@@ -1751,37 +1751,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     + "] off=[" + string.Join(" ", wf) + "]   nRows=" + nRows + " nSub=" + nSub);
                 }
             }
-            if (s_dropoutExact && walk is not null)
-            {
-                // THE SAME CROSSINGS THE FILL USED. LookForDropouts reads the arrays the scan walk
-                // wrote, not a second set found some other way; ours were still being derived from
-                // the FLATTENED polygon, which has hundreds of vertices where GDI's contour has a
-                // handful, and the two disagreed about 34 glyphs' worth of thin features. Rows the
-                // walk counts from the bottom, this frame counts from the top, hence nRows-1-r.
-                // The position kept per crossing is its sample centre, which is what the smart
-                // fill's midpoint is taken between -- GDI recomputes an exact one from the segment
-                // it stored, and the two differ by less than the sample the fill lands in.
-                for (int C = 0; C < nCols; C++)
-                {
-                    var on = new List<(int, float)>(); var off = new List<(int, float)>();
-                    foreach (int r in walk.ColOn[C]) { int R = nRows - 1 - r; on.Add((R, R + 0.5f)); }
-                    foreach (int r in walk.ColOff[C]) { int R = nRows - 1 - r; off.Add((R, R + 0.5f)); }
-                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                    colOn[C] = on; colOff[C] = off;
-                }
-                for (int R = 0; R < nRows; R++)
-                {
-                    int r = nRows - 1 - R;
-                    var on = new List<(int, float)>(); var off = new List<(int, float)>();
-                    foreach (int c in walk.On[r]) on.Add((c, c + 0.5f));
-                    foreach (int c in walk.Off[r]) off.Add((c, c + 0.5f));
-                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                    rowOn[R] = on; rowOff[R] = off;
-                }
-                goto listsReady;
-            }
             for (int R = 0; R < nRows; R++)
             {
                 var on = new List<(int, float)>(); var off = new List<(int, float)>();
@@ -1877,6 +1846,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 return n;
             }
 
+            if (s_dropoutExactMode != 0 && walk is not null)
+            {
+                // WHAT IT COSTS, AND WHICH HALF (2026-09-20, against 31,200): columns only
+                // 1,123,195, rows only 709,203, both 1,288,932. Neither list set is usable, and
+                // that is after two real repairs to them -- GdiConic's column row-bias (which
+                // took `both` from 2,657,963 to 1,276,085) and giving the column crossings their
+                // exact positions instead of their row's centre (no further change). So the fault
+                // is structural and in BOTH halves, not the positions and not the bias. The fill
+                // consumes these same arrays correctly, so whatever the dropout needs from them
+                // is not what GdiExactRows needs; finding it is the open work here.
+                // THE SAME CROSSINGS THE FILL USED. LookForDropouts reads the arrays the scan walk
+                // wrote, not a second set found some other way; ours were still being derived from
+                // the FLATTENED polygon, which has hundreds of vertices where GDI's contour has a
+                // handful, and the two disagreed about 34 glyphs' worth of thin features. Rows the
+                // walk counts from the bottom, this frame counts from the top, hence nRows-1-r.
+                // The position kept per crossing is its sample centre, which is what the smart
+                // fill's midpoint is taken between -- GDI recomputes an exact one from the segment
+                // it stored, and the two differ by less than the sample the fill lands in.
+                for (int C = 0; (s_dropoutExactMode & 1) != 0 && C < nCols; C++)
+                {
+                    var on = new List<(int, float)>(); var off = new List<(int, float)>();
+                    for (int k = 0; k < walk.ColOn[C].Count; k++)
+                        on.Add((nRows - 1 - walk.ColOn[C][k], nRows - walk.ColOnPos[C][k]));
+                    for (int k = 0; k < walk.ColOff[C].Count; k++)
+                        off.Add((nRows - 1 - walk.ColOff[C][k], nRows - walk.ColOffPos[C][k]));
+                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    colOn[C] = on; colOff[C] = off;
+                }
+                for (int R = 0; (s_dropoutExactMode & 2) != 0 && R < nRows; R++)
+                {
+                    int r = nRows - 1 - R;
+                    var on = new List<(int, float)>(); var off = new List<(int, float)>();
+                    foreach (int c in walk.On[r]) on.Add((c, c + 0.5f));
+                    foreach (int c in walk.Off[r]) off.Add((c, c + 0.5f));
+                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    rowOn[R] = on; rowOff[R] = off;
+                }
+            }
             listsReady:
             // The bitmap as the ordinary fill leaves it (fsc_FillBitMap runs before
             // LookForDropouts), then updated by every dropout fill so the "already on" tests see it.
@@ -2134,8 +2143,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_dropFlip =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_FLIP") == "1";
 
-        private static readonly bool s_dropoutExact =
-            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_EXACT") == "1";
+        /// <summary>WPF_CT_DROPOUT_EXACT: `1`/`both` takes BOTH of the dropout's list sets from
+        /// the scan walk, `cols` only the columns, `rows` only the rows -- so the two halves can
+        /// be blamed separately. Off by default; see the note at the substitution.</summary>
+        private static readonly int s_dropoutExactMode =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_EXACT") switch
+            { "1" or "both" => 3, "cols" => 1, "rows" => 2, _ => 0 };
 
         private static readonly bool s_scanTrace =
             Environment.GetEnvironmentVariable("WPF_CT_SCAN_TRACE") == "1";
@@ -2188,20 +2201,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // building them here rather than from the flattened polygon is what makes the dropout
             // and the fill agree about where the ink is.
             public readonly List<int>[] ColOn, ColOff;
+            // ...and where each column crossing actually IS, in the walk's own sixty-fourths of a
+            // sub-row, counted from the bottom as the walk counts. The index alone is not enough
+            // for the smart dropout, whose fill row is the MIDPOINT of a span's two crossings;
+            // filing both at their row's centre collapses every midpoint onto the ON row.
+            public readonly List<float>[] ColOnPos, ColOffPos;
             public GdiScanRows(int nRows, int nCols)
             {
                 On = new List<int>[nRows]; Off = new List<int>[nRows];
                 for (int i = 0; i < nRows; i++) { On[i] = new List<int>(); Off[i] = new List<int>(); }
                 ColOn = new List<int>[nCols]; ColOff = new List<int>[nCols];
-                for (int i = 0; i < nCols; i++) { ColOn[i] = new List<int>(); ColOff[i] = new List<int>(); }
+                ColOnPos = new List<float>[nCols]; ColOffPos = new List<float>[nCols];
+                for (int i = 0; i < nCols; i++)
+                {
+                    ColOn[i] = new List<int>(); ColOff[i] = new List<int>();
+                    ColOnPos[i] = new List<float>(); ColOffPos[i] = new List<float>();
+                }
             }
             public void Row(int col, int rUp, bool on)
             {
                 if ((uint) rUp < (uint) On.Length) (on ? On : Off)[rUp].Add(col);
             }
-            public void Col(int col, int rUp, bool on)
+            public void Col(int col, int rUp, bool on, float pos = float.NaN)
             {
-                if ((uint) col < (uint) ColOn.Length) (on ? ColOn : ColOff)[col].Add(rUp);
+                if ((uint) col >= (uint) ColOn.Length) return;
+                (on ? ColOn : ColOff)[col].Add(rUp);
+                (on ? ColOnPos : ColOffPos)[col].Add(float.IsNaN(pos) ? rUp + 0.5f : pos);
             }
         }
 
@@ -2248,7 +2273,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // and that bit also gates the dropout checks in fsc_FillGlyph. We pass no mode
                 // word and always emit the columns; what that bit means is not settled.</para>
                 int r = ((y0 - (s_hRowOld ? (x0 < x2 ? 1 : 0) : (x2 < x0 ? 1 : 0))) + 0x20) >> 6;
-                for (int i = 0; i < ncols; i++) { L.Col(col, r, colOn); col += xstep; }
+                for (int i = 0; i < ncols; i++) { L.Col(col, r, colOn, y0 / 64f); col += xstep; }
                 return;
             }
             if (x0 == x2)
@@ -2279,11 +2304,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // them -- the dropout takes its lists from the flattened polygon -- which is
                     // why the inconsistency survived. WPF_CT_COLBIAS=flip makes them agree; see
                     // the knob for why that is not the default.
-                    L.Col(col, (s_colBiasFlip ? bias : yDesc) + row, colOn);
+                    // WHERE the crossing is, not just which row it is filed under: the edge meets
+                    // this column's sample line at x = col * 64 + 32, and for a straight edge that
+                    // y is exact.
+                    long sx = (long) col * 64 + 32;
+                    float pos = x2 == x0 ? y0 / 64f
+                              : (float) ((y0 + (sx - x0) * (double) (y2 - y0) / (x2 - x0)) / 64.0);
+                    L.Col(col, (s_colBiasFlip ? bias : yDesc) + row, colOn, pos);
                     col += xstep;
                     f -= (long) dy * 0x40;
                 }
             }
+        }
+
+        /// <summary>Where a monotone quadratic piece meets a column's sample line, in the walk's
+        /// own sixty-fourths of a sub-row. Solves x(t) = col*64 + 32 on the piece -- which
+        /// EvaluateSpline has already made monotone in both axes -- and evaluates y there.</summary>
+        private static float ConicY(int x0, int y0, int x1, int y1, int x2, int y2, int col)
+        {
+            double sx = col * 64.0 + 32.0;
+            double a = x0 - 2.0 * x1 + x2, b = 2.0 * (x1 - x0), c = x0 - sx;
+            double t;
+            if (Math.Abs(a) < 1e-9)
+            {
+                if (Math.Abs(b) < 1e-9) return y0 / 64f;
+                t = -c / b;
+            }
+            else
+            {
+                double disc = b * b - 4 * a * c;
+                if (disc < 0) return y0 / 64f;
+                double r = Math.Sqrt(disc);
+                double t1 = (-b + r) / (2 * a), t2 = (-b - r) / (2 * a);
+                t = t1 >= -1e-6 && t1 <= 1 + 1e-6 ? t1 : t2;
+            }
+            if (!(t >= 0)) t = 0; else if (t > 1) t = 1;
+            double u = 1 - t;
+            return (float) ((u * u * y0 + 2 * u * t * y1 + t * t * y2) / 64.0);
         }
 
         /// <summary>fsc_CalcSpline's walk, rows only. The piece is monotonic in both axes and
@@ -2302,6 +2359,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 ydist = y0 - yc; row = yc >> 6; rowEnd = ((y2 + 0x20) >> 6) - 1; ystep = -1; q = 4; dy1 = y0 - y1; dy2 = y0 - y2;
             }
             int ybias = y2 <= y0 ? 1 : 0;
+            // THE COLUMN EMISSION TAKES THE UNFLIPPED ONE. fsc_CalcSpline stores its y bias to
+            // [sp+0x20] at 140043a5c -- BEFORE the x-direction test two instructions later -- and
+            // the column adder reads it from there (`w2 = [sp+0x20] + row` at 140043c58). The
+            // flip at 140043e4c happens inside the leftward path afterwards and is never written
+            // back, so it reaches the initial error terms and nothing else. fsc_CalcLine does the
+            // same with its own pair: w25 (unflipped) for the column emission at 140043940,
+            // w11 = 1 - w25 for the error alone. We were emitting with the flipped value, so a
+            // leftward CURVE filed its column crossings one row from where a leftward LINE filed
+            // its -- the two walks disagreed with each other, which is how it was noticed.
+            // WPF_CT_COLBIAS=flip restores it.
+            int yEmit = ybias;
             int xdist, col, colEnd, xstep, xbias, dx1, dx2;
             if (x0 < x2)
             {
@@ -2318,12 +2386,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // the initial error, so it decided every near-tie on a leftward piece the wrong way:
                 // Tahoma 'o' at 20ppem had three sub-rows one sample out, in both directions.
                 ybias = 1 - ybias;
+                if (s_colBiasFlip) yEmit = ybias;
             }
             bool rowOn = q == 1 || q == 2;
             bool colOn = q == 2 || q == 3;              // x descending, per the quadrant table
             if (row == rowEnd)
             {
-                for (; col != colEnd; col += xstep) L.Col(col, ybias + row, colOn);
+                for (; col != colEnd; col += xstep) L.Col(col, yEmit + row, colOn, ConicY(x0, y0, x1, y1, x2, y2, col));
                 return;
             }
             if (col == colEnd)
@@ -2383,7 +2452,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 while (col != colEnd)
                 {
-                    if (row == rowEnd) { for (; col != colEnd; col += xstep) L.Col(col, ybias + row, colOn); return; }
+                    if (row == rowEnd) { for (; col != colEnd; col += xstep) L.Col(col, yEmit + row, colOn, ConicY(x0, y0, x1, y1, x2, y2, col)); return; }
                     if (F >= 0 && Fy <= B2s)
                     {
                         if (s_scanTrace) Console.Error.WriteLine($"   ROW col={xbias + col} row={row} F={F} Fy={Fy} B2s={B2s}");
@@ -2392,17 +2461,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     else
                     {
-                        L.Col(col, ybias + row, colOn);
+                        L.Col(col, yEmit + row, colOn, ConicY(x0, y0, x1, y1, x2, y2, col));
                         F += Fx; col += xstep; Fx += 2 * A2s; Fy += Cs;
                     }
                 }
-                for (; col != colEnd; col += xstep) L.Col(col, ybias + row, colOn);
+                for (; col != colEnd; col += xstep) L.Col(col, yEmit + row, colOn, ConicY(x0, y0, x1, y1, x2, y2, col));
             }
             else
             {
                 while (col != colEnd)
                 {
-                    if (row == rowEnd) { for (; col != colEnd; col += xstep) L.Col(col, ybias + row, colOn); return; }
+                    if (row == rowEnd) { for (; col != colEnd; col += xstep) L.Col(col, yEmit + row, colOn, ConicY(x0, y0, x1, y1, x2, y2, col)); return; }
                     if (F < 0 || A2s < Fx)
                     {
                         if (s_scanTrace) Console.Error.WriteLine($"   ROW col={xbias + col} row={row} F={F} Fx={Fx} A2s={A2s}");
@@ -2411,7 +2480,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     else
                     {
-                        L.Col(col, ybias + row, colOn);
+                        L.Col(col, yEmit + row, colOn, ConicY(x0, y0, x1, y1, x2, y2, col));
                         F += Fx; Fx += 2 * A2s; col += xstep; Fy += Cs;
                     }
                 }
