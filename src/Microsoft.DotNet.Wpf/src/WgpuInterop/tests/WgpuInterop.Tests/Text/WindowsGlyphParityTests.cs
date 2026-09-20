@@ -4685,7 +4685,12 @@ namespace WgpuInterop.Tests.Text
         /// <para>That is a touch-set difference, and the enumeration says it is not a delta and
         /// not a SHPIX: itrp_DeltaEngine's suppression path (140036cac) and itrp_SHP_Common's
         /// (the param_4 gate) both skip the MOVE and the TOUCH together, exactly as this file
-        /// does. Finding which instruction touches that point is the next job.</para>
+        /// does. Finding which instruction touches that point is the next job, and the first
+        /// place to look is NOT the glyph program: filtering '6'@12's whole x phase for a
+        /// point-moving opcode whose target lands in 19..25 returns NOTHING. Nor is it the IUP
+        /// mask -- itrp_IUP tests tag bit 1 for x and bit 2 for y, so the y work at instructions
+        /// 181..192 (which does touch point 19) cannot split the x run. Whatever splits it is
+        /// either a branch we do not take or something outside the opcode stream.</para>
         /// <para>What that means is that the defect is in an INTERPOLATED point, not in an
         /// anchor: moving any anchor of the group drags a whole IUP run with it, and somewhere in
         /// that run one point crosses one sample. A per-anchor rounding rule -- a MIRP cut-in, a
