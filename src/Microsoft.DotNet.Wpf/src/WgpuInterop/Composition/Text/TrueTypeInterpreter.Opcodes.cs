@@ -686,6 +686,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             for (int i = 0; i < _gs.Loop; i++)
                             {
                                 int sp = Pop();
+                                // RE-MEASURED 2026-09-20 AT A HOLDOUT OF 28,183, AND THREE OF THE
+                                // FOUR SHIPPED RULES HERE ARE NOW DEAD: WPF_CT_SHPIX=run (execute
+                                // every SHPIX the CALL rule allows) is INERT at 28,183, and so are
+                                // WPF_CT_SHPIX_PAIR=0 (the opposing-diagonal-nudge heuristic) and
+                                // WPF_CT_SHPIXTOUCH=0. Only the two rules that come from the
+                                // binary still bite: WPF_CT_SHPIX=outline measures 330,733 and
+                                // WPF_CT_SHPIX_IUPY=0 -- dropping the "IUP[y] has not run" clause
+                                // of itrp_SHP_Common's gate -- measures 270,027. So the
+                                // suppression that matters is GDI'S OWN, and the heuristics layered
+                                // over it no longer do anything on this specimen. They are kept
+                                // for now because removing them is a separate change with its own
+                                // ratchet risk, but nothing here is load-bearing.
                                 // Jason Campbell, on the Windows rasterizers: "only DELTAPs are not
                                 // used, but SHPIX are executed." Tested, because it is a specific
                                 // claim from someone who would know, and it does NOT hold against
