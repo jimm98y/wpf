@@ -4935,11 +4935,26 @@ namespace WgpuInterop.Tests.Text
             // census tells and rules out "GDI touches a different point set" as the general
             // explanation. Keep the free solver for the phases the anchors cannot reach; those
             // are where a different touch set actually shows.</para>
-            // <para>And do not read the exact coordinates it prints as GDI's. It walks back to
-            // the SMALLEST move that still renders GDI exactly, so a value can land on a half
-            // sixty-fourth -- GDI's P46 comes out 177.5/64 at one phase -- which no fitted
-            // coordinate can be. The DIRECTIONS are the evidence; the magnitudes are an upper
-            // bound on how far we are wrong, and they are one to three 128ths.</para>
+            // <para>ALWAYS PAIR IT WITH WPF_XYSOLVE_GRID64=1. Free, the search works in 128ths
+            // and its last pass steps by one, so it prints GDI's P46 at 177.5 sixty-fourths --
+            // a position the interpreter's 26.6 zone cannot hold. That is the search's
+            // resolution being read as GDI's coordinate. On the grid, sixteen phases of Times
+            // Bold 'K'@12 ALL still reach residual zero, which settles something bigger than the
+            // reporting: GDI's raster is producible by a real outline, so the residual is the
+            // FIT and not anything downstream of it.</para>
+            // <para>And then every delta is a whole sixty-fourth, and nearly all of them are ONE:
+            // P0 is +/-1 at ten of eleven phases, P1 -2, P13 -1 or -2, P47 +1 or +2, P59 +1 or
+            // +3. Our fit is one sixty-fourth out on one or two anchors, per phase.</para>
+            // <para>THE SHARPEST THING IN THE TABLE IS P46, and it is a question about y.
+            // P15 and P46 go through our pipeline IDENTICALLY -- same orus x (563, which is also
+            // rp1's), so the x-axis IP gives both orgDist 0 and newDist 0 and parks them on
+            // curX[16]; then the same phase node, a=16 b=61 "avg", gives both v=-5. Yet GDI
+            // agrees with us on P15 at every phase and separates P46 from it by +1, +2 and twice
+            // by +10 sixty-fourths. The only thing that distinguishes the two points is their
+            // Y (orus 602 against 702). So something y-dependent -- the link/pair construction
+            // that decides which points are stem mates is the obvious candidate -- puts P46 in a
+            // different relationship in GDI than in us. That is the next question, and it is a
+            // far narrower one than "which point is wrong".</para>
             // <para>The search's answer at a glyph's own phase is under-determined -- Consolas
             // '1'@18 has three single-anchor fixes, each reaching GDI on its own, and every one
             // of them dissolves when checked against the instruction that places the point. What
@@ -5906,7 +5921,20 @@ namespace WgpuInterop.Tests.Text
                     int renders = 1;
                     for (int pass = 0; pass < passes && cur > 0; pass++)
                     {
-                        int step = pass == 0 ? 4 : pass == 1 ? 2 : 1;
+                        // WPF_XYSOLVE_GRID64=1: NEVER LEAVE THE SIXTY-FOURTH GRID.
+                        // <para>These arrays are in 128ths and the last pass steps by ONE of them,
+                        // so the search can place a point on a HALF sixty-fourth -- which no
+                        // fitted coordinate can be, the interpreter's whole zone being 26.6. That
+                        // is not a technicality: it means "the smallest move that renders GDI
+                        // exactly is 1/128" can be true of a position no outline could hold, and
+                        // reading it as "we are half a sixty-fourth out" is reading the search's
+                        // resolution as GDI's. Our fitted x times 128 is always EVEN, so stepping
+                        // by two keeps every candidate on a real coordinate, and whether the
+                        // residual still reaches zero then is the question worth asking: if it
+                        // does, GDI's raster is producible by an outline and the difference is
+                        // the FIT; if it does not, the difference is downstream of the outline
+                        // altogether and no amount of naming points will find it.</para>
+                        int step = pass == 0 ? 4 : s_solveGrid64 ? 2 : pass == 1 ? 2 : 1;
                         for (int i = 0; i < sx.Length && cur > 0; i++)
                             for (int axis = 0; axis < (s_solveXOnly ? 1 : 2); axis++)
                             {
@@ -5955,10 +5983,19 @@ namespace WgpuInterop.Tests.Text
                                 for (int axis = 0; axis < (s_solveXOnly ? 1 : 2); axis++)
                                 {
                                     int[] arr = axis == 0 ? sx : sy, ours = axis == 0 ? ox : oy;
+                                    // The walk-back steps by ONE 128th unless WPF_XYSOLVE_GRID64
+                                    // asks it not to. That single step is why this mode can print
+                                    // GDI's P46 at 177.5 sixty-fourths: a half sixty-fourth is a
+                                    // position the interpreter's 26.6 zone cannot hold, so it is
+                                    // the search's resolution being read as GDI's coordinate. On
+                                    // the grid the walk-back steps by two, our own value is even,
+                                    // and every number it prints is one an outline could have.
+                                    int back = s_solveGrid64 ? 2 : 1;
                                     while (arr[i] != ours[i])
                                     {
                                         int keep = arr[i];
-                                        arr[i] += arr[i] < ours[i] ? 1 : -1;
+                                        int gap = ours[i] - arr[i];
+                                        arr[i] += Math.Abs(gap) < back ? gap : (gap > 0 ? back : -back);
                                         backRenders++;
                                         if (Score() != 0) { arr[i] = keep; break; }
                                         moved = true;
@@ -9949,6 +9986,9 @@ namespace WgpuInterop.Tests.Text
             for (int v = lo; v <= hi; v += Math.Max(1, step)) list.Add(v);
             return list.ToArray();
         }
+
+        private static readonly bool s_solveGrid64 =
+            Environment.GetEnvironmentVariable("WPF_XYSOLVE_GRID64") == "1";
 
         private static short Read16(byte[] d, int at) => (short) ((d[at] << 8) | d[at + 1]);
         private static void Write16(byte[] d, int at, short v)
