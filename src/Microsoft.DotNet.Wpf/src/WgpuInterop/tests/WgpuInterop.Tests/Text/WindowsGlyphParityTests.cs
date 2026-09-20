@@ -9703,6 +9703,26 @@ namespace WgpuInterop.Tests.Text
                              out int nPoints, out int bboxAt))
             { Console.Error.WriteLine($"'{ch}' is a composite or malformed"); return 0; }
 
+            // WPF_PATCHPT_NOINSTR=1 zeroes this glyph's instruction length, so BOTH scalers
+            // render the linearly scaled outline with no program at all. It separates "our
+            // rasterizer disagrees about this SHAPE" from "our rasterizer disagrees about the
+            // shape the FIT produced": the shape is the same either way, only the hinting goes.
+            if (Environment.GetEnvironmentVariable("WPF_PATCHPT_NOINSTR") == "1")
+            {
+                int contours = Read16(original, glyphAt);
+                if (contours > 0)
+                {
+                    // FILL, do not zero the length: the count is followed by the instruction
+                    // BYTES, so shortening it makes the scaler read them as flags and the glyph
+                    // stops parsing. 0x00 is SVTCA[y], which moves nothing, so a stream of them
+                    // leaves the linearly scaled outline exactly as it arrived.
+                    int at2 = glyphAt + 10 + contours * 2;
+                    int ilen = Read16(original, at2);
+                    for (int i = 0; i < ilen; i++) original[at2 + 2 + i] = 0x00;
+                    Console.Error.WriteLine($"   NOINSTR: {ilen} instruction bytes -> SVTCA[y]");
+                }
+            }
+
             var report = new System.Text.StringBuilder();
             report.AppendLine($"== does GDI follow a moved point? {family}"
                               + $"{(bold ? " Bold" : "")}{(italic ? " Italic" : "")} '{ch}' at {ppem}ppem,"
@@ -10020,8 +10040,18 @@ namespace WgpuInterop.Tests.Text
         private static readonly bool s_solveGrid64 =
             Environment.GetEnvironmentVariable("WPF_XYSOLVE_GRID64") == "1";
 
-        /// <summary>FOR CONSOLAS '1' AT 18ppem THE OUTLINE IS NOT THE PROBLEM -- OUR FIT IS THE
-        /// REAL SCALER'S, POINT FOR POINT, AND THE PIXELS STILL DIFFER BY 256.
+        /// <summary>RETRACTED, AND REPLACED BY A SHARPER TOOL: WPF_PATCHPT_NOINSTR=1.
+        /// <para>Neutralise Consolas '1'@18's glyph program -- fill its 104 instruction bytes with
+        /// SVTCA[y], which moves nothing, so both scalers render the linearly scaled outline --
+        /// and our pixels are IDENTICAL to GDI's. With the program, 256. So the shape is fine,
+        /// the rasterizer is fine on it, and the whole difference is the FIT.</para>
+        /// <para>Which means the claim below is wrong, and the flaw is worth naming: the harness
+        /// agreement proves our interpreter reproduces the SCALER IN MODE 3, not that GDI uses
+        /// mode 3. Matching a mode that matches us is not evidence about GDI. (Fill the
+        /// instruction bytes -- do NOT zero the length, which makes the scaler read them as flags
+        /// and the glyph stops parsing.)</para></summary>
+        /// <summary>SUPERSEDED: FOR CONSOLAS '1' AT 18ppem THE OUTLINE IS NOT THE PROBLEM -- OUR
+        /// FIT IS THE REAL SCALER'S, POINT FOR POINT, AND THE PIXELS STILL DIFFER BY 256.
         /// <para>Driven directly (scratchpad/ctharness, INPD0=03), fontdrvhost's own fs__Contour
         /// returns, in pixels: x = 8.80 1.61 1.61 4.55 4.55 1.80 1.23 4.89 6.25 6.25 8.80 0 and
         /// y = 0 0 1 1 10 8 9 11 11 1 1 0. This port's fitted outline is the SAME THIRTEEN
