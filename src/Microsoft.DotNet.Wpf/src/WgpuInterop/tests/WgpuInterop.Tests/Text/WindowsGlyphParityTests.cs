@@ -10043,8 +10043,18 @@ namespace WgpuInterop.Tests.Text
         /// <summary>RETRACTED, AND REPLACED BY A SHARPER TOOL: WPF_PATCHPT_NOINSTR=1.
         /// <para>Neutralise Consolas '1'@18's glyph program -- fill its 104 instruction bytes with
         /// SVTCA[y], which moves nothing, so both scalers render the linearly scaled outline --
-        /// and our pixels are IDENTICAL to GDI's. With the program, 256. So the shape is fine,
-        /// the rasterizer is fine on it, and the whole difference is the FIT.</para>
+        /// and our pixels are IDENTICAL to GDI's. With the program, 256.</para>
+        /// <para>READ THAT PRECISELY -- I first wrote "so the whole 256 is the fit" and that does
+        /// NOT follow. It establishes that our rasterizer agrees with GDI's on this glyph's
+        /// UNHINTED geometry. The hinted geometry is a different shape, and it could still be
+        /// rasterized differently: an edge that lands on a sample in the fitted outline need not
+        /// land on one in the scaled outline. Both remain open --
+        /// (a) GDI's fit differs from ours, or (b) the fits agree and the rasterizer parts
+        /// company on the FITTED geometry only. What NOINSTR does prove is that the glyph's
+        /// SHAPE and our handling of it are not the problem.</para>
+        /// <para>Distinguishing (a) from (b) needs GDI's fitted outline, and the mode sweep does
+        /// not supply it: for this glyph mode 1 gives our fit minus a uniform 3/64 (the unphased
+        /// fit), mode 3 gives ours exactly, modes 5 and 7 give whole pixels. None is GDI.</para>
         /// <para>Which means the claim below is wrong, and the flaw is worth naming: the harness
         /// agreement proves our interpreter reproduces the SCALER IN MODE 3, not that GDI uses
         /// mode 3. Matching a mode that matches us is not evidence about GDI. (Fill the
