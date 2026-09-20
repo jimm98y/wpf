@@ -2125,12 +2125,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// GdiLine computes the same flipped value into `bias`, uses it for the initial error
         /// term, and then files its column crossings under the UNFLIPPED yDesc. One of the two is
         /// wrong for a leftward line.</para>
-        /// <para>Nothing reads those lists -- the dropout takes the flattened polygon's -- so the
-        /// holdout is 31,200 either way, and the only paths that do read them get WORSE with the
-        /// flip: WPF_CT_DROPOUT_COUNTS=walk goes 939,726 -> 947,044 and WPF_CT_DROPOUT_EXACT=1
-        /// 2,548,548 -> 2,657,963. Both of those are already 30x and 80x off, so that is not
-        /// evidence either way, and the default stays where it measured. Resolve it against the
-        /// binary before shipping the flip.</para></summary>
+        /// <para>Settled, and by a wide margin now that the dropout reads these lists: the flip
+        /// costs 653,457 against 28,475. When this was first written nothing read them and both
+        /// readings measured 31,200, so the question could only be answered off the binary -- and
+        /// it was, at 140043a5c/140043c58. The measurement caught up afterwards.</para></summary>
         /// <summary>WPF_CT_DROPOUT_NOFLIP=0 restores the `nRows - 1 - r` conversion on the
         /// walk's row indices. It was never right -- see the substitution -- and with it the
         /// walk's lists measure 1,288,932 where without it they measure 28,475.</summary>
