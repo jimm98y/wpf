@@ -4955,6 +4955,20 @@ namespace WgpuInterop.Tests.Text
             // that decides which points are stem mates is the obvious candidate -- puts P46 in a
             // different relationship in GDI than in us. That is the next question, and it is a
             // far narrower one than "which point is wrong".</para>
+            // <para>BUT DO NOT PROMOTE P46 TO "THE POINT". Even at one phase it is not unique:
+            // WPF_XYSOLVE_ANCHORS_HOLD=46 and the search reaches GDI by moving P47 alone by
+            // +1/64 instead, and holding both 46 and 15 changes nothing. The under-determination
+            // that dissolved five earlier chains is still here at every single phase. What the
+            // sweep adds is not uniqueness, it is REPETITION: over 41 phases P1 wants negative
+            // 11 times out of 11 and P46 positive 8 out of 9, and no alternative fix changes
+            // that. The DIRECTIONS survive the ambiguity; the choice of point does not.</para>
+            // <para>Also checked and not the answer: our pairing gate. The x-axis link
+            // (15, 46) IS recorded and survives the ClearType gate, but PhasePair takes only
+            // colour 1 and it comes back 0, so P15 and P46 stay unmated -- which is why they
+            // share a phase node at all. (16, 45) arrives as colour 3 and is refused the same
+            // way. Whether GDI's AddDistance pairs anything but black is worth reading out of
+            // the binary; it would not separate P46 from P15 by itself, since their link is
+            // grey either way.</para>
             // <para>The search's answer at a glyph's own phase is under-determined -- Consolas
             // '1'@18 has three single-anchor fixes, each reaching GDI on its own, and every one
             // of them dissolves when checked against the instruction that places the point. What
