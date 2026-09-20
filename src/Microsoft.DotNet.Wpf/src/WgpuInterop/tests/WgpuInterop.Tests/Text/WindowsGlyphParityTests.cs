@@ -9432,6 +9432,39 @@ namespace WgpuInterop.Tests.Text
             Console.Error.Write(report.ToString());
         }
 
+        /// <summary>THE FIT IS GDI'S AT EVERY SUB-PIXEL PHASE, not just the one each face ships.
+        /// <para>The per-glyph ratchets and the weight holdout both render a glyph exactly where
+        /// its own side bearing puts it, which is ONE sample of the fit. Times Bold 'K' at 16ppem
+        /// scores zero there and 8,576 across a sweep of phases: a fit we had no way to know was
+        /// wrong, and a change that broke it would have passed everything. This holds the specs
+        /// that are currently exact at EVERY phase to that, which is about two hundred and sixty
+        /// times the constraint per glyph.</para>
+        /// <para>Deliberately the clean specs only. The four that carry the residual --
+        /// consola/1/18, times/K/12/B, times/K/16/B, verdana/6/12 -- are measured by
+        /// <see cref="HowGdiFollowsAMovedPoint"/> on demand; putting a nonzero ceiling here would
+        /// just be a second holdout to argue with. Range and step are fixed so the number means
+        /// the same thing between runs.</para></summary>
+        [Fact]
+        public void OurFitTracksGdisAtEveryPhase()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string[] clean =
+            {
+                "consola/e/11", "times/a/13", "times/e/12/I", "arial/A/20/B", "arial/s/12",
+                "verdana/k/11", "verdana/w/16/I", "segoeui/g/13", "tahoma/S/10", "times/o/14/B",
+            };
+            long total = 0;
+            var wrong = new List<string>();
+            foreach (string spec in clean)
+            {
+                long v = OneMovedPoint(spec, "-90,90,6", quiet: true);
+                total += v;
+                if (v != 0) wrong.Add($"{spec} {v}");
+            }
+            Assert.True(total == 0,
+                        "these specs used to match GDI at every phase: " + string.Join(", ", wrong));
+        }
+
         /// <summary>MOVE ONE POINT OF A REAL FACE AND SEE WHETHER GDI FOLLOWS US.
         /// WPF_PATCHPT=family/char/ppem[/B|I].
         /// <para>Everything below the ClearType branch of the glyph program is proven, and the
@@ -9473,7 +9506,7 @@ namespace WgpuInterop.Tests.Text
         /// instead of the one each face happens to ship. A knob that reads "no change" on the
         /// holdout has not been shown to be neutral; it has been shown to be neutral at one
         /// phase, and most of these glyphs are wrong at a dozen more.</summary>
-        private long OneMovedPoint(string spec)
+        private long OneMovedPoint(string spec, string? sweep = null, bool quiet = false)
         {
             string[] parts = spec!.Split('/');
             bool bold = parts.Length > 3 && parts[3].Contains('B');
@@ -9589,7 +9622,7 @@ namespace WgpuInterop.Tests.Text
             // at every phase, so GDI's raster should be the same shape throughout and so should
             // ours. Each phase is an independent test of the fit, which is how a glyph carrying
             // four differing lamps turns into a hundred constraints instead of four.
-            if (Environment.GetEnvironmentVariable("WPF_PATCHPT_SHIFT") is { Length: > 0 } sh)
+            if ((sweep ?? Environment.GetEnvironmentVariable("WPF_PATCHPT_SHIFT")) is { Length: > 0 } sh)
             {
                 string[] r = sh.Split(',');
                 int lo = int.Parse(r[0]), hi = int.Parse(r[1]);
@@ -9673,7 +9706,7 @@ namespace WgpuInterop.Tests.Text
                 if (nameAt > 0) original[nameAt] = nameWas;
                 if (Environment.GetEnvironmentVariable("WPF_PATCHPT_REPORT") is { Length: > 0 } rp3)
                     File.AppendAllText(rp3, report.ToString());
-                if (Environment.GetEnvironmentVariable("WPF_PATCHPT_QUIET") == "1")
+                if (quiet || Environment.GetEnvironmentVariable("WPF_PATCHPT_QUIET") == "1")
                     Console.Error.WriteLine($"   {spec,-18} PHASETOTAL {total,8}"
                                             + $" over {n} phases, worst {worst}");
                 else Console.Error.Write(report.ToString());
