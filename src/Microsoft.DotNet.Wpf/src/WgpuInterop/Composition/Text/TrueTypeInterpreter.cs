@@ -4643,10 +4643,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// disagree. What it licenses is the GATE -- `itrp_RTG` and SVTCA and SDPVTL all install
         /// `itrp_RoundToGridSP` only when `localGS+0xcc != 0 && (globals[0x88] & 4 ||
         /// globals[0x16b] != 0)` -- and Arial issues no INSTCTRL, so GDI's behaviour here says
-        /// `globals[0x16b]` was ZERO. This knob exists to measure whether that mechanism is real
-        /// before anyone goes looking for 0x16b's writer, and it is deliberately narrow: putting
-        /// EVERY rounding on the whole pixel is already known to be catastrophic (see
-        /// ClearTypeGrid).</para></summary>
+        /// `globals[0x16b]` was ZERO. The knob is deliberately narrow: putting EVERY rounding on
+        /// the whole pixel is already known to be catastrophic (see ClearTypeGrid).</para>
+        /// <para>DO NOT GO LOOKING FOR 0x16b's WRITER -- it is already found, and listed in
+        /// ClearTypeGrid with all five stores to the halfword at globals+0x16a. The byte is 0
+        /// while 'prep' runs and 2 while EVERY glyph program runs, because
+        /// `itrp_ExecuteGlyphPgm@14003733c` sets it unconditionally as its first instruction. A
+        /// mode-0 glyph program therefore does not exist, and the Arial reading above can only be
+        /// a ROUND executed in prep or in an fpgm function called from it. This paragraph used to
+        /// say the writer was unfound, and that sentence alone cost a later session a Ghidra round
+        /// trip to rediscover what the file two thousand lines up already recorded.</para>
+        /// <para>Refuted again on the phase sweep, which sees twenty times as many fits as the
+        /// holdout: fourteen specs, 15,389 -> 276,997.</para></summary>
         private static readonly bool s_roundOpWholePixel =
             Environment.GetEnvironmentVariable("WPF_CT_ROUND_GRID") == "1";
 

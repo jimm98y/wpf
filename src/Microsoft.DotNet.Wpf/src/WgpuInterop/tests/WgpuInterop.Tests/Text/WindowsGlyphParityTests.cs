@@ -9516,6 +9516,24 @@ namespace WgpuInterop.Tests.Text
 
             int baseline = ppem + 12;
             var raw = new byte[Width * Height * 4];
+            long Compare(byte[] g4, byte[] o4, ref long gInk, ref long oInk,
+                         ref double gCx, ref double oCx)
+            {
+                long sum = 0; gInk = oInk = 0; gCx = oCx = 0;
+                for (int y = 0; y < Height; y++)
+                for (int x = 0; x < Width; x++)
+                for (int c = 0; c < 3; c++)
+                {
+                    int g = 255 - g4[(y * Width + x) * 4 + (2 - c)];
+                    int o = 255 - o4[(y * Width + x) * 4 + c];
+                    gInk += g; oInk += o; gCx += (double) g * x; oCx += (double) o * x;
+                    sum += Math.Abs(g - o);
+                }
+                if (gInk > 0) gCx /= gInk;
+                if (oInk > 0) oCx /= oInk;
+                return sum;
+            }
+
             long gdiInk = 0, ourInk = 0;
             // The glyph's INK CENTROID in x, per side. Ink alone cannot tell a glyph that moved
             // from one that changed shape, and a whole-pixel misplacement and a re-fitted stem
@@ -9583,6 +9601,30 @@ namespace WgpuInterop.Tests.Text
                                   + $" point 0 delta is {size[0]} byte(s)");
                 report.AppendLine("     shift     px/64      sum|d|    gdiInk    ourInk"
                                   + "     gdiCx     ourCx    dCx(px)");
+                // WPF_PATCHPT_CROSS=<shift> holds GDI at ONE phase and sweeps ours past it.
+                // Both scalers bucket the phase onto the same sixteenth of a pixel -- the bucket
+                // edges in the sweep coincide exactly -- and our fit matches GDI's in every
+                // bucket but one. So the question worth asking about that bucket is not "which
+                // point is wrong" (the lamps do not say) but "does GDI's raster here equal OURS
+                // somewhere else": if it does, GDI rounded the bucket the way we round a
+                // DIFFERENT one, and the offset between the two phases is the whole error,
+                // stated in the units the rounding works in rather than inferred from pixels.
+                byte[]? held = null; int crossAt = 0;
+                if (Environment.GetEnvironmentVariable("WPF_PATCHPT_CROSS") is { Length: > 0 } cs)
+                {
+                    crossAt = int.Parse(cs);
+                    byte[] cb = (byte[]) original.Clone();
+                    if (!Bump(cb, at[0], size[0], positive[0], crossAt))
+                    { Console.Error.WriteLine("point 0 cannot hold the cross shift"); return 0; }
+                    Write16(cb, bboxAt, (short) (Read16(cb, bboxAt) + crossAt));
+                    Write16(cb, bboxAt + 4, (short) (Read16(cb, bboxAt + 4) + crossAt));
+                    Write16(cb, lsbAt, (short) (Read16(cb, lsbAt) + crossAt));
+                    Score(cb, Rename(cb, nameAt, family, ref variant, nameWas));
+                    held = (byte[]) raw.Clone();
+                    report.AppendLine($"   GDI HELD at shift {crossAt}"
+                                      + $" ({crossAt * 64.0 * ppem / upem:F2}/64 px), ink {gdiInk}");
+                }
+
                 long worst = 0, total = 0; int n = 0;
                 for (int d = lo; d <= hi; d += step)
                 {
@@ -9594,7 +9636,35 @@ namespace WgpuInterop.Tests.Text
                     Write16(bytes, lsbAt, (short) (Read16(bytes, lsbAt) + d));
                     string fam = Rename(bytes, nameAt, family, ref variant, nameWas);
                     long v = Score(bytes, fam);
+                    if (held is not null) v = Compare(held, OursRgba(new TrueTypeFont(bytes),
+                        ch.ToString(), ppem, baseline, correction: true), ref gdiInk, ref ourInk,
+                        ref gdiCx, ref ourCx);
                     total += v; n++; if (v > worst) worst = v;
+                    // WPF_PATCHPT_DUMP=<shift>: the differing LAMPS at one phase. A bucket where
+                    // GDI's ink jumps and ours jumps with it is not a displaced point; what is
+                    // left once both sides agree on the jump is how the extra coverage was
+                    // SPREAD, and that is only visible lamp by lamp.
+                    if (Environment.GetEnvironmentVariable("WPF_PATCHPT_DUMP") == d.ToString())
+                    {
+                        byte[] ours = OursRgba(new TrueTypeFont(bytes), ch.ToString(), ppem,
+                                               baseline, correction: true);
+                        report.AppendLine($"   -- lamps that differ at shift {d}"
+                                          + " (x,y: gdi rgb | ours rgb | ours-gdi)");
+                        for (int y = 0; y < Height; y++)
+                        for (int x = 0; x < Width; x++)
+                        {
+                            int g0 = 255 - raw[(y * Width + x) * 4 + 2];
+                            int g1 = 255 - raw[(y * Width + x) * 4 + 1];
+                            int g2 = 255 - raw[(y * Width + x) * 4 + 0];
+                            int o0 = 255 - ours[(y * Width + x) * 4 + 0];
+                            int o1 = 255 - ours[(y * Width + x) * 4 + 1];
+                            int o2 = 255 - ours[(y * Width + x) * 4 + 2];
+                            if (g0 == o0 && g1 == o1 && g2 == o2) continue;
+                            report.AppendLine($"      {x,3},{y,3}: {g0,3},{g1,3},{g2,3}"
+                                              + $" | {o0,3},{o1,3},{o2,3}"
+                                              + $" | {o0 - g0,4},{o1 - g1,4},{o2 - g2,4}");
+                        }
+                    }
                     report.AppendLine($"   {d,7}   {d * 64.0 * ppem / upem,7:F2}   {v,9}"
                                       + $"   {gdiInk,7}   {ourInk,7}"
                                       + $"   {gdiCx,7:F3}   {ourCx,7:F3}   {ourCx - gdiCx,8:F4}");
