@@ -9583,6 +9583,196 @@ namespace WgpuInterop.Tests.Text
             Console.Error.Write(rep.ToString());
         }
 
+        /// <summary>GDI'S OWN 1-BIT OVERSCALED SAMPLE ROW, RECOVERED FROM ITS CLEARTYPE LAMPS.
+        /// WPF_SAMPLEROW=family/char/ppem[/B|I].
+        /// <para>Below a face's SYMMETRIC_SMOOTHING size -- under 18ppem for Times, Arial, Verdana
+        /// and Tahoma, under 20 for Consolas and Segoe UI, which is three quarters of the holdout
+        /// -- there is no vertical oversampling at all. A device row is sampled at ONE y, its own
+        /// centre, and the whole rendered row is decided by which of the six horizontal samples
+        /// per pixel lie inside the glyph at that line. The filter is then a plain 6x1: a lamp's
+        /// byte is a function of the SUM of six consecutive sample bits, which is why GDI emits
+        /// exactly seven values per channel.</para>
+        /// <para>That makes the lamps INVERTIBLE. Take GDI's bytes, map each to its level 0..6,
+        /// and the row of bits is constrained by one equation per lamp, each overlapping its
+        /// neighbour by four samples. A forward/backward reachability pass over a four-bit state
+        /// says, for every sample, whether it is 1 in EVERY consistent row, 0 in every one, or
+        /// free -- so what comes out is not a fit but GDI's own overscaled bitmap, to whatever
+        /// precision its own output determines it.</para>
+        /// <para>Why it is worth having: every other instrument here reports a POINT, and a point
+        /// is one of many that render the same pixels. This reports where GDI's outline CROSSES a
+        /// scanline, to a sixth of a pixel, with no parameterisation in between. A differing lamp
+        /// becomes "GDI's left edge at row 20 is one sample right of ours", which is a statement
+        /// about the curve rather than about which control point to blame.</para>
+        /// <para>Ours is solved the same way from our own lamps, so the two are directly
+        /// comparable. `-` marks a sample both agree is outside, `#` both inside, `?` one the
+        /// pixels do not pin down, and `G`/`O` a sample only GDI or only we cover.</para></summary>
+        [Fact]
+        public void WhereGdiSamplesTheRow()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the subject");
+            string? spec = Environment.GetEnvironmentVariable("WPF_SAMPLEROW");
+            Assert.SkipWhen(string.IsNullOrEmpty(spec), "set WPF_SAMPLEROW=family/char/ppem[/style]");
+            string[] parts = spec!.Split('/');
+            string family = parts[0], ch = parts[1];
+            int ppem = int.Parse(parts[2]);
+            string style = parts.Length > 3 ? parts[3].ToUpperInvariant() : "";
+            bool bold = style.Contains('B'), italic = style.Contains('I');
+            string? file = FontFiles.Find(family, bold, italic);
+            Assert.SkipWhen(file is null, $"this machine has no {family}");
+            byte[] bytes = File.ReadAllBytes(file!);
+            int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+
+            const int Base = 28;
+            var raw = new byte[Width * Height * 4];
+            Gdi.s_rawRgb = raw;
+            Gdi.Draw(ch, family, ppem, PenX, Base, Width, Height, bold, italic);
+            Gdi.s_rawRgb = null;
+            byte[] mine = OursRgba(font, ch, ppem, Base, correction: true);
+
+            int Level(byte[] buf, int y, int x, int lamp, bool gdi)
+            {
+                int i = (y * Width + x) * 4;
+                int v = 255 - (gdi ? buf[i + 2 - lamp] : buf[i + lamp]);
+                return v <= 0 ? 0 : (v * 6 + 127) / 255;
+            }
+
+            int x0 = Width, x1 = -1, y0 = Height, y1 = -1;
+            for (int y = 0; y < Height; y++)
+                for (int x = 0; x < Width; x++)
+                    for (int L = 0; L < 3; L++)
+                        if (Level(raw, y, x, L, true) > 0 || Level(mine, y, x, L, false) > 0)
+                        {
+                            if (x < x0) x0 = x;
+                            if (x > x1) x1 = x;
+                            if (y < y0) y0 = y;
+                            if (y > y1) y1 = y;
+                        }
+            Assert.True(x1 >= x0, "neither raster drew anything");
+            x0 = Math.Max(0, x0 - 1); x1 = Math.Min(Width - 1, x1 + 1);
+
+            int lamps = (x1 - x0 + 1) * 3, samples = lamps * 2;
+
+            int[] Solve(int[] level)
+            {
+                var reach = new bool[lamps + 1][];
+                for (int j = 0; j <= lamps; j++) reach[j] = new bool[16];
+                reach[0][0] = true;
+                for (int j = 0; j < lamps; j++)
+                    for (int st = 0; st < 16; st++)
+                    {
+                        if (!reach[j][st]) continue;
+                        int have = (st & 1) + ((st >> 1) & 1) + ((st >> 2) & 1) + ((st >> 3) & 1);
+                        for (int nb = 0; nb < 4; nb++)
+                        {
+                            int add = (nb & 1) + ((nb >> 1) & 1);
+                            if (have + add != level[j]) continue;
+                            reach[j + 1][((st >> 2) & 3) | (nb << 2)] = true;
+                        }
+                    }
+                var ok = new bool[lamps + 1][];
+                for (int j = 0; j <= lamps; j++) ok[j] = new bool[16];
+                for (int st = 0; st < 16; st++) ok[lamps][st] = true;
+                for (int j = lamps - 1; j >= 0; j--)
+                    for (int st = 0; st < 16; st++)
+                    {
+                        if (!reach[j][st]) continue;
+                        int have = (st & 1) + ((st >> 1) & 1) + ((st >> 2) & 1) + ((st >> 3) & 1);
+                        for (int nb = 0; nb < 4; nb++)
+                        {
+                            int add = (nb & 1) + ((nb >> 1) & 1);
+                            if (have + add != level[j]) continue;
+                            int ns = ((st >> 2) & 3) | (nb << 2);
+                            if (ok[j + 1][ns]) { ok[j][st] = true; break; }
+                        }
+                    }
+                var verdict = new int[samples];
+                for (int i = 0; i < samples; i++) verdict[i] = -2;
+                for (int j = 0; j < lamps; j++)
+                    for (int st = 0; st < 16; st++)
+                    {
+                        if (!reach[j][st] || !ok[j][st]) continue;
+                        int have = (st & 1) + ((st >> 1) & 1) + ((st >> 2) & 1) + ((st >> 3) & 1);
+                        for (int nb = 0; nb < 4; nb++)
+                        {
+                            int add = (nb & 1) + ((nb >> 1) & 1);
+                            if (have + add != level[j]) continue;
+                            int ns = ((st >> 2) & 3) | (nb << 2);
+                            if (!ok[j + 1][ns]) continue;
+                            for (int k = 0; k < 2; k++)
+                            {
+                                int idx = 2 * j + 4 + k;
+                                if (idx >= samples) continue;
+                                int b = (nb >> k) & 1;
+                                verdict[idx] = verdict[idx] == -2 ? b : (verdict[idx] == b ? b : -1);
+                            }
+                        }
+                    }
+                for (int i = 0; i < 4 && i < samples; i++) if (verdict[i] == -2) verdict[i] = 0;
+                return verdict;
+            }
+
+            Console.Error.WriteLine($"== '{ch}' {family}@{ppem}{(style.Length > 0 ? "/" + style : "")}"
+                + $"  columns {x0}..{x1}, rows {y0}..{y1}, {samples} samples a row"
+                + "   (- both out, # both in, G gdi only, O ours only, ? free)");
+            var gl = new int[lamps];
+            var ol = new int[lamps];
+            for (int y = y0; y <= y1; y++)
+            {
+                for (int j = 0; j < lamps; j++)
+                {
+                    gl[j] = Level(raw, y, x0 + j / 3, j % 3, true);
+                    ol[j] = Level(mine, y, x0 + j / 3, j % 3, false);
+                }
+                int[] g = Solve(gl), o = Solve(ol);
+                var line = new System.Text.StringBuilder($"   row {y,3}  ");
+                int diff = 0;
+                for (int i = 0; i < samples; i++)
+                {
+                    if (i % 6 == 0 && i > 0) line.Append('|');
+                    char c;
+                    if (g[i] == -2 || o[i] == -2) c = '!';
+                    else if (g[i] < 0 || o[i] < 0) c = '?';
+                    else if (g[i] == o[i]) c = g[i] == 1 ? '#' : '-';
+                    else { c = g[i] == 1 ? 'G' : 'O'; diff++; }
+                    line.Append(c);
+                }
+                // AND THE EDGES, WHICH IS THE POINT. A run's boundary is not a sample but the
+                // gap between the last sample forced OUTSIDE and the first forced INSIDE, so it
+                // is an interval; two intervals that do not overlap are a PROOF that the two
+                // outlines cross this scanline in different places, and by how much.
+                string Edges(int[] v)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    for (int i = 0; i < samples; i++)
+                    {
+                        bool inHere = v[i] == 1, inPrev = i > 0 && v[i - 1] == 1;
+                        if (!inHere || inPrev) continue;
+                        int lo = i; while (lo > 0 && v[lo - 1] != 0) lo--;
+                        int hi = i;
+                        int j2 = i; while (j2 + 1 < samples && v[j2 + 1] != 0) j2++;
+                        int end = j2; while (end + 1 < samples && v[end + 1] == 1) end++;
+                        int endHi = end; while (endHi + 1 < samples && v[endHi + 1] != 0) endHi++;
+                        sb.Append($" [{lo}-{hi},{end + 1}-{endHi + 1}]");
+                        i = endHi;
+                    }
+                    return sb.Length == 0 ? " (none)" : sb.ToString();
+                }
+                var lv = new System.Text.StringBuilder();
+                for (int j = 0; j < lamps; j++)
+                    if (gl[j] != ol[j]) lv.Append($" lamp{j}({x0 + j / 3}.{j % 3}) gdi {gl[j]} ours {ol[j]};");
+                if (diff > 0) line.Append($"   {diff} DIFFER");
+                Console.Error.WriteLine(line.ToString());
+                if (lv.Length > 0)
+                {
+                    Console.Error.WriteLine($"          LEVELS{lv}");
+                    Console.Error.WriteLine($"          gdi  runs{Edges(g)}");
+                    Console.Error.WriteLine($"          ours runs{Edges(o)}");
+                }
+            }
+        }
+
         /// <summary>GDI AGAINST ITSELF: the same glyph drawn bi-level, greyscale and ClearType,
         /// side by side. WPF_GDI_QUALITY=family/char/ppem[/B|I].
         /// <para>Built for one question. Times Bold's 'o' at 16ppem squeezes its counter to 1.4px
