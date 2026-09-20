@@ -319,8 +319,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// we used to. itrp_Normalize forms it in ONE rounded division and the second rounding
         /// could land an LSB low, tilting every diagonal: 3,605,604 -> 3,602,444 on the
         /// specimen, 12,621,181 -> 12,606,533 on the holdout, no ratchet moves.</summary>
-        /// <summary>WPF_CT_GRID_AXIS=exact rounds on the lamp grid only where localGS+0xcc is
-        /// set, i.e. never for a diagonal projection -- which is what itrp_MIRP does inline.</summary>
+        /// <summary>WPF_CT_GRID_AXIS=exact rounds on the lamp grid only where the projection is
+        /// EXACTLY the x axis.
+        /// <para>MEASURED AT LAST, 2026-09-20: 7,809,163 against 28,183. The sentence this note
+        /// used to carry -- "only where localGS+0xcc is set, i.e. never for a diagonal
+        /// projection" -- was wrong on its second half, and the first half is not this predicate.
+        /// itrp_SPVTL writes 0xcc as `pv != (0, 0x4000)` with x oversampled, so the slot is SET
+        /// for a diagonal and the lamp grid does apply there; see the note at
+        /// NotPureYProjection. Do not take this knob for the faithful reading.</para></summary>
         private static readonly bool s_gridAxisExact =
             Environment.GetEnvironmentVariable("WPF_CT_GRID_AXIS") == "exact";
 
@@ -4211,9 +4217,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
         }
 
-        /// <summary>localGS+0xcc exactly: itrp_SVTCA_1 writes 1 only when ClearType is on with
-        /// its axis on x, and SPVTL/SDPVTL only when the vector is EXACTLY (0x4000, 0). The
-        /// AddDistance and AddProportion call sites test this slot, not "mostly horizontal".
+        /// <summary>localGS+0xcc exactly. THE CLAUSE ABOUT SPVTL WAS WRONG and is corrected
+        /// here (2026-09-20), because it nearly bought a 7.8-million regression: the knob it
+        /// implies, WPF_CT_GRID_AXIS=exact -- round on the lamp grid only where 0xcc is set,
+        /// reading that as "the projection is exactly x" -- measures 7,809,163 against 28,183.
+        /// itrp_SPVTL@14003f274 writes the slot as
+        /// <code>
+        ///   if (!(globals[0x1c0] &amp; 1)) 0;                    // ClearType off
+        ///   else if (globals[0x1c0] &amp; 4) (pv.x == 0x4000 &amp;&amp; pv.y == 0) ? 0 : 1;
+        ///   else                          (pv.y == 0x4000 &amp;&amp; pv.x == 0) ? 0 : 1;
+        /// </code>
+        /// -- so with x the oversampled axis it is ZERO only for a PURE +Y projection and ONE for
+        /// everything else, diagonals included. That is NotPureYProjection exactly, which is what
+        /// InClearTypeDirection computes and what every gate in this file already uses --
+        /// confirmed from the other side too, since WPF_CT_AXIS_NOTPUREY=0, which swaps that
+        /// predicate for "the projection is horizontal", measures 531,055.
+        /// itrp_SDPVTL@14003d96c and itrp_SVTCA_0/_1 agree. OnClearTypeAxis -- the projection
+        /// being exactly x -- is a DIFFERENT predicate and is not this slot.
+        /// <para>itrp_SVTCA_1 writes 1 when ClearType is on with its axis on x. The
+        /// AddDistance and AddProportion call sites test this slot, not "mostly horizontal".</para>
         /// <para>Census (WPF_PROJ_CENSUS=1): of 159,581 horizontal-ish projections in the weight
         /// run, 139,660 are axis-EXACT and the rest are real diagonals about 12 degrees off.
         /// </para></summary>
