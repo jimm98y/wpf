@@ -9681,6 +9681,18 @@ namespace WgpuInterop.Tests.Text
             }
 
             // WPF_PATCHPT_SWEEP=lo,hi walks the glyph's DECLARED xMin instead of its points.
+            // KEEP THE SHIFT SWEEP ABOVE FOR ANYTHING THAT IS REPORTED. This one moves xMin
+            // WITHOUT moving the outline, so past a few font units the declared box stops
+            // bounding the points and both scalers start answering questions about a malformed
+            // glyph: our compatible advance drops a whole pixel between passes (448 -> 384 on
+            // Verdana 'k'@11, ctFrac +0.074 -> -0.079) and our fit jumps half a pixel left where
+            // GDI's does not. That looked like a real defect in our handling of a nonzero pp1 --
+            // it is not. Times Italic really does ship 57 glyphs with xMin < lsb, seven of them
+            // ASCII (#*+<=>|, down to -163), and EVERY ONE of them renders against GDI at
+            // sum|d| ZERO at 10, 14 and 18ppem. Arial and Times Bold have a handful more, also
+            // exact, and no other face in the corpus has any. So a negative pp1 is handled and
+            // the discontinuity belongs to the probe.
+            //
             // xMin is not decoration: pp1.x is xMin - lsb, so moving it moves the phantom point
             // the whole fit is anchored to and re-anchored onto, which is to say it sweeps the
             // glyph's sub-pixel PHASE without touching one outline coordinate. Both scalers
