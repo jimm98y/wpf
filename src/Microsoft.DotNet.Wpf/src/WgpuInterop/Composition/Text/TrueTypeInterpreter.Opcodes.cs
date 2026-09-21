@@ -777,9 +777,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                         || ((uint) sp < (uint) z.PointCount
                                             && (z.Tags[sp] & TagTouchY) != 0
                                             && !(s_shpixAfterIupY && _iupYDone)));
+                                // IN THE PRE-PROGRAM TOO. itrp_SHP_Common never asks which
+                                // program is running, and GDI's ClearType prep runs with the
+                                // ClearType bits set: Palatino Linotype Bold Italic's prep calls
+                                // its delta helper (fn 54) to SHPIX twilight point 1 by -62 at
+                                // 19..24ppem along x, and GDI's ClearType run declines it where
+                                // its bi-level run takes it -- so the italic vector it stores in
+                                // storage 6/7 is (3940,15903), not our (2880,16129), and every
+                                // stem at 20 and 24ppem was placed along the wrong slant.
+                                // WPF_CT_SHPIX_PREP=0 exempts the prep again.
                                 if (s_shpixCallRule && ClearTypeInfo && !NativeClearTypeMode
-                                    && !BiLevelPass && !_inPreProgram && _deltaFdefDepth > 0
-                                    && !shpixApply)
+                                    && !BiLevelPass && !(_inPreProgram && !s_shpixCallInPrep)
+                                    && _deltaFdefDepth > 0 && !shpixApply)
                                 {
                                     if (s_yTrace)
                                         Console.Error.WriteLine("SKIP-SHPIX pt=" + sp + " amt="
@@ -2551,6 +2560,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_CT_SHPIX_CALL=0 to disable the fontdrvhost SHPIX rule above.</summary>
         private static readonly bool s_shpixCallRule =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX_CALL") != "0";
+
+        /// <summary>WPF_CT_SHPIX_PREP=0 exempts the pre-program from the SHPIX call rule.</summary>
+        private static readonly bool s_shpixCallInPrep =
+            Environment.GetEnvironmentVariable("WPF_CT_SHPIX_PREP") != "0";
 
         /// <summary>WPF_CT_SHPIX_IUPY=0: drop the "IUP[y] has not run" clause from the ClearType
         /// SHPIX gate, which is how this was implemented before the third clause was read out of
