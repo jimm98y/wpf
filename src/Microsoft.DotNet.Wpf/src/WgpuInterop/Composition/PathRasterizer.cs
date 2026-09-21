@@ -2404,6 +2404,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        private static void SortWithPositions(List<int> idx, List<float> pos)
+        {
+            if (idx.Count < 2) return;
+            if (pos.Count != idx.Count) { idx.Sort(); return; }
+            // Insertion sort: stable, and these lists are a handful long.
+            for (int i = 1; i < idx.Count; i++)
+            {
+                int ki = idx[i]; float kp = pos[i]; int j = i - 1;
+                while (j >= 0 && idx[j] > ki) { idx[j + 1] = idx[j]; pos[j + 1] = pos[j]; j--; }
+                idx[j + 1] = ki; pos[j + 1] = kp;
+            }
+        }
+
         /// <summary>fsc_CalcLine's walk, rows only.</summary>
         private static void GdiLine(int x0, int y0, int x2, int y2, GdiScanRows L)
         {
@@ -3030,7 +3043,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             for (int rUp = 0; rUp < nRows; rUp++)
             {
                 List<int> on = L.On[rUp], off = L.Off[rUp];
-                on.Sort(); off.Sort();
+                // SORT EACH LIST WITH ITS POSITIONS. The walk is handed on to the dropout pass,
+                // which pairs On[k] with OnPos[k]; sorting the indices alone left a row with
+                // crossings from two contours holding one contour's indices against the other's
+                // positions -- Tahoma Italic 'guillemotright' at 24ppem filed its bottom-row
+                // dropout at column 14 and filled column 44.
+                SortWithPositions(on, L.OnPos[rUp]);
+                SortWithPositions(off, L.OffPos[rUp]);
                 // WPF_CT_ROWLIST=1: the walk's own sample indices per sub-row, before they become
                 // a span. This is the boundary between fsc_CalcLine and fsc_FillBitMap: if a
                 // disagreement with GDI moves these, it is the DDA; if it does not, it is what
