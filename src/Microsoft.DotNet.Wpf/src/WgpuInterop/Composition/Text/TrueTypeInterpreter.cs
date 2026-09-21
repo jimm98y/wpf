@@ -1805,6 +1805,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                               + System.Environment.NewLine);
                 System.IO.File.AppendAllText(cvtDump!, sb.ToString());
             }
+            // WPF_STORAGE_OVERRIDE=idx:val[,idx:val]: a DIAGNOSTIC that overwrites storage slots
+            // after the pre-program, on the ClearType pass -- to ask whether another scaler's run
+            // differs from ours only in the mode the pre-program left behind.
+            if (!BiLevelPass && Environment.GetEnvironmentVariable("WPF_STORAGE_OVERRIDE") is { Length: > 0 } sov)
+                foreach (string kv in sov.Split(','))
+                {
+                    string[] p = kv.Split(':');
+                    if (p.Length == 2 && int.TryParse(p[0], out int si) && int.TryParse(p[1], out int sv)
+                        && (uint) si < (uint) _storage.Length)
+                        _storage[si] = sv;
+                }
             // WPF_STORAGE_DUMP: the storage area the pre-program leaves for the glyph programs
             // to branch on, one line per slot -- the twin of the ctharness' STORDUMP.
             if (Environment.GetEnvironmentVariable("WPF_STORAGE_DUMP") is { Length: > 0 } stDump)
