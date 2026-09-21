@@ -224,8 +224,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // EBLC/EBDT is the same layout as CBLC/CBDT with monochrome images instead of PNGs,
             // so it is read by the same parser. The East Asian faces ship these -- and GDI draws
             // them in preference to the outline, which is why CJK is crisp at UI sizes.
+            // ...BUT ONLY FOR A FACE THAT DECLARES A DOUBLE-BYTE CHARSET. ttfd's
+            // vSetClearTypeState swaps the outline for a strike only when the font's flag word has
+            // bit 8, which vFill_IFIMETRICS sets from IsAnyCharsetDbcs -- ShiftJIS, Hangeul,
+            // GB2312 or Big5 among its charsets, OS/2 code pages 932/949/936/950. Calibri,
+            // Cambria, Courier New and Lucida Console all ship EBDT strikes too, and GDI draws
+            // their OUTLINES at every size: we were blitting Courier New's 1-bit strike and
+            // came out 20-38% light against GDI's ClearType. A face with no outlines keeps its
+            // strikes, since they are all it has. WPF_EBDT_DBCS_ONLY=0 uses every strike again.
             if (!tables.ContainsKey("CBLC") && tables.TryGetValue("EBLC", out int eblc)
-                && tables.TryGetValue("EBDT", out int ebdt))
+                && tables.TryGetValue("EBDT", out int ebdt)
+                && (!hasOutlines || !s_ebdtDbcsOnly || DeclaresDbcsCharset(tables)))
             {
                 var strikes = new BitmapGlyphTable(_data, eblc, ebdt);
                 if (strikes.HasStrikes) _bitmaps = strikes;
@@ -334,6 +343,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // measured and found to be drawing isolated letters.
             if (tables.TryGetValue("GSUB", out int gsub))
                 Gsub = new GsubTable(_data, gsub);
+        }
+
+        private static readonly bool s_ebdtDbcsOnly =
+            Environment.GetEnvironmentVariable("WPF_EBDT_DBCS_ONLY") != "0";
+
+        /// <summary>IsAnyCharsetDbcs@14001eff8 on the face's OS/2 code-page bits: 932 (bit 17),
+        /// 936 (18), 949 (19) or 950 (20) -- ShiftJIS, GB2312, Hangeul, Big5; not Johab.</summary>
+        private bool DeclaresDbcsCharset(Dictionary<string, int> tables)
+        {
+            if (!tables.TryGetValue("OS/2", out int os2) || os2 + 82 > _data.Length) return false;
+            if (U16(os2) < 1) return false;
+            uint range1 = (uint) (U16(os2 + 78) << 16 | U16(os2 + 80));
+            return (range1 & (0xFu << 17)) != 0;
         }
 
         /// <summary>The face's GSUB table, or null when it has none.</summary>

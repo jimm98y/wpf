@@ -10211,6 +10211,71 @@ namespace WgpuInterop.Tests.Text
             Assert.Equal(0L, bad);
         }
 
+        /// <summary>A PROBE: GDI's ink for a face as installed and for a renamed copy with some of
+        /// its tables disabled (WPF_STRIP_TABLES="EBLC,EBDT"; the tags are overwritten so the
+        /// scaler cannot find them). Answers whether a table changes how GDI renders the outline,
+        /// which no amount of reading our own rasterizer can. WPF_STRIP_FACE=cour.ttf,
+        /// WPF_STRIP_TEXT, WPF_STRIP_PPEM.</summary>
+        [Fact]
+        public void WhatGdiDoesWithoutTheStrikes()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? face = Environment.GetEnvironmentVariable("WPF_STRIP_FACE");
+            Assert.SkipWhen(string.IsNullOrEmpty(face), "set WPF_STRIP_FACE to a font file name");
+            string text = Environment.GetEnvironmentVariable("WPF_STRIP_TEXT") ?? "Hamburgefonstiv";
+            int ppem = int.Parse(Environment.GetEnvironmentVariable("WPF_STRIP_PPEM") ?? "12");
+            string[] strip = (Environment.GetEnvironmentVariable("WPF_STRIP_TABLES") ?? "EBLC,EBDT").Split(',');
+            byte[] source = File.ReadAllBytes(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), face!));
+            int nameAt = FamilyNameByte(source, 0);
+            string family = Environment.GetEnvironmentVariable("WPF_STRIP_FAMILY") ?? "Courier New";
+            long Ink(byte[] raw) { long s = 0; for (int i = 0; i < raw.Length; i += 4) s += 765 - raw[i] - raw[i + 1] - raw[i + 2]; return s; }
+            foreach (bool stripped in new[] { false, true })
+            {
+                byte[] d = (byte[]) source.Clone();
+                if (stripped)
+                {
+                    int n = (d[4] << 8) | d[5];
+                    for (int i = 0; i < n; i++)
+                    {
+                        int r = 12 + i * 16;
+                        string tag = System.Text.Encoding.ASCII.GetString(d, r, 4);
+                        if (Array.IndexOf(strip, tag) >= 0) { d[r] = (byte) 'X'; d[r + 1] = (byte) 'X'; }
+                    }
+                }
+                int variant = 0;
+                string fam = Rename(d, nameAt, family, ref variant, nameAt > 0 ? source[nameAt] : (byte) 0);
+                int count = 0;
+                IntPtr h = AddFontMemResourceEx(d, d.Length, IntPtr.Zero, ref count);
+                try
+                {
+                    byte[] DrawRaw(string f)
+                    {
+                        var buf = new byte[Width * Height * 4];
+                        Gdi.s_rawRgb = buf;
+                        try { Gdi.Draw(text, f, ppem, PenX, ppem + 12, Width, Height,
+                                       Environment.GetEnvironmentVariable("WPF_STRIP_BOLD") == "1",
+                                       Environment.GetEnvironmentVariable("WPF_STRIP_ITALIC") == "1"); }
+                        finally { Gdi.s_rawRgb = null; }
+                        return buf;
+                    }
+                    byte[] raw = DrawRaw(fam), inst = DrawRaw(family), none = DrawRaw("Zqxjv Nonexistent");
+                    string Row(byte[] r)
+                    {
+                        var sb = new System.Text.StringBuilder();
+                        int y = ppem + 12 - ppem / 3;
+                        for (int x = PenX; x < PenX + 8; x++)
+                            sb.Append($"{r[(y * Width + x) * 4 + 2]},{r[(y * Width + x) * 4 + 1]},{r[(y * Width + x) * 4]}|");
+                        return sb.ToString();
+                    }
+                    Console.Error.WriteLine($"STRIP {face} {(stripped ? string.Join("+", strip) + " off" : "as shipped")}"
+                        + $" loaded={count} fam='{fam}' ink renamed {Ink(raw)} installed {Ink(inst)} fallback {Ink(none)}");
+                    Console.Error.WriteLine($"   renamed   {Row(raw)}");
+                    Console.Error.WriteLine($"   installed {Row(inst)}");
+                }
+                finally { if (h != IntPtr.Zero) RemoveFontMemResourceEx(h); }
+            }
+        }
+
         private readonly record struct FlipRow(int V, long Sum, long GdiInk, long OurInk);
 
         /// <summary>One coordinate sweep of a device-space polygon, GDI against ours.</summary>
