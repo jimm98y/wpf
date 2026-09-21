@@ -257,6 +257,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x0E:                                                          // SFVTPV
                         _gs.FreeX = _gs.ProjX; _gs.FreeY = _gs.ProjY;
                         ResetProjection();
+                        // itrp_SFVTPV@140094d10 does NOT compute the projection factor: it copies
+                        // the vector and stores pfProj = 0x4000 OUTRIGHT, because fv == pv makes it
+                        // one by construction. Computing it instead -- two products each rounded to
+                        // 2.14 and summed -- can miss by one on a diagonal: (-13598, -9140) gives
+                        // 11286 + 5099 = 16385. That one unit sends itrp_MovePoint down its other
+                        // branch, where y moves by (fy*d + pf/2) / pf truncated instead of by the
+                        // per-product ((fy*d >> 13) + 1) >> 1, and loses a sixty-fourth in y. Found
+                        // by diffing GDI's own instruction stream (ctharness TRACEOPS) against ours:
+                        // Times Bold 'k' at 14ppem agreed on every point for 194 instructions and
+                        // parted here, point 16 to (393,126) in GDI and (393,127) here.
+                        // WPF_CT_SFVTPV_UNIT=0 restores the computed factor.
+                        if (s_sfvtpvUnit) _dotProduct = 0x4000;
                         break;
                     case 0x86: case 0x87:                                               // SDPVTL[a]
                         {
@@ -2024,8 +2036,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_dumpMoves =
             Environment.GetEnvironmentVariable("WPF_HINT_MOVES") == "1";
 
+        /// <summary>WPF_ZONE_SUM=1 (with WPF_HINT_DUMP=1): before each instruction, the sums of the
+        /// glyph zone's current x and y over the real points -- the twin of the ctharness'
+        /// TRACEOPS checksum, which is in GDI's overscaled units (x*6, y*5).</summary>
+        private static readonly bool s_zoneSum = Environment.GetEnvironmentVariable("WPF_ZONE_SUM") == "1";
+
         private void DumpStep(byte op, int at)
         {
+            if (s_zoneSum)
+            {
+                long zx = 0, zy = 0;
+                for (int i = 0; i < _realPoints && i < _glyphZone.CurX.Length; i++)
+                { zx += _glyphZone.CurX[i]; zy += _glyphZone.CurY[i]; }
+                var zsb = new System.Text.StringBuilder($"ZS {op:X2} {zx} {zy} P");
+                for (int i = 0; i < _realPoints && i < _glyphZone.CurX.Length; i++)
+                    zsb.Append(' ').Append(_glyphZone.CurX[i]).Append(',').Append(_glyphZone.CurY[i]);
+                Console.Error.WriteLine(zsb.ToString());
+            }
             if (s_dumpMoves)
             {
                 int n = _glyphZone.CurX.Length;
@@ -4356,6 +4383,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_PROGRAM_PPEM=n: a DIAGNOSTIC that makes MPPEM and delta matching see n
         /// while the outline keeps its real scale -- to ask whether another scaler's run of the
         /// same glyph differs from ours only in the size its program believes it is at.</summary>
+        private static readonly bool s_sfvtpvUnit =
+            Environment.GetEnvironmentVariable("WPF_CT_SFVTPV_UNIT") != "0";
+
         private static readonly int s_programPpem =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PROGRAM_PPEM"), out int pp) ? pp : 0;
         private int ProgramPpem => s_programPpem > 0 ? s_programPpem : _ppem;
