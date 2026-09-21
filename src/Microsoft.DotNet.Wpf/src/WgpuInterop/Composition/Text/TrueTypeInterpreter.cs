@@ -748,6 +748,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// under, or 0 for none. See Hint.</summary>
         internal static int ChildScale16;
 
+        private static readonly bool s_biLevelSpanRound =
+            Environment.GetEnvironmentVariable("WPF_CT_BILEVEL_PP2") != "pos";
+
         private static bool ScaledOriginals => ChildScale16 != 0 && s_childOriginals;
 
         private static readonly bool s_childOriginals =
@@ -2166,6 +2169,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // its two DELTAs add 2 and a third takes 0.75 off -- 6.58, rounds to 7 -- where
                 // GDI starts at 5, ends at 6.25 and spaces the glyph at 6. Same for 'i' and 'l'
                 // at 8ppem: 2.195 + 1 - 0.25 = 2.95 -> 3 against GDI's 2.
+                // ...AND IT ROUNDS THE SPAN, as scl_RoundCurrentSideBearingPnt does in the other
+                // pass: the (rounded) left phantom plus the advance rounded on its own. Rounding
+                // pp2 where it lies is the same number only while pp1 sits on 0, i.e. while the
+                // glyph's lsb equals its xMin. Times New Roman Italic 'IJ' is a composite whose
+                // hmtx lsb (-61) is not its box's xMin (-64): pp1 -0.94, pp2 479.06, and at 10ppem
+                // GDI spaces it 0 + round(480) = 8 pixels where rounding 479 gave 7.
+                // WPF_CT_BILEVEL_PP2=pos rounds the position again.
+                _ when BiLevelPass && s_biLevelSpanRound
+                    => z.CurX[glyph.PointCount] + Pix(glyph.Composite
+                        ? glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]
+                        : Scale(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount])),
                 _ when BiLevelPass => Pix(z.CurX[glyph.PointCount + 1]),
                 1 => (z.CurX[glyph.PointCount + 1] + 63) & ~63,      // ceil
                 2 => z.CurX[glyph.PointCount + 1],                   // leave it alone
