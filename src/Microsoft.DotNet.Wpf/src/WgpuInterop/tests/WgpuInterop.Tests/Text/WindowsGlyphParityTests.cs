@@ -9825,7 +9825,10 @@ namespace WgpuInterop.Tests.Text
                     Console.Error.WriteLine($"   ASFIT ends: {ends}");
                     for (int i = 0; i < n2; i++)
                         Console.Error.WriteLine($"   ASFIT p{i,2}: {xs2[i],6} {ys2[i],6}   "
-                            + $"= {xs2[i] / 64.0,8:F3} {ys2[i] / 64.0,8:F3} px");
+                            + $"= {xs2[i] / 64.0,8:F3} {ys2[i] / 64.0,8:F3} px"
+                            + (i < pts.StartX.Length
+                               ? $"   start {pts.StartX[i] * 64f,8:F1} {pts.StartY[i] * 64f,8:F1}"
+                               : ""));
                 }
             }
 
