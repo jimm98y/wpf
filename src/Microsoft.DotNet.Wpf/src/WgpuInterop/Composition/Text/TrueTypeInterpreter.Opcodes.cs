@@ -2564,6 +2564,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int _callDepth;
 
         /// <summary>WPF_CT_SHPIX_CALL=0 to disable the fontdrvhost SHPIX rule above.</summary>
+        private static readonly bool s_deltaNativeFree =
+            Environment.GetEnvironmentVariable("WPF_CT_DELTA_NATIVE") != "0";
+
         private static readonly bool s_instctrlOldOrder =
             Environment.GetEnvironmentVariable("WPF_INSTCTRL_ORDER") == "old";
 
@@ -4260,7 +4263,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // clears it). A composite's points arrive untouched in our assembly, so without
                 // this every y-delta a composite writes -- Verdana Bold 'E-acute' at 14ppem
                 // lowering its accent a pixel -- was dropped. WPF_CT_DELTA_COMPOSITE=0 restores.
+                // ...not in NATIVE ClearType mode (INSTCTRL selector 3), which is the face saying it
+                // was hinted for ClearType and wants none of the backward-compatibility filtering:
+                // Constantia Bold Italic '@' at 12ppem DELTAPs an untouched point after IUP[y] and
+                // GDI moves it. WPF_CT_DELTA_NATIVE=0 filters in native mode too.
                 if (!s_deltaOnUntouchedY && !BiLevelPass && ClearTypeInfo && !IsHorizontalProjection
+                    && !(s_deltaNativeFree && NativeClearTypeMode)
                     && !(s_deltaCompositeApplies && _inComposite)
                     && (uint) p < (uint) z.PointCount
                     && ((z.Tags[p] & TagTouchY) == 0 || (s_deltaAfterIupY && _iupYDone)))
