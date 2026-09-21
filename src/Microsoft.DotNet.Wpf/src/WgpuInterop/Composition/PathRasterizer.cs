@@ -2387,7 +2387,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (f < 1)
                 {
                     long syL = (long) row * 64 + 32;
-                    float posR = y2 == y0 ? x0 / 64f
+                    float posR = s_spSubpix ? HorizLineSubpix(row, x0, y0, x2, y2) / 64f
+                               : y2 == y0 ? x0 / 64f
                                : (float) ((x0 + (syL - y0) * (double) (x2 - x0) / (y2 - y0)) / 64.0);
                     L.Row(xbias + col, row, rowOn, posR);
                     row += ystep;
@@ -2421,6 +2422,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// sixty-fourths of a sub-column. The twin of ConicY.</summary>
         private static float ConicX(int x0, int y0, int x1, int y1, int x2, int y2, int row)
         {
+            if (s_spSubpix)
+            {
+                int v = SpSubpix(row * 64 + 32, y0, x0, y1, x1, y2, x2, out bool ok);
+                if (ok) return v / 64f;
+            }
             double sy = row * 64.0 + 32.0;
             double a = y0 - 2.0 * y1 + y2, b = 2.0 * (y1 - y0), c = y0 - sy;
             double t;
@@ -2459,15 +2465,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// (y1 - y0))`. CompDiv rounds half AWAY FROM ZERO -- EvaluateSpline inlines it, and the
         /// inlined form adds the divisor's half when the product's sign mask matches the
         /// divisor's and subtracts it otherwise.</summary>
-        private static int VertLineSubpix(int col, int x0, int y0, int x2, int y2)
+        private static int LineSubpix(int sa, int a0, int b0, int a2, int b2)
         {
-            int den = x2 - x0;
-            if (den == 0) return y0;
-            long prod = (long) (col * 64 + 32 - x0) * (y2 - y0);
+            int den = a2 - a0;
+            if (den == 0) return b0;
+            long prod = (long) (sa - a0) * (b2 - b0);
             int half = den / 2;                                   // truncates, keeps the sign
             long adj = (prod >> 63) == (den >> 31) ? half : -half;
-            return y0 + (int) ((prod + adj) / den);
+            return b0 + (int) ((prod + adj) / den);
         }
+
+        /// <summary>CalcVertLineSubpix@140095d20 / CalcHorizLineSubpix@140095ce0: the same
+        /// interpolation with the axes swapped. The vertical one is handed a COLUMN and answers
+        /// with a y; the horizontal one a ROW and a x.</summary>
+        private static int VertLineSubpix(int col, int x0, int y0, int x2, int y2)
+            => LineSubpix(col * 64 + 32, x0, y0, x2, y2);
+
+        private static int HorizLineSubpix(int row, int x0, int y0, int x2, int y2)
+            => LineSubpix(row * 64 + 32, y0, x0, y2, x2);
 
         /// <summary>CalcVertSpSubpix@140095e10, and it is NOT a solve -- it is de Casteljau
         /// BISECTION in 26.6 integers, halted when the x midpoint equals the sample exactly:
@@ -2485,16 +2500,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// already split the curve into pieces monotone in both axes; ours may not be, so a
         /// sample outside the span or a stalled triple falls back to the exact solve.</para>
         /// </summary>
-        private static int VertSpSubpix(int col, int x0, int y0, int x1, int y1, int x2, int y2,
-                                        out bool ok)
+        /// <summary>CalcHorizSpSubpix@140095d60 is the same function with the axes swapped --
+        /// it bisects on y and returns x -- so both are this one, over a SEARCH axis `a` and a
+        /// REPORT axis `b`. Vertical passes (x, y); horizontal passes (y, x).</summary>
+        private static int SpSubpix(int sa, int a0, int b0, int a1, int b1, int a2, int b2,
+                                    out bool ok)
         {
             ok = false;
-            int sx = col * 64 + 32;
+            int sx = sa;
             int lo, hi, yLo, yHi;
-            if (x0 < x2) { lo = x0; hi = x2; yLo = y0; yHi = y2; }
-            else { lo = x2; hi = x0; yLo = y2; yHi = y0; }
+            if (a0 < a2) { lo = a0; hi = a2; yLo = b0; yHi = b2; }
+            else { lo = a2; hi = a0; yLo = b2; yHi = b0; }
             if (sx < lo || sx > hi) return 0;
-            int cx = x1, cy = y1;
+            int cx = a1, cy = b1;
             for (int guard = 0; guard < 96; guard++)
             {
                 int xm = (hi + cx * 2 + lo + 1) >> 2;
@@ -2518,7 +2536,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (s_spSubpix)
             {
-                int v = VertSpSubpix(col, x0, y0, x1, y1, x2, y2, out bool ok);
+                int v = SpSubpix(col * 64 + 32, x0, y0, x1, y1, x2, y2, out bool ok);
                 if (ok) return v / 64f;
             }
             double sx = col * 64.0 + 32.0;
