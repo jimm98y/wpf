@@ -4253,6 +4253,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_unfittedPp1 =
             Environment.GetEnvironmentVariable("WPF_UNFITTED_PP1") != "0";
 
+        private static readonly bool s_unfittedBorrowPp1 =
+            Environment.GetEnvironmentVariable("WPF_UNFITTED_BORROW_PP1") != "0";
+
+        /// <summary>The component a composite takes its metrics from (USE_MY_METRICS), if any.</summary>
+        private bool TryGetMetricsComponent(int gid, out int component)
+        {
+            component = -1;
+            if (gid < 0 || gid >= _numGlyphs || _glyfOffset < 0 || _loca.Length == 0) return false;
+            uint start = _loca[gid], end = _loca[gid + 1];
+            if (end <= start) return false;
+            int p = _glyfOffset + (int) start;
+            if ((short) U16(p) >= 0) return false;
+            p += 10;
+            for (int guard = 0; guard < 64; guard++)
+            {
+                int flags = U16(p), cg = U16(p + 2);
+                p += 4 + ((flags & 0x0001) != 0 ? 4 : 2);
+                if ((flags & 0x0008) != 0) p += 2;
+                else if ((flags & 0x0040) != 0) p += 4;
+                else if ((flags & 0x0080) != 0) p += 8;
+                if ((flags & 0x0200) != 0 && cg < _numGlyphs && _loca[cg + 1] > _loca[cg]) { component = cg; return true; }
+                if ((flags & 0x0020) == 0) break;
+            }
+            return false;
+        }
+
         private static readonly bool s_offsetHalfUp =
             Environment.GetEnvironmentVariable("WPF_UNFITTED_OFFSET_HALFUP") != "0";
 
@@ -4426,6 +4452,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 int xMin = (short) U16(_glyfOffset + (int) _loca[gid] + 2);
                 int pp1Units = xMin - MetricsLeftSideBearing(gid);
+                // A composite that borrows a component's metrics (USE_MY_METRICS) is placed on
+                // THAT component's left phantom, unshifted, as fs_ExecuteGlyph does when it copies
+                // the phantoms over. Times New Roman Bold 'U-dieresis' at 7ppem carries a side
+                // bearing of 71 against 'U''s 48 and drew 4/64 right of GDI.
+                if (s_unfittedBorrowPp1 && TryGetMetricsComponent(gid, out int mc))
+                {
+                    int cxMin = (short) U16(_glyfOffset + (int) _loca[mc] + 2);
+                    pp1Units = cxMin - MetricsLeftSideBearing(mc);
+                }
                 // ...ON THE CLEARTYPE SIXTEENTH, as the fitted re-anchor is: Times Italic 'c', 'j'
                 // and 'y' carry a side bearing four units off their xMin -- a sixty-fourth at
                 // 8ppem -- and GDI does not move them, where the degree sign's 28.5/64 moves 28/64.
