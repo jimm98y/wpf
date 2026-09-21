@@ -4422,11 +4422,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             ClearTypeInfo && (s_ctInPrep || !_inPreProgram)
             && (s_ctAxisLatched ? _ctAxisFlag : _gs.ProjX == 0x4000 && _gs.ProjY == 0) && SubpixelGridHere;
 
-        /// <summary>localGS+0xcc is LATCHED, not recomputed. Only five handlers write it --
-        /// itrp_SVTCA_0/_1, itrp_SPVTCA_0/_1, itrp_SPVTL and itrp_SDPVTL -- and SPVFS is NOT
-        /// among them, so setting the projection vector from the stack leaves the flag saying
-        /// whatever the last of those said. Recomputing it from the current vector, as we did,
-        /// is therefore not the same predicate at all.</summary>
+        /// <summary>localGS+0xcc is LATCHED, not recomputed: itrp_SVTCA_0/_1, itrp_SPVTCA_0/_1,
+        /// itrp_SPVTL, itrp_SDPVTL and itrp_WPV (SPVFS, read 2026-09-21) write it, i.e. every
+        /// instruction that sets the projection vector, so the latched "not pure +Y" answer always
+        /// equals the recomputed one. This exact-x flag is our own and only the non-default
+        /// WPF_CT_*_AXIS=exact probes read it.</summary>
         private bool _ctAxisFlag;
 
         internal void LatchClearTypeAxis()
@@ -4449,17 +4449,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// predicate and GDI's latched one agree. gs+0xcc is also what selects the sixteenth
         /// rounding functions: see the rounding-function note below.</para>
         /// <para>`itrp_SDPVTL` writes gs+0xcc, and so do SVTCA_0/_1 and SPVTCA_0/_1 and SPVTL --
-        /// five handlers, and that is ALL of them. **SPVFS and SFVFS are not among them.** A face
-        /// that reads the projection vector with GPV, does arithmetic on it and sets the vectors
-        /// back from the stack therefore leaves the latch saying whatever the last of those five
-        /// said, while we recomputed it from the diagonal vector and switched into the ClearType
-        /// rules GDI was not using.</para>
-        /// <para>This is exactly the split between the italic faces that work and the one that does
-        /// not. Times New Roman Italic sets its stem-perpendicular vector through GPV/SPVFS with the
-        /// FREEDOM vector equal to it, and the glyphs that do so are precisely the ones that are
-        /// wrong -- 'l' 51 such instructions, 'd' 51, 'n' 58, all needing a quarter to half a pixel
-        /// of shift, against 'o', 'e' and 's' with NONE and already exact. Verdana, Arial and Segoe
-        /// UI italic use SDPVTL/SPVTL, which do latch, and their 'l' at 12ppem is pixel-exact.</para>
+        /// and itrp_WPV -- SPVFS -- too. THIS PARAGRAPH USED TO SAY SPVFS DID NOT LATCH, and built a
+        /// theory of Times Italic on it; itrp_WPV@14003feb0 writes gs+0xcc with the same test as
+        /// SDPVTL. Only SFVFS (itrp_WFV) leaves it alone, and it does not change the projection. So
+        /// with every projection writer latching, latched and recomputed agree always.</para>
         /// <para>WPF_CT_DIR_LATCH=0 goes back to recomputing.</para></summary>
         private bool _ctDirFlag;
 

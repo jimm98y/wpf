@@ -227,7 +227,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x0A:                                                          // SPVFS
                         {
                             int y = (short)Pop(), x = (short)Pop();
-                            Normalize(x, y, out _gs.ProjX, out _gs.ProjY);
+                            // STORED AS GIVEN. itrp_WPV@14003feb0 writes the two popped halfwords
+                            // straight into localGS+0x18/+0x1a and never calls itrp_Normalize, so a
+                            // vector the face computed itself keeps its last unit: Calibri Italic
+                            // 'M'@18 hands over (16034,-3371), a hair longer than one, and
+                            // normalising it to 16033 moved a projection across a rounding edge
+                            // (818*16033 -> 800, 818*16034 -> 801). WPF_CT_VFS_NORMALIZE=1 restores it.
+                            if (s_vfsNormalize) Normalize(x, y, out _gs.ProjX, out _gs.ProjY);
+                            else { _gs.ProjX = x; _gs.ProjY = y; }
                             _gs.DualX = _gs.ProjX; _gs.DualY = _gs.ProjY;
                             // AND IT RETIRES THE LINE, like the other ways of setting the
                             // projection. itrp_WPV@14003feb0 -- WPV is this opcode, the write to
@@ -241,6 +248,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // from a line the program had put down by hand and then abandoned.
                             SetVectorLine(-1, -1);
                             ResetProjection();
+                            LatchClearTypeAxis();                   // itrp_WPV writes gs+0xcc too
                             _projFnGeneral = true;                  // itrp_WPV: gs+0x78 = itrp_Project, axis or not
                             LatchRoundGrid();
                             break;
@@ -248,7 +256,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x0B:                                                          // SFVFS
                         {
                             int y = (short)Pop(), x = (short)Pop();
-                            Normalize(x, y, out _gs.FreeX, out _gs.FreeY);
+                            // itrp_WFV@140095360: stored as given too, see SPVFS.
+                            if (s_vfsNormalize) Normalize(x, y, out _gs.FreeX, out _gs.FreeY);
+                            else { _gs.FreeX = x; _gs.FreeY = y; }
                             ResetProjection();
                             break;
                         }
@@ -2582,6 +2592,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             long m = ((long) Math.Abs((long) a) * Math.Abs((long) b) + 0x20) >> 6;
             return (int) ((a < 0) != (b < 0) ? -m : m);
         }
+
+        private static readonly bool s_vfsNormalize =
+            Environment.GetEnvironmentVariable("WPF_CT_VFS_NORMALIZE") == "1";
 
         private static readonly bool s_mulGdi =
             Environment.GetEnvironmentVariable("WPF_CT_MUL") != "old";
