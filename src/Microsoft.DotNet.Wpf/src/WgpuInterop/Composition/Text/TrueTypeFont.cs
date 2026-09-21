@@ -886,6 +886,51 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>The bi-level pass's phantom span in sixty-fourths, unrounded -- the numerator
         /// of fs__Contour's phase scale. Measured by the same run as <see cref="TryGetHintedAdvance"/>
         /// and cached beside it, so asking for one costs the other nothing.</summary>
+        /// <summary>fs__Contour's ACTUAL numerator: the phantom span of a CLEARTYPE pass run with the
+        /// factor at one. GDI runs the glyph program twice under compatible widths and both runs
+        /// are the ClearType program -- its own instruction stream (ctharness TRACEOPS) shows the
+        /// two passes executing identically until the second's pre-scaled x meets IUP -- so the
+        /// span it divides by the linear advance is a SIXTEENTH-rounded ClearType span, not the
+        /// whole-pixel bi-level one. Times Italic 'm' at 22ppem: GDI's factor is 0xffc0 (span
+        /// 1016 over a linear 1017) where the bi-level span gave 1024/1017.</summary>
+        internal bool TryGetClearTypeSpan64(int glyphId, float pixelsPerEm, out int span64)
+        {
+            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            if (_ctSpans.TryGetValue(key, out span64)) return span64 > 0;
+            span64 = 0;
+            TrueTypeInterpreter? interpreter = Interpreter();
+            if (interpreter is null || s_measuringCtSpan) return false;
+            bool savedBi = TrueTypeInterpreter.BiLevelPass;
+            bool savedSub = SubpixelFitting;
+            s_measuringCtSpan = true;
+            TrueTypeInterpreter.BiLevelPass = false;
+            SubpixelFitting = true;
+            try
+            {
+                GlyphProgram? glyph = HintedProgram(interpreter, glyphId, pixelsPerEm, 0);
+                if (glyph is not null) span64 = glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
+            }
+            finally
+            {
+                s_measuringCtSpan = false;
+                TrueTypeInterpreter.BiLevelPass = savedBi;
+                SubpixelFitting = savedSub;
+            }
+            if (_ctSpans.Count > HintedCacheLimit) _ctSpans.Clear();
+            _ctSpans[key] = span64;
+            return span64 > 0;
+        }
+
+        private readonly System.Collections.Generic.Dictionary<(int, int), int> _ctSpans = new();
+        [ThreadStatic] private static bool s_measuringCtSpan;
+        /// <summary>WPF_CT_SPAN_PASS=ct takes the numerator from TryGetClearTypeSpan64. REFUTED as a
+        /// general rule, emphatically: holdout 58 -> 46,606,822 with 355 ratchets failing (the same
+        /// verdict WPF_CT_PHASE_NUM=ct reached), and even Times Italic 'm'@22, the glyph it was
+        /// derived from, goes 58 -> 2,785. The span GDI divides by is, almost everywhere, the
+        /// whole-pixel one the bi-level pass gives; what makes 'm'@22 an exception is not this.</summary>
+        private static readonly bool s_spanFromCtPass =
+            Environment.GetEnvironmentVariable("WPF_CT_SPAN_PASS") == "ct";
+
         internal bool TryGetHintedSpan64(int glyphId, float pixelsPerEm, out int span64)
         {
             var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
@@ -2503,14 +2548,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.HintDepth = depth;
             int savedCompat = TrueTypeInterpreter.CompatibleAdvance64;
             int savedSpan = TrueTypeInterpreter.BiLevelSpan64;
-            if (!TrueTypeInterpreter.BiLevelPass && gid >= 0 && gid < _numGlyphs)
+            if (s_measuringCtSpan)
+            {
+                // GDI's pass one: the ClearType program with the compatible-width factor at ONE --
+                // no pre-scale, no phase -- whose phantom span becomes the factor's numerator.
+                TrueTypeInterpreter.CompatibleAdvance64 = 0;
+                TrueTypeInterpreter.BiLevelSpan64 = 0;
+            }
+            else if (!TrueTypeInterpreter.BiLevelPass && gid >= 0 && gid < _numGlyphs)
             {
                 TrueTypeInterpreter.CompatibleAdvance64 =
                     (int) MathF.Round(CompatibleAdvance(gid, pixelsPerEm,
                                                         (int) MathF.Round(pixelsPerEm)) * 64f);
-                // AND THE UNROUNDED SPAN THE PHASE ACTUALLY WANTS. See TryGetHintedSpan64.
+                // AND THE UNROUNDED SPAN THE PHASE ACTUALLY WANTS -- from a ClearType pass at
+                // factor one, as fs__Contour's first pass is (TryGetClearTypeSpan64), falling back
+                // to the bi-level span. WPF_CT_SPAN_PASS=bilevel uses the bi-level span only.
                 TrueTypeInterpreter.BiLevelSpan64 =
-                    TryGetHintedSpan64(gid, pixelsPerEm, out int sp64) ? sp64 : 0;
+                    s_spanFromCtPass && TryGetClearTypeSpan64(gid, pixelsPerEm, out int ct64) ? ct64
+                    : TryGetHintedSpan64(gid, pixelsPerEm, out int sp64) ? sp64 : 0;
                 if (s_compatProbe)
                     Console.Error.WriteLine($"COMPAT gid={gid} ppem={pixelsPerEm:0.####}"
                         + $" ppemI={(int) MathF.Round(pixelsPerEm)}"

@@ -1563,6 +1563,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static int CompatibleAdvance64;
 
+        private static readonly bool s_preScaleNumSpan =
+            Environment.GetEnvironmentVariable("WPF_CT_PRESCALE_NUM") != "compat";
+
         /// <summary>The bi-level pass's phantom advance span in sixty-fourths, UNROUNDED -- the
         /// numerator fs__Contour actually uses for the phase scale. See the note at the scale.
         /// </summary>
@@ -2030,9 +2033,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (s_advancePhantom == 4 && !glyph.Composite && CompatibleAdvance64 > 0 && !BiLevelPass)
             {
                 int lin = z.CurX[glyph.PointCount + 1] - z.CurX[glyph.PointCount];
-                if (lin > 0 && lin != CompatibleAdvance64)
+                // THE SAME NUMERATOR AS THE PHASE. fs__Contour has ONE factor, globals[0x1d0] =
+                // (pass one's UNROUNDED phantom span << 16) / linear, and GDI's second pass runs on
+                // coordinates scaled by it. The phase below was moved onto that span long ago;
+                // this pre-scale kept the ROUNDED device advance, CompatibleAdvance64. Times
+                // Italic 'm' at 22ppem is where the two part visibly: span/linear 0.99902
+                // (globals[0x1d0] = 0xffc0 in fontdrvhost's own run) against 1024/1016.8 =
+                // 1.0071 here, and GDI's own instruction stream agrees with ours point for point
+                // up to IUP[x] and then every untouched x comes out 0.8% wide.
+                // WPF_CT_PRESCALE_NUM=compat restores the rounded advance.
+                int preNum = s_preScaleNumSpan && BiLevelSpan64 > 0 ? BiLevelSpan64 : CompatibleAdvance64;
+                if (lin > 0 && lin != preNum)
                 {
-                    float ratio = CompatibleAdvance64 / (float) lin;
+                    float ratio = preNum / (float) lin;
                     _preScaled = true;
                     _preScaleRatio = ratio;
                     for (int i = 0; i < n; i++)

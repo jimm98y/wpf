@@ -2051,6 +2051,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 var zsb = new System.Text.StringBuilder($"ZS {op:X2} {zx} {zy} P");
                 for (int i = 0; i < _realPoints && i < _glyphZone.CurX.Length; i++)
                     zsb.Append(' ').Append(_glyphZone.CurX[i]).Append(',').Append(_glyphZone.CurY[i]);
+                zsb.Append(" PH");
+                for (int i = _realPoints; i < _realPoints + 2 && i < _glyphZone.CurX.Length; i++)
+                    zsb.Append(' ').Append(_glyphZone.CurX[i]).Append(',').Append(_glyphZone.CurY[i]);
                 Console.Error.WriteLine(zsb.ToString());
             }
             if (s_dumpMoves)
