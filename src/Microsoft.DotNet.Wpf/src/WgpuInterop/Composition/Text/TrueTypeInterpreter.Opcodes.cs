@@ -2593,6 +2593,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return (int) ((a < 0) != (b < 0) ? -m : m);
         }
 
+        private static readonly bool s_ipZeroShift =
+            Environment.GetEnvironmentVariable("WPF_CT_IP_ZERO") == "shift";
+
         private static readonly bool s_vfsNormalize =
             Environment.GetEnvironmentVariable("WPF_CT_VFS_NORMALIZE") == "1";
 
@@ -3854,9 +3857,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 else if (oldRange != 0)
                     newDist = MulDiv(orgDist, curRange, oldRange);
                 else
-                    // Both references on the same spot, which is a glyph saying something
-                    // meaningless. Shift rather than divide by nothing.
-                    newDist = orgDist - oldRange + curRange;
+                    // Both references on the same spot along the projection. itrp_IP@140038040
+                    // tests the projected original range for zero and then sets each point's
+                    // distance from rp1 to its PROJECTED ORIGINAL outright -- read from the same
+                    // localGS fields as the range, i.e. FONT UNITS off the twilight zone, unscaled.
+                    // Palatino Italic 'H'@11 projects its two stem references onto one spot
+                    // (SPVFS along the italic stem) and GDI moves p47 by exactly -6 - (-12).
+                    // WPF_CT_IP_ZERO=shift restores the old curRange shift.
+                    newDist = s_ipZeroShift ? orgDist - oldRange + curRange : orgDist;
 
                 if (_dumpActive)
                     Console.Error.WriteLine($"      IP p={p} orus=({z2.OrusX[p]},{z2.OrusY[p]})"
