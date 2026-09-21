@@ -2147,6 +2147,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // that band. Ceiling minus one has no band at all and agrees with the nudge
             // everywhere else.
             4 => (int) MathF.Ceiling((a + b) * 0.5f) - 1,
+            // ...and the same formula with the two crossings TRUNCATED or rounded up instead.
+            // DoVertDropout's `(a + b - 1) >> 7` is settled; what a and b are is not. GDI gets
+            // them from a per-edge function it calls through a pointer, and that function returns
+            // a 26.6 integer, so the only question left in the expression is which way the true
+            // intersection was taken to sixty-fourths.
+            5 => ((int) MathF.Floor(a * 64f) + (int) MathF.Floor(b * 64f) - 1) >> 7,
+            6 => ((int) MathF.Ceiling(a * 64f) + (int) MathF.Ceiling(b * 64f) - 1) >> 7,
+            7 => ((int) MathF.Floor(a * 64f) + (int) MathF.Ceiling(b * 64f) - 1) >> 7,
+            8 => ((int) MathF.Ceiling(a * 64f) + (int) MathF.Floor(b * 64f) - 1) >> 7,
             _ => (int) MathF.Floor((a + b) * 0.5f - 1f / 128f),
         };
 
