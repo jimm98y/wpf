@@ -10302,7 +10302,24 @@ namespace WgpuInterop.Tests.Text
         /// <para>That is the precondition every fit oracle in this file has been missing. Five
         /// chains of "so point N should be V" dissolved because the pixels they were reasoning
         /// from carried rasterizer error as well as fit error; with this at zero they carry only
-        /// the fit. Keep it there.</para></summary>
+        /// the fit. Keep it there.</para>
+        /// <para>AND THE FIT IS WRONG ONLY IN ITS CLEARTYPE BRANCH. Every one of these carriers
+        /// is BI-LEVEL EXACT against GDI's own fitted points -- WPF_GGOPTS with
+        /// WPF_GGOPTS_BILEVEL=1 reports "1 of 1 glyphs exact; 0 differ in x, 0 in y" for
+        /// times/w/14/B, times/a/14/B, times/x/14/B, times/K/21/B, times/p/20/I and
+        /// consola/1/18. Same program, same face, same size: the interpreter is GDI's until the
+        /// ClearType flag is set. (Without WPF_GGOPTS_BILEVEL=1 all 45 points "differ", which is
+        /// meaningless -- GGO returns the bi-level fit whatever the DC, so that compares our
+        /// ClearType fit against GDI's bi-level one.)</para>
+        /// <para>The ClearType-gated surface is FINITE and it has been enumerated off the binary,
+        /// by finding every instruction that reads the flag at localGS+0xcc: itrp_MIRP (7),
+        /// itrp_IP (4), itrp_MSIRP (2), itrp_MDRP (2), itrp_SHP_Common, itrp_ALIGNRP,
+        /// itrp_SROUND, itrp_S45ROUND and the six round-state opcodes. All of them are ported --
+        /// the SP rounding family with its halved engine compensation and 1/16 grid,
+        /// RoundDownToGridSP's own gate, MIRP's x16 cut-in and halved minimum distance, MSIRP's
+        /// ClearType cut-in, ALIGNRP's InterAlign/AddProportion. So what is left is not a missing
+        /// OPCODE: it is the ClearType-gated STATE those branches read -- globals 0x1c0, 0x88 and
+        /// 0x78 -- or the detail of the phase tree they call into.</para></summary>
         [Fact]
         public void OurRasterizerAgreesOnOurOwnFit()
         {
