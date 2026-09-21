@@ -2609,6 +2609,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The compatible-width phase's inputs for one glyph: the advance it will be laid
         /// out at, and the unrounded pass-one span the factor divides.</summary>
+        /// <summary>The root's linear advance carries FO_SIM_BOLD's units too, as the simple
+        /// glyph's does (globals[0x1ac] += (2 upem - 1) / 100). WPF_CT_ROOTLINEAR_BOLD=0.</summary>
+        private static readonly bool s_rootLinearBold =
+            Environment.GetEnvironmentVariable("WPF_CT_ROOTLINEAR_BOLD") != "0";
+
         private static readonly bool s_strikeNumerator =
             Environment.GetEnvironmentVariable("WPF_CT_STRIKE_NUM") != "0";
 
@@ -2676,7 +2681,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     SetPhaseInputs(gid, pixelsPerEm);
                     s_inheritPhaseInputs = true;
                     TrueTypeInterpreter.RootLinear64 = interpreter.PrepareForSize(pixelsPerEm)
-                        ? interpreter.ScaleToPixels(RawAdvanceWidth(gid)) : 0;
+                        ? interpreter.ScaleToPixels(RawAdvanceWidth(gid)
+                                                    + (GdiEmboldens && s_rootLinearBold ? (2 * _unitsPerEm - 1) / 100 : 0)) : 0;
                     ResetScanAcc(depth);
                     glyph = ReadCompositeProgram(interpreter, gid, pixelsPerEm, depth);
                 }
