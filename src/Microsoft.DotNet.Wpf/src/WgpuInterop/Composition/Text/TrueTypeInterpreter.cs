@@ -1339,9 +1339,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // DOWN TO THE WHOLE PIXEL; the other subpixel functions never look.
             // 2026-09-19: THE INSTALL MODEL AND THE PER-CALL MODEL ARE THE SAME MODEL, so this
             // is now the fallback itself and the knob is a no-op (97,806 either way).
-            // <para>globals+0x90 is written in thirteen places -- the six round-state opcodes and
-            // SVTCA, SPVTCA, SPVTL, SPVFS/WPV and SDPVTL, all of which now call LatchRoundGrid --
-            // and EVERY projection change goes through one of them. So "which function is
+            // <para>globals+0x90 is written in FOURTEEN places, not thirteen: the six round-state
+            // opcodes, SVTCA, SPVTCA, SPVTL, SPVFS/WPV and SDPVTL -- all of which call
+            // LatchRoundGrid -- and itrp_Execute itself, at the start of EVERY program run
+            // (140037148-198): with globals[0x1c0] bit 0 set and bit 2 clear it sets the local
+            // latch (+0xcc, `strh #1,[sp,#0xdc]`) to 1 and reloads the function from the table
+            // at 14009b8c0, taking the subpixel half when globals[0x88] bit 2 OR the mode byte
+            // globals[0x16b] is nonzero. So a glyph program STARTS on the subpixel function with
+            // the latch on, whatever prep left installed -- which is why the per-call model
+            // matches GDI at glyph start and WPF_CT_ROUNDLATCH=1 (carry prep's function into the
+            // glyph) measures far worse: Times Bold 'K'@21 313 -> 22,914. And EVERY projection
+            // change goes through one of the others. So "which function is
             // installed" cannot disagree with "what the projection is now", and choosing the grid
             // per call is choosing the installed one. itrp_MDRP does load it from globals+0x90
             // (14003a694: `ldr x8,[x23, #0x90]`, x23 = gs), and the table at 14009b8c0 is
