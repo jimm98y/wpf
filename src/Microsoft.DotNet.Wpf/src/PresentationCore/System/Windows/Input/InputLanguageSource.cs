@@ -101,7 +101,15 @@ namespace System.Windows.Input
         {
             get
             {
-                return new CultureInfo(_CurrentInputLanguage);
+                // A 0 LANGID means there is no Win32 keyboard layout (HKL) for this thread -- the case
+                // off-Windows, where GetKeyboardLayout returns none. CultureInfo(0) is invalid, so fall
+                // back to the thread's current culture as the input language.
+                short langid = _CurrentInputLanguage;
+                if (langid == 0)
+                {
+                    return CultureInfo.CurrentCulture;
+                }
+                return new CultureInfo(langid);
             }
             set
             {

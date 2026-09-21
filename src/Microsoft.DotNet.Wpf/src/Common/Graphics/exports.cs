@@ -54,14 +54,30 @@ namespace System.Windows.Media.Composition
     /// </remark>
     internal struct CompositionEngineLock : IDisposable
     {
+        // The native composition engine lock lives in milcore. When the managed (WebGPU) backend
+        // is driving composition there is no milcore, so a process-wide managed monitor provides
+        // the same mutual exclusion between the UI and composition code paths.
+        private static readonly object s_managedLock = new object();
+        private bool _managed;
+
         /// <summary>
         /// Aquires the composition engine lock.
         /// </summary>
         internal static CompositionEngineLock Acquire()
         {
-            UnsafeNativeMethods.MilCoreApi.EnterCompositionEngineLock();
-
-            return new CompositionEngineLock();
+            // Always the managed monitor. The native lock lives in wpfgfx_cor3.dll, which this port
+            // does not ship, and there is no native composition engine here for it to serialise
+            // against -- the whole point of the port is that the compositor is managed.
+            //
+            // This used to be conditional on DUCE.ManagedComposition.IsEnabled, which looks safe and
+            // is not: that flag only becomes true once the WebGPU backend has been registered, and
+            // registration happens when the MediaContext starts. Anything that takes this lock
+            // BEFORE a window exists -- Geometry.Bounds on a geometry with a Transform or a Pen, for
+            // one, which is ordinary code -- therefore took the native branch and threw
+            // DllNotFoundException. It presented as an order-dependent failure, because whether it
+            // threw depended on whether something else had brought a MediaContext up first.
+            System.Threading.Monitor.Enter(s_managedLock);
+            return new CompositionEngineLock { _managed = true };
         }
 
         /// <summary>
@@ -69,7 +85,10 @@ namespace System.Windows.Media.Composition
         /// </summary>
         public void Dispose()
         {
-            UnsafeNativeMethods.MilCoreApi.ExitCompositionEngineLock();
+            if (_managed)
+            {
+                System.Threading.Monitor.Exit(s_managedLock);
+            }
         }
     }
 
@@ -78,8 +97,363 @@ namespace System.Windows.Media.Composition
     /// The following class only exists to clearly separate the DUCE APIs
     /// from the legacy resource APIs.
     /// </summary>
+    /// <summary>
+    /// Optional managed composition backend. When a sink is registered (see
+    /// <see cref="DUCE.ManagedComposition"/>), <see cref="DUCE.Channel"/> forwards
+    /// its command stream here -- the very same MILCMD_* binary it would otherwise
+    /// marshal to native milcore -- so an alternative compositor (e.g. the
+    /// cross-platform WebGPU engine in Microsoft.Wpf.Interop.WebGpu) can drive
+    /// rendering. The contract is deliberately byte-oriented so PresentationCore
+    /// takes no compile-time dependency on the backend assembly.
+    /// </summary>
+    internal interface IMilCompositionSink
+    {
+        /// <summary>Open a managed channel (the native MilConnection_CreateChannel analog).</summary>
+        void OpenChannel(int channelId, int referenceChannelId);
+
+        /// <summary>Close and destroy a managed channel.</summary>
+        void CloseChannel(int channelId);
+
+        /// <summary>
+        /// CreateOrAddRefOnChannel analog. If <paramref name="handle"/> is 0 the sink
+        /// allocates a fresh resource handle. Returns the resulting handle; <paramref
+        /// name="created"/> is true iff the resource was newly created.
+        /// </summary>
+        uint CreateOrAddRef(int channelId, uint handle, uint resourceType, out bool created);
+
+        /// <summary>ReleaseOnChannel analog. Returns true iff the resource left the channel.</summary>
+        bool ReleaseOnChannel(int channelId, uint handle);
+
+        /// <summary>SendCommand analog: a complete fixed-size MILCMD_* record.</summary>
+        void SendCommand(int channelId, byte[] data, bool sendInSeparateBatch);
+
+        /// <summary>
+        /// SendCommandBitmapSource analog: an image-source resource whose pixels are
+        /// marshalled on the managed side (no COM/WIC pointer crosses the boundary).
+        /// <paramref name="pixels"/> is straight (non-premultiplied) BGRA32, top-down,
+        /// <paramref name="stride"/> bytes per row.
+        /// </summary>
+        void SendBitmap(int channelId, uint handle, int width, int height, int stride, byte[] pixels);
+
+        /// <summary>
+        /// Sends the current decoded video frame for a media-player resource (managed backend only, e.g.
+        /// AVFoundation on macOS). Parallel to SendBitmap: <paramref name="pixels"/> is straight BGRA32,
+        /// top-down, <paramref name="rowBytes"/> bytes per row (may exceed width*4 -- decoders align rows).
+        /// The sink keys the frame by <paramref name="mediaHandle"/>; the MilDrawVideo record referencing the
+        /// same handle samples it. Fresh array per call, so the frame texture re-uploads each frame.
+        /// </summary>
+        void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels);
+
+        /// <summary>BeginCommand analog: opens a variable-length command (header bytes).</summary>
+        void BeginCommand(int channelId, byte[] data, int extraSize);
+
+        /// <summary>AppendCommandData analog: appends payload to the open command.</summary>
+        void AppendCommandData(int channelId, byte[] data);
+
+        /// <summary>EndCommand analog: closes the open command.</summary>
+        void EndCommand(int channelId);
+
+        /// <summary>CloseBatch analog.</summary>
+        void CloseBatch(int channelId);
+
+        /// <summary>Commit analog: the point at which a frame is composited/presented.</summary>
+        void Commit(int channelId);
+
+        /// <summary>SyncFlush analog: commit and block until executed.</summary>
+        void SyncFlush(int channelId);
+
+        /// <summary>
+        /// Renders a bitmap composition target (TYPE_GENERICRENDERTARGET, e.g. a
+        /// RenderTargetBitmap) and returns its pixels as premultiplied BGRA32, top-down,
+        /// tightly packed (width*4 stride). Returns null if the target cannot be rendered
+        /// (unknown handle, no root, or no synchronous GPU readback on this platform).
+        /// </summary>
+        byte[] ReadbackTarget(int channelId, uint targetHandle);
+
+        /// <summary>
+        /// The back channel: reports the last present so WPF can pace itself against the display.
+        /// Returns false when nothing is pending.
+        /// </summary>
+        /// <remarks>
+        /// On Windows milcore posts MilMessage.Presented after every present, and MediaContext uses
+        /// the refresh rate and timestamp in it to decide when the next commit should happen. The
+        /// managed backend posted nothing, so that whole mechanism sat idle and scheduling fell to
+        /// the "we don't know when vsync is" fallback of 17ms -- 58.8fps, on every head, whatever the
+        /// display could do.
+        /// </remarks>
+        /// <param name="windowHandle">
+        /// The window that was presented. The backend cannot resolve its refresh rate -- the
+        /// windowing layer owns that -- so it reports which window and the caller looks it up.
+        /// </param>
+        /// <param name="presentationTime">
+        /// When the present happened, in QueryPerformanceCounter counts (Stopwatch timestamps off
+        /// Windows, which is what the shim returns). This is the PHASE, and it matters as much as the
+        /// rate: a timer that knows the period but not where the last vblank was lands mid-interval
+        /// and slips a whole frame.
+        /// </param>
+        bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime);
+    }
+
+    /// <summary>
+    /// The following class only exists to clearly separate the DUCE APIs
+    /// from the legacy resource APIs.
+    /// </summary>
     internal partial class DUCE
     {
+        /// <summary>
+        /// Registration point and gate for the optional managed composition backend.
+        /// When <see cref="Sink"/> is null (the default) DUCE.Channel behaves exactly as
+        /// before, marshalling to native milcore. A host opts into the managed backend by
+        /// calling <see cref="Register"/> before any channels are created.
+        /// </summary>
+        internal static class ManagedComposition
+        {
+            private static IMilCompositionSink s_sink;
+            private static int s_nextChannelId;
+            private static bool s_autoRegisterAttempted;
+
+            // The opt-in switch + the backend assembly/type loaded reflectively so
+            // PresentationCore keeps no compile-time dependency on the WebGPU engine.
+            private const string EnableSwitch = "Switch.System.Windows.Media.UseWebGpuComposition";
+            private const string EnableEnvVar = "WPF_USE_WEBGPU_COMPOSITION";
+            private const string BackendAssembly = "Microsoft.Wpf.Interop.WebGpu";
+            private const string BackendType = "Microsoft.Wpf.Interop.WebGpu.Composition.Protocol.WpfCompositionSink";
+
+            /// <summary>The registered backend, or null to use native milcore.</summary>
+            internal static IMilCompositionSink Sink => s_sink;
+
+            /// <summary>True when a managed backend is driving composition.</summary>
+            internal static bool IsEnabled => s_sink != null;
+
+            /// <summary>Install (or clear) the managed composition backend.</summary>
+            internal static void Register(IMilCompositionSink sink) => s_sink = sink;
+
+            /// <summary>
+            /// The refresh rate, in Hz, of the display the given window is on; 0 when unknown.
+            /// </summary>
+            /// <remarks>
+            /// Lives here rather than in the backend because the backend has no reference to the
+            /// windowing assembly, by design. Failures answer 0, which keeps WPF on the fallback it
+            /// used before any of this existed.
+            /// </remarks>
+            // Escape hatch. Pacing against the real refresh is a behaviour change to the frame
+            // scheduler, and a scheduler is exactly the thing you want to be able to switch off on a
+            // machine where it misbehaves without rebuilding anything.
+            private static readonly bool s_refreshPacing =
+                Environment.GetEnvironmentVariable("WPF_WEBGPU_REFRESH_PACING") != "0";
+
+            internal static int RefreshRateFor(long windowHandle)
+            {
+                if (!s_refreshPacing) return 0;
+                try
+                {
+                    MS.Internal.Interop.IPlatformWindow window =
+                        MS.Internal.Interop.PlatformWindow.FromHandle((IntPtr)windowHandle);
+                    double hz = window?.GetRefreshRateHz() ?? 0;
+                    return hz > 0 ? (int)Math.Round(hz) : 0;
+                }
+                catch
+                {
+                    return 0;
+                }
+            }
+
+            /// <summary>Allocate a process-unique managed channel id.</summary>
+            internal static int NewChannelId() =>
+                System.Threading.Interlocked.Increment(ref s_nextChannelId);
+
+            /// <summary>
+            /// On first use, if the WebGPU composition switch is enabled and no sink has
+            /// been registered, load the backend assembly and register it. Any failure
+            /// (assembly missing, shape mismatch) silently leaves milcore in charge.
+            /// </summary>
+            internal static void EnsureAutoRegistered()
+            {
+                if (s_autoRegisterAttempted)
+                {
+                    return;
+                }
+                s_autoRegisterAttempted = true;
+
+                if (s_sink != null || !IsSwitchEnabled())
+                {
+                    return;
+                }
+
+                // Linux: the compositor connection must exist BEFORE the backend does.
+                //
+                // The engine is handed the process's wl_display when it creates its wgpu instance;
+                // the GLES backend cannot discover it on its own (libwayland exposes no
+                // wl_proxy_get_display), and without it eglGetPlatformDisplay reports "no windowing
+                // system" and quietly builds a SURFACELESS EGL platform. The failure then surfaces
+                // much later and far away, as a Rust-side abort inside wgpuSurfaceConfigure:
+                // "Surface does not support the adapter's queue family".
+                //
+                // This is the last moment that ordering can be guaranteed -- it runs immediately
+                // before the backend is constructed, whereas window creation may come after.
+                if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+                {
+                    try
+                    {
+                        MS.Internal.Interop.Wayland.WaylandWindow.EnsureApplication();
+                    }
+                    catch
+                    {
+                        // No compositor: let the backend load anyway and fail with its own message.
+                    }
+                }
+
+                try
+                {
+                    System.Reflection.Assembly asm = System.Reflection.Assembly.Load(BackendAssembly);
+                    Type type = asm.GetType(BackendType, throwOnError: false);
+                    object impl = (type != null) ? Activator.CreateInstance(type) : null;
+                    if (impl != null)
+                    {
+                        s_sink = new ReflectionMilCompositionSink(impl);
+                    }
+                }
+                catch
+                {
+                    // Backend unavailable: fall back to native milcore.
+                    s_sink = null;
+                }
+            }
+
+            private static bool IsSwitchEnabled()
+            {
+                // The WebGPU managed compositor is the DEFAULT. It is used whenever the backend
+                // assembly (Microsoft.Wpf.Interop.WebGpu) can be loaded; if it can't (e.g. a plain
+                // Windows WPF app that doesn't ship it), EnsureAutoRegistered silently falls back to
+                // native milcore. Opt out explicitly via the AppContext switch or WPF_USE_WEBGPU_COMPOSITION=0.
+                if (AppContext.TryGetSwitch(EnableSwitch, out bool enabled))
+                {
+                    return enabled;
+                }
+
+                string env = Environment.GetEnvironmentVariable(EnableEnvVar);
+                if (!string.IsNullOrEmpty(env))
+                {
+                    return env == "1" || string.Equals(env, "true", StringComparison.OrdinalIgnoreCase);
+                }
+
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Adapts a duck-typed backend object (whose public methods match
+        /// <see cref="IMilCompositionSink"/> by name/signature) to the interface,
+        /// forwarding via cached reflection. This is what lets the WebGPU sink in a
+        /// separate, independently-built assembly be plugged in without a hard reference.
+        /// </summary>
+        private sealed class ReflectionMilCompositionSink : IMilCompositionSink
+        {
+            private readonly object _impl;
+            private readonly System.Reflection.MethodInfo _openChannel;
+            private readonly System.Reflection.MethodInfo _closeChannel;
+            private readonly System.Reflection.MethodInfo _createOrAddRef;
+            private readonly System.Reflection.MethodInfo _release;
+            private readonly System.Reflection.MethodInfo _sendCommand;
+            private readonly System.Reflection.MethodInfo _sendBitmap;
+            private readonly System.Reflection.MethodInfo _sendVideoFrame;
+            private readonly System.Reflection.MethodInfo _beginCommand;
+            private readonly System.Reflection.MethodInfo _appendCommandData;
+            private readonly System.Reflection.MethodInfo _endCommand;
+            private readonly System.Reflection.MethodInfo _closeBatch;
+            private readonly System.Reflection.MethodInfo _commit;
+            private readonly System.Reflection.MethodInfo _syncFlush;
+            private readonly System.Reflection.MethodInfo _readbackTarget;
+            private readonly System.Reflection.MethodInfo _tryDequeuePresented;
+
+            internal ReflectionMilCompositionSink(object impl)
+            {
+                _impl = impl;
+                Type t = impl.GetType();
+                _openChannel = Bind(t, "OpenChannel");
+                _closeChannel = Bind(t, "CloseChannel");
+                _createOrAddRef = Bind(t, "CreateOrAddRef");
+                _release = Bind(t, "ReleaseOnChannel");
+                _sendCommand = Bind(t, "SendCommand");
+                _sendBitmap = Bind(t, "SendBitmap");
+                _sendVideoFrame = Bind(t, "SendVideoFrame");
+                _beginCommand = Bind(t, "BeginCommand");
+                _appendCommandData = Bind(t, "AppendCommandData");
+                _endCommand = Bind(t, "EndCommand");
+                _closeBatch = Bind(t, "CloseBatch");
+                _commit = Bind(t, "Commit");
+                _syncFlush = Bind(t, "SyncFlush");
+                _readbackTarget = Bind(t, "ReadbackTarget");
+                _tryDequeuePresented = Bind(t, "TryDequeuePresented");
+            }
+
+            private static System.Reflection.MethodInfo Bind(Type t, string name)
+            {
+                System.Reflection.MethodInfo m = t.GetMethod(name);
+                if (m == null)
+                {
+                    throw new MissingMethodException(t.FullName, name);
+                }
+                return m;
+            }
+
+            public void OpenChannel(int channelId, int referenceChannelId) =>
+                _openChannel.Invoke(_impl, new object[] { channelId, referenceChannelId });
+
+            public void CloseChannel(int channelId) =>
+                _closeChannel.Invoke(_impl, new object[] { channelId });
+
+            public uint CreateOrAddRef(int channelId, uint handle, uint resourceType, out bool created)
+            {
+                object[] args = { channelId, handle, resourceType, false };
+                uint result = (uint)_createOrAddRef.Invoke(_impl, args);
+                created = (bool)args[3];
+                return result;
+            }
+
+            public bool ReleaseOnChannel(int channelId, uint handle) =>
+                (bool)_release.Invoke(_impl, new object[] { channelId, handle });
+
+            public void SendCommand(int channelId, byte[] data, bool sendInSeparateBatch) =>
+                _sendCommand.Invoke(_impl, new object[] { channelId, data, sendInSeparateBatch });
+
+            public void SendBitmap(int channelId, uint handle, int width, int height, int stride, byte[] pixels) =>
+                _sendBitmap.Invoke(_impl, new object[] { channelId, handle, width, height, stride, pixels });
+
+            public void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels) =>
+                _sendVideoFrame.Invoke(_impl, new object[] { channelId, mediaHandle, width, height, rowBytes, pixels });
+
+            public void BeginCommand(int channelId, byte[] data, int extraSize) =>
+                _beginCommand.Invoke(_impl, new object[] { channelId, data, extraSize });
+
+            public void AppendCommandData(int channelId, byte[] data) =>
+                _appendCommandData.Invoke(_impl, new object[] { channelId, data });
+
+            public void EndCommand(int channelId) =>
+                _endCommand.Invoke(_impl, new object[] { channelId });
+
+            public void CloseBatch(int channelId) =>
+                _closeBatch.Invoke(_impl, new object[] { channelId });
+
+            public void Commit(int channelId) =>
+                _commit.Invoke(_impl, new object[] { channelId });
+
+            public void SyncFlush(int channelId) =>
+                _syncFlush.Invoke(_impl, new object[] { channelId });
+
+            public byte[] ReadbackTarget(int channelId, uint targetHandle) =>
+                (byte[])_readbackTarget.Invoke(_impl, new object[] { channelId, targetHandle });
+
+            public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime)
+            {
+                object[] args = { channelId, 0L, 0L };
+                bool any = (bool)_tryDequeuePresented.Invoke(_impl, args);
+                windowHandle = (long)args[1];
+                presentationTime = (long)args[2];
+                return any;
+            }
+        }
+
         /// <summary>
         /// CopyBytes - Poor-man's mem copy.  Copies cbData from pbFrom to pbTo.
         /// pbFrom and pbTo must be DWORD aligned, and cbData must be a multiple of 4.
@@ -330,6 +704,12 @@ namespace System.Windows.Media.Composition
 
             private IntPtr _pConnection;
 
+            // When non-null, this channel is driven by a managed composition backend
+            // (e.g. the WebGPU engine) instead of native milcore. _managedId identifies
+            // this channel to the sink; _hChannel stays IntPtr.Zero in this mode.
+            private readonly IMilCompositionSink _sink;
+            private readonly int _managedId;
+
             /// <summary>
             /// Creates a channel and associates it with channel group (partition).
             /// New create channel will belong to the same partition as the given referenceChannel.
@@ -349,6 +729,18 @@ namespace System.Windows.Media.Composition
                     referenceChannelHandle = referenceChannel._hChannel;
                 }
 
+                // Route to the managed composition backend if one is registered. The
+                // native channel is not created; every channel operation below forwards
+                // to the sink instead.
+                ManagedComposition.EnsureAutoRegistered();
+                _sink = ManagedComposition.Sink;
+                if (_sink != null)
+                {
+                    _managedId = ManagedComposition.NewChannelId();
+                    _sink.OpenChannel(_managedId, referenceChannel?._managedId ?? 0);
+                    return;
+                }
+
                 HRESULT.Check(UnsafeNativeMethods.MilConnection_CreateChannel(
                     _pConnection,
                     referenceChannelHandle,
@@ -361,6 +753,12 @@ namespace System.Windows.Media.Composition
             /// </summary>
             internal void Commit()
             {
+                if (_sink != null)
+                {
+                    _sink.Commit(_managedId);
+                    return;
+                }
+
                 if (_hChannel == IntPtr.Zero)
                 {
                     //
@@ -382,6 +780,12 @@ namespace System.Windows.Media.Composition
             /// </summary>
             internal void CloseBatch()
             {
+                if (_sink != null)
+                {
+                    _sink.CloseBatch(_managedId);
+                    return;
+                }
+
                 if (_hChannel == IntPtr.Zero)
                 {
                     //
@@ -404,6 +808,12 @@ namespace System.Windows.Media.Composition
             /// </summary>
             internal void SyncFlush()
             {
+                if (_sink != null)
+                {
+                    _sink.SyncFlush(_managedId);
+                    return;
+                }
+
                 if (_hChannel == IntPtr.Zero)
                 {
                     //
@@ -424,6 +834,15 @@ namespace System.Windows.Media.Composition
             /// </summary>
             internal void Close()
             {
+                if (_sink != null)
+                {
+                    _sink.CloseBatch(_managedId);
+                    _sink.Commit(_managedId);
+                    _sink.CloseChannel(_managedId);
+                    _referenceChannel = null;
+                    return;
+                }
+
                 if (_hChannel != IntPtr.Zero)
                 {
                     HRESULT.Check(UnsafeNativeMethods.MilConnection_CloseBatch(_hChannel));
@@ -445,8 +864,23 @@ namespace System.Windows.Media.Composition
             /// </summary>
             internal void Present()
             {
+                if (_sink != null)
+                {
+                    // The managed backend presents as part of Commit; nothing to do here.
+                    return;
+                }
+
                 HRESULT.Check(UnsafeNativeMethods.WgxConnection_SameThreadPresent(_pConnection));
             }
+
+            /// <summary>
+            /// Managed composition only: renders a bitmap composition target committed on this
+            /// channel and returns its premultiplied BGRA32 pixels (see
+            /// <see cref="IMilCompositionSink.ReadbackTarget"/>). Null when no managed backend
+            /// is registered or the target cannot be rendered.
+            /// </summary>
+            internal byte[] ReadbackTarget(DUCE.ResourceHandle targetHandle) =>
+                _sink?.ReadbackTarget(_managedId, (uint)targetHandle);
 
             /// <summary>
             /// Internal only: CreateOrAddRefOnChannel addrefs the resource corresponding to the
@@ -459,6 +893,13 @@ namespace System.Windows.Media.Composition
             internal bool CreateOrAddRefOnChannel(object instance, ref DUCE.ResourceHandle handle, DUCE.ResourceType resourceType)
             {
                 bool handleNeedsCreation = handle.IsNull;
+
+                if (_sink != null)
+                {
+                    uint h = _sink.CreateOrAddRef(_managedId, (uint)handle, (uint)resourceType, out bool created);
+                    handle = new ResourceHandle(h);
+                    return created;
+                }
 
                 Invariant.Assert(_hChannel != IntPtr.Zero);
 
@@ -497,6 +938,12 @@ namespace System.Windows.Media.Composition
             {
                 DUCE.ResourceHandle duplicate = DUCE.ResourceHandle.Null;
 
+                if (_sink != null)
+                {
+                    // Single managed partition: a duplicate handle is the same handle.
+                    return original;
+                }
+
                 //Debug.WriteLine(string.Format("DuplicateHandle: Channel: {0}, Resource: {1}, Target channel: {2},  ", _hChannel, original._handle, targetChannel));
 
                 HRESULT.Check(UnsafeNativeMethods.MilResource_DuplicateHandle(
@@ -519,6 +966,11 @@ namespace System.Windows.Media.Composition
             /// </return>
             internal bool ReleaseOnChannel(DUCE.ResourceHandle handle)
             {
+                if (_sink != null)
+                {
+                    return _sink.ReleaseOnChannel(_managedId, (uint)handle);
+                }
+
                 Invariant.Assert(_hChannel != IntPtr.Zero);
                 Debug.Assert(!handle.IsNull);
 
@@ -549,6 +1001,12 @@ namespace System.Windows.Media.Composition
             /// </return>
             internal uint GetRefCount(DUCE.ResourceHandle handle)
             {
+                if (_sink != null)
+                {
+                    // The managed backend owns resource lifetime; report a live ref.
+                    return 1;
+                }
+
                 Invariant.Assert(_hChannel != IntPtr.Zero);
                 Debug.Assert(!handle.IsNull);
 
@@ -582,6 +1040,11 @@ namespace System.Windows.Media.Composition
             {
                 get
                 {
+                    if (_sink != null)
+                    {
+                        return ChannelMarshalType.ChannelMarshalTypeSameThread;
+                    }
+
                     Invariant.Assert(_hChannel != IntPtr.Zero);
 
                     ChannelMarshalType marshalType;
@@ -632,6 +1095,23 @@ namespace System.Windows.Media.Composition
             /// current open batch, or whether it will be added to a new and separate batch
             /// which is then immediately closed, leaving the current batch untouched.
             /// </summary>
+            /// <summary>
+            /// Reinterpret a raw pointer as an <see cref="IntPtr"/>, deliberately UNCHECKED.
+            ///
+            /// The three command-marshalling methods below run inside `checked` blocks, which is
+            /// right for their size arithmetic but wrong for a pointer: C# range-checks a
+            /// pointer-to-integer conversion in a checked context (conv.ovf.i), and on Android an
+            /// arm64 pointer legitimately carries a non-zero TOP BYTE -- the kernel ignores bits
+            /// 56-63 (Top Byte Ignore), and the allocator uses them as a tag. Such a pointer
+            /// (observed: 0xB4007A1E5C0A59D8) is NEGATIVE as a signed 64-bit integer, so the
+            /// conversion threw OverflowException on the first glyph run WPF tried to draw. This is
+            /// not arithmetic and must never be range-checked; it is the same 64 bits either way.
+            /// </summary>
+            private static unsafe IntPtr Reinterpret(byte* p)
+            {
+                unchecked { return (IntPtr)p; }
+            }
+
             internal unsafe void SendCommand(
                 byte *pCommandData,
                 int cSize,
@@ -642,6 +1122,14 @@ namespace System.Windows.Media.Composition
                     Invariant.Assert(pCommandData != (byte*)0 && cSize > 0);
 
                     int hr = HRESULT.S_OK;
+
+                    if (_sink != null)
+                    {
+                        var data = new byte[cSize];
+                        Marshal.Copy(Reinterpret(pCommandData), data, 0, cSize);
+                        _sink.SendCommand(_managedId, data, sendInSeparateBatch);
+                        return;
+                    }
 
                     if (_hChannel == IntPtr.Zero)
                     {
@@ -679,6 +1167,14 @@ namespace System.Windows.Media.Composition
 
                     int hr = HRESULT.S_OK;
 
+                    if (_sink != null)
+                    {
+                        var data = new byte[cbSize];
+                        Marshal.Copy(Reinterpret(pbCommandData), data, 0, cbSize);
+                        _sink.BeginCommand(_managedId, data, cbExtra);
+                        return;
+                    }
+
                     if (_hChannel == IntPtr.Zero)
                     {
                         //
@@ -715,6 +1211,14 @@ namespace System.Windows.Media.Composition
 
                     int hr = HRESULT.S_OK;
 
+                    if (_sink != null)
+                    {
+                        var data = new byte[cbSize];
+                        Marshal.Copy(Reinterpret(pbCommandData), data, 0, cbSize);
+                        _sink.AppendCommandData(_managedId, data);
+                        return;
+                    }
+
                     if (_hChannel == IntPtr.Zero)
                     {
                         //
@@ -742,6 +1246,12 @@ namespace System.Windows.Media.Composition
             /// </summary>
             internal void EndCommand()
             {
+                if (_sink != null)
+                {
+                    _sink.EndCommand(_managedId);
+                    return;
+                }
+
                 if (_hChannel == IntPtr.Zero)
                 {
                     //
@@ -766,12 +1276,51 @@ namespace System.Windows.Media.Composition
                 )
             {
                 Invariant.Assert(pBitmapSource != null && !pBitmapSource.IsInvalid);
+
+                // The managed composition backend never takes the native pointer path: the
+                // caller routes bitmaps through SendCommandBitmapData (managed pixels) when
+                // DUCE.ManagedComposition.IsEnabled, so here we only marshal to milcore.
                 Invariant.Assert(_hChannel != IntPtr.Zero);
 
                 HRESULT.Check(UnsafeNativeMethods.MilResource_SendCommandBitmapSource(
                     imageHandle,
                     pBitmapSource,
                     _hChannel));
+            }
+
+            /// <summary>
+            /// Managed-pixels variant of <see cref="SendCommandBitmapSource"/>: the caller
+            /// has already copied the bitmap to a straight BGRA32 byte buffer using WPF's
+            /// managed imaging stack, so no COM/WIC pointer crosses into the backend. Only
+            /// valid when the managed composition sink is active.
+            /// </summary>
+            internal void SendCommandBitmapData(
+                DUCE.ResourceHandle imageHandle,
+                int width,
+                int height,
+                int stride,
+                byte[] pixels)
+            {
+                Invariant.Assert(_sink != null);
+                _sink.SendBitmap(_managedId, (uint)imageHandle, width, height, stride, pixels);
+            }
+
+            /// <summary>
+            /// Sends the current decoded video frame for a media-player resource to the managed compositor
+            /// (macOS/browser backends). Only valid when a managed sink is bound; the native backend renders
+            /// video through the native media resource instead.
+            /// </summary>
+            internal void SendVideoFrame(
+                DUCE.ResourceHandle mediaHandle,
+                int width,
+                int height,
+                int rowBytes,
+                byte[] pixels)
+            {
+                if (_sink != null)
+                {
+                    _sink.SendVideoFrame(_managedId, (uint)mediaHandle, width, height, rowBytes, pixels);
+                }
             }
 
             /// <summary>
@@ -784,6 +1333,12 @@ namespace System.Windows.Media.Composition
                 )
             {
                 Invariant.Assert(pMedia != null && !pMedia.IsInvalid);
+
+                if (_sink != null)
+                {
+                    // Native media resources are not yet supported by the managed backend.
+                    return;
+                }
 
                 Invariant.Assert(_hChannel != IntPtr.Zero);
 
@@ -809,6 +1364,12 @@ namespace System.Windows.Media.Composition
             /// </param>
             internal void SetNotificationWindow(IntPtr hwnd, WindowMessage message)
             {
+                if (_sink != null)
+                {
+                    // The managed backend has no asynchronous back-channel.
+                    return;
+                }
+
                 Invariant.Assert(_hChannel != IntPtr.Zero);
 
                 HRESULT.Check(UnsafeNativeMethods.MilChannel_SetNotificationWindow(
@@ -828,6 +1389,12 @@ namespace System.Windows.Media.Composition
             /// </remarks>
             internal void WaitForNextMessage()
             {
+                if (_sink != null)
+                {
+                    // No back-channel: there is never a message to wait for.
+                    return;
+                }
+
                 int waitReturn;
 
                 HRESULT.Check(UnsafeNativeMethods.MilComposition_WaitForNextMessage(
@@ -852,6 +1419,30 @@ namespace System.Windows.Media.Composition
             /// </returns>
             internal bool PeekNextMessage(out MilMessage.Message message)
             {
+                if (_sink != null)
+                {
+                    message = default;
+                    if (!_sink.TryDequeuePresented(_managedId, out long windowHandle, out long presentationTime))
+                        return false;
+
+                    int refreshRate = ManagedComposition.RefreshRateFor(windowHandle);
+                    if (refreshRate <= 0)
+                    {
+                        // Claiming a rate we do not know would be worse than saying nothing: WPF
+                        // would pace against a period it invented. Leave it on its own fallback.
+                        return false;
+                    }
+
+                    // The managed backend presents straight to the surface with no desktop compositor
+                    // in between, so DWM is the honest result code -- and it is the arm that takes the
+                    // reported refresh rate as authoritative rather than re-deriving one.
+                    message.Type = MilMessage.Type.Presented;
+                    message.Presented.PresentationResults = MIL_PRESENTATION_RESULTS.MIL_PRESENTATION_DWM;
+                    message.Presented.RefreshRate = refreshRate;
+                    message.Presented.PresentationTime = presentationTime;
+                    return true;
+                }
+
                 Invariant.Assert(_hChannel != IntPtr.Zero);
 
                 int messageRetrieved;

@@ -70,6 +70,18 @@ namespace System.Windows.Media.Imaging
 
         #endregion
 
+        /// <summary>
+        /// Managed encode for platforms without native WIC: single-frame GIF89a with a global colour
+        /// table. See ManagedGifEncoder.
+        /// </summary>
+        internal override bool TryManagedEncode(System.IO.Stream stream)
+        {
+            BitmapFrame frame = Frames[0];
+            BitmapSource source = (frame as BitmapFrameEncode)?._source ?? (BitmapSource)frame;
+            ManagedGifEncoder.Save(source, stream);
+            return true;
+        }
+
         #region Data Members
 
         private Guid _containerFormat = MILGuidData.GUID_ContainerFormatGif;

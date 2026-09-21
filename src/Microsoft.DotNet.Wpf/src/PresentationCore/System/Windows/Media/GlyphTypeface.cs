@@ -1251,47 +1251,120 @@ namespace System.Windows.Media
         {
             CheckInitialized();
 
-            unsafe
+            // Read from the font file, in managed code.
+            //
+            // This was MilGlyphRun_GetGlyphOutline -- a wpfgfx_cor3 entry point taking a
+            // DirectWrite font face -- and this port ships wpfgfx on no platform, so it threw
+            // DllNotFoundException everywhere. That took GlyphRun.BuildGeometry,
+            // FormattedText.BuildGeometry and GetGlyphOutline with it, all public API, and with
+            // them text-as-geometry, text clipping and printing glyphs as paths.
+            //
+            // Nonzero, always. Both outline formats are defined that way: TrueType contours wind
+            // opposite ways for holes, and Type 2 charstrings state it outright. Even-odd would
+            // punch holes in any glyph whose strokes overlap, which is most bold type.
+            MS.Internal.Text.TextInterface.FontFace fontFace = _font.GetFontFace();
+
+            try
             {
-                byte* pMilPathGeometry;
-                UInt32 size;
-                FillRule fillRule;
+                double unitsPerEm = fontFace.DesignUnitsPerEm;
+                if (unitsPerEm <= 0) return Geometry.Empty;
 
-                MS.Internal.Text.TextInterface.FontFace fontFaceDWrite = _font.GetFontFace();
-                try
+                var sink = new GlyphOutlineSink(renderingEmSize / unitsPerEm, sideways);
+
+                if (!fontFace.TryGetGlyphOutline(glyphIndex, sink)) return Geometry.Empty;
+
+                return sink.Build();
+            }
+            finally
+            {
+                fontFace.Release();
+            }
+        }
+
+        /// <summary>
+        /// Turns a glyph's contours into a PathGeometry.
+        ///
+        /// The font stores coordinates in font units with y running UP from the baseline; WPF wants
+        /// them scaled to the rendering em size with y running DOWN. Both happen here, per point,
+        /// so neither the outline readers nor anything downstream has to think about it.
+        ///
+        /// The scale cannot be left in the geometry's Transform, tempting as that is:
+        /// GlyphRun.BuildGeometry ASSIGNS Transform to position the glyph, so a transform set here
+        /// would be silently replaced and every glyph would come out in font units.
+        /// </summary>
+        private sealed class GlyphOutlineSink : MS.Internal.Text.TextInterface.Managed.IGlyphOutlineSink
+        {
+            private readonly double _scale;
+            private readonly bool _sideways;
+            private readonly PathFigureCollection _figures = new PathFigureCollection();
+
+            private PathFigure _figure;
+            private PathSegmentCollection _segments;
+
+            internal GlyphOutlineSink(double scale, bool sideways)
+            {
+                _scale = scale;
+                _sideways = sideways;
+            }
+
+            public void BeginFigure(double x, double y)
+            {
+                _segments = new PathSegmentCollection();
+
+                _figure = new PathFigure
                 {
-                    HRESULT.Check(UnsafeNativeMethods.MilCoreApi.MilGlyphRun_GetGlyphOutline(
-                        fontFaceDWrite.DWriteFontFaceAddRef, // Released in this native code function
-                        glyphIndex,
-                        sideways,
-                        renderingEmSize,
-                        out pMilPathGeometry,
-                        out size,
-                        out fillRule
-                        ));
-                }
-                finally
+                    StartPoint = Map(x, y),
+                    Segments = _segments,
+                    IsClosed = true,
+                    IsFilled = true,
+                };
+            }
+
+            public void LineTo(double x, double y)
+                => _segments?.Add(new LineSegment(Map(x, y), true) { IsSmoothJoin = true });
+
+            public void QuadraticTo(double cx, double cy, double x, double y)
+                => _segments?.Add(new QuadraticBezierSegment(Map(cx, cy), Map(x, y), true)
                 {
-                    fontFaceDWrite.Release();
-                }
+                    IsSmoothJoin = true,
+                });
 
-                Geometry.PathGeometryData pathGeoData = new Geometry.PathGeometryData();
-                byte[] data = new byte[size];
-                Marshal.Copy(new IntPtr(pMilPathGeometry), data, 0, checked((int)size));
-                
-                // Delete the memory we allocated in native code.
-                HRESULT.Check(UnsafeNativeMethods.MilCoreApi.MilGlyphRun_ReleasePathGeometryData(
-                    pMilPathGeometry
-                    ));
-                
-                pathGeoData.SerializedData = data;
-                pathGeoData.FillRule = fillRule;
-                pathGeoData.Matrix = CompositionResourceManager.MatrixToMilMatrix3x2D(Matrix.Identity);
+            public void CubicTo(double c1x, double c1y, double c2x, double c2y, double x, double y)
+                => _segments?.Add(new BezierSegment(Map(c1x, c1y), Map(c2x, c2y), Map(x, y), true)
+                {
+                    IsSmoothJoin = true,
+                });
 
-                PathStreamGeometryContext ctx = new PathStreamGeometryContext(fillRule, null);
-                PathGeometry.ParsePathGeometryData(pathGeoData, ctx);
-    
-                return ctx.GetPathGeometry();
+            public void EndFigure()
+            {
+                if (_figure != null && _segments != null && _segments.Count != 0) _figures.Add(_figure);
+
+                _figure = null;
+                _segments = null;
+            }
+
+            internal Geometry Build()
+            {
+                EndFigure();
+
+                if (_figures.Count == 0) return Geometry.Empty;
+
+                return new PathGeometry(_figures, FillRule.Nonzero, null);
+            }
+
+            /// <summary>
+            /// Font units to WPF units.
+            ///
+            /// Sideways is vertical writing: the glyph is turned a quarter turn clockwise about the
+            /// baseline origin, which is what a run laid out top-to-bottom expects and what the
+            /// DirectWrite path this replaces did with the same flag.
+            /// </summary>
+            private Point Map(double x, double y)
+            {
+                double sx = x * _scale;
+                double sy = -y * _scale;
+
+                return _sideways ? new Point(-sy, sx) : new Point(sx, sy);
             }
         }
 

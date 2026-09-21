@@ -770,6 +770,15 @@ namespace System.Windows.Media
             // Tell the freezable that we have changed.
             //
             FireChanged();
+
+            // On Windows the native compositor re-composites the video slave resource continuously, so the
+            // managed render loop need not run per frame. Off-Windows there is no native compositor -- the
+            // managed WebGPU compositor only presents on a render pass -- so a new frame must actively
+            // schedule one, or the video would appear frozen (updating only on an unrelated relayout/resize).
+            if (!OperatingSystem.IsWindows())
+            {
+                MediaContext.From(Dispatcher).PostRender();
+            }
         }
 
         /// <summary>

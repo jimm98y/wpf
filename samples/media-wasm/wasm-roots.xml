@@ -1,0 +1,11 @@
+<!-- WPF loads these reflectively (Application..cctor et al.), and the browser-wasm runtime pack does not
+     provide them, so they must be bundled. TrimmerRootAssembly triggers IL1035 (they resolve with action
+     'skip'); a root DESCRIPTOR preserves them whole without the root-assembly action check. -->
+<linker>
+  <assembly fullname="System.IO.Packaging" preserve="all" />
+  <assembly fullname="System.Windows.Extensions" preserve="all" />
+  <assembly fullname="System.Configuration.ConfigurationManager" preserve="all" />
+  <!-- Referenced by PresentationCore / WindowsBase; kept whole so mono-aot-cross can resolve them. -->
+  <assembly fullname="System.Private.Windows.Core" preserve="all" />
+  <assembly fullname="System.Security.Cryptography.Xml" preserve="all" />
+</linker>

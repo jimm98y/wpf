@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The platform-neutral half of the web-view seam: the scripting bridge every backend is driven
+    through, and the vocabulary types the controls and CoreWebView2 share.
+
+    This project is deliberately UNLIKE its siblings in one respect: it does not reference the fork
+    at all, and therefore has no _ForkBuilt gate. The seam under test is link-compiled SHARED SOURCE
+    (the same $(WpfSharedDir) files PresentationFramework, System.Windows.Forms and
+    Microsoft.Web.WebView2.Core each compile into themselves), so compiling it here is not a trick 
+    it is exactly what every consumer does. The payoff is that these tests run on a machine with no
+    built fork, no WebGPU, and no web engine installed, which is the whole point: the escaping and
+    marshalling rules below are the part that must be right everywhere, and they are the part that
+    is hardest to exercise once a real browser is in the picture.
+
+    WebViewBackendFactory.cs is the one shared file NOT compiled here. It is the only thing that
+    names the six concrete backends, and pulling it in would drag every platform implementation into
+    a test assembly that wants none of them.
+
+    Plain net10.0, never net10.0-windows.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <UseAppHost>true</UseAppHost>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <!-- CS0649: the event-payload fields are assigned by the platform backends, and this assembly
+         deliberately compiles the seam WITHOUT them (see the header). Their being unassigned here is
+         the expected state, not a defect. -->
+    <NoWarn>$(NoWarn);CS8002;CA1416;CS0649</NoWarn>
+
+    <_Shared>$(MSBuildThisFileDirectory)../../../src/Shared/MS/Internal/Interop/WebView</_Shared>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="3.0.0" />
+    <PackageReference Include="Microsoft.Testing.Platform" Version="1.7.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="$(_Shared)/WebViewTypes.cs" />
+    <Compile Include="$(_Shared)/WebViewScript.cs" />
+    <Compile Include="$(_Shared)/IWebViewBackend.cs" />
+    <Compile Include="$(_Shared)/AndroidWebViewRegistration.cs" />
+    <Compile Include="$(_Shared)/Platform/AndroidWebViewBackend.cs" />
+  </ItemGroup>
+
+</Project>

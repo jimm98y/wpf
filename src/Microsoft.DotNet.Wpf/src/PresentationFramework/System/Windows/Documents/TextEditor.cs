@@ -2004,8 +2004,11 @@ namespace System.Windows.Documents
         // Default is true.
         private bool _acceptsRichContent;
 
-        // If the system is IMM enabled, this is true.
-        private static bool _immEnabled = SafeSystemMetrics.IsImmEnabled ;
+        // True when this machine has an input-method channel ImmComposition can drive: IMM32 on
+        // Windows, zwp_text_input_v3 on Linux. A property rather than a static field because the
+        // Wayland connection is brought up lazily, on first window creation -- reading it into a
+        // static initializer would answer "no IME" for the whole process no matter what came up later.
+        private static bool _immEnabled => ImmComposition.IsPlatformInputMethodAvailable;
 
         // ImmComposition implementation, used when _immEnabled.
         private ImmComposition _immComposition;

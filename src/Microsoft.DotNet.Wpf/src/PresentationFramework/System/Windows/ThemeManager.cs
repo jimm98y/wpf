@@ -9,6 +9,61 @@ namespace System.Windows;
 
 internal static class ThemeManager
 {
+    static ThemeManager()
+    {
+        // Off-Windows there is no WM_SETTINGCHANGE to drive a runtime theme change. On macOS the Cocoa
+        // event pump polls the system appearance and raises SystemAppearanceChanged when the user toggles
+        // Dark/Light; re-apply the Fluent theme for ThemeMode.System, mirroring the Windows path.
+        if (OperatingSystem.IsMacOS())
+        {
+            MS.Internal.Interop.CocoaWindow.SystemAppearanceChanged += OnMacSystemAppearanceChanged;
+        }
+        else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+        {
+            // Linux: the desktop's colour-scheme preference comes from xdg-desktop-portal, and its
+            // SettingChanged signal is dispatched from the same pump that drives Wayland, so this
+            // arrives on the UI thread exactly as the macOS one does.
+            MS.Internal.Interop.Wayland.LinuxDesktopSettings.EnsureWatching();
+            MS.Internal.Interop.Wayland.LinuxDesktopSettings.SystemAppearanceChanged += OnMacSystemAppearanceChanged;
+        }
+    }
+
+    // Runs when the macOS Dark/Light setting flips at runtime. The event fires on the UI/pump thread;
+    // post to the dispatcher so the re-apply runs outside the pump. IsSystemThemeLight() then reads the
+    // now-current appearance and OnSystemThemeChanged swaps the Fluent Light/Dark dictionary.
+    private static void OnMacSystemAppearanceChanged()
+    {
+        Application app = Application.Current;
+        if (app == null)
+        {
+            return;
+        }
+
+        // Re-apply on the UI thread via the SAME path the Settings theme switch uses
+        // (OnApplicationThemeChanged) -- passing the current ThemeMode as both old and new re-evaluates
+        // GetUseLightColors (which now reads the new macOS appearance) and swaps the Fluent dictionary.
+        // NB: do NOT call OnSystemThemeChanged here -- its per-window ApplyFluentOnWindow re-merge blanks
+        // the WebGPU-composited window off-Windows, whereas ApplyStyleOnWindow (this path) works.
+        app.Dispatcher?.BeginInvoke(new Action(() =>
+        {
+            ThemeMode mode = Application.Current?.ThemeMode ?? ThemeMode.System;
+            OnApplicationThemeChanged(mode, mode);
+
+            // Tell the APP, not just WPF. On Windows the same user action arrives as
+            // WM_SETTINGCHANGE/"ImmersiveColorSet" and reaches app code through
+            // SystemEvents.UserPreferenceChanged, which is what apps actually subscribe to in order
+            // to restyle their own chrome. Off Windows nothing raised it, so an app that reacted to
+            // light/dark on Windows silently stopped doing so everywhere else -- while WPF's own
+            // theme switched around it, which looks like a bug in the app.
+            //
+            // The detection is not repeated here: it stays in CocoaWindow/LinuxDesktopSettings, and
+            // only the notification crosses into the shim (whose InternalsVisibleTo names us).
+#if WPF_SYSTEMEVENTS_SHIM
+            Microsoft.Win32.SystemEvents.NotifySystemAppearanceChanged();
+#endif
+        }));
+    }
+
     #region Internal Methods
 
     internal static void OnSystemThemeChanged()
@@ -453,6 +508,22 @@ internal static class ThemeManager
 
     private static bool IsSystemThemeLight()
     {
+        // The system light/dark setting lives in the Windows registry (Personalize key), which is
+        // unavailable off-Windows. On macOS read the system appearance (AppleInterfaceStyle) so
+        // ThemeMode.System tracks the OS Dark/Light setting; other platforms default to light.
+        if (!OperatingSystem.IsWindows())
+        {
+            if (OperatingSystem.IsMacOS())
+            {
+                return !MS.Internal.Interop.CocoaWindow.IsSystemDarkTheme();
+            }
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            {
+                return !MS.Internal.Interop.Wayland.LinuxDesktopSettings.IsSystemDarkTheme();
+            }
+            return true;
+        }
+
         var useLightTheme = Registry.GetValue(RegPersonalizeKeyPath,
             "AppsUseLightTheme", null) as int?;
 

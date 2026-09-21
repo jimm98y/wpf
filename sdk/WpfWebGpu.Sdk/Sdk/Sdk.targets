@@ -1,0 +1,870 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- Which flavor is this (inner) build?
+           browser : WebAssembly head (WebGPU via JS interop)
+           android : Android head — the same desktop renderer over a SurfaceView
+           ios     : iOS head — the Metal/CAMetalLayer renderer, wgpu linked statically
+           win     : Windows desktop head — real Win32 windowing and platform APIs (no
+                     cross-platform shims). NOT a passthrough to the stock WindowsDesktop
+                     SDK / milcore.
+           unix    : macOS/Linux desktop head — Cocoa/X11 windowing, platform-API shims.
+         The MANAGED WPF payload is the same on all five (lib/wpf); what differs is the renderer,
+         the native backend, and which platform shims are in play.
+
+         The desktop TFM is plain net10.0 on every OS (no -windows); the head is chosen by the
+         TARGET PLATFORM, not the TFM moniker, so the very same net10.0 project builds to the
+         Windows head here and the macOS head on a Mac.
+
+         ORDER MATTERS. The mobile heads are decided first, and Windows only after them: a
+         net10.0-android build on a Windows machine has no RuntimeIdentifier at this point, so the
+         "no RID, building on Windows" clause below would otherwise claim it for the Windows head
+         and hand an Android app win-x64 WebGPU. -->
+    <_WpfWebGpuBrowser>false</_WpfWebGpuBrowser>
+    <_WpfWebGpuBrowser Condition="'$(WpfPlatform)' == 'browser'">true</_WpfWebGpuBrowser>
+    <_WpfWebGpuAndroid>false</_WpfWebGpuAndroid>
+    <_WpfWebGpuAndroid Condition="'$(_WpfWebGpuBrowser)' != 'true' and ( $(TargetFramework.Contains('-android')) or $(RuntimeIdentifier.StartsWith('android')) )">true</_WpfWebGpuAndroid>
+    <_WpfWebGpuIos>false</_WpfWebGpuIos>
+    <_WpfWebGpuIos Condition="'$(_WpfWebGpuBrowser)' != 'true' and ( $(TargetFramework.Contains('-ios')) or $(RuntimeIdentifier.StartsWith('ios')) )">true</_WpfWebGpuIos>
+    <_WpfWebGpuMobile>false</_WpfWebGpuMobile>
+    <_WpfWebGpuMobile Condition="'$(_WpfWebGpuAndroid)' == 'true' or '$(_WpfWebGpuIos)' == 'true'">true</_WpfWebGpuMobile>
+    <_WpfWebGpuWin>false</_WpfWebGpuWin>
+    <_WpfWebGpuWin Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuMobile)' != 'true' and ( '$(WpfPlatform)' == 'windows' or $(RuntimeIdentifier.StartsWith('win')) or $(TargetFramework.Contains('-windows')) or ( '$(WpfPlatform)' == '' and '$(RuntimeIdentifier)' == '' and '$(OS)' == 'Windows_NT' ) )">true</_WpfWebGpuWin>
+    <_WpfWebGpuUnix>false</_WpfWebGpuUnix>
+    <_WpfWebGpuUnix Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuWin)' != 'true'">true</_WpfWebGpuUnix>
+
+    <!-- Which heads have no system fonts this renderer can use (see WpfWebGpu.Fonts). Windows has
+         Segoe UI, Segoe Fluent Icons, Cascadia and a system emoji font of its own. (Gated on WPF
+         being in play at each use site — $(_WpfWebGpuUseWpf) is not captured until below.)
+         A PORTABLE build always carries them, whatever it was built on: the output may be run on a
+         Linux or macOS box, and the cost of being wrong is boxes instead of text. -->
+    <_WpfWebGpuNeedsFonts Condition="'$(_WpfWebGpuWin)' != 'true' or '$(WpfWebGpuPortable)' == 'true'">true</_WpfWebGpuNeedsFonts>
+
+    <!-- Cross-building the windows head from a non-Windows dev machine. -->
+    <EnableWindowsTargeting Condition="'$(EnableWindowsTargeting)' == '' and '$(_WpfWebGpuWin)' == 'true' and $(TargetFramework.Contains('-windows')) and '$(OS)' != 'Windows_NT'">true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <!--
+    WpfPlatform=browser has to arrive as a GLOBAL property (command line: -p:WpfPlatform=browser),
+    because Sdk.props uses it to choose the BASE SDK — Microsoft.NET.Sdk.WebAssembly rather than
+    Microsoft.NET.Sdk — long before the project body, or a Directory.Build.props, has been read.
+
+    Setting it in the project body instead leaves the two halves disagreeing: this file would build
+    every browser item group while the project underneath is an ordinary net10.0 app with no wasm
+    toolchain, no boot shim and no wwwroot, and the failure surfaces somewhere in the middle of that
+    with nothing pointing back here. Say so instead. (This used to be hidden behind a separate
+    WpfWebGpuWasm.Sdk package id whose only content was this one property; the id is gone, so the
+    trap it papered over is now reachable and has to be diagnosed.)
+  -->
+  <Target Name="_WpfWebGpuCheckBrowserSelection" BeforeTargets="PrepareForBuild"
+          Condition="'$(WpfPlatform)' == 'browser' and '$(_WpfWebGpuBrowserFromProps)' != 'true'">
+    <Error Text="WpfPlatform=browser was set too late to take effect: it selects the base SDK, so it must be a GLOBAL property. Build with '-p:WpfPlatform=browser' on the command line (or set it in a Directory.Build.rsp / global property), not in the project body." />
+  </Target>
+
+  <!--
+    WPF comes from the assemblies packaged in this SDK, not from the WindowsDesktop framework
+    reference — on EVERY flavor, including the windows head. UseWPF/UseWindowsForms must be OFF
+    before the base SDK targets evaluate (the implicit WindowsDesktop SDK import must not fire,
+    and off-Windows NETSDK1136 would otherwise demand a windows TargetPlatform); the user's
+    intent is captured first so XAML compilation and references still key off it.
+  -->
+  <PropertyGroup>
+    <_WpfWebGpuUseWpf>$(UseWPF)</_WpfWebGpuUseWpf>
+    <UseWPF>false</UseWPF>
+    <_WpfWebGpuUseWinForms>$(UseWindowsForms)</_WpfWebGpuUseWinForms>
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <!-- (WPF markup-compilation inputs + default XAML item globbing live in Sdk.props now, so a
+       project's own ApplicationDefinition/Page overrides — added in its body — take effect.) -->
+
+  <!-- ================================ the WPF payload ================================ -->
+  <!--
+    ONE set of managed WPF assemblies, on every head — lib/wpf, straight out of the fork's AnyCPU
+    net10.0 build. Windows used to take a SEPARATE lib/wpf-windows payload that was copied out of a
+    staged runtime directory rather than built; it was the same assemblies, only older, and nothing
+    in the build could tell you so. See the header comment in WpfWebGpu.Sdk.csproj.
+
+    What is genuinely per-head is the RENDERER (and, below, the native backend it P/Invokes):
+      desktop, Android : lib/wpf-desktop  — P/Invokes wgpu-native
+      iOS              : lib/wpf-ios      — Metal/CAMetalLayer, wgpu linked statically
+      browser          : lib/wpf-browser  — JS interop over navigator.gpu
+    and the platform SHIMS, which every head but Windows uses (Windows passes those APIs straight
+    through to the real Win32-backed runtime packages).
+  -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf/*.dll" Private="true" />
+
+    <!-- The renderer. A per-RID Windows build names the one assembly it wants rather than globbing
+         the folder, because lib/wpf-desktop also carries the SystemEvents/Registry shims and Windows
+         binds the real runtime packages instead.
+
+         A PORTABLE build takes the whole folder on Windows too. It has to: one output serves three
+         operating systems, the shims and the real packages share an assembly identity, so exactly
+         one of them can ship — and the shims are the ones that work everywhere, now that they do the
+         real thing on Windows (a hidden top-level window pumping the OS broadcasts, and advapi32 for
+         the registry) instead of no-opping. -->
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-desktop/*.dll" Private="true"
+               Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuIos)' != 'true' and ('$(_WpfWebGpuWin)' != 'true' or '$(WpfWebGpuPortable)' == 'true')" />
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu" Condition="'$(_WpfWebGpuWin)' == 'true' and '$(WpfWebGpuPortable)' != 'true'">
+      <HintPath>$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Wpf.Interop.WebGpu.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-ios/*.dll" Private="true" Condition="'$(_WpfWebGpuIos)' == 'true'" />
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/*.dll" Private="true" Condition="'$(_WpfWebGpuBrowser)' == 'true'" />
+
+    <!-- The visual-tree inspector (Documentation/devtools.md). Loaded reflectively by
+         PresentationCore when WPF_DEVTOOLS is set, so it is referenced only to get it COPIED
+         next to the app; nothing binds to it at compile time and an app that drops it just has
+         no inspector. Same managed payload on every head.
+
+         Shipped by default because the whole point is that an unmodified app becomes
+         inspectable by setting one environment variable, with no rebuild. It starts nothing
+         unless WPF_DEVTOOLS is set; set WpfDevTools=false to leave it out of a release drop
+         entirely. -->
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-devtools/*.dll" Private="true"
+               Condition="'$(WpfDevTools)' != 'false'" />
+
+    <!-- Support packages WPF needs off the WindowsDesktop framework reference. Identical on every
+         head: on Windows they resolve to the real Win32-backed implementations, elsewhere to the
+         cross-platform ones (with our shims overlaid where the framework's are throw-only). -->
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+
+    <!-- The font bundle, on the heads with no system fonts this renderer can use. It is a package
+         rather than part of this SDK because it is 27 MB and the Windows head never reads it; see
+         the fonts section further down, and WpfWebGpu.Fonts.csproj. PrivateAssets=all: it is a build
+         input of THIS app, not something a library should propagate to its consumers. -->
+    <PackageReference Include="WpfWebGpu.Fonts" Version="0.1.1" PrivateAssets="all"
+                      Condition="'$(_WpfWebGpuNeedsFonts)' == 'true'" />
+
+    <!-- Force the managed WebGPU compositor on for the Windows head (it is already the default when
+         the interop resolves; this makes the intent explicit and immune to opt-out env). -->
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Media.UseWebGpuComposition" Value="true" Trim="false"
+                                    Condition="'$(_WpfWebGpuWin)' == 'true'" />
+  </ItemGroup>
+
+  <!-- A UseWindowsForms app that does NOT use WPF still needs Accessibility.dll, which lives in
+       lib/wpf with the rest of the managed payload and is therefore not referenced above. -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf/Accessibility.dll" Private="true" />
+  </ItemGroup>
+
+  <!-- A -windows TFM implicitly resolves the Microsoft.WindowsDesktop.App shared framework into
+       the runtimeconfig. We carry the fork WPF (managed + native) app-local, so drop that framework
+       so the app binds ONLY to Microsoft.NETCore.App + our app-local WebGPU WPF — self-contained and
+       independent of whatever (possibly stock milcore) WindowsDesktop framework is installed. -->
+  <Target Name="_WpfWebGpuDropWindowsDesktopFramework"
+          BeforeTargets="GenerateBuildRuntimeConfigurationFiles;GeneratePublishRuntimeConfigurationFiles"
+          Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuWin)' == 'true'">
+    <ItemGroup>
+      <RuntimeFramework Remove="@(RuntimeFramework)" Condition="'%(RuntimeFramework.FrameworkName)' == 'Microsoft.WindowsDesktop.App' or '%(Identity)' == 'Microsoft.WindowsDesktop.App'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- ============================== unix desktop extras ============================== -->
+
+  <!-- ======================== WinForms (every desktop head) ======================== -->
+
+  <!-- A UseWindowsForms app runs on the fork's Mono System.Windows.Forms, its vendored
+       Mono.System.Drawing, Accessibility, and WindowsFormsIntegration (ElementHost, for hosting a WPF
+       element tree inside a WinForms control).
+
+       Deliberately NOT unix-only. Microsoft.WindowsDesktop.App is never an option on this stack, and
+       on Windows it is actively harmful: it ships its own System.Windows.Forms, a framework assembly
+       always wins over an app-local one, and the SDK then drops the Mono copy as a "conflict" — so
+       the real WinForms loaded, and anything mixing the two died at runtime (MissingMethodException:
+       Control.set_BackColor, the two WinForms disagreeing about System.Drawing.Color). Every head
+       gets exactly the same assemblies. -->
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-winforms/*.dll" Private="true" />
+  </ItemGroup>
+
+  <!--
+    Deploy the Mono System.Windows.Forms into an app that only hosts WinForms TRANSITIVELY, i.e. one
+    that references a UseWindowsForms library (a WindowsFormsHost-bearing control library, say) but
+    does not set UseWindowsForms itself, so the item group above never fired for it.
+
+    Everything else in that chain copies itself down a project reference normally — Mono.System.Drawing,
+    WindowsFormsIntegration, Accessibility all arrive. System.Windows.Forms alone does not: it is
+    public-signed with the ECMA key so its identity is byte-for-byte the framework's, and conflict
+    resolution in the consuming project therefore treats it as a framework assembly that lost to an
+    ambient v10.0.0.0 and drops it. (In the library itself it is a PRIMARY reference and wins, which
+    is why the library's own output is complete and only the app's is missing it — the app then dies
+    with a FileNotFoundException the first time it shows the hosted control, and nothing at build
+    time says a word.)
+
+    Guarded on the sibling actually being present, so this copies only into apps that really do carry
+    the WinForms chain, and never into a pure-WPF app.
+  -->
+  <Target Name="_WpfWebGpuDeployTransitiveWinForms"
+          AfterTargets="Build;Publish;CopyFilesToOutputDirectory"
+          Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != ''">
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Windows.Forms.dll"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="true"
+          Condition="'$(OutDir)' != '' and Exists('$(OutDir)Mono.System.Drawing.dll') and !Exists('$(OutDir)System.Windows.Forms.dll')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Windows.Forms.dll"
+          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true"
+          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)Mono.System.Drawing.dll') and !Exists('$(PublishDir)System.Windows.Forms.dll')" />
+    <!-- And the System.Drawing identity, for the same reason: whatever conflict resolution makes
+         of a file with a framework assembly's name, the app needs ours beside it. -->
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Drawing.dll"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="true"
+          Condition="'$(OutDir)' != '' and Exists('$(OutDir)Mono.System.Drawing.dll')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Drawing.dll"
+          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true"
+          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)Mono.System.Drawing.dll')" />
+  </Target>
+
+  <!-- The vendored Mono.System.Drawing is the SOLE System.Drawing.* provider; evict the framework
+       System.Drawing.* the WPF path pulls in (System.Drawing.Common package) -> CS0433.
+
+       NOT ours. lib/wpf-winforms/System.Drawing.dll is the assembly IDENTITY every library built
+       against .NET Framework names, forwarding to Mono.System.Drawing; matching on the file name
+       alone threw it out with the framework copies, so that identity went on binding to the inbox
+       facade and resolved to System.Drawing.Common's types instead of the ones this WinForms
+       draws with. -->
+  <Target Name="_WpfWebGpuStripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences"
+          Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="('%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives')
+                                and !$([System.String]::new('%(FullPath)').Contains('wpf-winforms'))" />
+    </ItemGroup>
+  </Target>
+
+  <!-- ============================== WebView2 (every head) ============================== -->
+
+  <!--
+    WebView2 for a WPF or WinForms app, on every head.
+
+    The assemblies in lib/wpf-webview2 carry the REAL package's strong-name identity, so they satisfy
+    a reference compiled against Microsoft.Web.WebView2 and run on whatever engine the head has. They
+    are referenced whenever the app uses either UI stack, because a WebView2 reference is normally
+    transitive (a control library pulls it in) and gating on the app's own PackageReference would
+    miss exactly those apps.
+
+    The WinForms control is separate: it links against the Mono System.Windows.Forms, so referencing
+    it from a pure-WPF app would drag that whole stack in.
+  -->
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != '' and ('$(_WpfWebGpuUseWpf)' == 'true' or '$(_WpfWebGpuUseWinForms)' == 'true')">
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-webview2/*.dll" Private="true" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuUseWinForms)' == 'true'">
+    <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-webview2-winforms/*.dll" Private="true" />
+  </ItemGroup>
+
+  <!--
+    Evict the REAL Microsoft.Web.WebView2 assemblies when the app (or something it references) brings
+    the package along.
+
+    Without this the compiler sees two assemblies with the same identity and fails, and if it did not,
+    the package's own copy would win at run time and immediately fail: it is a COM wrapper that needs
+    WebView2Loader.dll and an Edge runtime, which is precisely what does not exist off Windows. The
+    same shape, and the same reasoning, as _WpfWebGpuStripFrameworkDrawing above.
+  -->
+  <Target Name="_WpfWebGpuStripWebView2Package" AfterTargets="ResolveAssemblyReferences"
+          Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != '' and ('$(_WpfWebGpuUseWpf)' == 'true' or '$(_WpfWebGpuUseWinForms)' == 'true')">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="('%(FileName)' == 'Microsoft.Web.WebView2.Core' or
+                                 '%(FileName)' == 'Microsoft.Web.WebView2.Wpf' or
+                                 '%(FileName)' == 'Microsoft.Web.WebView2.WinForms') and
+                                !$([System.String]::Copy('%(ReferencePath.Identity)').Contains('$(WpfWebGpuSdkRoot)'))" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    The real package also drops WebView2Loader.dll into the output through its own targets. Ours
+    needs it too on Windows (WindowsWebViewBackend P/Invokes CreateCoreWebView2EnvironmentWithOptions
+    from it), so it is deliberately left alone there, and removed everywhere else, where it is a
+    Windows binary that can only confuse a deployment.
+
+    NOTE: never write a double hyphen in this file's comments. XML forbids it inside a comment, so
+    the whole SDK fails to load, and MSBuild reports that further down the import chain as an
+    unrelated-looking "MicrosoftNETBuildTasksAssembly is empty" pointing at the .NET SDK's own
+    props. Nothing names this file, and every consuming project stops building at once; only
+    -v:diag ever says "was not imported". The pack now runs XmlPeek over this file and Sdk.props
+    (see WpfWebGpuValidateInputs) so that a malformed comment fails there instead of in an app.
+  -->
+  <!-- Not in a portable build: the output has to be able to land on Windows, where the loader is
+       required, and it sits under runtimes/win-*/native/ where it confuses nothing. -->
+  <Target Name="_WpfWebGpuDropWebView2LoaderOffWindows" AfterTargets="Build;Publish"
+          Condition="'$(_WpfWebGpuWin)' != 'true' and '$(WpfWebGpuPortable)' != 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_WpfWebGpuStrayLoader Include="$(OutDir)WebView2Loader.dll" Condition="'$(OutDir)' != ''" />
+      <_WpfWebGpuStrayLoader Include="$(PublishDir)WebView2Loader.dll" Condition="'$(PublishDir)' != ''" />
+      <_WpfWebGpuStrayLoader Include="$(OutDir)runtimes/**/WebView2Loader.dll" Condition="'$(OutDir)' != ''" />
+    </ItemGroup>
+    <Delete Files="@(_WpfWebGpuStrayLoader)" ContinueOnError="true" />
+  </Target>
+
+  <!-- Same reason, at RUNTIME: a UseWindowsForms app must not resolve Microsoft.WindowsDesktop.App,
+       or its System.Windows.Forms shadows the one deployed beside the app. -->
+  <Target Name="_WpfWebGpuDropWindowsDesktopForWinForms"
+          BeforeTargets="GenerateBuildRuntimeConfigurationFiles;GeneratePublishRuntimeConfigurationFiles"
+          Condition="'$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <RuntimeFramework Remove="@(RuntimeFramework)" Condition="'%(RuntimeFramework.FrameworkName)' == 'Microsoft.WindowsDesktop.App' or '%(Identity)' == 'Microsoft.WindowsDesktop.App'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- ============================== the native backend ============================== -->
+  <!--
+    wgpu-native, picked by the RID this build is actually producing — on EVERY head.
+
+    The package now carries every RID's backend (see WpfWebGpu.Sdk.csproj), so the only decision left
+    here is which one to deploy. Windows used to be exempt from that decision: it hard-coded
+    native/win-arm64/*.dll, which meant an ordinary win-x64 machine — nearly every machine with a WPF
+    app to port — copied an arm64 wgpu_native.dll next to its exe and died at startup. The RID logic
+    below was already right for macOS and Linux; Windows just was not asking it.
+
+    On the desktop heads the whole folder is deployed, not only the shared library: on Windows it
+    also holds the ANGLE GL runtime and WebView2Loader.dll, and elsewhere it holds exactly the one
+    file, so the same glob is correct for both.
+  -->
+  <PropertyGroup Condition="'$(_WpfWebGpuBrowser)' != 'true'">
+    <_WpfWebGpuNativeRid Condition="'$(_WpfWebGpuNativeRid)' == '' and '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_WpfWebGpuNativeRid>
+    <!-- iOS RIDs are not the directory names wgpu-native releases use: the simulator build is
+         iossimulator-arm64 as a RID and ios-arm64-simulator as an asset. Normalize. -->
+    <_WpfWebGpuNativeRid Condition="'$(_WpfWebGpuIos)' == 'true' and $(_WpfWebGpuNativeRid.StartsWith('iossimulator'))">ios-arm64-simulator</_WpfWebGpuNativeRid>
+    <_WpfWebGpuNativeRid Condition="'$(_WpfWebGpuIos)' == 'true' and '$(_WpfWebGpuNativeRid)' == ''">ios-arm64</_WpfWebGpuNativeRid>
+    <_WpfWebGpuNativeRid Condition="'$(_WpfWebGpuAndroid)' == 'true' and '$(_WpfWebGpuNativeRid)' == ''">android-arm64</_WpfWebGpuNativeRid>
+    <!-- Desktop: no explicit RID means "the machine I am building on". -->
+    <_WpfWebGpuNativeRid Condition="'$(_WpfWebGpuNativeRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</_WpfWebGpuNativeRid>
+
+    <_WpfWebGpuNativeFile Condition="'$(_WpfWebGpuIos)' == 'true'">libwgpu_native.a</_WpfWebGpuNativeFile>
+    <_WpfWebGpuNativeFile Condition="'$(_WpfWebGpuNativeFile)' == '' and $(_WpfWebGpuNativeRid.StartsWith('win'))">wgpu_native.dll</_WpfWebGpuNativeFile>
+    <_WpfWebGpuNativeFile Condition="'$(_WpfWebGpuNativeFile)' == '' and $(_WpfWebGpuNativeRid.StartsWith('osx'))">libwgpu_native.dylib</_WpfWebGpuNativeFile>
+    <_WpfWebGpuNativeFile Condition="'$(_WpfWebGpuNativeFile)' == ''">libwgpu_native.so</_WpfWebGpuNativeFile>
+
+    <_WpfWebGpuNativeDir>$(WpfWebGpuSdkRoot)native/$(_WpfWebGpuNativeRid)/</_WpfWebGpuNativeDir>
+    <_WpfWebGpuNativePath>$(_WpfWebGpuNativeDir)$(_WpfWebGpuNativeFile)</_WpfWebGpuNativePath>
+  </PropertyGroup>
+
+  <!-- Desktop heads (Windows, macOS, Linux): deployed beside the app. -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(WpfWebGpuPortable)' != 'true' and Exists('$(_WpfWebGpuNativePath)')">
+    <None Include="$(_WpfWebGpuNativeDir)*" CopyToOutputDirectory="PreserveNewest"
+          Link="%(Filename)%(Extension)" Visible="false" />
+  </ItemGroup>
+
+  <!--
+    PORTABLE desktop output (-p:WpfWebGpuPortable=true): ONE published folder that runs on Windows,
+    Linux and macOS, on x64 and arm64.
+
+    The managed half is already portable — lib/wpf is AnyCPU net10.0 and BAML has no platform in it —
+    so what has to change is the native half. Beside the app will not do: win-x64 and win-arm64 are
+    both called wgpu_native.dll, so a flat folder can hold at most one architecture per OS. They go
+    into runtimes/<rid>/native/ instead, the layout the platform distinguishes them by, and
+    NativeLoad in the interop picks by the RID the process is actually running as. (The framework
+    resolves that layout from deps.json, but only for libraries that arrived as NuGet package assets;
+    these are laid out by these targets, so the resolver does it.)
+
+    Everything else follows from "one folder, three operating systems":
+      - the fonts ship unconditionally, since the output may land on Linux or macOS, where nothing
+        supplies Segoe UI, the Fluent icon face, CJK or a drawable emoji font;
+      - WebView2Loader.dll is kept rather than stripped off-Windows (see the target below);
+      - there is no native apphost. A portable app is App.dll, started with `dotnet App.dll`; an
+        .exe/Mach-O/ELF launcher is per-RID by definition.
+
+    NOT yet portable: Microsoft.Win32.SystemEvents and Microsoft.Win32.Registry. Two assemblies share
+    one identity — our cross-platform stand-in and the real Windows package — and one output can
+    carry only one of them, so a portable build still takes whichever the BUILD MACHINE's head
+    picked. See _WpfWebGpuPortableShimWarning below.
+  -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(WpfWebGpuPortable)' == 'true'">
+    <_WpfWebGpuPortableRid Include="win-x64;win-arm64;win-x86;linux-x64;linux-arm64;osx-x64;osx-arm64" />
+  </ItemGroup>
+
+  <Target Name="_WpfWebGpuPortableNative"
+          BeforeTargets="AssignTargetPaths"
+          Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(WpfWebGpuPortable)' == 'true'">
+    <ItemGroup>
+      <!-- One item per RID, batched: the destination has to carry the RID, and %(Rid) can only be
+           dereferenced like this inside a target. -->
+      <_WpfWebGpuPortableNativeFile Include="$(WpfWebGpuSdkRoot)native/%(_WpfWebGpuPortableRid.Identity)/*">
+        <Rid>%(_WpfWebGpuPortableRid.Identity)</Rid>
+      </_WpfWebGpuPortableNativeFile>
+      <None Include="@(_WpfWebGpuPortableNativeFile)"
+            CopyToOutputDirectory="PreserveNewest"
+            Link="runtimes/%(_WpfWebGpuPortableNativeFile.Rid)/native/%(Filename)%(Extension)"
+            Visible="false" />
+    </ItemGroup>
+    <Message Importance="normal"
+             Text="WpfWebGpu: portable output — staged @(_WpfWebGpuPortableNativeFile->Count()) native files under runtimes/&lt;rid&gt;/native/ for @(_WpfWebGpuPortableRid->'%(Identity)', ', ')." />
+    <Warning Condition="'@(_WpfWebGpuPortableNativeFile)' == ''"
+             Text="WpfWebGpuPortable=true but the SDK carries no native/&lt;rid&gt;/ payload at all. The published app will fail at startup on every platform." />
+  </Target>
+
+  <!-- What a portable output does NOT carry, said once at build time rather than discovered on the
+       target machine. The shims used to be on this list; they are not any more, because they now do
+       the real thing on Windows as well. -->
+  <Target Name="_WpfWebGpuPortableNotes" BeforeTargets="Build"
+          Condition="'$(WpfWebGpuPortable)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true'">
+    <Message Importance="high"
+             Text="WpfWebGpu: portable output. One folder for Windows, Linux and macOS on x64/arm64 (plus win-x86); start it with 'dotnet $(AssemblyName).dll'. The apphost beside it ($(AssemblyName)$(_NativeExecutableExtension)) only runs on the platform this was built on — an executable launcher is per-RID by definition." />
+  </Target>
+
+  <!-- Android: packed into the APK under lib/<abi>/, where the loader finds it for the binding's
+       ordinary DllImport("wgpu_native"). -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuAndroid)' == 'true' and Exists('$(_WpfWebGpuNativePath)')">
+    <AndroidNativeLibrary Include="$(_WpfWebGpuNativePath)">
+      <Abi Condition="'$(_WpfWebGpuNativeRid)' == 'android-arm64'">arm64-v8a</Abi>
+      <Abi Condition="'$(_WpfWebGpuNativeRid)' == 'android-x64'">x86_64</Abi>
+      <Abi Condition="'$(_WpfWebGpuNativeRid)' == 'android-arm'">armeabi-v7a</Abi>
+    </AndroidNativeLibrary>
+  </ItemGroup>
+
+  <!-- iOS: linked STATICALLY into the app executable. An iOS app cannot load a third-party shared
+       library, so the binding's entry points come from libwgpu_native.a — and ForceLoad is what
+       keeps the linker from dead-stripping symbols nothing calls statically (every one of them is
+       reached through a P/Invoke). The frameworks are what wgpu's Metal backend links against. -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuIos)' == 'true' and Exists('$(_WpfWebGpuNativePath)')">
+    <NativeReference Include="$(_WpfWebGpuNativePath)">
+      <Kind>Static</Kind>
+      <ForceLoad>True</ForceLoad>
+      <Frameworks>Metal QuartzCore Foundation CoreGraphics IOSurface</Frameworks>
+    </NativeReference>
+  </ItemGroup>
+
+  <Target Name="_WpfWebGpuWarnMissingNative" BeforeTargets="Build"
+          Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and !Exists('$(_WpfWebGpuNativePath)')">
+    <Warning Text="WpfWebGpu.Sdk carries no WebGPU backend for '$(_WpfWebGpuNativeRid)' (looked for $(_WpfWebGpuNativePath)). The app will fail to start with DllNotFoundException. The package is meant to carry every RID — if this one is genuinely new, add it to eng/fetch-wgpu.ps1 and to the pack list in WpfWebGpu.Sdk.csproj." />
+  </Target>
+
+  <!--
+    unix desktop: the app-local fonts, the two families neither Linux nor macOS has.
+
+    Symbols       the Fluent theme draws its glyph icons from Segoe Fluent Icons / Segoe MDL2 Assets,
+                  which ship on no Linux or macOS box. Their glyphs sit in a private-use range no
+                  text font covers, so every chevron, checkmark and NavigationView glyph falls
+                  through to a text font and renders as a missing-glyph box. FontFactoryState
+                  substitutes both families onto "Symbols".
+    Cascadia Code its programming LIGATURES are the point: the substitution chain's fallbacks
+                  (Menlo, Consolas, DejaVu Sans Mono) have none, so code samples lose them and
+                  render as plain characters.
+
+    Both are what SystemFontCatalog's app-local probe is for. The iOS, Android and browser heads
+    already bundle these; the desktop unix head was the one that did not.
+
+    Only these two: DejaVu and Liberation are the rest of what this repo carries, and those are
+    already installed on any normal Linux (the head lists them as prerequisites), so shipping them
+    again would add megabytes to every app for nothing.
+  -->
+  <!--
+    The app-local fonts, on every head that has no system copy to fall back on.
+
+    They live in their own package now (WpfWebGpu.Fonts, referenced just above) rather than inside
+    this SDK: the bundle is 27 MB, it was two thirds of this package, and the Windows head — which
+    has Segoe UI, Segoe Fluent Icons, Cascadia and a system emoji font already — never read a byte of
+    it. $(WpfWebGpuFontsRoot) is set by that package's build/props.
+
+    What each family is doing here:
+
+    Selawik       the metric-compatible open replacement for Segoe UI, and the FIRST substitute
+                  FontFactoryState asks for. A wildcard so every weight vendored gets deployed.
+                  See eng/check-font-substitutions.py, which fails while it is missing.
+    Symbols       the Fluent theme draws its glyph icons from Segoe Fluent Icons / Segoe MDL2 Assets,
+                  which ship on no Linux, macOS or mobile box. Their glyphs sit in a private-use
+                  range no text font covers, so every chevron, checkmark and NavigationView glyph
+                  falls through to a text font and renders as a missing-glyph box.
+    Cascadia Code its programming LIGATURES are the point: the substitution chain's fallbacks
+                  (Menlo, Consolas, DejaVu Sans Mono) have none, so code samples lose them.
+    Noto Sans CJK Japanese, Chinese and Korean, as five separately-named families in one collection.
+                  Unlike DejaVu and Liberation this is NOT a safe assumption on a Linux box — a
+                  desktop install without the CJK language packs has no font for these scripts at
+                  all, and the text renders as boxes — so it ships even though it is the largest
+                  asset in the bundle. The families are named the way the .CompositeFont FamilyMaps
+                  expect ("Noto Sans CJK JP" and friends), so per-language selection keeps Japanese
+                  text in Japanese letterforms.
+    Twemoji       a COLR/CPAL emoji face, for the same reason: the platforms do not supply one this
+                  renderer can draw. Colour glyphs come from COLR layer outlines, and the system
+                  emoji fonts are mostly a different format entirely — Noto Color Emoji on Linux and
+                  Android is CBDT/CBLC (colour bitmaps) and Apple Color Emoji is sbix — so emoji
+                  rendered as nothing at all off Windows. See TwemojiMozilla-LICENSE.txt.
+
+    Only these: DejaVu and Liberation are the rest of what the bundle carries, and those are already
+    installed on any normal Linux (the head lists them as prerequisites), so shipping them again
+    would add megabytes to every app for nothing. The browser and mobile heads take the whole bundle
+    instead — see the scaffolding target below and @(AndroidAsset)/@(BundleResource) here — because
+    there is no system font store to fall back to at all.
+  -->
+  <ItemGroup Condition="'$(_WpfWebGpuNeedsFonts)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <_WpfWebGpuAppFont Include="$(WpfWebGpuFontsRoot)Symbols.ttf" Condition="Exists('$(WpfWebGpuFontsRoot)Symbols.ttf')" />
+    <_WpfWebGpuAppFont Include="$(WpfWebGpuFontsRoot)CascadiaCode-Regular.ttf" Condition="Exists('$(WpfWebGpuFontsRoot)CascadiaCode-Regular.ttf')" />
+    <_WpfWebGpuAppFont Include="$(WpfWebGpuFontsRoot)Selawik*.ttf" />
+    <_WpfWebGpuAppFont Include="$(WpfWebGpuFontsRoot)NotoSansCJK-Regular.ttc" Condition="Exists('$(WpfWebGpuFontsRoot)NotoSansCJK-Regular.ttc')" />
+    <_WpfWebGpuAppFont Include="$(WpfWebGpuFontsRoot)TwemojiMozilla.ttf" Condition="Exists('$(WpfWebGpuFontsRoot)TwemojiMozilla.ttf')" />
+  </ItemGroup>
+
+  <!-- macOS/Linux desktop (and any portable build, which may be run there): beside the app, in
+       fonts/, which is where SystemFontCatalog's app-local probe looks. -->
+  <ItemGroup Condition="('$(_WpfWebGpuUnix)' == 'true' or '$(WpfWebGpuPortable)' == 'true') and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true'">
+    <None Include="@(_WpfWebGpuAppFont)" CopyToOutputDirectory="PreserveNewest"
+          Link="fonts/%(Filename)%(Extension)" Visible="false" />
+  </ItemGroup>
+
+  <!-- Android/iOS: the whole bundle, as platform assets. There is no system font store these heads
+       can read, so the fallbacks (DejaVu, Liberation) have to travel too. -->
+  <ItemGroup Condition="'$(_WpfWebGpuAndroid)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <AndroidAsset Include="$(WpfWebGpuFontsRoot)*.ttf;$(WpfWebGpuFontsRoot)*.ttc" Link="fonts/%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(_WpfWebGpuIos)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <BundleResource Include="$(WpfWebGpuFontsRoot)*.ttf;$(WpfWebGpuFontsRoot)*.ttc" Link="fonts/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- A head that needs the bundle and did not get it renders in fallback letterforms, with boxes
+       for CJK and nothing at all for emoji — none of which looks like a missing package. -->
+  <Target Name="_WpfWebGpuWarnMissingFonts" BeforeTargets="PrepareForBuild"
+          Condition="'$(_WpfWebGpuNeedsFonts)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuFontsRoot)' == ''">
+    <Warning Text="The WpfWebGpu.Fonts package did not restore, so this head has no app-local fonts: UI text falls back to whatever the system has, CJK renders as boxes and emoji as nothing. Check that the feed serving WpfWebGpu.Sdk also serves WpfWebGpu.Fonts." />
+  </Target>
+
+  <!-- unix: overlay the cross-platform Microsoft.Win32.SystemEvents / Registry shims over whatever
+       the Windows-only runtime packages dropped in the output (same strong-name identity, so the
+       load binds the shim). These are the shims the windows head deliberately does NOT use. -->
+  <Target Name="_WpfWebGpuOverlaySystemEventsShim"
+          AfterTargets="Build;Publish;CopyFilesToOutputDirectory"
+          Condition="('$(_WpfWebGpuUnix)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true' or '$(WpfWebGpuPortable)' == 'true') and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuBrowser)' != 'true'">
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
+          Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
+          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
+          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
+          DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
+          Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
+          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
+          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
+  </Target>
+
+  <!-- ================================ browser ================================ -->
+
+  <PropertyGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <!-- Boot shim: pre-acquires the WebGPU device (async) before the app's own
+         entry point runs; the app's generated App.Main is found by reflection. -->
+    <StartupObject Condition="'$(StartupObject)' == ''">WpfWebGpuWasmBoot</StartupObject>
+    <!-- AOT is the difference between ~10fps (interpreter) and full frame rate.
+         Opt out with -p:WpfWebGpuAot=false for fast development builds. -->
+    <WpfWebGpuAot Condition="'$(WpfWebGpuAot)' == ''">true</WpfWebGpuAot>
+    <RunAOTCompilation Condition="'$(RunAOTCompilation)' == ''">$(WpfWebGpuAot)</RunAOTCompilation>
+    <RunAOTCompilationAfterBuild Condition="'$(RunAOTCompilationAfterBuild)' == ''">$(WpfWebGpuAot)</RunAOTCompilationAfterBuild>
+    <WasmEmitSymbolMap Condition="'$(WasmEmitSymbolMap)' == ''">true</WasmEmitSymbolMap>
+    <!-- The wasm SDK requires trimming for AOT; WPF resolves types/resources
+         reflectively (BAML, themes), so trim only trimmable-marked BCL assemblies. -->
+    <PublishTrimmed Condition="'$(PublishTrimmed)' == ''">true</PublishTrimmed>
+    <TrimMode Condition="'$(TrimMode)' == ''">partial</TrimMode>
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <!-- Keep EXCEPTION MESSAGES. Trimming otherwise substitutes resource lookups with their keys, so
+         every failure in the browser reads like "Arg_PlatformNotSupported" instead of saying what is
+         not supported. That turns ordinary diagnosis into guesswork precisely where diagnosis is
+         hardest: there is no debugger attached to a wasm page, and the message is often all the app
+         gets to show. The size cost is a few hundred KB against a bundle measured in megabytes. -->
+    <UseSystemResourceKeys Condition="'$(UseSystemResourceKeys)' == ''">false</UseSystemResourceKeys>
+    <!-- WPF needs real cultures (SystemFonts, text formatting). -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Trimming otherwise flips this off, and reflection-based JsonSerializer then throws
+         JsonSerializerIsReflectionDisabled. Apps that deserialize their own data files without a
+         source-generated JsonSerializerContext (e.g. WPFGallery's ControlsInfoData.json) fail at
+         static init. Same rationale as SuppressTrimAnalysisWarnings/TrimmerRootAssembly above:
+         this SDK targets existing reflection-heavy WPF apps, unmodified. -->
+    <JsonSerializerIsReflectionEnabledByDefault Condition="'$(JsonSerializerIsReflectionEnabledByDefault)' == ''">true</JsonSerializerIsReflectionEnabledByDefault>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!-- Fingerprinting publishes _framework/dotnet.native.js under a content-hashed name as well as
+         its plain one, and the placeholder task then refuses the duplicate ("already mapped to
+         dotnet.native.<hash>.js"). The page served is our own index.html, which asks for the stable
+         names, so nothing here needs cache-busting filenames. -->
+    <WasmFingerprintAssets Condition="'$(WasmFingerprintAssets)' == ''">false</WasmFingerprintAssets>
+    <StaticWebAssetsFingerprintContent Condition="'$(StaticWebAssetsFingerprintContent)' == ''">false</StaticWebAssetsFingerprintContent>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <Compile Include="$(WpfWebGpuSdkRoot)web/WasmBoot.cs" Link="WpfWebGpuWasmBoot.cs" />
+    <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
+
+    <TrimmerRootAssembly Include="$(AssemblyName)" />
+    <TrimmerRootAssembly Include="WindowsBase" />
+    <TrimmerRootAssembly Include="PresentationCore" />
+    <TrimmerRootAssembly Include="PresentationFramework" />
+    <TrimmerRootAssembly Include="System.Xaml" />
+    <!-- Themes are resolved reflectively (Assembly.Load of "PresentationFramework.{ThemeName}" and
+         pack://...;component/Themes/Fluent.xaml), so the trimmer cannot see they are used. Fluent is
+         what ThemeMode.System/Light/Dark resolve to, so a trimmed Fluent app dies with a
+         FileNotFoundException on its first merged dictionary. Every theme that SHIPS is rooted, for
+         the same reason: rooting is what makes shipping it mean anything. -->
+    <TrimmerRootAssembly Include="PresentationFramework.Fluent" />
+    <TrimmerRootAssembly Include="PresentationFramework.Aero" />
+    <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
+    <TrimmerRootAssembly Include="PresentationFramework.AeroLite" />
+    <TrimmerRootAssembly Include="PresentationFramework.Classic" />
+    <TrimmerRootAssembly Include="PresentationFramework.Luna" />
+    <TrimmerRootAssembly Include="PresentationFramework.Royale" />
+    <TrimmerRootAssembly Include="PresentationUI" />
+    <TrimmerRootAssembly Include="ReachFramework" />
+    <TrimmerRootAssembly Include="System.Printing" />
+    <TrimmerRootAssembly Include="DirectWriteForwarder" />
+    <TrimmerRootAssembly Include="Microsoft.Wpf.Interop.WebGpu" />
+    <TrimmerRootAssembly Include="UIAutomationTypes" />
+    <TrimmerRootAssembly Include="UIAutomationProvider" />
+    <TrimmerRootAssembly Include="System.Windows.Primitives" />
+    <TrimmerRootAssembly Include="System.Windows.Input.Manipulations" />
+    <TrimmerRootAssembly Include="System.IO.Packaging" />
+    <TrimmerRootAssembly Include="System.Windows.Extensions" />
+    <TrimmerRootAssembly Include="System.Configuration.ConfigurationManager" />
+
+    <!-- Keep these on the interpreter: they reference assemblies that are not in
+         the browser bundle (WinForms, Accessibility, print pipeline) and none are
+         on the rendering/layout hot path. -->
+    <_AOT_InternalForceInterpretAssemblies Include="PresentationUI.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationTypes.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationProvider.dll" />
+    <!-- The UIA CLIENT side and the Ribbon joined the shared payload when lib/wpf-windows was folded
+         into lib/wpf, so they are in the browser bundle now too. Same treatment as their siblings
+         above: nothing on a browser path reaches them, and none is on the rendering hot path. -->
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationClient.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationClientSideProviders.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Windows.Controls.Ribbon.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Windows.Presentation.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="ReachFramework.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Printing.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Drawing.Common.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" />
+  </ItemGroup>
+
+  <!-- Root EVERY assembly the app publishes, so the trimmer cannot drop one that is only ever
+       reached through BAML. XAML references an assembly via its xmlns (e.g.
+       xmlns:i="http://schemas.microsoft.com/xaml/behaviors"), which leaves NO static IL reference,
+       so the linker removes the whole assembly and the page dies at runtime with
+       FileNotFoundException from Baml2006SchemaContext.ResolveAssembly. That killed the WPFGallery
+       Icons page (Microsoft.Xaml.Behaviors) and, before it was rooted by name, the Fluent theme.
+       Same rationale as SuppressTrimAnalysisWarnings: this SDK targets existing reflection-heavy
+       WPF apps, unmodified, so correctness beats bundle size. -->
+  <Target Name="_WpfWebGpuRootAppAssembliesForTrimming"
+          BeforeTargets="PrepareForILLink"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(PublishTrimmed)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <!-- SATELLITES are excluded: a localized app ships Foo.resources.dll per culture (Roslyn alone
+           brings a dozen), and ILLink rejects one as a ROOT — "error IL1032: Root assembly
+           'Microsoft.CodeAnalysis.CSharp.resources' could not be found" — because a root is looked up
+           by assembly identity and a satellite is not in that set. They also need no rooting: a
+           satellite's resources are reached through its main assembly, which IS rooted below.
+           Identified two ways because either alone leaks one: the culture subdirectory they are copied
+           into, and the .resources suffix. -->
+      <_WpfWebGpuAppAsm Include="@(ReferenceCopyLocalPaths)"
+                        Condition="'%(Extension)' == '.dll' and '%(ReferenceCopyLocalPaths.DestinationSubDirectory)' == '' and !$([System.String]::Copy('%(Filename)').EndsWith('.resources'))" />
+      <TrimmerRootAssembly Include="@(_WpfWebGpuAppAsm->'%(Filename)'->Distinct())" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    A browser bundle is FLAT: every assembly becomes _framework/<name>.wasm, whatever folder it was
+    published from. Real apps publish assemblies into SUBFOLDERS as well, and those are private
+    payloads for something that cannot exist in a browser at all — Roslyn's out-of-process MSBuild
+    host (BuildHost-net472/, BuildHost-netcore/, each a complete second copy of dozens of assemblies),
+    per-architecture folders (amd64/, arm64/), tools/, and an app's own plugin drop folder.
+
+    Flattening them is not merely wasteful, it is fatal: two files with one identity collide while the
+    bundle is assembled, and the build dies in ManagedToNativeGenerator with "The assembly 'Humanizer,
+    Version=2.14.0.0' has already been loaded into this MetadataLoadContext" — a message that names
+    neither the folder nor the app that brought it in.
+
+    SATELLITES are the one kind of nested assembly that is genuinely part of the app (fr/App.resources.dll),
+    and the wasm SDK bundles them with their culture, so they stay.
+  -->
+  <!-- Computes @(_WpfWebGpuAppPayload) once: both the publish staging below and the AOT bundling
+       further down need the same list, and recomputing it in two places would let them disagree. -->
+  <Target Name="_WpfWebGpuComputeAppPayload"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_WpfWebGpuAppPayload Include="$(OutDir)%(WpfWebGpuBrowserPayloadDir.Identity)/**/*"
+                            Condition="'@(WpfWebGpuBrowserPayloadDir)' != '' and '@(_WpfWebGpuAppPayload)' == ''" />
+    </ItemGroup>
+    <ItemGroup>
+      <_WpfWebGpuAppPayload>
+        <PayloadPath>$([MSBuild]::MakeRelative($([System.IO.Path]::GetFullPath('$(OutDir)')), '%(FullPath)'))</PayloadPath>
+      </_WpfWebGpuAppPayload>
+    </ItemGroup>
+  </Target>
+
+  <Target Name="_WpfWebGpuBrowserDropNestedPayloads"
+          DependsOnTargets="_WpfWebGpuComputeAppPayload"
+          AfterTargets="ComputeResolvedFilesToPublishList"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <!-- Nested = published into a SUBFOLDER. A wasm bundle is flat (every assembly becomes
+           _framework/<name>.wasm), so two files in different folders claim one name and the build dies
+           in ManagedToNativeGenerator with "The assembly 'Humanizer, Version=2.14.0.0' has already been
+           loaded into this MetadataLoadContext" — a message naming neither folder nor culprit.
+           Satellites are the one nested kind the wasm SDK does handle, so they stay. -->
+      <_WpfWebGpuPackagePayload Include="@(ResolvedFileToPublish)"
+          Condition="'%(Extension)' == '.dll'
+                     and $([System.String]::Copy('%(ResolvedFileToPublish.RelativePath)').Replace('\','/').Contains('/'))
+                     and !$([System.String]::Copy('%(Filename)').EndsWith('.resources'))" />
+      <ResolvedFileToPublish Remove="@(_WpfWebGpuPackagePayload)" />
+
+    </ItemGroup>
+
+    <!-- The payload list itself is computed by _WpfWebGpuComputeAppPayload (above), which this
+         target depends on; it is shared with the AOT bundling target so the two cannot diverge. -->
+
+    <PropertyGroup>
+      <!-- Built as a property first: a transform with embedded quotes cannot be written directly into
+           a task attribute (MSB4012 "the expression cannot be used in this context"). -->
+      <_WpfWebGpuPayloadJson>[@(_WpfWebGpuAppPayload->'&quot;%(PayloadPath)&quot;', ',')]</_WpfWebGpuPayloadJson>
+    </PropertyGroup>
+
+
+    <Copy SourceFiles="@(_WpfWebGpuAppPayload)"
+          DestinationFiles="@(_WpfWebGpuAppPayload->'$(PublishDir)wwwroot/payload/%(PayloadPath)')"
+          SkipUnchangedFiles="true" Condition="'@(_WpfWebGpuAppPayload)' != ''" />
+
+    <!-- A manifest, for the same reason fonts/index.json exists: a directory cannot be listed over HTTP,
+         so the boot script has to be told what to mount. -->
+    <WriteLinesToFile File="$(PublishDir)wwwroot/payload/index.json" Lines="$(_WpfWebGpuPayloadJson)"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" Condition="'@(_WpfWebGpuAppPayload)' != ''" />
+
+    <!-- Say what happened either way: silently thinning an app's output looks exactly like the bundle
+         having lost assemblies. -->
+    <Message Importance="normal" Condition="'@(_WpfWebGpuAppPayload)' != ''"
+             Text="WpfWebGpu: staged @(_WpfWebGpuAppPayload->Count()) app payload files for the wasm filesystem: @(_WpfWebGpuAppPayload->'%(PayloadPath)', ', ')" />
+    <Message Importance="normal" Condition="'@(_WpfWebGpuPackagePayload)' != ''"
+             Text="WpfWebGpu: excluded @(_WpfWebGpuPackagePayload->Count()) package-private assemblies published into subfolders: @(_WpfWebGpuPackagePayload->'%(RelativePath)', ', ')" />
+  </Target>
+
+  <!-- Browser equivalent of _WpfWebGpuOverlaySystemEventsShim. The framework's SystemEvents/Registry
+       assemblies are throw-only stubs in wasm (PlatformNotSupported_SystemEvents; null registry hives)
+       and they win over our lib/wpf-browser Reference, so the shims must be swapped in explicitly.
+       The desktop overlay-copy trick does not work here: assemblies are webcil'd into _framework from
+       WasmAssembliesToBundle, so substitute in that item list (its final form) instead of on disk. -->
+  <Target Name="_WpfWebGpuBrowserOverlayShims"
+          AfterTargets="_GetDefaultWasmAssembliesToBundle"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','Microsoft.Win32.SystemEvents'))" />
+      <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','Microsoft.Win32.Registry'))" />
+      <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/Microsoft.Win32.SystemEvents.dll" />
+      <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/Microsoft.Win32.Registry.dll" />
+
+      <!-- System.Diagnostics.Process in the browser throws PlatformNotSupportedException from every
+           member, GetCurrentProcess() included — and that one is pure self-inspection, which apps use
+           for status bars and telemetry rather than for spawning anything. A single such call in a
+           constructor took out this app's entire plugin system before any plugin was even looked at.
+           The shim answers self-inspection with the runtime's real numbers and refuses only what a
+           browser truly cannot do. -->
+      <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','System.Diagnostics.Process'))" />
+      <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/System.Diagnostics.Process.dll" />
+    </ItemGroup>
+  </Target>
+
+  <!-- ============================== base SDK + markup ============================== -->
+
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.WebAssembly" Condition="'$(_WpfWebGpuBrowser)' == 'true'" />
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" Condition="'$(_WpfWebGpuBrowser)' != 'true'" />
+
+  <!-- XAML markup compilation (after the base targets, mirroring where the WindowsDesktop SDK
+       imports it). Every WPF flavor now uses the fork's compiler — the windows head no longer
+       falls back to the stock WindowsDesktop SDK. -->
+  <Import Project="$(WpfWebGpuSdkRoot)targets/Microsoft.WinFX.targets"
+          Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''" />
+
+  <!-- Scaffold the browser host page into wwwroot: index.html and main.js are
+       copied once (kept if the app customizes them); the two WPF JS interop
+       modules and the bundled fonts are kept in sync with the SDK on every build.
+       Runs before static-web-asset discovery so integrity hashes stay valid. -->
+  <Target Name="WpfWebGpuScaffoldWeb"
+          BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <MakeDir Directories="$(MSBuildProjectDirectory)/wwwroot;$(MSBuildProjectDirectory)/wwwroot/fonts" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/index.html" DestinationFolder="$(MSBuildProjectDirectory)/wwwroot"
+          Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/index.html')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/main.js" DestinationFolder="$(MSBuildProjectDirectory)/wwwroot"
+          Condition="!Exists('$(MSBuildProjectDirectory)/wwwroot/main.js')" />
+    <Copy SourceFiles="$(WpfWebGpuSdkRoot)web/wgpu-interop.js;$(WpfWebGpuSdkRoot)web/browser-window.js;$(WpfWebGpuSdkRoot)web/browser-media.js;$(WpfWebGpuSdkRoot)web/browser-webview.js"
+          DestinationFolder="$(MSBuildProjectDirectory)/wwwroot" SkipUnchangedFiles="true" />
+    <ItemGroup>
+      <!-- .ttc as well as .ttf: the CJK font is an OpenType COLLECTION (five language families in
+           one file), and a *.ttf glob silently leaves it behind — which looks exactly like the font
+           not existing, since the failure is missing glyphs rather than a build error.
+           $(WpfWebGpuFontsRoot) comes from the WpfWebGpu.Fonts package (see the fonts section
+           above); the browser takes the WHOLE bundle, having no system font store at all. -->
+      <_WpfWebGpuFonts Include="$(WpfWebGpuFontsRoot)*.ttf;$(WpfWebGpuFontsRoot)*.ttc" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WpfWebGpuFonts)" DestinationFolder="$(MSBuildProjectDirectory)/wwwroot/fonts" SkipUnchangedFiles="true" />
+
+    <!--
+      A manifest of what was actually staged, because the browser cannot list a directory over HTTP
+      and main.js therefore has to be told what to mount into the wasm filesystem.
+
+      It used to be told by a hand-written array, and every copy of main.js drifted from the bundle
+      in its own direction: the SDK's own template never listed Selawik (the FIRST substitute the
+      font stack asks for in place of Segoe UI, so the browser silently fell through to Liberation
+      for all UI text), one sample listed a single font, and none of them would have listed the CJK
+      collection. Generating the list from the copy that just happened removes the class of bug:
+      a font added to the bundle is mounted by every web head on the next build, with nothing to
+      remember.
+    -->
+    <PropertyGroup>
+      <_WpfWebGpuFontJson>[@(_WpfWebGpuFonts->'"%(Filename)%(Extension)"', ',')]</_WpfWebGpuFontJson>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(MSBuildProjectDirectory)/wwwroot/fonts/index.json"
+                      Lines="$(_WpfWebGpuFontJson)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!--
+    Android: make the app AOT-compilable.
+
+    mono-aot-cross must RESOLVE every reference in each assembly it compiles, and the WPF closure is
+    full of edges that exist only on Windows. Two distinct problems, two answers.
+
+    1. Assemblies that are pure Windows shims here (PresentationUI naming System.Windows.Forms, and
+       friends). Nothing on an Android path reaches them, so they are dropped from the AOT input
+       list; they still ship as IL and run under the JIT if anything ever calls in. This is the same
+       answer the iOS head gives with MtouchInterpreter, which Android has no equivalent of.
+
+    2. System.Formats.Nrbf, which PresentationCore itself names on its DataObject serialisation path.
+       PresentationCore has to be AOT compiled, so this one cannot be skipped: the assembly has to be
+       resolvable. It needs the REAL implementation assembly, not the WindowsDesktop reference (that
+       one carries a different identity and AOT rejects it), and it has to sit beside the assembly
+       being compiled because mono-aot-cross takes no search path. The package itself is already
+       referenced by the unix item group above, which Android also matches.
+  -->
+  <Target Name="WpfWebGpuExcludeWindowsShimsFromAot" AfterTargets="_AndroidAotInputs"
+          Condition="'$(_WpfWebGpuAndroid)' == 'true'">
+    <ItemGroup>
+      <_AndroidAotInputs Remove="@(_AndroidAotInputs)"
+                         Condition="'%(Filename)' == 'PresentationUI'
+                                 Or '%(Filename)' == 'ReachFramework'
+                                 Or '%(Filename)' == 'System.Printing'
+                                 Or '%(Filename)' == 'System.Windows.Primitives'
+                                 Or '%(Filename)' == 'System.Private.Windows.Core'
+                                 Or '%(Filename)' == 'System.Formats.Nrbf'
+                                 Or '%(Filename)' == 'Accessibility'
+                                 Or '%(Filename)' == 'UIAutomationTypes'
+                                 Or '%(Filename)' == 'UIAutomationProvider'
+                                 Or '%(Filename)' == 'UIAutomationClient'
+                                 Or '%(Filename)' == 'UIAutomationClientSideProviders'
+                                 Or '%(Filename)' == 'System.Windows.Controls.Ribbon'
+                                 Or '%(Filename)' == 'System.Drawing.Common'" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="WpfWebGpuStageAotResolvableRefs" BeforeTargets="_AndroidAotCompilation"
+          Condition="'$(_WpfWebGpuAndroid)' == 'true'">
+    <ItemGroup>
+      <_WpfWebGpuAotResolvable Include="@(RuntimeCopyLocalItems)" Condition="'%(Filename)' == 'System.Formats.Nrbf'" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WpfWebGpuAotResolvable)" DestinationFolder="$(IntermediateOutputPath)linked"
+          SkipUnchangedFiles="true"
+          Condition="'@(_WpfWebGpuAotResolvable)' != '' And Exists('$(IntermediateOutputPath)linked')" />
+  </Target>
+
+</Project>

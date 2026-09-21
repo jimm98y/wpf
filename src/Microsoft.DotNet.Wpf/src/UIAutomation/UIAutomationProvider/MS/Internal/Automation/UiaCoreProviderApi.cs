@@ -30,11 +30,14 @@ namespace MS.Internal.Automation
 
         internal static IntPtr UiaReturnRawElementProvider(IntPtr hwnd, IntPtr wParam, IntPtr lParam, IRawElementProviderSimple el)
         {
+            // UIAutomationCore.dll is Windows-only; there are no UIA clients off-Windows.
+            if (!OperatingSystem.IsWindows()) return IntPtr.Zero;
             return RawUiaReturnRawElementProvider( hwnd, wParam, lParam, el );
         }
 
         internal static IRawElementProviderSimple UiaHostProviderFromHwnd(IntPtr hwnd)
         {
+            if (!OperatingSystem.IsWindows()) return null;
             IRawElementProviderSimple provider;
             CheckError(RawUiaHostProviderFromHwnd(hwnd, out provider));
             return provider;
@@ -48,37 +51,46 @@ namespace MS.Internal.Automation
 
         internal static void UiaRaiseAutomationPropertyChangedEvent(IRawElementProviderSimple provider, int propertyId, object oldValue, object newValue)
         {
+            if (!OperatingSystem.IsWindows()) return;
             CheckError(RawUiaRaiseAutomationPropertyChangedEvent(provider, propertyId, oldValue, newValue));
         }
 
         internal static void UiaRaiseAutomationEvent(IRawElementProviderSimple provider, int eventId)
         {
+            if (!OperatingSystem.IsWindows()) return;
             CheckError(RawUiaRaiseAutomationEvent(provider, eventId));
         }
 
         internal static void UiaRaiseStructureChangedEvent(IRawElementProviderSimple provider, StructureChangeType structureChangeType, int[] runtimeId)
         {
+            if (!OperatingSystem.IsWindows()) return;
             CheckError(RawUiaRaiseStructureChangedEvent(provider, structureChangeType, runtimeId, runtimeId == null ? 0 : runtimeId.Length));
         }
 
         internal static void UiaRaiseAsyncContentLoadedEvent(IRawElementProviderSimple provider, AsyncContentLoadedState asyncContentLoadedState, double PercentComplete)
         {
+            if (!OperatingSystem.IsWindows()) return;
             CheckError(RawUiaRaiseAsyncContentLoadedEvent(provider, asyncContentLoadedState, PercentComplete));
         }
 
         internal static void UiaRaiseNotificationEvent(IRawElementProviderSimple provider,
             AutomationNotificationKind notificationKind, AutomationNotificationProcessing notificationProcessing, string displayString, string activityId)
         {
+            if (!OperatingSystem.IsWindows()) return;
             CheckError(RawUiaRaiseNotificationEvent(provider, notificationKind, notificationProcessing, displayString, activityId));
         }
 
         internal static void UiaRaiseActiveTextPositionChangedEvent(IRawElementProviderSimple provider, ITextRangeProvider textRange)
         {
+            if (!OperatingSystem.IsWindows()) return;
             CheckError(RawUiaRaiseActiveTextPositionChangedEvent(provider, textRange));
         }
 
         internal static bool UiaClientsAreListening()
         {
+            // No UIA client can attach off-Windows (UIAutomationCore.dll is Windows-only),
+            // so short-circuit here: every AutomationPeer.Raise* checks this first and bails.
+            if (!OperatingSystem.IsWindows()) return false;
             return RawUiaClientsAreListening();
         }
 

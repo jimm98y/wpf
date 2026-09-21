@@ -283,6 +283,16 @@ namespace System.Windows
         {
             get
             {
+                // SPI_GETDROPSHADOW is a user32 query with no off-Windows equivalent; the shim leaves the
+                // cached value at its default (false), which would disable the drop shadow WPF draws on
+                // popups (ComboBox dropdowns, menus, tooltips) via SystemDropShadowChrome -- so they'd have
+                // no shadow while their Windows counterparts do. Report enabled off-Windows (the shadow is
+                // rendered by WPF's own chrome over the transparent popup, matching Windows).
+                if (!OperatingSystem.IsWindows())
+                {
+                    return true;
+                }
+
                 lock (_cacheValid)
                 {
                     while (!_cacheValid[(int)CacheSlot.DropShadow])

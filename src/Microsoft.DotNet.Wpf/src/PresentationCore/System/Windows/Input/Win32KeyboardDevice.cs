@@ -30,11 +30,40 @@ namespace System.Windows.Input
         /// <returns>                           
         ///     The state of the specified key
         /// </returns>
+        // Off-Windows there is no GetKeyState; key state is tracked from the input reports as the
+        // keyboard provider feeds them in (see TrackMacKey). Indexed by Win32 virtual-key code.
+        private static readonly KeyStates[] s_macKeyStates = new KeyStates[256];
+
+        internal static void TrackMacKey(int virtualKey, bool down)
+        {
+            if ((uint)virtualKey > 255) return;
+
+            if (down)
+            {
+                s_macKeyStates[virtualKey] |= KeyStates.Down;
+                // Lock keys flip their toggled state on each press.
+                if (virtualKey == 0x14 /*VK_CAPITAL*/ || virtualKey == 0x90 /*VK_NUMLOCK*/)
+                {
+                    s_macKeyStates[virtualKey] ^= KeyStates.Toggled;
+                }
+            }
+            else
+            {
+                s_macKeyStates[virtualKey] &= ~KeyStates.Down;
+            }
+        }
+
         protected override KeyStates GetKeyStatesFromSystem(Key key)
         {
             KeyStates keyStates = KeyStates.None;
 
             int virtualKeyCode = KeyInterop.VirtualKeyFromKey(key);
+
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return ((uint)virtualKeyCode <= 255) ? s_macKeyStates[virtualKeyCode] : KeyStates.None;
+            }
+
             int nativeKeyState = UnsafeNativeMethods.GetKeyState(virtualKeyCode);
 
             if ((nativeKeyState & 0x00008000) == 0x00008000)

@@ -1,0 +1,6 @@
+<Project>
+  <!-- Isolate this WinForms-on-WebGPU sample from the WPF repo's Directory.Build machinery (artifacts
+       output layout, SR-resource generation, strict style analyzers). It is a standalone SDK-style
+       project that references the from-source WinFormsInterop build; the empty file stops MSBuild's
+       upward search so the repo-wide customization does not apply. -->
+</Project>

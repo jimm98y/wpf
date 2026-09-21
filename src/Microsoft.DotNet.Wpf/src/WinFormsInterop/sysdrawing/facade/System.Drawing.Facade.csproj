@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The System.Drawing assembly IDENTITY.
+
+    Everything built against .NET Framework names "System.Drawing, Version=4.0.0.0, Culture=neutral,
+    PublicKeyToken=b03f5f7f11d50a3a": a third-party control's TypeConverter and Editor attributes, a
+    .resx naming the type of the bitmap it holds, a designer's generated code, a serialized object
+    graph. We use those libraries WITHOUT rebuilding them, so that identity has to resolve to the
+    assembly that actually carries our types.
+
+    It did not. Ours is called Mono.System.Drawing (deliberately, so that the SDK's compile-time
+    conflict resolution cannot quietly prefer the inbox facade over it), and so "System.Drawing"
+    bound to the inbox facade instead, which forwards to System.Drawing.Common. A caller asking for
+    System.Drawing.Bitmap got a DIFFERENT Bitmap from the one this WinForms draws with, and
+    System.Drawing.Design.UITypeEditor did not resolve at all, which is why every property that
+    names its editor's base type that way silently fell back to its type converter.
+
+    So the implementation keeps its unambiguous name, and this carries the identity, forwarding
+    every public type to it. Exactly what the inbox facade does, pointed at us.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Drawing</AssemblyName>
+    <RootNamespace>System.Drawing</RootNamespace>
+    <!-- The Framework identity callers ask for. -->
+    <AssemblyVersion>4.0.0.0</AssemblyVersion>
+    <FileVersion>99.0.0.0</FileVersion>
+    <Version>4.0.0.0</Version>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS0618;CS0612;CS1591</NoWarn>
+
+    <!--
+      PublicSign, not real signing: MSFT.snk is a public-key blob with no private half, so the
+      signature it writes is not valid and .NET does not check it. What matters is the resulting
+      identity: the public key token callers named. The same pattern System.Design and
+      System.Windows.Forms already use here.
+    -->
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)../../../../../../eng/snk/MSFT.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="AssemblyInfo.cs" />
+    <Compile Include="Forwards.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Through an alias: the framework's own System.Drawing.Primitives and
+         System.ComponentModel.TypeConverter declare Point, Size, Rectangle and the converters too,
+         so the names are ambiguous without one. The alias says which assembly each forward means. -->
+    <ProjectReference Include="../System.Drawing.WebGpu.csproj" Aliases="mono" />
+  </ItemGroup>
+
+</Project>

@@ -22,8 +22,11 @@ namespace System.Windows.Media.Effects
             //
             // Avalon doesn't necessarily require STA, but many components do.  Examples
             // include Cicero, OLE, COM, etc.  So we throw an exception here if the
-            // thread is not STA.
-            if (Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
+            // thread is not STA. (Apartment state is a Windows/COM concept only; off Windows
+            // GetApartmentState() is never STA, and legacy BitmapEffects are deprecated no-ops
+            // at render time anyway, so don't block their construction there.)
+            if (OperatingSystem.IsWindows() &&
+                Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
             {
                 throw new InvalidOperationException(SR.RequiresSTA);
             }

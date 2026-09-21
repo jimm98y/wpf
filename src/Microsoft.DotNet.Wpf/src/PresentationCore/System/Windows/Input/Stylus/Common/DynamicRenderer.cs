@@ -52,7 +52,10 @@ namespace System.Windows.Input.StylusPlugIns
                 brush.Freeze();
                 _fillBrush = brush;
                 _strokeHV = hostVisual;
-                hostVisual.AddStrokeInfoRef(this); // Add ourselves as reference.
+                // Off-Windows there is no inking-thread host visual (real-time visuals aren't created);
+                // the stroke renders via the UI-thread path (RenderPackets -> _mainRawInkContainerVisual),
+                // which doesn't use the host visual, so tolerate a null one.
+                hostVisual?.AddStrokeInfoRef(this); // Add ourselves as reference.
             }
 
             // Public props to access info
@@ -232,7 +235,11 @@ namespace System.Windows.Input.StylusPlugIns
             // NOTE: stylusDevice == null means the mouse device.
 
             // Nothing to do if root visual not queried or not hookup up to element yet.
-            if (_mainContainerVisual == null || _applicationDispatcher == null || !IsActiveForInput)
+            // Off-Windows there is no WISP pen-context pipeline (IsActiveForInput is always false there),
+            // but the InkCanvas still drives us from the UI thread via Reset + RenderCollectedSegment for
+            // live inking, so don't bail on the inactive check off-Windows.
+            if (_mainContainerVisual == null || _applicationDispatcher == null
+                || (!IsActiveForInput && OperatingSystem.IsWindows()))
                 return;
             
             // Ensure on UIContext.
@@ -269,6 +276,41 @@ namespace System.Windows.Input.StylusPlugIns
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Renders one collected stroke segment on the UI thread into the in-progress stroke that Reset()
+        /// created. Off-Windows there is no WISP stylus pipeline to fire OnStylusMove, so the InkCanvas
+        /// editing behaviour calls this per collected segment to render live ink incrementally (matching
+        /// Windows). Uses RenderPackets' same-thread branch (draws into _mainRawInkContainerVisual).
+        /// </summary>
+        internal void RenderCollectedSegment(StylusPointCollection stylusPoints)
+        {
+            if (_mainContainerVisual == null || _applicationDispatcher == null
+                || !_applicationDispatcher.CheckAccess() || stylusPoints == null || stylusPoints.Count == 0)
+                return;
+
+            StrokeInfo si = null;
+            lock (__siLock)
+            {
+                // The current stroke is the most-recently-added one that hasn't seen an up.
+                for (int i = _strokeInfoList.Count - 1; i >= 0; i--)
+                {
+                    if (!_strokeInfoList[i].SeenUp) { si = _strokeInfoList[i]; break; }
+                }
+            }
+            if (si != null)
+                RenderPackets(stylusPoints, si);
+        }
+
+        /// <summary>
+        /// Clears the live in-progress ink visuals. Off-Windows there is no OnStylusUp to transition the
+        /// real-time stroke into the committed one, so the InkCanvas calls this on stroke end; the committed
+        /// stroke (added to InkCanvas.Strokes) then renders in its place.
+        /// </summary>
+        internal void ClearRealTimeInk()
+        {
+            AbortAllStrokes();
         }
 
         /////////////////////////////////////////////////////////////////////

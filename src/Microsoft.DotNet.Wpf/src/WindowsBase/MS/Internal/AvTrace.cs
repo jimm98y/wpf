@@ -236,7 +236,10 @@ namespace MS.Internal
 
         internal static bool IsDebuggerAttached()
         {
-            return Debugger.IsAttached || SafeNativeMethods.IsDebuggerPresent();
+            // Debugger.IsAttached is the managed, cross-platform check; the kernel32
+            // IsDebuggerPresent P/Invoke additionally catches a native-only debugger and is
+            // Windows-only, so it is gated behind the OS check.
+            return Debugger.IsAttached || (OperatingSystem.IsWindows() && SafeNativeMethods.IsDebuggerPresent());
         }
 
 

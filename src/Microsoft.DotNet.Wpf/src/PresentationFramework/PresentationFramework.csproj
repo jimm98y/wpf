@@ -6,9 +6,15 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnablePInvokeAnalyzer>false</EnablePInvokeAnalyzer>
     <!-- SYSLIB5005: System.Formats.Nrbf is experimental -->
-    <NoWarn>$(NoWarn);0618;1058;SYSLIB5005</NoWarn>
+    <!-- WPF0001: ThemeMode/ThemeModeConverter are [Experimental], and this is the assembly that
+         DEFINES them. Application, Window, ThemeManager and WindowBackdropManager all use them
+         internally, so the opt-in diagnostic necessarily fires on its own implementation. -->
+    <!-- CS3016: the UnmanagedCallersOnly thunks in the web-view backend take a CallConvs array,
+         which is not CLS-compliant as an attribute argument. Suppressed exactly as WindowsBase and
+         System.Windows.Primitives already do for the same construct. -->
+    <NoWarn>$(NoWarn);0618;1058;SYSLIB5005;WPF0001;CS3016</NoWarn>
     <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
-    <Platforms>x86;x64;arm64</Platforms>
+    <Platforms>AnyCPU;x86;x64;arm64</Platforms>
     <GenerateDependencyFile>false</GenerateDependencyFile>
   </PropertyGroup>
 
@@ -59,6 +65,24 @@
     <Compile Include="$(WpfSharedDir)\MS\Utility\ItemMap.cs" />
     <Compile Include="$(WpfSharedDir)\System\Windows\Interop\OSVersionHelper.cs" />
     <Compile Include="$(WpfSharedDir)\System\Windows\Interop\OperatingSystemVersion.cs" />
+    <!-- The cross-platform web-view seam behind System.Windows.Controls.WebBrowser. Shared source
+         rather than a reference because System.Windows.Forms and Microsoft.Web.WebView2.Core compile
+         the same files into themselves, and those three assemblies cannot reference one another. No
+         instance of these internal types ever crosses an assembly boundary. -->
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\WebViewTypes.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\IWebViewBackend.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\WebViewScript.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\WebViewBackendFactory.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\WebViewHostWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\WindowsWebViewInterop.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\WindowsWebViewBackend.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\MacWebViewBackend.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\IOSWebViewBackend.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\BrowserWebViewBackend.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\AndroidWebViewBackend.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\AndroidWebViewRegistration.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\LinuxWebViewRegistration.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WebView\Platform\LinuxWebViewBackend.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\EventSourceActivity.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\TelemetryEventSource.cs" />
     <Compile Include="$(WpfSharedDir)\Telemetry\Managed\TraceLoggingProvider.cs" />
@@ -193,51 +217,51 @@
     <Compile Include="MS\Internal\Data\XmlDataCollection.cs" />
     <Compile Include="MS\Internal\Data\XmlNodeChangedEventManager.cs" />
     <Compile Include="MS\Internal\DataStreams.cs" />
-    <Compile Include="MS\Internal\Documents\Application\DocumentApplicationJournalEntry.cs" />
-    <Compile Include="MS\Internal\Documents\ColumnResult.cs" />
-    <Compile Include="MS\Internal\Documents\ContentElementCollection.cs" />
-    <Compile Include="MS\Internal\Documents\ContentHostHelper.cs" />
-    <Compile Include="MS\Internal\Documents\DocumentGrid.cs" />
-    <Compile Include="MS\Internal\Documents\DocumentGridContextMenu.cs" />
-    <Compile Include="MS\Internal\Documents\DocumentGridPage.cs" />
-    <Compile Include="MS\Internal\Documents\DocumentPageHost.cs" />
-    <Compile Include="MS\Internal\Documents\DocumentPageTextView.cs" />
-    <Compile Include="MS\Internal\Documents\DocumentsTrace.cs" />
-    <Compile Include="MS\Internal\Documents\DocumentViewerConstants.cs" />
-    <Compile Include="MS\Internal\Documents\DocumentViewerHelper.cs" />
-    <Compile Include="MS\Internal\Documents\FixedDocumentPaginator.cs" />
-    <Compile Include="MS\Internal\Documents\FixedDocumentSequencePaginator.cs" />
-    <Compile Include="MS\Internal\Documents\FlowDocumentFormatter.cs" />
-    <Compile Include="MS\Internal\Documents\FlowDocumentPaginator.cs" />
-    <Compile Include="MS\Internal\Documents\FlowDocumentView.cs" />
-    <Compile Include="MS\Internal\Documents\HostedElements.cs" />
-    <Compile Include="MS\Internal\Documents\IAcceptInsertion.cs" />
-    <Compile Include="MS\Internal\Documents\IDocumentScrollInfo.cs" />
-    <Compile Include="MS\Internal\Documents\IFlowDocumentFormatter.cs" />
-    <Compile Include="MS\Internal\Documents\IFlowDocumentViewer.cs" />
-    <Compile Include="MS\Internal\Documents\IIndexedChild.cs" />
-    <Compile Include="MS\Internal\Documents\IParentUndoUnit.cs" />
-    <Compile Include="MS\Internal\Documents\ITextBoxViewHost.cs" />
-    <Compile Include="MS\Internal\Documents\IUndoUnit.cs" />
-    <Compile Include="MS\Internal\Documents\LineResult.cs" />
-    <Compile Include="MS\Internal\Documents\MultiPageTextView.cs" />
-    <Compile Include="MS\Internal\Documents\PageCache.cs" />
-    <Compile Include="MS\Internal\Documents\ParagraphResult.cs" />
-    <Compile Include="MS\Internal\Documents\ParentUndoUnit.cs" />
-    <Compile Include="MS\Internal\Documents\RowCache.cs" />
-    <Compile Include="MS\Internal\Documents\ScrollData.cs" />
-    <Compile Include="MS\Internal\Documents\TableColumnCollectionInternal.cs" />
-    <Compile Include="MS\Internal\Documents\TableTextElementCollectionInternal.cs" />
-    <Compile Include="MS\Internal\Documents\TextBoxLine.cs" />
-    <Compile Include="MS\Internal\Documents\TextBoxLineDrawingVisual.cs" />
-    <Compile Include="MS\Internal\Documents\TextBoxView.cs" />
-    <Compile Include="MS\Internal\Documents\TextContainerHelper.cs" />
-    <Compile Include="MS\Internal\Documents\TextDocumentView.cs" />
-    <Compile Include="MS\Internal\Documents\TextParagraphView.cs" />
-    <Compile Include="MS\Internal\Documents\TextViewBase.cs" />
-    <Compile Include="MS\Internal\Documents\UIElementIsland.cs" />
-    <Compile Include="MS\Internal\Documents\UndoCloseAction.cs" />
-    <Compile Include="MS\Internal\Documents\UndoManager.cs" />
+    <Compile Include="MS\Internal\documents\Application\DocumentApplicationJournalEntry.cs" />
+    <Compile Include="MS\Internal\documents\ColumnResult.cs" />
+    <Compile Include="MS\Internal\documents\ContentElementCollection.cs" />
+    <Compile Include="MS\Internal\documents\ContentHostHelper.cs" />
+    <Compile Include="MS\Internal\documents\DocumentGrid.cs" />
+    <Compile Include="MS\Internal\documents\DocumentGridContextMenu.cs" />
+    <Compile Include="MS\Internal\documents\DocumentGridPage.cs" />
+    <Compile Include="MS\Internal\documents\DocumentPageHost.cs" />
+    <Compile Include="MS\Internal\documents\DocumentPageTextView.cs" />
+    <Compile Include="MS\Internal\documents\DocumentsTrace.cs" />
+    <Compile Include="MS\Internal\documents\DocumentViewerConstants.cs" />
+    <Compile Include="MS\Internal\documents\DocumentViewerHelper.cs" />
+    <Compile Include="MS\Internal\documents\FixedDocumentPaginator.cs" />
+    <Compile Include="MS\Internal\documents\FixedDocumentSequencePaginator.cs" />
+    <Compile Include="MS\Internal\documents\FlowDocumentFormatter.cs" />
+    <Compile Include="MS\Internal\documents\FlowDocumentPaginator.cs" />
+    <Compile Include="MS\Internal\documents\FlowDocumentView.cs" />
+    <Compile Include="MS\Internal\documents\HostedElements.cs" />
+    <Compile Include="MS\Internal\documents\IAcceptInsertion.cs" />
+    <Compile Include="MS\Internal\documents\IDocumentScrollInfo.cs" />
+    <Compile Include="MS\Internal\documents\IFlowDocumentFormatter.cs" />
+    <Compile Include="MS\Internal\documents\IFlowDocumentViewer.cs" />
+    <Compile Include="MS\Internal\documents\IIndexedChild.cs" />
+    <Compile Include="MS\Internal\documents\IParentUndoUnit.cs" />
+    <Compile Include="MS\Internal\documents\ITextBoxViewHost.cs" />
+    <Compile Include="MS\Internal\documents\IUndoUnit.cs" />
+    <Compile Include="MS\Internal\documents\LineResult.cs" />
+    <Compile Include="MS\Internal\documents\MultiPageTextView.cs" />
+    <Compile Include="MS\Internal\documents\PageCache.cs" />
+    <Compile Include="MS\Internal\documents\ParagraphResult.cs" />
+    <Compile Include="MS\Internal\documents\ParentUndoUnit.cs" />
+    <Compile Include="MS\Internal\documents\RowCache.cs" />
+    <Compile Include="MS\Internal\documents\ScrollData.cs" />
+    <Compile Include="MS\Internal\documents\TableColumnCollectionInternal.cs" />
+    <Compile Include="MS\Internal\documents\TableTextElementCollectionInternal.cs" />
+    <Compile Include="MS\Internal\documents\TextBoxLine.cs" />
+    <Compile Include="MS\Internal\documents\TextBoxLineDrawingVisual.cs" />
+    <Compile Include="MS\Internal\documents\TextBoxView.cs" />
+    <Compile Include="MS\Internal\documents\TextContainerHelper.cs" />
+    <Compile Include="MS\Internal\documents\TextDocumentView.cs" />
+    <Compile Include="MS\Internal\documents\TextParagraphView.cs" />
+    <Compile Include="MS\Internal\documents\TextViewBase.cs" />
+    <Compile Include="MS\Internal\documents\UIElementIsland.cs" />
+    <Compile Include="MS\Internal\documents\UndoCloseAction.cs" />
+    <Compile Include="MS\Internal\documents\UndoManager.cs" />
     <Compile Include="MS\Internal\FrameworkAppContextSwitches.cs" />
     <Compile Include="MS\Internal\FrameworkObject.cs" />
     <Compile Include="MS\Internal\Generated\AvTraceMessages.cs" />
@@ -325,6 +349,7 @@
     <Compile Include="MS\Internal\PtsHost\FloaterParaClient.cs" />
     <Compile Include="MS\Internal\PtsHost\FloaterParagraph.cs" />
     <Compile Include="MS\Internal\PtsHost\FlowDocumentPage.cs" />
+    <Compile Include="MS\Internal\PtsHost\ManagedFlowLayout.cs" />
     <Compile Include="MS\Internal\PtsHost\Line.cs" />
     <Compile Include="MS\Internal\PtsHost\LineBase.cs" />
     <Compile Include="MS\Internal\PtsHost\LineBreakRecord.cs" />
@@ -794,6 +819,7 @@
     <Compile Include="System\Windows\Controls\VirtualizingStackPanel.cs" />
     <Compile Include="System\Windows\Controls\VisualStates.cs" />
     <Compile Include="System\Windows\Controls\WebBrowser.cs" />
+    <Compile Include="System\Windows\Controls\WebBrowser.WebView.cs" />
     <Compile Include="System\Windows\Controls\WrapPanel.cs" />
     <Compile Include="System\Windows\ControlTemplate.cs" />
     <Compile Include="System\Windows\CornerRadius.cs" />
@@ -855,8 +881,8 @@
     <Compile Include="System\Windows\Documents\BlockCollection.cs" />
     <Compile Include="System\Windows\Documents\BlockUIContainer.cs" />
     <Compile Include="System\Windows\Documents\Bold.cs" />
-    <Compile Include="System\windows\Documents\CaretElement.cs" />
-    <Compile Include="System\windows\Documents\CaretScrollMethod.cs" />
+    <Compile Include="System\Windows\Documents\CaretElement.cs" />
+    <Compile Include="System\Windows\Documents\CaretScrollMethod.cs" />
     <Compile Include="System\Windows\Documents\ChangeBlockUndoRecord.cs" />
     <Compile Include="System\Windows\Documents\ChildDocumentBlock.cs" />
     <Compile Include="System\Windows\Documents\ColumnResizeAdorner.cs" />
@@ -923,6 +949,12 @@
     <Compile Include="System\Windows\Documents\HighlightVisual.cs" />
     <Compile Include="System\Windows\Documents\Hyperlink.cs" />
     <Compile Include="System\Windows\Documents\ImmComposition.cs" />
+    <Compile Include="System\Windows\Documents\ImmComposition.Linux.cs" />
+    <Compile Include="System\Windows\Documents\ImmComposition.Android.cs" />
+    <Compile Include="System\Windows\Documents\ImmComposition.Browser.cs" />
+    <Compile Include="System\Windows\Documents\ImmComposition.Ios.cs" />
+    <Compile Include="System\Windows\Documents\ImmComposition.Mac.cs" />
+    <Compile Include="System\Windows\Documents\ImmComposition.PlatformInput.cs" />
     <Compile Include="System\Windows\Documents\InkInteropObject.cs" />
     <Compile Include="System\Windows\Documents\Inline.cs" />
     <Compile Include="System\Windows\Documents\InlineCollection.cs" />
@@ -981,9 +1013,9 @@
     <Compile Include="System\Windows\Documents\RtfToXamlReader.cs" />
     <Compile Include="System\Windows\Documents\RubberbandSelector.cs" />
     <Compile Include="System\Windows\Documents\Run.cs" />
-    <Compile Include="System\windows\Documents\Section.cs" />
-    <Compile Include="System\windows\Documents\SelectionHighlightInfo.cs" />
-    <Compile Include="System\windows\Documents\SelectionWordBreaker.cs" />
+    <Compile Include="System\Windows\Documents\Section.cs" />
+    <Compile Include="System\Windows\Documents\SelectionHighlightInfo.cs" />
+    <Compile Include="System\Windows\Documents\SelectionWordBreaker.cs" />
     <Compile Include="System\Windows\Documents\Serialization\ISerializerFactory.cs" />
     <Compile Include="System\Windows\Documents\Serialization\SerializerDescriptor.cs" />
     <Compile Include="System\Windows\Documents\Serialization\SerializerProvider.cs" />
@@ -1014,19 +1046,19 @@
     <Compile Include="System\Windows\Documents\TextContainerChangedEventHandler.cs" />
     <Compile Include="System\Windows\Documents\TextContainerChangeEventArgs.cs" />
     <Compile Include="System\Windows\Documents\TextContainerChangeEventHandler.cs" />
-    <Compile Include="System\windows\Documents\TextEditor.cs" />
-    <Compile Include="System\windows\Documents\TextEditorCharacters.cs" />
-    <Compile Include="System\windows\Documents\TextEditorContextMenu.cs" />
-    <Compile Include="System\windows\Documents\TextEditorCopyPaste.cs" />
-    <Compile Include="System\windows\Documents\TextEditorDragDrop.cs" />
-    <Compile Include="System\windows\Documents\TextEditorLists.cs" />
-    <Compile Include="System\windows\Documents\TextEditorMouse.cs" />
-    <Compile Include="System\windows\Documents\TextEditorParagraphs.cs" />
-    <Compile Include="System\windows\Documents\TextEditorSelection.cs" />
-    <Compile Include="System\windows\Documents\TextEditorSpelling.cs" />
-    <Compile Include="System\windows\Documents\TextEditorTables.cs" />
-    <Compile Include="System\windows\Documents\TextEditorThreadLocalStore.cs" />
-    <Compile Include="System\windows\Documents\TextEditorTyping.cs" />
+    <Compile Include="System\Windows\Documents\TextEditor.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorCharacters.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorContextMenu.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorCopyPaste.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorDragDrop.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorLists.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorMouse.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorParagraphs.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorSelection.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorSpelling.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorTables.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorThreadLocalStore.cs" />
+    <Compile Include="System\Windows\Documents\TextEditorTyping.cs" />
     <Compile Include="System\Windows\Documents\TextEffectResolver.cs" />
     <Compile Include="System\Windows\Documents\TextElement.cs" />
     <Compile Include="System\Windows\Documents\TextElementCollection.cs" />
@@ -1046,9 +1078,9 @@
     <Compile Include="System\Windows\Documents\TextRangeEditTables.cs" />
     <Compile Include="System\Windows\Documents\TextRangeSerialization.cs" />
     <Compile Include="System\Windows\Documents\TextSchema.cs" />
-    <Compile Include="System\windows\Documents\TextSegment.cs" />
-    <Compile Include="System\windows\Documents\TextSelection.cs" />
-    <Compile Include="System\windows\Documents\TextSelectionHighlightLayer.cs" />
+    <Compile Include="System\Windows\Documents\TextSegment.cs" />
+    <Compile Include="System\Windows\Documents\TextSelection.cs" />
+    <Compile Include="System\Windows\Documents\TextSelectionHighlightLayer.cs" />
     <Compile Include="System\Windows\Documents\TextServicesDisplayAttribute.cs" />
     <Compile Include="System\Windows\Documents\TextServicesDisplayAttributePropertyRanges.cs" />
     <Compile Include="System\Windows\Documents\TextServicesHost.cs" />
@@ -1074,7 +1106,7 @@
     <Compile Include="System\Windows\Documents\TextTreeUndoUnit.cs" />
     <Compile Include="System\Windows\Documents\Tracing\SpellerCOMActionTraceLogger.cs" />
     <Compile Include="System\Windows\Documents\Typography.cs" />
-    <Compile Include="System\windows\Documents\UIElementPropertyUndoUnit.cs" />
+    <Compile Include="System\Windows\Documents\UIElementPropertyUndoUnit.cs" />
     <Compile Include="System\Windows\Documents\Underline.cs" />
     <Compile Include="System\Windows\Documents\ValidationHelper.cs" />
     <Compile Include="System\Windows\Documents\WinEventHandler.cs" />
@@ -1124,6 +1156,7 @@
     <Compile Include="System\Windows\Interop\BrowserInteropHelper.cs" />
     <Compile Include="System\Windows\Interop\DynamicScriptObject.cs" />
     <Compile Include="System\Windows\Interop\HwndHost.cs" />
+    <Compile Include="System\Windows\Interop\HwndHostForeignContent.cs" />
     <Compile Include="System\Windows\Interop\IErrorPage.cs" />
     <Compile Include="System\Windows\Interop\IProgressPage.cs" />
     <Compile Include="System\Windows\Interop\WindowInteropHelper.cs" />
@@ -1253,6 +1286,8 @@
     <Compile Include="System\Windows\Media\Animation\Storyboard.cs" />
     <Compile Include="System\Windows\Media\TextOptions.cs" />
     <Compile Include="System\Windows\MessageBox.cs" />
+    <Compile Include="System\Windows\ManagedMessageBox.cs" />
+    <Compile Include="System\Windows\Controls\ManagedPrintDialog.cs" />
     <Compile Include="System\Windows\MultiDataTrigger.cs" />
     <Compile Include="System\Windows\MultiTrigger.cs" />
     <Compile Include="System\Windows\Navigation\FragmentNavigationEventArgs.cs" />
@@ -1369,7 +1404,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="Accessibility" />
     <MicrosoftPrivateWinFormsReference Include="System.Private.Windows.Core" />
   </ItemGroup>
 
@@ -1380,11 +1414,34 @@
     <PackageReference Include="System.Formats.Nrbf" Version="$(SystemFormatsNrbfVersion)" />
   </ItemGroup>
 
+  <!-- The cross-platform Microsoft.Win32.SystemEvents stand-in, referenced by PATH rather than as a
+       package so that ThemeManager can call its internal NotifySystemAppearanceChanged (the shim
+       grants us access with an InternalsVisibleTo). That is how a Dark/Light switch on macOS and
+       Linux reaches an app's UserPreferenceChanged handler: the detection stays in the platform
+       layer, where it already lives with its fallbacks and its watcher, and only the notification
+       crosses over.
+
+       Exists()-gated ON PURPOSE. shims/ is built outside the Arcade graph, so a build of this
+       project alone, or one that runs before the shims, must still compile; ThemeManager is
+       compiled against the same condition and simply does not make the call when the shim was not
+       present. Without the gate, the ordinary `build.cmd` of this repo would fail on a clean
+       enlistment. -->
+  <PropertyGroup>
+    <_WpfSystemEventsShim>$(RepoRoot)artifacts\bin\Microsoft.Win32.SystemEvents\$(Configuration)\net10.0\Microsoft.Win32.SystemEvents.dll</_WpfSystemEventsShim>
+    <DefineConstants Condition="Exists('$(_WpfSystemEventsShim)')">$(DefineConstants);WPF_SYSTEMEVENTS_SHIM</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(_WpfSystemEventsShim)')">
+    <Reference Include="Microsoft.Win32.SystemEvents">
+      <HintPath>$(_WpfSystemEventsShim)</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="$(WpfSourceDir)PresentationCore\PresentationCore.csproj" />
-    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\DirectWriteForwarder.vcxproj">
-      <UndefineProperties>TargetFramework;TargetFrameworks</UndefineProperties>
-    </ProjectReference>
+    <!-- The managed DirectWriteForwarder stub is used on ALL platforms (the WebGPU port has no
+         C++/CLI DirectWrite dependency), so this builds with the dotnet CLI on Windows too. -->
+    <ProjectReference Include="$(WpfSourceDir)DirectWriteForwarder\Stub\DirectWriteForwarderStub.csproj" />
     <ProjectReference Include="$(WpfSourceDir)System.Xaml\System.Xaml.csproj" />
     <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" />
     <ProjectReference Include="$(WpfSourceDir)UIAutomation\UIAutomationTypes\UIAutomationTypes.csproj" />
@@ -1396,7 +1453,10 @@
 
   <ItemGroup>
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="$(SystemConfigurationConfigurationManagerPackageVersion)" />
-    <PackageReference Include="System.Windows.Extensions" Version="$(SystemWindowsExtensionsPackageVersion)" />
+    <!-- Aliased: System.Windows.Extensions still defines System.Xaml.Permissions.XamlAccessLevel (now
+         also owned cross-platform by System.Xaml). Aliasing it keeps global-scope XamlAccessLevel bound to
+         System.Xaml's (avoids CS0433); only SoundPlayerAction needs System.Media.SoundPlayer via the alias. -->
+    <PackageReference Include="System.Windows.Extensions" Version="$(SystemWindowsExtensionsPackageVersion)" Aliases="SystemWindowsExtensions" />
     <PackageReference Include="$(SystemIOPackagingPackage)" Version="$(SystemIOPackagingVersion)" />
   </ItemGroup>
 

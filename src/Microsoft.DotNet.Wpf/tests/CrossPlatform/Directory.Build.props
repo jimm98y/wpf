@@ -1,0 +1,9 @@
+<Project>
+  <!--
+    Intentionally empty, and load-bearing: it stops MSBuild walking up into the WPF Arcade SDK's
+    Directory.Build.props. The same trick WgpuInterop uses, for the same reason. Arcade's test
+    conventions in ../UnitTests append a Windows-suffixed TFM, which is precisely what these
+    cross-platform tests must not have, and Arcade itself does not participate in a plain
+    `dotnet test`.
+  -->
+</Project>

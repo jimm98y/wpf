@@ -39,8 +39,24 @@ namespace MS.Internal.PtsHost
         internal FlowDocumentPage(StructuralCache structuralCache) : base(null)
         {
             _structuralCache = structuralCache;
-            _ptsPage = new PtsPage(structuralCache.Section);
+            // The native PTS engine lives in PresentationNative_cor3.dll, which this port does not
+            // ship on any platform, so structuralCache.Section (which acquires a PtsContext) would
+            // throw. Use the fully-managed block layout instead; _ptsPage stays null and every PTS
+            // path is guarded by s_managed.
+            if (!s_managed)
+                _ptsPage = new PtsPage(structuralCache.Section);
         }
+
+        // The managed document layout (ManagedFlowLayout) replaces the native PTS engine everywhere.
+        //
+        // This was once off-Windows only. On Windows it meant FlowDocument/RichTextBox went down the
+        // PTS path and died with DllNotFoundException the moment a document was paginated, because
+        // the port deploys none of WPF's native DLLs -- so the "supported" path was in fact the
+        // broken one. Keeping it a field rather than a constant leaves one obvious place to switch
+        // back if a native PTS build is ever reintroduced.
+        private static readonly bool s_managed = true;
+        private ManagedFlowLayout _managedLayout;
+        private Vector _managedViewportOffset;
 
         // ------------------------------------------------------------------
         // Finalizer
@@ -116,6 +132,8 @@ namespace MS.Internal.PtsHost
         {
             Invariant.Assert(!IsDisposed);
 
+            if (s_managed) { FormatBottomlessManaged(pageSize, pageMargin); return; }
+
             // Every time full format is done reset formatted lines count to 0.
             _formattedLinesCount = 0;
 
@@ -176,6 +194,8 @@ namespace MS.Internal.PtsHost
         {
             Invariant.Assert(!IsDisposed);
 
+            if (s_managed) { return FormatFiniteManaged(pageSize, pageMargin, breakRecord); }
+
             // Every time full format is done reset formatted lines count to 0.
             _formattedLinesCount = 0;
 
@@ -228,6 +248,8 @@ namespace MS.Internal.PtsHost
 
             _partitionSize = partitionSize;
 
+            if (s_managed) { _visualNeedsUpdate = true; return; }
+
             using(_structuralCache.SetDocumentArrangeContext(this))
             {
                 _ptsPage.ArrangePage();
@@ -235,6 +257,205 @@ namespace MS.Internal.PtsHost
             }
 
             ValidateTextView();
+        }
+
+        // ---- Managed (no-PTS) layout path ------------------------------------------------
+        // Lay the FlowDocument's blocks out with ManagedFlowLayout (FormattedText on the fork's
+        // managed text stack) and render them into the PageVisual, so RichTextBox / FlowDocument
+        // controls work where the native PTS engine is unavailable.
+        private void FormatBottomlessManaged(Size pageSize, Thickness pageMargin)
+        {
+            _formattedLinesCount = 0;
+            TextDpi.EnsureValidPageSize(ref pageSize);
+            _pageMargin = pageMargin;
+            _lastFormatWidth = pageSize.Width;
+
+            // Mark the cache formatted AND subscribe to TextContainer changes, so edits (typing) invalidate
+            // and re-format. The PTS path does this via SetDocumentFormatContext, which we never enter.
+            _structuralCache.EnsureInitializedForFirstFormat();
+
+            // Reset background-format bookkeeping. Crucially this sets CPInterrupted back to -1: without it
+            // the field sits at its default 0, and TextDocumentView.GetTextSegments would then truncate the
+            // bottomless page's single TextSegment to [Start, Start], making ITextView.Contains -- and hence
+            // the caret's HasValidLayout -- fail. The PTS path calls this from FormatBottomless.
+            _structuralCache.BackgroundFormatInfo.UpdateBackgroundFormatInfo();
+
+            _managedLayout ??= new ManagedFlowLayout();
+            // Only the blocks the edit touched (per StructuralCache's dirty text ranges) are re-measured;
+            // the rest reuse their cached FormattedText. Then consume the ranges.
+            System.Collections.Generic.HashSet<System.Windows.Documents.Block> dirty = ComputeManagedDirtyBlocks();
+            _managedLayout.Format(_structuralCache.PropertyOwner as FlowDocument, pageSize, pageMargin, dirty);
+            _structuralCache.ClearUpdateInfo(false);
+
+            Size size = _managedLayout.Size;
+            SetSize(size);
+            SetContentBox(new Rect(pageMargin.Left, pageMargin.Top,
+                Math.Max(0, size.Width - pageMargin.Left - pageMargin.Right),
+                Math.Max(0, size.Height - pageMargin.Top - pageMargin.Bottom)));
+            _partitionSize = size;
+            _visualNeedsUpdate = true;
+        }
+
+        // Managed (no-PTS) finite pagination. Lay the whole document out in a single bottomless column
+        // at the content width, then present it as one fixed-size page. Multi-column layout and splitting
+        // content across pages are not modelled here, so a document taller than the page is clipped —
+        // enough to render paginated FlowDocument viewers (FlowDocumentPageViewer / DocumentViewer) where
+        // the native PTS engine is unavailable. Returns null: a single page with no continuation record,
+        // which the BreakRecordTable treats as the end of the document.
+        private PageBreakRecord FormatFiniteManaged(Size pageSize, Thickness pageMargin, PageBreakRecord breakRecord)
+        {
+            _formattedLinesCount = 0;
+            TextDpi.EnsureValidPageSize(ref pageSize);
+            TextDpi.EnsureValidPageMargin(ref pageMargin, pageSize);
+            _pageMargin = pageMargin;
+            _lastFormatWidth = pageSize.Width;
+
+            // Mark the cache formatted and reset background-format bookkeeping (see FormatBottomlessManaged
+            // for why CPInterrupted must be reset) — the PTS path does this from SetDocumentFormatContext,
+            // which we never enter.
+            _structuralCache.EnsureInitializedForFirstFormat();
+            _structuralCache.BackgroundFormatInfo.UpdateBackgroundFormatInfo();
+
+            // ManagedFlowLayout insets the margins itself, so pass the full page size and margin. The
+            // column height (page content height) enables paginated multi-column layout for a FlowDocument
+            // whose ColumnWidth is narrower than the page.
+            _managedLayout ??= new ManagedFlowLayout();
+            System.Collections.Generic.HashSet<System.Windows.Documents.Block> dirty = ComputeManagedDirtyBlocks();
+            double columnHeight = Math.Max(0, pageSize.Height - pageMargin.Top - pageMargin.Bottom);
+            _managedLayout.Format(_structuralCache.PropertyOwner as FlowDocument, pageSize, pageMargin, dirty, columnHeight);
+            _structuralCache.ClearUpdateInfo(false);
+
+            // Finite pages have a fixed size (unlike bottomless, whose height grows to fit the content).
+            SetSize(pageSize);
+            SetContentBox(new Rect(pageMargin.Left, pageMargin.Top,
+                Math.Max(0, pageSize.Width - (pageMargin.Left + pageMargin.Right)),
+                Math.Max(0, pageSize.Height - (pageMargin.Top + pageMargin.Bottom))));
+            _partitionSize = pageSize;
+            _visualNeedsUpdate = true;
+
+            return null;
+        }
+
+        // Map StructuralCache's dirty text ranges to the top-level blocks they touch, so the managed
+        // layout re-measures only those. Returns null when there is no change info (first format /
+        // re-measure with no edit) — the layout then relies on its per-block cache.
+        private System.Collections.Generic.HashSet<System.Windows.Documents.Block> ComputeManagedDirtyBlocks()
+        {
+            DtrList dtrs = _structuralCache.DtrList;
+            if (dtrs == null || dtrs.Length == 0) return null;
+            FlowDocument doc = _structuralCache.PropertyOwner as FlowDocument;
+            if (doc == null) return null;
+
+            ITextPointer containerStart = _structuralCache.TextContainer.Start;
+            var dirty = new System.Collections.Generic.HashSet<System.Windows.Documents.Block>();
+            foreach (System.Windows.Documents.Block b in doc.Blocks)
+            {
+                int bs = containerStart.GetOffsetToPosition(b.ContentStart);
+                int be = containerStart.GetOffsetToPosition(b.ContentEnd);
+                for (int i = 0; i < dtrs.Length; i++)
+                {
+                    DirtyTextRange dtr = dtrs[i];
+                    int ds = dtr.StartIndex;
+                    int de = dtr.StartIndex + Math.Max(dtr.PositionsAdded, dtr.PositionsRemoved);
+                    if (ds <= be && de >= bs) { dirty.Add(b); break; }
+                }
+            }
+            // A structural edit at a block boundary may not fall inside any block's content range; re-measure
+            // everything rather than render stale layout.
+            if (dirty.Count == 0)
+                foreach (System.Windows.Documents.Block b in doc.Blocks) dirty.Add(b);
+            return dirty;
+        }
+
+        private DrawingVisual _managedContentVisual;
+        // The hosted-element islands currently parented under _managedContentVisual.
+        private readonly System.Collections.Generic.List<UIElementIsland> _hostedChildren = new();
+
+        private void UpdateVisualManaged()
+        {
+            if (!_visualNeedsUpdate)
+                return;
+
+            this.PageVisual.DrawBackground((Brush)_structuralCache.PropertyOwner.GetValue(FlowDocument.BackgroundProperty), new Rect(_partitionSize));
+
+            // Reuse a single content visual (RenderOpen clears it) — reconnecting a fresh child each
+            // update trips VisualCollection ("index already in use"). RenderOpen replaces the drawing
+            // content but PRESERVES visual children, which is what lets the hosted elements below
+            // survive a re-render.
+            _managedContentVisual ??= new DrawingVisual();
+            using (DrawingContext dc = _managedContentVisual.RenderOpen())
+            {
+                _managedLayout?.Render(dc);
+            }
+
+            UpdateHostedElements();
+
+            this.PageVisual.Child = _managedContentVisual;   // same reference after the first set -> no-op
+            _visualNeedsUpdate = false;
+        }
+
+        /// <summary>
+        /// Parent and position the UIElements the document hosts (BlockUIContainer).
+        ///
+        /// These are elements, not drawings: nothing renders them on our behalf, so their islands have
+        /// to be real visual children of the page. Being in the visual tree is what makes a hosted
+        /// button paint AND take input, rather than merely leaving a gap where it should be.
+        ///
+        /// ManagedFlowLayout has already measured and arranged each element inside its island, so all
+        /// that is left here is where the island sits on the page.
+        ///
+        /// The child list is synchronised rather than rebuilt: dropping and re-adding every island on
+        /// each render would restart the elements' animations and lose their focus.
+        /// </summary>
+        private void UpdateHostedElements()
+        {
+            System.Collections.Generic.IReadOnlyList<ManagedFlowLayout.HostedBox> hosted =
+                _managedLayout?.HostedElements;
+
+            if ((hosted == null || hosted.Count == 0) && _hostedChildren.Count == 0)
+                return;
+
+            var wanted = new System.Collections.Generic.HashSet<UIElementIsland>();
+            if (hosted != null)
+            {
+                foreach (ManagedFlowLayout.HostedBox h in hosted)
+                {
+                    if (h.Island != null) wanted.Add(h.Island);
+                }
+            }
+
+            // Unparent anything the document no longer hosts.
+            for (int i = _hostedChildren.Count - 1; i >= 0; i--)
+            {
+                UIElementIsland island = _hostedChildren[i];
+                if (wanted.Contains(island)) continue;
+                _managedContentVisual.Children.Remove(island);
+                _hostedChildren.RemoveAt(i);
+            }
+
+            if (hosted == null) return;
+
+            foreach (ManagedFlowLayout.HostedBox h in hosted)
+            {
+                UIElementIsland island = h.Island;
+                if (island == null) continue;
+
+                if (!_hostedChildren.Contains(island))
+                {
+                    // A Visual cannot be in two collections at once, and another page of the same
+                    // document may still be holding this island.
+                    if (VisualTreeHelper.GetParent(island) is ContainerVisual previous)
+                    {
+                        previous.Children.Remove(island);
+                    }
+                    _managedContentVisual.Children.Add(island);
+                    _hostedChildren.Add(island);
+                }
+
+                // Set every time: the box moves when the content above it reflows, even when the
+                // element itself did not change.
+                island.Offset = new Vector(h.Bounds.X, h.Bounds.Y);
+            }
         }
 
         //-------------------------------------------------------------------
@@ -276,7 +497,10 @@ namespace MS.Internal.PtsHost
             }
 
             IInputElement ie = null;
-            if (this.IsLayoutDataValid)
+            // The managed (off-Windows) layout path has no PtsPage, so PTS hit-testing below would NRE
+            // (crash on mouse-move over a FlowDocument/RichTextBox). Fall through to the FormattingOwner;
+            // caret placement uses the managed TextView.GetTextPositionFromPoint, not this element hit-test.
+            if (this.IsLayoutDataValid && !s_managed)
             {
                 // Transform point to PtsPage coordinate system.
                 // NOTE: TransformToAncestor is safe (will never throw an exception).
@@ -615,6 +839,30 @@ namespace MS.Internal.PtsHost
         //-------------------------------------------------------------------
         internal void UpdateViewport(ref PTS.FSRECT viewport, bool drawBackground)
         {
+            if (s_managed)
+            {
+                if (!IsDisposed && drawBackground && this.PageVisual != null)
+                    this.PageVisual.DrawBackground((Brush)_structuralCache.PropertyOwner.GetValue(FlowDocument.BackgroundProperty), viewport.FromTextDpi());
+                // Raise TextView.Updated so deferred consumers (e.g. the caret's
+                // _pendingUpdateCaretStateCallback in TextSelection.OnTextViewUpdated) run now that
+                // layout is valid. The PTS path does this at the end of UpdateViewport; mirror it here.
+                // First invalidate the view's cached TextSegments/Columns so they rebuild against the
+                // current TextContainer.End (otherwise a segment cached while the document was empty
+                // makes ITextView.Contains -- and thus caret HasValidLayout -- fail after edits).
+                if (!IsDisposed)
+                {
+                    // The managed layout renders content at page-absolute coordinates translated by the
+                    // page visual's Offset (= -scroll). Record the scroll offset (the viewport origin) so
+                    // the caret/selection geometry can be made viewport-relative (see TextDocumentView) --
+                    // the adorner layer is NOT scrolled, so page-absolute geometry would stay fixed.
+                    Rect vp = viewport.FromTextDpi();
+                    _managedViewportOffset = new Vector(vp.X, vp.Y);
+                    _textView?.Invalidate();
+                    ValidateTextView();
+                }
+                return;
+            }
+
             Rect contentViewport;
 
             // Transform point to PtsPage coordinate system.
@@ -676,7 +924,7 @@ namespace MS.Internal.PtsHost
         //-------------------------------------------------------------------
         // Is this page already disposed?
         //-------------------------------------------------------------------
-        internal bool IsDisposed { get { return _disposed || _structuralCache.PtsContext.Disposed; } }
+        internal bool IsDisposed { get { return _disposed || (!s_managed && _structuralCache.PtsContext.Disposed); } }
 
         //-------------------------------------------------------------------
         // Size of content on page.
@@ -685,6 +933,8 @@ namespace MS.Internal.PtsHost
         {
             get
             {
+                if (s_managed)
+                    return _managedLayout != null ? _managedLayout.Size : Size;
                 Size size = _ptsPage.ContentSize;
                 size.Width += _pageMargin.Left + _pageMargin.Right;
                 size.Height += _pageMargin.Top + _pageMargin.Bottom;
@@ -695,7 +945,15 @@ namespace MS.Internal.PtsHost
         //-------------------------------------------------------------------
         // Is it finite page or bottomless?
         //-------------------------------------------------------------------
-        internal bool FinitePage { get { return _ptsPage.FinitePage; } }
+        internal bool FinitePage { get { return _ptsPage != null && _ptsPage.FinitePage; } }
+
+        /// <summary>The native PTS engine is unavailable; this page uses the managed block layout.</summary>
+        internal bool IsManaged => s_managed;
+        internal ManagedFlowLayout ManagedLayout => _managedLayout;
+        // Scroll offset (viewport origin) recorded by the managed UpdateViewport; used to convert
+        // page-absolute caret/selection geometry to viewport-relative coordinates for the (unscrolled)
+        // adorner layer. See UpdateViewport / TextDocumentView.ManagedCaretRect.
+        internal Vector ManagedViewportOffset => _managedViewportOffset;
 
         //-------------------------------------------------------------------
         // Page context
@@ -815,6 +1073,10 @@ namespace MS.Internal.PtsHost
                         this.PageVisual.ClearDrawingContext();
                     }
 
+                    // DestroyVisualLinks has already removed the hosted-element islands from the
+                    // tree; drop our references so a disposed page does not keep the elements alive.
+                    _hostedChildren.Clear();
+
                     // Dispose PTS page
                     _ptsPage?.Dispose();
                 }
@@ -845,6 +1107,7 @@ namespace MS.Internal.PtsHost
             {
                 SetVisual(new PageVisual(this));
             }
+            if (s_managed) { UpdateVisualManaged(); return; }
             if (_visualNeedsUpdate)
             {
                 // Draw background

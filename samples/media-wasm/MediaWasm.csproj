@@ -1,0 +1,256 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <PropertyGroup>
+    <WasmFingerprintAssets>false</WasmFingerprintAssets>
+    <StaticWebAssetsFingerprintContent>false</StaticWebAssetsFingerprintContent>
+    <!-- WebAssembly head for the WPF WebGPU gallery: compiles the same Program.cs as
+         the desktop/mac heads against the from-source WPF assemblies, with the
+         browser flavor of the WebGPU interop (JS interop over navigator.gpu). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>WpfWebGpuGalleryWasm</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- The JSExport source generator (AotProfiling.Stop, the profiler write-at trigger) emits unsafe marshaling. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <StartupObject>WasmBoot</StartupObject>
+    <!-- DEFAULT = INTERPRETER (renders + interactive, ~10fps), because it builds in seconds. AOT is
+         the opposite trade and is OPT-IN here via -p:UseAot=true.
+
+         AOT WORKS. This comment used to say it did not: that the WPF-in-wasm AOT build hit a fatal
+         interp.c:3420 assert which was a known, won't-fix mono limitation (dotnet/runtime#80994).
+         That diagnosis was WRONG: the assert came from DUPLICATE ASSEMBLIES in the bundle, not
+         from the runtime. With the duplicates gone WPF AOT-compiles and runs in the browser; the
+         HexEditor IDE does exactly that today. See the fuller note in
+         samples/wpf-webgpu-gallery-wasm/WpfWebGpuGalleryWasm.csproj. -->
+    <UseAot Condition="'$(UseAot)' == ''">false</UseAot>
+    <!-- CollectAotProfile=true builds a NON-AOT, AOT-profiler-instrumented build
+         (<WasmProfilers>aot). Running it and invoking AotProfiling.WpfAotProfileFlush (see main.js /
+         Boot.cs) dumps the generic instantiations the gallery actually exercises to gallery.aotprofile. -->
+    <CollectAotProfile Condition="'$(CollectAotProfile)' == ''">false</CollectAotProfile>
+    <RunAOTCompilation Condition="'$(UseAot)' == 'true' and '$(CollectAotProfile)' != 'true'">true</RunAOTCompilation>
+    <RunAOTCompilationAfterBuild Condition="'$(UseAot)' == 'true' and '$(CollectAotProfile)' != 'true'">true</RunAOTCompilationAfterBuild>
+    <WasmProfilers Condition="'$(CollectAotProfile)' == 'true'">aot</WasmProfilers>
+    <WasmBuildNative Condition="'$(CollectAotProfile)' == 'true'">true</WasmBuildNative>
+    <!-- OPT-IN (-p:UseAotProfile=true). The MonoAOTCompiler task reads the AotProfilePath ITEM,
+         populated from $(WasmAotProfilePath) (NOT the documented $(AOTProfilePath) property, which
+         maps to a dead task param). NOTE: a profile here triggers profile-guided *partial* AOT
+         (only profiled methods are AOT'd — native wasm drops ~79MB->14MB), which does NOT fix the
+         missing-interp-wrapper crash; kept off by default so the build stays full-AOT. -->
+    <WasmAotProfilePath Condition="'$(UseAotProfile)' == 'true' and '$(CollectAotProfile)' != 'true' and Exists('$(MSBuildProjectDirectory)/gallery.aotprofile')">$(MSBuildProjectDirectory)/gallery.aotprofile</WasmAotProfilePath>
+    <AOTProfilePath Condition="'$(WasmAotProfilePath)' != ''">$(WasmAotProfilePath)</AOTProfilePath>
+    <WasmEmitSymbolMap>true</WasmEmitSymbolMap>
+    <!-- Collection build is non-AOT + throwaway: don't trim, so the profiler's dump method
+         (Interop/Runtime::DumpAotProfileData) and our trigger survive. The AOT build trims. -->
+    <PublishTrimmed Condition="'$(UseAot)' == 'true' and '$(CollectAotProfile)' != 'true'">true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <TrimmerRootAssembly Include="WpfWebGpuGalleryWasm" />
+    <TrimmerRootAssembly Include="WindowsBase" />
+    <TrimmerRootAssembly Include="PresentationCore" />
+    <TrimmerRootAssembly Include="PresentationFramework" />
+    <TrimmerRootAssembly Include="System.Xaml" />
+    <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
+    <TrimmerRootAssembly Include="PresentationFramework.Classic" />
+    <TrimmerRootAssembly Include="PresentationUI" />
+    <TrimmerRootAssembly Include="ReachFramework" />
+    <TrimmerRootAssembly Include="System.Printing" />
+    <TrimmerRootAssembly Include="DirectWriteForwarder" />
+    <TrimmerRootAssembly Include="Microsoft.Wpf.Interop.WebGpu" />
+    <TrimmerRootAssembly Include="UIAutomationTypes" />
+    <TrimmerRootAssembly Include="UIAutomationProvider" />
+    <TrimmerRootAssembly Include="System.Windows.Primitives" />
+    <TrimmerRootAssembly Include="System.Windows.Input.Manipulations" />
+    <!-- System.IO.Packaging / System.Windows.Extensions / System.Configuration.ConfigurationManager are
+         rooted via wasm-roots.xml (a descriptor) instead of TrimmerRootAssembly: with the current wasm-tools
+         toolchain they resolve with ILLink action 'skip', and a ROOT assembly with action 'skip' errors
+         IL1035. A root descriptor preserves them whole without that check. -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <TrimmerRootDescriptor Include="wasm-roots.xml" />
+  </ItemGroup>
+
+  <!-- Guarantee the WindowsDesktop-framework assemblies WPF needs land in the publish dir (the wasm SDK
+       bundles everything under $(PublishDir)\**\*.dll, and mono-aot-cross AOTs from there). These are all
+       excluded from publish as framework-provided, but the browser-wasm runtime pack doesn't ship them:
+       - the reflective trio (System.IO.Packaging / System.Windows.Extensions /
+         System.Configuration.ConfigurationManager) — WPF loads them in Application..cctor;
+       - System.Private.Windows.Core + System.Security.Cryptography.Xml — referenced by PresentationCore /
+         WindowsBase, so mono-aot-cross must resolve them to AOT those assemblies (the Win32 paths are dead
+         in wasm, but the IL still has to load/compile). -->
+  <Target Name="_ForcePublishVendoredReflectiveDeps" BeforeTargets="CopyFilesToPublishDirectory">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+          Condition="'%(FileName)' == 'System.IO.Packaging' or '%(FileName)' == 'System.Windows.Extensions' or '%(FileName)' == 'System.Configuration.ConfigurationManager' or '%(FileName)' == 'System.Security.Cryptography.Xml'" />
+      <ResolvedFileToPublish Include="lib\System.IO.Packaging.dll;lib\System.Windows.Extensions.dll;lib\System.Configuration.ConfigurationManager.dll;lib\System.Security.Cryptography.Xml.dll">
+        <RelativePath>%(FileName)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+  <!-- Give mono-aot-cross our vendored lib/ as an assembly search path. System.Private.Windows.Core /
+       System.Private.Windows.GdiPlus / System.Formats.Nrbf have inherent WindowsDesktop assembly IDENTITIES
+       (pulled transitively by PresentationCore/WindowsBase) that no package trick suppresses, so they never
+       land in aot-in; this lets mono-aot-cross RESOLVE them at AOT time (the Win32 methods are dead in wasm). -->
+  <Target Name="_AddVendoredAotSearchPath" BeforeTargets="_WasmAotCompileApp">
+    <ItemGroup>
+      <_WasmAOTSearchPaths Include="$(MSBuildProjectDirectory)\lib" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Do NOT bundle System.Private.Windows.Core/GdiPlus at runtime: they carry native <Module>.cctor
+       initializers the wasm interpreter can't run ("NIY encountered in method <Module>:.cctor"). They're
+       only needed to RESOLVE PresentationCore/WindowsBase during AOT (via the search path above); their
+       Win32 code paths are dead in wasm, so the AOT'd callers never invoke them — exactly as in the
+       (working) non-AOT build, where these assemblies were never bundled either. -->
+  <PropertyGroup>
+    <!-- Dedup MUST stay off: it asserts at appdomain.c:188 during runtime init (creating the corlib
+         OutOfMemoryException singleton fails) — the dedup image is incompatible with our required
+         force-interpret assemblies (dedup assumes uniform full-AOT). The dedup module IS registered
+         in driver-gen.c and there are no AOT compile failures, so it's a deep mono-runtime dedup bug,
+         not a config/bundling issue. Re-verified 2026-07-19. -->
+    <WasmDedup>false</WasmDedup>
+    <!-- Keep IL after AOT: some methods fall back to the interpreter at runtime, but the strip removes the
+         IL of methods it believes are fully AOT'd, so the interp finds nothing ("should not be reached").
+         Keeping IL lets those methods run interpreted. -->
+    <WasmStripILAfterAOT>false</WasmStripILAfterAOT>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Keep these on the interpreter: they reference assemblies that are not (and
+         should not be) in the browser bundle (System.Windows.Forms, Accessibility,
+         print pipeline), which the AOT compiler cannot resolve — and none of them
+         are on the rendering/layout hot path. -->
+    <_AOT_InternalForceInterpretAssemblies Include="PresentationUI.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationTypes.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="UIAutomationProvider.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="ReachFramework.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Printing.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Drawing.Common.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- WPF needs real cultures (SystemFonts, text formatting). -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <!-- The repo root Directory.Build.props turns style analyzers into errors; this
+         sample compiles the gallery sources as-is. -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- MediaProgram.cs + Boot.cs are picked up by default items. -->
+  </ItemGroup>
+
+  <!-- Fonts live under wwwroot/fonts as plain static assets; main.js fetches them
+       and writes them into the wasm virtual filesystem at /fonts before Main runs
+       (where SystemFontCatalog scans on the browser). -->
+
+  <!-- From-source WPF (built by the repo into artifacts/) + the BROWSER flavor of
+       the WebGPU interop. Same set the mac head uses, plus both theme satellites. -->
+  <ItemGroup>
+    <Reference Include="PresentationFramework"><HintPath>..\..\artifacts\bin\PresentationFramework\Release\net10.0\PresentationFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationCore"><HintPath>..\..\artifacts\bin\PresentationCore\Release\net10.0\PresentationCore.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="WindowsBase"><HintPath>..\..\artifacts\bin\WindowsBase\Release\net10.0\WindowsBase.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Xaml"><HintPath>..\..\artifacts\bin\System.Xaml\Release\net10.0\System.Xaml.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="ReachFramework"><HintPath>..\..\artifacts\bin\ReachFramework\Release\net10.0\ReachFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Input.Manipulations"><HintPath>..\..\artifacts\bin\System.Windows.Input.Manipulations\Release\net10.0\System.Windows.Input.Manipulations.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationTypes"><HintPath>..\..\artifacts\bin\UIAutomationTypes\Release\net10.0\UIAutomationTypes.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationProvider"><HintPath>..\..\artifacts\bin\UIAutomationProvider\Release\net10.0\UIAutomationProvider.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Primitives"><HintPath>..\..\artifacts\bin\System.Windows.Primitives\Release\net10.0\System.Windows.Primitives.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="DirectWriteForwarder"><HintPath>..\..\artifacts\bin\DirectWriteForwarderStub\Release\net10.0\DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Aero2"><HintPath>..\..\artifacts\bin\PresentationFramework.Aero2\Release\net10.0\PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Classic"><HintPath>..\..\artifacts\bin\PresentationFramework.Classic\Release\net10.0\PresentationFramework.Classic.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationUI"><HintPath>..\..\artifacts\bin\PresentationUI\Release\net10.0\PresentationUI.dll</HintPath><Private>true</Private></Reference>
+    <!-- The api-cycle System.Printing lacks XpsDocumentWriter, which mono-wasm resolves
+         EAGERLY while setting up DocumentViewerBase (CoreCLR is lazy about field types);
+         the fuller ref build carries the complete surface. -->
+    <Reference Include="System.Printing"><HintPath>..\..\artifacts\bin\System.Printing.Managed\Release\net10.0\System.Printing.dll</HintPath><Private>true</Private></Reference>
+    <!-- Reference assembly bundled ONLY so the AOT compiler can resolve WindowsBase's
+         Accessibility-typed P/Invoke signatures; runtime never loads it (all call
+         sites are OS-guarded off-Windows). PresentationUI's System.Windows.Forms refs
+         don't need this treatment: it is on the interpreter list, so it is not AOT'd. -->
+    <!-- Vendored Accessibility.dll (NOT windowsdesktop.app.ref): referencing the ref pack pulls the
+         Microsoft.WindowsDesktop.App PlatformManifest, which classifies our reflectively-loaded
+         PackageReferences (System.IO.Packaging / System.Windows.Extensions /
+         System.Configuration.ConfigurationManager) as FRAMEWORK-provided — so they'd be dropped from the
+         app bundle (the browser-wasm runtime pack doesn't ship them) and WPF fails to boot. -->
+    <Reference Include="Accessibility"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\lib\Accessibility.dll</HintPath><Private>true</Private></Reference>
+    <!-- Our Mono System.Windows.Forms + vendored System.Drawing (the shared WinFormsHost card). The
+         browser WinForms driver is not yet proven, so the card is guarded (CreateDemoCardOrFallback);
+         these are here so the shared gallery sources compile and the card can attempt to init. -->
+    <Reference Include="System.Windows.Forms"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\bin\Release\net10.0\System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Mono.System.Drawing"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\sysdrawing\bin\Release\net10.0\Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <!-- WPF's reflectively-loaded deps. Their NuGet packages ship these in the Microsoft.WindowsDesktop.App
+       shared framework on net8.0+, so the SDK recognizes the PACKAGE identity and excludes the assembly
+       from publish (expecting the framework to provide it) — but the browser-wasm runtime pack does NOT
+       ship WindowsDesktop, so WPF then fails to load System.IO.Packaging in Application..cctor. Reference
+       VENDORED copies by local path (like Accessibility): a local DLL isn't recognized as framework, so it
+       publishes + the wasm SDK bundles it. -->
+  <ItemGroup>
+    <Reference Include="System.IO.Packaging"><HintPath>lib\System.IO.Packaging.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Extensions"><HintPath>lib\System.Windows.Extensions.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Configuration.ConfigurationManager"><HintPath>lib\System.Configuration.ConfigurationManager.dll</HintPath><Private>true</Private></Reference>
+    <!-- System.Security.Cryptography.Xml: vendored (bundled, interpreted — normal managed assembly) so
+         WindowsBase's AOT'd code can call it. System.Private.Windows.Core is NOT referenced/bundled (native
+         <Module>.cctor crashes the interpreter); it's resolved only via the AOT search path (lib/). -->
+    <Reference Include="System.Security.Cryptography.Xml"><HintPath>lib\System.Security.Cryptography.Xml.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <!-- swf + sysdrawing are reflection-heavy and not on the render hot path; keep them interpreted so
+       the AOT compiler needn't resolve their (libgdiplus/native) seams. -->
+  <ItemGroup>
+    <_AOT_InternalForceInterpretAssemblies Include="System.Windows.Forms.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="Mono.System.Drawing.dll" />
+  </ItemGroup>
+
+  <!-- Our vendored Mono.System.Drawing is the sole System.Drawing.* provider (avoid CS0433 vs the
+       framework System.Drawing.Common WPF drags in). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <!-- System.IO.Packaging / System.Configuration.ConfigurationManager / System.Windows.Extensions are
+         referenced as VENDORED local DLLs above (their PackageReference identity would make the SDK treat
+         them as WindowsDesktop-framework and drop them from the wasm publish). -->
+    <!-- Vendored above; ExcludeAssets=all so the package identity doesn't re-classify it as framework. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" ExcludeAssets="all" />
+    <!-- Neutralize the TRANSITIVE System.Windows.Extensions (pulled by System.Security.Permissions etc.):
+         its package identity would win reference resolution and be excluded from publish as WindowsDesktop-
+         framework. ExcludeAssets=all suppresses all its assets so our vendored local copy (referenced above)
+         is the sole provider and actually publishes. -->
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+  </ItemGroup>
+
+  <!-- Keep the served JS interop modules in sync with their sources in the WPF tree.
+       Must run before static-web-asset discovery (stale integrity hashes otherwise). -->
+  <Target Name="CopyWpfInteropJs" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
+    <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\wgpu-interop.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\browser-window.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\browser-media.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

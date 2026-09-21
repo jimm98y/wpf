@@ -17,6 +17,12 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo(BuildInfo.SystemWindowsControlsRibbon)]
 [assembly: InternalsVisibleTo(BuildInfo.WindowsFormsIntegration)]
 [assembly: InternalsVisibleTo($"PresentationCore.Tests, PublicKey={BuildInfo.WCP_PUBLIC_KEY_STRING}")]
+
+// The CDP visual-tree inspector (src/WpfDevTools). It is otherwise built entirely against public
+// API -- it has to be, since it references PresentationFramework and is reached from here only by
+// Assembly.Load -- and needs exactly one internal: CompositionDiagnostics.GetCompositionHandle,
+// the DUCE handle that joins a managed Visual to the SceneVisual the compositor decoded for it.
+[assembly: InternalsVisibleTo("Microsoft.Wpf.DevTools, PublicKey=00000000000000000400000000000000")]
 [assembly: TypeForwardedTo(typeof(System.Windows.Markup.IUriContext))]
 [assembly: TypeForwardedTo(typeof(System.Windows.Media.TextFormattingMode))]
 [assembly: TypeForwardedTo(typeof(System.Windows.Input.ICommand))]

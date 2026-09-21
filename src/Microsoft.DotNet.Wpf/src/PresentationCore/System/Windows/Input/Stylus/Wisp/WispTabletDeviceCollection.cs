@@ -49,6 +49,13 @@ namespace System.Windows.Input.StylusWisp
         /// <returns></returns>
         internal static bool ShouldEnableTablets()
         {
+            // WISP/wisptis (the Windows pen & tablet service) does not exist off-Windows, so no
+            // tablet devices are enumerated and the touch/stylus stack stays disabled.
+            if (!OperatingSystem.IsWindows())
+            {
+                return false;
+            }
+
             bool enabled = false;
 
             // We only want to enable by default if Wisptis is registered and tablets are detected.

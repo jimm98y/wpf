@@ -265,14 +265,17 @@ namespace System.Windows.Media.Animation
 
         internal DUCE.ResourceHandle GetAnimationResourceHandle(DependencyProperty dp, DUCE.Channel channel)
         {
-            if (channel != null && IAnimatable_HasAnimatedProperties)
-            {
-                return IndependentAnimationStorage.GetResourceHandle(this, dp, channel);
-            }
-            else
-            {
-                return DUCE.ResourceHandle.Null;
-            }
+            // The WebGPU compositor is value-based: it renders from the resolved values packed into
+            // each resource's MILCMD and discards the "independent animation" resource handles that
+            // native milcore would evaluate on the render thread (see MilcoreEngine, which reads e.g.
+            // hThicknessAnimations only to skip it). If we returned a non-null handle here, the
+            // generated UpdateResource would send the animation handle *instead of* the value
+            // (`if (hXAnimations.IsNull) data.X = X;`), leaving the value at struct-default 0 — so an
+            // animated ScaleTransform/RotateTransform/etc. renders at scale 0 / angle 0. Returning Null
+            // makes every generated UpdateResource marshal the resolved (animated) value instead, which
+            // is what a value-based compositor needs. Held-value state animations (the common Fluent
+            // case, e.g. a checked RadioButton's inner dot) then render correctly.
+            return DUCE.ResourceHandle.Null;
         }
 
         /// <summary>

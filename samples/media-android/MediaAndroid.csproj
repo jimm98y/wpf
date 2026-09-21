@@ -1,0 +1,167 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Android media head: a MediaElement plus transport controls, exercising AndroidMediaBackend
+    (AMediaExtractor/AMediaCodec -> AImageReader YUV_420_888 -> BGRA, audio through AAudio) and the
+    compositor's MilDrawVideo path. It is the Android spelling of samples/media-linux, and shares
+    that sample's on-screen half through ../media-shared/MediaTestUi.cs.
+
+      ANDROID_PROJECT=samples/media-android/MediaAndroid.csproj \
+      ANDROID_PACKAGE=net.dot.wpf.media eng/run-android.sh -c Release
+
+    Pass -p:MediaTestVideo=<file.mp4> to pack a clip into the APK, or push one to the device and
+    name it with `adb shell setprop debug.wpf.mediafile /sdcard/Movies/clip.mp4`. Scaffolding
+    follows samples/wpf-gallery-android; run eng/build-sdk.sh first, since this project references
+    the fork's artifacts by path and does NOT build them.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>true</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationId>net.dot.wpf.media</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <AssemblyName>WpfMediaAndroid</AssemblyName>
+    <RootNamespace>WpfMediaAndroid</RootNamespace>
+    <NoWarn>$(NoWarn);CA1416;CS0618</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+
+    <!-- AAudio is API 26. The backend degrades to silent video below that rather than failing, but
+         there is no reason for this head to ask for less than the audio path needs. -->
+    <SupportedOSPlatformVersion>26</SupportedOSPlatformVersion>
+
+    <_Art>$(MSBuildThisFileDirectory)../../artifacts/bin</_Art>
+  </PropertyGroup>
+
+  <!-- The Android windowing head (SurfaceView + Choreographer pump), shared verbatim with the spike
+       and the gallery head; see the file's own remarks for why it lives beside AndroidWindow.cs. -->
+  <ItemGroup>
+    <Compile Include="../../src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/AndroidHost.cs" Link="AndroidHost.cs" />
+    <!-- The page itself, shared with the iOS head verbatim. -->
+    <Compile Include="../media-shared/MediaTestUi.cs" Link="MediaTestUi.cs" />
+  </ItemGroup>
+
+  <!--
+    The clip to play, packed as an asset and copied to the app's files directory at startup (an
+    AndroidAsset lives inside the APK, where no file-path API can reach it). MainActivity also
+    accepts an absolute path from `adb shell setprop debug.wpf.mediafile`, which is the only
+    configuration channel an Android app has: it inherits its environment from zygote, so
+    `adb shell VAR=x am start` sets nothing. No default clip is committed; this repo ships no
+    sample media.
+  -->
+  <ItemGroup Condition="'$(MediaTestVideo)' != '' And Exists('$(MediaTestVideo)')">
+    <AndroidAsset Include="$(MediaTestVideo)" Link="media/test.mp4" />
+  </ItemGroup>
+
+  <Target Name="WarnIfNoTestVideo" BeforeTargets="Build"
+          Condition="'$(MediaTestVideo)' == '' Or !Exists('$(MediaTestVideo)')">
+    <Warning Text="No test clip packed. Pass -p:MediaTestVideo=&lt;file.mp4&gt;, or push one and run: adb shell setprop debug.wpf.mediafile &lt;path&gt;." />
+  </Target>
+
+  <!-- The same fonts the other heads bundle; without Symbols.ttf every glyph icon is a box.
+       Copied out of the APK at startup by AndroidFonts.ExtractBundled. -->
+  <ItemGroup>
+    <AndroidAsset Include="../../sdk/WpfWebGpu.Fonts/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+    <AndroidAsset Include="../../sdk/WpfWebGpu.Fonts/fonts/*.ttc" Link="fonts/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/WgpuInterop.csproj" />
+  </ItemGroup>
+
+  <!-- wgpu-native, packed into the APK under lib/<abi>/. Fetch with eng/fetch-wgpu.ps1 -Rid
+       android-arm64 (the tree is gitignored). -->
+  <ItemGroup>
+    <AndroidNativeLibrary Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/android-arm64/lib/libwgpu_native.so">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+  </ItemGroup>
+
+  <!-- The from-source WPF fork, as built artifacts (eng/build-sdk.sh). Referenced rather than
+       ProjectReference'd because these build through the Arcade SDK, which does not participate in
+       the Android build. -->
+  <ItemGroup>
+    <Reference Include="WindowsBase">                <HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath></Reference>
+    <Reference Include="System.Xaml">                <HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath></Reference>
+    <Reference Include="PresentationCore">           <HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework">      <HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath></Reference>
+    <Reference Include="DirectWriteForwarder">       <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath></Reference>
+    <Reference Include="ReachFramework">             <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath></Reference>
+    <Reference Include="PresentationUI">             <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath></Reference>
+    <Reference Include="System.Printing">            <HintPath>$(_Art)/System.Printing.Managed/Release/net10.0/System.Printing.dll</HintPath></Reference>
+    <Reference Include="UIAutomationTypes">          <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath></Reference>
+    <Reference Include="UIAutomationProvider">       <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework.Aero2"><HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <!-- The fork's cross-platform Microsoft.Win32.SystemEvents / Registry shims; the framework copies
+       are throw-only stubs off Windows and theme loading reaches them. ExcludeAssets=all neutralises
+       the transitive packages so ours are the only copies. -->
+  <ItemGroup>
+    <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath></Reference>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" ExcludeAssets="all" />
+  </ItemGroup>
+
+  <!-- Assemblies the WPF closure names but no Android path reaches. They still have to RESOLVE. -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <!-- The REAL assembly, not the WindowsDesktop reference: mono-aot-cross reads signatures out of
+         it while compiling PresentationCore. See WpfStageAotResolvableRefs below. -->
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <_WinDesktopRef>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/10.0.10/ref/net10.0</_WinDesktopRef>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Windows-only assemblies WindowsBase/PresentationCore reference from code paths Android never
+         executes. The REFERENCE assemblies are enough: the runtime never loads them. -->
+    <Reference Include="Accessibility">              <HintPath>$(_WinDesktopRef)/Accessibility.dll</HintPath></Reference>
+    <Reference Include="System.Windows.Primitives">  <HintPath>$(_WinDesktopRef)/System.Windows.Primitives.dll</HintPath></Reference>
+    <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <!-- Keep the Windows-only shim assemblies out of AOT; see the gallery head's copy of this target
+       for the full reasoning (the authoritative one is in sdk/WpfWebGpu.Sdk/Sdk/Sdk.targets, which
+       a path-referencing sample does not consume). -->
+  <Target Name="WpfExcludeWindowsShimsFromAot" AfterTargets="_AndroidAotInputs">
+    <ItemGroup>
+      <_AndroidAotInputs Remove="@(_AndroidAotInputs)"
+                         Condition="'%(Filename)' == 'PresentationUI'
+                                 Or '%(Filename)' == 'ReachFramework'
+                                 Or '%(Filename)' == 'System.Printing'
+                                 Or '%(Filename)' == 'System.Windows.Primitives'
+                                 Or '%(Filename)' == 'System.Private.Windows.Core'
+                                 Or '%(Filename)' == 'System.Formats.Nrbf'
+                                 Or '%(Filename)' == 'Accessibility'
+                                 Or '%(Filename)' == 'UIAutomationTypes'
+                                 Or '%(Filename)' == 'UIAutomationProvider'
+                                 Or '%(Filename)' == 'System.Drawing.Common'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Put System.Formats.Nrbf where mono-aot-cross can find it; again see the gallery head. -->
+  <Target Name="WpfStageAotResolvableRefs" BeforeTargets="_AndroidAotCompilation">
+    <ItemGroup>
+      <_WpfAotResolvable Include="@(RuntimeCopyLocalItems)" Condition="'%(Filename)' == 'System.Formats.Nrbf'" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_WpfAotResolvable)" DestinationFolder="$(IntermediateOutputPath)linked"
+          SkipUnchangedFiles="true" Condition="'@(_WpfAotResolvable)' != '' And Exists('$(IntermediateOutputPath)linked')" />
+  </Target>
+
+  <Target Name="ErrorIfForkNotBuilt" BeforeTargets="Build" Condition="!Exists('$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll')">
+    <Error Text="The WPF fork has not been built. Run eng/build-sdk.sh first." />
+  </Target>
+
+</Project>

@@ -139,7 +139,11 @@ namespace System.Windows.Input
             // Avalon doesn't necessarily require STA, but many components do.  Examples
             // include Cicero, OLE, COM, etc.  So we throw an exception here if the
             // thread is not STA.
-            if(Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
+            //
+            // Apartment state is a Windows COM concept; other platforms have no apartment model
+            // (GetApartmentState reports Unknown/MTA and STA cannot be set), so the requirement
+            // only applies on Windows.
+            if(OperatingSystem.IsWindows() && Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
             {
                 throw new InvalidOperationException(SR.RequiresSTA);
             }

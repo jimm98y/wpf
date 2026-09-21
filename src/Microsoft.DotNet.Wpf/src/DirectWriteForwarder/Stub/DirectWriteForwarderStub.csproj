@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    macOS/Linux stand-in for DirectWriteForwarder.vcxproj, which wraps DirectWrite via C++/CLI
+    (an MSVC + CLR-only technology with no non-Windows equivalent). It re-declares the managed
+    MS.Internal.Text.TextInterface surface that PresentationCore consumes from the real
+    DirectWriteForwarder assembly, and (off-Windows) backs it with the managed OpenType font
+    stack in the WebGPU engine (Microsoft.Wpf.Interop.WebGpu, Composition.Text) rather than
+    DirectWrite - the same font code the renderer already uses to rasterize glyph runs.
+    Only referenced when '$(OS)' != 'Windows_NT' (see PresentationCore.csproj).
+  -->
+  <PropertyGroup>
+    <AssemblyName>DirectWriteForwarder</AssemblyName>
+    <RootNamespace>MS.Internal.Text.TextInterface</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- CA1051 (visible instance fields) is intentionally suppressed: several stub value types
+         (GlyphMetrics, FontMetrics, GlyphOffset, DWriteFontFeature) mirror C++/CLI value structs
+         from the original DWriteWrapper headers whose fields PresentationCore accesses directly
+         by name (e.g. GlyphMetrics.AdvanceWidth, GlyphOffset.du/dv). -->
+    <!-- CS3001/CS3003/CS3009 (CLS-compliance): the stub mirrors the real DirectWriteForwarder's
+         native pointer/uint surface, which is likewise non-CLS-compliant. CS0109: some 'new'
+         members mirror shadowing in the original headers. -->
+    <NoWarn>$(NoWarn);CS0108;CS0114;CS0067;CA1051;CS3001;CS3003;CS3009;CS0109</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" />
+    <!-- The managed OpenType font stack (Composition.Text: TrueTypeFont/CffFont/CmapTable/
+         ManagedFontResolver/Shaping) lives here; we adapt it to the TextInterface surface. -->
+    <ProjectReference Include="$(WpfSourceDir)WgpuInterop\WgpuInterop.csproj" />
+  </ItemGroup>
+
+</Project>

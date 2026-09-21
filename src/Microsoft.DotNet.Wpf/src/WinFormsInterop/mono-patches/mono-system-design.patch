@@ -1,0 +1,17 @@
+# Delta vs upstream Mono mcs/class/System.Design — already applied to the vendored
+# swfdesign/ copy; kept as provenance, matching mono-swf.patch.
+#
+# ICodeDomDesignerReload.cs — drop a stray 'using System.Web.UI.Design'. The interface
+# has nothing to do with ASP.NET; the using only existed because Mono compiled this file
+# into an assembly that also carried the Web.UI designers, which we do not vendor.
+
+--- C:/Users/LUKASV~1/AppData/Local/Temp/claude/c--Git-SharpDevelop/255ca31a-5262-4d30-af12-abbaade65e2a/scratchpad/mono-sd/mcs/class/System.Design/System.ComponentModel.Design.Serialization/ICodeDomDesignerReload.cs	2026-08-19 22:35:52.315426600 +0200
++++ swfdesign/System.ComponentModel.Design.Serialization/ICodeDomDesignerReload.cs	2026-08-19 22:47:35.939385100 +0200
+@@ -28,7 +28,6 @@
+ //
+ 
+ using System.CodeDom;
+-using System.Web.UI.Design;
+ 
+ namespace System.ComponentModel.Design.Serialization
+ {

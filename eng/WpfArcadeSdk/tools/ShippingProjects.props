@@ -30,21 +30,22 @@
       PresentationFramework.Luna;
       PresentationFramework.Royale;
       PresentationFramework.Fluent;
-      WindowsFormsIntegration;
-      PenImc;
-      wpfgfx;
-      D3DCompiler;
-      VCRuntime
+      WindowsFormsIntegration
     </ExternalShippingProjects>
 
+    <!--
+      PenImc, wpfgfx, D3DCompiler and VCRuntime used to be listed above, and PresentationNative and
+      bilinearspan below. All were C++ projects; none is in the solution any more and the port ships
+      none of them, because it has managed replacements for what they did: composition is the managed
+      WebGPU engine, text and geometry are managed, media goes through IMediaBackend, and stylus and
+      touch use WM_POINTER.
+    -->
     <InternalShippingLibProjects>
-      $(InternalShippingLibProjects);
-      bilinearspan
+      $(InternalShippingLibProjects)
     </InternalShippingLibProjects>
 
     <InternalShippingProjects>
-    $(InternalShippingLibProjects);
-      PresentationNative;
+      $(InternalShippingLibProjects)
     </InternalShippingProjects>
 
     <ShippingProjects>

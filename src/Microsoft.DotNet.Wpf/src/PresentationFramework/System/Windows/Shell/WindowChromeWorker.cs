@@ -249,11 +249,20 @@ namespace Microsoft.Windows.Shell
 
             _FixupTemplateIssues();
 
-            // Force this the first time.
-            _UpdateSystemMenu(_window.WindowState);
-            _UpdateFrameState(true);
+            // Non-client-area customization below is Win32-only (system menu, DWM frame extension,
+            // window-style bits, SetWindowPos) and P/Invokes the native presentation library that
+            // doesn't exist off-Windows. There the platform window owns its chrome; the managed
+            // template fixup above already lets the app's custom title-bar content fill the client
+            // area, so skip the native calls rather than crash. (_WndProc, hooked above, is likewise
+            // never invoked off-Windows since there is no Win32 message loop.)
+            if (System.OperatingSystem.IsWindows())
+            {
+                // Force this the first time.
+                _UpdateSystemMenu(_window.WindowState);
+                _UpdateFrameState(true);
 
-            NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, 0, 0, _SwpFlags);
+                NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, 0, 0, _SwpFlags);
+            }
         }
 
         /// <summary>
@@ -656,6 +665,13 @@ namespace Microsoft.Windows.Shell
         /// </remarks>
         private void _UpdateSystemMenu(WindowState? assumeState)
         {
+            // The Win32 system menu (GetSystemMenu/EnableMenuItem/GetWindowPlacement, all user32) doesn't
+            // exist off-Windows. Skipping it is essential: this runs from the WM_SIZE public-hook, and an
+            // unguarded user32 DllNotFoundException here aborts the whole HwndWrapper hook chain before
+            // WPF's layout/HwndTarget resize hooks run — so the window would never re-layout on resize
+            // (the CAMetalLayer just stretches the stale frame like a Viewbox).
+            if (!OperatingSystem.IsWindows())
+                return;
             const MF mfEnabled = MF.ENABLED | MF.BYCOMMAND;
             const MF mfDisabled = MF.GRAYED | MF.DISABLED | MF.BYCOMMAND;
 
@@ -743,6 +759,11 @@ namespace Microsoft.Windows.Shell
 
         private void _SetRoundingRegion(WINDOWPOS? wp)
         {
+            // HRGN window regions (SetWindowRgn) + GetWindowPlacement are user32-only; off-Windows the
+            // native window frame handles rounding. Guard so this WM_WINDOWPOSCHANGED-path native call
+            // doesn't throw and abort the hook chain (see _UpdateSystemMenu).
+            if (!OperatingSystem.IsWindows())
+                return;
             const int MONITOR_DEFAULTTONEAREST = 0x00000002;
 
             // We're early - WPF hasn't necessarily updated the state of the window.

@@ -1,0 +1,96 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <!-- Browser/WebAssembly head for the WinForms-on-WebGPU port: the SAME managed Mono
+       System.Windows.Forms + XplatUIWebGpu driver + vendored System.Drawing that the mac
+       host runs, but presented to a <canvas> WebGPU surface via the BROWSER flavor of the
+       WebGPU interop (JS interop over navigator.gpu). DOM events feed the driver's input.
+       Assembly name is "WinFormsHost" so it inherits WgpuInterop's InternalsVisibleTo. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>WinFormsHost</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <StartupObject>WasmBoot</StartupObject>
+    <!-- AOT is OPT-IN (`dotnet publish -p:WfAot=true`) so the dev loop stays on the fast interpreter
+         build (present-on-change keeps idle free; the interpreter is fine for the demo). WfAot=true
+         native-compiles the hot render path (Mono.System.Drawing recorder + WGSL renderer) — swf stays
+         interpreted (see the item group below). The wasm SDK requires PublishTrimmed for AOT; the host
+         reflects the driver's internal methods, so the rooted assemblies below keep those members.
+         Interpreter build needs PublishTrimmed=false (else the trimmer strips the reflected methods). -->
+    <WfAot Condition="'$(WfAot)' == ''">false</WfAot>
+    <RunAOTCompilation>$(WfAot)</RunAOTCompilation>
+    <PublishTrimmed>$(WfAot)</PublishTrimmed>
+    <WasmEmitSymbolMap Condition="'$(WfAot)' == 'true'">true</WasmEmitSymbolMap>
+    <TrimMode Condition="'$(WfAot)' == 'true'">partial</TrimMode>
+    <SuppressTrimAnalysisWarnings Condition="'$(WfAot)' == 'true'">true</SuppressTrimAnalysisWarnings>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!-- Repo root props turn style analyzers into build errors; this head compiles as-is. -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+  </PropertyGroup>
+
+  <!-- Shared present path + host interface reused from the desktop host (platform-neutral). -->
+  <ItemGroup>
+    <!-- The present path and the host contract now live in the WinForms assembly itself
+         (WinFormsInterop/host); the browser head still compiles its own copy because BrowserHost
+         drives its loop from JS rather than through PresentationHost. -->
+    <Compile Include="..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\host\WgpuPresenter.cs" Link="WgpuPresenter.cs" />
+    <Compile Include="..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\host\IWinFormsHost.cs" Link="IWinFormsHost.cs" />
+  </ItemGroup>
+
+  <!-- Root the reflection-heavy assemblies so trimming keeps the driver's reflected members and the
+       managed WinForms/System.Drawing surface. Accessibility is a ref assembly (no IL) referenced only
+       by OS-guarded P/Invoke signatures -> keep it on the interpreter (mono-aot-cross can't AOT it). -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="WinFormsHost" />
+    <TrimmerRootAssembly Include="System.Windows.Forms" />
+    <TrimmerRootAssembly Include="Mono.System.Drawing" />
+    <TrimmerRootAssembly Include="Microsoft.Wpf.Interop.WebGpu" />
+    <!-- AOT only the hot rendering path (Mono.System.Drawing recorder + the WebGPU renderer). Keep
+         System.Windows.Forms on the interpreter: it drags a legacy closure (System.Configuration /
+         Security.Cryptography.Xml / EventLog ...) mono-aot-cross can't resolve, and the control/theme
+         logic runs only on change (present-on-change), not per frame. Accessibility is a ref asm. -->
+    <_AOT_InternalForceInterpretAssemblies Include="System.Windows.Forms.dll" />
+    <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" />
+  </ItemGroup>
+
+  <!-- The managed WinForms stack (built by the desktop projects; platform-neutral IL) plus the
+       BROWSER flavor of the WebGPU interop (same AssemblyName, resolves the C-ABI to navigator.gpu). -->
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\bin\Release\net10.0\System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Mono.System.Drawing"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\sysdrawing\bin\Release\net10.0\Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Accessibility"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\lib\Accessibility.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <!-- Legacy CAS types (UIPermission etc.) that Mono System.Windows.Forms references; needed on the
+       bundle so the trimmer/AOT can resolve them. -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+  </ItemGroup>
+
+  <!-- Strip the framework System.Drawing.* (dragged in transitively) so our vendored
+       Mono.System.Drawing is the sole System.Drawing.* provider (avoids CS0433). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Keep the served JS interop modules in sync with their sources. Must run before
+       static-web-asset discovery or the integrity hashes go stale. -->
+  <Target Name="CopyInteropJs" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
+    <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\wgpu-interop.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+  </Target>
+
+  <ItemGroup>
+    <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
+  </ItemGroup>
+
+</Project>

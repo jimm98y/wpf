@@ -1,0 +1,79 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Builds Mono's managed System.Drawing (VENDORED here: mono/ = Mono's own source, corefx/ = the
+    mono-corefx files its .sources pulls in, build/ = Mono build commons) on net10. This is the
+    System.Drawing WE own: its single P/Invoke seam (mono/System.Drawing/gdipFunctions.cs, ~580
+    Gdip* imports → libgdiplus) is what a later step reroutes to the WgpuInterop GPU rasterizer so
+    WinForms controls draw through WebGPU. Self-contained (no external mono/corefx checkout).
+    Flags mirror Mono's Makefile: /unsafe -d:FEATURE_TYPECONVERTER,SUPPORTS_WINDOWS_COLORS.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- NOT "System.Drawing": that collides with the inbox System.Drawing facade (which forwards to
+         System.Drawing.Common), and the SDK's conflict resolution silently prefers the facade over
+         our copy. A distinct assembly name makes ours the unambiguous provider of the System.Drawing
+         namespace (the namespace is still System.Drawing; only the assembly file name differs). -->
+    <AssemblyName>Mono.System.Drawing</AssemblyName>
+    <RootNamespace>System.Drawing</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+    <!-- NO_CAS strips Code Access Security metadata (see the Compile Remove + #if !NO_CAS sites).
+         CAS is dead in .NET Core (the attributes are inert metadata), but their typerefs
+         (System.Security.ISecurityEncodable via System.Runtime) name types the browser-wasm BCL does
+         not have, so mono-aot-cross cannot AOT this assembly with them present. Stripping them is what
+         lets Mono.System.Drawing be AOT'd instead of force-interpreted in the wasm head. -->
+    <DefineConstants>MONO;FEATURE_TYPECONVERTER;SUPPORTS_WINDOWS_COLORS;NET_4_5;NO_CAS</DefineConstants>
+    <NoWarn>$(NoWarn);CS0618;CS0612;CS0672;CS1591;CS0809;CS0114;CS0108;CS0169;CS0649;CS0067;CS0642;CS0219;CS0162;CS0164;CS0628;CS0659;CS0660;CS0661;CS0465;CS0436;CS3021</NoWarn>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <SignAssembly>false</SignAssembly>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RunAnalyzers>false</RunAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Exactly the files Mono's System.Drawing.dll.sources compiles (copied 1:1). -->
+    <Compile Include="mono/**/*.cs" />
+    <Compile Include="corefx/**/*.cs" />
+    <Compile Include="build/**/*.cs" />
+    <Compile Include="GdiPlusResolver.cs" />   <!-- maps "gdiplus" -> libgdiplus at runtime -->
+    <Compile Include="backend/**/*.cs" />       <!-- IGpuSceneRecorder seam + WgpuInterop backend -->
+    <!-- The two CAS permission classes (they derive from CodeAccessPermission /
+         CodeAccessSecurityAttribute, which is what drags in the unresolvable CAS typerefs). Nothing
+         references them; only unrelated SR string constants mention the names. PrintingPermissionLevel
+         stays: it is a plain enum and part of the System.Drawing.Printing surface. -->
+    <Compile Remove="corefx/src/System.Security.Permissions/src/System/Drawing/Printing/PrintingPermission.cs" />
+    <Compile Remove="corefx/src/System.Security.Permissions/src/System/Drawing/Printing/PrintingPermissionAttribute.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The WgpuInterop GPU rasterizer: the SceneRecorder backend rerouted the Graphics draw verbs
+         into its scene graph. Its internals are exposed via InternalsVisibleTo("Mono.System.Drawing"). -->
+    <ProjectReference Include="../../WgpuInterop/WgpuInterop.csproj" />
+  </ItemGroup>
+
+  <!-- System.Security.Permissions is no longer referenced: NO_CAS removed every use of
+       PermissionSet / CodeAccessPermission / IUnrestrictedPermission. -->
+
+
+  <!--
+    The six icons SystemIcons hands out. Mono embeds them with the bare filename as the logical
+    name (see its Makefile: -resource:Assembly/Mono.ico,Mono.ico) and Icon's internal resource
+    constructor looks them up that way.
+
+    Without these the SystemIcons static constructor throws FileNotFoundException on the FIRST
+    icon, so every member is dead - including SystemIcons.Error, which WinForms' own
+    ThreadExceptionDialog paints. That turns any unhandled exception into a
+    TypeInitializationException that hides the original one.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="mono/Assembly/Mono.ico" LogicalName="Mono.ico" />
+    <EmbeddedResource Include="mono/Assembly/Information.ico" LogicalName="Information.ico" />
+    <EmbeddedResource Include="mono/Assembly/Error.ico" LogicalName="Error.ico" />
+    <EmbeddedResource Include="mono/Assembly/Warning.ico" LogicalName="Warning.ico" />
+    <EmbeddedResource Include="mono/Assembly/Question.ico" LogicalName="Question.ico" />
+    <EmbeddedResource Include="mono/Assembly/Shield.ico" LogicalName="Shield.ico" />
+  </ItemGroup>
+
+</Project>

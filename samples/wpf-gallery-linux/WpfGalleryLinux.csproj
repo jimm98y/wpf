@@ -1,0 +1,169 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The gallery on the Linux/Wayland head.
+
+    Compiles the SAME code-only gallery sources the macOS, Windows and Android heads run
+    (samples/wpf-webgpu-gallery), so a screenshot here is directly comparable with theirs. The one
+    WinForms card included: it embeds a Mono System.Windows.Forms control tree whose scene
+    composites into the SAME WebGPU frame, so it needs the WinForms-interop assemblies from
+    eng/build-sdk.sh (do NOT pass -p:SkipWinForms=true).
+
+    Referenced by path rather than ProjectReference'd, exactly as the Android head does
+    (samples/wpf-gallery-android): those projects build through the Arcade SDK, which a plain
+    `dotnet run` of a sample does not participate in. Run eng/build-sdk.sh first.
+
+    Note the target framework: plain net10.0, NOT net10.0-windows. This fork's WPF is not tied to
+    the Windows Desktop SDK, which is the whole point of the port.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <!-- Samples are not held to the framework's own analyzer rules (the other gallery heads do the
+         same); the shared gallery sources predate several of them. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <UseWPF>false</UseWPF>
+    <AssemblyName>WpfGalleryLinux</AssemblyName>
+    <_Art>$(MSBuildThisFileDirectory)../../artifacts/bin</_Art>
+    <_WinForms>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src/WinFormsInterop</_WinForms>
+    <_Wgpu>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/bin/Release/net10.0</_Wgpu>
+    <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>
+    <WgpuNativeDir>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/$(WgpuRid)/lib/</WgpuNativeDir>
+  </PropertyGroup>
+
+  <!-- The shared gallery, compiled from the canonical copy rather than duplicated. -->
+  <ItemGroup>
+    <Compile Include="../wpf-webgpu-gallery/Program.cs" Link="Program.cs" />
+    <Compile Include="../wpf-webgpu-gallery/InputDemo.cs" Link="InputDemo.cs" />
+    <Compile Include="../wpf-webgpu-gallery/WinFormsHost.cs" Link="WinFormsHost.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="WindowsBase">                 <HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Xaml">                 <HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationCore">            <HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework">       <HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="DirectWriteForwarder">        <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="ReachFramework">              <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationUI">              <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Printing">             <HintPath>$(_Art)/System.Printing.Managed/Release/net10.0/System.Printing.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationTypes">           <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationProvider">        <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath><Private>true</Private></Reference>
+    <!-- WgpuInterop deliberately builds OUTSIDE Arcade (its Directory.Build.props is empty so
+         MSBuild does not walk up into the Arcade SDK), so its output lands next to the project
+         rather than in artifacts/bin. -->
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>$(_Wgpu)/Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Aero2"> <HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Forms"><HintPath>$(_WinForms)/bin/Release/net10.0/System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Mono.System.Drawing"><HintPath>$(_WinForms)/sysdrawing/bin/Release/net10.0/Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Accessibility"><HintPath>$(_WinForms)/lib/Accessibility.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <!-- The vendored Mono.System.Drawing must be the SOLE System.Drawing.* provider: the WPF closure
+       drags in the framework System.Drawing.Common, and two providers for the same namespace is
+       CS0433 on every type the WinForms card touches. -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The fork's cross-platform Microsoft.Win32.SystemEvents / Registry shims. The framework copies
+       throw off Windows; ExcludeAssets=all neutralises the transitive packages so ours are the only
+       copies (the same trick the Android head documents). -->
+  <ItemGroup>
+    <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath><Private>true</Private></Reference>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" ExcludeAssets="all" />
+  </ItemGroup>
+
+  <!--
+    Copy the fork's assemblies next to the app explicitly.
+
+    <Private>true</Private> is not enough: conflict resolution recognises names like
+    PresentationFramework and System.Xaml as framework-provided and drops them from the copy set,
+    so the app compiled fine and then died at startup with a FileNotFoundException for the very
+    assembly it had just been compiled against. Copying the resolved HintPaths directly sidesteps
+    that judgement entirely.
+  -->
+  <Target Name="CopyForkAssemblies" AfterTargets="Build">
+    <ItemGroup>
+      <_ForkAssembly Include="@(Reference->'%(HintPath)')" Condition="'%(Reference.HintPath)' != ''" />
+      <_ForkAssembly Include="@(_ForkAssembly->Replace('.dll', '.pdb'))" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ForkAssembly)" DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" Condition="Exists('%(_ForkAssembly.Identity)')" />
+  </Target>
+
+  <!-- Assemblies the WPF closure names but this app never reaches; they still have to RESOLVE. -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.CodeDom" Version="10.0.10" />
+    <!-- Application's static constructor loads it (resource/pack URI support), so it is needed at
+         startup, not merely at resolve time. -->
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <!-- FrameworkCompatibilityPreferences reads app.config switches during theme loading. -->
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <!-- Brings System.Private.Windows.Core, which PresentationCore's DataObject needs at runtime.
+         Without it Clipboard and DragDrop throw FileNotFoundException the moment they are used. The
+         packaged SDK already adds this (sdk/WpfWebGpu.Sdk/Sdk/Sdk.targets); samples that reference
+         the fork by path have to say so themselves. -->
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <!-- The rest of the packaged SDK's unix set, kept in step with it: DataObject's serialisation
+         path reaches System.Formats.Nrbf, and the others are named by the WPF closure. -->
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+  </ItemGroup>
+
+  <!-- The native WebGPU backend, next to the app so the loader finds it. -->
+  <ItemGroup>
+    <None Include="$(WgpuNativeDir)libwgpu_native.so" Condition="Exists('$(WgpuNativeDir)libwgpu_native.so')" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="WarnIfNoNativeLib" BeforeTargets="Build" Condition="!Exists('$(WgpuNativeDir)libwgpu_native.so')">
+    <Warning Text="wgpu-native not found in '$(WgpuNativeDir)'. Run: pwsh src/Microsoft.DotNet.Wpf/src/WgpuInterop/eng/fetch-wgpu.ps1 -Rid $(WgpuRid)" />
+  </Target>
+
+  <Target Name="ErrorIfForkNotBuilt" BeforeTargets="Build" Condition="!Exists('$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll')">
+    <Error Text="The WPF fork has not been built. Run eng/build-sdk.sh first." />
+  </Target>
+
+
+  <!-- The Fluent theme's glyph icons come from Segoe Fluent Icons / Segoe MDL2 Assets, which no Linux
+       box has; FontFactoryState substitutes them onto "Symbols", and SystemFontCatalog looks for it in
+       the app-local fonts folder. The packaged SDK deploys this automatically (Sdk.targets); samples
+       that reference the fork by path have to do it themselves, or every icon is a missing-glyph box. -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Fonts/fonts/Symbols.ttf"
+          Link="fonts/Symbols.ttf" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <!-- Cascadia Code for its programming ligatures: the fallbacks have none. -->
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Fonts/fonts/CascadiaCode-Regular.ttf"
+          Link="fonts/CascadiaCode-Regular.ttf" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <!-- Selawik (the Segoe UI substitute) once it is vendored; a glob matching nothing is inert. -->
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Fonts/fonts/Selawik*.ttf"
+          Link="fonts/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <!-- Noto Sans CJK, the same collection the packaged SDK deploys. A sample that references the
+         fork by path has to deploy it itself, or Japanese/Chinese/Korean text is missing glyphs on
+         any box without the CJK language packs installed. -->
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Fonts/fonts/NotoSansCJK-Regular.ttc"
+          CopyToOutputDirectory="PreserveNewest" Link="fonts/NotoSansCJK-Regular.ttc" Visible="false" />
+    <!-- The COLR emoji face the SDK ships: the system emoji fonts are colour BITMAPS
+         (CBDT/CBLC, sbix) that this renderer cannot draw, so without this emoji are blank. -->
+    <None Include="$(MSBuildThisFileDirectory)../../sdk/WpfWebGpu.Fonts/fonts/TwemojiMozilla.ttf"
+          CopyToOutputDirectory="PreserveNewest" Link="fonts/TwemojiMozilla.ttf" Visible="false" />
+  </ItemGroup>
+
+</Project>

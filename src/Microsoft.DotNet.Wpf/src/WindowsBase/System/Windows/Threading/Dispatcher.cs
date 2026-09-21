@@ -21,7 +21,6 @@ namespace System.Windows.Threading
     {
         static Dispatcher()
         {
-            _msgProcessQueue = UnsafeNativeMethods.RegisterWindowMessage("DispatcherProcessQueue");
             _globalLock = new object();
             _dispatchers = new List<WeakReference>();
             _possibleDispatcher = new WeakReference(null);
@@ -1732,12 +1731,16 @@ namespace System.Windows.Threading
 
             _defaultDispatcherSynchronizationContext = new DispatcherSynchronizationContext(this);
 
-            // Create the message-only window we use to receive messages
-            // that tell us to process the queue.
-            _window = new MessageOnlyHwndWrapper();
-
-            _hook = new HwndWrapperHook(WndProcHook);
-            _window.AddHook(_hook);
+            // The cross-platform run loop that replaces the Win32 message-only window: the
+            // dispatcher thread blocks in it and RequestProcessing/timers wake it. See
+            // DispatcherRunLoop for why this is a single managed implementation on every platform.
+            _runLoop = new DispatcherRunLoop
+            {
+                // How the queue gets serviced when the thread is inside an OS modal loop (a window
+                // drag or resize, a tracking menu, AppKit's event-tracking loop) instead of inside
+                // PushFrameImpl's loop below.
+                Pump = PumpFromNativeLoop,
+            };
 
             // Verify that the accessibility switches are set prior to any major UI code running.
             AccessibilitySwitches.VerifySwitches(this);
@@ -1836,18 +1839,17 @@ namespace System.Windows.Threading
                 ShutdownFinished(this, EventArgs.Empty);
             }
 
-            // Destroy the message-only window we use to process Win32 messages
+            // Stop the run loop and release any thread blocked pumping frames.
             //
             // Note: we need to do this BEFORE we actually mark the dispatcher
-            // as shutdown.  This is because the window will need the dispatcher
-            // to execute the window proc.
-            MessageOnlyHwndWrapper window = null;
+            // as shutdown, mirroring the original ordering for the message-only window.
+            DispatcherRunLoop runLoop = null;
             lock(_instanceLock)
             {
-                window = _window;
-                _window = null;
+                runLoop = _runLoop;
+                _runLoop = null;
             }
-            window.Dispose();
+            runLoop?.Shutdown();
 
             // Mark this dispatcher as shut down.  Attempts to BeginInvoke
             // or Invoke will result in an exception.
@@ -2045,9 +2047,57 @@ namespace System.Windows.Threading
 
         private void PushFrameImpl(DispatcherFrame frame)
         {
+            // The browser main thread can never block: PushFrame's blocking loop is
+            // replaced by a self-scheduling async pump and this method returns
+            // immediately (Application.Run then returns; the wasm host keeps the
+            // runtime alive and the pump drives the queue/timers/rendering).
+            // Nested frames (ShowDialog, DispatcherOperation.Wait) need a blocking
+            // wait and are unsupported on this platform.
+            if (OperatingSystem.IsBrowser())
+            {
+                if (_frameDepth > 0)
+                {
+                    throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on the browser.");
+                }
+                RunBrowserPumpAsync(frame);
+                return;
+            }
+
+            // iOS is the same shape of problem as the browser: UIKit owns the main run loop and
+            // UIApplicationMain never returns, so the dispatcher cannot own the loop -- it has to be
+            // a guest in it, driven by CADisplayLink (the iOS analog of requestAnimationFrame).
+            // Blocking here is not merely slower, it is fatal: Application.Run/Dispatcher.Run is
+            // reached from inside a UIKit callback (scene:willConnectToSession:), so the blocking
+            // loop below would never return to UIKit, the scene would stay half-connected and its
+            // window would never be composited -- the app renders and presents every frame
+            // correctly, and the screen stays blank.
+            if (OperatingSystem.IsIOS())
+            {
+                if (_frameDepth > 0)
+                {
+                    throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on iOS.");
+                }
+                RunIosPump(frame);
+                return;
+            }
+
+            // Android is the same problem again, and fatal in the same way: Dispatcher.Run is reached
+            // from inside Activity.onCreate, which is a callback on the main Looper. Blocking there
+            // never returns to the Looper, so the activity stays half-created, its window is never
+            // laid out and nothing is ever composited -- the app renders every frame correctly into a
+            // surface the system never shows.
+            if (OperatingSystem.IsAndroid())
+            {
+                if (_frameDepth > 0)
+                {
+                    throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on Android.");
+                }
+                RunAndroidPump(frame);
+                return;
+            }
+
             SynchronizationContext oldSyncContext = null;
             SynchronizationContext newSyncContext = null;
-            MSG msg = new MSG();
 
             _frameDepth++;
             try
@@ -2061,10 +2111,24 @@ namespace System.Windows.Threading
                 {
                     while(frame.Continue)
                     {
-                        if (!GetMessage(ref msg, IntPtr.Zero, 0, 0))
+                        if (!WaitForWork())
                             break;
 
-                        TranslateAndDispatchMessage(ref msg);
+                        if(_disableProcessingCount > 0)
+                        {
+                            throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
+                        }
+
+                        // A run-loop wake either delivers queued operations or a fired timer
+                        // (or both). Promote any due timers first, then service the queue.
+                        if(_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
+                        {
+                            PromoteTimers(Environment.TickCount);
+                        }
+
+                        ProcessQueue();
+
+                        RaiseIdleIfQuiescent();
                     }
 
                     // If this was the last frame to exit after a quit, we
@@ -2094,160 +2158,419 @@ namespace System.Windows.Threading
             }
         }
 
+        // Browser replacement for PushFrameImpl's blocking loop: an async pump that
+        // yields to the JS event loop between ticks (which is also what presents the
+        // WebGPU canvas) and services timers + the operation queue at up to ~120Hz,
+        // mirroring the macOS NativeEventPumpIntervalMs cadence. The pump's own
+        // awaits intentionally run OUTSIDE the DispatcherSynchronizationContext:
+        // posting its continuations through the dispatcher queue would deadlock the
+        // very loop that services that queue. The dispatcher context is installed
+        // only around ProcessQueue so application awaits resume via the dispatcher.
+        // Diagnostics (browser): per-tick wall-time telemetry to the console, enabled by
+        // WPF_WEBGPU_PERF_CONSOLE=1 (?perf=1 in the wasm head). The renderer's PERF lines
+        // cover the sink; this covers the whole dispatcher tick (input+layout+render).
+        private static readonly bool s_pumpPerfConsole =
+            Environment.GetEnvironmentVariable("WPF_WEBGPU_PERF_CONSOLE") == "1";
+        private int _pumpTickCount;
+        private double _pumpTickTotalMs, _pumpTickMaxMs;
 
-        private bool GetMessage(ref MSG msg, IntPtr hwnd, int minMessage, int maxMessage)
+        private async void RunBrowserPumpAsync(DispatcherFrame frame)
         {
-            // If Any TextServices for Cicero is not installed GetMessagePump() returns null.
-            // If TextServices are there, we can get ITfMessagePump and have to use it instead of
-            // Win32 GetMessage().
-            bool result;
-            UnsafeNativeMethods.ITfMessagePump messagePump = GetMessagePump();
+            _frameDepth++;
             try
             {
-                if (messagePump == null)
+                var dispatcherSyncContext = new DispatcherSynchronizationContext(this);
+
+                while (frame.Continue)
                 {
-                    // We have foreground items to process.
-                    // By posting a message, Win32 will service us fairly promptly.
-                    result = UnsafeNativeMethods.GetMessageW(ref msg,
-                                                             new HandleRef(this, hwnd),
-                                                             minMessage,
-                                                             maxMessage);
-                }
-                else
-                {
-                    int intResult;
-
-                    messagePump.GetMessageW(
-                        ref msg,
-                        hwnd,
-                        minMessage,
-                        maxMessage,
-                        out intResult);
-
-                    if (intResult == -1)
+                    if (_runLoop is null)
                     {
-                        throw new Win32Exception();
+                        break;
                     }
-                    else if (intResult == 0)
+
+                    // Tick on animation frames: display-aligned (the canvas presents on the
+                    // same boundary) and immune to the browser's setTimeout clamping, which
+                    // stretched a Task.Delay-based pump to ~25ms periods (~40fps ceiling)
+                    // and made timer-driven animation visibly jitter. Timers with due times
+                    // inside a frame fire on the next tick — 60Hz granularity, same as any
+                    // display-paced app. Hidden tabs fall back to a slow JS-side timeout.
+                    await MS.Internal.Interop.BrowserWindow.NextFrameAsync().ConfigureAwait(false);
+
+                    if (_runLoop is null || !frame.Continue)
                     {
-                        result = false;
+                        break;
                     }
-                    else
+
+                    if (_disableProcessingCount > 0)
                     {
-                        result = true;
+                        throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
                     }
-                }
-            }
-            finally
-            {
-                if (messagePump != null) Marshal.ReleaseComObject(messagePump);
-            }
 
-            return result;
-        }
-
-        //  Get ITfMessagePump interface from Cicero.
-        private UnsafeNativeMethods.ITfMessagePump GetMessagePump()
-        {
-            UnsafeNativeMethods.ITfMessagePump messagePump = null;
-
-            if (_isTSFMessagePumpEnabled)
-            {
-                // If the current thread is not STA, Cicero just does not work.
-                // Probably this Dispatcher is running for worker thread.
-                if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
-                {
-                    // If there is no text services, we don't have to use ITfMessagePump.
-                    if (TextServicesLoader.ServicesInstalled)
+                    SynchronizationContext oldSyncContext = SynchronizationContext.Current;
+                    SynchronizationContext.SetSynchronizationContext(dispatcherSyncContext);
+                    long tick0 = s_pumpPerfConsole ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+                    try
                     {
-                        UnsafeNativeMethods.ITfThreadMgr threadManager;
-                        threadManager = TextServicesLoader.Load();
+                        // Drain DOM input/resize events queued by the browser windowing
+                        // backend (the browser analog of the Cocoa pump in WaitForWork).
+                        MS.Internal.Interop.BrowserWindow.PumpEvents();
 
-                        // ThreadManager does not exist. No MessagePump yet.
-                        if (threadManager != null)
+                        if (_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
                         {
-                            // QI ITfMessagePump.
-                            messagePump = threadManager as UnsafeNativeMethods.ITfMessagePump;
+                            PromoteTimers(Environment.TickCount);
+                        }
+
+                        // ProcessQueue services ONE operation. The Win32/macOS loops iterate
+                        // back-to-back while work is queued and only sleep when idle; awaiting
+                        // a display frame between single operations would serialize animation/
+                        // layout/render ops at the frame rate (~1/3 of it reaches rendering).
+                        // Drain the queue each tick, bounded by a frame-ish time budget so a
+                        // flood cannot starve the browser event loop.
+                        long drain0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        long drainBudget = System.Diagnostics.Stopwatch.Frequency / 80;   // ~12.5ms
+                        do
+                        {
+                            ProcessQueue();
+                        }
+                        while (_queue.MaxPriority is not (DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                               && System.Diagnostics.Stopwatch.GetTimestamp() - drain0 < drainBudget
+                               && frame.Continue);
+
+                        RaiseIdleIfQuiescent();
+                    }
+                    catch (Exception tickException)
+                    {
+                        // A throw from the tick body must NOT end the pump. Input is delivered inside
+                        // it (PumpEvents raises WPF's routed events directly), so an ordinary
+                        // application bug in a click handler used to escape here, exit the loop, and
+                        // leave the page permanently frozen: no further ticks means no layout, no
+                        // render and no input, with the window still on screen looking alive. That is
+                        // the harshest failure mode available, and it is not what any other head does
+                        // -- on Windows and macOS the exception is offered to Dispatcher.UnhandledException
+                        // and the app carries on if it handles it.
+                        //
+                        // So offer it the same way. Unhandled, it is reported and the pump still
+                        // continues: on the desktop the process would die and the user would restart
+                        // it, but here the page is the process, and killing the loop denies the app
+                        // even the chance to show its own error UI.
+                        if (!CatchException(tickException))
+                        {
+                            Console.WriteLine($"WPF browser dispatcher: unhandled exception in pump tick (pump continues): {tickException}");
+                        }
+                    }
+                    finally
+                    {
+                        SynchronizationContext.SetSynchronizationContext(oldSyncContext);
+                        if (s_pumpPerfConsole)
+                        {
+                            double tms = (System.Diagnostics.Stopwatch.GetTimestamp() - tick0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                            _pumpTickTotalMs += tms;
+                            if (tms > _pumpTickMaxMs) _pumpTickMaxMs = tms;
+                            if (++_pumpTickCount == 120)
+                            {
+                                // Heap size and collection counts ride along: on the browser the
+                                // only window into managed memory is what the app prints, and
+                                // "it gets slower the longer it runs" is either heap growth or it
+                                // is not -- worth one measurement per 120 ticks to tell which.
+                                Console.WriteLine(
+                                    $"PERF/tick: avg={_pumpTickTotalMs / 120:F1}ms max={_pumpTickMaxMs:F1}ms over 120 ticks" +
+                                    $" | heap={GC.GetTotalMemory(false) / (1024 * 1024)}MB" +
+                                    $" gc0={GC.CollectionCount(0)} gc2={GC.CollectionCount(2)}");
+                                _pumpTickCount = 0; _pumpTickTotalMs = 0; _pumpTickMaxMs = 0;
+                            }
                         }
                     }
                 }
+
+                if (_frameDepth == 1 && _hasShutdownStarted)
+                {
+                    ShutdownImpl();
+                }
             }
-
-            return messagePump;
-        }
-
-        /// <summary>
-        /// Enables/disables ITfMessagePump handshake with Text Services Framework.
-        /// </summary>
-        /// <remarks>
-        /// PresentationCore's TextServicesManager sets this property false when
-        /// no WPF element has focus.  This is important to ensure that native
-        /// controls receive unfiltered input.
-        /// </remarks>
-        internal bool IsTSFMessagePumpEnabled
-        {
-            set
+            catch (Exception e)
             {
-                _isTSFMessagePumpEnabled = value;
+                // Only the loop's own plumbing reaches here now (the tick body handles its own
+                // exceptions above); surface it before the async-void rethrow turns it into an
+                // opaque unhandled promise rejection.
+                Console.WriteLine($"WPF browser dispatcher pump failed: {e}");
+                throw;
             }
-        }
-
-        private void TranslateAndDispatchMessage(ref MSG msg)
-        {
-            bool handled = false;
-
-            handled = ComponentDispatcher.RaiseThreadMessage(ref msg);
-
-            if(!handled)
+            finally
             {
-                UnsafeNativeMethods.TranslateMessage(ref msg);
-                UnsafeNativeMethods.DispatchMessage(ref msg);
+                _frameDepth--;
+                if (_frameDepth == 0)
+                {
+                    _exitAllFrames = false;
+                }
             }
         }
 
-        private IntPtr WndProcHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        // iOS replacement for PushFrameImpl's blocking loop, and the counterpart of
+        // RunBrowserPumpAsync: install a display-linked tick and RETURN, leaving the run loop to
+        // UIKit (which must get it back -- see the note in PushFrameImpl).
+        //
+        // Synchronous, unlike the browser pump: CADisplayLink delivers its callback on the main
+        // thread, which is already the dispatcher thread, so the tick body can run directly inside
+        // it. Awaiting instead would risk resuming the continuation on a thread-pool thread, and
+        // ProcessQueue has hard UI-thread affinity.
+        private void RunIosPump(DispatcherFrame frame)
         {
-            WindowMessage message = (WindowMessage)msg;
-            if(_disableProcessingCount > 0)
+            _frameDepth++;
+
+            var dispatcherSyncContext = new DispatcherSynchronizationContext(this);
+            if (!MS.Internal.Interop.UIKitWindow.StartDisplayLink(() => PumpIosTick(frame, dispatcherSyncContext)))
+            {
+                // Not running under UIKit (no CADisplayLink / no run loop): nothing can drive the
+                // queue, so unwind rather than leaving a frame pushed forever.
+                _frameDepth--;
+                return;
+            }
+
+            // Idle like every other platform: the Win32/macOS loops block in WaitForWork until
+            // something is queued, so a window that has rendered its content costs nothing until it
+            // changes. A display link left running would instead tick 60-120x/second forever --
+            // on a phone that is the difference between an idle app and a flat battery. Signal() is
+            // raised whenever work is queued or a timer's due time moves, so it is exactly the edge
+            // that must un-park the link; PumpIosTick parks it again once the queue drains.
+            _runLoop.Woken = MS.Internal.Interop.UIKitWindow.RequestWake;
+        }
+
+        // One CADisplayLink tick: promote due timers, then drain the operation queue. Mirrors the
+        // browser pump's body; there is no native event drain because UIKit delivers touches
+        // straight into UIKitWindow's touch handlers rather than queueing them for us.
+        private void PumpIosTick(DispatcherFrame frame, SynchronizationContext dispatcherSyncContext)
+        {
+            if (_runLoop is null || !frame.Continue)
+            {
+                MS.Internal.Interop.UIKitWindow.StopDisplayLink();
+                _frameDepth--;
+                if (_frameDepth == 0)
+                {
+                    _exitAllFrames = false;
+                    if (_hasShutdownStarted)
+                    {
+                        ShutdownImpl();
+                    }
+                }
+                return;
+            }
+
+            if (_disableProcessingCount > 0)
             {
                 throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
             }
 
-            if(message == WindowMessage.WM_DESTROY)
+            SynchronizationContext oldSyncContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(dispatcherSyncContext);
+            try
             {
-                if(!_hasShutdownStarted && !_hasShutdownFinished) // Dispatcher thread - no lock needed for read
+                if (_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
                 {
-                    // Aack!  We are being torn down rudely!  Try to
-                    // shut the dispatcher down as nicely as we can.
-                    ShutdownImpl();
+                    PromoteTimers(Environment.TickCount);
+                }
+
+                // ProcessQueue services ONE operation, so drain back-to-back like the Win32/macOS
+                // loops -- bounded by a frame-ish budget so a flood cannot starve UIKit's run loop
+                // (input, animation and the present all ride it).
+                long drain0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                long drainBudget = System.Diagnostics.Stopwatch.Frequency / 80;   // ~12.5ms
+                do
+                {
+                    ProcessQueue();
+                }
+                while (_queue.MaxPriority is not (DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                       && System.Diagnostics.Stopwatch.GetTimestamp() - drain0 < drainBudget
+                       && frame.Continue);
+
+                RaiseIdleIfQuiescent();
+
+                // Park the link if nothing is left to do, so the app renders on change and then
+                // idles (the iOS spelling of WaitForWork's block). Three cases:
+                //   queue still has work  -> keep ticking, drain it next frame
+                //   only a timer pending  -> park, and schedule a one-shot wake at its due time
+                //   nothing at all        -> park; Signal() (via _runLoop.Woken) revives us
+                if (_queue.MaxPriority is DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                {
+                    if (_dueTimeFound)
+                    {
+                        MS.Internal.Interop.UIKitWindow.ScheduleWake((_dueTimeInTicks - Environment.TickCount) / 1000.0);
+                    }
+                    MS.Internal.Interop.UIKitWindow.SetDisplayLinkPaused(true);
                 }
             }
-            else if(message == _msgProcessQueue)
+            finally
             {
-                ProcessQueue();
+                SynchronizationContext.SetSynchronizationContext(oldSyncContext);
             }
-            else if(message == WindowMessage.WM_TIMER && (int) wParam == TIMERID_BACKGROUND)
+        }
+
+        // Android replacement for PushFrameImpl's blocking loop, and the exact counterpart of
+        // RunIosPump: install a display-aligned per-frame callback (Choreographer, the Android
+        // spelling of CADisplayLink / requestAnimationFrame) and RETURN, leaving the main Looper to
+        // Android -- which must get it back, see the note in PushFrameImpl. Synchronous for the same
+        // reason the iOS pump is: the callback is delivered on the UI thread, which is already the
+        // dispatcher thread, and ProcessQueue has hard UI-thread affinity.
+        private void RunAndroidPump(DispatcherFrame frame)
+        {
+            _frameDepth++;
+
+            var dispatcherSyncContext = new DispatcherSynchronizationContext(this);
+            if (!MS.Internal.Interop.AndroidWindow.StartFrameCallback(() => PumpAndroidTick(frame, dispatcherSyncContext)))
             {
-                // This timer is just used to process background operations.
-                // Stop the timer so that it doesn't fire again.
-                SafeNativeMethods.KillTimer(new HandleRef(this, hwnd), TIMERID_BACKGROUND);
-
-                ProcessQueue();
+                // No activity/host to drive the pump: nothing can service the queue, so unwind rather
+                // than leaving a frame pushed forever.
+                _frameDepth--;
+                return;
             }
-            else if(message == WindowMessage.WM_TIMER && (int) wParam == TIMERID_TIMERS)
+
+            // Idle like every other platform -- and on a phone this is the difference between an idle
+            // app and a flat battery. Signal() is raised whenever work is queued or a timer's due time
+            // moves, which is exactly the edge that must un-park the callback; PumpAndroidTick parks
+            // it again once the queue drains.
+            _runLoop.Woken = MS.Internal.Interop.AndroidWindow.RequestWake;
+        }
+
+        // One Choreographer tick: promote due timers, then drain the operation queue. Mirrors
+        // PumpIosTick; there is no native event drain because Android delivers touches straight into
+        // AndroidWindow.NotifyTouch rather than queueing them for us.
+        private void PumpAndroidTick(DispatcherFrame frame, SynchronizationContext dispatcherSyncContext)
+        {
+            if (_runLoop is null || !frame.Continue)
             {
-                // We want 1-shot only timers.  So stop the timer
-                // that just fired.
-                KillWin32Timer();
-
-                PromoteTimers(Environment.TickCount);
+                MS.Internal.Interop.AndroidWindow.StopFrameCallback();
+                _frameDepth--;
+                if (_frameDepth == 0)
+                {
+                    _exitAllFrames = false;
+                    if (_hasShutdownStarted)
+                    {
+                        ShutdownImpl();
+                    }
+                }
+                return;
             }
 
-            // We are about to return to the OS.  If there is nothing left
-            // to do in the queue, then we will effectively go to sleep.
-            // This is the condition that means Idle.
+            if (_disableProcessingCount > 0)
+            {
+                throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
+            }
+
+            SynchronizationContext oldSyncContext = SynchronizationContext.Current;
+            SynchronizationContext.SetSynchronizationContext(dispatcherSyncContext);
+            try
+            {
+                if (_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
+                {
+                    PromoteTimers(Environment.TickCount);
+                }
+
+                // ProcessQueue services ONE operation, so drain back-to-back like the Win32/macOS
+                // loops -- bounded by a frame-ish budget so a flood cannot starve the Looper (input,
+                // animation and the present all ride it).
+                long drain0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                long drainBudget = System.Diagnostics.Stopwatch.Frequency / 80;   // ~12.5ms
+                do
+                {
+                    ProcessQueue();
+                }
+                while (_queue.MaxPriority is not (DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                       && System.Diagnostics.Stopwatch.GetTimestamp() - drain0 < drainBudget
+                       && frame.Continue);
+
+                RaiseIdleIfQuiescent();
+
+                // Park the pump if nothing is left to do (the Android spelling of WaitForWork's
+                // block); see the three cases spelled out in PumpIosTick.
+                if (_queue.MaxPriority is DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                {
+                    if (_dueTimeFound)
+                    {
+                        MS.Internal.Interop.AndroidWindow.ScheduleWake((_dueTimeInTicks - Environment.TickCount) / 1000.0);
+                    }
+                    MS.Internal.Interop.AndroidWindow.SetFrameCallbackPaused(true);
+                }
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(oldSyncContext);
+            }
+        }
+
+        // Block the dispatcher thread until there is work to do or the next DispatcherTimer is due.
+        // Returns false once the run loop has been shut down, which unwinds the frame.
+        private bool WaitForWork()
+        {
+            DispatcherRunLoop runLoop = _runLoop;
+            if (runLoop is null)
+            {
+                return false;
+            }
+
+            // Compute how long to sleep: until the next DispatcherTimer fires, else indefinitely.
+            int timeout = Timeout.Infinite;
+            lock(_instanceLock)
+            {
+                if (_dueTimeFound)
+                {
+                    int delta = _dueTimeInTicks - Environment.TickCount;
+                    timeout = delta < 0 ? 0 : delta;
+                }
+            }
+
+            // On macOS the Cocoa windowing backend has no separate UI thread: its NSApplication
+            // run loop must be serviced on this (the dispatcher) thread. Rather than block on the
+            // managed event, block on the Cocoa run loop - that is what actually composites the
+            // window (CoreAnimation / window-server handshake) and delivers input; a bare managed
+            // wait leaves the CAMetalLayer occluded. If work was already signaled, don't block:
+            // just drain pending events and return so the queue is processed promptly.
+            if (OperatingSystem.IsMacOS())
+            {
+                int cap = (timeout < 0 || timeout > NativeEventPumpIntervalMs) ? NativeEventPumpIntervalMs : timeout;
+
+                // Wait for managed work (or the timer deadline / the ~120Hz cap), then drain the
+                // Cocoa event queue non-blocking. The wait uses the managed event so DispatcherTimers
+                // and cross-thread posts wake the loop promptly (keeping animation + shutdown live);
+                // draining events keeps the window responsive.
+                runLoop.Wait(cap <= 0 ? 0 : cap);
+                MS.Internal.Interop.CocoaWindow.PumpEvents(0);
+                return _runLoop != null;
+            }
+
+            // Linux/Wayland is the same arrangement as macOS -- the compositor connection is
+            // serviced on this thread -- but it does NOT need the ~120Hz polling cap, because
+            // Wayland gives us a real file descriptor to block on. DispatcherRunLoop.Wait polls
+            // {wayland fd, wake eventfd} with the full timeout, so an idle app costs nothing at all
+            // rather than waking 125 times a second.
+            //
+            // WPF_LINUX_POLL_PUMP=1 falls back to the macOS-shaped periodic slice: five lines that
+            // always make progress, kept as an escape hatch if the fd integration ever misbehaves.
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid() &&
+                MS.Internal.Interop.Wayland.WaylandDisplay.IsActive)
+            {
+                if (s_linuxPollPump)
+                {
+                    int cap = (timeout < 0 || timeout > NativeEventPumpIntervalMs) ? NativeEventPumpIntervalMs : timeout;
+                    runLoop.Wait(cap <= 0 ? 0 : cap);
+                    MS.Internal.Interop.Wayland.WaylandWindow.PumpEvents(0);
+                    return _runLoop != null;
+                }
+
+                bool alive = runLoop.Wait(timeout);
+                // The blocking half already dispatched; this is the reconciliation half -- resize,
+                // scale and close notifications, plus synthetic key repeats.
+                MS.Internal.Interop.Wayland.WaylandWindow.AfterDispatch();
+                return alive && _runLoop != null;
+            }
+
+            return runLoop.Wait(timeout);
+        }
+
+        // When the queue has quiesced (nothing foreground/background pending) the dispatcher is
+        // idle - raise the same hooks the Win32 WndProc used to raise before returning to the OS.
+        private void RaiseIdleIfQuiescent()
+        {
             DispatcherHooks hooks = null;
-            bool idle = false;
+            bool idle;
 
             lock(_instanceLock)
             {
@@ -2264,54 +2587,29 @@ namespace System.Windows.Threading
 
                 ComponentDispatcher.RaiseIdle();
             }
-
-            return IntPtr.Zero ;
         }
 
+        /// <summary>
+        /// Enables/disables ITfMessagePump handshake with Text Services Framework.
+        /// </summary>
+        /// <remarks>
+        /// PresentationCore's TextServicesManager sets this property false when
+        /// no WPF element has focus.  Retained for API compatibility; the cross-platform
+        /// run loop does not host the Win32/Cicero ITfMessagePump.
+        /// </remarks>
+        internal bool IsTSFMessagePumpEnabled
+        {
+            set
+            {
+                _isTSFMessagePumpEnabled = value;
+            }
+        }
+
+        // The cross-platform run loop has no separate OS input queue to defer background work to;
+        // operation ordering is handled entirely by the dispatcher's priority queue.
         private bool IsInputPending()
         {
-            int retVal = 0;
-
-            // We need to know if there is any pending input in the Win32
-            // queue because we want to only process Avalon "background"
-            // items after Win32 input has been processed.
-            //
-            // Win32 provides the GetQueueStatus API -- but it has a major
-            // drawback: it only counts "new" input.  This means that
-            // sometimes it could return false, even if there really is input
-            // that needs to be processed.  This results in very hard to
-            // find bugs.
-            //
-            // Luckily, Win32 also provides the MsgWaitForMultipleObjectsEx
-            // API.  While more awkward to use, this API can return queue
-            // status information even if the input is "old".  The various
-            // flags we use are:
-            //
-            // QS_INPUT
-            // This represents any pending input - such as mouse moves, or
-            // key presses.  It also includes the new GenericInput messages.
-            //
-            // QS_EVENT
-            // This is actually a private flag that represents the various
-            // events that can be queued in Win32.  Some of these events
-            // can cause input, but Win32 doesn't include them in the
-            // QS_INPUT flag.  An example is WM_MOUSELEAVE.
-            //
-            // QS_POSTMESSAGE
-            // If there is already a message in the queue, we need to process
-            // it before we can process input.
-            //
-            // MWMO_INPUTAVAILABLE
-            // This flag indicates that any input (new or old) is to be
-            // reported.
-            //
-            retVal = UnsafeNativeMethods.MsgWaitForMultipleObjectsEx(0, null, 0,
-                                                                     NativeMethods.QS_INPUT |
-                                                                     NativeMethods.QS_EVENT |
-                                                                     NativeMethods.QS_POSTMESSAGE,
-                                                                     NativeMethods.MWMO_INPUTAVAILABLE);
-
-            return retVal == 0;
+            return false;
         }
 
 
@@ -2325,9 +2623,9 @@ namespace System.Windows.Threading
             bool succeeded = true;
 
             // This method is called from within the instance lock.  So we
-            // can reliably check the _window field without worrying about
+            // can reliably check the _runLoop field without worrying about
             // it being changed out from underneath us during shutdown.
-            if (IsWindowNull())
+            if (IsRunLoopNull())
                 return false;
 
             DispatcherPriority priority = _queue.MaxPriority;
@@ -2336,24 +2634,11 @@ namespace System.Windows.Threading
                 priority != DispatcherPriority.Inactive)
             {
                 // If forcing the processing request, we will discard any
-                // existing request (timer or message) and request again.
+                // existing request and request again. With the managed run loop a
+                // pending wake simply collapses into the next Signal(), so there is
+                // nothing to unschedule - we just reset the posted state.
                 if (force)
                 {
-                    if (_postedProcessingType == PROCESS_BACKGROUND)
-                    {
-                        SafeNativeMethods.KillTimer(new HandleRef(this, _window.Handle), TIMERID_BACKGROUND);
-                    }
-                    else if (_postedProcessingType == PROCESS_FOREGROUND)
-                    {
-                        // Preserve the thread's current "extra message info"
-                        // (PeekMessage overwrites it).
-                        IntPtr extraInformation = UnsafeNativeMethods.GetMessageExtraInfo();
-
-                        MSG msg = new MSG();
-                        UnsafeNativeMethods.PeekMessage(ref msg, new HandleRef(this, _window.Handle), _msgProcessQueue, _msgProcessQueue, NativeMethods.PM_REMOVE);
-
-                        UnsafeNativeMethods.SetMessageExtraInfo(extraInformation);
-                    }
                     _postedProcessingType = PROCESS_NONE;
                 }
 
@@ -2370,30 +2655,16 @@ namespace System.Windows.Threading
             return succeeded;
         }
 
-        private bool IsWindowNull() => _window is null;
+        private bool IsRunLoopNull() => _runLoop is null;
 
         private bool RequestForegroundProcessing()
         {
             if(_postedProcessingType < PROCESS_FOREGROUND)
             {
-                // If we have already set a timer to do background processing,
-                // make sure we stop it before posting a message for foreground
-                // processing.
-                if(_postedProcessingType == PROCESS_BACKGROUND)
-                {
-                    SafeNativeMethods.KillTimer(new HandleRef(this, _window.Handle), TIMERID_BACKGROUND);
-                }
-
                 _postedProcessingType = PROCESS_FOREGROUND;
 
-                // We have foreground items to process.
-                // By posting a message, Win32 will service us fairly promptly.
-                bool succeeded = UnsafeNativeMethods.TryPostMessage(new HandleRef(this, _window.Handle), _msgProcessQueue, IntPtr.Zero, IntPtr.Zero);
-                if (!succeeded)
-                {
-                    OnRequestProcessingFailure("TryPostMessage");
-                }
-                return succeeded;
+                // Wake the run loop so it services the queue promptly.
+                _runLoop?.Signal();
             }
 
             return true;
@@ -2401,30 +2672,15 @@ namespace System.Windows.Threading
 
         private bool RequestBackgroundProcessing()
         {
-            bool succeeded = true;
-
             if(_postedProcessingType < PROCESS_BACKGROUND)
             {
-                // If there is Win32 input pending, we can't do any background
-                // processing until it is done.  We use a short timer to
-                // get processing time after the input.
-                if(IsInputPending())
-                {
-                    _postedProcessingType = PROCESS_BACKGROUND;
-
-                    succeeded = SafeNativeMethods.TrySetTimer(new HandleRef(this, _window.Handle), TIMERID_BACKGROUND, DELTA_BACKGROUND);
-                    if (!succeeded)
-                    {
-                        OnRequestProcessingFailure("TrySetTimer");
-                    }
-                }
-                else
-                {
-                    succeeded = RequestForegroundProcessing();
-                }
+                // The managed run loop has no separate OS input queue to defer to
+                // (IsInputPending is always false), so background work is serviced the
+                // same way as foreground - the priority queue preserves ordering.
+                return RequestForegroundProcessing();
             }
 
-            return succeeded;
+            return true;
         }
 
         // Request{Foreground|Background}Processing can encounter failures from an
@@ -2638,39 +2894,57 @@ namespace System.Windows.Threading
 
         private void SetWin32Timer(int dueTimeInTicks)
         {
-            if(!IsWindowNull())
+            if(!IsRunLoopNull())
             {
-                int delta = dueTimeInTicks - Environment.TickCount;
-                if(delta < 1)
-                {
-                    delta = 1;
-                }
-
-                // We are being called on the dispatcher thread so we can rely on
-                // _window.Value being non-null without taking the instance lock.
-
-                SafeNativeMethods.SetTimer(
-                    new HandleRef(this, _window.Handle),
-                    TIMERID_TIMERS,
-                    delta);
-
+                // The managed run loop derives its sleep timeout directly from _dueTimeInTicks
+                // (see WaitForWork). Recording that a timer is armed and waking the loop is enough
+                // for it to recompute the deadline - no OS timer object is needed.
                 _isWin32TimerSet = true;
+                _runLoop?.Signal();
+
+                // Mirror the deadline onto a real OS timer as well (a Win32 timer on Windows, a
+                // CFRunLoopTimer in the common run-loop modes on macOS). That deadline is otherwise
+                // only honoured by the sleep in WaitForWork, which an OS modal/tracking loop never
+                // reaches -- so without this a DispatcherTimer stops ticking for as long as the user
+                // drags or resizes the window, taking every animation (and MediaContext's promotion
+                // of its render operation out of Inactive priority) with it. No-op elsewhere.
+                _runLoop?.SetOsTimer(dueTimeInTicks - Environment.TickCount);
             }
         }
 
         private void KillWin32Timer()
         {
-            if(!IsWindowNull())
+            if(!IsRunLoopNull())
             {
-                // We are being called on the dispatcher thread so we can rely on
-                // _window.Value being non-null without taking the instance lock.
-
-                SafeNativeMethods.KillTimer(
-                    new HandleRef(this, _window.Handle),
-                    TIMERID_TIMERS);
-
                 _isWin32TimerSet = false;
+                _runLoop?.KillOsTimer();
             }
+        }
+
+        /// <summary>
+        /// Service the queue from inside a message loop that is not ours -- user32's modal
+        /// drag/resize/menu loop, which owns the thread until the gesture ends. Deliberately the
+        /// same two steps the loop in <see cref="PushFrameImpl"/> takes per wake, so work runs in
+        /// the same order whoever is pumping. One operation per call: <see cref="ProcessQueue"/>
+        /// re-signals while work remains, and each signal posts another message that the modal loop
+        /// will deliver, so the queue keeps draining without this ever looping unboundedly.
+        /// </summary>
+        private void PumpFromNativeLoop()
+        {
+            // DisableProcessing is an explicit "no reentrancy here" from application code. The main
+            // loop treats pumping in that state as a bug it can throw on; there is no frame to fail
+            // from a WndProc, so just leave the work queued until processing is enabled again.
+            if(_disableProcessingCount > 0 || _hasShutdownFinished)
+            {
+                return;
+            }
+
+            if(_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
+            {
+                PromoteTimers(Environment.TickCount);
+            }
+
+            ProcessQueue();
         }
 
         // Exception filter returns true if exception should be caught.
@@ -2795,9 +3069,13 @@ namespace System.Windows.Threading
         private const int PROCESS_BACKGROUND = 1;
         private const int PROCESS_FOREGROUND = 2;
 
-        private const int TIMERID_BACKGROUND = 1;
-        private const int TIMERID_TIMERS = 2;
-        private const int DELTA_BACKGROUND = 1;
+        // ~120 Hz cap for draining the macOS Cocoa event queue from the dispatcher loop.
+        private const int NativeEventPumpIntervalMs = 8;
+
+        /// <summary>WPF_LINUX_POLL_PUMP=1: drive Wayland with the macOS-shaped periodic slice
+        /// instead of blocking on its file descriptor (see WaitForWork).</summary>
+        private static readonly bool s_linuxPollPump =
+            Environment.GetEnvironmentVariable("WPF_LINUX_POLL_PUMP") == "1";
 
         private static List<WeakReference> _dispatchers;
         private static WeakReference _possibleDispatcher;
@@ -2820,12 +3098,10 @@ namespace System.Windows.Threading
         private static PriorityRange _backgroundPriorityRange = new PriorityRange(DispatcherPriority.Background, true, DispatcherPriority.Input, true);
         private static PriorityRange _idlePriorityRange = new PriorityRange(DispatcherPriority.SystemIdle, true, DispatcherPriority.ContextIdle, true);
 
-        private MessageOnlyHwndWrapper _window;
-
-        private HwndWrapperHook _hook;
+        // Cross-platform replacement for the Win32 message-only window that used to wake the pump.
+        private DispatcherRunLoop _runLoop;
 
         private int _postedProcessingType;
-        private static WindowMessage _msgProcessQueue;
 
         private static ExceptionWrapper _exceptionWrapper;
         private static readonly object ExceptionDataKey = new object();

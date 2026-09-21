@@ -336,7 +336,17 @@ using System.Runtime.Versioning;
       </ExtendedAssemblyInfoFileContent>
     </ItemGroup>
 
-    <Delete Condition="Exists('$(GeneratedExtendedAssemblyInfoFile)')" Files="$(GeneratedExtendedAssemblyInfoFile)" />
+    <!--
+      Overwrite in place; do NOT delete first.
+
+      A Delete here silently defeated the WriteOnlyWhenDifferent below: the file never existed by the
+      time WriteLinesToFile looked, so it was rewritten with a fresh timestamp on every single build.
+      That file is a Compile input, so CoreCompile's inputs were always newer than its outputs and
+      EVERY project recompiled every time. A no-change build of PresentationFramework still ran the
+      C# compiler 131 times and took over four minutes. With the delete gone the content is compared,
+      the timestamp only moves when the generated attributes actually change, and an unchanged
+      project is skipped.
+    -->
     <WriteLinesToFile Lines="@(ExtendedAssemblyInfoFileContent->'%(Text)')"
                       File="$(GeneratedExtendedAssemblyInfoFile)"
                       Overwrite="true" WriteOnlyWhenDifferent="true" />

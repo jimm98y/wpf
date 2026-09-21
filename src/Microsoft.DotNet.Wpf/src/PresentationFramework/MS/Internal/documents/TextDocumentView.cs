@@ -69,6 +69,14 @@ namespace MS.Internal.Documents
             // Transforms point to content's coordinate system.
             TransformToContent(ref point);
 
+            if (_owner.IsManaged)
+            {
+                var layout = _owner.ManagedLayout;
+                if (layout != null && layout.HitTest(point, out System.Windows.Documents.Paragraph para, out int off))
+                    return ManagedPointerAt(para, off) ?? (snapToText ? _textContainer.Start : null);
+                return snapToText ? _textContainer.Start : null;
+            }
+
             // Search columns
             return GetTextPositionFromPoint(Columns, FloatingElements, point, snapToText);
         }
@@ -93,12 +101,104 @@ namespace MS.Internal.Documents
             }
             _owner.EnsureValidVisuals();
 
-            Rect rect = GetRectangleFromTextPosition(Columns, FloatingElements, position);
+            Rect rect = _owner.IsManaged
+                ? ManagedCaretRect(position)
+                : GetRectangleFromTextPosition(Columns, FloatingElements, position);
 
             // Transforms Rect from content's coordinate system.
             TransformFromContent(ref rect, out transform);
 
             return rect;
+        }
+
+        // ---- managed (no-PTS) caret/hit-test helpers ------------------------------------------------
+        private Rect ManagedCaretRect(ITextPointer position)
+        {
+            var layout = _owner.ManagedLayout;
+            System.Windows.Documents.Paragraph para = (position as TextPointer)?.Paragraph;
+            Rect result = Rect.Empty;
+            if (layout != null && para != null && position is TextPointer tp)
+            {
+                int charOffset = new TextRange(para.ContentStart, tp).Text.Length;
+                result = layout.CaretRect(para, charOffset) ?? Rect.Empty;
+                if (!result.IsEmpty)
+                {
+                    Vector off = _owner.ManagedViewportOffset;
+                    result.Offset(-off.X, -off.Y);
+                }
+            }
+            return result;
+        }
+
+        // Walk a paragraph's content forward by charCount plain-text characters and return that pointer.
+        private ITextPointer ManagedPointerAt(System.Windows.Documents.Paragraph para, int charCount)
+        {
+            TextPointer p = para.ContentStart;
+            int remaining = charCount;
+            while (p != null && remaining > 0)
+            {
+                if (p.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
+                {
+                    int run = p.GetTextRunLength(LogicalDirection.Forward);
+                    int take = Math.Min(run, remaining);
+                    p = p.GetPositionAtOffset(take, LogicalDirection.Forward);
+                    remaining -= take;
+                }
+                else
+                {
+                    TextPointer next = p.GetNextContextPosition(LogicalDirection.Forward);
+                    if (next == null || next.CompareTo(para.ContentEnd) > 0) break;
+                    p = next;
+                }
+            }
+            return (ITextPointer)(p ?? para.ContentEnd);
+        }
+
+        private Geometry ManagedSelectionGeometry(ITextPointer startPosition, ITextPointer endPosition)
+        {
+            var layout = _owner.ManagedLayout;
+            if (layout == null || startPosition is not TextPointer sp || endPosition is not TextPointer ep) return null;
+            System.Windows.Documents.Paragraph sPara = sp.Paragraph, ePara = ep.Paragraph;
+            if (sPara == null || ePara == null) return null;
+            int sOff = new TextRange(sPara.ContentStart, sp).Text.Length;
+            int eOff = new TextRange(ePara.ContentStart, ep).Text.Length;
+            // Bake the scroll offset into the geometry points (the adorner layer is not scrolled, and the
+            // compositor ignores Geometry.Transform -- see ManagedFlowLayout.ParagraphHighlight).
+            Vector off = _owner.ManagedViewportOffset;
+            if (sPara == ePara)
+                return layout.ParagraphHighlight(sPara, sOff, eOff, off);
+
+            Geometry result = null;
+            bool inRange = false;
+            foreach (var pl in layout.Paragraphs)
+            {
+                System.Windows.Documents.Paragraph p = pl.Para;
+                if (p == sPara) inRange = true;
+                if (inRange)
+                {
+                    Geometry g = layout.ParagraphHighlight(p, p == sPara ? sOff : 0, p == ePara ? eOff : int.MaxValue, off);
+                    if (g != null) result = result == null ? g : Geometry.Combine(result, g, GeometryCombineMode.Union, null);
+                }
+                if (p == ePara) break;
+            }
+            return result;
+        }
+
+        private ITextPointer ManagedPositionAtNextLine(ITextPointer position, double suggestedX, int count, out double newSuggestedX, out int linesMoved)
+        {
+            newSuggestedX = suggestedX; linesMoved = 0;
+            var layout = _owner.ManagedLayout;
+            Rect caret = ManagedCaretRect(position);
+            if (layout == null || caret.IsEmpty) return position;
+            double x = double.IsNaN(suggestedX) ? caret.Left : suggestedX;
+            double lineH = caret.Height > 0 ? caret.Height : 16;
+            double targetY = caret.Top + caret.Height / 2 + count * lineH;
+            if (layout.HitTest(new Point(x, targetY), out System.Windows.Documents.Paragraph para, out int off))
+            {
+                linesMoved = count; newSuggestedX = x;
+                return ManagedPointerAt(para, off);
+            }
+            return position;
         }
 
         /// <summary>
@@ -118,6 +218,9 @@ namespace MS.Internal.Documents
             ValidationHelper.VerifyPosition(_textContainer, endPosition, nameof(endPosition));
 
             _owner.EnsureValidVisuals();
+
+            if (_owner.IsManaged)
+                return ManagedSelectionGeometry(startPosition, endPosition);
 
             // Get visible rect, adjusted to owner's content offset
             Rect visibleRect = CalculateViewportRect();
@@ -243,6 +346,9 @@ namespace MS.Internal.Documents
             suggestedX = newSuggestedX = point.X;
             linesMoved = count;
 
+            if (_owner.IsManaged)
+                return ManagedPositionAtNextLine(position, suggestedX, count, out newSuggestedX, out linesMoved);
+
             if (count == 0)
             {
                 return position;
@@ -286,7 +392,27 @@ namespace MS.Internal.Documents
                 throw new ArgumentOutOfRangeException(nameof(position));
             }
 
+            // Managed (no-PTS) path: PTS grapheme-cluster boundaries aren't available, so treat every
+            // insertion position as a caret unit boundary. Without this, caret navigation/selection
+            // normalization (which defers to the view here when layout is valid) collapses to
+            // line granularity -- arrow keys and drag-select can't reach individual characters.
+            if (_owner.IsManaged)
+                return true;
+
             return IsAtCaretUnitBoundary(Columns, FloatingElements, position);
+        }
+
+        // Managed caret-unit navigation: move one character (symbol) in the given direction, or step
+        // over an element edge / embedded object. Gives character-granular caret movement in the
+        // no-PTS path (mirrors the symbol-based fallback WPF uses when layout is invalid).
+        private static ITextPointer ManagedNextCaretUnit(ITextPointer position, LogicalDirection direction)
+        {
+            ITextPointer next = position.CreatePointer();
+            if (next.GetPointerContext(direction) == TextPointerContext.Text)
+                next.MoveByOffset(direction == LogicalDirection.Forward ? 1 : -1);
+            else
+                next.MoveToNextContextPosition(direction);
+            return next;
         }
 
         /// <summary>
@@ -305,6 +431,9 @@ namespace MS.Internal.Documents
             {
                 throw new ArgumentOutOfRangeException(nameof(position));
             }
+
+            if (_owner.IsManaged)
+                return ManagedNextCaretUnit(position, direction);
 
             return GetNextCaretUnitPosition(Columns, FloatingElements, position, direction);
         }
@@ -325,6 +454,9 @@ namespace MS.Internal.Documents
                 throw new ArgumentOutOfRangeException(nameof(position));
             }
 
+            if (_owner.IsManaged)
+                return ManagedNextCaretUnit(position, LogicalDirection.Backward);
+
             return GetBackspaceCaretUnitPosition(Columns, FloatingElements, position);
         }
 
@@ -342,6 +474,13 @@ namespace MS.Internal.Documents
             if (!ContainsCore(position))
             {
                 throw new ArgumentOutOfRangeException(nameof(position));
+            }
+
+            if (_owner.IsManaged)
+            {
+                // Approximate a visual line by the containing paragraph (no per-wrapped-line info).
+                System.Windows.Documents.Paragraph para = (position as TextPointer)?.Paragraph;
+                return para != null ? new TextSegment(para.ContentStart, para.ContentEnd) : new TextSegment(position, position);
             }
 
             return GetLineRangeFromPosition(Columns, FloatingElements, position);

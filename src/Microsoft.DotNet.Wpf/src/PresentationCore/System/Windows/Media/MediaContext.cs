@@ -529,6 +529,35 @@ namespace System.Windows.Media
         /// Specifies the minimum time before making the next rendering operation
         /// active
         /// </param>
+        /// <summary>
+        /// How long to wait before the next render when interlocked presentation is off -- which is
+        /// always, off-Windows.
+        ///
+        /// The delay exists so the render loop cannot outrun the compositor. It was a flat 10ms,
+        /// chosen when nothing reported back when the display had actually refreshed, and it set a
+        /// hard ceiling of 1/(render + 10ms): a 5.7ms frame on a 100Hz panel ran at 64fps and no
+        /// display could ever do better. Now that each present reports the window's refresh rate,
+        /// only the unused REMAINDER of the refresh period has to be waited out, so the frame rate
+        /// is bounded by the display (or by the render itself, if it is the slower of the two)
+        /// rather than by a constant.
+        ///
+        /// Never zero: at zero the next render is queued at Render priority with nothing to yield
+        /// to, and input and layout starve behind a render loop that always has work.
+        /// </summary>
+        private TimeSpan NonInterlockedDelay(long renderStartTicks)
+        {
+            if (_reportedRefreshRate <= 0)
+            {
+                return _timeDelay;
+            }
+
+            long period = TimeSpan.TicksPerSecond / _reportedRefreshRate;
+            long remaining = period - (CurrentTicks - renderStartTicks);
+            return remaining < MinimumRenderDelay.Ticks ? MinimumRenderDelay : TimeSpan.FromTicks(remaining);
+        }
+
+        private static readonly TimeSpan MinimumRenderDelay = TimeSpan.FromMilliseconds(1);
+
         private void ScheduleNextRenderOp(TimeSpan minimumDelay)
         {
             //
@@ -695,6 +724,17 @@ namespace System.Windows.Media
             int displayRefreshRate
             )
         {
+            // Recorded whether or not interlocked presentation is on, and deliberately NOT into
+            // _animationRenderRate: that field also drives HasCommittedThisVBlankInterval and the
+            // vblank estimator, which are interlock-only machinery and must keep seeing "unknown".
+            // Off-Windows the interlock is permanently off (see EnterInterlockedPresentation), so
+            // everything below this point is skipped -- and skipping it is what left the render loop
+            // on its fixed fallback delay however fast the display actually was.
+            if (displayRefreshRate > 0)
+            {
+                _reportedRefreshRate = Math.Min(displayRefreshRate, 1000);
+            }
+
             if (InterlockIsEnabled)
             {
                 Debug.Assert(_interlockState == InterlockState.WaitingForResponse,
@@ -1252,6 +1292,19 @@ namespace System.Windows.Media
         /// </summary>
         private void EnterInterlockedPresentation()
         {
+            // Off-Windows the WebGPU compositor presents SYNCHRONOUSLY (Channel.Commit -> SyncFlush ->
+            // present) and never posts back the async "Presented" channel notification the interlock
+            // pattern waits for. Entering interlocked presentation would therefore stall the render loop
+            // after the first commit (InterlockState.WaitingForResponse, RenderMessageHandler's post-render
+            // "else" branch schedules nothing) -- so an active animation freezes partway and only advances
+            // when some unrelated event forces a render (the menu's entrance easing "terminating early",
+            // then inching forward as you move the mouse). Stay in the simpler timer-driven mode where each
+            // render schedules the next (the !InterlockIsEnabled branch), so animations play continuously.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (!InterlockIsEnabled)
             {
                 if (MediaSystem.AnimationSmoothing
@@ -1842,6 +1895,7 @@ namespace System.Windows.Media
                 //
 
                 bool interlockWasNotWaiting = !InterlockIsWaiting;
+                long renderStartTicks = CurrentTicks;
 
                 //
                 // This is the big Render!
@@ -1867,7 +1921,7 @@ namespace System.Windows.Media
                     // thread
                     //
 
-                    ScheduleNextRenderOp(_timeDelay);
+                    ScheduleNextRenderOp(NonInterlockedDelay(renderStartTicks));
                 }
                 else if (interlockWasNotWaiting)
                 {
@@ -2150,6 +2204,20 @@ namespace System.Windows.Media
 
                 Channel.Commit();
 
+                // The managed backend composites and presents INSIDE Commit, synchronously, and has
+                // no message processor to tell us about it afterwards -- on Windows that call is what
+                // milcore's render thread makes when it posts MilMessage.Presented. So collect the
+                // notification here, at the one moment the state machine is expecting one: the commit
+                // above has just put us in WaitingForResponse.
+                //
+                // Without this the back channel stays silent, _animationRenderRate is never learnt,
+                // and scheduling falls to the "we don't know when vsync is" fallback of 17ms -- which
+                // is 58.8fps and is what every non-Windows head ran at, on any display.
+                if (DUCE.ManagedComposition.IsEnabled)
+                {
+                    NotifyChannelMessage();
+                }
+
                 if (_commitPendingAfterRender)
                 {
                     //
@@ -2173,6 +2241,16 @@ namespace System.Windows.Media
 }
 
             _needToCommitChannel = false;
+
+            // The managed (WebGPU) composition sink renders and presents synchronously inside
+            // Channel.Commit() above - there is no separate composition engine to send an async
+            // "Presented" back-channel notification. Complete the interlock immediately (as if the
+            // frame presented at vsync) so the render loop schedules the next frame instead of
+            // waiting forever in WaitingForResponse. Without this the UI renders exactly one frame.
+            if (DUCE.ManagedComposition.IsEnabled && _interlockState == InterlockState.WaitingForResponse)
+            {
+                NotifyPresented(MIL_PRESENTATION_RESULTS.MIL_PRESENTATION_VSYNC, CurrentTicks, 60);
+            }
         }
 
         /// <summary>
@@ -2713,6 +2791,10 @@ namespace System.Windows.Media
 
         // Time to wait for unthrottled renders
         private TimeSpan _timeDelay = TimeSpan.FromMilliseconds(10);
+
+        // The display refresh rate last reported by the compositor with a present, in Hz; 0 until
+        // one arrives. See NotifyPresented and NonInterlockedDelay.
+        private int _reportedRefreshRate;
 
         // A flag to determine if RenderComplete event is raised. We only
         // raise the event if Render + Commit happens.

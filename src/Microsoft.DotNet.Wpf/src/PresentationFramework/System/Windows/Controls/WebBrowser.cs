@@ -57,7 +57,7 @@ namespace System.Windows.Controls
     /// The WebBrowser class is currently not thread safe. Multi-threading could corrupt the class internal state, 
     /// which could lead to security exploits (see example in devdiv bug #196538). So we enforce thread affinity. 
     /// </remarks>
-    public sealed class WebBrowser : ActiveXHost
+    public sealed partial class WebBrowser : ActiveXHost
     {
         //----------------------------------------------
         //
@@ -186,6 +186,12 @@ namespace System.Windows.Controls
         {
             VerifyAccess();
 
+            if (!UseLegacyActiveX)
+            {
+                WebViewGoBack();
+                return;
+            }
+
             AxIWebBrowser2.GoBack();
         }
 
@@ -196,7 +202,13 @@ namespace System.Windows.Controls
         {
             VerifyAccess();
 
-            AxIWebBrowser2.GoForward();            
+            if (!UseLegacyActiveX)
+            {
+                WebViewGoForward();
+                return;
+            }
+
+            AxIWebBrowser2.GoForward();
         }
 
 
@@ -206,6 +218,12 @@ namespace System.Windows.Controls
         public void Refresh()
         {
             VerifyAccess();
+
+            if (!UseLegacyActiveX)
+            {
+                WebViewRefresh(noCache: false);
+                return;
+            }
 
             AxIWebBrowser2.Refresh();
         }
@@ -217,6 +235,12 @@ namespace System.Windows.Controls
         public void Refresh(bool noCache)
         {
             VerifyAccess();
+
+            if (!UseLegacyActiveX)
+            {
+                WebViewRefresh(noCache);
+                return;
+            }
 
             // Out of the three options of RefreshConstants, we only expose two: REFRESH_NORMAL and REFRESH_COMPLETELY,
             // because the thrid option, RefreshConstants.REFRESH_IFEXPIRED, is not implemented by IWebBrowser2.Refresh.
@@ -255,6 +279,11 @@ namespace System.Windows.Controls
             if (string.IsNullOrEmpty(scriptName))
             {
                 throw new ArgumentNullException(nameof(scriptName));
+            }
+
+            if (!UseLegacyActiveX)
+            {
+                return WebViewInvokeScript(scriptName, args);
             }
 
             UnsafeNativeMethods.IDispatchEx scriptObjectEx = null;
@@ -364,6 +393,11 @@ namespace System.Windows.Controls
             {
                 VerifyAccess();
 
+                if (!UseLegacyActiveX)
+                {
+                    return WebViewSource;
+                }
+
                 // Current url, return IWebBrowser2.LocationURL.
                 string urlString = AxIWebBrowser2.LocationURL;
 
@@ -390,6 +424,11 @@ namespace System.Windows.Controls
             {
                 VerifyAccess();
 
+                if (!UseLegacyActiveX)
+                {
+                    return !IsDisposed && WebViewBackend is not null && WebViewBackend.CanGoBack;
+                }
+
                 return (!IsDisposed && _canGoBack);
             }
         }
@@ -402,6 +441,11 @@ namespace System.Windows.Controls
             get
             {
                 VerifyAccess();
+
+                if (!UseLegacyActiveX)
+                {
+                    return !IsDisposed && WebViewBackend is not null && WebViewBackend.CanGoForward;
+                }
 
                 return (!IsDisposed && _canGoForward);
             }
@@ -423,7 +467,11 @@ namespace System.Windows.Controls
             {
                 VerifyAccess();
 
-                if (value != null)
+                // The COM-visibility requirement is an artefact of how the WebOC reached the object:
+                // through IDispatch. The modern bridge marshals calls as JSON and invokes the member
+                // by reflection, so a plain managed class works -- and demanding [ComVisible] off
+                // Windows would be asking for a COM attribute on a platform with no COM.
+                if (value != null && UseLegacyActiveX)
                 {
                     Type t = value.GetType();
 
@@ -434,6 +482,13 @@ namespace System.Windows.Controls
                 }
 
                 _objectForScripting = value;
+
+                if (!UseLegacyActiveX)
+                {
+                    WebViewObjectForScriptingChanged();
+                    return;
+                }
+
                 _hostingAdaptor.ObjectForScripting = value;
             }
         }
@@ -447,6 +502,18 @@ namespace System.Windows.Controls
             {
                 VerifyAccess();
 
+                // This property has always returned the WebOC's COM document object, which callers
+                // cast to an mshtml interface. Nothing outside the IE host can produce one: a modern
+                // engine's DOM is reachable only through script, and handing back some other object
+                // would break every existing cast in a way that looks like a null-reference bug.
+                //
+                // So it throws, and says what to use instead. Applications that genuinely need
+                // mshtml can re-enable the legacy host on Windows with the AppContext switch
+                // documented on ActiveXHost.UseLegacyActiveX.
+                if (!UseLegacyActiveX)
+                {
+                    throw new PlatformNotSupportedException(SR.WebBrowserDocumentNotSupported);
+                }
 
                 return AxIWebBrowser2.Document;
             }
@@ -601,6 +668,14 @@ namespace System.Windows.Controls
         /// </remarks>
         internal override System.Windows.Media.DrawingGroup GetDrawing()
         {
+            // The base is PrintWindow over the hosted HWND, which was right for the WebOC and is not
+            // right for a modern engine: they render out of process and through the compositor, so
+            // PrintWindow comes back with the blank bitmap it pre-fills. Ask the engine instead.
+            if (!UseLegacyActiveX)
+            {
+                return GetWebViewDrawing();
+            }
+
             return base.GetDrawing();
         }
 
@@ -830,6 +905,13 @@ namespace System.Windows.Controls
         private void DoNavigate(Uri source, ref object targetFrameName, ref object postData, ref object headers, bool ignoreEscaping = false)
         {
             VerifyAccess();
+
+            if (!UseLegacyActiveX)
+            {
+                WebViewDoNavigate(source, targetFrameName as string, postData as byte[], headers as string,
+                                  ignoreEscaping);
+                return;
+            }
 
             // TFS  - Calling Navigate and NavigateToStream subsequently causes internal state
             // of the WebBrowser control to become invalid. By cancelling outstanding navigations in the

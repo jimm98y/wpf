@@ -197,6 +197,12 @@ namespace MS.Win32
         {
             extStatus = MSGFLTINFO.NONE;
 
+            // Per-window Win32 message-filter isolation (UIPI) does not exist off-Windows.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return HRESULT.S_FALSE;
+            }
+
             // This API were added for Vista.  The Ex version was added for Windows 7.
             // If we're not on either, then this message filter isolation doesn't exist.
             if (!Utilities.IsOSVistaOrNewer)
@@ -254,13 +260,40 @@ namespace MS.Win32
 
         // note that this method exists in UnsafeNativeMethodsCLR.cs but with a different signature
         // using a HandleRef for the hWnd instead of an IntPtr, and not using an IntPtr for lParam
-        [DllImport(ExternDll.User32, CharSet = CharSet.Auto)]
-        internal static extern IntPtr SendMessage(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam);
+        [DllImport(ExternDll.User32, EntryPoint = "SendMessage", CharSet = CharSet.Auto)]
+        private static extern IntPtr SendMessageNative(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam);
+
+        /// <summary>Routes off-Windows to the target's managed WndProc, exactly as
+        /// <see cref="UnsafeSendMessage"/> does. Window.DragMove() posts WM_SYSCOMMAND through THIS
+        /// overload, so leaving it as a bare P/Invoke made dragging a window by its own chrome a
+        /// DllNotFoundException on every non-Windows head.</summary>
+        internal static IntPtr SendMessage(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam)
+        {
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return HwndWrapper.DispatchMessage(hWnd, (int)msg, wParam, lParam);
+            }
+
+            return SendMessageNative(hWnd, msg, wParam, lParam);
+        }
 
         // note that this method exists in UnsafeNativeMethodsCLR.cs but with a different signature
         // using a HandleRef for the hWnd instead of an IntPtr, and not using an IntPtr for lParam
         [DllImport(ExternDll.User32, EntryPoint = "SendMessage", CharSet = CharSet.Auto)]
-        internal static extern IntPtr UnsafeSendMessage(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam);
+        private static extern IntPtr UnsafeSendMessageNative(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam);
+
+        // Win32 window messaging does not exist off-Windows; route a "sent" message to the target
+        // window's managed WndProc instead (there is no OS queue). This makes synchronous message
+        // paths such as Window.Close()'s WM_CLOSE actually run.
+        internal static IntPtr UnsafeSendMessage(IntPtr hWnd, WindowMessage msg, IntPtr wParam, IntPtr lParam)
+        {
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return HwndWrapper.DispatchMessage(hWnd, (int)msg, wParam, lParam);
+            }
+
+            return UnsafeSendMessageNative(hWnd, msg, wParam, lParam);
+        }
 
         [DllImport(ExternDll.User32, EntryPoint = "RegisterPowerSettingNotification")]
         internal static extern unsafe IntPtr RegisterPowerSettingNotification(IntPtr hRecipient, Guid* pGuid, int Flags);
@@ -333,8 +366,43 @@ namespace MS.Win32
 #endif // BASE_NATIVEMETHODS
 
 
+        /// <summary>
+        /// The part of a style write that means something off Windows: the resize chrome.
+        /// </summary>
+        /// <remarks>
+        /// Both entry points go through here, which is the point of it: HwndStyleManager.Flush uses
+        /// CriticalSetWindowLong and everything else uses SetWindowLong, so teaching one alone leaves
+        /// ResizeMode working at creation and inert afterwards. Safe only because GetWindowLong now
+        /// answers with these same bits -- see the note there.
+        /// </remarks>
+        private static void ApplyStyleOffWindows(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
+        {
+            if (nIndex != NativeMethods.GWL_STYLE)
+            {
+                return;
+            }
+
+            const int WS_MINIMIZEBOX = 0x00020000, WS_THICKFRAME = 0x00040000;
+            long style = dwNewLong.ToInt64();
+            MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)
+                ?.SetResizeMode((style & WS_THICKFRAME) != 0, (style & WS_MINIMIZEBOX) != 0);
+        }
+
         internal static IntPtr SetWindowLong(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
         {
+            // Almost nothing to set off-Windows -- see GetWindowLong -- but ResizeMode is a style
+            // change, and this is the only route it has to a LIVE window.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                ApplyStyleOffWindows(hWnd, nIndex, dwNewLong);
+                return IntPtr.Zero;
+            }
+
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return IntPtr.Zero;
+            }
+
             IntPtr result = IntPtr.Zero;
 
             if (IntPtr.Size == 4)
@@ -354,6 +422,15 @@ namespace MS.Win32
 
         internal static IntPtr CriticalSetWindowLong(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
         {
+            // AppKit owns the NSWindow's style, apart from what ApplyStyleOffWindows handles. This is
+            // the entry point HwndStyleManager.Flush uses, so it is the one a live ResizeMode change
+            // arrives through -- the other exists for completeness.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                ApplyStyleOffWindows(hWnd, nIndex, dwNewLong);
+                return IntPtr.Zero;
+            }
+
             IntPtr result = IntPtr.Zero;
 
             if (IntPtr.Size == 4)
@@ -431,8 +508,67 @@ namespace MS.Win32
             return result;
         }
 
+        /// <summary>SW_NORMAL: the state a head reports when it is neither maximized nor minimized.</summary>
+        private const int SwNormalState = 1;
+
         internal static int GetWindowLong(HandleRef hWnd, int nIndex)
         {
+            // Window styles/exstyles are a Win32 concept, and off Windows a top-level window is
+            // opaque, non-child, non-layered and LTR -- none of the bits the callers care about.
+            //
+            // Except two. WS_MAXIMIZE and WS_MINIMIZE are not style bits an app SETS; Windows keeps
+            // them as the window's current state, and WPF reads them back as exactly that:
+            // Window.OnWindowStateChanged restores a window only `if ((style & WS_MAXIMIZE) ==
+            // WS_MAXIMIZE)`. Answering a flat zero therefore made restoring a no-op off Windows --
+            // WindowState went to Normal, the window stayed maximized, and nothing reported an error
+            // because from WPF's side the window had never been maximized in the first place.
+            //
+            // It failed in one direction only, which is why it survived: the maximize branch tests
+            // the SAME bit the other way round (`!= WS_MAXIMIZE`), so maximizing worked and only
+            // coming back did not.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                if (nIndex != NativeMethods.GWL_STYLE)
+                {
+                    return 0;
+                }
+
+                MS.Internal.Interop.IPlatformWindow window =
+                    MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+                if (window is null)
+                {
+                    return 0;
+                }
+
+                const int SwShowMinimized = 2, SwShowMaximized = 3, SwMinimize = 6, SwShowMinNoActive = 7;
+                int state = SwNormalState;
+                bool canResize = true, canMinimize = true;
+                try
+                {
+                    state = window.GetWindowState();
+                    window.GetResizeMode(out canResize, out canMinimize);
+                }
+                catch { /* a head that cannot answer is a window in no particular state */ }
+
+                int style = state switch
+                {
+                    SwShowMaximized => NativeMethods.WS_MAXIMIZE,
+                    SwShowMinimized or SwMinimize or SwShowMinNoActive => NativeMethods.WS_MINIMIZE,
+                    _ => 0,
+                };
+
+                // The RESIZE bits as well, and for a reason beyond reporting them accurately: WPF
+                // reads this word, ORs a change into it and flushes the whole thing back through
+                // CriticalSetWindowLong. Leaving WS_THICKFRAME out of the answer means the flush
+                // takes resizability off every window it touches. This is the read that makes that
+                // write safe -- and the two have to land together.
+                const int WS_MAXIMIZEBOX = 0x00010000, WS_MINIMIZEBOX = 0x00020000, WS_THICKFRAME = 0x00040000;
+                if (canResize) style |= WS_THICKFRAME | WS_MAXIMIZEBOX;
+                if (canMinimize) style |= WS_MINIMIZEBOX;
+
+                return style;
+            }
+
             int iResult = 0;
             IntPtr result = IntPtr.Zero;
             int error = 0;
@@ -546,6 +682,15 @@ namespace MS.Win32
 
         internal static void SetWindowText(HandleRef hWnd, string text)
         {
+            // Off-Windows this used to P/Invoke user32 unguarded, so simply setting Window.Title
+            // after SourceInitialized threw DllNotFoundException on EVERY non-Windows platform --
+            // including macOS, where the backend could always have answered it.
+            if (!OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.PlatformWindow.SetTitle(hWnd.Handle, text);
+                return;
+            }
+
             if (!IntSetWindowText(hWnd, text))
             {
                 throw new Win32Exception();
@@ -610,6 +755,43 @@ namespace MS.Win32
         // note:  this method exists in UnsafeNativeMethodsCLR.cs, but that method does not have the if/throw implemntation
         internal static void GetWindowPlacement(HandleRef hWnd, ref NativeMethods.WINDOWPLACEMENT placement)
         {
+            // Off Windows this used to answer with a fiction: showCmd was always SW_NORMAL and
+            // rcNormalPosition was the CURRENT content size at the origin. Window.RestoreBounds is
+            // built from exactly these fields, so a window at (120,90) sized 420x320 reported
+            // 0;30;410;282 -- and while maximized it reported the MAXIMIZED size, which is the one
+            // case RestoreBounds exists to get right. Applications persist that value to reopen where
+            // the user left them.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.IPlatformWindow window =
+                    MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+                if (window is null)
+                {
+                    return;
+                }
+
+                window.GetRestoreBoundsPixels(out int x, out int y, out int w, out int h);
+                placement.showCmd = window.GetWindowState();
+
+                // rcNormalPosition is in WORKSPACE coordinates for a window without WS_EX_TOOLWINDOW,
+                // and Window.GetNormalRectDeviceUnits converts back by adding the work area's offset
+                // WITHIN its monitor. So subtract that same offset here; anything else lands the
+                // window a menu-bar's height out every time the value is round-tripped.
+                if (MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(
+                        out int monLeft, out int monTop, out _, out _,
+                        out int workLeft, out int workTop, out _, out _))
+                {
+                    x -= workLeft - monLeft;
+                    y -= workTop - monTop;
+                }
+
+                placement.rcNormalPosition_left = x;
+                placement.rcNormalPosition_top = y;
+                placement.rcNormalPosition_right = x + w;
+                placement.rcNormalPosition_bottom = y + h;
+                return;
+            }
+
             if (!IntGetWindowPlacement(hWnd, ref placement))
             {
                 throw new Win32Exception();
@@ -622,17 +804,47 @@ namespace MS.Win32
         // note: this method appears in UnsafeNativeMethodsCLR.cs but does not have the if/throw block
         internal static void SetWindowPlacement(HandleRef hWnd, [In] ref NativeMethods.WINDOWPLACEMENT placement)
         {
+            // Window placement (min/max/restore geometry) is driven by AppKit off-Windows; no-op.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (!IntSetWindowPlacement(hWnd, ref placement))
             {
                 throw new Win32Exception();
             }
         }
 
-        [DllImport(ExternDll.User32, CharSet = CharSet.Auto, BestFitMapping = false)]
-        internal static extern bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.ANIMATIONINFO anim, int nUpdate);
+        // Off-Windows these return success with sensible defaults (see the CLR overloads for the
+        // rationale) so SystemParameters does not throw when there is no user32.
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", CharSet = CharSet.Auto, BestFitMapping = false)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, [In, Out] NativeMethods.ANIMATIONINFO anim, int nUpdate);
+        internal static bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.ANIMATIONINFO anim, int nUpdate)
+        {
+            if (System.OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, anim, nUpdate);
+            }
+            // Minimized-window animation off by default.
+            anim.iMinAnimate = 0;
+            return true;
+        }
 
-        [DllImport(ExternDll.User32, CharSet = CharSet.Auto, BestFitMapping = false, ThrowOnUnmappableChar = true)]
-        internal static extern bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.ICONMETRICS metrics, int nUpdate);
+        [DllImport(ExternDll.User32, EntryPoint = "SystemParametersInfo", CharSet = CharSet.Auto, BestFitMapping = false, ThrowOnUnmappableChar = true)]
+        private static extern bool SystemParametersInfoNative(int nAction, int nParam, [In, Out] NativeMethods.ICONMETRICS metrics, int nUpdate);
+        internal static bool SystemParametersInfo(int nAction, int nParam, [In, Out] NativeMethods.ICONMETRICS metrics, int nUpdate)
+        {
+            if (System.OperatingSystem.IsWindows())
+            {
+                return SystemParametersInfoNative(nAction, nParam, metrics, nUpdate);
+            }
+            metrics.iHorzSpacing = 75;
+            metrics.iVertSpacing = 75;
+            metrics.iTitleWrap = 1;
+            metrics.lfFont = NativeMethods.LOGFONT.CreateDefault();
+            return true;
+        }
 
 
         //---------------------------------------------------------------------------

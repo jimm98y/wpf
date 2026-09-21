@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Cross-platform in-memory replacement for the Windows-only Microsoft.Win32.Registry runtime
+       assembly (Registry.CurrentUser etc. are null off-Windows, so apps that persist settings to the
+       registry NRE/PNSE on startup). Built with the SAME strong-name identity (name + AssemblyVersion
+       10.0.0.0 + Microsoft public key token b03f5f7f11d50a3a via PUBLIC signing — .NET Core does not
+       verify the signature, only the token) so it satisfies references compiled against the real
+       assembly and shadows it in the app output. The WpfWebGpu.Sdk bundles this for non-Windows heads
+       (see Sdk.targets). Reads return the caller's default (nothing was ever persisted); writes are
+       in-memory (lost on exit) — the app runs with default settings instead of crashing. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Microsoft.Win32.Registry</AssemblyName>
+    <RootNamespace>Microsoft.Win32</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- Higher than the shared-framework assembly's 10.0.0.0 so RAR does NOT treat it as the in-box
+         framework assembly: it gets copied app-local and written into the app's deps.json, and the host
+         (unifying by simple name) then binds this shim for every reference instead of the null-hive
+         framework copy. Keep within 10.x so a real 10.0.0.0 framework assembly never out-versions it. -->
+    <AssemblyVersion>10.0.9999.0</AssemblyVersion>
+    <FileVersion>10.0.9999.0</FileVersion>
+    <Version>10.0.9999</Version>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>registry.publickey</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>CA1416</NoWarn>
+    <!-- Standalone (outside the Arcade build); keep it self-contained and free of the repo's
+         code-style-as-error analyzers (the shim intentionally uses public static fields etc.). -->
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

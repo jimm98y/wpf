@@ -1130,6 +1130,16 @@ namespace System.Windows
             if (_setDpi)
             {
                 _setDpi = false;
+
+                // GetDC/GetDeviceCaps are user32/gdi32 (Windows-only). Off-Windows use the standard
+                // 96 DPI (scale 1.0) until a cross-platform windowing backend reports the real scale.
+                if (!OperatingSystem.IsWindows())
+                {
+                    _dpiScaleX = 1.0;
+                    _dpiScaleY = 1.0;
+                    return new DpiScale(_dpiScaleX, _dpiScaleY);
+                }
+
                 int dpiX, dpiY;
                 HandleRef desktopWnd = new HandleRef(null, IntPtr.Zero);
 

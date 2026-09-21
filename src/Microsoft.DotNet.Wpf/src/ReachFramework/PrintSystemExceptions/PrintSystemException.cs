@@ -239,6 +239,16 @@ namespace System.Printing
             String resourceString = printResourceManager.GetString(resourceKey,
                                                                    System.Threading.Thread.CurrentThread.CurrentUICulture);
 
+            // A key with no resource behind it used to reach String.Format as a null format string,
+            // which throws ArgumentNullException FROM INSIDE AN EXCEPTION CONSTRUCTOR -- so whatever
+            // actually went wrong was replaced by a null-argument error about the reporting of it.
+            // The key is itself a readable sentence often enough to be the better fallback, and it
+            // is always better than losing the original failure.
+            if (resourceString == null)
+            {
+                return resourceKey;
+            }
+
             if (PrinterHResult.HResultFacility(errorCode) == PrinterHResult.Facility.Win32)
             {
                 exceptionMessage = String.Format(System.Threading.Thread.CurrentThread.CurrentUICulture,
@@ -265,6 +275,16 @@ namespace System.Printing
             int win32Error
             )
         {
+            // FormatMessage is kernel32, unguarded, and reached from the ordinary
+            // PrintSystemException(string) constructor -- so off Windows the act of REPORTING a
+            // printing failure threw DllNotFoundException, replacing whatever actually went wrong
+            // with a message about Kernel32.dll. Errors carrying a Win32 code are a Windows concept
+            // anyway; elsewhere the number is the most honest thing to say about one.
+            if (!OperatingSystem.IsWindows())
+            {
+                return win32Error.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+
             StringBuilder win32ErrorMessage = new StringBuilder(defaultWin32ErrorMessageLength);
 
             int charCount = NativeMethodsForPrintExceptions.InvokeFormatMessage(FormatMessageFromSystem,

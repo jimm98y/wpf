@@ -1,0 +1,6 @@
+<Project>
+  <!-- Isolate WinFormsInterop from the WPF repo's Directory.Build machinery (SR-resource
+       generation, artifacts output layout, resx handling). These are standalone SDK-style
+       projects that build Mono's System.Windows.Forms + our host; they must NOT inherit the
+       repo-wide WPF build customization. This empty file stops MSBuild's upward search. -->
+</Project>

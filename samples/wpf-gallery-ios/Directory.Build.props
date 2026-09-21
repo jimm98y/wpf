@@ -1,0 +1,6 @@
+<Project>
+  <!-- Isolate this iOS head from the WPF repo's Directory.Build machinery (artifacts output layout,
+       SR-resource generation, strict analyzers, and trimming/linker defaults that conflict with the
+       iOS SDK's - with them applied, every TrimmerRootAssembly failed as "cannot use action 'Skip'").
+       Same empty-file trick the sibling samples use to stop MSBuild's upward search. -->
+</Project>
