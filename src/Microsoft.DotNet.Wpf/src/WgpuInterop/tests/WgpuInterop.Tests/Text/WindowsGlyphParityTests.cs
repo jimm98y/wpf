@@ -9754,6 +9754,27 @@ namespace WgpuInterop.Tests.Text
                     xs2[i] = (int) MathF.Round(pts.FitX[i] * 64f);
                     ys2[i] = (int) MathF.Round(pts.FitY[i] * 64f);
                 }
+                // WPF_PATCHPT_ASFIT_POLY="x,y x,y ..." REPLACES the fitted outline with a
+                // polygon of my own, in the same 1/64-px units. With the em set to ppem*64 and
+                // the program gone, the glyph record has become a plain device-space canvas:
+                // whatever goes in here is what BOTH rasterisers receive, so a real glyph's
+                // failing shape can be cut down edge by edge until the differing lamps go away.
+                // That is the synthetic probe the bar sweeps could not express -- they were
+                // rectangles with a slant, and this regime is a shallow diagonal ending on a
+                // vertex that sits exactly on a pixel boundary.
+                if (Environment.GetEnvironmentVariable("WPF_PATCHPT_ASFIT_POLY") is { Length: > 0 } poly)
+                {
+                    string[] pp = poly.Split(new[] { ' ', ';' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (conts != 1)
+                    { Console.Error.WriteLine($"ASFIT_POLY: glyph has {conts} contours, need 1"); return 0; }
+                    n2 = pp.Length; xs2 = new int[n2]; ys2 = new int[n2];
+                    for (int i = 0; i < n2; i++)
+                    {
+                        string[] xy = pp[i].Split(',');
+                        xs2[i] = int.Parse(xy[0]); ys2[i] = int.Parse(xy[1]);
+                    }
+                    Write16(original, glyphAt + 10, (short) (n2 - 1));   // endPts[0]
+                }
                 // Rebuild: header, endPts, zero instructions, all-16-bit flags and deltas.
                 int need = 10 + conts * 2 + 2 + n2 + n2 * 2 + n2 * 2;
                 if (need > glyphLen)
@@ -9786,6 +9807,19 @@ namespace WgpuInterop.Tests.Text
                 }
                 Console.Error.WriteLine($"   ASFIT: upem -> {ppem * 64}, {n2} points as the fit,"
                     + $" bbox {xmn}..{xmx} x {ymn}..{ymx}");
+                // WPF_PATCHPT_ASFIT_DUMP=1: print the polygon that both sides are about to
+                // rasterise, in 64ths and in pixels, with the contour ends. ASFIT writes every
+                // point ON-CURVE, so this is a straight-edged polygon -- the exact shape class
+                // the synthetic bar probes claimed to have covered.
+                if (Environment.GetEnvironmentVariable("WPF_PATCHPT_ASFIT_DUMP") == "1")
+                {
+                    var ends = new System.Text.StringBuilder();
+                    for (int c = 0; c < conts; c++) ends.Append(Read16(original, glyphAt + 10 + c * 2) + " ");
+                    Console.Error.WriteLine($"   ASFIT ends: {ends}");
+                    for (int i = 0; i < n2; i++)
+                        Console.Error.WriteLine($"   ASFIT p{i,2}: {xs2[i],6} {ys2[i],6}   "
+                            + $"= {xs2[i] / 64.0,8:F3} {ys2[i] / 64.0,8:F3} px");
+                }
             }
 
             var report = new System.Text.StringBuilder();
@@ -9821,6 +9855,7 @@ namespace WgpuInterop.Tests.Text
             // weigh about the same; the centroid separates them, and it is continuous, so it
             // reads sub-pixel movement that the leftmost lit column quantises away.
             double gdiCx = 0, ourCx = 0;
+            byte[]? lastOurs = null;                 // kept for WPF_PATCHPT_LAMPS
             long Score(byte[] bytes, string fam)
             {
                 int count = 0;
@@ -9834,6 +9869,7 @@ namespace WgpuInterop.Tests.Text
                     Gdi.s_rawRgb = null;
                     byte[] ours = OursRgba(Ours(bytes, sfnt, bold, italic), ch.ToString(), ppem, baseline,
                                            correction: true);
+                    lastOurs = ours;
                     long sum = 0;
                     gdiInk = ourInk = 0; gdiCx = ourCx = 0;
                     for (int y = 0; y < Height; y++)
@@ -9856,8 +9892,35 @@ namespace WgpuInterop.Tests.Text
             int nameAt = FamilyNameByte(original, sfnt);
             byte nameWas = nameAt > 0 ? original[nameAt] : (byte) 0;
             int variant = 0;
-            long baseScore = Score(original, family);
+            // THE BASELINE MUST BE RENAMED TOO. Score() registers the bytes with
+            // AddFontMemResourceEx, but a private memory font does not displace an installed face
+            // of the same name: ask GDI for "Consolas" and it draws the one in C:\Windows\Fonts,
+            // whatever is in the buffer. Every sweep below renames for exactly that reason; the
+            // baseline did not, so any probe that judged itself against baseScore was comparing
+            // our patched glyph with GDI's UNPATCHED one, and a patch GDI never saw looks exactly
+            // like a patch GDI ignored. The giveaway is gdiInk holding still while ourInk moves.
+            long baseScore = Score(original, Rename(original, nameAt, family, ref variant, nameWas));
             report.AppendLine($"   (unpatched baseline sum|d| {baseScore}, ink gdi {gdiInk} ours {ourInk})");
+            // WPF_PATCHPT_LAMPS=1: every differing sub-pixel, as col,row: gdi | ours | ours-gdi.
+            // With ASFIT_POLY cutting the outline down this is what says WHICH edge of the shape
+            // the disagreement sits on, in glyph coordinates (col - PenX, baseline - row).
+            if (Environment.GetEnvironmentVariable("WPF_PATCHPT_LAMPS") == "1" && lastOurs is not null)
+            {
+                for (int y = 0; y < Height; y++)
+                for (int x = 0; x < Width; x++)
+                {
+                    int dr = (255 - lastOurs[(y * Width + x) * 4 + 0]) - (255 - raw[(y * Width + x) * 4 + 2]);
+                    int dg = (255 - lastOurs[(y * Width + x) * 4 + 1]) - (255 - raw[(y * Width + x) * 4 + 1]);
+                    int db = (255 - lastOurs[(y * Width + x) * 4 + 2]) - (255 - raw[(y * Width + x) * 4 + 0]);
+                    if (dr == 0 && dg == 0 && db == 0) continue;
+                    Console.Error.WriteLine($"   LAMP {x,3},{y,3}  glyph x {x - PenX,3} y {baseline - y,3}"
+                        + $"   gdi {255 - raw[(y * Width + x) * 4 + 2],3},{255 - raw[(y * Width + x) * 4 + 1],3},"
+                        + $"{255 - raw[(y * Width + x) * 4 + 0],3}"
+                        + $" | ours {255 - lastOurs[(y * Width + x) * 4 + 0],3},"
+                        + $"{255 - lastOurs[(y * Width + x) * 4 + 1],3},{255 - lastOurs[(y * Width + x) * 4 + 2],3}"
+                        + $" | d {dr,4},{dg,4},{db,4}");
+                }
+            }
 
             // WPF_PATCHPT_SHIFT=lo,hi TRANSLATES THE WHOLE GLYPH, pp1 and the advance held fixed.
             // The xMin sweep below moves pp1, and pp1 is zero for all but a handful of real
@@ -10063,6 +10126,133 @@ namespace WgpuInterop.Tests.Text
                 File.AppendAllText(rp, report.ToString());
             Console.Error.Write(report.ToString());
             return 0;
+        }
+
+        /// <summary>SWEEP ONE COORDINATE OF A POLYGON AND SEE WHERE EACH RASTERISER FLIPS.
+        /// WPF_FLIP="&lt;polygon with one @&gt;", WPF_FLIP_RANGE="lo,hi[,step]".
+        /// <para>The glyph record is turned into a plain device-space canvas the way
+        /// <see cref="HowGdiFollowsAMovedPoint"/>'s ASFIT mode does -- unitsPerEm set to ppem*64
+        /// so one font unit is one sixty-fourth of a pixel, the instructions removed, the bounding
+        /// box and side bearing rewritten -- and then the polygon in WPF_FLIP is written into it
+        /// directly. Both rasterisers receive identical geometry with no program between them, so
+        /// a difference in the resulting lamps is the scan conversion and nothing else.</para>
+        /// <para>Sweeping ONE coordinate in sixty-fourths turns that into a staircase: the ink
+        /// holds flat, then jumps as a sample crosses the edge. Where the two staircases step at
+        /// DIFFERENT coordinates, the rule for a sample sitting exactly on the boundary differs,
+        /// and the sweep says by how much and in which direction. That is the measurement the
+        /// 20,664 swept-edge bar cases could not make: they asked whether two rasters agree at a
+        /// position, not where each one's threshold is, so a boundary rule that is off by one
+        /// sixty-fourth reads as agreement everywhere except the single position that lands on
+        /// it.</para></summary>
+        [Fact]
+        public void WhereTheTwoRasterizersFlipASample()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string? tmpl = Environment.GetEnvironmentVariable("WPF_FLIP");
+            Assert.SkipWhen(string.IsNullOrEmpty(tmpl), "set WPF_FLIP to a polygon holding one @");
+            string[] rg = (Environment.GetEnvironmentVariable("WPF_FLIP_RANGE") ?? "0,64,1").Split(',');
+            int lo = int.Parse(rg[0]), hi = int.Parse(rg[1]), step = rg.Length > 2 ? int.Parse(rg[2]) : 1;
+            int ppem = int.Parse(Environment.GetEnvironmentVariable("WPF_FLIP_PPEM") ?? "18");
+            var rows = FlipSweep(tmpl!, lo, hi, step, ppem, out string note);
+            Console.Error.WriteLine($"== flip sweep {tmpl} over {lo}..{hi} step {step} at {ppem}ppem {note}");
+            Console.Error.WriteLine("        @    sum|d|    gdiInk    ourInk    gdi step   our step");
+            long pg = -1, po = -1, bad = 0;
+            foreach (var r in rows)
+            {
+                string gs = pg >= 0 && r.GdiInk != pg ? (r.GdiInk - pg).ToString("+#;-#;0") : "";
+                string os = po >= 0 && r.OurInk != po ? (r.OurInk - po).ToString("+#;-#;0") : "";
+                Console.Error.WriteLine($"{r.V,9}{r.Sum,10}{r.GdiInk,10}{r.OurInk,10}{gs,12}{os,11}");
+                pg = r.GdiInk; po = r.OurInk; bad += r.Sum;
+            }
+            Console.Error.WriteLine($"FLIPTOTAL {bad} over {rows.Count} positions");
+        }
+
+        private readonly record struct FlipRow(int V, long Sum, long GdiInk, long OurInk);
+
+        /// <summary>One coordinate sweep of a device-space polygon, GDI against ours.</summary>
+        private List<FlipRow> FlipSweep(string tmpl, int lo, int hi, int step, int ppem,
+                                               out string note)
+        {
+            var rows = new List<FlipRow>();
+            note = "";
+            string family = GdiFamily("consola");
+            string? file = FontFiles.Find(family, false, false);
+            if (file is null) { note = "(no Consolas)"; return rows; }
+            byte[] source = File.ReadAllBytes(file);
+            int sfnt = FontFiles.SfntOffset(source, family, false, false);
+            var probe = new TrueTypeFont(source);
+            int gid = probe.GlyphIndex('1');
+            if (!Glyf(source, sfnt, gid, out int glyphAt, out int glyphLen))
+            { note = "(no outline)"; return rows; }
+            int nameAt = FamilyNameByte(source, sfnt);
+            byte nameWas = nameAt > 0 ? source[nameAt] : (byte) 0;
+            int lsbAt = LeftSideBearingByte(source, sfnt, gid);
+            int baseline = ppem + 12, variant = 0;
+            var raw = new byte[Width * Height * 4];
+
+            for (int v = lo; v <= hi; v += step)
+            {
+                byte[] d = (byte[]) source.Clone();
+                string[] pp = tmpl.Replace("@", v.ToString())
+                                  .Split(new[] { ' ', ';' }, StringSplitOptions.RemoveEmptyEntries);
+                int n = pp.Length;
+                // 10 header + 2 endPts + 2 instrLen + n flags + 2n x deltas + 2n y deltas.
+                if (10 + 2 + 2 + n + 4 * n > glyphLen)
+                { note = $"(a polygon of {n} points will not fit)"; return rows; }
+                var xs = new int[n]; var ys = new int[n];
+                for (int i = 0; i < n; i++)
+                {
+                    string[] xy = pp[i].Split(',');
+                    xs[i] = int.Parse(xy[0]); ys[i] = int.Parse(xy[1]);
+                }
+                Write16(d, TableAt(d, sfnt, "head") + 18, (short) (ppem * 64));   // unitsPerEm
+                Write16(d, glyphAt, 1);                                           // one contour
+                Write16(d, glyphAt + 10, (short) (n - 1));                        // endPts[0]
+                int w = glyphAt + 12;
+                Write16(d, w, 0); w += 2;                                         // instructionLength
+                for (int i = 0; i < n; i++) d[w++] = 0x01;                        // on-curve, 16-bit
+                int px = 0, py = 0;
+                for (int i = 0; i < n; i++) { Write16(d, w, (short) (xs[i] - px)); px = xs[i]; w += 2; }
+                for (int i = 0; i < n; i++) { Write16(d, w, (short) (ys[i] - py)); py = ys[i]; w += 2; }
+                int xmn = int.MaxValue, xmx = int.MinValue, ymn = int.MaxValue, ymx = int.MinValue;
+                for (int i = 0; i < n; i++)
+                {
+                    if (xs[i] < xmn) xmn = xs[i];
+                    if (xs[i] > xmx) xmx = xs[i];
+                    if (ys[i] < ymn) ymn = ys[i];
+                    if (ys[i] > ymx) ymx = ys[i];
+                }
+                Write16(d, glyphAt + 2, (short) xmn); Write16(d, glyphAt + 4, (short) ymn);
+                Write16(d, glyphAt + 6, (short) xmx); Write16(d, glyphAt + 8, (short) ymx);
+                if (lsbAt > 0) { Write16(d, lsbAt, (short) xmn); Write16(d, lsbAt - 2, 632); }
+
+                string fam = Rename(d, nameAt, family, ref variant, nameWas);
+                int count = 0;
+                IntPtr h = AddFontMemResourceEx(d, d.Length, IntPtr.Zero, ref count);
+                if (h == IntPtr.Zero || count == 0)
+                { note = "(AddFontMemResourceEx refused the patched font)"; return rows; }
+                try
+                {
+                    Array.Clear(raw);
+                    Gdi.s_rawRgb = raw;
+                    Gdi.Draw("1", fam, ppem, PenX, baseline, Width, Height, false, false);
+                    Gdi.s_rawRgb = null;
+                    byte[] ours = OursRgba(new TrueTypeFont(d, false, false, sfnt), "1", ppem, baseline,
+                                           correction: true);
+                    long sum = 0, gi = 0, oi = 0;
+                    for (int y = 0; y < Height; y++)
+                    for (int x = 0; x < Width; x++)
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int g = 255 - raw[(y * Width + x) * 4 + (2 - c)];
+                        int o = 255 - ours[(y * Width + x) * 4 + c];
+                        gi += g; oi += o; sum += Math.Abs(g - o);
+                    }
+                    rows.Add(new FlipRow(v, sum, gi, oi));
+                }
+                finally { RemoveFontMemResourceEx(h); }
+            }
+            return rows;
         }
 
         /// <summary>Give the patched bytes a family name GDI has never seen, and say what it is.
