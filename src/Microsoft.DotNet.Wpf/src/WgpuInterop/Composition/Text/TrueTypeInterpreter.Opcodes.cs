@@ -1094,7 +1094,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             break;
                         }
 
-                    case 0x4B: Push(_ppem); break;                                      // MPPEM
+                    case 0x4B: Push(ProgramPpem); break;                                // MPPEM
                     case 0x4C: Push(_pointSize); break;                                 // MPS
 
                     // Whether a point is ON the curve or a control point for it. A program uses
@@ -4353,11 +4353,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Unpack one delta: the high nibble says which size it is for, the low nibble how
         /// far to move, in steps of a fraction of a pixel the program chose with SDS.</summary>
+        /// <summary>WPF_PROGRAM_PPEM=n: a DIAGNOSTIC that makes MPPEM and delta matching see n
+        /// while the outline keeps its real scale -- to ask whether another scaler's run of the
+        /// same glyph differs from ours only in the size its program believes it is at.</summary>
+        private static readonly int s_programPpem =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_PROGRAM_PPEM"), out int pp) ? pp : 0;
+        private int ProgramPpem => s_programPpem > 0 ? s_programPpem : _ppem;
+
         private bool DeltaApplies(int spec, int rangeOffset, out int amount)
         {
             amount = 0;
             int ppem = ((spec >> 4) & 0x0F) + _gs.DeltaBase + rangeOffset;
-            if (ppem != _ppem) return false;
+            if (ppem != ProgramPpem) return false;
 
             int steps = spec & 0x0F;
             steps -= 8;
