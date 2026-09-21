@@ -347,7 +347,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x8D: _gs.ScanType = Pop(); break;                             // SCANTYPE
                     case 0x8E:                                                          // INSTCTRL
                         {
-                            int value = Pop(), selector = Pop();
+                            // The SELECTOR is on top (the spec's order, and GDI's trace: Corbel's
+                            // prep runs `INSTCTRL` on [.. 4 3], selector 3, value 4). Popping the
+                            // value first read that as selector 4 and dropped it, so native
+                            // ClearType mode never switched on for any face.
+                            // WPF_INSTCTRL_ORDER=old restores the reversed reading.
+                            int selector = Pop(), value = Pop();
+                            if (s_instctrlOldOrder) (selector, value) = (value, selector);
                             if (selector >= 1 && selector <= 3)
                             {
                                 int mask = 1 << (selector - 1);
@@ -2558,6 +2564,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int _callDepth;
 
         /// <summary>WPF_CT_SHPIX_CALL=0 to disable the fontdrvhost SHPIX rule above.</summary>
+        private static readonly bool s_instctrlOldOrder =
+            Environment.GetEnvironmentVariable("WPF_INSTCTRL_ORDER") == "old";
+
         private static readonly bool s_shpixCallRule =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX_CALL") != "0";
 
