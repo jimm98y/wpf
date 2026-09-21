@@ -191,6 +191,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             Dictionary<string, int> tables = ReadTableDirectory();
             int head = Require(tables, "head");
+            _headXMin = (short) U16(head + 36);
+            _headXMax = (short) U16(head + 40);
+            _headYMin = (short) U16(head + 38);
+            _headYMax = (short) U16(head + 42);
             int maxp = Require(tables, "maxp");
             int hhea = Require(tables, "hhea");
             int hmtx = Require(tables, "hmtx");
@@ -703,6 +707,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>The fallback rounds; it does not truncate. Consolas ships no VDMX at all and its
         /// TEXTMETRIC is round(usWinAscent x scale) / round(usWinDescent x scale) at every one of
         /// those sizes, truncation being wrong at seven of them.</para></summary>
+        private readonly int _headXMin, _headXMax, _headYMin, _headYMax;
+
+        /// <summary>The glyph COLUMNS GDI keeps, relative to the pen: bComputeMaxGlyph@14001b198
+        /// scales head.xMin/xMax into 28.4 and takes floor(min) and ceil(max) as the font
+        /// context's +0x98/+0x9c, and vFillGLYPHDATA's _GMC drops the bitmap columns outside
+        /// [+0x98, +0x9c) when it copies the glyph out -- before win32k filters the run, so the
+        /// neighbouring pixel still takes the clipped lamps' filter spill. It only bites where a
+        /// glyph is wider than the face's own box, which is FO_SIM_BOLD's extra pixel: Lucida
+        /// Console Bold 'w' at 11ppem smeared into a column GDI cuts off.</summary>
+        internal bool TryGetGdiColumnLimits(float pixelsPerEm, out int left, out int right)
+        {
+            left = right = 0;
+            if (_unitsPerEm <= 0 || _headXMax <= _headXMin) return false;
+            double k = pixelsPerEm * 16.0 / _unitsPerEm;
+            // The simulated oblique widens the box first (bComputeMaxGlyph shears the corners by
+            // 0x5700 before scaling them).
+            double xMin = _headXMin, xMax = _headXMax;
+            if (_shear != 0f)
+            {
+                double sh = Math.Abs(_shear);
+                xMin += Math.Min(0.0, sh * _headYMin);
+                xMax += Math.Max(0.0, sh * _headYMax);
+            }
+            int lo = (int) Math.Round(xMin * k, MidpointRounding.AwayFromZero);
+            int hi = (int) Math.Round(xMax * k, MidpointRounding.AwayFromZero);
+            // ...with the margins its device-metrics arm adds: two pixels left, one right.
+            // Lucida Console Bold 'w' at 11ppem: GDI keeps pixel 7 of a box whose scaled xMax is
+            // 6.93 and drops pixel 8.
+            left = (lo >> 4) - 2;
+            right = ((hi + 15) >> 4) + 1;
+            return true;
+        }
+
         public bool TryGetGdiLineMetrics(int ppem, out int ascent, out int descent)
         {
             ascent = descent = 0;

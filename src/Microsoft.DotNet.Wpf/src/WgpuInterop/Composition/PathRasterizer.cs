@@ -1001,6 +1001,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             + $" composite={composite} exact={(exactRows is not null ? 1 : 0)} origin=({originX},{originY})"
                             + $" size={width}x{height} nSub={nSub} fills={(fills is null ? -1 : fills.Count)}");
                     var lev = new byte[nSub][];
+                    s_colClipL = s_colClipR = 0;
+                    if (composite && GlyphColClipForRun is { } colTable && colTable.TryGetValue(gid, out var cc))
+                    { s_colClipL = cc.Left - originX; s_colClipR = cc.Right - originX; }
                     for (int sI = 0; sI < nSub; sI++)
                         lev[sI] = GdiTableFilterRowset(polysOne, path.FillRule, originX, originY,
                                                        width, height, (sI + GdiSubrowPhase) / nSub, nSub, sI, fills,
@@ -3498,6 +3501,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (lamp[idx] < 2) lamp[idx]++;
                 }
             if (SimBoldPixelsForRun > 0) EmboldenLampRows(lamp, width, height, SimBoldPixelsForRun);
+            if (s_colClipR > s_colClipL)
+                for (int py = 0; py < height; py++)
+                    for (int x = 0; x < width; x++)
+                        if (x < s_colClipL || x >= s_colClipR)
+                        {
+                            int at = py * subWidth + x * SubpixelsPerPixel;
+                            for (int L = 0; L < SubpixelsPerPixel; L++) lamp[at + L] = 0;
+                        }
             var rgba = new byte[width * height * 4];
             for (int py = 0; py < height; py++)
             {
@@ -3829,6 +3840,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// -21 and GDI's ascent is 20. The rows go AFTER scan conversion and dropout control, which
         /// is why this clips coverage rather than the outline.</para></summary>
         internal static Dictionary<int, (int Top, int Bottom)>? GlyphRowClipForRun;
+
+        /// <summary>Per glyph ordinal, the mask columns [Left, Right) whose lamps survive --
+        /// TrueTypeFont.TryGetGdiColumnLimits. Null for no clip.</summary>
+        internal static Dictionary<int, (int Left, int Right)>? GlyphColClipForRun;
+
+        [ThreadStatic] private static int s_colClipL, s_colClipR;
 
         /// <summary>WPF_CT_DROPOUT_PERGLYPH=0 hands the dropout pass the whole run again, which is
         /// what it used to get. A bisection handle, and the way the win stays reproducible: on the
