@@ -2131,7 +2131,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// 1 floors it, 2 rounds to nearest, 3 quantises both crossings to a sixty-fourth FIRST
         /// and then does the binary's integer `(a + b - 1) >> 7`.</para></summary>
         private static readonly int s_dropMid =
-            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_MID"), out int dm) ? dm : 0;
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_MID"), out int dm) ? dm : 3;
 
         private static int DropMid(float a, float b) => s_dropMid switch
         {
@@ -2156,6 +2156,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             6 => ((int) MathF.Ceiling(a * 64f) + (int) MathF.Ceiling(b * 64f) - 1) >> 7,
             7 => ((int) MathF.Floor(a * 64f) + (int) MathF.Ceiling(b * 64f) - 1) >> 7,
             8 => ((int) MathF.Ceiling(a * 64f) + (int) MathF.Floor(b * 64f) - 1) >> 7,
+            // WPF_CT_DROPOUT_MID=0: the float rule this shipped with, floor(mid - 1/128). It is
+            // an approximation of mode 3 with a slack band, and it was only ever needed because
+            // the crossings handed to it were exact solves rather than GDI's 26.6 integers. With
+            // VertLineSubpix and VertSpSubpix supplying those, the two measure IDENTICALLY --
+            // 12,585 either way -- so the default is now the one that is actually in the binary.
             _ => (int) MathF.Floor((a + b) * 0.5f - 1f / 128f),
         };
 
@@ -2402,7 +2407,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // this column's sample line at x = col * 64 + 32, and for a straight edge that
                     // y is exact.
                     long sx = (long) col * 64 + 32;
-                    float pos = x2 == x0 ? y0 / 64f
+                    float pos = s_spSubpix ? VertLineSubpix(col, x0, y0, x2, y2) / 64f
+                              : x2 == x0 ? y0 / 64f
                               : (float) ((y0 + (sx - x0) * (double) (y2 - y0) / (x2 - x0)) / 64.0);
                     L.Col(col, (s_colBiasFlip ? bias : yDesc) + row, colOn, pos);
                     col += xstep;
@@ -2439,8 +2445,82 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Where a monotone quadratic piece meets a column's sample line, in the walk's
         /// own sixty-fourths of a sub-row. Solves x(t) = col*64 + 32 on the piece -- which
         /// EvaluateSpline has already made monotone in both axes -- and evaluates y there.</summary>
+        /// <summary>WPF_CT_DROPOUT_SUBPIX=0 goes back to solving the crossing in doubles.
+        /// <para>The smart dropout's fill row is `(a + b - 1) >> 7` over two crossings
+        /// (DoVertDropout@140041ea8), and GDI does not take those from the scan walk: it stores a
+        /// segment index with each crossing and calls one of THREE evaluators through
+        /// `client[(0x1b + tag) * 8]` -- CalcVertLineSubpix@140095d20, CalcVertSpSubpix@140095e10
+        /// and CalcVertEpSubpix@140096090, installed by fsc_FillGlyph@1400340a4. All three return
+        /// a 26.6 y at the column's sample, and all three are integer arithmetic.</para></summary>
+        private static readonly bool s_spSubpix =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_SUBPIX") != "0";
+
+        /// <summary>CalcVertLineSubpix@140095d20: `y0 + CompDiv(x1 - x0, (col*64 + 32 - x0) *
+        /// (y1 - y0))`. CompDiv rounds half AWAY FROM ZERO -- EvaluateSpline inlines it, and the
+        /// inlined form adds the divisor's half when the product's sign mask matches the
+        /// divisor's and subtracts it otherwise.</summary>
+        private static int VertLineSubpix(int col, int x0, int y0, int x2, int y2)
+        {
+            int den = x2 - x0;
+            if (den == 0) return y0;
+            long prod = (long) (col * 64 + 32 - x0) * (y2 - y0);
+            int half = den / 2;                                   // truncates, keeps the sign
+            long adj = (prod >> 63) == (den >> 31) ? half : -half;
+            return y0 + (int) ((prod + adj) / den);
+        }
+
+        /// <summary>CalcVertSpSubpix@140095e10, and it is NOT a solve -- it is de Casteljau
+        /// BISECTION in 26.6 integers, halted when the x midpoint equals the sample exactly:
+        /// <code>
+        ///   xm = (hi + 2*ctrl + lo + 1) >> 2;   ym = (yHi + 2*yc + yLo + 1) >> 2;
+        ///   if (xm > sx) { ctrl = (ctrl + lo) >> 1; yc = (yc + yLo) >> 1; yHi = ym; hi = xm; }
+        ///   else if (xm < sx) { ctrl = (hi + ctrl) >> 1; yc = (yHi + yc) >> 1; yLo = ym; lo = xm; }
+        ///   while (xm != sx);  return ym;
+        /// </code>
+        /// Every step truncates, so the answer is not the exact intersection and cannot be
+        /// reached by rounding one: that is why the proven `(a + b - 1) >> 7` was exact on
+        /// straight edges and wrong on every genuine spline.
+        /// <para>The ends are taken in x order, each carrying its own y, which is the swap the
+        /// binary does before the loop. GDI needs no guard because EvaluateSpline@140033848 has
+        /// already split the curve into pieces monotone in both axes; ours may not be, so a
+        /// sample outside the span or a stalled triple falls back to the exact solve.</para>
+        /// </summary>
+        private static int VertSpSubpix(int col, int x0, int y0, int x1, int y1, int x2, int y2,
+                                        out bool ok)
+        {
+            ok = false;
+            int sx = col * 64 + 32;
+            int lo, hi, yLo, yHi;
+            if (x0 < x2) { lo = x0; hi = x2; yLo = y0; yHi = y2; }
+            else { lo = x2; hi = x0; yLo = y2; yHi = y0; }
+            if (sx < lo || sx > hi) return 0;
+            int cx = x1, cy = y1;
+            for (int guard = 0; guard < 96; guard++)
+            {
+                int xm = (hi + cx * 2 + lo + 1) >> 2;
+                int ym = (yHi + cy * 2 + yLo + 1) >> 2;
+                if (xm == sx) { ok = true; return ym; }
+                if (xm > sx)
+                {
+                    if (xm == hi && cx == (cx + lo) >> 1) return 0;   // no progress
+                    cx = (cx + lo) >> 1; cy = (cy + yLo) >> 1; yHi = ym; hi = xm;
+                }
+                else
+                {
+                    if (xm == lo && cx == (hi + cx) >> 1) return 0;
+                    cx = (hi + cx) >> 1; cy = (yHi + cy) >> 1; yLo = ym; lo = xm;
+                }
+            }
+            return 0;
+        }
+
         private static float ConicY(int x0, int y0, int x1, int y1, int x2, int y2, int col)
         {
+            if (s_spSubpix)
+            {
+                int v = VertSpSubpix(col, x0, y0, x1, y1, x2, y2, out bool ok);
+                if (ok) return v / 64f;
+            }
             double sx = col * 64.0 + 32.0;
             double a = x0 - 2.0 * x1 + x2, b = 2.0 * (x1 - x0), c = x0 - sx;
             double t;
