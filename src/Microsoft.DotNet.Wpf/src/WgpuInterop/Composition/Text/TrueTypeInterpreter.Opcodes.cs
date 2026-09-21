@@ -2593,6 +2593,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return (int) ((a < 0) != (b < 0) ? -m : m);
         }
 
+        private static readonly bool s_ipDual =
+            Environment.GetEnvironmentVariable("WPF_CT_IP_DUAL") == "1";
+
         private static readonly bool s_ipZeroShift =
             Environment.GetEnvironmentVariable("WPF_CT_IP_ZERO") == "shift";
 
@@ -3846,9 +3849,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int p = Pop();
                 if (p >= z2.PointCount) continue;
 
-                int orgDist = twilight
-                    ? DualProject(z2.OrgX[p] - baseX, z2.OrgY[p] - baseY)
-                    : DualProject(z2.OrusX[p] - baseX, z2.OrusY[p] - baseY);
+                // THE POINT'S ORIGINAL IS PROJECTED ON THE PROJECTION VECTOR, NOT THE DUAL ONE.
+                // itrp_IP@140038040 measures the reference range through localGS+0x78 (after
+                // SDPVTL, itrp_OldProject: the dual vector) but saves +0x70 (itrp_Project) at entry
+                // and measures every point's original distance with that -- in the ordinary loop
+                // (blr x26 at 1400386e0) and in the zero-range one alike. The two only differ after
+                // SDPVTL, where the dual follows the original line and the projection the current
+                // one: Georgia Italic 'mu'@12 interpolates p11 between two stem points with dual
+                // (15966,-3677) and projection (16044,-3319), and GDI's 60/185 puts it at 13 where
+                // the dual's 80/184 gave 20. WPF_CT_IP_DUAL=1 projects on the dual vector again.
+                int orgDist = s_ipDual
+                    ? (twilight ? DualProject(z2.OrgX[p] - baseX, z2.OrgY[p] - baseY)
+                                : DualProject(z2.OrusX[p] - baseX, z2.OrusY[p] - baseY))
+                    : (twilight ? Project(z2.OrgX[p] - baseX, z2.OrgY[p] - baseY)
+                                : Project(z2.OrusX[p] - baseX, z2.OrusY[p] - baseY));
                 int curDist = Project(z2.CurX[p] - baseCurX, z2.CurY[p] - baseCurY);
 
                 int newDist;
