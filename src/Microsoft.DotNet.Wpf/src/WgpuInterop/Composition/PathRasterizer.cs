@@ -498,6 +498,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         internal static int DropoutForRun;
 
+        /// <summary>FO_SIM_BOLD's horizontal smear, in whole pixels, for the run being drawn; zero
+        /// for a face that is not being emboldened. See <see cref="EmboldenLampRows"/>.</summary>
+        internal static int SimBoldPixelsForRun;
+
+        /// <summary>GDI'S SIMULATED BOLD UNDER CLEARTYPE IS A BITMAP OPERATION, not an outline one:
+        /// sbit_EmboldenSubPixel@1400333a0, run by fs_ContourScan on the packed per-pixel lamp
+        /// bytes once fsc_OverscaleToSubPixel has made them, whenever the glyph input's +0x8c
+        /// "embolden" word is set (ttfdQueryFontData passes it for FO_SIM_BOLD, and fs__Contour
+        /// then skips fsg_Embold's point pass entirely -- only the advance phantom moves). Each
+        /// row is walked right to left; a pixel whose left neighbour (within n) has ink becomes
+        /// that neighbour's three lamps if it was empty, and FULL -- all three lamps at two --
+        /// if it had ink of its own. So a stem gains a pixel on its right, and a diagonal gains a
+        /// solid pixel wherever it overlapped itself, which no outline offset can reproduce.
+        /// </summary>
+        private static void EmboldenLampRows(byte[] lamp, int width, int height, int n)
+        {
+            int sw = width * SubpixelsPerPixel;
+            for (int py = 0; py < height; py++)
+            {
+                int row = py * sw;
+                for (int x = width - 1; x >= 1; x--)
+                {
+                    int at = row + x * 3;
+                    byte l0 = lamp[at], l1 = lamp[at + 1], l2 = lamp[at + 2];
+                    bool ink = (l0 | l1 | l2) != 0;
+                    for (int i = 1; i <= n && x - i >= 0; i++)
+                    {
+                        int nb = row + (x - i) * 3;
+                        if ((lamp[nb] | lamp[nb + 1] | lamp[nb + 2]) == 0) continue;
+                        if (ink) { l0 = l1 = l2 = 2; break; }
+                        l0 = lamp[nb]; l1 = lamp[nb + 1]; l2 = lamp[nb + 2];
+                        ink = true;
+                        // the binary keeps scanning left with the copied value as "its own" ink
+                    }
+                    lamp[at] = l0; lamp[at + 1] = l1; lamp[at + 2] = l2;
+                }
+            }
+        }
+
         /// <summary>How many bits the dropout pass set on the last rasterization, and how many
         /// times it ran. A diagnostic: the edge solver renders a GeometryFill rather than a glyph
         /// run, and this is how to tell whether the pass it is inverting is the one that draws.</summary>
@@ -3385,6 +3424,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     int idx = (f.SubRow / nSub) * subWidth + f.Col / 2;
                     if (lamp[idx] < 2) lamp[idx]++;
                 }
+            if (SimBoldPixelsForRun > 0) EmboldenLampRows(lamp, width, height, SimBoldPixelsForRun);
             var rgba = new byte[width * height * 4];
             for (int py = 0; py < height; py++)
             {

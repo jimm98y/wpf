@@ -623,6 +623,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </remarks>
         public bool TryGetDeviceAdvance(int glyphId, float pixelsPerEm, out float advance)
         {
+            if (!TryGetDeviceAdvanceCore(glyphId, pixelsPerEm, out advance)) return false;
+            if (GdiEmboldens) advance += SimBoldAdvancePixels((int) MathF.Round(pixelsPerEm));
+            return true;
+        }
+
+        private bool TryGetDeviceAdvanceCore(int glyphId, float pixelsPerEm, out float advance)
+        {
             advance = 0f;
             if (glyphId < 0 || glyphId >= _numGlyphs || pixelsPerEm <= 0f) return false;
 
@@ -775,7 +782,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         [ThreadStatic] private static bool s_measuringAdvance;
 
         public float DeviceAdvance(int glyphId, float pixelsPerEm)
-            => CompatibleAdvance(glyphId, pixelsPerEm, (int) MathF.Round(pixelsPerEm));
+            => CompatibleAdvance(glyphId, pixelsPerEm, (int) MathF.Round(pixelsPerEm))
+               + (GdiEmboldens ? SimBoldAdvancePixels((int) MathF.Round(pixelsPerEm)) : 0);
 
         /// <summary>WHERE THE TEXT DIFFERENCE STANDS, once this and the margin were fixed.
         /// <para>PLACEMENT IS SOLVED. Letting every 16-pixel window of the specimen shift
@@ -1022,7 +1030,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     if (glyph is not null)
                     {
                         int span = glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
-                        if (span > 0) advance = MathF.Round(span / 64f, MidpointRounding.AwayFromZero);
+                        // The emboldening pass moved pp2 a pixel; that pixel is the phase's to see
+                        // (it is in pass one's span) but the layout adds FO_SIM_BOLD's own, so the
+                        // advance is taken from the span without it.
+                        int advSpan = GdiEmboldens && span > 64 ? span - 64 : span;
+                        if (advSpan > 0) advance = MathF.Round(advSpan / 64f, MidpointRounding.AwayFromZero);
                         if (_hintedSpans.Count > HintedCacheLimit) { _hintedSpans.Clear(); _hintedSpanTouched.Clear(); }
                         _hintedSpans[key] = span;
                         _hintedSpanTouched[key] = interpreter.AdvancePhantomTouchedX;
@@ -1826,8 +1838,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             // The simulated styles go on AFTER hinting and in pixels, for the same reason they do
             // on the fitted path: thickening a hinted outline keeps its stems on the grid the face
-            // just put them on.
-            if (_emboldenStrength > 0f)
+            // just put them on. (GdiEmbolden already did it, in the program's own 26.6.)
+            if (_emboldenStrength > 0f && !GdiEmboldens)
                 Embolden(working, _emboldenStrength * pixelsPerEm / BaseEmPixels);
             foreach ((Vector2[] pts, _) in working)
                 for (int i = 0; i < pts.Length; i++)
@@ -2643,6 +2655,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool savedBi = TrueTypeInterpreter.BiLevelPass;
             if (small) TrueTypeInterpreter.BiLevelPass = true;
             bool hinted;
+            int savedBoldUnits = TrueTypeInterpreter.SimBoldAdvanceUnits;
+            if (depth == 0)
+                TrueTypeInterpreter.SimBoldAdvanceUnits = GdiEmboldens ? (2 * _unitsPerEm - 1) / 100 : 0;
             // The advance the glyph will be LAID OUT at, for advance-phantom mode 3. Never asked
             // for during a bi-level pass: that pass is how this number is computed in the first
             // place, and asking from inside it recurses.
@@ -2698,6 +2713,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (s_twoPassGlyph && !TrueTypeInterpreter.BiLevelPass && SubpixelFitting)
                     interpreter.Hint(glyph, pixelsPerEm);
                 hinted = interpreter.Hint(glyph, pixelsPerEm);
+                // THE SIMULATED BOLD, AS GDI APPLIES IT: once, to the whole glyph tree, after its
+                // programs and in both passes -- see GdiEmbolden.
+                if (hinted && depth == 0 && GdiEmboldens) GdiEmbolden(glyph, pixelsPerEm, true);
             }
             finally
             {
@@ -2706,6 +2724,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeInterpreter.BiLevelSpan64 = savedSpan;
                 TrueTypeInterpreter.BiLevelPhantomUntouched = savedUntouched;
                 TrueTypeInterpreter.HintDepth = savedDepth;
+                TrueTypeInterpreter.SimBoldAdvanceUnits = savedBoldUnits;
             }
             if (!hinted) return null;
 
@@ -4313,6 +4332,175 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // orientation (from the summed signed area) is used for all contours so
         // outer contours grow and holes (reverse-wound) shrink -- adding ink
         // everywhere, the same effect as FreeType's outline embolden.
+        private static readonly bool s_gdiEmbolden =
+            Environment.GetEnvironmentVariable("WPF_GDI_EMBOLDEN") != "0";
+
+        /// <summary>Whether this face's simulated bold is GDI's (fsg_Embold) rather than the
+        /// symmetric dilation. WPF_GDI_EMBOLDEN=0 restores the dilation.</summary>
+        private bool GdiEmboldens => s_gdiEmbolden && _emboldenStrength > 0f;
+
+        /// <summary>Whether the renderer should smear this face's lamps (GDI's FO_SIM_BOLD).</summary>
+        internal bool GdiEmboldensBitmap => GdiEmboldens && !s_embOutline;
+
+        private static readonly bool s_embOutline =
+            Environment.GetEnvironmentVariable("WPF_EMB_OUTLINE") == "1";
+
+        /// <summary>How many pixels FO_SIM_BOLD adds to each glyph's advance: bComputeMaxGlyph's
+        /// font-context field 0x190, (2 x ppem - 1) / 100 + 1 -- one pixel at every UI size --
+        /// which vFillGLYPHDATA adds to the glyph's device advance.</summary>
+        internal static int SimBoldAdvancePixels(int ppem) => (2 * ppem - 1) / 100 + 1;
+
+        /// <summary>GDI'S SIMULATED BOLD, ported from fsg_Embold@14002e618 and
+        /// EmboldPoint@14002b298. It is not a symmetric dilation.
+        /// <para>scl_InitializeScaling@140040540 sets the amounts in whole pixels,
+        /// (20 x ppem - 10) / 1000 + 1 in x and (20 x ppem - 10) / 1000 in y -- one pixel and none
+        /// at every UI size (fontdrvhost's own globals: 1/0 up to 48ppem, 2/1 at 64). A GRID-FITTED
+        /// glyph splits x unevenly, floor(x/2) to the left and the rest to the right, so the whole
+        /// pixel goes RIGHT; an unfitted one splits it in halves and shifts right by the left
+        /// half. Every point then moves by EmboldPoint's rule: each of its two edges is pushed out
+        /// along its unit normal (-dy, dx) -- by the right amount for a normal with a positive x,
+        /// the left amount otherwise, and likewise in y -- the two pushed edges are intersected
+        /// (or averaged where they are near parallel), the move is clamped to the amounts, and
+        /// the point is shifted by the left and bottom amounts. So a left-facing stem edge stays
+        /// put and a right-facing one moves a pixel right: the glyph gains a pixel of weight on
+        /// the right, and pp2 moves a pixel with it.</para></summary>
+        private void GdiEmbolden(GlyphProgram glyph, float pixelsPerEm, bool fitted)
+        {
+            int ppem = (int) MathF.Round(pixelsPerEm);
+            int ax = (20 * ppem - 10) / 1000 + 1, ay = (20 * ppem - 10) / 1000;
+            int p8, p9, p10, p11;
+            if (!fitted) { p8 = p9 = ax * 32; p10 = p11 = ay * 32; }
+            else
+            {
+                p9 = (ax >> 1) << 6; p8 = (ax - (ax >> 1)) * 64;
+                p10 = (ay >> 1) << 6; p11 = (ay - (ay >> 1)) * 64;
+            }
+            int n = glyph.PointCount;
+            int[] X = glyph.X, Y = glyph.Y;
+            if (X.Length > n + 1 && X[n + 1] != X[n]) X[n + 1] += 64;
+            // UNDER CLEARTYPE THE POINTS DO NOT MOVE. A real draw sets the glyph input's +0x8c
+            // (bSetXform, from ttfdQueryFontData's FO_SIM_BOLD test), fs__Contour hands that to
+            // fsg_Embold as its "skip" argument in both passes, and the weight is added to the
+            // bitmap instead -- PathRasterizer.EmboldenLampRows. Only pp2 moves, above.
+            // WPF_EMB_OUTLINE=1 runs the point pass as well (what the harness does with +0x8c clear).
+            if (!s_embOutline) return;
+            int first = 0;
+            foreach (int last in glyph.EndPoints)
+            {
+                GdiEmboldContour(X, Y, first, last, p8, p9, p10, p11);
+                first = last + 1;
+            }
+        }
+
+        private static void GdiEmboldContour(int[] X, int[] Y, int start, int end,
+                                             int p8, int p9, int p10, int p11)
+        {
+            if (end - start < 2) return;
+            int m = end - start + 1;
+            var ox = new int[m]; var oy = new int[m];
+            for (int k = 0; k < m; k++) { ox[k] = X[start + k]; oy[k] = Y[start + k]; }
+            int i = 0;
+            int px = ox[m - 1], py = oy[m - 1];
+            while (i < m)
+            {
+                int j = i;
+                // a run of identical points is one vertex; its neighbour is the first point after it
+                while (j + 1 < m && ox[j + 1] == ox[i] && oy[j + 1] == oy[i]) j++;
+                int nIdx = j + 1 < m ? j + 1 : 0;
+                EmboldPoint(X, Y, start + i, start + j, px, py, ox[i], oy[i], ox[nIdx], oy[nIdx],
+                            p8, p9, p10, p11);
+                px = ox[i]; py = oy[i];
+                i = j + 1;
+            }
+        }
+
+        /// <summary>A unit normal component in 2.6 (64 = 1): fontdrvhost normalizes to 2.14 through
+        /// FracSqrt and a rounding divide, adds half and shifts to 2.14, then takes >> 8.</summary>
+        private static void UnitNormal(int vx, int vy, out int nx, out int ny)
+        {
+            if (vx == 0 && vy == 0) { nx = 0x4000 >> 8; ny = 0; return; }
+            double len = Math.Sqrt((double) vx * vx + (double) vy * vy);
+            int x14 = (int) Math.Floor(vx / len * 16384.0 + 0.5);
+            int y14 = (int) Math.Floor(vy / len * 16384.0 + 0.5);
+            nx = x14 >> 8; ny = y14 >> 8;
+        }
+
+        private static int CompDivRound(long num, int den)
+        {
+            // CompDiv: half the divisor added with the numerator's sign, so a tie rounds away from zero
+            if (den == 0) return num < 0 ? int.MinValue : int.MaxValue;
+            long half = Math.Abs((long) den) / 2;
+            return (int) ((num + (num < 0 ? -half : half)) / den);
+        }
+
+        private static void EmboldPoint(int[] X, int[] Y, int first, int last,
+                                        int Px, int Py, int Cx, int Cy, int Nx, int Ny,
+                                        int p8, int p9, int p10, int p11)
+        {
+            // the two edges' outward normals, (-dy, dx) for a contour of the usual orientation
+            UnitNormal(-(Cy - Py), Cx - Px, out int nix, out int niy);
+            UnitNormal(-(Ny - Cy), Nx - Cx, out int nox, out int noy);
+            int dxi = ((nix * (nix >= 1 ? p8 : p9)) + 32) >> 6;
+            int dyi = ((niy * (niy < 0 ? p11 : p10)) + 32) >> 6;
+            int dxo = ((nox * (nox >= 1 ? p8 : p9)) + 32) >> 6;
+            int dyo = ((noy * (noy < 0 ? p11 : p10)) + 32) >> 6;
+            int Pax = Px + dxi, Pay = Py + dyi;          // w4, w21
+            int Cax = Cx + dxi, Cay = Cy + dyi;          // w11, w15
+            int Nbx = Nx + dxo, Nby = Ny + dyo;          // w6, w26
+            int Cbx = Cx + dxo, Cby = Cy + dyo;          // w5, w19
+            int rx, ry;
+            if (Cax == Cbx && Cay == Cby) { rx = Cbx; ry = Cby; goto Store; }
+            {
+                int odx = Nbx - Cbx, ody = Nby - Cby;    // w14, w6
+                int idx = Cax - Pax, idy = Cay - Pay;    // w13, w12
+                int w21, w8;
+                if (idy == 0)
+                {
+                    if (odx == 0) { rx = Cbx; ry = Pay; goto Clamp; }
+                    w21 = Cby - Pay; w8 = -ody;
+                }
+                else if (idx == 0)
+                {
+                    if (ody == 0) { rx = Pax; ry = Cby; goto Clamp; }
+                    w21 = Cbx - Pax; w8 = -odx;
+                }
+                else if (Math.Abs(idx) >= Math.Abs(idy))
+                {
+                    int w0 = CompDivRound((long) (Cbx - Pax) * idy, idx);
+                    w21 = (Cby - Pay) - w0;
+                    w0 = CompDivRound((long) odx * idy, idx);
+                    w8 = w0 - ody;
+                }
+                else
+                {
+                    int w0 = CompDivRound((long) (Cby - Pay) * idx, idy);
+                    w21 = w0 + (Pax - Cbx);
+                    w0 = CompDivRound((long) ody * idx, idy);
+                    w8 = odx - w0;
+                }
+                if (Math.Abs(w8) <= 16)
+                {
+                    rx = (Cax + Cbx) >> 1; ry = (Cay + Cby) >> 1;
+                }
+                else
+                {
+                    rx = CompDivRound((long) odx * w21, w8) + Cbx;
+                    ry = CompDivRound((long) ody * w21, w8) + Cby;
+                }
+            }
+        Clamp:
+            {
+                int mx = rx - Cx, my = ry - Cy;
+                if (mx > p8) rx = Cx + p8;
+                if (mx < -p9) rx = Cx - p9;
+                if (my < -p11) ry = Cy - p11;
+                if (my > p10) ry = Cy + p11;
+            }
+        Store:
+            rx += p9; ry += p11;
+            for (int k = first; k <= last; k++) { X[k] = rx; Y[k] = ry; }
+        }
+
         private static void Embolden(List<(Vector2[] Pts, bool[] On)> contours, float strength)
         {
             float totalArea = 0f;

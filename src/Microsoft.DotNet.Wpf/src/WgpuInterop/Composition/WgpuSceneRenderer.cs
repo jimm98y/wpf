@@ -87,6 +87,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         private int _symmetricRows;
         private int _dropoutForRun;
+        private int _simBoldForRun;
         private int _symPpemForRun;
 
         /// <summary>Whether symmetric smoothing also softens across ROWS. WPF_SYM_VERTICAL=1.</summary>
@@ -3614,6 +3615,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         PathRasterizer.PpemForRun = PpemOverride > 0 ? PpemOverride : _symPpemForRun;
                         // Vertical dropout control, as the face's prep asks for it (SCANCTRL /
                         // SCANTYPE). WPF_CT_DROPOUT=0 turns it off.
+                        PathRasterizer.SimBoldPixelsForRun = _simBoldForRun;
                         PathRasterizer.DropoutForRun =
                             DropoutOverride >= 0 ? DropoutOverride : _dropoutForRun;
                         PathRasterizer.SymmetricVerticalForRun =
@@ -3633,6 +3635,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         finally
                         {
                             PathRasterizer.SubpixelRowsForRun = 0; PathRasterizer.DropoutForRun = 0;
+                            PathRasterizer.SimBoldPixelsForRun = 0;
                             PathRasterizer.GlyphRowClipForRun = deviceClip;
                         }
                         if (sm.IsEmpty) return;
@@ -4663,6 +4666,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             _symmetricRows = _symmetricSmoothing && font is Text.IHintedGlyphFont gfit
                              && gfit.WantsGridFit(symPpem) ? SymmetricRowsFitted : SymmetricRows;
             // Vertical dropout control as the face's prep asks for it (SCANCTRL / SCANTYPE).
+            // FO_SIM_BOLD's bitmap smear, for a face being emboldened the way GDI does it.
+            _simBoldForRun = font is Text.TrueTypeFont sbf && sbf.GdiEmboldensBitmap
+                             ? Text.TrueTypeFont.SimBoldAdvancePixels((int)MathF.Round(symPpem)) : 0;
             _dropoutForRun = s_dropoutControl && font is Text.IHintedGlyphFont dof
                              && dof.WantsDropoutControl(symPpem, out int scanType) ? scanType + 1 : 0;
 

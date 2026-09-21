@@ -1617,6 +1617,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// else zero.</summary>
         [ThreadStatic] internal static int RootLinear64;
 
+        /// <summary>FO_SIM_BOLD's addition to the advance the compatible-width factor divides by, in
+        /// font units: fs__Contour bumps globals[0x1ac] by (2 x upem - 1) / 100 after the
+        /// emboldening pass, before it forms globals[0x1d0].</summary>
+        [ThreadStatic] internal static int SimBoldAdvanceUnits;
+
         /// <summary>Which grid the LEFT PHANTOM is put on before the program runs.
         /// <para>scl_AdjustOldCharSideBearing@1801da5f0 rounds it to a SIXTEENTH under ClearType and
         /// to a whole pixel otherwise -- `(v + 2) &amp; ~3` against `(v + 0x20) &amp; ~0x3f`, chosen by
@@ -2879,7 +2884,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // the error on every one of them -- so a last sixty-fourth in the factor is the shape
             // of what is left. WPF_CT_PHASE_DEN=span restores the phantom difference.</para>
             int linear = s_phaseDenFontUnits
-                       ? Scale(_glyphZone.OrusX[adv] - _glyphZone.OrusX[_realPoints])
+                       ? Scale(_glyphZone.OrusX[adv] - _glyphZone.OrusX[_realPoints] + SimBoldAdvanceUnits)
                        : _glyphZone.OrgX[adv] - _glyphZone.OrgX[_realPoints];
             // WPF_CT_PHASE_DEN=round: REFUTED (holdout 376,284 -> 37,012,697, 355 ratchets) though
             // 'A'@20B alone went 6,767 -> 4,095. The denominator is the linear advance ROUNDED to a whole

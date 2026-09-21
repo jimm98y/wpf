@@ -205,11 +205,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             string suffix = slot == 1 ? "b" : slot == 2 ? "i" : slot == 3 ? "z" : string.Empty;
             foreach (string ext in new[] { ".ttf", ".otf", ".ttc" })
             {
-                string? path = Locate(stem + suffix + ext) ?? (suffix.Length > 0 ? Locate(stem + ext) : null);
+                string? path = Locate(stem + suffix + ext);
                 if (path != null) return path;
             }
 
-            // The guess missed, so ask the files what they are called.
+            // The guess missed, so ask the files what they are called -- BEFORE settling for the
+            // regular file. Falling back to "stem.ttf" first resolved Ebrima Bold to ebrima.ttf
+            // (the bold is ebrimabd.ttf) and Gadugi Bold Italic to gadugi.ttf rather than
+            // gadugib.ttf, so we synthesized a weight GDI draws from a real bold face: 18M of the
+            // other-faces battery.
             if (ScannedFamilies().TryGetValue(family, out string?[]? declared))
             {
                 foreach (int candidate in Order(slot))
@@ -224,6 +228,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 for (int i = 0; i < declared.Length; i++)
                     if (declared[i] != null) return declared[i];
             }
+            if (suffix.Length > 0)
+                foreach (string ext in new[] { ".ttf", ".otf", ".ttc" })
+                    if (Locate(stem + ext) is { } regular) return regular;
             return null;
         }
 
