@@ -1797,6 +1797,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                               + System.Environment.NewLine);
                 System.IO.File.AppendAllText(cvtDump!, sb.ToString());
             }
+            // WPF_STORAGE_DUMP: the storage area the pre-program leaves for the glyph programs
+            // to branch on, one line per slot -- the twin of the ctharness' STORDUMP.
+            if (Environment.GetEnvironmentVariable("WPF_STORAGE_DUMP") is { Length: > 0 } stDump)
+            {
+                var sbs = new System.Text.StringBuilder();
+                for (int i = 0; i < _storage.Length; i++)
+                    sbs.Append($"ppem {_ppem} bilevel {BiLevelPass} storage[{i}] {_storage[i]}"
+                               + System.Environment.NewLine);
+                System.IO.File.AppendAllText(stDump, sbs.ToString());
+            }
             return true;
         }
 
