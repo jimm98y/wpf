@@ -10199,18 +10199,23 @@ namespace WgpuInterop.Tests.Text
                 // 10 header + 2 endPts + 2 instrLen + n flags + 2n x deltas + 2n y deltas.
                 if (10 + 2 + 2 + n + 4 * n > glyphLen)
                 { note = $"(a polygon of {n} points will not fit)"; return rows; }
-                var xs = new int[n]; var ys = new int[n];
+                var xs = new int[n]; var ys = new int[n]; var on = new bool[n];
                 for (int i = 0; i < n; i++)
                 {
+                    // "x,y" is an on-curve point; a third field of 0 makes it OFF-curve, so the
+                    // same probe can ask the question of a QUADRATIC. GDI solves a spline per
+                    // scanline (fsc_CalcSpline) where a straight edge is a division, and the two
+                    // need not round a crossing to the same sixty-fourth.
                     string[] xy = pp[i].Split(',');
                     xs[i] = int.Parse(xy[0]); ys[i] = int.Parse(xy[1]);
+                    on[i] = xy.Length < 3 || xy[2] != "0";
                 }
                 Write16(d, TableAt(d, sfnt, "head") + 18, (short) (ppem * 64));   // unitsPerEm
                 Write16(d, glyphAt, 1);                                           // one contour
                 Write16(d, glyphAt + 10, (short) (n - 1));                        // endPts[0]
                 int w = glyphAt + 12;
                 Write16(d, w, 0); w += 2;                                         // instructionLength
-                for (int i = 0; i < n; i++) d[w++] = 0x01;                        // on-curve, 16-bit
+                for (int i = 0; i < n; i++) d[w++] = (byte) (on[i] ? 0x01 : 0x00);  // 16-bit deltas
                 int px = 0, py = 0;
                 for (int i = 0; i < n; i++) { Write16(d, w, (short) (xs[i] - px)); px = xs[i]; w += 2; }
                 for (int i = 0; i < n; i++) { Write16(d, w, (short) (ys[i] - py)); py = ys[i]; w += 2; }
