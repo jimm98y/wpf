@@ -1008,10 +1008,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     s_colClipL = s_colClipR = 0;
                     if (composite && GlyphColClipForRun is { } colTable && colTable.TryGetValue(gid, out var cc))
                     { s_colClipL = cc.Left - originX; s_colClipR = cc.Right - originX; }
+                    var lampsBySub = new byte[]?[nSub];
                     for (int sI = 0; sI < nSub; sI++)
+                    {
                         lev[sI] = GdiTableFilterRowset(polysOne, path.FillRule, originX, originY,
                                                        width, height, (sI + GdiSubrowPhase) / nSub, nSub, sI, fills,
                                                        originalVertex, exactRows);
+                        lampsBySub[sI] = s_lastLamp;
+                    }
+                    if (composite && s_blankOneByOne
+                        && GdiDropsOneByOne(polysOne, originX, originY, nSub, width, height, lampsBySub))
+                    { first = last; continue; }
                     (int Top, int Bottom) rowClip = (int.MinValue, int.MaxValue);
                     if (composite && GlyphRowClipForRun is { } clipTable
                         && clipTable.TryGetValue(gid, out var clipRows))
@@ -3514,6 +3521,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             int at = py * subWidth + x * SubpixelsPerPixel;
                             for (int L = 0; L < SubpixelsPerPixel; L++) lamp[at + L] = 0;
                         }
+            s_lastLamp = lamp;
             var rgba = new byte[width * height * 4];
             for (int py = 0; py < height; py++)
             {
@@ -3855,6 +3863,48 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static Dictionary<int, int>? GlyphDropoutForRun;
 
         [ThreadStatic] private static int s_colClipL, s_colClipR;
+        [ThreadStatic] private static byte[]? s_lastLamp;
+
+        private static readonly bool s_blankOneByOne =
+            Environment.GetEnvironmentVariable("WPF_CT_BLANK_1X1") != "0";
+
+        /// <summary>THE 6x5 FILTER'S EMPTY-GLYPH TEST. ulClearTypeFilter_6x5@1400217d8 opens with
+        /// <c>if (cx == 1 &amp;&amp; pixelRows == 1 &amp;&amp; bits[0] == 0) { size = 0; }</c> -- a
+        /// glyph one pixel wide and one tall whose FIRST byte, the top scan row's only pixel, has
+        /// no lamp lit is taken for a blank and drawn as nothing, whatever the rows below it hold.
+        /// Times New Roman Italic '.' at 8ppem is exactly that (four scan rows, the top one
+        /// empty), and GDI never draws it. The box is fs_FindBitMapSize's, from the measured scan
+        /// rows. WPF_CT_BLANK_1X1=0.</summary>
+        private static bool GdiDropsOneByOne(List<List<Vector2>> polys, int originX, int originY,
+                                             int nSub, int width, int height, byte[]?[] lamps)
+        {
+            if (nSub != 5 || polys.Count == 0) return false;
+            int gx0 = int.MaxValue, gx1 = int.MinValue, gy0 = int.MaxValue, gy1 = int.MinValue;
+            foreach (List<Vector2> poly in polys)
+                foreach (Vector2 pt in poly)
+                {
+                    int x64 = (int) MathF.Round(pt.X * 64f), y64 = (int) MathF.Round(pt.Y * 64f);
+                    if (x64 < gx0) gx0 = x64; if (x64 > gx1) gx1 = x64;
+                    if (y64 < gy0) gy0 = y64; if (y64 > gy1) gy1 = y64;
+                }
+            if (gx0 > gx1) return false;
+            const int X = SubpixelsPerPixel * 2;
+            long cMin = ((long) gx0 * X + 0x1f) >> 6, cMax = ((long) gx1 * X + 0x20) >> 6;
+            long rMin = (-(long) gy1 * nSub + 0x1f) >> 6, rMax = (-(long) gy0 * nSub + 0x20) >> 6;
+            if (cMax == cMin) cMax++;
+            if (rMax == rMin) rMax++;
+            int c0 = (int) Math.Floor(cMin / (double) X), c1 = (int) Math.Ceiling(cMax / (double) X);
+            int B = (int) Math.Floor(rMin / (double) nSub), T = (int) Math.Ceiling(rMax / (double) nSub);
+            if (c1 - c0 != 1 || T - B != 1) return false;
+            int py = -T - originY, px = c0 - originX;
+            int sI = (int) (T * nSub - rMax);           // the top scan row's place in its pixel
+            if (py < 0 || py >= height || px < 0 || px >= width || sI < 0 || sI >= nSub) return false;
+            byte[]? lamp = lamps[sI];
+            if (lamp is null) return false;
+            int at = py * width * SubpixelsPerPixel + px * SubpixelsPerPixel;
+            for (int L = 0; L < SubpixelsPerPixel; L++) if (lamp[at + L] != 0) return false;
+            return true;
+        }
 
         /// <summary>WPF_CT_DROPOUT_PERGLYPH=0 hands the dropout pass the whole run again, which is
         /// what it used to get. A bisection handle, and the way the win stays reproducible: on the
