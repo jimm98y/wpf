@@ -1107,6 +1107,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_gaspNoSymDefault =
             Environment.GetEnvironmentVariable("WPF_CT_GASP_NOSYM") == "1";
 
+        private static readonly int s_v0SymFrom =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_V0SYM"), out int vs) ? vs : 0;
+
         private const int GaspGridfit = 0x0001;
         private const int GaspSymmetricGridfit = 0x0004;
         private const int GaspSymmetricSmoothing = 0x0008;
@@ -1172,7 +1175,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // the difference between arial.ttf answering symmetric at 20ppem and arialbd.ttf
             // not -- and answering yes for the version 0 files is worth 62,829 at 18ppem and
             // 49,059 at 20 on the text specimen.
-            if (want == GaspSymmetricSmoothing && U16(_gasp) == 0) return true;
+            // WPF_CT_V0SYM=<n>: a DIAGNOSTIC of vSetClearTypeState@14001d1d8's version-0 branch,
+            // which is not unconditional. A v0 table falls into the same branch as no table,
+            // and there `ppem < 21 || !(flags & 0x10000000)` sends it through a check that
+            // RETURNS WITHOUT 0x20000000 if any of three fields of the face's table-info
+            // record (+0xa0, +0xa8, +0xb0) is nonzero, or the face is legacy East Asian. So
+            // below 21 a v0 face smooths symmetrically only if those fields are clear. This
+            // knob asks what happens if they are not: smoothing only at ppem >= n.
+            // REFUTED, emphatically: WPF_CT_V0SYM=21 takes the holdout 12,585 -> 2,997,000. The
+            // fields are clear for Times Bold, Times Italic and Arial Italic and GDI smooths them
+            // symmetrically at every size, as the line below already says.
+            if (want == GaspSymmetricSmoothing && U16(_gasp) == 0)
+                return s_v0SymFrom <= 0 || (int) MathF.Round(pixelsPerEm) >= s_v0SymFrom;
             int ppem = (int) MathF.Round(pixelsPerEm);
             int ranges = U16(_gasp + 2);
             int at = _gasp + 4;
