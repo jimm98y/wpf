@@ -4154,6 +4154,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_unfittedPp1 =
             Environment.GetEnvironmentVariable("WPF_UNFITTED_PP1") != "0";
 
+        private static readonly bool s_offsetHalfUp =
+            Environment.GetEnvironmentVariable("WPF_UNFITTED_OFFSET_HALFUP") != "0";
+
         private static readonly bool s_unfittedComponents =
             Environment.GetEnvironmentVariable("WPF_UNFITTED_COMPONENTS") != "0";
 
@@ -4217,8 +4220,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 float ox = (float) (arg1 * k), oy = (float) (arg2 * k);     // y-UP, as the font has it
                 if ((flags & SCALED_COMPONENT_OFFSET) != 0 && !identity)
                 { float tx = a * ox + c * oy; oy = bb * ox + d * oy; ox = tx; }
-                int dx64 = (int) MathF.Round(ox * 64f, MidpointRounding.AwayFromZero);
-                int dy64 = (int) MathF.Round(oy * 64f, MidpointRounding.AwayFromZero);
+                // Font-unit scaling is floor(v + 1/2), as the fitted path's ScaleToPixels has it:
+                // Consolas Italic 'A-tilde' at 8ppem offsets its tilde -10 units, -2.5/64, which
+                // GDI takes to -2 (and the sixteenth to 0) where away-from-zero gave -3 (-4).
+                int dx64 = s_offsetHalfUp ? (int) Math.Floor(ox * 64.0 + 0.5)
+                                          : (int) MathF.Round(ox * 64f, MidpointRounding.AwayFromZero);
+                int dy64 = s_offsetHalfUp ? (int) Math.Floor(oy * 64.0 + 0.5)
+                                          : (int) MathF.Round(oy * 64f, MidpointRounding.AwayFromZero);
                 if ((flags & ROUND_XY_TO_GRID) != 0)
                 {
                     bool ct = s_ctComponentOffset && SubpixelFitting;
