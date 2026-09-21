@@ -966,7 +966,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // Italic drifting up to seven pixels a line at 8ppem, where every one of them asks for
             // no gridfit and Windows spaces them by their programs regardless. (The bit-4 face has
             // already been answered above, before the program was asked.)
-            int sixtyFourths = (int) MathF.Round(Advance(gid) * 64f * pixelsPerEm / PixelsPerEm,
+            // THIS IS THE SCALER'S ADVANCE -- its phantom points -- and a composite's phantoms are
+            // its USE_MY_METRICS component's (fsg_ExecuteGlyph copies them over), not its own hmtx
+            // entry. Comic Sans MS Italic 'ydieresis' is 883 units wide but borrows 'y's 1066, so
+            // at 8ppem (unfitted, LTSH 255) GDI spaces it 4 where 883 gave 3, and every glyph after
+            // it on the line moved a pixel. The linear and head-flag answers above stay the
+            // composite's: they model ttfd reading hmtx directly. WPF_UNFITTED_ADV_BORROW=0 undoes.
+            int advGid = gid;
+            for (int depth = 0; s_unfittedAdvBorrow && depth < 4 && TryGetMetricsComponent(advGid, out int mcg); depth++)
+                advGid = mcg;
+            int sixtyFourths = (int) MathF.Round(Advance(advGid) * 64f * pixelsPerEm / PixelsPerEm,
                                                  MidpointRounding.AwayFromZero);
             return MathF.Round(sixtyFourths / 64f, MidpointRounding.AwayFromZero);
         }
@@ -4308,6 +4317,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
             return false;
         }
+
+        private static readonly bool s_unfittedAdvBorrow =
+            Environment.GetEnvironmentVariable("WPF_UNFITTED_ADV_BORROW") != "0";
 
         private static readonly bool s_offsetHalfUp =
             Environment.GetEnvironmentVariable("WPF_UNFITTED_OFFSET_HALFUP") != "0";
