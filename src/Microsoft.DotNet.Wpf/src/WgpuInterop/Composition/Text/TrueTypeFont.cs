@@ -931,6 +931,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_spanFromCtPass =
             Environment.GetEnvironmentVariable("WPF_CT_SPAN_PASS") == "ct";
 
+        private readonly System.Collections.Generic.Dictionary<(int, int), bool> _hintedSpanTouched = new();
+
+        /// <summary>Whether the bi-level measuring pass moved the advance phantom in x.</summary>
+        internal bool HintedSpanTouched(int glyphId, float pixelsPerEm)
+        {
+            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            if (!_hintedSpanTouched.TryGetValue(key, out bool t))
+            {
+                TryGetHintedAdvance(glyphId, pixelsPerEm, out float _);
+                _hintedSpanTouched.TryGetValue(key, out t);
+            }
+            return t;
+        }
+
         internal bool TryGetHintedSpan64(int glyphId, float pixelsPerEm, out int span64)
         {
             var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
@@ -985,8 +999,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     {
                         int span = glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
                         if (span > 0) advance = MathF.Round(span / 64f, MidpointRounding.AwayFromZero);
-                        if (_hintedSpans.Count > HintedCacheLimit) _hintedSpans.Clear();
+                        if (_hintedSpans.Count > HintedCacheLimit) { _hintedSpans.Clear(); _hintedSpanTouched.Clear(); }
                         _hintedSpans[key] = span;
+                        _hintedSpanTouched[key] = interpreter.AdvancePhantomTouchedX;
                     }
                 }
                 finally
@@ -2548,6 +2563,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.HintDepth = depth;
             int savedCompat = TrueTypeInterpreter.CompatibleAdvance64;
             int savedSpan = TrueTypeInterpreter.BiLevelSpan64;
+            bool savedUntouched = TrueTypeInterpreter.BiLevelPhantomUntouched;
             if (s_measuringCtSpan)
             {
                 // GDI's pass one: the ClearType program with the compatible-width factor at ONE --
@@ -2566,6 +2582,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeInterpreter.BiLevelSpan64 =
                     s_spanFromCtPass && TryGetClearTypeSpan64(gid, pixelsPerEm, out int ct64) ? ct64
                     : TryGetHintedSpan64(gid, pixelsPerEm, out int sp64) ? sp64 : 0;
+                TrueTypeInterpreter.BiLevelPhantomUntouched =
+                    TrueTypeInterpreter.BiLevelSpan64 > 0 && !HintedSpanTouched(gid, pixelsPerEm);
                 if (s_compatProbe)
                     Console.Error.WriteLine($"COMPAT gid={gid} ppem={pixelsPerEm:0.####}"
                         + $" ppemI={(int) MathF.Round(pixelsPerEm)}"
@@ -2605,6 +2623,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeInterpreter.BiLevelPass = savedBi;
                 TrueTypeInterpreter.CompatibleAdvance64 = savedCompat;
                 TrueTypeInterpreter.BiLevelSpan64 = savedSpan;
+                TrueTypeInterpreter.BiLevelPhantomUntouched = savedUntouched;
                 TrueTypeInterpreter.HintDepth = savedDepth;
             }
             if (!hinted) return null;

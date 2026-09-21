@@ -1571,6 +1571,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static int BiLevelSpan64;
 
+        /// <summary>Set for the ClearType pass when the bi-level measuring pass never touched the
+        /// advance phantom in x. See the numerator in ApplyPhaseControl.</summary>
+        [ThreadStatic] internal static bool BiLevelPhantomUntouched;
+
+        /// <summary>Whether the last run touched the advance phantom (pp2) in x.</summary>
+        internal bool AdvancePhantomTouchedX
+            => _realPoints + 1 < _glyphZone.Tags.Length && (_glyphZone.Tags[_realPoints + 1] & TagTouchX) != 0;
+
+        /// <summary>WPF_CT_UNTOUCHED_PP2=1: REFUTED as a general rule -- holdout 58 -> 29,689,736,
+        /// 343 ratchets failing, and 'm'@22 itself 58 -> 2,785. Almost every glyph leaves pp2
+        /// untouched, and our phase stage REQUIRES the whole-pixel numerator to reproduce GDI
+        /// there, though GDI's own factor for those glyphs is ~1. The stage is calibrated to GDI's
+        /// pixels, not a port of fs__Contour's factor; see the note on the numerator below.</summary>
+        private static readonly bool s_untouchedPhantomNum =
+            Environment.GetEnvironmentVariable("WPF_CT_UNTOUCHED_PP2") == "1";
+
         /// <summary>Composite recursion depth of the glyph being hinted: 0 for a glyph asked for
         /// directly, 1+ for a component of a composite. WPF_CT_PHASE_DEPTH selects which of them
         /// the phase runs for.</summary>
@@ -2885,6 +2901,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // 6-pixel advance against its own 'hdmx' entry of 5. See the GETINFO handler. With
             // that right the span needs no guard at all and the holdout is 843,447.</para>
             int numerator = s_phaseNumSpan && BiLevelSpan64 > 0 ? BiLevelSpan64 : CompatibleAdvance64;
+            // A PHANTOM THE PROGRAM NEVER MOVES KEEPS ITS STARTING PLACE, and GDI's starting place
+            // is the linear advance on the SIXTEENTH grid, not the whole pixel our bi-level pass
+            // starts it on. fs__Contour's factor is pass one's phantom span over the linear
+            // advance; GDI's own run of Times Italic 'm' at 22ppem starts pp2 at 1016 (linear
+            // 1016.8), never touches it, and divides: 0xffc0. Our bi-level measurement started it
+            // at 1024 and so stretched 'm' 0.7% where GDI compresses it 0.1% -- the whole of the
+            // last row of the holdout. Where the program DOES move pp2 the whole-pixel span is the
+            // one that measures right, and it is left alone. WPF_CT_UNTOUCHED_PP2=0 restores.
+            if (s_untouchedPhantomNum && BiLevelPhantomUntouched && linear > 0)
+                numerator = (linear + 2) & ~3;
             // WPF_CT_PHASE_NUM=ct: REFUTED (holdout 46,789,700; 'A'@20B 6,767 -> 13,653; the ClearType
             // pass leaves 'A's advance phantom at 908/64 against a linear 924, so this span is nearly
             // the linear one). The numerator is THIS pass's phantom span as the program left it
