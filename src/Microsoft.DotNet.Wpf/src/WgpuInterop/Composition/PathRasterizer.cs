@@ -966,8 +966,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         lev[sI] = GdiTableFilterRowset(polysOne, path.FillRule, originX, originY,
                                                        width, height, (sI + GdiSubrowPhase) / nSub, nSub, sI, fills,
                                                        originalVertex, exactRows);
+                    (int Top, int Bottom) rowClip = (int.MinValue, int.MaxValue);
+                    if (composite && GlyphRowClipForRun is { } clipTable
+                        && clipTable.TryGetValue(gid, out var clipRows))
+                        rowClip = clipRows;
                     for (int px = 0; px < width * height; px++)
                     {
+                        int devRow = originY + px / width;
+                        if (devRow < rowClip.Top || devRow >= rowClip.Bottom) continue;
                         int g0 = 0, g1 = 0, g2 = 0;
                         for (int ch = 0; ch < 3; ch++)
                         {
@@ -3698,6 +3704,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// the length of one coverage mask and null everywhere else. A single glyph needs none of
         /// this: one group is the whole path, which is what a null array means.</summary>
         internal static int[]? FigureGlyphIdsForRun;
+
+        /// <summary>The device rows each glyph of the run may put ink in, [Top, Bottom), keyed by
+        /// the same glyph ordinal as FigureGlyphIdsForRun; null for no clip.
+        /// <para>GDI CLIPS A GLYPH TO ITS FONT'S LINE BOX. vFillGLYPHDATA@140012568 compares the
+        /// scanned glyph's box with the font context's limits, set in bComputeMaxGlyph@14001b198
+        /// as round(-ascent) and round(descent) in device rows -- the TEXTMETRIC ascent and descent,
+        /// VDMX where it applies -- and hands lGetGlyphBitmap a _GMC that skips the rows above and
+        /// below when it copies the glyph out of the scan converter's bitmap. So an accent that
+        /// climbs past the ascent loses its top row: Tahoma Bold 'E-acute' at 20ppem reaches row
+        /// -21 and GDI's ascent is 20. The rows go AFTER scan conversion and dropout control, which
+        /// is why this clips coverage rather than the outline.</para></summary>
+        internal static Dictionary<int, (int Top, int Bottom)>? GlyphRowClipForRun;
 
         /// <summary>WPF_CT_DROPOUT_PERGLYPH=0 hands the dropout pass the whole run again, which is
         /// what it used to get. A bisection handle, and the way the win stays reproducible: on the

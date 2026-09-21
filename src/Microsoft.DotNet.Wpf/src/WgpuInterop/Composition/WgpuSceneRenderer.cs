@@ -694,6 +694,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Grid fitting, on by default. WPF_TEXT_HINTING=0 draws the outlines as the face contains
         // them, which is what this did before there was a hinter -- kept because the two are worth
         // being able to put side by side when text looks wrong, not because either is optional.
+        /// <summary>WPF_CT_GLYPH_ROWCLIP=0: no clipping of a glyph's ink to its face's GDI line box.</summary>
+        private static readonly bool s_glyphRowClip =
+            Environment.GetEnvironmentVariable("WPF_CT_GLYPH_ROWCLIP") != "0";
+
         private static readonly bool s_hintText =
             Environment.GetEnvironmentVariable("WPF_TEXT_HINTING") != "0";
 
@@ -3556,6 +3560,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     key = key * 397 ^ ((long) ToByte(solid.Color.R) << 16
                                      | (long) ToByte(solid.Color.G) << 8
                                      | ToByte(solid.Color.B));
+                // The glyph row clip, taken into this mask's frame: the mask lands at device row
+                // oy, so a device row is oy plus the rasterizer's own. Part of the key, since two
+                // runs of one shape could sit differently against their faces' line boxes.
+                Dictionary<int, (int Top, int Bottom)>? deviceClip = PathRasterizer.GlyphRowClipForRun;
+                Dictionary<int, (int Top, int Bottom)>? localClip = null;
+                if (deviceClip is not null && subpixel)
+                {
+                    localClip = new Dictionary<int, (int Top, int Bottom)>(deviceClip.Count);
+                    foreach (var kv in deviceClip)
+                    {
+                        var rc = (kv.Value.Top - (int)oy, kv.Value.Bottom - (int)oy);
+                        localClip[kv.Key] = rc;
+                        key = key * 31 + kv.Key;
+                        key = key * 31 + rc.Item1;
+                        key = key * 31 + rc.Item2;
+                    }
+                }
                 if (!_maskCache.TryGetValue(key, out CachedMask? cm))
                 {
                     PerfCoverage++;
@@ -3606,9 +3627,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         PathRasterizer.ContrastFilterForRun =
                             s_contrastFilter == 1 || (s_contrastFilter == 2 && !_symmetricSmoothing);
                         PathRasterizer.SubpixelMask sm;
+                        PathRasterizer.GlyphRowClipForRun = localClip;
                         try { sm = PathRasterizer.RasterizeSubpixel(TransformGeometry(normGeom, phased),
                                                     CurveFlattener.GlyphTolerance); }
-                        finally { PathRasterizer.SubpixelRowsForRun = 0; PathRasterizer.DropoutForRun = 0; }
+                        finally
+                        {
+                            PathRasterizer.SubpixelRowsForRun = 0; PathRasterizer.DropoutForRun = 0;
+                            PathRasterizer.GlyphRowClipForRun = deviceClip;
+                        }
                         if (sm.IsEmpty) return;
                         // Corrected AFTER the filter, and it was worth checking which way round:
                         // correcting the raw lamps first is the tidier story (a linear filter then
@@ -4700,6 +4726,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // never the run's. See PathRasterizer.FigureGlyphIdsForRun.
                 var batchOwner = new List<int>();
                 int glyphOrdinal = 0;
+                // Each glyph's ink is clipped to the face's GDI line box -- see
+                // PathRasterizer.GlyphRowClipForRun. Only where the run is fitted to the device
+                // grid, which is the GDI-parity path. WPF_CT_GLYPH_ROWCLIP=0 turns it off.
+                Dictionary<int, (int Top, int Bottom)>? batchClip = null;
+                int clipAscent = 0, clipDescent = 0;
+                if (s_glyphRowClip && hintPpem > 0f && font is Text.TrueTypeFont clipFace
+                    && clipFace.TryGetGdiLineMetrics((int)MathF.Round(hintPpem), out clipAscent, out clipDescent))
+                    batchClip = new Dictionary<int, (int Top, int Bottom)>();
                 // COLOUR EMOJI, EXCEPT WHERE GDI IS THE THING WE MUST MATCH.
                 //
                 // This is the string-run path, which is WinForms; WPF's own text arrives already
@@ -4726,6 +4760,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 {
                     if (batch.Count == 0) return;
                     PathRasterizer.FigureGlyphIdsForRun = batchOwner.ToArray();
+                    PathRasterizer.GlyphRowClipForRun = batchClip;
                     try
                     {
                         EmitFill(new GeometryFill(new PathGeometry(FillRule.NonZero, batch),
@@ -4733,9 +4768,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                  { PixelAligned = hintPpem > 0f },
                                  world, opacity, clip, width, height, format, data);
                     }
-                    finally { PathRasterizer.FigureGlyphIdsForRun = null; }
+                    finally
+                    {
+                        PathRasterizer.FigureGlyphIdsForRun = null;
+                        PathRasterizer.GlyphRowClipForRun = null;
+                    }
                     batch = new List<PathFigure>();
                     batchOwner = new List<int>();
+                    if (batchClip is not null) batchClip = new Dictionary<int, (int Top, int Bottom)>();
                 }
 
                 foreach (Text.ShapedGlyph g in _shapeScratch)
@@ -4744,6 +4784,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     float gx = pen + g.XOffset * scale;
                     float gy = originY + g.YOffset * scale;
 
+                    if (batchClip is not null)
+                    {
+                        int baseRow = (int)MathF.Round(Vector2.Transform(new Vector2(gx, gy), world).Y);
+                        batchClip[glyphOrdinal] = (baseRow - clipAscent, baseRow + clipDescent);
+                    }
                     _glyphFills.Clear();
                     Text.GlyphRunPainter.Paint(outline, colorFont, font as Text.IBitmapGlyphFont,
                                                g.GlyphId, hintPpem > 0f ? hintScale : scale, gx, gy,

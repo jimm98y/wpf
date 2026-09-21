@@ -990,7 +990,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // read as a fitting problem for a long time because that is what drift looks like.
                 bool savedBi = TrueTypeInterpreter.BiLevelPass;
                 bool savedMeasuring = s_measuringAdvance;
+                bool savedInterpMeasuring = TrueTypeInterpreter.MeasuringAdvance;
                 TrueTypeInterpreter.BiLevelPass = true;
+                TrueTypeInterpreter.MeasuringAdvance = true;
                 s_measuringAdvance = true;      // the run below must not ask itself this question
                 try
                 {
@@ -1007,6 +1009,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 finally
                 {
                     TrueTypeInterpreter.BiLevelPass = savedBi;
+                    TrueTypeInterpreter.MeasuringAdvance = savedInterpMeasuring;
                     s_measuringAdvance = savedMeasuring;
                 }
             }
@@ -1140,10 +1143,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return figures.Count > 0;
         }
 
+        /// <summary>THE GUARD IS OFF. GDI never throws a fit away, and the interpreter this guarded
+        /// against no longer runs programs wrongly: the only fits it still rejected were correct
+        /// ones. Times New Roman Bold 'E-acute' at 9ppem is fitted point for point as GDI fits it
+        /// -- its accent lifted a pixel and a half above the raw outline, which is past two
+        /// pixels of slack on the box -- and the guard swapped in the unfitted outline, a row low
+        /// throughout. Off: Latin-1 over six faces x four styles x 8..24ppem 1,009,878 -> 794,367,
+        /// punctuation 350,630 -> 271,037, the holdout unchanged at 0. WPF_FIT_SLACK=2 restores
+        /// the old two-pixel guard.</summary>
         private static readonly float s_fitSlack =
             float.TryParse(Environment.GetEnvironmentVariable("WPF_FIT_SLACK"),
                 System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out float fs) && fs > 0 ? fs : 2f;
+                System.Globalization.CultureInfo.InvariantCulture, out float fs) && fs > 0 ? fs : float.PositiveInfinity;
 
         private static int s_implausibleFits;
 
@@ -2428,6 +2439,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return (int)MathF.Round(MathF.Round(f26d6 / step) * step);
         }
 
+        /// <summary>WPF_CT_COMPONENT_FACTOR=own phases each component with its own factor.</summary>
+        private static readonly bool s_componentFactorFromRoot =
+            Environment.GetEnvironmentVariable("WPF_CT_COMPONENT_FACTOR") != "own";
+
+        /// <summary>Set while a composite's components are hinted: they take the root's phase
+        /// inputs rather than measuring their own.</summary>
+        [ThreadStatic] private static bool s_inheritPhaseInputs;
+
+        /// <summary>The compatible-width phase's inputs for one glyph: the advance it will be laid
+        /// out at, and the unrounded pass-one span the factor divides.</summary>
+        private void SetPhaseInputs(int gid, float pixelsPerEm)
+        {
+            TrueTypeInterpreter.CompatibleAdvance64 =
+                (int) MathF.Round(CompatibleAdvance(gid, pixelsPerEm,
+                                                    (int) MathF.Round(pixelsPerEm)) * 64f);
+            // AND THE UNROUNDED SPAN THE PHASE ACTUALLY WANTS -- from a ClearType pass at
+            // factor one, as fs__Contour's first pass is (TryGetClearTypeSpan64), falling back
+            // to the bi-level span. WPF_CT_SPAN_PASS=bilevel uses the bi-level span only.
+            TrueTypeInterpreter.BiLevelSpan64 =
+                s_spanFromCtPass && TryGetClearTypeSpan64(gid, pixelsPerEm, out int ct64) ? ct64
+                : TryGetHintedSpan64(gid, pixelsPerEm, out int sp64) ? sp64 : 0;
+            TrueTypeInterpreter.BiLevelPhantomUntouched =
+                TrueTypeInterpreter.BiLevelSpan64 > 0 && !HintedSpanTouched(gid, pixelsPerEm);
+        }
+
         private GlyphProgram? HintedProgram(TrueTypeInterpreter interpreter, int gid, float pixelsPerEm,
                                             int depth)
         {
@@ -2438,9 +2474,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             uint start = _loca[gid], end = _loca[gid + 1];
             if (end <= start) return null;                       // a blank: nothing to hint
 
-            GlyphProgram? glyph = (short)U16(_glyfOffset + (int)start) >= 0
-                ? ReadGlyphProgram(gid)
-                : ReadCompositeProgram(interpreter, gid, pixelsPerEm, depth);
+            GlyphProgram? glyph;
+            if ((short)U16(_glyfOffset + (int)start) >= 0) glyph = ReadGlyphProgram(gid);
+            else if (s_componentFactorFromRoot && depth == 0 && !s_measuringCtSpan
+                     && !TrueTypeInterpreter.BiLevelPass)
+            {
+                // ONE FACTOR FOR THE WHOLE TREE, THE ROOT'S. fs__Contour runs pass one over every
+                // element of the glyph tree, leaves globals[0x1ac] holding the ROOT's advance and
+                // the outline's phantoms holding the ROOT's span, and computes globals[0x1d0] once
+                // from those -- into the pass-two globals block that every element of pass two
+                // then reads. So a component is phased with the composite's factor, not its own:
+                // the dieresis in Arial 'a-dieresis' at 20ppem is compressed by 'a's factor, its
+                // two dots 225/64 apart in GDI's fit where alone they are 240. Set the root's
+                // inputs BEFORE the components are hinted, and have them inherit it.
+                // WPF_CT_COMPONENT_FACTOR=own gives each component its own again.
+                int sc = TrueTypeInterpreter.CompatibleAdvance64, ss = TrueTypeInterpreter.BiLevelSpan64;
+                bool su = TrueTypeInterpreter.BiLevelPhantomUntouched, si = s_inheritPhaseInputs;
+                int sl = TrueTypeInterpreter.RootLinear64;
+                try
+                {
+                    SetPhaseInputs(gid, pixelsPerEm);
+                    s_inheritPhaseInputs = true;
+                    TrueTypeInterpreter.RootLinear64 = interpreter.PrepareForSize(pixelsPerEm)
+                        ? interpreter.ScaleToPixels(RawAdvanceWidth(gid)) : 0;
+                    glyph = ReadCompositeProgram(interpreter, gid, pixelsPerEm, depth);
+                }
+                finally
+                {
+                    TrueTypeInterpreter.CompatibleAdvance64 = sc;
+                    TrueTypeInterpreter.BiLevelSpan64 = ss;
+                    TrueTypeInterpreter.BiLevelPhantomUntouched = su;
+                    TrueTypeInterpreter.RootLinear64 = sl;
+                    s_inheritPhaseInputs = si;
+                }
+            }
+            else glyph = ReadCompositeProgram(interpreter, gid, pixelsPerEm, depth);
             if (glyph is null) return null;
 
             // Where x is not being hinted, keep the scaled outline's own x and let the program have
@@ -2571,19 +2639,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeInterpreter.CompatibleAdvance64 = 0;
                 TrueTypeInterpreter.BiLevelSpan64 = 0;
             }
-            else if (!TrueTypeInterpreter.BiLevelPass && gid >= 0 && gid < _numGlyphs)
+            else if (!TrueTypeInterpreter.BiLevelPass && gid >= 0 && gid < _numGlyphs
+                     && !(s_inheritPhaseInputs && depth > 0))
             {
-                TrueTypeInterpreter.CompatibleAdvance64 =
-                    (int) MathF.Round(CompatibleAdvance(gid, pixelsPerEm,
-                                                        (int) MathF.Round(pixelsPerEm)) * 64f);
-                // AND THE UNROUNDED SPAN THE PHASE ACTUALLY WANTS -- from a ClearType pass at
-                // factor one, as fs__Contour's first pass is (TryGetClearTypeSpan64), falling back
-                // to the bi-level span. WPF_CT_SPAN_PASS=bilevel uses the bi-level span only.
-                TrueTypeInterpreter.BiLevelSpan64 =
-                    s_spanFromCtPass && TryGetClearTypeSpan64(gid, pixelsPerEm, out int ct64) ? ct64
-                    : TryGetHintedSpan64(gid, pixelsPerEm, out int sp64) ? sp64 : 0;
-                TrueTypeInterpreter.BiLevelPhantomUntouched =
-                    TrueTypeInterpreter.BiLevelSpan64 > 0 && !HintedSpanTouched(gid, pixelsPerEm);
+                SetPhaseInputs(gid, pixelsPerEm);
                 if (s_compatProbe)
                     Console.Error.WriteLine($"COMPAT gid={gid} ppem={pixelsPerEm:0.####}"
                         + $" ppemI={(int) MathF.Round(pixelsPerEm)}"

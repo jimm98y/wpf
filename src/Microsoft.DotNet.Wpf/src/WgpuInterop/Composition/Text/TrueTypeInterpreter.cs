@@ -1592,6 +1592,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// the phase runs for.</summary>
         internal static int HintDepth;
 
+        /// <summary>The composite root's linear advance (26.6) while its components are hinted,
+        /// else zero.</summary>
+        [ThreadStatic] internal static int RootLinear64;
+
         /// <summary>Which grid the LEFT PHANTOM is put on before the program runs.
         /// <para>scl_AdjustOldCharSideBearing@1801da5f0 rounds it to a SIXTEENTH under ClearType and
         /// to a whole pixel otherwise -- `(v + 2) &amp; ~3` against `(v + 0x20) &amp; ~0x3f`, chosen by
@@ -2149,7 +2153,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 z.CurY[p4] = Pix(z.CurY[p3] + advY);
             }
 
-            if (LsbRoundHere && !glyph.Composite && glyph.PointCount < n)
+            // THE MEASURING PASS IS NOT A PLAIN BI-LEVEL FIT. fs__Contour's pass one -- the run
+            // whose phantom span becomes the compatible-width factor -- goes through the same
+            // side-bearing shift as pass two, on the whole-pixel grid since its ClearType flags
+            // are clear: GDI's own instruction stream for Times New Roman Italic '|' at 19ppem
+            // starts pass one with every x 19/64 left of the scaled outline (pp1 -45 -> -64) and
+            // pp2 at pp1 + the rounded advance, 256, where we started at the unshifted outline
+            // and pp2 rounded on its own, 320. A span of six pixels against GDI's five then set
+            // the phase to compress by the wrong ratio. GetGlyphOutline's bi-level points (see
+            // s_lsbRoundMode) show NO shift, so this is only the measuring pass, not bi-level
+            // fitting in general. WPF_CT_MEASURE_LSB=0 restores the unshifted measurement.
+            bool measureShift = s_measureLsb && MeasuringAdvance && BiLevelPass && TrueTypeFont.SubpixelFitting;
+            if ((LsbRoundHere || measureShift) && !glyph.Composite && glyph.PointCount < n)
             {
                 int pp1 = glyph.PointCount;
                 int org = z.OrgX[pp1];
@@ -2168,6 +2183,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (s_lsbPhantoms)
                     for (int i = glyph.PointCount; i < n && i < glyph.PointCount + 4; i++)
                     { z.OrgX[i] += delta; z.CurX[i] += delta; z.InkX[i] += delta; }
+                // ...and the advance phantom is pp1 plus the ROUNDED advance, taken after the
+                // shift (scl_RoundCurrentSideBearingPnt), not a phantom rounded on its own.
+                // pp1 itself is where the shift put it -- the rounding of its current x above
+                // was a second rounding GDI does not make.
+                if (measureShift && glyph.PointCount + 1 < n)
+                {
+                    z.CurX[pp1] = z.OrgX[pp1];
+                    z.CurX[pp1 + 1] = z.CurX[pp1]
+                        + Pix(Scale(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]));
+                }
             }
 
             for (int i = 0; i < glyph.EndPoints.Length; i++)
@@ -2847,6 +2872,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     + $" curPP1={_glyphZone.CurX[_realPoints]} curPP2={_glyphZone.CurX[adv]}"
                     + $" span64={BiLevelSpan64}");
             if (linear <= 0 || CompatibleAdvance64 <= 0) return;
+            // A COMPONENT DIVIDES BY THE ROOT'S LINEAR ADVANCE, not its own: globals[0x1d0] is
+            // computed once per glyph tree from the root (see TrueTypeFont.SetPhaseInputs), so
+            // numerator and denominator both belong to the composite.
+            if (RootLinear64 > 0 && HintDepth > 0) linear = RootLinear64;
             _ctFrac = CompatibleAdvance64 / (float) linear - 1f;
             // GS+0x1d0 is a 16.16 FIXED, not a float, and every phase below is derived from it by
             // integer arithmetic. Carrying it as a float rounded differently from GDI at the last
@@ -3819,6 +3848,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// bi-level frame at all, and the oracle can see nothing else.</para></summary>
         private static readonly string s_lsbRoundMode =
             Environment.GetEnvironmentVariable("WPF_CT_LSBROUND") ?? "";
+
+        /// <summary>Set by TrueTypeFont while it runs the bi-level measuring pass that compatible
+        /// widths take their span from.</summary>
+        [ThreadStatic] internal static bool MeasuringAdvance;
+
+        private static readonly bool s_measureLsb =
+            Environment.GetEnvironmentVariable("WPF_CT_MEASURE_LSB") != "0";
 
         private static bool LsbRoundHere =>
             s_lsbRoundMode != "0" && (s_lsbRoundMode == "both" || !BiLevelPass);

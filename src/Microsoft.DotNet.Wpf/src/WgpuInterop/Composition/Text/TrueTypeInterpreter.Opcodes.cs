@@ -3679,13 +3679,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private void ShiftZone(bool useRp1)
         {
             int which = Pop() & 1;
-            if (!ReferenceShift(useRp1, out int dx, out int dy, out _, out _)) return;
+            if (!ReferenceShift(useRp1, out int dx, out int dy, out int refZone, out int refPoint)) return;
 
             Zone z = ZoneOf(which);
+            // THE REFERENCE POINT STAYS WHERE IT IS. itrp_SHE@140094d40 saves the reference
+            // point's current x and y when it lives in the zone being shifted, shifts the whole
+            // range, and writes them back. Times New Roman Bold Italic 'B' at 12ppem runs
+            // SHZ[1] with rp1 = 23 in the glyph zone straight after a DELTAP and an SHPIX on
+            // that very point: GDI leaves point 23 at 118 while every other point moves +48, and
+            // we moved it too, 48/64 of a pixel into the bowl. WPF_CT_SHZ_KEEPREF=0 restores.
+            bool keepRef = s_shzKeepRef && ZoneOf(refZone) == z && (uint) refPoint < (uint) z.PointCount;
+            int savedX = keepRef ? z.CurX[refPoint] : 0, savedY = keepRef ? z.CurY[refPoint] : 0;
             int last = which == 0 ? z.PointCount - 1 : _realPoints - 1;
             for (int p = 0; p <= last && p < z.PointCount; p++)
                 MoveDirect(z, p, dx, dy, 0);
+            if (keepRef) { z.CurX[refPoint] = savedX; z.CurY[refPoint] = savedY; }
         }
+
+        private static readonly bool s_shzKeepRef =
+            Environment.GetEnvironmentVariable("WPF_CT_SHZ_KEEPREF") != "0";
 
         /// <summary>IP: put each point back in the same PROPORTION between rp1 and rp2 that it held
         /// in the outline. This is what keeps the middle of a curve where it belongs once the two
@@ -4204,7 +4216,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // delta is dropped WHATEVER the point's touch flag says -- the dent rule is about
                 // the interpolation having already happened, not only about the point.
                 // WPF_CT_DELTA_AFTERIUPY=0 keeps the touch test alone.
+                // AND NOT IN A COMPOSITE'S OWN PROGRAM. The test is `if (globals[0x171]) apply;`
+                // BEFORE the touch and IUP clauses (itrp_DeltaEngine@140036d6c), and
+                // fsg_CompositeInnerGridFit sets that byte to 1 on entry (fsg_SimpleInnerGridFit
+                // clears it). A composite's points arrive untouched in our assembly, so without
+                // this every y-delta a composite writes -- Verdana Bold 'E-acute' at 14ppem
+                // lowering its accent a pixel -- was dropped. WPF_CT_DELTA_COMPOSITE=0 restores.
                 if (!s_deltaOnUntouchedY && !BiLevelPass && ClearTypeInfo && !IsHorizontalProjection
+                    && !(s_deltaCompositeApplies && _inComposite)
                     && (uint) p < (uint) z.PointCount
                     && ((z.Tags[p] & TagTouchY) == 0 || (s_deltaAfterIupY && _iupYDone)))
                     continue;
@@ -4260,6 +4279,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// denting it, which is how diacritics keep clear of their base.</para>
         private static readonly bool s_deltaOnUntouchedY =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA_UNTOUCHED") == "1";
+
+        private static readonly bool s_deltaCompositeApplies =
+            Environment.GetEnvironmentVariable("WPF_CT_DELTA_COMPOSITE") != "0";
 
         private static readonly bool s_deltaAfterIupY =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA_AFTERIUPY") != "0";
@@ -4340,6 +4362,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             ? !(_gs.FreeX == 0 && _gs.FreeY == 0x4000)
                             : !(_gs.ProjX == 0 && _gs.ProjY == 0x4000);
                 if (axis) return true;
+                // "-- or a composite (+0x171)": on the y projection the composite byte applies the
+                // delta before the touch and IUP clauses are asked. See s_deltaCompositeApplies.
+                if (s_deltaCompositeApplies && _inComposite) return false;
                 if (s_deltaReMode == 2) return false;          // axis test only
                 bool untouched = (uint) point >= (uint) z.PointCount
                                  || (z.Tags[point] & TagTouchY) == 0;
