@@ -73,13 +73,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_symAlways =
             Environment.GetEnvironmentVariable("WPF_SYM_ALWAYS") == "1";
 
-        /// <summary>Which of GDI's two ClearType filter palettes to use: 0 never the contrast one,
-        /// 1 always, 2 (auto) where the face's gasp declines symmetric smoothing. WPF_CT_CONTRAST.
+        /// <summary>Which of GDI's two ClearType filter palettes to use. Unset (-1), the face
+        /// decides as win32k does (TrueTypeFont.GdiContrastPalette); WPF_CT_CONTRAST=0 never the
+        /// contrast one, 1 always, auto where the face's gasp declines symmetric smoothing.
         /// </summary>
         private static readonly int s_contrastFilter =
             Environment.GetEnvironmentVariable("WPF_CT_CONTRAST") switch
             {
-                "1" => 1, "auto" => 2, _ => 0,
+                "1" => 1, "auto" => 2, "0" => 0, _ => -1,
             };
 
         /// <summary>How many vertical samples this run's symmetric smoothing asks for, which
@@ -88,6 +89,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private int _symmetricRows;
         private int _dropoutForRun;
         private int _simBoldForRun;
+        private bool _contrastForRun;
         private int _symPpemForRun;
 
         /// <summary>Whether symmetric smoothing also softens across ROWS. WPF_SYM_VERTICAL=1.</summary>
@@ -3627,7 +3629,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         // where ours is short by 1.47x. WPF_CT_CONTRAST: auto (the gasp decides),
                         // 1 always, 0 never.
                         PathRasterizer.ContrastFilterForRun =
-                            s_contrastFilter == 1 || (s_contrastFilter == 2 && !_symmetricSmoothing);
+                            s_contrastFilter == 1 || (s_contrastFilter == 2 && !_symmetricSmoothing)
+                            || (s_contrastFilter == -1 && _contrastForRun);
                         PathRasterizer.SubpixelMask sm;
                         PathRasterizer.GlyphRowClipForRun = localClip;
                         try { sm = PathRasterizer.RasterizeSubpixel(TransformGeometry(normGeom, phased),
@@ -4667,6 +4670,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                              && gfit.WantsGridFit(symPpem) ? SymmetricRowsFitted : SymmetricRows;
             // Vertical dropout control as the face's prep asks for it (SCANCTRL / SCANTYPE).
             // FO_SIM_BOLD's bitmap smear, for a face being emboldened the way GDI does it.
+            // GDI's contrast palette, for the faces win32k names (TrueTypeFont.GdiContrastPalette).
+            _contrastForRun = font is Text.TrueTypeFont cpf && cpf.GdiContrastPalette;
             _simBoldForRun = font is Text.TrueTypeFont sbf && sbf.GdiEmboldensBitmap
                              ? Text.TrueTypeFont.SimBoldAdvancePixels((int)MathF.Round(symPpem)) : 0;
             _dropoutForRun = s_dropoutControl && font is Text.IHintedGlyphFont dof

@@ -426,7 +426,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>Name id 1 is the family and id 2 the subfamily, and the subfamily is the styles in
         /// words -- so it is read rather than guessed from the filename, which is the mistake that
         /// made this necessary.</para></summary>
-        private static bool ReadNames(byte[] d, int sfnt, out string? family, out bool bold, out bool italic)
+        internal static bool ReadNames(byte[] d, int sfnt, out string? family, out bool bold, out bool italic)
         {
             family = null; bold = italic = false;
             if (sfnt + 12 > d.Length) return false;

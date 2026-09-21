@@ -210,6 +210,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _winDescent = U16(os2 + 76);
             }
             _vdmx = tables.TryGetValue("VDMX", out int vdmx) ? vdmx : -1;
+            GdiContrastPalette = ComputeGdiContrastPalette(tables);
 
             // Outlines are OPTIONAL, because a colour BITMAP font has none.
             //
@@ -350,6 +351,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>IsAnyCharsetDbcs@14001eff8 on the face's OS/2 code-page bits: 932 (bit 17),
         /// 936 (18), 949 (19) or 950 (20) -- ShiftJIS, GB2312, Hangeul, Big5; not Johab.</summary>
+        /// <summary>Whether GDI draws this face's ClearType through the CONTRAST palette.
+        /// <para>ulClearTypeFilter_6x1 picks between its two 243-entry palettes on FONTOBJ+0x40,
+        /// and the only thing that sets that field is a name list in win32k's
+        /// RFONTOBJ::bRealizeFont@14019b8b4: under ClearType, for a face whose IFIMETRICS flInfo
+        /// has FM_INFO_CONSTANT_WIDTH or FM_INFO_OPTICALLY_FIXED_PITCH, whose usWinWeight is
+        /// under 401, and whose family name is -- case-insensitively -- Courier New, Rod, Rod
+        /// Transparent, Fixed Miriam Transparent, Miriam Fixed or Simplified Arabic Fixed. So
+        /// installed Courier New regular and italic get the heavy palette and its bold does not,
+        /// and a copy of the same file under another family name does not either: thin
+        /// monospaced faces Windows chose by name to darken. Without it Courier New R/I drew
+        /// 38% of GDI's ink short at 8ppem. WPF_CT_CONTRAST=0/1 still forces it off/on.</para>
+        /// </summary>
+        internal bool GdiContrastPalette { get; }
+
+        private static readonly string[] s_contrastFamilies =
+        {
+            "Courier New", "Rod", "Rod Transparent", "Fixed Miriam Transparent", "Miriam Fixed",
+            "Simplified Arabic Fixed",
+        };
+
+        private bool ComputeGdiContrastPalette(Dictionary<string, int> tables)
+        {
+            if (!tables.TryGetValue("post", out int post) || post + 16 > _data.Length) return false;
+            if (U32(post + 12) == 0) return false;                         // isFixedPitch
+            if (!tables.TryGetValue("OS/2", out int os2) || os2 + 6 > _data.Length) return false;
+            if (U16(os2 + 4) > 400) return false;                          // usWeightClass
+            if (!FontFiles.ReadNames(_data, _sfntBase, out string? family, out _, out _)) return false;
+            foreach (string f in s_contrastFamilies)
+                if (string.Equals(f, family, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         private bool DeclaresDbcsCharset(Dictionary<string, int> tables)
         {
             if (!tables.TryGetValue("OS/2", out int os2) || os2 + 82 > _data.Length) return false;
@@ -4212,8 +4245,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             // The simulations are in pixels at THIS size, which is what the base-pixel builder
-            // does too once its own scale is taken out.
-            if (_emboldenStrength > 0f)
+            // does too once its own scale is taken out. Not GDI's simulated bold, though: that
+            // never moves a point, fitted or not -- the weight is the lamp smear
+            // (PathRasterizer.EmboldenLampRows). Offsetting the unfitted outline as well drew
+            // every face without a bold file 22% too heavy at 8ppem, the size where their prep
+            // turns instructions off.
+            if (_emboldenStrength > 0f && !GdiEmboldens)
                 Embolden(scaled, _emboldenStrength * pixelsPerEm / BaseEmPixels);
 
             // THE SLANT IS A COLUMN OF THE TRANSFORM, NOT A CORRECTION APPLIED AFTER IT.
