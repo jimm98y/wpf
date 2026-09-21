@@ -10311,6 +10311,17 @@ namespace WgpuInterop.Tests.Text
         /// ClearType flag is set. (Without WPF_GGOPTS_BILEVEL=1 all 45 points "differ", which is
         /// meaningless -- GGO returns the bi-level fit whatever the DC, so that compares our
         /// ClearType fit against GDI's bi-level one.)</para>
+        /// <para>THE KNOB SURFACE WAS RE-SWEPT AFTER THE RASTERIZER WAS FIXED, because every
+        /// earlier verdict on it was measured through a scan converter that was itself wrong. A
+        /// twelve-spec phase screen -- the six carriers above plus times/a/14/B, consola/1/18,
+        /// verdana/6/12, arial/w/17/I, consola/e/11 and segoeui/g/13, at 31 phases each -- runs
+        /// in five seconds and reads 11,879. Ninety-one settings across the stem, cut-in,
+        /// minimum-distance, rounding, phase, IUP, delta, SHPIX and ALIGNRP families: every one
+        /// neutral or worse. The shipped configuration is still the best one there is.</para>
+        /// <para>AND THE SCREEN ON ITS OWN IS A TRAP, which that sweep demonstrated rather than
+        /// assumed. WPF_CT_YMOVE_TRUNC=0 reads 5,784 on it -- a 51% cut -- and on the real
+        /// holdout it is 12,585 -> 81,141, with a ratchet failing. A phase total taken over specs
+        /// chosen BECAUSE they fail is fittable; use it to screen, never to decide.</para>
         /// <para>The ClearType-gated surface is FINITE and it has been enumerated off the binary,
         /// by finding every instruction that reads the flag at localGS+0xcc: itrp_MIRP (7),
         /// itrp_IP (4), itrp_MSIRP (2), itrp_MDRP (2), itrp_SHP_Common, itrp_ALIGNRP,
