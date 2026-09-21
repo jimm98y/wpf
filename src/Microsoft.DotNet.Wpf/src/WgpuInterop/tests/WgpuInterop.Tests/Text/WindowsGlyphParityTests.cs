@@ -10191,7 +10191,10 @@ namespace WgpuInterop.Tests.Text
             byte[] source = File.ReadAllBytes(file);
             int sfnt = FontFiles.SfntOffset(source, family, false, false);
             var probe = new TrueTypeFont(source);
-            int gid = probe.GlyphIndex('1');
+            // WPF_FLIP_HOST=<char>: the Consolas glyph whose record is the canvas. '1' holds 11
+            // points of 16-bit deltas; a whole real glyph needs a bigger record ('@' holds ~100).
+            char host = Environment.GetEnvironmentVariable("WPF_FLIP_HOST") is { Length: 1 } hs ? hs[0] : '1';
+            int gid = probe.GlyphIndex(host);
             if (!Glyf(source, sfnt, gid, out int glyphAt, out int glyphLen))
             { note = "(no outline)"; return rows; }
             int nameAt = FamilyNameByte(source, sfnt);
@@ -10250,9 +10253,9 @@ namespace WgpuInterop.Tests.Text
                 {
                     Array.Clear(raw);
                     Gdi.s_rawRgb = raw;
-                    Gdi.Draw("1", fam, ppem, PenX, baseline, Width, Height, false, false);
+                    Gdi.Draw(host.ToString(), fam, ppem, PenX, baseline, Width, Height, false, false);
                     Gdi.s_rawRgb = null;
-                    byte[] ours = OursRgba(new TrueTypeFont(d, false, false, sfnt), "1", ppem, baseline,
+                    byte[] ours = OursRgba(new TrueTypeFont(d, false, false, sfnt), host.ToString(), ppem, baseline,
                                            correction: true);
                     long sum = 0, gi = 0, oi = 0;
                     for (int y = 0; y < Height; y++)
