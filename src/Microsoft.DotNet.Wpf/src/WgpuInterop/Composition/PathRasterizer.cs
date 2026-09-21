@@ -1671,6 +1671,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 xMax = Math.Min(nCols, (colMax - originX) * SubpixelsPerPixel * 2);
                 yMin = Math.Max(0, nRows - (rowMax - originY) * nSub);
                 yMax = Math.Min(nRows, nRows - (rowMin - originY) * nSub);
+                // ...AND THE DROPOUT'S OWN LIMITS ARE THAT BOX IN SCAN ROWS, not rounded out to whole
+                // pixels. DoVertDropout clamps its fill row against the scan converter's y bounds,
+                // which are fsc_MeasureGlyph's overscaled rows before any division -- 36 of them for
+                // Consolas 'A-grave' at 9ppem, not a multiple of five. So a fill aimed one sub-row
+                // above the outline's top is clamped into the top sub-row. fontdrvhost's own scan
+                // of that glyph (fs__Contour with grid-fitting off, as ttfd calls it when gasp
+                // declines) shows the fill there; ours stayed a sub-row higher, and the 6x5 filter
+                // does not add the two the same way. WPF_CT_BOX_SUBROW=0 keeps the pixel box.
+                if (s_boxMeasured && s_boxSubRow)
+                {
+                    int S = Math.Max(1, nSub);
+                    long ymax = -(long) gy0 * S, ymin = -(long) gy1 * S;
+                    long rMin = (ymin + 0x1f) >> 6, rMax = (ymax + 0x20) >> 6;
+                    if (rMax == rMin) rMax++;
+                    int baseSub = nRows + originY * nSub;
+                    yMin = (int) Math.Max(0, baseSub + rMin);
+                    yMax = (int) Math.Min(nRows, baseSub + rMax);
+                }
             }
             if (xMin >= xMax || yMin >= yMax) return new List<(int, int)>();
 
@@ -2184,6 +2202,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         /// <summary>WPF_CT_BOX_FLIP=0: apply fs_FindBitMapSize's row bounds to the y-DOWN
         /// coordinate directly, as this did before 2026-09-20. See the note at the box.</summary>
+        private static readonly bool s_boxSubRow =
+            Environment.GetEnvironmentVariable("WPF_CT_BOX_SUBROW") != "0";
+
         private static readonly bool s_dropClamp =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_CLAMP") != "0";
 
