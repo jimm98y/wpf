@@ -9781,7 +9781,13 @@ namespace WgpuInterop.Tests.Text
                 { Console.Error.WriteLine($"ASFIT: needs {need} bytes, record is {glyphLen}"); return 0; }
                 int w = glyphAt + 10 + conts * 2;
                 Write16(original, w, 0); w += 2;                        // instructionLength
-                for (int i = 0; i < n2; i++) original[w++] = 0x01;      // on-curve, 16-bit deltas
+                // KEEP EACH POINT'S ON/OFF-CURVE FLAG. Writing them all on-curve turns every
+                // quadratic into a polyline THROUGH its control point, which is a different shape
+                // -- both sides still get the same one, so it is a fair test of the scan
+                // converter, but it is not our fitted outline and it never exercises the spline
+                // path at all. With the flags kept it is both.
+                for (int i = 0; i < n2; i++)
+                    original[w++] = (byte) (i < pts.OnCurve.Length && !pts.OnCurve[i] ? 0x00 : 0x01);
                 int px2 = 0, py2 = 0;
                 for (int i = 0; i < n2; i++) { Write16(original, w, (short) (xs2[i] - px2)); px2 = xs2[i]; w += 2; }
                 for (int i = 0; i < n2; i++) { Write16(original, w, (short) (ys2[i] - py2)); py2 = ys2[i]; w += 2; }
@@ -9805,6 +9811,7 @@ namespace WgpuInterop.Tests.Text
                     Write16(original, lsbAt2, (short) xmn);                    // lsb == xMin
                     Write16(original, lsbAt2 - 2, (short) (ppem * 64 * 10 / ppem / 10 * 0 + 632));
                 }
+                s_asfitApplied = true;
                 Console.Error.WriteLine($"   ASFIT: upem -> {ppem * 64}, {n2} points as the fit,"
                     + $" bbox {xmn}..{xmx} x {ymn}..{ymx}");
                 // WPF_PATCHPT_ASFIT_DUMP=1: print the polygon that both sides are about to
@@ -10274,6 +10281,55 @@ namespace WgpuInterop.Tests.Text
                 finally { RemoveFontMemResourceEx(h); }
             }
             return rows;
+        }
+
+        /// <summary>Set when WPF_PATCHPT_ASFIT actually rewrote the glyph. A record too small to
+        /// hold the fitted points makes that path bail and return zero, which is indistinguishable
+        /// from a match, so the ratchet below checks this rather than trusting the number.</summary>
+        private static bool s_asfitApplied;
+
+        /// <summary>THE RASTERIZER AGREES WITH GDI ON OUR OWN FITTED OUTLINE.
+        /// <para>Hand the SAME geometry to both sides with no glyph program between them -- the
+        /// ASFIT canvas of <see cref="HowGdiFollowsAMovedPoint"/>: unitsPerEm set to ppem*64 so a
+        /// font unit is a sixty-fourth of a pixel, our fitted coordinates written in, the
+        /// instructions removed, the bounding box and side bearing fixed -- and every one of
+        /// these glyphs comes out byte for byte identical.</para>
+        /// <para>They are not arbitrary. Each one CARRIES a row of the holdout: Times Bold 'w' at
+        /// 14 is the whole of that row (357 twice over), 'K' at 21 is 313 of 696, Times Italic
+        /// 'p' and 'a' at 20 are 200 and 160. They score 0 here and 118..357 in an ordinary
+        /// render, which says exactly one thing -- the difference is our FITTED OUTLINE, not what
+        /// the scan converter does with it.</para>
+        /// <para>That is the precondition every fit oracle in this file has been missing. Five
+        /// chains of "so point N should be V" dissolved because the pixels they were reasoning
+        /// from carried rasterizer error as well as fit error; with this at zero they carry only
+        /// the fit. Keep it there.</para></summary>
+        [Fact]
+        public void OurRasterizerAgreesOnOurOwnFit()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            string[] carriers =
+            {
+                "times/w/14/B", "times/K/21/B", "times/k/21/B",
+                "times/p/20/I", "times/a/20/I", "times/x/20/I",
+                "consola/1/18", "verdana/6/12", "arial/w/17/I",
+            };
+            string? was = Environment.GetEnvironmentVariable("WPF_PATCHPT_ASFIT");
+            Environment.SetEnvironmentVariable("WPF_PATCHPT_ASFIT", "1");
+            var wrong = new List<string>();
+            try
+            {
+                foreach (string spec in carriers)
+                {
+                    s_asfitApplied = false;
+                    long v = OneMovedPoint(spec, "0,0", quiet: true);
+                    if (!s_asfitApplied) wrong.Add($"{spec} (ASFIT did not apply)");
+                    else if (v != 0) wrong.Add($"{spec} {v}");
+                }
+            }
+            finally { Environment.SetEnvironmentVariable("WPF_PATCHPT_ASFIT", was); }
+            Assert.True(wrong.Count == 0,
+                        "the rasterizer used to reproduce GDI exactly on our own fitted outline: "
+                        + string.Join(", ", wrong));
         }
 
         /// <summary>Give the patched bytes a family name GDI has never seen, and say what it is.
