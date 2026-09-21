@@ -10177,6 +10177,26 @@ namespace WgpuInterop.Tests.Text
             Console.Error.WriteLine($"FLIPTOTAL {bad} over {rows.Count} positions");
         }
 
+        /// <summary>A POINT ON TOP OF ITS PREDECESSOR IS DELETED BEFORE THE SCAN, AND THE ONE KEPT
+        /// IS ON-CURVE -- see TrueTypeFont.DropDuplicatePoints, ported from fs_FindBitMapSize.
+        /// <para>The canvas is the six points that carried the last row of the holdout (Times New
+        /// Roman Italic 'm' at 22ppem, reduced): an on-curve vertex with an off-curve point on
+        /// top of it, then two more off-curve points. The coincident pair is swept along x from
+        /// 176 to 200 sixty-fourths. Drawn as the font writes it, 187..195 each light one more
+        /// lamp in GDI than in ours (342 over the sweep); with the pair merged the two agree at
+        /// every position. WPF_CT_DEDUP=0 makes it bite.</para></summary>
+        [Fact]
+        public void CoincidentPointsAreMergedBeforeTheScan()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "GDI is the reference");
+            var rows = FlipSweep("@,576 @,576,0 158,585,0 125,585,0 81,576 298,640", 176, 200, 1, 22,
+                                 out string note);
+            Assert.SkipWhen(rows.Count == 0, $"no canvas {note}");
+            long bad = 0;
+            foreach (var r in rows) bad += r.Sum;
+            Assert.Equal(0L, bad);
+        }
+
         private readonly record struct FlipRow(int V, long Sum, long GdiInk, long OurInk);
 
         /// <summary>One coordinate sweep of a device-space polygon, GDI against ours.</summary>
@@ -10245,6 +10265,10 @@ namespace WgpuInterop.Tests.Text
                 if (lsbAt > 0) { Write16(d, lsbAt, (short) xmn); Write16(d, lsbAt - 2, 632); }
 
                 string fam = Rename(d, nameAt, family, ref variant, nameWas);
+                // WPF_FLIP_SAVE=<path>: the canvas font itself, with {0} for the swept value, so
+                // GDI's own scan converter can be run over it outside a device context.
+                if (Environment.GetEnvironmentVariable("WPF_FLIP_SAVE") is { Length: > 0 } save)
+                    File.WriteAllBytes(string.Format(save, v), d);
                 int count = 0;
                 IntPtr h = AddFontMemResourceEx(d, d.Length, IntPtr.Zero, ref count);
                 if (h == IntPtr.Zero || count == 0)

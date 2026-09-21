@@ -4120,6 +4120,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // between consecutive off-curve points) into a closed PathFigure.
         private static PathFigure BuildContourFigure(Vector2[] pts, bool[] on)
         {
+            if (s_dropDuplicates) DropDuplicatePoints(ref pts, ref on);
             int n = pts.Length;
             int firstOn = -1;
             for (int i = 0; i < n; i++) if (on[i]) { firstOn = i; break; }
@@ -4158,6 +4159,52 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // Close back to the start.
             if (havePendingControl) figure.Segments.Add(new QuadraticBezierSegment(control, startPoint));
             return figure;
+        }
+
+        /// <summary>WPF_CT_DEDUP=0 hands the scan converter coincident points as they come.</summary>
+        private static readonly bool s_dropDuplicates =
+            Environment.GetEnvironmentVariable("WPF_CT_DEDUP") != "0";
+
+        /// <summary>A POINT THAT REPEATS ITS PREDECESSOR IS DELETED, AND THE ONE KEPT IS ON-CURVE.
+        /// <para>fs_FindBitMapSize@140022a48 does this to the fitted outline before
+        /// fsc_MeasureGlyph and fsc_FillGlyph see it (the loop at 140022f40..14002303c). For each
+        /// contour it walks i from the start to end - 1, and wherever point i + 1 equals point i
+        /// on both axes it shifts points start..i - 1 up by one (so point i, flag and all, is
+        /// overwritten), moves the contour's start forward by one, and ORs the ON-CURVE bit into
+        /// point i + 1. After the walk, if the last point equals the (new) first one, the start
+        /// moves forward again and the last point is made on-curve.</para>
+        /// <para>That is not a no-op when one of the pair is off-curve. An off-curve point on top
+        /// of an on-curve one reads, as drawn, as a degenerate spline from the vertex to the
+        /// implied midpoint beyond it, followed by a spline starting FROM that midpoint; GDI
+        /// instead draws one spline from the vertex through the next control point, and the
+        /// midpoint never exists. Times New Roman Italic 'm' at 22ppem fits points 76 and 77 onto
+        /// the same 26.6 position -- (188, 576) -- and the curve that follows then crosses the
+        /// sub-row at y = 9.1px a sub-column further left in GDI's raster than in ours: one lamp,
+        /// the last 58 of the holdout. Read off GDI's own flags (ctharness, clientRec+0x1e8 ol[6]
+        /// after fs_FindBitMapSize: 01 01 00 00 01 01 where the font says 01 00 00 00 01 01) and
+        /// its own crossing lists (AddHorizSmartScan hooked: row 45 at x-index 15, not 16).</para>
+        /// </summary>
+        private static void DropDuplicatePoints(ref Vector2[] pts, ref bool[] on)
+        {
+            int n = pts.Length;
+            if (n < 2) return;
+            int dup = 0;
+            for (int i = 0; i < n; i++)
+                if (pts[(i + 1) % n] == pts[i]) { dup++; break; }
+            if (dup == 0) return;
+            var p = (Vector2[])pts.Clone();
+            var f = (bool[])on.Clone();
+            int start = 0, end = n - 1;
+            for (int i = 0; i < end; i++)
+            {
+                if (p[i + 1] != p[i]) continue;
+                for (int k = i; k > start; k--) { p[k] = p[k - 1]; f[k] = f[k - 1]; }
+                start++;
+                f[i + 1] = true;
+            }
+            if (start != end && p[end] == p[start]) { start++; f[end] = true; }
+            pts = p[start..(end + 1)];
+            on = f[start..(end + 1)];
         }
 
         /// <summary>The implied on-curve point between two off-curve ones.
