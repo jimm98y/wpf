@@ -549,9 +549,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _nudgeCount = 0; _nudgeDx = 0;
             if (!IsUsable || pixelsPerEm <= 0f) return false;
 
+            int sizeScale = _scale;
             try
             {
                 if (!PrepareSize(pixelsPerEm)) return false;
+                sizeScale = _scale;
+                // A TRANSFORMED COMPONENT IS HINTED AT ITS MATRIX'S MAGNITUDE.
+                // scl_InitializeChildScaling@140095480 resets the point scale for the child to the
+                // size's times max(|m00|,|m01|) (x) and max(|m10|,|m11|) (y), and the rotation or
+                // flip is applied after the program, by fsg_MergeGlyphData's mth_IntelMul. Calibri
+                // 'questiondown' is 'question' at -0.99988: GDI starts it at 855 * 0.5 * 0.99988 =
+                // 427.45 -> 427, where the plain scale's exact half gave 428.
+                if (ChildScale16 != 0 && !glyph.Composite)
+                    _scale = (int)(((long)_scale * ChildScale16 + 0x8000) >> 16);
                 LoadGlyph(glyph);
                 _steps = 0;
 
@@ -563,7 +573,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // twenty-one accents that disagreed with Windows -- Segoe UI's accented letters
                 // write a control value and read it straight back to work out how far to slide the
                 // accent, and with the identity they read 39 font units as 39 PIXELS.
-                _measureScale = glyph.Composite ? 1 << 16 : _scale;
+                _measureScale = glyph.Composite || ScaledOriginals ? 1 << 16 : _scale;
 
                 // A PRE-PROGRAM MAY SWITCH THE GLYPH PROGRAMS OFF. INSTCTRL selector 1 is "inhibit
                 // grid-fitting", and a face sets it in 'prep' at the sizes it does not want hinted
@@ -728,7 +738,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // nothing: the caller falls back to fitting the outline by analysis.
                 return false;
             }
+            finally
+            {
+                _scale = sizeScale;
+            }
         }
+
+        /// <summary>The 16.16 magnitude of the component matrix the next glyph is being hinted
+        /// under, or 0 for none. See Hint.</summary>
+        internal static int ChildScale16;
+
+        private static bool ScaledOriginals => ChildScale16 != 0 && s_childOriginals;
+
+        private static readonly bool s_childOriginals =
+            Environment.GetEnvironmentVariable("WPF_CT_CHILD_ORIGINALS") != "0";
 
 
         /// <summary>Font units to 26.6 pixels at the size last prepared -- what a composite's
@@ -2049,6 +2072,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     z.OrusY[i] = glyph.Y[i];
                     z.OrgX[i] = z.CurX[i] = Scale(glyph.X[i]);
                     z.OrgY[i] = z.CurY[i] = ScaleY(glyph.Y[i]);
+                    // globals+0x196: under a transformed component GDI measures every ORIGINAL
+                    // from the scaled outline, not from font units -- itrp_IP, itrp_MDRP and IUP
+                    // all switch to localGS 0x10/0x18 on it, as they do for the twilight zone.
+                    // fsg_MergeGlyphData and fsg_CompositeInnerGridFit set it with the child
+                    // scaling. Calibri 'questiondown'@16: IUP[y] puts p0 at 510 from the scaled
+                    // 495 between 306 and 687, where font units give 511.
+                    if (ScaledOriginals) { z.OrusX[i] = z.OrgX[i]; z.OrusY[i] = z.OrgY[i]; }
                 }
                 z.InkX[i] = z.OrgX[i];
 

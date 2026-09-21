@@ -3796,6 +3796,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_borrowAfterProgram =
             Environment.GetEnvironmentVariable("WPF_CT_BORROW_EARLY") != "1";
 
+        /// <summary>WPF_CT_CHILD_SCALE=0: hint a transformed component at the plain scale and
+        /// apply its matrix in floating point, as before.</summary>
+        private static readonly bool s_childScale =
+            Environment.GetEnvironmentVariable("WPF_CT_CHILD_SCALE") != "0";
+
+        private static int FixMulAway(int v, int m16)
+        {
+            long p = (long)v * m16;
+            return (int)((p + (p >> 63) + 0x8000) >> 16);
+        }
+
         private static readonly bool s_shearOffsetSixteenth =
             Environment.GetEnvironmentVariable("WPF_CT_SHEAR_OFFSET") != "0";
 
@@ -3858,7 +3869,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                 more = (flags & MORE_COMPONENTS) != 0;
 
-                GlyphProgram? part = HintedProgram(interpreter, componentGid, pixelsPerEm, depth + 1);
+                // A transformed component is hinted at its matrix's magnitude and flipped or
+                // rotated afterwards (see TrueTypeInterpreter.Hint). One magnitude for both axes:
+                // a matrix that stretches x and y differently keeps the plain scale.
+                bool xform = a != 1f || b != 0f || c != 0f || d != 1f;
+                int m00 = (int)MathF.Round(a * 65536f), m01 = (int)MathF.Round(b * 65536f);
+                int m10 = (int)MathF.Round(c * 65536f), m11 = (int)MathF.Round(d * 65536f);
+                int magX = Math.Max(Math.Abs(m00), Math.Abs(m01)), magY = Math.Max(Math.Abs(m10), Math.Abs(m11));
+                int savedChild = TrueTypeInterpreter.ChildScale16;
+                if (s_childScale && xform && magX == magY && magX != 0x10000)
+                    TrueTypeInterpreter.ChildScale16 = magX;
+                GlyphProgram? part;
+                try { part = HintedProgram(interpreter, componentGid, pixelsPerEm, depth + 1); }
+                finally { TrueTypeInterpreter.ChildScale16 = savedChild; }
                 if (part is null) continue;                 // a blank component places nothing
 
                 int count = part.PointCount;
@@ -3867,6 +3890,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 for (int i = 0; i < count + 2; i++)         // the two horizontal phantoms travel too
                 {
                     float fx = part.X[i], fy = part.Y[i];
+                    if (s_childScale && xform)
+                    {
+                        // mth_IntelMul@140026b40: 16.16 products, each rounded half away from zero.
+                        px[i] = FixMulAway(part.X[i], m00) + FixMulAway(part.Y[i], m10);
+                        py[i] = FixMulAway(part.X[i], m01) + FixMulAway(part.Y[i], m11);
+                        continue;
+                    }
                     px[i] = (int)MathF.Round(a * fx + c * fy);
                     py[i] = (int)MathF.Round(b * fx + d * fy);
                 }
