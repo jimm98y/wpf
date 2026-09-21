@@ -3584,6 +3584,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         key = key * 31 + rc.Item2;
                     }
                 }
+                // The per-glyph scan types change the mask too.
+                if (PathRasterizer.GlyphDropoutForRun is { } glyphDrop && subpixel)
+                    foreach (var kv in glyphDrop) key = key * 41 + (kv.Key * 8 + kv.Value);
                 Dictionary<int, (int Left, int Right)>? deviceColClip = PathRasterizer.GlyphColClipForRun;
                 Dictionary<int, (int Left, int Right)>? localColClip = null;
                 if (deviceColClip is not null && subpixel)
@@ -4762,6 +4765,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // grid, which is the GDI-parity path. WPF_CT_GLYPH_ROWCLIP=0 turns it off.
                 Dictionary<int, (int Top, int Bottom)>? batchClip = null;
                 Dictionary<int, (int Left, int Right)>? batchColClip = null;
+                Dictionary<int, int>? batchDropout = null;
                 int colL = 0, colR = 0;
                 if (s_glyphColClip && hintPpem > 0f && font is Text.TrueTypeFont colFace
                     && colFace.GdiEmboldensBitmap && colFace.TryGetGdiColumnLimits(hintPpem, out colL, out colR))
@@ -4798,6 +4802,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     PathRasterizer.FigureGlyphIdsForRun = batchOwner.ToArray();
                     PathRasterizer.GlyphRowClipForRun = batchClip;
                     PathRasterizer.GlyphColClipForRun = batchColClip;
+                    PathRasterizer.GlyphDropoutForRun = batchDropout;
                     try
                     {
                         EmitFill(new GeometryFill(new PathGeometry(FillRule.NonZero, batch),
@@ -4810,11 +4815,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         PathRasterizer.FigureGlyphIdsForRun = null;
                         PathRasterizer.GlyphRowClipForRun = null;
                         PathRasterizer.GlyphColClipForRun = null;
+                        PathRasterizer.GlyphDropoutForRun = null;
                     }
                     batch = new List<PathFigure>();
                     batchOwner = new List<int>();
                     if (batchClip is not null) batchClip = new Dictionary<int, (int Top, int Bottom)>();
                     if (batchColClip is not null) batchColClip = new Dictionary<int, (int Left, int Right)>();
+                    batchDropout = null;
                 }
 
                 foreach (Text.ShapedGlyph g in _shapeScratch)
@@ -4838,6 +4845,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                                g.GlyphId, hintPpem > 0f ? hintScale : scale, gx, gy,
                                                _glyphFills, hintPpem);
 
+                    if (hintPpem > 0f && font is Text.TrueTypeFont gdf2 && gdf2.GlyphDropout(g.GlyphId, hintPpem) is int gdv && gdv >= 0)
+                        (batchDropout ??= new Dictionary<int, int>())[glyphOrdinal] = gdv;
                     foreach (Text.GlyphFill gf in _glyphFills)
                     {
                         if (!gf.IsColorLayer)

@@ -945,9 +945,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 var accLvl = new byte[width * height * 3];
                 int totalFills = 0;
                 int first = 0;
+                int runDropout = DropoutForRun;
+                try {
                 while (first < polysG.Count)
                 {
                     int gid = GlyphOf(owners, contourFigures, first);
+                    DropoutForRun = composite && GlyphDropoutForRun is { } gdt && gdt.TryGetValue(gid, out int gd)
+                        ? gd : runDropout;
                     int last = first + 1;
                     if (composite || DropoutForRun > 0)
                         while (last < polysG.Count && GlyphOf(owners, contourFigures, last) == gid) last++;
@@ -1056,6 +1060,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     first = last;
                 }
+                } finally { DropoutForRun = runDropout; }
                 LastDropoutFills = DropoutForRun > 0 ? totalFills : -1; LastDropoutRuns++;
                 if (s_runCompositeLevels)
                     for (int px = 0; px < width * height; px++)
@@ -3844,6 +3849,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Per glyph ordinal, the mask columns [Left, Right) whose lamps survive --
         /// TrueTypeFont.TryGetGdiColumnLimits. Null for no clip.</summary>
         internal static Dictionary<int, (int Left, int Right)>? GlyphColClipForRun;
+
+        /// <summary>Per glyph ordinal, the DropoutForRun value that glyph's own graphics state asks
+        /// for (TrueTypeFont.GlyphDropout); glyphs not listed take the run's.</summary>
+        internal static Dictionary<int, int>? GlyphDropoutForRun;
 
         [ThreadStatic] private static int s_colClipL, s_colClipR;
 

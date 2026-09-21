@@ -62,6 +62,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         public byte[] Instructions = Array.Empty<byte>();
         public int PointCount;                        // real points; the array holds four more
 
+        /// <summary>The SCANCTRL and SCANTYPE the graphics state holds once this glyph's program has
+        /// run -- prep's, unless the program set its own. -1 when no program ran.</summary>
+        public int ScanControl = -1, ScanType = -1;
+
         /// <summary>An accented letter and the like: this glyph's points are its components' points,
         /// each of which has ALREADY been hinted, so they arrive in 26.6 pixels rather than in font
         /// units and must not be scaled again.
@@ -599,6 +603,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     _dumpActive = dumping;
                     try { if (!Execute(glyph.Instructions, 0)) return false; }
                     finally { _dumpActive = false; }
+                    glyph.ScanControl = _gs.ScanControl;
+                    glyph.ScanType = _gs.ScanType;
                     // The trace prints each instruction's state BEFORE it runs, so the last one --
                     // which is nearly always an IUP, and nearly always the one in question -- never
                     // shows its own result. Print the finished outline.

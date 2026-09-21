@@ -1385,6 +1385,59 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// one and what we did with all of them.</para></summary>
         public bool WantsGridFit(float pixelsPerEm) => FaceWantsGridFit(pixelsPerEm);
 
+        /// <summary>GDI'S SCAN TYPE IS PER GLYPH. fsg_ExecuteGlyph@14002e8c8 takes it from the
+        /// graphics state the glyph's OWN program leaves behind -- fsg_DoScanControl(SCANCTRL, ppem)
+        /// ? SCANTYPE : 2 (none) -- not from prep's: Palatino Linotype '6' runs SCANTYPE 4
+        /// (smart, stubs NOT excluded) over prep's 5, and GDI fills a dropout there that the stub
+        /// test would refuse. A composite merges its elements as each finishes, the first taken
+        /// as it is and the rest as (child &amp; 3 | 4) &amp; parent, and its own program -- when
+        /// it runs -- overwrites the result. Returns the renderer's DropoutForRun value (scan type
+        /// + 1, or 0 for none), or -1 when nothing was recorded.</summary>
+        internal int GlyphDropout(int gid, float pixelsPerEm)
+            => s_perGlyphScan && _glyphScan.TryGetValue((gid, (int) MathF.Round(pixelsPerEm * 16f)), out int t)
+               ? ((t & 2) != 0 ? 0 : t + 1) : -1;
+
+        private static readonly bool s_perGlyphScan =
+            Environment.GetEnvironmentVariable("WPF_CT_SCAN_PERGLYPH") != "0";
+
+        private readonly Dictionary<(int, int), int> _glyphScan = new();
+        [ThreadStatic] private static int[]? s_scanAcc;
+
+        private void RecordScanType(TrueTypeInterpreter interpreter, GlyphProgram glyph, int gid,
+                                    float pixelsPerEm, int depth)
+        {
+            int ctrl = glyph.ScanControl >= 0 ? glyph.ScanControl : interpreter.PrepScanControl;
+            int type = glyph.ScanType >= 0 ? glyph.ScanType : interpreter.PrepScanType;
+            int own = DoScanControl(ctrl, (int) MathF.Round(pixelsPerEm)) ? type : 2;
+            s_scanAcc ??= new int[8];
+            if (depth < s_scanAcc.Length - 1)
+            {
+                // The parent's accumulator starts empty (0xffff) for each composite.
+                int acc = glyph.Composite ? s_scanAcc[depth + 1] : -1;
+                int mine = glyph.Composite ? (glyph.ScanControl >= 0 ? own : (acc >= 0 ? acc : own)) : own;
+                if (depth > 0)
+                {
+                    int p = s_scanAcc[depth];
+                    s_scanAcc[depth] = p < 0 ? mine : ((mine & 3) | 4) & p;
+                }
+                if (depth == 0)
+                {
+                    if (_glyphScan.Count > HintedCacheLimit) _glyphScan.Clear();
+                    _glyphScan[(gid, (int) MathF.Round(pixelsPerEm * 16f))] = mine;
+                }
+            }
+        }
+
+        private static void ResetScanAcc(int depth)
+        {
+            s_scanAcc ??= new int[8];
+            if (depth + 1 < s_scanAcc.Length) s_scanAcc[depth + 1] = -1;
+        }
+
+        /// <summary>fsg_DoScanControl@14002e5d0.</summary>
+        private static bool DoScanControl(int ctrl, int ppem)
+            => ((ctrl & 0x100) != 0 && ((ctrl & 0xFF) == 0xFF || ppem <= (ctrl & 0xFF)));
+
         public bool WantsDropoutControl(float pixelsPerEm, out int scanType)
         {
             scanType = 0;
@@ -2624,6 +2677,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     s_inheritPhaseInputs = true;
                     TrueTypeInterpreter.RootLinear64 = interpreter.PrepareForSize(pixelsPerEm)
                         ? interpreter.ScaleToPixels(RawAdvanceWidth(gid)) : 0;
+                    ResetScanAcc(depth);
                     glyph = ReadCompositeProgram(interpreter, gid, pixelsPerEm, depth);
                 }
                 finally
@@ -2635,7 +2689,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     s_inheritPhaseInputs = si;
                 }
             }
-            else glyph = ReadCompositeProgram(interpreter, gid, pixelsPerEm, depth);
+            else { ResetScanAcc(depth); glyph = ReadCompositeProgram(interpreter, gid, pixelsPerEm, depth); }
             if (glyph is null) return null;
 
             // Where x is not being hinted, keep the scaled outline's own x and let the program have
@@ -2806,6 +2860,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (s_twoPassGlyph && !TrueTypeInterpreter.BiLevelPass && SubpixelFitting)
                     interpreter.Hint(glyph, pixelsPerEm);
                 hinted = interpreter.Hint(glyph, pixelsPerEm);
+                if (hinted && !TrueTypeInterpreter.BiLevelPass && !s_measuringCtSpan)
+                    RecordScanType(interpreter, glyph, gid, pixelsPerEm, depth);
                 // THE SIMULATED BOLD, AS GDI APPLIES IT: once, to the whole glyph tree, after its
                 // programs and in both passes -- see GdiEmbolden.
                 if (hinted && depth == 0 && GdiEmboldens) GdiEmbolden(glyph, pixelsPerEm, true);
