@@ -3595,6 +3595,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         ///  would fit a shape the face never measured, and the letter under the accent would come out
         ///  a different weight from the same letter beside it in the same word.</para>
         /// </remarks>
+        /// <summary>WPF_CT_BORROW_EARLY=1: USE_MY_METRICS sets the composite's phantoms before its
+        /// program runs, as it used to.</summary>
+        private static readonly bool s_borrowAfterProgram =
+            Environment.GetEnvironmentVariable("WPF_CT_BORROW_EARLY") != "1";
+
+        private static readonly bool s_shearOffsetSixteenth =
+            Environment.GetEnvironmentVariable("WPF_CT_SHEAR_OFFSET") != "0";
+
         private GlyphProgram? ReadCompositeProgram(TrueTypeInterpreter interpreter, int gid,
                                                    float pixelsPerEm, int depth)
         {
@@ -3625,7 +3633,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // USE_MY_METRICS: the composite is spaced as one of its components is, so that a letter
             // and its accented form keep the same sidebearings.
             bool borrowedMetrics = false;
-            int borrowedOrigin = 0, borrowedAdvance = 0;
+            int borrowedOrigin = 0, borrowedAdvance = 0, borrowedOriginY = 0, borrowedAdvanceY = 0;
 
             int flags = 0;
             bool more = true;
@@ -3696,7 +3704,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         dx = s_ctComponentOffset && SubpixelFitting && !TrueTypeInterpreter.BiLevelPass
                             ? (dx + 2) & ~3
                             : TrueTypeInterpreter.RoundToPixel(dx);
-                        dy = TrueTypeInterpreter.RoundToPixel(dy);
+                        // ...AND Y TOO, UNDER A SHEARED TRANSFORM. fsg_MergeGlyphData@140030040
+                        // classifies the element's matrix -- 0 axis-aligned, 1 swapped, 2 anything
+                        // with both a diagonal and an off-diagonal term -- and for class 2 under
+                        // ClearType it rounds BOTH offsets to the sixteenth. A simulated italic is
+                        // class 2: ttfd's bSetXform puts the shear (0x5700) into the scaler's
+                        // matrix, and fontdrvhost's own fit of Tahoma 'N-tilde' at 20ppem with
+                        // FO_SIM_ITALIC has the tilde 28/64 above the whole pixel it sits on
+                        // without. WPF_CT_SHEAR_OFFSET=0 keeps y on the whole pixel.
+                        dy = s_shearOffsetSixteenth && _shear != 0f && SubpixelFitting
+                             && !TrueTypeInterpreter.BiLevelPass
+                            ? (dy + 2) & ~3
+                            : TrueTypeInterpreter.RoundToPixel(dy);
                     }
                 }
                 else
@@ -3720,8 +3739,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if ((flags & USE_MY_METRICS) != 0)
                 {
                     borrowedMetrics = true;
-                    borrowedOrigin = px[count] + dx;
-                    borrowedAdvance = px[count + 1] + dx;
+                    // THE PHANTOMS ARE NOT OFFSET. fsg_ExecuteGlyph's merge adds the component
+                    // offset to points 0..lastPoint only and then stores the component's phantoms
+                    // as they stand -- Arial Bold 'quoteright', a comma raised 1181 units, keeps
+                    // the comma's pp1 on the baseline, and the re-anchor on it leaves the quote up.
+                    int odx = s_borrowAfterProgram ? 0 : dx;
+                    borrowedOrigin = px[count] + odx;
+                    borrowedAdvance = px[count + 1] + odx;
+                    borrowedOriginY = py[count];
+                    borrowedAdvanceY = py[count + 1];
                 }
             }
 
@@ -3747,7 +3773,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             // The phantom points, in pixels like everything else here -- a composite is not scaled
             // again on the way in, so nothing else will convert them.
-            if (borrowedMetrics)
+            if (borrowedMetrics && !s_borrowAfterProgram)
             {
                 X[points] = borrowedOrigin;
                 X[points + 1] = borrowedAdvance;
@@ -3767,6 +3793,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 Instructions = instructions,
                 PointCount = points,
                 Composite = true,
+                BorrowedPhantoms = borrowedMetrics && s_borrowAfterProgram
+                    ? new[] { borrowedOrigin, borrowedOriginY, borrowedAdvance, borrowedAdvanceY } : null,
             };
         }
 
@@ -4026,19 +4054,120 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// rounding the points first and building the figure afterwards puts the midpoint back
         /// where GDI has it: halfway between two rounded neighbours.</para>
         /// <para>WPF_UNFITTED_PTS=0 goes back to rounding the finished figure.</para></summary>
+        private static readonly bool s_unfittedPp1 =
+            Environment.GetEnvironmentVariable("WPF_UNFITTED_PP1") != "0";
+
+        private static readonly bool s_unfittedComponents =
+            Environment.GetEnvironmentVariable("WPF_UNFITTED_COMPONENTS") != "0";
+
+        /// <summary>A COMPOSITE IS ASSEMBLED AT SIZE, NOT IN FONT UNITS, EVEN WHERE NOTHING IS
+        /// FITTED. fsg_MergeGlyphData@140030040 runs whether or not a glyph program does: each
+        /// component is scaled to 26.6 on its own and its offset is scaled separately and, under
+        /// ROUND_XY_TO_GRID, rounded -- to a whole pixel in y, to the sixteenth in x under
+        /// ClearType (both to the sixteenth under a sheared matrix). Resolving the composite in
+        /// font units and scaling the result put Verdana Bold 'A-tilde' at 8ppem -- a size its
+        /// gasp leaves unfitted -- with the tilde a row above GDI's. Appends y-DOWN, 26.6-rounded
+        /// pixel contours to <paramref name="into"/>; false for a simple glyph, a point-matched
+        /// component or a variable font (the caller then scales the resolved outline).
+        /// WPF_UNFITTED_COMPONENTS=0 restores the font-unit assembly.</summary>
+        private bool TryScaleCompositeAt(int gid, double k, bool halfUp, int depth,
+                                         List<(Vector2[] Pts, bool[] On)> into)
+        {
+            if (depth > 5 || _glyfOffset < 0 || gid < 0 || gid >= _numGlyphs || _loca.Length == 0) return false;
+            uint start = _loca[gid], end = _loca[gid + 1];
+            if (end <= start) return false;
+            int header = _glyfOffset + (int) start;
+            if ((short) U16(header) >= 0) return false;         // simple: not ours to assemble
+
+            const int ARG_1_AND_2_ARE_WORDS = 0x0001, ARGS_ARE_XY_VALUES = 0x0002;
+            const int ROUND_XY_TO_GRID = 0x0004, WE_HAVE_A_SCALE = 0x0008, MORE_COMPONENTS = 0x0020;
+            const int WE_HAVE_AN_X_AND_Y_SCALE = 0x0040, WE_HAVE_A_TWO_BY_TWO = 0x0080;
+            const int SCALED_COMPONENT_OFFSET = 0x0800;
+            int p = header + 10;
+            bool more = true;
+            var parts = new List<(Vector2[] Pts, bool[] On)>();
+            while (more)
+            {
+                int flags = U16(p); p += 2;
+                int compGid = U16(p); p += 2;
+                int arg1, arg2;
+                if ((flags & ARG_1_AND_2_ARE_WORDS) != 0) { arg1 = (short) U16(p); p += 2; arg2 = (short) U16(p); p += 2; }
+                else { arg1 = (sbyte) _data[p++]; arg2 = (sbyte) _data[p++]; }
+                float a = 1f, bb = 0f, c = 0f, d = 1f;
+                if ((flags & WE_HAVE_A_SCALE) != 0) { a = d = F2Dot14(p); p += 2; }
+                else if ((flags & WE_HAVE_AN_X_AND_Y_SCALE) != 0) { a = F2Dot14(p); p += 2; d = F2Dot14(p); p += 2; }
+                else if ((flags & WE_HAVE_A_TWO_BY_TWO) != 0)
+                { a = F2Dot14(p); p += 2; bb = F2Dot14(p); p += 2; c = F2Dot14(p); p += 2; d = F2Dot14(p); p += 2; }
+                more = (flags & MORE_COMPONENTS) != 0;
+                if ((flags & ARGS_ARE_XY_VALUES) == 0) return false;   // point matching: fall back
+
+                // The component, at size, y-DOWN on the 26.6 grid (the plain path's frame).
+                var comp = new List<(Vector2[] Pts, bool[] On)>();
+                if (!TryScaleCompositeAt(compGid, k, halfUp, depth + 1, comp))
+                {
+                    comp.Clear();
+                    foreach (Contour ct in ReadGlyphContours(compGid, depth + 1))
+                    {
+                        var pts = new Vector2[ct.Points.Length];
+                        for (int i = 0; i < pts.Length; i++)
+                            pts[i] = new Vector2(Round64((float) (ct.Points[i].X * k), halfUp),
+                                                 Round64Y((float) (-ct.Points[i].Y * k), halfUp));
+                        comp.Add((pts, ct.OnCurve));
+                    }
+                }
+
+                bool identity = a == 1f && bb == 0f && c == 0f && d == 1f;
+                float ox = (float) (arg1 * k), oy = (float) (arg2 * k);     // y-UP, as the font has it
+                if ((flags & SCALED_COMPONENT_OFFSET) != 0 && !identity)
+                { float tx = a * ox + c * oy; oy = bb * ox + d * oy; ox = tx; }
+                int dx64 = (int) MathF.Round(ox * 64f, MidpointRounding.AwayFromZero);
+                int dy64 = (int) MathF.Round(oy * 64f, MidpointRounding.AwayFromZero);
+                if ((flags & ROUND_XY_TO_GRID) != 0)
+                {
+                    bool ct = s_ctComponentOffset && SubpixelFitting;
+                    dx64 = ct ? (dx64 + 2) & ~3 : (dx64 + 32) & ~63;
+                    dy64 = ct && s_shearOffsetSixteenth && _shear != 0f ? (dy64 + 2) & ~3 : (dy64 + 32) & ~63;
+                }
+                foreach ((Vector2[] pts, bool[] on) in comp)
+                {
+                    if (pts.Length < 2) continue;
+                    var outp = new Vector2[pts.Length];
+                    for (int i = 0; i < pts.Length; i++)
+                    {
+                        Vector2 q = pts[i];                      // y-down
+                        if (!identity)
+                        {
+                            // the component's own matrix works in y-UP
+                            float ux = q.X, uy = -q.Y;
+                            q = new Vector2(Round64(a * ux + c * uy, halfUp), Round64Y(-(bb * ux + d * uy), halfUp));
+                        }
+                        outp[i] = new Vector2(q.X + dx64 / 64f, q.Y - dy64 / 64f);
+                    }
+                    parts.Add((outp, on));
+                }
+            }
+            into.AddRange(parts);
+            return true;
+        }
+
         private List<PathFigure> BuildGlyphFiguresAt(int gid, float pixelsPerEm, bool halfUp)
         {
-            List<Contour> contours = ReadGlyphContours(gid, 0);
             double k = (double) pixelsPerEm / _unitsPerEm;
-            var scaled = new List<(Vector2[] Pts, bool[] On)>(contours.Count);
-            foreach (Contour contour in contours)
+            var scaled = new List<(Vector2[] Pts, bool[] On)>();
+            if (!(s_unfittedComponents && s_unfittedRoundMode != 0 && _variations is null
+                  && TryScaleCompositeAt(gid, k, halfUp, 0, scaled)))
             {
-                if (contour.Points.Length < 2) continue;
-                var pts = new Vector2[contour.Points.Length];
-                for (int i = 0; i < pts.Length; i++)
-                    pts[i] = new Vector2((float) (contour.Points[i].X * k),
-                                         (float) (-contour.Points[i].Y * k));
-                scaled.Add((pts, contour.OnCurve));
+                scaled.Clear();
+                List<Contour> contours = ReadGlyphContours(gid, 0);
+                foreach (Contour contour in contours)
+                {
+                    if (contour.Points.Length < 2) continue;
+                    var pts = new Vector2[contour.Points.Length];
+                    for (int i = 0; i < pts.Length; i++)
+                        pts[i] = new Vector2((float) (contour.Points[i].X * k),
+                                             (float) (-contour.Points[i].Y * k));
+                    scaled.Add((pts, contour.OnCurve));
+                }
             }
 
             // The simulations are in pixels at THIS size, which is what the base-pixel builder
@@ -4077,6 +4206,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     pts[i] = rnd ? new Vector2(Round64(x, halfUp), Round64Y(y, halfUp))
                                  : new Vector2(x, y);
                 }
+
+            // THE OUTLINE IS PLACED ON ITS LEFT PHANTOM EVEN WHEN NOTHING IS FITTED. fs__Contour
+            // translates every point by origin - curX[pp1] after the (here empty) glyph pass, and
+            // rounds that only when grid fitting -- so an unfitted glyph whose side bearing is not
+            // its xMin moves by the exact scaled difference. Times New Roman Italic's degree sign
+            // (xMin 98, lsb 212) at 8ppem, a size its gasp leaves unfitted, sat 0.445px left of
+            // GDI's. pp1's x is on the 26.6 grid like every other point. WPF_UNFITTED_PP1=0 skips.
+            if (s_unfittedPp1 && gid >= 0 && gid < _numGlyphs && _glyfOffset >= 0 && _loca.Length > 0
+                && _loca[gid + 1] > _loca[gid])
+            {
+                int xMin = (short) U16(_glyfOffset + (int) _loca[gid] + 2);
+                int pp1Units = xMin - MetricsLeftSideBearing(gid);
+                // ...ON THE CLEARTYPE SIXTEENTH, as the fitted re-anchor is: Times Italic 'c', 'j'
+                // and 'y' carry a side bearing four units off their xMin -- a sixty-fourth at
+                // 8ppem -- and GDI does not move them, where the degree sign's 28.5/64 moves 28/64.
+                float dx = 0f;
+                if (pp1Units != 0)
+                {
+                    int d64 = -(int) MathF.Round(Round64((float) (pp1Units * k), halfUp) * 64f);
+                    if (SubpixelFitting) d64 = (d64 + 2) & ~3;
+                    dx = d64 / 64f;
+                }
+                if (dx != 0f)
+                    foreach ((Vector2[] pts, _) in scaled)
+                        for (int i = 0; i < pts.Length; i++) pts[i] = new Vector2(pts[i].X + dx, pts[i].Y);
+            }
 
             var figures = new List<PathFigure>(scaled.Count);
             foreach ((Vector2[] pts, bool[] on) in scaled)

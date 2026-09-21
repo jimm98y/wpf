@@ -72,6 +72,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// measured against Windows it turned twenty-one disagreeing accents into seventy-four.
         /// </para></summary>
         public bool Composite;
+
+        /// <summary>USE_MY_METRICS: the component's phantoms (pp1 x, y, pp2 x, y), written over the
+        /// composite's AFTER its own program has run -- see TrueTypeFont.ReadCompositeProgram.</summary>
+        public int[]? BorrowedPhantoms;
     }
 
     internal sealed partial class TrueTypeInterpreter
@@ -645,7 +649,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // back +12/64. That was the uniform third-of-a-lamp offset every Arial diagonal
                 // showed: 'A'@20B 6,767 -> ~1,100, 'A'@16B 2,291 -> 0, holdout 376,284 -> ~330k.
                 // WPF_CT_PP1_ORIGIN=0 off; =exact skips the rounding; =x leaves y alone.
-                if (s_pp1Origin != 0 && _realPoints + 1 < _glyphZone.CurX.Length)
+                // ONCE, ON THE ROOT. fs__Contour re-anchors after fsg_ExecuteGlyph has run the
+                // WHOLE tree, on the root element's pp1 -- a component is merged as its program left
+                // it. Re-anchoring each component on its own pp1 moved Arial Bold 'A' inside
+                // 'A-circumflex' at 22ppem 8/64 right of GDI's, and the composite's program then
+                // placed the circumflex from it. WPF_CT_PP1_ORIGIN_COMPONENTS=1 re-anchors every level.
+                // USE_MY_METRICS, AFTER THE PROGRAM. fsg_ExecuteGlyph@14002f... copies the stored
+                // component phantoms over the composite's current pp1/pp2 once
+                // fsg_CompositeInnerGridFit has returned, so the composite's own program runs with
+                // its OWN scaled phantoms and fs__Contour then measures the span -- and re-anchors
+                // -- on the borrowed ones. Times New Roman 'y-dieresis' at 24ppem: GDI's program
+                // starts at (0, 768) in both passes and its factor is 'y's own, 0xf655.
+                if (glyph.BorrowedPhantoms is { } bp && _realPoints + 1 < _glyphZone.CurX.Length)
+                {
+                    _glyphZone.CurX[_realPoints] = bp[0]; _glyphZone.CurY[_realPoints] = bp[1];
+                    _glyphZone.CurX[_realPoints + 1] = bp[2]; _glyphZone.CurY[_realPoints + 1] = bp[3];
+                }
+                if (s_pp1Origin != 0 && _realPoints + 1 < _glyphZone.CurX.Length
+                    && (HintDepth == 0 || s_pp1OriginComponents))
                 {
                     int pp1 = _realPoints;
                     int dx = -_glyphZone.CurX[pp1];
@@ -3136,6 +3157,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             long half = TrueTypeFont.ClearTypeOversample / 2;
             return (int) ((over >= 0 ? over + half : over - half) / TrueTypeFont.ClearTypeOversample);
         }
+
+        private static readonly bool s_pp1OriginComponents =
+            Environment.GetEnvironmentVariable("WPF_CT_PP1_ORIGIN_COMPONENTS") == "1";
 
         private static readonly int s_pp1Origin =
             Environment.GetEnvironmentVariable("WPF_CT_PP1_ORIGIN") switch
