@@ -10249,6 +10249,22 @@ namespace WgpuInterop.Tests.Text
                         gi += g; oi += o; sum += Math.Abs(g - o);
                     }
                     rows.Add(new FlipRow(v, sum, gi, oi));
+                    // WPF_FLIP_DUMP=1: the pixels themselves, ours and GDI's, over the ink box.
+                    if (Environment.GetEnvironmentVariable("WPF_FLIP_DUMP") == "1")
+                        for (int y = baseline - ppem - 2; y < baseline + 2; y++)
+                        {
+                            var sb = new System.Text.StringBuilder($"  DUMP @{v} y{y,3} ");
+                            for (int x = PenX - 1; x < PenX + 10; x++)
+                                sb.Append($"{255 - raw[(y * Width + x) * 4 + 2],3},"
+                                    + $"{255 - raw[(y * Width + x) * 4 + 1],3},"
+                                    + $"{255 - raw[(y * Width + x) * 4 + 0],3}|");
+                            sb.Append("   ours ");
+                            for (int x = PenX - 1; x < PenX + 10; x++)
+                                sb.Append($"{255 - ours[(y * Width + x) * 4 + 0],3},"
+                                    + $"{255 - ours[(y * Width + x) * 4 + 1],3},"
+                                    + $"{255 - ours[(y * Width + x) * 4 + 2],3}|");
+                            Console.Error.WriteLine(sb.ToString());
+                        }
                 }
                 finally { RemoveFontMemResourceEx(h); }
             }

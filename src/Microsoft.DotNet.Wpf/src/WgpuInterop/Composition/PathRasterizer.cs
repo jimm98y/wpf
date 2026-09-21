@@ -2138,6 +2138,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             1 => (int) MathF.Floor((a + b) * 0.5f),
             2 => (int) MathF.Round((a + b) * 0.5f, MidpointRounding.AwayFromZero),
             3 => (((int) MathF.Round(a * 64f) + (int) MathF.Round(b * 64f)) - 1) >> 7,
+            // WPF_CT_DROPOUT_MID=4: the greatest integer STRICTLY BELOW the midpoint.
+            // The default below wants the same thing and reaches for it with a 1/128 nudge, which
+            // is a slack band, not a tie-break: a midpoint anywhere in (n, n + 1/128] is filed one
+            // row low. WhereTheTwoRasterizersFlipASample catches it on a vertex sitting exactly on
+            // a pixel-row boundary -- sweep the vertex's x in sixty-fourths and our fill row steps
+            // from 3 to 2 one sixty-fourth before GDI's does, every time the midpoint lands in
+            // that band. Ceiling minus one has no band at all and agrees with the nudge
+            // everywhere else.
+            4 => (int) MathF.Ceiling((a + b) * 0.5f) - 1,
             _ => (int) MathF.Floor((a + b) * 0.5f - 1f / 128f),
         };
 
@@ -2209,6 +2218,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly int s_dropoutExactMode =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_EXACT") switch
             { "0" or "off" or "flat" => 0, "cols" => 1, "rows" => 2, _ => 3 };
+
+        private static readonly bool s_rowListTrace =
+            Environment.GetEnvironmentVariable("WPF_CT_ROWLIST") == "1";
 
         private static readonly bool s_scanTrace =
             Environment.GetEnvironmentVariable("WPF_CT_SCAN_TRACE") == "1";
@@ -2834,6 +2846,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 List<int> on = L.On[rUp], off = L.Off[rUp];
                 on.Sort(); off.Sort();
+                // WPF_CT_ROWLIST=1: the walk's own sample indices per sub-row, before they become
+                // a span. This is the boundary between fsc_CalcLine and fsc_FillBitMap: if a
+                // disagreement with GDI moves these, it is the DDA; if it does not, it is what
+                // the fill makes of them.
+                if (s_rowListTrace && (on.Count > 0 || off.Count > 0))
+                    Console.Error.WriteLine($"ROWLIST rUp={rUp} on=[{string.Join(",", on)}]"
+                                            + $" off=[{string.Join(",", off)}]");
                 var dst = new List<(float X, int Dir)>();
                 int n = Math.Min(on.Count, off.Count);
                 for (int k = 0; k < n; k++)
