@@ -1423,19 +1423,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 // The parent's accumulator starts empty (0xffff) for each composite.
                 int acc = glyph.Composite ? s_scanAcc[depth + 1] : -1;
-                int mine = glyph.Composite ? (glyph.ScanControl >= 0 ? own : (acc >= 0 ? acc : own)) : own;
+                int mine;
+                if (s_scanChangedOnly)
+                {
+                    // AN ELEMENT ONLY SAYS SOMETHING IF ITS PROGRAM CHANGED THE SCAN STATE.
+                    // itrp_ExecuteGlyphPgm@140037320 reports `gs+0x84 != gs+0x44` -- the glyph's
+                    // scan control and type, as one 32-bit pair, against the defaults it started
+                    // from -- and fsg_ExecuteGlyph writes the element's own value
+                    // (DoScanControl ? SCANTYPE : 2) only when that is true. Otherwise the element
+                    // keeps 0xffff, or for a composite whatever its children merged into it, and
+                    // 0xffff is neutral in the merge. Palatino 'adieresis' at 20ppem: 'a' sets
+                    // SCANTYPE 4, the dieresis and the composite's own program touch nothing, so GDI
+                    // drops out with 4 (no stub test) and fills the two zero-width columns at the
+                    // dots' vertical tangents, where the composite's unchanged 5 refused them.
+                    // WPF_CT_SCAN_CHANGED=0 restores the old reading.
+                    bool changed = glyph.ScanControl >= 0
+                                   && (glyph.ScanControl != interpreter.PrepScanControl
+                                       || glyph.ScanType != interpreter.PrepScanType);
+                    mine = changed ? own : glyph.Composite ? acc : -1;
+                }
+                else
+                    mine = glyph.Composite ? (glyph.ScanControl >= 0 ? own : (acc >= 0 ? acc : own)) : own;
                 if (depth > 0)
                 {
                     int p = s_scanAcc[depth];
-                    s_scanAcc[depth] = p < 0 ? mine : ((mine & 3) | 4) & p;
+                    if (mine >= 0) s_scanAcc[depth] = p < 0 ? mine : ((mine & 3) | 4) & p;
                 }
                 if (depth == 0)
                 {
                     if (_glyphScan.Count > HintedCacheLimit) _glyphScan.Clear();
+                    // Nothing in the tree changed it: the size's own, as the pre-program left it.
+                    if (mine < 0)
+                        mine = DoScanControl(interpreter.PrepScanControl, (int) MathF.Round(pixelsPerEm))
+                               ? interpreter.PrepScanType : 2;
                     _glyphScan[(gid, (int) MathF.Round(pixelsPerEm * 16f))] = mine;
                 }
             }
         }
+
+        private static readonly bool s_scanChangedOnly =
+            Environment.GetEnvironmentVariable("WPF_CT_SCAN_CHANGED") != "0";
 
         private static void ResetScanAcc(int depth)
         {
