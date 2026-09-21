@@ -4246,8 +4246,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return true;
         }
 
+        /// <summary>WPF_CT_DELTAFLIP=n: a DIAGNOSTIC that inverts exactly ONE ClearType delta
+        /// decision -- the n-th time the ClearType pass asks whether to skip a DELTAP or a SHPIX,
+        /// it gets the other answer. Deltas are size-specific, and so is what is left of the
+        /// holdout (Times Bold is wrong at 12, 14, 15, 17-19 and 21-24 but not 13, 16 or 20), so
+        /// a delta kept where GDI drops it, or dropped where it keeps it, is the obvious discrete
+        /// suspect. WPF_CT_DELTAFLIP_TRACE=1 lists the decisions. Never set in a result.</summary>
+        private static readonly int s_deltaFlipAt =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_DELTAFLIP"), out int df) ? df : -1;
+        private static readonly bool s_deltaFlipTrace =
+            Environment.GetEnvironmentVariable("WPF_CT_DELTAFLIP_TRACE") == "1";
+        [ThreadStatic] private static int t_deltaFlipCount;
+        /// <summary>Reset by the test between glyphs; see WPF_CT_DELTAFLIP.</summary>
+        internal static void ResetDeltaFlip() => t_deltaFlipCount = 0;
+
         private bool SkipDeltaInClearTypeDirection(Zone z, int point, bool compositeExempt,
                                                    bool forShpix = false)
+        {
+            bool skip = SkipDeltaCore(z, point, compositeExempt, forShpix);
+            if ((s_deltaFlipAt >= 0 || s_deltaFlipTrace) && !BiLevelPass && TrueTypeFont.SubpixelFitting)
+            {
+                int n = t_deltaFlipCount++;
+                if (s_deltaFlipTrace)
+                    Console.Error.WriteLine($"DELTAFLIP #{n} {(forShpix ? "SHPIX" : "DELTAP")} pt={point}"
+                        + $" skip={skip} ppem={_ppem} prep={_inPreProgram}");
+                if (n == s_deltaFlipAt) skip = !skip;
+            }
+            return skip;
+        }
+
+        private bool SkipDeltaCore(Zone z, int point, bool compositeExempt, bool forShpix)
         {
             // THE SCALER'S OWN TEST, read from itrp_DeltaEngine@+0x36a18. Unlike SHPIX there is no
             // recognised-FDEF gate here: the suppression is on for every delta once ClearType is

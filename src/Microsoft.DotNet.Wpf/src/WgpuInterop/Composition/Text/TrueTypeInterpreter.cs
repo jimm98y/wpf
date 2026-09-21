@@ -2136,7 +2136,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _pvPtA = _pvPtB = -1;
             _phaseAnyCycle = false;
             _phaseApplied = false;
+            _roundFlipCount = 0;
+            t_deltaFlipCount = 0;
         }
+
+        /// <summary>WPF_CT_ROUNDFLIP=n: a DIAGNOSTIC that flips exactly ONE rounding decision of
+        /// the ClearType pass -- the n-th rounded distance or position the glyph program asks
+        /// for is rounded on the OTHER grid (sixteenth &lt;-&gt; whole pixel). Everything else is
+        /// untouched. Sweeping n over a glyph that still differs from GDI asks a discrete question
+        /// the pixels can answer without anything being fitted: is there ONE instruction whose
+        /// grid choice is wrong? WPF_CT_ROUNDFLIP_TRACE=1 lists the decisions and their indices.
+        /// Never set in a measurement reported as a result.</summary>
+        private static readonly int s_roundFlipAt =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_ROUNDFLIP"), out int rf) ? rf : -1;
+        private static readonly bool s_roundFlipTrace =
+            Environment.GetEnvironmentVariable("WPF_CT_ROUNDFLIP_TRACE") == "1";
+        private int _roundFlipCount;
 
         // ---- x features ------------------------------------------------------------------------
 
@@ -4812,6 +4827,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                          : s_roundLatch && _roundGridSubpixel is bool rg ? rg
                          : s_gridAxisExact ? OnClearTypeAxis : InClearTypeDirection) ? ClearTypeGrid
                        : 1;
+            if ((s_roundFlipAt >= 0 || s_roundFlipTrace) && !BiLevelPass && TrueTypeFont.SubpixelFitting
+                && _gs.Round != RoundMode.Off)
+            {
+                int n = _roundFlipCount++;
+                if (s_roundFlipTrace)
+                    Console.Error.WriteLine($"ROUNDFLIP #{n} pos={position} mdap={mdap} v={value}"
+                                            + $" grid={thirds} x={IsHorizontalProjection}"
+                                            + $" pv=({_gs.ProjX},{_gs.ProjY}) fv=({_gs.FreeX},{_gs.FreeY})"
+                                            + $" round={_gs.Round} installedSp={installed} fnSp={_roundFnSp}"
+                                            + $" latchNow={InClearTypeDirection} bare={bare} prep={_inPreProgram}");
+                if (n == s_roundFlipAt) thirds = thirds == 1 ? ClearTypeGrid : 1;
+            }
             // A SNAP ZONE was tried here -- pull a value onto a whole pixel when it lands within a
             // few 64ths of one, leave it alone otherwise. It is the one mechanism that would explain
             // the shape of the per-glyph measurement, where GDI's lamps prefer the bi-level fit for
