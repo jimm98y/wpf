@@ -1642,6 +1642,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 int rowMax = s_boxFlip ? -((0x1f - gy1) >> 6) : (gy1 + 0x20) >> 6;
                 if (colMax == colMin) colMax++;
                 if (rowMax == rowMin) rowMax++;
+                if (s_boxMeasured)
+                {
+                    // THE BOX GDI ACTUALLY DRAWS INTO. A real draw zeroes the glyph input's +0x94
+                    // (lGetGlyphBitmap, ttfdQueryFontData), so fs_FindBitMapSize takes its bounds
+                    // from fsc_MeasureGlyph@1400344f0 -- the same (min+0x1f)>>6 / (max+0x20)>>6
+                    // rounding, but in the OVERSCALED scan units, and then divides by the
+                    // overscale, flooring the minimum and ceiling the maximum. The maximum is
+                    // EXCLUSIVE. With one scan row per pixel that leaves a sliver with no sample
+                    // in it -- Tahoma 'O-slash''s slash tip at 12ppem, 9.36px high -- outside the
+                    // box, and its dropout fill is clamped into the row below, which is where GDI
+                    // draws it. With five rows a pixel the same rounding can take one row more.
+                    // y-up rows [B, T) map to y-down rows [-T, -B). WPF_CT_BOX_MEASURE=0.
+                    int S = Math.Max(1, nSub), X = SubpixelsPerPixel * 2;
+                    long ymax = -(long) gy0 * S, ymin = -(long) gy1 * S;
+                    long xmin = (long) gx0 * X, xmax = (long) gx1 * X;
+                    long rMin = (ymin + 0x1f) >> 6, rMax = (ymax + 0x20) >> 6;
+                    long cMin = (xmin + 0x1f) >> 6, cMax = (xmax + 0x20) >> 6;
+                    if (rMax == rMin) rMax++;
+                    if (cMax == cMin) cMax++;
+                    int B = (int) Math.Floor(rMin / (double) S), T = (int) Math.Ceiling(rMax / (double) S);
+                    colMin = (int) Math.Floor(cMin / (double) X);
+                    colMax = (int) Math.Ceiling(cMax / (double) X);
+                    rowMin = -T;
+                    rowMax = -B;
+                }
                 xMin = Math.Max(0, (colMin - originX) * SubpixelsPerPixel * 2);
                 xMax = Math.Min(nCols, (colMax - originX) * SubpixelsPerPixel * 2);
                 yMin = Math.Max(0, nRows - (rowMax - originY) * nSub);
@@ -2023,7 +2048,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (why is null && C < xMax && Bit(C, R)) why = "on-right";
                     int fc = smart ? DropMid(on[k].V, off[k].V) : C - 1;
                     if (fc < xMin) fc = xMin;
-                    if (fc >= xMax) why ??= "past-right";
+                    if (fc >= xMax) { if (s_dropClamp) fc = xMax - 1; else why ??= "past-right"; }
                     if (s_dropoutTrace)
                         Console.Error.WriteLine($"DROP H row={R} C={C} x=({on[k].V:F3},{off[k].V:F3})"
                             + $" -> {why ?? $"fill col {fc}"}");
@@ -2083,7 +2108,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (why is null && R < yMax && Bit(C, R)) why = "on-above";
                     int fr = smart ? DropMid(onE.V, offE.V) : R - 1;
                     if (fr < yMin) fr = yMin;
-                    if (fr >= yMax) why ??= "past-top";
+                    // DoVertDropout@140041ea8 CLAMPS a fill past the box to its last row
+                    // (`if (max <= row) row = max - 1`); it does not refuse it. WPF_CT_DROPOUT_CLAMP=0.
+                    if (fr >= yMax) { if (s_dropClamp) fr = yMax - 1; else why ??= "past-top"; }
                     if (s_dropoutTrace)
                         Console.Error.WriteLine($"DROP V col={C} R={R} y=({onE.V:F3},{offE.V:F3})"
                             + $" st={scanType} L[{Count(colOn, colOff, C - 1, R, xMin, xMax)},"
@@ -2157,6 +2184,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         /// <summary>WPF_CT_BOX_FLIP=0: apply fs_FindBitMapSize's row bounds to the y-DOWN
         /// coordinate directly, as this did before 2026-09-20. See the note at the box.</summary>
+        private static readonly bool s_dropClamp =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_CLAMP") != "0";
+
+        private static readonly bool s_boxMeasured =
+            Environment.GetEnvironmentVariable("WPF_CT_BOX_MEASURE") != "0";
+
         private static readonly bool s_boxFlip =
             Environment.GetEnvironmentVariable("WPF_CT_BOX_FLIP") != "0";
 
