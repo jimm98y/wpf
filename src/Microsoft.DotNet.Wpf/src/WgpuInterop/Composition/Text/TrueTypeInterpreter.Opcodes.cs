@@ -1189,7 +1189,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             Push(b == 0 ? 0 : (int)(((long)a << 6) / b));
                             break;
                         }
-                    case 0x63: { int b = Pop(), a = Pop(); Push(MulDiv(a, b, 64)); break; }  // MUL
+                    case 0x63: { int b = Pop(), a = Pop(); Push(s_mulGdi ? GdiMul(a, b) : MulDiv(a, b, 64)); break; }  // MUL
                     case 0x64: Push(Math.Abs(Pop())); break;                                 // ABS
                     case 0x65: Push(-Pop()); break;                                          // NEG
                     case 0x66: Push(Floor(Pop())); break;                                    // FLOOR
@@ -2566,6 +2566,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>WPF_CT_SHPIX_CALL=0 to disable the fontdrvhost SHPIX rule above.</summary>
         private static readonly bool s_instctrlOldOrder =
             Environment.GetEnvironmentVariable("WPF_INSTCTRL_ORDER") == "old";
+
+        /// <summary>itrp_MUL@14003beb0, which rounds two ways: operands both under 0xb505 in
+        /// magnitude take <c>(a * b + 0x20) &gt;&gt; 6</c> -- HALF UP, so -52.5 is -52 -- and larger ones
+        /// round the magnitude and put the sign back, half away from zero. We rounded every product
+        /// away from zero: Times New Roman Bold 'M' at 12ppem multiplies 28 by -120 and SHPIXes its
+        /// middle vertex by the result, a sixty-fourth low. WPF_CT_MUL=old.</summary>
+        private static int GdiMul(int a, int b)
+        {
+            if (a < 0xb505 && b < 0xb505 && a > -0xb505 && b > -0xb505)
+                return (a * b + 0x20) >> 6;
+            long m = ((long) Math.Abs((long) a) * Math.Abs((long) b) + 0x20) >> 6;
+            return (int) ((a < 0) != (b < 0) ? -m : m);
+        }
+
+        private static readonly bool s_mulGdi =
+            Environment.GetEnvironmentVariable("WPF_CT_MUL") != "old";
 
         private static readonly bool s_shpixCallRule =
             Environment.GetEnvironmentVariable("WPF_CT_SHPIX_CALL") != "0";
