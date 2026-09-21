@@ -234,11 +234,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // came out 20-38% light against GDI's ClearType. A face with no outlines keeps its
             // strikes, since they are all it has. WPF_EBDT_DBCS_ONLY=0 uses every strike again.
             if (!tables.ContainsKey("CBLC") && tables.TryGetValue("EBLC", out int eblc)
-                && tables.TryGetValue("EBDT", out int ebdt)
-                && (!hasOutlines || !s_ebdtDbcsOnly || DeclaresDbcsCharset(tables)))
+                && tables.TryGetValue("EBDT", out int ebdt))
             {
                 var strikes = new BitmapGlyphTable(_data, eblc, ebdt);
-                if (strikes.HasStrikes) _bitmaps = strikes;
+                if (strikes.HasStrikes)
+                {
+                    _metricStrikes = strikes;
+                    if (!hasOutlines || !s_ebdtDbcsOnly || DeclaresDbcsCharset(tables)) _bitmaps = strikes;
+                }
             }
             if (tables.TryGetValue("CBLC", out int cblc) && tables.TryGetValue("CBDT", out int cbdt))
             {
@@ -2516,6 +2519,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The compatible-width phase's inputs for one glyph: the advance it will be laid
         /// out at, and the unrounded pass-one span the factor divides.</summary>
+        private static readonly bool s_strikeNumerator =
+            Environment.GetEnvironmentVariable("WPF_CT_STRIKE_NUM") != "0";
+
+        /// <summary>The face's EBLC/EBDT strikes for their METRICS only -- see SetPhaseInputs.
+        /// Built whether or not the strikes are drawn.</summary>
+        private readonly BitmapGlyphTable? _metricStrikes;
+
         private void SetPhaseInputs(int gid, float pixelsPerEm)
         {
             TrueTypeInterpreter.CompatibleAdvance64 =
@@ -2527,6 +2537,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.BiLevelSpan64 =
                 s_spanFromCtPass && TryGetClearTypeSpan64(gid, pixelsPerEm, out int ct64) ? ct64
                 : TryGetHintedSpan64(gid, pixelsPerEm, out int sp64) ? sp64 : 0;
+            // ...UNLESS THE SIZE HAS AN EMBEDDED STRIKE. fs__Contour@140024220 takes the numerator
+            // from pass one's phantom span only while clientRec+0x351 is clear; with a strike at
+            // this size it calls sbit_CalcDevHorMetrics instead, and the numerator is the strike's
+            // own horiAdvance -- whether or not GDI ever draws from the strike (it does not, for a
+            // single-byte face). Cambria Bold 'y' at 16ppem ends pass one with pp2 at 576/64
+            // (GDI's own trace), yet globals[0x1d0] is 0xf0f1 = 512/544: the 16ppem strike says 8.
+            // Dividing our 576 phased the glyph 6% WIDER where GDI compresses it 6%, at exactly
+            // the sizes Cambria Bold ships strikes for (12, 13, 15, 16, 17, 19).
+            // WPF_CT_STRIKE_NUM=0 keeps the span.
+            if (s_strikeNumerator && _metricStrikes is not null && TrueTypeInterpreter.BiLevelSpan64 > 0
+                && _metricStrikes.TryGetStrikeAdvance(gid, (int) MathF.Round(pixelsPerEm), out int strikeAdvance))
+                TrueTypeInterpreter.BiLevelSpan64 =
+                    (strikeAdvance + (GdiEmboldens ? SimBoldAdvancePixels((int) MathF.Round(pixelsPerEm)) : 0)) * 64;
             TrueTypeInterpreter.BiLevelPhantomUntouched =
                 TrueTypeInterpreter.BiLevelSpan64 > 0 && !HintedSpanTouched(gid, pixelsPerEm);
         }

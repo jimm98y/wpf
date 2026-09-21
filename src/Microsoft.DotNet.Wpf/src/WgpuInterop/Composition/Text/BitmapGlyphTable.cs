@@ -228,30 +228,71 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private BitmapGlyph? FromStrike(in Strike strike, int glyphId)
         {
+            if (!Locate(strike, glyphId, out int at, out int length, out int imageFormat, out int bigMetrics))
+                return null;
+            if (imageFormat is 1 or 2 or 5 or 6 or 7)
+                return ReadMono(imageFormat, at, length, strike, bigMetrics);
+            return ReadImage(imageFormat, at, length, strike);
+        }
+
+        /// <summary>The glyph's horizontal advance in the strike drawn at exactly
+        /// <paramref name="ppem"/>, in whole pixels, out of its small or big glyph metrics.
+        /// <para>The scaler reads this even for a face GDI never DRAWS from its strikes:
+        /// fs__Contour takes the compatible-width factor's numerator from
+        /// sbit_CalcDevHorMetrics -- the strike's horiAdvance -- whenever the size has one
+        /// (clientRec+0x351), instead of from pass one's phantom span.</para></summary>
+        public bool TryGetStrikeAdvance(int glyphId, int ppem, out int advance)
+        {
+            advance = 0;
+            foreach (Strike s in _strikes)
+            {
+                if (s.PpemY != ppem || s.PpemX != ppem) continue;
+                if (glyphId < s.FirstGlyph || glyphId > s.LastGlyph) continue;
+                if (!Locate(s, glyphId, out int at, out int length, out int imageFormat, out int bigMetrics))
+                    continue;
+                switch (imageFormat)
+                {
+                    case 1: case 2: case 8: case 17:          // smallGlyphMetrics: advance is byte 4
+                    case 6: case 7: case 9: case 18:          // bigGlyphMetrics: horiAdvance is byte 4
+                        if (length < 5 || at + 5 > _data.Length) continue;
+                        advance = _data[at + 4];
+                        return true;
+                    case 5: case 19:                          // metrics live in the index subtable
+                        if (bigMetrics < 0 || bigMetrics + 5 > _data.Length) continue;
+                        advance = _data[bigMetrics + 4];
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        private bool Locate(in Strike strike, int glyphId, out int at, out int length,
+                            out int imageFormat, out int bigMetrics)
+        {
+            at = length = imageFormat = 0; bigMetrics = -1;
             for (int i = 0; i < strike.NumIndexSubTables; i++)
             {
                 int rec = strike.IndexSubTableArray + i * 8;
-                if (rec + 8 > _data.Length) return null;
+                if (rec + 8 > _data.Length) return false;
 
                 int first = U16(rec), last = U16(rec + 2);
                 if (glyphId < first || glyphId > last) continue;
 
                 int sub = strike.IndexSubTableArray + (int)U32(rec + 4);
-                if (sub + 8 > _data.Length) return null;
+                if (sub + 8 > _data.Length) return false;
 
                 int indexFormat = U16(sub);
-                int imageFormat = U16(sub + 2);
+                imageFormat = U16(sub + 2);
                 int imageDataOffset = (int)U32(sub + 4) + _cbdt;
 
                 int k = glyphId - first;
-                int at, length;
 
                 switch (indexFormat)
                 {
                     case 1:   // u32 offsets, one per glyph plus a terminator
                     {
                         int table = sub + 8;
-                        if (table + (k + 2) * 4 > _data.Length) return null;
+                        if (table + (k + 2) * 4 > _data.Length) return false;
                         int o0 = (int)U32(table + k * 4), o1 = (int)U32(table + (k + 1) * 4);
                         at = imageDataOffset + o0;
                         length = o1 - o0;
@@ -260,7 +301,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 3:   // u16 offsets, otherwise identical to format 1
                     {
                         int table = sub + 8;
-                        if (table + (k + 2) * 2 > _data.Length) return null;
+                        if (table + (k + 2) * 2 > _data.Length) return false;
                         int o0 = U16(table + k * 2), o1 = U16(table + (k + 1) * 2);
                         at = imageDataOffset + o0;
                         length = o1 - o0;
@@ -284,7 +325,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             if (idArray + j * 2 + 2 > _data.Length) break;
                             if (U16(idArray + j * 2) == glyphId) { index = j; break; }
                         }
-                        if (index < 0) return null;
+                        if (index < 0) return false;
                         at = imageDataOffset + index * imageSize;
                         length = imageSize;
                         break;
@@ -299,25 +340,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             if (pairs + j * 4 + 4 > _data.Length) break;
                             if (U16(pairs + j * 4) == glyphId) { index = j; break; }
                         }
-                        if (index < 0 || pairs + (index + 1) * 4 + 2 > _data.Length) return null;
+                        if (index < 0 || pairs + (index + 1) * 4 + 2 > _data.Length) return false;
                         int from = U16(pairs + index * 4 + 2), to = U16(pairs + (index + 1) * 4 + 2);
                         at = imageDataOffset + from;
                         length = to - from;
                         break;
                     }
                     default:
-                        return null;   // anything unknown, rather than guessed at
+                        return false;   // anything unknown, rather than guessed at
                 }
 
-                if (length <= 0 || at < 0 || at + length > _data.Length) return null;
+                if (length <= 0 || at < 0 || at + length > _data.Length) return false;
                 // Index formats 2 and 5 carry bigGlyphMetrics of their own, right after the
                 // constant image size -- image format 5 has none and gets them from there.
-                int bigMetrics = indexFormat == 2 || indexFormat == 5 ? sub + 12 : -1;
-                if (imageFormat is 1 or 2 or 5 or 6 or 7)
-                    return ReadMono(imageFormat, at, length, strike, bigMetrics);
-                return ReadImage(imageFormat, at, length, strike);
+                bigMetrics = indexFormat == 2 || indexFormat == 5 ? sub + 12 : -1;
+                return true;
             }
-            return null;
+            return false;
         }
 
         // The image record: metrics (whose shape depends on the format) followed by the PNG.
