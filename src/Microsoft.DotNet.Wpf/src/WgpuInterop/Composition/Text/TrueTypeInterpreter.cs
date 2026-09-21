@@ -614,6 +614,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // ExecutePhaseControl@140035970 really does not read elem[0x60] -- it only writes
                 // it, at 1400359fc -- so the latch that stops itrp_IUP's copy repeating does not
                 // stop this one. What stops it is the CALL SITE: itrp_Execute reaches it only
+                // THE WHOLE WORD IS 0x8b. fs__NewTransformation writes globals[0x1c0] as 0x8b --
+                // bits 0, 1, 3 and 7 -- when clientRec[0x488] != 0, and as 0 otherwise
+                // (`mov w9,#0x8b` at 1400261ec against `mov w22,#0x0` at 140025b3c). So bits 0
+                // and 1 set with bit 2 clear, which is what this file assumes everywhere, is the
+                // real ClearType value and not an inference. Bits 3 and 7 are read by nothing in
+                // the interpreter; every tbz/tbnz on this word, in fsg_SimpleInnerGridFit,
+                // itrp_CALL, itrp_DeltaEngine, itrp_ALIGNRP and itrp_GETINFO, tests 0, 1 or 2.
+                // It also explains the ctharness: it reads 0 there, so it runs with ClearType off
+                // at the gate the interpreter tests, which is why its x disagrees with ours on
+                // glyphs whose pixels we match exactly while its y is right.
                 // through `globals[0x16b] == 2` (a glyph, not prep), `globals[0x1c0]` bits 0 and 1
                 // (ClearType), and `elem[0xd0] == 0` -- a SECOND latch, written by
                 // fsg_ExecuteGlyph. That one is plainly not zero once the glyph program has run
