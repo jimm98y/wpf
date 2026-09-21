@@ -2159,6 +2159,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // scl_RoundCurrentSideBearingPnt forms it as (xs[pp2] - xs[pp1]) * xScale, not
                 // as the difference of two already-scaled phantoms, and the two round apart --
                 // the same distinction WPF_MDRP_EXACT draws for a black distance.
+                // A COMPOSITE's phantoms arrive already in pixels (see LoadGlyph), so its span is
+                // not scaled a second time: Palatino Linotype 'y-dieresis' at 12ppem had its
+                // 427/64 advance scaled again to 160/64 before its own program, which then
+                // measured the dieresis off it -- GDI starts that program at 428.
+                6 when glyph.Composite => z.CurX[glyph.PointCount]
+                     + (((glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]) + 2) & ~3),
                 6 => z.CurX[glyph.PointCount]
                      + ((Scale(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]) + 2) & ~3),
                 _ => Pix(z.CurX[glyph.PointCount + 1]),              // round, as a bi-level rasterizer does
