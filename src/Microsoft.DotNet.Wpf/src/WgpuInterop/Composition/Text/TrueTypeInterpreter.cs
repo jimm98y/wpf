@@ -775,6 +775,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                ? Scale(glyph.CompositeAdvanceUnits)
                : glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
 
+        private static readonly bool s_compositePp2Org =
+            Environment.GetEnvironmentVariable("WPF_CT_COMPOSITE_PP2ORG") != "0";
+
         private static readonly bool s_compositePp1 =
             Environment.GetEnvironmentVariable("WPF_CT_COMPOSITE_PP1") != "0";
 
@@ -2193,6 +2196,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int v = z.CurX[glyph.PointCount];
                 int r = SubpixelFittingHere && !BiLevelPass ? (v + 2) & ~3 : Pix(v);
                 z.CurX[glyph.PointCount] = z.OrgX[glyph.PointCount] = r;
+                // ...and the ORIGINAL pp2 moves with it (`org[pp2] += round(pp1) - pp1`), though
+                // the current one is then rebuilt from the advance. A program that measures from
+                // pp2's original sees it: Times Bold Cyrillic 'E'@16 MIRPs p24 from pp2, 695 -> 694
+                // turns an original -42 into GDI's -41 and a sixteenth of -40.
+                if (s_compositePp2Org) z.OrgX[glyph.PointCount + 1] += r - v;
             }
             else if (s_pp1Round == 1 || !SubpixelFittingHere)
                 z.CurX[glyph.PointCount] = Pix(z.CurX[glyph.PointCount]);
