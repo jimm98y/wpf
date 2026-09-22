@@ -573,6 +573,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // Calibri Italic 'tcaron' shrinks its comma accent 0.956 by 0.935.
                     if (ChildScaleY16 != 0)
                         _childScaleY = (int)(((long)_scale * ChildScaleY16 + 0x8000) >> 16);
+                    if (s_childPhantomPlain) _phantomScale = _scale;
                     _scale = (int)(((long)_scale * ChildScale16 + 0x8000) >> 16);
                 }
                 LoadGlyph(glyph);
@@ -760,12 +761,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 _scale = sizeScale;
                 _childScaleY = 0;
+                _phantomScale = 0;
             }
         }
 
         /// <summary>The 16.16 magnitude of the component matrix the next glyph is being hinted
         /// under, or 0 for none. See Hint.</summary>
         internal static int ChildScale16;
+
+        /// <summary>The size's own scale while a transformed child is being hinted (0 = no
+        /// child). A transformed component's ORIGINAL phantoms scale with its points (at the
+        /// matrix's magnitude), but its CURRENT advance phantom is rebuilt from the font-unit
+        /// advance at the size's plain scale: Tahoma Bold 'c-stroke' shrinks its stroke 0.85,
+        /// and GDI starts that stroke at original pp2 410 but current pp2 512 (bi-level) / 484
+        /// (ClearType) -- 1286 units * k -- which is what makes its MDRP from pp2 measure -7.
+        /// WPF_CT_CHILD_PHANTOM=scaled scales the current one with the points too.</summary>
+        private int _phantomScale;
+        private int ScalePhantomSpan(int units) => _phantomScale != 0 ? ScaleUnits(units, _phantomScale) : Scale(units);
+        private static readonly bool s_childPhantomPlain =
+            Environment.GetEnvironmentVariable("WPF_CT_CHILD_PHANTOM") != "scaled";
 
         private static readonly bool s_phaseNoProgram =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_NOPROG") == "1";
@@ -2237,7 +2251,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _ when BiLevelPass && s_biLevelSpanRound
                     => z.CurX[glyph.PointCount] + Pix(glyph.Composite
                         ? CompositeSpan(glyph)
-                        : Scale(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount])),
+                        : ScalePhantomSpan(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount])),
                 _ when BiLevelPass => Pix(z.CurX[glyph.PointCount + 1]),
                 1 => (z.CurX[glyph.PointCount + 1] + 63) & ~63,      // ceil
                 2 => z.CurX[glyph.PointCount + 1],                   // leave it alone
@@ -2268,7 +2282,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 6 when glyph.Composite => z.CurX[glyph.PointCount]
                      + ((CompositeSpan(glyph) + 2) & ~3),
                 6 => z.CurX[glyph.PointCount]
-                     + ((Scale(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]) + 2) & ~3),
+                     + ((ScalePhantomSpan(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]) + 2) & ~3),
                 _ => Pix(z.CurX[glyph.PointCount + 1]),              // round, as a bi-level rasterizer does
             };
 
@@ -2331,7 +2345,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 {
                     z.CurX[pp1] = z.OrgX[pp1];
                     z.CurX[pp1 + 1] = z.CurX[pp1]
-                        + Pix(Scale(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]));
+                        + Pix(ScalePhantomSpan(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]));
                 }
             }
 
