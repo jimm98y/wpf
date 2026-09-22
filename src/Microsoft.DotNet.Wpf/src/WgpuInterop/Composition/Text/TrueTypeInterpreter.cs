@@ -2297,6 +2297,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (_phasePartner.Length < np) _phasePartner = new int[np];
             for (int i = 0; i < np; i++) { _phaseP0[i] = -1; _phaseP1[i] = -1; }
             for (int i = 0; i < _phasePartner.Length; i++) _phasePartner[i] = -1;
+            // InitPhaseControl@140035ae0 zeroes every node's VALUE too, at the start of each
+            // program. We left the last glyph's values in place, and SHC adds its reference
+            // point's value after asking for the phase -- which a factor of exactly 1 answers
+            // without computing anything -- so a composite shifted by a component's leftovers.
+            Array.Clear(_phaseVal, 0, Math.Min(np, _phaseVal.Length));
             _phaseGlyphStamp++;
             _pvPtA = _pvPtB = -1;
             _phaseAnyCycle = false;
@@ -2763,10 +2768,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// already placed.</summary>
         private static readonly int s_phaseDepth =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEPTH"), out int pd) ? pd
-            // 1: the COMPONENTS. With mode 7 gone there is nothing else correcting them, and
-            // phasing the assembly instead leaves each component where its own program put it
-            // (185 accented ratchets fail that way against 145 this way, 159 doing both).
-            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 1 : 0;
+            // 2: BOTH, the components and the composite's own program. itrp_Execute@140037320 runs
+            // ExecutePhaseControl on every element once its program ends (and itrp_SHC earlier),
+            // gated only on globals[0x16b] == 2, the ClearType flags and elem[0x60], with no
+            // composite exclusion. The old measurement that made 1 look better ("159 doing both")
+            // was two bugs of ours: a composite's pixel-unit span scaled a second time as the
+            // phase denominator, and node values left over from the previous element. With both
+            // fixed, Times 'ij'@16 traces point for point with GDI. WPF_CT_PHASE_DEPTH=1 restores
+            // components only.
+            : Environment.GetEnvironmentVariable("WPF_CT_PHASE") != "0" ? 2 : 0;
 
         private static readonly bool s_phaseTruncFactor =
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_TRUNC") == "1";
@@ -2939,7 +2949,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // The phase is what places those anchors -- turning it off costs ten to thirty times
             // the error on every one of them -- so a last sixty-fourth in the factor is the shape
             // of what is left. WPF_CT_PHASE_DEN=span restores the phantom difference.</para>
-            int linear = s_phaseDenFontUnits
+            // A COMPOSITE'S "FONT UNITS" ARE ALREADY PIXELS (LoadGlyph sets OrusX = OrgX = CurX for
+            // one), so scaling its span again halved the denominator at 16ppem and doubled the
+            // factor: Times 'ij' phased its own program by 1.583 where the tree's is 0.7915.
+            int linear = s_phaseDenFontUnits && !_inComposite
                        ? Scale(_glyphZone.OrusX[adv] - _glyphZone.OrusX[_realPoints] + SimBoldAdvanceUnits)
                        : _glyphZone.OrgX[adv] - _glyphZone.OrgX[_realPoints];
             // WPF_CT_PHASE_DEN=round: REFUTED (holdout 376,284 -> 37,012,697, 355 ratchets) though
