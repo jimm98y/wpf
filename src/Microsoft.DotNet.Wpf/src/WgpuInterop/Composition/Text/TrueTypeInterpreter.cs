@@ -77,6 +77,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </para></summary>
         public bool Composite;
 
+        /// <summary>A composite's own advance in font units (its hmtx entry), or -1. GDI builds a
+        /// composite's advance phantom from it, scaled once -- see TrueTypeInterpreter.LoadGlyph.</summary>
+        public int CompositeAdvanceUnits = -1;
+
         /// <summary>USE_MY_METRICS: the component's phantoms (pp1 x, y, pp2 x, y), written over the
         /// composite's AFTER its own program has run -- see TrueTypeFont.ReadCompositeProgram.</summary>
         public int[]? BorrowedPhantoms;
@@ -747,6 +751,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>The 16.16 magnitude of the component matrix the next glyph is being hinted
         /// under, or 0 for none. See Hint.</summary>
         internal static int ChildScale16;
+
+        /// <summary>The composite's advance span: its font-unit advance scaled ONCE, as
+        /// fsg_CompositeInnerGridFit does ((units * scale + 0x200) >> 10), rather than the
+        /// difference of its two already-rounded pixel phantoms. A borrowed (USE_MY_METRICS)
+        /// composite has no own advance here and keeps the phantoms it was handed.</summary>
+        private int CompositeSpan(GlyphProgram glyph)
+            => s_compositePp1 && glyph.CompositeAdvanceUnits >= 0
+               ? Scale(glyph.CompositeAdvanceUnits)
+               : glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
+
+        private static readonly bool s_compositePp1 =
+            Environment.GetEnvironmentVariable("WPF_CT_COMPOSITE_PP1") != "0";
 
         private static readonly bool s_biLevelSpanRound =
             Environment.GetEnvironmentVariable("WPF_CT_BILEVEL_PP2") != "pos";
@@ -2152,7 +2168,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // Measured all three ways, ratchets green in each: whole pixel (this)
             // 975,462 / holdout 3,162,566; a sixteenth 985,522 / 3,206,554; not rounded at all
             // 981,440 / 3,189,494. WPF_CT_PP1_SIXTEENTH=2 or 3 to re-measure.
-            if (s_pp1Round == 1 || !SubpixelFittingHere)
+            // A COMPOSITE'S LEFT PHANTOM IS ROUNDED, on the pass's own grid. fsg_CompositeInnerGridFit
+            // @14002cf10 scales the composite's phantoms from font units, rounds the ORIGINAL pp1 --
+            // (v + 2) & ~3 on the ClearType axis, (v + 0x20) & ~0x3f off it -- moves pp2 by the same
+            // amount, copies both to the current points, and then rebuilds pp2 from the font-unit
+            // advance (below). Times Bold 'ij'@16: pp1 1.5/64 -> 2 -> 4 in GDI, where ours stayed 2.
+            // WPF_CT_COMPOSITE_PP1=0 leaves it.
+            if (glyph.Composite && s_compositePp1 && glyph.CompositeAdvanceUnits >= 0)
+            {
+                int v = z.CurX[glyph.PointCount];
+                int r = SubpixelFittingHere && !BiLevelPass ? (v + 2) & ~3 : Pix(v);
+                z.CurX[glyph.PointCount] = z.OrgX[glyph.PointCount] = r;
+            }
+            else if (s_pp1Round == 1 || !SubpixelFittingHere)
                 z.CurX[glyph.PointCount] = Pix(z.CurX[glyph.PointCount]);
             else if (s_pp1Round == 2)
                 z.CurX[glyph.PointCount] = (z.CurX[glyph.PointCount] + 2) & ~3;
@@ -2178,7 +2206,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // WPF_CT_BILEVEL_PP2=pos rounds the position again.
                 _ when BiLevelPass && s_biLevelSpanRound
                     => z.CurX[glyph.PointCount] + Pix(glyph.Composite
-                        ? glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]
+                        ? CompositeSpan(glyph)
                         : Scale(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount])),
                 _ when BiLevelPass => Pix(z.CurX[glyph.PointCount + 1]),
                 1 => (z.CurX[glyph.PointCount + 1] + 63) & ~63,      // ceil
@@ -2208,7 +2236,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // 427/64 advance scaled again to 160/64 before its own program, which then
                 // measured the dieresis off it -- GDI starts that program at 428.
                 6 when glyph.Composite => z.CurX[glyph.PointCount]
-                     + (((glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]) + 2) & ~3),
+                     + ((CompositeSpan(glyph) + 2) & ~3),
                 6 => z.CurX[glyph.PointCount]
                      + ((Scale(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount]) + 2) & ~3),
                 _ => Pix(z.CurX[glyph.PointCount + 1]),              // round, as a bi-level rasterizer does

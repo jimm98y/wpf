@@ -4055,6 +4055,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 Instructions = instructions,
                 PointCount = points,
                 Composite = true,
+                CompositeAdvanceUnits = borrowedMetrics && !s_borrowAfterProgram ? -1 : RawAdvanceWidth(gid),
                 BorrowedPhantoms = borrowedMetrics && s_borrowAfterProgram
                     ? new[] { borrowedOrigin, borrowedOriginY, borrowedAdvance, borrowedAdvanceY } : null,
             };
