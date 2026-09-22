@@ -3843,6 +3843,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_childNorm =
             Environment.GetEnvironmentVariable("WPF_CT_CHILD_NORM") != "0";
 
+        private static readonly bool s_mergeFixed =
+            Environment.GetEnvironmentVariable("WPF_CT_MERGE_FIXED") != "0";
+
+        private static readonly bool s_mergeFixedInhibited =
+            Environment.GetEnvironmentVariable("WPF_CT_MERGE_INHIBITED") != "0";
+
         private static readonly bool s_childScaleXY =
             Environment.GetEnvironmentVariable("WPF_CT_CHILD_SCALE_XY") != "0";
 
@@ -3937,6 +3943,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int count = part.PointCount;
                 var px = new int[count + 2];
                 var py = new int[count + 2];
+                // A NON-UNITARY COMPONENT IS MERGED IN FIXED FONT UNITS. fsg_ExecuteGlyph clears
+                // the element's "in pixels" flag (+0xd4) when mth_UnitarySquare@14008e558 says its
+                // matrix is anything but a pure flip, and then the child's hinted points go back
+                // to font units (scl_ScaleBack: FixDiv by its OWN scale's Rec0 >> 6, which drops six
+                // bits), through the matrix (mth_IntelMul), and forward at the parent's scale
+                // (scl_ScaleFromFixedFUnits), whose FRound arm floors a negative coordinate. Tahoma
+                // Bold 'ccentslash'@12 has the stroke's -64 come back as -65.
+                // WPF_CT_MERGE_FIXED=0 turns the matrix's direction in 26.6 instead.
+                bool unitary = m01 == 0 && m10 == 0 && Math.Abs(m00) == 0x10000 && Math.Abs(m11) == 0x10000;
+                if (s_mergeFixed && s_childScale && xform && !unitary)
+                {
+                    int ppem = interpreter.PreparedPpem, em = interpreter.UnitsPerEm << 16;
+                    // The records the child was hinted with: its x and y magnitudes when it was
+                    // hinted scaled (scl_InitializeChildScaling), the size's own when not.
+                    var cx = new TrueTypeInterpreter.SclRecord((int)((long)(scaledChild ? magX : 0x10000) * ppem), em);
+                    var cy = new TrueTypeInterpreter.SclRecord((int)((long)(scaledChild ? magY : 0x10000) * ppem), em);
+                    var pr = new TrueTypeInterpreter.SclRecord(ppem << 16, em);
+                    // A child whose grid fit is inhibited (INSTCTRL) never reaches pixels at all:
+                    // fsg_SimpleInnerGridFit's no-fit arm takes its ORIGINAL font units << 6 as its
+                    // fixed-font-unit coordinates (scl_OriginalCharPointsToCurrentFixedFUnits), with
+                    // no child scale anywhere. Tahoma Bold 'ccentslash'@8.
+                    GlyphProgram? raw = s_mergeFixedInhibited && interpreter.GridFitInhibited
+                        ? ReadGlyphProgram(componentGid) : null;
+                    if (raw is not null && raw.PointCount != count) raw = null;
+                    for (int i = 0; i < count + 2; i++)
+                    {
+                        int fxu = raw is not null ? raw.X[i] << 6 : cx.Back(part.X[i]);
+                        int fyu = raw is not null ? raw.Y[i] << 6 : cy.Back(part.Y[i]);
+                        px[i] = pr.FromFixed(FixMulAway(fxu, m00) + FixMulAway(fyu, m10));
+                        py[i] = pr.FromFixed(FixMulAway(fxu, m01) + FixMulAway(fyu, m11));
+                    }
+                }
+                else
                 for (int i = 0; i < count + 2; i++)         // the two horizontal phantoms travel too
                 {
                     float fx = part.X[i], fy = part.Y[i];
@@ -4430,10 +4469,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                 // The component, at size, y-DOWN on the 26.6 grid (the plain path's frame).
                 var comp = new List<(Vector2[] Pts, bool[] On)>();
+                List<Contour>? rawContours = null;
                 if (!TryScaleCompositeAt(compGid, k, halfUp, depth + 1, comp))
                 {
                     comp.Clear();
-                    foreach (Contour ct in ReadGlyphContours(compGid, depth + 1))
+                    rawContours = ReadGlyphContours(compGid, depth + 1);
+                    foreach (Contour ct in rawContours)
                     {
                         var pts = new Vector2[ct.Points.Length];
                         for (int i = 0; i < pts.Length; i++)
@@ -4459,6 +4500,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     bool ct = s_ctComponentOffset && SubpixelFitting;
                     dx64 = ct ? (dx64 + 2) & ~3 : (dx64 + 32) & ~63;
                     dy64 = ct && s_shearOffsetSixteenth && _shear != 0f ? (dy64 + 2) & ~3 : (dy64 + 32) & ~63;
+                }
+                // A NON-UNITARY SIMPLE COMPONENT NEVER REACHES PIXELS BEFORE ITS MATRIX: with no
+                // fit, fsg_SimpleInnerGridFit hands its font units << 6 on as fixed font units, the
+                // merge's mth_IntelMul turns them there, and scl_ScaleFromFixedFUnits scales the
+                // result at the size (see ReadCompositeProgram). Tahoma Bold 'ccentslash'@8, whose
+                // gasp leaves it unfitted, has its 0.85 stroke come out 1/64 narrower than scaling
+                // first and turning after. WPF_CT_MERGE_INHIBITED=0 scales first.
+                int m00 = (int) MathF.Round(a * 65536f), m01 = (int) MathF.Round(bb * 65536f);
+                int m10 = (int) MathF.Round(c * 65536f), m11 = (int) MathF.Round(d * 65536f);
+                bool unitary = m01 == 0 && m10 == 0 && Math.Abs(m00) == 0x10000 && Math.Abs(m11) == 0x10000;
+                if (s_mergeFixed && s_mergeFixedInhibited && !unitary && rawContours is not null
+                    && rawContours.Count == comp.Count)
+                {
+                    int ppem = (int) MathF.Round((float) (k * _unitsPerEm));
+                    var pr = new TrueTypeInterpreter.SclRecord(ppem << 16, _unitsPerEm << 16);
+                    for (int ci = 0; ci < comp.Count; ci++)
+                    {
+                        Vector2[] src = rawContours[ci].Points, pts = comp[ci].Pts;
+                        for (int i = 0; i < pts.Length && i < src.Length; i++)
+                        {
+                            int fx = (int) MathF.Round(src[i].X) << 6, fy = (int) MathF.Round(src[i].Y) << 6;
+                            int tx = pr.FromFixed(TrueTypeInterpreter.FixMulAway(fx, m00) + TrueTypeInterpreter.FixMulAway(fy, m10));
+                            int ty = pr.FromFixed(TrueTypeInterpreter.FixMulAway(fx, m01) + TrueTypeInterpreter.FixMulAway(fy, m11));
+                            pts[i] = new Vector2(tx / 64f, -ty / 64f);
+                        }
+                    }
+                    identity = true;                             // the matrix is in the points now
                 }
                 foreach ((Vector2[] pts, bool[] on) in comp)
                 {

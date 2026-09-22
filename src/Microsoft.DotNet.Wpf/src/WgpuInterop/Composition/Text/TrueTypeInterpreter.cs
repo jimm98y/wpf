@@ -817,6 +817,81 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// already fitted.</summary>
         internal int ScaleToPixels(int fontUnits) => Scale(fontUnits);
 
+        /// <summary>The integer size and the em it was prepared at, for the composite merge's
+        /// fixed-font-unit round trip (<see cref="SclRecord"/>).</summary>
+        internal int PreparedPpem => _ppem;
+        internal int UnitsPerEm => _unitsPerEm;
+
+        /// <summary>
+        /// One of the scaler's scale records (globals+0x110..0x14f), as scl_ComputeScaling@1400402d0
+        /// builds it from a numerator and denominator in 16.16: the pair is reduced by their
+        /// common power of two, the numerator takes the 26.6 shift, Rec0 is their 16.16 quotient,
+        /// and the rounder is scl_FRound (a power-of-two denominator), scl_SRound (any other) or
+        /// scl_FixRound (a numerator from 0x8000 up).
+        /// </summary>
+        internal readonly struct SclRecord
+        {
+            internal readonly int Rec0, Den, Num, Shift, Kind;   // Kind: 0 FRound, 1 SRound, 2 FixRound
+
+            internal SclRecord(int num, int den)
+            {
+                int tz = 0;
+                for (uint u = (uint)(num | den); u != 0 && (u & 1) == 0; u >>= 1) tz++;
+                if (tz - 1 > 0) { num >>= tz - 1; den >>= tz - 1; }
+                if (num < 0x2000000) num <<= 6; else den >>= 6;
+                long bias = den / 2;
+                if ((num < 0) != (den < 0)) bias = -bias;
+                long q = den == 0 ? int.MaxValue : ((long)num * 0x10000 + bias) / den;
+                Rec0 = (int)Math.Clamp(q, int.MinValue, int.MaxValue);
+                Den = den; Num = num; Shift = 0;
+                if (num < 0x8000)
+                {
+                    if (den != 0 && (den & (den - 1)) == 0)
+                    {
+                        Kind = 0;
+                        Shift = System.Numerics.BitOperations.TrailingZeroCount(den);
+                    }
+                    else Kind = 1;
+                }
+                else Kind = 2;
+            }
+
+            /// <summary>scl_ScaleFromFixedFUnits@1400958f0: fixed font units (font units in 26.6)
+            /// to 26.6 pixels. The FRound arm is an arithmetic shift with the denominator's half
+            /// as its bias -- a floor, near enough, for a negative coordinate.</summary>
+            internal int FromFixed(int v)
+            {
+                if (Kind == 0 && Num < 0x1ff)
+                    return unchecked(v * Num + (Den >> 1)) >> ((Shift + 6) & 31);
+                if (Kind == 1)
+                {
+                    int n = Num >> 6;
+                    return v < 0 ? -(((Den >> 1) - n * v) / Den) : ((Den >> 1) + n * v) / Den;
+                }
+                return FixMulAway(v, Rec0 >> 6);
+            }
+
+            /// <summary>scl_ScaleBack@140095668: 26.6 pixels to fixed font units.</summary>
+            internal int Back(int v) => FixDivAway(v, Rec0 >> 6);
+        }
+
+        /// <summary>DWRITE_FixMul@140026538: the 16.16 product, half away from zero.</summary>
+        internal static int FixMulAway(int a, int b)
+        {
+            long p = (long)a * b;
+            return (int)Math.Clamp((p + (p >> 63) + 0x8000) >> 16, int.MinValue, int.MaxValue);
+        }
+
+        /// <summary>DWRITE_FixDiv@1400264c8: the 16.16 quotient, half away from zero.</summary>
+        internal static int FixDivAway(int a, int b)
+        {
+            long bias = b / 2;
+            if ((a < 0) != (b < 0)) bias = -bias;
+            long n = (long)a * 0x10000 + bias;
+            if (b == 0) return int.MaxValue;
+            return (int)Math.Clamp(n / b, int.MinValue, int.MaxValue);
+        }
+
         /// <summary>A 26.6 distance rounded to a whole pixel, as the rasterizer rounds it.</summary>
         internal static int RoundToPixel(int f26d6) => Pix(f26d6);
 
