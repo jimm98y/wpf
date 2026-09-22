@@ -3001,11 +3001,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     + $" orgPP2={_glyphZone.OrgX[adv]} linear={linear} compat64={CompatibleAdvance64}"
                     + $" curPP1={_glyphZone.CurX[_realPoints]} curPP2={_glyphZone.CurX[adv]}"
                     + $" span64={BiLevelSpan64}");
-            if (linear <= 0 || CompatibleAdvance64 <= 0) return;
             // A COMPONENT DIVIDES BY THE ROOT'S LINEAR ADVANCE, not its own: globals[0x1d0] is
             // computed once per glyph tree from the root (see TrueTypeFont.SetPhaseInputs), so
-            // numerator and denominator both belong to the composite.
+            // numerator and denominator both belong to the composite. AND BEFORE THE ZERO TEST:
+            // a combining mark has no advance of its own, and returning on that left Cambria's
+            // comma-below (uni0326) in 'lcommaaccent' unphased where GDI moves it with the rest.
             if (RootLinear64 > 0 && HintDepth > 0) linear = RootLinear64;
+            if (linear <= 0 || CompatibleAdvance64 <= 0) return;
             _ctFrac = CompatibleAdvance64 / (float) linear - 1f;
             // GS+0x1d0 is a 16.16 FIXED, not a float, and every phase below is derived from it by
             // integer arithmetic. Carrying it as a float rounded differently from GDI at the last
