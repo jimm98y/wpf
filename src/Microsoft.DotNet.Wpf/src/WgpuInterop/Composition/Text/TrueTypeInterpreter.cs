@@ -465,6 +465,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool _prepRun;
         private bool _inPreProgram;
         private bool _inComposite;
+        private int _compositeAdvanceUnits = -1;
         private bool _iupDone;
         private bool _iupXDone, _iupYDone;
         private bool _prepClearType;
@@ -544,6 +545,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // have been touched while its component ran, so a delta moves the whole outline instead
             // of denting it -- which is how diacritics keep their distance from the base glyph.
             _inComposite = glyph.Composite;
+            _compositeAdvanceUnits = glyph.Composite ? glyph.CompositeAdvanceUnits : -1;
             _iupDone = false;
             _iupXDone = _iupYDone = false;
             // itrp_Execute@140037148 clears bits 0, 1, 3 and 4 of gs+0x1c2 as a glyph starts
@@ -2980,8 +2982,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // A COMPOSITE'S "FONT UNITS" ARE ALREADY PIXELS (LoadGlyph sets OrusX = OrgX = CurX for
             // one), so scaling its span again halved the denominator at 16ppem and doubled the
             // factor: Times 'ij' phased its own program by 1.583 where the tree's is 0.7915.
+            // ...and the composite's own advance is the one to scale, WITH the simulated-bold
+            // units the root's linear carries: Microsoft Sans Serif Bold (simulated) 'ij'@12 has
+            // GDI's factor 0x10d53 = 384 / 365, where the pixel span (350) gave 1.0971.
             int linear = s_phaseDenFontUnits && !_inComposite
                        ? Scale(_glyphZone.OrusX[adv] - _glyphZone.OrusX[_realPoints] + SimBoldAdvanceUnits)
+                       : _inComposite && _compositeAdvanceUnits >= 0 && s_phaseDenFontUnits
+                       ? Scale(_compositeAdvanceUnits + SimBoldAdvanceUnits)
                        : _glyphZone.OrgX[adv] - _glyphZone.OrgX[_realPoints];
             // WPF_CT_PHASE_DEN=round: REFUTED (holdout 376,284 -> 37,012,697, 355 ratchets) though
             // 'A'@20B alone went 6,767 -> 4,095. The denominator is the linear advance ROUNDED to a whole
