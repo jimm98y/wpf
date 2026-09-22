@@ -4007,6 +4007,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// to the ones that are not. See SolveGdisOutlineXy, which reports the interpreter's own
         /// point index, its touch flag and its on/off-curve flag for exactly this question.</para>
         /// </summary>
+        private static readonly bool s_iupFlatAdd =
+            Environment.GetEnvironmentVariable("WPF_CT_IUP_FLATADD") != "0";
+
         private static void Carry(int[] cur, int[] org, int[] orus, int from, int to, int ref1, int ref2)
         {
             if (from > to) return;
@@ -4055,9 +4058,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // differ in the design land on the same reference coordinate -- so it is the serifs
                 // and bars, which is where the residual is.
                 // WPF_CT_IUP_FLAT=0 restores the split.
+                // AND IT ADDS TO THE CURRENT POSITION, `cur[i] += delta`, not org[i] + delta. The
+                // two agree until something has already moved an untouched point -- the phase,
+                // which itrp_IUP runs just before interpolating: Times Bold 'Lslash'@16 phases
+                // p11 115 -> 108 between two flat references, and GDI keeps 108 where rebuilding
+                // from the original put it back at 115. WPF_CT_IUP_FLATADD=0 rebuilds from org.
                 for (int i = from; i <= to; i++)
-                    cur[i] = org[i] + (s_iupFlatLower ? delta1
-                                                      : (org[i] <= org1 ? delta1 : delta2));
+                {
+                    int d = s_iupFlatLower ? delta1 : (org[i] <= org1 ? delta1 : delta2);
+                    cur[i] = s_iupFlatAdd ? cur[i] + d : org[i] + d;
+                }
                 return;
             }
 
