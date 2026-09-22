@@ -3837,6 +3837,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_childScale =
             Environment.GetEnvironmentVariable("WPF_CT_CHILD_SCALE") != "0";
 
+        private static readonly bool s_childNorm =
+            Environment.GetEnvironmentVariable("WPF_CT_CHILD_NORM") != "0";
+
+        private static readonly bool s_childScaleXY =
+            Environment.GetEnvironmentVariable("WPF_CT_CHILD_SCALE_XY") != "0";
+
         private static int FixMulAway(int v, int m16)
         {
             long p = (long)v * m16;
@@ -3912,12 +3918,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int m00 = (int)MathF.Round(a * 65536f), m01 = (int)MathF.Round(b * 65536f);
                 int m10 = (int)MathF.Round(c * 65536f), m11 = (int)MathF.Round(d * 65536f);
                 int magX = Math.Max(Math.Abs(m00), Math.Abs(m01)), magY = Math.Max(Math.Abs(m10), Math.Abs(m11));
-                int savedChild = TrueTypeInterpreter.ChildScale16;
-                if (s_childScale && xform && magX == magY && magX != 0x10000)
+                int savedChild = TrueTypeInterpreter.ChildScale16, savedChildY = TrueTypeInterpreter.ChildScaleY16;
+                if (s_childScale && xform && (magX != 0x10000 || magY != 0x10000)
+                    && (magX == magY || s_childScaleXY))
+                {
                     TrueTypeInterpreter.ChildScale16 = magX;
+                    TrueTypeInterpreter.ChildScaleY16 = magX == magY ? 0 : magY;
+                }
+                bool scaledChild = TrueTypeInterpreter.ChildScale16 != 0;
                 GlyphProgram? part;
                 try { part = HintedProgram(interpreter, componentGid, pixelsPerEm, depth + 1); }
-                finally { TrueTypeInterpreter.ChildScale16 = savedChild; }
+                finally { TrueTypeInterpreter.ChildScale16 = savedChild; TrueTypeInterpreter.ChildScaleY16 = savedChildY; }
                 if (part is null) continue;                 // a blank component places nothing
 
                 int count = part.PointCount;
@@ -3929,8 +3940,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     if (s_childScale && xform)
                     {
                         // mth_IntelMul@140026b40: 16.16 products, each rounded half away from zero.
-                        px[i] = FixMulAway(part.X[i], m00) + FixMulAway(part.Y[i], m10);
-                        py[i] = FixMulAway(part.X[i], m01) + FixMulAway(part.Y[i], m11);
+                        // THE MAGNITUDE IS ALREADY IN THE CHILD. It was hinted at the matrix's
+                        // magnitude (TrueTypeInterpreter.Hint), and fsg_MergeGlyphData applies the
+                        // matrix in FIXED FONT UNITS -- scaled back by the child's scale, multiplied,
+                        // scaled forward by the parent's -- so what reaches the parent is the child's
+                        // own coordinates turned by the matrix's DIRECTION, m / |m| per axis. Applying
+                        // the whole matrix again shrank Calibri Italic's comma accent twice (0.956^2).
+                        // WPF_CT_CHILD_NORM=0 applies the whole matrix.
+                        int nx = s_childNorm && scaledChild ? magX : 0x10000, ny = s_childNorm && scaledChild ? magY : 0x10000;
+                        int a00 = (int)(((long)m00 << 16) / nx), a01 = (int)(((long)m01 << 16) / ny);
+                        int a10 = (int)(((long)m10 << 16) / nx), a11 = (int)(((long)m11 << 16) / ny);
+                        px[i] = FixMulAway(part.X[i], a00) + FixMulAway(part.Y[i], a10);
+                        py[i] = FixMulAway(part.X[i], a01) + FixMulAway(part.Y[i], a11);
                         continue;
                     }
                     px[i] = (int)MathF.Round(a * fx + c * fy);

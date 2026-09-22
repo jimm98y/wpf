@@ -235,8 +235,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// baseline: a descender's -0.5 becomes -1 rather than 0.</summary>
         private int ScaleY(int fontUnits)
         {
-            if (!s_yScaleAway) return ScaleUnits(fontUnits, _scale);
-            long v = (long) fontUnits * _scale;
+            int sc = _childScaleY != 0 ? _childScaleY : _scale;
+            if (!s_yScaleAway) return ScaleUnits(fontUnits, sc);
+            long v = (long) fontUnits * sc;
             return (int) ((v + (v >> 63) + 0x8000) >> 16);
         }
 
@@ -567,7 +568,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // 'questiondown' is 'question' at -0.99988: GDI starts it at 855 * 0.5 * 0.99988 =
                 // 427.45 -> 427, where the plain scale's exact half gave 428.
                 if (ChildScale16 != 0 && !glyph.Composite)
+                {
+                    // x and y on their own magnitudes (max |m00|,|m01| and max |m10|,|m11|):
+                    // Calibri Italic 'tcaron' shrinks its comma accent 0.956 by 0.935.
+                    if (ChildScaleY16 != 0)
+                        _childScaleY = (int)(((long)_scale * ChildScaleY16 + 0x8000) >> 16);
                     _scale = (int)(((long)_scale * ChildScale16 + 0x8000) >> 16);
+                }
                 LoadGlyph(glyph);
                 _steps = 0;
 
@@ -747,12 +754,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             finally
             {
                 _scale = sizeScale;
+                _childScaleY = 0;
             }
         }
 
         /// <summary>The 16.16 magnitude of the component matrix the next glyph is being hinted
         /// under, or 0 for none. See Hint.</summary>
         internal static int ChildScale16;
+
+        /// <summary>The y magnitude when it differs from x's (0 = same as ChildScale16).</summary>
+        internal static int ChildScaleY16;
+        private int _childScaleY;
 
         /// <summary>The composite's advance span: its font-unit advance scaled ONCE, as
         /// fsg_CompositeInnerGridFit does ((units * scale + 0x200) >> 10), rather than the
