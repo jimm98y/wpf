@@ -3837,6 +3837,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_childScale =
             Environment.GetEnvironmentVariable("WPF_CT_CHILD_SCALE") != "0";
 
+        private static readonly bool s_compDump =
+            Environment.GetEnvironmentVariable("WPF_CT_COMPDUMP") == "1";
+
         private static readonly bool s_childNorm =
             Environment.GetEnvironmentVariable("WPF_CT_CHILD_NORM") != "0";
 
@@ -4053,6 +4056,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             var Y = new int[points + 4];
             var On = new bool[points + 4];
             for (int i = 0; i < points; i++) { X[i] = xs[i]; Y[i] = ys[i]; On[i] = onCurve[i]; }
+            // WPF_CT_COMPDUMP=1: the assembled composite, in 26.6, for comparing with GDI's
+            // merged outline (ctharness's final table).
+            if (s_compDump && !TrueTypeInterpreter.BiLevelPass)
+            {
+                var sb = new System.Text.StringBuilder($"COMPDUMP gid={gid} ppem={pixelsPerEm} pts=");
+                for (int i = 0; i < points; i++) sb.Append(X[i]).Append(',').Append(Y[i]).Append(' ');
+                Console.Error.WriteLine(sb.ToString());
+            }
 
             // The phantom points, in pixels like everything else here -- a composite is not scaled
             // again on the way in, so nothing else will convert them.

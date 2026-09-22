@@ -662,7 +662,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // against 31,200. The at-execute call is still needed for the glyphs that never
                 // reach an IUP -- turning it off costs 217,420.
                 if (s_phaseTwice) _phaseApplied = false;
-                if (s_phaseAtExecute) ApplyPhaseAtIup();
+                // ...AND ONLY IF A PROGRAM RAN. ExecutePhaseControl sits at the end of itrp_Execute,
+                // which fsg_*InnerGridFit only calls when the element HAS instructions: Constantia
+                // Italic 'napostrophe' is a composite with none, and phasing it anyway moved its
+                // phantoms. WPF_CT_PHASE_NOPROG=1 phases program-less glyphs again.
+                if (s_phaseAtExecute && (s_phaseNoProgram || (glyph.Instructions.Length > 0 && !GridFitInhibited)))
+                    ApplyPhaseAtIup();
 
                 // THE OUTLINE IS RE-ANCHORED ON THE FITTED LEFT PHANTOM. fs__Contour, after each
                 // pass's fsg_ExecuteGlyph (140025398.. for pass one, the pfVar50 loop for pass
@@ -761,6 +766,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>The 16.16 magnitude of the component matrix the next glyph is being hinted
         /// under, or 0 for none. See Hint.</summary>
         internal static int ChildScale16;
+
+        private static readonly bool s_phaseNoProgram =
+            Environment.GetEnvironmentVariable("WPF_CT_PHASE_NOPROG") == "1";
 
         /// <summary>The y magnitude when it differs from x's (0 = same as ChildScale16).</summary>
         internal static int ChildScaleY16;
