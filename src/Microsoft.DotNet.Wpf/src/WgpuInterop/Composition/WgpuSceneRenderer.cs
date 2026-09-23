@@ -104,6 +104,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal int DropoutOverride = -1;
         internal int PpemOverride = -1;
 
+        /// <summary>The size band this renderer takes GDI's text path through -- the hinted
+        /// outline, its filter, the whole-pixel origin. WPF_HINT_MIN_PPEM / WPF_HINT_MAX_PPEM.
+        /// <para>IT USED TO BE 6..100, on the reasoning that there is nothing to gain outside it.
+        /// There is: outside the band a run falls back to the generic glyph path, whose level ramp
+        /// is LINEAR (255, 212, 170, 128) where GDI's is its seven-level table (255, 219, 182,
+        /// 144), and GDI rasterizes every size through its own filter whether or not the face's
+        /// gasp lets it grid-fit. So the band cost parity at BOTH ends, and not a little: over
+        /// Arial, Times, Verdana and Segoe UI in four styles, 5ppem measures 1,050,908 with the
+        /// floor and 0 without, and 101..200ppem measures 48,312,830 with the ceiling and 0
+        /// without. Even at 300 and 400, where our device advances stop (ppem &gt; 255) and the
+        /// outline is all that is left, hinting is better: 1,760,787 against 3,147,918.</para>
+        /// <para>Two pixels an em is the smallest size the specimen can measure and it reads 58
+        /// there, so the floor is one.</para></summary>
+        private static readonly float s_hintMinPpem =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_HINT_MIN_PPEM"),
+                           System.Globalization.CultureInfo.InvariantCulture, out float hmin) ? hmin : 1f;
+
+        private static readonly float s_hintMaxPpem =
+            float.TryParse(Environment.GetEnvironmentVariable("WPF_HINT_MAX_PPEM"),
+                           System.Globalization.CultureInfo.InvariantCulture, out float hmax) ? hmax : 2048f;
+
         private static readonly bool s_symVertical =
             Environment.GetEnvironmentVariable("WPF_SYM_VERTICAL") == "1";
 
@@ -4721,7 +4742,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                            && MathF.Abs(MathF.Abs(world.M11) - MathF.Abs(world.M22)) < 1e-4f;
             float hintPpem = s_hintText && upright && deviceScale > 1e-6f
                              ? run.EmSize * deviceScale : 0f;
-            if (hintPpem < 6f || hintPpem > 100f)
+            if (hintPpem < s_hintMinPpem || hintPpem > s_hintMaxPpem)
                 hintPpem = 0f;
             var hinted = hintPpem > 0f ? font as Text.IHintedGlyphFont : null;
 
