@@ -1193,8 +1193,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // script face's thin strokes snapped up to whole pixels where GDI leaves the outline
             // where the designer drew it and lets it fade. Its gasp says GRIDFIT at every size and
             // that is not a lie; there is simply nothing to run. WPF_UNHINTED_FACE=fit restores it.
+            // ...AND A VERSION 1 'gasp' THAT CLEARS SYMMETRIC_GRIDFIT SAYS SO TO CLEARTYPE.
+            // CompatibleAdvance already reads that bit -- the face telling a ClearType rasterizer
+            // not to run its program -- but only for the advance, so the OUTLINE was fitted anyway.
+            // MV Boli never sets it (its ranges are DOGRAY, GRIDFIT, GRIDFIT+DOGRAY), and every
+            // one of its glyphs differed from GDI by twenty to seventy pixels at 16ppem although
+            // our instruction trace is identical to the driver's. WPF_CT_GASP_SYMFIT=0 fits anyway.
             if (!FaceWantsGridFit(pixelsPerEm) || PrepInhibitsGridFit(pixelsPerEm)
-                || (s_scaleUnhintedFaces && Interpreter() is null))
+                || (s_scaleUnhintedFaces && Interpreter() is null)
+                || (s_gaspSymGridfitGovernsOutline && ClearTypeRendering
+                    && GaspDeclinesClearTypeGridFit(pixelsPerEm)))
             {
                 // The outline as drawn, SCALED TO THIS SIZE -- not a refusal. Callers of this method
                 // are promised a device-pixel outline and scale everything else by the reciprocal of
@@ -1515,6 +1523,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// hinting program, as this used to.</summary>
         private static readonly bool s_scaleUnhintedFaces =
             Environment.GetEnvironmentVariable("WPF_UNHINTED_FACE") != "fit";
+
+        /// <summary>WPF_CT_GASP_SYMFIT=0: fit the outline even where a version 1 'gasp' clears
+        /// SYMMETRIC_GRIDFIT, as this used to.</summary>
+        private static readonly bool s_gaspSymGridfitGovernsOutline =
+            Environment.GetEnvironmentVariable("WPF_CT_GASP_SYMFIT") != "0";
 
         private static readonly bool s_alwaysFit =
             System.Environment.GetEnvironmentVariable("WPF_GASP_FIT") == "always";
