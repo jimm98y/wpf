@@ -2106,6 +2106,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         ///  Italic is the same story told twice, because a family may express it as a 0/1 'ital'
         ///  switch or as a continuous 'slnt' angle in degrees (negative leans right).
         /// </remarks>
+        /// <summary>Put this font on a NAMED INSTANCE's axis settings -- what a family like
+        /// "Segoe UI Variable Text" means. Called right after construction, before anything has
+        /// been read through, so nothing cached needs clearing.</summary>
+        /// <summary>A diagnostic: whether this font is on a non-default instance and whether it
+        /// has outline deltas to draw it with.</summary>
+        internal string VariationState => _variations is null ? "no fvar"
+            : $"varied={_variations.IsVaried} deltas={_variations.HasOutlineDeltas}";
+
+        internal void ApplyNamedInstance(IReadOnlyDictionary<uint, float> coordinates)
+        {
+            if (_variations is null || coordinates.Count == 0) return;
+            _variations.SetInstance(coordinates);
+            _advanceDeltas.Clear();
+        }
+
         private static void SelectInstance(VariableFont variations, bool bold, bool oblique,
                                            out bool variedBold, out bool variedOblique)
         {

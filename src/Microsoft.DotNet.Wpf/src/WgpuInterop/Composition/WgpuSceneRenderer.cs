@@ -4631,7 +4631,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 bool simBold = bold && Text.FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold);
                 if (Text.CffFont.IsCff(bytes, sfnt))
                     return new Text.CffFont(bytes, simBold, italic && !fileItalic, sfnt);
-                return new Text.TrueTypeFont(bytes, simBold, italic && !fileItalic, sfnt);
+                // A NAMED INSTANCE'S FAMILY carries its axis settings with it: "Segoe UI Variable
+                // Text" is (opsz 10.5, wght 400) of one file and its bold is that file at wght
+                // 700 -- a real weight, not a simulation. See FontFiles.ScanNamedInstances.
+                Text.FontFiles.NamedInstance? instance = Text.FontFiles.FindInstance(family, bold, italic);
+                var face = new Text.TrueTypeFont(bytes, simBold && instance is null,
+                                                 italic && !fileItalic, sfnt);
+                if (instance is { } inst) face.ApplyNamedInstance(inst.Coords);
+                return face;
             }
             catch (Exception)
             {

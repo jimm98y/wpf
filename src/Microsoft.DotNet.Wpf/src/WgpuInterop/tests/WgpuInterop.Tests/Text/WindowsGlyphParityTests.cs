@@ -8008,9 +8008,19 @@ namespace WgpuInterop.Tests.Text
                         int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
                         if (CffFont.IsCff(bytes, sfnt)) continue;
                         FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+                        // The renderer's own resolution, named instances and all -- otherwise this
+                        // measures a variable family at its default master against GDI's instance.
+                        FontFiles.NamedInstance? instance = FontFiles.FindInstance(family, bold, italic);
                         var font = new TrueTypeFont(bytes,
-                                                    bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold),
+                                                    instance is null
+                                                    && bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold),
                                                     italic && !fileItalic, sfnt);
+                        if (instance is { } inst) font.ApplyNamedInstance(inst.Coords);
+                        if (Environment.GetEnvironmentVariable("WPF_WEIGHT_INSTDBG") == "1")
+                            report.AppendLine($"      instance {family}/{(bold ? "B" : "")}{(italic ? "I" : "")}: "
+                                + (instance is { } d2
+                                   ? string.Join(",", System.Linq.Enumerable.Select(d2.Coords, c => $"{c.Key:x}={c.Value}"))
+                                   : "none") + "  " + font.VariationState);
 
                         Gdi.s_rawRgb = raw;
                         Gdi.Draw(Sample, family, ppem, PenX, 28, SpecimenWidth, Height, bold, italic);

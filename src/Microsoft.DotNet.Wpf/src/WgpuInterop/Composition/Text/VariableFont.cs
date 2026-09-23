@@ -33,6 +33,7 @@
 //
 
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Numerics;
 
@@ -388,6 +389,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
                 float coord = a < _coords.Length ? _coords[a] : 0f;
                 if (coord == 0f) return 0f;
+
+                // AT THE PEAK, THE FACTOR IS ONE, and that test comes BEFORE the region one.
+                // A master is normally encoded with its peak ON the edge of its intermediate
+                // region -- Segoe UI Variable's bold tuple peaks at wght 1.0 with the region
+                // [0.5, 1.0] -- so testing `coord >= end` first threw away the very tuple the
+                // instance asked for, and EVERY tuple of that font scored zero: its Bold drew
+                // byte-identical to its Regular, and so did every other variable face whose
+                // gvar is written that way.
+                if (coord == peakA) continue;
 
                 if (interStart is null || interEnd is null)
                 {

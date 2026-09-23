@@ -172,6 +172,214 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
         }
 
+        /// <summary>A variable font's NAMED INSTANCE: the file it lives in and the axis settings
+        /// that make it.</summary>
+        internal readonly struct NamedInstance
+        {
+            internal NamedInstance(string path, int sfnt, Dictionary<uint, float> coords)
+            { Path = path; Sfnt = sfnt; Coords = coords; }
+
+            internal string Path { get; }
+            internal int Sfnt { get; }
+            internal Dictionary<uint, float> Coords { get; }
+        }
+
+        /// <summary>WINDOWS REGISTERS A VARIABLE FONT'S INSTANCES AS FAMILIES, and it names them
+        /// from 'STAT'. EnumFontFamiliesEx on a stock Windows 11 lists "Segoe UI Variable Text",
+        /// "Segoe UI Variable Text Light", "Segoe UI Variable Display Semibold" and nine more --
+        /// families an application asks for by name, Windows' own shell among them -- and NOT the
+        /// typographic family "Segoe UI Variable", which GDI does not know at all: asked for it,
+        /// it hands back ARIAL. We knew only the file's name-1 record, so every one of those
+        /// families resolved to nothing and its text drew in the fallback face.
+        /// <para>The rule, read off 'STAT' and confirmed against that enumeration: take each fvar
+        /// instance's coordinates, name each axis through STAT's value records in the table's
+        /// AxisOrdering, drop the ones flagged ELIDABLE (bit 1 -- Segoe UI Variable's weight 400
+        /// is "Regular" and elided), and what is left joins the family name, except Bold and
+        /// Italic which are the STYLE. So (opsz 10.5, wght 400) is "Segoe UI Variable Text"
+        /// regular, (opsz 10.5, wght 700) is that family in bold, and (opsz 36, wght 300) is
+        /// "Segoe UI Variable Display Light".</para>
+        /// <para>A face with no 'STAT' falls back to the instance's own subfamily string split the
+        /// same way, which is what Bahnschrift's "Light SemiCondensed" needs.</para></summary>
+        private static void ScanNamedInstances(byte[] d, int sfnt, string path, string family,
+                                               Dictionary<string, NamedInstance?[]> into)
+        {
+            Dictionary<string, int> tables = SfntTables(d, sfnt);
+            if (!tables.TryGetValue("fvar", out int fvar) || fvar + 16 > d.Length) return;
+
+            int axesOff = fvar + Be16(d, fvar + 4);
+            int axisCount = Be16(d, fvar + 8), axisSize = Be16(d, fvar + 10);
+            int instCount = Be16(d, fvar + 12), instSize = Be16(d, fvar + 14);
+            if (axisCount == 0 || axisSize < 20 || instSize < 4 + axisCount * 4) return;
+
+            var axisTags = new uint[axisCount];
+            for (int i = 0; i < axisCount; i++)
+            {
+                int at = axesOff + i * axisSize;
+                if (at + 20 > d.Length) return;
+                axisTags[i] = (uint) Be32(d, at);
+            }
+
+            // STAT says how the axes are ordered in a name and what each value on them is called.
+            var order = new int[axisCount];
+            for (int i = 0; i < axisCount; i++) order[i] = i;
+            // STAT indexes ITS OWN design axes, which need not be fvar's order: Segoe UI Variable
+            // lists wght then opsz in fvar and opsz then wght in STAT, so matching the two by
+            // index found nothing and every instance fell back to its subfamily string.
+            var statTags = new List<uint>();
+            var values = new List<(int Axis, float Value, float Min, float Max, int Flags, int NameId)>();
+            if (tables.TryGetValue("STAT", out int stat) && stat + 20 <= d.Length)
+            {
+                // STAT: majorVersion(0) minorVersion(2) designAxisSize(4) designAxisCount(6)
+                // designAxesOffset(8) axisValueCount(12) offsetToAxisValueOffsets(14).
+                int designOff = stat + Be32(d, stat + 8);
+                int designSize = Be16(d, stat + 4), designCount = Be16(d, stat + 6);
+                for (int i = 0; i < designCount; i++)
+                {
+                    int at = designOff + i * designSize;
+                    if (at + 8 > d.Length) break;
+                    uint tag = (uint) Be32(d, at);
+                    int ordering = Be16(d, at + 6);
+                    statTags.Add(tag);
+                    for (int a = 0; a < axisCount; a++)
+                        if (axisTags[a] == tag && ordering < axisCount) order[a] = ordering;
+                }
+
+                int avOff = stat + Be32(d, stat + 14);
+                int avCount = Be16(d, stat + 12);
+                for (int i = 0; i < avCount; i++)
+                {
+                    int rec = avOff + i * 2;
+                    if (rec + 2 > d.Length) break;
+                    int v = avOff + Be16(d, rec);
+                    if (v + 12 > d.Length) break;
+                    int format = Be16(d, v), axis = Be16(d, v + 2), flags = Be16(d, v + 4);
+                    int nameId = Be16(d, v + 6);
+                    if (format == 1 || format == 3)
+                        values.Add((axis, Fixed(d, v + 8), float.NaN, float.NaN, flags, nameId));
+                    else if (format == 2 && v + 20 <= d.Length)
+                        values.Add((axis, Fixed(d, v + 8), Fixed(d, v + 12), Fixed(d, v + 16), flags, nameId));
+                    else if (format == 4)
+                    {
+                        int count = axis;                     // format 4 puts the count where the axis is
+                        flags = Be16(d, v + 4); nameId = Be16(d, v + 6);
+                        for (int k = 0; k < count && v + 8 + k * 6 + 6 <= d.Length; k++)
+                            values.Add((Be16(d, v + 8 + k * 6), Fixed(d, v + 8 + k * 6 + 2),
+                                        float.NaN, float.NaN, flags, nameId));
+                    }
+                }
+            }
+
+            int instOff = axesOff + axisCount * axisSize;
+            for (int i = 0; i < instCount; i++)
+            {
+                int at = instOff + i * instSize;
+                if (at + 4 + axisCount * 4 > d.Length) return;
+
+                var coords = new Dictionary<uint, float>();
+                var named = new List<(int Order, string Name, int Flags)>();
+                for (int a = 0; a < axisCount; a++)
+                {
+                    float value = Fixed(d, at + 4 + a * 4);
+                    coords[axisTags[a]] = value;
+                    foreach ((int axis, float v, float min, float max, int flags, int nameId) in values)
+                    {
+                        if (axis < 0 || axis >= statTags.Count || statTags[axis] != axisTags[a]) continue;
+                        bool hit = float.IsNaN(min)
+                            ? Math.Abs(v - value) < 0.001f
+                            : value >= min && value <= max && Math.Abs(v - value) < 0.001f;
+                        if (!hit) continue;
+                        if (NameById(d, sfnt, nameId) is { Length: > 0 } n) named.Add((order[a], n, flags));
+                        break;
+                    }
+                }
+
+                List<string> parts;
+                if (named.Count > 0)
+                {
+                    named.Sort((x, y) => x.Order.CompareTo(y.Order));
+                    parts = new List<string>();
+                    foreach ((int _, string valueName, int flags) in named)
+                        if ((flags & 2) == 0) parts.Add(valueName);   // ELIDABLE_AXIS_VALUE_NAME
+                }
+                // The fvar InstanceRecord is subfamilyNameID, flags, then the coordinates -- the
+                // name is at offset ZERO, and reading the flags instead named every instance after
+                // name id 0, which is the COPYRIGHT.
+                else if (NameById(d, sfnt, Be16(d, at)) is { Length: > 0 } subfamily)
+                    parts = new List<string>(subfamily.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+                else continue;
+
+                bool bold = false, italic = false;
+                var keep = new List<string>();
+                foreach (string part in parts)
+                {
+                    if (part.Equals("Bold", StringComparison.OrdinalIgnoreCase)) { bold = true; continue; }
+                    if (part.Equals("Italic", StringComparison.OrdinalIgnoreCase)
+                        || part.Equals("Oblique", StringComparison.OrdinalIgnoreCase)) { italic = true; continue; }
+                    if (part.Equals("Regular", StringComparison.OrdinalIgnoreCase)
+                        || part.Equals("Normal", StringComparison.OrdinalIgnoreCase)) continue;
+                    keep.Add(part);
+                }
+
+                string name = keep.Count == 0 ? family : family + " " + string.Join(" ", keep);
+                int slot = (bold ? 1 : 0) | (italic ? 2 : 0);
+                RegisterInstance(into, name, slot, new NamedInstance(path, sfnt, coords));
+                // ...AND UNDER THE NAME A LOGFONT CAN HOLD: lfFaceName is 32 characters including
+                // its terminator, so Windows enumerates "Segoe UI Variable Display Semib" and an
+                // application that read that back asks for exactly it.
+                if (name.Length > 31)
+                    RegisterInstance(into, name.Substring(0, 31), slot, new NamedInstance(path, sfnt, coords));
+            }
+        }
+
+        private static void RegisterInstance(Dictionary<string, NamedInstance?[]> into, string family,
+                                             int slot, NamedInstance instance)
+        {
+            if (!into.TryGetValue(family, out NamedInstance?[]? slots))
+                into[family] = slots = new NamedInstance?[4];
+            slots[slot] ??= instance;
+        }
+
+        private static float Fixed(byte[] d, int at) => at + 4 <= d.Length ? Be32(d, at) / 65536f : 0f;
+
+        /// <summary>One name record of the face at <paramref name="sfnt"/>, English preferred.
+        /// </summary>
+        private static string? NameById(byte[] d, int sfnt, int wanted)
+        {
+            Dictionary<string, int> tables = SfntTables(d, sfnt);
+            if (!tables.TryGetValue("name", out int nameOff) || nameOff + 6 > d.Length) return null;
+            int count = Be16(d, nameOff + 2), strings = nameOff + Be16(d, nameOff + 4);
+            string? best = null;
+            for (int i = 0; i < count; i++)
+            {
+                int rec = nameOff + 6 + i * 12;
+                if (rec + 12 > d.Length) break;
+                int platform = Be16(d, rec), language = Be16(d, rec + 4), nameId = Be16(d, rec + 6);
+                int len = Be16(d, rec + 8), off = strings + Be16(d, rec + 10);
+                if (nameId != wanted || len <= 0 || off + len > d.Length) continue;
+                string value = platform == 3 || platform == 0
+                    ? System.Text.Encoding.BigEndianUnicode.GetString(d, off, len)
+                    : System.Text.Encoding.ASCII.GetString(d, off, len);
+                if (platform == 3 && language == 0x409) return value;
+                best ??= value;
+            }
+            return best;
+        }
+
+        /// <summary>The table directory of one face.</summary>
+        private static Dictionary<string, int> SfntTables(byte[] d, int sfnt)
+        {
+            var tables = new Dictionary<string, int>(StringComparer.Ordinal);
+            if (sfnt + 12 > d.Length) return tables;
+            int numTables = Be16(d, sfnt + 4);
+            for (int i = 0; i < numTables; i++)
+            {
+                int rec = sfnt + 12 + i * 16;
+                if (rec + 16 > d.Length) break;
+                tables[System.Text.Encoding.ASCII.GetString(d, rec, 4)] = Be32(d, rec + 8);
+            }
+            return tables;
+        }
+
         /// <summary>What weight the FILE declares, from 'OS/2'.usWeightClass; 400 when it has no
         /// OS/2 table to ask.
         /// <para>GDI does not simulate bold on a face that is already heavy, and "already heavy"
@@ -260,6 +468,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // different typeface, and it is what the name says the user asked for.
                 for (int i = 0; i < declared.Length; i++)
                     if (declared[i] != null) return declared[i];
+            }
+            // A VARIABLE FONT'S NAMED INSTANCES ARE FAMILIES TOO -- "Segoe UI Variable Text" is
+            // one, and Windows' own shell asks for it. See ScanNamedInstances.
+            if (s_scannedInstances is not null
+                && s_scannedInstances.TryGetValue(family, out NamedInstance?[]? instances))
+            {
+                foreach (int candidate in Order(slot))
+                    if (instances[candidate] is { } instance) return instance.Path;
+                for (int i = 0; i < instances.Length; i++)
+                    if (instances[i] is { } any) return any.Path;
             }
             if (suffix.Length > 0)
                 foreach (string ext in new[] { ".ttf", ".otf", ".ttc" })
@@ -391,6 +609,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         private static Dictionary<string, string?[]>? s_scanned;
+        private static Dictionary<string, NamedInstance?[]>? s_scannedInstances;
+
+        /// <summary>The named instance a family resolves to, or null when the family is a plain
+        /// face. The caller applies the coordinates to the font it opens.</summary>
+        internal static NamedInstance? FindInstance(string? family, bool bold, bool italic)
+        {
+            if (string.IsNullOrWhiteSpace(family)) return null;
+            ScannedFamilies();                       // fills s_scannedInstances
+            if (s_scannedInstances is null) return null;
+            // A REAL FILE FIRST. Bahnschrift's own name-1 record is "Bahnschrift" and so is its
+            // Regular instance's family, and the file is the same either way; but a family that
+            // BOTH a file and an instance claim (a static "Sitka Text" beside a variable one)
+            // should come from the file, which is what Windows lists.
+            if (Resolve(family!, bold, italic) is { } direct
+                && (!s_scannedInstances.TryGetValue(family!, out NamedInstance?[]? byName)
+                    || byName[(bold ? 1 : 0) | (italic ? 2 : 0)] is not { } exact
+                    || !string.Equals(exact.Path, direct, StringComparison.OrdinalIgnoreCase)))
+                return null;
+            if (!s_scannedInstances.TryGetValue(family!, out NamedInstance?[]? slots)) return null;
+            foreach (int candidate in Order((bold ? 1 : 0) | (italic ? 2 : 0)))
+                if (slots[candidate] is { } instance) return instance;
+            for (int i = 0; i < slots.Length; i++)
+                if (slots[i] is { } any) return any;
+            return null;
+        }
 
         /// <summary>What the scan found, for a diagnostic that can say whether it ran at all.
         /// </summary>
@@ -400,6 +643,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             if (s_scanned is not null) return s_scanned;
             var found = new Dictionary<string, string?[]>(StringComparer.OrdinalIgnoreCase);
+            var instances = new Dictionary<string, NamedInstance?[]>(StringComparer.OrdinalIgnoreCase);
             foreach (string dir in s_directories.Value)
             {
                 string[] files;
@@ -431,8 +675,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         if (!found.TryGetValue(family!, out string?[]? slots))
                             found[family!] = slots = new string?[4];
                         slots[slot] ??= path;
+                        // ...UNDER THE TYPOGRAPHIC FAMILY (name 16) where the face has one: Sitka's
+                        // name-1 family is "Sitka Text" (its default optical size), and Windows
+                        // lists the instances as "Sitka Banner", "Sitka Heading" and so on off the
+                        // typographic "Sitka".
+                        ScanNamedInstances(head, sfnt, path,
+                                           NameById(head, sfnt, 16) is { Length: > 0 } typographic
+                                               ? typographic : family!, instances);
                     }
                 }
+            }
+            s_scannedInstances = instances;
+            // WPF_FONT_INSTANCES=<path>: every named-instance family the scan registered, for
+            // asking whether a family Windows lists is one we know.
+            if (Environment.GetEnvironmentVariable("WPF_FONT_INSTANCES") is { Length: > 0 } dump)
+            {
+                var sb = new System.Text.StringBuilder();
+                foreach (KeyValuePair<string, NamedInstance?[]> kv in instances)
+                {
+                    sb.Append(kv.Key).Append(" :");
+                    for (int i = 0; i < 4; i++)
+                        if (kv.Value[i] is { } inst)
+                        {
+                            sb.Append(' ').Append(i).Append("={");
+                            foreach (KeyValuePair<uint, float> c in inst.Coords)
+                                sb.Append((char) (c.Key >> 24)).Append((char) ((c.Key >> 16) & 0xFF))
+                                  .Append((char) ((c.Key >> 8) & 0xFF)).Append((char) (c.Key & 0xFF))
+                                  .Append('=').Append(c.Value).Append(' ');
+                            sb.Append('}');
+                        }
+                    sb.Append(Environment.NewLine);
+                }
+                try { File.WriteAllText(dump, sb.ToString()); } catch (IOException) { }
             }
             return s_scanned = found;
         }
