@@ -1186,7 +1186,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // at the sizes it does not want fitted, which switches the glyph programs off in the
             // rasterizer. Verdana uses both tables and they agree; a face that uses only this one
             // must be read here or its glyphs are fitted where Windows leaves them alone.
-            if (!FaceWantsGridFit(pixelsPerEm) || PrepInhibitsGridFit(pixelsPerEm))
+            // ...AND A FACE THAT CARRIES NO HINTS AT ALL IS SCALED, NOT FITTED BY US. Ink Free
+            // ships no 'fpgm', no 'prep', no 'cvt ' and not one glyph program, so Interpreter()
+            // hands back null, RunFaceHints returns null and the analysis fitter -- our own
+            // invention -- drew it: 'n' at 8ppem came out 5,706 of ink against GDI's 2,300, a
+            // script face's thin strokes snapped up to whole pixels where GDI leaves the outline
+            // where the designer drew it and lets it fade. Its gasp says GRIDFIT at every size and
+            // that is not a lie; there is simply nothing to run. WPF_UNHINTED_FACE=fit restores it.
+            if (!FaceWantsGridFit(pixelsPerEm) || PrepInhibitsGridFit(pixelsPerEm)
+                || (s_scaleUnhintedFaces && Interpreter() is null))
             {
                 // The outline as drawn, SCALED TO THIS SIZE -- not a refusal. Callers of this method
                 // are promised a device-pixel outline and scale everything else by the reciprocal of
@@ -1503,6 +1511,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// the ORACLE and not about what the renderer does. Consolas is also the worst face in the
         /// pixel comparison at those sizes, so the question is worth settling by rendering.</para>
         /// </summary>
+        /// <summary>WPF_UNHINTED_FACE=fit: run the analysis fitter over a face that carries no
+        /// hinting program, as this used to.</summary>
+        private static readonly bool s_scaleUnhintedFaces =
+            Environment.GetEnvironmentVariable("WPF_UNHINTED_FACE") != "fit";
+
         private static readonly bool s_alwaysFit =
             System.Environment.GetEnvironmentVariable("WPF_GASP_FIT") == "always";
 
