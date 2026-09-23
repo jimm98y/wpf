@@ -4781,6 +4781,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
             int n = glyph.PointCount;
             int[] X = glyph.X, Y = glyph.Y;
+            // pp2 MOVES ONE PIXEL, not by the emboldening amount `ax`. The advance phantom tracks
+            // the advance, and that grows by exactly one pixel at every size (SimBoldAdvancePixels).
+            // Moving it by ax instead -- two pixels from 51ppem -- was measured and is far worse
+            // through the compatible-width phase: Impact Bold's ten 'n's at 51/56/64/96ppem go
+            // 398,260 / 101,700 / 76,720 / 76,720 with one pixel and 795,700 / 465,390 / 428,400 /
+            // 390,040 with ax.
             if (X.Length > n + 1 && X[n + 1] != X[n]) X[n + 1] += 64;
             // UNDER CLEARTYPE THE POINTS DO NOT MOVE. A real draw sets the glyph input's +0x8c
             // (bSetXform, from ttfdQueryFontData's FO_SIM_BOLD test), fs__Contour hands that to
