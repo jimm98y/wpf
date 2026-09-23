@@ -4720,9 +4720,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_embOutline =
             Environment.GetEnvironmentVariable("WPF_EMB_OUTLINE") == "1";
 
-        /// <summary>How wide FO_SIM_BOLD's bitmap smear is, in pixels: fs__Contour adds
-        /// `(2 * ppem - 1) / 100` to the emboldening amount it keeps at clientRec+0x1ac once
-        /// fsg_Embold has run, so the smear is one pixel to 50ppem, two to 100, three to 150.</summary>
+        /// <summary>How wide FO_SIM_BOLD's bitmap smear is, in pixels: scl_InitializeScaling's own
+        /// x amount, `(20 * ppem - 10) / 1000 + 1` -- the same function written the other way round
+        /// -- so one pixel to 50ppem, two to 100, three to 150, and GGO's black box for Impact grows
+        /// by exactly that much over the regular face at 51ppem and again at 101.
+        /// <para>NOT the `(2 * X - 1) / 100` fs__Contour adds at clientRec+0x1ac after fsg_Embold,
+        /// which this cited before: X is clientRec+0x174, the EM -- findbitmapsize.c hands that same
+        /// field to scl_ScaleAdvanceWidth as its units-per-em -- so THAT one adds two percent of the
+        /// em in FONT UNITS to the advance, which is the phase's linear input and not a pixel
+        /// count. Forcing the smear to 1, 2 or 3 (WPF_SIM_BOLD_SMEAR) is worse than this at every
+        /// size from 48 to 128.</para></summary>
         internal static int SimBoldSmearPixels(int ppem)
             => s_simBoldSmear >= 0 ? s_simBoldSmear : (2 * ppem - 1) / 100 + 1;
 
@@ -4738,7 +4745,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// 24, 32, 40, 48, 50, 51, 64, 100, 101, 128, 150, 151, 200 and 255 pixels an em, is the
         /// regular advance plus exactly one pixel per glyph at EVERY one of them -- while the ink
         /// box grows by two from 51 and by three from 101, which is the smear doing what its
-        /// formula says. WPF_SIM_BOLD_ADV=smear restores the old shared formula.</para></summary>
+        /// formula says. The two percent of the em the binary adds to the FONT-UNIT advance is 0.47
+        /// pixels at 24ppem and 2.5 at 128, so the device advance is not a scaling of that either.
+        /// WPF_SIM_BOLD_ADV=smear restores the old shared formula.</para></summary>
         internal static int SimBoldAdvancePixels(int ppem)
             => s_simBoldAdvanceSmear ? SimBoldSmearPixels(ppem) : 1;
 
