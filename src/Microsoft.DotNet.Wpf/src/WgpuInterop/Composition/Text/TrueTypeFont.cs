@@ -4197,6 +4197,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             xs[numPoints] = origin;
             xs[numPoints + 1] = origin + RawAdvanceWidth(gid);
 
+            // A VARIABLE FONT'S INSTANCE HAS TO REACH THE HINTED PATH TOO. The unfitted reader
+            // applies gvar (ApplyVariations) and this one did not, so a face with an instance
+            // selected was HINTED AT ITS DEFAULT MASTER: our Bahnschrift Bold at 24ppem drew ink
+            // byte-identical to our own regular, 0.78 of GDI's, while its italic -- a shear applied
+            // after the fit -- was exact. The deltas move the phantom points with the outline, as
+            // they do there, so the advance the program reads is the instance's.
+            // WPF_VAR_HINTED=0 hints the default master, as this did.
+            if (s_variationsWhenHinted && _variations is not null && _variations.IsVaried
+                && _variations.HasOutlineDeltas)
+            {
+                var pts = new Vector2[numPoints + 4];
+                for (int i = 0; i < numPoints + 4; i++) pts[i] = new Vector2(xs[i], ys[i]);
+                ApplyVariations(gid, pts, numPoints, endPts);
+                for (int i = 0; i < numPoints + 4; i++)
+                {
+                    xs[i] = (int) MathF.Round(pts[i].X);
+                    ys[i] = (int) MathF.Round(pts[i].Y);
+                }
+            }
+
             var onCurve = new bool[numPoints + 4];
             for (int i = 0; i < numPoints; i++) onCurve[i] = (flags[i] & 0x01) != 0;
 
@@ -4246,6 +4266,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bearing = (short)U16(at);
             return true;
         }
+
+        /// <summary>WPF_VAR_HINTED=0: hint a variable font's DEFAULT master, as this used to.</summary>
+        private static readonly bool s_variationsWhenHinted =
+            Environment.GetEnvironmentVariable("WPF_VAR_HINTED") != "0";
 
         private ushort RawAdvanceWidth(int gid)
             => _advanceWidths.Length == 0 ? (ushort)0 : _advanceWidths[gid < _numHMetrics ? gid : _numHMetrics - 1];
