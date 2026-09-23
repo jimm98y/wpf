@@ -502,6 +502,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// for a face that is not being emboldened. See <see cref="EmboldenLampRows"/>.</summary>
         internal static int SimBoldPixelsForRun;
 
+        /// <summary>WPF_SIM_BOLD_PAD=0: do not widen the raster for the smear.</summary>
+        private static readonly bool s_simBoldPad =
+            Environment.GetEnvironmentVariable("WPF_SIM_BOLD_PAD") != "0";
+
         /// <summary>GDI'S SIMULATED BOLD UNDER CLEARTYPE IS A BITMAP OPERATION, not an outline one:
         /// sbit_EmboldenSubPixel@1400333a0, run by fs_ContourScan on the packed per-pixel lamp
         /// bytes once fsc_OverscaleToSubPixel has made them, whenever the glyph input's +0x8c
@@ -862,7 +866,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // filtered against nothing and lose the fringe that belongs there.
             int originX = (int)MathF.Floor(minX) - 2;
             int originY = (int)MathF.Floor(minY) - 1;
-            int width = (int)MathF.Ceiling(maxX) + 2 - originX;
+            // ...AND ROOM FOR THE BOLD SMEAR, which moves ink up to SimBoldPixelsForRun pixels
+            // right: GDI sizes the bitmap for it (fs_FindBitMapSize adds the emboldening amount),
+            // and two columns of slack are not enough once that amount is two.
+            int width = (int)MathF.Ceiling(maxX) + 2 + (s_simBoldPad ? SimBoldPixelsForRun : 0) - originX;
             int height = (int)MathF.Ceiling(maxY) + 1 - originY;
             if (width <= 0 || height <= 0) return default;
 
