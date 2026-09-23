@@ -90,6 +90,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>The instance in normalized coordinates, one per axis. All zero = default.</summary>
         private float[] _coords;
 
+        private readonly int _cvarOffset;
+        private readonly int _cvarLength;
+
         public IReadOnlyList<VariationAxis> Axes => _axes;
 
         /// <summary>True when this face carries per-glyph outline deltas we can apply.</summary>
@@ -107,7 +110,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private VariableFont(byte[] data, VariationAxis[] axes, (float, float)[][]? segments,
                              int gvarOffset, int sharedTuplesOffset, int sharedTupleCount,
-                             uint[] glyphDataOffsets, int gvarAxisCount)
+                             uint[] glyphDataOffsets, int gvarAxisCount, int cvarOffset,
+                             int cvarLength)
         {
             _data = data;
             _axes = axes;
@@ -117,13 +121,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _sharedTupleCount = sharedTupleCount;
             _glyphDataOffsets = glyphDataOffsets;
             _gvarAxisCount = gvarAxisCount;
+            _cvarOffset = cvarOffset;
+            _cvarLength = cvarLength;
             _coords = new float[axes.Length];
         }
 
         /// <summary>
         ///  Reads the variation tables of a face, or returns null when it is not a variable font.
         /// </summary>
-        public static VariableFont? TryRead(byte[] data, Dictionary<string, int> tables)
+        public static VariableFont? TryRead(byte[] data, Dictionary<string, int> tables,
+                                            Dictionary<string, int>? lengths = null)
         {
             if (!tables.TryGetValue("fvar", out int fvar)) return null;
 
@@ -165,8 +172,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 gvarOffset = gvar;
             }
 
+            int cvarOffset = 0, cvarLength = 0;
+            if (tables.TryGetValue("cvar", out int cvar) && cvar + 8 <= data.Length)
+            {
+                cvarOffset = cvar;
+                cvarLength = lengths is not null && lengths.TryGetValue("cvar", out int cl)
+                    ? cl : data.Length - cvar;
+            }
+
             return new VariableFont(data, axes, segments, gvarOffset, sharedTuplesOffset,
-                                    sharedTupleCount, glyphOffsets, gvarAxisCount);
+                                    sharedTupleCount, glyphOffsets, gvarAxisCount,
+                                    cvarOffset, cvarLength);
         }
 
         // ---- the design space ----
@@ -368,6 +384,99 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             return any ? total : null;
+        }
+
+
+        /// <summary>What the instance does to the CONTROL VALUES, from 'cvar'.
+        /// <para>A variable font varies its hinting as well as its outlines: the cvt entries that
+        /// hold stem widths and zone heights move with the axes, and hinting an instance with the
+        /// default master's control values fits it to the wrong grid. Sitka's optical sizes are
+        /// the case in point -- "Sitka Banner" is opsz 27.5 against a default of 11 -- and its ink
+        /// came out a tenth heavy at every size its gasp lets us FIT, while 8ppem, which that gasp
+        /// leaves unfitted, was exact.</para>
+        /// <para>The store is gvar's, minus the per-glyph offsets: one TupleVariationStore whose
+        /// "points" are cvt indices. There are no shared point numbers to inherit and no
+        /// interpolation to infer -- an entry no tuple names simply does not move.</para></summary>
+        public int[]? GetControlValueDeltas(int cvtCount)
+        {
+            if (!IsVaried || _cvarOffset <= 0 || cvtCount <= 0) return null;
+
+            int end = Math.Min(_data.Length, _cvarOffset + _cvarLength);
+            int p = _cvarOffset + 4;                       // major/minor version
+            if (p + 4 > end) return null;
+
+            int tupleCount = U16(_data, p);
+            bool sharedPoints = (tupleCount & 0x8000) != 0;
+            tupleCount &= 0x0FFF;
+            int serialized = _cvarOffset + U16(_data, p + 2);
+            p += 4;
+            if (tupleCount == 0 || serialized >= end) return null;
+
+            int[]? shared = null;
+            if (sharedPoints) shared = ReadPointNumbers(ref serialized, end, cvtCount);
+
+            var total = new float[cvtCount];
+            bool any = false;
+            for (int t = 0; t < tupleCount && p + 4 <= end; t++)
+            {
+                int variationDataSize = U16(_data, p);
+                int tupleIndex = U16(_data, p + 2);
+                p += 4;
+
+                var peak = new float[_axes.Length];
+                if ((tupleIndex & 0x8000) != 0)
+                    for (int a = 0; a < _axes.Length; a++, p += 2) peak[a] = F2Dot14(_data, p);
+                else
+                {
+                    int index = tupleIndex & 0x0FFF;
+                    if (index >= _sharedTupleCount) { serialized += variationDataSize; continue; }
+                    int sp = _sharedTuplesOffset + index * _gvarAxisCount * 2;
+                    for (int a = 0; a < _axes.Length && a < _gvarAxisCount; a++)
+                        peak[a] = F2Dot14(_data, sp + a * 2);
+                }
+
+                float[]? interStart = null, interEnd = null;
+                if ((tupleIndex & 0x4000) != 0)
+                {
+                    interStart = new float[_axes.Length];
+                    interEnd = new float[_axes.Length];
+                    for (int a = 0; a < _axes.Length; a++, p += 2) interStart[a] = F2Dot14(_data, p);
+                    for (int a = 0; a < _axes.Length; a++, p += 2) interEnd[a] = F2Dot14(_data, p);
+                }
+
+                int tupleData = serialized;
+                serialized += variationDataSize;
+
+                float scalar = Scalar(peak, interStart, interEnd);
+                if (scalar == 0f) continue;
+
+                int q = tupleData;
+                int[]? numbers = (tupleIndex & 0x2000) != 0
+                    ? ReadPointNumbers(ref q, end, cvtCount)
+                    : shared;
+                int deltaCount = numbers?.Length ?? cvtCount;
+                int[] deltas = ReadPackedDeltas(ref q, end, deltaCount);
+
+                if (numbers is null)
+                {
+                    for (int i = 0; i < cvtCount && i < deltas.Length; i++) total[i] += deltas[i] * scalar;
+                }
+                else
+                {
+                    for (int i = 0; i < numbers.Length && i < deltas.Length; i++)
+                    {
+                        int idx = numbers[i];
+                        if ((uint) idx < (uint) cvtCount) total[idx] += deltas[i] * scalar;
+                    }
+                }
+                any = true;
+            }
+
+            if (!any) return null;
+            var rounded = new int[cvtCount];
+            for (int i = 0; i < cvtCount; i++)
+                rounded[i] = (int) MathF.Round(total[i], MidpointRounding.AwayFromZero);
+            return rounded;
         }
 
         /// <summary>

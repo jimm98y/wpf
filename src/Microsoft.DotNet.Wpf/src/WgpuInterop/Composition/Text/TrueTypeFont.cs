@@ -330,7 +330,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // faking one from the default master, so the simulation flags become an instance request
             // wherever the face has an axis that can answer them, and only fall back to dilating and
             // shearing the outline where it has not. See SelectInstance.
-            _variations = VariableFont.TryRead(_data, tables);
+            _variations = VariableFont.TryRead(_data, tables, _tableLengths);
             bool variedBold = false, variedOblique = false;
             if (_variations is not null)
                 SelectInstance(_variations, synthesizeBold, synthesizeOblique, out variedBold, out variedOblique);
@@ -621,6 +621,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             var controlValues = new short[cvtLength / 2];
             for (int i = 0; i < controlValues.Length; i++)
                 controlValues[i] = (short)U16(_controlValueTable + i * 2);
+
+            // ...AND THE INSTANCE MOVES THEM. 'cvar' varies the control values with the axes, and
+            // hinting an instance against the default master's cvt fits it to the wrong grid:
+            // "Sitka Banner" is opsz 27.5 where the file's default is 11, and its ink came out a
+            // tenth heavy at every size its gasp lets us fit while 8ppem, which that gasp leaves
+            // unfitted, was exact. WPF_VAR_CVAR=0 hints with the master's values.
+            if (s_cvarApplies && _variations is not null
+                && _variations.GetControlValueDeltas(controlValues.Length) is { } cvtDeltas)
+                for (int i = 0; i < controlValues.Length; i++)
+                    controlValues[i] = (short) Math.Clamp(controlValues[i] + cvtDeltas[i],
+                                                          short.MinValue, short.MaxValue);
 
             var interpreter = new TrueTypeInterpreter(
                 _data, _unitsPerEm, fontProgram, controlProgram, controlValues,
@@ -4309,6 +4320,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         /// <summary>WPF_VAR_HINTED=0: hint a variable font's DEFAULT master, as this used to.</summary>
+        /// <summary>WPF_VAR_CVAR=1 varies the control values with the instance. OFF, and the
+        /// reason is a measurement, not a preference.
+        /// <para>'cvar' is the right idea -- a variable font varies its hinting as well as its
+        /// outlines, and "Sitka Banner" (opsz 27.5 against a default of 11) draws a tenth heavy at
+        /// every size its gasp lets us fit while 8ppem, which that gasp leaves unfitted, is exact.
+        /// But applying it as read here makes a case that IS exact wrong: Segoe UI Variable Text
+        /// Bold at 10/14/20ppem goes from 0 to 1,161,058, and Display's regular and italic with
+        /// it. So the deltas this produces are not the ones GDI hints with -- the reading is
+        /// unfinished, not the idea -- and it stays off until that is understood.</para></summary>
+        private static readonly bool s_cvarApplies =
+            Environment.GetEnvironmentVariable("WPF_VAR_CVAR") == "1";
+
         private static readonly bool s_variationsWhenHinted =
             Environment.GetEnvironmentVariable("WPF_VAR_HINTED") != "0";
 
