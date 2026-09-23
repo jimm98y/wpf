@@ -4696,7 +4696,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // GDI's contrast palette, for the faces win32k names (TrueTypeFont.GdiContrastPalette).
             _contrastForRun = font is Text.TrueTypeFont cpf && cpf.GdiContrastPalette;
             _simBoldForRun = font is Text.TrueTypeFont sbf && sbf.GdiEmboldensBitmap
-                             ? Text.TrueTypeFont.SimBoldAdvancePixels((int)MathF.Round(symPpem)) : 0;
+                             ? Text.TrueTypeFont.SimBoldSmearPixels((int)MathF.Round(symPpem)) : 0;
             _dropoutForRun = s_dropoutControl && font is Text.IHintedGlyphFont dof
                              && dof.WantsDropoutControl(symPpem, out int scanType) ? scanType + 1 : 0;
 

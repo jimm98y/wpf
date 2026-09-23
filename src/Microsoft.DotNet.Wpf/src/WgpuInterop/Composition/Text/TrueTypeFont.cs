@@ -3838,7 +3838,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_CHILD_SCALE") != "0";
 
         private static readonly bool s_compDump =
-            Environment.GetEnvironmentVariable("WPF_CT_COMPDUMP") == "1";
+            Environment.GetEnvironmentVariable("WPF_CT_COMPDUMP") is { Length: > 0 };
 
         private static readonly bool s_childNorm =
             Environment.GetEnvironmentVariable("WPF_CT_CHILD_NORM") != "0";
@@ -4101,7 +4101,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 var sb = new System.Text.StringBuilder($"COMPDUMP gid={gid} ppem={pixelsPerEm} pts=");
                 for (int i = 0; i < points; i++) sb.Append(X[i]).Append(',').Append(Y[i]).Append(' ');
-                Console.Error.WriteLine(sb.ToString());
+                // ...to a FILE when the knob names one: the test host swallows stderr.
+                string where = Environment.GetEnvironmentVariable("WPF_CT_COMPDUMP") ?? "1";
+                if (where.Length > 1) System.IO.File.AppendAllText(where, sb.ToString() + Environment.NewLine);
+                else Console.Error.WriteLine(sb.ToString());
             }
 
             // The phantom points, in pixels like everything else here -- a composite is not scaled
@@ -4717,10 +4720,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_embOutline =
             Environment.GetEnvironmentVariable("WPF_EMB_OUTLINE") == "1";
 
-        /// <summary>How many pixels FO_SIM_BOLD adds to each glyph's advance: bComputeMaxGlyph's
-        /// font-context field 0x190, (2 x ppem - 1) / 100 + 1 -- one pixel at every UI size --
-        /// which vFillGLYPHDATA adds to the glyph's device advance.</summary>
-        internal static int SimBoldAdvancePixels(int ppem) => (2 * ppem - 1) / 100 + 1;
+        /// <summary>How wide FO_SIM_BOLD's bitmap smear is, in pixels: fs__Contour adds
+        /// `(2 * ppem - 1) / 100` to the emboldening amount it keeps at clientRec+0x1ac once
+        /// fsg_Embold has run, so the smear is one pixel to 50ppem, two to 100, three to 150.</summary>
+        internal static int SimBoldSmearPixels(int ppem)
+            => s_simBoldSmear >= 0 ? s_simBoldSmear : (2 * ppem - 1) / 100 + 1;
+
+        /// <summary>WPF_SIM_BOLD_SMEAR=&lt;n&gt; forces the smear width, for measuring it.</summary>
+        private static readonly int s_simBoldSmear =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_SIM_BOLD_SMEAR"), out int sbs) ? sbs : -1;
+
+        /// <summary>How many pixels FO_SIM_BOLD adds to each glyph's ADVANCE, which is NOT the
+        /// smear: ONE, at every size.
+        /// <para>The two were one function here, and the smear's formula was used for both. That
+        /// is right to 50ppem, where they agree, and wrong above it: GDI's own layout advance for
+        /// ten 'n's, measured on Impact, Sylfaen, Lucida Console and Microsoft Sans Serif at 8, 16,
+        /// 24, 32, 40, 48, 50, 51, 64, 100, 101, 128, 150, 151, 200 and 255 pixels an em, is the
+        /// regular advance plus exactly one pixel per glyph at EVERY one of them -- while the ink
+        /// box grows by two from 51 and by three from 101, which is the smear doing what its
+        /// formula says. WPF_SIM_BOLD_ADV=smear restores the old shared formula.</para></summary>
+        internal static int SimBoldAdvancePixels(int ppem)
+            => s_simBoldAdvanceSmear ? SimBoldSmearPixels(ppem) : 1;
+
+        private static readonly bool s_simBoldAdvanceSmear =
+            Environment.GetEnvironmentVariable("WPF_SIM_BOLD_ADV") == "smear";
 
         /// <summary>GDI'S SIMULATED BOLD, ported from fsg_Embold@14002e618 and
         /// EmboldPoint@14002b298. It is not a symmetric dilation.

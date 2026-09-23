@@ -12140,7 +12140,10 @@ namespace WgpuInterop.Tests.Text
             // THE SPACE IS IN HERE ON PURPOSE. It is a glyph with no ink, so every instrument
             // that looks at pixels is blind to it, and its advance displaces everything after it
             // just as surely as a letter's does.
-            const string Letters = "abcdefghijklmnopqrstuvwxyz 0123456789 AKNRWXYZkvwxyz";
+            // WPF_ADVANCE_TEXT replaces them, for a range this set does not reach: the general
+            // punctuation block drifted a pixel in Segoe UI Bold where every glyph of it is exact.
+            string Letters = Environment.GetEnvironmentVariable("WPF_ADVANCE_TEXT") is { Length: > 0 } at
+                ? at : "abcdefghijklmnopqrstuvwxyz 0123456789 AKNRWXYZkvwxyz";
             int ourTotal = 0, gdiTotal = 0;
             log.AppendLine($"== {family}{(bold ? " Bold" : italic ? " Italic" : "")} @ {ppem}ppem");
             log.AppendLine($"   our file: {file}");
