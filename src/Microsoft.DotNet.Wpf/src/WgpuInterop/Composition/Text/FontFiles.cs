@@ -116,16 +116,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         public static int SfntOffset(byte[] data, string? family, bool bold = false, bool italic = false)
         {
             if (string.IsNullOrEmpty(family)) return SfntOffset(data);
-            int fallback = -1;
+            // ...AND THE FALLBACK WALKS TOWARDS THE REGULAR, as Order does for files. Taking the
+            // first face of the family in ANY other style meant a bold-italic request got face
+            // zero -- Nirmala UI's REGULAR -- and then we emboldened and sheared it, where GDI
+            // takes the family's BOLD face and shears that. Nirmala UI BI was 1.15 of GDI's ink
+            // and its run 38 pixels long, while its regular, bold and italic were all exact.
+            var byStyle = new int[4];
+            for (int i = 0; i < 4; i++) byStyle[i] = -1;
             foreach (int sfnt in FaceOffsets(data))
             {
                 if (!ReadNames(data, sfnt, out string? declared, out bool isBold, out bool isItalic))
                     continue;
                 if (!string.Equals(declared, family, StringComparison.OrdinalIgnoreCase)) continue;
-                if (isBold == bold && isItalic == italic) return sfnt;
-                if (fallback < 0) fallback = sfnt;      // the family, in another style
+                int slot = (isBold ? 1 : 0) | (isItalic ? 2 : 0);
+                if (byStyle[slot] < 0) byStyle[slot] = sfnt;
             }
-            return fallback >= 0 ? fallback : SfntOffset(data);
+            foreach (int candidate in Order((bold ? 1 : 0) | (italic ? 2 : 0)))
+                if (byStyle[candidate] >= 0) return byStyle[candidate];
+            for (int i = 0; i < 4; i++)
+                if (byStyle[i] >= 0) return byStyle[i];
+            return SfntOffset(data);
         }
 
         public static string? Find(string? family, bool bold, bool italic)
