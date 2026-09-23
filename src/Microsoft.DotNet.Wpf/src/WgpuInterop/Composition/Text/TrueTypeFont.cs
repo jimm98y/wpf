@@ -2173,6 +2173,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // deltas -- so the glyph has to have been read for the answer to exist. Reading it here
             // is what keeps a caller that only ever asks for metrics (measuring a line before
             // drawing it) from getting the default master's widths.
+            // HVAR FIRST, where the font has one: it carries the advance deltas outright, and GDI
+            // reads it rather than measuring the phantom points gvar moved. The two need not agree
+            // -- Segoe UI Variable Text Bold at 20ppem and Display regular at 10 and 14 drew ink
+            // IDENTICAL to GDI's with the run two pixels out, an advance difference and not a shape
+            // one. WPF_VAR_HVAR=0 goes back to the phantoms.
+            if (s_hvarAdvances && _variations.TryGetAdvanceDelta(gid, out float hvarDelta))
+                return advance + hvarDelta;
+
             if (!_advanceDeltas.TryGetValue(gid, out float delta))
             {
                 ReadGlyphContours(gid, 0);
@@ -4320,6 +4328,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         /// <summary>WPF_VAR_HINTED=0: hint a variable font's DEFAULT master, as this used to.</summary>
+        /// <summary>WPF_VAR_HVAR=0: take a variable instance's advance deltas from gvar's phantom
+        /// points instead of 'HVAR'.</summary>
+        private static readonly bool s_hvarAdvances =
+            Environment.GetEnvironmentVariable("WPF_VAR_HVAR") != "0";
+
         /// <summary>WPF_VAR_CVAR=1 varies the control values with the instance. OFF, and the
         /// reason is a measurement, not a preference.
         /// <para>'cvar' is the right idea -- a variable font varies its hinting as well as its

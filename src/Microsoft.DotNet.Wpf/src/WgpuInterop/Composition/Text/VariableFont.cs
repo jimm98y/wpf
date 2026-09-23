@@ -92,6 +92,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private readonly int _cvarOffset;
         private readonly int _cvarLength;
+        private readonly int _hvarOffset;
 
         public IReadOnlyList<VariationAxis> Axes => _axes;
 
@@ -111,7 +112,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private VariableFont(byte[] data, VariationAxis[] axes, (float, float)[][]? segments,
                              int gvarOffset, int sharedTuplesOffset, int sharedTupleCount,
                              uint[] glyphDataOffsets, int gvarAxisCount, int cvarOffset,
-                             int cvarLength)
+                             int cvarLength, int hvarOffset)
         {
             _data = data;
             _axes = axes;
@@ -123,6 +124,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _gvarAxisCount = gvarAxisCount;
             _cvarOffset = cvarOffset;
             _cvarLength = cvarLength;
+            _hvarOffset = hvarOffset;
             _coords = new float[axes.Length];
         }
 
@@ -172,6 +174,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 gvarOffset = gvar;
             }
 
+            int hvarOffset = tables.TryGetValue("HVAR", out int hvar) && hvar + 8 <= data.Length
+                ? hvar : 0;
             int cvarOffset = 0, cvarLength = 0;
             if (tables.TryGetValue("cvar", out int cvar) && cvar + 8 <= data.Length)
             {
@@ -182,7 +186,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             return new VariableFont(data, axes, segments, gvarOffset, sharedTuplesOffset,
                                     sharedTupleCount, glyphOffsets, gvarAxisCount,
-                                    cvarOffset, cvarLength);
+                                    cvarOffset, cvarLength, hvarOffset);
         }
 
         // ---- the design space ----
@@ -386,6 +390,117 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return any ? total : null;
         }
 
+
+
+        /// <summary>What the instance does to a glyph's ADVANCE, from 'HVAR'.
+        /// <para>An instance moves the advances as well as the outlines, and a font may say so
+        /// TWICE: gvar moves the phantom points, HVAR carries the deltas directly. They need not
+        /// agree, and GDI reads HVAR where a font has one -- Segoe UI Variable's Text Bold at
+        /// 20ppem and its Display regular at 10 and 14 drew ink IDENTICAL to GDI's with the run two
+        /// pixels out, which is an advance difference and not a shape one.</para>
+        /// <para>The table is an ItemVariationStore plus an optional DeltaSetIndexMap: with no map
+        /// a glyph indexes the store's first subtable directly, and with one the entry gives an
+        /// (outer, inner) pair whose bit widths the map's own entryFormat declares.</para>
+        /// </summary>
+        public bool TryGetAdvanceDelta(int gid, out float delta)
+        {
+            delta = 0f;
+            if (!IsVaried || _hvarOffset <= 0 || gid < 0) return false;
+
+            int store = _hvarOffset + (int) U32(_data, _hvarOffset + 4);
+            int mapOffset = (int) U32(_data, _hvarOffset + 8);
+            if (store + 8 > _data.Length) return false;
+
+            int outer = 0, inner = gid;
+            if (mapOffset != 0)
+            {
+                int map = _hvarOffset + mapOffset;
+                if (map + 4 > _data.Length) return false;
+                int format = _data[map];
+                int entryFormat = _data[map + 1];
+                int entrySize = ((entryFormat & 0x30) >> 4) + 1;
+                int innerBits = (entryFormat & 0x0F) + 1;
+                int count, at;
+                if (format == 0) { count = U16(_data, map + 2); at = map + 4; }
+                else { count = (int) U32(_data, map + 2); at = map + 6; }
+                // A glyph past the end of the map takes the LAST entry, which is what the spec says
+                // and what lets a font map a whole tail of glyphs with one row.
+                int index = gid < count ? gid : count - 1;
+                if (index < 0) return false;
+                int p = at + index * entrySize;
+                if (p + entrySize > _data.Length) return false;
+                int entry = 0;
+                for (int i = 0; i < entrySize; i++) entry = (entry << 8) | _data[p + i];
+                outer = entry >> innerBits;
+                inner = entry & ((1 << innerBits) - 1);
+            }
+
+            // ItemVariationStore: format, regionListOffset, dataCount, dataOffsets[].
+            int regionList = store + (int) U32(_data, store + 2);
+            int dataCount = U16(_data, store + 6);
+            if (outer >= dataCount) return false;
+            int dataOff = store + (int) U32(_data, store + 8 + outer * 4);
+            if (dataOff + 6 > _data.Length || regionList + 4 > _data.Length) return false;
+
+            int regionAxisCount = U16(_data, regionList);
+            int regionCount = U16(_data, regionList + 2);
+
+            int itemCount = U16(_data, dataOff);
+            int wordDeltaCount = U16(_data, dataOff + 2);
+            int regionIndexCount = U16(_data, dataOff + 4);
+            bool longWords = (wordDeltaCount & 0x8000) != 0;
+            int wordCount = wordDeltaCount & 0x7FFF;
+            if (inner >= itemCount) return false;
+
+            int regionIndexes = dataOff + 6;
+            int rowSize = wordCount * (longWords ? 4 : 2) + (regionIndexCount - wordCount) * (longWords ? 2 : 1);
+            int row = regionIndexes + regionIndexCount * 2 + inner * rowSize;
+            if (row + rowSize > _data.Length) return false;
+
+            float total = 0f;
+            int q = row;
+            for (int i = 0; i < regionIndexCount; i++)
+            {
+                int value;
+                if (i < wordCount)
+                {
+                    value = longWords ? (int) U32(_data, q) : (short) U16(_data, q);
+                    q += longWords ? 4 : 2;
+                }
+                else
+                {
+                    value = longWords ? (short) U16(_data, q) : (sbyte) _data[q];
+                    q += longWords ? 2 : 1;
+                }
+
+                int region = U16(_data, regionIndexes + i * 2);
+                if (region >= regionCount) continue;
+                float scalar = RegionScalar(regionList + 4 + region * regionAxisCount * 6, regionAxisCount);
+                if (scalar != 0f) total += value * scalar;
+            }
+
+            delta = total;
+            return true;
+        }
+
+        /// <summary>How much a VariationRegion applies at the current instance. Its axes carry
+        /// start, peak and end explicitly, and a peak of zero means the axis does not restrict it.
+        /// As in Scalar, sitting exactly ON the peak is tested before the region's edges.</summary>
+        private float RegionScalar(int at, int axisCount)
+        {
+            float scalar = 1f;
+            for (int a = 0; a < axisCount; a++, at += 6)
+            {
+                if (at + 6 > _data.Length) return 0f;
+                float start = F2Dot14(_data, at), peak = F2Dot14(_data, at + 2), end = F2Dot14(_data, at + 4);
+                if (peak == 0f) continue;
+                float coord = a < _coords.Length ? _coords[a] : 0f;
+                if (coord == peak) continue;
+                if (coord <= start || coord >= end) return 0f;
+                scalar *= coord < peak ? (coord - start) / (peak - start) : (end - coord) / (end - peak);
+            }
+            return scalar;
+        }
 
         /// <summary>What the instance does to the CONTROL VALUES, from 'cvar'.
         /// <para>A variable font varies its hinting as well as its outlines: the cvt entries that
