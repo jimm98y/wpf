@@ -4623,10 +4623,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // UNVERIFIED BY RENDERING: no CFF face is installed on the machine this was
                 // written on, and TestFonts.FindCff looks for STIX on macOS and Linux. What is
                 // tested is the discriminator and the reader, separately and already.
+                // ...AND A HEAVY FACE IS NOT SIMULATED. macStyle's bold bit is clear on Arial
+                // Black, Segoe UI Black and Segoe UI Semibold, and GDI draws all three unsimulated
+                // because their OS/2 weight already is what was asked for or nearly; we emboldened
+                // them on top, which is 16M of the untested-families battery for Arial Black alone.
+                // See FontFiles.NeedsBoldSimulation.
+                bool simBold = bold && Text.FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold);
                 if (Text.CffFont.IsCff(bytes, sfnt))
-                    return new Text.CffFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
-                return new Text.TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic,
-                                             sfnt);
+                    return new Text.CffFont(bytes, simBold, italic && !fileItalic, sfnt);
+                return new Text.TrueTypeFont(bytes, simBold, italic && !fileItalic, sfnt);
             }
             catch (Exception)
             {

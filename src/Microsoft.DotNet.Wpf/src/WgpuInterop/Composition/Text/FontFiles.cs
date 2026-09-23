@@ -172,6 +172,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
         }
 
+        /// <summary>What weight the FILE declares, from 'OS/2'.usWeightClass; 400 when it has no
+        /// OS/2 table to ask.
+        /// <para>GDI does not simulate bold on a face that is already heavy, and "already heavy"
+        /// is not macStyle -- Arial Black, Segoe UI Black and Segoe UI Semibold all leave the bold
+        /// bit CLEAR and GDI still draws them unsimulated. Measured with GetTextExtentPoint32W at
+        /// lfWeight 400 against 700: no advance grows for weight 900 (Arial Black, Segoe UI Black)
+        /// or 600 (Segoe UI Semibold), and every one grows by a pixel per glyph for 500 (Dubai
+        /// Medium, Yu Gothic Medium, Engravers MT), 400 (Impact, Franklin Gothic Medium), 350
+        /// (Segoe UI Semilight) and 300 (Segoe UI Light, Calibri Light). So the line is two
+        /// hundred below the weight asked for.</para></summary>
+        public static int DeclaredWeight(byte[] data, int sfntOffset)
+        {
+            if (data.Length < sfntOffset + 12) return 400;
+            int numTables = (data[sfntOffset + 4] << 8) | data[sfntOffset + 5];
+            for (int i = 0; i < numTables; i++)
+            {
+                int rec = sfntOffset + 12 + i * 16;
+                if (rec + 16 > data.Length) return 400;
+                if (data[rec] != (byte) 'O' || data[rec + 1] != (byte) 'S'
+                    || data[rec + 2] != (byte) '/' || data[rec + 3] != (byte) '2') continue;
+                int off = Be32(data, rec + 8);
+                if (off + 6 > data.Length) return 400;
+                int weight = Be16(data, off + 4);
+                return weight > 0 ? weight : 400;
+            }
+            return 400;
+        }
+
+        /// <summary>Whether a bold run has to be SIMULATED on this face: only when the face is
+        /// neither declared bold nor already within two hundred of the weight asked for.</summary>
+        public static bool NeedsBoldSimulation(byte[] data, int sfntOffset, bool declaredBold)
+            => !declaredBold && DeclaredWeight(data, sfntOffset) <= 500;
+
         /// <summary>Whether the requested style has a file of its own. When it does not, the caller
         /// has to synthesize it -- drawing the regular face bold rather than pretending it is bold
         /// already, which would lay the text out at the wrong widths.</summary>
@@ -447,6 +480,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int rec = nameOff + 6 + i * 12;
                 if (rec + 12 > d.Length) break;
                 int platform = Be16(d, rec), nameId = Be16(d, rec + 6);
+                int language = Be16(d, rec + 4);
                 int len = Be16(d, rec + 8), off = strings + Be16(d, rec + 10);
                 if (nameId != 1 && nameId != 2) continue;
                 if (off + len > d.Length || len <= 0) continue;
@@ -458,8 +492,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 string value = platform == 3 || platform == 0
                     ? System.Text.Encoding.BigEndianUnicode.GetString(d, off, len)
                     : System.Text.Encoding.ASCII.GetString(d, off, len);
-                if (nameId == 1) family ??= value;
-                else subfamily ??= value;
+                // ENGLISH FIRST, and not merely "the first record in the file". A name table is
+                // localized: Leelawadee UI Bold's subfamily records are SPANISH, and the first of
+                // them is "Negreta", which contains neither "bold" nor "italic" -- so the bold file
+                // called itself regular, took the regular slot (the scan keeps the first file per
+                // slot and LeelaUIb sorts before LeelawUI), and EVERY style of that family resolved
+                // to the bold face: its regular text drew at nearly twice GDI's ink, 12M of the
+                // untested-families battery. The same applies to the family name, where a CJK
+                // face's first name-1 record is the Japanese or Chinese one and the English name is
+                // what a caller asks for.
+                bool english = platform == 3 && language == 0x409;
+                if (nameId == 1) { if (english || family is null) family = value; }
+                else { if (english || subfamily is null) subfamily = value; }
             }
             if (string.IsNullOrWhiteSpace(family)) return false;
             if (subfamily is not null)
@@ -468,6 +512,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 italic = subfamily.Contains("italic", StringComparison.OrdinalIgnoreCase)
                          || subfamily.Contains("oblique", StringComparison.OrdinalIgnoreCase);
             }
+            // ...AND 'head'.macStyle HAS A VOTE, because it says the same thing in no language at
+            // all. Four faces on a stock Windows install disagree with their own subfamily string
+            // -- Monotype Corsiva and Palace Script MT say "Regular" and lean, Lucida Calligraphy
+            // and Lucida Handwriting say "Italic" and clear the bit -- and all four are italic in
+            // fact, so the two are OR-ed rather than ranked.
+            DeclaredStyle(d, sfnt, out bool headBold, out bool headItalic);
+            bold |= headBold; italic |= headItalic;
             return true;
         }
 

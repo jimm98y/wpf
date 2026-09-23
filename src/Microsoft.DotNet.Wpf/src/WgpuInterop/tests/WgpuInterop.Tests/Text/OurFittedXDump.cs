@@ -43,7 +43,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipWhen(file is null, "this machine lacks the face");
             byte[] faceBytes = File.ReadAllBytes(file!);
             FontFiles.DeclaredStyle(faceBytes, 0, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(faceBytes, bold && !fileBold, italic && !fileItalic);
+            var font = new TrueTypeFont(faceBytes, bold && FontFiles.NeedsBoldSimulation(faceBytes, 0, fileBold), italic && !fileItalic);
 
             // SUBPIXELFITTING IS A STATIC WITH NO INITIALIZER, so it defaults to FALSE and every
             // outline this printed before it was set here was the BI-LEVEL fit, not the ClearType

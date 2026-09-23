@@ -778,7 +778,7 @@ namespace WgpuInterop.Tests.Text
 
             byte[] faceBytes = File.ReadAllBytes(file!);
             FontFiles.DeclaredStyle(faceBytes, 0, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(faceBytes, bold && !fileBold, italic && !fileItalic);
+            var font = new TrueTypeFont(faceBytes, bold && FontFiles.NeedsBoldSimulation(faceBytes, 0, fileBold), italic && !fileItalic);
             bool saved = TrueTypeFont.SubpixelFitting;
             // WPF_GGOPTS_CT=1: fit the way the RENDERER does (SubpixelFitting on). The two
             // settings below are a THIRD mode -- neither the bi-level oracle nor the ClearType
@@ -1422,7 +1422,7 @@ namespace WgpuInterop.Tests.Text
             Assert.SkipWhen(file is null, "this machine lacks the face");
             byte[] faceBytes = File.ReadAllBytes(file!);
             FontFiles.DeclaredStyle(faceBytes, 0, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(faceBytes, bold && !fileBold, italic && !fileItalic);
+            var font = new TrueTypeFont(faceBytes, bold && FontFiles.NeedsBoldSimulation(faceBytes, 0, fileBold), italic && !fileItalic);
 
             var sb = new System.Text.StringBuilder();
             // GGO's "fitted" outline is GDI's BI-LEVEL fit (see the trap note in

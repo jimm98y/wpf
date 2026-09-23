@@ -714,7 +714,7 @@ namespace WgpuInterop.Tests.Text
             // hinting catastrophe and is a bug in the test.
             byte[] bytes = File.ReadAllBytes(file!);
             FontFiles.DeclaredStyle(bytes, 0, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, 0, fileBold), italic && !fileItalic);
             string style = (bold ? "b" : "") + (italic ? "i" : "");
             int baseline = ppem + 12;
 
@@ -4404,7 +4404,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             char c = parts[1][0];
             int gid = font.GlyphIndex(c);
@@ -4513,7 +4513,7 @@ namespace WgpuInterop.Tests.Text
             TrueTypeFont.SubpixelFitting = false;
             try
             {
-                var biFont = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+                var biFont = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
                 if (((IHintedGlyphFont) biFont).TryGetHintedOutline(gid, ppem, out List<PathFigure> bi) && bi.Count > 0)
                 {
                     float lo = float.MaxValue, hi = float.MinValue;
@@ -4583,7 +4583,7 @@ namespace WgpuInterop.Tests.Text
                 byte[] bytes = File.ReadAllBytes(file);
                 int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
                 FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-                var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+                var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
                 float natScale = ppem / (float) font.PixelsPerEm;
                 foreach (char c in System.Linq.Enumerable.Distinct(parts[1]))
                 {
@@ -5024,7 +5024,7 @@ namespace WgpuInterop.Tests.Text
             }
 
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = true;
@@ -6601,7 +6601,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = true;
@@ -6721,7 +6721,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             var renderer = NewRenderer(font);
             renderer.TextBlendCorrection = true;
@@ -6819,7 +6819,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
             float natScale = ppem / (float) font.PixelsPerEm;
 
             // The bi-level fitting, for reference. Prep runs at construction, so a separate font.
@@ -6828,7 +6828,7 @@ namespace WgpuInterop.Tests.Text
             try
             {
                 TrueTypeInterpreter.BiLevelPass = true;
-                biFont = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+                biFont = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
             }
             finally { TrueTypeInterpreter.BiLevelPass = savedBi; }
 
@@ -7321,7 +7321,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             Console.Error.WriteLine($"== {parts[0]} @{ppem}{(style == "" ? "" : "/" + style)}:"
                                     + " can a sub-pixel shift of OUR fitted outline reproduce GDI's?");
@@ -7361,7 +7361,7 @@ namespace WgpuInterop.Tests.Text
                     // afterwards leaves those CVTs as the ClearType pass computed them, and the
                     // outline comes back byte-identical -- which is what the first attempt showed.
                     TrueTypeInterpreter.BiLevelPass = true;
-                    var biFont = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+                    var biFont = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
                     if (!((IHintedGlyphFont) biFont).TryGetHintedOutline(gid, ppem, out biFitted))
                         biFitted = new List<PathFigure>();
                 }
@@ -7604,7 +7604,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             // Each glyph SEPARATED, so that a glyph whose ink sits differently can be named.
             // Repeating one letter proved the pen is right; it cannot say which letters are not.
@@ -7725,7 +7725,7 @@ namespace WgpuInterop.Tests.Text
             // The file may not declare the style asked for, in which case the face is synthesised
             // -- the same choice the renderer makes, so that the two sides are the same glyph.
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             var raw = new byte[Width * Height * 4];
             Gdi.s_rawRgb = raw;
@@ -7801,7 +7801,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, parts[0], bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             var raw = new byte[Width * Height * 4];
             Gdi.s_rawRgb = raw;
@@ -8008,7 +8008,8 @@ namespace WgpuInterop.Tests.Text
                         int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
                         if (CffFont.IsCff(bytes, sfnt)) continue;
                         FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-                        var font = new TrueTypeFont(bytes, bold && !fileBold,
+                        var font = new TrueTypeFont(bytes,
+                                                    bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold),
                                                     italic && !fileItalic, sfnt);
 
                         Gdi.s_rawRgb = raw;
@@ -10637,7 +10638,7 @@ namespace WgpuInterop.Tests.Text
         private static TrueTypeFont Ours(byte[] bytes, int sfnt, bool bold, bool italic)
         {
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            return new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            return new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
         }
 
         /// <summary>WPF_GETINFO_ITALIC=1 asks GDI the same questions while it SYNTHESIZES an
@@ -10986,7 +10987,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             const int Base = 28;
             byte[] windows = Gdi.Draw(text, family, ppem, PenX, Base, Width, Height, bold, italic);
@@ -11078,7 +11079,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
             int baseline = 28;
 
             var raw = new byte[Width * Height * 4];
@@ -11280,7 +11281,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             const int Base = 28;
             var raw = new byte[Width * Height * 4];
@@ -11515,7 +11516,7 @@ namespace WgpuInterop.Tests.Text
             byte[] bytes = File.ReadAllBytes(file!);
             int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
             FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-            var font = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+            var font = new TrueTypeFont(bytes, bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold), italic && !fileItalic, sfnt);
 
             int baseline = ppem + 12;
             var raw = new byte[Width * Height * 4];
