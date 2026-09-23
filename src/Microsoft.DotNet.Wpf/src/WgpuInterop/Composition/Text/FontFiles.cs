@@ -201,7 +201,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>A face with no 'STAT' falls back to the instance's own subfamily string split the
         /// same way, which is what Bahnschrift's "Light SemiCondensed" needs.</para></summary>
         private static void ScanNamedInstances(byte[] d, int sfnt, string path, string family,
-                                               Dictionary<string, NamedInstance?[]> into)
+                                               Dictionary<string, NamedInstance?[]> into,
+                                               bool faceBold, bool faceItalic)
         {
             Dictionary<string, int> tables = SfntTables(d, sfnt);
             if (!tables.TryGetValue("fvar", out int fvar) || fvar + 16 > d.Length) return;
@@ -308,7 +309,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     parts = new List<string>(subfamily.Split(' ', StringSplitOptions.RemoveEmptyEntries));
                 else continue;
 
-                bool bold = false, italic = false;
+                // THE FACE'S OWN STYLE IS THE BASE. Cascadia Code Italic is one file whose
+                // instances are named Light, Regular, Bold and so on -- none of them says
+                // "Italic", because the whole FACE is -- so slotting by the instance name alone
+                // filed its Bold as the family's upright bold and bold-italic fell back to the
+                // upright file with a synthetic shear.
+                bool bold = faceBold, italic = faceItalic;
                 var keep = new List<string>();
                 foreach (string part in parts)
                 {
@@ -428,6 +434,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             if (s_known.TryGetValue(family, out string?[]? files))
             {
+                // THE TABLE IS A SHORTCUT, NOT THE LAST WORD. Its entry for a family names the
+                // files this port was written against, and a machine can have MORE: Windows
+                // Terminal installs a newer Cascadia Code with an ITALIC (registered under HKCU,
+                // in Program Files\WindowsApps), and the table's "no italic file here" sent us to
+                // the upright with a synthetic shear while GDI drew the real italic. So when the
+                // table has nothing for the style asked for, the scan gets a say before the
+                // fallback does.
+                ScannedFamilies().TryGetValue(family, out string?[]? alsoScanned);
+                foreach (int candidate in Order(slot))
+                {
+                    if (files[candidate] is { } tabled && Locate(tabled) is { } tabledPath)
+                        return tabledPath;
+                    if (alsoScanned?[candidate] is { } scannedPath) return scannedPath;
+                    if (candidate == slot && s_scannedInstances is not null
+                        && s_scannedInstances.TryGetValue(family, out NamedInstance?[]? inst)
+                        && inst[candidate] is { } exactInstance)
+                        return exactInstance.Path;
+                }
                 // Fall back through the styles the family actually ships: bold-italic to bold, to
                 // italic, to regular.
                 foreach (int candidate in Order(slot))
@@ -639,19 +663,89 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static IReadOnlyCollection<string> ScannedFamilyNames() => ScannedFamilies().Keys;
 
+        /// <summary>Every font file the REGISTRY names, which is where Windows keeps the ones that
+        /// are not in a font directory.
+        /// <para>An application can install a font for itself, and a packaged one does it as a
+        /// matter of course: Windows Terminal ships Cascadia Code and Cascadia Mono -- each with an
+        /// ITALIC, which the copies in %WINDIR%\Fonts do not have -- under
+        /// HKCU\...\CurrentVersion\Fonts\&lt;package&gt;, pointing into Program Files\WindowsApps.
+        /// GDI finds them (asked for Cascadia Code Italic it hands back a real italic face, version
+        /// 2407 with 3,076 glyphs, against the 2102 upright in the font folder); we walked two
+        /// directories and found neither, so we sheared the upright and drew a different lean.</para>
+        /// <para>Values are "Face Name (TrueType)" -> file, and the file is a bare name (relative to
+        /// the system font directory) or a full path. The per-user hive nests them one level deeper,
+        /// a subkey per package.</para></summary>
+        private static List<string> RegistryFontFiles()
+        {
+            var paths = new List<string>();
+            if (!OperatingSystem.IsWindows()) return paths;
+            const int HkeyCurrentUser = unchecked((int) 0x80000001);
+            const int HkeyLocalMachine = unchecked((int) 0x80000002);
+            const string FontsKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts";
+            CollectFontValues((IntPtr) HkeyLocalMachine, FontsKey, paths, recurse: false);
+            CollectFontValues((IntPtr) HkeyCurrentUser, FontsKey, paths, recurse: true);
+            return paths;
+        }
+
+        private static void CollectFontValues(IntPtr hive, string subKey, List<string> into, bool recurse)
+        {
+            const int KeyRead = 0x20019, ErrorSuccess = 0;
+            if (RegOpenKeyExW(hive, subKey, 0, KeyRead, out IntPtr key) != ErrorSuccess) return;
+            try
+            {
+                var name = new char[512];
+                var data = new byte[1024];
+                for (int i = 0; ; i++)
+                {
+                    int nameLen = name.Length, dataLen = data.Length;
+                    int rc = RegEnumValueW(key, i, name, ref nameLen, IntPtr.Zero, out int _, data, ref dataLen);
+                    if (rc != ErrorSuccess) break;
+                    string value = System.Text.Encoding.Unicode.GetString(data, 0, Math.Max(0, dataLen)).TrimEnd('\0');
+                    if (value.Length == 0) continue;
+                    string path = Path.IsPathRooted(value) ? value : Locate(value) ?? "";
+                    if (path.Length > 0) into.Add(path);
+                }
+
+                if (!recurse) return;
+                for (int i = 0; ; i++)
+                {
+                    int len = name.Length;
+                    if (RegEnumKeyExW(key, i, name, ref len, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
+                                      IntPtr.Zero) != ErrorSuccess)
+                        break;
+                    CollectFontValues(hive, subKey + "\\" + new string(name, 0, len), into, recurse: false);
+                }
+            }
+            finally { RegCloseKey(key); }
+        }
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        private static extern int RegEnumValueW(IntPtr key, int index, char[] name, ref int nameLen,
+                                                IntPtr reserved, out int type, byte[] data, ref int dataLen);
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        private static extern int RegEnumKeyExW(IntPtr key, int index, char[] name, ref int nameLen,
+                                                IntPtr reserved, IntPtr className, IntPtr classLen,
+                                                IntPtr lastWrite);
+
         private static Dictionary<string, string?[]> ScannedFamilies()
         {
             if (s_scanned is not null) return s_scanned;
             var found = new Dictionary<string, string?[]>(StringComparer.OrdinalIgnoreCase);
             var instances = new Dictionary<string, NamedInstance?[]>(StringComparer.OrdinalIgnoreCase);
+            var toScan = new List<string>();
             foreach (string dir in s_directories.Value)
             {
-                string[] files;
-                try { files = Directory.GetFiles(dir); }
-                catch (IOException) { continue; }
-                catch (UnauthorizedAccessException) { continue; }
-                foreach (string path in files)
+                try { toScan.AddRange(Directory.GetFiles(dir)); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            toScan.AddRange(RegistryFontFiles());
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            {
+                foreach (string path in toScan)
                 {
+                    if (!seen.Add(path)) continue;
                     string ext = Path.GetExtension(path);
                     if (!ext.Equals(".ttf", StringComparison.OrdinalIgnoreCase)
                         && !ext.Equals(".otf", StringComparison.OrdinalIgnoreCase)
@@ -681,7 +775,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         // typographic "Sitka".
                         ScanNamedInstances(head, sfnt, path,
                                            NameById(head, sfnt, 16) is { Length: > 0 } typographic
-                                               ? typographic : family!, instances);
+                                               ? typographic : family!, instances, bold, italic);
                     }
                 }
             }
