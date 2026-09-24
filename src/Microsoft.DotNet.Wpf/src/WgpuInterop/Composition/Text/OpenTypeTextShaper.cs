@@ -87,6 +87,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             foreach (int gid in glyphs) output.Add(new ShapedGlyph(gid, font.Advance(gid)));
+            // NOT KERNING A COMPLEX SCRIPT WAS TRIED AND IS NOT THE ANSWER. Segoe UI's ra followed
+            // by a zain has ink IDENTICAL to GDI's with one glyph a pixel out and no joining to get
+            // wrong, so ExtTextOutW's Uniscribe path is positioning it somehow -- but kerning the
+            // run changes nothing, because the face has no 'kern' pair for those two. What is
+            // missing is GPOS (cursive attachment and its pair adjustments), which this stack does
+            // not apply at all.
             if (_kern) Kern(font, output);
         }
 
@@ -277,10 +283,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             => at >= 0 && (JoinCausing(text[at])
                            || Has(gsub, font, text, at, "fina") || Has(gsub, font, text, at, "medi"));
 
+        /// <summary>Whether the face gives this letter that positional form. COVERAGE, not a
+        /// changed glyph: a face may map a form to the letter itself (see GsubTable.Covers).</summary>
         private static bool Has(GsubTable gsub, IShapingFont font, string text, int at, string form)
         {
             int gid = font.GlyphIndex(text[at]);
-            return gid > 0 && gsub.Substitute(Arabic, form, gid) != gid;
+            return gid > 0 && gsub.Covers(Arabic, form, gid);
         }
 
         /// <summary>The pair adjustments, exactly as the kerning shaper applies them.</summary>

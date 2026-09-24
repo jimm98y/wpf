@@ -37,6 +37,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The glyph this feature substitutes for <paramref name="glyph"/>, or the glyph
         /// itself when the feature does not touch it.</summary>
+        /// <summary>Whether this feature COVERS the glyph -- which is not the same question as
+        /// whether it changes it.
+        /// <para>A face may map a letter's positional form to the letter itself: Arial's tah has
+        /// init, medi and fina lookups that all hand back uni0637, and its dal and waw do the same
+        /// for fina. Asking "did the glyph change" then answers "this letter does not join", and
+        /// the damage lands on its NEIGHBOUR -- kha before a dal took its ISOLATED form instead of
+        /// its initial one and drew 1.2 of GDI's ink at the same width. Coverage is the question
+        /// the shaper actually means.</para></summary>
+        public bool Covers(string script, string feature, int glyph)
+        {
+            foreach (int lookup in Lookups(script, feature))
+                if (Singles(lookup).ContainsKey(glyph)) return true;
+            return false;
+        }
+
         public int Substitute(string script, string feature, int glyph)
         {
             foreach (int lookup in Lookups(script, feature))
