@@ -111,6 +111,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int previous = Neighbour(text, i, -1), next = Neighbour(text, i, +1);
                 // Joining is mutual: this letter must reach towards its neighbour AND the
                 // neighbour back towards it, which is why both sides are asked of the face.
+                // A join-causing character keeps its own glyph whatever its neighbours are.
+                if (JoinCausing(text[i])) continue;
                 bool toPrevious = JoinsForward(gsub, font, text, previous) && Has(gsub, font, text, i, "fina");
                 bool toNext = JoinsBack(gsub, font, text, next) && Has(gsub, font, text, i, "init");
                 string form = toPrevious ? (toNext ? "medi" : "fina")
@@ -255,14 +257,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                    || category == UnicodeCategory.Format;
         }
 
+        /// <summary>A character that JOINS BOTH WAYS and has no form of its own: the tatweel, which
+        /// is drawn precisely to hold two letters apart while keeping them connected, and the zero
+        /// width joiner. Asking the face for their positional forms -- which is how every other
+        /// letter's joining is decided here -- says "does not join", because a face has one glyph
+        /// for a tatweel and no init or fina for it. So a letter next to one came out ISOLATED:
+        /// U+063F followed by a tatweel, and a tatweel followed by U+0641, were the only two of the
+        /// 36 Arabic letters' pairs that Tahoma disagreed with GDI about.</summary>
+        private static bool JoinCausing(char c) => c == 'ـ' || c == '‍';
+
         // A letter reaches towards what FOLLOWS it if the face has an initial form for it -- and
         // a medial form counts too, for a letter that only ever appears joined on both sides.
         private static bool JoinsForward(GsubTable gsub, IShapingFont font, string text, int at)
-            => at >= 0 && (Has(gsub, font, text, at, "init") || Has(gsub, font, text, at, "medi"));
+            => at >= 0 && (JoinCausing(text[at])
+                           || Has(gsub, font, text, at, "init") || Has(gsub, font, text, at, "medi"));
 
         // ... and towards what PRECEDES it if it has a final form.
         private static bool JoinsBack(GsubTable gsub, IShapingFont font, string text, int at)
-            => at >= 0 && (Has(gsub, font, text, at, "fina") || Has(gsub, font, text, at, "medi"));
+            => at >= 0 && (JoinCausing(text[at])
+                           || Has(gsub, font, text, at, "fina") || Has(gsub, font, text, at, "medi"));
 
         private static bool Has(GsubTable gsub, IShapingFont font, string text, int at, string form)
         {
