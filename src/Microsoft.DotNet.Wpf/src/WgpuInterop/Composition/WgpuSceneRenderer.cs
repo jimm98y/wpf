@@ -505,7 +505,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_traceText =
             Environment.GetEnvironmentVariable("WGPU_TRACE_TEXT") == "1";
         private readonly Text.ITextShaper _shaper;
-        private static readonly Text.SimpleTextShaper s_plainShaper = new();
+        /// <summary>The shaper for a run that asks not to be kerned. It still SHAPES: joining,
+        /// ligatures and Indic reordering are not kerning, and serving the request with a
+        /// pass-through shaper drew Arabic as isolated letters. WPF_PLAIN_SHAPER=1 restores it.
+        /// </summary>
+        private static readonly Text.ITextShaper s_plainShaper =
+            Environment.GetEnvironmentVariable("WPF_PLAIN_SHAPER") == "1"
+                ? new Text.SimpleTextShaper()
+                : new Text.OpenTypeTextShaper(kern: false);
         private readonly Text.GlyphAtlas _glyphAtlas = new();
         private readonly List<Text.ShapedGlyph> _shapeScratch = new();
         private IntPtr _shaderModule;
@@ -4741,6 +4748,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 s_plainShaper.Shape(font, run.Text, _shapeScratch);
             else
                 _shaper.Shape(font, run.Text, _shapeScratch);
+            // ...AND INTO VISUAL ORDER, because this pen only goes one way. A run that arrives as a
+            // STRING carries no bidi level for MilcoreEngine's backwards walk to read, so Hebrew and
+            // Arabic came out mirrored. See Text.BidiOrder.
+            Text.BidiOrder.ToVisual(run.Text, _shapeScratch);
 
             float scale = run.EmSize / font.PixelsPerEm;
 

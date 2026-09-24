@@ -30,6 +30,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
     {
         private const string Arabic = "arab";
 
+        /// <summary>Whether this shaper also applies pair kerning.
+        /// <para>A run can ask not to be kerned -- the parity suite's oracle is ExtTextOutW, which
+        /// does not kern -- and that used to be served by swapping in the PASS-THROUGH shaper,
+        /// which drops joining and ligatures with it. An Arabic word then drew as a row of
+        /// isolated letters: Tahoma's two-letter word at 16ppem came out 1.12 of GDI's ink and
+        /// seven pixels wide of it, and the whole Arabic sweep measured 64M. Not kerning is not
+        /// the same as not shaping.</para></summary>
+        private readonly bool _kern;
+
+        public OpenTypeTextShaper(bool kern = true) => _kern = kern;
+
         /// <summary>The script tag to shape this text with, when it is one that needs reordering
         /// and the face actually knows that script.</summary>
         private static string? IndicTag(GsubTable gsub, string text)
@@ -59,8 +70,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 ShapeIndic(indicGsub, font, text, indicScript, glyphs);
             }
+            // ...AND ONLY WHERE THERE IS ARABIC TO SHAPE. The test used to be "does the FACE know
+            // the script", which Calibri, Segoe UI, Arial and Tahoma all do -- so a line of Latin
+            // punctuation in Calibri had the Arabic features run over it, and 'ccmp' and 'calt'
+            // substituted glyphs that have nothing to do with Arabic: 11,215,675 of the punctuation
+            // battery, in Calibri regular and bold. The text has to contain the script.
             else if (font is IOpenTypeShapingFont ot && ot.Gsub is GsubTable gsub
-                     && gsub.HasFeature(Arabic, "init"))
+                     && HasArabic(text) && gsub.HasFeature(Arabic, "init"))
             {
                 // The order Uniscribe and HarfBuzz use: compose first, then decide each
                 // letter's form, then the rules that speak about sequences.
@@ -71,7 +87,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             foreach (int gid in glyphs) output.Add(new ShapedGlyph(gid, font.Advance(gid)));
-            Kern(font, output);
+            if (_kern) Kern(font, output);
+        }
+
+        /// <summary>Whether the text has a character the Arabic shaper is for: the Arabic block
+        /// itself, its supplement and extended ranges, and the presentation forms.</summary>
+        private static bool HasArabic(string text)
+        {
+            foreach (char c in text)
+                if (c >= '؀' && c <= 'ۿ' || c >= 'ݐ' && c <= 'ݿ'
+                    || c >= 'ࢠ' && c <= 'ࣿ' || c >= 'ﭐ' && c <= '﷿'
+                    || c >= 'ﹰ' && c <= '﻿')
+                    return true;
+            return false;
         }
 
         /// <summary>Replaces each letter with its positional form.</summary>
