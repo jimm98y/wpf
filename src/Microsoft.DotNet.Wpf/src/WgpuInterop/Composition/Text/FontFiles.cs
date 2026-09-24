@@ -655,6 +655,61 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return null;
         }
 
+        /// <summary>The families Windows names for a SHAPING script, which come before any general
+        /// face that merely covers the character.
+        /// <para>Read out of **dwrite.dll's FONTFALLBACK resource** (type FONTFALLBACK, name
+        /// FALLBACK, 1033): 370 entries of ranges and family lists, whose first group is the modern
+        /// one. That table is why Thai in a Segoe UI label is Leelawadee UI and not Tahoma --
+        /// Tahoma COVERS Thai and is the first entry of Segoe UI's registry SystemLink list, and
+        /// Windows still draws Leelawadee UI, which its own MapFont also answers. Devanagari is
+        /// Nirmala UI the same way. So a script's designated font outranks the link list, and only
+        /// the scripts that need SHAPING are listed here: for Hebrew, Greek, Cyrillic and CJK the
+        /// link list is right and this must not touch them (Hebrew in Segoe UI Italic really is
+        /// Tahoma, the first SystemLink entry).</para>
+        /// <para>Microsoft Sans Serif closes every one of these lists because it is the DEFAULT
+        /// linked font: win32kfull.sys hard-codes `MICROSS.TTF,Microsoft Sans Serif,108,122` as the
+        /// first of a seven-slot default table (FindDefaultLinkedFontEntry), and
+        /// RFONTOBJ::FindLinkedGlyphDataPlus consults that slot after the list. Arabic lands there
+        /// in every case measured -- Segoe UI Italic, Consolas, Cambria, Arial Italic and Times
+        /// Italic all draw Arabic from micross, at the same size as each other.</para>
+        /// <para>KNOWN DIVERGENCE, small and deliberate: for an UPRIGHT primary that lacks Arabic,
+        /// this yields the table's Segoe UI -- whose upright does have Arabic -- where GDI is
+        /// measured to take micross anyway (Consolas and Cambria both). No battery row reaches that
+        /// case, and following Windows' own table is the better guess until the reason is read out
+        /// of the code.</para></summary>
+        private static IEnumerable<string> ShapingScriptFallback(char c)
+        {
+            // Arabic, its supplement and extensions, and the presentation forms.
+            if (c is >= '؀' and <= 'ۿ' or >= 'ݐ' and <= 'ݿ'
+                  or >= 'ࢠ' and <= 'ࣿ' or >= 'ﭐ' and <= '﷏'
+                  or >= 'ﷰ' and <= '﷿' or >= 'ﹰ' and <= '﻾')
+            {
+                yield return "Segoe UI";
+                yield return "Simplified Arabic";
+            }
+            else if (c is >= '܀' and <= 'ݏ')             // Syriac
+                yield return "Segoe UI Historic";
+            else if (c is >= 'ऀ' and <= '෿' or >= '꣠' and <= 'ꣿ')
+                yield return "Nirmala UI";                         // Devanagari through Sinhala
+            else if (c is >= '฀' and <= '໿')             // Thai and Lao
+                yield return "Leelawadee UI";
+            else if (c is >= 'ༀ' and <= '࿿')             // Tibetan
+                yield return "Microsoft Himalaya";
+            else if (c is >= 'က' and <= '႟')             // Myanmar
+                yield return "Myanmar Text";
+            else if (c is >= 'ក' and <= '៿' or >= '᧠' and <= '᧿')
+            {
+                yield return "Leelawadee UI";                      // Khmer
+                yield return "Khmer UI";
+                yield return "DaunPenh";
+            }
+            else if (c is >= '᠀' and <= '᢯')             // Mongolian
+                yield return "Mongolian Baiti";
+            else
+                yield break;                                        // not a shaping script
+            yield return "Microsoft Sans Serif";
+        }
+
         public static IEnumerable<string> LinkCandidates(string? requested = null, char needed = '\0')
         {
             if (needed != '\0' && IsEmoji(needed))
@@ -662,6 +717,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 yield return "Segoe UI Emoji";
                 yield return "Segoe UI Symbol";
             }
+
+            // A SHAPING SCRIPT'S OWN FONT comes before the link list, which is what Windows does:
+            // see ShapingScriptFallback. Nothing else is affected, because the table lists only the
+            // scripts that need shaping.
+            foreach (string script in ShapingScriptFallback(needed)) yield return script;
 
             // What Windows itself would do, first.
             if (requested is not null)
