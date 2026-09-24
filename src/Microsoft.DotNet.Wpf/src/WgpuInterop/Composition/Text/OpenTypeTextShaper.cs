@@ -10,6 +10,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
     internal interface IOpenTypeShapingFont : IShapingFont
     {
         GsubTable? Gsub { get; }
+
+        /// <summary>The positioning table, for the pair adjustments a complex script gets and
+        /// Latin does not. Null for a face without one.</summary>
+        GposTable? Gpos { get; }
+
+        /// <summary>Design units as this face's base pixels, so a caller can use a table's own
+        /// numbers without knowing the em square.</summary>
+        float UnitsToPixels(int units);
     }
 
     /// <summary>Contextual shaping: the glyph a letter takes from the company it keeps.
@@ -64,6 +72,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             output.Clear();
             var glyphs = new List<int>(text.Length);
             foreach (char c in text) glyphs.Add(font.GlyphIndex(c));
+            // Set only where the face's positioning table applies: see PositionArabic.
+            GposTable? positioned = null;
 
             if (font is IOpenTypeShapingFont indicFont && indicFont.Gsub is GsubTable indicGsub
                 && IndicTag(indicGsub, text) is string indicScript)
@@ -84,9 +94,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 Join(gsub, font, text, glyphs);
                 gsub.ApplyFeature(Arabic, "rlig", glyphs);
                 gsub.ApplyFeature(Arabic, "calt", glyphs);
+                positioned = ot.Gpos;
             }
 
             foreach (int gid in glyphs) output.Add(new ShapedGlyph(gid, font.Advance(gid)));
+            if (positioned is { } gpos) PositionArabic(gpos, font, output);
             // NOT KERNING A COMPLEX SCRIPT WAS TRIED AND IS NOT THE ANSWER. Segoe UI's ra followed
             // by a zain has ink IDENTICAL to GDI's with one glyph a pixel out and no joining to get
             // wrong, so ExtTextOutW's Uniscribe path is positioning it somehow -- but kerning the
@@ -290,6 +302,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int gid = font.GlyphIndex(text[at]);
             return gid > 0 && gsub.Covers(Arabic, form, gid);
         }
+
+        /// <summary>The face's GPOS pair adjustments for a run that has been joined.
+        /// <para>The gap the face names between two letters, closed once. Segoe UI asks for -171
+        /// units between reh and zain and between zain and seen, which is the pixel our Arabic
+        /// alphabet was wide at each of those two places and nowhere else.</para>
+        /// <para>The adjustment is recorded on the glyph that comes FIRST IN VISUAL ORDER, which for
+        /// this right-to-left run is the second of the logical pair, because ShapedGlyph.Kern means
+        /// "the space after this glyph" and the renderer steps the pen through the run after
+        /// BidiOrder has reversed it. Putting it on the logical first glyph would close the gap on
+        /// the far side of the wrong letter.</para>
+        /// <para>WPF_GPOS=0 leaves a complex run unpositioned, as this used to.</para></summary>
+        private static void PositionArabic(GposTable gpos, IShapingFont font, List<ShapedGlyph> output)
+        {
+            if (s_gposOff || !gpos.HasFeature(Arabic, "kern")) return;
+            for (int i = 0; i + 1 < output.Count; i++)
+            {
+                if (!gpos.TryPairAdjustment(Arabic, "kern", output[i].GlyphId, output[i + 1].GlyphId,
+                                            out int units) || units == 0)
+                    continue;
+                float kern = font is IOpenTypeShapingFont ot ? ot.UnitsToPixels(units) : 0f;
+                if (kern == 0f) continue;
+                ShapedGlyph g = output[i + 1];
+                output[i + 1] = new ShapedGlyph(g.GlyphId, g.Advance, g.XOffset, g.YOffset,
+                                                g.Kern + kern);
+            }
+        }
+
+        private static readonly bool s_gposOff =
+            System.Environment.GetEnvironmentVariable("WPF_GPOS") == "0";
 
         /// <summary>The pair adjustments, exactly as the kerning shaper applies them.</summary>
         internal static void Kern(IShapingFont font, List<ShapedGlyph> output)

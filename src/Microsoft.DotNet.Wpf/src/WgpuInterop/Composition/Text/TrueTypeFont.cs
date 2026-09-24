@@ -351,6 +351,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // measured and found to be drawing isolated letters.
             if (tables.TryGetValue("GSUB", out int gsub))
                 Gsub = new GsubTable(_data, gsub);
+            // ...and the positions it wants them in. GDI's simple path ignores GPOS -- every Latin
+            // battery is exact without it -- but a complex script goes through the shaping engine,
+            // which applies it. See GposTable.
+            if (tables.TryGetValue("GPOS", out int gpos))
+                Gpos = new GposTable(_data, gpos);
         }
 
         private static readonly bool s_ebdtDbcsOnly =
@@ -400,6 +405,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The face's GSUB table, or null when it has none.</summary>
         public GsubTable? Gsub { get; }
+
+        /// <summary>The face's GPOS table, or null when it has none.</summary>
+        public GposTable? Gpos { get; }
+
+        /// <summary>Design units as base pixels, which is how a layout table's own numbers reach a
+        /// caller that works in pixels.</summary>
+        public float UnitsToPixels(int units) => units * (float) BaseEmPixels / _unitsPerEm;
 
         // ---- IColorGlyphFont ----
 
