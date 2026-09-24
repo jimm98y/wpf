@@ -4665,30 +4665,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// more often than not, and a run of mixed scripts still improves -- the script the
         /// requested face lacks stops being boxes -- so this is worth having before the larger
         /// change.</para></summary>
-        private Text.IFont? LinkedFontFor(string text, Text.IFont current, string? requested)
+        private Text.IFont? LinkedFontFor(string text, Text.IFont current, string? requested, int style)
         {
             if (current is not Text.IShapingFont shaping) return null;
-            char needed = '\0';
-            foreach (char c in text)
-            {
-                if (char.IsWhiteSpace(c) || char.IsControl(c) || char.IsSurrogate(c)) continue;
-                if (shaping.GlyphIndex(c) > 0) return null;   // the face copes; nothing to do
-                if (needed == '\0') needed = c;
-            }
+            char needed = Text.FontFiles.UncoveredRun(text, c => shaping.GlyphIndex(c) > 0);
             if (needed == '\0') return null;
 
-            if (_linkCache.TryGetValue((requested, needed), out Text.IFont? cached)) return cached;
+            // THE RUN'S STYLE GOES WITH IT. GDI does not link to a regular face and leave it
+            // upright: asked for Hebrew in Segoe UI Italic -- whose file has no Hebrew at all, nor
+            // has the bold italic one -- it draws Tahoma SHEARED, bitmap for bitmap the same as
+            // Tahoma italic (hash cfbf76f7572aa484 either way at 16ppem, and 5b91a506f14fcd3b for
+            // the bold pair, where upright Tahoma differs). Loading the link at style 0 was
+            // therefore upright Hebrew under an italic run, which is most of what the Hebrew and
+            // Arabic batteries were measuring; LoadFamily decides per axis whether the linked
+            // family has a file for the style or wants the simulation, exactly as for a named one.
+            if (_linkCache.TryGetValue((requested, needed, style), out Text.IFont? cached)) return cached;
             Text.IFont? found = null;
-            foreach (string family in Text.FontFiles.LinkCandidates(requested, needed))
+            Text.FontFiles.LinkedFamily(requested, needed, family =>
             {
-                if (LoadFamily(family, 0) is not Text.IFont f) continue;
-                if (f is Text.IShapingFont sf && sf.GlyphIndex(needed) > 0) { found = f; break; }
-            }
-            _linkCache[(requested, needed)] = found;
+                if (LoadFamily(family, style) is not Text.IFont f) return false;
+                if (f is not Text.IShapingFont sf || sf.GlyphIndex(needed) <= 0) return false;
+                found = f;
+                return true;
+            });
+            _linkCache[(requested, needed, style)] = found;
             return found;
         }
 
-        private readonly Dictionary<(string?, char), Text.IFont?> _linkCache = new();
+        private readonly Dictionary<(string?, char, int), Text.IFont?> _linkCache = new();
 
         private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
@@ -4714,7 +4718,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Text.IFont font = FontFor(run.Simulations, run.FontFamily);
             // If that face has none of the run's characters, draw them from one that
             // does, the way GDI links rather than drawing boxes.
-            if (LinkedFontFor(run.Text, font, run.FontFamily) is Text.IFont linked) font = linked;
+            if (LinkedFontFor(run.Text, font, run.FontFamily, run.Simulations & 3) is Text.IFont linked)
+                font = linked;
             Text.IGlyphOutlineFont? outline = ReferenceEquals(font, _font)
                 ? _outlineFont
                 : font as Text.IGlyphOutlineFont;

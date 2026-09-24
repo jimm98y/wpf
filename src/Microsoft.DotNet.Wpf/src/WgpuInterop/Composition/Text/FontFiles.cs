@@ -619,9 +619,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                || c is >= '️' and <= '️'       // the variation selector itself
                || c is >= '⬀' and <= '⯿';      // arrows and shapes drawn as emoji
 
-        public static IEnumerable<string> LinkCandidates(string? requested = null, char needed = ' ')
+        /// <summary>The character a run has to be drawn from ANOTHER family for, or nul when this
+        /// face can draw the run itself.
+        /// <para>Substitution is for the WHOLE run, so one covered character is enough to keep it:
+        /// ShapedGlyph carries a glyph id and no font, so a run whose glyphs come from two faces
+        /// cannot be expressed, and drawing an Arabic alphabet from Tahoma because Segoe UI lacks
+        /// the UNASSIGNED U+063B..U+063F in the middle of it would be far worse than a notdef box.
+        /// Both callers must agree on this or the parity harness measures a different renderer than
+        /// the one that ships -- it did, and the Arabic battery rose by 2.6 million saying so.</para>
+        /// </summary>
+        internal static char UncoveredRun(string text, Func<char, bool> covered)
         {
-            if (needed != ' ' && IsEmoji(needed))
+            char needed = '\0';
+            foreach (char c in text)
+            {
+                if (char.IsWhiteSpace(c) || char.IsControl(c) || char.IsSurrogate(c)) continue;
+                if (covered(c)) return '\0';          // the face copes; nothing to link
+                if (needed == '\0') needed = c;
+            }
+            return needed;
+        }
+
+        /// <summary>The family a character is drawn from when the requested face has no glyph for
+        /// it, as GDI's font link would choose it.
+        /// <para>The POLICY lives here and the loading stays with the caller, because there are two
+        /// callers with different loaders -- the renderer, which opens a family in the run's style
+        /// with every simulation and named-instance rule, and the parity harness, which opens one
+        /// file. The harness had no link step at all, so an italic Hebrew row measured
+        /// segoeuii.ttf, which has no Hebrew whatsoever, against GDI drawing Tahoma: millions of
+        /// difference that said nothing about this renderer.</para></summary>
+        internal static string? LinkedFamily(string? requested, char needed, Func<string, bool> covers)
+        {
+            foreach (string family in LinkCandidates(requested, needed))
+                if (covers(family)) return family;
+            return null;
+        }
+
+        public static IEnumerable<string> LinkCandidates(string? requested = null, char needed = '\0')
+        {
+            if (needed != '\0' && IsEmoji(needed))
             {
                 yield return "Segoe UI Emoji";
                 yield return "Segoe UI Symbol";

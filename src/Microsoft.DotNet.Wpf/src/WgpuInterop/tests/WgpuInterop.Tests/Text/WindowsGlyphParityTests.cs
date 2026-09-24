@@ -7946,6 +7946,29 @@ namespace WgpuInterop.Tests.Text
         /// stale one-row run left at the top of the file manufactured "Arial Bold at 20ppem is
         /// 7.3% of the residual" out of a duplicated row. It is 501, and unremarkable.</para>
         /// </summary>
+        /// <summary>Opens a family in a style the way the renderer does: the file the platform
+        /// keeps that style in, the right face of a collection, the simulations that file does not
+        /// already carry, and a named instance's axis coordinates. Null for a CFF face or a family
+        /// this machine has not got.</summary>
+        private static TrueTypeFont? OpenFace(string family, bool bold, bool italic)
+        {
+            string? file = FontFiles.Find(family, bold, italic);
+            if (file is null) return null;
+            byte[] bytes = File.ReadAllBytes(file);
+            int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
+            if (CffFont.IsCff(bytes, sfnt)) return null;
+            FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+            // The renderer's own resolution, named instances and all -- otherwise this
+            // measures a variable family at its default master against GDI's instance.
+            FontFiles.NamedInstance? instance = FontFiles.FindInstance(family, bold, italic);
+            var font = new TrueTypeFont(bytes,
+                                        instance is null
+                                        && bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold),
+                                        italic && !fileItalic, sfnt);
+            if (instance is { } inst) font.ApplyNamedInstance(inst.Coords);
+            return font;
+        }
+
         [Fact]
         public void HowOurWeightTracksGdis()
         {
@@ -8002,23 +8025,27 @@ namespace WgpuInterop.Tests.Text
                         if (onlyFace.Length > 0 && family != onlyFace) continue;
                         if (onlyStyle.Length > 0
                             && onlyStyle != (bold && italic ? "BI" : bold ? "B" : italic ? "I" : "R")) continue;
-                        string? file = FontFiles.Find(family, bold, italic);
-                        if (file is null) continue;
-                        byte[] bytes = File.ReadAllBytes(file);
-                        int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
-                        if (CffFont.IsCff(bytes, sfnt)) continue;
-                        FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
-                        // The renderer's own resolution, named instances and all -- otherwise this
-                        // measures a variable family at its default master against GDI's instance.
-                        FontFiles.NamedInstance? instance = FontFiles.FindInstance(family, bold, italic);
-                        var font = new TrueTypeFont(bytes,
-                                                    instance is null
-                                                    && bold && FontFiles.NeedsBoldSimulation(bytes, sfnt, fileBold),
-                                                    italic && !fileItalic, sfnt);
-                        if (instance is { } inst) font.ApplyNamedInstance(inst.Coords);
+                        if (OpenFace(family, bold, italic) is not TrueTypeFont font) continue;
+                        // GDI DOES NOT STOP AT THE FACE IT WAS ASKED FOR, and neither does the
+                        // renderer: a character the file has no glyph for is drawn from a LINKED
+                        // family, in the run's style. Without this step an italic Hebrew row
+                        // measured segoeuii.ttf -- which has no Hebrew at all, nor has the bold
+                        // italic one -- against GDI drawing Tahoma SHEARED, and the millions of
+                        // difference said nothing about this renderer. FontFiles.LinkedFamily is
+                        // the same choice WgpuSceneRenderer makes.
+                        char needed = FontFiles.UncoveredRun(Sample, c => font.GlyphIndex(c) > 0);
+                        if (needed != '\0')
+                        {
+                            char want = needed;
+                            if (FontFiles.LinkedFamily(family, want,
+                                                       f => OpenFace(f, bold, italic) is { } cand
+                                                            && cand.GlyphIndex(want) > 0) is { } linkTo
+                                && OpenFace(linkTo, bold, italic) is { } linked)
+                                font = linked;
+                        }
                         if (Environment.GetEnvironmentVariable("WPF_WEIGHT_INSTDBG") == "1")
                             report.AppendLine($"      instance {family}/{(bold ? "B" : "")}{(italic ? "I" : "")}: "
-                                + (instance is { } d2
+                                + (FontFiles.FindInstance(family, bold, italic) is { } d2
                                    ? string.Join(",", System.Linq.Enumerable.Select(d2.Coords, c => $"{c.Key:x}={c.Value}"))
                                    : "none") + "  " + font.VariationState);
 
@@ -8261,14 +8288,14 @@ namespace WgpuInterop.Tests.Text
         private static TrueTypeFont FaceThatDraws(TrueTypeFont requested, string text)
         {
             s_drawnBy = ProbeFamily();
-            char needed = ' ';
+            char needed = '\0';
             foreach (char c in text)
             {
                 if (char.IsWhiteSpace(c) || char.IsControl(c)) continue;
                 if (requested.GlyphIndex(c) > 0) return requested;
-                if (needed == ' ') needed = c;
+                if (needed == '\0') needed = c;
             }
-            if (needed == ' ') return requested;
+            if (needed == '\0') return requested;
             foreach (string family in FontFiles.LinkCandidates(ProbeFamily(), needed))
             {
                 string? file = FontFiles.Find(family, bold: false, italic: false);
