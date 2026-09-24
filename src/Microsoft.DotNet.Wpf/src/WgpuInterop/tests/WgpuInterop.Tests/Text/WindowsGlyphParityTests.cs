@@ -8034,6 +8034,11 @@ namespace WgpuInterop.Tests.Text
                         // difference said nothing about this renderer. FontFiles.LinkedFamily is
                         // the same choice WgpuSceneRenderer makes.
                         char needed = FontFiles.UncoveredRun(Sample, c => font.GlyphIndex(c) > 0);
+                        // ...and a linked run sits on its own baseline, which the renderer applies
+                        // for itself but cannot here, because this harness does the linking and
+                        // hands the renderer the face it landed on. Same rule, one place:
+                        // TrueTypeFont.GdiLinkedBaselineDrop.
+                        int linkDrop = 0;
                         if (needed != '\0')
                         {
                             char want = needed;
@@ -8041,7 +8046,10 @@ namespace WgpuInterop.Tests.Text
                                                        f => OpenFace(f, bold, italic) is { } cand
                                                             && cand.GlyphIndex(want) > 0) is { } linkTo
                                 && OpenFace(linkTo, bold, italic) is { } linked)
+                            {
+                                linkDrop = TrueTypeFont.GdiLinkedBaselineDrop(font, linked, ppem);
                                 font = linked;
+                            }
                         }
                         if (Environment.GetEnvironmentVariable("WPF_WEIGHT_INSTDBG") == "1")
                             report.AppendLine($"      instance {family}/{(bold ? "B" : "")}{(italic ? "I" : "")}: "
@@ -8052,7 +8060,7 @@ namespace WgpuInterop.Tests.Text
                         Gdi.s_rawRgb = raw;
                         Gdi.Draw(Sample, family, ppem, PenX, 28, SpecimenWidth, Height, bold, italic);
                         Gdi.s_rawRgb = null;
-                        byte[] ours = OursRgba(font, Sample, ppem, 28, correction: true,
+                        byte[] ours = OursRgba(font, Sample, ppem, 28 + linkDrop, correction: true,
                                                widthOverride: SpecimenWidth);
 
                         long theirs = 0, mine = 0;

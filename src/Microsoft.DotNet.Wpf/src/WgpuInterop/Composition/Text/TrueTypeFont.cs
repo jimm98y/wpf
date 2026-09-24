@@ -763,6 +763,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return true;
         }
 
+        /// <summary>How far down GDI moves a run it had to draw from a LINKED face.
+        /// <para>The face it links to is not drawn on the baseline the run was given: win32k's
+        /// bAdjusBaseLine takes the difference of the two fonts' metrics and shifts the linked one
+        /// by whole pixels. Measured against GDI, Hebrew drawn from Tahoma under a Segoe UI Italic
+        /// run is PIXEL-IDENTICAL to Tahoma's own at 12..17 and 19ppem, one pixel lower at 18, two
+        /// at 20, one at 22, 23 and 24 -- and (asking face's ascent - linked face's ascent - 1) is
+        /// 0,0,0,0,0,0 then 1,0,2,1,1,1 over exactly those sizes. Arabic drawn from Microsoft Sans
+        /// Serif agrees at every size measured. Those ascents are the TEXTMETRIC ones, which come
+        /// from 'VDMX' and jump about -- which is why the shift is not monotonic in the size, and
+        /// why scaled design metrics cannot produce it.</para>
+        /// <para>Negative answers are none: at sizes where the linked face's ascent is the larger,
+        /// GDI was measured to draw the two identically. WPF_LINK_BASELINE=0 turns it off.</para>
+        /// </summary>
+        internal static int GdiLinkedBaselineDrop(TrueTypeFont asking, TrueTypeFont linked, int ppem)
+        {
+            if (s_linkBaselineOff || ppem <= 0) return 0;
+            if (!asking.TryGetGdiLineMetrics(ppem, out int askingAscent, out _)) return 0;
+            if (!linked.TryGetGdiLineMetrics(ppem, out int linkedAscent, out _)) return 0;
+            int drop = askingAscent - linkedAscent - 1;
+            return drop > 0 ? drop : 0;
+        }
+
+        private static readonly bool s_linkBaselineOff =
+            Environment.GetEnvironmentVariable("WPF_LINK_BASELINE") == "0";
+
         public bool TryGetGdiLineMetrics(int ppem, out int ascent, out int descent)
         {
             ascent = descent = 0;

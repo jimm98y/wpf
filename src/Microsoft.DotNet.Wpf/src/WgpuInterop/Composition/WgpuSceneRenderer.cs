@@ -4718,8 +4718,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Text.IFont font = FontFor(run.Simulations, run.FontFamily);
             // If that face has none of the run's characters, draw them from one that
             // does, the way GDI links rather than drawing boxes.
+            Text.IFont? linkedFrom = null;
             if (LinkedFontFor(run.Text, font, run.FontFamily, run.Simulations & 3) is Text.IFont linked)
+            {
+                linkedFrom = font;          // the face that asked, for the baseline adjustment below
                 font = linked;
+            }
             Text.IGlyphOutlineFont? outline = ReferenceEquals(font, _font)
                 ? _outlineFont
                 : font as Text.IGlyphOutlineFont;
@@ -4790,6 +4794,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 originX += (MathF.Round(dev.X) - dev.X) / deviceScale;
                 originY += (MathF.Round(dev.Y) - dev.Y) / deviceScale;
             }
+            // A LINKED RUN SITS ON ITS OWN BASELINE, which is not the one the run was given.
+            // TrueTypeFont.GdiLinkedBaselineDrop has the rule and the measurements behind it.
+            if (linkedFrom is Text.TrueTypeFont asking && font is Text.TrueTypeFont drawn
+                && hintPpem > 0f)
+                originY += Text.TrueTypeFont.GdiLinkedBaselineDrop(asking, drawn, _symPpemForRun)
+                           / deviceScale;
 
             // Prefer CRISP outline coverage (the same analytic-AA path WPF's glyph fills take) over the
             // fixed-size glyph atlas: the atlas rasterizes at BaseEmPixels (48) and MINIFIES to the run's
