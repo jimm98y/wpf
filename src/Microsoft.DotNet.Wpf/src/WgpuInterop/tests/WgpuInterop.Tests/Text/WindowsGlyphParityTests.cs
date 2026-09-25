@@ -8038,7 +8038,7 @@ namespace WgpuInterop.Tests.Text
                         // for itself but cannot here, because this harness does the linking and
                         // hands the renderer the face it landed on. Same rule, one place:
                         // TrueTypeFont.GdiLinkedBaselineDrop.
-                        int linkDrop = 0;
+                        int linkDrop = 0, drawPpem = ppem;
                         if (needed != '\0')
                         {
                             char want = needed;
@@ -8048,6 +8048,32 @@ namespace WgpuInterop.Tests.Text
                                 && OpenFace(linkTo, bold, italic) is { } linked)
                             {
                                 linkDrop = TrueTypeFont.GdiLinkedBaselineDrop(font, linked, ppem);
+                                // WPF_LINK_SIZE=1 asks the question ComputeEUDCLogfont poses: GDI
+                                // hands the linked face a positive CELL height rather than an em,
+                                // so the link is realized at a different size than the primary.
+                                // This is a STAND-IN for that rule, not the rule: it takes the
+                                // largest em whose own cell fits. Measured over the Georgian
+                                // battery it takes 107,632,911 to 77,433,887 and makes 16ppem
+                                // EXACTLY zero for Arial, Tahoma and Verdana -- but it regresses
+                                // 10ppem (Arial 0 -> 577,278) and leaves the other sizes wrong,
+                                // so it stays off by default.
+                                // The cell is not the doubt: TryGetGdiLineMetrics agrees with
+                                // GDI's TEXTMETRIC for all six faces at 10..20ppem, and win32k
+                                // derives tmHeight from the same field this reads. What is still
+                                // missing is how the cell becomes a size: win32k's vInit turns the
+                                // height into a scale directly (h / (winAscender + winDescender)
+                                // of the LINKED face) with no search over ems -- there is no
+                                // mapper on the link path at all -- yet that ratio predicts em12
+                                // for Tahoma at 16ppem where GDI realizes em14.
+                                if (Environment.GetEnvironmentVariable("WPF_LINK_SIZE") == "1"
+                                    && font.TryGetGdiLineMetrics(ppem, out int cellA, out int cellD))
+                                {
+                                    int cell = cellA + cellD;
+                                    for (int e = cell; e >= 4; e--)
+                                        if (linked.TryGetGdiLineMetrics(e, out int la, out int ld)
+                                            && la + ld <= cell)
+                                        { drawPpem = e; break; }
+                                }
                                 font = linked;
                             }
                         }
@@ -8060,7 +8086,7 @@ namespace WgpuInterop.Tests.Text
                         Gdi.s_rawRgb = raw;
                         Gdi.Draw(Sample, family, ppem, PenX, 28, SpecimenWidth, Height, bold, italic);
                         Gdi.s_rawRgb = null;
-                        byte[] ours = OursRgba(font, Sample, ppem, 28 + linkDrop, correction: true,
+                        byte[] ours = OursRgba(font, Sample, drawPpem, 28 + linkDrop, correction: true,
                                                widthOverride: SpecimenWidth);
 
                         long theirs = 0, mine = 0;

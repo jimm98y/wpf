@@ -67,9 +67,13 @@ namespace WgpuInterop.Tests.Text
                         }
                     }
                     int ascender = (int) MathF.Ceiling(-up), descender = (int) MathF.Ceiling(down);
+                    // ...and the LINE metrics we report, which is what the linked-size rule asks
+                    // for. If these disagree with GDI's TEXTMETRIC the rule inherits the error.
+                    string lineBox = font.TryGetGdiLineMetrics(ppem, out int la, out int ld)
+                                     ? $"lineAsc={la} lineDesc={ld} lineCell={la + ld}" : "lineMetrics=none";
                     log.AppendLine($"{family} @{ppem}ppem  glyphs={measured} blank={blank}"
                                    + $"  ascender={-up:0.###} ({ascender})  descender={down:0.###} ({descender})"
-                                   + $"  CELL={ascender + descender}");
+                                   + $"  CELL={ascender + descender}  {lineBox}");
                 }
             }
             File.WriteAllText(report, log.ToString());
