@@ -4123,8 +4123,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// be exact for an arbitrary foreground AND an arbitrary destination -- (A+B)^(1/g) is not
         /// A^(1/g) + B^(1/g) -- so white paper is the achievable target, and it is the common one.
         /// At fg = 0 this reduces to the curve that was there before.</para></summary>
-        private static byte[] SubpixelLutForInk(byte fg)
+        /// <para>LIGHT INK IS SOLVED AGAINST BLACK PAPER instead. White is only the achievable
+        /// target for dark ink; for light ink the paper it sits on is dark (a selected row, a dark
+        /// theme), and solving against white left it at raw coverage -- white on black came out at
+        /// levels 43/85/127/170/212 where Windows draws 58/102/144/182/219, the same corrected
+        /// levels as black on white, mirrored. Against black paper the gamma blend is
+        /// (cov * fg^g)^(1/g) = fg * cov^(1/g), so c' = cov^(1/g) and white on black is EXACT.
+        /// Which paper to assume is chosen per RUN from the ink's luminance (see
+        /// <see cref="ApplySubpixelWeight"/>), so a dark ink is untouched and black on white stays
+        /// bit-identical. WPF_TEXT_LIGHT_INK=white restores the white-paper solve for every ink.
+        /// </para></summary>
+        private static byte[] SubpixelLutForInk(byte fg, bool blackPaper = false)
         {
+            if (blackPaper && s_lightInkOnBlack)
+            {
+                // c' = cov^(1/g), independent of the ink channel: one table for every light ink.
+                return s_blackPaperLut ??= BuildBlackPaperLut();
+            }
             if (fg == 0) return s_subpixelLut;
             byte[]? cached = s_inkLuts[fg];
             if (cached is not null) return cached;
@@ -4144,6 +4159,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return s_inkLuts[fg] = lut;
         }
 
+        private static byte[] BuildBlackPaperLut()
+        {
+            var lut = new byte[256];
+            float inv = 1f / SubpixelGamma;
+            for (int i = 0; i < 256; i++)
+                lut[i] = (byte) MathF.Round(Math.Clamp(MathF.Pow(i / 255f, inv), 0f, 1f) * 255f);
+            return lut;
+        }
+
+        private static byte[]? s_blackPaperLut;
+        private static readonly bool s_lightInkOnBlack =
+            Environment.GetEnvironmentVariable("WPF_TEXT_LIGHT_INK") != "white";
+
         private static readonly byte[]?[] s_inkLuts = new byte[]?[256];
 
         private static void ApplySubpixelWeight(byte[] rgba, bool gamma, bool textBlend, RgbaColor ink)
@@ -4161,9 +4189,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 return;
             }
             // One curve per LAMP, because each lamp lights a different channel of the ink.
-            byte[] lutR = SubpixelLutForInk(ToByte(ink.R));
-            byte[] lutG = SubpixelLutForInk(ToByte(ink.G));
-            byte[] lutB = SubpixelLutForInk(ToByte(ink.B));
+            // Which paper to solve against: a light ink is read against black, a dark one against
+            // white (see SubpixelLutForInk). Rec. 709 luminance of the ink, split at the middle.
+            bool blackPaper = 0.2126f * ink.R + 0.7152f * ink.G + 0.0722f * ink.B > 0.5f;
+            byte[] lutR = SubpixelLutForInk(ToByte(ink.R), blackPaper);
+            byte[] lutG = SubpixelLutForInk(ToByte(ink.G), blackPaper);
+            byte[] lutB = SubpixelLutForInk(ToByte(ink.B), blackPaper);
             for (int i = 0; i < rgba.Length; i += 4)
             {
                 int total = 0;
