@@ -23,6 +23,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -950,10 +951,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// under anything nothing else has been drawn beneath. Null for a layer (cleared
             /// transparent) or an unknown clear. See <see cref="PaperUnder"/>.</summary>
             public RgbaColor? ClearPaper;
-            /// <summary>Per draw, its device box and -- when it is an opaque, uniformly coloured,
-            /// axis-aligned rectangle -- that colour. Filled lazily by <see cref="PaperUnder"/>, in
-            /// step with <see cref="Draws"/>, so a draw is measured once however many runs ask.</summary>
-            public readonly List<(float X0, float Y0, float X1, float Y1, RgbaColor? Solid)> DrawInfo = new();
+            /// <summary>Per draw, its device box and -- when it can be paper -- its colour and shape.
+            /// Filled lazily by <see cref="PaperUnder"/>, in step with <see cref="Draws"/>, so a draw is
+            /// measured once however many runs ask.</summary>
+            public readonly List<PaperInfo> DrawInfo = new();
             // Byte offsets of this pass's vertices/indices inside the frame's shared batched geometry
             // buffers (BuildBatchedGeometry). -1 = no geometry / not yet assigned this frame.
             public int VbOffset = -1, IbOffset = -1;
@@ -3057,8 +3058,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Fills an arbitrary path with any brush; AA is in the coverage mask.
         private void EmitPath(GeometryFill fill, PathGeometry path, Matrix3x2 world, double opacity, Scissor clip,
             int width, int height, WGPUTextureFormat format, DrawData data)
-            => EmitCoverageMask(path, fill.Brush, world, opacity, clip, width, height, format, data, fill.IsGlyph,
-                                fill.BaselineAnchor, fill.PixelAligned);
+        {
+            // WPF's own text: a glyph outline that is neither part of a string run nor fitted to
+            // the grid (see EmitText for why this has to be said).
+            if (fill.IsGlyph && !fill.PixelAligned && !_inStringRun)
+            {
+                WithWpfTextConfig(() => EmitCoverageMask(path, fill.Brush, world, opacity, clip, width, height,
+                                                         format, data, true, fill.BaselineAnchor, false));
+                return;
+            }
+            EmitCoverageMask(path, fill.Brush, world, opacity, clip, width, height, format, data, fill.IsGlyph,
+                             fill.BaselineAnchor, fill.PixelAligned);
+        }
 
         // Fills a geometry and/or strokes its outline in one primitive (the fill
         // first, then the stroke on top), reusing the fill and stroke paths.
@@ -4307,22 +4318,79 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                              Func<Vector2, Vector2> fromNdc)
         {
             List<DrawItem> draws = data.Draws;
-            List<(float X0, float Y0, float X1, float Y1, RgbaColor? Solid)> info = data.DrawInfo;
+            List<PaperInfo> info = data.DrawInfo;
             for (int i = info.Count; i < draws.Count; i++) info.Add(MeasureDraw(data, draws[i], fromNdc));
             for (int i = draws.Count - 1; i >= 0; i--)
             {
                 FillKind kind = draws[i].Kind;
                 if (kind is FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) continue;
-                var b = info[i];
+                PaperInfo b = info[i];
                 if (b.X1 <= x0 || b.X0 >= x1 || b.Y1 <= y0 || b.Y0 >= y1) continue;
-                if (b.Solid is { } solid && b.X0 <= x0 && b.Y0 <= y0 && b.X1 >= x1 && b.Y1 >= y1) return solid;
+                if (b.Solid is { } solid && b.Covers(x0, y0, x1, y1)) return TracePaper("solid", solid);
+                if (s_tracePaper)
+                {
+                    DrawItem d = draws[i];
+                    TracePaper(b.Solid is null
+                        ? $"{d.Kind} idx={d.IndexCount}{(d.SourceCopy ? " copy" : "")}"
+                        : b.Shape ? "shape-partial" : "solid-partial", null);
+                }
                 return null;
             }
-            return data.ClearPaper;
+            return TracePaper(data.ClearPaper is null ? "clear-unknown" : "clear", data.ClearPaper);
         }
 
-        private static (float, float, float, float, RgbaColor?) MeasureDraw(DrawData data, DrawItem d,
-                                                                           Func<Vector2, Vector2> fromNdc)
+        /// <summary>What <see cref="PaperUnder"/> needs of one draw: its device box (scissor
+        /// included) and, when it is an opaque uniform fill that can be paper, its colour. A
+        /// rectangle covers exactly its box. An analytic shape (<see cref="EmitShape"/>, a filled
+        /// rounded rectangle) covers a device rectangle when fs_shape's coverage is 1 at every point
+        /// of it -- signed distance at most minus half a pixel -- and that distance is convex, so the
+        /// rectangle's four corners decide.</summary>
+        private readonly struct PaperInfo
+        {
+            public readonly float X0, Y0, X1, Y1;
+            public readonly RgbaColor? Solid;
+            public readonly bool Shape;
+            // Device to the shape's local units; the shape's half extents and corner radius; and
+            // fs_shape's fw, the pixel's size in local units.
+            private readonly Matrix3x2 _toLocal;
+            private readonly float _halfX, _halfY, _corner, _pixel;
+
+            public PaperInfo(float x0, float y0, float x1, float y1, RgbaColor? solid)
+            {
+                X0 = x0; Y0 = y0; X1 = x1; Y1 = y1; Solid = solid;
+                Shape = false; _toLocal = default; _halfX = _halfY = _corner = _pixel = 0f;
+            }
+
+            public PaperInfo(float x0, float y0, float x1, float y1, RgbaColor solid, Matrix3x2 toLocal,
+                             float halfX, float halfY, float corner)
+            {
+                X0 = x0; Y0 = y0; X1 = x1; Y1 = y1; Solid = solid;
+                Shape = true; _toLocal = toLocal; _halfX = halfX; _halfY = halfY; _corner = corner;
+                // p = toLocal(x, y): dp.x/dx = M11, dp.x/dy = M21; dp.y/dx = M12, dp.y/dy = M22.
+                float px = MathF.Sqrt(toLocal.M11 * toLocal.M11 + toLocal.M21 * toLocal.M21);
+                float py = MathF.Sqrt(toLocal.M12 * toLocal.M12 + toLocal.M22 * toLocal.M22);
+                _pixel = MathF.Max(0.5f * (px + py), 1e-6f);
+            }
+
+            public bool Covers(float x0, float y0, float x1, float y1)
+            {
+                if (X0 > x0 || Y0 > y0 || X1 < x1 || Y1 < y1) return false;
+                if (!Shape) return true;
+                return Inside(x0, y0) && Inside(x1, y0) && Inside(x0, y1) && Inside(x1, y1);
+            }
+
+            // fs_shape's rounded-rectangle distance, and its test for full coverage.
+            private bool Inside(float x, float y)
+            {
+                Vector2 p = Vector2.Transform(new Vector2(x, y), _toLocal);
+                float qx = MathF.Abs(p.X) - _halfX + _corner, qy = MathF.Abs(p.Y) - _halfY + _corner;
+                float ox = MathF.Max(qx, 0f), oy = MathF.Max(qy, 0f);
+                float d = MathF.Sqrt(ox * ox + oy * oy) + MathF.Min(MathF.Max(qx, qy), 0f) - _corner;
+                return 0.5f - d / _pixel >= 1f;
+            }
+        }
+
+        private static PaperInfo MeasureDraw(DrawData data, DrawItem d, Func<Vector2, Vector2> fromNdc)
         {
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
             List<uint> idx = data.Indices;
@@ -4345,12 +4413,58 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Scissor c = d.Clip;
             float cx0 = c.X, cy0 = c.Y, cx1 = c.X + (float) c.W, cy1 = c.Y + (float) c.H;
             float bx0 = Math.Max(x0, cx0), by0 = Math.Max(y0, cy0), bx1 = Math.Min(x1, cx1), by1 = Math.Min(y1, cy1);
+            bool opaque = uniform && a >= 0.999f && !d.SourceCopy && d.IndexCount == 6;
+            // A FILLED analytic shape (EmitShape): vertices 0, 1 and 3 of its quad sit at local
+            // (-ex,-ey), (ex,-ey) and (-ex,ey), which fixes the device-to-local map. Its colour is
+            // premultiplied and opaque here, so it is the colour. An ellipse (corner < 0) or an
+            // outline (stroke half-width >= 0) is never taken for paper.
+            if (d.Kind == FillKind.Shape && opaque)
+            {
+                int a0 = (int) idx[(int) d.FirstIndex] * FloatsPerVertex;
+                int a1 = (int) idx[(int) d.FirstIndex + 1] * FloatsPerVertex;
+                int a3 = (int) idx[(int) d.FirstIndex + 5] * FloatsPerVertex;
+                float halfX = v[a0 + 8], halfY = v[a0 + 9], corner = v[a0 + 10], stroke = v[a0 + 11];
+                Vector2 l0 = new(v[a0 + 6], v[a0 + 7]);
+                float sx = v[a1 + 6] - l0.X, sy = v[a3 + 7] - l0.Y;
+                if (corner >= 0f && stroke < 0f && sx != 0f && sy != 0f)
+                {
+                    Vector2 d0 = fromNdc(new Vector2(v[a0], v[a0 + 1]));
+                    Vector2 e1 = fromNdc(new Vector2(v[a1], v[a1 + 1])) - d0;
+                    Vector2 e3 = fromNdc(new Vector2(v[a3], v[a3 + 1])) - d0;
+                    // local -> device: dev = d0 + (lx - l0x)/sx * e1 + (ly - l0y)/sy * e3
+                    var toDevice = new Matrix3x2(e1.X / sx, e1.Y / sx, e3.X / sy, e3.Y / sy, 0f, 0f);
+                    toDevice.Translation = d0 - Vector2.TransformNormal(l0, toDevice);
+                    if (Matrix3x2.Invert(toDevice, out Matrix3x2 toLocal))
+                        return new PaperInfo(bx0, by0, bx1, by1, new RgbaColor(r, g, bl, 1f), toLocal,
+                                             halfX, halfY, corner);
+                }
+                return new PaperInfo(bx0, by0, bx1, by1, null);
+            }
             // A RECTANGLE: a solid quad whose four corners are the box's four corners.
-            bool rect = d.Kind == FillKind.Solid && d.IndexCount == 6 && uniform && a >= 0.999f
-                        && !d.SourceCopy && corners.Count == 4
+            bool rect = d.Kind == FillKind.Solid && opaque && corners.Count == 4
                         && corners.Contains((x0, y0)) && corners.Contains((x1, y0))
                         && corners.Contains((x0, y1)) && corners.Contains((x1, y1));
-            return (bx0, by0, bx1, by1, rect ? new RgbaColor(r, g, bl, 1f) : null);
+            return new PaperInfo(bx0, by0, bx1, by1, rect ? new RgbaColor(r, g, bl, 1f) : null);
+        }
+
+        /// <summary>WPF_TEXT_PAPER_TRACE=1 tallies what decided each run's paper -- the solid it
+        /// found, or the kind of draw that made it unknown -- and prints the tally every 500 runs.</summary>
+        private static readonly bool s_tracePaper =
+            Environment.GetEnvironmentVariable("WPF_TEXT_PAPER_TRACE") == "1";
+        private static readonly Dictionary<string, int> s_paperTally = new();
+        private static int s_paperRuns;
+
+        private static RgbaColor? TracePaper(string why, RgbaColor? paper)
+        {
+            if (!s_tracePaper) return paper;
+            lock (s_paperTally)
+            {
+                s_paperTally[why] = s_paperTally.GetValueOrDefault(why) + 1;
+                if (++s_paperRuns % 500 == 0)
+                    Console.Error.WriteLine("PAPER " + s_paperRuns + ": " + string.Join(", ",
+                        s_paperTally.OrderByDescending(p => p.Value).Select(p => p.Key + "=" + p.Value)));
+            }
+            return paper;
         }
 
         private static void ApplySubpixelWeight(byte[] rgba, bool gamma, bool textBlend, RgbaColor ink,
@@ -4949,12 +5063,55 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private readonly Dictionary<(string?, char, int), Text.IFont?> _linkCache = new();
 
+        /// <summary>A string run (WinForms text: <see cref="GlyphRunDraw"/>) configures the
+        /// rasterizer for its face and size -- GDI's symmetric rows, dropout, simulated-bold smear,
+        /// contrast palette -- in fields that <see cref="EmitCoverageMask"/> reads. WPF's own text
+        /// arrives as glyph outlines and never comes through here, so it read WHATEVER THE LAST
+        /// STRING RUN LEFT. In the gallery, whose WinForms card draws Segoe UI at 13ppem (a size
+        /// its gasp does not smooth symmetrically), every WPF glyph was sampled once per row, and a
+        /// horizontal thinner than a pixel that fell between two row centres vanished -- the top
+        /// bars of "File" and "Edit" in the menu. So a glyph fill knows whether it belongs to a
+        /// string run, and one that does not gets WPF's configuration (<see cref="WithWpfTextConfig"/>).</summary>
         private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
+        {
+            _inStringRun = true;
+            try { EmitStringRun(run, world, opacity, clip, width, height, format, data); }
+            finally { _inStringRun = false; }
+        }
+
+        private bool _inStringRun;
+
+        /// <summary>How WPF's glyph outlines are rasterized, for the duration of one fill. WPF on
+        /// Windows draws through DirectWrite's symmetric ClearType mode, which smooths vertically as
+        /// well as across the subpixels: five vertical samples, the count GDI's symmetric path uses,
+        /// and none of GDI's per-face rules (dropout, bold smear, contrast palette), which belong to
+        /// its scaler. WPF_WPF_TEXT_ROWS overrides the count; 0 samples once per row.</summary>
+        private void WithWpfTextConfig(Action draw)
+        {
+            (bool sym, int rows, int ppem, int drop, int bold, bool contrast) saved =
+                (_symmetricSmoothing, _symmetricRows, _symPpemForRun, _dropoutForRun, _simBoldForRun, _contrastForRun);
+            _symmetricSmoothing = s_wpfTextRows > 0;
+            _symmetricRows = s_wpfTextRows;
+            _symPpemForRun = 0;
+            _dropoutForRun = 0;
+            _simBoldForRun = 0;
+            _contrastForRun = false;
+            try { draw(); }
+            finally
+            {
+                (_symmetricSmoothing, _symmetricRows, _symPpemForRun, _dropoutForRun, _simBoldForRun, _contrastForRun) = saved;
+            }
+        }
+
+        private static readonly int s_wpfTextRows =
+            int.TryParse(Environment.GetEnvironmentVariable("WPF_WPF_TEXT_ROWS"), out int wr) ? wr : SymmetricRows;
+
+        private void EmitStringRun(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (s_traceText)
                 Console.Error.WriteLine($"[emit] '{run.Text}' family={run.FontFamily ?? "-"} sims={run.Simulations} "
                     + $"em={run.EmSize} origin={run.Origin} colorA={run.Color.A} clipEmpty={clip.IsEmpty} "
-                    + $"opacity={opacity} world=({world.M31},{world.M32}) target={width}x{height}");
+                    + $"opacity={opacity} clip=({clip.X},{clip.Y},{clip.W},{clip.H}) world=({world.M31},{world.M32}) target={width}x{height}");
             if (clip.IsEmpty || string.IsNullOrEmpty(run.Text)) return;
 
             // What the APP asks for, as opposed to what the parity suite asks for. The suite passes
