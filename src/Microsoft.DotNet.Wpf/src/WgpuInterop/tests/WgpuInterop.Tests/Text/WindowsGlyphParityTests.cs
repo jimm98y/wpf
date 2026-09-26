@@ -8048,32 +8048,21 @@ namespace WgpuInterop.Tests.Text
                                 && OpenFace(linkTo, bold, italic) is { } linked)
                             {
                                 linkDrop = TrueTypeFont.GdiLinkedBaselineDrop(font, linked, ppem);
-                                // WPF_LINK_SIZE=1 asks the question ComputeEUDCLogfont poses: GDI
-                                // hands the linked face a positive CELL height rather than an em,
-                                // so the link is realized at a different size than the primary.
-                                // This is a STAND-IN for that rule, not the rule: it takes the
-                                // largest em whose own cell fits. Measured over the Georgian
-                                // battery it takes 107,632,911 to 77,433,887 and makes 16ppem
-                                // EXACTLY zero for Arial, Tahoma and Verdana -- but it regresses
-                                // 10ppem (Arial 0 -> 577,278) and leaves the other sizes wrong,
-                                // so it stays off by default.
-                                // The cell is not the doubt: TryGetGdiLineMetrics agrees with
-                                // GDI's TEXTMETRIC for all six faces at 10..20ppem, and win32k
-                                // derives tmHeight from the same field this reads. What is still
-                                // missing is how the cell becomes a size: win32k's vInit turns the
-                                // height into a scale directly (h / (winAscender + winDescender)
-                                // of the LINKED face) with no search over ems -- there is no
-                                // mapper on the link path at all -- yet that ratio predicts em12
-                                // for Tahoma at 16ppem where GDI realizes em14.
-                                if (Environment.GetEnvironmentVariable("WPF_LINK_SIZE") == "1"
-                                    && font.TryGetGdiLineMetrics(ppem, out int cellA, out int cellD))
-                                {
-                                    int cell = cellA + cellD;
-                                    for (int e = cell; e >= 4; e--)
-                                        if (linked.TryGetGdiLineMetrics(e, out int la, out int ld)
-                                            && la + ld <= cell)
-                                        { drawPpem = e; break; }
-                                }
+                                // WPF_LINK_SIZE=1 realizes the linked face the size GDI does,
+                                // which is not the size of the run: TrueTypeFont.GdiLinkedPpem
+                                // carries the rule and where it was read from. The renderer cannot
+                                // do this for itself here for the same reason as the baseline drop
+                                // -- the harness does the linking and hands it the face.
+                                if (Environment.GetEnvironmentVariable("WPF_LINK_SIZE") == "1")
+                                    drawPpem = TrueTypeFont.GdiLinkedPpem(font, linked, ppem);
+                                // WPF_LINK_DELTA=-n draws the link n pixels smaller instead, which
+                                // MEASURES the size GDI used: the row reads zero only at the size
+                                // GDI realized, so sweeping the delta reads the rule off the
+                                // battery itself -- no inverting an em out of a CreateFont, which
+                                // is what made every earlier instrument ambiguous.
+                                if (Environment.GetEnvironmentVariable("WPF_LINK_DELTA") is { } dl
+                                    && int.TryParse(dl, out int delta))
+                                    drawPpem = Math.Max(4, ppem + delta);
                                 font = linked;
                             }
                         }

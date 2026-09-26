@@ -788,6 +788,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_linkBaselineOff =
             Environment.GetEnvironmentVariable("WPF_LINK_BASELINE") == "0";
 
+        /// <summary>What size GDI realizes a LINKED face at, which is NOT the size of the run.
+        /// <para>Read out of win32k rather than guessed. The link path is
+        /// wpgdGetLinkMetricsPlus -> vInitEUDC -> ComputeEUDCLogfont, which builds a logfont for
+        /// the linked face whose height is the ASKING face's realized CELL as a POSITIVE
+        /// lfHeight, and then RFONTOBJ::vInit -> bGetNtoD_Win31 -> bGetNtoW_Win31 turns that into
+        /// a scale. A positive height is divided by the LINKED face's fwdWinAscender +
+        /// fwdWinDescender (a negative one by fwdUnitsPerEm, which is how those two fields are
+        /// identified), so the linked face comes out at cell x upem / (winAscent + winDescent) of
+        /// its own -- no search over sizes, and no font mapper anywhere on that path.</para>
+        /// <para>Measured with a PRIVATE clone of Tahoma carrying one patched metric
+        /// (AddFontResourceEx + FR_PRIVATE): only usWinAscent/usWinDescent move the linked size at
+        /// all -- patching hhea's ascender or sTypoAscender changes neither it nor the TEXTMETRIC
+        /// -- and the height GDI asks for is the asking face's cell at every size where the
+        /// realization can be reproduced with a CreateFont at all (cells 12, 14, 19, 20, 23, 28
+        /// read back as exactly those).</para></summary>
+        internal static int GdiLinkedPpem(TrueTypeFont asking, TrueTypeFont linked, int ppem)
+        {
+            if (ppem <= 0 || linked._unitsPerEm <= 0) return ppem;
+            int win = linked._winAscent + linked._winDescent;
+            if (win <= 0) return ppem;
+            if (!asking.TryGetGdiLineMetrics(ppem, out int ascent, out int descent)) return ppem;
+            int got = (int) ((long) (ascent + descent) * linked._unitsPerEm / win);
+            return got > 0 ? got : 1;
+        }
+
         public bool TryGetGdiLineMetrics(int ppem, out int ascent, out int descent)
         {
             ascent = descent = 0;
