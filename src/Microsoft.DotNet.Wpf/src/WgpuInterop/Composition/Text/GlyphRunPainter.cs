@@ -176,7 +176,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (!bitmapFont.TryGetGlyphBitmap(glyphId, out BitmapGlyph bmp, ppem) || bmp.Png is null)
                 return false;
 
-            if (bmp.Mono) return PaintMono(bmp, scale, gx, gy, into);
+            // FO_SIM_BOLD applies to a strike too. GDI blits MS UI Gothic's 1-bit strike for bold
+            // kana as well as regular (no grey pixel at 10..22ppem in either) and the bold one is
+            // the regular bitmap ORed with itself shifted right -- the same smear the outline
+            // path gets (PathRasterizer.EmboldenLampRows), by the same width. Drawn without it,
+            // bold kana under Tahoma had exactly the regular ink: 491,130 against GDI's 814,725.
+            if (bmp.Mono)
+            {
+                int smear = bitmapFont is TrueTypeFont tf && tf.GdiEmboldensBitmap
+                    ? TrueTypeFont.SimBoldSmearPixels(ppem) : 0;
+                return PaintMono(bmp, scale, gx, gy, into, smear);
+            }
 
             DecodedBitmap? decoded = Decode(bmp);
             if (decoded is null) return false;
@@ -209,9 +219,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>The rectangles are whole pixels on integer boundaries, so they rasterize to the
         /// bitmap GDI blitted rather than to a resampling of it.</para></summary>
         private static bool PaintMono(in BitmapGlyph bmp, float scale, float gx, float gy,
-                                      List<GlyphFill> into)
+                                      List<GlyphFill> into, int smear = 0)
         {
             byte[] mask = bmp.Png;
+            int width = bmp.PixelWidth + smear;
+            if (smear > 0)
+            {
+                // The emboldening smear: every set pixel also sets the `smear` pixels to its right,
+                // so the bitmap grows by that many columns.
+                var bold = new byte[width * bmp.PixelHeight];
+                for (int y = 0; y < bmp.PixelHeight; y++)
+                    for (int x = 0; x < bmp.PixelWidth; x++)
+                        if (mask[y * bmp.PixelWidth + x] != 0)
+                            for (int s = 0; s <= smear; s++) bold[y * width + x + s] = 1;
+                mask = bold;
+            }
             var figures = new List<PathFigure>();
             // Strike pixels are device pixels; `scale` is what takes those into the caller's
             // space, exactly as it does for a fitted outline.
@@ -219,11 +241,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int y = 0; y < bmp.PixelHeight; y++)
             {
                 int x = 0;
-                while (x < bmp.PixelWidth)
+                while (x < width)
                 {
-                    if (mask[y * bmp.PixelWidth + x] == 0) { x++; continue; }
+                    if (mask[y * width + x] == 0) { x++; continue; }
                     int from = x;
-                    while (x < bmp.PixelWidth && mask[y * bmp.PixelWidth + x] != 0) x++;
+                    while (x < width && mask[y * width + x] != 0) x++;
                     figures.Add(Rectangle(x0 + from * scale, y0 + y * scale,
                                           (x - from) * scale, scale));
                 }
