@@ -886,7 +886,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private DrawData RentDrawData()
         {
             DrawData d = _drawDataPool.Count > 0 ? _drawDataPool.Pop() : new DrawData();
-            d.Verts.Clear(); d.Indices.Clear(); d.Draws.Clear(); d.HasText = false;
+            d.Verts.Clear(); d.Indices.Clear(); d.Draws.Clear(); d.HasText = false; d.ClearPaper = null;
+            d.DrawInfo.Clear();
             d.VbOffset = d.IbOffset = -1;
             _inUseDrawData.Add(d);
             return d;
@@ -945,6 +946,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public readonly List<uint> Indices = new();
             public readonly List<DrawItem> Draws = new();
             public bool HasText;
+            /// <summary>The colour this pass's target is cleared to, when that is OPAQUE -- the paper
+            /// under anything nothing else has been drawn beneath. Null for a layer (cleared
+            /// transparent) or an unknown clear. See <see cref="PaperUnder"/>.</summary>
+            public RgbaColor? ClearPaper;
+            /// <summary>Per draw, its device box and -- when it is an opaque, uniformly coloured,
+            /// axis-aligned rectangle -- that colour. Filled lazily by <see cref="PaperUnder"/>, in
+            /// step with <see cref="Draws"/>, so a draw is measured once however many runs ask.</summary>
+            public readonly List<(float X0, float Y0, float X1, float Y1, RgbaColor? Solid)> DrawInfo = new();
             // Byte offsets of this pass's vertices/indices inside the frame's shared batched geometry
             // buffers (BuildBatchedGeometry). -1 = no geometry / not yet assigned this frame.
             public int VbOffset = -1, IbOffset = -1;
@@ -1032,6 +1041,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 List<LayerPass> plan = _plan; plan.Clear();
                 _contentTexFrame.Clear();
                 DrawData mainData = RentDrawData();
+                if (background.A >= 0.999f) mainData.ClearPaper = background;
 
                 // Timed on this path as well as on RenderSceneToView. The two do the same collect and
                 // encode work and differ only in where the pixels end up, so leaving the counters on
@@ -1119,6 +1129,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 List<LayerPass> plan = _plan; plan.Clear();
                 _contentTexFrame.Clear();
                 DrawData mainData = RentDrawData();
+                if (background.A >= 0.999f) mainData.ClearPaper = background;
                 CollectVisual(root, Matrix3x2.Identity, 1.0, new Scissor(0, 0, width, height), mainData, plan, width, height, format);
                 PerfCollectTicks += System.Diagnostics.Stopwatch.GetTimestamp() - c0;
                 long ca1 = GC.GetAllocatedBytesForCurrentThread();
@@ -3595,6 +3606,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     key = key * 397 ^ ((long) ToByte(solid.Color.R) << 16
                                      | (long) ToByte(solid.Color.G) << 8
                                      | ToByte(solid.Color.B));
+                // ...AND FOR THE PAPER UNDER IT, when that is one solid colour: then the curve is
+                // exact for this ink on this paper (SubpixelLutForInkOnPaper). The box is the glyphs'
+                // device extent with a pixel of slack each side for the filter's spill.
+                RgbaColor? paper = null;
+                if (subpixel && textBlend && s_textPaper && solid.Color.A >= 0.999f && opacity >= 0.999)
+                {
+                    GeometryMax(coverageGeometry, out float gmaxX, out float gmaxY);
+                    Vector2 p0 = Vector2.Transform(new Vector2(gminX, gminY), world);
+                    Vector2 p1 = Vector2.Transform(new Vector2(gmaxX, gmaxY), world);
+                    paper = PaperUnder(data,
+                        MathF.Min(p0.X, p1.X) - 1f, MathF.Min(p0.Y, p1.Y) - 1f,
+                        MathF.Max(p0.X, p1.X) + 2f, MathF.Max(p0.Y, p1.Y) + 2f,
+                        n => new Vector2((n.X + 1f) * 0.5f * width + _devOX, (1f - n.Y) * 0.5f * height + _devOY));
+                    if (paper is { } pp)
+                        key = key * 397 ^ (1L << 40 | (long) ToByte(pp.R) << 16
+                                         | (long) ToByte(pp.G) << 8 | ToByte(pp.B));
+                }
+                _paperForMask = paper;
                 // The glyph row clip, taken into this mask's frame: the mask lands at device row
                 // oy, so a device row is oy plus the rasterizer's own. Part of the key, since two
                 // runs of one shape could sit differently against their faces' line boxes.
@@ -3698,7 +3727,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         // carries corrected ink about unchanged) and measures slightly WORSE on every
                         // count -- 1307 disagreeing pixels against 1196. It also does not straighten
                         // the size tilt, which is how we know the tilt is not about this order.
-                        ApplySubpixelWeight(sm.Rgba, gamma, textBlend, solid.Color);
+                        ApplySubpixelWeight(sm.Rgba, gamma, textBlend, solid.Color, _paperForMask);
                         (tex, view) = CreateRgbaTexture(sm.Rgba, sm.Width, sm.Height);
                         mox = (int)sm.OriginX; moy = (int)sm.OriginY; mw = sm.Width; mh = sm.Height;
                         cm = new CachedMask
@@ -4174,7 +4203,158 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private static readonly byte[]?[] s_inkLuts = new byte[]?[256];
 
-        private static void ApplySubpixelWeight(byte[] rgba, bool gamma, bool textBlend, RgbaColor ink)
+        /// <summary>The curve for ink channel <paramref name="fg"/> on a KNOWN paper channel
+        /// <paramref name="bg"/>: EXACT, not an approximation.
+        /// <para>GDI's blend is `((1-cov)*bg^g + cov*fg^g)^(1/g)`; ours is the two-draw linear blend
+        /// `bg + (fg - bg)*c'`. With the paper known the two meet for every coverage at
+        /// c' = (T - bg)/(fg - bg), T being GDI's answer -- which is what the white- and black-paper
+        /// tables above are, for bg = 1 and bg = 0. Unknown paper falls back to those.</para>
+        /// </summary>
+        /// <para>AND IT IS GDI'S OWN INTEGER ARITHMETIC, read out of win32k's
+        /// vClearTypeLookupTableLoop@140162eb8. Per channel and per lamp level k (0..6):
+        /// <code>out = B[ A[bg] + ((W[k] * (A[fg] - A[bg]) + 0x80000) >> 20) ]</code>
+        /// W[k] = round(k * 2^20 / 6) (the table at 0x140349a40). A and B are 256-byte tables that
+        /// EngCTGetGammaTable@140165e10 does not compute but PICKS by the ClearType contrast, in
+        /// buckets of 100: identity below 1100, then A = round(255 x^g), B = round(255 x^(1/g)) with
+        /// g = the bucket's floor / 1000 (1.2 for 1200..1299; both tables checked against the
+        /// binary, 256/256). A float curve at exactly g agrees to within one level and no better --
+        /// white on black at half coverage is B[128] = 144 where 255 * 0.5^(1/1.2) is 143.1, which
+        /// was the whole of every residual left once the paper was known.</para>
+        /// <para>Our composite is two draws, `dst *= (1 - c')` then `dst += fg * c'`, each stored to
+        /// eight bits, so the table holds, for each input coverage, the c' whose TWO-DRAW result is
+        /// GDI's byte (see <see cref="TwoDrawResult"/>).</para>
+        private static byte[] SubpixelLutForInkOnPaper(byte fg, byte bg)
+        {
+            int key = fg << 8 | bg;
+            lock (s_paperLuts)
+                if (s_paperLuts.TryGetValue(key, out byte[]? cached)) return cached;
+            (byte[] A, byte[] B) = GdiCtGammaTables();
+            int af = A[fg], ab = A[bg];
+            var lut = new byte[256];
+            for (int i = 0; i < 256; i++)
+            {
+                int k = (i * 6 + 127) / 255;           // the nearest of the seven lamp levels
+                int target = B[Math.Clamp(ab + ((s_gdiLampWeight[k] * (af - ab) + 0x80000) >> 20), 0, 255)];
+                lut[i] = CoverageForTarget(fg, bg, target, fg == bg ? i / 255f : (target - bg) / (float) (fg - bg));
+            }
+            lock (s_paperLuts) s_paperLuts[key] = lut;
+            return lut;
+        }
+
+        /// <summary>win32k's ClearType lamp weights, 0x140349a40: k/6 of 2^20.</summary>
+        private static readonly int[] s_gdiLampWeight = { 0, 174763, 349525, 524288, 699051, 873813, 1048576 };
+
+        /// <summary>What our two draws leave on an eight-bit target for ink <paramref name="fg"/>,
+        /// paper <paramref name="bg"/> and mask value <paramref name="c"/>: the multiply draw stores
+        /// round(bg * (1 - c/255)), the add draw then stores round(that + fg * c/255).</summary>
+        private static int TwoDrawResult(int fg, int bg, int c)
+        {
+            float cf = c / 255f;
+            int d1 = (int) MathF.Floor(bg * (1f - cf) + 0.5f);
+            return Math.Clamp((int) MathF.Floor(d1 + fg * cf + 0.5f), 0, 255);
+        }
+
+        /// <summary>The mask value whose two-draw result is <paramref name="target"/>; among several,
+        /// the one nearest the continuous answer; if none hits it, the nearest miss.</summary>
+        private static byte CoverageForTarget(byte fg, byte bg, int target, float want)
+        {
+            int best = 0; long bestScore = long.MaxValue;
+            for (int c = 0; c < 256; c++)
+            {
+                long score = (long) Math.Abs(TwoDrawResult(fg, bg, c) - target) * 100000
+                             + (long) (MathF.Abs(c / 255f - want) * 1000f);
+                if (score < bestScore) { bestScore = score; best = c; }
+            }
+            return (byte) best;
+        }
+
+        /// <summary>The A and B tables EngCTGetGammaTable would pick for this machine's ClearType
+        /// contrast (see <see cref="SubpixelLutForInkOnPaper"/>).</summary>
+        private static (byte[] A, byte[] B) GdiCtGammaTables()
+        {
+            if (s_gdiCtTables is { } t) return t;
+            int contrast = Platform.Win32Interop.FontSmoothingContrast();
+            if (contrast <= 0) contrast = 1200;               // off Windows: this port's own default
+            float g = contrast < 1100 ? 1f : Math.Min(contrast / 100, 22) / 10f;
+            var a = new byte[256]; var b = new byte[256];
+            for (int i = 0; i < 256; i++)
+            {
+                a[i] = (byte) MathF.Floor(255f * MathF.Pow(i / 255f, g) + 0.5f);
+                b[i] = (byte) MathF.Floor(255f * MathF.Pow(i / 255f, 1f / g) + 0.5f);
+            }
+            return (s_gdiCtTables = (a, b)).Value;
+        }
+
+        private static (byte[] A, byte[] B)? s_gdiCtTables;
+
+        private static readonly Dictionary<int, byte[]> s_paperLuts = new();
+
+        /// <summary>WPF_TEXT_PAPER=0 ignores the paper and uses the ink-only curves.</summary>
+        private static readonly bool s_textPaper =
+            Environment.GetEnvironmentVariable("WPF_TEXT_PAPER") != "0";
+
+        /// <summary>The single solid colour under a device rectangle in this target, or null when it
+        /// is not one solid colour or cannot be told.
+        /// <para>ClearType text on a coloured background cannot be blended the way GDI blends it
+        /// without knowing that background -- see <see cref="SubpixelLutForInkOnPaper"/>. Walks the
+        /// target's draws newest first. Earlier TEXT is skipped: it is ink, and runs of one line
+        /// overlap each other's boxes all the time. The first other draw that touches the rectangle
+        /// decides: an opaque, uniformly coloured, axis-aligned rectangle that CONTAINS it is the
+        /// paper; anything else (a gradient, an image, a rounded shape, a partial cover) makes it
+        /// unknown. If nothing touches it, the paper is what the pass was cleared to.</para>
+        /// </summary>
+        private static RgbaColor? PaperUnder(DrawData data, float x0, float y0, float x1, float y1,
+                                             Func<Vector2, Vector2> fromNdc)
+        {
+            List<DrawItem> draws = data.Draws;
+            List<(float X0, float Y0, float X1, float Y1, RgbaColor? Solid)> info = data.DrawInfo;
+            for (int i = info.Count; i < draws.Count; i++) info.Add(MeasureDraw(data, draws[i], fromNdc));
+            for (int i = draws.Count - 1; i >= 0; i--)
+            {
+                FillKind kind = draws[i].Kind;
+                if (kind is FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) continue;
+                var b = info[i];
+                if (b.X1 <= x0 || b.X0 >= x1 || b.Y1 <= y0 || b.Y0 >= y1) continue;
+                if (b.Solid is { } solid && b.X0 <= x0 && b.Y0 <= y0 && b.X1 >= x1 && b.Y1 >= y1) return solid;
+                return null;
+            }
+            return data.ClearPaper;
+        }
+
+        private static (float, float, float, float, RgbaColor?) MeasureDraw(DrawData data, DrawItem d,
+                                                                           Func<Vector2, Vector2> fromNdc)
+        {
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            List<uint> idx = data.Indices;
+            List<float> v = data.Verts;
+            bool uniform = true;
+            float r = 0, g = 0, bl = 0, a = 0;
+            var corners = new HashSet<(float, float)>();
+            for (uint k = d.FirstIndex; k < d.FirstIndex + d.IndexCount && k < idx.Count; k++)
+            {
+                int at = (int) idx[(int) k] * FloatsPerVertex;
+                if (at + 5 >= v.Count) continue;
+                Vector2 p = fromNdc(new Vector2(v[at], v[at + 1]));
+                if (p.X < x0) x0 = p.X; if (p.X > x1) x1 = p.X;
+                if (p.Y < y0) y0 = p.Y; if (p.Y > y1) y1 = p.Y;
+                if (k == d.FirstIndex) { r = v[at + 2]; g = v[at + 3]; bl = v[at + 4]; a = v[at + 5]; }
+                else if (v[at + 2] != r || v[at + 3] != g || v[at + 4] != bl || v[at + 5] != a) uniform = false;
+                corners.Add((p.X, p.Y));
+            }
+            // The scissor bounds it too.
+            Scissor c = d.Clip;
+            float cx0 = c.X, cy0 = c.Y, cx1 = c.X + (float) c.W, cy1 = c.Y + (float) c.H;
+            float bx0 = Math.Max(x0, cx0), by0 = Math.Max(y0, cy0), bx1 = Math.Min(x1, cx1), by1 = Math.Min(y1, cy1);
+            // A RECTANGLE: a solid quad whose four corners are the box's four corners.
+            bool rect = d.Kind == FillKind.Solid && d.IndexCount == 6 && uniform && a >= 0.999f
+                        && !d.SourceCopy && corners.Count == 4
+                        && corners.Contains((x0, y0)) && corners.Contains((x1, y0))
+                        && corners.Contains((x0, y1)) && corners.Contains((x1, y1));
+            return (bx0, by0, bx1, by1, rect ? new RgbaColor(r, g, bl, 1f) : null);
+        }
+
+        private static void ApplySubpixelWeight(byte[] rgba, bool gamma, bool textBlend, RgbaColor ink,
+                                                RgbaColor? paper = null)
         {
             // Applied whichever correction the grey path would have wanted, because the reason is the
             // same one -- coverage is not brightness -- and only the curve differs.
@@ -4192,11 +4372,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // Which paper to solve against: a light ink is read against black, a dark one against
             // white (see SubpixelLutForInk). Rec. 709 luminance of the ink, split at the middle.
             bool blackPaper = 0.2126f * ink.R + 0.7152f * ink.G + 0.0722f * ink.B > 0.5f;
-            byte[] lutR = SubpixelLutForInk(ToByte(ink.R), blackPaper);
-            byte[] lutG = SubpixelLutForInk(ToByte(ink.G), blackPaper);
-            byte[] lutB = SubpixelLutForInk(ToByte(ink.B), blackPaper);
+            // A known paper makes it exact (SubpixelLutForInkOnPaper); otherwise the ink decides
+            // which paper to assume.
+            byte[] lutR = paper is { } p ? SubpixelLutForInkOnPaper(ToByte(ink.R), ToByte(p.R))
+                                         : SubpixelLutForInk(ToByte(ink.R), blackPaper);
+            byte[] lutG = paper is { } q ? SubpixelLutForInkOnPaper(ToByte(ink.G), ToByte(q.G))
+                                         : SubpixelLutForInk(ToByte(ink.G), blackPaper);
+            byte[] lutB = paper is { } w ? SubpixelLutForInkOnPaper(ToByte(ink.B), ToByte(w.B))
+                                         : SubpixelLutForInk(ToByte(ink.B), blackPaper);
             for (int i = 0; i < rgba.Length; i += 4)
             {
+                // A PIXEL WITH NO LAMP LIT IS NOT BLENDED AT ALL. GDI leaves it as the paper, where
+                // its table would give B[A[paper]] -- not the identity: B[A[64]] is 65, so grey text
+                // on #404040 lightened every empty pixel of its quads by a level, whole rows of them
+                // (1,064,439 over the colour battery). Only on the exact (known-paper) path: the
+                // ink-only curves already send zero to zero.
+                if (paper is not null && rgba[i] < 22 && rgba[i + 1] < 22 && rgba[i + 2] < 22)
+                {
+                    rgba[i] = rgba[i + 1] = rgba[i + 2] = rgba[i + 3] = 0;
+                    continue;
+                }
+                // ...AND A PIXEL WITH EVERY LAMP FULL IS THE INK ITSELF, not B[A[ink]]: #1E1E1E text
+                // on #3C3C3C came out 31 in every solid stem where Windows writes 30.
+                if (paper is not null && rgba[i] >= 234 && rgba[i + 1] >= 234 && rgba[i + 2] >= 234)
+                {
+                    rgba[i] = rgba[i + 1] = rgba[i + 2] = rgba[i + 3] = 255;
+                    continue;
+                }
                 int total = 0;
                 for (int c = 0; c < 3; c++)
                 {
@@ -4262,6 +4464,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 g.NormHashValid = true;
             }
             return g.NormHash;
+        }
+
+        /// <summary>The paper found for the subpixel mask being built (see PaperUnder); read by the
+        /// correction on a cache miss.</summary>
+        private RgbaColor? _paperForMask;
+
+        private static void GeometryMax(PathGeometry g, out float maxX, out float maxY)
+        {
+            maxX = float.MinValue; maxY = float.MinValue;
+            static void Acc(Vector2 v, ref float mxX, ref float mxY) { if (v.X > mxX) mxX = v.X; if (v.Y > mxY) mxY = v.Y; }
+            foreach (PathFigure f in g.Figures)
+            {
+                Acc(f.Start, ref maxX, ref maxY);
+                foreach (PathSegment s in f.Segments)
+                    switch (s)
+                    {
+                        case LineSegment l: Acc(l.Point, ref maxX, ref maxY); break;
+                        case QuadraticBezierSegment q: Acc(q.Control, ref maxX, ref maxY); Acc(q.Point, ref maxX, ref maxY); break;
+                        case CubicBezierSegment c: Acc(c.Control1, ref maxX, ref maxY); Acc(c.Control2, ref maxX, ref maxY); Acc(c.Point, ref maxX, ref maxY); break;
+                    }
+            }
+            if (maxX == float.MinValue) { maxX = 0; maxY = 0; }
         }
 
         private static void GeometryMin(PathGeometry g, out float minX, out float minY)
