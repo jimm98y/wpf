@@ -97,6 +97,16 @@ namespace WgpuInterop.GdiFitProbe
                     object? r = mi.Invoke(font, new object[] { gid, (float)ppem, ppem });
                     Console.WriteLine($"   COMPATIBLE ADVANCE: {r} px  (= {(float)(r ?? 0f) * 64f} in 64ths)");
                 }
+                // ...and what the PROGRAM alone says, bypassing hdmx/LTSH, so a linear-threshold
+                // answer can be told from a hinted one.
+                var mh = typeof(TrueTypeFont).GetMethod("TryGetHintedAdvance",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (mh is not null)
+                {
+                    object?[] a = { gid, (float)ppem, 0f };
+                    bool ok = (bool)mh.Invoke(font, a)!;
+                    Console.WriteLine($"   HINTED (program) ADVANCE: {(ok ? a[2] : "n/a")} px");
+                }
             } catch (Exception ex) { Console.WriteLine("   advance probe failed: " + ex.Message); }
             DumpPoints(fitted);
             DumpOurLamps(fitted);

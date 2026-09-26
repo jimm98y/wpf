@@ -316,7 +316,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // it at all, so eight of Arial Italic's capitals came out a pixel wide at 9ppem: their
             // thresholds are 6 and 7, so Windows takes the linear advance (6.4995 -> 6) where we
             // ran the program and got exactly 6.5, which rounds to 7.
-            if (tables.TryGetValue("LTSH", out int ltsh) && U16(ltsh) == 0)
+            // ...BUT ONLY WHEN IT COVERS EVERY GLYPH IN THE FONT. The font driver's fast advance
+            // path (fontdrvhost bGetFastAdvanceWidth) takes the table only if maxp's glyph count
+            // plus its 4-byte header fits inside the table's own length; otherwise it treats the
+            // face as having no LTSH, the fast path fails for every glyph, and every advance comes
+            // from the scaler instead -- the program's phantom points, rounded to sixty-fourths
+            // before whole pixels. Tahoma Bold is the face that shows it: its LTSH lists 4,496
+            // glyphs of a 4,498-glyph font, and Windows spaces 'C' at 200ppem 134 (1367 units =
+            // 133.496 = 8543.75/64 -> 8544 -> 133.5 -> 134) where the linear answer is 133. Against
+            // GetCharWidth32 over 6..40 and 101..255ppem, Tahoma Bold matches the scaler rule at
+            // all 8,431 linear widths and the linear rule at 8,339; Tahoma, Arial, Arial Bold, Arial
+            // Italic, Times, Times Bold, Segoe UI, Segoe UI Bold, Georgia and Consolas all match the
+            // linear rule at every width. WPF_LTSH_ANY=1 accepts a short table again.
+            if (tables.TryGetValue("LTSH", out int ltsh) && U16(ltsh) == 0
+                && (s_ltshAnyLength
+                    || (_tableLengths.TryGetValue("LTSH", out int ltshLength) && _numGlyphs + 4 <= ltshLength)))
             {
                 int count = U16(ltsh + 2);
                 if (count > 0 && ltsh + 4 + count <= _data.Length)
@@ -784,6 +798,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int drop = askingAscent - linkedAscent - 1;
             return drop > 0 ? drop : 0;
         }
+
+        private static readonly bool s_ltshAnyLength =
+            Environment.GetEnvironmentVariable("WPF_LTSH_ANY") == "1";
 
         private static readonly bool s_linkBaselineOff =
             Environment.GetEnvironmentVariable("WPF_LINK_BASELINE") == "0";
