@@ -45,6 +45,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private long _gcBytes0, _perfRealizeAlloc, _perfRenderAlloc;
         private int _gc0, _gc1, _gc2;
         private int _perfFrames;
+        private long _perfLastStart, _perfPeriodTicks, _perfCommitTicks, _perfMaxPeriod;
         private int _perfSkipped;
         private static readonly bool s_frameStats =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_FRAMESTATS") == "1";
@@ -324,6 +325,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             WgpuSceneRenderer.PerfReset();
             long ra0 = GC.GetAllocatedBytesForCurrentThread();
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            // The whole frame, not just our part of it: the period between frames against the
+            // time spent in here says how much of a frame is WPF's own work and idle waiting.
+            if (_perfLastStart != 0)
+            {
+                long period = t0 - _perfLastStart;
+                _perfPeriodTicks += period;
+                if (period > _perfMaxPeriod) _perfMaxPeriod = period;
+            }
+            _perfLastStart = t0;
             _engine.Realize();   // re-parse content with the current resource state
             _perfRealizeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
             long ra1 = GC.GetAllocatedBytesForCurrentThread();
@@ -445,6 +455,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _engine.ClearDirty();
             _presentedAllTargets = presentedEvery;
 
+            _perfCommitTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
             if (++_perfFrames >= 60 && (s_logPath != null || s_perfToConsole))
             {
                 double ms(long ticks) => ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency / _perfFrames;
@@ -453,6 +464,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 Emit($"PERF: parse={msr(_engine.PerfParseTicks):0.0}ms ({_engine.PerfParsed} visuals) brushes={msr(_engine.PerfBrushTicks):0.0}ms | collect={msr(WgpuSceneRenderer.PerfCollectTicks):0.0}ms (layerhash={msr(WgpuSceneRenderer.PerfHashTicks):0.0}ms hits={WgpuSceneRenderer.PerfLayerHits} miss={WgpuSceneRenderer.PerfLayerMiss} shadowhits={WgpuSceneRenderer.PerfShadowHits} passes={WgpuSceneRenderer.PerfPasses}) encode={msr(WgpuSceneRenderer.PerfEncodeTicks):0.0}ms submit={msr(WgpuSceneRenderer.PerfSubmitTicks):0.0}ms (last frame)");
                 Emit($"PERF/frame: skipped={_perfSkipped} realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
                     $"rasterized={WgpuSceneRenderer.PerfCoverage} (localcache={WgpuSceneRenderer.PerfLocalCoverage}) textures={WgpuSceneRenderer.PerfTextures} bindgroups={WgpuSceneRenderer.PerfBindGroups} layers={WgpuSceneRenderer.PerfLayers} readbacks={WgpuSceneRenderer.PerfReadbacks}");
+                Emit($"PERF/period: frame={ms(_perfPeriodTicks):0.0}ms (max {msr(_perfMaxPeriod):0.0}) in-sink={ms(_perfCommitTicks):0.0}ms elsewhere={ms(_perfPeriodTicks - _perfCommitTicks):0.0}ms");
+                _perfPeriodTicks = 0; _perfCommitTicks = 0; _perfMaxPeriod = 0;
                 long allocNow = GC.GetTotalAllocatedBytes();
                 int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
                 if (_gcBytes0 != 0)

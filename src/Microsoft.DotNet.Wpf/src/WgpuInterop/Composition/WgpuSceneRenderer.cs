@@ -1579,6 +1579,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (!cacheHit)
                 {
                     PerfLayerMiss++;
+                    if (s_traceLayerMiss)
+                        Console.Error.WriteLine($"[layermiss] region=({region.X},{region.Y},{region.W},{region.H}) effect={v.Effect?.GetType().Name ?? "-"} clip={(v.ClipGeometry != null)} mask={(v.OpacityMask != null)} srccopy={HasSourceCopy(v)} full={fullTarget} key={key:X}");
                     // Full-target bakes are clipped only by the render target, and stable region
                     // bakes only by their own region, so the cached content is position-complete;
                     // the composite scissors to the live clip.
@@ -1617,6 +1619,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 EmitCachedLayer(cl, groupOpacity, clip, outData, outFormat, width, height);
                 return;
             }
+        }
+
+        private static readonly bool s_traceLayerMiss =
+            Environment.GetEnvironmentVariable("WPF_TRACE_LAYERMISS") == "1";
+
+        private static bool HasSourceCopy(SceneVisual v)
+        {
+            foreach (DrawingPrimitive p in v.Content) if (p.SourceCopy) return true;
+            foreach (SceneVisual c in v.Children) if (HasSourceCopy(c)) return true;
+            return false;
         }
 
         private static bool UsesSourceCopy(DrawData d)
@@ -2238,6 +2250,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        private int _liveBrushDepth;
+        private static readonly bool s_liveBrushFrameKey =
+            Environment.GetEnvironmentVariable("WPF_LIVE_BRUSH_FRAMEKEY") == "1";
+
         private void HashBrush(Brush b)
         {
             switch (b)
@@ -2252,9 +2268,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     foreach (GradientStop st in rg.Stops) { HF(st.Offset); HF(st.Color.R); HF(st.Color.G); HF(st.Color.B); HF(st.Color.A); }
                     break;
                 case ImageBrush img when img.SourceVisual is not null:
-                    // GPU-live source: no pixels to hash; the source can animate, so key on the frame id so a
-                    // cached layer containing it never goes stale (re-renders every frame).
-                    HV(15); HV(img.SourceId); HF(img.U0); HF(img.V0); HF(img.U1); HF(img.V1); HV(_frameId);
+                    // GPU-live source (VisualBrush / DrawingBrush): no pixels to hash, so hash what it is
+                    // rendered FROM -- the source visual, exactly as a layer's own subtree is hashed. It
+                    // used to key on the frame id instead, which kept a layer holding one from ever
+                    // hitting the cache: the gallery's VisualBrush reflection, and the card around it,
+                    // re-rendered (source, mask layer, card layer) every frame for a picture that never
+                    // changed. A brush showing its own ancestor (a reflection) would recurse, so past a
+                    // few levels it falls back to the frame id. WPF_LIVE_BRUSH_FRAMEKEY=1: always.
+                    HV(15); HV(img.SourceId); HF(img.U0); HF(img.V0); HF(img.U1); HF(img.V1);
+                    HV(img.SourceTexW); HV(img.SourceTexH);
+                    if (s_liveBrushFrameKey || _liveBrushDepth >= 4) HV(_frameId);
+                    else
+                    {
+                        _liveBrushDepth++;
+                        try { HashVisual(img.SourceVisual, Matrix3x2.Identity, 0f, 0f); }
+                        finally { _liveBrushDepth--; }
+                    }
                     break;
                 case ImageBrush img:
                     HV(14); HV(img.PixelWidth); HV(img.PixelHeight); HF((float)img.TileWidth); HF((float)img.TileHeight);
@@ -2803,11 +2832,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // (AccumulateContentBounds), so a region-sized layer would crop it away entirely.
         private static bool HasFullTargetContent(SceneVisual v)
         {
-            if (v.ClipGeometry != null || v.OpacityMask != null) return true;
+            // A descendant clip / opacity mask used to force this: it was rendered full-target, and a
+            // full-target pass inside a region texture gets out-of-bounds scissors. It is region-sized
+            // now, like every other layer, so it composites into a region parent at absolute device
+            // coordinates (EmitCachedLayer). Forcing it made a whole CARD full-window -- in the gallery
+            // the Tile brushes card, whose VisualBrush reflection sits under an opacity mask, re-drew
+            // its content and blurred its shadow over 3840x1129 every frame. WPF_NESTED_MASK_FULL=1
+            // restores the old rule.
+            if (s_nestedMaskFull && (v.ClipGeometry != null || v.OpacityMask != null)) return true;
             if (FillsTargetWith3D(v)) return true;
             foreach (SceneVisual c in v.Children) if (HasFullTargetContent(c)) return true;
             return false;
         }
+
+        private static readonly bool s_nestedMaskFull =
+            Environment.GetEnvironmentVariable("WPF_NESTED_MASK_FULL") == "1";
 
         private static bool FillsTargetWith3D(SceneVisual v)
         {
