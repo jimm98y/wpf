@@ -170,7 +170,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // 2,487,683 / 1,864,496.
 
         // Per-frame perf counters (diagnostics): reset + read by the sink each frame.
-        internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss;
+        internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss, PerfShadowHits;
         /// <summary>Draws routed to the local-space (resampled) coverage cache rather than the exact device-space path.</summary>
         internal static int PerfLocalCoverage;
 
@@ -205,7 +205,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
         internal static long PerfCollectAlloc, PerfExecAlloc;
 
-        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = PerfEdgeTextures = PerfMaskTextures = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
+        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfShadowHits = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = PerfEdgeTextures = PerfMaskTextures = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
 
         // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
         // texture + bind group EVERY frame, which dominates cost for largely-static UI. Cache those
@@ -285,8 +285,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // via Rx/Ry (their content is already region-local). See the cache-hit path.
             public bool FullTarget;
             public float OrigTX, OrigTY;       // world translation when rendered (full-target layers)
+            // Non-zero: BlurTex belongs to _shadowCache under this silhouette, not to this layer.
+            public long ShadowKey;
         }
         private readonly Dictionary<long, CachedLayer> _layerCache = new();
+
+        /// <summary>A blurred drop shadow shared by every layer bake with the same silhouette (see
+        /// ShadowSilhouetteKey). Outlives the layers that use it: each use refreshes LastFrame, and
+        /// it is evicted a frame later than a layer would be.</summary>
+        private sealed class SharedShadow
+        {
+            public IntPtr Tex, View;
+            public int W, H, LastFrame;
+        }
+        private readonly Dictionary<long, SharedShadow> _shadowCache = new();
+
+        /// <summary>WPF_SHADOW_SILHOUETTE=0 re-blurs every drop shadow with its layer.</summary>
+        private static readonly bool s_shadowSilhouette =
+            Environment.GetEnvironmentVariable("WPF_SHADOW_SILHOUETTE") != "0";
+
+
 
 
         /// <summary>Begin a logical composition frame (drives coverage-cache eviction).</summary>
@@ -319,7 +337,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     CachedLayer c = kv.Value;
                     // Return the (same-size, reusable) RGBA layer textures to the pool; release the R8 mask.
                     ReturnLayerTexture(c.SubTex, c.SubView, c.Rw, c.Rh);
-                    if (c.BlurTex != IntPtr.Zero) ReturnLayerTexture(c.BlurTex, c.BlurView, c.Rw, c.Rh);
+                    if (c.BlurTex != IntPtr.Zero && c.ShadowKey == 0) ReturnLayerTexture(c.BlurTex, c.BlurView, c.Rw, c.Rh);
                     if (c.MaskTex != IntPtr.Zero)
                     {
                         if (c.MaskPooled) ReturnMaskTexture(c.MaskTex, c.MaskView, c.Rw, c.Rh);
@@ -327,6 +345,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                 }
                 if (deadL != null) foreach (long k in deadL) _layerCache.Remove(k);
+            }
+
+            // One frame longer than a layer, so no live layer still points at an evicted shadow:
+            // every layer use refreshes its shadow's LastFrame too.
+            if (_shadowCache.Count > 0)
+            {
+                List<long>? deadS = null;
+                foreach (KeyValuePair<long, SharedShadow> kv in _shadowCache)
+                {
+                    if (kv.Value.LastFrame >= _frameId - 3) continue;
+                    (deadS ??= new List<long>()).Add(kv.Key);
+                    ReturnLayerTexture(kv.Value.Tex, kv.Value.View, kv.Value.W, kv.Value.H);
+                }
+                if (deadS != null) foreach (long k in deadS) _shadowCache.Remove(k);
             }
 
             if (_rampCache.Count > 0)
@@ -1580,9 +1612,92 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                 }
                 cl.LastFrame = _frameId;
+                if (cl.ShadowKey != 0 && _shadowCache.TryGetValue(cl.ShadowKey, out SharedShadow? sh))
+                    sh.LastFrame = _frameId;
                 EmitCachedLayer(cl, groupOpacity, clip, outData, outFormat, width, height);
                 return;
             }
+        }
+
+        private static bool UsesSourceCopy(DrawData d)
+        {
+            foreach (DrawItem it in d.Draws) if (it.SourceCopy) return true;
+            return false;
+        }
+
+        /// <summary>A key for a drop-shadow layer whose ALPHA is exactly that of its background,
+        /// so that its blurred shadow depends on nothing else; 0 when that cannot be shown.
+        /// <para>What has to hold: the layer's first primitive is an opaque solid rectangle or
+        /// rounded rectangle (a Border's background -- nothing is drawn under it); everything else
+        /// in the subtree lies inside that shape's fully opaque interior, inset by the corner radius
+        /// and a pixel of antialiasing; the world is axis-aligned; and no descendant has an effect of
+        /// its own (content bounds do not include an effect's spread). Then every pixel is either
+        /// under the background -- opaque whatever is drawn over it, since compositing over opaque
+        /// stays opaque -- or outside it and covered only by the background's own edge. The caller
+        /// also rules out source-copy draws, the one blend that can lower alpha.</para>
+        /// <para>The key is the effect's blur, the region's size and the background's device
+        /// rectangle and radius RELATIVE TO THE REGION, so a card that scrolls keeps its shadow.</para>
+        /// </summary>
+        private long ShadowSilhouetteKey(SceneVisual v, Matrix3x2 world, Scissor region, DropShadowEffect ds)
+        {
+            if (v.ClipGeometry is not null || v.OpacityMask is not null || v.Content.Count == 0) return 0;
+            if (MathF.Abs(world.M12) > 1e-6f || MathF.Abs(world.M21) > 1e-6f || world.M11 <= 0f || world.M22 <= 0f) return 0;
+            (Geometry? g, Brush? brush) = v.Content[0] switch
+            {
+                GeometryFill f => (f.Geometry, f.Brush),
+                GeometryDrawing d when d.Stroke is null || d.StrokeStyle.Thickness <= 0 => (d.Geometry, d.Fill),
+                _ => ((Geometry?)null, (Brush?)null),
+            };
+            if (brush is not SolidColorBrush sb || sb.Color.A < 0.999f) return 0;
+            Rect r; float radius;
+            switch (g)
+            {
+                case RectangleGeometry rg: r = rg.Rect; radius = 0f; break;
+                case RoundedRectangleGeometry rr when MathF.Abs(rr.RadiusX - rr.RadiusY) < 0.01f:
+                    r = rr.Rect; radius = Math.Clamp(rr.RadiusX, 0f, 0.5f * MathF.Min(rr.Rect.Width, rr.Rect.Height)); break;
+                default: return 0;
+            }
+            if (HasEffectBelow(v)) return 0;
+            float x0 = r.X * world.M11 + world.M31, y0 = r.Y * world.M22 + world.M32;
+            float x1 = (r.X + r.Width) * world.M11 + world.M31, y1 = (r.Y + r.Height) * world.M22 + world.M32;
+
+            // Everything but the background, in device space.
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            var rest = new SceneVisual();
+            for (int i = 1; i < v.Content.Count; i++) rest.Content.Add(v.Content[i]);
+            AccumulateContentBounds(rest, world, ref minX, ref minY, ref maxX, ref maxY);
+            foreach (SceneVisual c in v.Children)
+                AccumulateContentBounds(c, c.LocalToParent * world, ref minX, ref minY, ref maxX, ref maxY);
+            // Inside the background's rounded-rectangle distance by a pixel of antialiasing at all
+            // four corners of the content box; the distance is convex, so the box is then inside.
+            if (minX <= maxX)
+            {
+                float cx = 0.5f * (x0 + x1), cy = 0.5f * (y0 + y1), hx = 0.5f * (x1 - x0), hy = 0.5f * (y1 - y0);
+                float rad = radius * MathF.Min(world.M11, world.M22);
+                bool Inside(float px, float py)
+                {
+                    float qx = MathF.Abs(px - cx) - hx + rad, qy = MathF.Abs(py - cy) - hy + rad;
+                    float ox = MathF.Max(qx, 0f), oy = MathF.Max(qy, 0f);
+                    return MathF.Sqrt(ox * ox + oy * oy) + MathF.Min(MathF.Max(qx, qy), 0f) - rad <= -1f;
+                }
+                if (!(Inside(minX, minY) && Inside(maxX, minY) && Inside(minX, maxY) && Inside(maxX, maxY)))
+                    return 0;
+            }
+
+            _hash = unchecked((long)1469598103934665603UL);
+            HV(0x5AD0);
+            HF((float)ds.BlurRadius); HF((float)ds.OffsetX); HF((float)ds.OffsetY);
+            HV(region.W); HV(region.H);
+            HF(x0 - region.X); HF(y0 - region.Y); HF(x1 - region.X); HF(y1 - region.Y);
+            HF(radius * world.M11); HF(radius * world.M22);
+            return _hash == 0 ? 1 : _hash;
+        }
+
+        private static bool HasEffectBelow(SceneVisual v)
+        {
+            foreach (SceneVisual c in v.Children)
+                if (c.Effect is not null || HasEffectBelow(c)) return true;
+            return false;
         }
 
         // Render a cacheable region layer (subtree + optional blur) into OWNED textures.
@@ -1639,7 +1754,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             else if (v.Effect is DropShadowEffect ds)
             {
-                (cl.BlurTex, cl.BlurView) = BlurLayer(subView, ds.BlurRadius, BlurKernelType.Gaussian, plan, region);
+                // THE SHADOW OF A CARD IS THE SHADOW OF ITS BACKGROUND. When the layer's alpha is
+                // provably that of one opaque background shape (ShadowSilhouetteKey), its blurred
+                // shadow does not change when the content on the card does -- a spinning shape, a
+                // moving slider -- so it is cached by that silhouette and an animated card costs one
+                // pass a frame instead of three (subtree + two blur passes, ~1.8ms each on GL).
+                long silhouette = s_shadowSilhouette && !UsesSourceCopy(subData)
+                    ? ShadowSilhouetteKey(v, world, region, ds) : 0;
+                if (silhouette != 0 && _shadowCache.TryGetValue(silhouette, out SharedShadow? shared))
+                {
+                    PerfShadowHits++;
+                }
+                else
+                {
+                    (IntPtr bt, IntPtr bv) = BlurLayer(subView, ds.BlurRadius, BlurKernelType.Gaussian, plan, region);
+                    shared = new SharedShadow { Tex = bt, View = bv, W = rw, H = rh };
+                    if (silhouette != 0) _shadowCache[silhouette] = shared;
+                }
+                shared.LastFrame = _frameId;
+                cl.BlurTex = shared.Tex; cl.BlurView = shared.View;
+                cl.ShadowKey = silhouette;
                 cl.Mode = 2; cl.ShadowColor = ds.Color; cl.OffX = (int)ds.OffsetX; cl.OffY = (int)ds.OffsetY;
             }
             else
