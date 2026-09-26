@@ -8048,6 +8048,13 @@ namespace WgpuInterop.Tests.Text
                                 && OpenFace(linkTo, bold, italic) is { } linked)
                             {
                                 linkDrop = TrueTypeFont.GdiLinkedBaselineDrop(font, linked, ppem);
+                                // WPF_LINK_DROP_ADD=n moves the linked run n pixels further down,
+                                // so a sweep of it beside WPF_LINK_DELTA separates a wrong BASELINE
+                                // from a wrong SIZE: a row that zeroes at no size may zero at the
+                                // right size once the drop is right.
+                                if (Environment.GetEnvironmentVariable("WPF_LINK_DROP_ADD") is { } da
+                                    && int.TryParse(da, out int dropAdd))
+                                    linkDrop += dropAdd;
                                 // WPF_LINK_SIZE=1 realizes the linked face the size GDI does,
                                 // which is not the size of the run: TrueTypeFont.GdiLinkedPpem
                                 // carries the rule and where it was read from. The renderer cannot
