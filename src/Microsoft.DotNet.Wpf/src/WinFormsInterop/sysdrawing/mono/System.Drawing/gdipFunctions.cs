@@ -330,8 +330,10 @@ namespace System.Drawing
 		[DllImport(GdiPlus)]
 		static internal extern Status GdipCreateRegionRectI (ref Rectangle rect, out IntPtr region);
 
-		[DllImport(GdiPlus)]
-		static internal extern Status GdipCreateRegionPath (IntPtr path, out IntPtr region);
+		[DllImport (GdiPlus, EntryPoint = "GdipCreateRegionPath")]
+		static internal extern Status Native_GdipCreateRegionPath (IntPtr path, out IntPtr region);
+		internal static Status GdipCreateRegionPath (IntPtr path, out IntPtr region)
+		{ IntPtr r = IntPtr.Zero; Status st = PathInput (path, n => Native_GdipCreateRegionPath (n, out r)); region = r; return st; }
 
 		[DllImport(GdiPlus)]
 		static internal extern Status GdipTranslateRegion (IntPtr region, float dx, float dy);
@@ -364,8 +366,10 @@ namespace System.Drawing
 		static internal extern Status GdipCombineRegionRectI (IntPtr region, ref Rectangle rect,
 			CombineMode combineMode);
 
-		[DllImport(GdiPlus)]
-		static internal extern Status GdipCombineRegionPath (IntPtr region, IntPtr path, CombineMode combineMode);
+		[DllImport (GdiPlus, EntryPoint = "GdipCombineRegionPath")]
+		static internal extern Status Native_GdipCombineRegionPath (IntPtr region, IntPtr path, CombineMode combineMode);
+		internal static Status GdipCombineRegionPath (IntPtr region, IntPtr path, CombineMode combineMode)
+		{ return PathInput (path, n => Native_GdipCombineRegionPath (region, n, combineMode)); }
 
 		[DllImport(GdiPlus)]
 		static internal extern Status GdipGetRegionBounds (IntPtr region, IntPtr graphics, ref RectangleF rect);
@@ -467,8 +471,10 @@ namespace System.Drawing
 		static internal extern int GdipTranslateTextureTransform (HandleRef texture, float dx, float dy, MatrixOrder order);
 
 		// PathGradientBrush functions
-		[DllImport(GdiPlus)]
-		static internal extern Status GdipCreatePathGradientFromPath (IntPtr path, out IntPtr brush);
+		[DllImport (GdiPlus, EntryPoint = "GdipCreatePathGradientFromPath")]
+		static internal extern Status Native_GdipCreatePathGradientFromPath (IntPtr path, out IntPtr brush);
+		internal static Status GdipCreatePathGradientFromPath (IntPtr path, out IntPtr brush)
+		{ IntPtr b = IntPtr.Zero; Status st = PathInput (path, n => Native_GdipCreatePathGradientFromPath (n, out b)); brush = b; return st; }
 		[DllImport(GdiPlus)]
 		static internal extern Status GdipCreatePathGradientI (Point [] points, int count, WrapMode wrapMode, out IntPtr brush);
 		[DllImport(GdiPlus)]
@@ -624,8 +630,10 @@ namespace System.Drawing
 		static internal extern Status GdipDrawLines (IntPtr graphics, IntPtr pen, PointF [] points, int count);
 		[DllImport (GdiPlus)]
 		static internal extern Status GdipDrawLinesI (IntPtr graphics, IntPtr pen, Point [] points, int count);
-		[DllImport (GdiPlus)]
-		static internal extern Status GdipDrawPath (IntPtr graphics, IntPtr pen, IntPtr path);
+		[DllImport (GdiPlus, EntryPoint = "GdipDrawPath")]
+		static internal extern Status Native_GdipDrawPath (IntPtr graphics, IntPtr pen, IntPtr path);
+		internal static Status GdipDrawPath (IntPtr graphics, IntPtr pen, IntPtr path)
+		{ return PathInput (path, n => Native_GdipDrawPath (graphics, pen, n)); }
 		[DllImport (GdiPlus)]
 		static internal extern Status GdipDrawPie (IntPtr graphics, IntPtr pen, float x, float y, float width, float height, float startAngle, float sweepAngle);
 		[DllImport (GdiPlus)]
@@ -712,8 +720,10 @@ namespace System.Drawing
 		internal static extern Status GdipSetClipRect(IntPtr graphics, float x, float y, float width, float height, CombineMode combineMode);
 		[DllImport(GdiPlus)]
 		internal static extern Status GdipSetClipRectI(IntPtr graphics, int x, int y, int width, int height, CombineMode combineMode);
-		[DllImport(GdiPlus)]
-		internal static extern Status GdipSetClipPath(IntPtr graphics, IntPtr path, CombineMode combineMode);
+		[DllImport (GdiPlus, EntryPoint = "GdipSetClipPath")]
+		internal static extern Status Native_GdipSetClipPath(IntPtr graphics, IntPtr path, CombineMode combineMode);
+		internal static Status GdipSetClipPath (IntPtr graphics, IntPtr path, CombineMode combineMode)
+		{ return PathInput (path, n => Native_GdipSetClipPath (graphics, n, combineMode)); }
 		[DllImport(GdiPlus)]
 		internal static extern Status GdipSetClipRegion(IntPtr graphics, IntPtr region, CombineMode combineMode);
 		[DllImport(GdiPlus)]
@@ -747,8 +757,10 @@ namespace System.Drawing
 		internal static extern Status GdipFillPieI(IntPtr graphics, IntPtr brush, int x, int y,
 			int width, int height, float startAngle, float sweepAngle);
 
-		[DllImport(GdiPlus)]
-		internal static extern Status GdipFillPath(IntPtr graphics, IntPtr brush, IntPtr path);
+		[DllImport (GdiPlus, EntryPoint = "GdipFillPath")]
+		internal static extern Status Native_GdipFillPath(IntPtr graphics, IntPtr brush, IntPtr path);
+		internal static Status GdipFillPath (IntPtr graphics, IntPtr brush, IntPtr path)
+		{ return PathInput (path, n => Native_GdipFillPath (graphics, brush, n)); }
 
 		[DllImport(GdiPlus)]
 		internal static extern Status GdipGetNearestColor(IntPtr graphics, out int argb);
@@ -831,10 +843,14 @@ namespace System.Drawing
 		[DllImport(GdiPlus)]
 		internal static extern Status GdipFlush(IntPtr graphics, FlushIntention intention);
 
-		[DllImport(GdiPlus, CharSet=CharSet.Unicode)]
-		internal static extern Status GdipAddPathString (IntPtr path, string s, int lenght, IntPtr family, int style, float emSize, ref RectangleF layoutRect, IntPtr format);
-		[DllImport(GdiPlus, CharSet=CharSet.Unicode)]
-		internal static extern Status GdipAddPathStringI (IntPtr path, string s, int lenght, IntPtr family, int style, float emSize, ref Rectangle layoutRect, IntPtr format);
+		[DllImport (GdiPlus, EntryPoint = "GdipAddPathString", CharSet=CharSet.Unicode)]
+		internal static extern Status Native_GdipAddPathString (IntPtr path, string s, int lenght, IntPtr family, int style, float emSize, ref RectangleF layoutRect, IntPtr format);
+		internal static Status GdipAddPathString (IntPtr path, string s, int lenght, IntPtr family, int style, float emSize, ref RectangleF layoutRect, IntPtr format)
+		{ RectangleF r = layoutRect; return WithNativeCopy (path, n => Native_GdipAddPathString (n, s, lenght, family, style, emSize, ref r, format), readBack: true); }
+		[DllImport (GdiPlus, EntryPoint = "GdipAddPathStringI", CharSet=CharSet.Unicode)]
+		internal static extern Status Native_GdipAddPathStringI (IntPtr path, string s, int lenght, IntPtr family, int style, float emSize, ref Rectangle layoutRect, IntPtr format);
+		internal static Status GdipAddPathStringI (IntPtr path, string s, int lenght, IntPtr family, int style, float emSize, ref Rectangle layoutRect, IntPtr format)
+		{ Rectangle r = layoutRect; return WithNativeCopy (path, n => Native_GdipAddPathStringI (n, s, lenght, family, style, emSize, ref r, format), readBack: true); }
 
 
 		// Pen functions
@@ -1265,132 +1281,223 @@ namespace System.Drawing
 		[DllImport (GdiPlus)]
 		internal static extern Status GdipIsMatrixEqual (IntPtr matrix, IntPtr matrix2, out bool result);
 
-		// GraphicsPath functions
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipCreatePath (FillMode brushMode, out IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipCreatePath2 (PointF [] points, byte [] types, int count, FillMode brushMode, out IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipCreatePath2I (Point [] points, byte [] types, int count, FillMode brushMode, out IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipClonePath (IntPtr path, out IntPtr clonePath);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipDeletePath (IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipResetPath (IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipGetPointCount (IntPtr path, out int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipGetPathTypes (IntPtr path, [Out] byte [] types, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipGetPathPoints (IntPtr path, [Out] PointF [] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipGetPathPointsI (IntPtr path, [Out] Point [] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipGetPathFillMode (IntPtr path, out FillMode fillMode);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipSetPathFillMode (IntPtr path, FillMode fillMode);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipStartPathFigure (IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipClosePathFigure (IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipClosePathFigures (IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipSetPathMarker (IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipClearPathMarkers (IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipReversePath (IntPtr path);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipGetPathLastPoint (IntPtr path, out PointF lastPoint);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathLine (IntPtr path, float x1, float y1, float x2, float y2);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathLine2 (IntPtr path, PointF[] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathLine2I (IntPtr path, Point[] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathArc (IntPtr path, float x, float y, float width, float height, float startAngle, float sweepAngle);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathBezier (IntPtr path, float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathBeziers (IntPtr path, PointF [] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathCurve (IntPtr path, PointF [] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathCurveI (IntPtr path, Point [] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathCurve2 (IntPtr path, PointF [] points, int count, float tension);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathCurve2I (IntPtr path, Point [] points, int count, float tension);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathCurve3 (IntPtr path, PointF [] points, int count, int offset, int numberOfSegments, float tension);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathCurve3I (IntPtr path, Point [] points, int count, int offset, int numberOfSegments, float tension);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathClosedCurve (IntPtr path, PointF [] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathClosedCurveI (IntPtr path, Point [] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathClosedCurve2 (IntPtr path, PointF [] points, int count, float tension);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathClosedCurve2I (IntPtr path, Point [] points, int count, float tension);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathRectangle (IntPtr path, float x, float y, float width, float height);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathRectangles (IntPtr path, RectangleF [] rects, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathEllipse (IntPtr path, float x, float y, float width, float height);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathEllipseI (IntPtr path, int x, int y, int width, int height);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathPie (IntPtr path, float x, float y, float width, float height, float startAngle, float sweepAngle);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathPieI (IntPtr path, int x, int y, int width, int height, float startAngle, float sweepAngle);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathPolygon (IntPtr path, PointF [] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathPath (IntPtr path, IntPtr addingPath, bool connect);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathLineI (IntPtr path, int x1, int y1, int x2, int y2);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathArcI (IntPtr path, int x, int y, int width, int height, float startAngle, float sweepAngle);
+		// GraphicsPath functions -- MANAGED EVERYWHERE (ManagedPath), GDI+ or not.
+		//
+		// A path is geometry, and the port renders it through one pipeline on every platform: the
+		// recorder flattens it and the GPU rasterizes it. So GDI+ never holds a path, even where it is
+		// installed; these keep GDI+'s names and signatures so GraphicsPath and its callers are
+		// unchanged. The few GDI+ objects that take a path as INPUT (a region, a path-gradient brush, a
+		// clip on a native surface, Widen/Warp/AddString) get a temporary native copy built from the
+		// managed points -- see NativePathCopy -- and exist only where GDI+ does.
+		internal static Status GdipCreatePath (FillMode brushMode, out IntPtr path) => ManagedPath.Create (brushMode, out path);
+		internal static Status GdipCreatePath2 (PointF [] points, byte [] types, int count, FillMode brushMode, out IntPtr path) => ManagedPath.Create (points, types, count, brushMode, out path);
+		internal static Status GdipCreatePath2I (Point [] points, byte [] types, int count, FillMode brushMode, out IntPtr path) => ManagedPath.Create (points, types, count, brushMode, out path);
+		internal static Status GdipClonePath (IntPtr path, out IntPtr clonePath) => ManagedPath.Clone (path, out clonePath);
+		internal static Status GdipDeletePath (IntPtr path) => ManagedPath.Delete (path);
+		internal static Status GdipResetPath (IntPtr path) => ManagedPath.Reset (path);
+		internal static Status GdipGetPointCount (IntPtr path, out int count) => ManagedPath.GetPointCount (path, out count);
+		internal static Status GdipGetPathTypes (IntPtr path, byte [] types, int count) => ManagedPath.GetTypes (path, types, count);
+		internal static Status GdipGetPathPoints (IntPtr path, PointF [] points, int count) => ManagedPath.GetPoints (path, points, count);
+		internal static Status GdipGetPathPointsI (IntPtr path, Point [] points, int count) => ManagedPath.GetPoints (path, points, count);
+		internal static Status GdipGetPathFillMode (IntPtr path, out FillMode fillMode) => ManagedPath.GetFillMode (path, out fillMode);
+		internal static Status GdipSetPathFillMode (IntPtr path, FillMode fillMode) => ManagedPath.SetFillMode (path, fillMode);
+		internal static Status GdipStartPathFigure (IntPtr path) => ManagedPath.StartFigure (path);
+		internal static Status GdipClosePathFigure (IntPtr path) => ManagedPath.CloseFigure (path);
+		internal static Status GdipClosePathFigures (IntPtr path) => ManagedPath.CloseFigures (path);
+		internal static Status GdipSetPathMarker (IntPtr path) => ManagedPath.SetMarker (path);
+		internal static Status GdipClearPathMarkers (IntPtr path) => ManagedPath.ClearMarkers (path);
+		internal static Status GdipReversePath (IntPtr path) => ManagedPath.Reverse (path);
+		internal static Status GdipGetPathLastPoint (IntPtr path, out PointF lastPoint) => ManagedPath.GetLastPoint (path, out lastPoint);
+		internal static Status GdipAddPathLine (IntPtr path, float x1, float y1, float x2, float y2) => ManagedPath.AddLine (path, x1, y1, x2, y2);
+		internal static Status GdipAddPathLine2 (IntPtr path, PointF[] points, int count) => ManagedPath.AddLines (path, points, count);
+		internal static Status GdipAddPathLine2I (IntPtr path, Point[] points, int count) => ManagedPath.AddLines (path, points, count);
+		internal static Status GdipAddPathArc (IntPtr path, float x, float y, float width, float height, float startAngle, float sweepAngle) => ManagedPath.AddArc (path, x, y, width, height, startAngle, sweepAngle);
+		internal static Status GdipAddPathBezier (IntPtr path, float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4) => ManagedPath.AddBezier (path, x1, y1, x2, y2, x3, y3, x4, y4);
+		internal static Status GdipAddPathBeziers (IntPtr path, PointF [] points, int count) => ManagedPath.AddBeziers (path, points, count);
+		internal static Status GdipAddPathCurve (IntPtr path, PointF [] points, int count) => ManagedPath.AddCurve (path, points, count, 0, count - 1, 0.5f);
+		internal static Status GdipAddPathCurveI (IntPtr path, Point [] points, int count) => ManagedPath.AddCurve (path, points, count, 0, count - 1, 0.5f);
+		internal static Status GdipAddPathCurve2 (IntPtr path, PointF [] points, int count, float tension) => ManagedPath.AddCurve (path, points, count, 0, count - 1, tension);
+		internal static Status GdipAddPathCurve2I (IntPtr path, Point [] points, int count, float tension) => ManagedPath.AddCurve (path, points, count, 0, count - 1, tension);
+		internal static Status GdipAddPathCurve3 (IntPtr path, PointF [] points, int count, int offset, int numberOfSegments, float tension) => ManagedPath.AddCurve (path, points, count, offset, numberOfSegments, tension);
+		internal static Status GdipAddPathCurve3I (IntPtr path, Point [] points, int count, int offset, int numberOfSegments, float tension) => ManagedPath.AddCurve (path, points, count, offset, numberOfSegments, tension);
+		internal static Status GdipAddPathClosedCurve (IntPtr path, PointF [] points, int count) => ManagedPath.AddClosedCurve (path, points, count, 0.5f);
+		internal static Status GdipAddPathClosedCurveI (IntPtr path, Point [] points, int count) => ManagedPath.AddClosedCurve (path, points, count, 0.5f);
+		internal static Status GdipAddPathClosedCurve2 (IntPtr path, PointF [] points, int count, float tension) => ManagedPath.AddClosedCurve (path, points, count, tension);
+		internal static Status GdipAddPathClosedCurve2I (IntPtr path, Point [] points, int count, float tension) => ManagedPath.AddClosedCurve (path, points, count, tension);
+		internal static Status GdipAddPathRectangle (IntPtr path, float x, float y, float width, float height) => ManagedPath.AddRectangle (path, x, y, width, height);
+		internal static Status GdipAddPathRectangles (IntPtr path, RectangleF [] rects, int count) => ManagedPath.AddRectangles (path, rects, count);
+		internal static Status GdipAddPathEllipse (IntPtr path, float x, float y, float width, float height) => ManagedPath.AddEllipse (path, x, y, width, height);
+		internal static Status GdipAddPathEllipseI (IntPtr path, int x, int y, int width, int height) => ManagedPath.AddEllipse (path, x, y, width, height);
+		internal static Status GdipAddPathPie (IntPtr path, float x, float y, float width, float height, float startAngle, float sweepAngle) => ManagedPath.AddPie (path, x, y, width, height, startAngle, sweepAngle);
+		internal static Status GdipAddPathPieI (IntPtr path, int x, int y, int width, int height, float startAngle, float sweepAngle) => ManagedPath.AddPie (path, x, y, width, height, startAngle, sweepAngle);
+		internal static Status GdipAddPathPolygon (IntPtr path, PointF [] points, int count) => ManagedPath.AddPolygon (path, points, count);
+		internal static Status GdipAddPathPath (IntPtr path, IntPtr addingPath, bool connect) => ManagedPath.AddPath (path, addingPath, connect);
+		internal static Status GdipAddPathLineI (IntPtr path, int x1, int y1, int x2, int y2) => ManagedPath.AddLine (path, x1, y1, x2, y2);
+		internal static Status GdipAddPathArcI (IntPtr path, int x, int y, int width, int height, float startAngle, float sweepAngle) => ManagedPath.AddArc (path, x, y, width, height, startAngle, sweepAngle);
+		internal static Status GdipAddPathBezierI (IntPtr path, int x1, int y1, int x2, int y2, int x3, int y3, int x4, int y4) => ManagedPath.AddBezier (path, x1, y1, x2, y2, x3, y3, x4, y4);
+		internal static Status GdipAddPathBeziersI (IntPtr path, Point [] points, int count) => ManagedPath.AddBeziers (path, points, count);
+		internal static Status GdipAddPathPolygonI (IntPtr path, Point [] points, int count) => ManagedPath.AddPolygon (path, points, count);
+		internal static Status GdipAddPathRectangleI (IntPtr path, int x, int y, int width, int height) => ManagedPath.AddRectangle (path, x, y, width, height);
+		internal static Status GdipAddPathRectanglesI (IntPtr path, Rectangle [] rects, int count) => ManagedPath.AddRectangles (path, rects, count);
 
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathBezierI (IntPtr path, int x1, int y1, int x2, int y2, int x3, int y3, int x4, int y4);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathBeziersI (IntPtr path, Point [] points, int count);
+		internal static Status GdipFlattenPath (IntPtr path, IntPtr matrix, float floatness)
+		{
+			Status st = GdipTransformPath (path, matrix);
+			return st != Status.Ok ? st : ManagedPath.Flatten (path, IntPtr.Zero, floatness);
+		}
 
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathPolygonI (IntPtr path, Point [] points, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathRectangleI (IntPtr path, int x, int y, int width, int height);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipAddPathRectanglesI (IntPtr path, Rectangle [] rects, int count);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipFlattenPath (IntPtr path, IntPtr matrix, float floatness);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipTransformPath (IntPtr path, IntPtr matrix);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipWarpPath (IntPtr path, IntPtr matrix,
+		/// <summary>A GDI+ Matrix is read for its six elements; the transform itself is managed.</summary>
+		internal static Status GdipTransformPath (IntPtr path, IntPtr matrix)
+		{
+			if (matrix == IntPtr.Zero) return ManagedPath.Owns (path) ? Status.Ok : Status.InvalidParameter;
+			if (!Initialized) return Status.NotImplemented;
+			float [] m = MatrixElements (matrix);
+			return m == null ? Status.InvalidParameter : ManagedPath.Transform (path, m);
+		}
+
+		internal static Status GdipGetPathWorldBounds (IntPtr path, out RectangleF bounds, IntPtr matrix, IntPtr pen)
+		{
+			if (pen == IntPtr.Zero) {
+				if (matrix == IntPtr.Zero) return ManagedPath.GetBounds (path, out bounds, IntPtr.Zero, IntPtr.Zero);
+				bounds = RectangleF.Empty;
+				Status st = GdipClonePath (path, out IntPtr c);
+				if (st != Status.Ok) return st;
+				try {
+					st = GdipTransformPath (c, matrix);
+					return st != Status.Ok ? st : ManagedPath.GetBounds (c, out bounds, IntPtr.Zero, IntPtr.Zero);
+				} finally { ManagedPath.Delete (c); }
+			}
+			// A pen's widening is GDI+'s: measure a native copy.
+			RectangleF b = RectangleF.Empty;
+			Status s = WithNativeCopy (path, n => Native_GdipGetPathWorldBounds (n, out b, matrix, pen));
+			bounds = b;
+			return s;
+		}
+
+		internal static Status GdipGetPathWorldBoundsI (IntPtr path, out Rectangle bounds, IntPtr matrix, IntPtr pen)
+		{
+			Status st = GdipGetPathWorldBounds (path, out RectangleF f, matrix, pen);
+			bounds = Rectangle.Truncate (f);
+			return st;
+		}
+
+		internal static Status GdipIsVisiblePathPoint (IntPtr path, float x, float y, IntPtr graphics, out bool result) => ManagedPath.IsVisible (path, x, y, out result);
+		internal static Status GdipIsVisiblePathPointI (IntPtr path, int x, int y, IntPtr graphics, out bool result) => ManagedPath.IsVisible (path, x, y, out result);
+
+		internal static Status GdipIsOutlineVisiblePathPoint (IntPtr path, float x, float y, IntPtr pen, IntPtr graphics, out bool result)
+		{
+			bool r = false;
+			Status st = WithNativeCopy (path, n => Native_GdipIsOutlineVisiblePathPoint (n, x, y, pen, graphics, out r));
+			result = r;
+			return st;
+		}
+
+		internal static Status GdipIsOutlineVisiblePathPointI (IntPtr path, int x, int y, IntPtr pen, IntPtr graphics, out bool result)
+			=> GdipIsOutlineVisiblePathPoint (path, x, y, pen, graphics, out result);
+
+		internal static Status GdipWarpPath (IntPtr path, IntPtr matrix, PointF [] points, int count,
+			float srcx, float srcy, float srcwidth, float srcheight, WarpMode mode, float flatness)
+			=> WithNativeCopy (path, n => Native_GdipWarpPath (n, matrix, points, count, srcx, srcy, srcwidth, srcheight, mode, flatness), readBack: true);
+
+		internal static Status GdipWidenPath (IntPtr path, IntPtr pen, IntPtr matrix, float flatness)
+			=> WithNativeCopy (path, n => Native_GdipWidenPath (n, pen, matrix, flatness), readBack: true);
+
+		// ---- the bridge to GDI+ objects that take a path as input ------------------------------
+
+		/// <summary>A GDI+ call that takes a path: handed a native copy of the managed one.</summary>
+		private static Status PathInput (IntPtr path, Func<IntPtr, Status> call)
+		{
+			if (!Initialized) return Status.NotImplemented;
+			IntPtr n = NativePathCopy (path);
+			if (n == IntPtr.Zero) return Status.InvalidParameter;
+			try { return call (n); }
+			finally { Native_GdipDeletePath (n); }
+		}
+
+		/// <summary>A native GDI+ path holding the same points as a managed one, for a GDI+ object that
+		/// takes a path; the caller deletes it (Native_GdipDeletePath). Zero without GDI+.</summary>
+		internal static IntPtr NativePathCopy (IntPtr path)
+		{
+			if (!Initialized || !ManagedPath.Snapshot (path, out PointF [] pts, out byte [] types, out FillMode mode))
+				return IntPtr.Zero;
+			return Native_GdipCreatePath2 (pts, types, pts.Length, mode, out IntPtr n) == Status.Ok ? n : IntPtr.Zero;
+		}
+
+		/// <summary>Runs a GDI+ call against a native copy of a managed path; with
+		/// <paramref name="readBack"/>, what GDI+ left in the copy replaces the managed path.</summary>
+		internal static Status WithNativeCopy (IntPtr path, Func<IntPtr, Status> call, bool readBack = false)
+		{
+			if (!Initialized) return Status.NotImplemented;
+			IntPtr n = NativePathCopy (path);
+			if (n == IntPtr.Zero) return Status.InvalidParameter;
+			try {
+				Status st = call (n);
+				if (st == Status.Ok && readBack) {
+					Native_GdipGetPointCount (n, out int count);
+					var pts = new PointF [count];
+					var types = new byte [count];
+					if (count > 0) {
+						Native_GdipGetPathPoints (n, pts, count);
+						Native_GdipGetPathTypes (n, types, count);
+					}
+					ManagedPath.Replace (path, pts, types);
+				}
+				return st;
+			} finally { Native_GdipDeletePath (n); }
+		}
+
+		/// <summary>A GDI+ call that WRITES into a path (a path iterator's subpath) runs against a native
+		/// scratch path, whose result then replaces the managed path's contents.</summary>
+		internal static int IntoManagedPath (IntPtr managed, Func<IntPtr, int> call)
+		{
+			if (!Initialized) return (int) Status.NotImplemented;
+			if (Native_GdipCreatePath2 (Array.Empty<PointF> (), Array.Empty<byte> (), 0, FillMode.Alternate, out IntPtr n) != Status.Ok)
+				return (int) Status.GenericError;
+			try {
+				int st = call (n);
+				if (st == 0 && managed != IntPtr.Zero) {
+					Native_GdipGetPointCount (n, out int count);
+					var pts = new PointF [count];
+					var types = new byte [count];
+					if (count > 0) { Native_GdipGetPathPoints (n, pts, count); Native_GdipGetPathTypes (n, types, count); }
+					ManagedPath.Replace (managed, pts, types);
+				}
+				return st;
+			} finally { Native_GdipDeletePath (n); }
+		}
+
+		private static float [] MatrixElements (IntPtr matrix)
+		{
+			IntPtr buf = Marshal.AllocHGlobal (6 * sizeof (float));
+			try {
+				if (GdipGetMatrixElements (matrix, buf) != Status.Ok) return null;
+				var m = new float [6];
+				Marshal.Copy (buf, m, 0, 6);
+				return m;
+			} finally { Marshal.FreeHGlobal (buf); }
+		}
+
+		[DllImport (GdiPlus, EntryPoint = "GdipCreatePath2")]
+		private static extern Status Native_GdipCreatePath2 (PointF [] points, byte [] types, int count, FillMode brushMode, out IntPtr path);
+		[DllImport (GdiPlus, EntryPoint = "GdipDeletePath")]
+		internal static extern Status Native_GdipDeletePath (IntPtr path);
+		[DllImport (GdiPlus, EntryPoint = "GdipGetPointCount")]
+		private static extern Status Native_GdipGetPointCount (IntPtr path, out int count);
+		[DllImport (GdiPlus, EntryPoint = "GdipGetPathTypes")]
+		private static extern Status Native_GdipGetPathTypes (IntPtr path, [Out] byte [] types, int count);
+		[DllImport (GdiPlus, EntryPoint = "GdipGetPathPoints")]
+		private static extern Status Native_GdipGetPathPoints (IntPtr path, [Out] PointF [] points, int count);
+		[DllImport (GdiPlus, EntryPoint = "GdipWarpPath")]
+		private static extern Status Native_GdipWarpPath (IntPtr path, IntPtr matrix,
 			PointF [] points, int count,
 			float srcx, float srcy, float srcwidth, float srcheight,
 			WarpMode mode, float flatness);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipWidenPath (IntPtr path, IntPtr pen, IntPtr matrix, float flatness);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipGetPathWorldBounds (IntPtr path, out RectangleF bounds, IntPtr matrix, IntPtr pen);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipGetPathWorldBoundsI (IntPtr path, out Rectangle bounds, IntPtr matrix, IntPtr pen);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipIsVisiblePathPoint (IntPtr path, float x, float y, IntPtr graphics, out bool result);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipIsVisiblePathPointI (IntPtr path, int x, int y, IntPtr graphics, out bool result);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipIsOutlineVisiblePathPoint (IntPtr path, float x, float y, IntPtr pen, IntPtr graphics, out bool result);
-		[DllImport (GdiPlus)]
-		internal static extern Status GdipIsOutlineVisiblePathPointI (IntPtr path, int x, int y, IntPtr pen, IntPtr graphics, out bool result);
+		[DllImport (GdiPlus, EntryPoint = "GdipWidenPath")]
+		private static extern Status Native_GdipWidenPath (IntPtr path, IntPtr pen, IntPtr matrix, float flatness);
+		[DllImport (GdiPlus, EntryPoint = "GdipGetPathWorldBounds")]
+		private static extern Status Native_GdipGetPathWorldBounds (IntPtr path, out RectangleF bounds, IntPtr matrix, IntPtr pen);
+		[DllImport (GdiPlus, EntryPoint = "GdipIsOutlineVisiblePathPoint")]
+		private static extern Status Native_GdipIsOutlineVisiblePathPoint (IntPtr path, float x, float y, IntPtr pen, IntPtr graphics, out bool result);
 
 		// GraphicsPathIterator
 		[DllImport(GdiPlus)]

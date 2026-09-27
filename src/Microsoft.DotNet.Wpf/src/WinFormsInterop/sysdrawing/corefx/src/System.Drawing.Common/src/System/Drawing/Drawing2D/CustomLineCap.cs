@@ -27,10 +27,21 @@ namespace System.Drawing.Drawing2D
         public CustomLineCap(GraphicsPath fillPath, GraphicsPath strokePath, LineCap baseCap, float baseInset)
         {
             IntPtr nativeLineCap;
-            int status = SafeNativeMethods.Gdip.GdipCreateCustomLineCap(
-                                new HandleRef(fillPath, (fillPath == null) ? IntPtr.Zero : fillPath.nativePath),
-                                new HandleRef(strokePath, (strokePath == null) ? IntPtr.Zero : strokePath.nativePath),
+            // GDI+ takes the cap's shape as native paths: hand it copies of the managed ones.
+            IntPtr fill = fillPath == null ? IntPtr.Zero : GDIPlus.NativePathCopy(fillPath.nativePath);
+            IntPtr stroke = strokePath == null ? IntPtr.Zero : GDIPlus.NativePathCopy(strokePath.nativePath);
+            int status;
+            try
+            {
+                status = SafeNativeMethods.Gdip.GdipCreateCustomLineCap(
+                                new HandleRef(fillPath, fill), new HandleRef(strokePath, stroke),
                                 baseCap, baseInset, out nativeLineCap);
+            }
+            finally
+            {
+                if (fill != IntPtr.Zero) GDIPlus.Native_GdipDeletePath(fill);
+                if (stroke != IntPtr.Zero) GDIPlus.Native_GdipDeletePath(stroke);
+            }
 
             if (status != SafeNativeMethods.Gdip.Ok)
                 throw SafeNativeMethods.Gdip.StatusException(status);

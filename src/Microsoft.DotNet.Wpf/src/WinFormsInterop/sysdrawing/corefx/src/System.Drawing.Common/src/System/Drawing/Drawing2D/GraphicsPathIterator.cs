@@ -11,10 +11,15 @@ namespace System.Drawing.Drawing2D
 {
     public sealed class GraphicsPathIterator : MarshalByRefObject, IDisposable
     {
+        private IntPtr _pathCopy;
+
         public GraphicsPathIterator(GraphicsPath path)
         {
             IntPtr nativeIter = IntPtr.Zero;
-            int status = SafeNativeMethods.Gdip.GdipCreatePathIter(out nativeIter, new HandleRef(path, (path == null) ? IntPtr.Zero : path.nativePath));
+            // A GraphicsPath is managed (ManagedPath); the GDI+ iterator walks a native copy of it,
+            // kept for the iterator's lifetime. Without GDI+ there is no iterator to create.
+            _pathCopy = path == null ? IntPtr.Zero : GDIPlus.NativePathCopy(path.nativePath);
+            int status = SafeNativeMethods.Gdip.GdipCreatePathIter(out nativeIter, new HandleRef(path, _pathCopy));
 
             if (status != SafeNativeMethods.Gdip.Ok)
                 throw SafeNativeMethods.Gdip.StatusException(status);
@@ -54,6 +59,7 @@ namespace System.Drawing.Drawing2D
                 finally
                 {
                     nativeIter = IntPtr.Zero;
+                    if (_pathCopy != IntPtr.Zero) { GDIPlus.Native_GdipDeletePath(_pathCopy); _pathCopy = IntPtr.Zero; }
                 }
             }
         }
@@ -78,8 +84,12 @@ namespace System.Drawing.Drawing2D
 
         public int NextSubpath(GraphicsPath path, out bool isClosed)
         {
-            int status = SafeNativeMethods.Gdip.GdipPathIterNextSubpathPath(new HandleRef(this, nativeIter), out int resultCount,
-                        new HandleRef(path, (path == null) ? IntPtr.Zero : path.nativePath), out isClosed);
+            int resultCount = 0;
+            bool closed = false;
+            int status = GDIPlus.IntoManagedPath(path?.nativePath ?? IntPtr.Zero, n =>
+                SafeNativeMethods.Gdip.GdipPathIterNextSubpathPath(new HandleRef(this, nativeIter), out resultCount,
+                        new HandleRef(path, n), out closed));
+            isClosed = closed;
 
             if (status != SafeNativeMethods.Gdip.Ok)
                 throw SafeNativeMethods.Gdip.StatusException(status);
@@ -111,8 +121,10 @@ namespace System.Drawing.Drawing2D
 
         public int NextMarker(GraphicsPath path)
         {
-            int status = SafeNativeMethods.Gdip.GdipPathIterNextMarkerPath(new HandleRef(this, nativeIter), out int resultCount,
-                        new HandleRef(path, (path == null) ? IntPtr.Zero : path.nativePath));
+            int resultCount = 0;
+            int status = GDIPlus.IntoManagedPath(path?.nativePath ?? IntPtr.Zero, n =>
+                SafeNativeMethods.Gdip.GdipPathIterNextMarkerPath(new HandleRef(this, nativeIter), out resultCount,
+                        new HandleRef(path, n)));
 
             if (status != SafeNativeMethods.Gdip.Ok)
                 throw SafeNativeMethods.Gdip.StatusException(status);
