@@ -3042,6 +3042,11 @@ namespace System.Windows.Forms
 			// columns exactly while the first column's caption sat one pixel to the left of Windows'.
 			if (control.View == View.Details)
 				text_rect.X += 1;
+			// In List view comctl32's label starts at the cell's own edge (CLVListView::GetRects) and
+			// its text stands four pixels in and on the cell's top row; the label bounds here, plus
+			// DrawString's own margin, put it three right and one low. Measured against a stock list.
+			else if (control.View == View.List)
+				text_rect.Offset (-3, -1);
 
 			// Tile view doesn't support CheckBoxes
 			if (control.CheckBoxes && control.View != View.Tile) {

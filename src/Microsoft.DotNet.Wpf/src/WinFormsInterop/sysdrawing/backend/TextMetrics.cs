@@ -131,6 +131,16 @@ namespace System.Drawing.WebGpuBackend
             return face is TrueTypeFont ttf && ttf.TryGetGdiLineMetrics(ppem, out ascent, out descent);
         }
 
+        /// <summary>GDI's tmAveCharWidth for this family and style at this pixel size.</summary>
+        internal static bool TryGetAverageCharWidth(string family, bool bold, bool italic, float emPx, out int width)
+        {
+            width = 0;
+            int ppem = (int) Math.Round(emPx);
+            if (ppem <= 0) return false;
+            IFont face = FontFor((bold ? 1 : 0) | (italic ? 2 : 0), family);
+            return face is TrueTypeFont ttf && ttf.TryGetAverageCharWidth(ppem, out width);
+        }
+
         // One instance per family and style. A family that ships a real bold or italic file gets
         // that file; one that does not has the style synthesized from its regular face, which is
         // what the flags on TrueTypeFont do.

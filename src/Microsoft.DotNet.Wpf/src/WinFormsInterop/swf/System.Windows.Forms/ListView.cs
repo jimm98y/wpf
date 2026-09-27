@@ -1519,6 +1519,24 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>The cell a List view item takes, as comctl32 sizes it.</summary>
+		Size ListCellSize {
+			get {
+				int image_w = SmallImageList == null ? 0 : SmallImageList.ImageSize.Width;
+				int image_h = SmallImageList == null ? 0 : SmallImageList.ImageSize.Height;
+				int state_w = check_boxes ? CheckBoxSize.Width : 0;
+				int state_h = check_boxes ? CheckBoxSize.Height : 0;
+				float emPx = Font.SizeInPoints * 96f / 72f;
+				int ave;
+				if (!System.Drawing.WebGpuBackend.TextMetrics.TryGetAverageCharWidth (Font.FontFamily.Name, Font.Bold, Font.Italic, emPx, out ave) || ave <= 0)
+					ave = Math.Max (1, (int) Math.Round (emPx / 2));
+				int line = TextRenderer.GdiLineHeight (Font);
+				if (line <= 0)
+					line = Font.Height;
+				return new Size (16 * ave + image_w + state_w, Math.Max (image_h, Math.Max (line, state_h)) + 1);
+			}
+		}
+
 		Size TileItemSize {
 			get {
 				// Calculate tile size if needed
@@ -2041,8 +2059,14 @@ namespace System.Windows.Forms
 				break;
 
 			case View.List:
-				LayoutIcons (SmallIconItemSize, true, 
-						ThemeEngine.Current.ListViewHorizontalSpacing, 2);
+				// comctl32's List view is a grid of equal cells, not items spaced by their own text:
+				// sixteen average characters of the label font across (plus the small icon and the
+				// state image), the font's height plus a border high, and no gap between them
+				// (CLVView::ComputeCXItemSize / ComputeCYItemSize, CLVListView::GetRects).
+				if (UseCustomColumnWidth)
+					LayoutIcons (SmallIconItemSize, true, ThemeEngine.Current.ListViewHorizontalSpacing, 2);
+				else
+					LayoutIcons (ListCellSize, true, 0, 0);
 				break;
 			case View.Tile:
 				if (!Application.VisualStylesEnabled)

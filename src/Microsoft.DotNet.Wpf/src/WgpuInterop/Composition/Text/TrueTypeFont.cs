@@ -212,6 +212,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // usWinAscent / usWinDescent: the fallback line box, for a face with no usable VDMX.
                 _winAscent = U16(os2 + 74);
                 _winDescent = U16(os2 + 76);
+                _xAvgCharWidth = (short) U16(os2 + 2);
             }
             _vdmx = tables.TryGetValue("VDMX", out int vdmx) ? vdmx : -1;
             GdiContrastPalette = ComputeGdiContrastPalette(tables);
@@ -415,6 +416,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (U16(os2) < 1) return false;
             uint range1 = (uint) (U16(os2 + 78) << 16 | U16(os2 + 80));
             return (range1 & (0xFu << 17)) != 0;
+        }
+
+        private readonly short _xAvgCharWidth;
+
+        /// <summary>TEXTMETRIC's tmAveCharWidth at a pixel size: OS/2's xAvgCharWidth scaled and
+        /// rounded. comctl32 sizes a list view's List columns by it (sixteen of them).</summary>
+        internal bool TryGetAverageCharWidth(int ppem, out int width)
+        {
+            width = 0;
+            if (_xAvgCharWidth <= 0 || _unitsPerEm <= 0) return false;
+            width = (int) Math.Floor (_xAvgCharWidth * (double) ppem / _unitsPerEm + 0.5);
+            return true;
         }
 
         /// <summary>The face's GSUB table, or null when it has none.</summary>
