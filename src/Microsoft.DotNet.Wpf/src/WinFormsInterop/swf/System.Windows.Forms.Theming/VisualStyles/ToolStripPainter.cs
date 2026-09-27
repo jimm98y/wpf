@@ -207,7 +207,9 @@ namespace System.Windows.Forms.Theming.VisualStyles
 				base.OnRenderToolStripBackground (e);
 				return;
 			}
-			new VisualStyleRenderer (element).DrawBackground (e.Graphics, e.ToolStrip.Bounds, e.AffectedBounds);
+			// The strip's own rectangle -- Bounds is where it sits in its PARENT, which drew the
+			// status bar that far below the strip, off its surface altogether.
+			new VisualStyleRenderer (element).DrawBackground (e.Graphics, new Rectangle (Point.Empty, e.ToolStrip.Size), e.AffectedBounds);
 		}
 	}
 }

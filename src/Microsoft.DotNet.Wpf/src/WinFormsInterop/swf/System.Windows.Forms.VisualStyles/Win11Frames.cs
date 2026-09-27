@@ -366,14 +366,14 @@ namespace System.Windows.Forms.VisualStyles
 		static readonly Dictionary<(int cls, int part, int state), Frame> s_cache = new ();
 
 		const int Button = 1, ComboBox = 2, Edit = 3, Tab = 4, TrackBar = 5, TreeView = 6, ScrollBar = 7,
-			Header = 8, Progress = 9, Spin = 10, Toolbar = 11;
+			Header = 8, Progress = 9, Spin = 10, Toolbar = 11, Status = 12;
 
 		/// <summary>The frame uxtheme would take for a part and state at 96 DPI, or null for a part
 		/// that is not drawn from a frame.</summary>
 		internal static Frame Get (string cls, int part, int state)
 		{
 			int c = cls switch { "BUTTON" => Button, "COMBOBOX" => ComboBox, "EDIT" => Edit, "TAB" => Tab, "TRACKBAR" => TrackBar, "TREEVIEW" => TreeView, "SCROLLBAR" => ScrollBar,
-				"HEADER" => Header, "PROGRESS" => Progress, "SPIN" => Spin, "TOOLBAR" => Toolbar, _ => 0 };
+				"HEADER" => Header, "PROGRESS" => Progress, "SPIN" => Spin, "TOOLBAR" => Toolbar, "STATUS" => Status, _ => 0 };
 			if (c == 0)
 				return null;
 			lock (s_cache) {
@@ -423,6 +423,14 @@ namespace System.Windows.Forms.VisualStyles
 					},
 					Spin => part >= 1 && part <= 4 ? SpinButton (part, state) : null,
 					Toolbar => part == 1 || part == 2 ? ToolbarButton (state) : null,
+					Status => part switch {
+						// The bar: #F0F0F0 under a #D7D7D7 rule along its top (nine-grid 1/1/2/1).
+						0 => Stretched (Render (3, 4, new Layer (Box (0, 0, 3, 4), 0xfff0f0f0u), new Layer (Box (0, 0, 3, 1), 0xffd7d7d7u)), 1, 1, 2, 1),
+						// SP_PANE: a one-pixel divider down its right edge, clear on the last row.
+						1 => Stretched (Render (2, 2, new Layer (Box (1, 0, 2, 1), 0xffd7d7d7u)), 0, 1, 0, 1),
+						3 => SizeBox (),
+						_ => null,
+					},
 					ScrollBar => part switch {
 						1 => ScrollArrow (state),
 						2 => Stretched (ScrollThumb (false, state), 11, 8, 8, 8),

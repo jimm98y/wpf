@@ -384,17 +384,37 @@ namespace System.Windows.Forms {
 			text_area.X += cellBounds.X;
 			text_area.Y += cellBounds.Y;
 
-			Rectangle button_area = CalculateButtonArea (cellBounds);
+			if (Application.RenderWithVisualStyles && (FlatStyle == FlatStyle.Standard || FlatStyle == FlatStyle.System)) {
+				// As .NET's combo cell renderer draws it: the combo box's read-only face over the
+				// cell inside its grid lines, and the drop-down button part -- a face of its own
+				// with the chevron on it -- seventeen pixels wide at the right, a row short of the
+				// bottom so the face's darker last row runs under it.
+				var face = new Rectangle (cellBounds.X, cellBounds.Y, cellBounds.Width - 1, cellBounds.Height - 1);
+				var drop = new Rectangle (face.Right - ThemedDropWidth, face.Y, ThemedDropWidth, face.Height - 1);
+				if (face.Width > 0 && face.Height > 0) {
+					new VisualStyles.VisualStyleRenderer (VisualStyles.VisualStyleElement.CreateElement ("COMBOBOX", 5, 1))
+						.DrawBackground (graphics, face);
+					if (drop.Width > 0 && drop.Height > 0)
+						new VisualStyles.VisualStyleRenderer (VisualStyles.VisualStyleElement.CreateElement ("COMBOBOX", 1, 1))
+							.DrawBackground (graphics, drop);
+				}
+				// The text has the face up to the button, not just its own measured width.
+				text_area.Width = Math.Max (0, drop.X - text_area.X);
+			} else {
+				Rectangle button_area = CalculateButtonArea (cellBounds);
 
-			// The background of the dropdown button should be gray, not
-			// the background color of the cell.
-			graphics.FillRectangle (SystemBrushes.Control, button_area);
-			ThemeEngine.Current.CPDrawComboButton (graphics, button_area, ButtonState.Normal);
+				// The background of the dropdown button should be gray, not
+				// the background color of the cell.
+				graphics.FillRectangle (SystemBrushes.Control, button_area);
+				ThemeEngine.Current.CPDrawComboButton (graphics, button_area, ButtonState.Normal);
+			}
 
 			if (formattedValue != null)
 				TextRenderer.DrawText (graphics, formattedValue.ToString (), cellStyle.Font, text_area, color, flags);
 		}
 		
+		private const int ThemedDropWidth = 17;
+
 		private Rectangle CalculateButtonArea (Rectangle cellBounds)
 		{
 			Rectangle button_area, text_area;

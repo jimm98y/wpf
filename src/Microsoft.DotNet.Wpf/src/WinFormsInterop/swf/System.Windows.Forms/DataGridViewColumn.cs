@@ -173,10 +173,20 @@ namespace System.Windows.Forms {
 					if (value < 0 || value > Int32.MaxValue) {
 						throw new ArgumentOutOfRangeException("DisplayIndex is out of range");
 					}
-					displayIndex = value;
 					if (DataGridView != null) {
+						// .NET moves the column to that position and shifts the others along; storing
+						// the number alone left two columns sharing it, and the sort kept the old order.
+						if (value >= DataGridView.Columns.Count)
+							throw new ArgumentOutOfRangeException ("DisplayIndex is out of range");
+						var order = new System.Collections.Generic.List<DataGridViewColumn> (DataGridView.Columns.ColumnDisplayIndexSortedArrayList);
+						order.Remove (this);
+						order.Insert (Math.Min (value, order.Count), this);
+						for (int i = 0; i < order.Count; i++)
+							order [i].displayIndex = i;
 						DataGridView.Columns.RegenerateSortedList ();
 						DataGridView.OnColumnDisplayIndexChanged(new DataGridViewColumnEventArgs(this));
+					} else {
+						displayIndex = value;
 					}
 				}
 			}

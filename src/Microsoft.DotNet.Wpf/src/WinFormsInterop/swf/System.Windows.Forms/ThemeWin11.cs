@@ -1274,29 +1274,40 @@ namespace System.Windows.Forms
 			}
 			g.FillRectangle (ResPool.GetSolidBrush (marked ? HeaderMarkedFace : ColorWindow), bounds);
 			Pen pen = ResPool.GetPen (grid.GridColor);
-			// ON the boundary, not one inside it -- the same rule the body cells follow (see
-			// DataGridViewCell.PaintBorder), so a hundred-pixel column measures a hundred pixels from
-			// one line to the next in the header as well as below it.
-			g.DrawLine (pen, bounds.Right, bounds.Y, bounds.Right, bounds.Bottom - 1);
-			g.DrawLine (pen, bounds.X, bounds.Bottom - 1, bounds.Right, bounds.Bottom - 1);
-			// The grid is ruled on all four sides, so the headers along its top and down its left
-			// carry the outer lines too. Windows draws them, and against the control's own border they
-			// read as a two-pixel edge -- which is why leaving them out made ours look a pixel thin all
-			// the way round the first row and the first column.
-			// Every header draws its own left edge, because the header to its right is filled after
-			// this one and paints over the line this one drew on their shared boundary.
-			g.DrawLine (pen, bounds.X, bounds.Y, bounds.X, bounds.Bottom - 1);
+			// Each header's line is its own last column and row -- the rule the body cells follow
+			// (see DataGridViewCell.PaintBorder) -- so a column measures its width from one line to
+			// the next.
+			int right = bounds.Right - 1, bottom = bounds.Bottom - 1;
+			// The grid is ruled on all four sides, so the header along its left carries the outer
+			// line too: the row headers and the corner, or the first column header when there are no
+			// row headers (it has the gutter pixel to stand in; see DataGridView.FirstColumnGutter).
+			bool leftmost = cell is DataGridViewRowHeaderCell || cell is DataGridViewTopLeftHeaderCell
+				|| (cell is DataGridViewColumnHeaderCell && !grid.RowHeadersVisible && IsFirstDisplayedColumn (grid, cell.ColumnIndex));
 			if (cell is DataGridViewColumnHeaderCell) {
-				g.DrawLine (pen, bounds.X, bounds.Y, bounds.Right, bounds.Y);
 				// A paler rule just inside the grid's own, along the top of the header and down the
-				// left of its first column. Windows finishes the header off with it; without it ours
-				// met the grid line with bare white.
+				// left of the leftmost one -- drawn first, because Windows' grid lines cross over it.
 				Pen inner = ResPool.GetPen (HeaderInnerEdge);
-				g.DrawLine (inner, bounds.X, bounds.Y + 1, bounds.Right, bounds.Y + 1);
-				if (cell.ColumnIndex == 0)
-					g.DrawLine (inner, bounds.X + 1, bounds.Y + 1, bounds.X + 1, bounds.Bottom - 1);
+				g.DrawLine (inner, bounds.X, bounds.Y + 1, right, bounds.Y + 1);
+				if (leftmost)
+					g.DrawLine (inner, bounds.X + 1, bounds.Y + 1, bounds.X + 1, bottom);
+				g.DrawLine (pen, bounds.X, bounds.Y, right, bounds.Y);
+			} else if (leftmost) {
+				// A row header has the same pale rule down its left.
+				g.DrawLine (ResPool.GetPen (HeaderInnerEdge), bounds.X + 1, bounds.Y, bounds.X + 1, bottom);
 			}
+			g.DrawLine (pen, right, bounds.Y, right, bottom);
+			g.DrawLine (pen, bounds.X, bottom, right, bottom);
+			if (leftmost)
+				g.DrawLine (pen, bounds.X, bounds.Y, bounds.X, bottom);
 			return true;
+		}
+
+		private static bool IsFirstDisplayedColumn (DataGridView grid, int columnIndex)
+		{
+			foreach (DataGridViewColumn col in grid.Columns.ColumnDisplayIndexSortedArrayList)
+				if (col.Visible)
+					return col.Index == columnIndex;
+			return false;
 		}
 
 		/// <summary>The wash over a row header whose row is selected.</summary>

@@ -483,6 +483,13 @@ namespace System.Windows.Forms {
 			}
 		}
 
+		/// <summary>.NET's SingleVerticalBorderAdded: with the row headers hidden and single cell
+		/// borders, the data starts a pixel in and the first column's left grid line stands in that
+		/// pixel. Measured against a stock grid: border at x, that line at x+1, the first cell's
+		/// content from x+2, and every column's own line on its last pixel.</summary>
+		internal int FirstColumnGutter
+			=> !RowHeadersVisible && AdvancedCellBorderStyle.All == DataGridViewAdvancedCellBorderStyle.Single ? 1 : 0;
+
 		internal int BorderWidth {
 			get {
 				switch (BorderStyle) {
@@ -2443,6 +2450,8 @@ namespace System.Windows.Forms {
 
 			if (RowHeadersVisible)
 				columnLeft += RowHeadersWidth;
+			else
+				columnLeft += FirstColumnGutter;
 
 			Size visibleClientArea = ClientSize;
 			if (verticalScrollBar.Visible)
@@ -2568,6 +2577,8 @@ namespace System.Windows.Forms {
 			
 			if (RowHeadersVisible)
 				x += RowHeadersWidth;
+			else
+				x += FirstColumnGutter;
 
 			// Handle the top left cell when both column and row headers are showing.
 			if (columnIndex == -1 && rowIndex == -1)
@@ -2830,6 +2841,8 @@ namespace System.Windows.Forms {
 
 			if (RowHeadersVisible)
 				x += RowHeadersWidth;
+			else
+				x += FirstColumnGutter;
 
 			List<DataGridViewColumn> cols = columns.ColumnDisplayIndexSortedArrayList;
 
@@ -2919,7 +2932,7 @@ namespace System.Windows.Forms {
 				top += row.Height;
 			}
 			
-			int left = rowHeadersVisible ? RowHeadersWidth : 0;
+			int left = rowHeadersVisible ? RowHeadersWidth : FirstColumnGutter;
 
 			List<DataGridViewColumn> cols = columns.ColumnDisplayIndexSortedArrayList;
 			
@@ -4809,6 +4822,9 @@ namespace System.Windows.Forms {
 				
 				if (rowHeadersVisible)
 					headerBounds.X += rowHeadersWidth;
+				else
+					headerBounds.X += FirstColumnGutter;
+				bool firstHeader = true;
 				
 				for (int index = first_col_index; index < sortedColumns.Count; index++) {
 					DataGridViewColumn col = sortedColumns[index];
@@ -4822,7 +4838,14 @@ namespace System.Windows.Forms {
 					DataGridViewAdvancedBorderStyle intermediateBorderStyle = (DataGridViewAdvancedBorderStyle)((ICloneable)this.AdvancedColumnHeadersBorderStyle).Clone ();
 					DataGridViewAdvancedBorderStyle borderStyle = AdjustColumnHeaderBorderStyle (this.AdvancedColumnHeadersBorderStyle, intermediateBorderStyle, cell.ColumnIndex == 0, cell.ColumnIndex == columns.Count - 1);
 
-					cell.PaintWork (g, e.ClipRectangle, headerBounds, -1, cell.State, cell.InheritedStyle, borderStyle, DataGridViewPaintParts.All);
+					// The first header takes the gutter pixel, where its left line goes.
+					Rectangle paintBounds = headerBounds;
+					if (firstHeader && FirstColumnGutter > 0) {
+						paintBounds.X -= FirstColumnGutter;
+						paintBounds.Width += FirstColumnGutter;
+					}
+					firstHeader = false;
+					cell.PaintWork (g, e.ClipRectangle, paintBounds, -1, cell.State, cell.InheritedStyle, borderStyle, DataGridViewPaintParts.All);
 					
 					headerBounds.X += col.Width;
 				}
@@ -6142,6 +6165,8 @@ namespace System.Windows.Forms {
 			if (cell is DataGridViewColumnHeaderCell) {
 				if (RowHeadersVisible)
 					bounds.X += RowHeadersWidth;
+				else
+					bounds.X += FirstColumnGutter;
 				List<DataGridViewColumn> sortedColumns = columns.ColumnDisplayIndexSortedArrayList;
 				for (int index = first_col_index; index < sortedColumns.Count; index++) {
 					DataGridViewColumn column = sortedColumns [index];

@@ -434,11 +434,11 @@ namespace System.Windows.Forms {
 		public virtual DataGridViewAdvancedBorderStyle AdjustCellBorderStyle (DataGridViewAdvancedBorderStyle dataGridViewAdvancedBorderStyleInput,	DataGridViewAdvancedBorderStyle dataGridViewAdvancedBorderStylePlaceholder, bool singleVerticalBorderAdded, bool singleHorizontalBorderAdded, bool isFirstDisplayedColumn, bool isFirstDisplayedRow) {
 			if (dataGridViewAdvancedBorderStyleInput.All == DataGridViewAdvancedCellBorderStyle.Single) {
 
-				// EVERY cell draws its own left edge, not just the first. A grid line lives ON the
-				// boundary between two columns -- see PaintBorder, where the right edge goes at the
-				// cell's Right rather than one inside it -- so the cell to the right of a line paints
-				// over the one its neighbour drew and has to put it back.
-				dataGridViewAdvancedBorderStylePlaceholder.Left = DataGridViewAdvancedCellBorderStyle.Single;
+				// .NET's rule: a cell's line is its own last column, so only the first displayed
+				// column carries a left edge (when the grid adds one). Measured against a stock grid:
+				// a row header 24 wide inside a 1-pixel border has its line at x=24, and each column's
+				// line falls on its own Right - 1.
+				dataGridViewAdvancedBorderStylePlaceholder.Left = (isFirstDisplayedColumn && singleVerticalBorderAdded) ? DataGridViewAdvancedCellBorderStyle.Single : DataGridViewAdvancedCellBorderStyle.None;
 				dataGridViewAdvancedBorderStylePlaceholder.Right = DataGridViewAdvancedCellBorderStyle.Single;
 				dataGridViewAdvancedBorderStylePlaceholder.Top = (isFirstDisplayedRow && singleHorizontalBorderAdded)? DataGridViewAdvancedCellBorderStyle.Single : DataGridViewAdvancedCellBorderStyle.None;
 				dataGridViewAdvancedBorderStylePlaceholder.Bottom = DataGridViewAdvancedCellBorderStyle.Single;
@@ -1259,11 +1259,7 @@ namespace System.Windows.Forms {
 			Pen penLight = ThemeEngine.Current.ResPool.GetPen (cpColor.LightLight);
 
 			int left = bounds.X;
-			// ON the boundary, not one inside it: Windows puts the line between two columns at the
-			// first column's Right, so a hundred-pixel column measures a hundred pixels from one line
-			// to the next. Drawing at Right - 1 made every column ninety-nine wide on screen and walked
-			// the whole grid a pixel left of Windows' from the second column on.
-			int right = bounds.Right;
+			int right = bounds.Right - 1;
 			int top = bounds.Y;
 			int bottom = bounds.Bottom - 1;
 

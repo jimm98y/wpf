@@ -32,7 +32,11 @@ namespace System.Windows.Forms {
 		// scrolling code consults before it bothers to listen.
 		internal override bool MouseWheelPresent { get { return true; } }
 		// VirtualScreen / WorkingArea / AllScreens implemented in XplatUIWebGpu.Core.cs
-		internal override bool ThemesEnabled { get { return default(bool); } }
+		// Generated as false, which told Application.RenderWithVisualStyles that themes were off, so
+		// every public renderer -- ButtonRenderer, CheckBoxRenderer, ComboBoxRenderer, the ones a
+		// DataGridView's cells draw with -- fell back to the classic bevels. The theme on every
+		// head is the managed Windows 11 one, and it is always on.
+		internal override bool ThemesEnabled { get { return true; } }
 		internal override event EventHandler Idle;
 		internal override void AudibleAlert(AlertType alert) {  }
 		internal override void BeginMoveResize(IntPtr handle) {  }

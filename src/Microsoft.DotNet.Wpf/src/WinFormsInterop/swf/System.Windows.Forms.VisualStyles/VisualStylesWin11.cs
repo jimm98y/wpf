@@ -62,7 +62,24 @@ namespace System.Windows.Forms.VisualStyles
 		public int UxThemeCloseThemeData (IntPtr hTheme) => S_OK;
 		public bool UxThemeIsAppThemed () => true;
 		public bool UxThemeIsThemeActive () => true;
-		public bool UxThemeIsThemePartDefined (IntPtr hTheme, int iPartId) => ClassOf (hTheme) != null;
+		/// <summary>Only what this backend draws counts as defined, so a painter that asks first
+		/// (ToolStripPainter with a rebar band, say) falls back to its own drawing instead of drawing
+		/// nothing.</summary>
+		public bool UxThemeIsThemePartDefined (IntPtr hTheme, int iPartId)
+		{
+			string cls = ClassOf (hTheme);
+			if (cls == null)
+				return false;
+			if (Win11Frames.Get (cls, iPartId, 1) != null || Win11Frames.BorderFill (cls, iPartId, 1) != null)
+				return true;
+			switch (cls) {
+			case "COMBOBOX": case "EDIT": case "SCROLLBAR": case "PROGRESS": case "HEADER": case "SPIN": case "TOOLBAR":
+				return true;
+			case "TREEVIEW":
+				return iPartId == 2;
+			}
+			return false;
+		}
 		public bool UxThemeIsThemeBackgroundPartiallyTransparent (IntPtr hTheme, int iPartId, int iStateId)
 			=> ClassOf (hTheme) == "BUTTON" && iPartId != 1;
 

@@ -557,7 +557,11 @@ namespace System.Windows.Forms
 			if (DataGridView.RowHeadersVisible) {
 				bounds.X += DataGridView.RowHeadersWidth;
 				bounds.Width -= DataGridView.RowHeadersWidth;
+			} else {
+				bounds.X += DataGridView.FirstColumnGutter;
+				bounds.Width -= DataGridView.FirstColumnGutter;
 			}
+			bool firstCell = true;
 
 			bool singleVerticalBorderAdded = !DataGridView.RowHeadersVisible;
 			bool singleHorizontalBorderAdded = !DataGridView.ColumnHeadersVisible;
@@ -601,7 +605,14 @@ namespace System.Windows.Forms
 				DataGridView.OnCellFormattingInternal (new DataGridViewCellFormattingEventArgs (cell.ColumnIndex, cell.RowIndex, value, cell.FormattedValueType, style));
 
 
-				cell.PaintWork (graphics, clipBounds, bounds, rowIndex, cellState, style, borderStyle, paintParts);
+				// The first cell takes the gutter pixel, where its left line goes.
+				Rectangle paintBounds = bounds;
+				if (firstCell && DataGridView.FirstColumnGutter > 0) {
+					paintBounds.X -= DataGridView.FirstColumnGutter;
+					paintBounds.Width += DataGridView.FirstColumnGutter;
+				}
+				firstCell = false;
+				cell.PaintWork (graphics, clipBounds, paintBounds, rowIndex, cellState, style, borderStyle, paintParts);
 				bounds.X += bounds.Width;
 			}
 		}

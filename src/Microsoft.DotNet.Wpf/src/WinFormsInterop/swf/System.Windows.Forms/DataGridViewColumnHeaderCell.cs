@@ -189,10 +189,12 @@ namespace System.Windows.Forms {
 				// cell's left edge and sits two pixels lower than a plain vertical centring puts it.
 				// Drawing it flush left and centred instead left every header caption six pixels wide
 				// and two rows high of the same header in Windows.
-				// The FIRST column carries the grid's own left line inside its bounds, so its caption
-				// starts a pixel further in than the others do. Measured: Windows' two captions are
-				// ninety-nine pixels apart where its columns are a hundred.
-				int inset = ColumnIndex == 0 ? 6 : 5;
+				// Four pixels past where the header's content starts. The leftmost header -- the first
+				// column when there are no row headers -- carries the grid's left line and a pale rule
+				// inside its bounds, so its content starts two pixels further in.
+				bool leftmost = DataGridView != null && !DataGridView.RowHeadersVisible
+					&& DataGridView.FirstColumnGutter > 0 && DataGridView.Columns.GetFirstColumn (DataGridViewElementStates.Visible) == OwningColumn;
+				int inset = leftmost ? 6 : 4;
 				Rectangle contentbounds = cellBounds;
 				contentbounds.X += inset;
 				contentbounds.Width -= inset + 2;

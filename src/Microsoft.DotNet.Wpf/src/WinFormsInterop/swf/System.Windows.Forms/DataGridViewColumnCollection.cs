@@ -135,38 +135,91 @@ namespace System.Windows.Forms
 			base.List.CopyTo (array, index);
 		}
 
+		// The filtered queries, as .NET answers them: a column matches when it has every state in the
+		// include filter and none in the exclude one, and "first", "next" and so on follow the
+		// columns' DISPLAY order. These were stubs answering 0 and null, which a caller asking for
+		// the first visible column read as "there is none".
+
+		private static DataGridViewElementStates StateOf (DataGridViewColumn column)
+		{
+			// The properties are the truth for these five; the stored state can carry a stale bit
+			// (a column hidden after it was added still reported Visible).
+			const DataGridViewElementStates fromProperties = DataGridViewElementStates.Visible | DataGridViewElementStates.Frozen
+				| DataGridViewElementStates.ReadOnly | DataGridViewElementStates.Displayed | DataGridViewElementStates.Selected;
+			DataGridViewElementStates state = column.State & ~fromProperties;
+			if (column.Visible) state |= DataGridViewElementStates.Visible;
+			if (column.Frozen) state |= DataGridViewElementStates.Frozen;
+			if (column.ReadOnly) state |= DataGridViewElementStates.ReadOnly;
+			if (column.Displayed) state |= DataGridViewElementStates.Displayed;
+			if (column.Selected) state |= DataGridViewElementStates.Selected;
+			return state;
+		}
+
+		private static bool Matches (DataGridViewColumn column, DataGridViewElementStates include, DataGridViewElementStates exclude)
+		{
+			DataGridViewElementStates state = StateOf (column);
+			return (state & include) == include && (state & exclude) == 0;
+		}
+
 		public int GetColumnCount (DataGridViewElementStates includeFilter)
 		{
-			return 0;
+			int count = 0;
+			foreach (DataGridViewColumn column in base.List)
+				if (Matches (column, includeFilter, DataGridViewElementStates.None))
+					count++;
+			return count;
 		}
 
 		public int GetColumnsWidth (DataGridViewElementStates includeFilter)
 		{
-			return 0;
+			int width = 0;
+			foreach (DataGridViewColumn column in base.List)
+				if (Matches (column, includeFilter, DataGridViewElementStates.None))
+					width += column.Width;
+			return width;
 		}
 
 		public DataGridViewColumn GetFirstColumn (DataGridViewElementStates includeFilter)
 		{
-			return null;
+			return GetFirstColumn (includeFilter, DataGridViewElementStates.None);
 		}
 
 		public DataGridViewColumn GetFirstColumn (DataGridViewElementStates includeFilter, DataGridViewElementStates excludeFilter)
 		{
+			foreach (DataGridViewColumn column in ColumnDisplayIndexSortedArrayList)
+				if (Matches (column, includeFilter, excludeFilter))
+					return column;
 			return null;
 		}
 
 		public DataGridViewColumn GetLastColumn (DataGridViewElementStates includeFilter, DataGridViewElementStates excludeFilter)
 		{
+			List<DataGridViewColumn> sorted = ColumnDisplayIndexSortedArrayList;
+			for (int i = sorted.Count - 1; i >= 0; i--)
+				if (Matches (sorted [i], includeFilter, excludeFilter))
+					return sorted [i];
 			return null;
 		}
 
 		public DataGridViewColumn GetNextColumn (DataGridViewColumn dataGridViewColumnStart, DataGridViewElementStates includeFilter, DataGridViewElementStates excludeFilter)
 		{
+			if (dataGridViewColumnStart == null)
+				throw new ArgumentNullException ("dataGridViewColumnStart");
+			List<DataGridViewColumn> sorted = ColumnDisplayIndexSortedArrayList;
+			for (int i = sorted.IndexOf (dataGridViewColumnStart) + 1; i > 0 && i < sorted.Count; i++)
+				if (Matches (sorted [i], includeFilter, excludeFilter))
+					return sorted [i];
 			return null;
 		}
 
 		public DataGridViewColumn GetPreviousColumn (DataGridViewColumn dataGridViewColumnStart, DataGridViewElementStates includeFilter, DataGridViewElementStates excludeFilter)
 		{
+			if (dataGridViewColumnStart == null)
+				throw new ArgumentNullException ("dataGridViewColumnStart");
+			List<DataGridViewColumn> sorted = ColumnDisplayIndexSortedArrayList;
+			for (int i = sorted.IndexOf (dataGridViewColumnStart) - 1; i >= 0; i--)
+				if (Matches (sorted [i], includeFilter, excludeFilter))
+					return sorted [i];
 			return null;
 		}
 
