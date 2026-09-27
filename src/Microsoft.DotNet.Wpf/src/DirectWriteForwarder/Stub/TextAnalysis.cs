@@ -383,8 +383,17 @@ namespace MS.Internal.Text.TextInterface
         {
             Managed.OpenTypeFontData d = font.Face.GetData();
             double toIdeal = fontEmSize / d.UnitsPerEm * scalingFactor;
+            // GDI_CLASSIC (TextFormattingMode.Display): DirectWrite's GetGdiCompatibleGlyphPlacements
+            // hands back GDI's own whole-pixel advance, in DIPs.
+            double pixels = fontEmSize * pixelsPerDip;
+            bool gdi = textFormattingMode == System.Windows.Media.TextFormattingMode.Display && !isSideways && pixels > 0;
             for (uint g = 0; g < glyphCount; g++)
-                glyphAdvances[g] = (int)Math.Round(d.AdvanceWidth(glyphIndices[g]) * toIdeal);
+            {
+                int px = gdi ? GdiCompatibleAdvances.PixelAdvance(font.Face, 0, pixels, glyphIndices[g]) : -1;
+                glyphAdvances[g] = px >= 0
+                    ? (int)Math.Round(px / (double)pixelsPerDip * scalingFactor)
+                    : (int)Math.Round(d.AdvanceWidth(glyphIndices[g]) * toIdeal);
+            }
             glyphOffsets = new GlyphOffset[glyphCount];
         }
 

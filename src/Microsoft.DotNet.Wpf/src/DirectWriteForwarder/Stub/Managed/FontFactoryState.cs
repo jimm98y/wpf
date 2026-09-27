@@ -248,6 +248,73 @@ namespace MS.Internal.Text.TextInterface.Managed
 
     internal static class FontMetricsBuilder
     {
+        /// <summary>DWRITE_FONT_METRICS as IDWriteFontFace::GetGdiCompatibleMetrics reports them, which
+        /// is where WPF's DISPLAY formatting mode takes its line box (PhysicalFontFamily, through
+        /// DisplayMetrics). The ascent and descent are GDI's own tmAscent / tmDescent at the size --
+        /// VDMX when the face has a range with bCharSet 1, else the Windows metrics scaled and rounded
+        /// -- and the line gap is the natural one scaled and rounded. Measured against DirectWrite for
+        /// six faces at 11..20ppem: every value agrees. They are returned in design units that scale
+        /// back to exactly those pixels at this size.</summary>
+        public static FontMetrics BuildGdiCompatible(OpenTypeFontData d, float emSize, float pixelsPerDip)
+        {
+            FontMetrics m = Build(d);
+            double pixels = (double)emSize * pixelsPerDip;
+            int ppem = (int)Math.Round(pixels, MidpointRounding.AwayFromZero);
+            if (ppem <= 0 || d.UnitsPerEm <= 0) return m;
+
+            int ascent, descent;
+            if (!TryGetVdmxExtents(d, ppem, out ascent, out descent))
+            {
+                if (!d.HasOS2 || (d.UsWinAscent == 0 && d.UsWinDescent == 0)) return m;
+                ascent = (int)Math.Round((double)d.UsWinAscent * ppem / d.UnitsPerEm, MidpointRounding.AwayFromZero);
+                descent = (int)Math.Round((double)d.UsWinDescent * ppem / d.UnitsPerEm, MidpointRounding.AwayFromZero);
+            }
+            int gap = (int)Math.Round((double)m.LineGap * ppem / d.UnitsPerEm, MidpointRounding.AwayFromZero);
+
+            double toDesign = d.UnitsPerEm / pixels;
+            m.Ascent = (ushort)Math.Clamp(Math.Round(ascent * toDesign), 0, ushort.MaxValue);
+            m.Descent = (ushort)Math.Clamp(Math.Round(descent * toDesign), 0, ushort.MaxValue);
+            m.LineGap = (short)Math.Clamp(Math.Round(gap * toDesign), short.MinValue, short.MaxValue);
+            return m;
+        }
+
+        /// <summary>GDI's VDMX lookup: only a ratio range with bCharSet 1 counts (Tahoma's bCharSet 0
+        /// range disagrees with GDI and GDI ignores it), the range must cover square pixels, and the
+        /// first record at or above the size governs within the group's size span.</summary>
+        private static bool TryGetVdmxExtents(OpenTypeFontData d, int ppem, out int yMax, out int yMin)
+        {
+            yMax = yMin = 0;
+            if (!d.TryGetTable("VDMX", out int vdmx, out int length) || length < 6 || ppem > 0xFFFF) return false;
+            byte[] data = d.Raw;
+            int U16(int o) => data[o] << 8 | data[o + 1];
+            int end = vdmx + length;
+            int numRatios = U16(vdmx + 4);
+            int ratios = vdmx + 6, offsets = ratios + numRatios * 4;
+            if (numRatios <= 0 || offsets + numRatios * 2 > end) return false;
+            for (int i = 0; i < numRatios; i++)
+            {
+                int r = ratios + i * 4;
+                if (data[r] != 1) continue;
+                int xRatio = data[r + 1], yStart = data[r + 2], yEnd = data[r + 3];
+                if (xRatio != 0 && !(xRatio == 1 && yStart <= 1 && yEnd >= 1)) continue;
+                int group = vdmx + U16(offsets + i * 2);
+                if (group + 4 > end) continue;
+                int recs = U16(group);
+                if (ppem < data[group + 2] || ppem > data[group + 3] || group + 4 + recs * 6 > end) continue;
+                for (int j = 0; j < recs; j++)
+                {
+                    int e = group + 4 + j * 6;
+                    int size = U16(e);
+                    if (size < ppem) continue;
+                    if (size > ppem) break;
+                    yMax = (short)U16(e + 2);
+                    yMin = -(short)U16(e + 4);
+                    return yMax != 0 || yMin != 0;
+                }
+            }
+            return false;
+        }
+
         // OS/2 fsSelection bit 7 (USE_TYPO_METRICS): the font asks consumers to use the
         // sTypo* metrics for line spacing instead of the usWin* metrics.
         private const ushort FsSelectionUseTypoMetrics = 0x80;

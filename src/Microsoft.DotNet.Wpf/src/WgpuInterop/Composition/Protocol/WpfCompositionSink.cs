@@ -109,6 +109,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             Log($"WpfCompositionSink created (pid {Environment.ProcessId})");
         }
 
+        /// <summary>GDI's own whole-pixel advance for a glyph, which is what WPF's DISPLAY formatting
+        /// mode lays text out with (DirectWrite's GDI-compatible metrics). Called by PresentationCore
+        /// on the UI thread, through the text stack's GdiCompatibleAdvances hook, so it resolves fonts
+        /// into instances of its own -- the render thread's are not safe to share -- and serializes.
+        /// -1 when the face cannot be read.</summary>
+        public int GdiCompatibleAdvance(string path, int faceIndex, int simulations, int ppem, int glyph)
+        {
+            lock (_advanceFonts)
+            {
+                if (_advanceFonts.Resolve(new Text.FontDescriptor(path, faceIndex, simulations))
+                        is not Text.IHintedGlyphFont font || ppem <= 0 || glyph < 0)
+                    return -1;
+                return (int)MathF.Round(font.DeviceAdvance(glyph, ppem));
+            }
+        }
+
+        private readonly Text.ManagedFontResolver _advanceFonts = new();
+
         /// <summary>Total swap-chain textures successfully acquired (diagnostics/tests).</summary>
         public int AcquiredFrames { get; private set; }
 

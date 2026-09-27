@@ -472,6 +472,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool _prepClearType;
         private bool _prepBiLevel;
         private int _prepDWriteFlags;
+        private bool? _prepSymOverride;
 
         /// <summary>Run this hint with the BI-LEVEL rules -- physical grid, full cut-in, full minimum
         /// distance, every delta applied -- whatever the ClearType defaults say.
@@ -530,7 +531,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>What to answer GETINFO's symmetric-rendering query at the size in hand.</summary>
         internal bool SymmetricRenderingAnswer =>
-            s_symmetricInfoForced ?? (FaceWantsSymmetricSmoothing?.Invoke(_ppem) ?? false);
+            SymmetricAnswerOverride ?? s_symmetricInfoForced ?? (FaceWantsSymmetricSmoothing?.Invoke(_ppem) ?? false);
+
+        /// <summary>Fixes the SYMMETRIC RENDERING answer for this thread, whatever the face's gasp says.
+        /// <para>DirectWrite's GDI_CLASSIC mode (WPF's Display formatting) hands the scaler word 3 --
+        /// ClearType and compatible widths, never bit 5 -- at every size (TrueTypeRasterizer::
+        /// NewTransform), where GDI itself sets bit 5 from the gasp's SYMMETRIC_SMOOTHING. Null for
+        /// GDI.</para></summary>
+        [ThreadStatic] internal static bool? SymmetricAnswerOverride;
         private int _pointSize;
         private int _dotProduct;               // freedom . projection, 2.14
 
@@ -1970,13 +1978,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // for every glyph afterwards -- so switching the answer appeared to do nothing at all.
             bool clearType = ClearTypeInfo;
             if (_prepRun && Math.Abs(_prepPpem - pixelsPerEm) < 0.001f && _prepClearType == clearType
-                && _prepBiLevel == BiLevelPass && _prepDWriteFlags == DWriteFlags)
+                && _prepBiLevel == BiLevelPass && _prepDWriteFlags == DWriteFlags
+                && _prepSymOverride == SymmetricAnswerOverride)
                 return !_faulted;
 
             _prepPpem = pixelsPerEm;
             _prepClearType = clearType;
             _prepBiLevel = BiLevelPass;
             _prepDWriteFlags = DWriteFlags;
+            _prepSymOverride = SymmetricAnswerOverride;
             _roundFnSp = false;          // the pre-program starts on the whole-pixel functions
             _prepRun = true;
             _faulted = false;

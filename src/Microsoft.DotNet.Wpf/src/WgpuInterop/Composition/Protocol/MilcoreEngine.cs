@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -2442,11 +2442,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // moves it, is drawn the way stock WPF draws it (WpfTextRunDraw); everything it would
             // otherwise have been goes along as its fallback. Anything else is emitted as outlines,
             // as before.
-            bool natural = s_naturalText && run.MeasuringMode == 0 && font is Text.TrueTypeFont
+            bool natural = NaturalText && run.MeasuringMode <= 1 && font is Text.TrueTypeFont { Simulated: false }
                            && brush is SolidColorBrush && state.Clip is null
                            && state.Transform.M11 == 1f && state.Transform.M22 == 1f
                            && state.Transform.M12 == 0f && state.Transform.M21 == 0f
                            && (run.BidiLevel & 1) == 0;
+            if (s_naturalWhy && !natural)
+                Console.Error.WriteLine("[natural-why] " + (run.MeasuringMode > 1 ? "mode" + run.MeasuringMode
+                    : font is not Text.TrueTypeFont ? "font" : brush is not SolidColorBrush ? "brush"
+                    : state.Clip is not null ? "clip" : (run.BidiLevel & 1) != 0 ? "rtl" : "transform"));
             List<DrawingPrimitive> sink = natural ? new List<DrawingPrimitive>(run.Indices.Length) : output;
             float[]? gxs = natural ? new float[run.Indices.Length] : null;
             float[]? gys = natural ? new float[run.Indices.Length] : null;
@@ -2531,14 +2535,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 if (natural)
                     output.Add(new WpfTextRunDraw((Text.TrueTypeFont)font, run.EmSize, run.Indices, gxs!, gys!,
-                        Vector2.Transform(run.Origin, state.Transform), ((SolidColorBrush)brush).Color, sink));
+                        Vector2.Transform(run.Origin, state.Transform), ((SolidColorBrush)brush).Color, sink,
+                        display: run.MeasuringMode == 1));
                 else
                     output.AddRange(sink);
             }
         }
 
-        /// <summary>WPF_NATURAL_TEXT=0 draws ideal-mode WPF text as outlines, as before.</summary>
-        private static readonly bool s_naturalText =
+        private static readonly bool s_naturalWhy = Environment.GetEnvironmentVariable("WPF_NATURAL_TRACE") == "1";
+
+        /// <summary>Whether WPF glyph runs are kept as runs and drawn the way stock WPF draws them
+        /// (WpfTextRunDraw). WPF_NATURAL_TEXT=0 draws them as outlines, as before; tests that are about
+        /// the outline path turn it off.</summary>
+        internal bool NaturalText { get; set; } = s_naturalTextDefault;
+
+        private static readonly bool s_naturalTextDefault =
             Environment.GetEnvironmentVariable("WPF_NATURAL_TEXT") != "0";
 
         // Reused across the glyphs of a run; GlyphRunPainter appends into it.

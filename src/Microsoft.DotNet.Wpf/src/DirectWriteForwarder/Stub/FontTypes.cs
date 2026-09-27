@@ -47,7 +47,7 @@ namespace MS.Internal.Text.TextInterface
         public double Version => _face.GetData().FontRevision;
 
         public FontMetrics DisplayMetrics(float emSize, float pixelsPerDip)
-            => FontMetricsBuilder.Build(_face.GetData());
+            => FontMetricsBuilder.BuildGdiCompatible(_face.GetData(), emSize, pixelsPerDip);
 
         public static void ResetFontFaceCache()
         {
@@ -149,8 +149,18 @@ namespace MS.Internal.Text.TextInterface
         public void GetDisplayGlyphMetrics(ushort* glyphIndices, uint glyphCount, GlyphMetrics* glyphMetrics,
             float emSize, bool useDisplayNatural, bool isSideways, float pixelsPerDip)
         {
-            // Without hinting/gridfitting we return the design metrics; visually adequate at UI sizes.
             GetDesignGlyphMetrics(glyphIndices, glyphCount, glyphMetrics);
+            // GDI_CLASSIC: GDI's own whole-pixel advance, in design units that scale back to it.
+            // With no provider (nothing has installed the rasterizer) the design advance stands.
+            double pixels = (double)emSize * pixelsPerDip;
+            if (useDisplayNatural || isSideways || pixels <= 0) return;
+            ushort upem = Data.UnitsPerEm;
+            for (uint i = 0; i < glyphCount; i++)
+            {
+                int px = GdiCompatibleAdvances.PixelAdvance(_face, (int)_sims, pixels, glyphIndices[i]);
+                if (px >= 0)
+                    glyphMetrics[i].AdvanceWidth = (uint)Math.Round(px * (double)upem / pixels);
+            }
         }
 
         public void GetArrayOfGlyphIndices(uint* codePoints, uint glyphCount, ushort* glyphIndices)
@@ -246,7 +256,7 @@ namespace MS.Internal.Text.TextInterface
             => FontMetricsBuilder.Build(GetRepresentativeFace().GetData());
 
         public new FontMetrics DisplayMetrics(float emSize, float pixelsPerDip)
-            => FontMetricsBuilder.Build(GetRepresentativeFace().GetData());
+            => FontMetricsBuilder.BuildGdiCompatible(GetRepresentativeFace().GetData(), emSize, pixelsPerDip);
 
         private FaceRecord GetRepresentativeFace()
             => MatchFace(FontWeight.Normal, FontStretch.Normal, FontStyle.Normal);

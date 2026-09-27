@@ -32,6 +32,12 @@ namespace WgpuInterop.Tests.Text
             ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 24, ["arial"] = 9, ["times"] = 28, ["verdana"] = 20,
         };
 
+        /// <summary>The same diagonal class, in GDI_CLASSIC.</summary>
+        private static readonly Dictionary<string, int> GdiClassicCeiling = new()
+        {
+            ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 29, ["arial"] = 11, ["times"] = 17, ["verdana"] = 20,
+        };
+
         private static readonly Dictionary<string, int> RunCeiling = new()
         {
             ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 3, ["arial"] = 3, ["times"] = 5, ["verdana"] = 3,
@@ -141,6 +147,39 @@ namespace WgpuInterop.Tests.Text
             if (Environment.GetEnvironmentVariable("WPF_NATURAL_REPORT") is null)
                 Assert.True(misses.Count <= GlyphCeiling[file],
                     $"{misses.Count} of {total} differ (ceiling {GlyphCeiling[file]}): {string.Join(" ", misses.Take(40))}");
+        }
+
+        /// <summary>WPF's DISPLAY formatting mode: DWRITE_RENDERING_MODE_GDI_CLASSIC with the GDI
+        /// measuring mode, which is GDI's own ClearType fit through DirectWrite's 6x1 filter.</summary>
+        [Theory]
+        [MemberData(nameof(Faces))]
+        public void GdiClassicGlyphsAreDirectWritesTexture(string file)
+        {
+            string? path = FontPath(file);
+            Assert.SkipWhen(path is null, "needs the Windows face and DirectWrite");
+            var font = new TrueTypeFont(File.ReadAllBytes(path!));
+            IntPtr face = DWriteOracle.FontFace(path!);
+
+            var misses = new List<string>();
+            int total = 0;
+            foreach (float em in Sizes)
+                foreach (char c in Printable)
+                {
+                    int gid = font.GlyphIndex(c);
+                    if (gid <= 0) continue;
+                    byte[] theirs = DWriteOracle.AlphaTexture(face, em, new[] { (ushort)gid }, new[] { 0f }, null, 2,
+                        out int tl, out int tt, out int tr, out int tb, measuring: 1);
+                    NaturalClearType.GlyphBits bits = NaturalClearType.RasterizeGdiClassic(font, gid, em);
+                    byte[] ours = NaturalClearType.RunTexture(new[] { bits }, new[] { 0f }, new[] { 0f },
+                        out int ol, out int ot, out int ow, out int oh);
+                    total++;
+                    long d = Diff(theirs, tl, tt, tr - tl, tb - tt, ours, ol, ot, ow, oh);
+                    if (d != 0) misses.Add($"{em}:'{c}'={d}");
+                }
+            Report($"GDI_CLASSIC {file}: {total - misses.Count}/{total} glyphs exact; {string.Join(" ", misses.Take(40))}");
+            if (Environment.GetEnvironmentVariable("WPF_NATURAL_REPORT") is null)
+                Assert.True(misses.Count <= GdiClassicCeiling[file],
+                    $"{misses.Count} of {total} differ (ceiling {GdiClassicCeiling[file]}): {string.Join(" ", misses.Take(40))}");
         }
 
         [Theory]

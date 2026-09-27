@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -51,7 +51,8 @@ namespace WgpuInterop.Tests.Text
             double expected = ExpectedInkArea(font, indices, advScale);
             Assert.True(expected > 0, "font exposed no outlines to measure");
 
-            var engine = new MilcoreEngine { FontResolver = _ => font };
+            // The OUTLINE path: stock WPF's own pipeline (WpfTextRunDraw) does not conserve outline area.
+            var engine = new MilcoreEngine { FontResolver = _ => font, NaturalText = false };
             engine.CreateOrAddRef(1, MilResourceTypeId.Visual);
             float c = dark ? 1f : 0f;
             engine.SubmitCommand(MilCmd.SolidColorBrush(3, c, c, c, 1));
@@ -96,7 +97,8 @@ namespace WgpuInterop.Tests.Text
             TrueTypeFont font = TestFonts.Load();
             BuildRun(font, out ushort[] indices, out float[] advances, out _);
 
-            var engine = new MilcoreEngine { FontResolver = _ => font };
+            // The OUTLINE path: stock WPF's own pipeline (WpfTextRunDraw) does not conserve outline area.
+            var engine = new MilcoreEngine { FontResolver = _ => font, NaturalText = false };
             engine.CreateOrAddRef(1, MilResourceTypeId.Visual);
             engine.SubmitCommand(MilCmd.SolidColorBrush(3, 0, 0, 0, 1));
             engine.CreateOrAddRef(20, MilResourceTypeId.Null);

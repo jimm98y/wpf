@@ -563,11 +563,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     internal sealed class WpfTextRunDraw : DrawingPrimitive
     {
         public WpfTextRunDraw(Text.TrueTypeFont font, float emSize, ushort[] glyphs, float[] x, float[] y,
-                              Vector2 origin, RgbaColor color, List<DrawingPrimitive> fallback)
+                              Vector2 origin, RgbaColor color, List<DrawingPrimitive> fallback, bool display = false)
         {
             Font = font; EmSize = emSize; Glyphs = glyphs; X = x; Y = y; Origin = origin; Color = color;
-            Fallback = fallback;
+            Fallback = fallback; Display = display;
         }
+
+        /// <summary>Measured in WPF's DISPLAY formatting mode (DWRITE_MEASURING_MODE_GDI_CLASSIC):
+        /// drawn in DWRITE_RENDERING_MODE_GDI_CLASSIC, from a pixel-snapped origin.</summary>
+        public bool Display { get; }
 
         public Text.TrueTypeFont Font { get; }
         /// <summary>The run's em size, in the run's own (local) units.</summary>

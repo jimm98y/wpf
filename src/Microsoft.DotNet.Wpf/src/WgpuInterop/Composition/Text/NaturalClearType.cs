@@ -77,6 +77,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 dropout = 0;
                 if (!font.TryGetScaledOutline(glyphId, pixelsPerEm, out figures)) return s_empty;
             }
+            return Scan(figures, nSub, dropout);
+        }
+
+        private static GlyphBits Scan(List<PathFigure> figures, int nSub, int dropout)
+        {
             if (figures.Count == 0) return s_empty;
 
             float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
@@ -126,6 +131,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int r = 0; r < g.Height; r++)
                 Array.Copy(bits, (r0 + r) * cols + c0, g.Bits, r * g.Width, g.Width);
             return g;
+        }
+
+        /// <summary>The glyph as DWRITE_RENDERING_MODE_GDI_CLASSIC (WPF's Display formatting mode)
+        /// makes it. NewTransform hands the scaler word 3 there -- ClearType WITH compatible widths --
+        /// which is GDI's own ClearType fit, the one <see cref="TrueTypeFont.TryGetHintedOutline"/>
+        /// reproduces for WinForms; the scan and the filter are the natural mode's (6x1).</summary>
+        internal static GlyphBits RasterizeGdiClassic(TrueTypeFont font, int glyphId, float pixelsPerEm)
+        {
+            bool savedSub = TrueTypeFont.SubpixelFitting, savedCt = TrueTypeFont.ClearTypeRendering;
+            bool? savedSym = TrueTypeInterpreter.SymmetricAnswerOverride;
+            List<PathFigure>? figures;
+            int dropout;
+            try
+            {
+                TrueTypeFont.SubpixelFitting = true;
+                TrueTypeFont.ClearTypeRendering = true;
+                TrueTypeInterpreter.SymmetricAnswerOverride = false;
+                if (!((IHintedGlyphFont)font).TryGetHintedOutline(glyphId, pixelsPerEm, out figures) || figures is null)
+                    return s_empty;
+                dropout = Math.Max(0, font.GlyphDropout(glyphId, pixelsPerEm));
+            }
+            finally
+            {
+                TrueTypeFont.SubpixelFitting = savedSub;
+                TrueTypeFont.ClearTypeRendering = savedCt;
+                TrueTypeInterpreter.SymmetricAnswerOverride = savedSym;
+            }
+            return Scan(figures, 1, dropout);
         }
 
         /// <summary>DirectWrite's rounding of a float to an int in GlyphRunAnalysis: truncate, then

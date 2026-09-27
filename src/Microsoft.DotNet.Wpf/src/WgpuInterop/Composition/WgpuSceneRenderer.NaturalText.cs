@@ -59,6 +59,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>EnhancedContrastTable::ReInit for k.</summary>
         private static readonly byte[] s_wpfContrastTable = BuildContrastTable(WpfTextContrast);
 
+        /// <summary>DISPLAY-mode text (DWRITE_RENDERING_MODE_GDI_CLASSIC): GetAlphaBlendParams reports
+        /// GDI's own values there -- the ClearType contrast as the gamma (1200 -> 1.2) and NO enhanced
+        /// contrast, so wpfgfx applies no table at all (GetEnhancedContrastTable skips k = 0).</summary>
+        private static readonly int s_wpfDisplayGammaIndex = Math.Clamp((int)(
+            ((Platform.Win32Interop.FontSmoothingContrast() is int c && c > 0 ? c : 1200) / 1000f - 1.0f) * 10.0f), 0, 12);
+
+        /// <summary>The identity: no enhanced contrast.</summary>
+        private static readonly byte[] s_identityTable = BuildContrastTable(0f);
+
         private static byte[] BuildContrastTable(float k)
         {
             var t = new byte[256];
@@ -89,7 +98,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             && ppem > 0f && ppem <= 200f;
             // NATURAL_SYMMETRIC where the face's gasp asks for symmetric smoothing, which is exactly
             // what GetRecommendedRenderingMode answers (checked over 6..60ppem for twelve faces).
-            int nSub = run.Font.WantsSymmetricSmoothing(ppem) ? 5 : 1;
+            // Display text is GDI_CLASSIC at every size, and GDI_CLASSIC is one row a pixel.
+            bool display = run.Display;
+            int nSub = !display && run.Font.WantsSymmetricSmoothing(ppem) ? 5 : 1;
             if (s_naturalTrace)
                 Console.Error.WriteLine($"[natural] ppem={ppem:0.###} glyphs={run.Glyphs.Length} drawable={drawable}"
                                         + $" symmetric={run.Font.WantsSymmetricSmoothing(ppem)}");
@@ -105,11 +116,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var xs = new float[n]; var ys = new float[n];
             for (int i = 0; i < n; i++)
             {
-                var gkey = (run.Font, (int)run.Glyphs[i], ppem, nSub);
+                var gkey = (run.Font, (int)run.Glyphs[i], ppem, display ? -1 : nSub);
                 if (!_naturalGlyphs.TryGetValue(gkey, out Text.NaturalClearType.GlyphBits? gb))
                 {
                     if (_naturalGlyphs.Count > 20000) _naturalGlyphs.Clear();
-                    gb = Text.NaturalClearType.Rasterize(run.Font, run.Glyphs[i], ppem, nSub);
+                    gb = display ? Text.NaturalClearType.RasterizeGdiClassic(run.Font, run.Glyphs[i], ppem)
+                                 : Text.NaturalClearType.Rasterize(run.Font, run.Glyphs[i], ppem, nSub);
                     _naturalGlyphs[gkey] = gb;
                 }
                 bits[i] = gb;
@@ -120,7 +132,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // The run's device origin: x where it falls, y on the baseline's whole pixel.
             Vector2 o = Vector2.Transform(run.Origin, world);
             int oy = (int)MathF.Floor(o.Y + 0.5f);
-            float ox = o.X;
+            // A display-measured run is pixel-snapped in x as well (CBaseGlyphRunPainter::Init rounds
+            // m_20 when IsDisplayMeasured).
+            float ox = display ? MathF.Floor(o.X + 0.5f) : o.X;
             int oxi = (int)MathF.Floor(ox);
             float frac = ox - oxi;
 
@@ -134,7 +148,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 key = key * 31 + run.Font.GetHashCode();
                 key = key * 31 + BitConverter.SingleToInt32Bits(ppem);
-                key = key * 31 + nSub;
+                key = key * 31 + (display ? -1 : nSub);
                 for (int i = 0; i < n; i++)
                 {
                     key = key * 31 + run.Glyphs[i];
@@ -166,8 +180,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (!_maskCache.TryGetValue(key, out CachedMask? cm))
             {
                 // Made only on a miss: the texture, then wpfgfx's resolve of it on this pixel grid.
+                PerfCoverage++;
                 byte[] tex = Text.NaturalClearType.RunTexture(bits, xs, ys, out _, out _, out _, out _, nSub);
-                byte[] rgba = WpfNaturalMask(tex, tl, tw, th, frac, px0 - oxi, mw, ink, alpha, paper);
+                byte[] rgba = WpfNaturalMask(tex, tl, tw, th, frac, px0 - oxi, mw, ink, alpha, paper,
+                    display ? s_wpfDisplayGammaIndex : s_wpfGammaIndex, display ? s_identityTable : s_wpfContrastTable);
                 (IntPtr t, IntPtr view) = CreateRgbaTexture(rgba, mw, mh);
                 cm = new CachedMask
                 {
@@ -188,10 +204,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// resolve it on this pixel grid (see the file header). <paramref name="maskLeft"/> is the
         /// mask's first column relative to the origin's whole pixel.</summary>
         private static byte[] WpfNaturalMask(byte[] tex, int texLeft, int texWidth, int texHeight, float frac,
-            int maskLeft, int maskWidth, RgbaColor ink, float alpha, RgbaColor? paper)
+            int maskLeft, int maskWidth, RgbaColor ink, float alpha, RgbaColor? paper, int gi, byte[] ect)
         {
-            byte[] ect = s_wpfContrastTable;
-            int gi = s_wpfGammaIndex;
             float g1 = s_wpfGammaRatios[gi, 0], g2 = s_wpfGammaRatios[gi, 1];
             float g3 = s_wpfGammaRatios[gi, 2], g4 = s_wpfGammaRatios[gi, 3];
             float[] f = { ink.R, ink.G, ink.B };

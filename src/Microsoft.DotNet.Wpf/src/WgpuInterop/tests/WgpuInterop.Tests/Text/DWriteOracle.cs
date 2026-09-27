@@ -75,7 +75,8 @@ namespace WgpuInterop.Tests.Text
         /// <summary>The ClearType 3x1 alpha texture DirectWrite makes for the run, and its bounds in
         /// pixels relative to the baseline origin.</summary>
         internal static byte[] AlphaTexture(IntPtr face, float emSize, ushort[] glyphs, float[] advances,
-            float[]? offsets, int mode, out int left, out int top, out int right, out int bottom, int gridFit = 0)
+            float[]? offsets, int mode, out int left, out int top, out int right, out int bottom, int gridFit = 0,
+            int measuring = 0)
         {
             IntPtr factory = Factory(), analysis;
             int n = glyphs.Length;
@@ -88,7 +89,7 @@ namespace WgpuInterop.Tests.Text
                 if (gridFit == 0)
                     // IDWriteFactory::CreateGlyphRunAnalysis = slot 23
                     Check(((delegate* unmanaged[Stdcall]<IntPtr, GlyphRun*, float, float*, int, int, float, float, IntPtr*, int>)V(factory)[23])(
-                        factory, &run, 1f, xf, mode, 0, 0f, 0f, &analysis), "analysis");
+                        factory, &run, 1f, xf, mode, measuring, 0f, 0f, &analysis), "analysis");
                 else
                 {
                     // IDWriteFactory2::CreateGlyphRunAnalysis = slot 30, which takes the grid-fit mode
@@ -99,7 +100,7 @@ namespace WgpuInterop.Tests.Text
                     try
                     {
                         Check(((delegate* unmanaged[Stdcall]<IntPtr, GlyphRun*, float*, int, int, int, int, float, float, IntPtr*, int>)V(f2)[30])(
-                            f2, &run, null, mode, 0, gridFit, 0, 0f, 0f, &analysis), "analysis2");
+                            f2, &run, null, mode, measuring, gridFit, 0, 0f, 0f, &analysis), "analysis2");
                     }
                     finally { Marshal.Release(f2); }
                 }

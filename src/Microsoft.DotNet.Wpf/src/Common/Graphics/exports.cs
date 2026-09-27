@@ -487,6 +487,13 @@ namespace System.Windows.Media.Composition
                 _syncFlush = Bind<Action<int>>(impl, t, "SyncFlush");
                 _readbackTarget = Bind<Func<int, uint, byte[]>>(impl, t, "ReadbackTarget");
                 _tryDequeuePresented = Bind<TryDequeuePresentedFn>(impl, t, "TryDequeuePresented");
+
+                // Display-mode text is laid out with GDI's own advances, which only the managed
+                // rasterizer can produce; hand the text stack a way to ask for them.
+                if (t.GetMethod("GdiCompatibleAdvance") is System.Reflection.MethodInfo advance)
+                    MS.Internal.Text.TextInterface.GdiCompatibleAdvances.Provider =
+                        (Func<string, int, int, int, int, int>)advance.CreateDelegate(
+                            typeof(Func<string, int, int, int, int, int>), impl);
             }
 
             private static TDelegate Bind<TDelegate>(object impl, Type t, string name) where TDelegate : Delegate

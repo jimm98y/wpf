@@ -38,7 +38,7 @@ namespace WgpuInterop.Tests.Text
         // Distinct letters: a repeat would already be in the cache and rasterize nothing.
         private const string Text = "abcdefghijklmnopqrstuvwxyz";
 
-        private SceneVisual BuildRun(TrueTypeFont font, out int glyphs)
+        private SceneVisual BuildRun(TrueTypeFont font, out int glyphs, bool natural = false)
         {
             var indices = new ushort[Text.Length];
             var advances = new float[Text.Length];
@@ -52,7 +52,7 @@ namespace WgpuInterop.Tests.Text
                 if (font.TryGetGlyphOutline(gid, out _)) glyphs++;
             }
 
-            var engine = new MilcoreEngine { FontResolver = _ => font };
+            var engine = new MilcoreEngine { FontResolver = _ => font, NaturalText = natural };
             engine.CreateOrAddRef(1, MilResourceTypeId.Visual);
             engine.SubmitCommand(MilCmd.SolidColorBrush(3, 0, 0, 0, 1));
             engine.CreateOrAddRef(20, MilResourceTypeId.Null);
@@ -65,6 +65,27 @@ namespace WgpuInterop.Tests.Text
         /// The same renderer, twice over the same scene. The first frame pays for the masks; the
         /// second must pay for none of them.
         /// </summary>
+        /// <summary>The same, for a run drawn the way stock WPF draws it (WpfTextRunDraw): one mask a
+        /// RUN, built on the first frame and served from the cache on the second.</summary>
+        [Fact]
+        public void TheSecondFrameOfTheSameNaturalRunCostsNoMasks()
+        {
+            TrueTypeFont font = TestFonts.Load();
+            SceneVisual scene = BuildRun(font, out int glyphs, natural: true);
+            Assert.True(glyphs > 8, "the test font mapped too few of these letters to be worth measuring");
+
+            WgpuSceneRenderer renderer = NewRenderer();
+            WgpuSceneRenderer.PerfReset();
+            renderer.RenderToRgba(scene, W, H, RgbaColor.FromBytes(255, 255, 255, 255));
+            int first = WgpuSceneRenderer.PerfCoverage;
+            WgpuSceneRenderer.PerfReset();
+            renderer.RenderToRgba(scene, W, H, RgbaColor.FromBytes(255, 255, 255, 255));
+            int second = WgpuSceneRenderer.PerfCoverage;
+
+            Assert.True(first >= 1, "the first frame built no mask for the run");
+            Assert.True(second == 0, $"a repeat frame of the same run built {second} masks");
+        }
+
         [Fact]
         public void TheSecondFrameOfTheSameTextCostsNoMaskPasses()
         {
