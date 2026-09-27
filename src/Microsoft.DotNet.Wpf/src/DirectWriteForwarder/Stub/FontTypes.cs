@@ -40,7 +40,7 @@ namespace MS.Internal.Text.TextInterface
 
         public LocalizedStrings FaceNames => LocalizedStrings.FromString(_face.FaceName);
 
-        public FontSimulations SimulationFlags => FontSimulations.None;
+        public FontSimulations SimulationFlags => _face.Simulations;
 
         public FontMetrics Metrics => FontMetricsBuilder.Build(_face.GetData());
 
@@ -56,8 +56,7 @@ namespace MS.Internal.Text.TextInterface
 
         public FontFace GetFontFace()
         {
-            FontSimulations sims = FontSimulations.None;
-            return new FontFace(_face, sims);
+            return new FontFace(_face, _face.Simulations);
         }
 
         public bool GetInformationalStrings(InformationalStringID informationalStringID, out LocalizedStrings informationalStrings)
@@ -129,7 +128,7 @@ namespace MS.Internal.Text.TextInterface
             for (uint i = 0; i < glyphCount; i++)
             {
                 ushort gid = glyphIndices[i];
-                ushort adv = d.AdvanceWidth(gid);
+                ushort adv = (ushort)SimulatedMetrics.BoldAdvance(d, _sims, gid);
                 short lsb = d.LeftSideBearing(gid);
                 glyphMetrics[i] = new GlyphMetrics
                 {
@@ -210,6 +209,20 @@ namespace MS.Internal.Text.TextInterface
         }
     }
 
+    internal static class SimulatedMetrics
+    {
+        /// <summary>A glyph's design advance under DWrite's simulated bold
+        /// (AdjustGlyphAdvanceForBoldSimulation): (upem + 25) / 50 more -- 2% of the em, rounded --
+        /// for a glyph with an advance and ink, nothing for a space.</summary>
+        internal static int BoldAdvance(OpenTypeFontData d, FontSimulations sims, int glyph)
+        {
+            int adv = d.AdvanceWidth((ushort)glyph);
+            if ((sims & FontSimulations.Bold) != 0 && adv != 0 && d.GlyphHasInk(glyph))
+                adv += (d.UnitsPerEm + 25) / 50;
+            return adv;
+        }
+    }
+
     public class FontList : IEnumerable<Font>
     {
         // Backing list of faces for enumeration (a family's faces, or a match result).
@@ -239,7 +252,8 @@ namespace MS.Internal.Text.TextInterface
 
         public unsafe FontFamily(Native.IDWriteFactory* fontFamily) : base(fontFamily) { }
 
-        internal FontFamily(FamilyRecord family) : base(family?.Faces ?? new List<FaceRecord>())
+        internal FontFamily(FamilyRecord family)
+            : base(FaceRecord.WithSimulations(family?.Faces ?? new List<FaceRecord>()))
         {
             _family = family;
         }
@@ -267,7 +281,7 @@ namespace MS.Internal.Text.TextInterface
         public FontList GetMatchingFonts(FontWeight weight, FontStretch stretch, FontStyle style)
         {
             // Order the faces by closeness to the request (DWrite returns a ranked list).
-            var ordered = new List<FaceRecord>(_family.Faces);
+            var ordered = new List<FaceRecord>(_faces);
             ordered.Sort((a, b) => MatchScore(a, weight, stretch, style).CompareTo(MatchScore(b, weight, stretch, style)));
             return new FontList(ordered);
         }
@@ -277,12 +291,12 @@ namespace MS.Internal.Text.TextInterface
         {
             FaceRecord best = null;
             int bestScore = int.MaxValue;
-            foreach (FaceRecord f in _family.Faces)
+            foreach (FaceRecord f in _faces)
             {
                 int score = MatchScore(f, weight, stretch, style);
                 if (score < bestScore) { bestScore = score; best = f; }
             }
-            return best ?? _family.Faces[0];
+            return best ?? _faces[0];
         }
 
         private static int MatchScore(FaceRecord f, FontWeight weight, FontStretch stretch, FontStyle style)
@@ -347,7 +361,8 @@ namespace MS.Internal.Text.TextInterface
         /// collection has never seen.
         /// </summary>
         public Font GetFontFromFontFace(FontFace fontFace) => fontFace?.Record is FaceRecord record
-            ? new Font(record)
+            ? new Font(fontFace.SimulationFlags == record.Simulations ? record
+                       : record.Simulated(fontFace.SimulationFlags & ~record.Simulations))
             : null;
     }
 

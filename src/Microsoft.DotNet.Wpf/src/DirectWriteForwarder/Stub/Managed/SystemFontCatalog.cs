@@ -30,6 +30,56 @@ namespace MS.Internal.Text.TextInterface.Managed
         public bool IsCff;
         public bool IsSymbol;
 
+        /// <summary>A face DirectWrite's font set SIMULATES rather than ships (FontSet::
+        /// AddSimulationsForWwsCompleteness): a copy of a real face's record, bold and/or oblique.</summary>
+        public FontSimulations Simulations;
+
+        /// <summary>This face with a simulation added: a simulated bold weighs 700, a simulated
+        /// oblique slants (DWrite's WwsFontItem gets weight 700 / slope 1 the same way).</summary>
+        public FaceRecord Simulated(FontSimulations add)
+        {
+            var s = (FaceRecord)MemberwiseClone();
+            s.Simulations |= add;
+            if ((add & FontSimulations.Bold) != 0) s.Weight = FontWeight.Bold;
+            if ((add & FontSimulations.Oblique) != 0) s.Style = FontStyle.Oblique;
+            string name = FaceName is null or "Regular" or "Normal" ? "" : FaceName + " ";
+            s.FaceName = ((add & FontSimulations.Bold) != 0 ? name + "Bold" : name + "Oblique").Trim();
+            return s;
+        }
+
+        /// <summary>DWrite's WWS completeness, for a family's real faces. Bold: in each group of one
+        /// slope and stretch whose heaviest face weighs 350..550, that face gets a simulated bold.
+        /// Oblique: every upright face (the simulated bolds too) with no OBLIQUE face of its weight
+        /// and stretch gets a simulated oblique -- an italic does not count, DWrite asks for slope 1.</summary>
+        public static List<FaceRecord> WithSimulations(List<FaceRecord> faces)
+        {
+            var items = new List<FaceRecord>(faces);
+            int n = faces.Count;
+            for (int i = 0; i < n; i++)
+            {
+                int best = -1, max = 0;
+                for (int j = i; j < n; j++)
+                    if (faces[j].Style == faces[i].Style && faces[j].Stretch == faces[i].Stretch && (int)faces[j].Weight > max)
+                    {
+                        max = (int)faces[j].Weight;
+                        best = j;
+                    }
+                if (best >= 0 && max >= 350 && max <= 550
+                    && !items.Exists(f => f.Simulations == FontSimulations.Bold && f.FilePath == faces[best].FilePath
+                                          && f.FaceIndex == faces[best].FaceIndex))
+                    items.Add(faces[best].Simulated(FontSimulations.Bold));
+            }
+            int m = items.Count;
+            for (int i = 0; i < m; i++)
+            {
+                FaceRecord f = items[i];
+                if (f.Style != FontStyle.Normal) continue;
+                if (!items.Exists(o => o.Style == FontStyle.Oblique && o.Weight == f.Weight && o.Stretch == f.Stretch))
+                    items.Add(f.Simulated(FontSimulations.Oblique));
+            }
+            return items;
+        }
+
         private OpenTypeFontData _data;
         private static readonly Dictionary<string, byte[]> s_fileCache = new(StringComparer.OrdinalIgnoreCase);
 

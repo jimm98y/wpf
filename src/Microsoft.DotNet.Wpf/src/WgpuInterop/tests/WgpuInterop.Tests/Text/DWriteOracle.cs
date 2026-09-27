@@ -41,8 +41,9 @@ namespace WgpuInterop.Tests.Text
             return s_factory;
         }
 
-        /// <summary>An IDWriteFontFace for a font file, or zero.</summary>
-        internal static IntPtr FontFace(string path, int faceIndex = 0)
+        /// <summary>An IDWriteFontFace for a font file, or zero. <paramref name="simulations"/> is
+        /// DWRITE_FONT_SIMULATIONS: 1 bold, 2 oblique.</summary>
+        internal static IntPtr FontFace(string path, int faceIndex = 0, int simulations = 0)
         {
             IntPtr factory = Factory(), file, face;
             fixed (char* pp = path)
@@ -53,7 +54,7 @@ namespace WgpuInterop.Tests.Text
             Check(((delegate* unmanaged[Stdcall]<IntPtr, int*, int*, int*, int*, int>)V(file)[5])(file, &supported, &fileType, &faceType, &faces), "analyze");
             // IDWriteFactory::CreateFontFace = slot 9
             Check(((delegate* unmanaged[Stdcall]<IntPtr, int, uint, IntPtr*, uint, int, IntPtr*, int>)V(factory)[9])(
-                factory, faceType, 1, &file, (uint)faceIndex, 0, &face), "face");
+                factory, faceType, 1, &file, (uint)faceIndex, simulations, &face), "face");
             Marshal.Release(file);
             return face;
         }

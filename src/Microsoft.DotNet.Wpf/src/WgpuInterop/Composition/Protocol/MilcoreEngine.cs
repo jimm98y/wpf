@@ -2442,7 +2442,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // moves it, is drawn the way stock WPF draws it (WpfTextRunDraw); everything it would
             // otherwise have been goes along as its fallback. Anything else is emitted as outlines,
             // as before.
-            bool natural = NaturalText && run.MeasuringMode <= 1 && font is Text.TrueTypeFont { Simulated: false }
+            bool natural = NaturalText && run.MeasuringMode <= 1 && font is Text.TrueTypeFont
                            && brush is SolidColorBrush && state.Clip is null or RectangleGeometry
                            && state.Transform.M11 == 1f && state.Transform.M22 == 1f
                            && state.Transform.M12 == 0f && state.Transform.M21 == 0f;

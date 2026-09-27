@@ -320,7 +320,7 @@ namespace MS.Internal.Text.TextInterface
             glyphOffsets = new GlyphOffset[glyphCount];
             double toIdeal = fontEmSize / d.UnitsPerEm * scalingFactor;
             for (uint i = 0; i < glyphCount; i++)
-                glyphAdvances[i] = (int)Math.Round(d.AdvanceWidth(glyphIndices[i]) * toIdeal);
+                glyphAdvances[i] = (int)Math.Round(SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[i]) * toIdeal);
         }
 
         public void GetGlyphs(
@@ -396,10 +396,10 @@ namespace MS.Internal.Text.TextInterface
             bool gdi = textFormattingMode == System.Windows.Media.TextFormattingMode.Display && !isSideways && pixels > 0;
             for (uint g = 0; g < glyphCount; g++)
             {
-                int px = gdi ? GdiCompatibleAdvances.PixelAdvance(font.Face, 0, pixels, glyphIndices[g]) : -1;
+                int px = gdi ? GdiCompatibleAdvances.PixelAdvance(font.Face, (int)font.Face.Simulations, pixels, glyphIndices[g]) : -1;
                 glyphAdvances[g] = px >= 0
                     ? (int)Math.Round(px / (double)pixelsPerDip * scalingFactor)
-                    : (int)Math.Round(d.AdvanceWidth(glyphIndices[g]) * toIdeal);
+                    : (int)Math.Round(SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[g]) * toIdeal);
             }
             glyphOffsets = new GlyphOffset[glyphCount];
         }

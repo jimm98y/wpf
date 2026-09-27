@@ -629,9 +629,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal float ObliqueShearApplied => _shear;
 
         /// <summary>Whether this instance carries a style SIMULATION (synthesized bold or oblique).
-        /// DirectWrite simulates both inside its scaler (RenderingFlags 2 and 4 on NewTransform), which
-        /// NaturalClearType does not reproduce yet, so such runs keep the outline path.</summary>
+        /// DirectWrite simulates both inside its scaler (RenderingFlags 2 and 4 on NewTransform);
+        /// NaturalClearType reproduces them (Embolden, EmboldenOutline, the post-fit shear).</summary>
         internal bool Simulated => _emboldenStrength > 0f || _shear != 0f;
+
+        /// <summary>Whether this instance is a synthesized BOLD.</summary>
+        internal bool SynthesizesBold => _emboldenStrength > 0f;
 
         private TrueTypeInterpreter? Interpreter()
         {
@@ -2160,7 +2163,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// else as the pre-program did -- in <see cref="PathRasterizer.DropoutForRun"/>'s terms
         /// (SCANTYPE + 1, or 0 for none).</para></summary>
         internal bool TryGetDWriteFittedOutline(int glyphId, float pixelsPerEm, int flags, out List<PathFigure> figures,
-                                                out int dropout)
+                                                out int dropout, Func<int[], int[], int[], bool>? postFit = null)
         {
             figures = s_noFigures;
             dropout = 0;
@@ -2206,6 +2209,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 SubpixelFitting = savedSub;
             }
 
+            int[] gx = glyph.X, gy = glyph.Y;
+            if (postFit is not null)
+            {
+                // What the scaler does to the fitted points before it scans them (a simulated bold).
+                gx = (int[])gx.Clone(); gy = (int[])gy.Clone();
+                postFit(gx, gy, glyph.EndPoints);
+            }
             var built = new List<PathFigure>(glyph.EndPoints.Length);
             int first = 0;
             foreach (int last in glyph.EndPoints)
@@ -2217,7 +2227,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     var on = new bool[n];
                     for (int k = 0; k < n; k++)
                     {
-                        pts[k] = new Vector2(glyph.X[first + k] / 64f, -glyph.Y[first + k] / 64f);
+                        // A simulated oblique is the upright fit sheared afterwards, as the scaler
+                        // applies the skew it did not hint under (DWrite's NewTransform carries
+                        // 0x5700, the 87/256 GDI shears by too).
+                        var p = new Vector2(gx[first + k] / 64f, gy[first + k] / 64f);
+                        pts[k] = new Vector2(Sheared(p, true), -p.Y);
                         on[k] = glyph.OnCurve[first + k];
                     }
                     built.Add(BuildContourFigure(pts, on));

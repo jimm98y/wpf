@@ -74,6 +74,9 @@ namespace WgpuInterop.Tests.Text
             return d;
         }
 
+        /// <summary>WPF_NATURAL_RAW=1: Show prints each channel's value rather than its sixth.</summary>
+        private static readonly bool s_raw = Environment.GetEnvironmentVariable("WPF_NATURAL_RAW") == "1";
+
         private static string Show(byte[] t, int l, int top, int w, int h)
         {
             var sb = new System.Text.StringBuilder($"x[{l},{l + w}) y[{top},{top + h})\n");
@@ -84,7 +87,8 @@ namespace WgpuInterop.Tests.Text
                     for (int k = 0; k < 3; k++)
                     {
                         int v = t[(y * w + x) * 3 + k];
-                        sb.Append(v == 0 ? '.' : (char)('0' + (v * 6 + 127) / 255));
+                        if (s_raw) sb.Append(v.ToString().PadLeft(4));
+                        else sb.Append(v == 0 ? '.' : (char)('0' + (v * 6 + 127) / 255));
                     }
                     sb.Append(' ');
                 }
@@ -194,6 +198,77 @@ namespace WgpuInterop.Tests.Text
                 Assert.True(misses.Count <= GdiClassicCeiling[file],
                     $"{misses.Count} of {total} differ (ceiling {GdiClassicCeiling[file]}): {string.Join(" ", misses.Take(40))}");
         }
+
+        /// <summary>The style SIMULATIONS DirectWrite applies in its scaler (DWRITE_FONT_SIMULATIONS):
+        /// a face asked for a bold or italic it does not ship.</summary>
+        [Theory]
+        [InlineData("tahoma", 2)]
+        [InlineData("segoeui", 2)]
+        [InlineData("tahoma", 1)]
+        [InlineData("segoeui", 1)]
+        public void SimulatedGlyphsAreDirectWritesTexture(string file, int simulations)
+        {
+            string? path = FontPath(file);
+            Assert.SkipWhen(path is null, "needs the Windows face and DirectWrite");
+            var font = new TrueTypeFont(File.ReadAllBytes(path!), synthesizeBold: (simulations & 1) != 0,
+                                        synthesizeOblique: (simulations & 2) != 0);
+            IntPtr face = DWriteOracle.FontFace(path!, 0, simulations);
+
+            var misses = new List<string>();
+            int total = 0;
+            foreach (float em in Sizes.Concat(new[] { 26f, 32f, 60f, 72f }))
+            {
+                int mode = DWriteOracle.RecommendedMode(face, em);
+                if (mode != 4 && mode != 5) continue;
+                int nSub = mode == 5 ? 5 : 1;
+                foreach (char c in Printable)
+                {
+                    int gid = font.GlyphIndex(c);
+                    if (gid <= 0) continue;
+                    byte[] theirs = DWriteOracle.AlphaTexture(face, em, new[] { (ushort)gid }, new[] { 0f }, null, mode,
+                        out int tl, out int tt, out int tr, out int tb);
+                    NaturalClearType.GlyphBits bits = NaturalClearType.Rasterize(font, gid, em, nSub);
+                    byte[] ours = NaturalClearType.RunTexture(new[] { bits }, new[] { 0f }, new[] { 0f },
+                        out int ol, out int ot, out int ow, out int oh, nSub);
+                    total++;
+                    long d = Diff(theirs, tl, tt, tr - tl, tb - tt, ours, ol, ot, ow, oh);
+                    if (d != 0) misses.Add($"{em}:'{c}'={d}");
+                    if (Environment.GetEnvironmentVariable("WPF_NATURAL_SHOW") == $"{file}{simulations}/{em}/{c}")
+                    {
+                        Report("DWRITE " + Show(theirs, tl, tt, tr - tl, tb - tt));
+                        Report("OURS   " + Show(ours, ol, ot, ow, oh));
+                    }
+                }
+            }
+            // GDI_CLASSIC (Display text) is scanned 6x1 too, and gets the same bitmap smear.
+            if (simulations == 1)
+                foreach (float em in Sizes)
+                    foreach (char c in Printable)
+                    {
+                        int gid = font.GlyphIndex(c);
+                        if (gid <= 0) continue;
+                        byte[] theirs = DWriteOracle.AlphaTexture(face, em, new[] { (ushort)gid }, new[] { 0f }, null, 2,
+                            out int tl, out int tt, out int tr, out int tb, measuring: 1);
+                        NaturalClearType.GlyphBits bits = NaturalClearType.RasterizeGdiClassic(font, gid, em);
+                        byte[] ours = NaturalClearType.RunTexture(new[] { bits }, new[] { 0f }, new[] { 0f },
+                            out int ol, out int ot, out int ow, out int oh);
+                        total++;
+                        if (Diff(theirs, tl, tt, tr - tl, tb - tt, ours, ol, ot, ow, oh) is long d && d != 0)
+                            misses.Add($"g{em}:'{c}'={d}");
+                    }
+            Report($"SIMULATED {file}/{simulations}: {total - misses.Count}/{total} glyphs exact; by size "
+                   + string.Join(" ", misses.GroupBy(m => m[..m.IndexOf(':')]).Select(g => $"{g.Key}x{g.Count()}"))
+                   + $"; {string.Join(" ", misses.Take(40))}");
+            if (Environment.GetEnvironmentVariable("WPF_NATURAL_REPORT") is null)
+                Assert.True(misses.Count <= SimulatedCeiling[(file, simulations)],
+                    $"{misses.Count} of {total} differ: {string.Join(" ", misses.Take(40))}");
+        }
+
+        private static readonly Dictionary<(string, int), int> SimulatedCeiling = new()
+        {
+            // Tahoma's are its upright diagonal class (see GlyphCeiling), natural and GDI_CLASSIC.
+            [("tahoma", 2)] = 18, [("segoeui", 2)] = 0, [("tahoma", 1)] = 56, [("segoeui", 1)] = 0,
+        };
 
         [Theory]
         [MemberData(nameof(Faces))]

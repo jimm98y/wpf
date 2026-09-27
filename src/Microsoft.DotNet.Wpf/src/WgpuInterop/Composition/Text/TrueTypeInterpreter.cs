@@ -346,7 +346,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_normDirect =
             Environment.GetEnvironmentVariable("WPF_CT_NORM") != "twostep";
 
-        private static void Normalize(int x, int y, out int nx, out int ny)
+        internal static void Normalize(int x, int y, out int nx, out int ny)
         {
             if (x == 0 && y == 0) { nx = 0x4000; ny = 0; return; }
 

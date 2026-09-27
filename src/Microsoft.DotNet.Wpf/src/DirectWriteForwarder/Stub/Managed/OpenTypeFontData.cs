@@ -169,6 +169,16 @@ namespace MS.Internal.Text.TextInterface.Managed
         /// the next. Equal entries mean an empty glyph -- a space -- which is why the range comes
         /// back valid but zero-length rather than as a failure.
         /// </summary>
+        /// <summary>Whether the glyph has ink: a non-empty box in both directions, as DWrite's
+        /// GlyphHasSize asks. A CFF face's charstrings are not read for this; its glyphs count.</summary>
+        public bool GlyphHasInk(int glyphIndex)
+        {
+            if (!HasGlyfOutlines) return true;
+            if (!TryGetGlyfRange(glyphIndex, out int s, out int e) || e - s < 10) return false;
+            short xMin = (short)U16(s + 2), yMin = (short)U16(s + 4), xMax = (short)U16(s + 6), yMax = (short)U16(s + 8);
+            return xMax > xMin && yMax > yMin;
+        }
+
         public bool TryGetGlyfRange(int glyphIndex, out int start, out int end)
         {
             start = end = 0;
