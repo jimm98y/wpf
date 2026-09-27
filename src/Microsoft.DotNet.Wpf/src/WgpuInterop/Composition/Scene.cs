@@ -554,6 +554,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public NestedVisualDraw(SceneVisual visual) => Visual = visual;
     }
 
+    /// <summary>A WPF glyph run in the IDEAL text formatting mode (DWRITE_MEASURING_MODE_NATURAL),
+    /// kept as a run so it can be drawn the way stock WPF draws it -- DirectWrite's natural ClearType
+    /// alpha texture through wpfgfx's blend (see Text.NaturalClearType) -- rather than as glyph
+    /// outlines. <see cref="Fallback"/> holds the outline fills the run would otherwise have been,
+    /// and is what everything that is not the draw itself (bounds, hashing, hit testing) reads, and
+    /// what the draw falls back to when the run cannot be drawn that way.</summary>
+    internal sealed class WpfTextRunDraw : DrawingPrimitive
+    {
+        public WpfTextRunDraw(Text.TrueTypeFont font, float emSize, ushort[] glyphs, float[] x, float[] y,
+                              Vector2 origin, RgbaColor color, List<DrawingPrimitive> fallback)
+        {
+            Font = font; EmSize = emSize; Glyphs = glyphs; X = x; Y = y; Origin = origin; Color = color;
+            Fallback = fallback;
+        }
+
+        public Text.TrueTypeFont Font { get; }
+        /// <summary>The run's em size, in the run's own (local) units.</summary>
+        public float EmSize { get; }
+        public ushort[] Glyphs { get; }
+        /// <summary>Each glyph's origin relative to <see cref="Origin"/>, in local units: the pen
+        /// position plus the glyph offset, y down.</summary>
+        public float[] X { get; }
+        public float[] Y { get; }
+        /// <summary>The run's baseline origin, local space.</summary>
+        public Vector2 Origin { get; }
+        /// <summary>The solid brush, with the render state's opacity folded into its alpha.</summary>
+        public RgbaColor Color { get; }
+        public List<DrawingPrimitive> Fallback { get; }
+
+        /// <summary>The primitives a consumer that does not draw this run itself should see.</summary>
+        internal static IEnumerable<DrawingPrimitive> Expand(DrawingPrimitive p)
+        {
+            if (p is WpfTextRunDraw t)
+                foreach (DrawingPrimitive f in t.Fallback) yield return f;
+            else
+                yield return p;
+        }
+    }
+
     internal sealed class GlyphRunDraw : DrawingPrimitive
     {
         public string Text { get; }

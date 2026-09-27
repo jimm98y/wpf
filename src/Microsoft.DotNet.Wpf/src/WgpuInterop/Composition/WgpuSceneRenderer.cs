@@ -1334,7 +1334,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             uint id = v.Id;
             float pr = (id & 0xFF) / 255f, pg = ((id >> 8) & 0xFF) / 255f, pb = ((id >> 16) & 0xFF) / 255f;
 
-            foreach (DrawingPrimitive p in v.Content)
+            foreach (DrawingPrimitive p0 in v.Content)
+            foreach (DrawingPrimitive p in WpfTextRunDraw.Expand(p0))
             {
                 switch (p)
                 {
@@ -2152,7 +2153,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (n.Clip is { } c) HR(c); else HV(7);
             if (n.OpacityMask is { } nm) HashBrush(nm);
             if (n.ClipGeometry is { } ncg) HashGeo(ncg);
-            foreach (DrawingPrimitive p in n.Content) HashPrimitive(p);
+            foreach (DrawingPrimitive p0 in n.Content) foreach (DrawingPrimitive p in WpfTextRunDraw.Expand(p0)) HashPrimitive(p);
             foreach (SceneVisual ch in n.Children) HashVisual(ch, ch.LocalToParent * w, bx, by);
         }
 
@@ -2175,7 +2176,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 case NestedVisualDraw nv:
                     HV(9);
                     if (nv.Visual.OpacityMask is { } nvm) HashBrush(nvm);
-                    foreach (DrawingPrimitive np in nv.Visual.Content) HashPrimitive(np);
+                    foreach (DrawingPrimitive np0 in nv.Visual.Content) foreach (DrawingPrimitive np in WpfTextRunDraw.Expand(np0)) HashPrimitive(np);
                     break;
                 case GeometryStroke s: HV(2); HashGeo(s.Geometry); HashBrush(s.Brush); HashStroke(s.Style); break;
                 // Must hash the fill/stroke brushes too -- a brush-only change (e.g. a menu item's
@@ -2551,6 +2552,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 case GlyphRunDraw run:
                     EmitText(run, world, opacity, clip, width, height, format, data);
                     break;
+                case WpfTextRunDraw natural:
+                    EmitWpfNaturalText(natural, world, opacity, clip, width, height, format, data);
+                    break;
             }
         }
 
@@ -2923,7 +2927,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static void AccumulateContentBounds(SceneVisual v, Matrix3x2 world,
             ref float minX, ref float minY, ref float maxX, ref float maxY)
         {
-            foreach (DrawingPrimitive p in v.Content)
+            foreach (DrawingPrimitive p0 in v.Content)
+            foreach (DrawingPrimitive p in WpfTextRunDraw.Expand(p0))
             {
                 switch (p)
                 {

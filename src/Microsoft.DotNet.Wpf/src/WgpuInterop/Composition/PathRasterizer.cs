@@ -2995,6 +2995,56 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// crossing lists in the frame GdiTableFilterRowset pairs -- rows counted from the top,
         /// x as the sample centre's own expression so the span test lands on the index exactly,
         /// direction -1 for ON.</summary>
+        /// <summary>A glyph's ONE-BIT bitmap as the Agfa scan converter makes it: six samples per pixel
+        /// across, <paramref name="nSub"/> rows per pixel down, rows counted from the top. The same
+        /// walk the ClearType fill uses (fsc_CalcLine / fsc_CalcSpline filed into ON and OFF lists,
+        /// paired by rank the way fsc_FillBitMap pairs them), and when <paramref name="dropout"/> is
+        /// non-zero -- SCANTYPE + 1, as <see cref="DropoutForRun"/> holds it -- the dropout fills
+        /// LookForDropouts adds. What DirectWrite's GetGlyphBitmaps keeps per glyph and ORs into the
+        /// run (MergeGlyph1Bit).</summary>
+        /// <param name="path">The fitted outline, in pixels, y down.</param>
+        /// <returns>bits[subRow * width * 6 + sample], or null when the outline is empty.</returns>
+        internal static bool[]? ScanGlyphBits(PathGeometry path, int originX, int originY, int width, int height,
+            int nSub, int dropout)
+        {
+            if (width <= 0 || height <= 0 || path.Figures.Count == 0) return null;
+            var figureOf = new List<int>(path.Figures.Count);
+            for (int i = 0; i < path.Figures.Count; i++) figureOf.Add(i);
+            GdiExactRows(path, figureOf, 0, path.Figures.Count, originX, originY, width, height, nSub,
+                         out GdiScanRows walk);
+
+            int nRows = height * nSub, nCols = width * SubpixelsPerPixel * 2;
+            var bits = new bool[nRows * nCols];
+            for (int rUp = 0; rUp < nRows; rUp++)
+            {
+                List<int> on = walk.On[rUp], off = walk.Off[rUp];
+                int row = nRows - 1 - rUp, n = Math.Min(on.Count, off.Count);
+                for (int k = 0; k < n; k++)
+                {
+                    int a = on[k], b = off[k];
+                    if (a == b) continue;
+                    if (b < a) (a, b) = (b, a);
+                    for (int c = Math.Max(0, a); c < b && c < nCols; c++) bits[row * nCols + c] = true;
+                }
+            }
+
+            if (dropout > 0)
+            {
+                List<List<Vector2>> polys = Flatten(path, CurveFlattener.GlyphTolerance);
+                int saved = DropoutForRun;
+                DropoutForRun = dropout;
+                try
+                {
+                    foreach ((int col, int subRow) in GdiDropoutFills(polys, path.FillRule, originX, originY,
+                                                                      width, height, nSub, walk))
+                        if (col >= 0 && col < nCols && subRow >= 0 && subRow < nRows)
+                            bits[subRow * nCols + col] = true;
+                }
+                finally { DropoutForRun = saved; }
+            }
+            return bits;
+        }
+
         private static List<(float X, int Dir)>[] GdiExactRows(PathGeometry path, List<int> figureOf,
             int firstContour, int lastContour, int originX, int originY, int width, int height, int nSub,
             out GdiScanRows walk)

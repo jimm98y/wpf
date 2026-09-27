@@ -471,6 +471,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool _iupXDone, _iupYDone;
         private bool _prepClearType;
         private bool _prepBiLevel;
+        private int _prepDWriteFlags;
 
         /// <summary>Run this hint with the BI-LEVEL rules -- physical grid, full cut-in, full minimum
         /// distance, every delta applied -- whatever the ClearType defaults say.
@@ -496,6 +497,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// or two from where GDI puts it -- a different block of instructions from the one the
         /// bi-level oracle covers, and the only part of the chain with no oracle over it.</para></summary>
         [ThreadStatic] internal static bool BiLevelPass;
+
+        /// <summary>DirectWrite's rendering-mode word, or 0 for GDI's.
+        /// <para>DWrite and GDI run the same Agfa scaler; what differs is the halfword the client puts
+        /// at glyph-input +0xD0, which fs__NewTransformation copies into globals[0x1c0] and which
+        /// GETINFO and every ClearType gate read. TrueTypeRasterizer::Implementation::NewTransform
+        /// (dwrite.dll) writes 0x51 for DWRITE_RENDERING_MODE_NATURAL -- ClearType, sub-pixel
+        /// positioned, and bit 6 -- and 0x71 for NATURAL_SYMMETRIC, which adds symmetric rendering.
+        /// Neither has bit 1, so there are no compatible widths: no bi-level measuring pass, no
+        /// phase, no compatible advance. GDI's word is 0x23 or 0x03 (bSetXform in fontdrvhost),
+        /// which is what the rest of this file assumes when this is 0.</para></summary>
+        [ThreadStatic] internal static int DWriteFlags;
+
+        /// <summary>Running DirectWrite's natural modes, whose word has no compatible widths.</summary>
+        internal static bool DWriteNatural => DWriteFlags != 0 && (DWriteFlags & 2) == 0;
         private float _prepPpem = -1f;
 
         private int _scale;                    // 16.16: font units -> 26.6 pixels
@@ -738,9 +753,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (_preScaled && s_blackOnInk && !AnyTouchedX())
                     for (int i = 0; i < _realPoints; i++)
                         _glyphZone.CurX[i] = _glyphZone.OrgX[i] = _glyphZone.InkX[i];
-                if (s_ctColor && !BiLevelPass && TrueTypeFont.SubpixelFitting) ColorStems();
-                if (s_ctColorValidate && !BiLevelPass && TrueTypeFont.SubpixelFitting) ValidateColoring();
-                if (s_ctPhase != 0 && !BiLevelPass && TrueTypeFont.SubpixelFitting) ApplyPhaseControl();
+                if (s_ctColor && !BiLevelPass && TrueTypeFont.SubpixelFitting && !DWriteNatural) ColorStems();
+                if (s_ctColorValidate && !BiLevelPass && TrueTypeFont.SubpixelFitting && !DWriteNatural) ValidateColoring();
+                if (s_ctPhase != 0 && !BiLevelPass && TrueTypeFont.SubpixelFitting && !DWriteNatural) ApplyPhaseControl();
                 if (s_capturePoints) CapturePoints(glyph);
                 if (s_storeProbe && _realPoints == 27 && CompatibleAdvance64 == 576)
                     Console.Error.WriteLine($"STORE pts={_realPoints} compat64={CompatibleAdvance64}"
@@ -1727,7 +1742,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// and 20 (+5 to +14 a line). The answer was the 'gasp', see
         /// TrueTypeFont.GaspDeclinesClearTypeGridFit.</para></summary>
         internal static bool ClearTypeInfo =>
-            s_ctInfoAllowed && TrueTypeFont.ClearTypeRendering && !BiLevelPass;
+            DWriteFlags != 0 ? (DWriteFlags & 1) != 0 && !BiLevelPass
+            : s_ctInfoAllowed && TrueTypeFont.ClearTypeRendering && !BiLevelPass;
 
         /// <summary>How the ADVANCE phantom is quantized before the program runs. 0 round (the
         /// default), 1 ceil, 2 not at all. WPF_PP2_ROUND.
@@ -1954,12 +1970,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // for every glyph afterwards -- so switching the answer appeared to do nothing at all.
             bool clearType = ClearTypeInfo;
             if (_prepRun && Math.Abs(_prepPpem - pixelsPerEm) < 0.001f && _prepClearType == clearType
-                && _prepBiLevel == BiLevelPass)
+                && _prepBiLevel == BiLevelPass && _prepDWriteFlags == DWriteFlags)
                 return !_faulted;
 
             _prepPpem = pixelsPerEm;
             _prepClearType = clearType;
             _prepBiLevel = BiLevelPass;
+            _prepDWriteFlags = DWriteFlags;
             _roundFnSp = false;          // the pre-program starts on the whole-pixel functions
             _prepRun = true;
             _faulted = false;
@@ -3050,7 +3067,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // and flips them all at once, which is why "the phase off" has never been measurable
             // on its own. Every call site goes through here, so this is the whole of it.
             if (s_phaseNoMove) return;
-            if (!s_phaseAtIup || _phaseApplied || BiLevelPass || !TrueTypeFont.SubpixelFitting) return;
+            if (!s_phaseAtIup || _phaseApplied || BiLevelPass || !TrueTypeFont.SubpixelFitting || DWriteNatural) return;
             // s_phaseDepth: 0 = only a top-level glyph (components are phased by their own run
             // and the assembly would apply it a second time), 1 = only components, 2 = both.
             if (s_phaseDepth == 0 && HintDepth > 0) return;

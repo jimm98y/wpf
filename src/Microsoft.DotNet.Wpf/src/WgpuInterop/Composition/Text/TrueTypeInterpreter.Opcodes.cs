@@ -1214,6 +1214,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         {
                             int selector = Pop();
                             int result = 0;
+                            if (DWriteFlags != 0)
+                            {
+                                Push(DWriteGetInfo(selector, DWriteFlags));
+                                break;
+                            }
                             // Version 35: the classic interpreter, which is the one GDI is. Saying
                             // 40 would make a ClearType-era face suppress its own horizontal hints,
                             // and GDI plainly does not -- its stems land on single columns.
@@ -2332,6 +2337,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // s_symmetricInfo.
 
         /// <summary>WPF_CT_COMPATINFO=0: answer GETINFO's compatible-widths query NO.</summary>
+        /// <summary>GETINFO as dwrite.dll's itrp_GETINFO@1800819f0 answers it, from the rendering-mode
+        /// word alone (<see cref="DWriteFlags"/>): version 42; ClearType, compatible widths,
+        /// horizontal stripes, BGR, sub-pixel positioned and symmetric rendering from bits 0-5 of the
+        /// word; ClearType grey from bit 7; selectors 8 and 16 always; greyscale never, because DWrite's ClearType modes leave
+        /// the grey-level count at zero. The stretched/rotated answers (selectors 2 and 4) are for a
+        /// transform that is not a plain scale, which a DirectWrite text realization never has.
+        /// Bit 6 of the word answers nothing.</summary>
+        internal static int DWriteGetInfo(int selector, int flags)
+        {
+            int result = (selector & 1) != 0 ? 42 : 0;
+            if ((selector & 8) != 0) result |= 0x400;      // unconditional in the binary
+            if ((selector & 16) != 0) result |= 0x800;     // likewise
+            if ((selector & 64) != 0 && (flags & 1) != 0) result |= 0x2000;
+            if ((selector & 128) != 0 && (flags & 2) != 0) result |= 0x4000;
+            if ((selector & 256) != 0 && (flags & 4) != 0) result |= 0x8000;
+            if ((selector & 512) != 0 && (flags & 8) != 0) result |= 0x10000;
+            if ((selector & 1024) != 0 && (flags & 16) != 0) result |= 0x20000;
+            if ((selector & 2048) != 0 && (flags & 32) != 0) result |= 0x40000;
+            if ((selector & 4096) != 0 && (flags & 128) != 0) result |= 0x80000;
+            return result;
+        }
+
         private static readonly bool s_compatWidthInfo =
             Environment.GetEnvironmentVariable("WPF_CT_COMPATINFO") != "0";
 

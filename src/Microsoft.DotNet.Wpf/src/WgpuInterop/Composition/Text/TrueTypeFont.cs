@@ -2130,6 +2130,98 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return built;
         }
 
+        /// <summary>The outline as the scaler holds it when it does not fit it: scaled to this size and
+        /// rounded to its 26.6 grid, in device pixels, y down.</summary>
+        internal bool TryGetScaledOutline(int glyphId, float pixelsPerEm, out List<PathFigure> figures)
+        {
+            figures = s_noFigures;
+            if (pixelsPerEm <= 0f || glyphId < 0 || glyphId >= _numGlyphs) return false;
+            figures = BuildGlyphFiguresAt(glyphId, pixelsPerEm, ScaleRoundsHalfUp(_unitsPerEm, pixelsPerEm));
+            return figures.Count > 0;
+        }
+
+        /// <summary>The glyph fitted the way DirectWrite fits it for WPF: one run of the face's own
+        /// program under DirectWrite's rendering-mode word (<see cref="TrueTypeInterpreter.DWriteFlags"/>,
+        /// 0x51 natural or 0x71 natural symmetric), in device pixels, y down, baseline at 0.
+        /// <para>None of GDI's machinery applies. Its compatible-width realization -- the bi-level
+        /// measuring pass, the phase, the compatible advance -- hangs off bit 1 of the word, which
+        /// DirectWrite's natural modes never set, and the adjustments this class makes after a GDI fit
+        /// are approximations of GDI, not of anything DirectWrite does.</para>
+        /// <para>False when the face has no program for the glyph, or the program fails; the caller
+        /// then draws the scaled outline, as DirectWrite does when grid fitting is off.</para>
+        /// <para><paramref name="dropout"/> is the scan converter's dropout mode for the glyph, as
+        /// fsg_ExecuteGlyph takes it -- SCANCTRL and SCANTYPE as the glyph's own program leaves them,
+        /// else as the pre-program did -- in <see cref="PathRasterizer.DropoutForRun"/>'s terms
+        /// (SCANTYPE + 1, or 0 for none).</para></summary>
+        internal bool TryGetDWriteFittedOutline(int glyphId, float pixelsPerEm, int flags, out List<PathFigure> figures,
+                                                out int dropout)
+        {
+            figures = s_noFigures;
+            dropout = 0;
+            if (pixelsPerEm <= 0f || glyphId < 0 || glyphId >= _numGlyphs || _glyfOffset < 0 || _loca.Length == 0)
+                return false;
+            uint start = _loca[glyphId], end = _loca[glyphId + 1];
+            if (end <= start) return false;
+            TrueTypeInterpreter? interpreter = Interpreter();
+            if (interpreter is null) return false;
+
+            int savedFlags = TrueTypeInterpreter.DWriteFlags;
+            bool savedBi = TrueTypeInterpreter.BiLevelPass, savedSub = SubpixelFitting;
+            int savedCompat = TrueTypeInterpreter.CompatibleAdvance64, savedSpan = TrueTypeInterpreter.BiLevelSpan64;
+            int savedDepth = TrueTypeInterpreter.HintDepth, savedBold = TrueTypeInterpreter.SimBoldAdvanceUnits;
+            GlyphProgram? glyph;
+            try
+            {
+                TrueTypeInterpreter.DWriteFlags = flags;
+                TrueTypeInterpreter.BiLevelPass = false;
+                TrueTypeInterpreter.CompatibleAdvance64 = 0;
+                TrueTypeInterpreter.BiLevelSpan64 = 0;
+                TrueTypeInterpreter.HintDepth = 0;
+                TrueTypeInterpreter.SimBoldAdvanceUnits = 0;
+                SubpixelFitting = true;
+
+                glyph = (short)U16(_glyfOffset + (int)start) >= 0
+                    ? ReadGlyphProgram(glyphId)
+                    : ReadCompositeProgram(interpreter, glyphId, pixelsPerEm, 0);
+                if (glyph is null || !interpreter.Hint(glyph, pixelsPerEm)) return false;
+                int ctrl = glyph.ScanControl >= 0 ? glyph.ScanControl : interpreter.PrepScanControl;
+                int type = glyph.ScanType >= 0 ? glyph.ScanType : interpreter.PrepScanType;
+                int scan = DoScanControl(ctrl, (int)MathF.Round(pixelsPerEm)) ? type : 2;
+                dropout = (scan & 2) != 0 ? 0 : scan + 1;
+            }
+            finally
+            {
+                TrueTypeInterpreter.DWriteFlags = savedFlags;
+                TrueTypeInterpreter.BiLevelPass = savedBi;
+                TrueTypeInterpreter.CompatibleAdvance64 = savedCompat;
+                TrueTypeInterpreter.BiLevelSpan64 = savedSpan;
+                TrueTypeInterpreter.HintDepth = savedDepth;
+                TrueTypeInterpreter.SimBoldAdvanceUnits = savedBold;
+                SubpixelFitting = savedSub;
+            }
+
+            var built = new List<PathFigure>(glyph.EndPoints.Length);
+            int first = 0;
+            foreach (int last in glyph.EndPoints)
+            {
+                int n = last - first + 1;
+                if (n >= 2)
+                {
+                    var pts = new Vector2[n];
+                    var on = new bool[n];
+                    for (int k = 0; k < n; k++)
+                    {
+                        pts[k] = new Vector2(glyph.X[first + k] / 64f, -glyph.Y[first + k] / 64f);
+                        on[k] = glyph.OnCurve[first + k];
+                    }
+                    built.Add(BuildContourFigure(pts, on));
+                }
+                first = last + 1;
+            }
+            figures = built;
+            return built.Count > 0;
+        }
+
         /// <summary>The simulated italic's x for a hinted point (y up, pixels): x + shear * y,
         /// ROUNDED TO A SIXTY-FOURTH the way the rasterizer's 26.6 arithmetic leaves it. With the
         /// shear 87/256 that rounding is a genuine tie at every y that is 2 mod 4 sixty-fourths,
@@ -4427,7 +4519,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_variationsWhenHinted =
             Environment.GetEnvironmentVariable("WPF_VAR_HINTED") != "0";
 
-        private ushort RawAdvanceWidth(int gid)
+        internal ushort RawAdvanceWidth(int gid)
             => _advanceWidths.Length == 0 ? (ushort)0 : _advanceWidths[gid < _numHMetrics ? gid : _numHMetrics - 1];
 
         /// <summary>

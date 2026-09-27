@@ -136,7 +136,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private static byte[] BuildRenderData(IReadOnlyList<DrawingPrimitive> content)
         {
             var w = new CommandWriter();
-            foreach (DrawingPrimitive primitive in content)
+            foreach (DrawingPrimitive primitive0 in content)
+            foreach (DrawingPrimitive primitive in WpfTextRunDraw.Expand(primitive0))
             {
                 switch (primitive)
                 {

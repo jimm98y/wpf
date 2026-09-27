@@ -456,6 +456,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // says the baseline origin is the run's right edge and the pen moves leftward.
             public ushort BidiLevel;
 
+            // DWRITE_MEASURING_MODE: 0 natural (TextFormattingMode.Ideal), 1 GDI classic (Display),
+            // 2 GDI natural. wpfgfx picks the rendering mode from it (GetDWriteRenderingMode).
+            public ushort MeasuringMode;
+
             // Managed font descriptor (cross-platform, COM-free). Present when the
             // run carried the 'WFNT' trailer; null for legacy/test streams that
             // only supply FontPtr.
@@ -716,6 +720,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 32; var bounds = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
                     r.Position = 64; int count = r.U16();
                     r.Position = 68; ushort bidiLevel = r.U16();
+                    r.Position = 72; ushort measuringMode = r.U16();
 
                     r.Position = 76;
                     var indices = new ushort[count];
@@ -749,6 +754,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     {
                         FontPtr = fontPtr, Origin = origin, EmSize = emSize, Bounds = bounds,
                         Indices = indices, Advances = advances, Offsets = offsets, BidiLevel = bidiLevel,
+                        MeasuringMode = measuringMode,
                         FontPath = fontPath, FaceIndex = faceIndex, Simulations = simulations,
                     };
                     break;
@@ -1773,7 +1779,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             BMixF(w.M11); BMixF(w.M12); BMixF(w.M21); BMixF(w.M22); BMixF(w.M31); BMixF(w.M32);
             BMix(BitConverter.DoubleToInt64Bits(n.Opacity));
-            foreach (DrawingPrimitive p in n.Content)
+            foreach (DrawingPrimitive p0 in n.Content)
+            foreach (DrawingPrimitive p in WpfTextRunDraw.Expand(p0))
             {
                 switch (p)
                 {
@@ -1898,7 +1905,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 maxX = Math.Max(maxX, r.X + r.Width); maxY = Math.Max(maxY, r.Y + r.Height);
                 any = true;
             }
-            foreach (DrawingPrimitive p in v.Content)
+            foreach (DrawingPrimitive p0 in v.Content)
+            foreach (DrawingPrimitive p in WpfTextRunDraw.Expand(p0))
             {
                 Geometry? g = p switch
                 {
@@ -2430,6 +2438,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             var colorFont = font as Text.IColorGlyphFont;
             float scale = run.EmSize / font.PixelsPerEm;
 
+            // An IDEAL-mode run of a TrueType face in a solid brush, under a transform that only
+            // moves it, is drawn the way stock WPF draws it (WpfTextRunDraw); everything it would
+            // otherwise have been goes along as its fallback. Anything else is emitted as outlines,
+            // as before.
+            bool natural = s_naturalText && run.MeasuringMode == 0 && font is Text.TrueTypeFont
+                           && brush is SolidColorBrush && state.Clip is null
+                           && state.Transform.M11 == 1f && state.Transform.M22 == 1f
+                           && state.Transform.M12 == 0f && state.Transform.M21 == 0f
+                           && (run.BidiLevel & 1) == 0;
+            List<DrawingPrimitive> sink = natural ? new List<DrawingPrimitive>(run.Indices.Length) : output;
+            float[]? gxs = natural ? new float[run.Indices.Length] : null;
+            float[]? gys = natural ? new float[run.Indices.Length] : null;
+
             // A right-to-left run anchors its baseline origin at its RIGHT edge and marches leftward
             // from there, with each glyph placed one of its OWN advances further left -- which is
             // what GlyphRun.BuildGeometry does, and the shape WPF's measured bounds already assume.
@@ -2458,6 +2479,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
                 float gx = penX + offsetX;
                 float gy = run.Origin.Y - (run.Offsets != null ? run.Offsets[2 * i + 1] : 0f);
+                if (gxs is not null) { gxs[i] = gx - run.Origin.X; gys![i] = gy - run.Origin.Y; }
 
                 // What a glyph id becomes -- a monochrome outline, or the stack of coloured layers a
                 // COLR/CPAL emoji decomposes into -- is GlyphRunPainter's business, shared with the
@@ -2482,7 +2504,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                             : gf.Color is RgbaColor c
                                 ? ApplyOpacity(new SolidColorBrush(c), state.Opacity)!
                                 : brush;
-                        output.Add(new GeometryFill(glyph, layerBrush, isGlyph: false));
+                        sink.Add(new GeometryFill(glyph, layerBrush, isGlyph: false));
+                        natural = false;
                         continue;
                     }
 
@@ -2490,7 +2513,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // coverage cache snaps the whole run to one baseline instead of snapping
                     // each glyph by its own ink box (which sinks some letters ~1px).
                     Vector2 baseline = Vector2.Transform(new Vector2(gx, gy), state.Transform);
-                    output.Add(new GeometryFill(glyph, brush, isGlyph: true, baselineAnchor: baseline));
+                    sink.Add(new GeometryFill(glyph, brush, isGlyph: true, baselineAnchor: baseline));
                 }
 
                 float advance = i < run.Advances.Length ? run.Advances[i] : 0f;
@@ -2503,7 +2526,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     penX += advance;
                 }
             }
+
+            if (!ReferenceEquals(sink, output))
+            {
+                if (natural)
+                    output.Add(new WpfTextRunDraw((Text.TrueTypeFont)font, run.EmSize, run.Indices, gxs!, gys!,
+                        Vector2.Transform(run.Origin, state.Transform), ((SolidColorBrush)brush).Color, sink));
+                else
+                    output.AddRange(sink);
+            }
         }
+
+        /// <summary>WPF_NATURAL_TEXT=0 draws ideal-mode WPF text as outlines, as before.</summary>
+        private static readonly bool s_naturalText =
+            Environment.GetEnvironmentVariable("WPF_NATURAL_TEXT") != "0";
 
         // Reused across the glyphs of a run; GlyphRunPainter appends into it.
         private readonly List<Text.GlyphFill> _glyphFills = new();
