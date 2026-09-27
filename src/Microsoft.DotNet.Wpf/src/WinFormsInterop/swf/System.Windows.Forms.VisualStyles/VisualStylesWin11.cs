@@ -109,6 +109,10 @@ namespace System.Windows.Forms.VisualStyles
 				Win11Frames.Draw (g, frame, r);
 				return true;
 			}
+			if (Win11Frames.BorderFill (cls, part, state) is var (size, border, fill)) {
+				Win11Frames.DrawBorderFill (g, (size, border, fill), r);
+				return true;
+			}
 			ThemeWin11 t = Theme;
 			switch (cls) {
 			case "BUTTON":

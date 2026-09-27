@@ -34,6 +34,12 @@ namespace System.Windows.Forms.VisualStyles
 			/// <summary>SIZINGMARGINS, left, right, top, bottom: the rows and columns kept as they are
 			/// when the frame is stretched.</summary>
 			public (int L, int R, int T, int B) Margins;
+			/// <summary>A glyph drawn over the background at its own size, centred (GLYPHTYPE
+			/// IMAGEGLYPH): the combo box's chevron.</summary>
+			public Frame Glyph;
+			/// <summary>Larger glyphs for larger buttons (IMAGESELECTTYPE SIZE): each is taken in
+			/// place of <see cref="Glyph"/> once the button is at least its size square.</summary>
+			public (int MinSize, Frame Glyph) [] LargerGlyphs;
 			public Frame (int width, int height)
 			{
 				Width = width;
@@ -71,6 +77,45 @@ namespace System.Windows.Forms.VisualStyles
 					using (var brush = new SolidBrush (Color.FromArgb ((int) face)))
 						g.FillRectangle (brush, middle);
 			}
+
+			Frame glyph = f.Glyph;
+			if (f.LargerGlyphs != null)
+				foreach (var (min, larger) in f.LargerGlyphs)
+					if (bounds.Width >= min && bounds.Height >= min)
+						glyph = larger;
+			if (glyph != null) {
+				// Centred with the offset rounded down, and never scaled: a glyph taller than the
+				// button hangs from its top.
+				int gx = bounds.X + Math.Max (0, (bounds.Width - glyph.Width) / 2);
+				int gy = bounds.Y + Math.Max (0, (bounds.Height - glyph.Height) / 2);
+				g.DrawImage (Blit (glyph, glyph.Width, glyph.Height), gx, gy, glyph.Width, glyph.Height);
+			}
+		}
+
+		// ---- border-fill parts ---------------------------------------------------------------
+
+		/// <summary>A BGTYPE BORDERFILL part: FILLCOLOR inside a BORDERSIZE frame of BORDERCOLOR,
+		/// as the theme's property table gives them; null for a part that is not one.</summary>
+		internal static (int size, uint border, uint fill)? BorderFill (string cls, int part, int state)
+			=> cls switch {
+				// EP_EDITTEXT and the other plain edit parts; the theme fills state 4 #B1CEED.
+				"EDIT" when part >= 1 && part <= 5 => (1, 0xffabadb3u, part == 1 && state == 4 ? 0xffb1ceedu : 0xffffffffu),
+				"SCROLLBAR" when part == 11 => (0, 0u, 0xfff0f0f0u),
+				_ => null,
+			};
+
+		internal static void DrawBorderFill (Graphics g, (int size, uint border, uint fill) p, Rectangle r)
+		{
+			using (var fill = new SolidBrush (Color.FromArgb ((int) p.fill)))
+				g.FillRectangle (fill, r);
+			if (p.size <= 0)
+				return;
+			using var border = new SolidBrush (Color.FromArgb ((int) p.border));
+			int n = Math.Min (p.size, Math.Min (r.Width, r.Height) / 2);
+			g.FillRectangle (border, r.X, r.Y, r.Width, n);
+			g.FillRectangle (border, r.X, r.Bottom - n, r.Width, n);
+			g.FillRectangle (border, r.X, r.Y + n, n, r.Height - 2 * n);
+			g.FillRectangle (border, r.Right - n, r.Y + n, n, r.Height - 2 * n);
 		}
 
 		/// <summary>The colour of a stretched frame's middle, when it is all one opaque colour.</summary>
@@ -124,8 +169,15 @@ namespace System.Windows.Forms.VisualStyles
 		/// <paramref name="size"/> takes: the margins one to one, the middle scaled.</summary>
 		static int Source (int d, int size, int source, int lo, int hi)
 		{
-			if (lo + hi >= size || lo + hi >= source)
+			if (lo + hi >= source)
 				return d * source / size;
+			if (lo + hi >= size) {
+				// Smaller than its two margins: they share the space in proportion, the far one
+				// still counted from the far end, and nothing is left for the middle.
+				int near = lo * size / (lo + hi), far = size - near;
+				return d < near ? d * lo / Math.Max (1, near)
+					: source - 1 - (size - 1 - d) * hi / Math.Max (1, far);
+			}
 			if (d < lo)
 				return d;
 			if (d >= size - hi)
@@ -199,6 +251,40 @@ namespace System.Windows.Forms.VisualStyles
 			return f;
 		}
 
+		/// <summary>Rasterizes each layer to its own per-pixel coverage and composites the layers
+		/// per PIXEL. Where two antialiased edges meet, this leaves the seam a little transparent
+		/// (1 - (1-a)(1-b) rather than a + b) -- which the tab frames were drawn with: their inner
+		/// corner, border meeting face, is not opaque.</summary>
+		internal static Frame RenderPerPixel (int width, int height, params Layer [] layers)
+		{
+			var f = new Frame (width, height);
+			for (int y = 0; y < height; y++)
+				for (int x = 0; x < width; x++) {
+					float a = 0, r = 0, g = 0, b = 0;
+					foreach (Layer l in layers) {
+						float la = 0, lr = 0, lg = 0, lb = 0;
+						for (int k = 0; k < 16; k++) {
+							float px = x + s_sx [k], py = y + s_sy [k];
+							if (!l.Shape (px, py))
+								continue;
+							uint c = l.Paint (px, py);
+							float ca = (c >> 24) / 255f;
+							la += ca;
+							lr += ((c >> 16) & 0xff) * ca;
+							lg += ((c >> 8) & 0xff) * ca;
+							lb += (c & 0xff) * ca;
+						}
+						float sa = la / 16;
+						r = lr / 16 + r * (1 - sa);
+						g = lg / 16 + g * (1 - sa);
+						b = lb / 16 + b * (1 - sa);
+						a = sa * 255 + a * (1 - sa);
+					}
+					f.Pixels [y * width + x] = Pack (a, r, g, b);
+				}
+			return f;
+		}
+
 		static uint Pack (float a, float r, float g, float b)
 			=> (uint) (int) (a + 0.5f) << 24 | (uint) (int) (r + 0.5f) << 16 | (uint) (int) (g + 0.5f) << 8 | (uint) (int) (b + 0.5f);
 
@@ -213,6 +299,20 @@ namespace System.Windows.Forms.VisualStyles
 				float dx = px - cx, dy = py - cy;
 				return dx * dx + dy * dy <= radius * radius;
 			};
+
+		/// <summary>A rectangle rounded at its two top corners only.</summary>
+		internal static Shape RoundTop (float x0, float y0, float x1, float y1, float radius)
+			=> (px, py) => {
+				if (px < x0 || px > x1 || py < y0 || py > y1)
+					return false;
+				if (py >= y0 + radius)
+					return true;
+				float cx = Math.Min (Math.Max (px, x0 + radius), x1 - radius), cy = y0 + radius;
+				return (px - cx) * (px - cx) + (py - cy) * (py - cy) <= radius * radius;
+			};
+
+		internal static Shape Box (float x0, float y0, float x1, float y1)
+			=> (px, py) => px >= x0 && px < x1 && py >= y0 && py < y1;
 
 		internal static Shape Circle (float cx, float cy, float radius)
 			=> (px, py) => (px - cx) * (px - cx) + (py - cy) * (py - cy) <= radius * radius;
@@ -250,13 +350,13 @@ namespace System.Windows.Forms.VisualStyles
 
 		static readonly Dictionary<(int cls, int part, int state), Frame> s_cache = new ();
 
-		const int Button = 1;
+		const int Button = 1, ComboBox = 2, Edit = 3, Tab = 4, TrackBar = 5, TreeView = 6, ScrollBar = 7;
 
 		/// <summary>The frame uxtheme would take for a part and state at 96 DPI, or null for a part
 		/// that is not drawn from a frame.</summary>
 		internal static Frame Get (string cls, int part, int state)
 		{
-			int c = cls switch { "BUTTON" => Button, _ => 0 };
+			int c = cls switch { "BUTTON" => Button, "COMBOBOX" => ComboBox, "EDIT" => Edit, "TAB" => Tab, "TRACKBAR" => TrackBar, "TREEVIEW" => TreeView, "SCROLLBAR" => ScrollBar, _ => 0 };
 			if (c == 0)
 				return null;
 			lock (s_cache) {
@@ -267,6 +367,41 @@ namespace System.Windows.Forms.VisualStyles
 						1 => PushButton (state),
 						2 => RadioButton (state),
 						3 => CheckBox (state),
+						_ => null,
+					},
+					ComboBox => part switch {
+						1 => DropDownButton (state),
+						4 => ComboBorder (state),
+						5 => ComboReadOnly (state),
+						6 or 7 => DropDownButtonSide (part, state),
+						_ => null,
+					},
+					Edit => part >= 6 && part <= 9 ? EditBorder (state) : null,
+					TrackBar => part switch {
+						1 or 2 => Stretched (Render (3, 3, new Layer (Box (0, 0, 3, 3), 0xffd6d6d6u), new Layer (Box (1, 1, 2, 2), 0xffe7eaeau)), 1, 1, 1, 1),
+						3 or 6 => Stretched (Render (6, 22, new Layer (Box (0, 0, 5, 21), Thumb (state, true))), 2, 3, part == 3 ? 9 : 5, part == 3 ? 9 : 5),
+						4 => PointedThumb (11, 19, 0, 1, state),
+						5 => PointedThumb (11, 19, 0, -1, state),
+						7 => PointedThumb (19, 11, -1, 0, state),
+						8 => PointedThumb (19, 11, 1, 0, state),
+						_ => null,
+					},
+					TreeView => part == 2 ? TreeGlyph (state == 2) : null,
+					ScrollBar => part switch {
+						1 => ScrollArrow (state),
+						2 => Stretched (ScrollThumb (false, state), 11, 8, 8, 8),
+						3 => Stretched (ScrollThumb (true, state), 8, 8, 5, 5),
+						4 or 5 => Stretched (Render (1, 8, new Layer (Box (0, 0, 1, 8), ScrollFace), new Layer (Box (0, 0, 1, 1), 0xffffffffu)), 0, 0, 4, 3),
+						6 or 7 => Stretched (Render (14, 1, new Layer (Box (0, 0, 14, 1), ScrollFace), new Layer (Box (0, 0, 1, 1), 0xffffffffu)), 10, 3, 0, 0),
+						8 => new Frame (10, 9),
+						9 => new Frame (9, 10),
+						10 => SizeBox (),
+						_ => null,
+					},
+					Tab => part switch {
+						>= 1 and <= 8 => TabItem (part, state),
+						9 => TabPane (),
+						10 => Stretched (Render (1, 1, new Layer (Box (0, 0, 1, 1), 0xfff9f9f9u)), 0, 0, 0, 0),
 						_ => null,
 					},
 					_ => null,
@@ -342,6 +477,326 @@ namespace System.Windows.Forms.VisualStyles
 				layers.Add (new Layer (Circle (6.5f, 6.5f, dot), 0xffffffffu));
 			}
 			return Render (13, 13, layers.ToArray ());
+		}
+
+		/// <summary>A bordered field: the outer rounded rectangle is the border, its bottom
+		/// <paramref name="band"/> rows in <paramref name="bottom"/>, and the face a rounded
+		/// rectangle one pixel in (and <paramref name="faceBottom"/> up from the bottom).</summary>
+		static Frame Field (int w, int h, float r0, float r1, uint border, uint bottom, float band, uint face, float faceBottom)
+			=> Render (w, h,
+				new Layer (RoundRect (0, 0, w, h, r0), (x, y) => y >= h - band ? bottom : border),
+				new Layer (RoundRect (1, 1, w - 1, h - faceBottom, r1), face));
+
+		static Frame Stretched (Frame f, int l, int r, int t, int b)
+		{
+			f.Stretch = true;
+			f.Margins = (l, r, t, b);
+			return f;
+		}
+
+		/// <summary>The four looks the combo box's buttons share: normal, hot, pressed, disabled.</summary>
+		static (uint border, uint bottom, uint face) ComboLook (int state) => state switch {
+			2 => (0xff0078d4u, 0xff006cbeu, 0xffe5f1fbu),
+			3 => (0xff005fb7u, 0xff005fb7u, 0xffcce4f7u),
+			4 => (0xffeaeaeau, 0xffeaeaeau, 0xfffafafau),
+			_ => (0xffd2d2d2u, 0xffbcbcbcu, 0xfffdfdfdu),
+		};
+
+		/// <summary>CP_DROPDOWNBUTTON, 7x21 nine-grid 3/3/7/8, with the chevron over it.</summary>
+		internal static Frame DropDownButton (int state)
+		{
+			var (border, bottom, face) = ComboLook (state);
+			Frame f = Stretched (Field (7, 21, 2, 1, border, bottom, 1.0625f, face, 1), 3, 3, 7, 8);
+			f.Glyph = Chevron (state);
+			return f;
+		}
+
+		/// <summary>CP_READONLY, the face of a drop-down list: 7x21 nine-grid 3/3/4/4.</summary>
+		internal static Frame ComboReadOnly (int state)
+		{
+			var (border, bottom, face) = ComboLook (state);
+			return Stretched (Field (7, 21, 2, 1, border, bottom, 1.0625f, face, 1), 3, 3, 4, 4);
+		}
+
+		/// <summary>CP_DROPDOWNBUTTONRIGHT/LEFT, the button inside an editable combo box: nothing
+		/// but the chevron until the pointer is on it, then an accent-framed face.</summary>
+		internal static Frame DropDownButtonSide (int part, int state)
+		{
+			int w = part == 6 ? 5 : 6;
+			Frame f = state == 2 || state == 3
+				? Field (w, 23, 2, 1, ComboLook (state).border, ComboLook (state).border, 0, ComboLook (state).face, 1)
+				: new Frame (w, 23);
+			Stretched (f, part == 6 ? 2 : 3, 2, 7, 8);
+			f.Glyph = Chevron (state);
+			return f;
+		}
+
+		/// <summary>CP_BORDER, 5x5 nine-grid 2/2/2/2.</summary>
+		internal static Frame ComboBorder (int state)
+		{
+			(uint border, uint face) = state switch {
+				2 => (0xff8d8d8du, 0xfffcfcfcu),
+				3 => (0xff0078d4u, 0xffffffffu),
+				4 => (0xffc8c8c8u, 0xfffefefeu),
+				_ => (0xff8d8d8du, 0xffffffffu),
+			};
+			return Stretched (Field (5, 5, 2, 1, border, border, 1, face, 1), 2, 2, 2, 2);
+		}
+
+		/// <summary>EP_EDITBORDER_*, 5x5 nine-grid 2/2/2/2: a pale frame over a darker bottom
+		/// line, which turns into two rows of the accent while the field has the focus.</summary>
+		internal static Frame EditBorder (int state)
+		{
+			Frame f = state switch {
+				2 => Field (5, 5, 2, 1.25f, 0xffecececu, 0xff838383u, 1.3125f, 0xfffafafau, 1),
+				3 => Field (5, 5, 1.8125f, 0.5f, 0xffecececu, 0xff0067c0u, 2, 0xffffffffu, 2),
+				4 => Field (5, 5, 2, 1.25f, 0xffecececu, 0xffecececu, 1.3125f, 0xfffbfbfbu, 1),
+				_ => Field (5, 5, 2, 1.25f, 0xffecececu, 0xff838383u, 1.3125f, 0xfffefefeu, 1),
+			};
+			return Stretched (f, 2, 2, 2, 2);
+		}
+
+		/// <summary>TABP_TABITEM and its edge variants, 5x19 (7x19 for the right-edge ones) nine-grid
+		/// 2/2/13/4: rounded at the top only, and neighbouring tabs share a border, so a plain item
+		/// has none on its left. The border is a ring round the face, composited per pixel. States:
+		/// normal, hot, selected (both sides bordered, the bottom row opening into the pane), disabled,
+		/// focused.</summary>
+		internal static Frame TabItem (int part, int state)
+		{
+			(uint border, uint face) = state switch {
+				2 => (0xffe5e5e5u, 0xffedededu),
+				3 => (0xffe5e5e5u, 0xfff9f9f9u),
+				4 => (0xffd9d9d9u, 0xffecececu),
+				5 => (0xff0078d7u, 0xffffffffu),
+				_ => (0xffe5e5e5u, 0xfff3f3f3u),
+			};
+			bool leftEdge = part == 2 || part == 6, rightEdge = part == 3 || part == 7;
+			bool selected = state == 3;
+			bool left = selected || leftEdge;
+			int w = rightEdge ? 7 : 5;
+			float x0 = left ? 0 : -6, x1 = 5;
+			Shape outer = RoundTop (x0, 0, x1, 30, 2), inner = RoundTop (x0 + 1, 1, x1 - 1, 30, 1.125f);
+			Frame f = RenderPerPixel (w, 19, new Layer (Minus (outer, inner), border), new Layer (inner, face));
+			if (selected)
+				for (int x = 0; x < 5; x++)
+					f.Pixels [18 * w + x] = (leftEdge && x == 0) || (rightEdge && x == 4) ? border : face;
+			return Stretched (f, 2, rightEdge ? 4 : 2, 13, 4);
+		}
+
+		/// <summary>TABP_PANE, 5x4 nine-grid 1/3/1/2: a one-pixel frame round the page face, with
+		/// the tab control's own face showing in the two columns right of it and the row below.</summary>
+		static Frame TabPane ()
+			=> Stretched (Render (5, 4,
+				new Layer (Box (0, 0, 5, 4), 0xfff3f3f3u),
+				new Layer (Box (0, 0, 3, 3), 0xffe5e5e5u),
+				new Layer (Box (1, 1, 2, 2), 0xfff9f9f9u)), 1, 3, 1, 2);
+
+		const uint ScrollFace = 0xfff0f0f0u;
+
+		/// <summary>SBP_ARROWBTN: a 17x17 tile of the track (nine-grid 8/8/8/8) with the arrow as a
+		/// glyph over it. At rest the arrow is not drawn at all; hot, pressed, disabled and the
+		/// hover states show a soft-cornered triangle of translucent black, each its own size.
+		/// The states run up, down, left, right in fours (normal, hot, pressed, disabled), then the
+		/// four hover states.</summary>
+		static Frame ScrollArrow (int state)
+		{
+			int i = state - 1;
+			int dir = i < 16 ? i / 4 : i - 16, look = i < 16 ? i % 4 : 4;
+			// The track's white edge: down the left of a vertical bar's buttons, along the top of
+			// a horizontal one's.
+			Shape edge = dir < 2 ? Box (0, 0, 1, 17) : Box (0, 0, 17, 1);
+			Frame f = Stretched (Render (17, 17, new Layer (Box (0, 0, 17, 17), ScrollFace), new Layer (edge, 0xffffffffu)), 8, 8, 8, 8);
+			if (look > 0) {
+				f.Glyph = Arrow (dir, 13, s_arrows [dir, look - 1]);
+				// The glyph is picked by the button's smaller side (IMAGESELECTTYPE SIZE): the theme's
+				// MINSIZE1..3 give 13 px below 21, 16 px from 21, 20 px from 26; its fourth image, 32
+				// px, carries no MINSIZE and uxtheme takes it from 32 (the 39 and 52 px ones are never
+				// taken up to 80, measured).
+				f.LargerGlyphs = new [] { (21, Arrow (dir, 16, s_arrows16 [dir, look - 1])),
+							  (26, Arrow (dir, 20, s_arrows20 [dir, look - 1])),
+							  (32, Arrow (dir, 32, s_arrows32 [dir, look - 1])) };
+			}
+			return f;
+		}
+
+		// Apex, base, half-width, corner radius, alpha and centre of each arrow, by direction and
+		// look (hot, pressed, disabled, hover), fitted in the arrow's own up-pointing frame: the
+		// 13-pixel arrow, then the 16-, 20- and 32-pixel ones, which are not the small one scaled.
+		static readonly (float apex, float bse, float hw, float r, float a, float cx) [,] s_arrows = {
+			{ (2.8125f, 10.075f, 4.875f, 0.275f, 0.5781f, 7.0625f), (3.6719f, 9.45f, 4.1094f, 0.15f, 0.5781f, 7f),
+			  (3.625f, 9.6375f, 4.375f, 0.3375f, 0.3203f, 7f), (3.8438f, 9.5125f, 4.0625f, 0.4781f, 0.4453f, 7.0625f) },
+			{ (2.6719f, 8.7f, 4.375f, 0.65f, 0.5781f, 7f), (2.6719f, 8.45f, 4.1094f, 0.15f, 0.5781f, 7f),
+			  (2.625f, 8.6375f, 4.375f, 0.3375f, 0.3203f, 7f), (1.8125f, 8.95f, 4.8125f, 0f, 0.4531f, 7.0625f) },
+			{ (2.625f, 8.7f, 4.3438f, 0.65f, 0.5781f, 7.0234f), (2.5f, 8.6375f, 4.4375f, 0f, 0.5781f, 7.0625f),
+			  (2.5625f, 8.6375f, 4.3125f, 0.3375f, 0.3203f, 7.0625f), (2.3125f, 8.8875f, 4.9219f, 0.0875f, 0.4453f, 7.0625f) },
+			{ (2.625f, 8.7f, 4.3438f, 0.65f, 0.5781f, 6.9766f), (2.5f, 8.6375f, 4.4375f, 0f, 0.5781f, 6.9375f),
+			  (2.5625f, 8.6375f, 4.3125f, 0.3375f, 0.3203f, 6.9375f), (2.3125f, 8.8875f, 4.9219f, 0.0875f, 0.4453f, 6.9375f) },
+		};
+
+		static readonly (float apex, float bse, float hw, float r, float a, float cx) [,] s_arrows16 = {
+			{ (3.8678f, 12.2125f, 5.625f, 0.3385f, 0.5781f, 8.5048f), (4.863f, 11.3808f, 4.4327f, 0.0596f, 0.5781f, 8.4904f),
+			  (4.6412f, 11.674f, 4.8221f, 0.4154f, 0.3203f, 8.5529f), (4.7308f, 11.4577f, 4.4766f, 0.5884f, 0.4453f, 8.4423f) },
+			{ (3.0385f, 10.9577f, 5.1346f, 0.55f, 0.5781f, 8.4904f), (3.726f, 10.4625f, 4.4952f, 0f, 0.5781f, 8.4748f),
+			  (3.2308f, 10.8183f, 5.2596f, 0.1654f, 0.3203f, 8.4904f), (2.6995f, 11.0154f, 5.4856f, 0f, 0.4531f, 8.5048f) },
+			{ (2.9183f, 11.0202f, 4.9712f, 0.55f, 0.5781f, 8.3942f), (3.7175f, 10.4433f, 4.4615f, 0f, 0.5781f, 8.5048f),
+			  (3.0601f, 10.8495f, 5.1827f, 0.1654f, 0.3203f, 8.4423f), (2.7837f, 10.9697f, 5.4952f, 0f, 0.4531f, 8.4736f) },
+			{ (3.1526f, 10.9889f, 5.1353f, 0.55f, 0.5781f, 8.5241f), (3.7097f, 10.4433f, 4.4928f, 0f, 0.5781f, 8.5385f),
+			  (3.0288f, 10.8105f, 5.1202f, 0.1654f, 0.3203f, 8.5385f), (2.7837f, 11.0166f, 5.6202f, 0f, 0.4453f, 8.5072f) },
+		};
+
+		static readonly (float apex, float bse, float hw, float r, float a, float cx) [,] s_arrows20 = {
+			{ (5.5144f, 16.0625f, 7.3125f, 0f, 0.5781f, 10.6154f), (7.2116f, 14.851f, 5.5097f, 0f, 0.5781f, 10.5505f),
+			  (5.9832f, 15.5301f, 6.6839f, 0.0192f, 0.3203f, 10.5192f), (6.8354f, 15.0721f, 5.6563f, 0.4855f, 0.4453f, 10.5998f) },
+			{ (4.2981f, 13.5096f, 6.4495f, 0.5f, 0.5781f, 10.5192f), (5.1966f, 12.875f, 5.4472f, 0f, 0.5781f, 10.5192f),
+			  (4.6635f, 13.226f, 6.2308f, 0.3005f, 0.3203f, 10.5192f), (4.2728f, 13.488f, 6.7788f, 0f, 0.4453f, 10.4904f) },
+			{ (4.1635f, 13.4784f, 6.3078f, 0.5f, 0.5781f, 10.4927f), (5.1665f, 12.851f, 5.5144f, 0f, 0.5781f, 10.4904f),
+			  (4.5986f, 13.2885f, 6.1346f, 0.2692f, 0.3203f, 10.6154f), (4.0733f, 13.5325f, 6.8847f, 0f, 0.4453f, 10.4904f) },
+			{ (5.101f, 14.494f, 6.339f, 0.5f, 0.5781f, 10.4832f), (5.7837f, 13.851f, 5.2644f, 0f, 0.5781f, 10.5481f),
+			  (5.1298f, 14.476f, 6.8534f, 0f, 0.3203f, 10.5168f), (4.9249f, 14.4934f, 6.6972f, 0f, 0.4453f, 10.4856f) },
+		};
+
+		static readonly (float apex, float bse, float hw, float r, float a, float cx) [,] s_arrows32 = {
+			{ (4.7668f, 22.55f, 12.3438f, 0f, 0.5781f, 17.0096f), (7.9135f, 20.449f, 8.9279f, 0f, 0.5781f, 16.9808f),
+			  (6.3606f, 21.4731f, 10.9411f, 0.0808f, 0.3203f, 17.0433f), (6.4929f, 21.4154f, 10.8594f, 0.1769f, 0.4453f, 17.0096f) },
+			{ (6.827f, 21.3763f, 10.2849f, 1.1f, 0.5781f, 16.9886f), (8.1864f, 20.3f, 8.7404f, 0.1192f, 0.5781f, 16.9808f),
+			  (6.649f, 21.199f, 10.3317f, 0.3308f, 0.3203f, 16.9808f), (5.8678f, 21.5308f, 10.9087f, 0f, 0.4453f, 17.0096f) },
+			{ (6.8209f, 21.3841f, 10.2237f, 1.1f, 0.5781f, 17.0071f), (7.982f, 20.449f, 8.9543f, 0f, 0.5781f, 17.0252f),
+			  (6.6749f, 21.1678f, 10.3966f, 0.3308f, 0.3203f, 17.0096f), (6.2236f, 21.5097f, 11.1155f, 0f, 0.4453f, 17.0096f) },
+			{ (6.7897f, 21.4154f, 10.1924f, 1.1f, 0.5781f, 16.9857f), (8.0288f, 20.449f, 9.0481f, 0f, 0.5781f, 17.0144f),
+			  (6.7452f, 21.1678f, 10.4279f, 0.3308f, 0.3203f, 16.9519f), (6.2079f, 21.5019f, 11.0842f, 0f, 0.4453f, 16.9597f) },
+		};
+
+		static Frame Arrow (int dir, int n, (float apex, float bse, float hw, float r, float a, float cx) t)
+		{
+			Shape up = Triangle (t.cx, t.apex, t.bse, t.hw, t.r);
+			Shape shape = dir switch {
+				1 => (x, y) => up (x, n - y),
+				2 => (x, y) => up (y, x),
+				3 => (x, y) => up (y, n - x),
+				_ => up,
+			};
+			return Render (n, n, new Layer (shape, (uint) Math.Round (t.a * 255) << 24));
+		}
+
+		/// <summary>An upward triangle -- apex at (<paramref name="cx"/>, <paramref name="apex"/>),
+		/// base on y = <paramref name="bse"/>, <paramref name="hw"/> either side -- grown by
+		/// <paramref name="r"/>, which rounds its corners.</summary>
+		static Shape Triangle (float cx, float apex, float bse, float hw, float r)
+			=> (px, py) => {
+				if (py <= bse && py >= apex && Math.Abs (px - cx) <= hw * (py - apex) / (bse - apex))
+					return true;
+				float d = Math.Min (SegmentDistance (px, py, cx, apex, cx + hw, bse),
+					  Math.Min (SegmentDistance (px, py, cx + hw, bse, cx - hw, bse),
+						    SegmentDistance (px, py, cx - hw, bse, cx, apex)));
+				return d <= r;
+			};
+
+		static float SegmentDistance (float px, float py, float ax, float ay, float bx, float by)
+		{
+			float dx = bx - ax, dy = by - ay;
+			float t = Math.Clamp (((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy), 0, 1);
+			float ex = ax + t * dx - px, ey = ay + t * dy - py;
+			return MathF.Sqrt (ex * ex + ey * ey);
+		}
+
+		/// <summary>SBP_THUMBBTNVERT (17x11) / THUMBBTNHORZ (20x17): a tile of the track with a
+		/// bar down its middle -- two pixels wide at rest, six and rounded under the pointer or
+		/// while dragged, and not there at all when the bar is disabled.</summary>
+		static Frame ScrollThumb (bool vertical, int state)
+		{
+			int w = vertical ? 17 : 20, h = vertical ? 11 : 17;
+			var layers = new List<Layer> {
+				new Layer (Box (0, 0, w, h), ScrollFace),
+				new Layer (vertical ? Box (0, 0, 1, h) : Box (0, 0, w, 1), 0xffffffffu),
+			};
+			if (state != 4) {
+				(float a0, float a1, float r) = state == 1 ? (8f, 10f, 0.75f) : (6f, 12f, 3f);
+				layers.Add (new Layer (vertical ? RoundRect (a0, 0, a1, h, r) : RoundRect (0, a0, w, a1, r), 0xff858585u));
+			}
+			return Render (w, h, layers.ToArray ());
+		}
+
+		/// <summary>SBP_SIZEBOX, 16x16: six 2x2 dots stacked into a triangle in the corner.</summary>
+		static Frame SizeBox ()
+		{
+			var layers = new List<Layer> ();
+			foreach (var (x, y) in new [] { (12, 6), (9, 9), (12, 9), (6, 12), (9, 12), (12, 12) })
+				layers.Add (new Layer (Box (x, y, x + 2, y + 2), 0xffbfbfbfu));
+			return Render (16, 16, layers.ToArray ());
+		}
+
+		/// <summary>TVP_GLYPH, 9x9 true size: a square with its corners softened, a face banded
+		/// darker toward the bottom, and a plus (closed) or minus (open) in two blues -- the
+		/// horizontal stroke over the vertical one.</summary>
+		static Frame TreeGlyph (bool open)
+		{
+			var layers = new List<Layer> {
+				new Layer (Box (0, 0, 9, 9), 0xff919191u),
+				new Layer ((x, y) => (x < 1 || x >= 8) && (y < 1 || y >= 8), 0xffbabbbcu),
+			};
+			// The face, a band at a time: the closed glyph starts two rows lighter than the open one.
+			uint [] bands = open
+				? new [] { 0xfffafbfbu, 0xfffafbfbu, 0xfffafbfbu, 0xffededecu, 0xffededecu, 0xffe3e3e3u, 0xffe3e3e3u }
+				: new [] { 0xfffcfcfcu, 0xfffcfcfcu, 0xfffafbfbu, 0xfffafbfbu, 0xffededecu, 0xffe3e3e3u, 0xffe3e3e3u };
+			for (int row = 0; row < 7; row++) {
+				layers.Add (new Layer (Box (1, 1 + row, 8, 2 + row), bands [row]));
+			}
+			if (!open)
+				layers.Add (new Layer (Box (4, 2, 5, 7), 0xff294272u));
+			layers.Add (new Layer (Box (2, 4, 7, 5), 0xff4b63a7u));
+			return Render (9, 9, layers.ToArray ());
+		}
+
+		/// <summary>A trackbar thumb's colour: normal, hot, pressed, focused, disabled. The plain
+		/// thumb's rest colour is a shade off the pointed ones'.</summary>
+		static uint Thumb (int state, bool plain) => state switch {
+			2 => 0xff171717u,
+			3 or 5 => 0xffccccccu,
+			4 => 0xff0078d7u,
+			_ => plain ? 0xff007ad9u : 0xff0078d7u,
+		};
+
+		/// <summary>TKP_THUMBBOTTOM/TOP/LEFT/RIGHT: a solid body and a 45-degree point
+		/// (<paramref name="dx"/>, <paramref name="dy"/> the way it points) whose edge pixels are
+		/// half covered. A half is 127.5, which the theme rounds down on an edge facing up and up on
+		/// one facing down.</summary>
+		static Frame PointedThumb (int w, int h, int dx, int dy, int state)
+		{
+			uint c = Thumb (state, false);
+			var f = new Frame (w, h);
+			int across = dy != 0 ? w : h, along = dy != 0 ? h : w;
+			int tip = (across + 1) / 2;                         // rows the point takes
+			for (int i = 0; i < along; i++) {
+				// i counts from the flat end toward the point.
+				int inset = Math.Max (0, i - (along - tip));    // how far this row is cut in on each side
+				for (int j = 0; j < across; j++) {
+					int from = Math.Min (j, across - 1 - j);    // distance in from the nearer side
+					if (from < inset - 1)
+						continue;
+					uint a = 255;
+					if (from == inset - 1) {
+						// The edge faces up when the point itself is up, or when the point runs
+						// sideways and this is its upper edge.
+						bool facesUp = dy < 0 || (dy == 0 && j < across / 2);
+						a = facesUp ? 127u : 128u;
+					}
+					int x = dy != 0 ? j : (dx > 0 ? i : w - 1 - i);
+					int y = dy != 0 ? (dy > 0 ? i : h - 1 - i) : j;
+					f.Pixels [y * w + x] = Premultiply (c, a);
+				}
+			}
+			return f;
+		}
+
+		static uint Premultiply (uint c, uint a)
+			=> a << 24 | (uint) Math.Round (((c >> 16) & 0xff) * a / 255.0) << 16
+			 | (uint) Math.Round (((c >> 8) & 0xff) * a / 255.0) << 8 | (uint) Math.Round ((c & 0xff) * a / 255.0);
+
+		/// <summary>The combo box's chevron, 10x19: a stroke, not quite opaque, in the state's ink.</summary>
+		static Frame Chevron (int state)
+		{
+			uint ink = state switch { 2 => 0x1f1f1fu, 4 => 0xa8a8a8u, _ => 0x3f3f3fu };
+			return Render (10, 19, new Layer (Stroke (1, 1.3281f, 8.1875f, 5, 11.75f, 8.6719f, 8.1875f), 0xd9000000u | ink));
 		}
 
 		/// <summary>The border and face of an unmarked check box or radio button.</summary>
