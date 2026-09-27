@@ -80,8 +80,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return Scan(figures, nSub, dropout);
         }
 
+        private static readonly bool s_noDropout = Environment.GetEnvironmentVariable("WPF_NCT_NODROPOUT") == "1";
+
         private static GlyphBits Scan(List<PathFigure> figures, int nSub, int dropout)
         {
+            if (s_noDropout) dropout = 0;
             if (figures.Count == 0) return s_empty;
 
             float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;

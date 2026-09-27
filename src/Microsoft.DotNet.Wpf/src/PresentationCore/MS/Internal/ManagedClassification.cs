@@ -32,6 +32,10 @@ namespace MS.Internal
         private const int C_ComplexRTL = 8;     // Arabic/Hebrew (RTL + shaping)
         private const int C_Ideographic = 9;    // CJK
         private const int C_Combining = 10;     // combining marks
+        private const int C_Hebrew = 11;        // Hebrew letters (RTL + shaping, its own script)
+        private const int C_RtlMark = 12;       // Hebrew points, Arabic harakat: marks, bidi NSM
+        private const int C_ArabicNumber = 13;  // U+0660..0669: bidi AN
+        private const int C_ArabicDigit = 14;   // U+06F0..06F9: bidi EN
 
         // Enum numeric values (from MS/internal/UnicodeClasses.cs), inlined to avoid a hard
         // dependency ordering; kept in sync with those enums.
@@ -48,7 +52,7 @@ namespace MS.Internal
 
         private static CharacterAttribute[] BuildTemplates()
         {
-            var t = new CharacterAttribute[11];
+            var t = new CharacterAttribute[15];
             // NOTE: CharacterLineBreak (0x4) must ONLY be on actual break characters
             // (CR/LF/NEL/VT/FF/LS/PS -> C_CRLF). Putting it on spaces/controls makes
             // TextStore substitute them with U+2028 markers, which hard-breaks the
@@ -64,6 +68,15 @@ namespace MS.Internal
             t[C_ComplexRTL]   = Make(0x01, 5, 0x0001 | 0x0002 | 0x0800, 0, 1);
             t[C_Ideographic]  = Make(0x0A, 5, 0x0020 | 0x0800,   0, 0);   // CharacterIdeo
             t[C_Combining]    = Make(0x00, 7, 0x0000,             0, 8);
+            // Hebrew is a script of its own: DWrite itemizes "shalom marhaba" as two items, and a
+            // face's Hebrew and Arabic features must not run over each other's letters.
+            t[C_Hebrew]       = Make(0x19, 5, 0x0001 | 0x0002 | 0x0800, 0, 1);
+            // A point or haraka is a MARK: transparent to Arabic joining, attached by GPOS mark
+            // positioning, and a non-spacing mark to the bidi algorithm. As a strong letter it broke
+            // joining around it and was never positioned.
+            t[C_RtlMark]      = Make(0x00, 8, 0x0001,             0, 8);
+            t[C_ArabicNumber] = Make(0x3D, 0, 0x0100,             2, 2);
+            t[C_ArabicDigit]  = Make(0x3D, 0, 0x0100,             2, 3);
             return t;
         }
 
@@ -120,8 +133,22 @@ namespace MS.Internal
                 (cp >= 0x1E00 && cp <= 0x1FFF) || (cp >= 0x2C00 && cp <= 0x2C5F))
                 return C_SimpleLetter;
 
-            // Hebrew + Arabic: RTL + shaping.
-            if (cp >= 0x0590 && cp <= 0x08FF) return C_ComplexRTL;
+            // Hebrew + Arabic (and the RTL blocks after them): RTL + shaping, marks and digits apart.
+            if ((cp >= 0x0590 && cp <= 0x08FF) || (cp >= 0xFB1D && cp <= 0xFDFF) || (cp >= 0xFE70 && cp <= 0xFEFF))
+            {
+                if (cp >= 0x0660 && cp <= 0x0669) return C_ArabicNumber;
+                if (cp >= 0x06F0 && cp <= 0x06F9) return C_ArabicDigit;
+                switch (CharUnicodeInfo.GetUnicodeCategory((char)cp))
+                {
+                    case UnicodeCategory.NonSpacingMark:
+                    case UnicodeCategory.SpacingCombiningMark:
+                    case UnicodeCategory.EnclosingMark:
+                        return C_RtlMark;
+                    case UnicodeCategory.Format:        // ALM, the Arabic number signs, U+FEFF
+                        return C_Control;
+                }
+                return (short)((cp <= 0x05FF || cp <= 0xFB4F && cp >= 0xFB1D) ? C_Hebrew : C_ComplexRTL);
+            }
 
             // General punctuation / symbols / currency.
             if ((cp >= 0x2000 && cp <= 0x206F) || (cp >= 0x20A0 && cp <= 0x20CF) ||

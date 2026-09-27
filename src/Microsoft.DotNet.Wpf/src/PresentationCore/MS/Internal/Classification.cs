@@ -144,8 +144,16 @@ namespace MS.Internal
         /// </summary>
         public int GetScript(int unicodeScalar)
         {
-            ScriptID script = (ScriptID)Classification.CharAttributeOf((int)Classification.GetUnicodeClass(unicodeScalar)).Script;
-            return script is ScriptID.Default or ScriptID.Digit or ScriptID.Mirror or ScriptID.Control
+            CharacterAttribute charAttribute = Classification.CharAttributeOf((int)Classification.GetUnicodeClass(unicodeScalar));
+            ScriptID script = (ScriptID)charAttribute.Script;
+            // WPF's table files the space and ASCII punctuation under Latin, but they are neutrals:
+            // DWrite gives them the Common script, so a space between two Hebrew words is
+            // Hebrew and the phrase is one item. Only strong characters and marks carry a script.
+            byte itemClass = charAttribute.ItemClass;
+            bool neutral = itemClass != (byte)ItemClass.StrongClass
+                        && itemClass != (byte)ItemClass.SimpleMarkClass
+                        && itemClass != (byte)ItemClass.ComplexMarkClass;
+            return neutral || script is ScriptID.Default or ScriptID.Digit or ScriptID.Mirror or ScriptID.Control
                 ? 0
                 : (int)script;
         }

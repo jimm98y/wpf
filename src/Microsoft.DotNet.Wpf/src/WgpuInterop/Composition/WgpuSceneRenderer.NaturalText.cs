@@ -91,6 +91,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (clip.IsEmpty) return;
             float scale = world.M11;
+            // An axis-aligned rectangle clip, in device pixels. wpfgfx antialiases its edges the way
+            // its rasterizer does everything (see EdgeCoverage): the text in a pixel an edge cuts is
+            // lerped from the paper by the clip's share of the samples.
+            float cx0 = 0, cy0 = 0, cx1 = 0, cy1 = 0;
+            bool rectClip = false;
+            if (run.ClipRect is Rect cr && world.M12 == 0f && world.M21 == 0f)
+            {
+                Vector2 c0 = Vector2.Transform(new Vector2((float)cr.X, (float)cr.Y), world);
+                Vector2 c1 = Vector2.Transform(new Vector2((float)(cr.X + cr.Width), (float)(cr.Y + cr.Height)), world);
+                cx0 = MathF.Min(c0.X, c1.X); cy0 = MathF.Min(c0.Y, c1.Y);
+                cx1 = MathF.Max(c0.X, c1.X); cy1 = MathF.Max(c0.Y, c1.Y);
+                int x0 = (int)MathF.Floor(cx0), y0 = (int)MathF.Floor(cy0);
+                int x1 = (int)MathF.Ceiling(cx1), y1 = (int)MathF.Ceiling(cy1);
+                clip = Intersect(clip, new Scissor(x0, y0, x1 - x0, y1 - y0));
+                if (clip.IsEmpty) return;
+                rectClip = true;
+            }
             float ppem = run.EmSize * scale;
             // wpfgfx realizes ClearType only for an opaque target and an axis-aligned, unskewed scale.
             bool drawable = ClearType && !_transparentTarget
@@ -127,6 +144,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 bits[i] = gb;
                 xs[i] = run.X[i] * scale;
                 ys[i] = run.Y[i] * scale;
+                // Right to left, a glyph sits one nominal advance left of the pen; a display run's
+                // nominal advance is GDI's whole pixels at this size, not the scaled design width.
+                if (display && run.RtlNominal is { } nominal)
+                {
+                    int gdi = (int)MathF.Round(run.Font.DeviceAdvance(run.Glyphs[i], (int)MathF.Round(ppem, MidpointRounding.AwayFromZero)));
+                    xs[i] += nominal[i] * scale - gdi;
+                }
             }
 
             // The run's device origin: x where it falls, y on the baseline's whole pixel.
@@ -177,13 +201,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     key = key * 397 ^ (1L << 40 | (long)ToByte(pp.R) << 16 | (long)ToByte(pp.G) << 8 | ToByte(pp.B));
             }
 
+            // The clip's samples over the mask's columns and rows, where an edge cuts them.
+            byte[]? colCover = null, rowCover = null;
+            if (rectClip)
+            {
+                colCover = EdgeCoverage(px0, mw, cx0, cx1, 16);
+                rowCover = EdgeCoverage(py0, mh, cy0, cy1, 8);
+                unchecked
+                {
+                    if (colCover is not null) foreach (byte b in colCover) key = key * 11 + b;
+                    if (rowCover is not null) foreach (byte b in rowCover) key = key * 13 + b;
+                }
+            }
+
             if (!_maskCache.TryGetValue(key, out CachedMask? cm))
             {
                 // Made only on a miss: the texture, then wpfgfx's resolve of it on this pixel grid.
                 PerfCoverage++;
                 byte[] tex = Text.NaturalClearType.RunTexture(bits, xs, ys, out _, out _, out _, out _, nSub);
                 byte[] rgba = WpfNaturalMask(tex, tl, tw, th, frac, px0 - oxi, mw, ink, alpha, paper,
-                    display ? s_wpfDisplayGammaIndex : s_wpfGammaIndex, display ? s_identityTable : s_wpfContrastTable);
+                    display ? s_wpfDisplayGammaIndex : s_wpfGammaIndex, display ? s_identityTable : s_wpfContrastTable,
+                    colCover, rowCover);
                 (IntPtr t, IntPtr view) = CreateRgbaTexture(rgba, mw, mh);
                 cm = new CachedMask
                 {
@@ -204,7 +242,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// resolve it on this pixel grid (see the file header). <paramref name="maskLeft"/> is the
         /// mask's first column relative to the origin's whole pixel.</summary>
         private static byte[] WpfNaturalMask(byte[] tex, int texLeft, int texWidth, int texHeight, float frac,
-            int maskLeft, int maskWidth, RgbaColor ink, float alpha, RgbaColor? paper, int gi, byte[] ect)
+            int maskLeft, int maskWidth, RgbaColor ink, float alpha, RgbaColor? paper, int gi, byte[] ect,
+            byte[]? colCover = null, byte[]? rowCover = null)
         {
             float g1 = s_wpfGammaRatios[gi, 0], g2 = s_wpfGammaRatios[gi, 1];
             float g3 = s_wpfGammaRatios[gi, 2], g4 = s_wpfGammaRatios[gi, 3];
@@ -235,6 +274,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         float a = (t0 * (1f - w) + t1 * w) / 255f * alpha;
                         float a2 = a + a * (1f - a) * ((g1 * f[k] + g2) * a + (g3 * f[k] + g4));
                         a2 = Math.Clamp(a2, 0f, 1f);
+                        // A clip edge through this pixel: the text's share of it (see EdgeCoverage).
+                        int cover = (colCover?[j] ?? 16) * (rowCover?[row] ?? 8);
+                        if (cover < 128)
+                        {
+                            a2 *= cover / 128f;
+                            if (cover == 0) a = 0f;
+                        }
                         byte m;
                         if (a <= 0f) m = 0;
                         else if (bg is not null)
@@ -251,6 +297,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
             }
             return rgba;
+        }
+
+        /// <summary>How many of wpfgfx's rasterizer samples in each of <paramref name="count"/>
+        /// pixels from <paramref name="first"/> fall inside [lo, hi) -- or null when all of them do.
+        /// The edges are snapped to 28.4 fixed point first; a pixel has 16 samples across and 8
+        /// down (<paramref name="samples"/>), each 1/32 px into its cell. Measured on five clip
+        /// edges: left 28.3 -> 11/16 and 41.7 -> 5/16; bottom 365.267 -> 2/8, 388.067 -> 1/8 and
+        /// 439.417 -> 4/8.</summary>
+        private static byte[]? EdgeCoverage(int first, int count, float lo, float hi, int samples)
+        {
+            float lo16 = MathF.Floor(lo * 16f + 0.5f) / 16f, hi16 = MathF.Floor(hi * 16f + 0.5f) / 16f;
+            byte[]? cover = null;
+            for (int i = 0; i < count; i++)
+            {
+                int inside = 0;
+                for (int k = 0; k < samples; k++)
+                {
+                    float sample = first + i + (float)k / samples + 1f / 32f;
+                    if (sample >= lo16 && sample < hi16) inside++;
+                }
+                if (inside < samples)
+                {
+                    if (cover is null) { cover = new byte[count]; Array.Fill(cover, (byte)samples); }
+                    cover[i] = (byte)inside;
+                }
+            }
+            return cover;
         }
     }
 }

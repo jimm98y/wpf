@@ -252,6 +252,104 @@ namespace MS.Internal.TextFormatting
             forFace[new string(text, 0, charCount)] = run;
         }
 
+        /// <summary>
+        ///  The mark order DirectWrite's Hebrew engine shapes in (TextShaping.dll,
+        ///  ShapingLibraryInternal::NeedsReorder / VerifyCharacterOrder): each run of marks after a
+        ///  base is stably sorted by <see cref="HebrewReorderClass"/>, so a shin dot or a dagesh typed
+        ///  after the vowel still reaches the base first and the face's ccmp ligature (shin + shin dot)
+        ///  applies. Marks of one class keep their order -- a meteg stays on whichever side of the
+        ///  qamats it was typed. The reordered cluster becomes one: every character in it maps to the
+        ///  base glyph, as DirectWrite's cluster map has it.
+        /// </summary>
+        private static unsafe void ReorderHebrewMarks(char* text, int charCount, ushort* glyphs, int glyphCount, ushort* clusterMap)
+        {
+            if (charCount != glyphCount)
+            {
+                return;   // nominal runs are one glyph per character; Hebrew has no surrogates
+            }
+
+            int c = 0;
+            while (c < charCount)
+            {
+                if (HebrewReorderClass(text[c]) is 0 or 10 or 11)
+                {
+                    c++;
+                    continue;
+                }
+                int start = c;
+                bool sorted = true;
+                int previous = 0;
+                while (c < charCount && HebrewReorderClass(text[c]) is int k && k is not (0 or 10 or 11))
+                {
+                    if (k < previous) sorted = false;
+                    previous = k;
+                    c++;
+                }
+                if (sorted || start == 0)
+                {
+                    continue;
+                }
+
+                // Stable insertion sort of glyphs [start, c) by their characters' classes. The text
+                // itself is the caller's and stays as it is.
+                Span<int> classes = stackalloc int[c - start];
+                for (int i = start; i < c; i++)
+                {
+                    classes[i - start] = HebrewReorderClass(text[i]);
+                }
+                for (int i = 1; i < classes.Length; i++)
+                {
+                    int k = classes[i];
+                    ushort gl = glyphs[start + i];
+                    int j = i - 1;
+                    while (j >= 0 && classes[j] > k)
+                    {
+                        classes[j + 1] = classes[j];
+                        glyphs[start + j + 1] = glyphs[start + j];
+                        j--;
+                    }
+                    classes[j + 1] = k;
+                    glyphs[start + j + 1] = gl;
+                }
+                for (int i = start; i < c; i++)
+                {
+                    clusterMap[i] = clusterMap[start - 1];
+                }
+            }
+        }
+
+        /// <summary>TextShaping.dll's GetReorderClass: the high nibble of byHebrewCharAttribute for
+        /// U+0590..05FF, and a few marks outside the block. 0 is a base, 10 (CGJ) and 11 (ZWJ,
+        /// ZWNJ) end a mark run.</summary>
+        private static int HebrewReorderClass(char ch)
+        {
+            if (ch >= 0x0590 && ch < 0x0600)
+            {
+                return ch - 0x0590 < s_hebrewReorderClass.Length ? s_hebrewReorderClass[ch - 0x0590] : 0;
+            }
+            return ch switch
+            {
+                '̇' or '̈' => 9,
+                '͏' => 10,
+                '̣' => 4,
+                '‌' or '‍' => 11,
+                'ﬞ' => 2,
+                _ => 0,
+            };
+        }
+
+        private static readonly byte[] s_hebrewReorderClass =
+        {
+            // 0590
+            0, 4, 6, 6, 6, 6, 4, 6, 6, 6, 5, 4, 6, 6, 6, 6,
+            // 05A0
+            6, 6, 4, 4, 4, 4, 4, 4, 6, 6, 4, 6, 6, 5, 7, 8,
+            // 05B0: sheva..qamats 4, holam 3, dagesh 2, meteg 4, rafe 2, shin/sin dot 1
+            4, 4, 4, 4, 4, 4, 4, 4, 4, 3, 3, 4, 2, 4, 0, 2,
+            // 05C0
+            0, 1, 1, 0, 6, 4, 0, 4,
+        };
+
         private static unsafe int SubstituteCore(
             GlyphTypeface glyphTypeface,
             char*         text,
@@ -263,6 +361,8 @@ namespace MS.Internal.TextFormatting
             int*          canGlyphAlone
             )
         {
+            ReorderHebrewMarks(text, charCount, glyphs, glyphCount, clusterMap);
+
             FontFaceLayoutInfo layout = glyphTypeface.FontFaceLayoutInfo;
             if (layout == null || layout.Gsub() == null)
             {
@@ -493,7 +593,10 @@ namespace MS.Internal.TextFormatting
                 advances[g] = advances[g] == nominal
                     ? (int)Math.Round(workAdvances[g] * designToIdeal)
                     : advances[g] + Round((workAdvances[g] - designAdvances[g]) * designToIdeal);
-                offsets[g].du += Round(workOffsets[g].dx * designToIdeal);
+                // The engine's dx is physical (+ right); DirectWrite's offset runs in the reading
+                // direction, so a right-to-left run's is the negation (a qamats DirectWrite puts at
+                // -4.16 the engine puts at +4.16).
+                offsets[g].du += Round((isRightToLeft ? -workOffsets[g].dx : workOffsets[g].dx) * designToIdeal);
                 offsets[g].dv += Round(workOffsets[g].dy * designToIdeal);
             }
         }

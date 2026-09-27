@@ -2443,17 +2443,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // otherwise have been goes along as its fallback. Anything else is emitted as outlines,
             // as before.
             bool natural = NaturalText && run.MeasuringMode <= 1 && font is Text.TrueTypeFont { Simulated: false }
-                           && brush is SolidColorBrush && state.Clip is null
+                           && brush is SolidColorBrush && state.Clip is null or RectangleGeometry
                            && state.Transform.M11 == 1f && state.Transform.M22 == 1f
-                           && state.Transform.M12 == 0f && state.Transform.M21 == 0f
-                           && (run.BidiLevel & 1) == 0;
+                           && state.Transform.M12 == 0f && state.Transform.M21 == 0f;
             if (s_naturalWhy && !natural)
                 Console.Error.WriteLine("[natural-why] " + (run.MeasuringMode > 1 ? "mode" + run.MeasuringMode
                     : font is not Text.TrueTypeFont ? "font" : brush is not SolidColorBrush ? "brush"
-                    : state.Clip is not null ? "clip" : (run.BidiLevel & 1) != 0 ? "rtl" : "transform"));
+                    : state.Clip is not null and not RectangleGeometry ? "clip" : "transform"));
             List<DrawingPrimitive> sink = natural ? new List<DrawingPrimitive>(run.Indices.Length) : output;
             float[]? gxs = natural ? new float[run.Indices.Length] : null;
             float[]? gys = natural ? new float[run.Indices.Length] : null;
+            float[]? nominals = natural && (run.BidiLevel & 1) != 0 ? new float[run.Indices.Length] : null;
 
             // A right-to-left run anchors its baseline origin at its RIGHT edge and marches leftward
             // from there, with each glyph placed one of its OWN advances further left -- which is
@@ -2479,6 +2479,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         : (i < run.Advances.Length ? run.Advances[i] : 0f);
                     penX = run.Origin.X - accumulated - nominal;
                     offsetX = -offsetX;
+                    if (nominals is not null) nominals[i] = nominal;
                 }
 
                 float gx = penX + offsetX;
@@ -2536,7 +2537,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (natural)
                     output.Add(new WpfTextRunDraw((Text.TrueTypeFont)font, run.EmSize, run.Indices, gxs!, gys!,
                         Vector2.Transform(run.Origin, state.Transform), ((SolidColorBrush)brush).Color, sink,
-                        display: run.MeasuringMode == 1));
+                        display: run.MeasuringMode == 1)
+                    { ClipRect = (state.Clip as RectangleGeometry)?.Rect, RtlNominal = nominals });
                 else
                     output.AddRange(sink);
             }

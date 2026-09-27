@@ -219,6 +219,12 @@ namespace MS.Internal.Text.TextInterface
                 }
             }
 
+            // Except whitespace at the very START of the text: DWrite leaves it an item of its own
+            // (" abc" and " (abc" are two items, "( abc" and "1 abc" one). The text is a bidi
+            // level run, so this is what splits the space after a Hebrew word from a Latin one.
+            for (int i = 0; i < n && char.IsWhiteSpace(text[i]) && script[i] != NoVisualScript; i++)
+                script[i] = LeadingWhitespace;
+
             int start = 0;
             for (int i = 1; i <= n; i++)
             {
@@ -258,6 +264,7 @@ namespace MS.Internal.Text.TextInterface
         private const int Unresolved = -1;
         private const int NoVisualScript = -2;
         private const int CommonScript = 0;
+        private const int LeadingWhitespace = -3;
 
         public static void AnalyzeExtendedCharactersAndDigits(
             char* text,

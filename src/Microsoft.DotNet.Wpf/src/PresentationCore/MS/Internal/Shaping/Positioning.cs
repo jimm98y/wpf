@@ -252,8 +252,18 @@ namespace MS.Internal.Shaping
 
             if ((format&XAdvanceFlag)!=0) 
             {
-                    GlyphAdvance += Positioning.DesignToPixels(Metrics.DesignEmHeight,Metrics.PixelsEmWidth,
+                    int xAdvance = Positioning.DesignToPixels(Metrics.DesignEmHeight,Metrics.PixelsEmWidth,
                                                                     Table.GetShort(curOffset));
+                    GlyphAdvance += xAdvance;
+                    // Right to left, DirectWrite (like Uniscribe before it) moves the glyph with its
+                    // advance as well: its reading-direction offset is XAdvance - XPlacement (the
+                    // shaper negates dx for RTL). Hence RTL faces kern with both set to one value --
+                    // Segoe UI's lamed + final mem, -50/-50, comes back as offset 0 -- while Calibri's
+                    // XAdvance-only -765 on yeh barree after dal comes back as an offset of -765.
+                    if (Metrics.Direction==TextFlowDirection.RTL)
+                    {
+                        GlyphOffset.dx -= xAdvance;
+                    }
                 curOffset+=2;
             }
 

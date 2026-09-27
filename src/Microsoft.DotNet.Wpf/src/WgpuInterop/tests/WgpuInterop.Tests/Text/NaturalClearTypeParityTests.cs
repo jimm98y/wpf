@@ -93,6 +93,19 @@ namespace WgpuInterop.Tests.Text
             return sb.ToString();
         }
 
+        /// <summary>Diagnostic: more characters to test, as hex code point ranges ("05D0-05EA,0621").</summary>
+        private static string Extra()
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (string r in (Environment.GetEnvironmentVariable("WPF_NATURAL_EXTRA") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] ends = r.Split('-');
+                int lo = Convert.ToInt32(ends[0], 16), hi = Convert.ToInt32(ends[^1], 16);
+                for (int c = lo; c <= hi; c++) sb.Append((char)c);
+            }
+            return sb.ToString();
+        }
+
         private static void Report(string line)
         {
             if (Environment.GetEnvironmentVariable("WPF_NATURAL_REPORT") is { Length: > 0 } file)
@@ -115,7 +128,7 @@ namespace WgpuInterop.Tests.Text
                 int mode = DWriteOracle.RecommendedMode(face, em);
                 if (mode != 4 && mode != 5) continue;
                 int nSub = mode == 5 ? 5 : 1;
-                foreach (char c in Printable)
+                foreach (char c in Printable + Extra())
                 {
                     int gid = font.GlyphIndex(c);
                     if (gid <= 0) continue;

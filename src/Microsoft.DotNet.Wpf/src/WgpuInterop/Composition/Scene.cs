@@ -573,6 +573,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// drawn in DWRITE_RENDERING_MODE_GDI_CLASSIC, from a pixel-snapped origin.</summary>
         public bool Display { get; }
 
+        /// <summary>A render-data clip (PushClip of a rectangle) over the run, local space; the
+        /// fallback fills carry it as geometry.</summary>
+        public Rect? ClipRect { get; init; }
+
+        /// <summary>A right-to-left run's per-glyph NOMINAL advance, local units: each glyph sits one
+        /// of these left of the pen (see MilcoreEngine). Kept so a display-measured run can swap in
+        /// GDI's whole-pixel advance at the device size, which only the renderer knows.</summary>
+        public float[]? RtlNominal { get; init; }
+
         public Text.TrueTypeFont Font { get; }
         /// <summary>The run's em size, in the run's own (local) units.</summary>
         public float EmSize { get; }
