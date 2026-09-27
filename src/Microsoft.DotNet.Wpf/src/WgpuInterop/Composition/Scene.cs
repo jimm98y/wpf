@@ -582,6 +582,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// GDI's whole-pixel advance at the device size, which only the renderer knows.</summary>
         public float[]? RtlNominal { get; init; }
 
+        /// <summary>-1 when the render data mirrored the run in x (an RTL FlowDirection element's
+        /// text): <see cref="X"/> is then already mirrored, and the visual's own mirror must undo it.</summary>
+        public float Mirror { get; init; } = 1f;
+
         public Text.TrueTypeFont Font { get; }
         /// <summary>The run's em size, in the run's own (local) units.</summary>
         public float EmSize { get; }

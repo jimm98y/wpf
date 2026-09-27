@@ -2444,8 +2444,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // as before.
             bool natural = NaturalText && run.MeasuringMode <= 1 && font is Text.TrueTypeFont
                            && brush is SolidColorBrush && state.Clip is null or RectangleGeometry
-                           && state.Transform.M11 == 1f && state.Transform.M22 == 1f
+                           // a translation, or one mirrored in x: FlowDirection.RightToLeft mirrors the
+                           // element and draws its text through a second mirror, the two cancelling
+                           && MathF.Abs(state.Transform.M11) == 1f && state.Transform.M22 == 1f
                            && state.Transform.M12 == 0f && state.Transform.M21 == 0f;
+            float mirror = state.Transform.M11;
             if (s_naturalWhy && !natural)
                 Console.Error.WriteLine("[natural-why] " + (run.MeasuringMode > 1 ? "mode" + run.MeasuringMode
                     : font is not Text.TrueTypeFont ? "font" : brush is not SolidColorBrush ? "brush"
@@ -2484,7 +2487,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
                 float gx = penX + offsetX;
                 float gy = run.Origin.Y - (run.Offsets != null ? run.Offsets[2 * i + 1] : 0f);
-                if (gxs is not null) { gxs[i] = gx - run.Origin.X; gys![i] = gy - run.Origin.Y; }
+                if (gxs is not null) { gxs[i] = mirror * (gx - run.Origin.X); gys![i] = gy - run.Origin.Y; }
 
                 // What a glyph id becomes -- a monochrome outline, or the stack of coloured layers a
                 // COLR/CPAL emoji decomposes into -- is GlyphRunPainter's business, shared with the
@@ -2538,7 +2541,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     output.Add(new WpfTextRunDraw((Text.TrueTypeFont)font, run.EmSize, run.Indices, gxs!, gys!,
                         Vector2.Transform(run.Origin, state.Transform), ((SolidColorBrush)brush).Color, sink,
                         display: run.MeasuringMode == 1)
-                    { ClipRect = (state.Clip as RectangleGeometry)?.Rect, RtlNominal = nominals });
+                    { ClipRect = (state.Clip as RectangleGeometry)?.Rect, RtlNominal = nominals, Mirror = mirror });
                 else
                     output.AddRange(sink);
             }

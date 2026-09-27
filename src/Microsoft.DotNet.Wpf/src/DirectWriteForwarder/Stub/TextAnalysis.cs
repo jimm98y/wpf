@@ -311,7 +311,7 @@ namespace MS.Internal.Text.TextInterface
 
             var cmap = new ushort[textLength];
             var gids = new ushort[textLength];
-            uint glyphCount = MapNominal(textString, textLength, d, blankGlyphIndex, cmap, gids);
+            uint glyphCount = MapNominal(textString, textLength, d, blankGlyphIndex, cmap, gids, isRightToLeft);
 
             clusterMap = cmap;
             glyphIndices = new ushort[glyphCount];
@@ -348,7 +348,7 @@ namespace MS.Internal.Text.TextInterface
 
             var cmap = new ushort[textLength];
             var gids = new ushort[textLength];
-            actualGlyphCount = MapNominal(textString, textLength, d, blankGlyphIndex, cmap, gids);
+            actualGlyphCount = MapNominal(textString, textLength, d, blankGlyphIndex, cmap, gids, isRightToLeft);
             if (actualGlyphCount > maxGlyphCount)
                 return;   // caller re-invokes with a larger buffer based on actualGlyphCount
 
@@ -404,10 +404,53 @@ namespace MS.Internal.Text.TextInterface
             glyphOffsets = new GlyphOffset[glyphCount];
         }
 
+        /// <summary>The Unicode Bidi_Mirroring_Glyph of a character, or null: the paired brackets
+        /// and relations (BidiMirroring.txt), which is every mirror text actually meets.</summary>
+        private static uint? Mirror(uint cp)
+        {
+            switch (cp)
+            {
+                case 0x28: return 0x29; case 0x29: return 0x28;
+                case 0x3C: return 0x3E; case 0x3E: return 0x3C;
+                case 0x5B: return 0x5D; case 0x5D: return 0x5B;
+                case 0x7B: return 0x7D; case 0x7D: return 0x7B;
+                case 0xAB: return 0xBB; case 0xBB: return 0xAB;
+                case 0x2039: return 0x203A; case 0x203A: return 0x2039;
+                case 0x2045: return 0x2046; case 0x2046: return 0x2045;
+                case 0x207D: return 0x207E; case 0x207E: return 0x207D;
+                case 0x208D: return 0x208E; case 0x208E: return 0x208D;
+                case 0x2208: return 0x220B; case 0x220B: return 0x2208;
+                case 0x2209: return 0x220C; case 0x220C: return 0x2209;
+                case 0x220A: return 0x220D; case 0x220D: return 0x220A;
+                case 0x2264: return 0x2265; case 0x2265: return 0x2264;
+                case 0x2266: return 0x2267; case 0x2267: return 0x2266;
+                case 0x226A: return 0x226B; case 0x226B: return 0x226A;
+                case 0x226E: return 0x226F; case 0x226F: return 0x226E;
+                case 0x2270: return 0x2271; case 0x2271: return 0x2270;
+                case 0x2282: return 0x2283; case 0x2283: return 0x2282;
+                case 0x2286: return 0x2287; case 0x2287: return 0x2286;
+                case 0x2329: return 0x232A; case 0x232A: return 0x2329;
+                case 0x3008: return 0x3009; case 0x3009: return 0x3008;
+                case 0xFF08: return 0xFF09; case 0xFF09: return 0xFF08;
+                case 0xFF1C: return 0xFF1E; case 0xFF1E: return 0xFF1C;
+                case 0xFF3B: return 0xFF3D; case 0xFF3D: return 0xFF3B;
+                case 0xFF5B: return 0xFF5D; case 0xFF5D: return 0xFF5B;
+                case 0xFF5F: return 0xFF60; case 0xFF60: return 0xFF5F;
+                case 0xFF62: return 0xFF63; case 0xFF63: return 0xFF62;
+            }
+            // Runs of open/close pairs: the ceiling/floor brackets, the mathematical and
+            // ornamental brackets, and the CJK corner and lenticular brackets.
+            if ((cp >= 0x2308 && cp <= 0x230B) || (cp >= 0x2768 && cp <= 0x2775) || (cp >= 0x27E6 && cp <= 0x27EF)
+                || (cp >= 0x2983 && cp <= 0x2998) || (cp >= 0x300A && cp <= 0x3011) || (cp >= 0x3014 && cp <= 0x301B))
+                return (cp & 1) == 0 ? cp + 1 : cp - 1;
+            return null;
+        }
+
         // Maps UTF-16 text to nominal glyphs: one glyph per codepoint (a surrogate pair's
         // two code units share one cluster), cluster map entry = first glyph of the char.
         private static uint MapNominal(char* text, uint textLength,
-            Managed.OpenTypeFontData d, ushort blankGlyphIndex, ushort[] clusterMap, ushort[] gids)
+            Managed.OpenTypeFontData d, ushort blankGlyphIndex, ushort[] clusterMap, ushort[] gids,
+            bool isRightToLeft = false)
         {
             uint g = 0;
             for (uint i = 0; i < textLength; i++)
@@ -417,6 +460,9 @@ namespace MS.Internal.Text.TextInterface
                 if (pair)
                     cp = (uint)char.ConvertToUtf32(text[i], text[i + 1]);
 
+                // Right to left, a bidi-mirrored character is drawn as its mirror, as DWrite's
+                // GetGlyphs does: the '(' that opens a parenthesis in Hebrew is the ')' glyph.
+                if (isRightToLeft && Mirror(cp) is uint m && d.GlyphIndex(m) != 0) cp = m;
                 ushort gid = (ushort)d.GlyphIndex(cp);
                 if (gid == 0 && (cp == 0x20 || cp == 0xA0 || cp == 0x09))
                     gid = blankGlyphIndex;

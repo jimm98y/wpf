@@ -270,19 +270,23 @@ namespace MS.Internal.TextFormatting
 
                 Plsrun plsrun = (Plsrun)(uint)plsrunPtr.ToInt64();
 
-                // Bidi level changes arrive as control runs, one per level step: the text store
-                // brackets every embedding with Reverse (level up) and CloseAnchor (level down).
-                // That is the only place direction is expressed -- FetchRun says nothing about it --
-                // so tracking these brackets is what makes reordering possible at all. Note the
+                // Bidi level changes arrive as control runs, one CHARACTER per level step: the text
+                // store brackets every embedding with Reverse (level up) and CloseAnchor (level
+                // down). That is the only place direction is expressed -- FetchRun says nothing about
+                // it -- so tracking these brackets is what makes reordering possible at all. Note the
                 // marker itself belongs to the level OUTSIDE the bracket it opens or closes.
+                // Consecutive markers of one kind merge into one run (CreateReverseLSRuns writes one
+                // cp each into the plsrun vector), so stepping once per RUN left "shalom 12 abc" --
+                // 2 -> 0 in a single two-character CloseAnchor -- with " abc" still at level 1,
+                // reversed onto the digits.
                 Plsrun runKind = TextStore.ToIndex(plsrun);
                 if (runKind == Plsrun.Reverse)
                 {
-                    bidiLevel++;
+                    bidiLevel += cchText;
                 }
                 else if (runKind == Plsrun.CloseAnchor)
                 {
-                    bidiLevel = Math.Max(baseLevel, bidiLevel - 1);
+                    bidiLevel = Math.Max(baseLevel, bidiLevel - cchText);
                 }
 
                 bool isText = chp.idObj == (ushort)TextStore.ObjectId.Text_chp;
@@ -1178,6 +1182,8 @@ namespace MS.Internal.TextFormatting
 
         // ---- display: replay the glyph runs through the draw callbacks ----
 
+        private static readonly int s_rtlCell = Environment.GetEnvironmentVariable("WPF_LS_RTLCELL") == "0" ? 0 : 1;
+
         internal static unsafe LsErr DisplayLine(IntPtr ploline, ref LSPOINT pt, uint displayMode, ref LSRECT clipRect)
         {
             ManagedLsLine line = LineFrom(ploline);
@@ -1201,7 +1207,13 @@ namespace MS.Internal.TextFormatting
                 // leftward from there (see GlyphRun.BuildGeometry). Handing an RTL run its left edge
                 // draws it one run-width too far left, on top of whatever precedes it.
                 int leftEdge = pt.x + run.PenX;
+                // LS positions are cells, laid out in the PARAGRAPH's direction, so a run that reads
+                // against it starts in the last ideal unit it covers: an RTL run in an LTR paragraph
+                // one unit short of its right edge (stock: 55.967 vs 55.970 at 12px, 74.623 vs 74.627
+                // at 16 -- 1/300 DIP at every size), an LTR run in an RTL paragraph one unit past its
+                // left edge (714.683 vs 714.680), and a run that reads with it exactly on its edge.
                 int originEdge = run.IsRightToLeft ? leftEdge + run.Width : leftEdge;
+                if (run.IsRightToLeft != line.RightToLeft) originEdge += line.RightToLeft ? s_rtlCell : -s_rtlCell;
 
                 // In an RTL paragraph the line origin is the line's RIGHT edge, and LS expresses run
                 // positions as negative offsets from it -- ComputeShapedGlyphRun negates what it gets.

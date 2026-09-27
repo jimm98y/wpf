@@ -90,7 +90,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (clip.IsEmpty) return;
-            float scale = world.M11;
+            // The x scale may be negative -- an RTL FlowDirection visual -- when the run's render
+            // data mirrored it back; only a run that ends up upright is drawn here.
+            float scale = MathF.Abs(world.M11);
             // An axis-aligned rectangle clip, in device pixels. wpfgfx antialiases its edges the way
             // its rasterizer does everything (see EdgeCoverage): the text in a pixel an edge cuts is
             // lerped from the paper by the clip's share of the samples.
@@ -112,6 +114,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // wpfgfx realizes ClearType only for an opaque target and an axis-aligned, unskewed scale.
             bool drawable = ClearType && !_transparentTarget
                             && world.M12 == 0f && world.M21 == 0f && world.M22 == scale && scale > 0f
+                            && world.M11 * run.Mirror > 0f
                             && ppem > 0f && ppem <= 200f;
             // NATURAL_SYMMETRIC where the face's gasp asks for symmetric smoothing, which is exactly
             // what GetRecommendedRenderingMode answers (checked over 6..60ppem for twelve faces).
@@ -142,7 +145,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     _naturalGlyphs[gkey] = gb;
                 }
                 bits[i] = gb;
-                xs[i] = run.X[i] * scale;
+                xs[i] = run.X[i] * world.M11;
                 ys[i] = run.Y[i] * scale;
                 // Right to left, a glyph sits one nominal advance left of the pen; a display run's
                 // nominal advance is GDI's whole pixels at this size, not the scaled design width.
