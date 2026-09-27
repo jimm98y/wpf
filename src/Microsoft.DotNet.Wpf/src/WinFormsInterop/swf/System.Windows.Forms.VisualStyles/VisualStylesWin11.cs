@@ -104,21 +104,16 @@ namespace System.Windows.Forms.VisualStyles
 
 		private static bool DrawPart (Graphics g, string cls, int part, int state, Rectangle r)
 		{
+			// An image part is its frame, blitted the way uxtheme blits it.
+			if (Win11Frames.Get (cls, cls == "BUTTON" && part == 5 ? 1 : part, state) is Win11Frames.Frame frame) {
+				Win11Frames.Draw (g, frame, r);
+				return true;
+			}
 			ThemeWin11 t = Theme;
 			switch (cls) {
 			case "BUTTON":
+				// PUSHBUTTON, RADIOBUTTON, CHECKBOX and USERBUTTON are frames, drawn above.
 				switch (part) {
-				case 1:     // PUSHBUTTON
-				case 5:     // USERBUTTON
-					t.PartPushButton (g, r, state);
-					return true;
-				case 2:     // RADIOBUTTON: 1-4 unchecked, 5-8 checked; within each normal/hot/pressed/disabled
-					t.PartRadioButton (g, r, state >= 5, (state - 1) % 4 != 3, (state - 1) % 4 == 1 || (state - 1) % 4 == 2);
-					return true;
-				case 3:     // CHECKBOX: 1-4 unchecked, 5-8 checked, 9-12 mixed
-					t.PartCheckBox (g, r, state >= 5 && state <= 8, state >= 9, (state - 1) % 4 != 3,
-							(state - 1) % 4 == 1 || (state - 1) % 4 == 2);
-					return true;
 				case 4:     // GROUPBOX
 					t.CPDrawBorder3D (g, r, Border3DStyle.Etched, Border3DSide.All);
 					return true;

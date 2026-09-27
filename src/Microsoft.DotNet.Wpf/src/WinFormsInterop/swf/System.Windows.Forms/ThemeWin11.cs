@@ -10,6 +10,7 @@
 // renderers draw their parts through it too (the Part* methods, called by VisualStylesWin11).
 
 using System.Drawing;
+using System.Windows.Forms.VisualStyles;
 using System.Drawing.Drawing2D;
 
 namespace System.Windows.Forms
@@ -431,52 +432,27 @@ namespace System.Windows.Forms
 		// ---- buttons, check boxes and radio buttons -------------------------------------
 		//
 		// The classic theme builds these out of light/dark bevels. Windows draws a flat, slightly
-		// rounded face with a hairline border, and fills a ticked box with the accent colour.
+		// rounded face with a hairline border, and fills a ticked box with the accent colour --
+		// both drawn here from the theme's frames, as uxtheme draws them.
 
-		// Read off Windows' own rendering rather than guessed at. A button is very nearly white --
+		// Buttons, check boxes and radio buttons are the theme's own frames (Win11Frames); these are
+		// what the rest of the theme still paints with. Read off Windows' own rendering rather than
+		// guessed at. A button is very nearly white --
 		// #E1E1E1 was the XP-era face and made every button look pressed beside the real thing --
 		// and the accent is #005FB8, not the #0078D7 of a decade ago.
 		private static readonly Color ButtonFaceNormal = Color.FromArgb (253, 253, 253);
 		private static readonly Color ButtonBorderNormal = Color.FromArgb (208, 208, 208);
-		/// <summary>The inside of a disabled check box or radio button, #F9F9F9 -- measured off a
-		/// stock one, and NOT the control colour behind it.</summary>
-		private static readonly Color GlyphDisabledFace = Color.FromArgb (249, 249, 249);
-
-		/// <summary>The inside of a resting, unchecked check box or radio button: #F3F3F3,
-		/// measured off a stock one. Not ColorWindow.</summary>
-		private static readonly Color GlyphRestFace = Color.FromArgb (243, 243, 243);
-
 		/// <summary>The calendar's month arrows: the mean of the 25..59 ramp Windows draws them
 		/// with, measured off a stock calendar.</summary>
 		private static readonly Color CalendarArrowInk = Color.FromArgb (44, 44, 44);
-		/// <summary>The bottom edge only, #BABABA, measured off a stock button. The other three
-		/// sides are ButtonBorderNormal; drawing all four in it left a 90-pixel line across the
-		/// two buttons 22 levels too light.</summary>
-		private static readonly Color ButtonBorderBottom = Color.FromArgb (186, 186, 186);
 		private static readonly Color ButtonFaceHover = Color.FromArgb (224, 238, 249);
 		private static readonly Color ButtonBorderHover = Color.FromArgb (0, 95, 184);
 
-		/// <summary>The ring around the button that has the focus. Measured off a stock one: the
-		/// accent proper (#0078D4), a shade lighter than the #005FB8 the glyphs are drawn in.
-		/// </summary>
-		private static readonly Color ButtonBorderFocus = Color.FromArgb (0, 120, 212);
 		private static readonly Color ButtonFacePressed = Color.FromArgb (204, 228, 247);
-		private static readonly Color ButtonBorderPressed = Color.FromArgb (0, 76, 148);
 		private static readonly Color ButtonFaceDisabled = Color.FromArgb (249, 249, 249);
 		private static readonly Color ButtonBorderDisabled = Color.FromArgb (205, 205, 205);
-		// A disabled PUSH BUTTON's frame alone: #E9E9E9, measured on a live stock window, where ours
-		// read 205 -- dark enough that the frame carried 1.7 times Windows' ink round that button.
-		// Only the push button: giving the same lightening to the disabled radio and check box, which
-		// share ButtonBorderDisabled, cost the group box 3k of what the button gained 19k.
-		private static readonly Color ButtonFrameDisabled = Color.FromArgb (233, 233, 233);
-		// An unchecked box is not white: Windows fills it #F3F3F3 and outlines it #626262, both
-		// measured off its own rendering. White with a pale border read as the greyer of the two
-		// even though it was the lighter one.
-		private static readonly Color GlyphBorder = Color.FromArgb (98, 98, 98);
+		/// <summary>The inside of a resting, unchecked check box, #F3F3F3.</summary>
 		private static readonly Color GlyphFace = Color.FromArgb (243, 243, 243);
-
-		private const int ButtonCornerRadius = 3;
-
 		/// <summary>Paint a rounded rectangle: the border is the ring left between the shape and the
 		/// same shape a pixel in, so the two fills together are the whole of it.
 		/// <para>Nothing is painted outside the shape, which is the point. What this did instead was
@@ -517,38 +493,16 @@ namespace System.Windows.Forms
 				return;
 			}
 
-			Color face, border;
-			if (!button.Enabled) {
-				face = ButtonFaceDisabled; border = ButtonFrameDisabled;
-			} else if (button.Pressed) {
-				face = ButtonFacePressed; border = ButtonBorderPressed;
-			} else if (button.Entered) {
-				face = ButtonFaceHover; border = ButtonBorderHover;
-			} else {
-				face = ButtonFaceNormal;
-				// The default button, and a focused one, are outlined in the accent colour.
-				border = button.IsDefault || button.Focused ? ButtonBorderFocus : ButtonBorderNormal;
-			}
-
-			// Windows insets the button's frame by a pixel all round rather than painting it hard
-			// against the control's bounds -- a 26-pixel button draws a 24-pixel face.
+			// The face is the theme's push-button frame over the whole client area, in the state
+			// WinForms' own ButtonStandardAdapter picks: disabled, pressed, hot, then default (the
+			// default button and the focused one), else normal.
+			int state = !button.Enabled ? 4 : button.Pressed ? 3 : button.Entered ? 2
+				  : button.IsDefault || button.Focused ? 5 : 1;
+			Win11Frames.Draw (dc, Win11Frames.PushButton (state), button.ClientRectangle);
 			Rectangle r = Rectangle.Inflate (button.ClientRectangle, -1, -1);
 			r.Width -= 1;
 			r.Height -= 1;
-			if (r.Width <= 0 || r.Height <= 0)
-				return;
-
-			PaintRoundedRect (dc, r, ButtonCornerRadius, face, border);
-
-			// Windows draws a resting button's BOTTOM edge darker than its other three -- #BABABA
-			// against the #D0D0D0 of the sides and top. It is the whole of what is left of a button
-			// once the face and the frame agree, and it reads as a very slight lift off the page.
-			// Only at rest: a hovered, pressed or focused button is outlined in one colour all
-			// round, which is what the capture shows for each of those states.
-			if (button.Enabled && !button.Pressed && !button.Entered
-			    && !button.IsDefault && !button.Focused)
-				dc.DrawLine (ResPool.GetPen (ButtonBorderBottom),
-					     r.X + 1, r.Bottom, r.Right - 1, r.Bottom);
+			Color face = state == 4 ? ButtonFaceDisabled : state == 3 ? ButtonFacePressed : state == 2 ? ButtonFaceHover : ButtonFaceNormal;
 
 			// The dotted rectangle a focused button carries, two pixels inside its frame -- Windows
 			// draws one and this did not, so the only sign that a button had the focus was the colour
@@ -569,14 +523,6 @@ namespace System.Windows.Forms
 
 
 
-		/// <summary>The modern check box, drawn by hand. Shared by the control and by
-		/// CPDrawCheckBox, which is the primitive a CheckedListBox and others reach for -- they
-		/// never come through DrawCheckBoxGlyph, so without this they kept the classic tick.
-		/// </summary>
-		/// <summary>Round a small glyph's corners the way Windows does: put the corner pixel back
-		/// to whatever is behind the glyph. Drawing a curve at this size does not survive the
-		/// recorder -- a flattened path bulges inwards and an arc antialiases outside the shape --
-		/// and at a one-pixel radius the corner pixel IS the rounding.</summary>
 		/// <summary>A one-pixel frame whose corners are rounded by exactly one pixel -- the corner
 		/// pixel is simply not painted. Every input on this theme is outlined with it.</summary>
 		private void DrawRoundedOutline (Graphics g, Rectangle r, Color colour)
@@ -592,33 +538,6 @@ namespace System.Windows.Forms
 			g.DrawLine (pen, r.Right, r.Y + 1, r.Right, r.Bottom - 1);
 			g.SmoothingMode = old;
 		}
-
-		/// <summary>How wide the tick's stroke is. Measured over both regions that draw one:
-		///     0.30 94,252   0.44 93,960   0.55 94,438   0.60 92,532
-		///     0.62 92,510   0.65 92,518   0.70 92,652   0.75 92,990   0.90 94,098
-		/// A clear basin from 0.60 to 0.70 with 0.62 at the bottom. (0.55 reading worse than both
-		/// its neighbours is not noise -- these regions repeat to the pixel across captures -- it is
-		/// a stroke width falling either side of a rasterization threshold.) WPF_TICK_WIDTH sweeps
-		/// it.</summary>
-		private static readonly float TickWidth =
-			float.TryParse (Environment.GetEnvironmentVariable ("WPF_TICK_WIDTH"),
-					System.Globalization.NumberStyles.Float,
-					System.Globalization.CultureInfo.InvariantCulture, out float tw) ? tw : 0.62f;
-
-		/// <summary>How far a check box's corner is rounded. THREE, measured over the whole of the
-		/// two regions that draw these boxes rather than off one corner:
-		///     radius   2.0     2.5     2.75    3.0     3.25    3.5
-		///     checked  98,261  96,362  94,029  93,960  95,686  98,177
-		///     boxes    48,854  48,060  46,720  46,384  47,308  48,732
-		/// <para>It was 2.5 on the strength of a single reading -- how far the box's TOP ROW is
-		/// inset from its own edge -- which said three rounded a pixel more than Windows. That one
-		/// pixel is real and the rest of the shape outvotes it: at three, both regions are better
-		/// than at any other radius tried, and the offscreen control-parity suite stays green.
-		/// WPF_CHECK_RADIUS sweeps it.</para></summary>
-		private static readonly float Radius =
-			float.TryParse (Environment.GetEnvironmentVariable ("WPF_CHECK_RADIUS"),
-					System.Globalization.NumberStyles.Float,
-					System.Globalization.CultureInfo.InvariantCulture, out float cr) ? cr : 3.0f;
 
 		/// <summary>A rounded rectangle in float coordinates, built from four arcs -- the shape a
 		/// modern check box, and anything else with softened corners, is drawn as.</summary>
@@ -639,82 +558,15 @@ namespace System.Windows.Forms
 			return path;
 		}
 
+		/// <summary>A check box: the theme's frame for the state, true size, at the box. The box is
+		/// given as a DrawRectangle rectangle (its span one short of the glyph).</summary>
 		private void DrawModernCheck (Graphics g, Rectangle box, bool ticked, bool mixed,
-					      bool enabled, bool hot)
+					      bool enabled, bool hot, bool pressed = false)
 		{
-			Color fill, border;
-			if (!enabled) {
-				fill = ticked || mixed ? ButtonFaceDisabled : ColorWindow; border = ButtonBorderDisabled;
-			} else if (ticked || mixed) {
-				fill = border = hot ? ButtonBorderPressed : ButtonBorderHover;      // accent
-			} else {
-				fill = GlyphFace; border = hot ? ButtonBorderHover : GlyphBorder;
-			}
-
-			// A rounded rectangle, filled and outlined as one shape with antialiasing on, so a pixel
-			// the curve only partly covers is BLENDED WITH WHATEVER IS BEHIND IT. The previous
-			// version filled a square and then painted the four corners in a colour the caller
-			// passed as "the surround" -- which is a guess, and wrong wherever the glyph does not
-			// stand on a plain stretch of that colour: the primitive passed the window colour, so a
-			// box on any other background showed four pale corners. A shape that simply is not
-			// painted outside its own outline cannot get that wrong.
-			SmoothingMode boxMode = g.SmoothingMode;
-			g.SmoothingMode = SmoothingMode.AntiAlias;
-			// box.Width is the span between the outermost pixel CENTRES, so the shape it stands for is
-			// one pixel wider. Two FILLS rather than a fill and a stroke: the outline is the ring left
-			// between the shape and the same shape a pixel in, which is exact geometry, where stroking
-			// a path put a quarter of a pixel of ink on the row BELOW the box -- a stroke is widened
-			// about its own line, and that line is only as well placed as the widening is.
-			float bw = box.Width + 1, bh = box.Height + 1;
-			using (GraphicsPath shape = RoundedGlyph (box.X, box.Y, bw, bh, Radius))
-				g.FillPath (ResPool.GetSolidBrush (border), shape);
-			if (fill != border)
-				using (GraphicsPath inner = RoundedGlyph (box.X + 1, box.Y + 1, bw - 2, bh - 2, Radius - 1))
-					g.FillPath (ResPool.GetSolidBrush (fill), inner);
-			g.SmoothingMode = boxMode;
-
-			if (mixed) {
-				// A DASH, not the classic filled square. Windows marks the indeterminate state with a
-				// single row of white across the middle of the box, a little over half its width --
-				// measured off a stock check box, where that row sits at three quarters coverage and
-				// the two pixels either end of it are barely touched. A filled square is what the
-				// classic theme draws and it reads as a different control altogether.
-				SmoothingMode dashMode = g.SmoothingMode;
-				g.SmoothingMode = SmoothingMode.AntiAlias;
-				// Measured off a stock box, column by column: Windows inks five pixels at three
-				// quarters coverage with the two either side barely touched (16 of 255), i.e. a
-				// dash from 15.92 to 21.08 in a box spanning 12..24. Ours ran 15 to 21 at 0.85 --
-				// two pixels too long and centred half a pixel left. box.Width here is 13, the
-				// glyph's full width -- NOT the centre-to-centre span the rounded-rect code above
-				// works in -- so the geometric centre is box.X + Width / 2. Measured, after
-				// assuming otherwise put the dash half a pixel right.
-				using (var dash = new Pen (enabled ? ColorWindow : ColorControlDark, 0.545f)) {
-					float cy = box.Y + box.Height / 2f;
-					float cx = box.X + box.Width / 2f;
-					g.DrawLine (dash, cx - 2.2f, cy, cx + 2.2f, cy);
-				}
-				g.SmoothingMode = dashMode;
-				return;
-			}
-			if (!ticked)
-				return;
-
-			// The tick, on the box's own scale so it holds at any size. These proportions and the
-			// stroke width are measured off Windows' own glyph: the vertex sits low and left of
-			// centre, the short arm is about half the long one, and the stroke is barely wider than
-			// a pixel. Ours was a full pixel heavier and reached further into the corners, which read
-			// as a different mark rather than the same one drawn a little off.
-			SmoothingMode old = g.SmoothingMode;
-			g.SmoothingMode = SmoothingMode.AntiAlias;
-			using (var pen = new Pen (enabled ? ColorWindow : ColorControlDark, TickWidth)) {
-				float x = box.X, y = box.Y, w = box.Width, h = box.Height;
-				g.DrawLines (pen, new PointF [] {
-					new PointF (x + w * 0.30f, y + h * 0.56f),
-					new PointF (x + w * 0.48f, y + h * 0.75f),
-					new PointF (x + w * 0.84f, y + h * 0.37f),
-				});
-			}
-			g.SmoothingMode = old;
+			int mark = mixed ? 2 : ticked ? 1 : 0;
+			int look = !enabled ? 3 : pressed ? 2 : hot ? 1 : 0;
+			Win11Frames.Draw (g, Win11Frames.CheckBox (mark * 4 + look + 1),
+					  new Rectangle (box.X, box.Y, box.Width + 1, box.Height + 1));
 		}
 
 		/// <summary>Where the caption goes beside the glyph. The classic rule is kept and the result
@@ -751,7 +603,7 @@ namespace System.Windows.Forms
 				return;
 			// The same drawing the primitive uses, so a CheckedListBox and a CheckBox cannot drift.
 			DrawModernCheck (g, box, cb.CheckState == CheckState.Checked,
-					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered);
+					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered, cb.Pressed);
 		}
 
 		/// <summary>The 13x13 cell Windows draws a check box or radio button in, centred in
@@ -775,40 +627,8 @@ namespace System.Windows.Forms
 						    glyphArea.Y + (glyphArea.Height - size) / 2,
 						    size, size);
 
-			Color border = !rb.Enabled ? ButtonBorderDisabled
-				     : rb.Checked ? ButtonBorderHover
-				     : rb.Entered ? ButtonBorderHover : GlyphBorder;
-
-			SmoothingMode old = g.SmoothingMode;
-			g.SmoothingMode = SmoothingMode.AntiAlias;
-			// A checked radio button is an accent-coloured disc with a light dot punched out of it,
-			// not a light disc with an accent dot on it -- which is what this drew, and read as the
-			// colours being swapped.
-			// A DISABLED radio still has a face: Windows fills it #F9F9F9, a shade off the
-			// control colour behind it, so the disc is still a disc. Filling it with ColorControl
-			// painted it the same colour as its own background and left nothing but a ring.
-			// An UNCHECKED radio is #F3F3F3 inside, not the window's white -- measured off a stock
-			// one, an 11x11 disc of it. ColorWindow was 12 levels light over the whole face.
-			Color face = !rb.Enabled ? GlyphDisabledFace
-				   : rb.Checked ? border : GlyphRestFace;
-			// Two FILLS, not a fill and an outline: an outline is stroked down the middle of the
-			// shape's edge, so half of it lands outside and a thirteen-pixel disc came out fourteen
-			// across -- which is what made this one look cut off against the control's left edge.
-			g.FillEllipse (ResPool.GetSolidBrush (border), circle);
-			if (face != border)
-				g.FillEllipse (ResPool.GetSolidBrush (face), Rectangle.Inflate (circle, -1, -1));
-
-			if (rb.Checked) {
-				// Five pixels across in a thirteen pixel disc, measured off a stock radio button.
-				// A third of the disc gave four, which at this size reads as a square rather than a
-				// dot -- there is no room left for the corners to be rounded away.
-				int span = circle.Width;
-				int dotSize = Math.Max (3, span * 5 / 13);
-				var dot = new Rectangle (circle.X + (span - dotSize) / 2, circle.Y + (span - dotSize) / 2,
-						     dotSize, dotSize);
-				g.FillEllipse (ResPool.GetSolidBrush (rb.Enabled ? ColorWindow : ColorControl), dot);
-			}
-			g.SmoothingMode = old;
+			int look = !rb.Enabled ? 3 : rb.Pressed ? 2 : rb.Entered ? 1 : 0;
+			Win11Frames.Draw (g, Win11Frames.RadioButton ((rb.Checked ? 4 : 0) + look + 1), circle);
 		}
 
 		/// <summary>The drop-down button belongs to the field, not to a button of its own: fill it
@@ -1716,7 +1536,7 @@ namespace System.Windows.Forms
 			if (box.Width <= 0 || box.Height <= 0)
 				return;
 			DrawModernCheck (dc, box, (state & ButtonState.Checked) != 0, false,
-					 (state & ButtonState.Inactive) == 0, (state & ButtonState.Pushed) != 0);
+					 (state & ButtonState.Inactive) == 0, false, (state & ButtonState.Pushed) != 0);
 		}
 
 		// ---- month calendar ----------------------------------------------------------
@@ -2736,54 +2556,7 @@ namespace System.Windows.Forms
 		/// 4 disabled, 5 default.</summary>
 		internal void PartPushButton (Graphics g, Rectangle bounds, int state)
 		{
-			Color face, border;
-			switch (state) {
-			case 2: face = ButtonFaceHover; border = ButtonBorderHover; break;
-			case 3: face = ButtonFacePressed; border = ButtonBorderPressed; break;
-			case 4: face = ButtonFaceDisabled; border = ButtonFrameDisabled; break;
-			case 5: face = ButtonFaceNormal; border = ButtonBorderFocus; break;
-			default: face = ButtonFaceNormal; border = ButtonBorderNormal; break;
-			}
-			Rectangle r = Rectangle.Inflate (bounds, -1, -1);
-			r.Width -= 1;
-			r.Height -= 1;
-			if (r.Width <= 0 || r.Height <= 0)
-				return;
-			PaintRoundedRect (g, r, ButtonCornerRadius, face, border);
-			if (state == 1)
-				g.DrawLine (ResPool.GetPen (ButtonBorderBottom), r.X + 1, r.Bottom, r.Right - 1, r.Bottom);
-		}
-
-		/// <summary>A check box glyph centred in <paramref name="bounds"/>.</summary>
-		internal void PartCheckBox (Graphics g, Rectangle bounds, bool ticked, bool mixed, bool enabled, bool hot)
-		{
-			Rectangle box = CentredGlyph (bounds);
-			box.Width = Math.Max (box.Width - 1, 0);
-			box.Height = Math.Max (box.Height - 1, 0);
-			if (box.Width > 0 && box.Height > 0)
-				DrawModernCheck (g, box, ticked, mixed, enabled, hot);
-		}
-
-		/// <summary>A radio button glyph centred in <paramref name="bounds"/>, drawn as
-		/// DrawRadioButtonGlyph draws the control's.</summary>
-		internal void PartRadioButton (Graphics g, Rectangle bounds, bool check, bool enabled, bool hot)
-		{
-			int size = Math.Min (13, Math.Min (bounds.Width, bounds.Height));
-			var circle = new Rectangle (bounds.X + (bounds.Width - size) / 2, bounds.Y + (bounds.Height - size) / 2, size, size);
-			Color border = !enabled ? ButtonBorderDisabled : check || hot ? ButtonBorderHover : GlyphBorder;
-			Color face = !enabled ? GlyphDisabledFace : check ? border : GlyphRestFace;
-			SmoothingMode old = g.SmoothingMode;
-			g.SmoothingMode = SmoothingMode.AntiAlias;
-			g.FillEllipse (ResPool.GetSolidBrush (border), circle);
-			if (face != border)
-				g.FillEllipse (ResPool.GetSolidBrush (face), Rectangle.Inflate (circle, -1, -1));
-			if (check) {
-				int span = circle.Width;
-				int dotSize = Math.Max (3, span * 5 / 13);
-				var dot = new Rectangle (circle.X + (span - dotSize) / 2, circle.Y + (span - dotSize) / 2, dotSize, dotSize);
-				g.FillEllipse (ResPool.GetSolidBrush (enabled ? ColorWindow : ColorControl), dot);
-			}
-			g.SmoothingMode = old;
+			Win11Frames.Draw (g, Win11Frames.PushButton (state), bounds);
 		}
 
 		/// <summary>An input field: the window colour inside the one-pixel rounded frame every

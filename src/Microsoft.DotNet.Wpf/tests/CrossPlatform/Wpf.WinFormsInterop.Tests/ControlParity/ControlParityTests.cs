@@ -81,7 +81,7 @@ namespace Wpf.WinFormsInterop.Tests
             // difference lands in shade instead.
             ["textbox-readonly"] = (839, 153),
 
-            ["button"] = (132, 345),
+            ["button"] = (3, 345),
             // RAISED, and only ever on the live window's authority. Windows 11 does not emboss disabled
             // text -- one flat #A0A0A0 pass, where the base drew a light copy at (1,1) and the real one
             // on top. Against the live stock window that took this button's text from 1.26 times
@@ -90,7 +90,7 @@ namespace Wpf.WinFormsInterop.Tests
             // difference in this reference's own geometry: with one pass it shows, and on an unshown
             // form the caption lands a pixel over from stock's. The live window has it on the same
             // rows as Windows (87..95, both), so this number is the reference disagreeing, not us.
-            ["button-disabled"] = (352, 240),
+            ["button-disabled"] = (4, 240),
             // INK DOWN AND SHADE UP, on both this and the group box, from the group box caption
             // moving to where the LIVE stock window draws it and from the string-format margin it
             // used to carry. This reference is rendered on a form that was never shown, and where
@@ -101,11 +101,14 @@ namespace Wpf.WinFormsInterop.Tests
             // The check GLYPH moved up a row to sit where the live window beside ours puts it, so these
             // three moved with it: the ink is the same or better, the shade a few pixels worse
             // against a reference drawn on a form that was never shown. The live window is the
-            // authority for where the box goes; see the note on tabcontrol.
-            ["checkbox"] = (224, 210),
-            ["checkbox-clear"] = (242, 210),
-            ["checkbox-disabled"] = (233, 290),
-            ["checkedlistbox"] = (20, 1060),
+            // authority for where the box goes; see the note on tabcontrol. The glyphs are the
+            // theme's frames now (Win11Frames), whose corner antialiasing is a sixteenth off the
+            // theme's on a few pixels -- the one and five ink pixels the two clear/checked boxes
+            // gained, against 7 to 348 every other button, radio and check specimen lost.
+            ["checkbox"] = (225, 210),
+            ["checkbox-clear"] = (247, 210),
+            ["checkbox-disabled"] = (226, 290),
+            ["checkedlistbox"] = (4, 1060),
             // The chevron grew to the size Windows draws it and the editable field's text moved up a
             // row, both measured against the live window -- where these two went from 93k of
             // difference to 55k. This reference, drawn on a form that was never shown, disagrees by a
@@ -139,8 +142,8 @@ namespace Wpf.WinFormsInterop.Tests
             // apart while its ink does not. The shade numbers here are a ceiling with room for that.
             ["progressbar"] = (0, 2100),
             ["progressbar-full"] = (0, 4000),
-            ["radio"] = (115, 160),
-            ["radio-clear"] = (128, 155),
+            ["radio"] = (90, 160),
+            ["radio-clear"] = (96, 155),
             // A THIRD harness case. Our StatusStrip renders its panel with no caption in this
             // path -- the row ink is flat background on every row -- while Windows' has "Ready"
             // on rows 7..18. On SCREEN ours draws its panel text correctly, so this is the
