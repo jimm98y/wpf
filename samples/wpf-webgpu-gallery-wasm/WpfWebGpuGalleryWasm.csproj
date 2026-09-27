@@ -349,6 +349,20 @@
     </ItemGroup>
   </Target>
 
+  <!-- BUILD WHAT THIS LINKS. The browser WebGPU interop, System.Drawing and WinForms are referenced
+       by their bin/Release OUTPUTS (HintPath), and nothing rebuilt them: on 2026-09-27 this app was
+       running a browser interop DLL from 2026-08-20 (a month of renderer work missing) and a
+       System.Drawing built against the newer one failing to load against it (TypeLoadException on
+       IHintedGlyphFont). Building them first costs a few seconds when they are up to date.
+       -p:SkipDependencyBuild=true skips it. -->
+  <Target Name="BuildLinkedBrowserDependencies" BeforeTargets="ResolveAssemblyReferences"
+          Condition="'$(SkipDependencyBuild)' != 'true'">
+    <MSBuild Projects="..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\WgpuInterop.Browser.csproj;
+                       ..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\sysdrawing\System.Drawing.WebGpu.csproj;
+                       ..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\System.Windows.Forms.WebGpu.csproj"
+             Targets="Build" Properties="Configuration=Release" BuildInParallel="false" />
+  </Target>
+
   <!-- Keep the served JS interop modules in sync with their sources in the WPF tree.
        Must run before static-web-asset discovery (stale integrity hashes otherwise). -->
   <Target Name="CopyWpfInteropJs" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
