@@ -5,9 +5,9 @@
 // for an application that asks for the classic look, so it is left alone -- this derives from it
 // and overrides only what Windows itself changed.
 //
-// The other modern theme here, ThemeVisualStyles, cannot be used on this stack: it asks UXTheme to
-// draw into an HDC, and in GPU-raster mode a Graphics has no native surface behind it. This one is
-// managed drawing all the way down, so it works wherever the classic theme does.
+// It is the ONE modern theme, on every head -- macOS, Linux, Android, iOS, WebAssembly and Windows:
+// managed drawing all the way down, needing no native surface behind a Graphics. The public
+// renderers draw their parts through it too (the Part* methods, called by VisualStylesWin11).
 
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -2724,5 +2724,109 @@ namespace System.Windows.Forms
 			else
 				CPDrawImageDisabled (g, glyph, x, y, ColorControl);
 		}
-	}
+	
+		// ---- themed PARTS, for the managed visual-styles backend ------------------------------
+		//
+		// VisualStyleRenderer and the public renderers built on it (CheckBoxRenderer, ButtonRenderer,
+		// ComboBoxRenderer, ScrollBarRenderer...) ask for a part by class, part and state. They are
+		// answered here, by the same drawing the controls use, so a check box a DataGridView cell
+		// draws through CheckBoxRenderer is the check box a CheckBox control draws -- on every head.
+
+		/// <summary>A push button face in one of the uxtheme states: 1 normal, 2 hot, 3 pressed,
+		/// 4 disabled, 5 default.</summary>
+		internal void PartPushButton (Graphics g, Rectangle bounds, int state)
+		{
+			Color face, border;
+			switch (state) {
+			case 2: face = ButtonFaceHover; border = ButtonBorderHover; break;
+			case 3: face = ButtonFacePressed; border = ButtonBorderPressed; break;
+			case 4: face = ButtonFaceDisabled; border = ButtonFrameDisabled; break;
+			case 5: face = ButtonFaceNormal; border = ButtonBorderFocus; break;
+			default: face = ButtonFaceNormal; border = ButtonBorderNormal; break;
+			}
+			Rectangle r = Rectangle.Inflate (bounds, -1, -1);
+			r.Width -= 1;
+			r.Height -= 1;
+			if (r.Width <= 0 || r.Height <= 0)
+				return;
+			PaintRoundedRect (g, r, ButtonCornerRadius, face, border);
+			if (state == 1)
+				g.DrawLine (ResPool.GetPen (ButtonBorderBottom), r.X + 1, r.Bottom, r.Right - 1, r.Bottom);
+		}
+
+		/// <summary>A check box glyph centred in <paramref name="bounds"/>.</summary>
+		internal void PartCheckBox (Graphics g, Rectangle bounds, bool ticked, bool mixed, bool enabled, bool hot)
+		{
+			Rectangle box = CentredGlyph (bounds);
+			box.Width = Math.Max (box.Width - 1, 0);
+			box.Height = Math.Max (box.Height - 1, 0);
+			if (box.Width > 0 && box.Height > 0)
+				DrawModernCheck (g, box, ticked, mixed, enabled, hot);
+		}
+
+		/// <summary>A radio button glyph centred in <paramref name="bounds"/>, drawn as
+		/// DrawRadioButtonGlyph draws the control's.</summary>
+		internal void PartRadioButton (Graphics g, Rectangle bounds, bool check, bool enabled, bool hot)
+		{
+			int size = Math.Min (13, Math.Min (bounds.Width, bounds.Height));
+			var circle = new Rectangle (bounds.X + (bounds.Width - size) / 2, bounds.Y + (bounds.Height - size) / 2, size, size);
+			Color border = !enabled ? ButtonBorderDisabled : check || hot ? ButtonBorderHover : GlyphBorder;
+			Color face = !enabled ? GlyphDisabledFace : check ? border : GlyphRestFace;
+			SmoothingMode old = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.AntiAlias;
+			g.FillEllipse (ResPool.GetSolidBrush (border), circle);
+			if (face != border)
+				g.FillEllipse (ResPool.GetSolidBrush (face), Rectangle.Inflate (circle, -1, -1));
+			if (check) {
+				int span = circle.Width;
+				int dotSize = Math.Max (3, span * 5 / 13);
+				var dot = new Rectangle (circle.X + (span - dotSize) / 2, circle.Y + (span - dotSize) / 2, dotSize, dotSize);
+				g.FillEllipse (ResPool.GetSolidBrush (enabled ? ColorWindow : ColorControl), dot);
+			}
+			g.SmoothingMode = old;
+		}
+
+		/// <summary>An input field: the window colour inside the one-pixel rounded frame every
+		/// input on this theme has.</summary>
+		internal void PartField (Graphics g, Rectangle bounds, bool enabled)
+		{
+			g.FillRectangle (ResPool.GetSolidBrush (enabled ? ColorWindow : ColorControl), bounds);
+			Rectangle frame = new Rectangle (bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+			DrawRoundedOutline (g, frame, enabled ? EditFieldFrame : ButtonBorderDisabled);
+		}
+
+		/// <summary>A scroll bar's arrow button.</summary>
+		internal void PartScrollArrow (Graphics g, Rectangle bounds, ArrowDirection direction, bool enabled)
+		{
+			g.FillRectangle (ResPool.GetSolidBrush (ScrollTrack), bounds);
+			DrawScrollArrow (g, bounds, direction, enabled);
+		}
+
+		/// <summary>A scroll bar's track, and its thumb.</summary>
+		internal void PartScrollTrack (Graphics g, Rectangle bounds)
+		{
+			g.FillRectangle (ResPool.GetSolidBrush (ScrollTrack), bounds);
+		}
+
+		internal void PartScrollThumb (Graphics g, Rectangle bounds, bool vertical)
+		{
+			g.FillRectangle (ResPool.GetSolidBrush (ScrollTrack), bounds);
+			Rectangle thumb = vertical ? Rectangle.Inflate (bounds, -(bounds.Width / 2 - 2), 0)
+						   : Rectangle.Inflate (bounds, 0, -(bounds.Height / 2 - 2));
+			if (thumb.Width > 0 && thumb.Height > 0)
+				PaintRoundedRect (g, thumb, 2, ScrollArrow, ScrollArrow);
+		}
+
+		/// <summary>A column header cell.</summary>
+		internal void PartHeader (Graphics g, Rectangle bounds, bool pressed)
+		{
+			DrawModernHeaderCell (g, bounds, pressed);
+		}
+
+		/// <summary>A progress bar's track or its fill.</summary>
+		internal void PartProgress (Graphics g, Rectangle bounds, bool fill)
+		{
+			g.FillRectangle (ResPool.GetSolidBrush (fill ? ColorHighlight : ScrollTrack), bounds);
+		}
+}
 }

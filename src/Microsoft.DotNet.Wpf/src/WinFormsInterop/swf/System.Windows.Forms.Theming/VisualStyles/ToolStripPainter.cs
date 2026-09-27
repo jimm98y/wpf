@@ -49,7 +49,7 @@ namespace System.Windows.Forms.Theming.VisualStyles
 		}
 		public override void OnRenderButtonBackground (ToolStripItemRenderEventArgs e)
 		{
-			if (!ThemeVisualStyles.RenderClientAreas) {
+			if (!Application.RenderWithVisualStyles) {
 				base.OnRenderButtonBackground (e);
 				return;
 			}
@@ -75,7 +75,7 @@ namespace System.Windows.Forms.Theming.VisualStyles
 		}
 		public override void OnRenderDropDownButtonBackground (ToolStripItemRenderEventArgs e)
 		{
-			if (!ThemeVisualStyles.RenderClientAreas) {
+			if (!Application.RenderWithVisualStyles) {
 				base.OnRenderDropDownButtonBackground (e);
 				return;
 			}
@@ -101,7 +101,7 @@ namespace System.Windows.Forms.Theming.VisualStyles
 		}
 		public override void OnRenderGrip (ToolStripGripRenderEventArgs e)
 		{
-			if (!ThemeVisualStyles.RenderClientAreas) {
+			if (!Application.RenderWithVisualStyles) {
 				base.OnRenderGrip (e);
 				return;
 			}
@@ -121,7 +121,7 @@ namespace System.Windows.Forms.Theming.VisualStyles
 		}
 		public override void OnRenderOverflowButtonBackground (ToolStripItemRenderEventArgs e)
 		{
-			if (!ThemeVisualStyles.RenderClientAreas) {
+			if (!Application.RenderWithVisualStyles) {
 				base.OnRenderOverflowButtonBackground (e);
 				return;
 			}
@@ -137,7 +137,7 @@ namespace System.Windows.Forms.Theming.VisualStyles
 		}
 		public override void OnRenderSeparator (ToolStripSeparatorRenderEventArgs e)
 		{
-			if (!ThemeVisualStyles.RenderClientAreas) {
+			if (!Application.RenderWithVisualStyles) {
 				base.OnRenderSeparator (e);
 				return;
 			}
@@ -152,7 +152,7 @@ namespace System.Windows.Forms.Theming.VisualStyles
 		}
 		public override void OnRenderSplitButtonBackground (ToolStripItemRenderEventArgs e)
 		{
-			if (!ThemeVisualStyles.RenderClientAreas) {
+			if (!Application.RenderWithVisualStyles) {
 				base.OnRenderSplitButtonBackground (e);
 				return;
 			}
@@ -194,7 +194,7 @@ namespace System.Windows.Forms.Theming.VisualStyles
 			if (e.ToolStrip.BackgroundImage != null)
 				return;
 				
-			if (!ThemeVisualStyles.RenderClientAreas) {
+			if (!Application.RenderWithVisualStyles) {
 				base.OnRenderToolStripBackground (e);
 				return;
 			}

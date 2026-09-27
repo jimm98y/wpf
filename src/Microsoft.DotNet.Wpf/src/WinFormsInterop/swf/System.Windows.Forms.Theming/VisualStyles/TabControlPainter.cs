@@ -29,7 +29,7 @@ namespace System.Windows.Forms.Theming.VisualStyles
 	class TabControlPainter : Default.TabControlPainter
 	{
 		static bool ShouldPaint (TabControl tabControl) {
-			return ThemeVisualStyles.RenderClientAreas &&
+			return Application.RenderWithVisualStyles &&
 				tabControl.Alignment == TabAlignment.Top &&
 				tabControl.DrawMode == TabDrawMode.Normal;
 		}
@@ -200,7 +200,7 @@ namespace System.Windows.Forms.Theming.VisualStyles
 		}
 		protected override void DrawScrollButton (Graphics dc, Rectangle bounds, Rectangle clippingArea, ScrollButton button, PushButtonState state)
 		{
-			if (!ThemeVisualStyles.RenderClientAreas) {
+			if (!Application.RenderWithVisualStyles) {
 				base.DrawScrollButton (dc, bounds, clippingArea, button, state);
 				return;
 			}

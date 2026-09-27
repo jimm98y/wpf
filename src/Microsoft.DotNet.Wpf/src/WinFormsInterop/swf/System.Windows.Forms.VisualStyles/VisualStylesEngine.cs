@@ -28,24 +28,15 @@
 
 namespace System.Windows.Forms.VisualStyles
 {
+	/// <summary>The visual-styles backend. There is ONE, managed, on every head: the Windows 11
+	/// look drawn by ThemeWin11 (see VisualStylesWin11). The uxtheme backend needed a real device
+	/// context -- which a Graphics recording into a GPU scene does not have -- and the GTK+ one
+	/// drew a Linux look; both were a per-platform second theme to keep in parity.</summary>
 	class VisualStylesEngine
 	{
-		static IVisualStyles instance = Initialize ();
+		static readonly IVisualStyles instance = new VisualStylesWin11 ();
 		public static IVisualStyles Instance {
 			get { return instance; }
-		}
-		static IVisualStyles Initialize ()
-		{
-			string environment_variable = Environment.GetEnvironmentVariable("MONO_VISUAL_STYLES");
-			if (environment_variable != null)
-				environment_variable = environment_variable.ToLower ();
-			if (
-#if !VISUAL_STYLES_USE_GTKPLUS_ON_WINDOWS
-				environment_variable == "gtkplus" &&
-#endif
-				VisualStylesGtkPlus.Initialize ())
-				return new VisualStylesGtkPlus ();
-			return new VisualStylesNative ();
 		}
 	}
 }

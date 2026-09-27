@@ -35,33 +35,21 @@ namespace System.Windows.Forms
 		
 		static ThemeEngine ()
 		{
-			// The modern Windows look is the default, as it is on Windows 11 itself. The classic
-			// theme is still here and still selectable -- an application that wants the pre-visual-
-			// styles look, or one whose custom drawing assumes those two-pixel bevels, sets
-			// WF_THEME=classic and gets exactly what it got before.
+			// The Windows 11 look, drawn by this port in managed code, on every head. The classic
+			// theme stays selectable (WF_THEME=classic) for an application whose custom drawing
+			// assumes its two-pixel bevels.
 			//
-			// Application.EnableVisualStyles() deliberately does NOT select ThemeVisualStyles here,
-			// and that is the opposite of what it looks like it should do. ThemeVisualStyles does not
-			// draw anything itself: it asks uxtheme to, through a real device context taken with
-			// Graphics.GetHdc. There is no such context on this port -- a Graphics here records into
-			// a GPU scene -- so GetHdc throws, and it throws inside OnPaint of the first Button on
-			// the form. Since EnableVisualStyles is the first line of Program.cs in every application
-			// the Visual Studio template has ever generated, that made ordinary WinForms applications
-			// die on their first paint.
-			//
-			// ThemeWin11 IS the visual-styles look; it is this port's own drawing of it, and it needs
-			// nothing from uxtheme. So asking for visual styles gets the visual-styles appearance,
-			// which is what the caller wanted. The uxtheme-backed theme stays reachable by name for a
-			// GDI-backed surface that can satisfy it.
+			// There is deliberately no uxtheme-backed theme any more. It drew by asking uxtheme,
+			// through a device context taken with Graphics.GetHdc -- there is no such context here, a
+			// Graphics records into a GPU scene -- and it could only ever have worked on Windows. The
+			// public renderers (CheckBoxRenderer, VisualStyleRenderer...) draw through the same
+			// managed theme via VisualStylesWin11.
 			string requested = Environment.GetEnvironmentVariable ("WF_THEME");
 
-			if (string.Equals (requested, "classic", StringComparison.OrdinalIgnoreCase)) {
+			if (string.Equals (requested, "classic", StringComparison.OrdinalIgnoreCase))
 				theme = new ThemeWin32Classic ();
-			} else if (string.Equals (requested, "visualstyles", StringComparison.OrdinalIgnoreCase)) {
-				theme = new ThemeVisualStyles ();
-			} else {
+			else
 				theme = new ThemeWin11 ();
-			}
 		}
 		
 			
