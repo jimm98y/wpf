@@ -117,6 +117,8 @@ namespace System.Windows.Forms
 			current_link = null;
 			show_caret_w_selection = (this is TextBox);
 			document = new Document(this);
+			applied_font = Font;
+			applied_fore_color = ForeColor;
 			document.SizeChanged += new EventHandler<Document.SizeChangedEventArgs> (document_SizeChanged);
 			//document.CaretMoved += new EventHandler(CaretMoved);
 			document.Wrap = false;
@@ -2327,6 +2329,17 @@ namespace System.Windows.Forms
 			}
 		}
 
+		// The font and colour the whole document was last given. A control that joins a form raises
+		// a font change whether or not the ambient font differs, and applying it re-formatted the whole
+		// document -- wiping a RichTextBox's SelectionFont and SelectionColor, set before the control
+		// had a handle, for a "change" to the very font it already had.
+		private Font applied_font;
+		private Color applied_fore_color;
+
+		private static bool SameFont (Font a, Font b)
+			=> a != null && b != null && a.Name == b.Name && a.SizeInPoints == b.SizeInPoints
+			   && a.Style == b.Style && a.GdiCharSet == b.GdiCharSet;
+
 		private void TextBoxBase_FontOrColorChanged (object sender, EventArgs e)
 		{
 			Line	line;
@@ -2335,6 +2348,11 @@ namespace System.Windows.Forms
 				delayed_font_or_color_change = true;
 				return;
 			}
+			delayed_font_or_color_change = false;
+			if (SameFont (applied_font, Font) && applied_fore_color.ToArgb () == ForeColor.ToArgb ())
+				return;
+			applied_font = Font;
+			applied_fore_color = ForeColor;
 
 			document.SuspendRecalc ();
 			// Font changes apply to the whole document

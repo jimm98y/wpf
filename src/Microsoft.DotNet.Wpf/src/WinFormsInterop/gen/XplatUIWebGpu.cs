@@ -76,7 +76,17 @@ namespace System.Windows.Forms {
 		internal override IntPtr GetFocus() { return FocusHandle; }
 		internal override IntPtr GetActive() { return IntPtr.Zero; }
 		internal override IntPtr GetPreviousWindow(IntPtr hwnd) { return IntPtr.Zero; }
-		internal override bool GetFontMetrics(Graphics g, Font font, out int ascent, out int descent) { ascent = default(int); descent = default(int); return false; }
+		// Generated as zero, so every run in a text box had no ascent and runs of different sizes were
+		// hung from the top of the line instead of standing on one baseline. The caller (LineTag)
+		// scales these by the font's height over its line spacing, so they are design units.
+		internal override bool GetFontMetrics(Graphics g, Font font, out int ascent, out int descent)
+		{
+			ascent = descent = 0;
+			if (font == null) return false;
+			ascent = font.FontFamily.GetCellAscent(font.Style);
+			descent = font.FontFamily.GetCellDescent(font.Style);
+			return ascent > 0;
+		}
 		internal override bool SystrayAdd(IntPtr hwnd, string tip, Icon icon, out ToolTip tt) { tt = default(ToolTip); return false; }
 		internal override bool SystrayChange(IntPtr hwnd, string tip, Icon icon, ref ToolTip tt) { return false; }
 		internal override void SystrayRemove(IntPtr hwnd, ref ToolTip tt) {  }
