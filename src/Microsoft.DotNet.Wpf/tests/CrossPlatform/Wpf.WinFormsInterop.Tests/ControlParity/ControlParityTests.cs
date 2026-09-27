@@ -175,7 +175,7 @@ namespace Wpf.WinFormsInterop.Tests
             ["textbox-password"] = (0, 602),
             // The slider is nineteen rows and the channel one row up, both measured on the live window,
             // and the ticks now snap to a column instead of being spread over two by a fractional x.
-            ["trackbar"] = (4, 10),
+            ["trackbar"] = (0, 10),
             // The dotted connector now hangs from the centre of its expander box and reaches the
             // label, as Windows draws it (TreeView.DrawNodeLines). Two pixels changed shade in
             // trade; against the live window that was 2,628 pixels of position recovered.

@@ -2990,6 +2990,46 @@ namespace System.Windows.Forms
 				CPDrawFocusRectangle (dc, focus_rect, control.ForeColor, control.BackColor);
 		}
 
+		/// <summary>An item's check box when the list has no state images of its own.</summary>
+		protected virtual void DrawListViewCheckBox (Graphics dc, ListView control, ListViewItem item, Rectangle rect_checkrect)
+		{
+			// Make sure we've got at least a line width of 1
+			int check_wd = Math.Max (3, rect_checkrect.Width / 6);
+			int scale = Math.Max (1, rect_checkrect.Width / 12);
+
+			// set the checkbox background
+			dc.FillRectangle (SystemBrushes.Window,
+					  rect_checkrect);
+			// define a rectangle inside the border area
+			Rectangle rect = new Rectangle (rect_checkrect.X + 2,
+							rect_checkrect.Y + 2,
+							rect_checkrect.Width - 4,
+							rect_checkrect.Height - 4);
+			Pen pen = ResPool.GetSizedPen (this.ColorWindowText, 2);
+			dc.DrawRectangle (pen, rect);
+
+			// Need to draw a check-mark
+			if (item.Checked) {
+				Pen check_pen = ResPool.GetSizedPen (this.ColorWindowText, 1);
+				// adjustments to get the check-mark at the right place
+				rect.X ++; rect.Y ++;
+				// following logic is taken from DrawFrameControl method
+				int x_offset = rect.Width / 5;
+				int y_offset = rect.Height / 3;
+				for (int i = 0; i < check_wd; i++) {
+					dc.DrawLine (check_pen, rect.Left + x_offset,
+						     rect.Top + y_offset + i,
+						     rect.Left + x_offset + 2 * scale,
+						     rect.Top + y_offset + 2 * scale + i);
+					dc.DrawLine (check_pen,
+						     rect.Left + x_offset + 2 * scale,
+						     rect.Top + y_offset + 2 * scale + i,
+						     rect.Left + x_offset + 6 * scale,
+						     rect.Top + y_offset - 2 * scale + i);
+				}
+			}
+		}
+
 		protected virtual void DrawListViewItem (Graphics dc, ListView control, ListViewItem item)
 		{				
 			Rectangle rect_checkrect = item.CheckRectReal;
@@ -3006,41 +3046,7 @@ namespace System.Windows.Forms
 			// Tile view doesn't support CheckBoxes
 			if (control.CheckBoxes && control.View != View.Tile) {
 				if (control.StateImageList == null) {
-					// Make sure we've got at least a line width of 1
-					int check_wd = Math.Max (3, rect_checkrect.Width / 6);
-					int scale = Math.Max (1, rect_checkrect.Width / 12);
-
-					// set the checkbox background
-					dc.FillRectangle (SystemBrushes.Window,
-							  rect_checkrect);
-					// define a rectangle inside the border area
-					Rectangle rect = new Rectangle (rect_checkrect.X + 2,
-									rect_checkrect.Y + 2,
-									rect_checkrect.Width - 4,
-									rect_checkrect.Height - 4);
-					Pen pen = ResPool.GetSizedPen (this.ColorWindowText, 2);
-					dc.DrawRectangle (pen, rect);
-
-					// Need to draw a check-mark
-					if (item.Checked) {
-						Pen check_pen = ResPool.GetSizedPen (this.ColorWindowText, 1);
-						// adjustments to get the check-mark at the right place
-						rect.X ++; rect.Y ++;
-						// following logic is taken from DrawFrameControl method
-						int x_offset = rect.Width / 5;
-						int y_offset = rect.Height / 3;
-						for (int i = 0; i < check_wd; i++) {
-							dc.DrawLine (check_pen, rect.Left + x_offset,
-								     rect.Top + y_offset + i,
-								     rect.Left + x_offset + 2 * scale,
-								     rect.Top + y_offset + 2 * scale + i);
-							dc.DrawLine (check_pen,
-								     rect.Left + x_offset + 2 * scale,
-								     rect.Top + y_offset + 2 * scale + i,
-								     rect.Left + x_offset + 6 * scale,
-								     rect.Top + y_offset - 2 * scale + i);
-						}
-					}
+					DrawListViewCheckBox (dc, control, item, rect_checkrect);
 				}
 				else {
 					int simage_idx;

@@ -396,6 +396,17 @@ namespace System.Windows.Forms
 			base.TextBoxBaseFillBackground (textBoxBase, g, clippingArea);
 		}
 
+		/// <summary>A list view's check box is the theme's, as comctl32 builds its state images:
+		/// the check-box part drawn at its own size in the middle of the item's check cell.</summary>
+		protected override void DrawListViewCheckBox (Graphics dc, ListView control, ListViewItem item, Rectangle rect_checkrect)
+		{
+			// The cell comctl32 draws it in stands three pixels in from the column's edge and a pixel
+			// higher than the 16x16 cell this layout keeps (measured against a stock details view;
+			// the labels already agree, so only the box moves).
+			rect_checkrect.Offset (3, -1);
+			Win11Frames.Draw (dc, Win11Frames.CheckBox (item.Checked ? 5 : 1), rect_checkrect);
+		}
+
 		/// <summary>CP_READONLY's state for a drop-down list: disabled, pressed while its list is
 		/// down, hot under the pointer.</summary>
 		private static int ComboReadOnlyState (ComboBox c)
@@ -1309,161 +1320,175 @@ namespace System.Windows.Forms
 			return cell != null && cell.DataGridView != null;
 		}
 
-		// ---- track bar ---------------------------------------------------------------
-		//
-		// A flat pale channel with a solid accent-coloured slider, in place of the sunken groove and
-		// the bevelled grey pointer the classic theme carves. The shapes and their positions are the
-		// classic ones -- the control works out where the thumb goes, and hit testing has to agree
-		// with what is drawn -- so only the painting changes.
-
-		private static readonly Color TrackChannel = Color.FromArgb (231, 234, 234);
-		private static readonly Color TrackChannelEdge = Color.FromArgb (214, 214, 214);
 		private static readonly Color TrackTick = Color.FromArgb (196, 196, 196);
 
-		private void FillChannel (Graphics dc, Rectangle channel)
+		// ---- track bar: comctl32's layout, the theme's parts --------------------------------
+		//
+		// The classic painter draws the background and the ticks, which already stand where
+		// Windows puts them; the channel and the thumb are drawn here where comctl32 (TBResize,
+		// ValidateThumbHeight, MoveThumb, TBLogToPhys, GetChannelRect) puts them, with the
+		// theme's TKP_* parts.
+
+		[ThreadStatic] private static TrackBar s_trackBar;
+
+		public override void DrawTrackBar (Graphics dc, Rectangle clip_rectangle, TrackBar tb)
 		{
-			if (channel.Width <= 0 || channel.Height <= 0)
-				return;
-			dc.FillRectangle (ResPool.GetSolidBrush (TrackChannel), channel);
-			dc.DrawRectangle (ResPool.GetPen (TrackChannelEdge), channel.X, channel.Y,
-					  channel.Width - 1, channel.Height - 1);
+			s_trackBar = tb;
+			try {
+				base.DrawTrackBar (dc, clip_rectangle, tb);
+			} finally {
+				s_trackBar = null;
+			}
+			// Where the thumb really is, for hit testing and dragging.
+			tb.ThumbPos = Comctl32TrackBar (tb).Thumb;
+		}
+
+		/// <summary>A track bar laid out as comctl32 lays it out, in the control's coordinates.</summary>
+		internal readonly struct TrackBarLayout
+		{
+			public readonly Rectangle Channel, Thumb;
+			public readonly int ThumbPart, ChannelPart;
+			public TrackBarLayout (Rectangle channel, Rectangle thumb, int thumbPart, int channelPart)
+			{
+				Channel = channel; Thumb = thumb; ThumbPart = thumbPart; ChannelPart = channelPart;
+			}
+		}
+
+		internal static TrackBarLayout Comctl32TrackBar (TrackBar tb)
+		{
+			bool vert = tb.Orientation == Orientation.Vertical;
+			Rectangle client = tb.ClientRectangle;
+			// TBResize works in the horizontal frame; a vertical bar swaps x and y first.
+			int W = vert ? client.Height : client.Width, H = vert ? client.Width : client.Height;
+			bool both = tb.TickStyle == TickStyle.Both;
+			bool top = tb.TickStyle == TickStyle.TopLeft;
+			bool noTicks = tb.TickStyle == TickStyle.None;
+			int thumbPart = vert ? (both ? 6 : top ? 7 : 8) : (both ? 3 : top ? 5 : 4);
+
+			int w, h;
+			if (!both) {
+				// The pointed thumb's true size (11x19), shrunk to what the control can hold.
+				w = 11; h = 19;
+				int avail = H - (noTicks ? 4 : 7);
+				if (2 * EdgeMetric <= avail && avail < h) {
+					w = w * avail / h;
+					h = avail;
+				}
+			} else {
+				// No theme size for the plain thumb: four thirds of a scroll bar's height.
+				h = 4 * HScrollHeight / 3;
+				ValidateThumbHeight (ref h, out w);
+				if (!(h <= 2 * EdgeMetric || h <= H)) {
+					h = H - 3 * EdgeMetric;
+					ValidateThumbHeight (ref h, out w);
+				}
+			}
+
+			int y0 = (top || both) && !noTicks ? 8 : 0;
+			int thumbTop = y0 + 2, thumbBottom = thumbTop + h;
+			int left = w + 2, right = W - w - 2;
+			int length = Math.Max (1, right - left);
+
+			int min = tb.Minimum, max = tb.Maximum;
+			int value = tb.thumb_pressed ? tb.Minimum + tb.thumb_mouseclick : tb.Value;
+			// WinForms hands a vertical bar its value upside down, so that the minimum is at the
+			// bottom.
+			if (vert)
+				value = min + max - value;
+			int x = left + (max != min ? MulDiv (value - min, length - 1, max - min) : 0) - w / 2;
+
+			int channelLeft = left - w / 2;
+			int channelRight = length + w + channelLeft - 1;
+			int channelTop = (thumbBottom + thumbTop - ChannelThickness) / 2;
+			if (!both)
+				channelTop += top ? 1 : -1;
+
+			var thumb = new Rectangle (x, thumbTop, w, h);
+			var channel = new Rectangle (channelLeft, channelTop, channelRight - channelLeft, ChannelThickness);
+			if (vert) {
+				thumb = new Rectangle (thumb.Y, thumb.X, thumb.Height, thumb.Width);
+				channel = new Rectangle (channel.Y, channel.X, channel.Height, channel.Width);
+			}
+			thumb.Offset (client.Location);
+			channel.Offset (client.Location);
+			return new TrackBarLayout (channel, thumb, thumbPart, vert ? 2 : 1);
+		}
+
+		private const int EdgeMetric = 2;         // SM_CXEDGE
+		private const int HScrollHeight = 17;     // SM_CYHSCROLL
+		private const int ChannelThickness = 4;   // MulDiv (4, dpi, 96)
+
+		private static void ValidateThumbHeight (ref int h, out int w)
+		{
+			if (h < 2 * EdgeMetric)
+				h = 2 * EdgeMetric;
+			w = h / 2 | 1;
+		}
+
+		/// <summary>Win32 MulDiv: a * b / c rounded to the nearest, halves away from zero.</summary>
+		private static int MulDiv (int a, int b, int c)
+		{
+			long n = (long) a * b;
+			return (int) ((n + (n >= 0 ? c / 2 : -c / 2)) / c);
+		}
+
+		/// <summary>comctl32's thumb state: disabled, pressed, hot, focused (unless focus cues are
+		/// hidden), else normal.</summary>
+		private static int TrackBarThumbState (TrackBar tb)
+			=> !tb.Enabled ? 5 : tb.thumb_pressed ? 3 : tb.ThumbEntered ? 2
+			 : tb.Focused && tb.ShowFocusCues ? 4 : 1;
+
+		private void DrawComctl32Channel (Graphics dc)
+		{
+			if (s_trackBar is TrackBar tb) {
+				TrackBarLayout l = Comctl32TrackBar (tb);
+				Win11Frames.Draw (dc, Win11Frames.Get ("TRACKBAR", l.ChannelPart, 1), l.Channel);
+			}
+		}
+
+		private static void DrawComctl32Thumb (Graphics dc, TrackBar tb)
+		{
+			TrackBarLayout l = Comctl32TrackBar (tb);
+			Win11Frames.Draw (dc, Win11Frames.Get ("TRACKBAR", l.ThumbPart, TrackBarThumbState (tb)), l.Thumb);
 		}
 
 		protected override void TrackBarDrawHorizontalTrack (Graphics dc, Rectangle thumb_area,
 								     Point channel_startpoint, Rectangle clippingArea)
-		{
-			// ONE ROW ABOVE the classic channel. The layout that hands over channel_startpoint is
-			// the classic one and puts a horizontal channel at y=9; Windows draws it at 8. Measured
-			// off both: the four rows are the same colours in the same order -- edge D6D6D6, two of
-			// E7EAEA, edge D6D6D6 -- and ours were simply one row lower all the way along.
-			// The THUMB is not moved: its rows already agree.
-			FillChannel (dc, new Rectangle (channel_startpoint.X, channel_startpoint.Y - 1,
-							thumb_area.Width, 4));
-		}
+			=> DrawComctl32Channel (dc);
 
 		protected override void TrackBarDrawVerticalTrack (Graphics dc, Rectangle thumb_area,
 								   Point channel_startpoint, Rectangle clippingArea)
-		{
-			FillChannel (dc, new Rectangle (channel_startpoint.X, channel_startpoint.Y,
-							4, thumb_area.Height));
-		}
-
-		/// <summary>The slider, as a pointer with its tip on the given side, or a plain bar when
-		/// <paramref name="tip"/> is none. Sampled rather than filled as a polygon: the recorder
-		/// leaves a polygon's diagonals hard, and against the pale channel behind it a stepped edge
-		/// on a shape this small is the whole of what one sees.</summary>
-		private void FillPointer (Graphics dc, Rectangle body, TrackBarTip tip, Color colour, Color behind)
-		{
-			Rectangle bounds = body;
-			double cx = body.X + body.Width / 2.0, cy = body.Y + body.Height / 2.0;
-			Func<double, double, bool> inside;
-			switch (tip) {
-			case TrackBarTip.Bottom:
-				inside = (x, y) => {
-					if (y <= body.Bottom - PointerTip)
-						return x >= body.X && x <= body.Right;
-					double t = (body.Bottom - y) / (double) PointerTip;
-					double half = body.Width / 2.0 * t;
-					return x >= cx - half && x <= cx + half;
-				};
-				break;
-			case TrackBarTip.Top:
-				inside = (x, y) => {
-					if (y >= body.Y + PointerTip)
-						return x >= body.X && x <= body.Right;
-					double t = (y - body.Y) / (double) PointerTip;
-					double half = body.Width / 2.0 * t;
-					return x >= cx - half && x <= cx + half;
-				};
-				break;
-			case TrackBarTip.Right:
-				inside = (x, y) => {
-					if (x <= body.Right - PointerTip)
-						return y >= body.Y && y <= body.Bottom;
-					double t = (body.Right - x) / (double) PointerTip;
-					double half = body.Height / 2.0 * t;
-					return y >= cy - half && y <= cy + half;
-				};
-				break;
-			case TrackBarTip.Left:
-				inside = (x, y) => {
-					if (x >= body.X + PointerTip)
-						return y >= body.Y && y <= body.Bottom;
-					double t = (x - body.X) / (double) PointerTip;
-					double half = body.Height / 2.0 * t;
-					return y >= cy - half && y <= cy + half;
-				};
-				break;
-			default:
-				dc.FillRectangle (ResPool.GetSolidBrush (colour), body);
-				return;
-			}
-			FillAntialiased (dc, bounds, colour, behind, inside);
-		}
-
-		private enum TrackBarTip { None, Top, Bottom, Left, Right }
-
-		/// <summary>How far along the slider its point runs.</summary>
-		private const int PointerTip = 4;
-
-		/// <summary>NINETEEN rows, one down from where the layout puts it -- not the twenty-one hard
-		/// against it. Measured on a live stock track bar, whose slider inks rows 4..22 of the control
-		/// where ours inked 3..23: same centre, a row proud at each end.</summary>
-		private static Rectangle HorizontalThumb (Rectangle thumb_pos)
-			=> new Rectangle (thumb_pos.X, thumb_pos.Y + 1, 11, 19);
-
-		private Color ThumbColour (TrackBar bar)
-		{
-			return bar != null && !bar.Enabled ? ColorGrayText : ColorHighlight;
-		}
+			=> DrawComctl32Channel (dc);
 
 		protected override void TrackBarDrawHorizontalThumbBottom (Graphics dc, Rectangle thumb_pos,
 									   Brush br_thumb, Rectangle clippingArea,
 									   TrackBar trackBar)
-		{
-			FillPointer (dc, HorizontalThumb (thumb_pos), TrackBarTip.Bottom,
-				     ThumbColour (trackBar), trackBar.BackColor);
-		}
+			=> DrawComctl32Thumb (dc, trackBar);
 
 		protected override void TrackBarDrawHorizontalThumbTop (Graphics dc, Rectangle thumb_pos,
 									Brush br_thumb, Rectangle clippingArea,
 									TrackBar trackBar)
-		{
-			FillPointer (dc, HorizontalThumb (thumb_pos), TrackBarTip.Top,
-				     ThumbColour (trackBar), trackBar.BackColor);
-		}
+			=> DrawComctl32Thumb (dc, trackBar);
 
 		protected override void TrackBarDrawHorizontalThumb (Graphics dc, Rectangle thumb_pos,
 								     Brush br_thumb, Rectangle clippingArea,
 								     TrackBar trackBar)
-		{
-			FillPointer (dc, HorizontalThumb (thumb_pos), TrackBarTip.None,
-				     ThumbColour (trackBar), trackBar.BackColor);
-		}
+			=> DrawComctl32Thumb (dc, trackBar);
 
 		protected override void TrackBarDrawVerticalThumbRight (Graphics dc, Rectangle thumb_pos,
 									Brush br_thumb, Rectangle clippingArea,
 									TrackBar trackBar)
-		{
-			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 21, 11), TrackBarTip.Right,
-				     ThumbColour (trackBar), trackBar.BackColor);
-		}
+			=> DrawComctl32Thumb (dc, trackBar);
 
 		protected override void TrackBarDrawVerticalThumbLeft (Graphics dc, Rectangle thumb_pos,
 								       Brush br_thumb, Rectangle clippingArea,
 								       TrackBar trackBar)
-		{
-			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 21, 11), TrackBarTip.Left,
-				     ThumbColour (trackBar), trackBar.BackColor);
-		}
+			=> DrawComctl32Thumb (dc, trackBar);
 
 		protected override void TrackBarDrawVerticalThumb (Graphics dc, Rectangle thumb_pos,
 								   Brush br_thumb, Rectangle clippingArea,
 								   TrackBar trackBar)
-		{
-			FillPointer (dc, new Rectangle (thumb_pos.X, thumb_pos.Y, 21, 11), TrackBarTip.None,
-				     ThumbColour (trackBar), trackBar.BackColor);
-		}
+			=> DrawComctl32Thumb (dc, trackBar);
 
 		protected override ITrackBarTickPainter GetTrackBarTickPainter (Graphics g)
 		{
