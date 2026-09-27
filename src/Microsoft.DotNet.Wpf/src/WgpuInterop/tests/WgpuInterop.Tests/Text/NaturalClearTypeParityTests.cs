@@ -206,6 +206,9 @@ namespace WgpuInterop.Tests.Text
         [InlineData("segoeui", 2)]
         [InlineData("tahoma", 1)]
         [InlineData("segoeui", 1)]
+        [InlineData("sylfaen", 0)]
+        [InlineData("sylfaen", 1)]
+        [InlineData("sylfaen", 3)]
         public void SimulatedGlyphsAreDirectWritesTexture(string file, int simulations)
         {
             string? path = FontPath(file);
@@ -267,7 +270,7 @@ namespace WgpuInterop.Tests.Text
         private static readonly Dictionary<(string, int), int> SimulatedCeiling = new()
         {
             // Tahoma's are its upright diagonal class (see GlyphCeiling), natural and GDI_CLASSIC.
-            [("tahoma", 2)] = 18, [("segoeui", 2)] = 0, [("tahoma", 1)] = 56, [("segoeui", 1)] = 0,
+            [("tahoma", 2)] = 18, [("segoeui", 2)] = 0, [("tahoma", 1)] = 56, [("segoeui", 1)] = 0, [("sylfaen", 0)] = 96, [("sylfaen", 1)] = 142, [("sylfaen", 3)] = 99,
         };
 
         [Theory]
