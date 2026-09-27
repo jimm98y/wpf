@@ -118,8 +118,8 @@ namespace Wpf.WinFormsInterop.Tests
             // pixel -- lighter ink puts one faint antialiased pixel the other side of the
             // "drawn at all" threshold. The window agrees and by much more: 9,303 off the
             // captured difference across the two combo boxes.
-            ["combobox-editable"] = (17, 300),
-            ["combobox-list"] = (20, 225),
+            ["combobox-editable"] = (4, 300),
+            ["combobox-list"] = (11, 225),
             // Windows leaves the control's last row clear -- its frame's bottom edge sits a row above
             // ours did -- and the etched hairline is #DCDCDC, not #DFDFDF. Both measured on the live
             // window, where the group box went from 212,532 to 181,740.

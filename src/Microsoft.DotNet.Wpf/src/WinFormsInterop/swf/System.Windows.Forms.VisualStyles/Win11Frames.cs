@@ -70,8 +70,7 @@ namespace System.Windows.Forms.VisualStyles
 			// A stretched frame whose middle is one opaque colour gets that middle again as a solid
 			// fill -- the same pixels, but text drawn on the face then stands on a paper colour the
 			// renderer can see, and blends onto it exactly rather than onto an image.
-			if (f.Stretch && Solid (f) is uint face) {
-				var (l, r, t, b) = f.Margins;
+			if (f.Stretch && Solid (f) is (uint face, int l, int r, int t, int b)) {
 				var middle = new Rectangle (dest.X + l, dest.Y + t, dest.Width - l - r, dest.Height - t - b);
 				if (middle.Width > 0 && middle.Height > 0)
 					using (var brush = new SolidBrush (Color.FromArgb ((int) face)))
@@ -118,20 +117,36 @@ namespace System.Windows.Forms.VisualStyles
 			g.FillRectangle (border, r.Right - n, r.Y + n, n, r.Height - 2 * n);
 		}
 
-		/// <summary>The colour of a stretched frame's middle, when it is all one opaque colour.</summary>
-		static uint? Solid (Frame f)
+		/// <summary>The colour of a stretched frame's middle, when it is all one opaque colour, and
+		/// how far that colour reaches: from the sizing margins, each side is pulled outward while
+		/// the rows or columns it takes in are still that colour, so a caption that runs into the
+		/// margins still stands on it.</summary>
+		static (uint face, int l, int r, int t, int b)? Solid (Frame f)
 		{
 			var (l, r, t, b) = f.Margins;
 			if (l + r >= f.Width || t + b >= f.Height)
 				return null;
 			uint c = f.Pixels [t * f.Width + l];
-			if (c >> 24 != 255)
+			if (c >> 24 != 255 || !Uniform (f, c, l, r, t, b))
 				return null;
+			bool grew = true;
+			while (grew) {
+				grew = false;
+				if (l > 0 && Uniform (f, c, l - 1, r, t, b)) { l--; grew = true; }
+				if (r > 0 && Uniform (f, c, l, r - 1, t, b)) { r--; grew = true; }
+				if (t > 0 && Uniform (f, c, l, r, t - 1, b)) { t--; grew = true; }
+				if (b > 0 && Uniform (f, c, l, r, t, b - 1)) { b--; grew = true; }
+			}
+			return (c, l, r, t, b);
+		}
+
+		static bool Uniform (Frame f, uint c, int l, int r, int t, int b)
+		{
 			for (int y = t; y < f.Height - b; y++)
 				for (int x = l; x < f.Width - r; x++)
 					if (f.Pixels [y * f.Width + x] != c)
-						return null;
-			return c;
+						return false;
+			return true;
 		}
 
 		static readonly Dictionary<(Frame, int, int), Bitmap> s_blits = new ();
@@ -522,6 +537,9 @@ namespace System.Windows.Forms.VisualStyles
 			4 => (0xffeaeaeau, 0xffeaeaeau, 0xfffafafau),
 			_ => (0xffd2d2d2u, 0xffbcbcbcu, 0xfffdfdfdu),
 		};
+
+		/// <summary>The face colour of the combo box's buttons in a state.</summary>
+		internal static uint ComboFace (int state) => ComboLook (state).face;
 
 		/// <summary>CP_DROPDOWNBUTTON, 7x21 nine-grid 3/3/7/8, with the chevron over it.</summary>
 		internal static Frame DropDownButton (int state)

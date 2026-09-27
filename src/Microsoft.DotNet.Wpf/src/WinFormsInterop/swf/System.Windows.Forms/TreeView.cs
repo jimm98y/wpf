@@ -1278,8 +1278,17 @@ namespace System.Windows.Forms {
 
 		private bool IsCheckboxArea (TreeNode node, int x)
 		{
-			int l = CheckBoxLeft (node);
-			return (x > l && x < l + 10);
+			int l = CheckBoxCellLeft (node);
+			return (x >= l && x < l + TreeNode.CheckBoxWidth);
+		}
+
+		/// <summary>Where a check-box tree draws a node's box: the cell just before its text.</summary>
+		private int CheckBoxCellLeft (TreeNode node)
+		{
+			int l = node.Bounds.Left - TreeNode.CheckBoxWidth;
+			if (ImageList != null)
+				l -= ImageList.ImageSize.Width + 3;
+			return l;
 		}
 
 		private bool IsImage (TreeNode node, int x)
@@ -1505,22 +1514,12 @@ namespace System.Windows.Forms {
 
 		private void DrawNodeCheckBox (TreeNode node, Graphics dc, int x, int middle)
 		{
-			Pen pen = ThemeEngine.Current.ResPool.GetSizedPen(Color.Black, 2);
-				dc.DrawRectangle (pen, x + 3, middle - 4, 11, 11);
-
-			if (node.Checked) {
-				Pen check_pen = ThemeEngine.Current.ResPool.GetPen(Color.Black);
-				
-				int check_size = 5;
-				int lineWidth = 3;
-				
-				Rectangle rect = new Rectangle (x + 4, middle - 3, check_size, check_size);
-				
-				for (int i = 0; i < lineWidth; i++) {
-					dc.DrawLine (check_pen, rect.Left + 1, rect.Top + lineWidth + i, rect.Left + 3, rect.Top + 5 + i);
-					dc.DrawLine (check_pen, rect.Left + 3, rect.Top + 5 + i, rect.Left + 7, rect.Top + 1 + i);
-				}
-			}
+			// comctl32 builds a check-box tree's state images by drawing the theme's check box
+			// (unchecked or checked, normal) at its own size, and draws a node's on its row -- so
+			// the box is the same one a CheckBox control shows.
+			var cell = new Rectangle (x, middle - 7, TreeNode.CheckBoxWidth, 13);
+			System.Windows.Forms.VisualStyles.Win11Frames.Draw (dc,
+				System.Windows.Forms.VisualStyles.Win11Frames.CheckBox (node.Checked ? 5 : 1), cell);
 		}
 
 		private void DrawNodeLines (TreeNode node, Graphics dc, Rectangle clip, Pen dash, int x, int y,	int middle)
@@ -1771,7 +1770,7 @@ namespace System.Windows.Forms {
 
 			if (draw_mode == TreeViewDrawMode.Normal || draw_mode == TreeViewDrawMode.OwnerDrawText) {
 				if (checkboxes && state_image_list == null)
-					DrawNodeCheckBox (node, dc, CheckBoxLeft (node) - 3, middle);
+					DrawNodeCheckBox (node, dc, CheckBoxCellLeft (node), middle);
 
 				if (checkboxes && state_image_list != null)
 					DrawNodeState (node, dc, CheckBoxLeft (node) - 3, y);

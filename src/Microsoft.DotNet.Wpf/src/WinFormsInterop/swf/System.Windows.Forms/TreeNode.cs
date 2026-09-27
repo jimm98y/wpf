@@ -255,13 +255,19 @@ namespace System.Windows.Forms
 				return 0;
 			int indent_level = IndentLevel;
 			int roots = (TreeView.ShowRootLines ? 1 : 0);
-			int cb = (TreeView.CheckBoxes ? 19 : 0);
+			// A check-box tree's state images are the theme's check box at its own size, 13
+			// pixels, and the text follows the box directly.
+			int cb = (TreeView.CheckBoxes ? CheckBoxWidth : 0);
 			if (!TreeView.CheckBoxes && StateImage != null)
 				cb = 19;
 			int imgs = (TreeView.ImageList != null ?  TreeView.ImageList.ImageSize.Width + 3 : 0);
-			// The three pixels are Windows': a stock node's rectangle starts that far past the indent.
+			// The three pixels are Windows': a stock node's rectangle starts that far past the
+			// indent, and a check box stands in them and after them.
 			return ((indent_level + roots) * TreeView.Indent) + cb + imgs + 3 - TreeView.hbar_offset;
 		}
+
+		/// <summary>The check box cell of a check-box tree: the theme's 13x13 check box.</summary>
+		internal const int CheckBoxWidth = 13;
 
 		internal int GetLinesX ()
 		{

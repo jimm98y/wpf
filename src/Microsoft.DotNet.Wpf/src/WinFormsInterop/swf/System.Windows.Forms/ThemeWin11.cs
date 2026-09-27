@@ -367,6 +367,11 @@ namespace System.Windows.Forms
 
 		public override Color ComboBoxFieldBackColor (ComboBox comboBox)
 		{
+			// A drop-down list's field is the face of the theme's CP_READONLY frame in the
+			// control's state, so its text stands on that exact colour.
+			if (comboBox.DropDownStyle == ComboBoxStyle.DropDownList && comboBox.FlatStyle != FlatStyle.Flat
+			    && comboBox.FlatStyle != FlatStyle.Popup)
+				return Color.FromArgb ((int) Win11Frames.ComboFace (ComboReadOnlyState (comboBox)));
 			if (!comboBox.Enabled)
 				return ColorControl;
 			if (comboBox.DroppedDown || comboBox.PointerOver)
@@ -379,24 +384,54 @@ namespace System.Windows.Forms
 			return comboBox.BackColor;
 		}
 
+		/// <summary>A combo box's own edit field stays the window colour when disabled: comctl32
+		/// answers its edit's colour request with the window brush, and the disabled look is the
+		/// CP_BORDER frame round it. Any other text box keeps the classic rule.</summary>
+		public override void TextBoxBaseFillBackground (TextBoxBase textBoxBase, Graphics g, Rectangle clippingArea)
+		{
+			if (textBoxBase is ComboBox.ComboTextBox && !textBoxBase.backcolor_set) {
+				g.FillRectangle (ResPool.GetSolidBrush (ColorWindow), clippingArea);
+				return;
+			}
+			base.TextBoxBaseFillBackground (textBoxBase, g, clippingArea);
+		}
+
+		/// <summary>CP_READONLY's state for a drop-down list: disabled, pressed while its list is
+		/// down, hot under the pointer.</summary>
+		private static int ComboReadOnlyState (ComboBox c)
+			=> !c.Enabled ? 4 : c.DroppedDown ? 3 : c.PointerOver ? 2 : 1;
+
+		/// <summary>CP_BORDER's state for an editable combo: disabled, focused (or open), hot.</summary>
+		private static int ComboBorderState (ComboBox c)
+			=> !c.Enabled ? 4 : c.Focused || c.DroppedDown ? 3 : c.PointerOver ? 2 : 1;
+
 		public override void ComboBoxDrawBackground (ComboBox comboBox, Graphics g, Rectangle clippingArea, FlatStyle style)
 		{
+			bool is_flat = style == FlatStyle.Flat || style == FlatStyle.Popup;
+			if (!is_flat) {
+				// comctl32 draws a themed combo box whole from the theme: a drop-down list is the
+				// CP_READONLY face over the entire control, an editable one the CP_BORDER frame,
+				// and a simple one that frame round its edit field; the drop button comes after.
+				switch (comboBox.DropDownStyle) {
+				case ComboBoxStyle.DropDownList:
+					Win11Frames.Draw (g, Win11Frames.ComboReadOnly (ComboReadOnlyState (comboBox)), comboBox.ClientRectangle);
+					return;
+				case ComboBoxStyle.DropDown:
+					Win11Frames.Draw (g, Win11Frames.ComboBorder (ComboBorderState (comboBox)), comboBox.ClientRectangle);
+					return;
+				default:
+					g.FillRectangle (ResPool.GetSolidBrush (comboBox.Parent.BackColor), comboBox.ClientRectangle);
+					Win11Frames.Draw (g, Win11Frames.ComboBorder (ComboBorderState (comboBox)), comboBox.TextArea);
+					return;
+				}
+			}
+
 			if (!comboBox.Enabled)
 				g.FillRectangle (ResPool.GetSolidBrush (ColorControl), comboBox.ClientRectangle);
 			else if (comboBox.DroppedDown || comboBox.PointerOver)
 				g.FillRectangle (ResPool.GetSolidBrush (ComboFieldOpenFace), comboBox.ClientRectangle);
-			else if (comboBox.DropDownStyle == ComboBoxStyle.DropDownList)
-				// A resting DROP-DOWN LIST is #FDFDFD, not the window's white -- it is a button
-				// showing a choice, and Windows gives it a button's face. Most of ours already came
-				// out at 253 because what draws over it is that colour, but the first and last row
-				// inside the frame were left showing the control's own white: a two-row ring round
-				// the field, 786 pixels of it, invisible until the two are subtracted.
-				//
-				// ONLY the list style. An editable combo is a text field with a button on the end
-				// and Windows fills it with real white; painting both alike moved 1,202 pixels of
-				// the editable one the wrong way, which is how the two came to be told apart.
-				g.FillRectangle (ResPool.GetSolidBrush (ComboFieldFace), comboBox.ClientRectangle);
-
+			else
+				g.FillRectangle (ResPool.GetSolidBrush (comboBox.BackColor), comboBox.ClientRectangle);
 			if (comboBox.DropDownStyle == ComboBoxStyle.Simple)
 				g.FillRectangle (ResPool.GetSolidBrush (comboBox.Parent.BackColor), comboBox.ClientRectangle);
 
@@ -407,21 +442,29 @@ namespace System.Windows.Forms
 				g.DrawRectangle (ResPool.GetPen (SystemColors.ControlDark), area);
 				g.DrawLine (ResPool.GetPen (SystemColors.ControlDark), comboBox.ButtonArea.X - 1, comboBox.ButtonArea.Top, comboBox.ButtonArea.X - 1, comboBox.ButtonArea.Bottom);
 			}
+		}
 
-			bool is_flat = style == FlatStyle.Flat || style == FlatStyle.Popup;
-			if (!is_flat && clippingArea.IntersectsWith (comboBox.TextArea)) {
-				// The light hairline Windows puts round an input, with its corner pixel dropped --
-				// not the dark #7A7A7A of the classic sunken field.
-				Rectangle border = comboBox.TextArea;
-				border.Width -= 1;
-				border.Height -= 1;
-				bool list = comboBox.DropDownStyle == ComboBoxStyle.DropDownList;
-				DrawRoundedOutline (g, border, comboBox.Focused ? ButtonBorderHover
-								     : list ? ComboListFrame : EditFieldFrame);
-				if (list && !comboBox.Focused && border.Width > 2)
-					g.DrawLine (ResPool.GetPen (ComboBorder), border.X + 1, border.Bottom,
-						    border.Right - 1, border.Bottom);
-			}
+		/// <summary>The themed drop button draws its own face (or none), so nothing is filled
+		/// under it first.</summary>
+		public override bool ComboBoxNormalDropDownButtonHasTransparentBackground (ComboBox comboBox, ButtonState state)
+		{
+			return false;
+		}
+
+		/// <summary>CP_DROPDOWNBUTTONRIGHT: the chevron alone at rest, an accent-framed face
+		/// under the pointer or pressed. A drop-down list lights up whole instead, so its button
+		/// only ever shows the chevron.</summary>
+		public override void ComboBoxDrawNormalDropDownButton (ComboBox comboBox, Graphics g, Rectangle clippingArea, Rectangle area, ButtonState state)
+		{
+			int st = (state & ButtonState.Inactive) != 0 ? 4
+				: comboBox.DropDownStyle == ComboBoxStyle.DropDownList ? 1
+				: (state & ButtonState.Pushed) != 0 || comboBox.DroppedDown ? 3
+				: comboBox.DropDownButtonEntered ? 2 : 1;
+			// The themed button stands one pixel in from the control's edge, not a 3D border's two:
+			// that is where Windows' chevron lands.
+			Rectangle client = comboBox.TextArea;
+			var button = new Rectangle (client.Right - 1 - area.Width, client.Y + 1, area.Width, client.Height - 2);
+			Win11Frames.Draw (g, Win11Frames.DropDownButtonSide (6, st), button);
 		}
 
 		/// <summary>
@@ -485,18 +528,19 @@ namespace System.Windows.Forms
 
 		protected override void ButtonBase_DrawButton (ButtonBase button, Graphics dc)
 		{
-			// A check box or radio button rendered AS a button, and the flat styles, keep the base
-			// behaviour: those have their own drawing and their own reasons.
-			if (button is CheckBox || button is RadioButton ||
-			    button.FlatStyle == FlatStyle.Flat || button.FlatStyle == FlatStyle.Popup) {
+			// The flat styles keep the base behaviour: those have their own drawing.
+			if (button.FlatStyle == FlatStyle.Flat || button.FlatStyle == FlatStyle.Popup) {
 				base.ButtonBase_DrawButton (button, dc);
 				return;
 			}
 
 			// The face is the theme's push-button frame over the whole client area, in the state
 			// WinForms' own ButtonStandardAdapter picks: disabled, pressed, hot, then default (the
-			// default button and the focused one), else normal.
-			int state = !button.Enabled ? 4 : button.Pressed ? 3 : button.Entered ? 2
+			// default button and the focused one), else normal. A check box or radio button drawn
+			// AS a button is a push button that stays pressed while it is checked.
+			bool on = button is CheckBox cb ? cb.CheckState != CheckState.Unchecked
+				: button is RadioButton rb && rb.Checked;
+			int state = !button.Enabled ? 4 : button.Pressed || on ? 3 : button.Entered ? 2
 				  : button.IsDefault || button.Focused ? 5 : 1;
 			Win11Frames.Draw (dc, Win11Frames.PushButton (state), button.ClientRectangle);
 			Rectangle r = Rectangle.Inflate (button.ClientRectangle, -1, -1);
