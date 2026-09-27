@@ -32,7 +32,7 @@ namespace WgpuInterop.Tests.Protocol
         /// <summary>A sink with one visual carrying some drawn content, as a live window would have.</summary>
         private static WpfCompositionSink NewSinkWithContent()
         {
-            var sink = new WpfCompositionSink();
+            var sink = new WpfCompositionSink { UseRenderThread = false };   // inspects the engine after each call
             MilcoreEngine engine = sink.Engine;
             engine.CreateOrAddRef(HRoot, MilResourceTypeId.Visual);
             engine.SubmitCommand(MilCmd.SolidColorBrush(HBrush, 1f, 0f, 0f, 1f));
@@ -55,7 +55,7 @@ namespace WgpuInterop.Tests.Protocol
         [Fact]
         public void AFreshEngineIsDirty()
         {
-            using var sink = new WpfCompositionSink();
+            using var sink = new WpfCompositionSink { UseRenderThread = false };   // inspects the engine after each call
             Assert.True(sink.Engine.Dirty);
         }
 

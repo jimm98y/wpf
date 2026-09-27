@@ -134,20 +134,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // this assembly deliberately cannot see it. The caller resolves the handle. It has to be
             // per-window rather than per-process because a machine can pair a 120Hz laptop panel with
             // a 60Hz monitor, and dragging between them must change the pacing.
-            _presentedWindow = hwnd;
-            _presentedTime = System.Diagnostics.Stopwatch.GetTimestamp();
-            _presentedPending = true;
+            lock (_presentLock)
+            {
+                _presentedWindow = hwnd;
+                _presentedTime = System.Diagnostics.Stopwatch.GetTimestamp();
+                _presentedPending = true;
+            }
         }
+
+        // Written by whichever thread presents (the render thread, with WPF_RENDER_THREAD) and read by
+        // WPF's scheduler on the UI thread.
+        private readonly object _presentLock = new();
 
         /// <summary>Reports the last present to WPF's scheduler. See IMilCompositionSink.</summary>
         public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime)
         {
-            windowHandle = (long)_presentedWindow;
-            presentationTime = _presentedTime;
-            if (!_presentedPending) return false;
+            lock (_presentLock)
+            {
+                windowHandle = (long)_presentedWindow;
+                presentationTime = _presentedTime;
+                if (!_presentedPending) return false;
 
-            _presentedPending = false;
-            return true;
+                _presentedPending = false;
+                return true;
+            }
         }
 
         // Per-target (HWND) timestamp of the last present, to detect an isolated/idle frame that needs a
@@ -182,6 +192,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // Keep the allocator ahead of any client-assigned handles.
                 _nextHandle = handle;
             }
+            if (Recording)
+            {
+                MirrorAddRef(handle);
+                uint h = handle;
+                Record(() => _engine.CreateOrAddRef(h, (MilResourceTypeId)resourceType));
+                return handle;
+            }
             _engine.CreateOrAddRef(handle, (MilResourceTypeId)resourceType);
             return handle;
         }
@@ -190,16 +207,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // Return whether the resource actually LEFT the channel (refcount hit 0). DUCE.Resource only
             // then clears its cached handle; returning true unconditionally zeroed the handle of resources
             // still shared by other owners (broke PhotoFlipper's reused DiffuseMaterials).
-            => _engine.Release(handle);
+        {
+            if (Recording)
+            {
+                Record(() => _engine.Release(handle));
+                return MirrorRelease(handle);
+            }
+            return _engine.Release(handle);
+        }
 
         public void SendCommand(int channelId, byte[] data, bool sendInSeparateBatch)
-            => _engine.SubmitCommand(data);
+        {
+            if (Recording) { Record(() => _engine.SubmitCommand(data)); return; }
+            _engine.SubmitCommand(data);
+        }
 
         // Receive an image-source's pixels as straight BGRA32 (top-down, stride bytes/row),
         // marshalled on the managed PresentationCore side -- no COM. Convert to the engine's
         // straight RGBA and register it for image brushes / DrawImage.
         public void SendBitmap(int channelId, uint handle, int width, int height, int stride, byte[] pixels)
         {
+            // The BGRA -> RGBA conversion goes with it: off the UI thread is where it belongs.
+            if (Recording) { Record(() => SendBitmap(channelId, handle, width, height, stride, pixels)); return; }
             if (width <= 0 || height <= 0 || pixels == null || stride < width * 4 ||
                 (long)stride * height > pixels.Length)
             {
@@ -231,6 +260,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // call makes the frame texture re-upload every frame.
         public void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels)
         {
+            if (Recording) { Record(() => SendVideoFrame(channelId, mediaHandle, width, height, rowBytes, pixels)); return; }
             if (width <= 0 || height <= 0 || pixels == null || rowBytes < width * 4 ||
                 (long)rowBytes * height > pixels.Length)
             {
@@ -255,19 +285,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         }
 
         public void BeginCommand(int channelId, byte[] data, int extraSize)
-            => _engine.BeginCommand(data);
+        {
+            if (Recording) { Record(() => _engine.BeginCommand(data)); return; }
+            _engine.BeginCommand(data);
+        }
 
         public void AppendCommandData(int channelId, byte[] data)
-            => _engine.AppendCommandData(data);
+        {
+            if (Recording) { Record(() => _engine.AppendCommandData(data)); return; }
+            _engine.AppendCommandData(data);
+        }
 
         public void EndCommand(int channelId)
-            => _engine.EndCommand();
+        {
+            if (Recording) { Record(() => _engine.EndCommand()); return; }
+            _engine.EndCommand();
+        }
 
         public void CloseBatch(int channelId) { }
 
-        public void Commit(int channelId) => RenderTargets();
+        public void Commit(int channelId)
+        {
+            if (Recording) { HandOver(render: true, wait: false); return; }
+            RenderTargets();
+        }
 
-        public void SyncFlush(int channelId) => RenderTargets();
+        public void SyncFlush(int channelId)
+        {
+            if (Recording) { HandOver(render: true, wait: true); return; }
+            RenderTargets();
+        }
 
         /// <summary>
         /// Renders a bitmap composition target (RenderTargetBitmap via the sync channel) and
@@ -277,6 +324,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// </summary>
         public byte[]? ReadbackTarget(int channelId, uint targetHandle)
         {
+            if (Recording)
+            {
+                byte[]? result = null;
+                Record(() => result = ReadbackTarget(channelId, targetHandle));
+                HandOver(render: false, wait: true);
+                return result;
+            }
             try
             {
                 _engine.Realize();
@@ -864,9 +918,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private static void Log(string message)
         {
             if (s_logPath is null) return;
-            try { System.IO.File.AppendAllText(s_logPath, message + Environment.NewLine); }
-            catch { /* diagnostics only */ }
+            // Locked: with the render thread two threads log, and a collision drops the line.
+            lock (s_logLock)
+            {
+                try { System.IO.File.AppendAllText(s_logPath, message + Environment.NewLine); }
+                catch { /* diagnostics only */ }
+            }
         }
+
+        private static readonly object s_logLock = new();
 
         private static void UnpremultiplyInPlace(byte[] px)
         {
@@ -1226,6 +1286,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public void Dispose()
         {
             if (_disposed) return;
+            // Finish what was handed over and stop the render thread first: it owns every GPU object
+            // released below and may be in the middle of a frame.
+            StopRenderThread();
             _disposed = true;
             foreach (TargetSurface ts in _surfaces.Values)
             {

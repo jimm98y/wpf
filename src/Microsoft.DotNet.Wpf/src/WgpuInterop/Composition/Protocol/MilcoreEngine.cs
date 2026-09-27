@@ -532,6 +532,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public SceneVisual? VisualByHandle(uint handle) =>
             _visuals.TryGetValue(handle, out SceneVisual? v) ? v : null;
 
+        /// <summary>Whether a solid-colour brush resource exists, and its colour (tests).</summary>
+        internal bool HasSolidBrush(uint handle) => _solidBrushes.ContainsKey(handle);
+
+        internal RgbaColor SolidBrushColour(uint handle) =>
+            _solidBrushes.TryGetValue(handle, out RgbaColor c) ? c : default;
+
         /// <summary>
         /// Models DUCE.Channel.CreateOrAddRefOnChannel: allocate the slave resource for
         /// <paramref name="handle"/> if it does not exist yet.

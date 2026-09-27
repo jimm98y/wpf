@@ -211,6 +211,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW", SetLastError = true)]
         private static extern bool SystemParametersInfo(uint action, uint param, ref uint value, uint winIni);
 
+        // PM_QS_SENDMESSAGE alone: Windows delivers pending SENT messages inside the call and reports
+        // no posted one, so nothing is removed from the queue.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Msg { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public int x, y; }
+        [DllImport("user32.dll", EntryPoint = "PeekMessageW")]
+        private static extern bool PeekMessage(out Msg msg, IntPtr hWnd, uint min, uint max, uint remove);
+        private const uint PM_NOREMOVE = 0x0000, PM_QS_SENDMESSAGE = 0x00400000;
+
+        internal static void PumpSentMessages() => PeekMessage(out _, IntPtr.Zero, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE);
+
+        [DllImport("user32.dll")] private static extern bool TranslateMessage(ref Msg msg);
+        [DllImport("user32.dll", EntryPoint = "DispatchMessageW")] private static extern IntPtr DispatchMessage(ref Msg msg);
+        private const uint PM_REMOVE = 0x0001;
+
+        internal static void PumpThreadMessages()
+        {
+            while (PeekMessage(out Msg m, IntPtr.Zero, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage(ref m);
+                DispatchMessage(ref m);
+            }
+        }
+
         [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
         [DllImport("gdi32.dll")] private static extern IntPtr CreateCompatibleDC(IntPtr hdc);

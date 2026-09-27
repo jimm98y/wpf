@@ -151,7 +151,7 @@ namespace WgpuInterop.Tests.Protocol
                 255, 0, 0, 255,   0, 255, 255, 255,
             };
 
-            using var sink = new WpfCompositionSink();
+            using var sink = new WpfCompositionSink { UseRenderThread = false };   // inspects the engine after each call
             sink.SendBitmap(0, HImg, 2, 2, 8, bgra);
 
             MilcoreEngine engine = sink.Engine;

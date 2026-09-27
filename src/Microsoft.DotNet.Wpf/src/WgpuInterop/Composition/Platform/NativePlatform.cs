@@ -49,6 +49,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// Returns IntPtr.Zero if the platform is unsupported -- or, on Android, if the
         /// window has no live Surface yet, in which case the caller should retry.
         /// </summary>
+        /// <summary>Delivers messages other threads have SENT to this one, and nothing else -- the
+        /// posted queue is left alone, so no input or dispatcher work runs. For a thread that has to
+        /// block on the render thread: see WpfCompositionSink.WaitForRenderThread.</summary>
+        public static void PumpSentMessages()
+        {
+            if (Current == PlatformKind.Windows) Win32Interop.PumpSentMessages();
+        }
+
+        /// <summary>Removes and dispatches every message queued for this thread's windows. For a
+        /// thread with no message loop of its own that nonetheless owns a window (the render thread,
+        /// through wgpu's GL context).</summary>
+        public static void PumpThreadMessages()
+        {
+            if (Current == PlatformKind.Windows) Win32Interop.PumpThreadMessages();
+        }
+
         public static IntPtr CreateWindowSurface(IntPtr instance, IntPtr nativeWindow)
         {
             switch (Current)
