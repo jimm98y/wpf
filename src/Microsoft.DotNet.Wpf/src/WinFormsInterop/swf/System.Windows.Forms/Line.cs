@@ -880,7 +880,7 @@ namespace System.Windows.Forms
 			}
 
 			if (this.height == 0) {
-				this.height = tags.Font.Height;
+				this.height = TextRenderer.GdiLineHeight (tags.Font);
 				tags.Height = this.height;
 				tags.Shift = 0;
 			}
@@ -950,12 +950,12 @@ namespace System.Windows.Forms
 
 			w = TextBoxTextRenderer.MeasureText (g, doc.password_char, tags.Font).Width;
 
-			if (this.textHeight != (int)tag.Font.Height)
+			if (this.textHeight != TextRenderer.GdiLineHeight (tag.Font))
 				ret = true;
 			else
 				ret = false;
 
-			this.textHeight = (int)tag.Font.Height;
+			this.textHeight = TextRenderer.GdiLineHeight (tag.Font);
 			tag.Height = this.textHeight;
 			this.height = (int)(this.LineSpacing + this.TotalParagraphSpacing);
 

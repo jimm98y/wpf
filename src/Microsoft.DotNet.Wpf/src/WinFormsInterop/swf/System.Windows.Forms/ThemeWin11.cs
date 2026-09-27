@@ -979,6 +979,14 @@ namespace System.Windows.Forms
 			return true;
 		}
 
+		/// <summary>COLOR_WINDOWFRAME is #646464 on Windows 10 and 11 -- a plain WS_BORDER round a
+		/// text box or panel. The theme states it rather than reading the host's system colours,
+		/// which are not Windows' on the other heads and came back black here.</summary>
+		public override Color ColorWindowFrame {
+			get { return Color.FromArgb (100, 100, 100); }
+			set { }
+		}
+
 		public override void DrawControlBorder (Graphics dc, Rectangle bounds, Control control, bool sunken)
 		{
 			if (bounds.Width <= 1 || bounds.Height <= 1)
@@ -2075,6 +2083,16 @@ namespace System.Windows.Forms
 			if (bar.Capture)
 				open = 1.0;                                     // dragging holds it open
 
+			// At rest and fully open the bar is the theme's own SCROLLBAR parts, as user32 draws
+			// them: the track, the arrow buttons (their arrows hidden at rest, faint on a bar that
+			// cannot scroll, shown in the hover state once the pointer is on the bar) and the thumb
+			// (a thin line at rest, the wide rounded bar in the hover state). Only the fade between
+			// the two is drawn by hand.
+			if (open <= 0.05 || open >= 0.95) {
+				DrawThemedScrollBar (dc, bar, client, first, second, thumb, open >= 0.95);
+				return;
+			}
+
 			// The track is always there. A scroll bar inside a list or a grid keeps its channel in
 			// Windows whether the pointer is near it or not -- it is the thumb and the arrows that come
 			// and go. Fading the track out to the control's own colour left it white where a stock one
@@ -2119,6 +2137,24 @@ namespace System.Windows.Forms
 				slim.Height = Math.Max (1, Math.Min (thickness, thumb.Height - inset));
 			}
 			FillCapsule (dc, slim, Blend (ScrollThumbRest, ScrollThumb, open), ScrollTrack);
+		}
+
+		/// <summary>A scroll bar from the theme's parts, at rest or in the hover state.</summary>
+		private static void DrawThemedScrollBar (Graphics dc, ScrollBar bar, Rectangle client,
+							 Rectangle first, Rectangle second, Rectangle thumb, bool hover)
+		{
+			// SBP_LOWERTRACK* / UPPERTRACK*: the same tile either side of the thumb.
+			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", bar.vert ? 6 : 4, 1), client);
+			// SBP_ARROWBTN: up/down/left/right in fours (normal, hot, pressed, disabled), then the
+			// four hover states.
+			int d1 = bar.vert ? 0 : 2, d2 = bar.vert ? 1 : 3;
+			int ArrowState (int dir) => !bar.Enabled ? dir * 4 + 4 : hover ? 17 + dir : dir * 4 + 1;
+			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", 1, ArrowState (d1)), first);
+			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", 1, ArrowState (d2)), second);
+			if (!bar.Enabled || thumb.Width <= 0 || thumb.Height <= 0)
+				return;
+			// SBP_THUMBBTNVERT / HORZ: normal, or SCRBS_HOVER.
+			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", bar.vert ? 3 : 2, hover ? 5 : 1), thumb);
 		}
 
 		private const int ScrollRestThickness = 2;

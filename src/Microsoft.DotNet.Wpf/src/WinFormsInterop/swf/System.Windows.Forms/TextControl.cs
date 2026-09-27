@@ -541,8 +541,10 @@ namespace System.Windows.Forms {
 					right_margin = 1;
 					break;
 				case BorderStyle.FixedSingle:
-					left_margin = 2;
-					top_margin = 2;
+					// One pixel inside the one-pixel border, both ways: a stock fixed-single box's text
+					// starts in its third column and row, and two put ours in the fourth.
+					left_margin = 1;
+					top_margin = 1;
 					right_margin = 3;
 					break;
 				case BorderStyle.Fixed3D:
@@ -1789,7 +1791,8 @@ namespace System.Windows.Forms {
 			/// We draw the single border ourself
 			///
 			if (owner.actual_border_style == BorderStyle.FixedSingle) {
-				ControlPaint.DrawBorder (g, owner.ClientRectangle, Color.Black, ButtonBorderStyle.Solid);
+				// In the window-frame colour -- #646464 on Windows 10 and 11 -- not black.
+				ControlPaint.DrawBorder (g, owner.ClientRectangle, ThemeEngine.Current.ColorWindowFrame, ButtonBorderStyle.Solid);
 			}
 
 			/// Make sure that we aren't drawing one more line then we need to

@@ -142,7 +142,10 @@ namespace System.Windows.Forms
 					small_font = null;
 					font = value;
 	
-					height = Font.Height;
+					// An edit control spaces its lines by the font's TEXTMETRIC height -- ascent
+					// plus descent, no line gap -- not by GDI+'s line spacing, which is a pixel
+					// taller for Segoe UI 9pt and pushed every line of a multiline box down.
+					height = TextRenderer.GdiLineHeight (Font);
 					XplatUI.GetFontMetrics (Hwnd.GraphicsContext, Font, out ascent, out descent);
 					float scale_factor = font.GetHeight () / font.FontFamily.GetLineSpacing (font.Style);
 					ascent = (int) Math.Ceiling (ascent * scale_factor);
@@ -504,7 +507,7 @@ namespace System.Windows.Forms
 			bool retval = false;		// Assume line-height doesn't change
 
 			// Too simple?
-			if (((FormatSpecified.Font & specified) == FormatSpecified.Font) && font.Height != line.TextHeight)
+			if (((FormatSpecified.Font & specified) == FormatSpecified.Font) && TextRenderer.GdiLineHeight (font) != line.TextHeight)
 				retval = true;
 
 			line.recalc = true;		// This forces recalculation of the line in RecalculateDocument
@@ -659,7 +662,7 @@ namespace System.Windows.Forms
 		
 		internal virtual int MaxHeight ()
 		{
-			return font.Height;
+			return TextRenderer.GdiLineHeight (font);
 		}
 
 		private static void SetFormat (LineTag tag, Font font, Color color, Color back_color, FormatSpecified specified)
