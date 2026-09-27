@@ -60,6 +60,20 @@ namespace MS.Internal.TextFormatting
         public int PenX;
 
         public int Width;                   // ideal advance width of the run
+        public int[] CharWidths;            // ideal width of each character (a cluster's split over its characters)
+
+        /// <summary>
+        ///  The run's glyphs come from the shaping engine (LsChp.fGlyphBased), so its width is what
+        ///  its glyphs advance by rather than its characters' nominal widths.
+        /// </summary>
+        public bool GlyphBased;
+
+        /// <summary>
+        ///  Shaped in one piece with the run before it -- the pair shares a glyph chunk, the way
+        ///  LineServices groups neighbouring runs that FInterruptShaping does not separate.
+        /// </summary>
+        public bool JoinsPrevious;
+
         public int Ascent;
         public int Descent;
         public bool IsText;                 // false for control/object runs (skipped when drawing)
@@ -354,7 +368,9 @@ namespace MS.Internal.TextFormatting
                     continue;
                 }
 
-                // Measure the run (ideal char widths), capped to the remaining column width.
+                // Measure the run (ideal char widths), capped to the remaining column width. This is
+                // also what records how far formatting has measured (FullText.CpMeasured), so it runs
+                // for every text run, including the glyph-based ones whose widths Place replaces.
                 int[] charWidths = new int[cchText];
                 int totalWidth = 0, fitted = 0;
                 fixed (char* pText = runText)
@@ -365,8 +381,23 @@ namespace MS.Internal.TextFormatting
                         LsTFlow.lstflowES, pCw, ref totalWidth, ref fitted);
                 }
 
+                // Shape the run onto the line -- together with the runs before it that it shares a
+                // glyph chunk with, which can re-measure those too -- and fit what it now measures.
+                bool glyphBased = (chp.flags & LsChp.Flags.fGlyphBased) != 0;
+                ManagedLsRun prev = line.Runs.Count > 0 ? line.Runs[^1] : null;
+                var run = new ManagedLsRun
+                {
+                    Plsrun = plsrun, PlsrunPtr = plsrunPtr, CpFirst = cp, CchText = cchText, Text = runText,
+                    IsText = true, BidiLevel = bidiLevel, GlyphBased = glyphBased,
+                    JoinsPrevious = glyphBased && prev != null && prev.IsText && prev.GlyphBased
+                                    && ShapesWith(cb, ploc, prev.Plsrun, plsrun),
+                };
+                line.Runs.Add(run);
+                Place(cb, ploc, line, line.Runs.Count - 1, charWidths);
+                int runPen = run.PenX;
+
                 int consume = cchText;
-                if (column != int.MaxValue && penX + totalWidth > column)
+                if (column != int.MaxValue && runPen + run.Width > column)
                 {
                     // How many characters actually fit. GetRunCharWidths' stringLengthFitted counts
                     // the first character that CROSSES the boundary as well (LS's own contract: it
@@ -375,8 +406,8 @@ namespace MS.Internal.TextFormatting
                     // preceding space, but for scripts with no spaces -- CJK above all -- the break
                     // IS that position, and every wrapped line spilled one ideograph past its edge.
                     int fits = 0;
-                    for (int w = penX; fits < cchText && w + charWidths[fits] <= column; fits++)
-                        w += charWidths[fits];
+                    for (int w = runPen; fits < cchText && w + run.CharWidths[fits] <= column; fits++)
+                        w += run.CharWidths[fits];
 
                     // Trailing whitespace is not drawn, so a space that only just overflows still
                     // counts as fitting. Without this the break opportunity it carries falls outside
@@ -387,18 +418,22 @@ namespace MS.Internal.TextFormatting
                     int brk = FindBreak(runText, fits);
                     if (brk <= 0)
                     {
-                        if (line.Runs.Count == 0 && penX == 0)
+                        if (line.Runs.Count == 1 && runPen == 0)
                         {
                             // Emergency: guarantee forward progress with at least one character.
                             brk = Math.Max(1, Math.Min(fits, cchText));
                         }
                         else
                         {
+                            // The run goes to the next line whole: take it off this one, and give the
+                            // run it was shaped with back the shape it had without it.
+                            penX = Unplace(cb, ploc, line);
+
                             // Nothing more fits and this run carries no break opportunity of its own.
-                            // The store itemizes into one run per word / space / punctuation mark, so
-                            // ending the line at THIS run boundary would break wherever the runs happen
-                            // to meet -- e.g. a trailing "," that no longer fits would start the next
-                            // line. Backtrack to the last real break opportunity already on the line
+                            // Runs end wherever the formatting or the script changes, not where a line
+                            // may break, so ending the line at THIS run boundary would break wherever
+                            // the runs happen to meet -- e.g. a bold "," that no longer fits would start
+                            // the next line. Backtrack to the last real break opportunity already on the line
                             // (which also returns the runs after it to the next line); only if the line
                             // holds no opportunity at all does it end at the run boundary.
                             BackTrackToBreak(cb, ploc, line, ref cp, ref penX);
@@ -409,31 +444,27 @@ namespace MS.Internal.TextFormatting
                     lineFull = true;
                 }
 
-                if (consume <= 0) break;
+                if (consume <= 0)
+                {
+                    penX = Unplace(cb, ploc, line);
+                    break;
+                }
 
-                int usedWidth = 0;
-                for (int i = 0; i < consume; i++) usedWidth += charWidths[i];
+                if (consume < cchText)
+                {
+                    run.Text = runText[..consume];
+                    run.CchText = consume;
+                    Place(cb, ploc, line, line.Runs.Count - 1, charWidths);
+                }
 
                 LsTxM txm = new LsTxM();
                 cb.GetRunTextMetrics(ploc, plsrun, LsDevice.Presentation, LsTFlow.lstflowES, ref txm);
                 lineAscent = Math.Max(lineAscent, txm.dvAscent);
                 lineDescent = Math.Max(lineDescent, txm.dvDescent);
+                run.Ascent = txm.dvAscent;
+                run.Descent = txm.dvDescent;
 
-                char[] shapeText = (consume == cchText) ? runText : runText[..consume];
-                ShapeRun(cb, ploc, plsrun, plsrunPtr, shapeText,
-                         out ushort[] glyphs, out ushort[] clusters, out ushort[] charProps,
-                         out uint[] glyphProps, out int[] advances, out GlyphOffset[] offsets, out int glyphCount);
-
-                line.Runs.Add(new ManagedLsRun
-                {
-                    Plsrun = plsrun, PlsrunPtr = plsrunPtr, CpFirst = cp, CchText = consume, Text = shapeText,
-                    Glyphs = glyphs, ClusterMap = clusters, CharProps = charProps, GlyphProps = glyphProps,
-                    Advances = advances, Offsets = offsets, GlyphCount = glyphCount,
-                    PenX = penX, Width = usedWidth, Ascent = txm.dvAscent, Descent = txm.dvDescent, IsText = true,
-                    BidiLevel = bidiLevel,
-                });
-
-                penX += usedWidth;
+                penX = run.PenX + run.Width;
                 cp += consume;
             }
 
@@ -598,34 +629,31 @@ namespace MS.Internal.TextFormatting
                 return;
             }
 
-            // The expansion points, as (run, glyph) pairs. Trailing whitespace is excluded: it hangs
-            // past the end of the line and stretching it would push the last word left of the edge.
-            var points = new List<(ManagedLsRun Run, int Glyph)>();
-            int lastNonSpaceRun = -1;
-            for (int r = 0; r < line.Runs.Count; r++)
-            {
-                if (line.Runs[r].IsText && !IsAllWhitespace(line.Runs[r])) lastNonSpaceRun = r;
-            }
-            if (lastNonSpaceRun < 0)
+            // The expansion points, as (run, glyph, char) triples. Trailing whitespace is excluded:
+            // it hangs past the end of the line and stretching it would push the last word left of
+            // the edge. A run can hold several words and the spaces after the last of them, so the
+            // cut-off is the line's last non-space CHARACTER, not its last non-space run.
+            var points = new List<(ManagedLsRun Run, int Glyph, int Char)>();
+            (int lastRun, int lastChar) = LastInk(line);
+            if (lastRun < 0)
             {
                 return;
             }
 
-            for (int r = 0; r <= lastNonSpaceRun; r++)
+            for (int r = 0; r <= lastRun; r++)
             {
                 ManagedLsRun run = line.Runs[r];
                 if (!run.IsText || run.Text == null) continue;
 
-                for (int i = 0; i < run.CchText && i < run.Text.Length; i++)
+                int end = r == lastRun ? lastChar : Math.Min(run.CchText, run.Text.Length);
+                for (int i = 0; i < end; i++)
                 {
                     if (!IsBreakableSpace(run.Text[i])) continue;
 
-                    // The last character of the last non-space run cannot be an expansion point that
-                    // matters, but the general rule is simply: every space before the final word.
                     int glyph = i < run.ClusterMap.Length ? run.ClusterMap[i] : -1;
                     if (glyph >= 0 && glyph < run.Advances.Length)
                     {
-                        points.Add((run, glyph));
+                        points.Add((run, glyph, i));
                     }
                 }
             }
@@ -643,9 +671,10 @@ namespace MS.Internal.TextFormatting
                 int add = share + (i < remainder ? 1 : 0);
                 if (add == 0) continue;
 
-                (ManagedLsRun run, int glyph) = points[i];
+                (ManagedLsRun run, int glyph, int ch) = points[i];
                 run.Advances[glyph] += add;
                 run.Width += add;
+                if (run.CharWidths != null && ch < run.CharWidths.Length) run.CharWidths[ch] += add;
             }
         }
 
@@ -656,27 +685,38 @@ namespace MS.Internal.TextFormatting
             for (int r = line.Runs.Count - 1; r >= 0; r--)
             {
                 ManagedLsRun run = line.Runs[r];
-                if (!run.IsText)
+                if (!run.IsText || run.Text == null)
                 {
                     continue;   // a break or control run carries no width either way
                 }
-                if (!IsAllWhitespace(run))
+                for (int i = Math.Min(run.CchText, run.Text.Length) - 1; i >= 0; i--)
                 {
-                    break;
+                    if (!IsBreakableSpace(run.Text[i]))
+                    {
+                        return width;
+                    }
+                    width += run.CharWidths != null && i < run.CharWidths.Length ? run.CharWidths[i] : 0;
                 }
-                width += run.Width;
             }
             return width;
         }
 
-        private static bool IsAllWhitespace(ManagedLsRun run)
+        /// <summary>
+        ///  The line's last character that is not a breakable space, as (run index, character index
+        ///  within the run); (-1, -1) when the line holds none.
+        /// </summary>
+        private static (int Run, int Char) LastInk(ManagedLsLine line)
         {
-            if (run.Text == null || run.CchText == 0) return false;
-            for (int i = 0; i < run.CchText && i < run.Text.Length; i++)
+            for (int r = line.Runs.Count - 1; r >= 0; r--)
             {
-                if (!IsBreakableSpace(run.Text[i])) return false;
+                ManagedLsRun run = line.Runs[r];
+                if (!run.IsText || run.Text == null) continue;
+                for (int i = Math.Min(run.CchText, run.Text.Length) - 1; i >= 0; i--)
+                {
+                    if (!IsBreakableSpace(run.Text[i])) return (r, i);
+                }
             }
-            return true;
+            return (-1, -1);
         }
 
         // True if the run is a line/paragraph break: its leading character is a separator marker
@@ -820,10 +860,21 @@ namespace MS.Internal.TextFormatting
                 int brk = FindBreak(r.Text, r.CchText);
                 if (brk <= 0) continue;                       // no opportunity in this run
 
-                if (brk < r.CchText && !TruncateRun(cb, ploc, r, brk)) return false;
+                bool nextJoined = i + 1 < line.Runs.Count && line.Runs[i + 1].JoinsPrevious;
 
                 if (i + 1 < line.Runs.Count)
                     line.Runs.RemoveRange(i + 1, line.Runs.Count - i - 1);
+
+                if (brk < r.CchText)
+                {
+                    if (!TruncateRun(cb, ploc, line, i, brk)) return false;
+                }
+                else if (nextJoined)
+                {
+                    // The run it was shaped with has gone to the next line, and so has anything that
+                    // run's text did to this one's glyphs (a kerning pair across the boundary).
+                    Place(cb, ploc, line, i, null);
+                }
 
                 cp = r.CpFirst + r.CchText;
                 penX = r.PenX + r.Width;
@@ -833,10 +884,12 @@ namespace MS.Internal.TextFormatting
         }
 
         // Cuts a placed run down to its first `keep` characters, re-measuring and re-shaping so the
-        // glyphs and advances match the characters that remain on the line.
+        // glyphs and advances match the characters that remain on the line. The run must be the
+        // line's last.
         private static unsafe bool TruncateRun(
-            LineServicesCallbacks cb, IntPtr ploc, ManagedLsRun r, int keep)
+            LineServicesCallbacks cb, IntPtr ploc, ManagedLsLine line, int index, int keep)
         {
+            ManagedLsRun r = line.Runs[index];
             char[] text = r.Text[..keep];
             int[] charWidths = new int[keep];
             int totalWidth = 0, fitted = 0;
@@ -850,25 +903,201 @@ namespace MS.Internal.TextFormatting
                 }
             }
 
-            ShapeRun(cb, ploc, r.Plsrun, r.PlsrunPtr, text,
-                     out ushort[] glyphs, out ushort[] clusters, out ushort[] charProps,
-                     out uint[] glyphProps, out int[] advances, out GlyphOffset[] offsets, out int glyphCount);
-
             r.Text = text;
             r.CchText = keep;
-            r.Width = totalWidth;
-            r.Glyphs = glyphs;
-            r.ClusterMap = clusters;
-            r.CharProps = charProps;
-            r.GlyphProps = glyphProps;
-            r.Advances = advances;
-            r.Offsets = offsets;
-            r.GlyphCount = glyphCount;
+            Place(cb, ploc, line, index, charWidths);
             return true;
         }
 
-        private static unsafe void ShapeRun(
-            LineServicesCallbacks cb, IntPtr ploc, Plsrun plsrun, IntPtr plsrunPtr, char[] text,
+        /// <summary>Whether two neighbouring runs are shaped as one glyph chunk.</summary>
+        private static bool ShapesWith(LineServicesCallbacks cb, IntPtr ploc, Plsrun first, Plsrun second)
+        {
+            int interrupt = 1;
+            return cb.FInterruptShaping(ploc, LsTFlow.lstflowES, first, second, ref interrupt) == LsErr.None
+                && interrupt == 0;
+        }
+
+        /// <summary>The index of the first run of the glyph chunk that run <paramref name="index"/> is in.</summary>
+        private static int ChunkStart(ManagedLsLine line, int index)
+        {
+            while (index > 0 && line.Runs[index].JoinsPrevious) index--;
+            return index;
+        }
+
+        /// <summary>
+        ///  Shapes run <paramref name="index"/> -- which ends the line so far -- and gives it its
+        ///  glyphs, width and x. A glyph-based run is shaped together with the runs of its glyph
+        ///  chunk, which re-measures those as well.
+        /// </summary>
+        /// <remarks>
+        ///  <para>
+        ///   This is how LineServices measures text: a glyph-based run is as wide as its glyphs
+        ///   advance once shaped, and neighbouring runs that FInterruptShaping does not separate go
+        ///   to GetGlyphs and GetGlyphPositions as ONE string. The width GetRunCharWidths reports is
+        ///   each character's nominal hmtx advance, so measuring with it lost every kerning pair:
+        ///   the ones inside a run moved glyphs without narrowing the run, and the ones across a run
+        ///   boundary were never shaped at all. Every Arial, Times New Roman and Verdana line came out wider than stock WPF's by
+        ///   exactly its kerning.
+        ///  </para>
+        ///  <para>
+        ///   <paramref name="unshapedWidths"/> are GetRunCharWidths' widths for the run's characters,
+        ///   which remain the measure of a run that is not glyph-based; null when the run is.
+        ///  </para>
+        /// </remarks>
+        private static void Place(LineServicesCallbacks cb, IntPtr ploc, ManagedLsLine line, int index, int[] unshapedWidths)
+        {
+            ManagedLsRun run = line.Runs[index];
+            int first = run.GlyphBased ? ChunkStart(line, index) : index;
+
+            if (first < index && ShapeChunk(cb, ploc, line, first, index))
+            {
+                return;
+            }
+
+            // Shaped on its own: not glyph-based, the first of its chunk, or a chunk whose glyphs do
+            // not divide cleanly between its runs (see ShapeChunk).
+            run.JoinsPrevious = false;
+            ShapeRuns(cb, ploc, new[] { run.PlsrunPtr }, new[] { run.CchText }, run.Text[..run.CchText],
+                      out ushort[] glyphs, out ushort[] clusters, out ushort[] charProps,
+                      out uint[] glyphProps, out int[] advances, out GlyphOffset[] offsets, out int glyphCount);
+
+            run.Glyphs = glyphs;
+            run.ClusterMap = clusters;
+            run.CharProps = charProps;
+            run.GlyphProps = glyphProps;
+            run.Advances = advances;
+            run.Offsets = offsets;
+            run.GlyphCount = glyphCount;
+            run.PenX = PenAfter(line, index - 1);
+
+            if (run.GlyphBased || unshapedWidths == null)
+            {
+                run.CharWidths = CharWidthsFromClusters(clusters, run.CchText, glyphCount, advances);
+                run.Width = Sum(advances, 0, glyphCount);
+            }
+            else
+            {
+                run.CharWidths = unshapedWidths[..run.CchText];
+                run.Width = Sum(run.CharWidths, 0, run.CchText);
+            }
+        }
+
+        /// <summary>
+        ///  Takes the line's last run off it and re-places the run it shared a glyph chunk with.
+        ///  Returns the pen position where the removed run started.
+        /// </summary>
+        private static int Unplace(LineServicesCallbacks cb, IntPtr ploc, ManagedLsLine line)
+        {
+            ManagedLsRun removed = line.Runs[^1];
+            line.Runs.RemoveAt(line.Runs.Count - 1);
+            if (removed.JoinsPrevious)
+            {
+                Place(cb, ploc, line, line.Runs.Count - 1, null);
+            }
+            return PenAfter(line, line.Runs.Count - 1);
+        }
+
+        private static int PenAfter(ManagedLsLine line, int index)
+            => index < 0 ? 0 : line.Runs[index].PenX + line.Runs[index].Width;
+
+        /// <summary>
+        ///  Shapes runs <paramref name="first"/>..<paramref name="last"/> as one string and divides
+        ///  the glyphs back between them by cluster. False, with every run untouched, when that
+        ///  cannot be done cleanly: a cluster that spans two runs (a ligature across the boundary)
+        ///  or a cluster map that is not in logical order.
+        /// </summary>
+        private static bool ShapeChunk(LineServicesCallbacks cb, IntPtr ploc, ManagedLsLine line, int first, int last)
+        {
+            int runCount = last - first + 1;
+            var plsruns = new IntPtr[runCount];
+            var cchs = new int[runCount];
+            int total = 0;
+            for (int k = 0; k < runCount; k++)
+            {
+                ManagedLsRun r = line.Runs[first + k];
+                plsruns[k] = r.PlsrunPtr;
+                cchs[k] = r.CchText;
+                total += r.CchText;
+            }
+
+            var text = new char[total];
+            for (int k = 0, at = 0; k < runCount; k++)
+            {
+                Array.Copy(line.Runs[first + k].Text, 0, text, at, cchs[k]);
+                at += cchs[k];
+            }
+
+            ShapeRuns(cb, ploc, plsruns, cchs, text,
+                      out ushort[] glyphs, out ushort[] clusters, out ushort[] charProps,
+                      out uint[] glyphProps, out int[] advances, out GlyphOffset[] offsets, out int glyphCount);
+
+            for (int c = 1; c < total; c++)
+            {
+                if (clusters[c] < clusters[c - 1]) return false;
+            }
+            if (total == 0 || clusters[total - 1] >= glyphCount) return false;
+            for (int k = 1, at = cchs[0]; k < runCount; at += cchs[k], k++)
+            {
+                if (clusters[at] == clusters[at - 1]) return false;
+            }
+
+            int pen = line.Runs[first].PenX;
+            for (int k = 0, cs = 0; k < runCount; cs += cchs[k], k++)
+            {
+                ManagedLsRun r = line.Runs[first + k];
+                int ce = cs + cchs[k];
+                int gs = clusters[cs];
+                int ge = ce < total ? clusters[ce] : glyphCount;
+                int n = ge - gs;
+
+                r.Glyphs = glyphs[gs..ge];
+                r.GlyphProps = glyphProps[gs..ge];
+                r.Advances = advances[gs..ge];
+                r.Offsets = offsets[gs..ge];
+                r.GlyphCount = n;
+                r.CharProps = charProps[cs..ce];
+                r.ClusterMap = new ushort[cchs[k]];
+                for (int c = 0; c < cchs[k]; c++) r.ClusterMap[c] = (ushort)(clusters[cs + c] - gs);
+                r.CharWidths = CharWidthsFromClusters(r.ClusterMap, cchs[k], n, r.Advances);
+                r.Width = Sum(r.Advances, 0, n);
+                r.PenX = pen;
+                pen += r.Width;
+            }
+            return true;
+        }
+
+        /// <summary>
+        ///  Each character's share of its cluster's advance: split evenly, the remainder on the
+        ///  cluster's first character, so a run's characters always add up to the run.
+        /// </summary>
+        private static int[] CharWidthsFromClusters(ushort[] clusters, int charCount, int glyphCount, int[] advances)
+        {
+            var widths = new int[charCount];
+            int c = 0;
+            while (c < charCount)
+            {
+                int end = c + 1;
+                while (end < charCount && clusters[end] == clusters[c]) end++;
+                int g0 = Math.Min(clusters[c], glyphCount);
+                int g1 = Math.Max(g0, Math.Min(end < charCount ? clusters[end] : glyphCount, glyphCount));
+                int w = Sum(advances, g0, g1);
+                int each = w / (end - c);
+                for (int i = c; i < end; i++) widths[i] = each;
+                widths[c] += w - each * (end - c);
+                c = end;
+            }
+            return widths;
+        }
+
+        private static int Sum(int[] values, int from, int to)
+        {
+            int s = 0;
+            for (int i = from; i < to; i++) s += values[i];
+            return s;
+        }
+
+        private static unsafe void ShapeRuns(
+            LineServicesCallbacks cb, IntPtr ploc, IntPtr[] plsruns, int[] cchs, char[] text,
             out ushort[] glyphs, out ushort[] clusters, out ushort[] charProps,
             out uint[] glyphProps, out int[] advances, out GlyphOffset[] offsets, out int glyphCount)
         {
@@ -881,9 +1110,6 @@ namespace MS.Internal.TextFormatting
             ushort[] glyphBuf;
             uint[] glyphPropBuf;
             int gc;
-
-            IntPtr plsrunLocal = plsrunPtr;
-            int cchLocal = cch;
 
             // GetGlyphs is allowed to need more glyphs than the buffer holds -- shaping can turn one
             // glyph into several -- and says so by leaving fBuffersUsed clear and reporting the count
@@ -898,6 +1124,8 @@ namespace MS.Internal.TextFormatting
                 gc = capacity;
                 int fBuffersUsed = 0;
 
+                fixed (IntPtr* pPlsruns = plsruns)
+                fixed (int* pCchs = cchs)
                 fixed (char* pText = text)
                 fixed (ushort* pGlyphs = glyphBuf)
                 fixed (uint* pGlyphProps = glyphPropBuf)
@@ -905,7 +1133,7 @@ namespace MS.Internal.TextFormatting
                 fixed (ushort* pCharProps = charPropBuf)
                 fixed (int* pCanAlone = canAlone)
                 {
-                    cb.GetGlyphsRedefined(ploc, &plsrunLocal, &cchLocal, 1, pText, cch, LsTFlow.lstflowES,
+                    cb.GetGlyphsRedefined(ploc, pPlsruns, pCchs, plsruns.Length, pText, cch, LsTFlow.lstflowES,
                         pGlyphs, pGlyphProps, capacity, ref fBuffersUsed, pCluster, pCharProps, pCanAlone, ref gc);
                 }
 
@@ -933,6 +1161,8 @@ namespace MS.Internal.TextFormatting
             advances = new int[gc];
             offsets = new GlyphOffset[gc];
 
+            fixed (IntPtr* pPlsruns = plsruns)
+            fixed (int* pCchs = cchs)
             fixed (char* pText = text)
             fixed (ushort* pCluster = clusters)
             fixed (ushort* pCharProps = charProps)
@@ -941,7 +1171,7 @@ namespace MS.Internal.TextFormatting
             fixed (int* pAdvances = advances)
             fixed (GlyphOffset* pOffsets = offsets)
             {
-                cb.GetGlyphPositions(ploc, &plsrunLocal, &cchLocal, 1, LsDevice.Presentation, pText,
+                cb.GetGlyphPositions(ploc, pPlsruns, pCchs, plsruns.Length, LsDevice.Presentation, pText,
                     pCluster, pCharProps, cch, pGlyphs, pGlyphProps, gc, LsTFlow.lstflowES, pAdvances, pOffsets);
             }
         }
@@ -1077,9 +1307,12 @@ namespace MS.Internal.TextFormatting
         /// </remarks>
         private static void CellBounds(ManagedLsRun run, int offset, out int x, out int width)
         {
+            // Per CHARACTER, not per glyph: a ligature is one glyph for several characters, and a
+            // cluster several glyphs for one.
+            int[] widths = run.CharWidths ?? run.Advances;
             int before = 0;
-            for (int i = 0; i < offset && i < run.Advances.Length; i++) before += run.Advances[i];
-            width = offset < run.Advances.Length ? run.Advances[offset] : 0;
+            for (int i = 0; i < offset && i < widths.Length; i++) before += widths[i];
+            width = offset < widths.Length ? widths[offset] : 0;
 
             x = run.IsRightToLeft
                 ? run.PenX + run.Width - before - width

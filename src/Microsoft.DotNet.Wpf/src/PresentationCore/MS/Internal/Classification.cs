@@ -18,7 +18,8 @@ namespace MS.Internal
     /// from the static class Classification.
     /// We cannot make MC++ reference PresentationCore.dll since this will result in cirular reference.
     /// </summary>
-    internal class ClassificationUtility : MS.Internal.Text.TextInterface.IClassification
+    internal class ClassificationUtility : MS.Internal.Text.TextInterface.IClassification,
+                                          MS.Internal.Text.TextInterface.IScriptClassification
     {
         // We have restored this list from WPF 3.x.
         // The original list can be found under
@@ -134,6 +135,19 @@ namespace MS.Internal
             {
                 isIndic = IsScriptIndic(scriptId);
             }
+        }
+
+        /// <summary>
+        /// The character's script for itemization, or 0 when it has none of its own and belongs to
+        /// the text around it: WPF's Default (spaces, punctuation), Digit, Mirror (brackets) and
+        /// Control classes, which DWrite's script analysis resolves to their neighbours' script.
+        /// </summary>
+        public int GetScript(int unicodeScalar)
+        {
+            ScriptID script = (ScriptID)Classification.CharAttributeOf((int)Classification.GetUnicodeClass(unicodeScalar)).Script;
+            return script is ScriptID.Default or ScriptID.Digit or ScriptID.Mirror or ScriptID.Control
+                ? 0
+                : (int)script;
         }
 
         /// <summary>

@@ -485,7 +485,14 @@ namespace MS.Internal.TextFormatting
 
             for (int g = 0; g < glyphCount; g++)
             {
-                advances[g] += Round((workAdvances[g] - designAdvances[g]) * designToIdeal);
+                // Where the caller's advance is the nominal one, round the ADJUSTED advance once,
+                // as WPF rounds the float advance DWrite's GetGlyphPlacements returns with the
+                // kerning already in it. Rounding the nominal advance and the adjustment separately
+                // is off by an ideal unit on some glyphs, which a long line adds up.
+                int nominal = (int)Math.Round(designAdvances[g] * designToIdeal);
+                advances[g] = advances[g] == nominal
+                    ? (int)Math.Round(workAdvances[g] * designToIdeal)
+                    : advances[g] + Round((workAdvances[g] - designAdvances[g]) * designToIdeal);
                 offsets[g].du += Round(workOffsets[g].dx * designToIdeal);
                 offsets[g].dv += Round(workOffsets[g].dy * designToIdeal);
             }

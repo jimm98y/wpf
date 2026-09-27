@@ -268,11 +268,13 @@ namespace Wpf.Text.Tests
             return placed;
         }
 
+        // A word's run carries the spaces bidi resolves to its level ("abc " before an RTL island in
+        // an LTR paragraph), as it does with DWrite's itemization, so the match ignores them.
         private static Placed Find(IReadOnlyList<Placed> runs, string text)
         {
             foreach (Placed run in runs)
             {
-                if (run.Text == text) return run;
+                if (run.Text.Trim(' ') == text) return run;
             }
             Assert.Fail($"no run with text '{text}' among [{Describe(runs)}]");
             return default;

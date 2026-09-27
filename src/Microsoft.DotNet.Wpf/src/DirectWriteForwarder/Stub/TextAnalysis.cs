@@ -23,6 +23,14 @@ namespace MS.Internal.Text.TextInterface
             );
     }
 
+    // Off-Windows: a character's script as WPF classifies it, so the managed itemizer can resolve
+    // script runs the way DWrite's AnalyzeScript does. 0 for a character with no script of its own
+    // (spaces, punctuation, digits, combining marks), which takes the script of the text around it.
+    public interface IScriptClassification
+    {
+        int GetScript(int unicodeScalar);
+    }
+
     // Managed-backed off-Windows. Produced by the managed TextAnalyzer.Itemize; carries the
     // per-run script/number-substitution properties WPF's font mapping and shaping read. There is
     // no native DWrite script analysis, so ScriptAnalysis/NumberSubstitution are null and the
@@ -136,69 +144,120 @@ namespace MS.Internal.Text.TextInterface
             CreateTextAnalysisSource pfnCreateTextAnalysisSource
             )
         {
-            // Managed itemization: no DWrite. Group consecutive characters that share the same
-            // script class (via WPF's classification) into runs; each run becomes an ItemProps
-            // span. Complex-script/number substitution nuances are simplified.
+            // Managed itemization, following what the DWrite path does: DWrite's AnalyzeScript cuts
+            // the text into script runs, and TextItemizer.Itemize cuts those again only where digit
+            // handling changes. A character with no script of its own -- a space, punctuation, a
+            // digit, a combining mark -- belongs to the script run around it, so "brown fox 0123"
+            // is ONE item. The items become the text store's runs, and runs from different items
+            // are never shaped together; cutting at every space (as this did) left one run per
+            // word, and the kerning pairs across a word boundary (" A", " T") were never applied.
             var spans = new List<MS.Internal.Span>();
             if (length == 0) return spans;
 
-            int runStart = 0;
-            int prevKey = -1;
-            bool prevCombining = false, prevCaret = false, prevIndic = false, prevLatin = false, prevExtended = false;
+            int n = (int)length;
+            var scriptOf = classificationUtility as IScriptClassification;
 
-            for (int i = 0; i < (int)length; i++)
+            var combining = new bool[n];
+            var caret = new bool[n];
+            var indic = new bool[n];
+            var latin = new bool[n];
+            var strong = new bool[n];
+            var extended = new bool[n];
+            var digit = new bool[n];
+            var script = new int[n];      // resolved below; Unresolved until then
+
+            for (int i = 0; i < n; i++)
             {
-                // Combine surrogate pairs into a scalar for classification.
+                // Combine surrogate pairs into a scalar for classification; both halves take its
+                // attributes.
                 int scalar = text[i];
-                int advance = 1;
-                if (i + 1 < (int)length && (scalar & 0xFC00) == 0xD800 && (text[i + 1] & 0xFC00) == 0xDC00)
+                int units = 1;
+                if (i + 1 < n && (scalar & 0xFC00) == 0xD800 && (text[i + 1] & 0xFC00) == 0xDC00)
                 {
                     scalar = (((scalar & 0x3FF) << 10) | (text[i + 1] & 0x3FF)) + 0x10000;
-                    advance = 2;
+                    units = 2;
                 }
 
                 classificationUtility.GetCharAttribute(scalar,
                     out bool isCombining, out bool needsCaretInfo, out bool isIndic,
                     out bool isDigit, out bool isLatin, out bool isStrong);
 
-                bool extended = scalar > 0xFFFF;
-                int key = (isLatin ? 1 : 0) | (isIndic ? 2 : 0) | (isDigit ? 4 : 0) | (isStrong ? 8 : 0);
+                // A C0/C1 control has no visual and DWrite gives it a run of its own
+                // (DWRITE_SCRIPT_SHAPES_NO_VISUAL), whatever surrounds it.
+                int s = scalar < 0x20 || (scalar >= 0x7F && scalar <= 0x9F) ? NoVisualScript
+                      : scriptOf != null ? scriptOf.GetScript(scalar)
+                      : isStrong ? (isLatin ? 1 : isIndic ? 2 : 3) : 0;
 
-                if (i == 0)
+                for (int u = i; u < i + units; u++)
                 {
-                    prevKey = key; prevCombining = isCombining; prevCaret = needsCaretInfo;
-                    prevIndic = isIndic; prevLatin = isLatin; prevExtended = extended;
+                    combining[u] = isCombining;
+                    caret[u] = needsCaretInfo;
+                    indic[u] = isIndic;
+                    latin[u] = isLatin;
+                    strong[u] = isStrong;
+                    extended[u] = scalar > 0xFFFF;
+                    // Digits are an item boundary only when they are substituted.
+                    digit[u] = numberCulture != null && isDigit;
+                    script[u] = s == 0 ? Unresolved : s;
                 }
-                else if (key != prevKey)
-                {
-                    spans.Add(new MS.Internal.Span(
-                        MakeProps(prevKey, numberCulture, prevCombining, prevCaret, prevExtended, prevIndic, prevLatin),
-                        i - runStart));
-                    runStart = i;
-                    prevKey = key; prevCombining = isCombining; prevCaret = needsCaretInfo;
-                    prevIndic = isIndic; prevLatin = isLatin; prevExtended = extended;
-                }
-                else
-                {
-                    prevCombining |= isCombining; prevCaret |= needsCaretInfo; prevExtended |= extended;
-                }
-
-                if (advance == 2) i++;
+                i += units - 1;
             }
 
-            spans.Add(new MS.Internal.Span(
-                MakeProps(prevKey, numberCulture, prevCombining, prevCaret, prevExtended, prevIndic, prevLatin),
-                (int)length - runStart));
+            // A character without a script takes the one before it; at the start of the text, the
+            // first one after it. Text with no script at all is one Common run.
+            int firstScript = Array.FindIndex(script, s => s != Unresolved && s != NoVisualScript);
+            int carry = firstScript >= 0 ? script[firstScript] : CommonScript;
+            for (int i = 0; i < n; i++)
+            {
+                if (script[i] == Unresolved)
+                {
+                    script[i] = carry;
+                }
+                else if (script[i] != NoVisualScript)
+                {
+                    carry = script[i];
+                }
+            }
+
+            int start = 0;
+            for (int i = 1; i <= n; i++)
+            {
+                if (i < n && script[i] == script[start] && digit[i] == digit[start])
+                {
+                    continue;
+                }
+
+                // The item's attributes, aggregated as TextItemizer.Itemize does: a combining mark
+                // or an extended character anywhere; caret info unless some strong character does
+                // without it; Indic if any strong character is; Latin if every strong one is.
+                bool hasCombining = false, needsCaret = true, hasExtended = false;
+                int strongCount = 0, latinCount = 0, indicCount = 0;
+                for (int c = start; c < i; c++)
+                {
+                    hasCombining |= combining[c];
+                    hasExtended |= extended[c];
+                    if (strong[c])
+                    {
+                        if (!caret[c]) needsCaret = false;
+                        strongCount++;
+                        if (latin[c]) latinCount++;
+                        else if (indic[c]) indicCount++;
+                    }
+                }
+
+                var props = ItemProps.Create(null, null, digit[start] ? numberCulture : null,
+                    hasCombining, needsCaret, hasExtended, indicCount > 0,
+                    strongCount > 0 && latinCount == strongCount);
+                props.ScriptKey = script[start];
+                spans.Add(new MS.Internal.Span(props, i - start));
+                start = i;
+            }
             return spans;
         }
 
-        private static ItemProps MakeProps(int key, CultureInfo digitCulture,
-            bool combining, bool caret, bool extended, bool indic, bool latin)
-        {
-            var p = ItemProps.Create(null, null, digitCulture, combining, caret, extended, indic, latin);
-            p.ScriptKey = key;
-            return p;
-        }
+        private const int Unresolved = -1;
+        private const int NoVisualScript = -2;
+        private const int CommonScript = 0;
 
         public static void AnalyzeExtendedCharactersAndDigits(
             char* text,
