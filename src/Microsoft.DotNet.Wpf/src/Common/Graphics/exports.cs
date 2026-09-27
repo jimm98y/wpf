@@ -247,6 +247,14 @@ namespace System.Windows.Media.Composition
                 if (!s_refreshPacing) return 0;
                 try
                 {
+                    // WINDOWS WAS NEVER ASKED. PlatformWindow has no Windows backend -- a window there
+                    // is an HwndSource -- so this answered 0 on Windows, every present was dropped
+                    // as "rate unknown", and MediaContext ran its flat 10ms fallback delay, which a
+                    // DispatcherTimer rounds up to the 15.6ms system tick: no WPF window on Windows
+                    // could exceed ~64fps whatever the display or the render cost.
+                    if (OperatingSystem.IsWindows())
+                        return Win32RefreshRate.For((IntPtr)windowHandle);
+
                     MS.Internal.Interop.IPlatformWindow window =
                         MS.Internal.Interop.PlatformWindow.FromHandle((IntPtr)windowHandle);
                     double hz = window?.GetRefreshRateHz() ?? 0;
@@ -256,6 +264,94 @@ namespace System.Windows.Media.Composition
                 {
                     return 0;
                 }
+            }
+
+            /// <summary>The refresh rate of the monitor a window is on, from the display settings
+            /// (EnumDisplaySettings, ENUM_CURRENT_SETTINGS). Asked every present, so cached per
+            /// monitor for a second -- long enough to cost nothing, short enough that a mode change
+            /// or a drag to another monitor is picked up.</summary>
+            private static class Win32RefreshRate
+            {
+                private static IntPtr s_monitor;
+                private static int s_hz;
+                private static long s_asked;
+
+                internal static int For(IntPtr hwnd)
+                {
+                    IntPtr monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                    if (monitor == IntPtr.Zero) return 0;
+                    long now = Environment.TickCount64;
+                    if (monitor == s_monitor && now - s_asked < 1000) return s_hz;
+
+                    var info = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
+                    int hz = 0;
+                    if (GetMonitorInfo(monitor, ref info))
+                    {
+                        var mode = new DEVMODE { dmSize = (short)Marshal.SizeOf<DEVMODE>() };
+                        if (EnumDisplaySettings(info.szDevice, ENUM_CURRENT_SETTINGS, ref mode))
+                            hz = mode.dmDisplayFrequency > 1 ? mode.dmDisplayFrequency : 0;   // 0/1 = "hardware default"
+                    }
+                    s_monitor = monitor; s_hz = hz; s_asked = now;
+                    if (hz > 0) EnsureFineTimer();
+                    return hz;
+                }
+
+                /// <summary>Once WPF knows the refresh period it waits out only the REMAINDER of it
+                /// after each render -- a few milliseconds, through a DispatcherTimer, which is a
+                /// Win32 timer and fires on the system tick: 15.6ms unless the process asks for
+                /// better. Measured in the gallery: a 9ms remainder waited 15-23ms, and a 100Hz window
+                /// ran at ~58fps. milcore never needed this -- its render thread paced on vsync -- so
+                /// the managed compositor asks for 1ms resolution, once, for the life of the process.
+                /// WPF_TIMER_RESOLUTION=0 leaves the system tick alone.</summary>
+                private static void EnsureFineTimer()
+                {
+                    if (s_fineTimer) return;
+                    s_fineTimer = true;
+                    if (Environment.GetEnvironmentVariable("WPF_TIMER_RESOLUTION") == "0") return;
+                    try { timeBeginPeriod(1); } catch { /* winmm missing: keep the system tick */ }
+                }
+
+                private static bool s_fineTimer;
+
+                [DllImport("winmm.dll")]
+                private static extern int timeBeginPeriod(int periodMs);
+
+                private const int MONITOR_DEFAULTTONEAREST = 2;
+                private const int ENUM_CURRENT_SETTINGS = -1;
+
+                [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+                private struct MONITORINFOEX
+                {
+                    public int cbSize;
+                    public int rcMonitorLeft, rcMonitorTop, rcMonitorRight, rcMonitorBottom;
+                    public int rcWorkLeft, rcWorkTop, rcWorkRight, rcWorkBottom;
+                    public int dwFlags;
+                    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
+                }
+
+                [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+                private struct DEVMODE
+                {
+                    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+                    public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+                    public int dmFields;
+                    public int dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+                    public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+                    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+                    public short dmLogPixels;
+                    public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+                    public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2;
+                    public int dmPanningWidth, dmPanningHeight;
+                }
+
+                [DllImport("user32.dll")]
+                private static extern IntPtr MonitorFromWindow(IntPtr hwnd, int flags);
+
+                [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetMonitorInfoW")]
+                private static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
+
+                [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "EnumDisplaySettingsW")]
+                private static extern bool EnumDisplaySettings(string device, int mode, ref DEVMODE devMode);
             }
 
             /// <summary>Allocate a process-unique managed channel id.</summary>

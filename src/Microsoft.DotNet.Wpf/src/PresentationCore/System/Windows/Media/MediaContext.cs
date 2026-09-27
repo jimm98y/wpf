@@ -558,8 +558,20 @@ namespace System.Windows.Media
 
         private static readonly TimeSpan MinimumRenderDelay = TimeSpan.FromMilliseconds(1);
 
+        /// <summary>WPF_PACE_TRACE=1: one line per render, commit, presented notification and
+        /// scheduling decision, timestamped, to stderr.</summary>
+        private static readonly bool s_paceTrace =
+            Environment.GetEnvironmentVariable("WPF_PACE_TRACE") == "1";
+
+        private static void PaceTrace(string what)
+        {
+            if (s_paceTrace)
+                Console.Error.WriteLine($"[pace] {System.Diagnostics.Stopwatch.GetTimestamp() * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.00} {what}");
+        }
+
         private void ScheduleNextRenderOp(TimeSpan minimumDelay)
         {
+            PaceTrace($"schedule min={minimumDelay.TotalMilliseconds:0.00} interlock={InterlockIsEnabled}");
             //
             // If _needToCommitChannel is true, then we are in a waiting state and we've
             // already rendered a new frame. We don't want to render again until we've
@@ -724,6 +736,7 @@ namespace System.Windows.Media
             int displayRefreshRate
             )
         {
+            PaceTrace($"presented {presentationResults} rate={displayRefreshRate} anim={_animationRenderRate} state={_interlockState} needCommit={_needToCommitChannel}");
             // Recorded whether or not interlocked presentation is on, and deliberately NOT into
             // _animationRenderRate: that field also drives HasCommittedThisVBlankInterval and the
             // vblank estimator, which are interlock-only machinery and must keep seeing "unknown".
@@ -1010,7 +1023,8 @@ namespace System.Windows.Media
                     {
                         // SyncFlush will Commit()
 
-                        CommittingBatch?.Invoke(Channel, new EventArgs());
+                        PaceTrace("commit");
+                CommittingBatch?.Invoke(Channel, new EventArgs());
                         
 
                         Channel.SyncFlush();
@@ -2044,6 +2058,7 @@ namespace System.Windows.Media
         /// </remarks>
         private void Render(ICompositionTarget resizedCompositionTarget)
         {
+            PaceTrace("render");
             // resizedCompositionTarget is the HwndTarget that is currently being resized.
 
             //
@@ -2247,9 +2262,15 @@ namespace System.Windows.Media
             // "Presented" back-channel notification. Complete the interlock immediately (as if the
             // frame presented at vsync) so the render loop schedules the next frame instead of
             // waiting forever in WaitingForResponse. Without this the UI renders exactly one frame.
+            //
+            // At the display's rate as last REPORTED, not 60. With the sink compositing on its own render
+            // thread the present for this frame has not happened yet, so the notification collected just
+            // above is usually the previous frame's -- or none, and then this fallback runs. Passing 60
+            // here overwrote the rate the display had actually reported and paced a 100Hz window at 60fps.
             if (DUCE.ManagedComposition.IsEnabled && _interlockState == InterlockState.WaitingForResponse)
             {
-                NotifyPresented(MIL_PRESENTATION_RESULTS.MIL_PRESENTATION_VSYNC, CurrentTicks, 60);
+                NotifyPresented(MIL_PRESENTATION_RESULTS.MIL_PRESENTATION_VSYNC, CurrentTicks,
+                                _reportedRefreshRate > 0 ? _reportedRefreshRate : 60);
             }
         }
 
