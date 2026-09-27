@@ -286,7 +286,20 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                     IntPtr texView;
                     if (mat.TextureVisual is { } tvis)
                     {
-                        texView = RenderVisualToTexture(tvis, (int)mat.TexVisualBounds.Width, (int)mat.TexVisualBounds.Height, plan);
+                        // Realize the live 2D content at the size it is SEEN at, as milcore sizes a 3D
+                        // brush realization: sized from the projected mesh (two texels a device pixel).
+                        // The source's own size (2x its DIP bounds) put a 360x200 panel into a 720x400
+                        // texture drawn onto ~80 device pixels -- minified 9x through a bilinear sample
+                        // with no mip chain, which drops most texels and left its text illegible.
+                        int tw0 = (int)mat.TexVisualBounds.Width, th0 = (int)mat.TexVisualBounds.Height;
+                        (int tw, int th) = ProjectedTextureSize(mesh, model.Transform * viewProj, rw3, rh3, tw0, th0);
+                        SceneVisual target = tvis;
+                        if (tw != tw0 || th != th0)
+                        {
+                            target = new SceneVisual { Transform = Matrix3x2.CreateScale((float)tw / tw0, (float)th / th0) };
+                            target.Children.Add(tvis);
+                        }
+                        texView = RenderVisualToTexture(target, tw, th, plan);
                         // Diagnostic (WPF_DBG_3DTEX_OVERLAY=1): composite the live-2D texture straight
                         // into the 2D scene over the viewport rect, bypassing the 3D pass -- isolates
                         // texture-content bugs from 3D-sampling bugs.
@@ -424,8 +437,8 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 
         private IntPtr RenderVisualToTexture(SceneVisual v, int w, int h, List<LayerPass> plan)
         {
-            w = Math.Clamp(w, 1, 1024);
-            h = Math.Clamp(h, 1, 1024);
+            w = Math.Clamp(w, 1, 2048);
+            h = Math.Clamp(h, 1, 2048);
             (IntPtr _, IntPtr view) = CreateLayerTexture(w, h);   // pooled; returned after the frame
             DrawData d = RentDrawData();
             float sOX = _devOX, sOY = _devOY;
@@ -434,12 +447,59 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             // texture-size mapping) is applied. Same-encoder write->sample across passes is ordered
             // by WebGPU, so the 3D pass can sample this texture in the same submit (verified on
             // wgpu-native/Metal and Dawn).
+            // Greyscale text, as milcore renders brush content: this texture is resampled onto a
+            // surface that moves and tilts, so ClearType's sub-pixels would land nowhere near the
+            // screen's and show as colour fringes on every glyph.
+            bool sTransparent = _transparentTarget;
+            _transparentTarget = true;
             CollectVisual(v, System.Numerics.Matrix3x2.Identity, 1.0, new Scissor(0, 0, w, h), d, plan, w, h, ReadbackFormat);
+            _transparentTarget = sTransparent;
             _devOX = sOX; _devOY = sOY;
             if (Dbg3DTex && _dbg3DTexOnce++ == 30)
                 Console.WriteLine($"3D-TEXRND {w}x{h} draws={d.Draws.Count} planIdx={plan.Count}");
             plan.Add(new LayerPass(view, true, default, d, ReadbackFormat) { OriginX = 0, OriginY = 0, TexW = w, TexH = h });
             return view;
+        }
+
+        /// <summary>The texture size that puts two texels on each device pixel of the mesh as
+        /// projected: per triangle, the Jacobian from texture space to region pixels (its projected
+        /// edges against its texture-coordinate edges), and the most pixels any triangle spans per
+        /// unit of u and of v. Falls back to <paramref name="w0"/> x <paramref name="h0"/> when the
+        /// mesh has no usable texture coordinates.</summary>
+        private static (int, int) ProjectedTextureSize(MeshGeometry3D mesh, Matrix4x4 mvp, int rw, int rh, int w0, int h0)
+        {
+            Vector2[] uv = mesh.TexCoords;
+            if (uv is null || uv.Length != mesh.Positions.Length) return (w0, h0);
+            float pu = 0f, pv = 0f;
+            int[] ix = mesh.Indices;
+            for (int t = 0; t + 2 < ix.Length; t += 3)
+            {
+                int a = ix[t], b = ix[t + 1], c = ix[t + 2];
+                if ((uint)a >= (uint)uv.Length || (uint)b >= (uint)uv.Length || (uint)c >= (uint)uv.Length) continue;
+                if (!Project(mesh.Positions[a], out Vector2 sa) || !Project(mesh.Positions[b], out Vector2 sb)
+                    || !Project(mesh.Positions[c], out Vector2 sc)) continue;
+                Vector2 e1 = sb - sa, e2 = sc - sa, t1 = uv[b] - uv[a], t2 = uv[c] - uv[a];
+                float det = t1.X * t2.Y - t2.X * t1.Y;
+                if (MathF.Abs(det) < 1e-9f) continue;
+                // screen = [e1 e2] * inverse([t1 t2]) * uv: the columns are d(screen)/du and d(screen)/dv.
+                Vector2 du = (e1 * t2.Y - e2 * t1.Y) / det, dv = (e2 * t1.X - e1 * t2.X) / det;
+                pu = MathF.Max(pu, du.Length()); pv = MathF.Max(pv, dv.Length());
+            }
+            if (pu <= 0f || pv <= 0f) return (w0, h0);
+            // TWO texels a pixel: the 3D pass samples bilinearly with no mip chain, and at one texel a
+            // pixel the resample under a rotation blends neighbours and softens everything by about a
+            // pixel; at two, each bilinear tap averages a 2x2 block -- a box filter at pixel size.
+            const float density = 2f;
+            return (Math.Clamp((int)MathF.Ceiling(pu * density), 8, 2048), Math.Clamp((int)MathF.Ceiling(pv * density), 8, 2048));
+
+            bool Project(Vector3 p, out Vector2 s)
+            {
+                Vector4 c = Vector4.Transform(new Vector4(p, 1f), mvp);
+                s = default;
+                if (c.W <= 1e-6f) return false;
+                s = new Vector2((c.X / c.W + 1f) * 0.5f * rw, (1f - c.Y / c.W) * 0.5f * rh);
+                return true;
+            }
         }
 
         private IntPtr _white3DTex, _white3DView;
