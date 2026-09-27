@@ -350,13 +350,15 @@ namespace System.Windows.Forms.VisualStyles
 
 		static readonly Dictionary<(int cls, int part, int state), Frame> s_cache = new ();
 
-		const int Button = 1, ComboBox = 2, Edit = 3, Tab = 4, TrackBar = 5, TreeView = 6, ScrollBar = 7;
+		const int Button = 1, ComboBox = 2, Edit = 3, Tab = 4, TrackBar = 5, TreeView = 6, ScrollBar = 7,
+			Header = 8, Progress = 9, Spin = 10, Toolbar = 11;
 
 		/// <summary>The frame uxtheme would take for a part and state at 96 DPI, or null for a part
 		/// that is not drawn from a frame.</summary>
 		internal static Frame Get (string cls, int part, int state)
 		{
-			int c = cls switch { "BUTTON" => Button, "COMBOBOX" => ComboBox, "EDIT" => Edit, "TAB" => Tab, "TRACKBAR" => TrackBar, "TREEVIEW" => TreeView, "SCROLLBAR" => ScrollBar, _ => 0 };
+			int c = cls switch { "BUTTON" => Button, "COMBOBOX" => ComboBox, "EDIT" => Edit, "TAB" => Tab, "TRACKBAR" => TrackBar, "TREEVIEW" => TreeView, "SCROLLBAR" => ScrollBar,
+				"HEADER" => Header, "PROGRESS" => Progress, "SPIN" => Spin, "TOOLBAR" => Toolbar, _ => 0 };
 			if (c == 0)
 				return null;
 			lock (s_cache) {
@@ -367,6 +369,9 @@ namespace System.Windows.Forms.VisualStyles
 						1 => PushButton (state),
 						2 => RadioButton (state),
 						3 => CheckBox (state),
+						// BP_GROUPBOX: a one-pixel frame, its last row left clear (nine-grid 2/2/2/3,
+						// border only).
+						4 => Stretched (Render (5, 6, new Layer (Minus (Box (0, 0, 5, 5), Box (1, 1, 4, 4)), 0xffdcdcdcu)), 2, 2, 2, 3),
 						_ => null,
 					},
 					ComboBox => part switch {
@@ -387,6 +392,22 @@ namespace System.Windows.Forms.VisualStyles
 						_ => null,
 					},
 					TreeView => part == 2 ? TreeGlyph (state == 2) : null,
+					Header => part == 1 ? HeaderItem (state) : null,
+					Progress => part switch {
+						1 => Stretched (ProgressTrack (19, 14), 9, 9, 7, 6),
+						2 => Stretched (ProgressTrack (17, 19), 10, 6, 9, 9),
+						// TRANSPARENTBAR(VERT): the track again, with a narrower frame for its
+						// partially-transparent state.
+						11 => state == 2 ? Stretched (ProgressTrack (7, 17), 3, 3, 10, 6) : Stretched (ProgressTrack (19, 14), 9, 9, 7, 6),
+						12 => state == 2 ? Stretched (ProgressTrack (17, 7), 10, 6, 3, 3) : Stretched (ProgressTrack (17, 19), 10, 6, 9, 9),
+						3 => Stretched (Render (12, 12, new Layer (Box (0, 0, 12, 12), 0xff06b025u)), 0, 0, 6, 5),
+						4 => Stretched (Render (12, 12, new Layer (Box (0, 0, 12, 12), 0xff06b025u)), 6, 5, 0, 0),
+						5 => ProgressFill (false, state),
+						6 => ProgressFill (true, state),
+						_ => null,
+					},
+					Spin => part >= 1 && part <= 4 ? SpinButton (part, state) : null,
+					Toolbar => part == 1 || part == 2 ? ToolbarButton (state) : null,
 					ScrollBar => part switch {
 						1 => ScrollArrow (state),
 						2 => Stretched (ScrollThumb (false, state), 11, 8, 8, 8),
@@ -723,6 +744,100 @@ namespace System.Windows.Forms.VisualStyles
 			foreach (var (x, y) in new [] { (12, 6), (9, 9), (12, 9), (6, 12), (9, 12), (12, 12) })
 				layers.Add (new Layer (Box (x, y, x + 2, y + 2), 0xffbfbfbfu));
 			return Render (16, 16, layers.ToArray ());
+		}
+
+		/// <summary>HP_HEADERITEM, 6x24 nine-grid 2/3/9/14: white with a one-pixel divider on the
+		/// right at rest, a flat blue under the pointer and a deeper one pressed -- the same in
+		/// each of the four groups of three (plain, sorted, icon, sorted icon).</summary>
+		static Frame HeaderItem (int state)
+		{
+			int look = (state - 1) % 3;
+			Frame f = look switch {
+				1 => Render (6, 24, new Layer (Box (0, 0, 6, 24), 0xffd9ebf9u)),
+				2 => Render (6, 24, new Layer (Box (0, 0, 6, 24), 0xffbcdcf4u)),
+				_ => Render (6, 24, new Layer (Box (0, 0, 6, 24), 0xffffffffu), new Layer (Box (5, 0, 6, 24), 0xffe5e5e5u)),
+			};
+			return Stretched (f, 2, 3, 9, 14);
+		}
+
+		/// <summary>The progress bar's track: a #BCBCBC frame round #E6E6E6.</summary>
+		static Frame ProgressTrack (int w, int h)
+			=> Render (w, h, new Layer (Box (0, 0, w, h), 0xffbcbcbcu), new Layer (Box (1, 1, w - 1, h - 1), 0xffe6e6e6u));
+
+		/// <summary>PP_FILL / PP_FILLVERT: the state's colour, inset a clear pixel all round --
+		/// normal, error, paused, and the wider partial frame.</summary>
+		static Frame ProgressFill (bool vertical, int state)
+		{
+			uint c = state switch { 2 => 0xffc42b1cu, 3 => 0xff9d5d00u, 4 => 0xff0070cbu, _ => 0xff0f7b0fu };
+			bool partial = state == 4;
+			int w = vertical ? (partial ? 18 : 17) : (partial ? 125 : 51);
+			int h = vertical ? (partial ? 125 : 51) : 14;
+			Frame f = Render (w, h, new Layer (Box (1, 1, w - 1, h - 1), c));
+			return vertical ? Stretched (f, 10, partial ? 7 : 6, partial ? 62 : 25, partial ? 62 : 25)
+					: Stretched (f, partial ? 62 : 25, partial ? 62 : 25, 7, 6);
+		}
+
+		/// <summary>SPNP_UP / DOWN / UPHORZ / DOWNHORZ: a bordered face rounded on its outer
+		/// corners only, its last row a darker band, standing in a #F0F0F0 margin; the arrow is a
+		/// small solid triangle, fainter when pressed or disabled.</summary>
+		static Frame SpinButton (int part, int state)
+		{
+			(uint border, uint face, uint band) = state switch {
+				2 => (0xff0078d4u, 0xffd8e6f1u, 0xff006bbeu),
+				3 or 4 => (0xffe5e5e5u, 0xfff3f3f3u, 0xffe5e5e5u),
+				_ => (0xffd2d2d2u, 0xfffafafau, 0xffbcbcbcu),
+			};
+			int w = part <= 2 ? 8 : 7;
+			(float x0, float y0, float x1, float y1) = part switch { 1 => (1f, 1f, 7f, 16f), 2 => (1f, 0f, 7f, 15f), 3 => (0f, 1f, 6f, 16f), _ => (1f, 1f, 7f, 16f) };
+			(bool tl, bool tr, bool br, bool bl) = part switch { 1 => (true, true, false, false), 2 => (false, false, true, true), 3 => (false, true, true, false), _ => (true, false, false, true) };
+			float r0 = part == 2 || part == 3 ? 2.0625f : 2f;
+			Shape outer = Corners (x0, y0, x1, y1, r0, tl, tr, br, bl);
+			Shape inner = Corners (x0 + 1, y0 + 1, x1 - 1, y1 - 1, 0.75f, tl, tr, br, bl);
+			float bandY = y1 - 1;
+			Frame f = Render (w, 16, new Layer (Box (0, 0, w, 16), 0xfff0f0f0u),
+					  new Layer (outer, (x, y) => y >= bandY ? band : border), new Layer (inner, face));
+			Stretched (f, part == 4 ? 4 : part == 3 ? 3 : 4, part == 4 ? 2 : 3, part == 2 ? 8 : 9, 3);
+			// The arrow, fitted up-pointing and turned: 7x6 for up/down, 6x7 across.
+			int gw = part <= 2 ? 7 : 6, gh = part <= 2 ? 6 : 7;
+			float apex = part <= 2 ? 1.3125f : 1.25f;
+			Shape up = Triangle (3.5f, apex, 5, 3.125f, 0);
+			Shape glyph = part switch {
+				2 => (x, y) => up (x, gh - y),
+				3 => (x, y) => up (y, gw - x),
+				4 => (x, y) => up (y, x),
+				_ => up,
+			};
+			uint alpha = state switch { 3 => 0x9bu, 4 => 0x5cu, _ => 0xe4u };
+			f.Glyph = Render (gw, gh, new Layer (glyph, alpha << 24));
+			return f;
+		}
+
+		/// <summary>A rectangle rounded only at the corners asked for.</summary>
+		internal static Shape Corners (float x0, float y0, float x1, float y1, float r, bool tl, bool tr, bool br, bool bl)
+			=> (px, py) => {
+				if (px < x0 || px > x1 || py < y0 || py > y1)
+					return false;
+				bool left = px < x0 + r, right = px > x1 - r, top = py < y0 + r, bottom = py > y1 - r;
+				float cx, cy;
+				if (left && top && tl) { cx = x0 + r; cy = y0 + r; }
+				else if (right && top && tr) { cx = x1 - r; cy = y0 + r; }
+				else if (right && bottom && br) { cx = x1 - r; cy = y1 - r; }
+				else if (left && bottom && bl) { cx = x0 + r; cy = y1 - r; }
+				else return true;
+				return (px - cx) * (px - cx) + (py - cy) * (py - cy) <= r * r;
+			};
+
+		/// <summary>TP_BUTTON / TP_DROPDOWNBUTTON, 7x18 nine-grid 3/3/13/4: nothing at rest or
+		/// disabled; a pale-blue rounded face under the pointer, a deeper one pressed or checked.
+		/// The last row stays clear.</summary>
+		static Frame ToolbarButton (int state)
+		{
+			bool hot = state == 2 || state == 8, deep = state == 3 || state == 5 || state == 6;
+			Frame f = !hot && !deep ? new Frame (7, 18)
+				: Render (7, 18,
+					new Layer (RoundRect (0, 0, 7, 17, 3), hot ? 0xffcce8ffu : 0xff99d1ffu),
+					new Layer (RoundRect (1, 1, 6, 16, 2), hot ? 0xffe5f3ffu : 0xffcce8ffu));
+			return Stretched (f, 3, 3, 13, 4);
 		}
 
 		/// <summary>TVP_GLYPH, 9x9 true size: a square with its corners softened, a face banded
