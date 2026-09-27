@@ -202,10 +202,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// application renders, not what it was during one frame. In steady state it must not move.
         /// </remarks>
         internal static int PerfLayoutAcquires;
-        internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks;
+        internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks, PerfMaskTicks, PerfBoundsTicks;
+        internal static int PerfMaskCalls;
         internal static long PerfCollectAlloc, PerfExecAlloc;
 
-        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfShadowHits = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = PerfEdgeTextures = PerfMaskTextures = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = 0; }
+        internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfShadowHits = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = PerfEdgeTextures = PerfMaskTextures = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = PerfMaskTicks = PerfBoundsTicks = 0; PerfMaskCalls = 0; }
 
         // Coverage-mask cache: text/solid shapes are rasterized to an R8 mask + uploaded as a
         // texture + bind group EVERY frame, which dominates cost for largely-static UI. Cache those
@@ -2901,6 +2902,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // the subtree draws nothing.
         private static Scissor ContentDeviceBounds(SceneVisual v, Matrix3x2 world, int width, int height)
         {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { return ContentDeviceBoundsCore(v, world, width, height); }
+            finally { PerfBoundsTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0; }
+        }
+
+        private static Scissor ContentDeviceBoundsCore(SceneVisual v, Matrix3x2 world, int width, int height)
+        {
             float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
             AccumulateContentBounds(v, world, ref minX, ref minY, ref maxX, ref maxY);
             if (minX > maxX) return new Scissor(0, 0, 0, 0);
@@ -2973,6 +2981,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     AccGeometry(cg.Geometry1, world, pad, ref minX, ref minY, ref maxX, ref maxY);
                     AccGeometry(cg.Geometry2, world, pad, ref minX, ref minY, ref maxX, ref maxY);
                     break;
+                case PathGeometry path when s_pathBoxBounds:
+                    // The local box (every point, control points included), memoized on the geometry,
+                    // through the world: exact when the world is axis-aligned, a superset otherwise.
+                    if (!path.BoxValid) LocalBox(path);
+                    AccRect(path.BoxMinX, path.BoxMinY, path.BoxMaxX - path.BoxMinX, path.BoxMaxY - path.BoxMinY,
+                            world, pad, ref minX, ref minY, ref maxX, ref maxY);
+                    break;
                 case PathGeometry path:
                     foreach (PathFigure f in path.Figures)
                     {
@@ -2992,6 +3007,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     break;
             }
+        }
+
+        /// <summary>WPF_PATH_BOX_BOUNDS=0 bounds paths point by point again.</summary>
+        private static readonly bool s_pathBoxBounds =
+            Environment.GetEnvironmentVariable("WPF_PATH_BOX_BOUNDS") != "0";
+
+        private static void LocalBox(PathGeometry path)
+        {
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            void P(Vector2 p) { if (p.X < x0) x0 = p.X; if (p.X > x1) x1 = p.X; if (p.Y < y0) y0 = p.Y; if (p.Y > y1) y1 = p.Y; }
+            foreach (PathFigure f in path.Figures)
+            {
+                P(f.Start);
+                foreach (PathSegment seg in f.Segments)
+                    switch (seg)
+                    {
+                        case LineSegment l: P(l.Point); break;
+                        case QuadraticBezierSegment q: P(q.Control); P(q.Point); break;
+                        case CubicBezierSegment c: P(c.Control1); P(c.Control2); P(c.Point); break;
+                    }
+            }
+            if (x0 > x1) { x0 = y0 = x1 = y1 = 0f; }
+            path.BoxMinX = x0; path.BoxMinY = y0; path.BoxMaxX = x1; path.BoxMaxY = y1;
+            path.BoxValid = true;
         }
 
         // Accumulates the 4 (world-transformed) corners of an axis-aligned rect -- correct under rotation/skew.
@@ -3550,7 +3589,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             data.Draws.Add(new DrawItem(firstIndex, 6, clip, FillKind.ShapeBrush, bg, sourceCopy: _srcCopy));
         }
 
+        // Timed: in the browser's interpreter the per-glyph cost of this is what a frame is made of.
         private void EmitCoverageMask(PathGeometry coverageGeometry, Brush brush, Matrix3x2 world, double opacity,
+            Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data, bool isGlyph = false,
+            Vector2? baselineAnchor = null, bool pixelAligned = false)
+        {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            try { EmitCoverageMaskCore(coverageGeometry, brush, world, opacity, clip, width, height, format, data, isGlyph, baselineAnchor, pixelAligned); }
+            finally { PerfMaskTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0; PerfMaskCalls++; }
+        }
+
+        private void EmitCoverageMaskCore(PathGeometry coverageGeometry, Brush brush, Matrix3x2 world, double opacity,
             Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data, bool isGlyph = false,
             Vector2? baselineAnchor = null, bool pixelAligned = false)
         {
@@ -4793,7 +4842,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (minX == float.MaxValue) { minX = 0; minY = 0; }
         }
 
-        private static long HashGeometry(PathGeometry g) => HashGeometry(g, 0f, 0f);
+        private static long HashGeometry(PathGeometry g)
+        {
+            if (!g.FullHashValid) { g.FullHash = HashGeometry(g, 0f, 0f); g.FullHashValid = true; }
+            return g.FullHash;
+        }
 
         /// <summary>
         /// Hash of <paramref name="g"/> as if every point had been translated by (dx, dy).

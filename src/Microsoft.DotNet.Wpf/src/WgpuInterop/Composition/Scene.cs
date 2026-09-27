@@ -237,6 +237,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal bool MinValid;
         internal long NormHash;
         internal bool NormHashValid;
+        // ...and for the layer cache: the geometry's own hash (layer keys hash every fill in a layer's
+        // subtree every frame) and its local bounding box (layer regions bound every fill every frame).
+        // In the browser's interpreter those two walks over every glyph point were half the collect.
+        internal long FullHash;
+        internal bool FullHashValid;
+        internal float BoxMinX, BoxMinY, BoxMaxX, BoxMaxY;
+        internal bool BoxValid;
     }
 
     /// <summary>Base of the brush hierarchy that paints a fill (mirrors WPF Brush).</summary>
