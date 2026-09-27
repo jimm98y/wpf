@@ -251,8 +251,15 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
 
     private const int SW_HIDE = 0, SW_SHOWNA = 8;
 
+    /// <summary>WF_TRACE_FRAMES=1: when the window came up and when each present happened or was
+    /// skipped, in milliseconds since the process started -- the first-paint delay made visible.</summary>
+    private static readonly bool s_traceFrames = Environment.GetEnvironmentVariable("WF_TRACE_FRAMES") == "1";
+    private static double SinceStart => (DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime).TotalMilliseconds;
+    private int _framesTraced;
+
     public void Show()
     {
+        if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: Show");
         SetProcessDpiAwarenessContext((IntPtr)(-4)); // PER_MONITOR_AWARE_V2 -> real DPI, crisp text
         _hinstance = GetModuleHandleW(null);
         EnsureWindowClass(_hinstance);
@@ -301,6 +308,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
             XplatUIWebGpu.SetScreenSize(_form.Width, _form.Height);
         _form.LocationChanged += OnFormMoved;
         _form.VisibleChanged += OnFormVisibleChanged;
+        if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: window + surface ready");
         Present();
     }
 
@@ -347,6 +355,8 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         return (style, exStyle);
     }
 
+    private bool _repaintAsked;
+
     public void Present()
     {
         if (_wgpu == null) return;
@@ -357,11 +367,15 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         bool caretOn = CaretOn();
         string save = Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE");
         bool wantSave = !string.IsNullOrEmpty(save) && !_savedGpu;
-        if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk && !wantSave) return;
+        if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk && !wantSave && !_repaintAsked) return;
+        _repaintAsked = false;
 
+        double t0 = s_traceFrames ? SinceStart : 0;
         var scenes = GetScenes(out int ox, out int oy);
         Rectangle? caret = GetCaretRect(ox, oy);
         _lastPresentOk = _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.Width, _form.Height);
+        if (s_traceFrames && _framesTraced++ < 40)
+            Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms");
         _lastVer = ver; _lastCaretOn = caretOn;
         if (wantSave)
         {
@@ -517,6 +531,19 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 Frame();
                 return IntPtr.Zero;
             case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
+            // WM_PAINT: Windows wants the window's pixels again -- it has just been shown, uncovered
+            // or moved, and the surface's contents were not kept (they are not, on the GL backend).
+            // Nothing answered it: DefWindowProc validated the window and drew nothing, and the
+            // present path skips a frame whose scene has not changed, so the window stayed white or
+            // black until something in it happened to change. That was the "first render takes
+            // seconds" -- or never comes: the one frame presented from Show can land before the
+            // window is on screen at all. Validate, then present the current scene regardless.
+            case 0x000F:
+                ValidateRect(hwnd, IntPtr.Zero);
+                _repaintAsked = true;
+                Present();
+                return IntPtr.Zero;
+            case 0x0014: return (IntPtr)1;                                          // WM_ERASEBKGND: the frame covers it
             // Dragging or resizing a window puts Windows into a modal loop of its own inside
             // DefWindowProc, and this window's frame loop does not run again until it ends -- so
             // every animation froze for as long as the window was being moved. A Win32 timer is
@@ -972,6 +999,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     [DllImport("user32")] private static extern IntPtr DefWindowProcW(IntPtr h, uint m, IntPtr w, IntPtr l);
     [DllImport("user32")] private static extern bool DestroyWindow(IntPtr h);
     [DllImport("user32")] private static extern void PostQuitMessage(int code);
+    [DllImport("user32")] private static extern bool ValidateRect(IntPtr hwnd, IntPtr rect);
     [DllImport("user32")] private static extern bool PeekMessageW(out MSG m, IntPtr h, uint min, uint max, uint remove);
     [DllImport("user32")] private static extern bool TranslateMessage(ref MSG m);
     [DllImport("user32")] private static extern IntPtr DispatchMessageW(ref MSG m);
