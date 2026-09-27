@@ -445,109 +445,94 @@ namespace System.Windows.Media.Composition
         /// </summary>
         private sealed class ReflectionMilCompositionSink : IMilCompositionSink
         {
-            private readonly object _impl;
-            private readonly System.Reflection.MethodInfo _openChannel;
-            private readonly System.Reflection.MethodInfo _closeChannel;
-            private readonly System.Reflection.MethodInfo _createOrAddRef;
-            private readonly System.Reflection.MethodInfo _release;
-            private readonly System.Reflection.MethodInfo _sendCommand;
-            private readonly System.Reflection.MethodInfo _sendBitmap;
-            private readonly System.Reflection.MethodInfo _sendVideoFrame;
-            private readonly System.Reflection.MethodInfo _beginCommand;
-            private readonly System.Reflection.MethodInfo _appendCommandData;
-            private readonly System.Reflection.MethodInfo _endCommand;
-            private readonly System.Reflection.MethodInfo _closeBatch;
-            private readonly System.Reflection.MethodInfo _commit;
-            private readonly System.Reflection.MethodInfo _syncFlush;
-            private readonly System.Reflection.MethodInfo _readbackTarget;
-            private readonly System.Reflection.MethodInfo _tryDequeuePresented;
+            // TYPED DELEGATES, bound once, not MethodInfo.Invoke per call. Every command WPF sends --
+            // hundreds a frame -- came through here as a reflection invoke with a fresh object[] and
+            // boxed arguments, which is slow everywhere and very slow in the browser's interpreter.
+            // A delegate bound to the backend's method keeps the duck typing (no compile-time
+            // reference) and costs an ordinary call.
+            private delegate uint CreateOrAddRefFn(int channelId, uint handle, uint resourceType, out bool created);
+            private delegate bool TryDequeuePresentedFn(int channelId, out long windowHandle, out long presentationTime);
+
+            private readonly Action<int, int> _openChannel;
+            private readonly Action<int> _closeChannel;
+            private readonly CreateOrAddRefFn _createOrAddRef;
+            private readonly Func<int, uint, bool> _release;
+            private readonly Action<int, byte[], bool> _sendCommand;
+            private readonly Action<int, uint, int, int, int, byte[]> _sendBitmap;
+            private readonly Action<int, uint, int, int, int, byte[]> _sendVideoFrame;
+            private readonly Action<int, byte[], int> _beginCommand;
+            private readonly Action<int, byte[]> _appendCommandData;
+            private readonly Action<int> _endCommand;
+            private readonly Action<int> _closeBatch;
+            private readonly Action<int> _commit;
+            private readonly Action<int> _syncFlush;
+            private readonly Func<int, uint, byte[]> _readbackTarget;
+            private readonly TryDequeuePresentedFn _tryDequeuePresented;
 
             internal ReflectionMilCompositionSink(object impl)
             {
-                _impl = impl;
                 Type t = impl.GetType();
-                _openChannel = Bind(t, "OpenChannel");
-                _closeChannel = Bind(t, "CloseChannel");
-                _createOrAddRef = Bind(t, "CreateOrAddRef");
-                _release = Bind(t, "ReleaseOnChannel");
-                _sendCommand = Bind(t, "SendCommand");
-                _sendBitmap = Bind(t, "SendBitmap");
-                _sendVideoFrame = Bind(t, "SendVideoFrame");
-                _beginCommand = Bind(t, "BeginCommand");
-                _appendCommandData = Bind(t, "AppendCommandData");
-                _endCommand = Bind(t, "EndCommand");
-                _closeBatch = Bind(t, "CloseBatch");
-                _commit = Bind(t, "Commit");
-                _syncFlush = Bind(t, "SyncFlush");
-                _readbackTarget = Bind(t, "ReadbackTarget");
-                _tryDequeuePresented = Bind(t, "TryDequeuePresented");
+                _openChannel = Bind<Action<int, int>>(impl, t, "OpenChannel");
+                _closeChannel = Bind<Action<int>>(impl, t, "CloseChannel");
+                _createOrAddRef = Bind<CreateOrAddRefFn>(impl, t, "CreateOrAddRef");
+                _release = Bind<Func<int, uint, bool>>(impl, t, "ReleaseOnChannel");
+                _sendCommand = Bind<Action<int, byte[], bool>>(impl, t, "SendCommand");
+                _sendBitmap = Bind<Action<int, uint, int, int, int, byte[]>>(impl, t, "SendBitmap");
+                _sendVideoFrame = Bind<Action<int, uint, int, int, int, byte[]>>(impl, t, "SendVideoFrame");
+                _beginCommand = Bind<Action<int, byte[], int>>(impl, t, "BeginCommand");
+                _appendCommandData = Bind<Action<int, byte[]>>(impl, t, "AppendCommandData");
+                _endCommand = Bind<Action<int>>(impl, t, "EndCommand");
+                _closeBatch = Bind<Action<int>>(impl, t, "CloseBatch");
+                _commit = Bind<Action<int>>(impl, t, "Commit");
+                _syncFlush = Bind<Action<int>>(impl, t, "SyncFlush");
+                _readbackTarget = Bind<Func<int, uint, byte[]>>(impl, t, "ReadbackTarget");
+                _tryDequeuePresented = Bind<TryDequeuePresentedFn>(impl, t, "TryDequeuePresented");
             }
 
-            private static System.Reflection.MethodInfo Bind(Type t, string name)
+            private static TDelegate Bind<TDelegate>(object impl, Type t, string name) where TDelegate : Delegate
             {
                 System.Reflection.MethodInfo m = t.GetMethod(name);
                 if (m == null)
                 {
                     throw new MissingMethodException(t.FullName, name);
                 }
-                return m;
+                return (TDelegate)m.CreateDelegate(typeof(TDelegate), impl);
             }
 
-            public void OpenChannel(int channelId, int referenceChannelId) =>
-                _openChannel.Invoke(_impl, new object[] { channelId, referenceChannelId });
+            public void OpenChannel(int channelId, int referenceChannelId) => _openChannel(channelId, referenceChannelId);
 
-            public void CloseChannel(int channelId) =>
-                _closeChannel.Invoke(_impl, new object[] { channelId });
+            public void CloseChannel(int channelId) => _closeChannel(channelId);
 
-            public uint CreateOrAddRef(int channelId, uint handle, uint resourceType, out bool created)
-            {
-                object[] args = { channelId, handle, resourceType, false };
-                uint result = (uint)_createOrAddRef.Invoke(_impl, args);
-                created = (bool)args[3];
-                return result;
-            }
+            public uint CreateOrAddRef(int channelId, uint handle, uint resourceType, out bool created) =>
+                _createOrAddRef(channelId, handle, resourceType, out created);
 
-            public bool ReleaseOnChannel(int channelId, uint handle) =>
-                (bool)_release.Invoke(_impl, new object[] { channelId, handle });
+            public bool ReleaseOnChannel(int channelId, uint handle) => _release(channelId, handle);
 
             public void SendCommand(int channelId, byte[] data, bool sendInSeparateBatch) =>
-                _sendCommand.Invoke(_impl, new object[] { channelId, data, sendInSeparateBatch });
+                _sendCommand(channelId, data, sendInSeparateBatch);
 
             public void SendBitmap(int channelId, uint handle, int width, int height, int stride, byte[] pixels) =>
-                _sendBitmap.Invoke(_impl, new object[] { channelId, handle, width, height, stride, pixels });
+                _sendBitmap(channelId, handle, width, height, stride, pixels);
 
             public void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels) =>
-                _sendVideoFrame.Invoke(_impl, new object[] { channelId, mediaHandle, width, height, rowBytes, pixels });
+                _sendVideoFrame(channelId, mediaHandle, width, height, rowBytes, pixels);
 
-            public void BeginCommand(int channelId, byte[] data, int extraSize) =>
-                _beginCommand.Invoke(_impl, new object[] { channelId, data, extraSize });
+            public void BeginCommand(int channelId, byte[] data, int extraSize) => _beginCommand(channelId, data, extraSize);
 
-            public void AppendCommandData(int channelId, byte[] data) =>
-                _appendCommandData.Invoke(_impl, new object[] { channelId, data });
+            public void AppendCommandData(int channelId, byte[] data) => _appendCommandData(channelId, data);
 
-            public void EndCommand(int channelId) =>
-                _endCommand.Invoke(_impl, new object[] { channelId });
+            public void EndCommand(int channelId) => _endCommand(channelId);
 
-            public void CloseBatch(int channelId) =>
-                _closeBatch.Invoke(_impl, new object[] { channelId });
+            public void CloseBatch(int channelId) => _closeBatch(channelId);
 
-            public void Commit(int channelId) =>
-                _commit.Invoke(_impl, new object[] { channelId });
+            public void Commit(int channelId) => _commit(channelId);
 
-            public void SyncFlush(int channelId) =>
-                _syncFlush.Invoke(_impl, new object[] { channelId });
+            public void SyncFlush(int channelId) => _syncFlush(channelId);
 
-            public byte[] ReadbackTarget(int channelId, uint targetHandle) =>
-                (byte[])_readbackTarget.Invoke(_impl, new object[] { channelId, targetHandle });
+            public byte[] ReadbackTarget(int channelId, uint targetHandle) => _readbackTarget(channelId, targetHandle);
 
-            public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime)
-            {
-                object[] args = { channelId, 0L, 0L };
-                bool any = (bool)_tryDequeuePresented.Invoke(_impl, args);
-                windowHandle = (long)args[1];
-                presentationTime = (long)args[2];
-                return any;
-            }
+            public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime) =>
+                _tryDequeuePresented(channelId, out windowHandle, out presentationTime);
         }
 
         /// <summary>
