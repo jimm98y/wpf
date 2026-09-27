@@ -570,6 +570,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             bool savedSub = TrueTypeFont.SubpixelFitting, savedCt = TrueTypeFont.ClearTypeRendering;
             bool? savedSym = TrueTypeInterpreter.SymmetricAnswerOverride;
+            bool savedMove = TrueTypeInterpreter.DWriteMovePoint;
             List<PathFigure>? figures;
             int dropout;
             try
@@ -577,6 +578,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeFont.SubpixelFitting = true;
                 TrueTypeFont.ClearTypeRendering = true;
                 TrueTypeInterpreter.SymmetricAnswerOverride = false;
+                TrueTypeInterpreter.DWriteMovePoint = true;
                 if (!((IHintedGlyphFont)font).TryGetHintedOutline(glyphId, pixelsPerEm, out figures) || figures is null)
                     return s_empty;
                 dropout = Math.Max(0, font.GlyphDropout(glyphId, pixelsPerEm));
@@ -586,6 +588,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeFont.SubpixelFitting = savedSub;
                 TrueTypeFont.ClearTypeRendering = savedCt;
                 TrueTypeInterpreter.SymmetricAnswerOverride = savedSym;
+                TrueTypeInterpreter.DWriteMovePoint = savedMove;
             }
             // GDI_CLASSIC is scanned 6x1 too, so a simulated bold is the bitmap smear up to 50ppem.
             GlyphBits bits = Scan(figures, 1, dropout);

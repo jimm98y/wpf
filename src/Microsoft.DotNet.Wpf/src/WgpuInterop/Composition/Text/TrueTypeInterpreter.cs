@@ -472,6 +472,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool _prepClearType;
         private bool _prepBiLevel;
         private int _prepDWriteFlags;
+        private bool _prepDWriteMove;
         private bool? _prepSymOverride;
 
         /// <summary>Run this hint with the BI-LEVEL rules -- physical grid, full cut-in, full minimum
@@ -509,6 +510,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// phase, no compatible advance. GDI's word is 0x23 or 0x03 (bSetXform in fontdrvhost),
         /// which is what the rest of this file assumes when this is 0.</para></summary>
         [ThreadStatic] internal static int DWriteFlags;
+
+        /// <summary>Fitting for DirectWrite's scaler with GDI's own mode word (GDI_CLASSIC): the fit
+        /// is GDI's, but the arithmetic is dwrite.dll's copy (see FreedomStepY).</summary>
+        [ThreadStatic] internal static bool DWriteMovePoint;
 
         /// <summary>Running DirectWrite's natural modes, whose word has no compatible widths.</summary>
         internal static bool DWriteNatural => DWriteFlags != 0 && (DWriteFlags & 2) == 0;
@@ -1979,7 +1984,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool clearType = ClearTypeInfo;
             if (_prepRun && Math.Abs(_prepPpem - pixelsPerEm) < 0.001f && _prepClearType == clearType
                 && _prepBiLevel == BiLevelPass && _prepDWriteFlags == DWriteFlags
-                && _prepSymOverride == SymmetricAnswerOverride)
+                && _prepSymOverride == SymmetricAnswerOverride && _prepDWriteMove == DWriteMovePoint)
                 return !_faulted;
 
             _prepPpem = pixelsPerEm;
@@ -1987,6 +1992,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _prepBiLevel = BiLevelPass;
             _prepDWriteFlags = DWriteFlags;
             _prepSymOverride = SymmetricAnswerOverride;
+            _prepDWriteMove = DWriteMovePoint;
             _roundFnSp = false;          // the pre-program starts on the whole-pixel functions
             _prepRun = true;
             _faulted = false;
@@ -4956,7 +4962,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // the bi-level pass's y rounding no longer reaches the shipped raster at all -- it
             // survives only in the advance, which is whole-pixel rounded either way. The clean-row
             // claim above is therefore about the BI-LEVEL ORACLE, not about pixels.</para>
-            if (!s_freeStepExact || !s_yMoveTrunc
+            // DirectWrite's scaler is not fontdrvhost's here: dwrite.dll's itrp_MovePoint@180086260
+            // takes the y half exactly as the x half, `dot == freeY ? d : CompDiv(dot, freeY * d)`
+            // (read in the ARM64, 1800862ec), with no truncating bias. That +/-1/64 on the ends of
+            // diagonals was most of DWrite's "diagonal class" of glyph misses.
+            if (!s_freeStepExact || !s_yMoveTrunc || DWriteFlags != 0 || DWriteMovePoint
                 || (BiLevelPass && s_yMoveTruncMode == "ct"))
                 return FreedomStep(distance, component);
             if (_dotProduct == 0x4000)

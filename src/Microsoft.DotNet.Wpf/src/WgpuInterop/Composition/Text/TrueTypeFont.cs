@@ -1246,9 +1246,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // with the phase disabled. Leaving BiLevelPass out lets that measurement's unphased
             // outline answer the ClearType render for the same (glyph, size).
             // WPF_HINTCACHE_BILEVEL=0 restores the old key.
-            var key = (glyphId, ((int)MathF.Round(pixelsPerEm * 16f) * 4 + (SubpixelFitting ? 1 : 0)
+            var key = (glyphId, (((int)MathF.Round(pixelsPerEm * 16f) * 4 + (SubpixelFitting ? 1 : 0)
                        + (s_cacheByBiLevel && TrueTypeInterpreter.BiLevelPass ? 2 : 0)) * 3
-                       + (TrueTypeInterpreter.SymmetricAnswerOverride is bool so ? (so ? 1 : 2) : 0));
+                       + (TrueTypeInterpreter.SymmetricAnswerOverride is bool so ? (so ? 1 : 2) : 0))
+                      * 2 + (TrueTypeInterpreter.DWriteMovePoint ? 1 : 0));
             int callNo = 0;
             bool probe = s_outlineProbe && glyphId == s_probeGid;
             if (probe)

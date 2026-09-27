@@ -21,26 +21,26 @@ namespace WgpuInterop.Tests.Text
         private const string Printable =
             "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
 
-        /// <summary>RATCHETS, not tolerances. What is left is one kind of difference: a sample or two on
-        /// a DIAGONAL edge (K X x k Y &lt; &gt;), never a stem, a bowl or a row. dwrite's scaler keeps
-        /// the fitted outline in its 6x oversampled x frame all the way to the scan converter (the
-        /// natural word sets bit 6, which skips scl_ScaleDownFromSubPixelOverscale at the end of
-        /// fs__Contour), so an interpolated point carries a 384th of a pixel where ours carries a
-        /// 64th. Lower these as that is ported; never raise them.</summary>
+        /// <summary>RATCHETS, not tolerances. The "diagonal class" these used to hold (a sample on the
+        /// ends of K X k Y &lt; &gt;, 2-3% of glyphs) was dwrite.dll's itrp_MovePoint rounding a
+        /// diagonal move's y half symmetrically where fontdrvhost's truncates with a bias -- read by
+        /// hooking fsc_FillGlyph (scratchpad dwharness) and diffing DirectWrite's scanned points
+        /// against ours: x was identical, y 1/64 off. The one left, Times '&lt;' at 11, has points
+        /// identical to DirectWrite's. Never raise these.</summary>
         private static readonly Dictionary<string, int> GlyphCeiling = new()
         {
-            ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 24, ["arial"] = 9, ["times"] = 28, ["verdana"] = 20,
+            ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 0, ["arial"] = 0, ["times"] = 1, ["verdana"] = 0,
         };
 
         /// <summary>The same diagonal class, in GDI_CLASSIC.</summary>
         private static readonly Dictionary<string, int> GdiClassicCeiling = new()
         {
-            ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 29, ["arial"] = 11, ["times"] = 17, ["verdana"] = 20,
+            ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 0, ["arial"] = 0, ["times"] = 0, ["verdana"] = 0,
         };
 
         private static readonly Dictionary<string, int> RunCeiling = new()
         {
-            ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 3, ["arial"] = 3, ["times"] = 5, ["verdana"] = 3,
+            ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 0, ["arial"] = 0, ["times"] = 0, ["verdana"] = 0,
         };
 
         /// <summary>The natural sizes and, above each face's gasp threshold, the symmetric ones.</summary>
@@ -144,6 +144,21 @@ namespace WgpuInterop.Tests.Text
                     total++;
                     long d = Diff(theirs, tl, tt, tr - tl, tb - tt, ours, ol, ot, ow, oh);
                     if (d != 0) misses.Add($"{em}:'{c}'={d}");
+                    // WPF_NATURAL_FIGS=1: every missed glyph's fitted points (x in 64ths, y up), one
+                    // line each, to set beside DirectWrite's own (the dwharness fsc_FillGlyph hook).
+                    if (d != 0 && Environment.GetEnvironmentVariable("WPF_NATURAL_FIGS") == "1"
+                        && font.TryGetDWriteFittedOutline(gid, em, nSub > 1 ? NaturalClearType.SymmetricFlags : NaturalClearType.NaturalFlags, out var mf, out _))
+                    {
+                        var sb = new System.Text.StringBuilder($"FIGS {file} {em} {gid} {(int)c} {nSub}:");
+                        foreach (var f in mf)
+                        {
+                            sb.Append($" | {f.Start.X * 64},{-f.Start.Y * 64}");
+                            foreach (var sg in f.Segments)
+                                if (sg is Microsoft.Wpf.Interop.WebGpu.Composition.LineSegment l) sb.Append($" {l.Point.X * 64},{-l.Point.Y * 64}");
+                                else if (sg is Microsoft.Wpf.Interop.WebGpu.Composition.QuadraticBezierSegment q) sb.Append($" {q.Control.X * 64},{-q.Control.Y * 64}c {q.Point.X * 64},{-q.Point.Y * 64}");
+                        }
+                        Report(sb.ToString());
+                    }
                     if (Environment.GetEnvironmentVariable("WPF_NATURAL_SHOW") == $"{file}/{em}/{c}")
                     {
                         Report("DWRITE " + Show(theirs, tl, tt, tr - tl, tb - tt));
@@ -269,8 +284,7 @@ namespace WgpuInterop.Tests.Text
 
         private static readonly Dictionary<(string, int), int> SimulatedCeiling = new()
         {
-            // Tahoma's are its upright diagonal class (see GlyphCeiling), natural and GDI_CLASSIC.
-            [("tahoma", 2)] = 18, [("segoeui", 2)] = 0, [("tahoma", 1)] = 56, [("segoeui", 1)] = 0, [("sylfaen", 0)] = 96, [("sylfaen", 1)] = 142, [("sylfaen", 3)] = 99,
+            [("tahoma", 2)] = 0, [("segoeui", 2)] = 0, [("tahoma", 1)] = 0, [("segoeui", 1)] = 0, [("sylfaen", 0)] = 0, [("sylfaen", 1)] = 0, [("sylfaen", 3)] = 0,
         };
 
         [Theory]
