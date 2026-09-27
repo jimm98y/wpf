@@ -267,7 +267,12 @@ namespace MS.Internal.Text.TextInterface.Managed
             {
                 asc = d.UsWinAscent;
                 desc = d.UsWinDescent;   // stored as a positive magnitude
-                gap = 0;                 // usWin* already envelop the full character box
+                // ...and the LINE GAP is what hhea's line is taller than that box, never negative:
+                // DWrite's rule, measured against stock WPF, whose FontFamily.LineSpacing for Arial
+                // is (1854+434+67)/2048 = 1.1499 with the baseline half a gap down, 0.9216. Zero
+                // here put every Arial and Times line 3% short, and a StackPanel of them drifted a
+                // pixel every few lines. Verdana, Segoe UI and Tahoma come out zero either way.
+                gap = Math.Max(0, d.Ascender + Math.Abs((int)d.Descender) + d.LineGap - (asc + desc));
             }
             else if (d.HasOS2 && d.STypoAscender != 0)
             {
