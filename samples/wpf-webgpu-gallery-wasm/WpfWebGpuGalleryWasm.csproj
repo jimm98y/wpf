@@ -108,7 +108,47 @@
        System.Private.Windows.GdiPlus / System.Formats.Nrbf have inherent WindowsDesktop assembly IDENTITIES
        (pulled transitively by PresentationCore/WindowsBase) that no package trick suppresses, so they never
        land in aot-in; this lets mono-aot-cross RESOLVE them at AOT time (the Win32 methods are dead in wasm). -->
-  <Target Name="_AddVendoredAotSearchPath" BeforeTargets="_WasmAotCompileApp">
+  <!-- OFF BY DEFAULT since 2026-09-27 (-p:AotVendoredSearchPath=true restores it). Resolving these
+       at AOT time put System.Private.Windows.Core into the DEPENDENCY TABLES of WindowsBase,
+       PresentationCore and System.Windows.Primitives, and since it is not bundled (see below) Mono
+       then logged "module WindowsBase is unusable because dependency System.Private.Windows.Core is
+       not found" and discarded all three AOT images: WPF ran interpreted inside an AOT build, and the
+       first AOT-to-interpreter call with an unusual signature (UIElement.Measure) died at
+       interp.c:3420. Unresolvable, the methods that name Core are simply left to the interpreter and
+       the images stay usable, which is how WpfWebGpu.Sdk-built apps, which never had this search
+       path, AOT fine. Bundling Core instead does not work: it is not a trim input, so its references
+       into the trimmed System.Runtime facade (ISpanFormattable) no longer resolve. -->
+  <!-- AN AOT BUILD SHIPS System.Private.Windows.Core, AS A TRIM INPUT. The AOT compiler cannot
+       compile PresentationCore or System.Windows.Primitives without resolving it, and whatever it
+       resolved lands in their dependency tables; at run time Mono then needs that same assembly, and
+       with it absent it logged "module WindowsBase is unusable because dependency
+       System.Private.Windows.Core is not found" and discarded the WindowsBase, PresentationCore,
+       PresentationFramework and System.Windows.Primitives images. WPF ran INTERPRETED inside an AOT
+       build, and the first AOT-to-interpreter call with an unusual signature (UIElement.Measure) died
+       at interp.c:3420. What had made Core resolvable was a stale copy in aot-in (never cleaned,
+       dated 2026-08-03) plus the search path below.
+       Its WindowsDesktop identity keeps the SDK from publishing it, so it is added to the publish list
+       BEFORE trimming: then it is trimmed, compiled and bundled with everything else, one identity
+       throughout. Added after trimming instead, its references into the already-trimmed
+       System.Runtime facade (ISpanFormattable) no longer resolve and its own AOT compile fails.
+       AOT only: an interpreter build leaves it out, since its Module initializer is what the
+       interpreter cannot run (see below). -->
+  <Target Name="_PublishPrivateWindowsCoreForAot" AfterTargets="ComputeResolvedFilesToPublishList"
+          Condition="'$(UseAot)' == 'true'">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(FileName)' == 'System.Private.Windows.Core'" />
+      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)\lib\System.Private.Windows.Core.dll">
+        <RelativePath>System.Private.Windows.Core.dll</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <AssetType>runtime</AssetType>
+        <!-- What ILLink takes as a trim input (_ComputeManagedAssemblyToLink). -->
+        <PostprocessAssembly>true</PostprocessAssembly>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+  <Target Name="_AddVendoredAotSearchPath" BeforeTargets="_WasmAotCompileApp"
+          Condition="'$(AotVendoredSearchPath)' == 'true'">
     <ItemGroup>
       <_WasmAOTSearchPaths Include="$(MSBuildProjectDirectory)\lib" />
     </ItemGroup>
@@ -255,6 +295,13 @@
        instantiations over types from these. Resolving those at startup with the assemblies absent would
        fail exactly where we crash (create_domain_objects during mono_runtime_init_checked). WPFGallery
        has no resolve-only-but-unbundled assemblies, which is why dedup works there. -->
+  <!-- System.Formats.Nrbf for AOT: System.Private.Windows.Core (bundled for AOT above) needs it,
+       the browser runtime pack does not carry it, and as a framework-named assembly a publish-list
+       entry is dropped before bundling. A plain Reference reaches the bundle. -->
+  <ItemGroup Condition="'$(UseAot)' == 'true' and '$(BundlePrivateWin32Asms)' != 'true'">
+    <Reference Include="System.Formats.Nrbf"><HintPath>lib\System.Formats.Nrbf.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
   <ItemGroup Condition="'$(BundlePrivateWin32Asms)' == 'true'">
     <Reference Include="System.Private.Windows.Core"><HintPath>lib\System.Private.Windows.Core.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="System.Private.Windows.GdiPlus"><HintPath>lib\System.Private.Windows.GdiPlus.dll</HintPath><Private>true</Private></Reference>
