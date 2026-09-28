@@ -193,7 +193,7 @@ namespace System.Windows.Forms.VisualStyles
 		/// <summary>The outline of a two-segment stroke of width <paramref name="w"/>: butt ends moved
 		/// <paramref name="ext"/> along the stroke, their corners rounded by <paramref name="cap"/>, a
 		/// mitred inner corner and a round outer one.</summary>
-		static List<PointF> RoundJoinChevron (float x0, float y0, float xa, float ya, float x2, float y2, float w, float ext, float cap = 0)
+		internal static List<PointF> RoundJoinChevron (float x0, float y0, float xa, float ya, float x2, float y2, float w, float ext, float cap = 0)
 		{
 			static (float X, float Y) Unit (float dx, float dy) { float l = MathF.Sqrt (dx * dx + dy * dy); return (dx / l, dy / l); }
 			var u1 = Unit (xa - x0, ya - y0);
@@ -261,7 +261,7 @@ namespace System.Windows.Forms.VisualStyles
 
 		/// <summary>A polygon's exact area coverage of each pixel (the polygon clipped to the pixel's
 		/// square), as premultiplied <paramref name="rgb"/>.</summary>
-		static Frame RenderExactArea (int w, int h, List<PointF> poly, uint rgb)
+		internal static Frame RenderExactArea (int w, int h, List<PointF> poly, uint rgb)
 		{
 			var f = new Frame (w, h);
 			for (int y = 0; y < h; y++)
@@ -1619,13 +1619,13 @@ namespace System.Windows.Forms.VisualStyles
 			 | (uint) Math.Round (((c >> 8) & 0xff) * a / 255.0) << 8 | (uint) Math.Round ((c & 0xff) * a / 255.0);
 
 		/// <summary>The combo box's chevron, 10x19, in the state's ink. Exact-area art like the
-		/// Explorer tree glyph (its faintest pixels carry alpha 6): a 0.77-pixel stroke from
-		/// (1.04, 7.86) down to (5, 11.81) and back up, round-joined -- within 31 levels of the theme
-		/// image over its whole area.</summary>
+		/// Explorer tree glyph (its faintest pixels carry alpha 6): a 0.76-pixel stroke from
+		/// (1.05, 7.87) down to (5, 11.81) and back up, round-joined, its ends 0.07 past those points
+		/// with their corners rounded by 0.29 -- 5 to 14 levels from the theme image per look.</summary>
 		static Frame Chevron (int state)
 		{
 			uint ink = state switch { 2 => 0x1f1f1fu, 4 => 0xa8a8a8u, _ => 0x3f3f3fu };
-			return RenderExactArea (10, 19, RoundJoinChevron (1.0391f, 7.8594f, 5f, 11.8125f, 8.9609f, 7.8594f, 0.7672f, 0), ink);
+			return RenderExactArea (10, 19, RoundJoinChevron (1.0547f, 7.8672f, 5f, 11.8125f, 8.9453f, 7.8672f, 0.7555f, 0.0742f, 0.2941f), ink);
 		}
 
 		/// <summary>The border and face of an unmarked check box or radio button.</summary>

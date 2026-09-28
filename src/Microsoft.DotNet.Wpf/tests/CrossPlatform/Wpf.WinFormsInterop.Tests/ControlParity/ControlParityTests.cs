@@ -124,7 +124,7 @@ namespace Wpf.WinFormsInterop.Tests
             // pixel -- lighter ink puts one faint antialiased pixel the other side of the
             // "drawn at all" threshold. The window agrees and by much more: 9,303 off the
             // captured difference across the two combo boxes.
-            ["combobox-editable"] = (4, 300),
+            ["combobox-editable"] = (0, 300),
             // The chevron drawn as exact-area art: ink 11 -> 4; the parent colour under the corners: 1.
             ["combobox-list"] = (1, 225),
             // Windows leaves the control's last row clear -- its frame's bottom edge sits a row above
