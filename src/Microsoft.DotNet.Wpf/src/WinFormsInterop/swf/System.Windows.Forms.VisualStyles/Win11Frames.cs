@@ -958,7 +958,8 @@ namespace System.Windows.Forms.VisualStyles
 		internal static Frame DropDownButton (int state)
 		{
 			var (border, bottom, face) = ComboLook (state);
-			Frame f = Stretched (ExactRing (7, 21, 1.9375f, 0.875f, border, bottom, face), 3, 3, 7, 8);
+			(float r0, float r1) = ComboRingRadii (state);
+			Frame f = Stretched (ExactRing (7, 21, r0, r1, border, bottom, face), 3, 3, 7, 8);
 			f.Glyph = Chevron (state);
 			return f;
 		}
@@ -967,8 +968,18 @@ namespace System.Windows.Forms.VisualStyles
 		internal static Frame ComboReadOnly (int state)
 		{
 			var (border, bottom, face) = ComboLook (state);
-			return Stretched (ExactRing (7, 21, 1.9375f, 0.875f, border, bottom, face), 3, 3, 4, 4);
+			(float r0, float r1) = ComboRingRadii (state);
+			return Stretched (ExactRing (7, 21, r0, r1, border, bottom, face), 3, 3, 4, 4);
 		}
+
+		/// <summary>The exact-area ring's outer and inner radii per look, fitted to the CP_READONLY
+		/// image (normal 94 -> 70, hot 54 -> 38, pressed 12 -> 0 against it).</summary>
+		static (float, float) ComboRingRadii (int state) => state switch {
+			1 => (1.9336f, 0.9375f),
+			2 => (1.9336f, 0.8984f),
+			3 => (1.9375f, 0.9023f),
+			_ => (1.9375f, 0.875f),
+		};
 
 		/// <summary>CP_DROPDOWNBUTTONRIGHT/LEFT, the button inside an editable combo box: nothing
 		/// but the chevron until the pointer is on it, then an accent-framed face.</summary>
