@@ -143,6 +143,17 @@ namespace System.Windows.Forms
 
 		internal static bool IsDarker (Color c1, Color c2) => Luminosity (c1) < Luminosity (c2);
 
+		/// <summary>.NET's InvertForeColorIfNeeded over straight ARGB pixels: each pixel that is not
+		/// the background and differs from it in luminosity by more than 20 is inverted.</summary>
+		internal static void InvertForeColorIfNeeded (int [] argb, Color backgroundColor)
+		{
+			int bg = backgroundColor.ToArgb (), lum = Luminosity (backgroundColor);
+			for (int i = 0; i < argb.Length; i++) {
+				if (argb [i] != bg && Math.Abs (Luminosity (Color.FromArgb (argb [i])) - lum) > 20)
+					argb [i] = (int) ((uint) argb [i] & 0xff000000u | ~(uint) argb [i] & 0x00ffffffu);
+			}
+		}
+
 		internal static TextFormatFlags CreateTextFormatFlags (Control control, ContentAlignment alignment, bool showEllipsis, bool useMnemonic)
 		{
 			alignment = control.RtlTranslateContentInternal (alignment);

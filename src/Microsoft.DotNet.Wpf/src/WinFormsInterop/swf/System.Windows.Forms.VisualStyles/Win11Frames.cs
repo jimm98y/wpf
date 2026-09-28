@@ -140,6 +140,137 @@ namespace System.Windows.Forms.VisualStyles
 			return r;
 		}
 
+		/// <summary>A frame drawn true-size and centred into a <paramref name="w"/> x <paramref name="h"/>
+		/// cell of opaque <paramref name="paper"/>: straight ARGB, row-major.</summary>
+		internal static int [] Composite (Frame f, int w, int h, Color paper)
+		{
+			var px = new int [w * h];
+			uint bg = (uint) paper.ToArgb () | 0xff000000u;
+			int ox = (w - f.Width) / 2, oy = (h - f.Height) / 2;
+			for (int y = 0; y < h; y++)
+				for (int x = 0; x < w; x++) {
+					int fx = x - ox, fy = y - oy;
+					uint p = bg;
+					if (fx >= 0 && fy >= 0 && fx < f.Width && fy < f.Height)
+						p = Over (f.Pixels [fy * f.Width + fx], bg);
+					px [y * w + x] = (int) (p | 0xff000000u);
+				}
+			return px;
+		}
+
+		/// <summary>Explorer::TreeView TVP_GLYPH, 16x16 true size: a chevron pointing right in #8B8B8B
+		/// (closed) or down in #1B1B1B (opened). Unlike the frames above this art is EXACT-AREA
+		/// coverage, not sixteen samples -- its faintest pixels carry an alpha of 1 -- and it is a
+		/// 1.55-pixel stroke through pixel centres, (5.5, 4.5) to (9.5, 8.5) to (5.5, 12.5), butt ends,
+		/// a round join; the opened one is the same stroke turned, a pixel to the left.</summary>
+		internal static Frame ExplorerTreeGlyph (bool open)
+		{
+			lock (s_explorerGlyphs) {
+				int k = open ? 1 : 0;
+				if (s_explorerGlyphs [k] != null)
+					return s_explorerGlyphs [k];
+				List<PointF> poly = RoundJoinChevron (5.5f, 4.5f, 9.5f, 8.5f, 5.5f, 12.5f, 1.55f, -1 / 32f);
+				if (open)
+					for (int i = 0; i < poly.Count; i++)
+						poly [i] = new PointF (poly [i].Y - 1, poly [i].X);
+				return s_explorerGlyphs [k] = RenderExactArea (16, 16, poly, open ? 0x1b1b1bu : 0x8b8b8bu);
+			}
+		}
+
+		static readonly Frame [] s_explorerGlyphs = new Frame [2];
+
+		/// <summary>The outline of a two-segment stroke of width <paramref name="w"/>: butt ends moved
+		/// <paramref name="ext"/> along the stroke, a mitred inner corner and a round outer one.</summary>
+		static List<PointF> RoundJoinChevron (float x0, float y0, float xa, float ya, float x2, float y2, float w, float ext)
+		{
+			static (float X, float Y) Unit (float dx, float dy) { float l = MathF.Sqrt (dx * dx + dy * dy); return (dx / l, dy / l); }
+			var u1 = Unit (xa - x0, ya - y0);
+			var u2 = Unit (x2 - xa, y2 - ya);
+			(float X, float Y) n1 = (-u1.Y, u1.X), n2 = (-u2.Y, u2.X);
+			float h = w / 2;
+			var s0 = (X: x0 - u1.X * ext, Y: y0 - u1.Y * ext);
+			var e2 = (X: x2 + u2.X * ext, Y: y2 + u2.Y * ext);
+			PointF Miter (float sign)
+			{
+				float p1x = xa + sign * n1.X * h, p1y = ya + sign * n1.Y * h;
+				float p2x = xa + sign * n2.X * h, p2y = ya + sign * n2.Y * h;
+				float det = u1.X * -u2.Y - u1.Y * -u2.X;
+				float t = ((p2x - p1x) * -u2.Y - (p2y - p1y) * -u2.X) / det;
+				return new PointF (p1x + t * u1.X, p1y + t * u1.Y);
+			}
+			PointF mp = Miter (1), mm = Miter (-1);
+			float outer = (mp.X - xa) * (u1.X - u2.X) + (mp.Y - ya) * (u1.Y - u2.Y) > (mm.X - xa) * (u1.X - u2.X) + (mm.Y - ya) * (u1.Y - u2.Y) ? 1 : -1;
+			List<PointF> Side (float sign)
+			{
+				if (sign != outer)
+					return new List<PointF> { Miter (sign) };
+				float a0 = MathF.Atan2 (sign * n1.Y, sign * n1.X), a1 = MathF.Atan2 (sign * n2.Y, sign * n2.X);
+				float d = a1 - a0;
+				while (d > MathF.PI) d -= 2 * MathF.PI;
+				while (d < -MathF.PI) d += 2 * MathF.PI;
+				var arc = new List<PointF> ();
+				for (int i = 0; i <= 16; i++) {
+					float t = a0 + d * i / 16;
+					arc.Add (new PointF (xa + h * MathF.Cos (t), ya + h * MathF.Sin (t)));
+				}
+				return arc;
+			}
+			var poly = new List<PointF> { new PointF (s0.X + n1.X * h, s0.Y + n1.Y * h) };
+			poly.AddRange (Side (1));
+			poly.Add (new PointF (e2.X + n2.X * h, e2.Y + n2.Y * h));
+			poly.Add (new PointF (e2.X - n2.X * h, e2.Y - n2.Y * h));
+			List<PointF> back = Side (-1);
+			back.Reverse ();
+			poly.AddRange (back);
+			poly.Add (new PointF (s0.X - n1.X * h, s0.Y - n1.Y * h));
+			return poly;
+		}
+
+		/// <summary>A polygon's exact area coverage of each pixel (the polygon clipped to the pixel's
+		/// square), as premultiplied <paramref name="rgb"/>.</summary>
+		static Frame RenderExactArea (int w, int h, List<PointF> poly, uint rgb)
+		{
+			var f = new Frame (w, h);
+			for (int y = 0; y < h; y++)
+				for (int x = 0; x < w; x++) {
+					double a = Math.Abs (ClippedArea (poly, x, y, x + 1, y + 1));
+					uint alpha = (uint) Math.Min (255, (int) (a * 255 + 0.5));
+					if (alpha != 0)
+						f.Pixels [y * w + x] = Premultiply (rgb, alpha);
+				}
+			return f;
+		}
+
+		static double ClippedArea (List<PointF> poly, float x0, float y0, float x1, float y1)
+		{
+			List<PointF> p = poly;
+			p = ClipEdge (p, q => q.X >= x0, (a, b) => new PointF (x0, a.Y + (b.Y - a.Y) * (x0 - a.X) / (b.X - a.X)));
+			if (p.Count > 0) p = ClipEdge (p, q => q.X <= x1, (a, b) => new PointF (x1, a.Y + (b.Y - a.Y) * (x1 - a.X) / (b.X - a.X)));
+			if (p.Count > 0) p = ClipEdge (p, q => q.Y >= y0, (a, b) => new PointF (a.X + (b.X - a.X) * (y0 - a.Y) / (b.Y - a.Y), y0));
+			if (p.Count > 0) p = ClipEdge (p, q => q.Y <= y1, (a, b) => new PointF (a.X + (b.X - a.X) * (y1 - a.Y) / (b.Y - a.Y), y1));
+			double s = 0;
+			for (int i = 0; i < p.Count; i++) {
+				PointF a = p [(i + p.Count - 1) % p.Count], b = p [i];
+				s += (double) a.X * b.Y - (double) b.X * a.Y;
+			}
+			return s / 2;
+		}
+
+		static List<PointF> ClipEdge (List<PointF> p, Func<PointF, bool> inside, Func<PointF, PointF, PointF> cross)
+		{
+			var o = new List<PointF> (p.Count + 4);
+			for (int i = 0; i < p.Count; i++) {
+				PointF a = p [(i + p.Count - 1) % p.Count], b = p [i];
+				bool ia = inside (a), ib = inside (b);
+				if (ib) {
+					if (!ia) o.Add (cross (a, b));
+					o.Add (b);
+				} else if (ia)
+					o.Add (cross (a, b));
+			}
+			return o;
+		}
+
 		// ---- border-fill parts ---------------------------------------------------------------
 
 		/// <summary>A BGTYPE BORDERFILL part: FILLCOLOR inside a BORDERSIZE frame of BORDERCOLOR,

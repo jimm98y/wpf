@@ -775,7 +775,12 @@ namespace System.Windows.Forms.PropertyGridInternal {
 					int d = StockDepth (depth);
 					var outline = new Rectangle (d * (OutlineIconSize + OutlineIconPadding) + OutlineIconPadding / 2,
 								     yLoc + (RowHeight - OutlineIconSize) / 2, OutlineIconSize, OutlineIconSize);
-					grid_item.PlusMinusBounds = DrawPlusMinus (pevent.Graphics,
+					if (VisualStyles.VisualStyleRenderer.IsSupported) {
+						PaintOutlineWithExplorerTreeStyle (pevent.Graphics, outline, grid_item.Expanded);
+						grid_item.PlusMinusBounds = new Rectangle (outline.X + (OutlineIconSize - PLUS_MINUS_SIZE) / 2,
+											   outline.Y + (OutlineIconSize - PLUS_MINUS_SIZE) / 2, PLUS_MINUS_SIZE, PLUS_MINUS_SIZE);
+					} else
+						grid_item.PlusMinusBounds = DrawPlusMinus (pevent.Graphics,
 										   outline.X + (OutlineIconSize - PLUS_MINUS_SIZE) / 2,
 										   outline.Y + (OutlineIconSize - PLUS_MINUS_SIZE) / 2,
 										   grid_item.Expanded, grid_item.GridItemType == GridItemType.Category);
@@ -783,6 +788,29 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			}
 			grid_item.Top = yLoc;
 			yLoc += row_height;
+		}
+
+		// .NET's GridEntry.PaintOutlineWithExplorerTreeStyle: the opened glyph drawn as it is; the
+		// closed one into a bitmap of the line colour, then every pixel far enough from that colour in
+		// luminosity inverted (RedrawExplorerTreeViewClosedGlyph, ControlPaint.InvertForeColorIfNeeded).
+		private void PaintOutlineWithExplorerTreeStyle (Graphics g, Rectangle outline, bool expanded)
+		{
+			if (expanded) {
+				VisualStyles.Win11Frames.Draw (g, VisualStyles.Win11Frames.ExplorerTreeGlyph (true), outline);
+				return;
+			}
+			Color line = property_grid.LineColor;
+			int [] px = VisualStyles.Win11Frames.Composite (VisualStyles.Win11Frames.ExplorerTreeGlyph (false),
+									 outline.Width, outline.Height, line);
+			ControlPaint.InvertForeColorIfNeeded (px, line);
+			using (var bmp = new Bitmap (outline.Width, outline.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb)) {
+				var data = bmp.LockBits (new Rectangle (0, 0, outline.Width, outline.Height),
+							 System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+				for (int y = 0; y < outline.Height; y++)
+					System.Runtime.InteropServices.Marshal.Copy (px, y * outline.Width, data.Scan0 + y * data.Stride, outline.Width);
+				bmp.UnlockBits (data);
+				g.DrawImage (bmp, outline, 0, 0, outline.Width, outline.Height, GraphicsUnit.Pixel);
+			}
 		}
 
 		private Rectangle DrawPlusMinus (Graphics g, int x, int y, bool expanded, bool category) {
