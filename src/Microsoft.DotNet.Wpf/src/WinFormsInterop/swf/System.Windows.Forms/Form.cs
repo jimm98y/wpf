@@ -442,13 +442,8 @@ namespace System.Windows.Forms {
 			}
 
 			set {
-				if (accept_button != null)
-					accept_button.NotifyDefault (false);
-
 				accept_button = value;
-				if (accept_button != null)
-					accept_button.NotifyDefault (true);
-
+				UpdateDefaultButton ();
 				CheckAcceptButton ();
 			}
 		}
@@ -2456,8 +2451,29 @@ namespace System.Windows.Forms {
 			}
 		}
 
+		/// <summary>.NET's Form.UpdateDefaultButton: the button with the focus is the default one;
+		/// with none focused, the AcceptButton is.</summary>
 		protected override void UpdateDefaultButton() {
-			base.UpdateDefaultButton ();
+			ContainerControl container = this;
+			while (container.ActiveControl is ContainerControl inner) {
+				container = inner;
+				if (container is Form) {
+					container = this;
+					break;
+				}
+			}
+			SetDefaultButton (container.ActiveControl as IButtonControl ?? accept_button);
+		}
+
+		private IButtonControl default_button;
+
+		private void SetDefaultButton (IButtonControl button)
+		{
+			if (default_button == button)
+				return;
+			default_button?.NotifyDefault (false);
+			default_button = button;
+			button?.NotifyDefault (true);
 		}
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]

@@ -90,6 +90,7 @@ namespace System.Windows.Forms {
 					active_control = null;
 					if (this is Form)
 						CheckAcceptButton ();
+					FindForm ()?.UpdateDefaultButtonInternal ();
 					if (had_focus && IsHandleCreated)
 						XplatUI.SetFocus (Handle);
 					return;
@@ -231,6 +232,11 @@ namespace System.Windows.Forms {
 				// Let the control know it's selected
 				if (ctl.InternalContainsFocus)
 					SendControlFocus (active_control);
+
+				// .NET's UpdateActiveControl: the form picks its default button again -- a focused
+				// button IS the default one, and draws as it (a flat button's border a pixel wider,
+				// a themed one in the accent).
+				FindForm ()?.UpdateDefaultButtonInternal ();
 			}
 		}
 
@@ -699,6 +705,8 @@ namespace System.Windows.Forms {
 		protected virtual void UpdateDefaultButton() {
 			// MS Internal
 		}
+
+		internal void UpdateDefaultButtonInternal () => UpdateDefaultButton ();
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		protected override void WndProc(ref Message m) {
