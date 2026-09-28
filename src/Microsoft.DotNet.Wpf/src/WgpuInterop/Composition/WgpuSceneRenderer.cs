@@ -4550,24 +4550,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <para>ClearType text on a coloured background cannot be blended the way GDI blends it
         /// without knowing that background -- see <see cref="SubpixelLutForInkOnPaper"/>. Walks the
         /// target's draws newest first. Earlier TEXT is skipped: it is ink, and runs of one line
-        /// overlap each other's boxes all the time. The first other draw that touches the rectangle
-        /// decides: an opaque, uniformly coloured, axis-aligned rectangle that CONTAINS it is the
-        /// paper; anything else (a gradient, an image, a rounded shape, a partial cover) makes it
-        /// unknown. If nothing touches it, the paper is what the pass was cleared to.</para>
+        /// overlap each other's boxes all the time. Opaque uniform fills that touch the rectangle
+        /// without containing it are looked through while they share one colour -- a fill over its
+        /// own colour changes nothing -- down to one that CONTAINS it, which is the paper; a fill of
+        /// another colour, or anything else (a gradient, an image, an outline), makes it unknown.
+        /// "Touches" is the pixels a draw can write, not its quad's box. If nothing contains it, the
+        /// paper is what the pass was cleared to, provided that is the same colour.</para>
         /// </summary>
         private static RgbaColor? PaperUnder(DrawData data, float x0, float y0, float x1, float y1,
                                              Func<Vector2, Vector2> fromNdc)
         {
             List<DrawItem> draws = data.Draws;
             List<PaperInfo> info = data.DrawInfo;
+            RgbaColor? same = null;
             for (int i = info.Count; i < draws.Count; i++) info.Add(MeasureDraw(data, draws[i], fromNdc));
             for (int i = draws.Count - 1; i >= 0; i--)
             {
                 FillKind kind = draws[i].Kind;
                 if (kind is FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) continue;
                 PaperInfo b = info[i];
-                if (b.X1 <= x0 || b.X0 >= x1 || b.Y1 <= y0 || b.Y0 >= y1) continue;
-                if (b.Solid is { } solid && b.Covers(x0, y0, x1, y1)) return TracePaper("solid", solid);
+                if (!b.Touches(x0, y0, x1, y1)) continue;
+                if (b.Solid is { } solid)
+                {
+                    // A fill of the colour already found changes nothing where it lands, edges
+                    // included (c over c is c), so a stack of one colour is still one paper: an
+                    // item's background that stops short of the glyphs' slack, over the list's own
+                    // background of the same white.
+                    if (same is { } s0 && !SameColour(s0, solid))
+                        return TracePaper("solid-mixed", null);
+                    if (b.Covers(x0, y0, x1, y1)) return TracePaper("solid", solid);
+                    same = solid;
+                    continue;
+                }
                 if (s_tracePaper)
                 {
                     DrawItem d = draws[i];
@@ -4577,8 +4591,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 return null;
             }
+            if (same is { } s1)
+                return data.ClearPaper is { } cp && SameColour(cp, s1) ? TracePaper("clear", cp) : TracePaper("solid-partial", null);
             return TracePaper(data.ClearPaper is null ? "clear-unknown" : "clear", data.ClearPaper);
         }
+
+        private static bool SameColour(RgbaColor a, RgbaColor b)
+            => ToByte(a.R) == ToByte(b.R) && ToByte(a.G) == ToByte(b.G) && ToByte(a.B) == ToByte(b.B);
 
         /// <summary>What <see cref="PaperUnder"/> needs of one draw: its device box (scissor
         /// included) and, when it is an opaque uniform fill that can be paper, its colour. A
@@ -4595,11 +4614,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // fs_shape's fw, the pixel's size in local units.
             private readonly Matrix3x2 _toLocal;
             private readonly float _halfX, _halfY, _corner, _pixel;
+            // An axis-aligned shape's own device rectangle, which is smaller than its quad: the quad
+            // carries a margin for the antialiased edge that writes nothing past half a pixel out.
+            private readonly bool _aligned;
+            private readonly float _sx0, _sy0, _sx1, _sy1;
 
             public PaperInfo(float x0, float y0, float x1, float y1, RgbaColor? solid)
             {
                 X0 = x0; Y0 = y0; X1 = x1; Y1 = y1; Solid = solid;
                 Shape = false; _toLocal = default; _halfX = _halfY = _corner = _pixel = 0f;
+                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f;
             }
 
             public PaperInfo(float x0, float y0, float x1, float y1, RgbaColor solid, Matrix3x2 toLocal,
@@ -4611,6 +4635,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 float px = MathF.Sqrt(toLocal.M11 * toLocal.M11 + toLocal.M21 * toLocal.M21);
                 float py = MathF.Sqrt(toLocal.M12 * toLocal.M12 + toLocal.M22 * toLocal.M22);
                 _pixel = MathF.Max(0.5f * (px + py), 1e-6f);
+                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f;
+                if (MathF.Abs(toLocal.M12) < 1e-6f && MathF.Abs(toLocal.M21) < 1e-6f
+                    && Matrix3x2.Invert(toLocal, out Matrix3x2 toDevice))
+                {
+                    Vector2 a = Vector2.Transform(new Vector2(-halfX, -halfY), toDevice);
+                    Vector2 c = Vector2.Transform(new Vector2(halfX, halfY), toDevice);
+                    _aligned = true;
+                    _sx0 = MathF.Min(a.X, c.X); _sx1 = MathF.Max(a.X, c.X);
+                    _sy0 = MathF.Min(a.Y, c.Y); _sy1 = MathF.Max(a.Y, c.Y);
+                }
+            }
+
+            /// <summary>Whether this draw can write any pixel of the box. A shape writes a pixel
+            /// only where the pixel's centre is less than half a pixel outside it (fs_shape's
+            /// coverage is 0.5 - d there), so that is its reach, not its quad.</summary>
+            public bool Touches(float x0, float y0, float x1, float y1)
+            {
+                if (X1 <= x0 || X0 >= x1 || Y1 <= y0 || Y0 >= y1) return false;
+                if (!_aligned) return true;
+                return Reaches(x0, x1, _sx0, _sx1) && Reaches(y0, y1, _sy0, _sy1);
+            }
+
+            // Pixels i of [floor(b0), ceil(b1)) against those whose centre lies in (s0 - 0.5, s1 + 0.5).
+            private static bool Reaches(float b0, float b1, float s0, float s1)
+            {
+                int lo = Math.Max((int) MathF.Floor(b0), (int) MathF.Floor(s0 - 1f) + 1);
+                int hi = Math.Min((int) MathF.Ceiling(b1) - 1, (int) MathF.Ceiling(s1) - 1);
+                return lo <= hi;
             }
 
             public bool Covers(float x0, float y0, float x1, float y1)
