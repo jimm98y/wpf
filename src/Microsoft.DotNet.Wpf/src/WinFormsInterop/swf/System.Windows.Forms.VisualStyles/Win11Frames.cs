@@ -1006,18 +1006,28 @@ namespace System.Windows.Forms.VisualStyles
 			Frame f = Render (w, 16, new Layer (Box (0, 0, w, 16), 0xfff0f0f0u),
 					  new Layer (outer, (x, y) => y >= bandY ? band : border), new Layer (inner, face));
 			Stretched (f, part == 4 ? 4 : part == 3 ? 3 : 4, part == 4 ? 2 : 3, part == 2 ? 8 : 9, 3);
-			// The arrow, fitted up-pointing and turned: 7x6 for up/down, 6x7 across.
+			// The arrow: exact-area art (alphas down to 5), an up-pointing triangle -- apex (3.5, 1.43),
+			// base y = 5, half-width 3.34 -- with its base corners cut at 2.57 either side of the
+			// centre, then turned: 7x6 for up/down, 6x7 across. Within 4 levels of the theme image.
 			int gw = part <= 2 ? 7 : 6, gh = part <= 2 ? 6 : 7;
-			float apex = part <= 2 ? 1.3125f : 1.25f;
-			Shape up = Triangle (3.5f, apex, 5, 3.125f, 0);
-			Shape glyph = part switch {
-				2 => (x, y) => up (x, gh - y),
-				3 => (x, y) => up (y, gw - x),
-				4 => (x, y) => up (y, x),
-				_ => up,
-			};
+			var tri = new List<PointF> { new PointF (3.5f, 1.4297f), new PointF (3.5f + 3.3438f, 5f), new PointF (3.5f - 3.3438f, 5f) };
+			const float Cut = 2.5703f;
+			tri = ClipEdge (tri, q => q.X >= 3.5f - Cut, (a, b) => new PointF (3.5f - Cut, a.Y + (b.Y - a.Y) * (3.5f - Cut - a.X) / (b.X - a.X)));
+			tri = ClipEdge (tri, q => q.X <= 3.5f + Cut, (a, b) => new PointF (3.5f + Cut, a.Y + (b.Y - a.Y) * (3.5f + Cut - a.X) / (b.X - a.X)));
+			for (int i = 0; i < tri.Count; i++) {
+				PointF u = tri [i];
+				tri [i] = part switch {
+					2 => new PointF (u.X, gh - u.Y),
+					3 => new PointF (gw - u.Y, u.X),
+					4 => new PointF (u.Y, u.X),
+					_ => u,
+				};
+			}
 			uint alpha = state switch { 3 => 0x9bu, 4 => 0x5cu, _ => 0xe4u };
-			f.Glyph = Render (gw, gh, new Layer (glyph, alpha << 24));
+			Frame g = RenderExactArea (gw, gh, tri, 0);
+			for (int i = 0; i < g.Pixels.Length; i++)
+				g.Pixels [i] = (uint) ((g.Pixels [i] >> 24) * alpha / 255.0 + 0.5) << 24;
+			f.Glyph = g;
 			return f;
 		}
 

@@ -77,7 +77,8 @@ namespace Wpf.WinFormsInterop.Tests
             // does) moved the live window's NUD region 19,689 -> 1,467 and this count by 4. Shrinking
             // their margins on pixel centres, as uxtheme does, took the live region to 1,353 and
             // this count up 2 -- ink Windows' bitmap does not have at all.
-            ["numericupdown"] = (2166, 282),
+            // Exact-area arrows: ink 2166 -> 2162.
+            ["numericupdown"] = (2162, 282),
 
             // Our text-input frames are drawn on WM_NCPAINT, and DrawToBitmap renders the CLIENT area
             // only, so our border is absent from every one of these. Windows' native edit control
