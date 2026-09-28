@@ -373,7 +373,10 @@ namespace System.Windows.Forms
 			// higher than the 16x16 cell this layout keeps (measured against a stock details view;
 			// the labels already agree, so only the box moves).
 			rect_checkrect.Offset (3, -1);
-			Win11Frames.Draw (dc, Win11Frames.CheckBox (item.Checked ? 5 : 1), rect_checkrect);
+			// Composited as the image list composites it (Win11Frames.DrawStateImage).
+			Win11Frames.Frame box = Win11Frames.CheckBox (item.Checked ? 5 : 1);
+			Win11Frames.DrawStateImage (dc, box, new Rectangle (rect_checkrect.X + (rect_checkrect.Width - box.Width) / 2,
+				rect_checkrect.Y + (rect_checkrect.Height - box.Height) / 2, box.Width, box.Height));
 		}
 
 		/// <summary>CP_READONLY's state for a drop-down list: disabled, pressed while its list is
@@ -690,42 +693,10 @@ namespace System.Windows.Forms
 			int right = x - 5 + treeView.Indent;
 			var box = new Rectangle (right - Side - 2, middle - 3, Side - 1, Side - 1);
 
-			SmoothingMode old = dc.SmoothingMode;
-			dc.SmoothingMode = SmoothingMode.None;
-			// A VERTICAL RAMP, not the tree's flat BackColor. Measured off a stock expander, whose
-			// seven interior rows run 250, 250, 250, 237, 237, 227, 227 -- light at the top, a
-			// couple of percent darker at the foot. Ours filled all seven with the tree's white.
-			var inner = new Rectangle (box.X, box.Y, box.Width + 1, box.Height + 1);
-			using (var face = new LinearGradientBrush (
-					new Rectangle (inner.X, inner.Y, inner.Width, inner.Height + 1),
-					ExpanderFaceTop, ExpanderFaceFoot, LinearGradientMode.Vertical))
-				dc.FillRectangle (face, inner);
-			dc.DrawRectangle (ResPool.GetPen (ExpanderFrame), box);
-			// The four corners come back to a paler grey, which is all the rounding there is room for.
-			Brush corner = ResPool.GetSolidBrush (ExpanderCorner);
-			dc.FillRectangle (corner, box.X, box.Y, 1, 1);
-			dc.FillRectangle (corner, box.Right, box.Y, 1, 1);
-			dc.FillRectangle (corner, box.X, box.Bottom, 1, 1);
-			dc.FillRectangle (corner, box.Right, box.Bottom, 1, 1);
-
-			Pen mark = ResPool.GetPen (ExpanderMark);
-			int cx = box.X + box.Width / 2, cy = box.Y + box.Height / 2;
-			dc.DrawLine (mark, cx - 2, cy, cx + 2, cy);
-			if (!node.IsExpanded)
-				dc.DrawLine (mark, cx, cy - 2, cx, cy + 2);
-			dc.SmoothingMode = old;
+			// TVP_GLYPH, closed or opened, at its own size.
+			Win11Frames.Draw (dc, Win11Frames.Get ("TREEVIEW", 2, node.IsExpanded ? 2 : 1),
+					  new Rectangle (box.X, box.Y, Side, Side));
 		}
-
-		/// <summary>The expander's interior ramp. A stock one renders 250, 250, 250, 237, 237,
-		/// 227, 227 down its seven interior rows; these are the STOPS that produce that, not those
-		/// values -- the gradient is sampled across a rect a row taller than the interior, so
-		/// feeding it 250 and 227 rendered 247 to 233, a range half as wide as it should be.</summary>
-		private static readonly Color ExpanderFaceTop = Color.FromArgb (253, 253, 253);
-		private static readonly Color ExpanderFaceFoot = Color.FromArgb (221, 221, 221);
-
-		private static readonly Color ExpanderFrame = Color.FromArgb (145, 145, 145);
-		private static readonly Color ExpanderCorner = Color.FromArgb (186, 187, 188);
-		private static readonly Color ExpanderMark = Color.FromArgb (75, 99, 167);
 
 		/// <summary>A chevron, which is how Windows expands a tree. The boxed +/- belongs to a much
 		/// older shell.</summary>

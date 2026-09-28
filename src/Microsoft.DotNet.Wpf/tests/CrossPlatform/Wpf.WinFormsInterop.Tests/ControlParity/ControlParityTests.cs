@@ -187,7 +187,8 @@ namespace Wpf.WinFormsInterop.Tests
             // Ink 9 -> 14, shade 1062 -> 1033: the expander gained the vertical ramp Windows
             // fills it with, which is 2,740 off the window and moves five faint pixels across
             // the "drawn at all" line here. Shade -- the measure that can see a ramp -- improved.
-            ["treeview"] = (14, 1062),
+            // Ink 14 -> 0: the expander is TVP_GLYPH's flat bands, not a ramp.
+            ["treeview"] = (0, 1062),
             ["vscrollbar"] = (0, 1),
         };
 

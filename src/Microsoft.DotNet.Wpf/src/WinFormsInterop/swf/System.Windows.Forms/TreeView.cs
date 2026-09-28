@@ -1516,9 +1516,10 @@ namespace System.Windows.Forms {
 		{
 			// comctl32 builds a check-box tree's state images by drawing the theme's check box
 			// (unchecked or checked, normal) at its own size, and draws a node's on its row -- so
-			// the box is the same one a CheckBox control shows.
+			// the box is the same one a CheckBox control shows -- composited as an image list
+			// composites it (Win11Frames.DrawStateImage), at the cell's top-left.
 			var cell = new Rectangle (x, middle - 7, TreeNode.CheckBoxWidth, 13);
-			System.Windows.Forms.VisualStyles.Win11Frames.Draw (dc,
+			System.Windows.Forms.VisualStyles.Win11Frames.DrawStateImage (dc,
 				System.Windows.Forms.VisualStyles.Win11Frames.CheckBox (node.Checked ? 5 : 1), cell);
 		}
 

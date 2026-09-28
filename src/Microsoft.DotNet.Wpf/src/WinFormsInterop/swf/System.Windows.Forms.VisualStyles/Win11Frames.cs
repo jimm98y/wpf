@@ -91,6 +91,55 @@ namespace System.Windows.Forms.VisualStyles
 			}
 		}
 
+		/// <summary>A check box as a tree or list view's STATE IMAGE draws it. comctl32's
+		/// CreateCheckBoxImagelistEx has DrawThemeBackgroundEx paint the part into a 32-bit DIB --
+		/// premultiplied, as AlphaBlend leaves it -- and the image list then draws those pixels as if
+		/// they were straight alpha, so every partly covered pixel is premultiplied a second time:
+		/// out = P * A + paper * (1 - A). Measured to the digit on a stock tree's boxes.</summary>
+		internal static void DrawStateImage (Graphics g, Frame f, Rectangle bounds)
+		{
+			if (bounds.Width <= 0 || bounds.Height <= 0)
+				return;
+			Bitmap bmp;
+			lock (s_stateImages) {
+				if (!s_stateImages.TryGetValue (f, out bmp)) {
+					var px = (uint []) f.Pixels.Clone ();
+					if (f.Glyph is Frame glyph) {
+						int gx = Math.Max (0, (f.Width - glyph.Width) / 2), gy = Math.Max (0, (f.Height - glyph.Height) / 2);
+						for (int y = 0; y < glyph.Height && gy + y < f.Height; y++)
+							for (int x = 0; x < glyph.Width && gx + x < f.Width; x++) {
+								int i = (gy + y) * f.Width + gx + x;
+								px [i] = Over (glyph.Pixels [y * glyph.Width + x], px [i]);
+							}
+					}
+					bmp = new Bitmap (f.Width, f.Height, PixelFormat.Format32bppArgb);
+					BitmapData data = bmp.LockBits (new Rectangle (0, 0, f.Width, f.Height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+					var argb = new int [px.Length];
+					for (int i = 0; i < px.Length; i++)
+						argb [i] = (int) px [i];     // the premultiplied values, read as straight
+					for (int y = 0; y < f.Height; y++)
+						Marshal.Copy (argb, y * f.Width, data.Scan0 + y * data.Stride, f.Width);
+					bmp.UnlockBits (data);
+					s_stateImages [f] = bmp;
+				}
+			}
+			int w = Math.Min (f.Width, bounds.Width), h = Math.Min (f.Height, bounds.Height);
+			g.DrawImage (bmp, new Rectangle (bounds.X, bounds.Y, w, h), 0, 0, w, h, GraphicsUnit.Pixel);
+		}
+
+		static readonly Dictionary<Frame, Bitmap> s_stateImages = new ();
+
+		/// <summary>Premultiplied source over destination, per channel.</summary>
+		static uint Over (uint s, uint d)
+		{
+			uint sa = s >> 24, inv = 255 - sa, r = 0;
+			for (int sh = 0; sh < 32; sh += 8) {
+				uint c = ((s >> sh) & 0xff) + (((d >> sh) & 0xff) * inv + 127) / 255;
+				r |= Math.Min (255u, c) << sh;
+			}
+			return r;
+		}
+
 		// ---- border-fill parts ---------------------------------------------------------------
 
 		/// <summary>A BGTYPE BORDERFILL part: FILLCOLOR inside a BORDERSIZE frame of BORDERCOLOR,
