@@ -1115,7 +1115,8 @@ namespace System.Windows.Forms.VisualStyles
 			Shape edge = dir < 2 ? Box (0, 0, 1, 17) : Box (0, 0, 17, 1);
 			Frame f = Stretched (Render (17, 17, new Layer (Box (0, 0, 17, 17), ScrollFace), new Layer (edge, 0xffffffffu)), 8, 8, 8, 8);
 			if (look > 0) {
-				f.Glyph = Arrow (dir, 13, s_arrows [dir, look - 1]);
+				f.Glyph = s_arrowsExact.TryGetValue (state, out var exact) ? ArrowExact (dir, 13, exact)
+					: Arrow (dir, 13, s_arrows [dir, look - 1]);
 				// The glyph is picked by the button's smaller side (IMAGESELECTTYPE SIZE): the theme's
 				// MINSIZE1..3 give 13 px below 21, 16 px from 21, 20 px from 26; its fourth image, 32
 				// px, carries no MINSIZE and uxtheme takes it from 32 (the 39 and 52 px ones are never
@@ -1126,6 +1127,29 @@ namespace System.Windows.Forms.VisualStyles
 			}
 			return f;
 		}
+
+		// The 13-pixel glyphs as exact-area rounded triangles (ArrowExact), by SBP_ARROWBTN state:
+		// cx, apex, base, half-width, rounding and alpha, fitted to each state's image in its own
+		// up-pointing frame. The theme's arrows are not one shape turned four ways -- the up arrow
+		// sits lower in its frame than the others -- so each state has its own.
+		static readonly Dictionary<int, (float cx, float apex, float bse, float hw, float r, float a)> s_arrowsExact = new () {
+			{ 2, (7.0067f, 4.6446f, 9.1335f, 3.3488f, 1.2494f, 0.5783f) },
+			{ 3, (7.0033f, 3.3524f, 9.5647f, 4.1248f, 0.0601f, 0.5758f) },
+			{ 4, (7.0014f, 4.6894f, 8.9636f, 3.0488f, 1.041f, 0.3171f) },
+			{ 6, (7.0007f, 3.439f, 8.218f, 3.4148f, 1.166f, 0.5755f) },
+			{ 7, (6.9926f, 4.2855f, 7.62f, 2.5323f, 1.0144f, 0.5715f) },
+			{ 8, (7.0038f, 3.7203f, 7.9402f, 3.0029f, 1.0633f, 0.3171f) },
+			{ 10, (7.0003f, 3.4365f, 8.187f, 3.3997f, 1.1884f, 0.5772f) },
+			{ 11, (7.0001f, 4.1498f, 7.7007f, 2.6621f, 0.9254f, 0.5762f) },
+			{ 12, (7.0069f, 4.0129f, 7.8686f, 2.927f, 1.137f, 0.3178f) },
+			{ 14, (6.9917f, 3.6447f, 8.1573f, 3.36f, 1.2195f, 0.577f) },
+			{ 15, (7.002f, 4.2508f, 7.6448f, 2.5576f, 0.9837f, 0.5759f) },
+			{ 16, (7.0075f, 4.0973f, 7.8453f, 2.9338f, 1.1589f, 0.319f) },
+			{ 17, (6.9983f, 4.7767f, 8.9188f, 2.9754f, 1.0841f, 0.4479f) },
+			{ 18, (6.9999f, 3.7229f, 7.9468f, 3.0319f, 1.0557f, 0.4468f) },
+			{ 19, (7.0107f, 3.9429f, 7.9005f, 2.9773f, 1.1006f, 0.4484f) },
+			{ 20, (7.003f, 3.6502f, 7.9866f, 3.0914f, 1.0115f, 0.4478f) },
+		};
 
 		// Apex, base, half-width, corner radius, alpha and centre of each arrow, by direction and
 		// look (hot, pressed, disabled, hover), fitted in the arrow's own up-pointing frame: the
@@ -1184,6 +1208,42 @@ namespace System.Windows.Forms.VisualStyles
 				_ => up,
 			};
 			return Render (n, n, new Layer (shape, (uint) Math.Round (t.a * 255) << 24));
+		}
+
+		/// <summary>SBP_ARROWBTN's 13-pixel glyph as the theme holds it: EXACT-AREA art (its
+		/// partial pixels are not sixteenths of the full one), a triangle -- apex at (cx, apex),
+		/// base on y = bse, hw either side, in the up-pointing frame -- grown by r (Minkowski, which
+		/// rounds its corners), at alpha a, turned to face <paramref name="dir"/>.</summary>
+		static Frame ArrowExact (int dir, int n, (float cx, float apex, float bse, float hw, float r, float a) t)
+		{
+			var tri = new [] { new PointF (t.cx, t.apex), new PointF (t.cx + t.hw, t.bse), new PointF (t.cx - t.hw, t.bse) };
+			var poly = new List<PointF> ();
+			const int Seg = 24;
+			for (int i = 0; i < 3; i++) {
+				PointF p0 = tri [(i + 2) % 3], p1 = tri [i], p2 = tri [(i + 1) % 3];
+				double a1 = Math.Atan2 (-(p1.X - p0.X), p1.Y - p0.Y), a2 = Math.Atan2 (-(p2.X - p1.X), p2.Y - p1.Y);
+				while (a2 < a1) a2 += 2 * Math.PI;
+				for (int k = 0; k <= Seg; k++) {
+					double u = a1 + (a2 - a1) * k / Seg;
+					float ux = (float) (p1.X + t.r * Math.Cos (u)), uy = (float) (p1.Y + t.r * Math.Sin (u));
+					// up-frame (U, V) to the device: down (U, n - V), left (V, U), right (n - V, U).
+					poly.Add (dir switch {
+						1 => new PointF (ux, n - uy),
+						2 => new PointF (uy, ux),
+						3 => new PointF (n - uy, ux),
+						_ => new PointF (ux, uy),
+					});
+				}
+			}
+			var f = new Frame (n, n);
+			for (int y = 0; y < n; y++)
+				for (int x = 0; x < n; x++) {
+					double c = Math.Abs (ClippedArea (poly, x, y, x + 1, y + 1));
+					uint alpha = (uint) Math.Min (255, (int) (c * t.a * 255 + 0.5));
+					if (alpha != 0)
+						f.Pixels [y * n + x] = alpha << 24;
+				}
+			return f;
 		}
 
 		/// <summary>An upward triangle -- apex at (<paramref name="cx"/>, <paramref name="apex"/>),
