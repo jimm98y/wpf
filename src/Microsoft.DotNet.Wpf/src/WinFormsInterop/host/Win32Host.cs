@@ -288,14 +288,16 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         // everything drew ~7% short vertically, and because ClientDip assumes a 1:1 client the hit-test
         // point drifted further off the further down the window you clicked -- a click landed on the
         // control ABOVE the one under the cursor. Grow the window so the CLIENT is exactly form-sized.
-        ResizeClientTo(_form.Width, _form.Height);
+        // The form's Size is its WINDOW (frame included, as on Windows); the client is what the
+        // surface covers.
+        ResizeClientTo(_form.ClientSize.Width, _form.ClientSize.Height);
 
         if (_gpuRaster)
         {
             var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _hwnd);
             if (surface == IntPtr.Zero) throw new InvalidOperationException("NativePlatform.CreateWindowSurface returned null");
-            _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, _scale, srgb: true);
+            _wgpu = new WgpuPresenter(ctx, surface, _form.ClientSize.Width, _form.ClientSize.Height, _scale, srgb: true);
             Console.WriteLine($"WebGPU present path active (HWND 0x{_hwnd:x}, format {_wgpu.Format}, scale {_scale}, client {ClientSize()})");
         }
         // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and its
@@ -305,7 +307,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         // edge is not on any screen at all. A popup's own host does not speak for it -- it is
         // smaller than the window it drops out of.
         if (_form.Owner == null)
-            XplatUIWebGpu.SetScreenSize(_form.Width, _form.Height);
+            XplatUIWebGpu.SetScreenSize(_form.ClientSize.Width, _form.ClientSize.Height);
         _form.LocationChanged += OnFormMoved;
         _form.VisibleChanged += OnFormVisibleChanged;
         if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: window + surface ready");
@@ -367,13 +369,21 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         bool caretOn = CaretOn();
         string save = Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE");
         bool wantSave = !string.IsNullOrEmpty(save) && !_savedGpu;
+        // WF_WEBGPU_SAVE_AFTER_MS holds the save until the window has settled (the first present is
+        // before layout finishes). Needed where the screen cannot be read -- a locked session.
+        if (wantSave && int.TryParse(Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE_AFTER_MS"), out int saveAfter)
+            && SinceStart < saveAfter)
+        {
+            wantSave = false;
+            _repaintAsked = true;   // come back: the save is still owed
+        }
         if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk && !wantSave && !_repaintAsked) return;
         _repaintAsked = false;
 
         double t0 = s_traceFrames ? SinceStart : 0;
         var scenes = GetScenes(out int ox, out int oy);
         Rectangle? caret = GetCaretRect(ox, oy);
-        _lastPresentOk = _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.Width, _form.Height);
+        _lastPresentOk = _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.ClientSize.Width, _form.ClientSize.Height);
         if (s_traceFrames && _framesTraced++ < 40)
             Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms");
         _lastVer = ver; _lastCaretOn = caretOn;
@@ -713,9 +723,8 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         GetClientRect(_hwnd, out RECT r);
         int lw = (int)Math.Round((r.right - r.left) / _scale), lh = (int)Math.Round((r.bottom - r.top) / _scale);
         if (lw <= 0 || lh <= 0) return;                     // minimised
-        if (lw == _form.Width && lh == _form.Height) return;
-        _form.Width = lw;
-        _form.Height = lh;
+        if (lw == _form.ClientSize.Width && lh == _form.ClientSize.Height) return;
+        _form.ClientSize = new Size(lw, lh);
         Application.DoEvents();                             // let the WinForms layout settle first
         _lastVer = -1;                                      // force a present at the new size
         Present();

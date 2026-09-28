@@ -48,7 +48,7 @@ internal sealed class WinFormsHost : FrameworkElement
         // demo region is ~196x147). The embedded scene is composited at the host's device rect and is
         // NOT subject to WPF's card clip, so an oversized form would spill past the card — size to fit.
         const int FormW = 196, FormH = 132;
-        var form = new SWF.Form { Width = FormW, Height = FormH, BackColor = SD.Color.FromArgb(0xF2, 0xF2, 0xEC) };
+        var form = new SWF.Form { FormBorderStyle = SWF.FormBorderStyle.None, Width = FormW, Height = FormH, BackColor = SD.Color.FromArgb(0xF2, 0xF2, 0xEC) };
         // Bump from the 8.25pt default (~11px) to ~13px for readability. Reuse the form's EXISTING default
         // family (already constructed) rather than SD.FontFamily.GenericSansSerif — the generic-family ctor
         // P/Invokes gdiplus, which is absent in the browser (libgdiplus-free) and throws DllNotFoundException.

@@ -544,9 +544,11 @@ namespace System.Windows.Forms
 		internal override IntPtr CreateWindow(CreateParams cp)
 		{
 			var hwnd = new Hwnd();
-			int w = Math.Max(1, cp.Width), h = Math.Max(1, cp.Height);
-			hwnd.x = cp.X == int.MinValue ? 0 : cp.X;
-			hwnd.y = cp.Y == int.MinValue ? 0 : cp.Y;
+			// WinForms passes the WINDOW rectangle; keep the client one (see _frames).
+			Padding frame = TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null);
+			int w = Math.Max(1, cp.Width - frame.Horizontal), h = Math.Max(1, cp.Height - frame.Vertical);
+			hwnd.x = (cp.X == int.MinValue ? 0 : cp.X) + frame.Left;
+			hwnd.y = (cp.Y == int.MinValue ? 0 : cp.Y) + frame.Top;
 			hwnd.width = w; hwnd.height = h;
 			hwnd.initial_style = cp.WindowStyle;
 			hwnd.initial_ex_style = cp.WindowExStyle;
@@ -554,6 +556,7 @@ namespace System.Windows.Forms
 				hwnd.parent = Hwnd.ObjectFromHandle(cp.Parent);
 
 			IntPtr handle = (IntPtr)(next_handle++);
+			if (frame != Padding.Empty) _frames[handle] = frame;
 			hwnd.WholeWindow = handle;
 			hwnd.ClientWindow = handle;   // registers in Hwnd's handle->object table
 			// GPU-raster mode records scenes (no per-window bitmap); keep the key as the window
@@ -606,6 +609,7 @@ namespace System.Windows.Forms
 			if (_hotWindow == handle) _hotWindow = IntPtr.Zero;
 			captions.Remove(handle);
 			_scenes.Remove(handle);
+			_frames.Remove(handle);
 			_paintVersion++;   // a window disappeared from the composite
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd != null) { SendMessage(handle, Msg.WM_DESTROY, IntPtr.Zero, IntPtr.Zero); hwnd.Dispose(); }
@@ -713,6 +717,10 @@ namespace System.Windows.Forms
 		{
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return;
+			Padding frame = FrameOf(handle);
+			x += frame.Left; y += frame.Top;
+			if (width > 0) width = Math.Max(1, width - frame.Horizontal);
+			if (height > 0) height = Math.Max(1, height - frame.Vertical);
 			hwnd.x = x; hwnd.y = y;
 			if (width > 0 && height > 0 && (width != hwnd.width || height != hwnd.height))
 			{
@@ -737,8 +745,9 @@ namespace System.Windows.Forms
 		{
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) { x = y = width = height = client_width = client_height = 0; return; }
-			x = hwnd.x; y = hwnd.y; width = hwnd.width; height = hwnd.height;
-			// No non-client frame yet: client rect == window rect.
+			Padding frame = FrameOf(handle);
+			x = hwnd.x - frame.Left; y = hwnd.y - frame.Top;
+			width = hwnd.width + frame.Horizontal; height = hwnd.height + frame.Vertical;
 			client_width = hwnd.width; client_height = hwnd.height;
 		}
 
@@ -1323,11 +1332,72 @@ namespace System.Windows.Forms
 
 		internal override bool CalculateWindowRect(ref Rectangle ClientRect, CreateParams cp, Menu menu, out Rectangle WindowRect)
 		{
-			WindowRect = ClientRect;   // no non-client frame modelled yet
+			// Only a top-level window's frame is modelled (see TopLevelFrame); a child's border is
+			// drawn over its own edge (DrawWindowBorder), so a child's window and client are one.
+			Padding f = TopLevelFrame(cp.Style, cp.ExStyle, menu != null);
+			WindowRect = new Rectangle(ClientRect.X - f.Left, ClientRect.Y - f.Top,
+			                           ClientRect.Width + f.Horizontal, ClientRect.Height + f.Vertical);
 			return true;
 		}
 
-		internal override void SetWindowStyle(IntPtr handle, CreateParams cp) { }
+		/// <summary>The non-client frame of a top-level window, as the host draws it: supplied by the
+		/// host (the native title bar and borders belong to it), and on Windows, where Win32Host puts
+		/// the window in a real Windows 11 frame, Windows 11's own at 96 dpi by default. Elsewhere it
+		/// defaults to none -- a browser page has no frame round its canvas.</summary>
+		internal static Func<int, int, bool, Padding> FrameProvider = OperatingSystem.IsWindows() ? Windows11Frame : null;
+
+		/// <summary>AdjustWindowRectExForDpi at 96 dpi on Windows 11, for the styles a Form uses:
+		/// a caption (with or without a sizing frame) is 8 on three sides and 31 on top; a sizing
+		/// frame alone 7; a dialog frame alone 3; a plain border 1; WS_EX_CLIENTEDGE two more all
+		/// round; a menu bar another SM_CYMENU (20) on top. Read off the API for every combination
+		/// FormBorderStyle produces.</summary>
+		internal static Padding Windows11Frame(int style, int exStyle, bool menu)
+		{
+			var ws = (WindowStyles)style;
+			int edge;
+			if ((ws & WindowStyles.WS_CAPTION) == WindowStyles.WS_CAPTION) edge = 8;
+			else if ((ws & WindowStyles.WS_THICKFRAME) != 0) edge = 7;
+			else if ((ws & WindowStyles.WS_DLGFRAME) != 0) edge = 3;
+			else if ((ws & WindowStyles.WS_BORDER) != 0) edge = 1;
+			else return Padding.Empty;
+			int top = edge + ((ws & WindowStyles.WS_CAPTION) == WindowStyles.WS_CAPTION ? 23 : 0);
+			if (((WindowExStyles)exStyle & WindowExStyles.WS_EX_CLIENTEDGE) != 0) { edge += 2; top += 2; }
+			if (menu) top += 20;
+			return new Padding(edge, top, edge, edge);
+		}
+
+		/// <summary>The frame of a window with this style, if it is a top-level window with a
+		/// caption or sizing frame (a Form); zero for a child, and for a popup (a drop-down list),
+		/// whose border the driver draws itself.</summary>
+		internal static Padding TopLevelFrame(int style, int exStyle, bool menu)
+		{
+			var ws = (WindowStyles)style;
+			if ((ws & WindowStyles.WS_CHILD) != 0) return Padding.Empty;
+			if ((ws & (WindowStyles.WS_CAPTION | WindowStyles.WS_THICKFRAME)) == 0) return Padding.Empty;
+			return FrameProvider?.Invoke(style, exStyle, menu) ?? Padding.Empty;
+		}
+
+		// The frame each framed window was given; the Hwnd itself stores the CLIENT rectangle
+		// (client origin in screen, client size), which is what painting and the hosts work in.
+		private readonly Dictionary<IntPtr, Padding> _frames = new Dictionary<IntPtr, Padding>();
+
+		internal Padding FrameOf(IntPtr handle) => _frames.TryGetValue(handle, out Padding f) ? f : Padding.Empty;
+
+		internal override void SetWindowStyle(IntPtr handle, CreateParams cp)
+		{
+			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
+			if (hwnd == null) return;
+			Padding old = FrameOf(handle), now = TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null);
+			if (old == now) return;
+			// Win32 keeps the window rectangle across a style change; the client absorbs it.
+			int ox = hwnd.x - old.Left, oy = hwnd.y - old.Top;
+			int ow = hwnd.width + old.Horizontal, oh = hwnd.height + old.Vertical;
+			if (now == Padding.Empty) _frames.Remove(handle); else _frames[handle] = now;
+			hwnd.x = ox + now.Left; hwnd.y = oy + now.Top;
+			hwnd.width = Math.Max(1, ow - now.Horizontal); hwnd.height = Math.Max(1, oh - now.Vertical);
+			_paintVersion++;
+			SendMessage(handle, Msg.WM_WINDOWPOSCHANGED, IntPtr.Zero, IntPtr.Zero);
+		}
 		internal override void SetBorderStyle(IntPtr handle, FormBorderStyle border_style) { }
 		internal override FormWindowState GetWindowState(IntPtr handle) => FormWindowState.Normal;
 		internal override void SetWindowState(IntPtr handle, FormWindowState state) { }
