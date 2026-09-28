@@ -135,51 +135,10 @@ namespace System.Windows.Forms
 		public override Color ImageMarginGradientEnd => Surface;
 	}
 
-	/// <summary>The same colours, without the shading along a tool strip's background. A button row
-	/// embedded in another control -- the property grid's -- is flat in Windows.</summary>
 	/// <summary>The colours Windows draws an old-style menu in. It draws those itself rather
 	/// than leaving them to the application, and it draws them lighter than the ones it gives a
 	/// strip menu: a #E5E5E5 hairline round a #F9F9F9 body, where a strip menu gets a #808080
 	/// line round #FDFDFD. Measured off both, side by side.</summary>
-	/// <summary>The strip renderer for this theme. Everything is the professional renderer's
-	/// except the border around a tool bar: Windows runs a soft edge down its right-hand side,
-	/// pale at the top and grey at the bottom, and rounds the two corners it meets by leaving
-	/// them unpainted. The professional renderer draws a flat line of one colour instead, and in
-	/// this theme's palette that colour is the strip's own background -- so a tool bar had no
-	/// edge at all.</summary>
-	internal class ModernToolStripRenderer : ToolStripProfessionalRenderer
-	{
-		internal ModernToolStripRenderer (ProfessionalColorTable table) : base (table)
-		{
-		}
-
-		// Measured off a stock tool bar: the edge runs from three pixels down to two short of the
-		// bottom, ramping from #F5F5F5 to #ACACAC.
-		private static readonly Color EdgeTop = Color.FromArgb (245, 245, 245);
-		private static readonly Color EdgeBottom = Color.FromArgb (172, 172, 172);
-
-		protected override void OnRenderToolStripBorder (ToolStripRenderEventArgs e)
-		{
-			if (e.ToolStrip is ToolStripDropDown || e.ToolStrip is MenuStrip || e.ToolStrip is StatusStrip) {
-				base.OnRenderToolStripBorder (e);
-				return;
-			}
-
-			int x = e.ToolStrip.Width - 1;
-			int top = 3, bottom = e.ToolStrip.Height - 3;
-			if (bottom <= top)
-				return;
-			for (int y = top; y <= bottom; y++) {
-				double t = (y - top) / (double) (bottom - top);
-				Color c = Color.FromArgb (
-					(int) Math.Round (EdgeTop.R + (EdgeBottom.R - EdgeTop.R) * t),
-					(int) Math.Round (EdgeTop.G + (EdgeBottom.G - EdgeTop.G) * t),
-					(int) Math.Round (EdgeTop.B + (EdgeBottom.B - EdgeTop.B) * t));
-				e.Graphics.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (c), x, y, 1, 1);
-			}
-		}
-	}
-
 	internal class SystemMenuColorTable : ModernProfessionalColorTable
 	{
 		private static readonly Color Body = Color.FromArgb (249, 249, 249);
@@ -208,7 +167,9 @@ namespace System.Windows.Forms
 
 	internal class ThemeWin11 : ThemeWin32Classic
 	{
-		private readonly ProfessionalColorTable color_table = new ModernProfessionalColorTable ();
+		// Tool strips and menu strips are drawn as .NET draws them: its professional renderer with its
+		// colour table, which under Windows 11's theme is a set of blends of the system colours.
+		private readonly ProfessionalColorTable color_table = new ProfessionalColorTable ();
 
 		public override ProfessionalColorTable ColorTable => color_table;
 
@@ -237,13 +198,13 @@ namespace System.Windows.Forms
 			get { return 9; }
 		}
 
-		/// <summary>The renderer for a menu of the old kind, which Windows draws in its own
-		/// lighter colours rather than the ones it gives a strip menu.</summary>
 		public override ToolStripRenderer CreateToolStripRenderer ()
 		{
-			return new ModernToolStripRenderer (ColorTable);
+			return new ToolStripProfessionalRenderer (ColorTable);
 		}
 
+		/// <summary>The renderer for a menu of the old kind, which Windows draws in its own
+		/// lighter colours rather than the ones it gives a strip menu.</summary>
 		public override ToolStripRenderer CreateSystemMenuRenderer ()
 		{
 			return new ToolStripProfessionalRenderer (system_menu_color_table);

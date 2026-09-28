@@ -495,5 +495,83 @@ namespace System.Windows.Forms {
 			ThemeEngine.Current.CPDrawVisualStyleBorder (graphics, bounds);
 		}
 		#endregion	// Public Static Methods
+
+		// .NET's internal background-image painter, which the tool strip renderers use.
+		internal static Rectangle CalculateBackgroundImageRectangle (Rectangle bounds, Size imageSize, ImageLayout imageLayout)
+		{
+			Rectangle result = bounds;
+			switch (imageLayout) {
+			case ImageLayout.Stretch:
+				result.Size = bounds.Size;
+				break;
+			case ImageLayout.None:
+				result.Size = imageSize;
+				break;
+			case ImageLayout.Center:
+				result.Size = imageSize;
+				if (bounds.Width > result.Width)
+					result.X = (bounds.Width - result.Width) / 2;
+				if (bounds.Height > result.Height)
+					result.Y = (bounds.Height - result.Height) / 2;
+				break;
+			case ImageLayout.Zoom:
+				float xRatio = (float) bounds.Width / imageSize.Width;
+				float yRatio = (float) bounds.Height / imageSize.Height;
+				if (xRatio < yRatio) {
+					result.Width = bounds.Width;
+					result.Height = (int) (imageSize.Height * xRatio + 0.5);
+					if (bounds.Y >= 0)
+						result.Y = (bounds.Height - result.Height) / 2;
+				} else {
+					result.Height = bounds.Height;
+					result.Width = (int) (imageSize.Width * yRatio + 0.5);
+					if (bounds.X >= 0)
+						result.X = (bounds.Width - result.Width) / 2;
+				}
+				break;
+			}
+			return result;
+		}
+
+		internal static void DrawBackgroundImage (Graphics g, Image backgroundImage, Color backColor, ImageLayout backgroundImageLayout,
+		                                          Rectangle bounds, Rectangle clipRect, Point scrollOffset = default, RightToLeft rightToLeft = RightToLeft.No)
+		{
+			if (backgroundImageLayout == ImageLayout.Tile) {
+				using (TextureBrush brush = new TextureBrush (backgroundImage, WrapMode.Tile)) {
+					if (scrollOffset != Point.Empty) {
+						Matrix transform = brush.Transform;
+						transform.Translate (scrollOffset.X, scrollOffset.Y);
+						brush.Transform = transform;
+					}
+					g.FillRectangle (brush, clipRect);
+				}
+				return;
+			}
+			Rectangle image = CalculateBackgroundImageRectangle (bounds, backgroundImage.Size, backgroundImageLayout);
+			if (rightToLeft == RightToLeft.Yes && backgroundImageLayout == ImageLayout.None)
+				image.X += clipRect.Width - image.Width;
+			using (SolidBrush brush = new SolidBrush (backColor))
+				g.FillRectangle (brush, clipRect);
+			if (!clipRect.Contains (image)) {
+				if (backgroundImageLayout == ImageLayout.Stretch || backgroundImageLayout == ImageLayout.Zoom) {
+					image.Intersect (clipRect);
+					g.DrawImage (backgroundImage, image);
+				} else if (backgroundImageLayout == ImageLayout.None) {
+					image.Offset (clipRect.Location);
+					Rectangle dest = image;
+					dest.Intersect (clipRect);
+					g.DrawImage (backgroundImage, dest, 0, 0, dest.Width, dest.Height, GraphicsUnit.Pixel);
+				} else {
+					Rectangle dest = image;
+					dest.Intersect (clipRect);
+					g.DrawImage (backgroundImage, dest, dest.X - image.X, dest.Y - image.Y, dest.Width, dest.Height, GraphicsUnit.Pixel);
+				}
+				return;
+			}
+			using (ImageAttributes attributes = new ImageAttributes ()) {
+				attributes.SetWrapMode (WrapMode.TileFlipXY);
+				g.DrawImage (backgroundImage, image, 0, 0, backgroundImage.Width, backgroundImage.Height, GraphicsUnit.Pixel, attributes);
+			}
+		}
 	}
 }

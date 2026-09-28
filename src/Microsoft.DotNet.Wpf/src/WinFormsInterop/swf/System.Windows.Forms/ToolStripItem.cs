@@ -823,8 +823,15 @@ namespace System.Windows.Forms
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		public int Width {
 			get { return this.Size.Width; }
-			set { 
-				this.Size = new Size (value, this.Size.Height); 
+			set {
+				// .NET's Width goes to SetBounds, and a control host hands that on to its control with
+				// BoundsSpecified.None -- the control's SPECIFIED size, which is what an auto-sized
+				// host's GetPreferredSize answers, never changes, so the next layout puts the old
+				// width back. A tool strip combo box given Width = 70 stays 121 wide. (Size is the
+				// property that sticks: the host overrides it to update the specified bounds.)
+				if (this is ToolStripControlHost && this.AutoSize)
+					return;
+				this.Size = new Size (value, this.Size.Height);
 				this.explicit_size.Width = value;
 				
 				if (this.Visible) {
