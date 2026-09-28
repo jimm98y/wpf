@@ -1253,14 +1253,15 @@ namespace System.Windows.Forms
 				if (leftmost)
 					g.DrawLine (inner, bounds.X + 1, bounds.Y + 1, bounds.X + 1, bottom);
 				g.DrawLine (pen, bounds.X, bounds.Y, right, bounds.Y);
-			} else if (leftmost) {
-				// A row header has the same pale rule down its left.
-				g.DrawLine (ResPool.GetPen (HeaderInnerEdge), bounds.X + 1, bounds.Y, bounds.X + 1, bottom);
 			}
 			g.DrawLine (pen, right, bounds.Y, right, bottom);
 			g.DrawLine (pen, bounds.X, bottom, right, bottom);
 			if (leftmost)
 				g.DrawLine (pen, bounds.X, bounds.Y, bounds.X, bottom);
+			// A row header has the same pale rule down its left -- over the row's bottom line, not
+			// under it: Windows' rule runs unbroken down the whole column of row headers.
+			if (leftmost && cell is DataGridViewRowHeaderCell)
+				g.DrawLine (ResPool.GetPen (HeaderInnerEdge), bounds.X + 1, bounds.Y, bounds.X + 1, bottom);
 			return true;
 		}
 
