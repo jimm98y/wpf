@@ -25,6 +25,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     // follows. Asking the live control every frame therefore took the process down every time a
     // dialog was closed with a button rather than the window close box.
     private IntPtr _formHandle;
+    private MethodInfo _hostActivate;
 
     /// <summary>Whether there is still a form behind this window. A disposed one has no pixels to
     /// present and must not be touched.</summary>
@@ -68,6 +69,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _rightDown = M("InjectRightDown"); _rightUp = M("InjectRightUp");
         _sysKeyDown = M("InjectSysKeyDown"); _sysChar = M("InjectSysChar");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
+        _hostActivate = M("HostActivate");
         _getRubberBands = M("GetReversibleRects");
         _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsPopupWindow");
         _getCursor = M("GetActiveCursor");
@@ -460,8 +462,11 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
             // and a click elsewhere is not a message the driver ever sees -- so a colour picker that was
             // clicked away from stayed open behind the window, and the nested loop it runs in went on
             // spinning: the application took no further input. Windows closes a menu on exactly this.
-            case 0x0006:                                   // WM_ACTIVATE: this window lost it
+            case 0x0006:                                   // WM_ACTIVATE
                 if (((long)wParam & 0xFFFF) == 0) DismissPopup("WM_ACTIVATE");
+                // The form learns it was activated -- which is when a WinForms window takes focus.
+                if (_formHandle != IntPtr.Zero)
+                    _hostActivate?.Invoke(_driver, new object[] { _formHandle.ToInt64(), ((long)wParam & 0xFFFF) != 0 });
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
             case 0x0008:                                   // WM_KILLFOCUS: the keyboard went elsewhere
                 DismissPopup("WM_KILLFOCUS");

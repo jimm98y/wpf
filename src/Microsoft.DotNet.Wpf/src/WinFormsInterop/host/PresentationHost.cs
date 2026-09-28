@@ -143,6 +143,16 @@ namespace System.Windows.Forms
         /// surface, not a window. See <see cref="s_suppressed"/>.</summary>
         internal static void Suppress(Form form) { if (form != null) lock (s_lock) s_suppressed.Add(form); }
 
+        /// <summary>Whether this form will be put in a native window whose activation the host
+        /// reports (Win32Host, see XplatUIWebGpu.HostActivate): a visible top-level form on Windows
+        /// that nothing has taken for a surface -- the same rule AdoptNewForms applies. Such a form
+        /// takes focus when its window is activated, as on Windows, not when it is shown.</summary>
+        internal static bool TracksActivation(Form form)
+        {
+            if (!OperatingSystem.IsWindows() || form == null || form.Parent != null || !form.TopLevel) return false;
+            lock (s_lock) return !s_suppressed.Contains(form);
+        }
+
         internal static void Unsuppress(Form form) { if (form != null) lock (s_lock) s_suppressed.Remove(form); }
 
         internal static void Attach(IWinFormsHost host, Form form)

@@ -1330,6 +1330,40 @@ namespace System.Windows.Forms
 			if (hwnd != null) { Point o = ScreenLocation(hwnd); x += o.X; y += o.Y; }
 		}
 
+		// ---- activation -------------------------------------------------------------------------
+
+		private IntPtr _activeForm;
+
+		internal bool IsActiveForm(IntPtr handle) => handle != IntPtr.Zero && handle == _activeForm;
+
+		/// <summary>The host's native window was activated or deactivated: WM_ACTIVATE to the form,
+		/// which focuses its active control on activation.</summary>
+		internal void HostActivate(long formHandle, bool active)
+		{
+			var handle = (IntPtr)formHandle;
+			if (Environment.GetEnvironmentVariable("WF_TRACE_ACTIVATE") == "1")
+				Console.WriteLine($"activate form=0x{formHandle:x} active={active} focus=0x{(long)_focusHandle:x}");
+			if (active)
+				_activeForm = handle;
+			else if (_activeForm == handle)
+				_activeForm = IntPtr.Zero;
+			SendMessage(handle, Msg.WM_ACTIVATE, (IntPtr)(active ? 1 : 0), IntPtr.Zero);
+			if (!active && _focusHandle != IntPtr.Zero && IsDescendantOf(_focusHandle, handle)) {
+				// A window that is not the active one holds no keyboard focus.
+				IntPtr lost = _focusHandle;
+				_focusHandle = IntPtr.Zero;
+				SendMessage(lost, Msg.WM_KILLFOCUS, IntPtr.Zero, IntPtr.Zero);
+			}
+			_paintVersion++;
+		}
+
+		private static bool IsDescendantOf(IntPtr child, IntPtr ancestor)
+		{
+			for (Hwnd h = Hwnd.ObjectFromHandle(child); h != null; h = h.parent)
+				if (h.Handle == ancestor) return true;
+			return false;
+		}
+
 		internal override bool CalculateWindowRect(ref Rectangle ClientRect, CreateParams cp, Menu menu, out Rectangle WindowRect)
 		{
 			// Only a top-level window's frame is modelled (see TopLevelFrame); a child's border is

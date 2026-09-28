@@ -413,10 +413,20 @@ namespace System.Windows.Forms {
 		}
 
 		[MWFCategory("Appearance")]
+		// .NET's: once set, whatever was set; until then true only while the button has no back
+		// colour of its own -- giving it one (BackColor = LightSteelBlue) is what turns the theme's
+		// face off and paints the colour.
+		private bool use_visual_style_back_color_set;
+
 		public bool UseVisualStyleBackColor {
-			get { return use_visual_style_back_color; }
+			get {
+				if (use_visual_style_back_color_set || (!ShouldSerializeBackColor () && BackColor == SystemColors.Control))
+					return use_visual_style_back_color;
+				return false;
+			}
 			set {
-				if (use_visual_style_back_color != value) {
+				if (!use_visual_style_back_color_set || use_visual_style_back_color != value) {
+					use_visual_style_back_color_set = true;
 					use_visual_style_back_color = value;
 					Invalidate ();
 				}

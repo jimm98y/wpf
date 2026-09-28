@@ -74,7 +74,7 @@ namespace System.Windows.Forms {
 		// focus then stayed off: a selected ListView row or TreeView node kept its HighlightText
 		// (white) text but lost the blue highlight behind it, and so became invisible.
 		internal override IntPtr GetFocus() { return FocusHandle; }
-		internal override IntPtr GetActive() { return IntPtr.Zero; }
+		internal override IntPtr GetActive() { return _activeForm; }
 		internal override IntPtr GetPreviousWindow(IntPtr hwnd) { return IntPtr.Zero; }
 		// Generated as zero, so every run in a text box had no ascent and runs of different sizes were
 		// hung from the top of the line instead of standing on one baseline. The caller (LineTag)
