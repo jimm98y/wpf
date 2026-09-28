@@ -3922,6 +3922,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // exact for this ink on this paper (SubpixelLutForInkOnPaper). The box is the glyphs'
                 // device extent with a pixel of slack each side for the filter's spill.
                 RgbaColor? paper = null;
+                _paperFieldForMask = null;
                 if (subpixel && textBlend && s_textPaper && solid.Color.A >= 0.999f && opacity >= 0.999)
                 {
                     GeometryMax(coverageGeometry, out float gmaxX, out float gmaxY);
@@ -3937,13 +3938,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         MathF.Max(MathF.Min(p0.X, p1.X) - 1f, clip.X), MathF.Max(MathF.Floor(MathF.Min(p0.Y, p1.Y)), clip.Y),
                         MathF.Min(MathF.Max(p0.X, p1.X) + 2f, clip.X + (float) clip.W),
                         MathF.Min(MathF.Ceiling(MathF.Max(p0.Y, p1.Y)), clip.Y + (float) clip.H),
-                        n => new Vector2((n.X + 1f) * 0.5f * width + _devOX, (1f - n.Y) * 0.5f * height + _devOY));
+                        n => new Vector2((n.X + 1f) * 0.5f * width + _devOX, (1f - n.Y) * 0.5f * height + _devOY),
+                        out Func<int, int, RgbaColor?>? field);
+                    if (field is not null)
+                    {
+                        // The field's colours over the box are part of the mask: every row and column
+                        // of it, hashed. A pixel it cannot say makes the whole field unknown.
+                        int bx0 = (int) MathF.Floor(MathF.Max(MathF.Min(p0.X, p1.X) - 1f, clip.X)), bx1 = (int) MathF.Ceiling(MathF.Min(MathF.Max(p0.X, p1.X) + 2f, clip.X + (float) clip.W));
+                        int by0 = (int) MathF.Floor(MathF.Max(MathF.Min(p0.Y, p1.Y) - 1f, clip.Y)), by1 = (int) MathF.Ceiling(MathF.Min(MathF.Max(p0.Y, p1.Y) + 2f, clip.Y + (float) clip.H));
+                        long sig = 17;
+                        for (int yy = by0; yy < by1 && field is not null; yy++)
+                            for (int xx = bx0; xx < bx1; xx++)
+                            {
+                                if (field(xx, yy) is not { } fc) { field = null; break; }
+                                sig = sig * 131 + (ToByte(fc.R) << 16 | ToByte(fc.G) << 8 | ToByte(fc.B));
+                            }
+                        if (field is not null)
+                            key = key * 397 ^ (3L << 42 | (_windowBlendForRun ? 1L << 41 : 0) | (sig & 0xffffffffffL))
+                                  ^ ((long) (int) ox << 20) ^ (long) (int) oy;
+                    }
+                    _paperFieldForMask = field;
                     if (paper is { } pp)
                         key = key * 397 ^ (1L << 40 | (_windowBlendForRun ? 1L << 41 : 0)
                                          | (long) ToByte(pp.R) << 16
                                          | (long) ToByte(pp.G) << 8 | ToByte(pp.B));
                 }
                 _paperForMask = paper;
+                if (paper is not null) _paperFieldForMask = null;
+                _paperFieldOx = (int) ox; _paperFieldOy = (int) oy;
                 // The glyph row clip, taken into this mask's frame: the mask lands at device row
                 // oy, so a device row is oy plus the rasterizer's own. Part of the key, since two
                 // runs of one shape could sit differently against their faces' line boxes.
@@ -4047,7 +4069,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         // carries corrected ink about unchanged) and measures slightly WORSE on every
                         // count -- 1307 disagreeing pixels against 1196. It also does not straighten
                         // the size tilt, which is how we know the tilt is not about this order.
-                        ApplySubpixelWeight(sm.Rgba, gamma, textBlend, solid.Color, _paperForMask, _windowBlendForRun);
+                        if (_paperForMask is null && _paperFieldForMask is { } pf)
+                        {
+                            int fx = (int) sm.OriginX + _paperFieldOx, fy = (int) sm.OriginY + _paperFieldOy, fw = sm.Width;
+                            ApplySubpixelWeight(sm.Rgba, gamma, textBlend, solid.Color, null, _windowBlendForRun,
+                                                i => pf(fx + i % fw, fy + i / fw));
+                        }
+                        else
+                            ApplySubpixelWeight(sm.Rgba, gamma, textBlend, solid.Color, _paperForMask, _windowBlendForRun);
                         (tex, view) = CreateRgbaTexture(sm.Rgba, sm.Width, sm.Height);
                         mox = (int)sm.OriginX; moy = (int)sm.OriginY; mw = sm.Width; mh = sm.Height;
                         cm = new CachedMask
@@ -4672,10 +4701,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         private static RgbaColor? PaperUnder(DrawData data, float x0, float y0, float x1, float y1,
                                              Func<Vector2, Vector2> fromNdc)
+            => PaperUnder(data, x0, y0, x1, y1, fromNdc, out _);
+
+        /// <summary>As above; and when the only thing under the box is a gradient that covers it
+        /// but is NOT one colour there, <paramref name="field"/> gives the paper at each device
+        /// pixel -- GDI blends against each pixel, so the curve can be chosen per pixel.</summary>
+        private static RgbaColor? PaperUnder(DrawData data, float x0, float y0, float x1, float y1,
+                                             Func<Vector2, Vector2> fromNdc, out Func<int, int, RgbaColor?>? field)
         {
+            field = null;
             List<DrawItem> draws = data.Draws;
             List<PaperInfo> info = data.DrawInfo;
             RgbaColor? same = null;
+            var partial = new List<PaperInfo>();     // the partial fills met so far, newest first
+            List<PaperInfo>? stack = null;           // set once they disagree in colour
             for (int i = info.Count; i < draws.Count; i++) info.Add(MeasureDraw(data, i, draws[i], fromNdc));
             for (int i = draws.Count - 1; i >= 0; i--)
             {
@@ -4683,6 +4722,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (kind is FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) continue;
                 PaperInfo b = info[i];
                 if (!b.Touches(x0, y0, x1, y1)) continue;
+                if (b.Solid is null && b.Gradient is { } banding && same is null && b.Covers(x0, y0, x1, y1)
+                    && banding(x0, y0, x1, y1) is null)
+                {
+                    field = (px, py) => banding(px, py, px + 1, py + 1);
+                    return TracePaper("gradient-field", null);
+                }
                 if (b.Solid is null && b.Gradient is { } gradientAt && b.Covers(x0, y0, x1, y1)
                     && gradientAt(x0, y0, x1, y1) is { } flat)
                 {
@@ -4696,10 +4741,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // included (c over c is c), so a stack of one colour is still one paper: an
                     // item's background that stops short of the glyphs' slack, over the list's own
                     // background of the same white.
-                    if (same is { } s0 && !SameColour(s0, solid))
-                        return TracePaper("solid-mixed", null);
-                    if (b.Covers(x0, y0, x1, y1)) return TracePaper("solid", solid);
+                    // A stack of DIFFERENT colours is still known paper when every piece is a plain
+                    // rectangle: each pixel's paper is the topmost one holding its centre. That is
+                    // how a GDI+ vertical gradient arrives -- System.Drawing emits it as horizontal
+                    // bands -- and a tool strip's captions straddle two of them.
+                    bool mismatch = same is { } s0 && !SameColour(s0, solid);
+                    if (mismatch || stack is not null)
+                    {
+                        if (!b.IsPlainRect || (stack is null && partial.Exists(q => !q.IsPlainRect)))
+                            return TracePaper("solid-mixed", null);
+                        stack ??= new List<PaperInfo>(partial);
+                    }
+                    if (b.Covers(x0, y0, x1, y1))
+                    {
+                        if (stack is null) return TracePaper("solid", solid);
+                        List<PaperInfo> pieces = stack;
+                        RgbaColor bottom = solid;
+                        field = (px, py) =>
+                        {
+                            float cx = px + 0.5f, cy = py + 0.5f;
+                            foreach (PaperInfo q in pieces)
+                                if (q.HoldsCentre(cx, cy)) return q.Solid;
+                            return bottom;
+                        };
+                        return TracePaper("solid-field", null);
+                    }
                     same = solid;
+                    partial.Add(b);
+                    stack?.Add(b);
                     continue;
                 }
                 if (s_tracePaper)
@@ -4828,6 +4897,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 return Inside(cx0, cy0) && Inside(cx1, cy0) && Inside(cx0, cy1) && Inside(cx1, cy1);
             }
 
+            /// <summary>A plain rectangle: a rectangle fill, or an analytic shape that is an
+            /// axis-aligned filled box with square corners.</summary>
+            public bool IsPlainRect => !Shape || (_aligned && _corner <= 1e-4f && _stroke < 0f);
+
+            /// <summary>Whether this rectangle holds the device point (a pixel centre).</summary>
+            public bool HoldsCentre(float cx, float cy)
+                => Shape ? _sx0 <= cx && cx < _sx1 && _sy0 <= cy && cy < _sy1
+                         : X0 <= cx && cx < X1 && Y0 <= cy && cy < Y1;
+
             private float Distance(float x, float y)
             {
                 Vector2 p = Vector2.Transform(new Vector2(x, y), _toLocal);
@@ -4945,8 +5023,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private static void ApplySubpixelWeight(byte[] rgba, bool gamma, bool textBlend, RgbaColor ink,
-                                                RgbaColor? paper = null, bool windowBlend = false)
+                                                RgbaColor? paper = null, bool windowBlend = false,
+                                                Func<int, RgbaColor?>? paperAt = null)
         {
+            if (paperAt is not null && !s_correctBeforeFilter && (gamma || textBlend))
+            {
+                // A paper per PIXEL: each pixel is weighted with its own exact curve.
+                var one = new byte[4];
+                for (int i = 0; i < rgba.Length; i += 4)
+                {
+                    RgbaColor? here = paperAt(i / 4);
+                    one[0] = rgba[i]; one[1] = rgba[i + 1]; one[2] = rgba[i + 2]; one[3] = rgba[i + 3];
+                    ApplySubpixelWeight(one, gamma, textBlend, ink, here, windowBlend);
+                    rgba[i] = one[0]; rgba[i + 1] = one[1]; rgba[i + 2] = one[2]; rgba[i + 3] = one[3];
+                }
+                return;
+            }
             // Applied whichever correction the grey path would have wanted, because the reason is the
             // same one -- coverage is not brightness -- and only the curve differs.
             if (!gamma && !textBlend) return;
@@ -5060,6 +5152,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>The paper found for the subpixel mask being built (see PaperUnder); read by the
         /// correction on a cache miss.</summary>
         private RgbaColor? _paperForMask;
+        /// <summary>A per-pixel paper for the mask being built, when there is no single colour (see
+        /// PaperUnder's field), and the device offset that maps the mask's pixels onto it.</summary>
+        private Func<int, int, RgbaColor?>? _paperFieldForMask;
+        private int _paperFieldOx, _paperFieldOy;
 
         private static void GeometryMax(PathGeometry g, out float maxX, out float maxY)
         {
