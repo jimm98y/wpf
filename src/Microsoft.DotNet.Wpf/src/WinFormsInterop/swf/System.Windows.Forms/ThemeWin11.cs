@@ -325,13 +325,8 @@ namespace System.Windows.Forms
 			// the box is not "a selected item", it is what the control says.
 			bool inField = (e.State & DrawItemState.ComboBoxEdit) == DrawItemState.ComboBoxEdit;
 			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
-			if (!inField && !selected) {
-				base.DrawComboBoxItem (ctrl, e);
-				return;
-			}
-
-			Color back = inField ? ComboBoxFieldBackColor (ctrl) : ComboListSelection;
-			Color fore = inField ? ColorControlText : ColorHighlightText;
+			Color back = inField ? ComboBoxFieldBackColor (ctrl) : selected ? ComboListSelection : e.BackColor;
+			Color fore = inField ? ColorControlText : selected ? ColorHighlightText : e.ForeColor;
 			if (!ctrl.Enabled)
 				fore = ColorInactiveCaptionText;
 
@@ -350,11 +345,15 @@ namespace System.Windows.Forms
 				// ONE, not two. The editable combo box beside this one draws its caption through its own
 				// edit control and lands on Windows' exact column; measured against that, two pixels put
 				// this one a column LEFT of stock's.
-				if (inField) caption.X -= 1;
+				// A list item's text starts the same column in: comctl32's list box draws it at the
+				// row's edge plus its margin, which DrawString's own margin overshoots by one.
+				caption.X -= 1;
 				e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
 						       ResPool.GetSolidBrush (fore), caption, format);
 				format.Dispose ();
 			}
+			if (!inField && (e.State & DrawItemState.Focus) == DrawItemState.Focus)
+				CPDrawFocusRectangle (e.Graphics, e.Bounds, fore, back);
 		}
 
 		/// <summary>The whole control lights up when the pointer is over it or its list is down, not
@@ -933,7 +932,10 @@ namespace System.Windows.Forms
 		/// control.</summary>
 		private static bool IsPopupList (Control control)
 		{
-			return control != null && control.GetType ().Name == "ComboListBox";
+			// Only the list that drops down. A simple combo box's list is part of the control and
+			// takes the list box frame.
+			return control != null && control.GetType ().Name == "ComboListBox"
+				&& !(control.Parent is ComboBox cb && cb.DropDownStyle == ComboBoxStyle.Simple);
 		}
 
 		/// <summary>Whether this is something you type into, as opposed to a list you pick from.

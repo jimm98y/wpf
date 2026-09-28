@@ -97,7 +97,9 @@ namespace System.Windows.Forms
 		{
 			items = new ObjectCollection (this);
 			DropDownStyle = ComboBoxStyle.DropDown;
-			item_height = FontHeight + 2;
+			// comctl32's list items are the font's TEXTMETRIC height -- 15 for Segoe UI 9pt, which is
+			// what .NET's ComboBox.ItemHeight reports -- not GDI+'s line spacing plus two.
+			item_height = TextRenderer.GdiLineHeight (Font);
 			background_color = ThemeEngine.Current.ColorWindow;
 			foreground_color = ThemeEngine.Current.ColorWindowText;
 			border_style = BorderStyle.None;
@@ -1058,7 +1060,7 @@ namespace System.Windows.Forms
 				textbox_ctrl.Font = Font;
 			
 			if (!item_height_specified)
-				item_height = Font.Height + 2;
+				item_height = TextRenderer.GdiLineHeight (Font);
 
 			if (IntegralHeight)
 				UpdateComboBoxBounds ();
@@ -1387,9 +1389,15 @@ namespace System.Windows.Forms
 			text_area = ClientRectangle;
 			text_area.Height = PreferredHeight;
 			
+			// A simple combo's list stands directly under the edit field and, unless IntegralHeight
+			// is off, is cut to whole items plus its two-pixel sunken frame top and bottom -- what a
+			// stock one measures (a 90-pixel control: 23 of field, 64 of list for four 15-pixel
+			// items).
 			listbox_area = ClientRectangle;
-			listbox_area.Y = text_area.Bottom + 3;
-			listbox_area.Height -= (text_area.Height + 2);
+			listbox_area.Y = text_area.Bottom;
+			listbox_area.Height -= text_area.Height;
+			if (IntegralHeight && ItemHeight > 0 && listbox_area.Height > 4)
+				listbox_area.Height = (listbox_area.Height - 4) / ItemHeight * ItemHeight + 4;
 
 			Rectangle prev_button_area = button_area;
 
@@ -2597,6 +2605,11 @@ namespace System.Windows.Forms
 				Size = new Size (width, height + borderAdjustment.Height);
 				textarea_drawable = new Rectangle (ClientRectangle.Location,
 					new Size (width - borderAdjustment.Width, height));
+				// A simple combo's list keeps a sunken two-pixel frame (a line and a row of the
+				// window colour) that this driver paints over the list's own edge, so the items start
+				// inside it, as they do in a stock one.
+				if (dropdown_style == ComboBoxStyle.Simple)
+					textarea_drawable = Rectangle.Inflate (textarea_drawable, -2, -2);
 
 				if (vscrollbar_ctrl != null && show_scrollbar)
 					textarea_drawable.Width -= vscrollbar_ctrl.Width;
@@ -2660,7 +2673,7 @@ namespace System.Windows.Forms
 				Rectangle item_rect = new Rectangle ();
 				int height = owner.GetItemHeight (index);
 
-				item_rect.X = 0;
+				item_rect.X = textarea_drawable.X;
 				item_rect.Width = textarea_drawable.Width;
 				if (owner.DrawMode == DrawMode.OwnerDrawVariable) {
 					item_rect.Y = 0;
@@ -2669,6 +2682,7 @@ namespace System.Windows.Forms
 				} else
 					item_rect.Y = height * (index - top_index);
 
+				item_rect.Y += textarea_drawable.Y;
 				item_rect.Height = height;
 				return item_rect;
 			}
