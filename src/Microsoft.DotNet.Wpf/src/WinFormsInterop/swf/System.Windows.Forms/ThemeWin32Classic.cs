@@ -3773,28 +3773,32 @@ namespace System.Windows.Forms
 		{
 			MonthCalendar.ZoomEffectState fx = mc.ZoomEffect;
 			if (fx == null || !dc.CanSnapshot) {
-				DrawMonthCalendarView (dc, clip_rectangle, mc);
+				DrawMonthCalendarPicture (dc, clip_rectangle, mc);
 				return;
 			}
 			// CZoomEffect::v_InnerPaint. Outside the grid: the old view, and the new one blended over
 			// it as far as the frames so far have taken it (each frame AlphaBlends it over the screen).
 			Rectangle client = mc.ClientRectangle;
 			double p = fx.Progress;
-			// The two pictures are painted into comctl32's MEMORY DCs, and GDI blends ClearType
-			// text on a memory surface by win32k's rule, not the window surface's -- their glyphs'
-			// fringes are a few levels off the calendar at rest. What stays on screen round the
-			// grid is the window's own.
-			bool memory = dc.memory_surface_text;
 			var outside = dc.Save ();
 			dc.ExcludeClip (fx.Z);
-			mc.WithZoom (fx.From, () => DrawMonthCalendarView (dc, client, mc));
-			// Even at nothing yet: the effect's first frame is where both pictures are made, as
-			// comctl32 paints them into its memory DCs before it starts the clock.
-			dc.BeginSnapshot (client, client, (float) fx.Outside);
-			dc.memory_surface_text = true;
-			DrawMonthCalendarView (dc, client, mc);
-			dc.memory_surface_text = memory;
-			dc.EndSnapshot ();
+			mc.WithZoom (fx.From, () => DrawMonthCalendarPicture (dc, client, mc));
+			// One blend per frame so far, each at its own alpha: a GPU blend rounded to the 8-bit
+			// target is GDI's constant-alpha AlphaBlend exactly (round((s a + d (255 - a)) / 255),
+			// probed over every source/destination pair), so the sum comes out as the screen's did.
+			// The picture is one cached layer however many times it is drawn. The first frame draws
+			// it at nothing, which is where it is made -- as comctl32 paints its pictures before it
+			// starts the clock.
+			if (fx.OutsideAlphas.Count == 0) {
+				dc.BeginSnapshot (client, client, 0f);
+				DrawMonthCalendarPicture (dc, client, mc);
+				dc.EndSnapshot ();
+			}
+			foreach (int a in fx.OutsideAlphas) {
+				dc.BeginSnapshot (client, client, a / 255f);
+				DrawMonthCalendarPicture (dc, client, mc);
+				dc.EndSnapshot ();
+			}
 			dc.Restore (outside);
 			// The grid: its background (MC_GRIDBACKGROUND, white), the old view's picture stretched
 			// from A towards B, and the new view's growing out of A into place over it at p x 255.
@@ -3802,14 +3806,12 @@ namespace System.Windows.Forms
 			dc.IntersectClip (fx.Z);
 			dc.FillRectangle (ResPool.GetSolidBrush (Color.White), fx.Z);
 			Rectangle old_to = ZoomRect (fx.A, fx.B, p, true, fx.Z), new_to = ZoomRect (fx.A, fx.B, p, false, fx.Z);
-			dc.memory_surface_text = true;
 			dc.BeginSnapshot (fx.Z, old_to, 1f, stretchBlt: true);
-			mc.WithZoom (fx.From, () => DrawMonthCalendarView (dc, client, mc));
+			mc.WithZoom (fx.From, () => DrawMonthCalendarPicture (dc, client, mc));
 			dc.EndSnapshot ();
 			dc.BeginSnapshot (fx.Z, new_to, (int) (p * 255.0) / 255f);
-			DrawMonthCalendarView (dc, client, mc);
+			DrawMonthCalendarPicture (dc, client, mc);
 			dc.EndSnapshot ();
-			dc.memory_surface_text = memory;
 			dc.Restore (grid);
 		}
 
@@ -3827,6 +3829,21 @@ namespace System.Windows.Forms
 			int ox = (int) ((double) (int) (dx - (double) (right - left) * dx / w) + (double) (b.Left - a.Left) * t);
 			int oy = (int) ((double) (int) (dy - (double) (bottom - top) * dy / h) + (double) (b.Top - a.Top) * t);
 			return Rectangle.FromLTRB (left + ox, top + oy, right + ox, bottom + oy);
+		}
+
+		/// <summary>One whole picture of the calendar: the view and the frame round it, which comctl32's
+		/// zoom pictures include -- drawn after the effect instead, the frame was washed out by every
+		/// frame's blend of a picture without it.</summary>
+		private void DrawMonthCalendarPicture (Graphics dc, Rectangle clip_rectangle, MonthCalendar mc)
+		{
+			DrawMonthCalendarView (dc, clip_rectangle, mc);
+			MonthCalendarDrawFrame (dc, mc);
+		}
+
+		/// <summary>The line round the calendar, if the theme draws one. The classic theme leaves it to
+		/// the control's border.</summary>
+		protected virtual void MonthCalendarDrawFrame (Graphics dc, MonthCalendar mc)
+		{
 		}
 
 		private void DrawMonthCalendarView (Graphics dc, Rectangle clip_rectangle, MonthCalendar mc)

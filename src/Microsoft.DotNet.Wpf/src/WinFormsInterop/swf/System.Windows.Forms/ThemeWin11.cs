@@ -1750,10 +1750,8 @@ namespace System.Windows.Forms
 
 		protected override Color MonthCalendarSelectionForeColor (MonthCalendar mc) => ColorControlText;
 
-		public override void DrawMonthCalendar (Graphics dc, Rectangle clip_rectangle, MonthCalendar mc)
+		protected override void MonthCalendarDrawFrame (Graphics dc, MonthCalendar mc)
 		{
-			base.DrawMonthCalendar (dc, clip_rectangle, mc);
-
 			// A standalone calendar draws its own "border" in the background colour -- which is to
 			// say none at all -- and relies on the control having one. Windows shows a hairline
 			// around the whole thing, so draw it.
@@ -1868,7 +1866,7 @@ namespace System.Windows.Forms
 				return;
 			Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, mc.Focused ? 1 : 4), cell);
 			if (mc.Focused)
-				DrawFocusRectInverted (dc, Rectangle.Inflate (cell, -1, -1), MonthCalSelectedWash);
+				DrawFocusRectInverted (dc, Rectangle.Inflate (cell, -1, -1), MonthCalSelectedWash, Point.Empty);
 		}
 
 		/// <summary>What MC_GRIDCELLBACKGROUND state 1 leaves inside its accent border on the calendar's
@@ -1877,23 +1875,29 @@ namespace System.Windows.Forms
 		private static readonly Color MonthCalSelectedWash = Color.FromArgb (204, 232, 255);
 
 		/// <summary>user32's DrawFocusRect, for a native control: PATINVERT with the 50% grey
-		/// checkerboard, so the pixels whose x + y is odd in the control's own coordinates are
-		/// INVERTED -- a dot is the negative of what it lands on, not black, and the pattern is
-		/// pinned to the window rather than to the rectangle's corner. The recorder has no XOR, so
-		/// this is told what is underneath, which is one colour wherever it is used.</summary>
-		private void DrawFocusRectInverted (Graphics dc, Rectangle r, Color under)
+		/// checkerboard, so the pixels of its outline are
+		/// INVERTED -- a dot is the negative of what it lands on, not black -- and the pattern is
+		/// pinned to the ORIGIN OF THE BUFFER comctl32 was painting into: a dot where
+		/// (x - origin.X) + (y - origin.Y) is odd. A day is repainted on its own when it gains the focus
+		/// or the selection, so its buffer starts at its cell (the focus rectangle's corner less one);
+		/// a zoomed view is painted whole, so its buffer starts at the client's corner. Read off stock
+		/// pictures: the 28th and the 29th follow their cells, the months view's Sep the client. The
+		/// recorder has no XOR, so this is told what is underneath, which is one colour wherever it
+		/// is used.</summary>
+		private void DrawFocusRectInverted (Graphics dc, Rectangle r, Color under, Point origin)
 		{
 			if (r.Width <= 0 || r.Height <= 0)
 				return;
 			Brush brush = ResPool.GetSolidBrush (Color.FromArgb (255 - under.R, 255 - under.G, 255 - under.B));
 			int right = r.Right - 1, bottom = r.Bottom - 1;
+			bool Dot (int x, int y) => ((x - origin.X + y - origin.Y) & 1) == 1;
 			for (int x = r.X; x <= right; x++) {
-				if (((x + r.Y) & 1) == 1) dc.FillRectangle (brush, x, r.Y, 1, 1);
-				if (bottom != r.Y && ((x + bottom) & 1) == 1) dc.FillRectangle (brush, x, bottom, 1, 1);
+				if (Dot (x, r.Y)) dc.FillRectangle (brush, x, r.Y, 1, 1);
+				if (bottom != r.Y && Dot (x, bottom)) dc.FillRectangle (brush, x, bottom, 1, 1);
 			}
 			for (int y = r.Y + 1; y < bottom; y++) {
-				if (((r.X + y) & 1) == 1) dc.FillRectangle (brush, r.X, y, 1, 1);
-				if (right != r.X && ((right + y) & 1) == 1) dc.FillRectangle (brush, right, y, 1, 1);
+				if (Dot (r.X, y)) dc.FillRectangle (brush, r.X, y, 1, 1);
+				if (right != r.X && Dot (right, y)) dc.FillRectangle (brush, right, y, 1, 1);
 			}
 		}
 
@@ -2012,7 +2016,7 @@ namespace System.Windows.Forms
 				// comctl32 draws it on the focused day whenever the calendar has the focus, not only
 				// while a click is held.
 				if (mc.Focused)
-					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash);
+					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, new Point (rect.X - 1, rect.Y - 1));
 				return;
 			}
 			dc.FillRectangle (brush, rect);

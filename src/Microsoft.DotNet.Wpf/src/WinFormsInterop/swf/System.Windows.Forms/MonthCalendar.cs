@@ -26,6 +26,7 @@
 //	- get the date_cell_size and title_size to be pixel perfect match of SWF
 
 using System;
+using System.Collections.Generic;
 using System.Collections;
 using System.ComponentModel;
 using System.ComponentModel.Design;
@@ -1954,9 +1955,10 @@ namespace System.Windows.Forms {
 			public int StartTick;
 			public bool Started;
 			public double Progress;
-			/// <summary>How much of the new view the area outside the grid holds so far: each frame
-			/// AlphaBlends it over what is on the screen at that frame's progress.</summary>
-			public double Outside;
+			/// <summary>Outside the grid each frame AlphaBlends the new view over what is on the
+			/// screen, at that frame's progress x 255 -- so what is there is every frame's blend so far,
+			/// each rounded to 8 bits as GDI rounds it. These are those frames' alphas, in order.</summary>
+			public readonly List<int> OutsideAlphas = new List<int> ();
 		}
 
 		internal ZoomEffectState ZoomEffect => zoom_effect;
@@ -1990,9 +1992,8 @@ namespace System.Windows.Forms {
 
 		/// <summary>A view's grid as the zoom effect knows it. comctl32's days grid starts on the same
 		/// row as a zoomed one -- a pixel above the dates' own -- and still ends under the last week,
-		/// so it is a row taller than the dates. Solved from its frames: every rectangle a stock zoom
-		/// out of the days draws its two pictures into comes out of _ZoomRect exactly with this, and
-		/// a row off with the dates' grid.</summary>
+		/// so it is a row taller than the dates: (5,34,217,106) on a Segoe UI 9 calendar, the source
+		/// rectangle of every StretchBlt and AlphaBlend a stock zoom out of the days makes.</summary>
 		private Rectangle ZoomEffectGrid (ZoomLevel level)
 		{
 			Rectangle grid = ZoomGridRect (level);
@@ -2010,9 +2011,10 @@ namespace System.Windows.Forms {
 				fx.A = cell >= 0 ? ZoomCellRect (from, cell) : ZoomEffectGrid (from);
 				fx.B = ZoomEffectGrid (to);
 			}
-			// The pictures are clipped to the dates' grid whichever way the zoom runs: the frames'
-			// pixels stop a row below where A and B start.
-			fx.Z = ZoomGridRect (ZoomLevel.Days);
+			// The pictures are taken from, and drawn within, whichever of the two is the grid -- read off
+			// comctl32's own StretchBlt and AlphaBlend calls (their source rectangle is the effect grid,
+			// days grid a row taller, in every frame).
+			fx.Z = to > from ? fx.A : fx.B;
 			zoom = to;
 			zoom_effect = fx;
 			if (zoom_timer == null) {
@@ -2039,9 +2041,14 @@ namespace System.Windows.Forms {
 			}
 			if (s_zoomFreeze >= 0) {
 				// A still of one frame, to set beside comctl32's: the grid is a function of progress
-				// alone, and outside it one blend at that progress stands in for the frames' sum.
+				// alone; outside it, the frames before it are WF_ZOOM_FREEZE_ALPHAS (or this one alone).
 				fx.Progress = s_zoomFreeze;
-				fx.Outside = (int) (s_zoomFreeze * 255.0) / 255.0;
+				string alphas = Environment.GetEnvironmentVariable ("WF_ZOOM_FREEZE_ALPHAS");
+				if (!string.IsNullOrEmpty (alphas))
+					foreach (string a0 in alphas.Split (','))
+						fx.OutsideAlphas.Add (int.Parse (a0));
+				else
+					fx.OutsideAlphas.Add ((int) (s_zoomFreeze * 255.0));
 				Invalidate ();
 				zoom_timer.Stop ();
 				return;
@@ -2052,8 +2059,7 @@ namespace System.Windows.Forms {
 				return;
 			}
 			fx.Progress = p;
-			double a = (int) (p * 255.0) / 255.0;
-			fx.Outside = 1.0 - (1.0 - fx.Outside) * (1.0 - a);
+			fx.OutsideAlphas.Add ((int) (p * 255.0));
 			Invalidate ();
 		}
 
