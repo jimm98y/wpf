@@ -149,6 +149,20 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(new[] { "112,10,5,1", "113,11,3,1", "114,12,1,1" }, rows);
         }
 
+        [Fact]
+        public void LinearGradient_IsGdiPlusTable()
+        {
+            // The professional renderer's second tool strip gradient: brush over rows 12..24, filled
+            // on 13..24. GDI+'s rows, as it computes them (a table of rounded colours blended with an
+            // eight-bit fraction) and as Windows draws them; a float lerp at pixel centres gives
+            // 247, 243 and 242 on rows 13, 20 and 22.
+            var span = new GdipLinearGradient.Span(new RectangleF(0, 12, 10, 13), Color.FromArgb(248, 248, 248),
+                                                   Color.FromArgb(241, 241, 241), LinearGradientMode.Vertical);
+            var rows = new List<int>();
+            for (int y = 13; y <= 24; y++) rows.Add((int)(span.Pixel(0, y) & 0xff));
+            Assert.Equal(new[] { 248, 247, 246, 246, 245, 245, 244, 244, 243, 243, 242, 241 }, rows);
+        }
+
         private static void CollectRects(object visual, List<string> rows)
         {
             foreach (object p in (IEnumerable)visual.GetType().GetProperty("Content").GetValue(visual))

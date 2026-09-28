@@ -66,6 +66,10 @@ namespace System.Drawing
 
         // Graphics.Save / Restore: the transform, clip and compositing mode as they stand, and
         // back to them. Restore also discards every state saved after the one restored.
+        /// <summary>The translation PushTranslate has built up: where the recorder's origin sits in
+        /// the window, which is what GDI+'s per-pixel arithmetic runs in.</summary>
+        void GetTranslation(out float x, out float y);
+
         int SaveState();
         void RestoreState(int state);
     }

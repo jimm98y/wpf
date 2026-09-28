@@ -234,13 +234,23 @@ namespace System.Windows.Forms
 			else
 				color = LinkColor;
 
-			TextFormatFlags flags = TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter | TextFormatFlags.TextBoxControl;
+			// .NET's PaintPrivate: the value rectangle (less borders and padding), a pixel in at the
+			// top left, three narrower and two shorter (one more for bottom alignment).
+			bool rtl = DataGridView != null && DataGridView.RightToLeft == RightToLeft.Yes;
+			TextFormatFlags flags = DataGridViewUtilities.ComputeTextFormatFlagsForCellStyleAlignment (rtl, cellStyle.Alignment, cellStyle.WrapMode);
+			if ((flags & TextFormatFlags.SingleLine) != 0)
+				flags |= TextFormatFlags.EndEllipsis;
+			Rectangle r = CellValueBounds (cellBounds);
+			Padding pad = cellStyle.Padding;
+			r = new Rectangle (r.X + (rtl ? pad.Right : pad.Left), r.Y + pad.Top, r.Width - pad.Horizontal, r.Height - pad.Vertical);
+			r.Offset (1, 1);
+			r.Width -= 3;
+			r.Height -= 2;
+			if (((int) cellStyle.Alignment & 0x700) != 0)
+				r.Height--;
 
-			cellBounds.Height -= 2;
-			cellBounds.Width -= 2;
-
-			if (formattedValue != null)
-				TextRenderer.DrawText (graphics, formattedValue.ToString (), font, cellBounds, color, flags);
+			if (formattedValue is string text && r.Width > 0 && r.Height > 0)
+				TextRenderer.DrawText (graphics, text, font, r, color, flags);
 		}
 		#endregion
 

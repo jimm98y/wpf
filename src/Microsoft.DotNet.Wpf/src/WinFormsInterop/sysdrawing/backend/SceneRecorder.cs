@@ -86,6 +86,12 @@ namespace System.Drawing.WebGpuBackend
 
         private readonly List<(int Depth, int Translates, bool SourceCopy)> _saved = new();
 
+        public void GetTranslation(out float x, out float y)
+        {
+            x = 0; y = 0;
+            foreach (SceneVisual v in _stack) { x += v.Offset.X; y += v.Offset.Y; }
+        }
+
         public int SaveState()
         {
             _saved.Add((_stack.Count, _translateDepth, _sourceCopy));

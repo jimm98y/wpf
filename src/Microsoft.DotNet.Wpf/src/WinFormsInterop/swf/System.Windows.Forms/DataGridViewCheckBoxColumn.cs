@@ -34,6 +34,11 @@ namespace System.Windows.Forms {
 
 		public DataGridViewCheckBoxColumn (bool threeState) {
 			CellTemplate = new DataGridViewCheckBoxCell (threeState);
+			// .NET's: the column's own default style centres the box.
+			DefaultCellStyle = new DataGridViewCellStyle {
+				Alignment = DataGridViewContentAlignment.MiddleCenter,
+				NullValue = threeState ? (object) CheckState.Indeterminate : false,
+			};
 		}
 
 		public DataGridViewCheckBoxColumn () : this (false) {

@@ -407,8 +407,19 @@ namespace System.Windows.Forms {
 			else
 				state = (CheckBoxState)check_state;
 					
-			Point p = new Point (cellBounds.X + (Size.Width - 13) / 2, cellBounds.Y + (Size.Height - 13) / 2);
-			CheckBoxRenderer.DrawCheckBox (graphics, p, state);
+			// .NET's PaintPrivate: the value rectangle (the cell less its borders and padding) less two
+			// pixels all round, the glyph placed in it by the cell's alignment.
+			Rectangle r = CellValueBounds (cellBounds);
+			Padding pad = cellStyle.Padding;
+			r = new Rectangle (r.X + pad.Left, r.Y + pad.Top, r.Width - pad.Horizontal, r.Height - pad.Vertical);
+			r.Inflate (-2, -2);
+			Size glyph = new Size (13, 13);
+			int a = (int) cellStyle.Alignment;
+			int x = (a & 0x444) != 0 ? r.Right - glyph.Width
+				: (a & 0x222) != 0 ? r.Left + (r.Width - glyph.Width) / 2 : r.Left;
+			int y = (a & 0x700) != 0 ? r.Bottom - glyph.Height
+				: (a & 0x70) != 0 ? r.Top + (r.Height - glyph.Height) / 2 : r.Top;
+			CheckBoxRenderer.DrawCheckBox (graphics, new Point (x, y), state);
 		}
 		
 		private CheckState GetCurrentValue ()

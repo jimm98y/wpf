@@ -229,9 +229,17 @@ namespace System.Windows.Forms {
 			base.Paint (graphics, clipBounds, cellBounds, rowIndex, elementState, value, formattedValue, errorText, cellStyle, advancedBorderStyle, paintParts);
 		}
 
+		// .NET's PaintPrivate, themed: the cell's back colour and then the button over the value
+		// rectangle -- the cell less its borders, so the grid lines stay clear of it.
 		internal override void PaintPartBackground (Graphics graphics, Rectangle cellBounds, DataGridViewCellStyle style)
 		{
-			ButtonRenderer.DrawButton (graphics, cellBounds, button_state);
+			Rectangle value = CellValueBounds (cellBounds);
+			if (value.Width <= 0 || value.Height <= 0)
+				return;
+			if (style.BackColor.A == 255)
+				using (var b = new SolidBrush (style.BackColor))
+					graphics.FillRectangle (b, value);
+			ButtonRenderer.DrawButton (graphics, value, button_state);
 		}
 
 		internal override void PaintPartSelectionBackground (Graphics graphics, Rectangle cellBounds, DataGridViewElementStates cellState, DataGridViewCellStyle cellStyle)
@@ -242,15 +250,31 @@ namespace System.Windows.Forms {
 		
 		internal override void PaintPartContent (Graphics graphics, Rectangle cellBounds, int rowIndex, DataGridViewElementStates cellState, DataGridViewCellStyle cellStyle, object formattedValue)
 		{
-			Color color = Selected ? cellStyle.SelectionForeColor : cellStyle.ForeColor;
-
-			TextFormatFlags flags = TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter | TextFormatFlags.TextBoxControl | TextFormatFlags.HorizontalCenter;
-
-			cellBounds.Height -= 2;
-			cellBounds.Width -= 2;
-
-			if (formattedValue != null)
-				TextRenderer.DrawText (graphics, formattedValue.ToString (), cellStyle.Font, cellBounds, color, flags);
+			// .NET's: the button part's content rectangle, two in and a row down, four narrower and
+			// two shorter (and a pixel further for a pressed button), with the style's alignment, in
+			// the button part's text colour.
+			Rectangle value = CellValueBounds (cellBounds);
+			string text = formattedValue?.ToString ();
+			if (value.Width <= 0 || value.Height <= 0 || text == null)
+				return;
+			var renderer = new VisualStyles.VisualStyleRenderer (VisualStyles.VisualStyleElement.Button.PushButton.Normal);
+			Rectangle r = renderer.GetBackgroundContentRectangle (graphics, value);
+			r.Offset (2, 1);
+			r.Width -= 4;
+			r.Height -= 2;
+			if (button_state == PushButtonState.Pressed) {
+				r.Offset (1, 1);
+				r.Width--;
+				r.Height--;
+			}
+			if (r.Width <= 0 || r.Height <= 0)
+				return;
+			bool rtl = DataGridView != null && DataGridView.RightToLeft == RightToLeft.Yes;
+			TextFormatFlags flags = DataGridViewUtilities.ComputeTextFormatFlagsForCellStyleAlignment (rtl, cellStyle.Alignment, cellStyle.WrapMode);
+			Color color = renderer.GetColor (VisualStyles.ColorProperty.TextColor);
+			if (color.A == 0)
+				color = Selected ? cellStyle.SelectionForeColor : cellStyle.ForeColor;
+			TextRenderer.DrawText (graphics, text, cellStyle.Font, r, color, flags);
 		}
 		
 		protected class DataGridViewButtonCellAccessibleObject : DataGridViewCellAccessibleObject {

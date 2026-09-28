@@ -385,22 +385,36 @@ namespace System.Windows.Forms {
 			text_area.Y += cellBounds.Y;
 
 			if (Application.RenderWithVisualStyles && (FlatStyle == FlatStyle.Standard || FlatStyle == FlatStyle.System)) {
-				// As .NET's combo cell renderer draws it: the combo box's read-only face over the
-				// cell inside its grid lines, and the drop-down button part -- a face of its own
-				// with the chevron on it -- seventeen pixels wide at the right, a row short of the
-				// bottom so the face's darker last row runs under it.
-				var face = new Rectangle (cellBounds.X, cellBounds.Y, cellBounds.Width - 1, cellBounds.Height - 1);
-				var drop = new Rectangle (face.Right - ThemedDropWidth, face.Y, ThemedDropWidth, face.Height - 1);
-				if (face.Width > 0 && face.Height > 0) {
+				// .NET's PaintPrivate for a themed drop-down-button cell (post-XP themes): the
+				// combo box's read-only face over the value rectangle, the drop-down button part
+				// SM_CXHTHUMB wide at its right and as tall as a line of text plus eight, and the
+				// text in the rectangle it leaves -- two in, a row down, a row short.
+				Rectangle value = CellValueBounds (cellBounds);
+				if (value.Width > 0 && value.Height > 0) {
+					int num = Math.Min (SystemInformation.HorizontalScrollBarThumbWidth, value.Width - 6 - 1);
+					int lineHeight = TextRenderer.MeasureText (graphics, " ", cellStyle.Font, new Size (int.MaxValue, int.MaxValue), TextFormatFlags.Default).Height;
+					int num2 = Math.Min (lineHeight + 8, value.Height);
 					new VisualStyles.VisualStyleRenderer (VisualStyles.VisualStyleElement.CreateElement ("COMBOBOX", 5, 1))
-						.DrawBackground (graphics, face);
-					if (drop.Width > 0 && drop.Height > 0)
+						.DrawBackground (graphics, value);
+					if (num > 0 && num2 > 0)
 						new VisualStyles.VisualStyleRenderer (VisualStyles.VisualStyleElement.CreateElement ("COMBOBOX", 1, 1))
-							.DrawBackground (graphics, drop);
+							.DrawBackground (graphics, new Rectangle (value.Right - num, value.Top, num, num2));
+					Rectangle text = Rectangle.Inflate (value, -2, -2);
+					text.X--;
+					text.Width++;
+					text.Width -= Math.Max (num, 0);
+					text.Offset (-1, 1);
+					text.Width++;
+					text.Height--;
+					if (formattedValue is string str && text.Width > 0 && text.Height > 0)
+						TextRenderer.DrawText (graphics, str, cellStyle.Font, text, color,
+							TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix
+							| TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.EndEllipsis);
 				}
-				// The text has the face up to the button, not just its own measured width.
-				text_area.Width = Math.Max (0, drop.X - text_area.X);
-			} else {
+				return;
+			}
+
+			{
 				Rectangle button_area = CalculateButtonArea (cellBounds);
 
 				// The background of the dropdown button should be gray, not

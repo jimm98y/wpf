@@ -39,6 +39,8 @@ namespace System.Windows.Forms {
 			base.CellTemplate = new DataGridViewButtonCell();
 			flatStyle = FlatStyle.Standard;
 			text = String.Empty;
+			// .NET's: the column's own default style centres the caption.
+			DefaultCellStyle = new DataGridViewCellStyle { Alignment = DataGridViewContentAlignment.MiddleCenter };
 		}
 
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]

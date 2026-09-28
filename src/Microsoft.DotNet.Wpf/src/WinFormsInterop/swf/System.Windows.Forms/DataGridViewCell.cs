@@ -1179,8 +1179,23 @@ namespace System.Windows.Forms {
 			Paint (graphics, clipBounds, cellBounds, rowIndex, cellState, value, formattedValue, errorText, cellStyle, advancedBorderStyle, paintParts);
 		}
 			
+		// The border style of the cell being painted, for the part painters: .NET's cells work inside
+		// the rectangle BorderWidths leaves, and PaintPartContent is not handed the style.
+		internal DataGridViewAdvancedBorderStyle painting_border_style;
+
+		/// <summary>.NET's value rectangle: the cell less the widths of its borders.</summary>
+		internal Rectangle CellValueBounds (Rectangle cellBounds)
+		{
+			if (painting_border_style == null)
+				return cellBounds;
+			Rectangle b = BorderWidths (painting_border_style);
+			return new Rectangle (cellBounds.X + b.X, cellBounds.Y + b.Y,
+			                      cellBounds.Width - b.X - b.Width, cellBounds.Height - b.Y - b.Height);
+		}
+
 		protected virtual void Paint (Graphics graphics, Rectangle clipBounds, Rectangle cellBounds, int rowIndex, DataGridViewElementStates cellState, object value, object formattedValue, string errorText, DataGridViewCellStyle cellStyle, DataGridViewAdvancedBorderStyle advancedBorderStyle, DataGridViewPaintParts paintParts)
 		{
+			painting_border_style = advancedBorderStyle;
 			if ((paintParts & DataGridViewPaintParts.Background) == DataGridViewPaintParts.Background)
 				PaintPartBackground (graphics, cellBounds, cellStyle);
 			if ((paintParts & DataGridViewPaintParts.SelectionBackground) == DataGridViewPaintParts.SelectionBackground)

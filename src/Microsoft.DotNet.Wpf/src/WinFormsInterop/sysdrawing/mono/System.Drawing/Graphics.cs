@@ -223,6 +223,77 @@ namespace System.Drawing
 		bool RecordPen (Pen p) => GpuRecorder != null && (p?.Brush is SolidBrush || p != null);
 		// Resolve a gradient brush (linear multi-stop or path/radial) to a GradientDesc; false = not a
 		// gradient in GPU mode (fall through to libgdiplus).
+		/// <summary>A LinearGradientBrush fill of a whole-pixel rectangle as GDI+ computes it, pixel for
+		/// pixel (GdipLinearGradient, read out of gdiplus.dll): a table of rounded colours blended
+		/// with an eight-bit fraction at integer device coordinates. The shader's float lerp at pixel
+		/// centres is a level out on a third of a tool strip's rows. Recorded as one rectangle per
+		/// row (or column) when the gradient runs straight, else as an image; anything this cannot
+		/// reproduce -- a brush transform, gamma, translucency, a point-built brush -- is left to
+		/// the shader.</summary>
+		bool TryExactLinearGradient (Brush b, float x, float y, float w, float h)
+		{
+			if (GpuRecorder == null || nativeObject != IntPtr.Zero || !(b is Drawing2D.LinearGradientBrush lg) || !lg.exact_known)
+				return false;
+			if (x != (int) x || y != (int) y || w != (int) w || h != (int) h || w <= 0 || h <= 0 || w * h > 4 << 20)
+				return false;
+			GpuRecorder.GetTranslation (out float tx, out float ty);
+			if (tx != (int) tx || ty != (int) ty)
+				return false;
+			WebGpuBackend.GdipLinearGradient.Span span;
+			try {
+				if (lg.GammaCorrection || lg.user_transformed)
+					return false;
+				Color[] preset = null; float[] presetPos = null, factors = null, positions = null;
+				if (lg.InterpolationColorsWereSet) {
+					ColorBlend cb = lg.InterpolationColors;
+					preset = cb.Colors; presetPos = cb.Positions;
+					foreach (Color c in preset) if (c.A != 255) return false;
+				} else {
+					Blend bl = lg.Blend;
+					if (bl != null && bl.Factors != null && !(bl.Factors.Length == 1 && bl.Factors [0] == 1f)) {
+						factors = bl.Factors; positions = bl.Positions;
+					}
+				}
+				if (lg.gradient_color1.A != 255 || lg.gradient_color2.A != 255)
+					return false;
+				span = new WebGpuBackend.GdipLinearGradient.Span (lg.Rectangle, lg.gradient_color1, lg.gradient_color2,
+					lg.exact_angle, lg.exact_scalable, lg.WrapMode, factors, positions, preset, presetPos);
+			} catch (Exception) {
+				return false;
+			}
+			int x0 = (int) x, y0 = (int) y, iw = (int) w, ih = (int) h, ox = (int) tx, oy = (int) ty;
+			if (span.StepX == 0) {
+				// Each row one colour; runs of equal rows as one rectangle.
+				int start = 0; uint run = span.Pixel (x0 + ox, y0 + oy);
+				for (int j = 1; j <= ih; j++) {
+					uint c = j < ih ? span.Pixel (x0 + ox, y0 + oy + j) : ~run;
+					if (c == run) continue;
+					GpuRecorder.FillRect (x0, y0 + start, iw, j - start, unchecked ((int) run));
+					start = j; run = c;
+				}
+				return true;
+			}
+			if (span.StepY == 0) {
+				int start = 0; uint run = span.Pixel (x0 + ox, y0 + oy);
+				for (int i = 1; i <= iw; i++) {
+					uint c = i < iw ? span.Pixel (x0 + ox + i, y0 + oy) : ~run;
+					if (c == run) continue;
+					GpuRecorder.FillRect (x0 + start, y0, i - start, ih, unchecked ((int) run));
+					start = i; run = c;
+				}
+				return true;
+			}
+			var rgba = new byte [iw * ih * 4];
+			for (int j = 0; j < ih; j++)
+				for (int i = 0; i < iw; i++) {
+					uint c = span.Pixel (x0 + ox + i, y0 + oy + j);
+					int d = (j * iw + i) * 4;
+					rgba [d] = (byte) (c >> 16); rgba [d + 1] = (byte) (c >> 8); rgba [d + 2] = (byte) c; rgba [d + 3] = (byte) (c >> 24);
+				}
+			GpuRecorder.DrawImage (rgba, iw, ih, x0, y0, iw, ih);
+			return true;
+		}
+
 		bool TryGradient (Brush b, out GradientDesc g)
 		{
 			g = default;
@@ -2656,6 +2727,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillRect (x, y, width, height, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile rh)) { GpuRecorder.FillHatch (GradientShape.Rect, x, y, width, height, null, rh.Rgba, rh.W, rh.H, rh.Size); return; }
+			if (TryExactLinearGradient (brush, x, y, width, height)) return;
 			if (TryGradient (brush, out GradientDesc gd)) { GpuRecorder.FillGradient (GradientShape.Rect, x, y, width, height, null, gd); return; }
 
 			Status status = GDIPlus.GdipFillRectangleI (nativeObject, brush.NativeBrush, x, y, width, height);
@@ -2668,6 +2740,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillRect (x, y, width, height, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile rh)) { GpuRecorder.FillHatch (GradientShape.Rect, x, y, width, height, null, rh.Rgba, rh.W, rh.H, rh.Size); return; }
+			if (TryExactLinearGradient (brush, x, y, width, height)) return;
 			if (TryGradient (brush, out GradientDesc gd)) { GpuRecorder.FillGradient (GradientShape.Rect, x, y, width, height, null, gd); return; }
 
 			Status status = GDIPlus.GdipFillRectangle (nativeObject, brush.NativeBrush, x, y, width, height);

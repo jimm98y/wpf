@@ -42,6 +42,15 @@ namespace System.Drawing.Drawing2D {
 		// backend can reproduce the gradient (the native line-brush direction isn't otherwise readable).
 		internal PointF gradient_start, gradient_end;
 		internal Color gradient_color1 = Color.Black, gradient_color2 = Color.White;
+		// The rectangle constructors' arguments, which GDI+'s own fill is computed from
+		// (GdipLinearGradient): the mode's angle and whether it scales with the rectangle.
+		internal bool exact_known;
+		internal bool InterpolationColorsWereSet => _interpolationColorsWasSet;
+		// Whether the caller gave the brush a transform of its own. Transform itself cannot say:
+		// the native brush reports the gradient's own matrix in it too.
+		internal bool user_transformed;
+		internal float exact_angle;
+		internal bool exact_scalable;
 
 		/// <summary>Start/end points + the two endpoint colours, for the GPU-raster recorder.</summary>
 		internal void GetGpuGradient (out PointF start, out PointF end, out Color c1, out Color c2)
@@ -133,6 +142,10 @@ namespace System.Drawing.Drawing2D {
 			rectangle = (RectangleF) rect;
 			PointsFromMode (rectangle, linearGradientMode, out gradient_start, out gradient_end);
 			gradient_color1 = color1; gradient_color2 = color2;
+			exact_known = true; exact_scalable = true;
+			exact_angle = linearGradientMode == LinearGradientMode.Vertical ? 90f
+				: linearGradientMode == LinearGradientMode.ForwardDiagonal ? 45f
+				: linearGradientMode == LinearGradientMode.BackwardDiagonal ? 135f : 0f;
 		}
 
 		public LinearGradientBrush (Rectangle rect, Color color1, Color color2, float angle) : this (rect, color1, color2, angle, false)
@@ -157,6 +170,10 @@ namespace System.Drawing.Drawing2D {
 			rectangle = rect;
 			PointsFromMode (rectangle, linearGradientMode, out gradient_start, out gradient_end);
 			gradient_color1 = color1; gradient_color2 = color2;
+			exact_known = true; exact_scalable = true;
+			exact_angle = linearGradientMode == LinearGradientMode.Vertical ? 90f
+				: linearGradientMode == LinearGradientMode.ForwardDiagonal ? 45f
+				: linearGradientMode == LinearGradientMode.BackwardDiagonal ? 135f : 0f;
 		}
 
 		public LinearGradientBrush (RectangleF rect, Color color1, Color color2, float angle) : this (rect, color1, color2, angle, false)
@@ -177,6 +194,7 @@ namespace System.Drawing.Drawing2D {
 			rectangle = (RectangleF) rect;
 			PointsFromAngle (rectangle, angle, out gradient_start, out gradient_end);
 			gradient_color1 = color1; gradient_color2 = color2;
+			exact_known = true; exact_angle = angle; exact_scalable = isAngleScaleable;
 		}
 
 		public LinearGradientBrush (RectangleF rect, Color color1, Color color2, float angle, bool isAngleScaleable)
@@ -193,6 +211,7 @@ namespace System.Drawing.Drawing2D {
 			rectangle = rect;
 			PointsFromAngle (rectangle, angle, out gradient_start, out gradient_end);
 			gradient_color1 = color1; gradient_color2 = color2;
+			exact_known = true; exact_angle = angle; exact_scalable = isAngleScaleable;
 		}
 
 		// Public Properties
@@ -350,6 +369,7 @@ namespace System.Drawing.Drawing2D {
 				if (value == null)
 					throw new ArgumentNullException ("Transform");
 
+				user_transformed = true;
 				Status status = GDIPlus.GdipSetLineTransform (NativeBrush, value.nativeMatrix);
 				GDIPlus.CheckStatus (status);
 			}
@@ -385,12 +405,14 @@ namespace System.Drawing.Drawing2D {
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
 
+			user_transformed = true;
 			Status status = GDIPlus.GdipMultiplyLineTransform (NativeBrush, matrix.nativeMatrix, order);
 			GDIPlus.CheckStatus (status);
 		}
 
 		public void ResetTransform ()
 		{
+			user_transformed = false;
 			Status status = GDIPlus.GdipResetLineTransform (NativeBrush);
 			GDIPlus.CheckStatus (status);
 		}
@@ -402,6 +424,7 @@ namespace System.Drawing.Drawing2D {
 
 		public void RotateTransform (float angle, MatrixOrder order)
 		{
+			user_transformed = true;
 			Status status = GDIPlus.GdipRotateLineTransform (NativeBrush, angle, order);
 			GDIPlus.CheckStatus (status);
 		}
@@ -413,6 +436,7 @@ namespace System.Drawing.Drawing2D {
 
 		public void ScaleTransform (float sx, float sy, MatrixOrder order)
 		{
+			user_transformed = true;
 			Status status = GDIPlus.GdipScaleLineTransform (NativeBrush, sx, sy, order);
 			GDIPlus.CheckStatus (status);
 		}
@@ -456,6 +480,7 @@ namespace System.Drawing.Drawing2D {
 
 		public void TranslateTransform (float dx, float dy, MatrixOrder order)
 		{
+			user_transformed = true;
 			Status status = GDIPlus.GdipTranslateLineTransform (NativeBrush, dx, dy, order);
 			GDIPlus.CheckStatus (status);
 		}
