@@ -1510,6 +1510,12 @@ namespace System.Windows.Forms
 		public override int VerticalScrollBarWidth => ScrollBarWidth;
 		public override int HorizontalScrollBarHeight => ScrollBarHeight;
 		public override int ScrollBarButtonSize => ScrollBarWidth;
+		// SM_CXHSCROLL / SM_CYVSCROLL / SM_CXHTHUMB / SM_CYVTHUMB: 17 at 96 dpi too. The classic 16
+		// put a flat combo box's button, which .NET sizes by the arrow width, a pixel off.
+		public override int HorizontalScrollBarArrowWidth => ScrollBarWidth;
+		public override int VerticalScrollBarArrowHeight => ScrollBarHeight;
+		public override int HorizontalScrollBarThumbWidth => ScrollBarWidth;
+		public override int VerticalScrollBarThumbHeight => ScrollBarHeight;
 
 		public override void DrawScrollBarCorner (Graphics dc, Rectangle area)
 		{

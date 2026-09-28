@@ -905,9 +905,11 @@ namespace System.Windows.Forms {
 
 		internal Rectangle CheckBoxRect {
 			get {
-				Rectangle retval = new Rectangle (check_box_space, ClientSize.Height / 2 - check_box_size / 2, 
+				// The glyph, centred in comctl32's check box rectangle as DrawThemeBackground centres a
+				// true-size part.
+				Rectangle box = ThemeWin32Classic.DateTimePickerCheckBoxBox (this);
+				return new Rectangle (box.X + (box.Width - check_box_size) / 2, box.Y + (box.Height - check_box_size) / 2,
 						check_box_size, check_box_size);
-				return retval;
 			}
 		}
 		

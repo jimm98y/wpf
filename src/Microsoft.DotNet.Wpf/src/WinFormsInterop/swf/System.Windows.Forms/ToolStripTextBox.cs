@@ -44,7 +44,8 @@ namespace System.Windows.Forms
 			ToolStripTextBoxControl text_box = TextBox as ToolStripTextBoxControl;
 			text_box.OwnerItem = this;
 			text_box.border_style = BorderStyle.None;
-			text_box.TopMargin = 3; // need to explicitly set the margin
+			// No margin of its own: .NET's tool strip text box is a plain Edit, and lays its text out
+			// exactly as a TextBox on a form does. The three rows set here put "find" two low.
 			text_box.Border = BorderStyle.Fixed3D; // ToolStripTextBoxControl impl, not TextBox
 			this.border_style = BorderStyle.Fixed3D;
 		}

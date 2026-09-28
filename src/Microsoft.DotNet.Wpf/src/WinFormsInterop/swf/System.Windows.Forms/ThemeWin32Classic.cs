@@ -27,6 +27,7 @@
 //	Alexander Olk, alex.olk@googlemail.com
 //
 
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Drawing;
@@ -2443,25 +2444,18 @@ namespace System.Windows.Forms
 				if (!dtp.ShowUpDown) {
 					DateTimePickerDrawDropDownButton (dtp, dc, clip_rectangle);
 				} else {
-					ButtonState up_state = dtp.is_up_pressed ? ButtonState.Pushed : ButtonState.Normal;
-					ButtonState down_state = dtp.is_down_pressed ? ButtonState.Pushed : ButtonState.Normal;
-					Rectangle up_bounds = dtp.drop_down_arrow_rect;
-					Rectangle down_bounds = dtp.drop_down_arrow_rect;
-
-					up_bounds.Height = up_bounds.Height / 2;
-					down_bounds.Y = up_bounds.Height;
-					down_bounds.Height = dtp.Height - up_bounds.Height;
-					if (down_bounds.Height > up_bounds.Height)
-					{
-						down_bounds.Y += 1;
-						down_bounds.Height -= 1;
-					}
-
-					up_bounds.Inflate (-1, -1);
-					down_bounds.Inflate (-1, -1);
-
-					ControlPaint.DrawScrollButton (dc, up_bounds, ScrollButton.Up, up_state);
-					ControlPaint.DrawScrollButton (dc, down_bounds, ScrollButton.Down, down_state);
+					// comctl32 moves its msctls_updown32 child to the button rectangle _RecomputeSizing
+					// makes: the client less two pixels top, bottom and right, SM_CXVSCROLL wide.
+					Rectangle client = dtp.ClientRectangle;
+					int w = SystemInformation.VerticalScrollBarWidth;
+					Rectangle spin = new Rectangle (client.Right - 2 - w, client.Top + 2, w, Math.Max (0, client.Height - 4));
+					Rectangle up_bounds = new Rectangle (spin.X, spin.Y, spin.Width, spin.Height / 2);
+					Rectangle down_bounds = new Rectangle (spin.X, up_bounds.Bottom, spin.Width, spin.Height - up_bounds.Height);
+					var disabled = VisualStyles.PushButtonState.Disabled;
+					UpDownBaseDrawButton (dc, up_bounds, true, !dtp.Enabled ? disabled
+						: dtp.is_up_pressed ? VisualStyles.PushButtonState.Pressed : VisualStyles.PushButtonState.Normal);
+					UpDownBaseDrawButton (dc, down_bounds, false, !dtp.Enabled ? disabled
+						: dtp.is_down_pressed ? VisualStyles.PushButtonState.Pressed : VisualStyles.PushButtonState.Normal);
 				}
 			}
 
@@ -2486,85 +2480,130 @@ namespace System.Windows.Forms
 					CPDrawFocusRectangle (dc, check_box_rect, dtp.foreground_color, dtp.background_color);
 			}
 
-			// render each text part
-			using (StringFormat text_format = StringFormat.GenericTypographic)
-			{
-				text_format.LineAlignment = StringAlignment.Near;
-				text_format.Alignment = StringAlignment.Near;
-				text_format.FormatFlags = text_format.FormatFlags | StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoWrap | StringFormatFlags.FitBlackBox;
-				text_format.FormatFlags &= ~StringFormatFlags.NoClip;
+			DateTimePickerDrawFields (dtp, dc);
+		}
 
-				// Calculate the rectangles for each part 
-				if (dtp.part_data.Length > 0 && dtp.part_data[0].drawing_rectangle.IsEmpty)
-				{
-					Graphics gr = dc;
-					for (int i = 0; i < dtp.part_data.Length; i++)
-					{
-						DateTimePicker.PartData fd = dtp.part_data[i];
-						RectangleF text_rect = new RectangleF();
-						string text = fd.GetText(dtp.Value);
-						text_rect.Size = gr.MeasureString (text, dtp.Font, 250, text_format);
-						if (!fd.is_literal)
-							text_rect.Width = Math.Max (dtp.CalculateMaxWidth(fd.value, gr, text_format), text_rect.Width);
+		// comctl32's CDatePicker, read out of the binary: _RecomputeSizing places the fields after
+		// the check box and short of the button, _RecomputeSizingSEC makes every field as wide as
+		// the widest value it can hold and centres the line, _DrawSubedits draws each one with
+		// DrawText in that rectangle -- numbers right-aligned, names and literals centred.
+		internal static Rectangle DateTimePickerFieldArea (DateTimePicker dtp)
+		{
+			// The themed picker's client is the whole window: its fields start where this puts them
+			// only without the two-pixel client edge.
+			Rectangle client = dtp.ClientRectangle;
+			int boxRight = client.X + 1;
+			if (dtp.ShowCheckBox)
+				boxRight = DateTimePickerCheckBoxBox (dtp).Right;
+			int buttonLeft;
+			if (dtp.ShowUpDown)
+				buttonLeft = client.Right - 2 - SystemInformation.VerticalScrollBarWidth;
+			else // the themed calendar button: DP_SHOWCALENDARBUTTONRIGHT is two SM_CXVSCROLLs wide
+				buttonLeft = client.Right - 2 * SystemInformation.VerticalScrollBarWidth;
+			buttonLeft = Math.Max (buttonLeft, boxRight);
+			return Rectangle.FromLTRB (boxRight + 1, client.Top, buttonLeft - 1, client.Bottom);
+		}
 
-						if (i > 0) {
-							text_rect.X = dtp.part_data[i - 1].drawing_rectangle.Right;
-						} else {
-							text_rect.X = date_area_rect.X;
-						}
-						text_rect.Y = DateTimePickerTextTop (dtp, (int) text_rect.Height);
-						// No inflation: parts abut. Widening each one by a pixel either side pushed every part
-						// after it along, and the drift showed as a gap before the year that Windows does not
-						// have.
+		/// <summary>_RecomputeSizing's check box rectangle: the client less SM_CXEDGE/SM_CYEDGE, as
+		/// wide as it is tall but no more than half the control.</summary>
+		internal static Rectangle DateTimePickerCheckBoxBox (DateTimePicker dtp)
+		{
+			Rectangle client = dtp.ClientRectangle;
+			Rectangle box = Rectangle.Inflate (client, -2, -2);
+			box.Width = Math.Min (box.Height, client.X + client.Width / 2 - box.X);
+			return box;
+		}
 
-						fd.drawing_rectangle = text_rect;
-					}
+		private const TextFormatFlags DateFieldFlags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
+
+		// The subedit's DrawText alignment: DT_RIGHT for a number, DT_CENTER for a name, an AM/PM
+		// designator, an era or a literal.
+		private static TextFormatFlags DateFieldAlignment (DateTimePicker.PartData fd)
+		{
+			if (fd.is_literal || string.IsNullOrEmpty (fd.value))
+				return TextFormatFlags.HorizontalCenter;
+			switch (fd.value [0]) {
+			case 'M': case 'd':
+				return fd.value.Length <= 2 ? TextFormatFlags.Right : TextFormatFlags.HorizontalCenter;
+			case 'y': case 'h': case 'H': case 'm': case 's':
+				return TextFormatFlags.Right;
+			default:
+				return TextFormatFlags.HorizontalCenter;
+			}
+		}
+
+		// The values _RecomputeSizingSEC formats to find a field's width.
+		private static IEnumerable<DateTime> DateFieldSamples (DateTimePicker dtp, DateTimePicker.PartData fd)
+		{
+			DateTime v = dtp.Value;
+			if (fd.is_literal || string.IsNullOrEmpty (fd.value)) { yield return v; yield break; }
+			switch (fd.value [0]) {
+			case 'M':
+				for (int m = 1; m <= 12; m++) yield return new DateTime (v.Year, m, 1, v.Hour, v.Minute, v.Second);
+				break;
+			case 'd':   // days 10 to 17: every weekday, and two digits
+				for (int d = 10; d <= 17; d++) yield return new DateTime (v.Year, v.Month, d, v.Hour, v.Minute, v.Second);
+				break;
+			case 'y':
+				yield return new DateTime (dtp.MaxDate.Year, 1, 1);
+				break;
+			case 'h': case 'H':
+				yield return new DateTime (v.Year, v.Month, v.Day, 23, v.Minute, v.Second);
+				break;
+			case 'm':
+				yield return new DateTime (v.Year, v.Month, v.Day, v.Hour, 59, v.Second);
+				break;
+			case 's':
+				yield return new DateTime (v.Year, v.Month, v.Day, v.Hour, v.Minute, 59);
+				break;
+			case 't':
+				yield return new DateTime (v.Year, v.Month, v.Day, 11, 0, 0);
+				yield return new DateTime (v.Year, v.Month, v.Day, 12, 0, 0);
+				break;
+			default:
+				yield return v;
+				break;
+			}
+		}
+
+		internal virtual void DateTimePickerDrawFields (DateTimePicker dtp, Graphics dc)
+		{
+			Rectangle area = DateTimePickerFieldArea (dtp);
+			var widths = new int [dtp.part_data.Length];
+			int lineHeight = 0;
+			for (int i = 0; i < dtp.part_data.Length; i++) {
+				DateTimePicker.PartData fd = dtp.part_data [i];
+				TextFormatFlags flags = DateFieldFlags | DateFieldAlignment (fd);
+				foreach (DateTime sample in DateFieldSamples (dtp, fd)) {
+					Size size = TextRenderer.MeasureText (dc, fd.GetText (sample), dtp.Font, new Size (int.MaxValue, int.MaxValue), flags);
+					widths [i] = Math.Max (widths [i], size.Width);
+					lineHeight = Math.Max (lineHeight, size.Height);
 				}
-				
-				// draw the text part
-				Brush text_brush = ResPool.GetSolidBrush (dtp.ShowCheckBox && dtp.Checked == false ?
-						SystemColors.GrayText : dtp.ForeColor); // Use GrayText if Checked is false
-				RectangleF clip_rectangleF = clip_rectangle;
-
-				for (int i = 0; i < dtp.part_data.Length; i++)
-				{
+			}
+			int top = area.Top + (area.Height - lineHeight) / 2;
+			// _DrawSubedits: DATEPICKER/DP_DATETEXT, disabled (a disabled control or an unchecked box)
+			// in the theme's grey, the current field on the highlight.
+			bool greyed = !dtp.Enabled || (dtp.ShowCheckBox && !dtp.Checked);
+			Color normal = greyed ? Color.FromArgb (0x6D, 0x6D, 0x6D) : SystemColors.WindowText;
+			GraphicsState state = dc.Save ();
+			try {
+				dc.IntersectClip (area);
+				int x = area.Left;
+				for (int i = 0; i < dtp.part_data.Length; i++) {
 					DateTimePicker.PartData fd = dtp.part_data [i];
-					string text;
-
-					if (!clip_rectangleF.IntersectsWith (fd.drawing_rectangle))
-						continue;
-
-					text = dtp.editing_part_index == i ? dtp.editing_text : fd.GetText (dtp.Value);
-
-					PointF text_position = new PointF ();
-					SizeF text_size;
-					RectangleF text_rect;
-
-					text_size = dc.MeasureString (text, dtp.Font, 250, text_format);
-					text_position.X = (fd.drawing_rectangle.Left + fd.drawing_rectangle.Width / 2) - text_size.Width / 2;
-					text_position.Y = (fd.drawing_rectangle.Top + fd.drawing_rectangle.Height / 2) - text_size.Height / 2;
-					text_rect = new RectangleF (text_position, text_size);
-					text_rect = RectangleF.Intersect (text_rect, date_area_rect);
-					
-					if (text_rect.IsEmpty)
-						break;
-
-					if (text_rect.Right >= date_area_rect.Right)
-						text_format.FormatFlags &= ~StringFormatFlags.NoClip;
-					else
-						text_format.FormatFlags |= StringFormatFlags.NoClip;
-					
-					if (fd.Selected) {
-						dc.FillRectangle (SystemBrushes.Highlight, text_rect);
-						dc.DrawString (text, dtp.Font, SystemBrushes.HighlightText, text_rect, text_format);
-					
-					} else {
-						dc.DrawString (text, dtp.Font, text_brush, text_rect, text_format);
+					Rectangle rect = new Rectangle (x, top, widths [i], lineHeight);
+					x += widths [i];
+					fd.drawing_rectangle = rect;
+					string text = dtp.editing_part_index == i ? dtp.editing_text : fd.GetText (dtp.Value);
+					Color color = normal;
+					if (fd.Selected && !greyed) {
+						dc.FillRectangle (SystemBrushes.Highlight, rect);
+						color = SystemColors.HighlightText;
 					}
-
-					if (fd.drawing_rectangle.Right > date_area_rect.Right)
-						break; // the next part would be not be visible, so don't draw anything more.
+					TextRenderer.DrawText (dc, text, dtp.Font, rect, color, DateFieldFlags | DateFieldAlignment (fd));
 				}
+			} finally {
+				dc.Restore (state);
 			}
 		}
 
