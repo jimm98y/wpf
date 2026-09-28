@@ -251,7 +251,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
             SetForegroundWindow(anchor._hwnd);
     }
 
-    private const int SW_HIDE = 0, SW_SHOWNA = 8;
+    private const int SW_HIDE = 0, SW_SHOW = 5, SW_SHOWNA = 8;
 
     /// <summary>WF_TRACE_FRAMES=1: when the window came up and when each present happened or was
     /// skipped, in milliseconds since the process started -- the first-paint delay made visible.</summary>
@@ -313,7 +313,14 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _form.LocationChanged += OnFormMoved;
         _form.VisibleChanged += OnFormVisibleChanged;
         if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: window + surface ready");
+        // The first frame is drawn BEFORE the window is shown. It takes the UI thread a second or
+        // two (fonts, glyphs, pipelines), and a window on screen that answers no messages for that
+        // long is one Windows calls "Not Responding" -- stock WinForms shows its window already
+        // painted. So the window stays hidden until the swap chain holds the frame, then appears
+        // with it.
         Present();
+        ShowWindow(_hwnd, SW_SHOW);
+        if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: window shown");
         _form.HostWindowShown();
     }
 
@@ -329,7 +336,8 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         const uint WS_POPUP = 0x80000000, WS_VISIBLE = 0x10000000;
         const uint WS_EX_TOOLWINDOW = 0x00000080;
 
-        uint style = WS_VISIBLE, exStyle = 0;
+        // Not WS_VISIBLE: Show() makes the window visible once its first frame is in the swap chain.
+        uint style = 0, exStyle = 0;
         switch (_form.FormBorderStyle)
         {
             case FormBorderStyle.None:
