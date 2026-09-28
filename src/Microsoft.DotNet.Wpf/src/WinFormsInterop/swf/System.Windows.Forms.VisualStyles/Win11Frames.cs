@@ -850,10 +850,11 @@ namespace System.Windows.Forms.VisualStyles
 				5 or 6 => (0xff0078d4u, 0xfffdfdfdu, true), // default, default-animating
 				_ => (0xffd0d0d0u, 0xfffdfdfdu, true),   // normal
 			};
+			// Under the art's own sample pattern (s_markX/Y), the geometry refitted to the theme image.
 			Paint edge = raised ? Shaded (border, 9, 10, 0.21f) : (x, y) => border;
-			Frame f = Render (13, 11,
-				new Layer (RoundRect (1, 1, 12, 10, 4), edge),
-				new Layer (RoundRect (2, 2, 11, 9, 3), face));
+			Frame f = RenderSampled (13, 11, s_msx, s_msy,
+				new Layer (RoundRect (1.0078f, 1, 12.0312f, 10, 4.0312f), edge),
+				new Layer (RoundRect (2.0078f, 2, 11.0312f, 9, 3.0938f), face));
 			f.Stretch = true;
 			f.Margins = (6, 6, 5, 5);
 			return f;
