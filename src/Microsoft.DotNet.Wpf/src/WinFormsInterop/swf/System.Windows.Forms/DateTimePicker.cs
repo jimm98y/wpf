@@ -856,6 +856,12 @@ namespace System.Windows.Forms {
 
 		protected override void  OnHandleCreated (EventArgs e) {
 			 base.OnHandleCreated(e);
+			// .NET's CreateHandle sends DTM_SETSYSTEMTIME, and comctl32 answers a picker that is
+			// already checked by making the check box its current field (_SetCurSubed (-1) and the
+			// 0x100 flag) -- which is why a stock picker shows its box selected before it has ever
+			// had the focus.
+			if (ShowCheckBox && Checked)
+				is_checkbox_selected = true;
 		}
 		protected override void  OnHandleDestroyed (EventArgs e) {
  			 base.OnHandleDestroyed(e);
@@ -1624,12 +1630,8 @@ namespace System.Windows.Forms {
 				Invalidate (invalidate_rect);
 				OnUIASelectionChanged ();
 			}
-			else if (is_checkbox_selected)
-			{
-				is_checkbox_selected = false;
-				Invalidate (CheckBoxRect);
-				OnUIASelectionChanged ();
-			}
+			// The check box stays the current field: comctl32 clears that only when another field
+			// is chosen, not when the focus goes.
 		}
 
 		// if month calendar looses focus and the drop down is up, then close it

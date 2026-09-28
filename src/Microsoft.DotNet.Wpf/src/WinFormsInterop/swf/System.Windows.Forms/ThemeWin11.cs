@@ -252,13 +252,22 @@ namespace System.Windows.Forms
 		protected override void DateTimePickerDrawBorder (DateTimePicker dateTimePicker, Graphics g,
 								  Rectangle clippingArea)
 		{
-			Rectangle frame = dateTimePicker.ClientRectangle;
-			frame.Width -= 1;
-			frame.Height -= 1;
-			if (frame.Width <= 0 || frame.Height <= 0)
+			// CDatePicker::_Paint: the parent's background under the partly transparent corners, then
+			// DP_DATEBORDER over the whole client -- disabled, focused (or dropped down), hot, normal.
+			// Its image is the combo box's CP_BORDER, resource for resource.
+			Rectangle client = dateTimePicker.ClientRectangle;
+			if (client.Width <= 0 || client.Height <= 0)
 				return;
-			DrawRoundedOutline (g, frame,
-					    dateTimePicker.Enabled ? EditFieldFrame : ButtonBorderDisabled);
+			Color parent = dateTimePicker.Parent?.BackColor ?? ColorControl;
+			g.FillRectangle (ResPool.GetSolidBrush (parent), client);
+			int state = !dateTimePicker.Enabled ? 4
+				  : dateTimePicker.Focused || dateTimePicker.is_drop_down_visible ? 3
+				  : dateTimePicker.Entered ? 2 : 1;
+			VisualStyles.Win11Frames.Draw (g, VisualStyles.Win11Frames.ComboBorder (state), client);
+		}
+
+		protected override void DateTimePickerDrawDateAreaBackground (DateTimePicker dtp, Graphics dc)
+		{
 		}
 		private static readonly Color InputBorder = Color.FromArgb (131, 131, 131);
 		private static readonly Color RaisedBorder = Color.FromArgb (173, 173, 173);
@@ -2642,9 +2651,8 @@ namespace System.Windows.Forms
 			if (r.Width <= 0 || r.Height <= 0)
 				return;
 
-			// The button belongs to the field, so it takes the field's own background -- no chrome of
-			// its own until the pointer is on it, and then the same pale wash a spin button takes.
-			g.FillRectangle (ResPool.GetSolidBrush (dateTimePicker.Enabled ? ColorWindow : ColorControl), r);
+			// The button belongs to the field: DP_SHOWCALENDARBUTTONRIGHT is transparent at rest, so
+			// the border part's face shows through; the pale wash comes only under the pointer.
 			if (dateTimePicker.is_drop_down_visible)
 				g.FillRectangle (ResPool.GetSolidBrush (ComboFieldOpenFace), r);
 			else if (dateTimePicker.Enabled && dateTimePicker.DropDownButtonEntered) {

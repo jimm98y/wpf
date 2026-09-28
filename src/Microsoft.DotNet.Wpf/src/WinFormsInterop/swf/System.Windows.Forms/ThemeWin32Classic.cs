@@ -2413,6 +2413,13 @@ namespace System.Windows.Forms
 		#endregion
 
 		#region DateTimePicker
+		/// <summary>The field behind the date. A themed picker has none of its own: the border part's
+		/// face is it.</summary>
+		protected virtual void DateTimePickerDrawDateAreaBackground (DateTimePicker dtp, Graphics dc)
+		{
+			dc.FillRectangle (SystemBrushes.Window, dtp.date_area_rect);
+		}
+
 		protected virtual void DateTimePickerDrawBorder (DateTimePicker dateTimePicker, Graphics g, Rectangle clippingArea)
 		{
 			this.CPDrawBorder3D (g, dateTimePicker.ClientRectangle, Border3DStyle.Sunken, Border3DSide.Left | Border3DSide.Right | Border3DSide.Top | Border3DSide.Bottom, dateTimePicker.BackColor);
@@ -2476,7 +2483,7 @@ namespace System.Windows.Forms
 				return;
 
 			// fill the background
-			dc.FillRectangle (SystemBrushes.Window, dtp.date_area_rect);
+			DateTimePickerDrawDateAreaBackground (dtp, dc);
 
 			// Update date_area_rect if we are drawing the checkbox
 			Rectangle date_area_rect = dtp.date_area_rect;
@@ -2485,11 +2492,18 @@ namespace System.Windows.Forms
 				date_area_rect.X = date_area_rect.X + check_box_rect.Width + DateTimePicker.check_box_space * 2;
 				date_area_rect.Width = date_area_rect.Width - check_box_rect.Width - DateTimePicker.check_box_space * 2;
 
-				ButtonState bs = dtp.Checked ? ButtonState.Checked : ButtonState.Normal;
-				CPDrawCheckBox(dc, check_box_rect, bs);
+				if (VisualStyles.VisualStyleRenderer.IsSupported) {
+					// CDatePicker::_Paint: BP_CHECKBOX, "hot" while the box is the current field.
+					int state = dtp.Checked ? (!dtp.Enabled ? 8 : dtp.is_checkbox_selected ? 6 : 5)
+								: (!dtp.Enabled ? 4 : dtp.is_checkbox_selected ? 2 : 1);
+					new VisualStyles.VisualStyleRenderer ("BUTTON", 3, state).DrawBackground (dc, check_box_rect);
+				} else {
+					ButtonState bs = dtp.Checked ? ButtonState.Checked : ButtonState.Normal;
+					CPDrawCheckBox(dc, check_box_rect, bs);
 
-				if (dtp.is_checkbox_selected)
-					CPDrawFocusRectangle (dc, check_box_rect, dtp.foreground_color, dtp.background_color);
+					if (dtp.is_checkbox_selected)
+						CPDrawFocusRectangle (dc, check_box_rect, dtp.foreground_color, dtp.background_color);
+				}
 			}
 
 			DateTimePickerDrawFields (dtp, dc);
