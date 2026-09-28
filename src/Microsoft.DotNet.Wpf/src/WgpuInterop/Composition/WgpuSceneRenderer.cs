@@ -4660,12 +4660,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // carries a margin for the antialiased edge that writes nothing past half a pixel out.
             private readonly bool _aligned;
             private readonly float _sx0, _sy0, _sx1, _sy1;
+            // An OUTLINE (a stroked rounded rectangle) has its stroke half-width here, else -1. It
+            // writes nothing inside its hole, so a box wholly in there is not touched by it.
+            private readonly float _stroke;
 
             public PaperInfo(float x0, float y0, float x1, float y1, RgbaColor? solid)
             {
                 X0 = x0; Y0 = y0; X1 = x1; Y1 = y1; Solid = solid;
                 Shape = false; _toLocal = default; _halfX = _halfY = _corner = _pixel = 0f;
-                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f;
+                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f; _stroke = -1f;
+            }
+
+            /// <summary>An outline: fs_shape's stroke, coverage 0.5 - (|d| - stroke) / pixel.</summary>
+            public PaperInfo(float x0, float y0, float x1, float y1, Matrix3x2 toLocal,
+                             float halfX, float halfY, float corner, float stroke)
+            {
+                X0 = x0; Y0 = y0; X1 = x1; Y1 = y1; Solid = null;
+                Shape = true; _toLocal = toLocal; _halfX = halfX; _halfY = halfY; _corner = corner;
+                float px = MathF.Sqrt(toLocal.M11 * toLocal.M11 + toLocal.M21 * toLocal.M21);
+                float py = MathF.Sqrt(toLocal.M12 * toLocal.M12 + toLocal.M22 * toLocal.M22);
+                _pixel = MathF.Max(0.5f * (px + py), 1e-6f);
+                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f; _stroke = stroke;
             }
 
             public PaperInfo(float x0, float y0, float x1, float y1, RgbaColor solid, Matrix3x2 toLocal,
@@ -4677,7 +4692,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 float px = MathF.Sqrt(toLocal.M11 * toLocal.M11 + toLocal.M21 * toLocal.M21);
                 float py = MathF.Sqrt(toLocal.M12 * toLocal.M12 + toLocal.M22 * toLocal.M22);
                 _pixel = MathF.Max(0.5f * (px + py), 1e-6f);
-                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f;
+                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f; _stroke = -1f;
                 if (MathF.Abs(toLocal.M12) < 1e-6f && MathF.Abs(toLocal.M21) < 1e-6f
                     && Matrix3x2.Invert(toLocal, out Matrix3x2 toDevice))
                 {
@@ -4695,6 +4710,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public bool Touches(float x0, float y0, float x1, float y1)
             {
                 if (X1 <= x0 || X0 >= x1 || Y1 <= y0 || Y0 >= y1) return false;
+                if (_stroke >= 0f)
+                {
+                    // Every pixel centre of the box in the hole -- the hole is convex, so its corners
+                    // decide -- and none of the outline lands on it.
+                    float cx0 = x0 + 0.5f, cy0 = y0 + 0.5f, cx1 = MathF.Max(cx0, x1 - 0.5f), cy1 = MathF.Max(cy0, y1 - 0.5f);
+                    float hole = -(_stroke + 0.5f * _pixel);
+                    return !(Distance(cx0, cy0) < hole && Distance(cx1, cy0) < hole
+                             && Distance(cx0, cy1) < hole && Distance(cx1, cy1) < hole);
+                }
                 if (!_aligned) return true;
                 return Reaches(x0, x1, _sx0, _sx1) && Reaches(y0, y1, _sy0, _sy1);
             }
@@ -4716,6 +4740,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // run whose slack reached the shape's own edge (a label's text on its bottom row).
                 float cx0 = x0 + 0.5f, cy0 = y0 + 0.5f, cx1 = MathF.Max(cx0, x1 - 0.5f), cy1 = MathF.Max(cy0, y1 - 0.5f);
                 return Inside(cx0, cy0) && Inside(cx1, cy0) && Inside(cx0, cy1) && Inside(cx1, cy1);
+            }
+
+            private float Distance(float x, float y)
+            {
+                Vector2 p = Vector2.Transform(new Vector2(x, y), _toLocal);
+                float qx = MathF.Abs(p.X) - _halfX + _corner, qy = MathF.Abs(p.Y) - _halfY + _corner;
+                float ox = MathF.Max(qx, 0f), oy = MathF.Max(qy, 0f);
+                return MathF.Sqrt(ox * ox + oy * oy) + MathF.Min(MathF.Max(qx, qy), 0f) - _corner;
             }
 
             // fs_shape's rounded-rectangle distance, and its test for full coverage.
@@ -4755,6 +4787,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             float cx0 = c.X, cy0 = c.Y, cx1 = c.X + (float) c.W, cy1 = c.Y + (float) c.H;
             float bx0 = Math.Max(x0, cx0), by0 = Math.Max(y0, cy0), bx1 = Math.Min(x1, cx1), by1 = Math.Min(y1, cy1);
             bool opaque = uniform && a >= 0.999f && !d.SourceCopy && d.IndexCount == 6;
+            // A fill of a wholly transparent colour writes nothing (a Color.Transparent selection or
+            // hover wash), so it touches no paper at all -- it used to count as a different colour.
+            if (uniform && a <= 0f && !d.SourceCopy && (d.Kind == FillKind.Solid || d.Kind == FillKind.Shape))
+                return new PaperInfo(0f, 0f, 0f, 0f, null);
             // A FILLED analytic shape (EmitShape): vertices 0, 1 and 3 of its quad sit at local
             // (-ex,-ey), (ex,-ey) and (-ex,ey), which fixes the device-to-local map. Its colour is
             // premultiplied and opaque here, so it is the colour. An ellipse (corner < 0) or an
@@ -4767,6 +4803,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 float halfX = v[a0 + 8], halfY = v[a0 + 9], corner = v[a0 + 10], stroke = v[a0 + 11];
                 Vector2 l0 = new(v[a0 + 6], v[a0 + 7]);
                 float sx = v[a1 + 6] - l0.X, sy = v[a3 + 7] - l0.Y;
+                if (corner >= 0f && stroke >= 0f && sx != 0f && sy != 0f)
+                {
+                    Vector2 d0 = fromNdc(new Vector2(v[a0], v[a0 + 1]));
+                    Vector2 e1 = fromNdc(new Vector2(v[a1], v[a1 + 1])) - d0;
+                    Vector2 e3 = fromNdc(new Vector2(v[a3], v[a3 + 1])) - d0;
+                    var toDevice = new Matrix3x2(e1.X / sx, e1.Y / sx, e3.X / sy, e3.Y / sy, 0f, 0f);
+                    toDevice.Translation = d0 - Vector2.TransformNormal(l0, toDevice);
+                    if (Matrix3x2.Invert(toDevice, out Matrix3x2 toLocal))
+                        return new PaperInfo(bx0, by0, bx1, by1, toLocal, halfX, halfY, corner, stroke);
+                }
                 if (corner >= 0f && stroke < 0f && sx != 0f && sy != 0f)
                 {
                     Vector2 d0 = fromNdc(new Vector2(v[a0], v[a0 + 1]));
