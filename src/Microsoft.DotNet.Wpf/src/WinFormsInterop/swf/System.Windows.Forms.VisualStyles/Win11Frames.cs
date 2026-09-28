@@ -171,7 +171,8 @@ namespace System.Windows.Forms.VisualStyles
 		/// <summary>Explorer::TreeView TVP_GLYPH, 16x16 true size: a chevron pointing right in #8B8B8B
 		/// (closed) or down in #1B1B1B (opened). Unlike the frames above this art is EXACT-AREA
 		/// coverage, not sixteen samples -- its faintest pixels carry an alpha of 1 -- and it is a
-		/// 1.55-pixel stroke through pixel centres, (5.5, 4.5) to (9.5, 8.5) to (5.5, 12.5), butt ends,
+		/// 1.55-pixel stroke through pixel centres, (5.5, 4.5) to (9.5, 8.5) to (5.5, 12.5), its ends a
+		/// sixteenth past those points with their corners rounded by 0.75 (exact on the end pixels),
 		/// a round join; the opened one is the same stroke turned, a pixel to the left.</summary>
 		internal static Frame ExplorerTreeGlyph (bool open)
 		{
@@ -179,7 +180,7 @@ namespace System.Windows.Forms.VisualStyles
 				int k = open ? 1 : 0;
 				if (s_explorerGlyphs [k] != null)
 					return s_explorerGlyphs [k];
-				List<PointF> poly = RoundJoinChevron (5.5f, 4.5f, 9.5f, 8.5f, 5.5f, 12.5f, 1.55f, -1 / 32f);
+				List<PointF> poly = RoundJoinChevron (5.5f, 4.5f, 9.5f, 8.5f, 5.5f, 12.5f, 1.55f, 1 / 16f, 0.75f);
 				if (open)
 					for (int i = 0; i < poly.Count; i++)
 						poly [i] = new PointF (poly [i].Y - 1, poly [i].X);
@@ -190,8 +191,9 @@ namespace System.Windows.Forms.VisualStyles
 		static readonly Frame [] s_explorerGlyphs = new Frame [2];
 
 		/// <summary>The outline of a two-segment stroke of width <paramref name="w"/>: butt ends moved
-		/// <paramref name="ext"/> along the stroke, a mitred inner corner and a round outer one.</summary>
-		static List<PointF> RoundJoinChevron (float x0, float y0, float xa, float ya, float x2, float y2, float w, float ext)
+		/// <paramref name="ext"/> along the stroke, their corners rounded by <paramref name="cap"/>, a
+		/// mitred inner corner and a round outer one.</summary>
+		static List<PointF> RoundJoinChevron (float x0, float y0, float xa, float ya, float x2, float y2, float w, float ext, float cap = 0)
 		{
 			static (float X, float Y) Unit (float dx, float dy) { float l = MathF.Sqrt (dx * dx + dy * dy); return (dx / l, dy / l); }
 			var u1 = Unit (xa - x0, ya - y0);
@@ -225,14 +227,35 @@ namespace System.Windows.Forms.VisualStyles
 				}
 				return arc;
 			}
-			var poly = new List<PointF> { new PointF (s0.X + n1.X * h, s0.Y + n1.Y * h) };
+			// A corner of an end, rounded: the quarter arc of radius cap about the point cap in from
+			// both the end and the side, from direction a to direction b.
+			void Corner (List<PointF> into, (float X, float Y) end, (float X, float Y) inward, (float X, float Y) side, (float X, float Y) a, (float X, float Y) b)
+			{
+				if (cap <= 0) {
+					into.Add (new PointF (end.X + side.X * h, end.Y + side.Y * h));
+					return;
+				}
+				float cx = end.X + inward.X * cap + side.X * (h - cap), cy = end.Y + inward.Y * cap + side.Y * (h - cap);
+				float t0 = MathF.Atan2 (a.Y, a.X), t1 = MathF.Atan2 (b.Y, b.X), dt = t1 - t0;
+				while (dt > MathF.PI) dt -= 2 * MathF.PI;
+				while (dt < -MathF.PI) dt += 2 * MathF.PI;
+				for (int i = 0; i <= 12; i++) {
+					float t = t0 + dt * i / 12;
+					into.Add (new PointF (cx + cap * MathF.Cos (t), cy + cap * MathF.Sin (t)));
+				}
+			}
+			var back1 = (X: -u1.X, Y: -u1.Y);
+			var negN1 = (X: -n1.X, Y: -n1.Y);
+			var negN2 = (X: -n2.X, Y: -n2.Y);
+			var poly = new List<PointF> ();
+			Corner (poly, s0, u1, n1, back1, n1);
 			poly.AddRange (Side (1));
-			poly.Add (new PointF (e2.X + n2.X * h, e2.Y + n2.Y * h));
-			poly.Add (new PointF (e2.X - n2.X * h, e2.Y - n2.Y * h));
+			Corner (poly, e2, (-u2.X, -u2.Y), n2, n2, u2);
+			Corner (poly, e2, (-u2.X, -u2.Y), negN2, u2, negN2);
 			List<PointF> back = Side (-1);
 			back.Reverse ();
 			poly.AddRange (back);
-			poly.Add (new PointF (s0.X - n1.X * h, s0.Y - n1.Y * h));
+			Corner (poly, s0, u1, negN1, negN1, back1);
 			return poly;
 		}
 
