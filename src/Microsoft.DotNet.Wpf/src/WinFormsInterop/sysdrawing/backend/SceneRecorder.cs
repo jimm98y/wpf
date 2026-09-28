@@ -147,6 +147,39 @@ namespace System.Drawing.WebGpuBackend
             Add(new GeometryFill(new PolygonGeometry(pts), Rgba(argb)));
         }
 
+        public void FillContours(float[][] contours, bool nonZero, int argb)
+        {
+            PathGeometry geo = Contours(contours, nonZero);
+            if (geo != null) Add(new GeometryFill(geo, Rgba(argb)));
+        }
+
+        public void FillContoursGradient(float[][] contours, bool nonZero, GradientDesc g)
+        {
+            PathGeometry geo = Contours(contours, nonZero);
+            if (geo == null) return;
+            var stops = new GradientStop[g.Offsets.Length];
+            for (int i = 0; i < stops.Length; i++) stops[i] = new GradientStop(g.Offsets[i], Rgba(g.Argb[i]));
+            Add(g.Radial
+                ? new GeometryFill(geo, new RadialGradientBrush(new Vector2(g.Sx, g.Sy), g.Ex, g.Ey, stops))
+                : new GeometryFill(geo, new LinearGradientBrush(new Vector2(g.Sx, g.Sy), new Vector2(g.Ex, g.Ey), stops,
+                                                                GradientSpreadMethod.Pad, bands: 16)));
+        }
+
+        private static PathGeometry Contours(float[][] contours, bool nonZero)
+        {
+            var figures = new System.Collections.Generic.List<PathFigure>();
+            foreach (float[] xy in contours)
+            {
+                if (xy == null || xy.Length < 6) continue;
+                var f = new PathFigure(new Vector2(xy[0], xy[1]));
+                for (int i = 2; i + 1 < xy.Length; i += 2)
+                    f.Segments.Add(new LineSegment(new Vector2(xy[i], xy[i + 1])));
+                f.Closed = true;
+                figures.Add(f);
+            }
+            return figures.Count == 0 ? null : new PathGeometry(nonZero ? FillRule.NonZero : FillRule.EvenOdd, figures);
+        }
+
         public void DrawLine(float x1, float y1, float x2, float y2, int argb, float width = 1f)
         {
             RgbaColor c = Rgba(argb);

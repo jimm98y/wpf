@@ -263,6 +263,87 @@ namespace System.Drawing
 			} finally { bmp.UnlockBits (data); }
 			return true;
 		}
+		static PointF [] ToF (Point [] p)
+		{
+			if (p == null) return null;
+			var r = new PointF [p.Length];
+			for (int i = 0; i < p.Length; i++) r [i] = p [i];
+			return r;
+		}
+
+		// A parallelogram given as three points (upper-left, upper-right, lower-left) that is an upright
+		// rectangle draws as one; a rotated or sheared one falls through.
+		bool RecordImagePoints (Image image, PointF [] dest, RectangleF? src, GraphicsUnit unit, Imaging.ImageAttributes attrs)
+		{
+			if (GpuRecorder == null || image == null || dest == null || dest.Length < 3) return false;
+			if (dest [0].Y != dest [1].Y || dest [0].X != dest [2].X) return false;
+			var rect = new RectangleF (dest [0].X, dest [0].Y, dest [1].X - dest [0].X, dest [2].Y - dest [0].Y);
+			return RecordImage (image, rect, src ?? new RectangleF (0, 0, image.Width, image.Height), unit, attrs);
+		}
+
+		// Record a Bitmap draw with a source rectangle and image attributes applied to its pixels. False
+		// (fall through) when not in GPU-raster mode or the image isn't a Bitmap we can read.
+		bool RecordImage (Image image, RectangleF dest, RectangleF src, GraphicsUnit unit, Imaging.ImageAttributes attrs)
+		{
+			if (GpuRecorder == null || !(image is Bitmap bmp)) return false;
+			if (unit != GraphicsUnit.Pixel) {
+				float ux = UnitToPixels (unit, bmp.HorizontalResolution), uy = UnitToPixels (unit, bmp.VerticalResolution);
+				src = new RectangleF (src.X * ux, src.Y * uy, src.Width * ux, src.Height * uy);
+			}
+			if (src.Width <= 0 || src.Height <= 0 || dest.Width == 0 || dest.Height == 0) return true;
+			int x0 = Math.Max (0, (int) Math.Floor (src.X)), y0 = Math.Max (0, (int) Math.Floor (src.Y));
+			int x1 = Math.Min (bmp.Width, (int) Math.Ceiling (src.Right)), y1 = Math.Min (bmp.Height, (int) Math.Ceiling (src.Bottom));
+			int w = x1 - x0, h = y1 - y0;
+			if (w <= 0 || h <= 0) return true;
+			// Clamping the source to the bitmap shrinks the destination in proportion.
+			float kx = dest.Width / src.Width, ky = dest.Height / src.Height;
+			var d = new RectangleF (dest.X + (x0 - src.X) * kx, dest.Y + (y0 - src.Y) * ky, w * kx, h * ky);
+			var data = bmp.LockBits (new Rectangle (x0, y0, w, h), Imaging.ImageLockMode.ReadOnly, Imaging.PixelFormat.Format32bppArgb);
+			try {
+				byte[] buf = new byte[data.Stride * h];
+				System.Runtime.InteropServices.Marshal.Copy (data.Scan0, buf, 0, buf.Length);
+				byte[] rgba = new byte[w * h * 4];
+				for (int yy = 0; yy < h; yy++)
+					for (int xx = 0; xx < w; xx++) {
+						int si = yy * data.Stride + xx * 4, o = (yy * w + xx) * 4;
+						rgba[o] = buf[si + 2]; rgba[o + 1] = buf[si + 1]; rgba[o + 2] = buf[si + 0]; rgba[o + 3] = buf[si + 3];
+					}
+				attrs?.Apply (rgba, Imaging.ColorAdjustType.Bitmap);
+				GpuRecorder.DrawImage (rgba, w, h, d.X, d.Y, d.Width, d.Height);
+			} finally { bmp.UnlockBits (data); }
+			return true;
+		}
+
+		static float UnitToPixels (GraphicsUnit unit, float dpi)
+		{
+			switch (unit) {
+			case GraphicsUnit.Point: return dpi / 72f;
+			case GraphicsUnit.Inch: return dpi;
+			case GraphicsUnit.Document: return dpi / 300f;
+			case GraphicsUnit.Millimeter: return dpi / 25.4f;
+			default: return 1f;
+			}
+		}
+
+		// Convex, and wound one way: what a fan triangulates correctly. Collinear runs are allowed.
+		static bool IsConvex (float [] xy)
+		{
+			int n = xy.Length / 2;
+			if (n < 4) return true;
+			int sign = 0;
+			for (int i = 0; i < n; i++) {
+				float ax = xy [i * 2], ay = xy [i * 2 + 1];
+				float bx = xy [(i + 1) % n * 2], by = xy [(i + 1) % n * 2 + 1];
+				float cx = xy [(i + 2) % n * 2], cy = xy [(i + 2) % n * 2 + 1];
+				float cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+				if (cross == 0) continue;
+				int sg = cross > 0 ? 1 : -1;
+				if (sign == 0) sign = sg;
+				else if (sg != sign) return false;
+			}
+			return true;
+		}
+
 		internal IMacContext maccontext;
 		private bool disposed = false;
 		private static float defDpiX = 0;
@@ -618,6 +699,7 @@ namespace System.Drawing
 
 		public void DrawBezier (Pen pen, PointF pt1, PointF pt2, PointF pt3, PointF pt4)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBezier (pt1, pt2, pt3, pt4); DrawPath (pen, gp); } return; }
 			Status status;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -629,6 +711,7 @@ namespace System.Drawing
 
 		public void DrawBezier (Pen pen, Point pt1, Point pt2, Point pt3, Point pt4)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBezier (pt1, pt2, pt3, pt4); DrawPath (pen, gp); } return; }
 			Status status;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -640,6 +723,7 @@ namespace System.Drawing
 
 		public void DrawBezier (Pen pen, float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBezier (x1, y1, x2, y2, x3, y3, x4, y4); DrawPath (pen, gp); } return; }
 			Status status;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -650,6 +734,7 @@ namespace System.Drawing
 
 		public void DrawBeziers (Pen pen, Point [] points)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBeziers (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -677,6 +762,7 @@ namespace System.Drawing
 
 		public void DrawBeziers (Pen pen, PointF [] points)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBeziers (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -705,6 +791,7 @@ namespace System.Drawing
 		
 		public void DrawClosedCurve (Pen pen, PointF [] points)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -717,6 +804,7 @@ namespace System.Drawing
 		
 		public void DrawClosedCurve (Pen pen, Point [] points)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -731,6 +819,7 @@ namespace System.Drawing
 		// GDI+ call doesn't support it (issue spotted using Gendarme's AvoidUnusedParametersRule)
 		public void DrawClosedCurve (Pen pen, Point [] points, float tension, FillMode fillmode)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -745,6 +834,7 @@ namespace System.Drawing
 		// GDI+ call doesn't support it (issue spotted using Gendarme's AvoidUnusedParametersRule)
 		public void DrawClosedCurve (Pen pen, PointF [] points, float tension, FillMode fillmode)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -757,6 +847,7 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, Point [] points)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -769,6 +860,7 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, PointF [] points)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -781,6 +873,7 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, PointF [] points, float tension)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -793,6 +886,7 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, Point [] points, float tension)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -805,6 +899,7 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, PointF [] points, int offset, int numberOfSegments)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, offset, numberOfSegments, 0.5f); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -819,6 +914,7 @@ namespace System.Drawing
 
 		public void DrawCurve (Pen pen, Point [] points, int offset, int numberOfSegments, float tension)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, offset, numberOfSegments, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -833,6 +929,7 @@ namespace System.Drawing
 
 		public void DrawCurve (Pen pen, PointF [] points, int offset, int numberOfSegments, float tension)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, offset, numberOfSegments, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -927,6 +1024,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints)
 		{
+			if (RecordImagePoints (image, ToF (destPoints), null, GraphicsUnit.Pixel, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (destPoints == null)
@@ -952,6 +1050,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF [] destPoints)
 		{
+			if (RecordImagePoints (image, destPoints, null, GraphicsUnit.Pixel, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (destPoints == null)
@@ -980,6 +1079,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, Rectangle srcRect, GraphicsUnit srcUnit)
 		{
+			if (RecordImage (image, destRect, srcRect, srcUnit, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImageRectRectI (nativeObject, image.NativeObject,
@@ -990,7 +1090,8 @@ namespace System.Drawing
 		}
 		
 		public void DrawImage (Image image, RectangleF destRect, RectangleF srcRect, GraphicsUnit srcUnit)
-		{			
+		{
+			if (RecordImage (image, destRect, srcRect, srcUnit, null)) return;			
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImageRectRect (nativeObject, image.NativeObject,
@@ -1002,6 +1103,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit)
 		{
+			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (destPoints == null)
@@ -1016,6 +1118,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit)
 		{
+			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (destPoints == null)
@@ -1067,7 +1170,8 @@ namespace System.Drawing
 		}
 
 		public void DrawImage (Image image, int x, int y, Rectangle srcRect, GraphicsUnit srcUnit)
-		{			
+		{
+			if (RecordImage (image, new RectangleF (x, y, srcRect.Width, srcRect.Height), srcRect, srcUnit, null)) return;			
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImagePointRectI(nativeObject, image.NativeObject, x, y, srcRect.X, srcRect.Y, srcRect.Width, srcRect.Height, srcUnit);
@@ -1084,7 +1188,8 @@ namespace System.Drawing
 		}
 
 		public void DrawImage (Image image, float x, float y, RectangleF srcRect, GraphicsUnit srcUnit)
-		{			
+		{
+			if (RecordImage (image, new RectangleF (x, y, srcRect.Width, srcRect.Height), srcRect, srcUnit, null)) return;			
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImagePointRect (nativeObject, image.nativeObject, x, y, srcRect.X, srcRect.Y, srcRect.Width, srcRect.Height, srcUnit);
@@ -1093,6 +1198,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
 		{
+			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (destPoints == null)
@@ -1106,6 +1212,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
 		{
+			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (destPoints == null)
@@ -1120,6 +1227,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback, int callbackData)
 		{
+			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (destPoints == null)
@@ -1134,6 +1242,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit)
 		{
+			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImageRectRect (nativeObject, image.NativeObject,
@@ -1145,6 +1254,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback, int callbackData)
 		{
+			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			Status status = GDIPlus.GdipDrawImagePointsRect (nativeObject, image.NativeObject,
 				destPoints, destPoints.Length , srcRect.X, srcRect.Y,
 				srcRect.Width, srcRect.Height, srcUnit, 
@@ -1154,6 +1264,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit)
 		{
+			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImageRectRectI (nativeObject, image.NativeObject,
@@ -1165,6 +1276,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs)
 		{
+			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImageRectRect (nativeObject, image.NativeObject,
@@ -1175,7 +1287,8 @@ namespace System.Drawing
 		}
 		
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttr)
-		{			
+		{
+			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttr)) return;			
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImageRectRectI (nativeObject, image.NativeObject, 
@@ -1187,6 +1300,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
 		{
+			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImageRectRectI (nativeObject, image.NativeObject, 
@@ -1199,6 +1313,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback)
 		{
+			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImageRectRect (nativeObject, image.NativeObject, 
@@ -1211,6 +1326,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback, IntPtr callbackData)
 		{
+			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImageRectRect (nativeObject, image.NativeObject, 
@@ -1222,6 +1338,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback, IntPtr callbackData)
 		{
+			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			Status status = GDIPlus.GdipDrawImageRectRect (nativeObject, image.NativeObject, 
@@ -1278,6 +1395,7 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, PointF pt1, PointF pt2)
 		{
+			if (GpuRecorder != null) { DrawLine (pen, pt1.X, pt1.Y, pt2.X, pt2.Y); return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
                         Status status = GDIPlus.GdipDrawLine (nativeObject, pen.NativePen,
@@ -1407,6 +1525,7 @@ namespace System.Drawing
 		
 		public void DrawPie (Pen pen, float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddPie (x, y, width, height, startAngle, sweepAngle); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			Status status = GDIPlus.GdipDrawPie (nativeObject, pen.NativePen, x, y, width, height, startAngle, sweepAngle);
@@ -1515,6 +1634,7 @@ namespace System.Drawing
 
 		public void DrawRectangles (Pen pen, RectangleF [] rects)
 		{
+			if (GpuRecorder != null) { foreach (RectangleF r in rects) DrawRectangle (pen, r.X, r.Y, r.Width, r.Height); return; }
 			if (pen == null)
 				throw new ArgumentNullException ("image");
 			if (rects == null)
@@ -1525,6 +1645,7 @@ namespace System.Drawing
 
 		public void DrawRectangles (Pen pen, Rectangle [] rects)
 		{
+			if (GpuRecorder != null) { foreach (Rectangle r in rects) DrawRectangle (pen, r); return; }
 			if (pen == null)
 				throw new ArgumentNullException ("image");
 			if (rects == null)
@@ -2217,6 +2338,7 @@ namespace System.Drawing
 		
 		public void FillClosedCurve (Brush brush, PointF [] points)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath (FillMode.Alternate)) { gp.AddClosedCurve (points); FillPath (brush, gp); } return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2227,6 +2349,7 @@ namespace System.Drawing
 		
 		public void FillClosedCurve (Brush brush, Point [] points)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath (FillMode.Alternate)) { gp.AddClosedCurve (points); FillPath (brush, gp); } return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2256,6 +2379,7 @@ namespace System.Drawing
 
 		public void FillClosedCurve (Brush brush, PointF [] points, FillMode fillmode, float tension)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath (fillmode)) { gp.AddClosedCurve (points, tension); FillPath (brush, gp); } return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2266,6 +2390,7 @@ namespace System.Drawing
 
 		public void FillClosedCurve (Brush brush, Point [] points, FillMode fillmode, float tension)
 		{
+			if (GpuRecorder != null) { using (var gp = new GraphicsPath (fillmode)) { gp.AddClosedCurve (points, tension); FillPath (brush, gp); } return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2317,10 +2442,25 @@ namespace System.Drawing
 			if (path == null)
 				throw new ArgumentNullException ("path");
 			if (GpuRecorder != null) {
-				int c = ArgbOf (brush);
+				// Every subpath together, under the path's own fill mode: a figure inside another is a
+				// hole under Alternate, and a concave figure is not a fan.
+				var contours = new List<float []> ();
 				foreach (PointF [] sub in FlattenSubpaths (path))
 					if (sub.Length >= 3)
-						GpuRecorder.FillPolygon (ToXY (sub), c);
+						contours.Add (ToXY (sub));
+				if (contours.Count == 0)
+					return;
+				bool nonZero = path.FillMode == FillMode.Winding;
+				if (TryHatch (brush, out HatchTile ht)) {
+					foreach (float [] xy in contours)
+						GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, xy, ht.Rgba, ht.W, ht.H, ht.Size);
+					return;
+				}
+				if (TryGradient (brush, out GradientDesc gd)) {
+					GpuRecorder.FillContoursGradient (contours.ToArray (), nonZero, gd);
+					return;
+				}
+				GpuRecorder.FillContours (contours.ToArray (), nonZero, ArgbOf (brush));
 				return;
 			}
 			Status status = GDIPlus.GdipFillPath (nativeObject, brush.NativeBrush,  path.nativePath);
@@ -2371,7 +2511,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (points == null)
 				throw new ArgumentNullException ("points");
-			if (RecordSolid (brush)) { GpuRecorder.FillPolygon (Flatten (points), ArgbOf (brush)); return; }
+			if (RecordSolid (brush)) { float [] xy = Flatten (points); if (IsConvex (xy)) GpuRecorder.FillPolygon (xy, ArgbOf (brush)); else GpuRecorder.FillContours (new [] { xy }, false, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon2 (nativeObject, brush.NativeBrush, points, points.Length);
@@ -2384,7 +2524,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (points == null)
 				throw new ArgumentNullException ("points");
-			if (RecordSolid (brush)) { GpuRecorder.FillPolygon (Flatten (points), ArgbOf (brush)); return; }
+			if (RecordSolid (brush)) { float [] xy = Flatten (points); if (IsConvex (xy)) GpuRecorder.FillPolygon (xy, ArgbOf (brush)); else GpuRecorder.FillContours (new [] { xy }, false, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon2I (nativeObject, brush.NativeBrush, points, points.Length);
@@ -2397,7 +2537,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (points == null)
 				throw new ArgumentNullException ("points");
-			if (RecordSolid (brush)) { GpuRecorder.FillPolygon (Flatten (points), ArgbOf (brush)); return; }
+			if (RecordSolid (brush)) { float [] xy = Flatten (points); if (IsConvex (xy)) GpuRecorder.FillPolygon (xy, ArgbOf (brush)); else GpuRecorder.FillContours (new [] { xy }, fillMode == FillMode.Winding, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygonI (nativeObject, brush.NativeBrush, points, points.Length, fillMode);
@@ -2410,7 +2550,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (points == null)
 				throw new ArgumentNullException ("points");
-			if (RecordSolid (brush)) { GpuRecorder.FillPolygon (Flatten (points), ArgbOf (brush)); return; }
+			if (RecordSolid (brush)) { float [] xy = Flatten (points); if (IsConvex (xy)) GpuRecorder.FillPolygon (xy, ArgbOf (brush)); else GpuRecorder.FillContours (new [] { xy }, fillMode == FillMode.Winding, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon (nativeObject, brush.NativeBrush, points, points.Length, fillMode);
@@ -2460,6 +2600,7 @@ namespace System.Drawing
 
 		public void FillRectangles (Brush brush, Rectangle [] rects)
 		{
+			if (GpuRecorder != null) { foreach (Rectangle r in rects) FillRectangle (brush, r); return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (rects == null)
@@ -2471,6 +2612,7 @@ namespace System.Drawing
 
 		public void FillRectangles (Brush brush, RectangleF [] rects)
 		{
+			if (GpuRecorder != null) { foreach (RectangleF r in rects) FillRectangle (brush, r); return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (rects == null)
@@ -2483,6 +2625,7 @@ namespace System.Drawing
 		
 		public void FillRegion (Brush brush, Region region)
 		{
+			if (GpuRecorder != null) { foreach (RectangleF r in region.GetRegionScans (new Matrix ())) FillRectangle (brush, r.X, r.Y, r.Width, r.Height); return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (region == null)

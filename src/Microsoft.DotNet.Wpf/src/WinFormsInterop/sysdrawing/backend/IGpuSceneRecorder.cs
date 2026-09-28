@@ -31,6 +31,11 @@ namespace System.Drawing
         void FillHatch(GradientShape shape, float x, float y, float w, float h, float[] polyXY,
                        byte[] tileRgba, int tileW, int tileH, float tileSize);
         void FillPolygon(float[] xy, int argb);   // flattened x0,y0,x1,y1,…
+        /// <summary>Several closed contours (each flattened x0,y0,x1,y1,…) filled as ONE region under
+        /// the fill rule: GDI+'s Alternate is even-odd, Winding is non-zero. A path with a hole, or a
+        /// concave polygon, needs this -- a lone polygon is fanned as if convex.</summary>
+        void FillContours(float[][] contours, bool nonZero, int argb);
+        void FillContoursGradient(float[][] contours, bool nonZero, GradientDesc g);
         /// <summary>A stroked line. <paramref name="width"/> is the pen's, in the same units
         /// as the coordinates: a line is not always one pixel, and a theme that asks for half a
         /// one (a check box's tick) or two used to get exactly one either way.</summary>
