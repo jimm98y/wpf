@@ -1775,6 +1775,11 @@ namespace System.Windows.Forms {
 			}
 
 			if (draw_mode == TreeViewDrawMode.Normal || draw_mode == TreeViewDrawMode.OwnerDrawText) {
+				if (show_lines)
+					DrawNodeLines (node, dc, clip, dash, node.GetLinesX (), y, middle);
+
+				// The state image after the lines: comctl32 draws it over the connector that runs
+				// into it, so the dots stop at the box.
 				if (checkboxes && state_image_list == null)
 					DrawNodeCheckBox (node, dc, CheckBoxCellLeft (node), middle);
 
@@ -1783,9 +1788,6 @@ namespace System.Windows.Forms {
 
 				if (!checkboxes && node.StateImage != null)
 					dc.DrawImage (node.StateImage, new Rectangle (CheckBoxLeft (node) - 3, y, 16, 16));
-
-				if (show_lines)
-					DrawNodeLines (node, dc, clip, dash, node.GetLinesX (), y, middle);
 
 				// After the lines, not before: the button stands ON the line that runs into it, and Windows
 				// draws the line up to the box and no further. Drawn first, the dotted line was laid
