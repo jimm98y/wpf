@@ -92,10 +92,21 @@ namespace System.Windows.Forms.ButtonInternal
 			int side = Math.Min (bounds.Width, bounds.Height);
 			if (side <= 0)
 				return;
-			var square = new Rectangle (bounds.X + (bounds.Width - side) / 2, bounds.Y + (bounds.Height - side) / 2, side, side);
-			using (var marlett = new Font ("Marlett", side, FontStyle.Regular, GraphicsUnit.Pixel))
-				TextRenderer.DrawText (g, "a", marlett, square.Location, color,
-				                       TextFormatFlags.NoPadding | TextFormatFlags.NoClipping | TextFormatFlags.NoPrefix);
+			// user32's DrawMenuMark: the Marlett cell is the rectangle's shorter side, centred, and a
+			// pixel further left once the rectangle is wider than 11.
+			var square = new Rectangle (bounds.X + (bounds.Width - side) / 2 - (bounds.Width > 11 ? 1 : 0),
+			                            bounds.Y + (bounds.Height - side) / 2, side, side);
+			// user32 draws the check with TextOut into a bitmap .NET then recolours, and it comes
+			// out BI-LEVEL -- one colour, no smoothing -- so the run is drawn that way.
+			System.Drawing.Text.TextRenderingHint hint = g.TextRenderingHint;
+			g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.SingleBitPerPixelGridFit;
+			try {
+				using (var marlett = new Font ("Marlett", side, FontStyle.Regular, GraphicsUnit.Pixel))
+					TextRenderer.DrawText (g, "a", marlett, square.Location, color,
+					                       TextFormatFlags.NoPadding | TextFormatFlags.NoClipping | TextFormatFlags.NoPrefix);
+			} finally {
+				g.TextRenderingHint = hint;
+			}
 		}
 	}
 }

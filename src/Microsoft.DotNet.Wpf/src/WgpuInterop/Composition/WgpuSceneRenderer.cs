@@ -3828,7 +3828,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // Subpixel text is a DIFFERENT MASK of the same shape -- three channels instead of
                 // one -- so it needs its own key, or a run drawn once with ClearType and once without
                 // (a rotated copy, a layered window) would be handed the other one's texture.
-                bool subpixel = isGlyph && ClearType && !_transparentTarget && IsAxisAligned(world);
+                bool subpixel = isGlyph && ClearType && !_transparentTarget && IsAxisAligned(world) && !_biLevelForRun;
+                bool biLevel = isGlyph && _biLevelForRun && IsAxisAligned(world);
                 // The ROW COUNT is part of the mask, not merely the fact of smoothing: two
                 // runs of the same shape either side of the gridfit boundary ask for
                 // different numbers of vertical samples and must not share a texture.
@@ -3836,6 +3837,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 key = (key * 397 ^ (long)format) * 32 + (_symmetricSmoothing && subpixel ? 16 : 0)
                       + (_aliasedEdges ? 8 : 0) + (gamma ? 4 : 0)
                       + (textBlend ? 2 : 0) + (subpixel ? 1 : 0);
+                if (biLevel) key = key * 31 + 0x5b1;
                 // A subpixel mask now carries the contrast curve for the INK it will be drawn in --
                 // the gamma blend GDI does depends on the foreground, and only black makes it drop
                 // out -- so two colours cannot share one mask. Keyed only for subpixel text, and
@@ -3989,8 +3991,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     // Only the GPU path's target comes from the mask POOL; the CPU path uploads a
                     // sampling-only texture. See CachedMask.Pooled.
-                    bool pooled = s_gpuRaster;
-                    if (s_gpuRaster)
+                    bool pooled = s_gpuRaster && !biLevel;
+                    if (biLevel)
+                    {
+                        CoverageMask m = BiLevelGlyphMask(TransformGeometry(normGeom, phased));
+                        if (m.IsEmpty) return;
+                        (tex, view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
+                        mox = (int)m.OriginX; moy = (int)m.OriginY; mw = m.Width; mh = m.Height;
+                    }
+                    else if (s_gpuRaster)
                     {
                         if (!GpuRasterizeCoverage(TransformGeometry(normGeom, phased), gamma,
                                 out tex, out view, out mox, out moy, out mw, out mh, textBlend))
@@ -5317,11 +5326,66 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
             _inStringRun = true;
+            // A bi-level run is fitted the way GDI fits for a monochrome glyph -- ClearType off,
+            // whole-pixel rounding in x as well as y -- and the glyph caches are keyed by these.
+            bool biLevel = (run.Simulations & GlyphRunDraw.BiLevelSimulation) != 0;
+            bool savedSub = Text.TrueTypeFont.SubpixelFitting, savedCt = Text.TrueTypeFont.ClearTypeRendering;
+            if (biLevel)
+            {
+                _biLevelForRun = true;
+                Text.TrueTypeFont.SubpixelFitting = false;
+                Text.TrueTypeFont.ClearTypeRendering = false;
+            }
             try { EmitStringRun(run, world, opacity, clip, width, height, format, data); }
-            finally { _inStringRun = false; }
+            finally
+            {
+                _inStringRun = false;
+                if (biLevel)
+                {
+                    _biLevelForRun = false;
+                    Text.TrueTypeFont.SubpixelFitting = savedSub;
+                    Text.TrueTypeFont.ClearTypeRendering = savedCt;
+                }
+            }
         }
 
         private bool _inStringRun;
+
+        /// <summary>Set for the duration of a GlyphRunDraw.BiLevelSimulation run: its glyph masks are
+        /// GDI's monochrome scan, one sample at each pixel centre.</summary>
+        private bool _biLevelForRun;
+
+        /// <summary>A glyph outline, already in device pixels, scanned the way GDI scans a
+        /// monochrome glyph: the ClearType scan converter's walk with one sample a pixel across and
+        /// one down, each lit sample a whole pixel of ink.</summary>
+        private static CoverageMask BiLevelGlyphMask(PathGeometry device)
+        {
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            void Take(Vector2 p)
+            {
+                x0 = MathF.Min(x0, p.X); y0 = MathF.Min(y0, p.Y);
+                x1 = MathF.Max(x1, p.X); y1 = MathF.Max(y1, p.Y);
+            }
+            foreach (PathFigure f in device.Figures)
+            {
+                Take(f.Start);
+                foreach (PathSegment sg in f.Segments)
+                    switch (sg)
+                    {
+                        case LineSegment l: Take(l.Point); break;
+                        case QuadraticBezierSegment q: Take(q.Control); Take(q.Point); break;
+                        case CubicBezierSegment c: Take(c.Control1); Take(c.Control2); Take(c.Point); break;
+                    }
+            }
+            if (x0 > x1) return default;
+            int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
+            int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
+            bool[]? bits = PathRasterizer.ScanGlyphBits(device, ox, oy, w, h, nSub: 1, dropout: 0, xScale: 1);
+            if (bits is null) return default;
+            var cov = new byte[w * h];
+            for (int i = 0; i < cov.Length; i++) if (bits[i]) cov[i] = 255;
+            return new CoverageMask(cov, w, h, ox, oy);
+        }
 
         /// <summary>How WPF's glyph outlines are rasterized, for the duration of one fill. WPF on
         /// Windows draws through DirectWrite's symmetric ClearType mode, which smooths vertically as

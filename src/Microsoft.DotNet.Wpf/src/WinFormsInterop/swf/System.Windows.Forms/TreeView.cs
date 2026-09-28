@@ -1704,6 +1704,9 @@ namespace System.Windows.Forms {
 		}
 
 		private void DrawSelectionAndFocus(TreeNode node, Graphics dc, Rectangle r)
+			=> DrawSelectionAndFocus (node, dc, r, true);
+
+		private void DrawSelectionAndFocus(TreeNode node, Graphics dc, Rectangle r, bool inset)
 		{
 			if (Focused && focused_node == node && !full_row_select) {
 				ControlPaint.DrawFocusRectangle (dc, r, ForeColor, BackColor);
@@ -1716,7 +1719,8 @@ namespace System.Windows.Forms {
 			if (draw_mode == TreeViewDrawMode.OwnerDrawAll)
 				return;
 
-			r.Inflate (-1, -1);
+			if (inset)
+				r.Inflate (-1, -1);
 
 			if (s_traceSelection && (node == highlighted_node || node == selected_node))
 				Console.Error.WriteLine($"treeview draw '{node.Text}' focused={Focused} " +
@@ -1764,8 +1768,10 @@ namespace System.Windows.Forms {
 			int middle = y + (ActualItemHeight / 2);
 
 			if (full_row_select && !show_lines) {
-				var r = new Rectangle (1, y, ViewportRectangle.Width - 2, ActualItemHeight);
-				DrawSelectionAndFocus (node, dc, r);
+				// comctl32's full-row band: the whole client row, item-high, not inset -- the client
+				// being this viewport less the frame the border takes on each side.
+				var r = new Rectangle (0, y, ViewportRectangle.Width - 2 * BorderInset, ActualItemHeight);
+				DrawSelectionAndFocus (node, dc, r, false);
 			}
 
 			if (draw_mode == TreeViewDrawMode.Normal || draw_mode == TreeViewDrawMode.OwnerDrawText) {

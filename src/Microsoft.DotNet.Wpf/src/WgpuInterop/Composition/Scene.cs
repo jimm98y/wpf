@@ -629,6 +629,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// (TextRenderer) does, rather than from the legacy 'kern' table. See GposKerningTextShaper.</summary>
         public const int GposKerningSimulation = 8;
 
+        /// <summary>Bit 4 of Simulations: draw this run BI-LEVEL -- fitted to whole pixels the way
+        /// GDI's rasterizer fits for a monochrome glyph, one sample a pixel, no smoothing. What GDI
+        /// draws for a font asked for NONANTIALIASED_QUALITY and what DrawFrameControl's Marlett
+        /// glyphs (the menu check a flat CheckBox paints) come out as.</summary>
+        public const int BiLevelSimulation = 16;
+
         /// <summary>Style to render the run in, as WPF's StyleSimulations counts it: 1 = bold,
         /// 2 = italic. A string run carries only a size and a colour otherwise, so without this
         /// every run comes out in the regular face however the caller asked for it.</summary>

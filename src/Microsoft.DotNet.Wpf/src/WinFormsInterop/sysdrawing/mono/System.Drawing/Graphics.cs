@@ -1916,6 +1916,14 @@ namespace System.Drawing
 		/// <summary>Set while TextOutGdi draws a line for TextRenderer: kern from GPOS.</summary>
 		internal bool gpos_kerning;
 
+		/// <summary>TextRenderingHint on a recording Graphics, which has no GDI+ object to hold it.
+		/// The single-bit hints draw the run bi-level (GlyphRunDraw.BiLevelSimulation); TextRenderer
+		/// reads it too, as .NET's maps it to the font's quality (NONANTIALIASED_QUALITY).</summary>
+		TextRenderingHint recorded_text_hint = TextRenderingHint.SystemDefault;
+
+		bool BiLevelText => recorded_text_hint == TextRenderingHint.SingleBitPerPixel
+			|| recorded_text_hint == TextRenderingHint.SingleBitPerPixelGridFit;
+
 		/// <summary>GDI's TextOut with TA_TOP | TA_LEFT: one run, no wrapping and no margin, its cell's
 		/// top-left at (x, y) -- so its baseline is tmAscent below y. The primitive DrawTextEx draws
 		/// each of its lines with (see System.Windows.Forms.GdiDrawText).</summary>
@@ -2079,7 +2087,8 @@ namespace System.Drawing
 				// came out regular.
 				int sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0)
 					   | (no_kerning ? WebGpuBackend.TextMetrics.NoKerning : 0)
-					   | (gpos_kerning && !no_kerning ? WebGpuBackend.TextMetrics.GposKerning : 0);
+					   | (gpos_kerning && !no_kerning ? WebGpuBackend.TextMetrics.GposKerning : 0)
+					   | (BiLevelText ? WebGpuBackend.TextMetrics.BiLevel : 0);
 				// The family the caller asked for. A run used to arrive at the renderer with
 				// nothing but a size, a colour and a style, so everything came out in one
 				// hard-coded face -- and a fixed-width font could not be had at all.
@@ -3737,7 +3746,7 @@ namespace System.Drawing
 
 		public TextRenderingHint TextRenderingHint {
 			get {
-                                if (nativeObject == IntPtr.Zero) return TextRenderingHint.SystemDefault;   // recording-only
+                                if (nativeObject == IntPtr.Zero) return recorded_text_hint;   // recording-only
                                 TextRenderingHint hint;
 
                                 Status status = GDIPlus.GdipGetTextRenderingHint (nativeObject, out hint);
@@ -3746,7 +3755,7 @@ namespace System.Drawing
 			}
 
 			set {
-                                if (nativeObject == IntPtr.Zero) return;
+                                if (nativeObject == IntPtr.Zero) { recorded_text_hint = value; return; }
                                 Status status = GDIPlus.GdipSetTextRenderingHint (nativeObject, value);
 				CheckDrawStatus (status);
 			}

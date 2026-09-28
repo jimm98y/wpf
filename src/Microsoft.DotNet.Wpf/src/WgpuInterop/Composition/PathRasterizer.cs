@@ -3005,15 +3005,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <param name="path">The fitted outline, in pixels, y down.</param>
         /// <returns>bits[subRow * width * 6 + sample], or null when the outline is empty.</returns>
         internal static bool[]? ScanGlyphBits(PathGeometry path, int originX, int originY, int width, int height,
-            int nSub, int dropout)
+            int nSub, int dropout, int xScale = SubpixelsPerPixel * 2)
         {
             if (width <= 0 || height <= 0 || path.Figures.Count == 0) return null;
             var figureOf = new List<int>(path.Figures.Count);
             for (int i = 0; i < path.Figures.Count; i++) figureOf.Add(i);
             GdiExactRows(path, figureOf, 0, path.Figures.Count, originX, originY, width, height, nSub,
-                         out GdiScanRows walk);
+                         out GdiScanRows walk, xScale);
 
-            int nRows = height * nSub, nCols = width * SubpixelsPerPixel * 2;
+            int nRows = height * nSub, nCols = width * xScale;
             var bits = new bool[nRows * nCols];
             for (int rUp = 0; rUp < nRows; rUp++)
             {
@@ -3028,7 +3028,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
             }
 
-            if (dropout > 0)
+            // The dropout pass works on the ClearType lamp grid; a bi-level scan has none of it.
+            if (dropout > 0 && xScale == SubpixelsPerPixel * 2)
             {
                 List<List<Vector2>> polys = Flatten(path, CurveFlattener.GlyphTolerance);
                 int saved = DropoutForRun;
@@ -3047,9 +3048,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private static List<(float X, int Dir)>[] GdiExactRows(PathGeometry path, List<int> figureOf,
             int firstContour, int lastContour, int originX, int originY, int width, int height, int nSub,
-            out GdiScanRows walk)
+            out GdiScanRows walk, int xScale = SubpixelsPerPixel * 2)
         {
-            int nRows = height * nSub, nCols = width * SubpixelsPerPixel * 2;
+            // xScale samples a pixel across: six for ClearType's lamps, one for a bi-level glyph.
+            int nRows = height * nSub, nCols = width * xScale;
             var L = new GdiScanRows(nRows, nCols);
             walk = L;
             // HALVES GO UP, not to even. Every outline point is on the 26.6 pixel grid, so it
@@ -3067,7 +3069,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // by -- takes that glyph to zero. If instead a coordinate is genuinely a sixty-fourth
             // out, one unit does nothing, because a sixty-fourth is six units in x.</para>
             // <para>Never set in a measurement reported as a result.</para>
-            int Xg(float x) => (int) MathF.Floor((x - originX) * 384f + 0.5f) + s_xSubProbe;
+            float xUnits = 64f * xScale;
+            int Xg(float x) => (int) MathF.Floor((x - originX) * xUnits + 0.5f) + s_xSubProbe;
             int Yg(float y) => (int) MathF.Floor((nRows - (y - originY) * nSub) * 64f + 0.5f)
                                + s_ySubProbe;
             var verts = new List<(int X, int Y)>();
@@ -3157,8 +3160,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     int a = on[k], b = off[k];
                     if (a == b) continue;
                     if (b < a) (a, b) = (b, a);
-                    float start = originX + (a + GdiSamplePhase) / 6f;
-                    float end = (originX + (b - 1 + GdiSamplePhase) / 6f + originX + (b + GdiSamplePhase) / 6f) * 0.5f;
+                    float start = originX + (a + GdiSamplePhase) / xScale;
+                    float end = (originX + (b - 1 + GdiSamplePhase) / xScale + originX + (b + GdiSamplePhase) / xScale) * 0.5f;
                     dst.Add((start, -1));
                     dst.Add((end, 1));
                 }

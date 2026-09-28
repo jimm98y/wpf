@@ -18,6 +18,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly byte[] _data;
         private readonly int _subtable;   // file offset of the chosen subtable (0 = none)
         private readonly int _format;     // 4 / 12 / 6 / 0, or -1 if none usable
+        private bool _symbol;              // the chosen subtable is (3,0), a symbol font's
         private int _f4SegCount, _f4EndCodes, _f4StartCodes, _f4IdDeltas, _f4IdRangeOffsets;
         private readonly Dictionary<int, int> _cache = new();   // codepoint -> glyph id
 
@@ -25,6 +26,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             _data = data;
             (_subtable, _format) = SelectSubtable(cmapOffset);
+            _symbol = IsSymbolSubtable(cmapOffset, _subtable);
             if (_format == 4) PrepareFormat4(_subtable);
         }
 
@@ -40,6 +42,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 0 => MapFormat0(codepoint),
                 _ => 0,
             };
+            // A symbol font (Marlett, Wingdings, Symbol) keys its glyphs at U+F020..F0FF, and Windows
+            // maps a character code 0x20..0xFF there -- .NET draws Marlett's check mark as "a".
+            if (gid == 0 && _symbol && codepoint >= 0x20 && codepoint <= 0xFF)
+                gid = Map(0xF000 | codepoint);
             _cache[codepoint] = gid;
             return gid;
         }
@@ -71,6 +77,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (score > bestScore) { bestScore = score; best = sub; bestFormat = format; }
             }
             return bestFormat < 0 ? (0, -1) : (best, bestFormat);
+        }
+
+        private bool IsSymbolSubtable(int cmap, int chosen)
+        {
+            if (chosen == 0) return false;
+            int numTables = U16(cmap + 2);
+            for (int i = 0; i < numTables; i++)
+            {
+                int rec = cmap + 4 + i * 8;
+                if (cmap + (int)U32(rec + 4) == chosen)
+                    return U16(rec) == 3 && U16(rec + 2) == 0;
+            }
+            return false;
         }
 
         private void PrepareFormat4(int sub)

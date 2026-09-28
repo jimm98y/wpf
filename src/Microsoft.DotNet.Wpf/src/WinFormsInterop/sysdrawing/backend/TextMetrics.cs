@@ -119,6 +119,7 @@ namespace System.Drawing.WebGpuBackend
         /// to GDI), each advance a whole device pixel, and no pair kerning (ExtTextOut applies the
         /// legacy 'kern' pairs only to a string holding U+2015 or U+2020).</summary>
         internal const int GposKerning = Microsoft.Wpf.Interop.WebGpu.Composition.GlyphRunDraw.GposKerningSimulation;
+        internal const int BiLevel = Microsoft.Wpf.Interop.WebGpu.Composition.GlyphRunDraw.BiLevelSimulation;
         private static readonly ITextShaper GposShaper = new GposKerningTextShaper();
 
         /// <summary>A run's extent as user32's DrawText measures it: every character through the
