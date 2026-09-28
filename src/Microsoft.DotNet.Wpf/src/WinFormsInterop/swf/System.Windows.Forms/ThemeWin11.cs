@@ -1899,7 +1899,9 @@ namespace System.Windows.Forms
 			// There is a rule under the day names, but at #F5F5F5 it is almost invisible -- faint
 			// enough that reading it off a screen grab took a threshold tight enough to separate it
 			// from white. The classic theme draws the same line in the fore colour, which is black.
-			dc.DrawLine (ResPool.GetPen (Color.FromArgb (245, 245, 245)), x1, y, x2, y);
+			// comctl32 draws it as a GDI line, which stops short of its end point; a GDI+ line
+			// includes it, and ours ran a pixel long.
+			dc.DrawLine (ResPool.GetPen (Color.FromArgb (245, 245, 245)), x1, y, x2 - 1, y);
 		}
 
 		protected override void DrawMonthCalendarButton (Graphics dc, Rectangle rectangle, MonthCalendar mc,
