@@ -858,6 +858,12 @@ Console.WriteLine ("\tbih.biClrImportant: {0}", bih.biClrImportant);
 				int andSize = numBytesPerLine * iconHeight;
 				iidata.iconAND = new byte [andSize];
 				nread = bihReader.Read (iidata.iconAND, 0, andSize);
+				// A 32-bit image carries its transparency in alpha, and Windows reads one whose AND
+				// mask was left off -- .NET's own DataGridView and PropertyGrid icons are written so.
+				// Treat the missing mask as all zero (opaque, the alpha decides).
+				if (nread == 0 && bih.biBitCount == 32) {
+					nread = andSize;
+				}
 				if (nread != andSize) {
 					string msg = Locale.GetText ("{0} data length expected {1}, read {2}", "AND", andSize, nread);
 					throw new ArgumentException (msg, "stream");

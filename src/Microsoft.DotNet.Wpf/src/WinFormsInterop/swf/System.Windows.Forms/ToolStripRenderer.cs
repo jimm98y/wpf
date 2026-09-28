@@ -36,12 +36,15 @@ namespace System.Windows.Forms
 {
 	public abstract class ToolStripRenderer
 	{
+		// .NET's DisabledImageColorMatrix (light mode): MultiplyColorMatrix(diag(1, 1, 1, 0.7, 0),
+		// luminance-with-a-0.38-lift), which computes the SECOND times the first -- luminance,
+		// the 0.38 lift kept, alpha at 70%.
 		private static ColorMatrix grayscale_matrix = new ColorMatrix (new float[][] {
-					  new float[] {0.22f, 0.22f, 0.22f, 0, 0},
-					  new float[] {0.27f, 0.27f, 0.27f, 0, 0},
-					  new float[] {0.04f, 0.04f, 0.04f, 0, 0},
-					  new float[] {0.365f, 0.365f, 0.365f, 0.7f, 0},
-					  new float[] {0, 0, 0, 0, 1}
+					  new float[] {0.2125f, 0.2125f, 0.2125f, 0, 0},
+					  new float[] {0.2577f, 0.2577f, 0.2577f, 0, 0},
+					  new float[] {0.0361f, 0.0361f, 0.0361f, 0, 0},
+					  new float[] {0, 0, 0, 0.7f, 0},
+					  new float[] {0.38f, 0.38f, 0.38f, 0, 0}
 				  });
 
 		protected ToolStripRenderer () 

@@ -214,8 +214,13 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			e.Graphics.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (BackColor), ClientRectangle);
 			
 			int yLoc = TopMargin - vbar.Value*row_height;
-			if (this.RootGridItem != null)
+			if (this.RootGridItem != null) {
 				DrawGridItems (this.RootGridItem.GridItems, e, 1, ref yLoc);
+				// .NET closes the last row with one more rule.
+				if (yLoc > TopMargin && yLoc - 1 < ClientRectangle.Height)
+					using (Pen pen = new Pen (property_grid.LineColor))
+						e.Graphics.DrawLine (pen, 0, yLoc - 1, ClientRectangle.Width - (vbar.Visible ? vbar.Width : 0), yLoc - 1);
+			}
 
 			UpdateScrollBar ();
 		}
@@ -648,6 +653,13 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		// }
 		#region Drawing Code
 
+		// .NET's PropertyGridView.OnPaint / DrawLabel / DrawValue and GridEntry.PaintLabel / PaintValue,
+		// in this view's coordinates -- the border host puts it a pixel inside the frame, where .NET's
+		// view draws its own, so everything here is .NET's position less (1, 1). Row k's label and
+		// value rectangles start at 1 + k * (RowHeight + 1) and are RowHeight tall; the rule above
+		// each row is drawn at the row's top less one; the divider at the label width.
+		private const int OutlineIconSize = 16, OutlineIconPadding = 5, ValuePaintIndent = 26, ValuePaintWidth = 20;
+
 		private void DrawGridItems (GridItemCollection grid_items, PaintEventArgs pevent, int depth, ref int yLoc) {
 			foreach (GridItem grid_item in grid_items) {
 				DrawGridItem ((GridEntry)grid_item, pevent, depth, ref yLoc);
@@ -656,78 +668,76 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			}
 		}
 
-		private void DrawGridItemLabel (GridEntry grid_item, PaintEventArgs pevent, int depth, Rectangle rect) {
-			Font font = this.Font;
-			Brush brush;
-
-			if (grid_item.GridItemType == GridItemType.Category) {
-				font = bold_font;
-				brush = ThemeEngine.Current.ResPool.GetSolidBrush (property_grid.CategoryForeColor);
-
-				// The label itself is drawn once, below, along with every other kind of row. Drawing it
-				// here as well laid the same text down twice a pixel apart, and two passes of antialiased
-				// bold text on top of one another is what made a category heading look smeared and barely
-				// legible.
-				if (grid_item == this.SelectedGridItem) {
-					SizeF size = pevent.Graphics.MeasureString (grid_item.Label, font);
-					ControlPaint.DrawFocusRectangle (pevent.Graphics, new Rectangle (rect.X + 1, rect.Y+ENTRY_SPACING, (int)size.Width, (int)size.Height));
-				}
-			}
-			else {
-				if (grid_item == this.SelectedGridItem) {
-					Rectangle highlight = rect;
-					if (depth > 1) {
-						highlight.X -= V_INDENT;
-						highlight.Width += V_INDENT;
-					}
-					// The selection colour only while the grid has the keyboard. Windows marks the row of a
-					// grid that is not being worked in with its rule colour instead -- a pale band rather
-					// than a block of blue, which is what made ours look as though a row had been clicked
-					// when nothing had been.
-					bool active = Focused || ContainsFocus;
-					pevent.Graphics.FillRectangle (
-						active ? SystemBrushes.Highlight
-							 : ThemeEngine.Current.ResPool.GetSolidBrush (property_grid.LineColor),
-						highlight);
-					brush = active ? SystemBrushes.HighlightText : SystemBrushes.ControlText;
-				}
-				else {
-					brush = grid_item.IsReadOnly ? inactive_text_brush : SystemBrushes.ControlText;
-				}
-			}
-			// LABEL_PAD is Windows': its label starts a good deal further past the outline column than
-			// the single pixel this used, and every caption in the grid sat five pixels left of the same
-			// caption in a stock one.
-			// Centred in the row, less one pixel: measured against a stock grid, whose captions sit
-			// exactly there. Centring in the row less the entry spacing put them a pixel low and
-			// centring in the whole row a pixel high -- the row is an even number of pixels tall and
-			// the line is odd, so there is no arrangement that lands between the two by accident.
-			pevent.Graphics.DrawString (grid_item.Label, font, brush,
-						    new Rectangle (rect.X + 1 + LABEL_PAD, rect.Y + 1,
-								   Math.Max (0, rect.Width - ENTRY_SPACING - LABEL_PAD), rect.Height),
-						    string_format);
+		// .NET's _propertyDepth: a category and the properties directly under it are both depth 0.
+		private static int StockDepth (int depth)
+		{
+			return Math.Max (0, depth - 1);
 		}
 
-		private void DrawGridItemValue (GridEntry grid_item, PaintEventArgs pevent, int depth, Rectangle rect) 
+		private static int LabelIndent (GridEntry item, int depth)
 		{
-			if (grid_item.PropertyDescriptor == null)
-				return; 
+			int icon = OutlineIconSize + OutlineIconPadding;
+			return item.GridItemType == GridItemType.Category
+				? 1 + icon + StockDepth (depth) * 10
+				: (StockDepth (depth) + 1) * icon + 1;
+		}
 
-			int xLoc = SplitterLocation+ENTRY_SPACING;
+		private const TextFormatFlags LabelFlags = TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.PreserveGraphicsTranslateTransform;
+
+		private void DrawGridItemLabel (GridEntry grid_item, PaintEventArgs pevent, int depth, Rectangle rect) {
+			Graphics g = pevent.Graphics;
+			bool category = grid_item.GridItemType == GridItemType.Category;
+			bool selected = grid_item == this.SelectedGridItem && !category;
+			bool focus = Focused || ContainsFocus;
+			Color line = property_grid.LineColor;
+			Color back = category ? line : BackColor;
+			Color fill = selected ? (focus ? SystemColors.Highlight : line) : back;
+			int icon = OutlineIconSize + OutlineIconPadding;
+			int indent = LabelIndent (grid_item, depth);
+			Font font = category ? bold_font : this.Font;
+
+			using (var b = new SolidBrush (fill))
+				g.FillRectangle (b, rect);
+			using (var b = new SolidBrush (line))
+				g.FillRectangle (b, rect.X, rect.Y, icon, rect.Height);
+			if (selected && focus)
+				g.FillRectangle (SystemBrushes.Highlight, rect.X + indent, rect.Y, rect.Width - indent - 1, rect.Height);
+
+			string label = grid_item.Label ?? string.Empty;
+			int textWidth = TextRenderer.MeasureText (g, label, font, new Size (int.MaxValue, int.MaxValue), LabelFlags).Width;
+			var textRect = new Rectangle (rect.X + indent, rect.Y + 1, Math.Min (rect.Width - indent - 1, textWidth + 2), rect.Height - 1);
+			Color color = selected && focus ? SystemColors.HighlightText
+				: category ? property_grid.CategoryForeColor
+				: grid_item.IsReadOnly ? ThemeEngine.Current.ColorGrayText : ForeColor;
+			if (textRect.Width > 0 && textRect.Height > 0) {
+				System.Drawing.Drawing2D.GraphicsState state = g.Save ();
+				g.IntersectClip (textRect);
+				TextRenderer.DrawText (g, label, font, textRect, color, LabelFlags);
+				g.Restore (state);
+			}
+			if (category && grid_item == this.SelectedGridItem && focus)
+				ControlPaint.DrawFocusRectangle (g, new Rectangle (rect.X + indent - 2, rect.Y, textWidth + 3, rect.Height - 1));
+		}
+
+		private void DrawGridItemValue (GridEntry grid_item, PaintEventArgs pevent, int depth, Rectangle rect)
+		{
+			Graphics g = pevent.Graphics;
+			bool category = grid_item.GridItemType == GridItemType.Category;
+			using (var b = new SolidBrush (category ? property_grid.LineColor : BackColor))
+				g.FillRectangle (b, rect);
+			if (category || grid_item.PropertyDescriptor == null)
+				return;
+
+			int num = 0;
 			if (grid_item.PaintValueSupported) {
-				pevent.Graphics.DrawRectangle (Pens.Black, SplitterLocation + ENTRY_SPACING, 
-							       rect.Y + 2, VALUE_PAINT_WIDTH + 1, row_height - ENTRY_SPACING*2);
-				grid_item.PaintValue (pevent.Graphics, 
-						      new Rectangle (SplitterLocation + ENTRY_SPACING + 1, 
-								     rect.Y + ENTRY_SPACING + 1,
-								     VALUE_PAINT_WIDTH, row_height - (ENTRY_SPACING*2 +1)));
-				xLoc += VALUE_PAINT_INDENT;
+				num = ValuePaintIndent;
+				var swatch = new Rectangle (rect.X + 1, rect.Y + 1, ValuePaintWidth, RowHeight - 2);
+				grid_item.PaintValue (g, swatch);
+				swatch.Width--;
+				swatch.Height--;
+				g.DrawRectangle (SystemPens.WindowText, swatch);
 			}
 
-			Font font = this.Font;
-			if (grid_item.IsResetable || !grid_item.HasDefaultValue)
-				font = bold_font;
-			Brush brush = grid_item.IsReadOnly ? inactive_text_brush : SystemBrushes.ControlText;
 			string valueText = String.Empty;
 			if (!grid_item.IsMerged || grid_item.IsMerged && grid_item.HasMergedValue) {
 				if (grid_item.IsPassword)
@@ -735,55 +745,41 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				else
 					valueText = grid_item.ValueText;
 			}
-			// The same box the label is drawn in, one column over: a value given two pixels more on the
-			// left and two fewer in height came out three pixels right of Windows' and a pixel below it,
-			// because a shorter box centres the line lower.
-			// The same box the label is drawn in, one column over -- and one pixel nearer the divider
-			// than the entry spacing puts it, which is where a stock grid starts its values.
-			pevent.Graphics.DrawString (valueText, font,
-						    brush,
-						    new RectangleF (xLoc - 1, rect.Y + 1,
-								    ClientRectangle.Width - xLoc, row_height),
-						    string_format);
+			if (string.IsNullOrEmpty (valueText))
+				return;
+			Font font = (grid_item.IsResetable || !grid_item.HasDefaultValue) ? bold_font : this.Font;
+			Color fore = grid_item.IsReadOnly ? ThemeEngine.Current.ColorGrayText : ForeColor;
+			// rect less the painted swatch, then (1, 2) in for painting in place, then the text box
+			// a pixel back up and left and four narrower.
+			var bounds = new Rectangle (rect.X + num, rect.Y + 1, rect.Width - num - 4, rect.Height);
+			TextRenderer.DrawText (g, valueText, font, bounds, fore, BackColor,
+				TextFormatFlags.TextBoxControl | TextFormatFlags.ExpandTabs | TextFormatFlags.NoClipping
+				| TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine | LabelFlags);
 		}
 
 		private void DrawGridItem (GridEntry grid_item, PaintEventArgs pevent, int depth, ref int yLoc) {
 			if (yLoc > -row_height && yLoc < ClientRectangle.Height) {
-				// Left column
-				pevent.Graphics.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (property_grid.LineColor),
-							       0, yLoc, V_INDENT, row_height);
-			
-				if (grid_item.GridItemType == GridItemType.Category) {
-					pevent.Graphics.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (property_grid.LineColor), depth*V_INDENT,yLoc,ClientRectangle.Width-(depth*V_INDENT), row_height);
-				}
+				int divider = SplitterLocation;
+				int width = ClientRectangle.Width - (vbar.Visible ? vbar.Width : 0);
+				using (Pen pen = new Pen (property_grid.LineColor))
+					pevent.Graphics.DrawLine (pen, 0, yLoc - 1, width, yLoc - 1);
+				DrawGridItemValue (grid_item, pevent, depth,
+						  new Rectangle (divider + 1, yLoc, width - divider - 1, RowHeight));
+				DrawGridItemLabel (grid_item, pevent, depth, new Rectangle (0, yLoc, divider, RowHeight));
+				using (Pen pen = new Pen (property_grid.LineColor))
+					pevent.Graphics.DrawLine (pen, divider, yLoc - 1, divider, yLoc + RowHeight);
 
-				DrawGridItemLabel (grid_item, pevent,
-						  depth,
-						  new Rectangle (depth * V_INDENT, yLoc, SplitterLocation - depth * V_INDENT, row_height));
-				DrawGridItemValue (grid_item, pevent,
-						  depth,
-						  new Rectangle (SplitterLocation + ENTRY_SPACING , yLoc, 
-								 ClientRectangle.Width - SplitterLocation - ENTRY_SPACING - (vbar.Visible ? vbar.Width : 0), 
-								 row_height));
-
-				if (grid_item.GridItemType != GridItemType.Category) {
-					Pen pen = ThemeEngine.Current.ResPool.GetPen (property_grid.LineColor);
-					// vertical divider line
-					pevent.Graphics.DrawLine (pen, SplitterLocation, yLoc, SplitterLocation, yLoc + row_height);
-			
-					// draw the horizontal line
-					pevent.Graphics.DrawLine (pen, 0, yLoc + row_height, ClientRectangle.Width, yLoc + row_height);
-				}				
-				
 				if (grid_item.Expandable) {
-					// Centred in the row and centred in the outline column, which is where a stock grid puts
-					// it: measured against one, ours sat three pixels low and three pixels left.
-					int y = yLoc + (row_height - PLUS_MINUS_SIZE) / 2;
-					int x = (depth - 1) * V_INDENT + (V_INDENT - PLUS_MINUS_SIZE) / 2 + 2;
-					grid_item.PlusMinusBounds = DrawPlusMinus (pevent.Graphics, x, y,
+					// GridEntry.OutlineRectangle: 16 square, OutlineIconPadding / 2 in per depth step,
+					// centred in the row; the glyph centred in that.
+					int d = StockDepth (depth);
+					var outline = new Rectangle (d * (OutlineIconSize + OutlineIconPadding) + OutlineIconPadding / 2,
+								     yLoc + (RowHeight - OutlineIconSize) / 2, OutlineIconSize, OutlineIconSize);
+					grid_item.PlusMinusBounds = DrawPlusMinus (pevent.Graphics,
+										   outline.X + (OutlineIconSize - PLUS_MINUS_SIZE) / 2,
+										   outline.Y + (OutlineIconSize - PLUS_MINUS_SIZE) / 2,
 										   grid_item.Expanded, grid_item.GridItemType == GridItemType.Category);
 				}
-
 			}
 			grid_item.Top = yLoc;
 			yLoc += row_height;

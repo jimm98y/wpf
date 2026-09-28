@@ -198,7 +198,7 @@ namespace System.Windows.Forms {
 				int x = cellBounds.Left + 6;
 
 				if (DataGridView.CurrentRow != null && DataGridView.CurrentRow.Index == rowIndex) {
-					DrawRightArrowGlyph (graphics, p, x, cellBounds.Top + (cellBounds.Height / 2) - 4);
+					PaintIcon (graphics, RightArrowBitmap, IconBounds (cellBounds, cellStyle), color);
 					x += 7;
 				}
 
@@ -258,6 +258,43 @@ namespace System.Windows.Forms {
 			if (ThemeEngine.Current.DataGridViewRowHeaderCellDrawSelectionBackground (this))
 				return;
 			base.PaintPartSelectionBackground (graphics, cellBounds, cellState, cellStyle);
+		}
+
+		// .NET draws the row glyphs from its own icon resources, 12 x 11, black remapped to the
+		// header's text colour.
+		private static Bitmap s_rightArrowBmp;
+		private static Bitmap RightArrowBitmap => s_rightArrowBmp ??= ScaleHelper.GetIconResourceAsBitmap (typeof (DataGridViewHeaderCell), "DataGridViewRow.right", new Size (IconsWidth, IconsHeight));
+		private const int IconsWidth = 12, IconsHeight = 11;
+
+		// PaintPrivate's rectangle for the glyph: the value rectangle (less borders and padding),
+		// less the header theme's margins -- Aero's, which .NET hard-codes as 2 top, 1 left, 2 right.
+		private Rectangle IconBounds (Rectangle cellBounds, DataGridViewCellStyle cellStyle)
+		{
+			Rectangle r = CellValueBounds (cellBounds);
+			Padding pad = cellStyle.Padding;
+			r = new Rectangle (r.X + pad.Left, r.Y + pad.Top, r.Width - pad.Horizontal, r.Height - pad.Vertical);
+			if (Application.RenderWithVisualStyles) {
+				r.X += 1;
+				r.Width -= 1 + 2;
+				r.Height -= 2 + 0;
+				r.Y += 2;
+			}
+			return r;
+		}
+
+		private static void PaintIcon (Graphics g, Bitmap bmp, Rectangle bounds, Color foreColor)
+		{
+			if (bounds.Width < IconsWidth + 6 || bounds.Height < IconsHeight + 4)
+				return;
+			var dest = new Rectangle (bounds.Left + 3, bounds.Y + (bounds.Height - IconsHeight) / 2, IconsWidth, IconsHeight);
+			if (foreColor.ToArgb () == Color.Black.ToArgb ()) {
+				g.DrawImage (bmp, dest, 0, 0, IconsWidth, IconsHeight, GraphicsUnit.Pixel);
+				return;
+			}
+			using (var attributes = new System.Drawing.Imaging.ImageAttributes ()) {
+				attributes.SetRemapTable (new[] { new System.Drawing.Imaging.ColorMap { OldColor = Color.Black, NewColor = foreColor } }, System.Drawing.Imaging.ColorAdjustType.Bitmap);
+				g.DrawImage (bmp, dest, 0, 0, IconsWidth, IconsHeight, GraphicsUnit.Pixel, attributes);
+			}
 		}
 
 		private void DrawRightArrowGlyph (Graphics g, Pen p, int x, int y)

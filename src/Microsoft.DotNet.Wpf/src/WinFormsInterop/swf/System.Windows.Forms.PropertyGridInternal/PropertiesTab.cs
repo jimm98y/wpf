@@ -62,7 +62,16 @@ namespace System.Windows.Forms.PropertyGridInternal
 			if (obj == null)
 				return null;
 
-			return TypeDescriptor.GetDefaultProperty (obj);
+			// .NET's: the type's default property, else one called "Name".
+			PropertyDescriptor descriptor = TypeDescriptor.GetDefaultProperty (obj);
+			if (descriptor == null) {
+				PropertyDescriptorCollection properties = GetProperties (obj);
+				if (properties != null)
+					for (int i = 0; i < properties.Count; i++)
+						if ("Name".Equals (properties [i].Name))
+							return properties [i];
+			}
+			return descriptor;
 		}
 
 		public override string HelpKeyword {

@@ -161,16 +161,25 @@ namespace System.Windows.Forms
 			ContextMenu context_menu = new ContextMenu();
 			context_menu_default_location = Point.Empty;
 
-			categorized_image = new Bitmap (typeof (PropertyGrid), "propertygrid-categorized.png");
-			alphabetical_image = new Bitmap (typeof (PropertyGrid), "propertygrid-alphabetical.png");
-			propertypages_image = new Bitmap (typeof (PropertyGrid), "propertygrid-propertypages.png");
+			// .NET's own icons for the three buttons (SortByCategoryImage, SortByPropertyImage,
+			// ShowPropertyPageImage), at the small icon size.
+			categorized_image = ScaleHelper.GetIconResourceAsDefaultSizeBitmap (typeof (PropertyGrid), "PBCategory");
+			alphabetical_image = ScaleHelper.GetIconResourceAsDefaultSizeBitmap (typeof (PropertyGrid), "PBAlpha");
+			propertypages_image = ScaleHelper.GetIconResourceAsDefaultSizeBitmap (typeof (PropertyGrid), "PBPPage");
+			// .NET's AddImage: a bitmap that is not an icon -- ToBitmap's are not -- has the colour of
+			// its bottom-left pixel made transparent, which clears these icons' opaque light backing.
+			((Bitmap) categorized_image).MakeTransparent ();
+			((Bitmap) alphabetical_image).MakeTransparent ();
+			((Bitmap) propertypages_image).MakeTransparent ();
 
 			toolbar_imagelist = new ImageList();
 			toolbar_imagelist.ColorDepth = ColorDepth.Depth32Bit;
 			toolbar_imagelist.ImageSize = new System.Drawing.Size(16, 16);
 			toolbar_imagelist.TransparentColor = System.Drawing.Color.Transparent;
 
-			toolbar.Appearance = ToolBarAppearance.Flat;
+			// DrawFlatToolbar is false by default in .NET, which draws the tool bar with the system
+			// renderer.
+			toolbar.Appearance = ToolBarAppearance.Normal;
 			toolbar.AutoSize = false;
 			
 			toolbar.ImageList = toolbar_imagelist;
@@ -1715,7 +1724,8 @@ namespace System.Windows.Forms
 			{
 				SetStyle (ControlStyles.ResizeRedraw, true);
 				GripStyle = ToolStripGripStyle.Hidden;
-				appearance = ToolBarAppearance.Normal;
+				// Not Normal yet: setting Appearance to Normal must install the renderer.
+				appearance = ToolBarAppearance.Flat;
 			}
 
 			public bool ShowToolTips {
@@ -1733,13 +1743,17 @@ namespace System.Windows.Forms
 					// SYSTEM renderer, which draws the pre-visual-styles look, and that is what left
 					// this toolbar's checked buttons in carved 3D frames while everything else had
 					// moved on. The classic theme still answers exactly as this did.
+					// .NET's SetToolStripRenderer: a flat tool bar (or high contrast) gets the
+					// professional renderer in system colours, the normal one the system renderer.
 					switch (value) {
 					case ToolBarAppearance.Flat:
-						Renderer = ThemeEngine.Current.CreateToolBarRenderer (ToolBarAppearance.Flat);
+						Renderer = new ToolStripProfessionalRenderer (new ProfessionalColorTable { UseSystemColors = true });
 						appearance = ToolBarAppearance.Flat;
 						break;
 					case ToolBarAppearance.Normal:
-						Renderer = ThemeEngine.Current.CreateToolBarRenderer (ToolBarAppearance.Normal);
+						Renderer = SystemInformation.HighContrast
+							? (ToolStripRenderer) new ToolStripProfessionalRenderer (new ProfessionalColorTable { UseSystemColors = true })
+							: new ToolStripSystemRenderer ();
 						appearance = ToolBarAppearance.Normal;
 						break;
 					}

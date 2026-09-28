@@ -53,6 +53,18 @@
     <EmbeddedResource Include="swf/resources/image-x-generic.png"><LogicalName>image-x-generic.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/propertygrid-alphabetical.png"><LogicalName>System.Windows.Forms.propertygrid-alphabetical.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/datetimepicker-calendar.png"><LogicalName>System.Windows.Forms.datetimepicker-calendar.png</LogicalName></EmbeddedResource>
+    <!-- .NET's own icon resources (dotnet/winforms, MIT), under the names it loads them by. -->
+    <EmbeddedResource Include="swf/resources/PBAlpha.ico"><LogicalName>System.Windows.Forms.PBAlpha</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/PBCategory.ico"><LogicalName>System.Windows.Forms.PBCategory</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/PBPPage.ico"><LogicalName>System.Windows.Forms.PBPPage</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/DataGridViewRow.right.ico"><LogicalName>System.Windows.Forms.DataGridViewRow.right</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/DataGridViewRow.left.ico"><LogicalName>System.Windows.Forms.DataGridViewRow.left</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/DataGridViewRow.star.ico"><LogicalName>System.Windows.Forms.DataGridViewRow.star</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/DataGridViewRow.rightstar.ico"><LogicalName>System.Windows.Forms.DataGridViewRow.rightstar</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/DataGridViewRow.leftstar.ico"><LogicalName>System.Windows.Forms.DataGridViewRow.leftstar</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/DataGridViewRow.pencil_ltr.ico"><LogicalName>System.Windows.Forms.DataGridViewRow.pencil_ltr</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/DataGridViewRow.pencil_rtl.ico"><LogicalName>System.Windows.Forms.DataGridViewRow.pencil_rtl</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="swf/resources/DataGridViewRow.error.ico"><LogicalName>System.Windows.Forms.DataGridViewRow.error</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/propertygrid-categorized.png"><LogicalName>System.Windows.Forms.propertygrid-categorized.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/propertygrid-propertypages.png"><LogicalName>System.Windows.Forms.propertygrid-propertypages.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/EventsTab.bmp"><LogicalName>System.Windows.Forms.Design.EventsTab.bmp</LogicalName></EmbeddedResource>

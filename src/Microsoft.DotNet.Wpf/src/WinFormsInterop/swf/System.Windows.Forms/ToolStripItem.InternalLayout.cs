@@ -22,6 +22,12 @@ namespace System.Windows.Forms
 			return new ToolStripItemInternalLayout (this);
 		}
 
+		/// <summary>.NET's ClientBounds: the item's own rectangle at the origin.</summary>
+		internal Rectangle ClientBounds => new Rectangle (Point.Empty, Size);
+
+		/// <summary>.NET's RawBackColor: the back colour set on the item itself, or Empty.</summary>
+		internal Color RawBackColor => back_color;
+
 		/// <summary>.NET's PreferredImageSize: the image the layout makes room for.</summary>
 		internal Size PreferredImageSize {
 			get {

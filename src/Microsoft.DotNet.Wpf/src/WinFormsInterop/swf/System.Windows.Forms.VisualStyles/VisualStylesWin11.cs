@@ -183,6 +183,29 @@ namespace System.Windows.Forms.VisualStyles
 							  : part == 3 ? ArrowDirection.Right : ArrowDirection.Left, state != 4);
 				return true;
 			case "TOOLBAR":
+				// aero.msstyles, Toolbar: part 0 is a border fill of #F0F0F0 with no border.
+				if (part == 0) {
+					using (var b = new SolidBrush (Color.FromArgb (0xF0, 0xF0, 0xF0)))
+						g.FillRectangle (b, r);
+					return true;
+				}
+				// Parts 5 and 6, the separators: a 6x5 (5x6) image, sizing margins 4,1,2,2 (2,2,4,1),
+				// whose one stretched row (column) is black at alpha 115 then white at alpha 77, two
+				// pixels in from the leading edge -- the margins keep the two rows (columns) at each
+				// end transparent.
+				if (part == 5 || part == 6) {
+					using (var dark = new SolidBrush (Color.FromArgb (115, 0, 0, 0)))
+					using (var light = new SolidBrush (Color.FromArgb (77, 255, 255, 255))) {
+						if (part == 5 && r.Width >= 4 && r.Height > 4) {
+							g.FillRectangle (dark, r.X + 2, r.Y + 2, 1, r.Height - 4);
+							g.FillRectangle (light, r.X + 3, r.Y + 2, 1, r.Height - 4);
+						} else if (part == 6 && r.Height >= 4 && r.Width > 4) {
+							g.FillRectangle (dark, r.X + 2, r.Y + 2, r.Width - 4, 1);
+							g.FillRectangle (light, r.X + 2, r.Y + 3, r.Width - 4, 1);
+						}
+					}
+					return true;
+				}
 				if (state == 2 || state == 3 || state == 5 || state == 6)   // hot, pressed, checked, hot-checked
 					t.PartPushButton (g, r, state == 3 ? 3 : 2);
 				return true;

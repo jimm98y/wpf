@@ -109,6 +109,17 @@ namespace System.Windows.Forms
 		internal static bool IsThreadPerMonitorV2Aware => false;
 		internal static int ScaleToDpi (int value, int dpi) => (int) Math.Round (value * (double) dpi / OneHundredPercentLogicalDpi);
 		internal static int ScaleToInitialSystemDpi (int value) => value;
+
+		/// <summary>.NET's GetIconResourceAsBitmap: one of its icon resources, at a size, as a bitmap.</summary>
+		internal static Bitmap GetIconResourceAsBitmap (Type type, string resource, Size size)
+		{
+			using (var stream = type.Assembly.GetManifestResourceStream ("System.Windows.Forms." + resource))
+			using (var icon = new Icon (stream, size))
+				return icon.ToBitmap ();
+		}
+
+		internal static Bitmap GetIconResourceAsDefaultSizeBitmap (Type type, string resource)
+			=> GetIconResourceAsBitmap (type, resource, SystemInformation.SmallIconSize);
 	}
 
 	internal static class DisplayInformation

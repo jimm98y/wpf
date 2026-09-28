@@ -1849,6 +1849,12 @@ namespace System.Windows.Forms.VisualStyles
 		#region ToolBar
 		public static class ToolBar
 		{
+			// .NET's internal ToolBar.Bar: the tool bar's own background, part 0.
+			internal static class Bar
+			{
+				public static VisualStyleElement Normal => VisualStyleElement.CreateElement ("TOOLBAR", 0, 0);
+			}
+
 			public static class Button
 			{
 				public static VisualStyleElement Checked {
