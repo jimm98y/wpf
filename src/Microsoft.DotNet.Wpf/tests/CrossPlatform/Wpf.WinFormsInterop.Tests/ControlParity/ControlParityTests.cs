@@ -72,7 +72,10 @@ namespace Wpf.WinFormsInterop.Tests
             // apart from where the live control puts them. When the two harnesses disagree the
             // window wins: it is the thing being matched.
             ["monthcalendar"] = (1, 4355),
-            ["numericupdown"] = (2160, 282),
+            // Windows' DrawToBitmap draws a spin box without its children, so the edit and the
+            // buttons are all ink here; drawing the buttons with the SPIN parts (as UpDownButtons
+            // does) moved the live window's NUD region 19,689 -> 1,467 and this count by 4.
+            ["numericupdown"] = (2164, 282),
 
             // Our text-input frames are drawn on WM_NCPAINT, and DrawToBitmap renders the CLIENT area
             // only, so our border is absent from every one of these. Windows' native edit control

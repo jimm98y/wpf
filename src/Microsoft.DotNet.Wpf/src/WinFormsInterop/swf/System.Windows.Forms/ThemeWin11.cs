@@ -1013,10 +1013,13 @@ namespace System.Windows.Forms
 				// colour, not the light grey a themed frame gets and not black either: Windows moved
 				// COLOR_WINDOWFRAME off black years ago and a stock panel measures #646464.
 				edge = ColorWindowFrame;
+			else if (IsSpinner (control))
+				// UpDownBase draws its frame with TextBox.TextEdit.Normal whether or not it is enabled.
+				edge = SpinnerFrame;
 			else if (control != null && !control.Enabled)
 				edge = ButtonBorderDisabled;
 			else
-				edge = IsSpinner (control) ? SpinnerFrame : ListFrame;
+				edge = ListFrame;
 
 			// Square, not rounded. A list, a grid and a spin box are plain rectangles in Windows;
 			// dropping their corner pixels made them look softened at every corner.

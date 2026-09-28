@@ -116,8 +116,36 @@ namespace System.Windows.Forms
 					top_button_state = VisualStyles.PushButtonState.Disabled;
 					bottom_button_state = VisualStyles.PushButtonState.Disabled;
 				}
+				if (Application.RenderWithVisualStyles) {
+					// .NET's UpDownButtons.OnPaint: the SPIN parts, each half the height, and a
+					// line in the owner's back colour when the height is odd.
+					int half = ClientSize.Height / 2;
+					int w = ClientSize.Width;
+					var renderer = new VisualStyles.VisualStyleRenderer (SpinElement (true, top_button_state));
+					renderer.DrawBackground (graphics, new Rectangle (0, 0, w, half));
+					renderer.SetParameters (SpinElement (false, bottom_button_state));
+					renderer.DrawBackground (graphics, new Rectangle (0, half, w, half));
+					if (half != (ClientSize.Height + 1) / 2)
+						using (Pen pen = new Pen (owner.BackColor))
+							graphics.DrawLine (pen, 0, ClientSize.Height - 1, w, ClientSize.Height - 1);
+					return;
+				}
 				ThemeEngine.Current.UpDownBaseDrawButton (graphics, top_button_rect, true, top_button_state);
 				ThemeEngine.Current.UpDownBaseDrawButton (graphics, bottom_button_rect, false, bottom_button_state);
+			}
+
+			private static VisualStyles.VisualStyleElement SpinElement (bool up, VisualStyles.PushButtonState state)
+			{
+				switch (state) {
+				case VisualStyles.PushButtonState.Disabled:
+					return up ? VisualStyles.VisualStyleElement.Spin.Up.Disabled : VisualStyles.VisualStyleElement.Spin.Down.Disabled;
+				case VisualStyles.PushButtonState.Pressed:
+					return up ? VisualStyles.VisualStyleElement.Spin.Up.Pressed : VisualStyles.VisualStyleElement.Spin.Down.Pressed;
+				case VisualStyles.PushButtonState.Hot:
+					return up ? VisualStyles.VisualStyleElement.Spin.Up.Hot : VisualStyles.VisualStyleElement.Spin.Down.Hot;
+				default:
+					return up ? VisualStyles.VisualStyleElement.Spin.Up.Normal : VisualStyles.VisualStyleElement.Spin.Down.Normal;
+				}
 			}
 
 			private void tmrRepeat_Tick (object sender, EventArgs e)
@@ -480,12 +508,19 @@ namespace System.Windows.Forms
 			set { base.AutoSize = value; }
 		}
 
+		// Whether a caller set BackColor: .NET's ShouldSerializeBackColor on the edit. The
+		// constructor seeds the base colour itself, so the field alone cannot say.
+		private bool back_color_set;
+
 		public override Color BackColor {
+			// .NET's: the edit's -- which is the control grey while disabled, so the ring round a
+			// disabled spin box's edit is grey too, not the white a base BackColor gave it.
 			get {
-				return base.BackColor;
+				return txtView.BackColor;
 			}
 
 			set {
+				back_color_set = true;
 				base.BackColor = value;
 				txtView.BackColor = value;
 			}
@@ -764,9 +799,20 @@ namespace System.Windows.Forms
 			HandleMouseWheel (e);
 		}
 
+		// .NET's OnPaint (visual styles): the edit ringed in the back colour, and a disabled box
+		// with a back colour of its own ringed in the control colour.
 		protected override void OnPaint (PaintEventArgs e)
 		{
 			base.OnPaint (e);
+			if (txtView == null || BorderStyle == BorderStyle.None)
+				return;
+			Rectangle edit = txtView.Bounds;
+			using (Pen pen = new Pen (BackColor))
+				e.Graphics.DrawRectangle (pen, edit.X - 1, edit.Y - 1, edit.Width + 1, edit.Height + 1);
+			// .NET asks whether the EDIT's back colour was set by the caller; here a caller sets it
+			// through this control, whose own field says so.
+			if (!Enabled && !back_color_set)
+				ControlPaint.DrawBorderSimple (e.Graphics, Rectangle.Inflate (edit, 1, 1), SystemColors.Control);
 		}
 
 		protected virtual void OnTextBoxKeyDown (object source, KeyEventArgs e)

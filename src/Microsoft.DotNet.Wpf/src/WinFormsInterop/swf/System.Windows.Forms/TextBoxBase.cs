@@ -1551,8 +1551,10 @@ namespace System.Windows.Forms
 				requested_height = height;
 			}
 
+			// .NET's: only an AutoSize single-line box keeps its preferred height. The edit in a spin
+			// box has AutoSize off and fills the box's height.
 			if (!richtext) {
-				if (!document.multiline) {
+				if (!document.multiline && AutoSize) {
 					height = PreferredHeight;
 				}
 			}
