@@ -1060,8 +1060,8 @@ namespace System.Windows.Forms.VisualStyles
 		internal static Frame DropDownButton (int state)
 		{
 			var (border, bottom, face) = ComboLook (state);
-			(float r0, float r1, float inset) = ComboRingRadii (state);
-			Frame f = Stretched (ExactRing (7, 21, r0, r1, border, bottom, face, inset), 3, 3, 7, 8);
+			(_, float r1, float inset) = ComboRingRadii (state);
+			Frame f = Stretched (ExactRing (7, 21, 1.91f, r1, border, bottom, face, inset, 1.96f, 2, 1.86f, 1.9f), 3, 3, 7, 8);
 			f.Glyph = Chevron (state);
 			return f;
 		}
@@ -1070,11 +1070,13 @@ namespace System.Windows.Forms.VisualStyles
 		internal static Frame ComboReadOnly (int state)
 		{
 			var (border, bottom, face) = ComboLook (state);
-			(float r0, float r1, float inset) = ComboRingRadii (state);
-			return Stretched (ExactRing (7, 21, r0, r1, border, bottom, face, inset), 3, 3, 4, 4);
+			(_, float r1, float inset) = ComboRingRadii (state);
+			return Stretched (ExactRing (7, 21, 1.91f, r1, border, bottom, face, inset, 1.96f, 2, 1.86f, 1.9f), 3, 3, 4, 4);
 		}
 
-		/// <summary>The exact-area ring's outer and inner radii per look, and how far in from each side
+		/// <summary>(The outer corners are superellipses the same in every look -- top radius 1.91,
+		/// exponent 1.96; bottom 1.86, exponent 1.9 -- passed to ExactRing directly.) The exact-area
+		/// ring's outer and inner radii per look, and how far in from each side
 		/// the bottom colour starts along the last row -- it stops short of the corners, which keep
 		/// the border colour. Fitted to the CP_READONLY image: normal 76 -> 10, hot 58 -> 4,
 		/// pressed 24 -> 0.</summary>
@@ -1148,9 +1150,9 @@ namespace System.Windows.Forms.VisualStyles
 
 		/// <summary>As above, the border's last row in <paramref name="bottom"/>.</summary>
 		static Frame ExactRing (int w, int h, float outer, float inner, uint border, uint bottom, uint face, float bottomInset = 0,
-					float outerN = 2, float innerN = 2)
+					float outerN = 2, float innerN = 2, float outerBottom = -1, float outerBottomN = -1)
 		{
-			List<PointF> o = RoundRectPolygon (0, 0, w, h, outer, outerN), i = RoundRectPolygon (1, 1, w - 1, h - 1, inner, innerN);
+			List<PointF> o = RoundRectPolygon (0, 0, w, h, outer, outerN, outerBottom, outerBottomN), i = RoundRectPolygon (1, 1, w - 1, h - 1, inner, innerN);
 			var f = new Frame (w, h);
 			for (int y = 0; y < h; y++)
 				for (int x = 0; x < w; x++) {
@@ -1176,22 +1178,26 @@ namespace System.Windows.Forms.VisualStyles
 
 		/// <summary>A rounded rectangle's outline. <paramref name="n"/> is the corners' superellipse
 		/// exponent: 2 is a circular arc; the tool bar's buttons are drawn a little squarer (1.8).</summary>
-		static List<PointF> RoundRectPolygon (float x0, float y0, float x1, float y1, float r, float n = 2)
+		static List<PointF> RoundRectPolygon (float x0, float y0, float x1, float y1, float r, float n = 2, float rBottom = -1, float nBottom = -1)
 		{
+			if (rBottom < 0) rBottom = r;
+			if (nBottom < 0) nBottom = n;
 			var pts = new List<PointF> ();
 			if (r <= 0) {
 				pts.Add (new PointF (x0, y0)); pts.Add (new PointF (x1, y0)); pts.Add (new PointF (x1, y1)); pts.Add (new PointF (x0, y1));
 				return pts;
 			}
-			(float cx, float cy, float a0) [] corners = { (x1 - r, y0 + r, -90), (x1 - r, y1 - r, 0), (x0 + r, y1 - r, 90), (x0 + r, y0 + r, 180) };
-			foreach (var (cx, cy, a0) in corners)
+			(float cx, float cy, float a0, float rr, float nn) [] corners = {
+				(x1 - r, y0 + r, -90, r, n), (x1 - rBottom, y1 - rBottom, 0, rBottom, nBottom),
+				(x0 + rBottom, y1 - rBottom, 90, rBottom, nBottom), (x0 + r, y0 + r, 180, r, n) };
+			foreach (var (cx, cy, a0, rr, nn) in corners)
 				for (int k = 0; k <= 64; k++) {
 					double t = (a0 + 90.0 * k / 64) * Math.PI / 180, c = Math.Cos (t), sn = Math.Sin (t);
-					if (n != 2) {
-						c = Math.Sign (c) * Math.Pow (Math.Abs (c), 2 / n);
-						sn = Math.Sign (sn) * Math.Pow (Math.Abs (sn), 2 / n);
+					if (nn != 2) {
+						c = Math.Sign (c) * Math.Pow (Math.Abs (c), 2 / nn);
+						sn = Math.Sign (sn) * Math.Pow (Math.Abs (sn), 2 / nn);
 					}
-					pts.Add (new PointF ((float) (cx + r * c), (float) (cy + r * sn)));
+					pts.Add (new PointF ((float) (cx + rr * c), (float) (cy + rr * sn)));
 				}
 			return pts;
 		}
