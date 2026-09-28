@@ -2450,16 +2450,16 @@ namespace System.Windows.Forms
 					if (face.Width <= 0)
 						continue;
 
-					dc.FillRectangle (ResPool.GetSolidBrush (selected ? TabPaneFace : TabRestFace), face);
-					// THREE SIDES for a resting tab too, not four. Its foot sits directly on the
-					// pane's own top edge, so drawing one put two rows of #E5E5E5 where Windows has
-					// one -- the tab's last row of face, then the pane's edge. Across the two
-					// resting tabs that single row was 4,536 of the client's difference, and it is
-					// the same shape as the pane border being one row out that this control was
-					// caught by before.
-					dc.DrawLine (edge, face.X, face.Y, face.Right - 1, face.Y);
-					dc.DrawLine (edge, face.X, face.Y, face.X, face.Bottom - 1);
-					dc.DrawLine (edge, face.Right - 1, face.Y, face.Right - 1, face.Bottom - 1);
+					// Tab_Paint's part: TABITEM, LEFTEDGE for the first in the row, RIGHTEDGE for the
+					// last (or one reaching the client's right edge less two CXEDGEs), BOTH when it is
+					// both; the TOP variants on the top row. The TABITEM image has no left border --
+					// neighbours share one -- and the right-edge one stops two columns short.
+					int last = tab.TabCount - 1;
+					bool leftEdge = i == 0, rightEdge = i == last || bounds.Right >= tab.ClientRectangle.Right - 4;
+					int part = leftEdge && rightEdge ? 4 : rightEdge ? 3 : leftEdge ? 2 : 1;
+					part += 4;
+					int state = selected ? 3 : tab.EnteredTabPage == tab.TabPages [i] ? 2 : 1;
+					Win11Frames.Draw (dc, Win11Frames.Get ("TAB", part, state), face);
 
 					TabPage page = tab.TabPages[i];
 					var format = new StringFormat {
