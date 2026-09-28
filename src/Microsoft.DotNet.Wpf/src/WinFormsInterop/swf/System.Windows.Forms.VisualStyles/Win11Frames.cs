@@ -613,13 +613,14 @@ namespace System.Windows.Forms.VisualStyles
 		internal static Frame Render (int width, int height, params Layer [] layers)
 			=> RenderSampled (width, height, s_sx, s_sy, layers);
 
-		// The sixteen sample positions of the check box and radio button art, in 64ths of a pixel:
-		// solved from the theme's own images (the unchecked box, the unchecked ring and the checked
-		// dot at once) rather than assumed. Not a rook lattice -- two samples share a column band --
-		// and not D3D's standard pattern, both of which were tried and miss the art by far more.
-		static readonly float [] s_markX = { 4, 5, 10, 14, 18, 16, 26, 33, 31, 39, 46, 47, 50, 54, 59, 60 };
-		static readonly float [] s_markY = { 50, 22, 37, 2, 30, 58, 26, 52, 12, 44, 8, 33, 60, 28, 42, 12 };
-		static readonly float [] s_msx = Array.ConvertAll (s_markX, v => v / 64f), s_msy = Array.ConvertAll (s_markY, v => v / 64f);
+		// The sixteen sample positions of the check box and radio button art, in 128ths of a pixel:
+		// solved from the theme's own images -- ten of them at once (unchecked boxes and rings in three
+		// looks, the checked tick, the dash, the checked and disabled dots), each with its geometry free
+		// -- rather than assumed. Not a rook lattice and not D3D's standard pattern, both of which miss
+		// the art by twice as much. Independent restarts converge on this to a 128th.
+		static readonly float [] s_markX = { 8, 10, 24, 29, 34, 32, 50, 64, 62, 78, 96, 94, 99, 106, 118, 121 };
+		static readonly float [] s_markY = { 100, 44, 72, 7, 62, 116, 50, 104, 24, 85, 12, 66, 121, 56, 84, 25 };
+		static readonly float [] s_msx = Array.ConvertAll (s_markX, v => v / 128f), s_msy = Array.ConvertAll (s_markY, v => v / 128f);
 
 		internal static Frame RenderSampled (int width, int height, float [] s_sx, float [] s_sy, params Layer [] layers)
 		{
@@ -870,13 +871,13 @@ namespace System.Windows.Forms.VisualStyles
 			if (mark == 0) {
 				(uint border, uint face) = Unmarked (look);
 				layers.Add (new Layer (RoundRect (0, 0, 13, 13, 3.1211f), border));
-				layers.Add (new Layer (RoundRect (1, 1, 12, 12, 2), face));
+				layers.Add (new Layer (RoundRect (1, 1, 12, 12, 1.9922f), face));
 			} else {
 				layers.Add (new Layer (RoundRect (0, 0, 13, 13, 3.1211f), Marked (look)));
 				Shape glyph = mark switch {
 					// Solved under the art's own sample pattern (s_markX/Y): the tick is within 15
 					// levels of the theme image over its whole area, the dash within 1.
-					1 => Stroke (0.7031f, 3.5157f, 6.7891f, 5.4844f, 8.8281f, 9.6172f, 4.7266f),
+					1 => Stroke (0.6992f, 3.5157f, 6.7813f, 5.4883f, 8.8398f, 9.5352f, 4.75f),
 					2 => Stroke (0.7031f, 4.2109f, 6.6641f, 8.7578f, 6.6719f),
 					_ => (x, y) => Stroke (0.75f, 4.25f, 4.25f, 8.75f, 8.75f) (x, y) || Stroke (0.75f, 8.75f, 4.25f, 4.25f, 8.75f) (x, y),
 				};
@@ -911,13 +912,13 @@ namespace System.Windows.Forms.VisualStyles
 				if (look == 2)
 					layers.Add (new Layer (Circle (6.5f, 6.5f, 1.9844f), 0xffffffffu));
 			} else {
-				float dot = look switch { 1 => 3.2422f, 2 => 2.0157f, _ => 2.5195f };
+				float dot = look switch { 1 => 3.2422f, 2 => 2.0157f, _ => 2.5156f };
 				layers.Add (new Layer (Circle (6.5f, 6.5f, outer), Marked (look)));
 				// The dot stands on a soft shadow: a black disc a little larger than it and a little
 				// below, at about an eighth -- the accent ring darkens round the dot, most at the bottom.
 				(float rs, float dy, float sa) = look switch {
 					1 => (3.9875f, 0.4922f, 0.1246f), 2 => (2.7297f, 0.4844f, 0.1148f), 3 => (0f, 0f, 0f),
-					_ => (3.2257f, 0.3672f, 0.1422f),
+					_ => (3.2335f, 0.3555f, 0.1422f),
 				};
 				if (rs > 0)
 					layers.Add (new Layer (Circle (6.5f, 6.5f + dy, rs), (uint) Math.Round (sa * 255) << 24));
