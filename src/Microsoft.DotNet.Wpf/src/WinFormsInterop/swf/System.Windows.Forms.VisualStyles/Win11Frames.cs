@@ -934,17 +934,46 @@ namespace System.Windows.Forms.VisualStyles
 			return f;
 		}
 
-		/// <summary>CP_BORDER, 5x5 nine-grid 2/2/2/2.</summary>
+		/// <summary>CP_BORDER (and DP_DATEBORDER, the same art), 5x5 nine-grid 2/2/2/2, premultiplied:
+		/// a one-pixel ring with rounded corners over the face. The exact-area ring this used to be
+		/// computed as reproduces three states to the level and misses the disabled one's inner
+		/// corners by one (#F5 where the theme has #F4) -- each state's rounding is its own, so the
+		/// four are written out.</summary>
 		internal static Frame ComboBorder (int state)
 		{
-			(uint border, uint face) = state switch {
-				2 => (0xff8d8d8du, 0xfffcfcfcu),
-				3 => (0xff0078d4u, 0xffffffffu),
-				4 => (0xffc8c8c8u, 0xfffefefeu),
-				_ => (0xff8d8d8du, 0xffffffffu),
+			uint [] px = state switch {
+				2 => new uint [] {
+					0x57303030u, 0xec828282u, 0xff8d8d8du, 0xec828282u, 0x57303030u,
+					0xec828282u, 0xffe8e8e8u, 0xfffcfcfcu, 0xffe8e8e8u, 0xec828282u,
+					0xff8d8d8du, 0xfffcfcfcu, 0xfffcfcfcu, 0xfffcfcfcu, 0xff8d8d8du,
+					0xec828282u, 0xffe8e8e8u, 0xfffcfcfcu, 0xffe8e8e8u, 0xec828282u,
+					0x57303030u, 0xec828282u, 0xff8d8d8du, 0xec828282u, 0x57303030u,
+				},
+				3 => new uint [] {
+					0x57002948u, 0xec006fc4u, 0xff0078d4u, 0xec006fc4u, 0x57002948u,
+					0xec006fc4u, 0xffd2e7f7u, 0xffffffffu, 0xffd2e7f7u, 0xec006fc4u,
+					0xff0078d4u, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xff0078d4u,
+					0xec006fc4u, 0xffd2e7f7u, 0xffffffffu, 0xffd2e7f7u, 0xec006fc4u,
+					0x57002948u, 0xec006fc4u, 0xff0078d4u, 0xec006fc4u, 0x57002948u,
+				},
+				4 => new uint [] {
+					0x57444444u, 0xecb9b9b9u, 0xffc8c8c8u, 0xecb9b9b9u, 0x57444444u,
+					0xecb9b9b9u, 0xfff4f4f4u, 0xfffefefeu, 0xfff4f4f4u, 0xecb9b9b9u,
+					0xffc8c8c8u, 0xfffefefeu, 0xfffefefeu, 0xfffefefeu, 0xffc8c8c8u,
+					0xecb9b9b9u, 0xfff4f4f4u, 0xfffefefeu, 0xfff4f4f4u, 0xecb9b9b9u,
+					0x57444444u, 0xecb9b9b9u, 0xffc8c8c8u, 0xecb9b9b9u, 0x57444444u,
+				},
+				_ => new uint [] {
+					0x57303030u, 0xec828282u, 0xff8d8d8du, 0xec828282u, 0x57303030u,
+					0xec828282u, 0xffebebebu, 0xffffffffu, 0xffebebebu, 0xec828282u,
+					0xff8d8d8du, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xff8d8d8du,
+					0xec828282u, 0xffebebebu, 0xffffffffu, 0xffebebebu, 0xec828282u,
+					0x57303030u, 0xec828282u, 0xff8d8d8du, 0xec828282u, 0x57303030u,
+				},
 			};
-			// Exact-area art: a rounded ring, outer radius 1.94 on the 5x5, inner 0.875 a pixel in.
-			return Stretched (ExactRing (5, 5, 1.9375f, 0.875f, border, face), 2, 2, 2, 2);
+			var f = new Frame (5, 5);
+			Array.Copy (px, f.Pixels, 25);
+			return Stretched (f, 2, 2, 2, 2);
 		}
 
 		/// <summary>A rounded rectangle the size of the frame in <paramref name="border"/>, with a
