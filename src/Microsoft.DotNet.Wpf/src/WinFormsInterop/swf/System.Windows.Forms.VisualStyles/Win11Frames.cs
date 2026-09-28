@@ -293,6 +293,26 @@ namespace System.Windows.Forms.VisualStyles
 			return f;
 		}
 
+		/// <summary>MC_TODAY in its today states (5 and 6 share one image), 5x5 nine-grid 2/2/2/2: a
+		/// one-pixel #0066CC ring whose runs turn #0080FF a pixel before each corner, the corner and
+		/// the pixel diagonally inside it a translucent #1D92FF -- alpha 70, and 65 on the bottom
+		/// corners. Stretched, only the middle pixel of each edge repeats, so a box of any size keeps
+		/// the lighter shoulders at its ends.</summary>
+		internal static Frame MonthCalToday ()
+		{
+			const uint e = 0xff0080ffu, m = 0xff0066ccu, c = 0x46082846u, b = 0x41072541u;
+			var f = new Frame (5, 5) { Stretch = true, Margins = (2, 2, 2, 2) };
+			uint [] px = {
+				c, e, m, e, c,
+				e, c, 0, c, e,
+				m, 0, 0, 0, m,
+				e, c, 0, c, e,
+				b, e, m, e, b,
+			};
+			Array.Copy (px, f.Pixels, px.Length);
+			return f;
+		}
+
 		/// <summary>PP_MOVEOVERLAY, 127x18 stretched: the glow that sweeps along a progress bar's
 		/// fill -- green (#4DC94D) whose alpha falls away from the middle column like a bell, peak
 		/// 153 and a spread of 20 pixels, a little stronger along its second row.</summary>
@@ -634,14 +654,14 @@ namespace System.Windows.Forms.VisualStyles
 		static readonly Dictionary<(int cls, int part, int state), Frame> s_cache = new ();
 
 		const int Button = 1, ComboBox = 2, Edit = 3, Tab = 4, TrackBar = 5, TreeView = 6, ScrollBar = 7,
-			Header = 8, Progress = 9, Spin = 10, Toolbar = 11, Status = 12;
+			Header = 8, Progress = 9, Spin = 10, Toolbar = 11, Status = 12, MonthCal = 13;
 
 		/// <summary>The frame uxtheme would take for a part and state at 96 DPI, or null for a part
 		/// that is not drawn from a frame.</summary>
 		internal static Frame Get (string cls, int part, int state)
 		{
 			int c = cls switch { "BUTTON" => Button, "COMBOBOX" => ComboBox, "EDIT" => Edit, "TAB" => Tab, "TRACKBAR" => TrackBar, "TREEVIEW" => TreeView, "SCROLLBAR" => ScrollBar,
-				"HEADER" => Header, "PROGRESS" => Progress, "SPIN" => Spin, "TOOLBAR" => Toolbar, "STATUS" => Status, _ => 0 };
+				"HEADER" => Header, "PROGRESS" => Progress, "SPIN" => Spin, "TOOLBAR" => Toolbar, "STATUS" => Status, "MONTHCAL" => MonthCal, _ => 0 };
 			if (c == 0)
 				return null;
 			lock (s_cache) {
@@ -710,6 +730,7 @@ namespace System.Windows.Forms.VisualStyles
 						10 => SizeBox (),
 						_ => null,
 					},
+					MonthCal => part == 5 && (state == 5 || state == 6) ? MonthCalToday () : null,
 					Tab => part switch {
 						>= 1 and <= 8 => TabItem (part, state),
 						9 => TabPane (),

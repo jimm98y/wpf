@@ -1730,8 +1730,6 @@ namespace System.Windows.Forms
 
 		protected override Font MonthCalendarTitleFont (MonthCalendar mc) => mc.Font;
 
-		protected override bool MonthCalendarCentersToday (MonthCalendar mc) => true;
-
 		// Windows marks the selected day with a pale accent fill and leaves the number dark; the
 		// classic theme fills it with the caption colour and reverses the text out of it.
 		// Windows fills the selected day with a plain grey and rings it in the accent colour --
@@ -1796,40 +1794,46 @@ namespace System.Windows.Forms
 			return units_format;
 		}
 
-		protected override int MonthCalendarTodayIndent (MonthCalendar mc, int client_width, Size cell, int margin)
+		/// <summary>CCalendar::_GetTodayBtnRect. The button is as wide as the widest day number, the
+		/// footer text and eight pixels (_CalcOnStyleChange: 0x340 = day cx + 2 * 1 + text cx + 6), and
+		/// as tall as the taller of the two plus two; it sits on the bottom of the calendars. A single
+		/// column centres it under the month, ((month - button) / 2 - 1) past a one-pixel inset; more
+		/// columns, or a button wider than the months, run it from one pixel in on either side.
+		/// Everything is measured the way GetThemeTextExtent measures, which is GDI's extent.
+		/// A stock calendar's MCM_GETCALENDARGRIDINFO footer is (57,140)-(170,157) in a 227-wide
+		/// client whose month spans 5..222; this reproduces it.</summary>
+		protected override Rectangle MonthCalendarTodayButton (MonthCalendar mc, Rectangle client, Size cell, int margin, string text)
 		{
-			// NEGATIVE ASKS TO BE CENTRED, and centring is what Windows does. This used to return
-			// margin + 2 * cell.Width - 7, "measured against a stock calendar" -- and it was measured
-			// on one DAY. The caller only centres when the indent comes back negative, so a positive
-			// answer made MonthCalendarCentersToday dead code and pinned the Today line to a fixed
-			// column.
-			// A fixed column matches a centred one only for the string it was fitted to. The date
-			// rolled from 8/31/2026 to 9/1/2026 during a session and the line lost a character:
-			// Windows' centred group moved half a character right, ours did not, and MonthCalendar
-			// went from 245,138 to 604,417 with its position half alone going 32,088 -> 329,783.
-			// The cost of this was a function of the calendar date, which is the kind of bug that
-			// hides until the clock finds it.
-			// CENTRING WAS TRIED AND IS WORSE, for now. Returning -1 reaches the centring path,
-			// which is what Windows does, and it lands the group 12 pixels LEFT of Windows' where
-			// the fixed column lands 3 left: MonthCalendar 625,159 against 604,417. The centring
-			// I guessed that Graphics.MeasureString was over-measuring and that fixing it would
-			// unlock centring. MEASURED, and it is not: TextMeasurementTests puts MeasureString
-			// within 0 to 9 pixels of the ink actually drawn, and most of that is side bearings,
-			// which ink extents exclude and advances include. On this very string at 12px it is 91
-			// against 90 pixels of ink. There is no measurement bug to fix.
-			// So the group is measured correctly and centring STILL lands 12 left, which means our
-			// group is not the group Windows centres -- Windows' effective group is about 26 pixels
-			// narrower than marker-plus-gap-plus-text. What Windows actually centres is the open
-			// question; the fixed column is nearer until it is answered.
-			// TWO COLUMNS IN, and nothing else. Measured off the real control rather than off the
-			// screen: a stock MonthCalendar reports a client width of 227 and puts its marker's left
-			// edge at 64, and 227/7 is 32.4 a column -- so the marker starts exactly two columns in.
-			// The margin and the seven were fitted to a capture and cost about four pixels.
-			// Read off the stock control in ITS OWN coordinates, not off a screenshot: the marker's
-			// left edge is at 64 and the columns are 31 apart (first digits at 15, 46, 77 on both
-			// sides), so it is two columns plus two. The caller draws the box at today_left + 1, so
-			// the indent that lands it on 64 is 2 * cell + 1.
-			return 2 * cell.Width + 1;
+			Font font = MonthCalendarTodayFont (mc);
+			var flags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
+			var unbounded = new Size (int.MaxValue, int.MaxValue);
+			int day_cx = 0, day_cy = 0;
+			for (int d = 1; d <= 31; d++) {
+				Size day = TextRenderer.MeasureText (d.ToString (System.Globalization.CultureInfo.CurrentCulture), font, unbounded, flags);
+				day_cx = Math.Max (day_cx, day.Width);
+				day_cy = Math.Max (day_cy, day.Height);
+			}
+			Size footer = TextRenderer.MeasureText (text, font, unbounded, flags);
+			int width = day_cx + 2 + footer.Width + 6;
+			int height = Math.Max (day_cy, footer.Height) + 2;
+
+			int columns = Math.Max (1, mc.CalendarDimensions.Width);
+			int months = columns * mc.SingleMonthSize.Width + (columns - 1) * mc.calendar_spacing.Width;
+			int left = client.X + (client.Width - months) / 2, right = left + months;
+			int bottom = client.Bottom - margin;
+			if (months < width) {
+				left = client.X + 1;
+				right = client.Right - 1;
+			} else {
+				left += 1;
+				right -= 1;
+			}
+			if (columns == 1 && width <= client.Width) {
+				int d = (months - width) / 2 - 1;
+				left += d;
+				right -= d;
+			}
+			return Rectangle.FromLTRB (left, bottom - height, right, bottom);
 		}
 
 		// Windows colours the day under the pointer rather than shading behind it: the number
@@ -1962,48 +1966,16 @@ namespace System.Windows.Forms
 				dc.FillRectangle (brush, rect);
 		}
 
-		/// <summary>Windows marks today with a one-pixel frame whose corners are rounded. Drawing
-		/// that as a curve does not survive: a path is flattened into unjoined segments and bulges
-		/// inwards, an arc or a diagonal antialiases outwards and fringes the corner, and a
-		/// half-pixel offset blurs the whole stroke. Four edges that each stop a pixel short need
-		/// none of that.
-		/// <para>What the edges alone do NOT give is the corner pixel, and this used to say Windows
-		/// leaves it unpainted. It does not. Read off the live window at the today box's top left,
-		/// on white, Windows has 193,225,255 there and we had 255,255,255 -- a miss of 92 across the
-		/// three channels, at eight pixels a box. It paints the pixel diagonally INSIDE the corner
-		/// the same way, which is an antialiased arc of about a pixel's radius passing through both.
-		/// <para>The frame colour blended at 0.24 is what goes in, rather than the 193,225,255 that
-		/// was measured: per-channel that sample does not decompose into any single alpha over the
-		/// frame colour -- its blue is 255 where the frame's is 204 -- so the literal value is only
-		/// right over the white it was read on, and the ring is also drawn over selected cells. A
-		/// coverage is right everywhere and gets three quarters of the way there.</para></summary>
+		/// <summary>_DrawTodayCircle: DrawThemeBackground(MONTHCAL, MC_TODAY, 5 or 6) into the box,
+		/// which is the nine-grid image of <see cref="Win11Frames.MonthCalToday"/> -- its corners and
+		/// the lighter pixels beside them are the image's own, not a coverage. The box comes in with
+		/// its right and bottom edges inclusive.</summary>
 		protected override void DrawTodayCircle (Graphics dc, Rectangle rectangle)
 		{
 			if (rectangle.Width <= 2 || rectangle.Height <= 2)
 				return;
-			// The ring IS the rectangle it is given -- both callers hand over the box Windows outlines.
-			// Insetting it here put the selected day's ring a pixel inside Windows' on the top and the
-			// left while the other two edges agreed.
-			var box = new Rectangle (rectangle.X, rectangle.Y,
-						   Math.Max (rectangle.Width, 0), Math.Max (rectangle.Height, 0));
-			if (box.Width <= 1 || box.Height <= 1)
-				return;
-
-			Pen pen = ResPool.GetPen (ColorHotTrack);
-			SmoothingMode old = dc.SmoothingMode;
-			dc.SmoothingMode = SmoothingMode.None;
-			dc.DrawLine (pen, box.X + 1, box.Y, box.Right - 1, box.Y);
-			dc.DrawLine (pen, box.X + 1, box.Bottom, box.Right - 1, box.Bottom);
-			dc.DrawLine (pen, box.X, box.Y + 1, box.X, box.Bottom - 1);
-			dc.DrawLine (pen, box.Right, box.Y + 1, box.Right, box.Bottom - 1);
-			// The four corners, at the coverage measured off Windows' own.
-			using (var corner = new SolidBrush (Color.FromArgb (62, ColorHotTrack))) {
-				dc.FillRectangle (corner, box.X, box.Y, 1, 1);
-				dc.FillRectangle (corner, box.Right, box.Y, 1, 1);
-				dc.FillRectangle (corner, box.X, box.Bottom, 1, 1);
-				dc.FillRectangle (corner, box.Right, box.Bottom, 1, 1);
-			}
-			dc.SmoothingMode = old;
+			Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, 5),
+				new Rectangle (rectangle.X, rectangle.Y, rectangle.Width + 1, rectangle.Height + 1));
 		}
 
 		// ---- the same drawing, without Windows ---------------------------------------

@@ -3771,12 +3771,11 @@ namespace System.Windows.Forms
 		// draw the month calendar
 		public override void DrawMonthCalendar(Graphics dc, Rectangle clip_rectangle, MonthCalendar mc) 
 		{
-			// THE MONTH CALENDAR IS A NATIVE CONTROL IN WINDOWS, and comctl32 draws its text without
-			// pair kerning. A WinForms Label carrying the same string DOES kern -- measured, with the
-			// same "Today: 8/30/2026" in both: the Label matches us exactly and the calendar's own
-			// footer sat one pixel left of Windows', the width of the single 'To' pair in it.
-			// Unkerned, that line's error over its own rectangle falls from 143,223 to 8,198, which
-			// is the same number the kerned run only reaches when slid a pixel right.
+			// THE MONTH CALENDAR IS A NATIVE CONTROL IN WINDOWS, and its dates, day names and title
+			// come out without pair kerning: kerning them too takes the main window from 20,174 to
+			// 43,486. The FOOTER is the exception and kerns -- see the "Today" line below. (This
+			// once said the footer was unkerned; that was measured with the line mispositioned by a
+			// pixel, which the missing kern happened to cancel.)
 			bool saved_kerning = dc.no_kerning;
 			dc.no_kerning = true;
 			// AND GDI'S TEXT PLACEMENT, for the same reason the kerning is off: Windows' month
@@ -3888,8 +3887,33 @@ namespace System.Windows.Forms
 			{
 				dc.FillRectangle (GetControlBackBrush (mc.BackColor), bottom_rect);
 				if (mc.ShowToday) {
-					int today_offset = MonthCalendarTodayIndent (mc, client_rectangle.Width, date_cell_size, margin);
 					string today_text = "Today: " + DateTime.Now.ToShortDateString();
+					// comctl32's footer is its string 4433, " %s %s", over "Today:" and the date: it
+					// starts with a space, which both the button's width and the text's place include.
+					string footer = " " + today_text;
+					Rectangle today_button = MonthCalendarTodayButton (mc, client_rectangle, date_cell_size, margin, footer);
+					if (!today_button.IsEmpty) {
+						// CCalendar::_PaintFooter: the marker from four in to two past a cell width,
+						// two in from the top and bottom; the text from two past the marker to two short
+						// of the button's right, DrawText 0x924 (single line, centred vertically).
+						int text_left = today_button.X + 4;
+						if (mc.ShowTodayCircle) {
+							int circle_right = today_button.X + 2 + date_cell_size.Width;
+							DrawTodayCircle (dc, Rectangle.FromLTRB (today_button.X + 4, today_button.Y + 2,
+								circle_right - 1, today_button.Bottom - 3));
+							text_left = circle_right + 2;
+						}
+						// DrawThemeText is DrawText, which kerns: " Today" draws its 'To' a pixel
+						// tighter than the unkerned extent, as GetThemeTextExtent measures it.
+						bool unkerned = dc.no_kerning;
+						dc.no_kerning = false;
+						TextRenderer.DrawText (dc, footer, MonthCalendarTodayFont (mc),
+							Rectangle.FromLTRB (text_left, today_button.Y, today_button.Right - 2, today_button.Bottom),
+							mc.ForeColor, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine |
+							TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.NoClipping);
+						dc.no_kerning = unkerned;
+					} else {
+					int today_offset = MonthCalendarTodayIndent (mc, client_rectangle.Width, date_cell_size, margin);
 					if (MonthCalendarCentersToday (mc)) {
 						// Centre the marker and the date as one group, which is where Windows puts them.
 						// MEASURE IT THE WAY IT IS DRAWN. The text below goes out under
@@ -3949,7 +3973,8 @@ namespace System.Windows.Forms
 							date_cell_size.Height);
 					dc.DrawString (today_text, MonthCalendarTodayFont (mc), GetControlForeBrush (mc.ForeColor), today_rect, text_format);
 					text_format.Dispose ();
-				}				
+					}
+				}
 			}
 			
 			Brush border_brush;
@@ -4251,6 +4276,13 @@ namespace System.Windows.Forms
 					     int x1, int x2, int y)
 		{
 			dc.DrawLine (ResPool.GetPen (mc.ForeColor), x1, y, x2, y);
+		}
+
+		/// <summary>The "Today" line's button in client coordinates, as comctl32's
+		/// CCalendar::_GetTodayBtnRect sets it, or empty for a theme that places the line itself.</summary>
+		protected virtual Rectangle MonthCalendarTodayButton (MonthCalendar mc, Rectangle client, Size cell, int margin, string text)
+		{
+			return Rectangle.Empty;
 		}
 
 		/// <summary>Where the "Today" group starts, or -1 to centre it. Windows lines the right
