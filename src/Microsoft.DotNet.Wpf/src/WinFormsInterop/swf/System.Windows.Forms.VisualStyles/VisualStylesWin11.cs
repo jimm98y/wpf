@@ -81,7 +81,10 @@ namespace System.Windows.Forms.VisualStyles
 			return false;
 		}
 		public bool UxThemeIsThemeBackgroundPartiallyTransparent (IntPtr hTheme, int iPartId, int iStateId)
-			=> ClassOf (hTheme) == "BUTTON" && iPartId != 1;
+			// aero.msstyles marks every BUTTON part TRANSPARENT, the push button included: its rounded
+			// face leaves the corners clear, and .NET paints the parent's background there first
+			// (ButtonStandardAdapter), so a coloured button's corners show the form, not its colour.
+			=> ClassOf (hTheme) == "BUTTON";
 
 		public int UxThemeDrawThemeBackground (IntPtr hTheme, IDeviceContext dc, int iPartId, int iStateId, Rectangle bounds)
 			=> Draw (hTheme, dc, iPartId, iStateId, bounds, null);
