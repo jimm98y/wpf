@@ -380,6 +380,21 @@ namespace System.Windows.Forms.VisualStyles
 
 		static Frame s_datePickerGlyph, s_datePickerGlyphDisabled;
 
+		/// <summary>MC_TODAY state 4, the selected day, 7x7 nine-grid 1/1/1/1: black at alpha 0x26
+		/// inside a one-pixel edge at 0x6B whose corners are 0x62 -- on white, #D9 inside and a
+		/// darker rim that the today ring drawn over it leaves showing only at the corners.</summary>
+		internal static Frame MonthCalSelected ()
+		{
+			var f = new Frame (7, 7) { Stretch = true, Margins = (1, 1, 1, 1) };
+			for (int y = 0; y < 7; y++)
+				for (int x = 0; x < 7; x++) {
+					bool edgeX = x == 0 || x == 6, edgeY = y == 0 || y == 6;
+					uint a = edgeX && edgeY ? 0x62u : edgeX || edgeY ? 0x6bu : 0x26u;
+					f.Pixels [y * 7 + x] = a << 24;
+				}
+			return f;
+		}
+
 		/// <summary>PP_MOVEOVERLAY, 127x18 stretched: the glow that sweeps along a progress bar's
 		/// fill -- green (#4DC94D) whose alpha falls away from the middle column like a bell, peak
 		/// 153 and a spread of 20 pixels, a little stronger along its second row.</summary>
@@ -808,7 +823,8 @@ namespace System.Windows.Forms.VisualStyles
 						10 => SizeBox (),
 						_ => null,
 					},
-					MonthCal => part == 5 && (state == 5 || state == 6) ? MonthCalToday () : null,
+					MonthCal => part == 5 && (state == 5 || state == 6) ? MonthCalToday ()
+						: part == 5 && state == 4 ? MonthCalSelected () : null,
 					Tab => part switch {
 						>= 1 and <= 8 => TabItem (part, state),
 						9 => TabPane (),

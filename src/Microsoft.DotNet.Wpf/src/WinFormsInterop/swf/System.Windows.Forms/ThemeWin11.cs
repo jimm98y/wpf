@@ -1962,8 +1962,15 @@ namespace System.Windows.Forms
 		protected override void MonthCalendarFillSelection (Graphics dc, MonthCalendar mc, Rectangle rect,
 					   Brush brush, float startAngle, float sweepAngle)
 		{
-			if (rect.Width > 0 && rect.Height > 0)
-				dc.FillRectangle (brush, rect);
+			if (rect.Width <= 0 || rect.Height <= 0)
+				return;
+			// A lone selected day is MC_TODAY state 4 drawn into the day's box -- the box the today
+			// ring goes into, a pixel outside the one this is handed.
+			if (sweepAngle >= 360) {
+				Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, 4), Rectangle.Inflate (rect, 1, 1));
+				return;
+			}
+			dc.FillRectangle (brush, rect);
 		}
 
 		/// <summary>_DrawTodayCircle: DrawThemeBackground(MONTHCAL, MC_TODAY, 5 or 6) into the box,
