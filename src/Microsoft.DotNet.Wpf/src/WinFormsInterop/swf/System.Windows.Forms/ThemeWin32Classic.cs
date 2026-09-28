@@ -3771,6 +3771,57 @@ namespace System.Windows.Forms
 		// draw the month calendar
 		public override void DrawMonthCalendar(Graphics dc, Rectangle clip_rectangle, MonthCalendar mc) 
 		{
+			MonthCalendar.ZoomEffectState fx = mc.ZoomEffect;
+			if (fx == null || !dc.CanSnapshot) {
+				DrawMonthCalendarView (dc, clip_rectangle, mc);
+				return;
+			}
+			// CZoomEffect::v_InnerPaint. Outside the grid: the old view, and the new one blended over
+			// it as far as the frames so far have taken it (each frame AlphaBlends it over the screen).
+			Rectangle client = mc.ClientRectangle;
+			double p = fx.Progress;
+			var outside = dc.Save ();
+			dc.ExcludeClip (fx.Z);
+			mc.WithZoom (fx.From, () => DrawMonthCalendarView (dc, client, mc));
+			// Even at nothing yet: the effect's first frame is where both pictures are made, as
+			// comctl32 paints them into its memory DCs before it starts the clock.
+			dc.BeginSnapshot (client, client, (float) fx.Outside);
+			DrawMonthCalendarView (dc, client, mc);
+			dc.EndSnapshot ();
+			dc.Restore (outside);
+			// The grid: its background (MC_GRIDBACKGROUND, white), the old view's picture stretched
+			// from A towards B, and the new view's growing out of A into place over it at p x 255.
+			var grid = dc.Save ();
+			dc.IntersectClip (fx.Z);
+			dc.FillRectangle (ResPool.GetSolidBrush (Color.White), fx.Z);
+			Rectangle old_to = ZoomRect (fx.A, fx.B, p, true, fx.Z), new_to = ZoomRect (fx.A, fx.B, p, false, fx.Z);
+			dc.BeginSnapshot (fx.Z, old_to, 1f);
+			mc.WithZoom (fx.From, () => DrawMonthCalendarView (dc, client, mc));
+			dc.EndSnapshot ();
+			dc.BeginSnapshot (fx.Z, new_to, (int) (p * 255.0) / 255f);
+			DrawMonthCalendarView (dc, client, mc);
+			dc.EndSnapshot ();
+			dc.Restore (grid);
+		}
+
+		/// <summary>comctl32's _ZoomRect, to the integer: the rectangle <paramref name="z"/> is drawn
+		/// into so that the part of it at A (the old picture) or at B (the new one) lands on the
+		/// rectangle between them at <paramref name="t"/>.</summary>
+		internal static Rectangle ZoomRect (Rectangle a, Rectangle b, double t, bool old, Rectangle z)
+		{
+			if (!old) t -= 1.0;
+			Rectangle pr = old ? a : b;
+			int left = z.Left, top = z.Top, w = z.Width, h = z.Height;
+			int right = (int) ((double) (b.Width - a.Width) * t * ((double) w / pr.Width) + z.Right);
+			int bottom = (int) ((double) (b.Height - a.Height) * t * ((double) h / pr.Height) + z.Bottom);
+			double dx = pr.Left - left, dy = pr.Top - top;
+			int ox = (int) ((double) (int) (dx - (double) (right - left) * dx / w) + (double) (b.Left - a.Left) * t);
+			int oy = (int) ((double) (int) (dy - (double) (bottom - top) * dy / h) + (double) (b.Top - a.Top) * t);
+			return Rectangle.FromLTRB (left + ox, top + oy, right + ox, bottom + oy);
+		}
+
+		private void DrawMonthCalendarView (Graphics dc, Rectangle clip_rectangle, MonthCalendar mc)
+		{
 			// THE MONTH CALENDAR IS A NATIVE CONTROL IN WINDOWS, and its dates, day names and title
 			// come out without pair kerning: kerning them too takes the main window from 20,174 to
 			// 43,486. The FOOTER is the exception and kerns -- see the "Today" line below. (This
@@ -3786,9 +3837,6 @@ namespace System.Windows.Forms
 			bool saved_metrics = dc.gdi_text_metrics;
 			dc.gdi_text_metrics = true;
 			try {
-			// Once the outgoing view has finished gathering itself up, the calendar swaps to the new
-			// one and fades it in. Asking here is what drives the second half of the transition.
-			mc.AdvanceZoom ();
 
 			Rectangle client_rectangle = mc.ClientRectangle;
 			Size month_size = mc.SingleMonthSize;
@@ -3798,37 +3846,6 @@ namespace System.Windows.Forms
 			
 			// draw the singlecalendars
 			int margin = MonthCalendarMargin (mc);
-
-			// While a zoom is running the view being left is drawn smaller and smaller, closing on the
-			// cell it will occupy in the view being entered, and fading as it goes. This recorder can
-			// translate what it draws but not scale it, so the month is laid out at the size it should
-			// appear: the cell and title sizes it is built from are scaled, and so is the font.
-			double shrink = 1.0;
-			Size saved_cell = mc.date_cell_size, saved_title = mc.title_size;
-			Font saved_font = zoom_font;
-			Point collapse_at = Point.Empty;
-			if (mc.ZoomCollapsing) {
-				double t = Animation.Value (mc, MonthCalendar.ZoomKey);
-				Rectangle grid = new Rectangle (margin, margin + saved_title.Height,
-					      7 * saved_cell.Width, 7 * saved_cell.Height);
-				int cw = grid.Width / MonthCalendar.ZoomColumns;
-				int ch = grid.Height / MonthCalendar.ZoomRows;
-				int cell = mc.ZoomOriginCell;
-				Rectangle target = cell < 0 ? grid
-					   : new Rectangle (grid.X + (cell % MonthCalendar.ZoomColumns) * cw,
-							  grid.Y + (cell / MonthCalendar.ZoomColumns) * ch, cw, ch);
-				shrink = 1.0 - t * (1.0 - (double) target.Width / Math.Max (1, grid.Width));
-				collapse_at = new Point ((int) Math.Round ((target.X - margin) * t),
-						    (int) Math.Round ((target.Y - grid.Y) * t));
-				mc.date_cell_size = new Size (Math.Max (1, (int) Math.Round (saved_cell.Width * shrink)),
-						        Math.Max (1, (int) Math.Round (saved_cell.Height * shrink)));
-				zoom_font = ScaledFont (mc.Font, shrink);
-				date_cell_size = mc.date_cell_size;
-				// The grid alone travels. A heading that shrank would take its arrows with it, and the
-				// today marker below is no part of the view being left either -- both stay where they
-				// are while the days gather themselves up between them.
-				zoom_offset = collapse_at;
-			}
 
 			int x_offset = margin;
 			int y_offset = margin;
@@ -3864,12 +3881,6 @@ namespace System.Windows.Forms
 				}
 			}
 			
-			if (mc.ZoomCollapsing) {
-				mc.date_cell_size = saved_cell;
-				zoom_font = saved_font;
-				date_cell_size = saved_cell;
-				zoom_offset = Point.Empty;
-			}
 
 			// THIS FILL IS DRAWN AFTER THE DATES, so its top edge is the last row of the date grid
 			// or it erases one. It began a row too high, and what it rubbed out was the BOTTOM of the
@@ -4018,22 +4029,6 @@ namespace System.Windows.Forms
 				}
 			}
 			
-			// Wash the grid out by how far the transition has run -- a shrinking view that stayed at
-			// full strength would read as the days being squashed rather than going away. Only the
-			// grid: the heading and the today row are not going anywhere.
-			double faded = MonthCalendarFadeAmount (mc);
-			if (faded > 0.01) {
-				Rectangle grid_area = new Rectangle (
-					client_rectangle.X + margin,
-					client_rectangle.Y + margin + mc.title_size.Height,
-					Math.Max (0, client_rectangle.Width - margin * 2),
-					7 * date_cell_size.Height);
-				Color wash = mc.BackColor;
-				int alpha = (int) Math.Round (Math.Min (1.0, faded) * 255);
-				using (var brush = new SolidBrush (Color.FromArgb (alpha, wash.R, wash.G, wash.B)))
-					dc.FillRectangle (brush, grid_area);
-			}
-
 			// draw the drop down border if need
 			if (mc.owner != null) {
 				// One hairline all round, in whatever this theme frames a popup with. The classic
@@ -4110,10 +4105,6 @@ namespace System.Windows.Forms
 				}
 			}
 			
-			// Everything from here down is the grid, which a running zoom carries towards the cell it
-			// is collapsing into. Shifting the local copy of the rectangle moves all of it at once and
-			// leaves the heading already drawn above untouched.
-			rectangle.Offset (zoom_offset);
 
 			// Zoomed out, the same grid holds months, years or decades in four columns of three
 			// instead of seven columns of days.
@@ -4324,16 +4315,16 @@ namespace System.Windows.Forms
 		private StringFormat zoom_cell_format;
 
 		/// <summary>How far a running zoom has carried the grid from where it sits at rest.</summary>
-		private Point zoom_offset;
 
 		protected virtual void DrawMonthCalendarZoomed (Graphics dc, Rectangle clip, Rectangle rectangle,
 					     MonthCalendar mc, Size title_size, Size date_cell_size)
 		{
-			Rectangle grid = new Rectangle (rectangle.X, rectangle.Y + title_size.Height,
+			// A pixel higher than the days' grid (MonthCalendar.ZoomGridRect).
+			Rectangle grid = new Rectangle (rectangle.X, rectangle.Y + title_size.Height - 1,
 				      7 * date_cell_size.Width, 7 * date_cell_size.Height);
 			if (grid.Width <= 0 || grid.Height <= 0)
 				return;
-			dc.FillRectangle (GetControlBackBrush (mc.BackColor), grid);
+			dc.FillRectangle (GetControlBackBrush (mc.BackColor), new Rectangle (grid.X, grid.Y, grid.Width, grid.Height + 1));
 
 			int cw = grid.Width / MonthCalendar.ZoomColumns;
 			int ch = grid.Height / MonthCalendar.ZoomRows;
@@ -4371,21 +4362,6 @@ namespace System.Windows.Forms
 							       zoom_cell_format);
 				}
 			}
-		}
-
-		/// <summary>How much of the background is laid over the calendar just now: it rises as the
-		/// outgoing view shrinks away, and falls again as the incoming one arrives.</summary>
-		private static double MonthCalendarFadeAmount (MonthCalendar mc)
-		{
-			// Nothing is fading unless a zoom is actually running. A clock reading nought means "the
-			// transition has only just begun" and "there is no transition at all" alike, and taken for
-			// the former the calendar washed its own grid out from under itself on every paint, for the
-			// life of the control -- which is what took the marker off today, the highlight off the day
-			// under the pointer and the fill off the day selected.
-			if (!mc.ZoomTransitioning)
-				return 0.0;
-			double t = Animation.Value (mc, MonthCalendar.ZoomKey);
-			return mc.ZoomCollapsing ? t : 1.0 - t;   // going: fade with the shrink; arriving: fade in
 		}
 
 		/// <summary>The font a collapsing calendar draws with, or null when nothing is collapsing.

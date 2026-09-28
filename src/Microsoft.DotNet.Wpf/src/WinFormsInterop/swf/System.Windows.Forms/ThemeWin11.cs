@@ -1859,16 +1859,42 @@ namespace System.Windows.Forms
 			return HeaderHotFace;
 		}
 
-		// The current cell of a zoomed view is boxed rather than washed: a light face inside a
-		// hairline, which is what Windows draws around the month or year you are on.
+		// The current cell of a zoomed view is MC_GRIDCELLBACKGROUND over the whole cell -- selected
+		// (state 1) while the calendar has the focus, and then with the focus rectangle a pixel in;
+		// selected-not-focused (state 4) otherwise.
 		protected override void MonthCalendarDrawZoomedSelection (Graphics dc, MonthCalendar mc, Rectangle cell)
 		{
-			Rectangle box = Rectangle.Inflate (cell, -4, -2);
-			if (box.Width <= 1 || box.Height <= 1)
+			if (cell.Width <= 2 || cell.Height <= 2)
 				return;
-			dc.FillRectangle (ResPool.GetSolidBrush (GlyphFace), box);
-			DrawRoundedOutline (dc, new Rectangle (box.X, box.Y, box.Width - 1, box.Height - 1),
-				      ButtonBorderHover);
+			Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, mc.Focused ? 1 : 4), cell);
+			if (mc.Focused)
+				DrawFocusRectInverted (dc, Rectangle.Inflate (cell, -1, -1), MonthCalSelectedWash);
+		}
+
+		/// <summary>What MC_GRIDCELLBACKGROUND state 1 leaves inside its accent border on the calendar's
+		/// white: its 0x33 wash (#001C33 premultiplied) over white -- the pixels a focus rectangle one in
+		/// from the border lands on.</summary>
+		private static readonly Color MonthCalSelectedWash = Color.FromArgb (204, 232, 255);
+
+		/// <summary>user32's DrawFocusRect, for a native control: PATINVERT with the 50% grey
+		/// checkerboard, so the pixels whose x + y is odd in the control's own coordinates are
+		/// INVERTED -- a dot is the negative of what it lands on, not black, and the pattern is
+		/// pinned to the window rather than to the rectangle's corner. The recorder has no XOR, so
+		/// this is told what is underneath, which is one colour wherever it is used.</summary>
+		private void DrawFocusRectInverted (Graphics dc, Rectangle r, Color under)
+		{
+			if (r.Width <= 0 || r.Height <= 0)
+				return;
+			Brush brush = ResPool.GetSolidBrush (Color.FromArgb (255 - under.R, 255 - under.G, 255 - under.B));
+			int right = r.Right - 1, bottom = r.Bottom - 1;
+			for (int x = r.X; x <= right; x++) {
+				if (((x + r.Y) & 1) == 1) dc.FillRectangle (brush, x, r.Y, 1, 1);
+				if (bottom != r.Y && ((x + bottom) & 1) == 1) dc.FillRectangle (brush, x, bottom, 1, 1);
+			}
+			for (int y = r.Y + 1; y < bottom; y++) {
+				if (((r.X + y) & 1) == 1) dc.FillRectangle (brush, r.X, y, 1, 1);
+				if (right != r.X && ((right + y) & 1) == 1) dc.FillRectangle (brush, right, y, 1, 1);
+			}
 		}
 
 		// The month and year take the accent under the pointer, which is how Windows says the
@@ -1979,8 +2005,14 @@ namespace System.Windows.Forms
 				return;
 			// A lone selected day is MC_TODAY state 4 drawn into the day's box -- the box the today
 			// ring goes into, a pixel outside the one this is handed.
+			// With the focus it is state 1 instead, the accent round a wash of it.
 			if (sweepAngle >= 360) {
-				Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, 4), Rectangle.Inflate (rect, 1, 1));
+				Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, mc.Focused ? 1 : 4), Rectangle.Inflate (rect, 1, 1));
+				// And the focus rectangle a pixel in, as round the current cell of a zoomed view:
+				// comctl32 draws it on the focused day whenever the calendar has the focus, not only
+				// while a click is held.
+				if (mc.Focused)
+					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash);
 				return;
 			}
 			dc.FillRectangle (brush, rect);

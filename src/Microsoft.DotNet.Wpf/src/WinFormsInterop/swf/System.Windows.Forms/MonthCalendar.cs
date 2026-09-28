@@ -1938,63 +1938,138 @@ namespace System.Windows.Forms {
 		internal ZoomLevel Zoom => zoom;
 		private ZoomLevel zoom = ZoomLevel.Days;
 
-		/// <summary>Which cell of the view being entered the previous one came from, so the new
-		/// grid can grow out of the place the old one occupied. -1 when there is nowhere in
-		/// particular to grow from.</summary>
-		internal int ZoomOriginCell => zoom_origin;
-		private int zoom_origin = -1;
-		internal static readonly object ZoomKey = new object ();
-		private const int CollapseMilliseconds = 130;
-		private const int FadeMilliseconds = 110;
-
-		/// <summary>The level being moved to while the one on screen is still shrinking away.</summary>
-		internal ZoomLevel ZoomPending => zoom_pending;
-		private ZoomLevel zoom_pending;
-
-		/// <summary>Whether the view on screen is the one being left, on its way out. A zoom runs
-		/// in two parts the way Windows does it: what is showing gathers itself into the cell it
-		/// will occupy in the view being entered, and only then does that view fade in. Swapping
-		/// first and animating afterwards gets the order backwards -- the new view appears whole
-		/// and then expands, which is not a zoom at all.</summary>
-		internal bool ZoomCollapsing => zoom_collapsing;
-		private bool zoom_collapsing;
-
-		private void StartZoomTransition (ZoomLevel target, int origin)
+		/// <summary>A zoom between views as comctl32 runs one (CCalendar::_ChangeView + CZoomEffect):
+		/// the view changes at once, and for 250 ms -- progress linear in GetTickCount time, a 10 ms
+		/// timer -- the grid shows the old view's picture stretched from rectangle A towards B while the
+		/// new view's picture is blended over it at progress x 255, growing out of A into place; outside
+		/// the grid the new view is blended over the old frame by frame, and so accumulates. Zooming
+		/// out, A is the old grid and B the cell it lands in; zooming in, A is the cell picked and B the
+		/// new grid. Z, the grid the pictures are clipped to, is whichever of the two is the grid.</summary>
+		internal sealed class ZoomEffectState
 		{
-			zoom_pending = target;
-			zoom_origin = origin;
-			zoom_collapsing = true;
-			Animation.Run (this, ZoomKey, 0.0, 1.0, CollapseMilliseconds);
+			public ZoomLevel From, To;
+			public Rectangle A, B, Z;
+			public int StartTick;
+			public bool Started;
+			public double Progress;
+			/// <summary>How much of the new view the area outside the grid holds so far: each frame
+			/// AlphaBlends it over what is on the screen at that frame's progress.</summary>
+			public double Outside;
+		}
+
+		internal ZoomEffectState ZoomEffect => zoom_effect;
+		private ZoomEffectState zoom_effect;
+		private Timer zoom_timer;
+		internal const int ZoomMilliseconds = 250;
+		/// <summary>WF_ZOOM_FREEZE=p: hold every zoom at progress p, for comparing single frames.</summary>
+		private static readonly double s_zoomFreeze =
+			double.TryParse (Environment.GetEnvironmentVariable ("WF_ZOOM_FREEZE"), System.Globalization.NumberStyles.Float,
+					 System.Globalization.CultureInfo.InvariantCulture, out double f) ? f : -1;
+
+		/// <summary>Kept for the themes that ask: a zoom effect is running.</summary>
+		internal bool ZoomTransitioning => zoom_effect != null;
+
+		/// <summary>The grid a view is laid out in, in client coordinates. A zoomed view's grid stands a
+		/// pixel higher than the days' (measured: its cells and their text both sit a row above ours).</summary>
+		internal Rectangle ZoomGridRect (ZoomLevel level)
+		{
+			int margin = ThemeEngine.Current.MonthCalendarMargin (this);
+			return new Rectangle (margin, margin + title_size.Height - (level == ZoomLevel.Days ? 0 : 1),
+				      7 * date_cell_size.Width, 7 * date_cell_size.Height);
+		}
+
+		/// <summary>One cell of a zoomed view's four by three grid.</summary>
+		internal Rectangle ZoomCellRect (ZoomLevel level, int index)
+		{
+			Rectangle grid = ZoomGridRect (level);
+			int cw = grid.Width / ZoomColumns, ch = grid.Height / ZoomRows;
+			return new Rectangle (grid.X + (index % ZoomColumns) * cw, grid.Y + (index / ZoomColumns) * ch, cw, ch);
+		}
+
+		/// <summary>A view's grid as the zoom effect knows it. comctl32's days grid starts on the same
+		/// row as a zoomed one -- a pixel above the dates' own -- and still ends under the last week,
+		/// so it is a row taller than the dates. Solved from its frames: every rectangle a stock zoom
+		/// out of the days draws its two pictures into comes out of _ZoomRect exactly with this, and
+		/// a row off with the dates' grid.</summary>
+		private Rectangle ZoomEffectGrid (ZoomLevel level)
+		{
+			Rectangle grid = ZoomGridRect (level);
+			return level == ZoomLevel.Days ? new Rectangle (grid.X, grid.Y - 1, grid.Width, grid.Height + 1) : grid;
+		}
+
+		private void StartZoomEffect (ZoomLevel from, ZoomLevel to, int cell)
+		{
+			EndZoomEffect ();
+			var fx = new ZoomEffectState { From = from, To = to };
+			if (to > from) {
+				fx.A = ZoomEffectGrid (from);
+				fx.B = cell >= 0 ? ZoomCellRect (to, cell) : ZoomEffectGrid (to);
+			} else {
+				fx.A = cell >= 0 ? ZoomCellRect (from, cell) : ZoomEffectGrid (from);
+				fx.B = ZoomEffectGrid (to);
+			}
+			// The pictures are clipped to the dates' grid whichever way the zoom runs: the frames'
+			// pixels stop a row below where A and B start.
+			fx.Z = ZoomGridRect (ZoomLevel.Days);
+			zoom = to;
+			zoom_effect = fx;
+			if (zoom_timer == null) {
+				zoom_timer = new Timer { Interval = ZoomMilliseconds * 4 / 100 };   // 250 x 0.04 = 10 ms
+				zoom_timer.Tick += (s, e) => TickZoomEffect ();
+			}
+			zoom_timer.Start ();
 			Invalidate ();
 		}
 
-		/// <summary>Called as the calendar is painted: once the outgoing view has finished
-		/// gathering itself up, swap to the new one and fade it in.</summary>
-		/// <summary>Whether a zoom is under way at all -- the view leaving, or the one arriving.
-		/// <para>Without this there is no telling a transition that has just begun from no transition
-		/// at all: both read as nought on the clock. Taken for the former, the calendar washed its
-		/// whole grid over on every paint for the life of the control, which is what took the marker
-		/// off today, the highlight off the day under the pointer and the fill off the day
-		/// selected.</para></summary>
-		internal bool ZoomTransitioning {
-			get { return zoom_collapsing || zoom_arriving; }
-		}
-
-		private bool zoom_arriving;
-
-		internal void AdvanceZoom ()
+		private void TickZoomEffect ()
 		{
-			if (zoom_collapsing) {
-				if (Animation.Value (this, ZoomKey) < 1.0)
-					return;
-				zoom = zoom_pending;
-				zoom_collapsing = false;
-				zoom_arriving = true;
-				Animation.Run (this, ZoomKey, 0.0, 1.0, FadeMilliseconds);
+			ZoomEffectState fx = zoom_effect;
+			if (fx == null) { zoom_timer?.Stop (); return; }
+			// The clock starts once the pictures are made. comctl32 paints both views into memory DCs
+			// and only then calls _TimerStart, which takes GetTickCount; here the pictures are made by
+			// the effect's first frame (progress 0, the old view unchanged), which the tick after it
+			// follows. Starting at the click instead spent the first frame's cost -- the new view's text
+			// rasterized for the first time -- out of the 250 ms, and the zoom jumped to its end.
+			if (!fx.Started) {
+				fx.Started = true;
+				fx.StartTick = Environment.TickCount;
 				return;
 			}
-			if (zoom_arriving && Animation.Value (this, ZoomKey) >= 1.0)
-				zoom_arriving = false;
+			if (s_zoomFreeze >= 0) {
+				// A still of one frame, to set beside comctl32's: the grid is a function of progress
+				// alone, and outside it one blend at that progress stands in for the frames' sum.
+				fx.Progress = s_zoomFreeze;
+				fx.Outside = (int) (s_zoomFreeze * 255.0) / 255.0;
+				Invalidate ();
+				zoom_timer.Stop ();
+				return;
+			}
+			double p = (double) unchecked (Environment.TickCount - fx.StartTick) / ZoomMilliseconds;
+			if (p >= 1.0) {
+				EndZoomEffect ();
+				return;
+			}
+			fx.Progress = p;
+			double a = (int) (p * 255.0) / 255.0;
+			fx.Outside = 1.0 - (1.0 - fx.Outside) * (1.0 - a);
+			Invalidate ();
+		}
+
+		private void EndZoomEffect ()
+		{
+			zoom_timer?.Stop ();
+			if (zoom_effect == null) return;
+			zoom_effect = null;
+			Invalidate ();
+		}
+
+		/// <summary>Draw with the calendar at another zoom level for a moment: the picture of the view
+		/// being left.</summary>
+		internal void WithZoom (ZoomLevel level, Action draw)
+		{
+			ZoomLevel was = zoom;
+			zoom = level;
+			try { draw (); } finally { zoom = was; }
 		}
 
 		/// <summary>Which cell of the current zoomed view the calendar is sitting on.</summary>
@@ -2089,9 +2164,7 @@ namespace System.Windows.Forms {
 		/// area the days do, four across and three down.</summary>
 		internal int ZoomCellAt (Point point)
 		{
-			int margin = ThemeEngine.Current.MonthCalendarMargin (this);
-			Rectangle grid = new Rectangle (margin, margin + title_size.Height,
-				      7 * date_cell_size.Width, 7 * date_cell_size.Height);
+			Rectangle grid = ZoomGridRect (zoom);
 			if (grid.Width <= 0 || grid.Height <= 0 || !grid.Contains (point))
 				return -1;
 			int col = (point.X - grid.X) * ZoomColumns / grid.Width;
@@ -2104,19 +2177,16 @@ namespace System.Windows.Forms {
 		/// <summary>Step out one level, as far as decades.</summary>
 		internal void ZoomOut ()
 		{
-			if (zoom == ZoomLevel.Decades || zoom_collapsing)
+			if (zoom == ZoomLevel.Decades)
 				return;
-			// Where what is showing will end up once the next view is on screen -- that is the cell
-			// it gathers itself into.
+			// Where what is showing lands once the next view is on screen -- the cell it shrinks into.
 			ZoomLevel target = zoom + 1;
-			StartZoomTransition (target, CellOf (target));
+			StartZoomEffect (zoom, target, CellOf (target));
 		}
 
 		/// <summary>Pick a cell and step back in, landing on the days of whatever was chosen.</summary>
 		internal void ZoomInto (int index)
 		{
-			if (zoom_collapsing)
-				return;
 			ZoomLevel was = zoom;
 			ZoomLevel entering;
 			switch (zoom) {
@@ -2136,10 +2206,9 @@ namespace System.Windows.Forms {
 				default:
 					return;
 			}
-			// Stepping in, the cell that was picked is the one the old view collapses into.
-			int picked = index;
+			// Stepping in, the new view grows out of the cell that was picked.
 			zoom = was;
-			StartZoomTransition (entering, picked);
+			StartZoomEffect (was, entering, index);
 		}
 
 		/// <summary>What the arrows step by at this zoom: a month, a year, a decade, a century.</summary>

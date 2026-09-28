@@ -442,6 +442,20 @@ namespace System.Windows.Forms.VisualStyles
 			return f;
 		}
 
+		/// <summary>MC_GRIDCELLBACKGROUND state 1, selected with the focus: 7x7 nine-grid 3/3/3/3, the
+		/// accent round a fifth of the accent -- on white, #CCE8FF inside a #0078D4 line, its corners
+		/// at a fifth.</summary>
+		internal static Frame MonthCalSelectedFocused ()
+		{
+			var f = new Frame (7, 7) { Stretch = true, Margins = (3, 3, 3, 3) };
+			for (int y = 0; y < 7; y++)
+				for (int x = 0; x < 7; x++) {
+					bool edgeX = x == 0 || x == 6, edgeY = y == 0 || y == 6;
+					f.Pixels [y * 7 + x] = edgeX && edgeY ? 0x3300182au : edgeX || edgeY ? 0xff0078d4u : 0x33001c33u;
+				}
+			return f;
+		}
+
 		/// <summary>PP_MOVEOVERLAY, 127x18 stretched: the glow that sweeps along a progress bar's
 		/// fill -- green (#4DC94D) whose alpha falls away from the middle column like a bell, peak
 		/// 153 and a spread of 20 pixels, a little stronger along its second row.</summary>
@@ -916,7 +930,8 @@ namespace System.Windows.Forms.VisualStyles
 						_ => null,
 					},
 					MonthCal => part == 5 && (state == 5 || state == 6) ? MonthCalToday ()
-						: part == 5 && state == 4 ? MonthCalSelected () : null,
+						: part == 5 && state == 4 ? MonthCalSelected ()
+						: part == 5 && state == 1 ? MonthCalSelectedFocused () : null,
 					Tab => part switch {
 						>= 1 and <= 8 => TabItem (part, state),
 						9 => TabPane (),

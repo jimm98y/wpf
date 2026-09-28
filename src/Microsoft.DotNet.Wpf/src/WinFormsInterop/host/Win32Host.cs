@@ -73,6 +73,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _getRubberBands = M("GetReversibleRects");
         _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsPopupWindow");
         _getCursor = M("GetActiveCursor");
+        _leaveAll = M("InjectMouseLeaveAll");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
         // window rather than creating a second one of its own.
         _formHandle = form.Handle;
@@ -259,9 +260,27 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     private static double SinceStart => (DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime).TotalMilliseconds;
     private int _framesTraced;
 
+    /// <summary>The loop polls the OS queue and sleeps between frames (PresentationHost.Idle), and a
+    /// sleep lasts until the system tick: 15.6 ms unless the process asks for better. So every frame
+    /// of an animation paid its own cost AND a whole tick -- a month calendar's 10 ms zoom timer drew
+    /// every 35-50 ms where comctl32 draws every 15-20. Asked for once, as the managed WPF compositor
+    /// does (Common/Graphics/exports.cs); WF_TIMER_RESOLUTION=0 leaves the system tick alone.</summary>
+    private static void EnsureFineTimer()
+    {
+        if (s_fineTimer) return;
+        s_fineTimer = true;
+        if (Environment.GetEnvironmentVariable("WF_TIMER_RESOLUTION") == "0") return;
+        try { timeBeginPeriod(1); } catch { /* winmm missing: keep the system tick */ }
+    }
+
+    private static bool s_fineTimer;
+
+    [DllImport("winmm.dll")] private static extern int timeBeginPeriod(int periodMs);
+
     public void Show()
     {
         if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: Show");
+        EnsureFineTimer();
         SetProcessDpiAwarenessContext((IntPtr)(-4)); // PER_MONITOR_AWARE_V2 -> real DPI, crisp text
         _hinstance = GetModuleHandleW(null);
         EnsureWindowClass(_hinstance);
@@ -403,7 +422,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         Rectangle? caret = GetCaretRect(ox, oy);
         double t1 = s_traceFrames ? SinceStart : 0;
         _lastPresentOk = _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.ClientSize.Width, _form.ClientSize.Height);
-        if (s_traceFrames && _framesTraced++ < 40)
+        if (s_traceFrames && _framesTraced++ < 4000)
             Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms (paint {t1 - t0:0}, gpu {SinceStart - t1:0})");
         _lastVer = ver; _lastCaretOn = caretOn;
         if (wantSave)
@@ -518,7 +537,21 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
             // waiting for WM_SETCURSOR means the control under the pointer has already had its
             // chance to ask for a shape -- a list view's header asks for the double arrow from
             // its own MouseMove -- so the answer is never a move behind.
-            case 0x0200: MouseMove(lParam); ApplyCursor(); Frame(); return IntPtr.Zero;
+            case 0x0200:
+                // Ask to be told when the pointer leaves the window. Without it nothing ever left:
+                // a pointer that crossed a control and went off the window kept that control hot
+                // (a month calendar's heading stayed in the hover blue).
+                if (!_trackingLeave)
+                {
+                    var tme = new TRACKMOUSEEVENT { cbSize = (uint)Marshal.SizeOf<TRACKMOUSEEVENT>(), dwFlags = 0x2 /* TME_LEAVE */, hwndTrack = hwnd };
+                    _trackingLeave = TrackMouseEvent(ref tme);
+                }
+                MouseMove(lParam); ApplyCursor(); Frame(); return IntPtr.Zero;
+            case 0x02A3:        // WM_MOUSELEAVE
+                _trackingLeave = false;
+                _leaveAll?.Invoke(_driver, null);
+                Frame();
+                return IntPtr.Zero;
             // WM_SETCURSOR: the window class carries a plain arrow, so without answering this
             // the pointer stayed an arrow no matter what a control asked for -- no I-beam over
             // text, no double arrow over a column divider. Only the client area is ours; the
@@ -1060,6 +1093,10 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     [DllImport("user32")] private static extern bool AdjustWindowRectExForDpi(ref RECT r, int style, bool menu, int exStyle, uint dpi);
     [DllImport("user32")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
+    [StructLayout(LayoutKind.Sequential)] private struct TRACKMOUSEEVENT { public uint cbSize, dwFlags; public IntPtr hwndTrack; public uint dwHoverTime; }
+    [DllImport("user32")] private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT e);
+    private readonly MethodInfo _leaveAll;
+    private bool _trackingLeave;
     [DllImport("user32")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int index);
