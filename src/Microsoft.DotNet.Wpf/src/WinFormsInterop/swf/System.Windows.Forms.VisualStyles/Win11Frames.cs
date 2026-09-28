@@ -1116,11 +1116,14 @@ namespace System.Windows.Forms.VisualStyles
 			=> a << 24 | (uint) Math.Round (((c >> 16) & 0xff) * a / 255.0) << 16
 			 | (uint) Math.Round (((c >> 8) & 0xff) * a / 255.0) << 8 | (uint) Math.Round ((c & 0xff) * a / 255.0);
 
-		/// <summary>The combo box's chevron, 10x19: a stroke, not quite opaque, in the state's ink.</summary>
+		/// <summary>The combo box's chevron, 10x19, in the state's ink. Exact-area art like the
+		/// Explorer tree glyph (its faintest pixels carry alpha 6): a 0.77-pixel stroke from
+		/// (1.04, 7.86) down to (5, 11.81) and back up, round-joined -- within 31 levels of the theme
+		/// image over its whole area.</summary>
 		static Frame Chevron (int state)
 		{
 			uint ink = state switch { 2 => 0x1f1f1fu, 4 => 0xa8a8a8u, _ => 0x3f3f3fu };
-			return Render (10, 19, new Layer (Stroke (1, 1.3281f, 8.1875f, 5, 11.75f, 8.6719f, 8.1875f), 0xd9000000u | ink));
+			return RenderExactArea (10, 19, RoundJoinChevron (1.0391f, 7.8594f, 5f, 11.8125f, 8.9609f, 7.8594f, 0.7672f, 0), ink);
 		}
 
 		/// <summary>The border and face of an unmarked check box or radio button.</summary>
