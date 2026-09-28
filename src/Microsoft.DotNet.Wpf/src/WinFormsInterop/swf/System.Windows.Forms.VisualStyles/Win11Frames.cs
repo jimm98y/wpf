@@ -313,6 +313,73 @@ namespace System.Windows.Forms.VisualStyles
 			return f;
 		}
 
+		/// <summary>DP_SHOWCALENDARBUTTONRIGHT's glyph, 20x14: a calendar page beside a chevron.
+		/// <para>The page is 11x12 in #776B68 with its three square corners at alpha 0x96, and its
+		/// bottom-right corner folded: a #5D5452 crease inside two border pixels, then a fall-off of
+		/// alpha 0xB0, 0x40 and 0x47 along the diagonal. Inside, a grid: a pale header band, then
+		/// rows of cells whose lines and faces both darken from top left to bottom right -- each
+		/// pixel's colour is a function of x + y alone, one ramp for the lines and one for the
+		/// faces. A soft shadow, black at alpha 0x10 at most, runs down its right and under it.
+		/// The chevron is #4D6185, rows of 7, 5, 3 and 1 from (13, 4).</para>
+		/// <para>Disabled (the theme's fourth state) is the page's premultiplied pixels scaled by
+		/// 0x66/255, each channel rounded, beside an opaque #C9C9C2 chevron.</para></summary>
+		internal static Frame DatePickerGlyph (bool disabled = false)
+		{
+			if (disabled)
+				return s_datePickerGlyphDisabled ??= Disabled (DatePickerGlyph ());
+			if (s_datePickerGlyph != null)
+				return s_datePickerGlyph;
+			var f = new Frame (20, 14);
+			void Put (int x, int y, uint rgb, uint a) => f.Pixels [y * 20 + x] = Premultiply (rgb, a);
+			// The faces and the lines, by x + y (2..17 and 3..16).
+			uint [] face = { 0xffffff, 0xffffff, 0xffffff, 0xffffff, 0xfdfefe, 0xfafbfd, 0xf7f8fc, 0xf3f5fa,
+			                 0xeff2f9, 0xeaeff7, 0xe7ecf5, 0xe2e8f4, 0xdee5f2, 0xdbe3f1, 0xd8e1f0, 0xd6dfef };
+			uint [] line = { 0xc8c8c8, 0xc8c8c8, 0xc8c8c8, 0xc6c7c7, 0xc4c5c6, 0xc2c3c6, 0xbfc0c4, 0xbbbec3,
+			                 0xb8bbc2, 0xb5b9c0, 0xb1b6bf, 0xaeb4be, 0xacb2bd, 0xa9b0bc };
+			const uint border = 0x776b68;
+			for (int y = 1; y <= 10; y++)
+				for (int x = 1; x <= 9; x++) {
+					// Row 2 and the last row are all face, and so are the first and last columns; the
+					// rows between alternate full lines with cells, whose even columns are lines.
+					bool isLine = x > 1 && x < 9 && y != 2 && y != 10 && ((y & 1) == 1 || (x & 1) == 0);
+					if (isLine ? x + y - 3 >= line.Length : x + y - 2 >= face.Length)
+						continue;          // the fold's own pixels, drawn below
+					Put (x, y, isLine ? line [x + y - 3] : face [x + y - 2], 0xff);
+				}
+			for (int x = 0; x <= 10; x++) { Put (x, 0, border, 0xff); Put (x, 11, border, 0xff); }
+			for (int y = 0; y <= 11; y++) { Put (0, y, border, 0xff); Put (10, y, border, 0xff); }
+			Put (0, 0, border, 0x96); Put (10, 0, border, 0x96); Put (0, 11, border, 0x96);
+			// The fold.
+			Put (8, 9, 0x5d5452, 0xff); Put (9, 9, border, 0xff); Put (8, 10, border, 0xff);
+			Put (9, 10, 0x655b58, 0xb0); Put (10, 10, 0x2b2727, 0x40); Put (9, 11, 0x272323, 0x47);
+			Put (10, 11, 0, 0x1e); Put (11, 11, 0, 0x08); Put (11, 10, 0, 0x0e);
+			// The shadow.
+			uint [] right = { 0x04, 0x0c, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10 };
+			for (int i = 0; i < right.Length; i++) Put (11, 2 + i, 0, right [i]);
+			uint [] under1 = { 0x0c, 0x24, 0x30, 0x30, 0x30, 0x30, 0x30, 0x2c, 0x1e, 0x0c, 0x02 };
+			uint [] under2 = { 0x04, 0x0c, 0x10, 0x10, 0x10, 0x10, 0x10, 0x0e, 0x08, 0x02 };
+			for (int i = 0; i < under1.Length; i++) Put (1 + i, 12, 0, under1 [i]);
+			for (int i = 0; i < under2.Length; i++) Put (1 + i, 13, 0, under2 [i]);
+			// The chevron.
+			for (int r = 0; r < 4; r++)
+				for (int x = 13 + r; x <= 19 - r; x++)
+					Put (x, 4 + r, 0x4d6185, 0xff);
+			return s_datePickerGlyph = f;
+
+			static Frame Disabled (Frame normal)
+			{
+				var d = new Frame (normal.Width, normal.Height);
+				for (int i = 0; i < d.Pixels.Length; i++) {
+					uint p = normal.Pixels [i];
+					uint Scale (int shift) => (uint) Math.Round (((p >> shift) & 0xff) * 0x66 / 255.0) << shift;
+					d.Pixels [i] = p == 0xff4d6185u ? 0xffc9c9c2u : Scale (24) | Scale (16) | Scale (8) | Scale (0);
+				}
+				return d;
+			}
+		}
+
+		static Frame s_datePickerGlyph, s_datePickerGlyphDisabled;
+
 		/// <summary>PP_MOVEOVERLAY, 127x18 stretched: the glow that sweeps along a progress bar's
 		/// fill -- green (#4DC94D) whose alpha falls away from the middle column like a bell, peak
 		/// 153 and a spread of 20 pixels, a little stronger along its second row.</summary>

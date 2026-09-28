@@ -2547,24 +2547,9 @@ namespace System.Windows.Forms
 
 		// ---- date picker -------------------------------------------------------------
 
-		/// <summary>Windows draws a calendar and a chevron in a date picker's drop-down, and the
-		/// glyph is a bitmap in its theme rather than anything derivable from lines and arcs. So it
-		/// is extracted once, as the property grid's icons were, and embedded here: Microsoft's
-		/// artwork, but a file in our tree, so nothing at run time depends on Windows to draw it.
-		/// </summary>
-		private static Bitmap s_calendarGlyph;
-		private static bool s_calendarGlyphTried;
-
-		private static Bitmap CalendarGlyph {
-			get {
-				if (!s_calendarGlyphTried) {
-					s_calendarGlyphTried = true;
-					try { s_calendarGlyph = new Bitmap (typeof (DateTimePicker), "datetimepicker-calendar.png"); }
-					catch (Exception) { s_calendarGlyph = null; }
-				}
-				return s_calendarGlyph;
-			}
-		}
+		/// <summary>The calendar-and-chevron glyph in a date picker's drop-down: drawn, not shipped
+		/// (Win11Frames.DatePickerGlyph).</summary>
+		private static Win11Frames.Frame CalendarGlyph => Win11Frames.DatePickerGlyph ();
 
 		/// <summary>Wide enough for the glyph. The classic button is one scroll bar wide, which fits
 		/// an arrow and nothing else.</summary>
@@ -2610,9 +2595,7 @@ namespace System.Windows.Forms
 
 		public override Rectangle DateTimePickerGetDropDownButtonArea (DateTimePicker dateTimePicker)
 		{
-			Bitmap glyph = CalendarGlyph;
-			if (glyph == null)
-				return base.DateTimePickerGetDropDownButtonArea (dateTimePicker);
+			Win11Frames.Frame glyph = CalendarGlyph;
 			Rectangle rect = dateTimePicker.ClientRectangle;
 			int want = glyph.Width + 8;
 			if (rect.Width <= want + 2)
@@ -2644,19 +2627,13 @@ namespace System.Windows.Forms
 						 Math.Max (0, r.Width - 1), Math.Max (0, r.Height - 1));
 			}
 
-			Bitmap glyph = CalendarGlyph;
-			if (glyph == null) {
-				CPDrawComboButton (g, r, dateTimePicker.is_drop_down_visible ? ButtonState.Pushed : ButtonState.Normal);
-				return;
-			}
+			Win11Frames.Frame glyph = CalendarGlyph;
 			int x = r.X + (r.Width - glyph.Width) / 2;
 			// Rounded up, not down: the button is an even number of pixels taller than the glyph only
 			// half the time, and truncating left ours a row above the one Windows draws.
 			int y = r.Y + (r.Height - glyph.Height + 1) / 2;
-			if (dateTimePicker.Enabled)
-				g.DrawImage (glyph, x, y);
-			else
-				CPDrawImageDisabled (g, glyph, x, y, ColorControl);
+			Win11Frames.Draw (g, Win11Frames.DatePickerGlyph (!dateTimePicker.Enabled),
+				new Rectangle (x, y, glyph.Width, glyph.Height));
 		}
 	
 		// ---- themed PARTS, for the managed visual-styles backend ------------------------------

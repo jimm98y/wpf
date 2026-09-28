@@ -52,7 +52,6 @@
     <EmbeddedResource Include="swf/resources/image-missing.png"><LogicalName>image-missing.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/image-x-generic.png"><LogicalName>image-x-generic.png</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/propertygrid-alphabetical.png"><LogicalName>System.Windows.Forms.propertygrid-alphabetical.png</LogicalName></EmbeddedResource>
-    <EmbeddedResource Include="swf/resources/datetimepicker-calendar.png"><LogicalName>System.Windows.Forms.datetimepicker-calendar.png</LogicalName></EmbeddedResource>
     <!-- .NET's own icon resources (dotnet/winforms, MIT), under the names it loads them by. -->
     <EmbeddedResource Include="swf/resources/PBAlpha.ico"><LogicalName>System.Windows.Forms.PBAlpha</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/PBCategory.ico"><LogicalName>System.Windows.Forms.PBCategory</LogicalName></EmbeddedResource>
