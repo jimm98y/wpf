@@ -90,8 +90,51 @@ namespace System.Windows.Forms
 
 		[Browsable (false)]
 		public Rectangle ButtonBounds {
-			get { return new Rectangle (Bounds.Left, Bounds.Top, this.Bounds.Width - this.drop_down_button_width - 1, this.Height); }
+			get { CalculateLayout (out Rectangle button, out _, out _); return button; }
 		}
+
+		// .NET's CalculateLayout, in the item's own coordinates: the drop-down part takes
+		// DropDownButtonWidth on the right, the splitter the pixel before it, the button the rest.
+		private void CalculateLayout (out Rectangle button, out Rectangle splitter, out Rectangle dropDown)
+		{
+			const int splitterWidth = 1;
+			dropDown = new Rectangle (Point.Empty, new Size (Math.Min (Width, drop_down_button_width), Height));
+			button = new Rectangle (Point.Empty, new Size (Math.Max (0, Width - dropDown.Width), Math.Max (0, Height)));
+			button.Width -= splitterWidth;
+			if (RightToLeft == RightToLeft.No) {
+				dropDown.Offset (button.Right + splitterWidth, 0);
+				splitter = new Rectangle (button.Right, button.Top, splitterWidth, button.Height);
+			} else {
+				button.Offset (drop_down_button_width + splitterWidth, 0);
+				splitter = new Rectangle (dropDown.Right, dropDown.Top, splitterWidth, dropDown.Height);
+			}
+		}
+
+		// .NET's ToolStripSplitButtonButtonLayout: the item's layout, over the button part alone.
+		private sealed class SplitButtonButtonLayout : ToolStripItemInternalLayout
+		{
+			private readonly ToolStripSplitButton _split;
+
+			public SplitButtonButtonLayout (ToolStripSplitButton owner) : base (owner) { _split = owner; }
+
+			protected override ToolStripItemLayoutOptions CommonLayoutOptions ()
+			{
+				ToolStripItemLayoutOptions options = base.CommonLayoutOptions ();
+				options.Client = new Rectangle (Point.Empty, _split.ButtonBounds.Size);
+				return options;
+			}
+
+			public override Rectangle ImageRectangle {
+				get { Rectangle r = base.ImageRectangle; r.Offset (_split.ButtonBounds.Location); return r; }
+			}
+
+			public override Rectangle TextRectangle {
+				get { Rectangle r = base.TextRectangle; r.Offset (_split.ButtonBounds.Location); return r; }
+			}
+		}
+
+		private SplitButtonButtonLayout split_layout;
+		private SplitButtonButtonLayout SplitLayout => split_layout ??= new SplitButtonButtonLayout (this);
 
 		[Browsable (false)]
 		public bool ButtonPressed {
@@ -117,7 +160,7 @@ namespace System.Windows.Forms
 		
 		[Browsable (false)]
 		public Rectangle DropDownButtonBounds {
-			get { return new Rectangle (this.Bounds.Right - this.drop_down_button_width, 0, this.drop_down_button_width, this.Bounds.Height); }
+			get { CalculateLayout (out _, out _, out Rectangle dropDown); return dropDown; }
 		}
 
 		[Browsable (false)]
@@ -144,7 +187,7 @@ namespace System.Windows.Forms
 
 		[Browsable (false)]
 		public Rectangle SplitterBounds {
-			get { return new Rectangle (this.Bounds.Width - this.drop_down_button_width - 1, 0, 1, this.Height); }
+			get { CalculateLayout (out _, out Rectangle splitter, out _); return splitter; }
 		}
 		#endregion
 
@@ -161,18 +204,9 @@ namespace System.Windows.Forms
 		#region Public Methods
 		public override Size GetPreferredSize (Size constrainingSize)
 		{
-			// base should calculate the button part for us, add the splitter
-			// and drop down arrow part to that
-			Size s = base.GetPreferredSize (constrainingSize);
-
-			if (s.Width < 23)
-				s.Width = 23;
-
-			// If we are a fixed size, we can't add more in for the drop down
-			// button, but we can for autosize
-			if (AutoSize)
-				s.Width += (this.drop_down_button_width - 2);
-			
+			// .NET's: the button part's own preferred size, then the drop-down part and the splitter.
+			Size s = SplitLayout.GetPreferredSize (constrainingSize);
+			s.Width += drop_down_button_width + 1 + Padding.Horizontal;
 			return s;
 		}
 		
@@ -225,13 +259,15 @@ namespace System.Windows.Forms
 
 		protected override void OnMouseDown (MouseEventArgs e)
 		{
-			if (this.ButtonBounds.Contains (e.Location))
+			// The port hands items the tool strip's coordinates; these bounds are the item's own.
+			Point at = new Point (e.X - Bounds.X, e.Y - Bounds.Y);
+			if (this.ButtonBounds.Contains (at))
 			{
 				this.button_pressed = true;
 				this.Invalidate ();
 				base.OnMouseDown (e);
 			}
-			else if (this.DropDownButtonBounds.Contains (e.Location))
+			else if (this.DropDownButtonBounds.Contains (at))
 			{
 				if (this.DropDown.Visible)
 					this.HideDropDown (ToolStripDropDownCloseReason.ItemClicked);
@@ -271,21 +307,13 @@ namespace System.Windows.Forms
 
 				this.Owner.Renderer.DrawSplitButton (new System.Windows.Forms.ToolStripItemRenderEventArgs (e.Graphics, this));
 
-				Rectangle text_layout_rect;
-				Rectangle image_layout_rect;
+				// .NET's: the button part's layout; the renderer's DrawSplitButton has already drawn
+				// the arrow in DropDownButtonBounds.
+				if ((DisplayStyle & ToolStripItemDisplayStyle.Image) != 0 && draw_image != null)
+					this.Owner.Renderer.DrawItemImage (new System.Windows.Forms.ToolStripItemImageRenderEventArgs (e.Graphics, this, draw_image, SplitLayout.ImageRectangle));
+				if ((DisplayStyle & ToolStripItemDisplayStyle.Text) != 0)
+					this.Owner.Renderer.DrawItemText (new System.Windows.Forms.ToolStripItemTextRenderEventArgs (e.Graphics, this, this.Text, SplitLayout.TextRectangle, font_color, this.Font, SplitLayout.TextFormat));
 
-				Rectangle r = this.ContentRectangle;
-				r.Width -= (this.drop_down_button_width + 1);
-				
-				this.CalculateTextAndImageRectangles (r, out text_layout_rect, out image_layout_rect);
-
-				if (text_layout_rect != Rectangle.Empty)
-					this.Owner.Renderer.DrawItemText (new System.Windows.Forms.ToolStripItemTextRenderEventArgs (e.Graphics, this, this.Text, text_layout_rect, font_color, this.Font, this.TextAlign));
-				if (image_layout_rect != Rectangle.Empty)
-					this.Owner.Renderer.DrawItemImage (new System.Windows.Forms.ToolStripItemImageRenderEventArgs (e.Graphics, this, draw_image, image_layout_rect));
-
-				this.Owner.Renderer.DrawArrow (new ToolStripArrowRenderEventArgs (e.Graphics, this, new Rectangle (this.Width - 9, 1, 6, this.Height), Color.Black, ArrowDirection.Down));
-				
 				return;
 			}
 		}
@@ -327,7 +355,7 @@ namespace System.Windows.Forms
 			MouseEventArgs mea = e as MouseEventArgs;
 			
 			if (mea != null)
-				if (ButtonBounds.Contains (mea.Location))
+				if (ButtonBounds.Contains (new Point (mea.X - Bounds.X, mea.Y - Bounds.Y)))
 					OnButtonClick (EventArgs.Empty);
 		}
 		#endregion

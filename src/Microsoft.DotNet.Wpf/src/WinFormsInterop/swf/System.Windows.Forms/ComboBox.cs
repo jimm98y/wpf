@@ -43,7 +43,7 @@ namespace System.Windows.Forms
 	[DefaultBindingProperty ("Text")]
 	[ClassInterface (ClassInterfaceType.AutoDispatch)]
 	[ComVisible(true)]
-	public class ComboBox : ListControl
+	public partial class ComboBox : ListControl
 	{
 		private DrawMode draw_mode = DrawMode.Normal;
 		private ComboBoxStyle dropdown_style;
@@ -1481,6 +1481,13 @@ namespace System.Windows.Forms
 				HandleDrawItem (new DrawItemEventArgs (dc, Font, item_rect, SelectedIndex, state, fore_color, back_color));
 			}
 			
+			// .NET draws a Flat or Popup combo box's frame and button with FlatComboAdapter, over
+			// whatever the control itself painted.
+			if (is_flat && show_dropdown_button && dropdown_style != ComboBoxStyle.Simple) {
+				FlatComboBoxAdapter.DrawFlatCombo (this, dc);
+				return;
+			}
+
 			if (show_dropdown_button) {
 				ButtonState current_state;
 				if (is_enabled)

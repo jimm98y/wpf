@@ -803,13 +803,30 @@ namespace System.Windows.Forms {
 			Recalculate (true);
 		}
 				
+		/// <summary>Where Windows puts the scroll bars: inside the window's frame, which it keeps in
+		/// the non-client area. This driver has none, so the frame is inside ClientRectangle here --
+		/// and a plain border's children are already put back a pixel (XplatUIWebGpu.ClientOrigin),
+		/// so only a 3D edge moves the origin, as in DisplayRectangle. Laid out against the whole
+		/// client, the bars sat on the frame's right and bottom edges and hid them.</summary>
+		private Rectangle ScrollBarArea {
+			get {
+				Size size = ClientSize;
+				if (border_style == BorderStyle.None)
+					return new Rectangle (Point.Empty, size);
+				int edge = border_style == BorderStyle.FixedSingle ? 1 : ThemeEngine.Current.Border3DSize.Width;
+				int origin = border_style == BorderStyle.FixedSingle ? 0 : edge;
+				return new Rectangle (origin, origin, Math.Max (0, size.Width - 2 * edge), Math.Max (0, size.Height - 2 * edge));
+			}
+		}
+
 		private void Recalculate (bool doLayout) {
 			if (!IsHandleCreated) {
 				return;
 			}
 
 			Size canvas = canvas_size;
-			Size client = ClientSize;
+			Rectangle area = ScrollBarArea;
+			Size client = area.Size;
 
 			canvas.Width += auto_scroll_margin.Width;
 			canvas.Height += auto_scroll_margin.Height;
@@ -850,10 +867,10 @@ namespace System.Windows.Forms {
 			Rectangle hscroll_bounds;
 			Rectangle vscroll_bounds;
 
-			hscroll_bounds = new Rectangle (0, client.Height - SystemInformation.HorizontalScrollBarHeight,
-							ClientRectangle.Width, SystemInformation.HorizontalScrollBarHeight);
-			vscroll_bounds = new Rectangle (client.Width - SystemInformation.VerticalScrollBarWidth, 0,
-							SystemInformation.VerticalScrollBarWidth, ClientRectangle.Height);
+			hscroll_bounds = new Rectangle (area.X, area.Bottom - SystemInformation.HorizontalScrollBarHeight,
+							area.Width, SystemInformation.HorizontalScrollBarHeight);
+			vscroll_bounds = new Rectangle (area.Right - SystemInformation.VerticalScrollBarWidth, area.Y,
+							SystemInformation.VerticalScrollBarWidth, area.Height);
 
 			/* the ScrollWindow calls here are needed
 			 * because (this explanation sucks):

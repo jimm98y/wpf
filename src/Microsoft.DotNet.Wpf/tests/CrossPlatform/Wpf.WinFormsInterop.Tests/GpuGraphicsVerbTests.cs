@@ -11,6 +11,7 @@
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -127,10 +128,39 @@ namespace Wpf.WinFormsInterop.Tests
         public void FillPolygon_Concave_IsNotAFan()
         {
             // An L: a fan from its first corner would cover the notch.
+            // Antialiased: GDI+'s default is aliased, which is the next test.
             var l = new[] { new Point(0, 0), new Point(10, 0), new Point(10, 5), new Point(5, 5), new Point(5, 10), new Point(0, 10) };
-            Assert.Contains("PathGeometry", Record(g => g.FillPolygon(Brushes.Black, l)).kinds);
+            Assert.Contains("PathGeometry", Record(g => { g.SmoothingMode = SmoothingMode.AntiAlias; g.FillPolygon(Brushes.Black, l); }).kinds);
             var square = new[] { new Point(0, 0), new Point(10, 0), new Point(10, 10), new Point(0, 10) };
-            Assert.Contains("PolygonGeometry", Record(g => g.FillPolygon(Brushes.Black, square)).kinds);
+            Assert.Contains("PolygonGeometry", Record(g => { g.SmoothingMode = SmoothingMode.AntiAlias; g.FillPolygon(Brushes.Black, square); }).kinds);
+        }
+
+        [Fact]
+        public void FillPolygon_Aliased_IsGdiPlusPixelCentres()
+        {
+            // A ToolStrip combo box's drop-down arrow, as .NET fills it at SmoothingMode.None, and
+            // the rows Windows lights for it (read off the stock tool strip): a pixel's centre is on
+            // the integer coordinate, left and top edges are in, right and bottom edges out.
+            var arrow = new[] { new Point(112, 10), new Point(117, 10), new Point(114, 13) };
+            Graphics g = GpuRaster.NewRecording();
+            g.FillPolygon(Brushes.Black, arrow);
+            var rows = new List<string>();
+            CollectRects(GpuRaster.EndScene(g), rows);
+            Assert.Equal(new[] { "112,10,5,1", "113,11,3,1", "114,12,1,1" }, rows);
+        }
+
+        private static void CollectRects(object visual, List<string> rows)
+        {
+            foreach (object p in (IEnumerable)visual.GetType().GetProperty("Content").GetValue(visual))
+            {
+                object geo = p.GetType().GetProperty("Geometry")?.GetValue(p);
+                object rect = geo?.GetType().GetProperty("Rect")?.GetValue(geo) ?? geo?.GetType().GetField("Rect")?.GetValue(geo);
+                if (rect == null) continue;
+                float F(string n) => Convert.ToSingle(rect.GetType().GetProperty(n)?.GetValue(rect) ?? rect.GetType().GetField(n).GetValue(rect));
+                rows.Add($"{F("X")},{F("Y")},{F("Width")},{F("Height")}");
+            }
+            foreach (object child in (IEnumerable)visual.GetType().GetProperty("Children").GetValue(visual))
+                CollectRects(child, rows);
         }
     }
 }

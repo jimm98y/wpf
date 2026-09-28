@@ -36,6 +36,63 @@ namespace System.Windows.Forms
 	[ToolStripItemDesignerAvailability (ToolStripItemDesignerAvailability.ToolStrip | ToolStripItemDesignerAvailability.StatusStrip)]
 	public class ToolStripDropDownButton : ToolStripDropDownItem
 	{
+		// .NET's ToolStripDropDownButtonInternalLayout: the arrow takes its five pixels and two of
+		// padding either side off the right of the layout, and sits in the full height there.
+		private protected class ToolStripDropDownButtonInternalLayout : ToolStripItemInternalLayout
+		{
+			private readonly ToolStripDropDownButton _ownerItem;
+			private static readonly Size s_dropDownArrowSize = new Size (5, 3);
+			private readonly Padding _dropDownArrowPadding = new Padding (2);
+			private Rectangle _dropDownArrowRect = Rectangle.Empty;
+
+			public Rectangle DropDownArrowRect => _dropDownArrowRect;
+
+			public ToolStripDropDownButtonInternalLayout (ToolStripDropDownButton ownerItem)
+				: base (ownerItem)
+			{
+				_ownerItem = ownerItem;
+			}
+
+			public override Size GetPreferredSize (Size constrainingSize)
+			{
+				Size preferredSize = base.GetPreferredSize (constrainingSize);
+				if (_ownerItem.ShowDropDownArrow) {
+					if (_ownerItem.TextDirection == ToolStripTextDirection.Horizontal)
+						preferredSize.Width += DropDownArrowRect.Width + _dropDownArrowPadding.Horizontal;
+					else
+						preferredSize.Height += DropDownArrowRect.Height + _dropDownArrowPadding.Vertical;
+				}
+				return preferredSize;
+			}
+
+			protected override ToolStripItemLayoutOptions CommonLayoutOptions ()
+			{
+				ToolStripItemLayoutOptions options = base.CommonLayoutOptions ();
+				if (_ownerItem.ShowDropDownArrow) {
+					if (_ownerItem.TextDirection == ToolStripTextDirection.Horizontal) {
+						int num = s_dropDownArrowSize.Width + _dropDownArrowPadding.Horizontal;
+						options.Client.Width -= num;
+						if (_ownerItem.RightToLeft == RightToLeft.Yes) {
+							options.Client.Offset (num, 0);
+							_dropDownArrowRect = new Rectangle (_dropDownArrowPadding.Left, 0, s_dropDownArrowSize.Width, _ownerItem.Bounds.Height);
+						} else {
+							_dropDownArrowRect = new Rectangle (options.Client.Right, 0, s_dropDownArrowSize.Width, _ownerItem.Bounds.Height);
+						}
+					} else {
+						int num2 = s_dropDownArrowSize.Height + _dropDownArrowPadding.Vertical;
+						options.Client.Height -= num2;
+						_dropDownArrowRect = new Rectangle (0, options.Client.Bottom + _dropDownArrowPadding.Top, _ownerItem.Bounds.Width - 1, s_dropDownArrowSize.Height);
+					}
+				}
+				return options;
+			}
+		}
+
+		private protected override ToolStripItemInternalLayout CreateInternalLayout ()
+		{
+			return new ToolStripDropDownButtonInternalLayout (this);
+		}
+
 		private bool show_drop_down_arrow = true;
 
 		#region Public Constructors
@@ -140,17 +197,16 @@ namespace System.Windows.Forms
 
 				this.Owner.Renderer.DrawDropDownButtonBackground (new System.Windows.Forms.ToolStripItemRenderEventArgs (e.Graphics, this));
 
-				Rectangle text_layout_rect;
-				Rectangle image_layout_rect;
-
-				this.CalculateTextAndImageRectangles (out text_layout_rect, out image_layout_rect);
-
-				if (text_layout_rect != Rectangle.Empty)
-					this.Owner.Renderer.DrawItemText (new System.Windows.Forms.ToolStripItemTextRenderEventArgs (e.Graphics, this, this.Text, text_layout_rect, font_color, this.Font, this.TextAlign));
-				if (image_layout_rect != Rectangle.Empty)
-					this.Owner.Renderer.DrawItemImage (new System.Windows.Forms.ToolStripItemImageRenderEventArgs (e.Graphics, this, draw_image, image_layout_rect));
+				// .NET's layout: ToolStripItemInternalLayout places both, and the text goes down with
+				// its flags (the alignment, and HidePrefix while keyboard cues are off).
+				if ((DisplayStyle & ToolStripItemDisplayStyle.Image) == ToolStripItemDisplayStyle.Image && draw_image != null)
+					this.Owner.Renderer.DrawItemImage (new System.Windows.Forms.ToolStripItemImageRenderEventArgs (e.Graphics, this, draw_image, InternalLayout.ImageRectangle));
+				if ((DisplayStyle & ToolStripItemDisplayStyle.Text) == ToolStripItemDisplayStyle.Text)
+					this.Owner.Renderer.DrawItemText (new System.Windows.Forms.ToolStripItemTextRenderEventArgs (e.Graphics, this, this.Text, InternalLayout.TextRectangle, font_color, this.Font, InternalLayout.TextFormat));
 				if (this.ShowDropDownArrow)
-					this.Owner.Renderer.DrawArrow (new ToolStripArrowRenderEventArgs (e.Graphics, this, new Rectangle (this.Width - 10, 0, 6, this.Height), Color.Black, ArrowDirection.Down));
+					this.Owner.Renderer.DrawArrow (new ToolStripArrowRenderEventArgs (e.Graphics, this,
+						InternalLayout is ToolStripDropDownButtonInternalLayout l ? l.DropDownArrowRect : Rectangle.Empty,
+						Enabled ? SystemColors.ControlText : SystemColors.ControlDark, ArrowDirection.Down));
 				return;
 			}
 		}

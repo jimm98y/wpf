@@ -84,6 +84,25 @@ namespace System.Drawing.WebGpuBackend
             }
         }
 
+        private readonly List<(int Depth, int Translates, bool SourceCopy)> _saved = new();
+
+        public int SaveState()
+        {
+            _saved.Add((_stack.Count, _translateDepth, _sourceCopy));
+            return _saved.Count;
+        }
+
+        public void RestoreState(int state)
+        {
+            if (state < 1 || state > _saved.Count) return;
+            (int depth, int translates, bool sourceCopy) = _saved[state - 1];
+            _saved.RemoveRange(state - 1, _saved.Count - (state - 1));
+            if (depth >= 1)
+                while (_stack.Count > depth) _stack.RemoveAt(_stack.Count - 1);
+            _translateDepth = translates;
+            _sourceCopy = sourceCopy;
+        }
+
         private static PathFigure RectFigure(float x, float y, float w, float h)
         {
             var f = new PathFigure(new Vector2(x, y)) { Closed = true };

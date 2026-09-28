@@ -35,6 +35,25 @@ namespace System.Windows.Forms
 	[ToolStripItemDesignerAvailability (ToolStripItemDesignerAvailability.ToolStrip)]
 	public class ToolStripLabel : ToolStripItem
 	{
+		// .NET's ToolStripLabelLayout (and ToolStripStatusLabelLayout, which is the same): a label
+		// has no border, so the layout gives it none.
+		private sealed class ToolStripLabelLayout : ToolStripItemInternalLayout
+		{
+			public ToolStripLabelLayout (ToolStripLabel owner) : base (owner) { }
+
+			protected override ToolStripItemLayoutOptions CommonLayoutOptions ()
+			{
+				ToolStripItemLayoutOptions options = base.CommonLayoutOptions ();
+				options.BorderSize = 0;
+				return options;
+			}
+		}
+
+		private protected override ToolStripItemInternalLayout CreateInternalLayout ()
+		{
+			return new ToolStripLabelLayout (this);
+		}
+
 		private Color active_link_color;
 		private bool is_link;
 		private LinkBehavior link_behavior;
@@ -200,6 +219,14 @@ namespace System.Windows.Forms
 
 				this.CalculateTextAndImageRectangles (out text_layout_rect, out image_layout_rect);
 
+				// On a tool strip, .NET's layout (ToolStripItemInternalLayout).
+				if (!this.IsOnDropDown) {
+					if ((DisplayStyle & ToolStripItemDisplayStyle.Text) == ToolStripItemDisplayStyle.Text && !string.IsNullOrEmpty (Text))
+						text_layout_rect = InternalLayout.TextRectangle;
+					if (image_layout_rect != Rectangle.Empty)
+						image_layout_rect = InternalLayout.ImageRectangle;
+				}
+
 				if (this.IsOnDropDown) {
 					if (this.ShowMargin)
 						text_layout_rect = new Rectangle (35, text_layout_rect.Top, text_layout_rect.Width, text_layout_rect.Height);
@@ -269,7 +296,9 @@ namespace System.Windows.Forms
 
 							}
 						}
-					} else
+					} else if (!this.IsOnDropDown)
+						this.Owner.Renderer.DrawItemText (new System.Windows.Forms.ToolStripItemTextRenderEventArgs (e.Graphics, this, this.Text, text_layout_rect, font_color, this.Font, InternalLayout.TextFormat));
+					else
 						this.Owner.Renderer.DrawItemText (new System.Windows.Forms.ToolStripItemTextRenderEventArgs (e.Graphics, this, this.Text, text_layout_rect, font_color, this.Font, this.TextAlign));
 			}
 

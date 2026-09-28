@@ -134,29 +134,28 @@ namespace System.Windows.Forms
 
 		protected virtual void OnRenderArrow (ToolStripArrowRenderEventArgs e)
 		{
+			// .NET's RenderArrowCore at 96 dpi: a filled triangle about the rectangle's centre.
+			Rectangle r = e.ArrowRectangle;
+			Point c = new Point (r.Left + r.Width / 2, r.Top + r.Height / 2);
+			const int offset2X = 2, offset2Y = 2, offset4Y = 4, tip = 2;
+			Point[] arrow;
 			switch (e.Direction) {
-				case ArrowDirection.Down:
-					using (Pen p = new Pen (e.ArrowColor)) {
-						int x = e.ArrowRectangle.Left + (e.ArrowRectangle.Width / 2) - 3;
-						int y = e.ArrowRectangle.Top + (e.ArrowRectangle.Height / 2) - 2;
-
-						DrawDownArrow (e.Graphics, p, x, y);
-					}
+				case ArrowDirection.Up:
+					arrow = new[] { new Point (c.X - offset2X, c.Y + 1), new Point (c.X + offset2X + 1, c.Y + 1), new Point (c.X, c.Y - offset2Y) };
 					break;
 				case ArrowDirection.Left:
+					arrow = new[] { new Point (c.X + offset2X, c.Y - offset4Y), new Point (c.X + offset2X, c.Y + offset4Y), new Point (c.X - tip, c.Y) };
 					break;
 				case ArrowDirection.Right:
-					using (Pen p = new Pen (e.ArrowColor)) {
-						int x = e.ArrowRectangle.Left + (e.ArrowRectangle.Width / 2) - 3;
-						int y = e.ArrowRectangle.Top + (e.ArrowRectangle.Height / 2) - 4;
-
-						DrawRightArrow (e.Graphics, p, x, y);
-					}
+					arrow = new[] { new Point (c.X - offset2X, c.Y - offset4Y), new Point (c.X - offset2X, c.Y + offset4Y), new Point (c.X + tip, c.Y) };
 					break;
-				case ArrowDirection.Up:
+				default:
+					arrow = new[] { new Point (c.X - offset2X, c.Y - 1), new Point (c.X + offset2X + 1, c.Y - 1), new Point (c.X, c.Y + offset2Y) };
 					break;
 			}
-			
+			using (SolidBrush b = new SolidBrush (e.ArrowColor))
+				e.Graphics.FillPolygon (b, arrow);
+
 			ToolStripArrowRenderEventHandler eh = (ToolStripArrowRenderEventHandler)Events[RenderArrowEvent];
 			if (eh != null)
 				eh (this, e);

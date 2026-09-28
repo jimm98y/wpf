@@ -200,15 +200,12 @@ namespace System.Windows.Forms
 
 				this.Owner.Renderer.DrawButtonBackground (new System.Windows.Forms.ToolStripItemRenderEventArgs (e.Graphics, this));
 
-				Rectangle text_layout_rect;
-				Rectangle image_layout_rect;
-
-				this.CalculateTextAndImageRectangles (out text_layout_rect, out image_layout_rect);
-
-				if (text_layout_rect != Rectangle.Empty)
-					this.Owner.Renderer.DrawItemText (new System.Windows.Forms.ToolStripItemTextRenderEventArgs (e.Graphics, this, this.Text, text_layout_rect, font_color, this.Font, this.TextAlign));
-				if (image_layout_rect != Rectangle.Empty)
-					this.Owner.Renderer.DrawItemImage (new System.Windows.Forms.ToolStripItemImageRenderEventArgs (e.Graphics, this, draw_image, image_layout_rect));
+				// .NET's layout: ToolStripItemInternalLayout places both, and the text goes down with
+				// its flags (the alignment, and HidePrefix while keyboard cues are off).
+				if ((DisplayStyle & ToolStripItemDisplayStyle.Image) == ToolStripItemDisplayStyle.Image && draw_image != null)
+					this.Owner.Renderer.DrawItemImage (new System.Windows.Forms.ToolStripItemImageRenderEventArgs (e.Graphics, this, draw_image, InternalLayout.ImageRectangle));
+				if ((DisplayStyle & ToolStripItemDisplayStyle.Text) == ToolStripItemDisplayStyle.Text)
+					this.Owner.Renderer.DrawItemText (new System.Windows.Forms.ToolStripItemTextRenderEventArgs (e.Graphics, this, this.Text, InternalLayout.TextRectangle, font_color, this.Font, InternalLayout.TextFormat));
 
 				return;
 			}

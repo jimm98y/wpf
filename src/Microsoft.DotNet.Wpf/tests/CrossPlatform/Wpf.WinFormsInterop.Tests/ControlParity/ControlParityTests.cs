@@ -128,7 +128,7 @@ namespace Wpf.WinFormsInterop.Tests
             // (see ScrollBar.OnHandleCreated), which put it eighteen pixels left of Windows'. Fixing
             // that, the missing white leading edge and the thumb's extra pixel took both bars to zero
             // position error against the live window.
-            ["hscrollbar"] = (4, 1),
+            ["hscrollbar"] = (0, 1),
             ["label"] = (76, 110),
             ["label-disabled"] = (76, 120),
             ["linklabel"] = (331, 110),
@@ -183,7 +183,7 @@ namespace Wpf.WinFormsInterop.Tests
             // fills it with, which is 2,740 off the window and moves five faint pixels across
             // the "drawn at all" line here. Shade -- the measure that can see a ramp -- improved.
             ["treeview"] = (14, 1062),
-            ["vscrollbar"] = (4, 1),
+            ["vscrollbar"] = (0, 1),
         };
 
         private static (int Ink, int Shade) AllowanceFor(string name)

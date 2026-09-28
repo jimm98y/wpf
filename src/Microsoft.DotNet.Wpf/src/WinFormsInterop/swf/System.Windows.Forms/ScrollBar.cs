@@ -604,7 +604,7 @@ namespace System.Windows.Forms
 					if (IsHandleCreated) {
 						Rectangle thumb_rect = thumb_pos;
 
-						UpdateThumbPos ((vert ? thumb_area.Y : thumb_area.X) + (int)(((float)(position - minimum)) * pixel_per_pos), false, false);
+						UpdateThumbPos ((vert ? thumb_area.Y : thumb_area.X) + ThumbOffsetFor (position), false, false);
 
 						MoveThumb (thumb_rect, vert ? thumb_pos.Y : thumb_pos.X);
 					}
@@ -677,7 +677,7 @@ namespace System.Windows.Forms
 			// thumb lost the width of the first arrow and came up short of where the value puts it --
 			// eighteen pixels left of Windows', at a value of thirty out of a hundred.
 			UpdateThumbPos ((vert ? thumb_area.Y : thumb_area.X)
-					+ (int)(((float)(position - minimum)) * pixel_per_pos), true, false);
+					+ ThumbOffsetFor (position), true, false);
 		}
 
 		protected virtual void OnScroll (ScrollEventArgs se)
@@ -750,6 +750,30 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>win32k's EngMulDiv: a * b / c rounded to the nearest, halves away from zero.</summary>
+		private static int MulDiv (int a, int b, int c)
+		{
+			if (c == 0)
+				return 0;
+			long p = (long) a * b;
+			long half = Math.Abs ((long) c) / 2;
+			long q = (p >= 0) == (c > 0) ? (Math.Abs (p) + half) / Math.Abs ((long) c) : -((Math.Abs (p) + half) / Math.Abs ((long) c));
+			return (int) q;
+		}
+
+		/// <summary>How far into the track the thumb of <paramref name="pos"/> starts: win32k's
+		/// CalcSBStuff2, MulDiv(pos - min, track - thumb, range - page), which rounds -- the float
+		/// product this used truncated, and put a thumb a pixel short of Windows' half the time.</summary>
+		private int ThumbOffsetFor (int pos)
+		{
+			int lchange = use_manual_thumb_size ? manual_thumb_size : LargeChange;
+			int track = vert ? thumb_area.Height : thumb_area.Width;
+			int den = maximum - minimum - lchange + 1;
+			if (den <= 0)
+				return 0;
+			return MulDiv (pos - minimum, track - thumb_size, den);
+		}
+
 		private void CalcThumbArea ()
 		{
 			int lchange = use_manual_thumb_size ? manual_thumb_size : LargeChange;
@@ -765,11 +789,9 @@ namespace System.Windows.Forms
 				if (Height < thumb_notshown_size)
 					thumb_size = 0;
 				else {
-					double per =  ((double) lchange / (double)((1 + maximum - minimum)));
-					// No rounding up: Windows makes the thumb the plain proportion of the track, and the
-					// ThumbMinSize clamp below already keeps it draggable. The extra pixel made every
-					// thumb one longer than the one beside it.
-					thumb_size = (int) (thumb_area.Height * per);
+					// win32k's CalcSBStuff2: MulDiv(track, page, range), ROUNDED -- neither the ceiling
+					// this once took nor the plain truncation after it.
+					thumb_size = MulDiv (thumb_area.Height, lchange, 1 + maximum - minimum);
 
 					if (thumb_size < ThumbMinSize)
 						thumb_size = ThumbMinSize;
@@ -791,8 +813,7 @@ namespace System.Windows.Forms
 				if (Width < thumb_notshown_size)
 					thumb_size = 0;
 				else {
-					double per =  ((double) lchange / (double)((1 + maximum - minimum)));
-					thumb_size = (int) (thumb_area.Width * per);
+					thumb_size = MulDiv (thumb_area.Width, lchange, 1 + maximum - minimum);
 
 					if (thumb_size < ThumbMinSize)
 						thumb_size = ThumbMinSize;
@@ -1414,9 +1435,9 @@ namespace System.Windows.Forms
 
 			if (update_thumbpos) {
 				if (vert)
-					UpdateThumbPos (thumb_area.Y + (int)(((float)(pos - minimum)) * pixel_per_pos), true, false);
+					UpdateThumbPos (thumb_area.Y + ThumbOffsetFor (pos), true, false);
 				else
-					UpdateThumbPos (thumb_area.X + (int)(((float)(pos - minimum)) * pixel_per_pos), true, false);
+					UpdateThumbPos (thumb_area.X + ThumbOffsetFor (pos), true, false);
 				SetValue (pos);
 			}
 			else {

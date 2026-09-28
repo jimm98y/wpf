@@ -40,7 +40,7 @@ namespace System.Windows.Forms
 	[DesignTimeVisible (false)]
 	[ToolboxItem (false)]
 	[Designer ("System.Windows.Forms.Design.ToolStripItemDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
-	public abstract class ToolStripItem : Component, IDropTarget, IComponent, IDisposable, IArrangedElement
+	public abstract partial class ToolStripItem : Component, IDropTarget, IComponent, IDisposable, IArrangedElement
 	{
 		#region Private Variables
 		private AccessibleObject accessibility_object;
@@ -675,7 +675,15 @@ namespace System.Windows.Forms
 		[MonoTODO ("RTL not implemented")]
 		[Localizable (true)]
 		public virtual RightToLeft RightToLeft {
-			get { return this.right_to_left; }
+			// .NET resolves Inherit through the owning tool strip. Returning the raw Inherit made
+			// every "RightToLeft == No" test false, and a split button laid itself out mirrored.
+			get {
+				if (this.right_to_left != RightToLeft.Inherit)
+					return this.right_to_left;
+				if (this.owner != null)
+					return this.owner.RightToLeft;
+				return this.parent != null ? this.parent.RightToLeft : RightToLeft.Inherit;
+			}
 			set { 
 				if (this.right_to_left != value) {
 					this.right_to_left = value;
@@ -1185,10 +1193,9 @@ namespace System.Windows.Forms
 
 		void OnPaintInternal (PaintEventArgs e)
 		{
-			// Have the background rendered independently from OnPaint
-			if (this.parent != null)
-				this.parent.Renderer.DrawItemBackground (new ToolStripItemRenderEventArgs (e.Graphics, this));
-
+			// .NET's HandlePaint is OnPaint alone: each item's renderer call draws its own background.
+			// A general item background here painted a hosted control's BackColor over the whole
+			// item, rows of it outside the control where the tool strip shows through in Windows.
 			OnPaint (e);
 		}
 

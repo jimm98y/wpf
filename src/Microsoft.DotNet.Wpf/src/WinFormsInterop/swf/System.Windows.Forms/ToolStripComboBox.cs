@@ -28,6 +28,7 @@
 
 using System.Drawing;
 using System.ComponentModel;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms.Design;
 
 namespace System.Windows.Forms
@@ -39,6 +40,7 @@ namespace System.Windows.Forms
 		#region Public Constructors
 		public ToolStripComboBox () : base (new ToolStripComboBoxControl ())
 		{
+			((ToolStripComboBoxControl) Control).Owner = this;
 			// The default size of a new ToolStripComboBox doesn't seem
 			// to be DefaultSize.
 			Size = new Size (121, 21);
@@ -410,10 +412,89 @@ namespace System.Windows.Forms
 
 		private class ToolStripComboBoxControl : ComboBox
 		{
+			internal ToolStripComboBox Owner;
+			private static readonly ProfessionalColorTable s_defaultColors = new ProfessionalColorTable ();
+
 			public ToolStripComboBoxControl () : base ()
 			{
 				this.border_style = BorderStyle.None;
 				this.FlatStyle = FlatStyle.Popup;
+			}
+
+			private ProfessionalColorTable ColorTable
+				=> Owner?.Owner?.Renderer is ToolStripProfessionalRenderer r ? r.ColorTable : s_defaultColors;
+
+			internal override FlatComboAdapter CreateFlatComboAdapterInstance ()
+			{
+				return new ToolStripComboBoxFlatComboAdapter (this);
+			}
+
+			// .NET's ToolStripComboBoxFlatComboAdapter: the small button, in the professional
+			// renderer's colours.
+			private sealed class ToolStripComboBoxFlatComboAdapter : FlatComboAdapter
+			{
+				public ToolStripComboBoxFlatComboAdapter (ComboBox comboBox) : base (comboBox, smallButton: true) { }
+
+				private static bool UseBaseAdapter (ComboBox comboBox)
+					=> !(comboBox is ToolStripComboBoxControl c && c.Owner?.Owner?.Renderer is ToolStripProfessionalRenderer);
+
+				private static ProfessionalColorTable GetColorTable (ToolStripComboBoxControl c)
+					=> c != null ? c.ColorTable : s_defaultColors;
+
+				protected override Color GetOuterBorderColor (ComboBox comboBox)
+				{
+					if (UseBaseAdapter (comboBox))
+						return base.GetOuterBorderColor (comboBox);
+					return comboBox.Enabled ? SystemColors.Window : GetColorTable (comboBox as ToolStripComboBoxControl).ComboBoxBorder;
+				}
+
+				protected override Color GetPopupOuterBorderColor (ComboBox comboBox, bool focused)
+				{
+					if (UseBaseAdapter (comboBox))
+						return base.GetPopupOuterBorderColor (comboBox, focused);
+					if (!comboBox.Enabled)
+						return SystemColors.ControlDark;
+					return focused ? GetColorTable (comboBox as ToolStripComboBoxControl).ComboBoxBorder : SystemColors.Window;
+				}
+
+				protected override void DrawFlatComboDropDown (ComboBox comboBox, Graphics g, Rectangle dropDownRect)
+				{
+					if (UseBaseAdapter (comboBox)) {
+						base.DrawFlatComboDropDown (comboBox, g, dropDownRect);
+						return;
+					}
+					var c = comboBox as ToolStripComboBoxControl;
+					if (!comboBox.Enabled) {
+						g.FillRectangle (SystemBrushes.Control, dropDownRect);
+					} else {
+						ProfessionalColorTable colors = GetColorTable (c);
+						if (!comboBox.DroppedDown) {
+							if (comboBox.ContainsFocus || comboBox.MouseIsOver) {
+								using (Brush b = new LinearGradientBrush (dropDownRect, colors.ComboBoxButtonSelectedGradientBegin, colors.ComboBoxButtonSelectedGradientEnd, LinearGradientMode.Vertical))
+									g.FillRectangle (b, dropDownRect);
+							} else if (c?.Owner != null && c.Owner.IsOnOverflow) {
+								using (Brush b = new SolidBrush (colors.ComboBoxButtonOnOverflow))
+									g.FillRectangle (b, dropDownRect);
+							} else {
+								using (Brush b = new LinearGradientBrush (dropDownRect, colors.ComboBoxButtonGradientBegin, colors.ComboBoxButtonGradientEnd, LinearGradientMode.Vertical))
+									g.FillRectangle (b, dropDownRect);
+							}
+						} else {
+							using (Brush b = new LinearGradientBrush (dropDownRect, colors.ComboBoxButtonPressedGradientBegin, colors.ComboBoxButtonPressedGradientEnd, LinearGradientMode.Vertical))
+								g.FillRectangle (b, dropDownRect);
+						}
+					}
+					Brush arrow = comboBox.Enabled
+						? (SystemInformation.HighContrast && (comboBox.ContainsFocus || comboBox.MouseIsOver) ? SystemBrushes.HighlightText : SystemBrushes.ControlText)
+						: SystemBrushes.GrayText;
+					Point middle = new Point (dropDownRect.Left + dropDownRect.Width / 2, dropDownRect.Top + dropDownRect.Height / 2);
+					middle.X += dropDownRect.Width % 2;
+					g.FillPolygon (arrow, new[] {
+						new Point (middle.X - s_offsetPixels, middle.Y - 1),
+						new Point (middle.X + s_offsetPixels + 1, middle.Y - 1),
+						new Point (middle.X, middle.Y + s_offsetPixels),
+					});
+				}
 			}
 		}
 	}

@@ -63,5 +63,10 @@ namespace System.Drawing
         // bounds, draws it at the origin, and resets.
         void PushTranslate(float dx, float dy);
         void ResetTransform();
+
+        // Graphics.Save / Restore: the transform, clip and compositing mode as they stand, and
+        // back to them. Restore also discards every state saved after the one restored.
+        int SaveState();
+        void RestoreState(int state);
     }
 }

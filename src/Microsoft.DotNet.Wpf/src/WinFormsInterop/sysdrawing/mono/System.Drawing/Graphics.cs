@@ -325,6 +325,55 @@ namespace System.Drawing
 			}
 		}
 
+		// A recording Graphics has no GDI+ object to hold its smoothing mode, so it is kept here --
+		// and it matters: GDI+'s default is ALIASED, which is how every WinForms arrow and glyph is
+		// filled, while the recorder's fills are antialiased.
+		private SmoothingMode gpu_smoothing = SmoothingMode.None;
+		private readonly List<SmoothingMode> gpu_saved_smoothing = new List<SmoothingMode> ();
+
+		private bool GpuAliased => nativeObject == IntPtr.Zero && gpu_smoothing != SmoothingMode.AntiAlias
+			&& gpu_smoothing != SmoothingMode.HighQuality && gpu_smoothing != (SmoothingMode) 5 && gpu_smoothing != (SmoothingMode) 6;
+
+		/// <summary>GDI+'s aliased fill at PixelOffsetMode.None: pixel (i, j) is filled when the
+		/// point (i, j) -- a pixel's centre sits on the integer coordinate -- is inside, with left and
+		/// top edges in and right and bottom edges out. Recorded as one rectangle per run.</summary>
+		private void FillPolygonAliased (float [] xy, bool winding, int argb)
+		{
+			int n = xy.Length / 2;
+			if (n < 3) return;
+			float ymin = float.MaxValue, ymax = float.MinValue;
+			for (int i = 0; i < n; i++) { ymin = Math.Min (ymin, xy [i * 2 + 1]); ymax = Math.Max (ymax, xy [i * 2 + 1]); }
+			var xs = new List<(float X, int Dir)> ();
+			for (int y = (int) Math.Ceiling (ymin); y < ymax; y++) {
+				xs.Clear ();
+				for (int i = 0; i < n; i++) {
+					float x0 = xy [i * 2], y0 = xy [i * 2 + 1];
+					float x1 = xy [(i + 1) % n * 2], y1 = xy [(i + 1) % n * 2 + 1];
+					if (y0 == y1) continue;
+					int dir = y1 > y0 ? 1 : -1;
+					if (dir < 0) { (x0, x1) = (x1, x0); (y0, y1) = (y1, y0); }
+					if (y < y0 || y >= y1) continue;   // half-open: the top row in, the bottom row out
+					xs.Add ((x0 + (y - y0) * (x1 - x0) / (y1 - y0), dir));
+				}
+				xs.Sort ((a, b) => a.X.CompareTo (b.X));
+				int wind = 0;
+				for (int k = 0; k < xs.Count - 1; k++) {
+					wind += winding ? xs [k].Dir : 1;
+					bool inside = winding ? wind != 0 : (wind & 1) != 0;
+					if (!inside) continue;
+					int a = (int) Math.Ceiling (xs [k].X), b = (int) Math.Ceiling (xs [k + 1].X);
+					if (b > a) GpuRecorder.FillRect (a, y, b - a, 1, argb);
+				}
+			}
+		}
+
+		private void RecordFillPolygon (float [] xy, bool winding, int argb)
+		{
+			if (GpuAliased) { FillPolygonAliased (xy, winding, argb); return; }
+			if (IsConvex (xy)) GpuRecorder.FillPolygon (xy, argb);
+			else GpuRecorder.FillContours (new [] { xy }, winding, argb);
+		}
+
 		// Convex, and wound one way: what a fan triangulates correctly. Collinear runs are allowed.
 		static bool IsConvex (float [] xy)
 		{
@@ -2538,7 +2587,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (points == null)
 				throw new ArgumentNullException ("points");
-			if (RecordSolid (brush)) { float [] xy = Flatten (points); if (IsConvex (xy)) GpuRecorder.FillPolygon (xy, ArgbOf (brush)); else GpuRecorder.FillContours (new [] { xy }, false, ArgbOf (brush)); return; }
+			if (RecordSolid (brush)) { RecordFillPolygon (Flatten (points), false, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon2 (nativeObject, brush.NativeBrush, points, points.Length);
@@ -2551,7 +2600,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (points == null)
 				throw new ArgumentNullException ("points");
-			if (RecordSolid (brush)) { float [] xy = Flatten (points); if (IsConvex (xy)) GpuRecorder.FillPolygon (xy, ArgbOf (brush)); else GpuRecorder.FillContours (new [] { xy }, false, ArgbOf (brush)); return; }
+			if (RecordSolid (brush)) { RecordFillPolygon (Flatten (points), false, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon2I (nativeObject, brush.NativeBrush, points, points.Length);
@@ -2564,7 +2613,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (points == null)
 				throw new ArgumentNullException ("points");
-			if (RecordSolid (brush)) { float [] xy = Flatten (points); if (IsConvex (xy)) GpuRecorder.FillPolygon (xy, ArgbOf (brush)); else GpuRecorder.FillContours (new [] { xy }, fillMode == FillMode.Winding, ArgbOf (brush)); return; }
+			if (RecordSolid (brush)) { RecordFillPolygon (Flatten (points), fillMode == FillMode.Winding, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygonI (nativeObject, brush.NativeBrush, points, points.Length, fillMode);
@@ -2577,7 +2626,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (points == null)
 				throw new ArgumentNullException ("points");
-			if (RecordSolid (brush)) { float [] xy = Flatten (points); if (IsConvex (xy)) GpuRecorder.FillPolygon (xy, ArgbOf (brush)); else GpuRecorder.FillContours (new [] { xy }, fillMode == FillMode.Winding, ArgbOf (brush)); return; }
+			if (RecordSolid (brush)) { RecordFillPolygon (Flatten (points), fillMode == FillMode.Winding, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon (nativeObject, brush.NativeBrush, points, points.Length, fillMode);
@@ -3161,6 +3210,18 @@ namespace System.Drawing
 
 		public void Restore (GraphicsState gstate)
 		{			
+			// A recording Graphics has no GDI+ object to restore: the recorder holds the transform
+			// and clip. Without this a Save/Translate/Restore left the translation in place, and the
+			// next thing drawn -- a tool strip's first button, after its grip -- moved with it.
+			if (GpuRecorder != null && nativeObject == IntPtr.Zero) {
+				int k = gstate.nativeState - 1;
+				if (k >= 0 && k < gpu_saved_smoothing.Count) {
+					gpu_smoothing = gpu_saved_smoothing [k];
+					gpu_saved_smoothing.RemoveRange (k, gpu_saved_smoothing.Count - k);
+				}
+				GpuRecorder.RestoreState (gstate.nativeState);
+				return;
+			}
 			// the possible NRE thrown by gstate.nativeState match MS behaviour
 			Status status = GDIPlus.GdipRestoreGraphics (nativeObject, (uint)gstate.nativeState);
 			CheckDrawStatus (status);
@@ -3180,6 +3241,13 @@ namespace System.Drawing
 
 		public GraphicsState Save ()
 		{						
+			if (GpuRecorder != null && nativeObject == IntPtr.Zero) {
+				int token = GpuRecorder.SaveState ();
+				while (gpu_saved_smoothing.Count < token - 1) gpu_saved_smoothing.Add (gpu_smoothing);
+				if (gpu_saved_smoothing.Count >= token) gpu_saved_smoothing.RemoveRange (token - 1, gpu_saved_smoothing.Count - (token - 1));
+				gpu_saved_smoothing.Add (gpu_smoothing);
+				return new GraphicsState (token);
+			}
 			uint saveState;
 			Status status = GDIPlus.GdipSaveGraphics (nativeObject, out saveState);
 			CheckDrawStatus (status);
@@ -3553,7 +3621,7 @@ namespace System.Drawing
 
 		public SmoothingMode SmoothingMode {
 			get {
-                                if (nativeObject == IntPtr.Zero) return SmoothingMode.Default;   // recording-only
+                                if (nativeObject == IntPtr.Zero) return gpu_smoothing;   // recording-only
                                 SmoothingMode mode = SmoothingMode.Invalid;
 
 				Status status = GDIPlus.GdipGetSmoothingMode (nativeObject, out mode);
@@ -3562,7 +3630,12 @@ namespace System.Drawing
 			}
 
 			set {
-                                if (nativeObject == IntPtr.Zero) return;
+                                if (nativeObject == IntPtr.Zero) {
+					// GDI+ stores Default and HighSpeed as None, HighQuality as AntiAlias.
+					gpu_smoothing = value == SmoothingMode.Default || value == SmoothingMode.HighSpeed ? SmoothingMode.None
+						: value == SmoothingMode.HighQuality ? SmoothingMode.AntiAlias : value;
+					return;
+				}
                                 Status status = GDIPlus.GdipSetSmoothingMode (nativeObject, value);
 				CheckDrawStatus (status);
 			}
