@@ -857,16 +857,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         && !ext.Equals(".otf", StringComparison.OrdinalIgnoreCase)
                         && !ext.Equals(".ttc", StringComparison.OrdinalIgnoreCase))
                         continue;
-                    byte[] head;
+                    byte[]? head;
                     try
                     {
-                        // The name table can sit anywhere in the file, so the whole thing has to be
-                        // read. These are a few hundred kilobytes each and this runs once.
-                        head = File.ReadAllBytes(path);
+                        head = ReadScanTables(path);
                     }
                     catch (IOException) { continue; }
                     catch (UnauthorizedAccessException) { continue; }
-
+                    if (head is null) continue;
                     foreach (int sfnt in FaceOffsets(head))
                     {
                         if (!ReadNames(head, sfnt, out string? family, out bool bold, out bool italic))
@@ -909,6 +907,101 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 try { File.WriteAllText(dump, sb.ToString()); } catch (IOException) { }
             }
             return s_scanned = found;
+        }
+
+        /// <summary>The tables the scan reads -- 'name', 'head', 'fvar' and 'STAT' -- of every face in a font
+        /// file, repacked as a font (a collection when the file is one) holding only those.
+        /// <para>The scan used to read each file whole, because the tables can sit anywhere in it.
+        /// Every installed font adds up to hundreds of megabytes (a CJK face alone is tens), and the
+        /// scan runs on the first text a window measures, so reading it all was half a second of
+        /// every application's start. The tables it wants are a few kilobytes.</para></summary>
+        private static byte[]? ReadScanTables(string path)
+        {
+            using Microsoft.Win32.SafeHandles.SafeFileHandle file = File.OpenHandle(path);
+            long length = RandomAccess.GetLength(file);
+            byte[] Read(long offset, int count)
+            {
+                if (offset < 0 || count < 0 || offset + count > length) throw new IOException("truncated font");
+                var buffer = new byte[count];
+                int done = 0;
+                while (done < count)
+                {
+                    int n = RandomAccess.Read(file, buffer.AsSpan(done), offset + done);
+                    if (n <= 0) throw new IOException("truncated font");
+                    done += n;
+                }
+                return buffer;
+            }
+
+            if (length < 12) return null;
+            byte[] top = Read(0, 12);
+            var faces = new List<long>();
+            if (top[0] == (byte) 't' && top[1] == (byte) 't' && top[2] == (byte) 'c' && top[3] == (byte) 'f')
+            {
+                int count = Be32(top, 8);
+                if (count <= 0 || count > 1024) return null;
+                byte[] offsets = Read(12, count * 4);
+                for (int i = 0; i < count; i++) faces.Add((uint) Be32(offsets, i * 4));
+            }
+            else
+                faces.Add(0);
+
+            var packed = new List<byte[]>();
+            foreach (long face in faces)
+            {
+                byte[] header = Read(face, 12);
+                int numTables = Be16(header, 4);
+                byte[] directory = Read(face + 12, numTables * 16);
+                var kept = new List<(int Record, byte[] Data)>();
+                for (int i = 0; i < numTables; i++)
+                {
+                    int rec = i * 16;
+                    string tag = System.Text.Encoding.ASCII.GetString(directory, rec, 4);
+                    if (tag != "name" && tag != "fvar" && tag != "STAT" && tag != "head") continue;
+                    kept.Add((rec, Read((uint) Be32(directory, rec + 8), Be32(directory, rec + 12))));
+                }
+                // header, directory of the kept tables, then the tables, each at an offset from the
+                // start of THIS face's buffer -- rebased onto the whole buffer below.
+                int size = 12 + kept.Count * 16;
+                foreach ((int _, byte[] data) in kept) size += (data.Length + 3) & ~3;
+                var one = new byte[size];
+                Array.Copy(header, one, 12);
+                one[4] = (byte) (kept.Count >> 8); one[5] = (byte) kept.Count;
+                int at = 12 + kept.Count * 16;
+                for (int k = 0; k < kept.Count; k++)
+                {
+                    Array.Copy(directory, kept[k].Record, one, 12 + k * 16, 16);
+                    WriteBe32(one, 12 + k * 16 + 8, at);
+                    Array.Copy(kept[k].Data, 0, one, at, kept[k].Data.Length);
+                    at += (kept[k].Data.Length + 3) & ~3;
+                }
+                packed.Add(one);
+            }
+
+            if (faces.Count == 1 && top[0] != (byte) 't') return packed[0];
+            // A collection: its header, then each face with its table offsets moved to where the
+            // face now starts (table offsets in a collection are from the start of the FILE).
+            int headerSize = 12 + packed.Count * 4, total = headerSize;
+            foreach (byte[] one in packed) total += one.Length;
+            var all = new byte[total];
+            Array.Copy(top, all, 12);
+            int start = headerSize;
+            for (int f = 0; f < packed.Count; f++)
+            {
+                byte[] one = packed[f];
+                WriteBe32(all, 12 + f * 4, start);
+                int n = Be16(one, 4);
+                for (int k = 0; k < n; k++)
+                    WriteBe32(one, 12 + k * 16 + 8, Be32(one, 12 + k * 16 + 8) + start);
+                Array.Copy(one, 0, all, start, one.Length);
+                start += one.Length;
+            }
+            return all;
+        }
+
+        private static void WriteBe32(byte[] d, int at, int v)
+        {
+            d[at] = (byte) (v >> 24); d[at + 1] = (byte) (v >> 16); d[at + 2] = (byte) (v >> 8); d[at + 3] = (byte) v;
         }
 
         /// <summary>Where each face's sfnt header starts: one entry for a font, several for a

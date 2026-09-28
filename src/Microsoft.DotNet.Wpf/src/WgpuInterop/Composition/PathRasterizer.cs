@@ -1732,10 +1732,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // dropout over a row it would otherwise have sampled -- 16.70 ink, the stub-excluded
             // fill, not the 17.77 of a sampled row. Deriving the roles from the winding instead
             // (tried, and identical on every real face) loses exactly that.
-            for (int C = 0; C < nCols; C++)
+            // EDGE FIRST, THEN THE COLUMNS IT SPANS. The same crossings in the same order within
+            // each column -- contour by contour, its edges in turn, then its vertices -- so the
+            // sorts below see exactly the lists they always did; but one pass over the edges
+            // instead of one per column, which tested every column against every edge of the glyph
+            // and was 400 ms of the first frame of a window full of text. The rows are built the
+            // same way.
+            for (int C = 0; C < nCols; C++) { colOn[C] = new List<(int, float)>(); colOff[C] = new List<(int, float)>(); }
             {
-                var on = new List<(int, float)>(); var off = new List<(int, float)>();
-                float sx = C + 0.5f;
                 foreach (Vector2[] a in P)
                 {
                     int m = a.Length;
@@ -1744,11 +1748,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         Vector2 p = a[i], q = a[(i + 1) % m];
                         if (p.X == q.X) continue;
                         float lo = MathF.Min(p.X, q.X), hi = MathF.Max(p.X, q.X);
-                        // The column lists' counterpart of the row rule: strictly between the ends
-                        // when a vertex rule handles the vertices, half-open otherwise.
-                        if (s_colTopology != 0 ? (sx <= lo || sx >= hi) : (sx < lo || sx >= hi)) continue;
-                        float v = p.Y + (sx - p.X) / (q.X - p.X) * (q.Y - p.Y);
-                        if (q.X < p.X) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
+                        int c0 = Math.Max(0, (int) MathF.Floor(lo - 0.5f)), c1 = Math.Min(nCols - 1, (int) MathF.Ceiling(hi));
+                        for (int C = c0; C <= c1; C++)
+                        {
+                            float sx = C + 0.5f;
+                            // The column lists' counterpart of the row rule: strictly between the ends
+                            // when a vertex rule handles the vertices, half-open otherwise.
+                            if (s_colTopology != 0 ? (sx <= lo || sx >= hi) : (sx < lo || sx >= hi)) continue;
+                            float v = p.Y + (sx - p.X) / (q.X - p.X) * (q.Y - p.Y);
+                            if (q.X < p.X) colOn[C].Add((OnIdx(v), v)); else colOff[C].Add((OffIdx(v), v));
+                        }
                     }
                     if (s_colTopology == 0) continue;
                     // A VERTEX EXACTLY ON A COLUMN SAMPLE, and it IS CheckVertTopology@140044660.
@@ -1777,7 +1786,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     for (int i = 0; i < m; i++)
                     {
                         Vector2 p = a[i];
+                        int C = (int) MathF.Floor(p.X);
+                        if (C < 0 || C >= nCols) continue;
+                        float sx = C + 0.5f;
                         if (p.X != sx) continue;
+                        List<(int, float)> on = colOn[C], off = colOff[C];
                         if (a[(i - 1 + m) % m] == p) continue;
                         Vector2 pp = p, n = p;
                         for (int k = 1; k < m; k++) { int ip = (i - k + m) % m; if (a[ip] != p) { pp = a[ip]; break; } }
@@ -1808,9 +1821,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         }
                     }
                 }
-                on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                colOn[C] = on; colOff[C] = off;
+            }
+            for (int C = 0; C < nCols; C++)
+            {
+                colOn[C].Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                colOff[C].Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
             }
             // THE STUB TESTS' COUNTS, FROM THE ARRAYS THE FILL ACTUALLY WROTE.
             // <para>DoVertDropout's two three-term gates call VertCrossings@1400426c0 and
@@ -1888,10 +1903,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     + "] off=[" + string.Join(" ", wf) + "]   nRows=" + nRows + " nSub=" + nSub);
                 }
             }
-            for (int R = 0; R < nRows; R++)
+            for (int R = 0; R < nRows; R++) { rowOn[R] = new List<(int, float)>(); rowOff[R] = new List<(int, float)>(); }
             {
-                var on = new List<(int, float)>(); var off = new List<(int, float)>();
-                float sy = R + 0.5f;
                 foreach (Vector2[] a in P)
                 {
                     int m = a.Length;
@@ -1900,18 +1913,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         Vector2 p = a[i], q = a[(i + 1) % m];
                         if (p.Y == q.Y) continue;
                         float lo = MathF.Min(p.Y, q.Y), hi = MathF.Max(p.Y, q.Y);
-                        // THE SAME ROW RULE AS THE FILL: strictly between the ends
-                        // (fsc_CalcLine), a vertex on the row by CheckHorizTopology below.
-                        if (s_rowEdgeTopology ? (sy <= lo || sy >= hi) : (sy < lo || sy >= hi)) continue;
-                        float v = p.X + (sy - p.Y) / (q.Y - p.Y) * (q.X - p.X);
-                        if (q.Y > p.Y) on.Add((OnIdx(v), v)); else off.Add((OffIdx(v), v));
+                        int r0 = Math.Max(0, (int) MathF.Floor(lo - 0.5f)), r1 = Math.Min(nRows - 1, (int) MathF.Ceiling(hi));
+                        for (int R = r0; R <= r1; R++)
+                        {
+                            float sy = R + 0.5f;
+                            // THE SAME ROW RULE AS THE FILL: strictly between the ends
+                            // (fsc_CalcLine), a vertex on the row by CheckHorizTopology below.
+                            if (s_rowEdgeTopology ? (sy <= lo || sy >= hi) : (sy < lo || sy >= hi)) continue;
+                            float v = p.X + (sy - p.Y) / (q.Y - p.Y) * (q.X - p.X);
+                            if (q.Y > p.Y) rowOn[R].Add((OnIdx(v), v)); else rowOff[R].Add((OffIdx(v), v));
+                        }
                     }
                     if (!s_rowEdgeTopology) continue;
                     // CheckHorizTopology@1400443f8 in this frame, which is y-UP: "up" is a larger y.
                     for (int i = 0; i < m; i++)
                     {
                         Vector2 p = a[i];
+                        int R = (int) MathF.Floor(p.Y);
+                        if (R < 0 || R >= nRows) continue;
+                        float sy = R + 0.5f;
                         if (p.Y != sy) continue;
+                        List<(int, float)> on = rowOn[R], off = rowOff[R];
                         if (a[(i - 1 + m) % m] == p) continue;
                         Vector2 pp = p, n = p;
                         for (int k = 1; k < m; k++) { int ip = (i - k + m) % m; if (a[ip] != p) { pp = a[ip]; break; } }
@@ -1941,9 +1963,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         }
                     }
                 }
-                on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                rowOn[R] = on; rowOff[R] = off;
+            }
+            for (int R = 0; R < nRows; R++)
+            {
+                rowOn[R].Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                rowOff[R].Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
             }
             // VertCrossings / HorizCrossings walk the on and off lists together and count both.
             // AND A CROSSING LIST OUTSIDE THE GLYPH'S BOX COUNTS ZERO. VertCrossings@1400426c0 and

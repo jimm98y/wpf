@@ -393,9 +393,10 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         double t0 = s_traceFrames ? SinceStart : 0;
         var scenes = GetScenes(out int ox, out int oy);
         Rectangle? caret = GetCaretRect(ox, oy);
+        double t1 = s_traceFrames ? SinceStart : 0;
         _lastPresentOk = _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.ClientSize.Width, _form.ClientSize.Height);
         if (s_traceFrames && _framesTraced++ < 40)
-            Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms");
+            Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms (paint {t1 - t0:0}, gpu {SinceStart - t1:0})");
         _lastVer = ver; _lastCaretOn = caretOn;
         if (wantSave)
         {

@@ -2015,7 +2015,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // without setting the vectors, and on the virtual grid that misplaces horizontal strokes.
             _inPreProgram = true;
             // WPF_PREP_DUMP traces the pre-program the way WPF_HINT_DUMP traces a glyph's.
-            _dumpActive = Environment.GetEnvironmentVariable("WPF_PREP_DUMP") == "1";
+            _dumpActive = EnvVar.Get("WPF_PREP_DUMP") == "1";
             try
             {
                 if (_fontProgram.Length > 0)
@@ -2039,7 +2039,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // the one thing not yet ruled out for the 11-to-13 anomaly -- shows up as an entry that
             // moves when nothing else does. Comparing whole prep TRACES across sizes cannot show
             // that; they differ everywhere for uninteresting reasons.
-            string? cvtDump = Environment.GetEnvironmentVariable("WPF_CVT_DUMP");
+            string? cvtDump = EnvVar.Get("WPF_CVT_DUMP");
             if (!string.IsNullOrEmpty(cvtDump))
             {
                 var sb = new System.Text.StringBuilder();
@@ -2052,7 +2052,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // WPF_STORAGE_OVERRIDE=idx:val[,idx:val]: a DIAGNOSTIC that overwrites storage slots
             // after the pre-program, on the ClearType pass -- to ask whether another scaler's run
             // differs from ours only in the mode the pre-program left behind.
-            if (!BiLevelPass && Environment.GetEnvironmentVariable("WPF_STORAGE_OVERRIDE") is { Length: > 0 } sov)
+            if (!BiLevelPass && EnvVar.Get("WPF_STORAGE_OVERRIDE") is { Length: > 0 } sov)
                 foreach (string kv in sov.Split(','))
                 {
                     string[] p = kv.Split(':');
@@ -2062,7 +2062,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 }
             // WPF_STORAGE_DUMP: the storage area the pre-program leaves for the glyph programs
             // to branch on, one line per slot -- the twin of the ctharness' STORDUMP.
-            if (Environment.GetEnvironmentVariable("WPF_STORAGE_DUMP") is { Length: > 0 } stDump)
+            if (EnvVar.Get("WPF_STORAGE_DUMP") is { Length: > 0 } stDump)
             {
                 var sbs = new System.Text.StringBuilder();
                 for (int i = 0; i < _storage.Length; i++)
@@ -2881,7 +2881,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 };
                 stems.Add(s);
             }
-            if (Environment.GetEnvironmentVariable("WPF_CT_COLOR_VALIDATE") == "links")
+            if (EnvVar.Get("WPF_CT_COLOR_VALIDATE") == "links")
             {
                 var lb = new System.Text.StringBuilder("=== RAW LINKS: " + _stemCount + "\n");
                 for (int k = 0; k < _stemCount; k++)
@@ -4506,7 +4506,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 }
             }
             finally { _glyphZone.CurX = saveX; }
-            if (Environment.GetEnvironmentVariable("WPF_CT_CW_TRACE") == "1")
+            if (EnvVar.Get("WPF_CT_CW_TRACE") == "1")
             {
                 var tb = new System.Text.StringBuilder($"CW11 ctFrac={_ctFrac:0.0000} pts={pointCount}\n");
                 for (int i = 0; i < pointCount && i < x.Length; i++)
@@ -4570,7 +4570,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     _ctFrac = s_ctPhaseFactor / 10000f;
                     break;
             }
-            if (Environment.GetEnvironmentVariable("WPF_CT_PHASE_DEBUG") == "1")
+            if (EnvVar.Get("WPF_CT_PHASE_DEBUG") == "1")
                 Console.Error.WriteLine($"PHASE adv: org={_glyphZone.OrgX[adv]} cur={_glyphZone.CurX[adv]}"
                     + $" frac={_ctFrac:0.0000} realPts={_realPoints} zoneN={_glyphZone.PointCount}");
             if (_ctFrac == 0f && !s_ctPhaseRaw) return;

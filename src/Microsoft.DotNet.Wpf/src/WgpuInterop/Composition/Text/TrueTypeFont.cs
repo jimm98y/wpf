@@ -1292,7 +1292,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     + $" bilevel={TrueTypeInterpreter.BiLevelPass} ct={ClearTypeRendering}"
                     + $" cached={_hintedCache.ContainsKey(key)}");
             }
-            if (Environment.GetEnvironmentVariable("WPF_NO_HINTCACHE") != "1"
+            if (EnvVar.Get("WPF_NO_HINTCACHE") != "1"
                 && _hintedCache.TryGetValue(key, out List<PathFigure>? cached))
             {
                 figures = cached;
@@ -3353,7 +3353,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 int p0 = glyph.X[glyph.PointCount], p1 = glyph.X[glyph.PointCount + 1];
                 int fitted = p1 - p0;
-                if (Environment.GetEnvironmentVariable("WPF_CT_CW_TRACE") == "1" && gid >= 0 && gid < _numGlyphs)
+                if (EnvVar.Get("WPF_CT_CW_TRACE") == "1" && gid >= 0 && gid < _numGlyphs)
                     Console.Error.WriteLine($"CWIN mode={CompatibleWidthMode} gid={gid}"
                         + $" p0={p0} p1={p1} fitted={fitted}");
                 // MODE 2: put the glyph back on its ORIGINAL left side bearing instead of scaling it
@@ -3615,12 +3615,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // thing itself.
                     float wanted11 = CompatibleAdvance(gid, pixelsPerEm, ppemI);
                     int target11 = (int) MathF.Round(wanted11 * 64f);
-                    if (Environment.GetEnvironmentVariable("WPF_CT_CW_TRACE") == "1")
+                    if (EnvVar.Get("WPF_CT_CW_TRACE") == "1")
                         Console.Error.WriteLine($"CW11 gid={gid} fitted={fitted} target={target11} n={glyph.PointCount}");
                     if (target11 > 0 && target11 != fitted)
                     {
                         bool okPhase = interpreter.ApplyCompatPhase(glyph.X, glyph.PointCount, target11 / (float) fitted);
-                        if (Environment.GetEnvironmentVariable("WPF_CT_CW_TRACE") == "1")
+                        if (EnvVar.Get("WPF_CT_CW_TRACE") == "1")
                             Console.Error.WriteLine($"CW11 applied={okPhase}");
                         // ...and REALIZE THE ADVANCE. Omitting this crippled the measurement: for
                         // Verdana 'H'@12 the displacement is ~0 (s = 0.9983) and the entire value
@@ -4081,7 +4081,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // external renderer can be fed exactly what we produce. This is how we tell an outline
             // bug from a rasterizer bug: render OUR outline with a renderer already proven to
             // reproduce GDI, and see which side the difference is on.
-            if (Environment.GetEnvironmentVariable("WPF_OUTLINE_DUMP") is { Length: > 0 } odPath
+            if (EnvVar.Get("WPF_OUTLINE_DUMP") is { Length: > 0 } odPath
                 && (s_outlineDumpGid < 0 || gid == s_outlineDumpGid))
             {
                 var sb = new System.Text.StringBuilder();
@@ -4387,7 +4387,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 var sb = new System.Text.StringBuilder($"COMPDUMP gid={gid} ppem={pixelsPerEm} pts=");
                 for (int i = 0; i < points; i++) sb.Append(X[i]).Append(',').Append(Y[i]).Append(' ');
                 // ...to a FILE when the knob names one: the test host swallows stderr.
-                string where = Environment.GetEnvironmentVariable("WPF_CT_COMPDUMP") ?? "1";
+                string where = EnvVar.Get("WPF_CT_COMPDUMP") ?? "1";
                 if (where.Length > 1) System.IO.File.AppendAllText(where, sb.ToString() + Environment.NewLine);
                 else Console.Error.WriteLine(sb.ToString());
             }
