@@ -976,6 +976,17 @@ namespace System.Windows.Forms
 			if (sunken && control is TextBoxBase && bounds.Width > 4 && bounds.Height > 4) {
 				int state = !control.Enabled ? 4 : control.Focused ? 3 : 1;
 				var renderer = new VisualStyles.VisualStyleRenderer (VisualStyles.VisualStyleElement.CreateElement ("EDIT", 6, state));
+				// The part is partly transparent at its rounded corners, so uxtheme paints the PARENT's
+				// background under it first (DrawThemeParentBackground): the corners show the form, not
+				// the field's own white.
+				Color behind = control.Parent?.BackColor ?? ColorControl;
+				if (behind.A == 255) {
+					Brush under = ResPool.GetSolidBrush (behind);
+					dc.FillRectangle (under, bounds.X, bounds.Y, bounds.Width, 2);
+					dc.FillRectangle (under, bounds.X, bounds.Bottom - 2, bounds.Width, 2);
+					dc.FillRectangle (under, bounds.X, bounds.Y + 2, 2, bounds.Height - 4);
+					dc.FillRectangle (under, bounds.Right - 2, bounds.Y + 2, 2, bounds.Height - 4);
+				}
 				renderer.DrawBackground (dc, bounds, new Rectangle (bounds.X, bounds.Y, bounds.Width, 2));
 				renderer.DrawBackground (dc, bounds, new Rectangle (bounds.X, bounds.Bottom - 2, bounds.Width, 2));
 				renderer.DrawBackground (dc, bounds, new Rectangle (bounds.X, bounds.Y + 2, 2, bounds.Height - 4));
