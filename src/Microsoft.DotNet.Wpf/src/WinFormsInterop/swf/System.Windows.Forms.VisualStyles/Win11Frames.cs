@@ -1052,8 +1052,8 @@ namespace System.Windows.Forms.VisualStyles
 		internal static Frame DropDownButton (int state)
 		{
 			var (border, bottom, face) = ComboLook (state);
-			(float r0, float r1) = ComboRingRadii (state);
-			Frame f = Stretched (ExactRing (7, 21, r0, r1, border, bottom, face), 3, 3, 7, 8);
+			(float r0, float r1, float inset) = ComboRingRadii (state);
+			Frame f = Stretched (ExactRing (7, 21, r0, r1, border, bottom, face, inset), 3, 3, 7, 8);
 			f.Glyph = Chevron (state);
 			return f;
 		}
@@ -1062,17 +1062,19 @@ namespace System.Windows.Forms.VisualStyles
 		internal static Frame ComboReadOnly (int state)
 		{
 			var (border, bottom, face) = ComboLook (state);
-			(float r0, float r1) = ComboRingRadii (state);
-			return Stretched (ExactRing (7, 21, r0, r1, border, bottom, face), 3, 3, 4, 4);
+			(float r0, float r1, float inset) = ComboRingRadii (state);
+			return Stretched (ExactRing (7, 21, r0, r1, border, bottom, face, inset), 3, 3, 4, 4);
 		}
 
-		/// <summary>The exact-area ring's outer and inner radii per look, fitted to the CP_READONLY
-		/// image (normal 94 -> 70, hot 54 -> 38, pressed 12 -> 0 against it).</summary>
-		static (float, float) ComboRingRadii (int state) => state switch {
-			1 => (1.9336f, 0.9375f),
-			2 => (1.9336f, 0.8984f),
-			3 => (1.9375f, 0.9023f),
-			_ => (1.9375f, 0.875f),
+		/// <summary>The exact-area ring's outer and inner radii per look, and how far in from each side
+		/// the bottom colour starts along the last row -- it stops short of the corners, which keep
+		/// the border colour. Fitted to the CP_READONLY image: normal 76 -> 10, hot 58 -> 4,
+		/// pressed 24 -> 0.</summary>
+		static (float, float, float) ComboRingRadii (int state) => state switch {
+			2 => (1.9378f, 0.8988f, 1.2188f),
+			3 => (1.9378f, 0.9027f, 1f),
+			4 => (1.9378f, 0.93f, 1f),
+			_ => (1.9378f, 0.93f, 1.1563f),
 		};
 
 		/// <summary>CP_DROPDOWNBUTTONRIGHT/LEFT, the button inside an editable combo box: nothing
@@ -1137,7 +1139,7 @@ namespace System.Windows.Forms.VisualStyles
 			=> ExactRing (w, h, outer, inner, border, border, face);
 
 		/// <summary>As above, the border's last row in <paramref name="bottom"/>.</summary>
-		static Frame ExactRing (int w, int h, float outer, float inner, uint border, uint bottom, uint face)
+		static Frame ExactRing (int w, int h, float outer, float inner, uint border, uint bottom, uint face, float bottomInset = 0)
 		{
 			List<PointF> o = RoundRectPolygon (0, 0, w, h, outer), i = RoundRectPolygon (1, 1, w - 1, h - 1, inner);
 			var f = new Frame (w, h);
@@ -1149,9 +1151,13 @@ namespace System.Windows.Forms.VisualStyles
 					if (a == 0)
 						continue;
 					uint px = (uint) a << 24;
+					double ring = co - ci, low = 0;
+					if (y == h - 1) {
+						float bx0 = Math.Max (x, bottomInset), bx1 = Math.Min (x + 1, w - bottomInset);
+						low = bx1 > bx0 ? Math.Min (ring, Math.Abs (ClippedArea (o, bx0, y, bx1, y + 1))) : 0;
+					}
 					for (int sh = 0; sh < 24; sh += 8) {
-						uint edge = y == h - 1 ? bottom : border;
-						double straight = (((edge >> sh) & 0xff) * (co - ci) + ((face >> sh) & 0xff) * ci) / co;
+						double straight = (((bottom >> sh) & 0xff) * low + ((border >> sh) & 0xff) * (ring - low) + ((face >> sh) & 0xff) * ci) / co;
 						px |= (uint) Math.Min (255, (int) (straight * a / 255 + 0.5)) << sh;
 					}
 					f.Pixels [y * w + x] = px;
