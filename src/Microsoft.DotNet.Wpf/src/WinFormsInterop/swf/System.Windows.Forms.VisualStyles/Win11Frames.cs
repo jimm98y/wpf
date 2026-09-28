@@ -651,7 +651,40 @@ namespace System.Windows.Forms.VisualStyles
 		static readonly float [] s_pushY = { 102, 44, 72, 7, 60, 114, 51, 102, 26, 85, 14, 66, 121, 55, 84, 24 };
 		static readonly float [] s_psx = Array.ConvertAll (s_pushX, v => v / 128f), s_psy = Array.ConvertAll (s_pushY, v => v / 128f);
 
+		// THE ART'S OWN PATTERN, and the two above are approximations of it. Every corner of the
+		// theme's images is the same under a quarter turn -- the push button's top-left top edge is
+		// its top-right right edge, pixel for pixel -- which a pattern only gives when it is itself
+		// unchanged by a quarter turn about the pixel centre: four orbits of four. Searched
+		// exhaustively over the odd sixteenths, the four orbits through (1,5), (1,13), (3,9) and
+		// (5,7) (in sixteenths) reproduce the push button, the 13px check box and the radio
+		// rings at 13, 16 and 32 pixels exactly, with the geometry falling on whole numbers: the
+		// push button is a rounded rectangle (1,1)-(12,10) of radius 4 round a face (2,2)-(11,9)
+		// of radius 3. Each x and each y is used twice.
+		static readonly float [] s_orbX = Orbits (true), s_orbY = Orbits (false);
+
+		static float [] Orbits (bool x)
+		{
+			(int u, int v) [] bases = { (1, 5), (1, 13), (3, 9), (5, 7) };
+			var r = new float [16];
+			for (int o = 0; o < 4; o++) {
+				(int u, int v) = bases [o];
+				(int X, int Y) [] turns = { (u, v), (16 - v, u), (16 - u, 16 - v), (v, 16 - u) };
+				for (int k = 0; k < 4; k++)
+					r [4 * o + k] = (x ? turns [k].X : turns [k].Y) / 16f;
+			}
+			return r;
+		}
+
 		internal static Frame RenderSampled (int width, int height, float [] s_sx, float [] s_sy, params Layer [] layers)
+			=> RenderSampled (width, height, s_sx, s_sy, false, layers);
+
+		/// <summary>The art as the theme's own rasterizer made it: its sample pattern, and the
+		/// sixteen samples' sum TRUNCATED -- a pixel of fifteen face samples and one border sample
+		/// is 230.6 on a channel and the image holds 230.</summary>
+		internal static Frame RenderArt (int width, int height, params Layer [] layers)
+			=> RenderSampled (width, height, s_orbX, s_orbY, false, layers);
+
+		static Frame RenderSampled (int width, int height, float [] s_sx, float [] s_sy, bool truncate, Layer [] layers)
 		{
 			var f = new Frame (width, height);
 			for (int y = 0; y < height; y++)
@@ -672,10 +705,15 @@ namespace System.Windows.Forms.VisualStyles
 						}
 						a += sa; r += sr; g += sg; b += sb;
 					}
-					f.Pixels [y * width + x] = Pack (a / 16, r / 16, g / 16, b / 16);
+					f.Pixels [y * width + x] = truncate
+						? PackFloor (a / 16, r / 16, g / 16, b / 16)
+						: Pack (a / 16, r / 16, g / 16, b / 16);
 				}
 			return f;
 		}
+
+		static uint PackFloor (float a, float r, float g, float b)
+			=> (uint) (int) (a + 1e-3f) << 24 | (uint) (int) (r + 1e-3f) << 16 | (uint) (int) (g + 1e-3f) << 8 | (uint) (int) (b + 1e-3f);
 
 		/// <summary>Rasterizes each layer to its own per-pixel coverage and composites the layers
 		/// per PIXEL. Where two antialiased edges meet, this leaves the seam a little transparent
@@ -880,11 +918,12 @@ namespace System.Windows.Forms.VisualStyles
 				5 or 6 => (0xff0078d4u, 0xfffdfdfdu, true), // default, default-animating
 				_ => (0xffd0d0d0u, 0xfffdfdfdu, true),   // normal
 			};
-			// Under the art's own sample pattern (s_markX/Y), the geometry refitted to the theme image.
-			Paint edge = raised ? Shaded (border, 9, 10, 0.21f) : (x, y) => border;
-			Frame f = RenderSampled (13, 11, s_psx, s_psy,
-				new Layer (RoundRect (1.0f, 1, 12.0195f, 10, 4.0117f), edge),
-				new Layer (RoundRect (2.0f, 2, 11.0195f, 9, 3.1172f), face));
+			// The art's own pattern and whole-number geometry (see s_orbX); the raised looks darken
+			// the border over its bottom row, 14% by the lowest half pixel.
+			Paint edge = raised ? Shaded (border, 9, 9.5f, 0.14f) : (x, y) => border;
+			Frame f = RenderArt (13, 11,
+				new Layer (RoundRect (1, 1, 12, 10, 4), edge),
+				new Layer (RoundRect (2, 2, 11, 9, 3), face));
 			f.Stretch = true;
 			f.Margins = (6, 6, 5, 5);
 			return f;

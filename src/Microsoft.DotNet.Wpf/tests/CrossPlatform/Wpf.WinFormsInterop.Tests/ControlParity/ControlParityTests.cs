@@ -87,7 +87,7 @@ namespace Wpf.WinFormsInterop.Tests
             // difference lands in shade instead.
             ["textbox-readonly"] = (839, 153),
 
-            ["button"] = (2, 345),
+            ["button"] = (1, 345),
             // RAISED, and only ever on the live window's authority. Windows 11 does not emboss disabled
             // text -- one flat #A0A0A0 pass, where the base drew a light copy at (1,1) and the real one
             // on top. Against the live stock window that took this button's text from 1.26 times
