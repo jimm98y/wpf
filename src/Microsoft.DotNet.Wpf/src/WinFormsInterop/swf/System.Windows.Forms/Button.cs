@@ -170,6 +170,11 @@ namespace System.Windows.Forms {
 				return;
 			}
 
+			if (Adapter != null) {
+				Adapter.Paint (pevent);
+				return;
+			}
+
 			// FIXME: This should be called every time something that can affect it
 			// is changed, not every paint.  Can only change so many things at a time.
 
@@ -188,20 +193,25 @@ namespace System.Windows.Forms {
 				ThemeEngine.Current.DrawPopupButton (pevent.Graphics, this, text_rectangle, image_rectangle, pevent.ClipRectangle);
 		}
 
+		internal override ButtonInternal.ButtonBaseAdapter CreateFlatAdapter () => new ButtonInternal.ButtonFlatAdapter (this);
+		internal override ButtonInternal.ButtonBaseAdapter CreatePopupAdapter () => new ButtonInternal.ButtonPopupAdapter (this);
+		internal override ButtonInternal.ButtonBaseAdapter CreateStandardAdapter () => new ButtonInternal.ButtonStandardAdapter (this);
+
 		internal override Size GetPreferredSizeCore (Size proposedSize)
 		{
+			// .NET's: the adapter's size, and for FlatStyle.System the native button's text size
+			// plus its fixed chrome (14 x 9). Unless GrowAndShrink, the button never shrinks.
 			Size size;
-
-			if (this.AutoSize)
-				size = ThemeEngine.Current.CalculateButtonAutoSize (this);
-			else
+			if (FlatStyle != FlatStyle.System) {
 				size = base.GetPreferredSizeCore (proposedSize);
-
-			// Button has a special legacy behavior and implements AutoSizeMode itself
-			if (AutoSizeMode == AutoSizeMode.GrowOnly)
-				size = new Size (Math.Max (size.Width, Width), Math.Max (size.Height, Height));
-
-			return size;
+			} else {
+				Size text = TextRenderer.MeasureText (Text, Font);
+				size = SizeFromClientSize (text);
+				size.Width += 14;
+				size.Height += 9;
+				size += Padding.Size;
+			}
+			return AutoSizeMode != AutoSizeMode.GrowAndShrink ? System.Windows.Forms.Layout.LayoutUtils.UnionSizes (size, Size) : size;
 		}
 		#endregion	// Internal methods
 	}

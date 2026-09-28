@@ -22,6 +22,17 @@ namespace WinFormsControlParity
 {
     internal static class SpecimenRenderer
     {
+        // Both programs start up the way the stock one does (StockRenderer/Program.cs): visual
+        // styles on and GDI text (TextRenderer). A control laid out with GDI+ text on one side and
+        // GDI text on the other would be comparing two text stacks, not two ports. Setting the
+        // default again in the stock program, after its own Main did, is harmless before any
+        // control exists.
+        static SpecimenRenderer()
+        {
+            Application.EnableVisualStyles();
+            try { Application.SetCompatibleTextRenderingDefault(false); } catch (InvalidOperationException) { }
+        }
+
         /// <summary>Render one specimen and return its pixels as BGRA, row by row from the top.
         /// </summary>
         internal static byte[] Render(Specimen spec, out int width, out int height)

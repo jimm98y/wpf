@@ -29,7 +29,7 @@
 using System.Drawing;
 
 namespace System.Windows.Forms {
-	public class PaintEventArgs : EventArgs, IDisposable {
+	public class PaintEventArgs : EventArgs, IDisposable, IDeviceContext {
 		private Graphics	graphics;
 		private Rectangle	clip_rectangle;
 		internal bool		Handled;
@@ -58,6 +58,13 @@ namespace System.Windows.Forms {
 				return this.graphics;
 			}
 		}
+
+		// .NET's name for the same Graphics, which its painting code reads.
+		internal Graphics GraphicsInternal => this.graphics;
+
+		// PaintEventArgs is an IDeviceContext in .NET: a painter handed one can take an HDC from it.
+		IntPtr IDeviceContext.GetHdc () => graphics.GetHdc ();
+		void IDeviceContext.ReleaseHdc () => graphics.ReleaseHdc ();
 		#endregion	// Public Instance Properties
 
 		#region Public Instance Methods

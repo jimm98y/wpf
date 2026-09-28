@@ -114,6 +114,37 @@ namespace System.Drawing.WebGpuBackend
             }
         }
 
+        /// <summary>GetTextExtentPoint: one run exactly as GDI measures it -- every character
+        /// through the face's cmap, control characters included (a line break is not a line break
+        /// to GDI), each advance a whole device pixel, and no pair kerning (ExtTextOut applies the
+        /// legacy 'kern' pairs only to a string holding U+2015 or U+2020).</summary>
+        internal const int GposKerning = Microsoft.Wpf.Interop.WebGpu.Composition.GlyphRunDraw.GposKerningSimulation;
+        private static readonly ITextShaper GposShaper = new GposKerningTextShaper();
+
+        /// <summary>A run's extent as user32's DrawText measures it: every character through the
+        /// face's cmap, control characters included (a line break is not a line break to it), each
+        /// advance a whole device pixel, and pair kerning from the face's GPOS (see
+        /// GposKerningTextShaper) -- not from the legacy 'kern' table.</summary>
+        internal static int MeasureGdiRun(string text, float emPx, int simulations, string family)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            IFont font = FontFor(simulations & 3, family);
+            float width = 0f;
+            lock (Buf)
+            {
+                ((simulations & NoKerning) != 0 ? PlainShaper : GposShaper).Shape((IShapingFont)font, text, Buf);
+                float scale = emPx / font.PixelsPerEm;
+                var faced = font as IHintedGlyphFont;
+                foreach (ShapedGlyph g in Buf)
+                {
+                    width += faced is not null && faced.TryGetDeviceAdvance(g.GlyphId, emPx, out float device)
+                             ? device : (float)Math.Round(g.Advance * scale);
+                    if (g.Kern != 0f) width += (float)Math.Round(g.Kern * scale);
+                }
+            }
+            return (int)Math.Round(width);
+        }
+
         /// <summary>The ascent and descent GDI reports for this family and style at this pixel
         /// size -- the line box every control that sizes itself to a line of text is measured
         /// against. False when the family cannot be resolved to a face.

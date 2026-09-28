@@ -625,6 +625,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// WHO IS DRAWING, and it has to travel with the run.</para></summary>
         public const int NoKerningSimulation = 4;
 
+        /// <summary>Bit 3 of Simulations: kern this run from the face's GPOS, as user32's DrawText
+        /// (TextRenderer) does, rather than from the legacy 'kern' table. See GposKerningTextShaper.</summary>
+        public const int GposKerningSimulation = 8;
+
         /// <summary>Style to render the run in, as WPF's StyleSimulations counts it: 1 = bold,
         /// 2 = italic. A string run carries only a size and a colour otherwise, so without this
         /// every run comes out in the regular face however the caller asked for it.</summary>

@@ -97,7 +97,7 @@ namespace Wpf.WinFormsInterop.Tests
             // the two disagree the live window is the authority -- see the disabled button above,
             // which has the same note for the same reason. Ink 148 -> 106 here and 266 -> 168 there
             // says the shapes agree better than they did; the shade is a few edge pixels either way.
-            ["button-flat"] = (106, 398),
+            ["button-flat"] = (98, 398),
             // The check GLYPH moved up a row to sit where the live window beside ours puts it, so these
             // three moved with it: the ink is the same or better, the shade a few pixels worse
             // against a reference drawn on a form that was never shown. The live window is the
@@ -105,9 +105,9 @@ namespace Wpf.WinFormsInterop.Tests
             // theme's frames now (Win11Frames), whose corner antialiasing is a sixteenth off the
             // theme's on a few pixels -- the one and five ink pixels the two clear/checked boxes
             // gained, against 7 to 348 every other button, radio and check specimen lost.
-            ["checkbox"] = (225, 210),
-            ["checkbox-clear"] = (247, 210),
-            ["checkbox-disabled"] = (226, 290),
+            ["checkbox"] = (203, 210),
+            ["checkbox-clear"] = (207, 210),
+            ["checkbox-disabled"] = (204, 290),
             ["checkedlistbox"] = (4, 1060),
             // The chevron grew to the size Windows draws it and the editable field's text moved up a
             // row, both measured against the live window -- where these two went from 93k of
@@ -142,8 +142,8 @@ namespace Wpf.WinFormsInterop.Tests
             // apart while its ink does not. The shade numbers here are a ceiling with room for that.
             ["progressbar"] = (0, 2100),
             ["progressbar-full"] = (0, 4000),
-            ["radio"] = (90, 160),
-            ["radio-clear"] = (96, 155),
+            ["radio"] = (88, 160),
+            ["radio-clear"] = (94, 155),
             // A THIRD harness case. Our StatusStrip renders its panel with no caption in this
             // path -- the row ink is flat background on every row -- while Windows' has "Ready"
             // on rows 7..18. On SCREEN ours draws its panel text correctly, so this is the

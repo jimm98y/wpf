@@ -543,6 +543,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// ligatures and Indic reordering are not kerning, and serving the request with a
         /// pass-through shaper drew Arabic as isolated letters. WPF_PLAIN_SHAPER=1 restores it.
         /// </summary>
+        private static readonly Text.ITextShaper s_gposShaper = new Text.GposKerningTextShaper();
         private static readonly Text.ITextShaper s_plainShaper =
             Environment.GetEnvironmentVariable("WPF_PLAIN_SHAPER") == "1"
                 ? new Text.SimpleTextShaper()
@@ -5398,6 +5399,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // A run that asks not to be kerned gets the plain shaper, whatever this renderer's is.
             if ((run.Simulations & GlyphRunDraw.NoKerningSimulation) != 0)
                 s_plainShaper.Shape(font, run.Text, _shapeScratch);
+            else if ((run.Simulations & GlyphRunDraw.GposKerningSimulation) != 0)
+                s_gposShaper.Shape(font, run.Text, _shapeScratch);
             else
                 _shaper.Shape(font, run.Text, _shapeScratch);
             // ...AND INTO VISUAL ORDER, because this pen only goes one way. A run that arrives as a

@@ -698,6 +698,56 @@ namespace System.Windows.Forms {
 		{
 			ThemeEngine.Current.DrawButtonBase (pevent.Graphics, pevent.ClipRectangle, this);
 		}
+
+		// .NET paints a button through an ADAPTER per FlatStyle (System.Windows.Forms.ButtonInternal),
+		// ported from .NET: the standard, flat and popup looks of Button, CheckBox and RadioButton.
+		private ButtonInternal.ButtonBaseAdapter adapter;
+		private FlatStyle cached_adapter_type;
+
+		internal ButtonInternal.ButtonBaseAdapter Adapter {
+			get {
+				if (adapter == null || FlatStyle != cached_adapter_type) {
+					switch (FlatStyle) {
+					case FlatStyle.Standard:
+					case FlatStyle.System:
+						adapter = CreateStandardAdapter ();
+						break;
+					case FlatStyle.Popup:
+						adapter = CreatePopupAdapter ();
+						break;
+					case FlatStyle.Flat:
+						adapter = CreateFlatAdapter ();
+						break;
+					}
+					cached_adapter_type = FlatStyle;
+				}
+				return adapter;
+			}
+		}
+
+		// .NET's: whatever the adapter lays out, plus the padding, at least the minimum size.
+		internal override Size GetPreferredSizeCore (Size proposedSize)
+		{
+			if (Adapter == null)
+				return base.GetPreferredSizeCore (proposedSize);
+			return System.Windows.Forms.Layout.LayoutUtils.UnionSizes (Adapter.GetPreferredSizeCore (proposedSize) + Padding.Size, MinimumSize);
+		}
+
+		internal virtual ButtonInternal.ButtonBaseAdapter CreateFlatAdapter () => null;
+		internal virtual ButtonInternal.ButtonBaseAdapter CreatePopupAdapter () => null;
+		internal virtual ButtonInternal.ButtonBaseAdapter CreateStandardAdapter () => null;
+
+		internal virtual StringFormat CreateStringFormat () => Adapter?.CreateStringFormat () ?? new StringFormat ();
+		internal virtual TextFormatFlags CreateTextFormatFlags () => Adapter?.CreateTextFormatFlags () ?? TextFormatFlags.Default;
+
+		// The pointer is over the button, and the button is held down with the pointer on it: the
+		// two states .NET's adapters draw from.
+		internal bool MouseIsOver => is_entered;
+		internal bool MouseIsDown => is_pressed;
+		internal bool MouseIsPressed => is_pressed;
+
+		// Set when AutoEllipsis cut the text short, so the adapter ellipsises it.
+		internal bool ShowToolTip { get; set; }
 		
 		internal virtual void HaveDoubleClick ()
 		{

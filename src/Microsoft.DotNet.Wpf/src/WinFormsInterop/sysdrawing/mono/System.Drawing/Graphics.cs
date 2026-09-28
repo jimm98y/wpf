@@ -1793,6 +1793,32 @@ namespace System.Drawing
 		/// Label carrying the same string kerns it. See GlyphRunDraw.NoKerningSimulation.</summary>
 		internal bool no_kerning;
 
+		/// <summary>Set while TextOutGdi draws a line for TextRenderer: kern from GPOS.</summary>
+		internal bool gpos_kerning;
+
+		/// <summary>GDI's TextOut with TA_TOP | TA_LEFT: one run, no wrapping and no margin, its cell's
+		/// top-left at (x, y) -- so its baseline is tmAscent below y. The primitive DrawTextEx draws
+		/// each of its lines with (see System.Windows.Forms.GdiDrawText).</summary>
+		internal void TextOutGdi (string s, Font font, Color color, int x, int y)
+		{
+			if (string.IsNullOrEmpty (s))
+				return;
+			// Kerned from GPOS, as DrawText's Uniscribe path kerns (WebGpuBackend.TextMetrics.MeasureGdiRun).
+			bool saved = gpos_kerning;
+			gpos_kerning = true;
+			try {
+				using (var brush = new SolidBrush (color))
+				using (var format = (StringFormat) StringFormat.GenericTypographic.Clone ()) {
+					format.FormatFlags |= StringFormatFlags.NoWrap | StringFormatFlags.NoClip | StringFormatFlags.MeasureTrailingSpaces;
+					format.HotkeyPrefix = Text.HotkeyPrefix.None;
+					format.Trimming = StringTrimming.None;
+					DrawStringGdi (s, font, brush, new RectangleF (x, y, 1e6f, 1e6f), format);
+				}
+			} finally {
+				gpos_kerning = saved;
+			}
+		}
+
 		/// <summary>Draw a string the way GDI would place it. TextRenderer means GDI, and the only
 		/// difference that reaches this far is which box a centred line is centred in.</summary>
 		internal void DrawStringGdi (string s, Font font, Brush brush, RectangleF layoutRectangle,
@@ -1932,7 +1958,8 @@ namespace System.Drawing
 				// every hosted control -- a property grid's modified values, a group heading --
 				// came out regular.
 				int sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0)
-					   | (no_kerning ? WebGpuBackend.TextMetrics.NoKerning : 0);
+					   | (no_kerning ? WebGpuBackend.TextMetrics.NoKerning : 0)
+					   | (gpos_kerning && !no_kerning ? WebGpuBackend.TextMetrics.GposKerning : 0);
 				// The family the caller asked for. A run used to arrive at the renderer with
 				// nothing but a size, a colour and a style, so everything came out in one
 				// hard-coded face -- and a fixed-width font could not be had at all.

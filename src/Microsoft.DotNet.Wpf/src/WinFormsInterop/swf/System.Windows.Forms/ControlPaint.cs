@@ -31,7 +31,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 
 namespace System.Windows.Forms {
-	public sealed class ControlPaint {
+	public sealed partial class ControlPaint {
 		#region Local Variables
 		static int		RGBMax=255;
 		static int		HLSMax=255;

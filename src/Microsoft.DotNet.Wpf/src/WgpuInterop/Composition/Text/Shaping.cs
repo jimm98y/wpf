@@ -211,4 +211,42 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
         }
     }
+
+    /// <summary>Pair kerning as user32's DrawText applies it: from the face's GPOS 'kern' feature,
+    /// not the legacy 'kern' table.
+    /// <para>DrawText goes through the language pack (LPK, Uniscribe) on every modern Windows, and
+    /// Uniscribe positions Latin from GPOS. Measured with DrawText's own DT_CALCRECT against
+    /// GetTextExtentPoint on Segoe UI 9pt: T-r, T-o, A-V, L-T, R-T, Y-o close by a pixel as GPOS
+    /// says, while P-., T-., W-., T-u -- pairs only the legacy table carries -- are not kerned at
+    /// all. So TextRenderer's text wants this shaper, and GDI+ text and ExtTextOut the others.
+    /// </para></summary>
+    internal sealed class GposKerningTextShaper : ITextShaper
+    {
+        public void Shape(IShapingFont font, string text, List<ShapedGlyph> output)
+        {
+            output.Clear();
+            foreach (char c in text)
+            {
+                // Uniscribe gives a C0 control -- a tab, a line feed in a single-line run -- no glyph
+                // and no width: DrawText measures "Tab	here" as "Tabhere".
+                if (c < ' ')
+                    continue;
+                int gid = font.GlyphIndex(c);
+                output.Add(new ShapedGlyph(gid, font.Advance(gid)));
+            }
+            if (!(font is IOpenTypeShapingFont ot) || ot.Gpos is not GposTable gpos)
+                return;
+            string script = gpos.HasFeature("latn", "kern") ? "latn" : gpos.HasFeature("DFLT", "kern") ? "DFLT" : null;
+            if (script == null)
+                return;
+            for (int i = 0; i < output.Count - 1; i++)
+            {
+                if (gpos.TryPairAdjustment(script, "kern", output[i].GlyphId, output[i + 1].GlyphId, out int units) && units != 0)
+                {
+                    ShapedGlyph g = output[i];
+                    output[i] = new ShapedGlyph(g.GlyphId, g.Advance, g.XOffset, g.YOffset, ot.UnitsToPixels(units));
+                }
+            }
+        }
+    }
 }

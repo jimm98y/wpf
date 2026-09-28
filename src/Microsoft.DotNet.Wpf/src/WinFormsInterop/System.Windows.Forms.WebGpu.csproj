@@ -59,6 +59,7 @@
     <Compile Include="swf/System.Windows.Forms.RTF/**/*.cs" />
     <Compile Include="swf/System.Windows.Forms.Theming/**/*.cs" />
     <Compile Include="swf/System.Windows.Forms.WebBrowserDialogs/**/*.cs" />
+    <Compile Include="swf/System.Windows.Forms.ButtonInternal/**/*.cs" />
     <!-- ResXResourceReader/Writer, ResXDataNode and their handlers. Pruned with the rest of
          the non-managed tree when swf/ was vendored, but they are pure managed XML handling
          and consumers do use them (SharpDevelop's ResXConverter does not compile without). -->

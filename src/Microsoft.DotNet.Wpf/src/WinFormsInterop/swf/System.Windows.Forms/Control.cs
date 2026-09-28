@@ -133,12 +133,9 @@ namespace System.Windows.Forms
 		ContextMenu             context_menu; // Context menu associated with the control
 		internal bool		use_compatible_text_rendering;
 		private bool		use_wait_cursor;
-		// WebGPU GPU-raster mode forces GDI+ (Graphics.DrawString) text so the scene recorder captures
-		// it — even if the app opted into the GDI TextRenderer path (SetCompatibleTextRenderingDefault
-		// (false), as the VS WinForms template does). Set from the driver's env; no host-side setup.
-		// On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
-		private static readonly bool webgpu_gpu_raster = Environment.GetEnvironmentVariable ("WF_GPU_RASTER") != "0"
-			&& Environment.GetEnvironmentVariable ("WF_WEBGPU") != "0";
+		// The application's choice (SetCompatibleTextRenderingDefault), as in .NET. GPU-raster mode used
+		// to force GDI+ text here because TextRenderer could not reach the scene recorder; it now draws
+		// through GdiDrawText and Graphics.TextOutGdi, so a control lays its text out as Windows does.
 
 		//accessibility
 		string accessible_name;
@@ -940,7 +937,7 @@ namespace System.Windows.Forms
 			use_wait_cursor = false;
 
 			backgroundimage_layout = ImageLayout.Tile;
-			use_compatible_text_rendering = webgpu_gpu_raster || Application.use_compatible_text_rendering;
+			use_compatible_text_rendering = Application.use_compatible_text_rendering;
 			padding = this.DefaultPadding;
 			maximum_size = new Size();
 			minimum_size = new Size();
@@ -1360,6 +1357,58 @@ namespace System.Windows.Forms
 		}
 
 		// This method exists so controls overriding OnPaintBackground can have default background painting done
+		// .NET's Control.PaintBackground, which its button adapters call: a transparent colour shows
+		// the parent through, then the background image, else the colour.
+		internal void PaintBackground (PaintEventArgs e, Rectangle rectangle)
+		{
+			PaintBackground (e, rectangle, BackColor, Point.Empty);
+		}
+
+		internal void PaintBackground (PaintEventArgs e, Rectangle rectangle, Color backColor, Point scrollOffset = default)
+		{
+			bool transparent = GetStyle (ControlStyles.SupportsTransparentBackColor) && backColor.A < 255;
+			if (transparent)
+				PaintTransparentBackground (e, rectangle);
+			if (BackgroundImage != null && !SystemInformation.HighContrast) {
+				bool imageTransparent = (BackgroundImage.Flags & 2) != 0;
+				if (!transparent && BackgroundImageLayout == ImageLayout.Tile && imageTransparent)
+					PaintTransparentBackground (e, rectangle);
+				Point offset = scrollOffset;
+				if (this is ScrollableControl sc && offset != Point.Empty)
+					offset = sc.AutoScrollPosition;
+				if (imageTransparent)
+					PaintBackColor (e, rectangle, backColor);
+				ControlPaint.DrawBackgroundImage (e.Graphics, BackgroundImage, backColor, BackgroundImageLayout, ClientRectangle, rectangle, offset, RightToLeft);
+			} else {
+				PaintBackColor (e, rectangle, backColor);
+			}
+		}
+
+		private static void PaintBackColor (PaintEventArgs e, Rectangle rectangle, Color backColor)
+		{
+			if (backColor.A == 0)
+				return;
+			using (SolidBrush b = new SolidBrush (backColor))
+				e.Graphics.FillRectangle (b, rectangle);
+		}
+
+		/// <summary>The parent's background and foreground, painted under this control.</summary>
+		internal void PaintTransparentBackground (PaintEventArgs e, Rectangle rectangle)
+		{
+			if (parent == null)
+				return;
+			var parent_pe = new PaintEventArgs (e.Graphics, new Rectangle (rectangle.X + Left, rectangle.Y + Top, rectangle.Width, rectangle.Height));
+			GraphicsState state = parent_pe.Graphics.Save ();
+			parent_pe.Graphics.TranslateTransform (-Left, -Top);
+			parent.OnPaintBackground (parent_pe);
+			parent_pe.Graphics.Restore (state);
+			state = parent_pe.Graphics.Save ();
+			parent_pe.Graphics.TranslateTransform (-Left, -Top);
+			parent.OnPaint (parent_pe);
+			parent_pe.Graphics.Restore (state);
+			parent_pe.SetGraphics (null);
+		}
+
 		internal virtual void PaintControlBackground (PaintEventArgs pevent) {
 
 			bool tbstyle_flat = ((CreateParams.Style & (int) ToolBarStyles.TBSTYLE_FLAT) != 0);
@@ -3500,7 +3549,7 @@ namespace System.Windows.Forms
 			}
 		}
 
-		protected SolidBrush BackColorBrush => ThemeEngine.Current.ResPool.GetSolidBrush (BackColor);
+		protected internal SolidBrush BackColorBrush => ThemeEngine.Current.ResPool.GetSolidBrush (BackColor);
 
 		#endregion	// Protected Instance Properties
 
@@ -4732,6 +4781,8 @@ namespace System.Windows.Forms
 		}
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
+		internal ContentAlignment RtlTranslateContentInternal (ContentAlignment align) => RtlTranslateContent (align);
+
 		protected ContentAlignment RtlTranslateContent(ContentAlignment align) {
 			return RtlTranslateAlignment(align);
 		}

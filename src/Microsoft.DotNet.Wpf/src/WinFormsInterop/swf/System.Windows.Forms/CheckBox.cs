@@ -117,6 +117,11 @@ namespace System.Windows.Forms {
 
 		#region	Internal Methods
 		internal override void Draw (PaintEventArgs pe) {
+			if (Adapter != null) {
+				Adapter.Paint (pe);
+				return;
+			}
+
 			// FIXME: This should be called every time something that can affect it
 			// is changed, not every paint.  Can only change so many things at a time.
 
@@ -134,12 +139,22 @@ namespace System.Windows.Forms {
 				ThemeEngine.Current.DrawCheckBox (pe.Graphics, this.ClientRectangle, this);
 		}
 
+		internal override ButtonInternal.ButtonBaseAdapter CreateFlatAdapter () => new ButtonInternal.CheckBoxFlatAdapter (this);
+		internal override ButtonInternal.ButtonBaseAdapter CreatePopupAdapter () => new ButtonInternal.CheckBoxPopupAdapter (this);
+		internal override ButtonInternal.ButtonBaseAdapter CreateStandardAdapter () => new ButtonInternal.CheckBoxStandardAdapter (this);
+
 		internal override Size GetPreferredSizeCore (Size proposedSize)
 		{
-			if (this.AutoSize)
-				return ThemeEngine.Current.CalculateCheckBoxAutoSize (this);
-
-			return base.GetPreferredSizeCore (proposedSize);
+			// .NET's: a button-looking check box sizes as a standard button, a system one from its
+			// text plus the native glyph's 25 x 13, everything else by its adapter.
+			if (Appearance == Appearance.Button)
+				return new ButtonInternal.ButtonStandardAdapter (this).GetPreferredSizeCore (proposedSize);
+			if (FlatStyle != FlatStyle.System)
+				return base.GetPreferredSizeCore (proposedSize);
+			Size size = SizeFromClientSize (TextRenderer.MeasureText (Text, Font));
+			size.Width += 25;
+			size.Height = Math.Max (size.Height + 5, 13);
+			return size + Padding.Size;
 		}
 
 		internal override void HaveDoubleClick() {

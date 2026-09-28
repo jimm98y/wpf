@@ -169,6 +169,11 @@ namespace System.Windows.Forms {
 		}
 
 		internal override void Draw (PaintEventArgs pe) {
+			if (Adapter != null) {
+				Adapter.Paint (pe);
+				return;
+			}
+
 			// FIXME: This should be called every time something that can affect it
 			// is changed, not every paint.  Can only change so many things at a time.
 
@@ -186,12 +191,20 @@ namespace System.Windows.Forms {
 				ThemeEngine.Current.DrawRadioButton (pe.Graphics, this.ClientRectangle, this);
 		}
 
+		internal override ButtonInternal.ButtonBaseAdapter CreateFlatAdapter () => new ButtonInternal.RadioButtonFlatAdapter (this);
+		internal override ButtonInternal.ButtonBaseAdapter CreatePopupAdapter () => new ButtonInternal.RadioButtonPopupAdapter (this);
+		internal override ButtonInternal.ButtonBaseAdapter CreateStandardAdapter () => new ButtonInternal.RadioButtonStandardAdapter (this);
+
 		internal override Size GetPreferredSizeCore (Size proposedSize)
 		{
-			if (this.AutoSize)
-				return ThemeEngine.Current.CalculateRadioButtonAutoSize (this);
-
-			return base.GetPreferredSizeCore (proposedSize);
+			// .NET's: a system radio button from its text plus the native glyph's 24 x 5, everything
+			// else by its adapter.
+			if (FlatStyle != FlatStyle.System)
+				return base.GetPreferredSizeCore (proposedSize);
+			Size size = SizeFromClientSize (TextRenderer.MeasureText (Text, Font));
+			size.Width += 24;
+			size.Height += 5;
+			return size;
 		}
 		#endregion	// Private Methods
 
