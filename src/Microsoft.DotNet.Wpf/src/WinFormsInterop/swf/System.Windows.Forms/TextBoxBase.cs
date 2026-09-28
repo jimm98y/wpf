@@ -46,6 +46,9 @@ namespace System.Windows.Forms
 	[Designer("System.Windows.Forms.Design.TextBoxBaseDesigner, " + Consts.AssemblySystem_Design)]
 	public abstract class TextBoxBase : Control
 	{
+		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
+		internal override bool GdiTextOnMemorySurface => true;
+
 		#region Local Variables
 		internal HorizontalAlignment	alignment;
 		internal bool			accepts_tab;

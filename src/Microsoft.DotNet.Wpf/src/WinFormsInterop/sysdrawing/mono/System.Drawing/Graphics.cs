@@ -1936,6 +1936,8 @@ namespace System.Drawing
 		/// Windows' own month calendar draws its "Today: ..." line without pair kerning; a WinForms
 		/// Label carrying the same string kerns it. See GlyphRunDraw.NoKerningSimulation.</summary>
 		internal bool no_kerning;
+		/// <summary>This Graphics stands for a memory DC (see Control.GdiTextOnMemorySurface).</summary>
+		internal bool memory_surface_text;
 
 		/// <summary>Set while TextOutGdi draws a line for TextRenderer: kern from GPOS.</summary>
 		internal bool gpos_kerning;
@@ -2112,7 +2114,8 @@ namespace System.Drawing
 				int sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0)
 					   | (no_kerning ? WebGpuBackend.TextMetrics.NoKerning : 0)
 					   | (gpos_kerning && !no_kerning ? WebGpuBackend.TextMetrics.GposKerning : 0)
-					   | (BiLevelText ? WebGpuBackend.TextMetrics.BiLevel : 0);
+					   | (BiLevelText ? WebGpuBackend.TextMetrics.BiLevel : 0)
+					   | (memory_surface_text ? WebGpuBackend.TextMetrics.MemorySurface : 0);
 				// The family the caller asked for. A run used to arrive at the renderer with
 				// nothing but a size, a colour and a style, so everything came out in one
 				// hard-coded face -- and a fixed-width font could not be had at all.

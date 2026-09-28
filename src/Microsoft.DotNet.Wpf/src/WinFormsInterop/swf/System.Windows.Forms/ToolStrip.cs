@@ -44,6 +44,9 @@ namespace System.Windows.Forms
 	[DesignerSerializer ("System.Windows.Forms.Design.ToolStripCodeDomSerializer, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.Serialization.CodeDomSerializer, " + Consts.AssemblySystem_Design)]
 	public class ToolStrip : ScrollableControl, IComponent, IDisposable, IToolStripData, IArrangedContainer
 	{
+		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
+		internal override bool GdiTextOnMemorySurface => true;
+
 		#region Private Variables
 		private bool allow_item_reorder;
 		private bool allow_merge;

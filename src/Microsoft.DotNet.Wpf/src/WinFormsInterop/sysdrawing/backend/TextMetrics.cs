@@ -13,6 +13,8 @@ namespace System.Drawing.WebGpuBackend
     {
         /// <summary>The simulation bit that asks for a run to be laid out WITHOUT pair kerning,
         /// re-exported here so the drawing code need not name the composition types.</summary>
+        internal const int MemorySurface =
+            Microsoft.Wpf.Interop.WebGpu.Composition.GlyphRunDraw.MemorySurfaceSimulation;
         internal const int NoKerning =
             Microsoft.Wpf.Interop.WebGpu.Composition.GlyphRunDraw.NoKerningSimulation;
 

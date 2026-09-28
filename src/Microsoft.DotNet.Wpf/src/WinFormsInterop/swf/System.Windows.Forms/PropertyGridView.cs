@@ -39,6 +39,9 @@ using System.Windows.Forms.Design;
 
 namespace System.Windows.Forms.PropertyGridInternal {
 	internal class PropertyGridView : ScrollableControl, IWindowsFormsEditorService {
+		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
+		internal override bool GdiTextOnMemorySurface => true;
+
 
 		#region Private Members
 		private const char PASSWORD_PAINT_CHAR = '\u25cf'; // the dot char

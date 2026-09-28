@@ -36,6 +36,9 @@ namespace System.Windows.Forms {
 		   "System.ComponentModel.Design.IDesigner")]
 	public abstract class ButtonBase : Control
 	{
+		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
+		internal override bool GdiTextOnMemorySurface => true;
+
 		#region Local Variables
 		private FlatStyle		flat_style;
 		private int			image_index;

@@ -3865,7 +3865,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         MathF.Min(MathF.Max(p0.Y, p1.Y) + 2f, clip.Y + (float) clip.H),
                         n => new Vector2((n.X + 1f) * 0.5f * width + _devOX, (1f - n.Y) * 0.5f * height + _devOY));
                     if (paper is { } pp)
-                        key = key * 397 ^ (1L << 40 | (long) ToByte(pp.R) << 16
+                        key = key * 397 ^ (1L << 40 | (_windowBlendForRun ? 1L << 41 : 0)
+                                         | (long) ToByte(pp.R) << 16
                                          | (long) ToByte(pp.G) << 8 | ToByte(pp.B));
                 }
                 _paperForMask = paper;
@@ -3972,7 +3973,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         // carries corrected ink about unchanged) and measures slightly WORSE on every
                         // count -- 1307 disagreeing pixels against 1196. It also does not straighten
                         // the size tilt, which is how we know the tilt is not about this order.
-                        ApplySubpixelWeight(sm.Rgba, gamma, textBlend, solid.Color, _paperForMask);
+                        ApplySubpixelWeight(sm.Rgba, gamma, textBlend, solid.Color, _paperForMask, _windowBlendForRun);
                         (tex, view) = CreateRgbaTexture(sm.Rgba, sm.Width, sm.Height);
                         mox = (int)sm.OriginX; moy = (int)sm.OriginY; mw = sm.Width; mh = sm.Height;
                         cm = new CachedMask
@@ -4493,6 +4494,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return lut;
         }
 
+        private static byte[] SubpixelLutForKnownPaper(byte fg, byte bg, bool window)
+            => window && s_windowBlend ? SubpixelLutForInkOnWindow(fg, bg) : SubpixelLutForInkOnPaper(fg, bg);
+
+        /// <summary>WPF_TEXT_WINDOW_BLEND=0 blends every string run the memory-DC (win32k) way.</summary>
+        private static readonly bool s_windowBlend =
+            Environment.GetEnvironmentVariable("WPF_TEXT_WINDOW_BLEND") != "0";
+
+        /// <summary>The curve for GDI ClearType text drawn on a WINDOW, which win32k does not blend:
+        /// cdd.dll hands it to the display driver as DXGK_GDIOP_CLEARTYPEBLEND, whose per-pixel rule
+        /// the WDK documents (DXGK_GDIARG_CLEARTYPEBLEND):
+        /// <code>out = InvGamma[ Gamma[D] + (Color - Gamma[D]) * A / 255 ]</code>
+        /// with A = 0 leaving D and A = 255 giving the ink. Measured on a live window it is exactly
+        /// that, with GDI's own A/B gamma tables (GdiCtGammaTables), the lamp level k's alpha
+        /// round(42.5 k) = 0, 43, 85, 128, 170, 213, 255, and the product TRUNCATED toward zero --
+        /// 2,464 of 2,465 black/white-on-grey levels and 131 of 131 mixed pairs. It is not win32k's
+        /// memory-DC arithmetic (SubpixelLutForInkOnPaper): black on white is 57/143 here where a
+        /// memory DC gives 58/144.</summary>
+        private static byte[] SubpixelLutForInkOnWindow(byte fg, byte bg)
+        {
+            int key = 1 << 16 | fg << 8 | bg;
+            lock (s_paperLuts)
+                if (s_paperLuts.TryGetValue(key, out byte[]? cached)) return cached;
+            (byte[] A, byte[] B) = GdiCtGammaTables();
+            int af = A[fg], ab = A[bg];
+            var lut = new byte[256];
+            for (int i = 0; i < 256; i++)
+            {
+                int k = (i * 6 + 127) / 255;
+                int alpha = (k * 85 + 1) / 2;       // round(42.5 k), halves up
+                int product = (af - ab) * alpha;
+                int delta = product >= 0 ? product / 255 : -(-product / 255);
+                int target = k == 0 ? bg : k == 6 ? fg : B[Math.Clamp(ab + delta, 0, 255)];
+                lut[i] = CoverageForTarget(fg, bg, target, fg == bg ? i / 255f : (target - bg) / (float) (fg - bg));
+            }
+            lock (s_paperLuts) s_paperLuts[key] = lut;
+            return lut;
+        }
+
         /// <summary>win32k's ClearType lamp weights, 0x140349a40: k/6 of 2^20.</summary>
         private static readonly int[] s_gdiLampWeight = { 0, 174763, 349525, 524288, 699051, 873813, 1048576 };
 
@@ -4767,7 +4806,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private static void ApplySubpixelWeight(byte[] rgba, bool gamma, bool textBlend, RgbaColor ink,
-                                                RgbaColor? paper = null)
+                                                RgbaColor? paper = null, bool windowBlend = false)
         {
             // Applied whichever correction the grey path would have wanted, because the reason is the
             // same one -- coverage is not brightness -- and only the curve differs.
@@ -4787,11 +4826,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             bool blackPaper = 0.2126f * ink.R + 0.7152f * ink.G + 0.0722f * ink.B > 0.5f;
             // A known paper makes it exact (SubpixelLutForInkOnPaper); otherwise the ink decides
             // which paper to assume.
-            byte[] lutR = paper is { } p ? SubpixelLutForInkOnPaper(ToByte(ink.R), ToByte(p.R))
+            byte[] lutR = paper is { } p ? SubpixelLutForKnownPaper(ToByte(ink.R), ToByte(p.R), windowBlend)
                                          : SubpixelLutForInk(ToByte(ink.R), blackPaper);
-            byte[] lutG = paper is { } q ? SubpixelLutForInkOnPaper(ToByte(ink.G), ToByte(q.G))
+            byte[] lutG = paper is { } q ? SubpixelLutForKnownPaper(ToByte(ink.G), ToByte(q.G), windowBlend)
                                          : SubpixelLutForInk(ToByte(ink.G), blackPaper);
-            byte[] lutB = paper is { } w ? SubpixelLutForInkOnPaper(ToByte(ink.B), ToByte(w.B))
+            byte[] lutB = paper is { } w ? SubpixelLutForKnownPaper(ToByte(ink.B), ToByte(w.B), windowBlend)
                                          : SubpixelLutForInk(ToByte(ink.B), blackPaper);
             for (int i = 0; i < rgba.Length; i += 4)
             {
@@ -5378,6 +5417,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private void EmitText(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
             _inStringRun = true;
+            _windowBlendForRun = (run.Simulations & GlyphRunDraw.MemorySurfaceSimulation) == 0;
             // A bi-level run is fitted the way GDI fits for a monochrome glyph -- ClearType off,
             // whole-pixel rounding in x as well as y -- and the glyph caches are keyed by these.
             bool biLevel = (run.Simulations & GlyphRunDraw.BiLevelSimulation) != 0;
@@ -5392,6 +5432,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             finally
             {
                 _inStringRun = false;
+                _windowBlendForRun = false;
                 if (biLevel)
                 {
                     _biLevelForRun = false;
@@ -5402,6 +5443,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private bool _inStringRun;
+
+        /// <summary>Set for a string run that stands in for GDI text on a WINDOW (every string run
+        /// unless it says MemorySurfaceSimulation): its known-paper curve is the display driver's
+        /// blend, not win32k's. See SubpixelLutForInkOnWindow.</summary>
+        private bool _windowBlendForRun;
 
         /// <summary>Set for the duration of a GlyphRunDraw.BiLevelSimulation run: its glyph masks are
         /// GDI's monochrome scan, one sample at each pixel centre.</summary>

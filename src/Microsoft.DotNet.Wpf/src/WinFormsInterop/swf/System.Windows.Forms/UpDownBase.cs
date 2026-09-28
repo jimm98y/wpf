@@ -39,6 +39,9 @@ namespace System.Windows.Forms
 	[ComVisible (true)]
 	[Designer("System.Windows.Forms.Design.UpDownBaseDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
 	public abstract class UpDownBase : ContainerControl {
+		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
+		internal override bool GdiTextOnMemorySurface => true;
+
 		#region UpDownSpinner Sub-class
 		internal sealed class UpDownSpinner : Control {
 			#region	Local Variables

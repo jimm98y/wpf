@@ -1874,7 +1874,10 @@ namespace WgpuInterop.Tests.Text
         /// two faces scored five times Segoe UI's and why "A K N R W X Y Z" spaced out scored more
         /// than twice the same letters run together. Not a rendering difference at all -- the pen
         /// was asked one question and the oracle another.</summary>
-        private static int OracleSimulations => Gdi.s_useDrawText ? 0 : GlyphRunDraw.NoKerningSimulation;
+        // The oracle draws into a MEMORY DC, where win32k blends -- so the runs say so, or they are
+        // blended the way text on a window is (the display driver's blend, a level off at some coverages).
+        private static int OracleSimulations => GlyphRunDraw.MemorySurfaceSimulation
+                                                | (Gdi.s_useDrawText ? 0 : GlyphRunDraw.NoKerningSimulation);
 
         private byte[] OursRgba(TrueTypeFont font, string text, int ppem, int baseline, bool correction,
                                 float dx = 0f, int widthOverride = 0)

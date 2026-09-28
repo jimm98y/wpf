@@ -44,6 +44,9 @@ namespace System.Windows.Forms {
 	[ComVisible (true)]
 	[Designer ("System.Windows.Forms.Design.RichTextBoxDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
 	public class RichTextBox : TextBoxBase {
+		// RichEdit draws straight onto its window, unlike the edit control it derives from here.
+		internal override bool GdiTextOnMemorySurface => false;
+
 		#region Local Variables
 		internal bool		auto_word_select;
 		internal int		bullet_indent;

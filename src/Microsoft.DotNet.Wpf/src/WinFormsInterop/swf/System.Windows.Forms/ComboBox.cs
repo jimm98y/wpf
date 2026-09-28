@@ -45,6 +45,9 @@ namespace System.Windows.Forms
 	[ComVisible(true)]
 	public partial class ComboBox : ListControl
 	{
+		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
+		internal override bool GdiTextOnMemorySurface => true;
+
 		private DrawMode draw_mode = DrawMode.Normal;
 		private ComboBoxStyle dropdown_style;
 		private int dropdown_width = -1;

@@ -635,6 +635,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// glyphs (the menu check a flat CheckBox paints) come out as.</summary>
         public const int BiLevelSimulation = 16;
 
+        /// <summary>Bit 5 of Simulations: this string run stands in for GDI text drawn into a MEMORY
+        /// DC (a control that double-buffers: an edit control, a tree view), which win32k blends
+        /// itself. Without it a string run is blended the way text on a WINDOW is -- by the display
+        /// driver's DXGK_GDIOP_CLEARTYPEBLEND (WgpuSceneRenderer.SubpixelLutForInkOnWindow).</summary>
+        public const int MemorySurfaceSimulation = 32;
+
         /// <summary>Style to render the run in, as WPF's StyleSimulations counts it: 1 = bold,
         /// 2 = italic. A string run carries only a size and a colour otherwise, so without this
         /// every run comes out in the regular face however the caller asked for it.</summary>

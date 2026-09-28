@@ -43,6 +43,9 @@ namespace System.Windows.Forms {
 	[DefaultProperty("Value")]
 	[Designer("System.Windows.Forms.Design.DateTimePickerDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
 	public class DateTimePicker : Control {
+		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
+		internal override bool GdiTextOnMemorySurface => true;
+
 
 		#region Public variables
 		

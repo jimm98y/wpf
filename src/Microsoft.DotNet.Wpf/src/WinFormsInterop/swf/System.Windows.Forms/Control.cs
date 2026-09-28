@@ -5366,6 +5366,13 @@ namespace System.Windows.Forms
 		// Nice description of what should happen when handling WM_PAINT
 		// can be found here: http://pluralsight.com/wiki/default.aspx/Craig/FlickerFreeControlDrawing.html
 		// and here http://msdn.microsoft.com/msdnmag/issues/06/03/WindowsFormsPerformance/
+		/// <summary>Whether the stock control this stands for paints into a MEMORY DC on Windows --
+		/// double-buffered (.NET's OptimizedDoubleBuffer controls) or buffered natively (an edit
+		/// control, a tree view). GDI text in a memory DC is blended by win32k; text drawn straight
+		/// onto a window by the display driver, which differs by a level at some coverages. Carried
+		/// to the renderer on every glyph run (GlyphRunDraw.MemorySurfaceSimulation).</summary>
+		internal virtual bool GdiTextOnMemorySurface => false;
+
 		private void WmPaint (ref Message m) {
 			IntPtr handle = Handle;
 
@@ -5391,6 +5398,7 @@ namespace System.Windows.Forms
 					//}
 					current_buffer.Start (paint_event);
 				}
+				paint_event.Graphics.memory_surface_text = GdiTextOnMemorySurface;
 				// If using OptimizedDoubleBuffer, ensure the clip region gets set
 				if (GetStyle (ControlStyles.OptimizedDoubleBuffer))
 					paint_event.Graphics.SetClip (Rectangle.Intersect (paint_event.ClipRectangle, this.ClientRectangle));

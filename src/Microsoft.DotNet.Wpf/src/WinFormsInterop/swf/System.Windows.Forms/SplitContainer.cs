@@ -44,6 +44,9 @@ namespace System.Windows.Forms
 	public class SplitContainer : ContainerControl
 		, ISupportInitialize
 	{
+		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
+		internal override bool GdiTextOnMemorySurface => true;
+
 		#region Local Variables
 		private FixedPanel fixed_panel;
 		private Orientation orientation;

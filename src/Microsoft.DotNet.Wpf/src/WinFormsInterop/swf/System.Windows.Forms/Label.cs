@@ -45,6 +45,9 @@ namespace System.Windows.Forms
 	[DefaultBindingProperty ("Text")]
 	public class Label : Control
 	{
+		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
+		internal override bool GdiTextOnMemorySurface => true;
+
 		private bool autosize;
 		private bool auto_ellipsis;
 		private Image image;

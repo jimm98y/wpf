@@ -39,6 +39,9 @@ namespace System.Windows.Forms {
 	[DefaultEvent("AfterSelect")]
 	[Designer("System.Windows.Forms.Design.TreeViewDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
 	public class TreeView : Control {
+		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
+		internal override bool GdiTextOnMemorySurface => true;
+
 		#region Fields
 		private string path_separator = "\\";
 		private int item_height = -1;
