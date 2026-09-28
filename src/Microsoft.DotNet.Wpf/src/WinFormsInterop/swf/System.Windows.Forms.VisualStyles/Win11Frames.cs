@@ -911,8 +911,16 @@ namespace System.Windows.Forms.VisualStyles
 				if (look == 2)
 					layers.Add (new Layer (Circle (6.5f, 6.5f, 1.9844f), 0xffffffffu));
 			} else {
-				float dot = look switch { 1 => 3.2578f, 2 => 1.9766f, _ => 2.5195f };
+				float dot = look switch { 1 => 3.2422f, 2 => 2.0157f, _ => 2.5195f };
 				layers.Add (new Layer (Circle (6.5f, 6.5f, outer), Marked (look)));
+				// The dot stands on a soft shadow: a black disc a little larger than it and a little
+				// below, at about an eighth -- the accent ring darkens round the dot, most at the bottom.
+				(float rs, float dy, float sa) = look switch {
+					1 => (3.9875f, 0.4922f, 0.1246f), 2 => (2.7297f, 0.4844f, 0.1148f), 3 => (0f, 0f, 0f),
+					_ => (3.2257f, 0.3672f, 0.1422f),
+				};
+				if (rs > 0)
+					layers.Add (new Layer (Circle (6.5f, 6.5f + dy, rs), (uint) Math.Round (sa * 255) << 24));
 				layers.Add (new Layer (Circle (6.5f, 6.5f, dot), 0xffffffffu));
 			}
 			return RenderSampled (13, 13, s_msx, s_msy, layers.ToArray ());
