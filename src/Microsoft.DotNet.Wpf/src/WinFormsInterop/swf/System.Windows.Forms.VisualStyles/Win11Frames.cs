@@ -1390,7 +1390,7 @@ namespace System.Windows.Forms.VisualStyles
 			Shape outer = Corners (x0, y0, x1, y1, r0, tl, tr, br, bl);
 			Shape inner = Corners (x0 + 1, y0 + 1, x1 - 1, y1 - 1, 0.75f, tl, tr, br, bl);
 			float bandY = y1 - 1;
-			Frame f = Render (w, 16, new Layer (Box (0, 0, w, 16), 0xfff0f0f0u),
+			Frame f = RenderSampled (w, 16, s_msx, s_msy, new Layer (Box (0, 0, w, 16), 0xfff0f0f0u),
 					  new Layer (outer, (x, y) => y >= bandY ? band : border), new Layer (inner, face));
 			Stretched (f, part == 4 ? 4 : part == 3 ? 3 : 4, part == 4 ? 2 : 3, part == 2 ? 8 : 9, 3);
 			// The arrow: exact-area art (alphas down to 5), an up-pointing triangle -- apex (3.5, 1.43),
