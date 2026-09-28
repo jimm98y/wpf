@@ -271,6 +271,28 @@ namespace System.Windows.Forms.VisualStyles
 			return o;
 		}
 
+		/// <summary>MONTHCAL's navigation arrows, 16x16 true size: part 11 (previous) points left
+		/// from column 8, part 10 (next) right from column 7, seven rows from row 4, solid runs of
+		/// 1, 2, 3, 4, 3, 2, 1 pixels. At rest and pressed each row is one grey, darkening down the
+		/// glyph; hot it is #0066CC throughout; disabled the rest greys at alpha 0x66.</summary>
+		internal static Frame MonthCalArrow (bool previous, int state)
+		{
+			uint [] ramp = { 0x3b, 0x3a, 0x38, 0x31, 0x26, 0x19, 0x0b };
+			int [] width = { 1, 2, 3, 4, 3, 2, 1 };
+			var f = new Frame (16, 16);
+			for (int r = 0; r < 7; r++) {
+				uint g = ramp [r];
+				uint px = state switch {
+					2 => 0xff0066ccu,
+					4 => Premultiply (g << 16 | g << 8 | g, 0x66),
+					_ => 0xff000000u | g << 16 | g << 8 | g,
+				};
+				for (int i = 0; i < width [r]; i++)
+					f.Pixels [(4 + r) * 16 + (previous ? 8 - i : 7 + i)] = px;
+			}
+			return f;
+		}
+
 		// ---- border-fill parts ---------------------------------------------------------------
 
 		/// <summary>A BGTYPE BORDERFILL part: FILLCOLOR inside a BORDERSIZE frame of BORDERCOLOR,

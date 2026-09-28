@@ -1898,7 +1898,9 @@ namespace System.Windows.Forms
 			const int Side = 16, Inset = 0;
 			// And a little above the middle of the heading, which is where Windows puts it: level
 			// with the month's name rather than with the strip the name sits in.
-			int top = rectangle.Y + ((title_size.Height - Side) / 2) - 2;
+			// (The theme's glyph starts four rows into this 16x16 button; the old hand-drawn arrow's
+			// placement had the rect a row higher.)
+			int top = rectangle.Y + ((title_size.Height - Side) / 2) - 1;
 			Rectangle button = is_previous
 				? new Rectangle (rectangle.X + Inset, top, Side, Side)
 				: new Rectangle (rectangle.Right - Inset - Side, top, Side, Side);
@@ -1941,13 +1943,10 @@ namespace System.Windows.Forms
 			// <para>One flat colour is an approximation of a vertical ramp, and #2C2C2C is its mean
 			// -- worth saying plainly rather than implying the ramp has been reproduced. It takes
 			// the two arrows from 44 levels out to about 15.</para>
-			Color ink = !mc.Enabled ? ColorGrayText
-				  : clicked || hovered ? ButtonBorderHover
-				  : CalendarArrowInk;
-			PointF [] arrow = is_previous
-				? new PointF [] { new PointF (cx + Flat, cy - Top), new PointF (cx + Flat, cy + Bottom), new PointF (cx - Apex, cy + Mid) }
-				: new PointF [] { new PointF (cx - Flat, cy - Top), new PointF (cx - Flat, cy + Bottom), new PointF (cx + Apex, cy + Mid) };
-			dc.FillPolygon (ResPool.GetSolidBrush (ink), arrow);
+			// CCalendar::_PaintArrowBtn: MONTHCAL part 11 / 10 in the button, disabled (4) when there is
+			// nowhere to go, pressed (3), hot (2), else normal.
+			int state = !mc.Enabled ? 4 : clicked ? 3 : hovered ? 2 : 1;
+			Win11Frames.Draw (dc, Win11Frames.MonthCalArrow (is_previous, state), button);
 			dc.SmoothingMode = old;
 		}
 
