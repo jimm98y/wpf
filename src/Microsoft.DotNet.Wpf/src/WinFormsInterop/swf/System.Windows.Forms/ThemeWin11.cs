@@ -1313,10 +1313,9 @@ namespace System.Windows.Forms
 
 		// ---- track bar: comctl32's layout, the theme's parts --------------------------------
 		//
-		// The classic painter draws the background and the ticks, which already stand where
-		// Windows puts them; the channel and the thumb are drawn here where comctl32 (TBResize,
-		// ValidateThumbHeight, MoveThumb, TBLogToPhys, GetChannelRect) puts them, with the
-		// theme's TKP_* parts.
+		// The classic painter draws the background; the ticks, the channel and the thumb are drawn
+		// here where comctl32 (TBResize, ValidateThumbHeight, MoveThumb, TBLogToPhys,
+		// GetChannelRect, DrawTicsOneLine) puts them, with the theme's TKP_* parts.
 
 		[ThreadStatic] private static TrackBar s_trackBar;
 
@@ -1337,9 +1336,12 @@ namespace System.Windows.Forms
 		{
 			public readonly Rectangle Channel, Thumb;
 			public readonly int ThumbPart, ChannelPart;
-			public TrackBarLayout (Rectangle channel, Rectangle thumb, int thumbPart, int channelPart)
+			/// <summary>TRACKBAR.rc, in the horizontal frame and client coordinates: the first tic
+			/// at Left, the last at Right - 1, the thumb from Top to Bottom.</summary>
+			public readonly Rectangle Tics;
+			public TrackBarLayout (Rectangle channel, Rectangle thumb, int thumbPart, int channelPart, Rectangle tics)
 			{
-				Channel = channel; Thumb = thumb; ThumbPart = thumbPart; ChannelPart = channelPart;
+				Channel = channel; Thumb = thumb; ThumbPart = thumbPart; ChannelPart = channelPart; Tics = tics;
 			}
 		}
 
@@ -1400,7 +1402,8 @@ namespace System.Windows.Forms
 			}
 			thumb.Offset (client.Location);
 			channel.Offset (client.Location);
-			return new TrackBarLayout (channel, thumb, thumbPart, vert ? 2 : 1);
+			return new TrackBarLayout (channel, thumb, thumbPart, vert ? 2 : 1,
+						   Rectangle.FromLTRB (left, thumbTop, right, thumbBottom));
 		}
 
 		private const int EdgeMetric = 2;         // SM_CXEDGE
@@ -1431,8 +1434,50 @@ namespace System.Windows.Forms
 		{
 			if (s_trackBar is TrackBar tb) {
 				TrackBarLayout l = Comctl32TrackBar (tb);
+				DrawComctl32Tics (dc, tb, l);
 				Win11Frames.Draw (dc, Win11Frames.Get ("TRACKBAR", l.ChannelPart, 1), l.Channel);
 			}
+		}
+
+		/// <summary>comctl32's DrawTicsOneLine, below rc (rc.bottom + 1, downwards) unless the
+		/// ticks are on top only, above it (rc.top - 1, upwards) when they are on top or both. Each
+		/// tic is DrawTic's 1x3 PatRect; the two end tics are drawn twice, a row apart; the others
+		/// every TickFrequency values between, at TBLogToPhys.</summary>
+		private static void DrawComctl32Tics (Graphics dc, TrackBar tb, TrackBarLayout l)
+		{
+			if (tb.TickStyle == TickStyle.None)
+				return;
+			bool vert = tb.Orientation == Orientation.Vertical;
+			Point origin = tb.ClientRectangle.Location;
+			Brush brush = ThemeEngine.Current.ResPool.GetSolidBrush (TrackTick);
+			void Tic (int x, int y, int dir)
+			{
+				if (dir == -1)
+					y -= 3;
+				if (vert)
+					dc.FillRectangle (brush, origin.X + y, origin.Y + x, 3, 1);
+				else
+					dc.FillRectangle (brush, origin.X + x, origin.Y + y, 1, 3);
+			}
+			void Line (int dir, int y)
+			{
+				Rectangle rc = l.Tics;
+				Tic (rc.Left, y, dir);
+				Tic (rc.Left, y + dir, dir);
+				Tic (rc.Right - 1, y, dir);
+				Tic (rc.Right - 1, y + dir, dir);
+				int min = tb.Minimum, max = tb.Maximum, freq = tb.TickFrequency;
+				if (freq <= 0 || max <= min)
+					return;
+				for (int v = min + 1; v < max; v++)
+					if ((v - min) % freq == 0)
+						Tic (rc.Left + MulDiv (v - min, rc.Width - 1, max - min), y, dir);
+			}
+			bool both = tb.TickStyle == TickStyle.Both, top = tb.TickStyle == TickStyle.TopLeft;
+			if (both || !top)
+				Line (1, l.Tics.Bottom + 1);
+			if (both || top)
+				Line (-1, l.Tics.Top - 1);
 		}
 
 		private static void DrawComctl32Thumb (Graphics dc, TrackBar tb)
@@ -1479,36 +1524,15 @@ namespace System.Windows.Forms
 								   TrackBar trackBar)
 			=> DrawComctl32Thumb (dc, trackBar);
 
+		// The ticks are comctl32's, drawn with the channel (DrawComctl32Tics).
 		protected override ITrackBarTickPainter GetTrackBarTickPainter (Graphics g)
 		{
-			return new ModernTickPainter (g, ResPool.GetPen (TrackTick));
+			return new NoTickPainter ();
 		}
 
-		private class ModernTickPainter : ITrackBarTickPainter
+		private sealed class NoTickPainter : ITrackBarTickPainter
 		{
-			private readonly Graphics g;
-			private readonly Pen pen;
-
-			public ModernTickPainter (Graphics graphics, Pen tickPen)
-			{
-				g = graphics;
-				pen = tickPen;
-			}
-
-			public void Paint (float x1, float y1, float x2, float y2)
-			{
-				if (x1 == x2)
-				{
-					// A tick under a HORIZONTAL bar. SNAP IT TO A COLUMN: left on a fraction the
-					// recorder spreads a hairline over two columns -- ours read 200 and 236 side
-					// by side where Windows draws one solid 196. And two rows up, which is where
-					// a stock bar puts them: rows 388..390 of the client against our 390..392.
-					float x = (float) System.Math.Round (x1);
-					g.DrawLine (pen, x, y1 - 2f, x, y2 - 2f);
-					return;
-				}
-				g.DrawLine (pen, x1, y1, x2, y2);
-			}
+			public void Paint (float x1, float y1, float x2, float y2) { }
 		}
 
 		// ---- scroll bar metrics ------------------------------------------------------
