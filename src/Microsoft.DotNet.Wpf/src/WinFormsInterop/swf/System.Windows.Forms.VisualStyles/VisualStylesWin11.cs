@@ -93,10 +93,10 @@ namespace System.Windows.Forms.VisualStyles
 		{
 			if (dc is not Graphics g)
 				return;
-			Region saved = g.Clip;
+			System.Drawing.Drawing2D.GraphicsState saved = g.Save ();
 			g.ExcludeClip (excludedArea);
 			Draw (theme, dc, part, state, bounds, null);
-			g.Clip = saved;
+			g.Restore (saved);
 		}
 
 		private static int Draw (IntPtr hTheme, IDeviceContext dc, int part, int state, Rectangle bounds, Rectangle? clip)
@@ -106,16 +106,19 @@ namespace System.Windows.Forms.VisualStyles
 			string cls = ClassOf (hTheme);
 			if (cls == null)
 				return E_FAIL;
-			Region saved = null;
+			// Save/Restore, not reading and re-assigning Clip: a recording Graphics cannot hand its
+			// clip back as a Region, so re-assigning it lost the clip and a group box's frame ran
+			// straight through its caption.
+			System.Drawing.Drawing2D.GraphicsState saved = null;
 			if (clip is Rectangle c) {
-				saved = g.Clip;
+				saved = g.Save ();
 				g.IntersectClip (c);
 			}
 			try {
 				return DrawPart (g, cls, part, state, bounds) ? S_OK : E_NOTIMPL;
 			} finally {
 				if (saved != null)
-					g.Clip = saved;
+					g.Restore (saved);
 			}
 		}
 
@@ -319,7 +322,8 @@ namespace System.Windows.Forms.VisualStyles
 		}
 
 		public int UxThemeGetThemeBool (IntPtr hTheme, int iPartId, int iStateId, BooleanProperty prop, out bool result) { result = false; return E_NOTIMPL; }
-		public int UxThemeGetThemeColor (IntPtr hTheme, int iPartId, int iStateId, ColorProperty prop, out Color result) { result = Color.Empty; return E_NOTIMPL; }
+		public int UxThemeGetThemeColor (IntPtr hTheme, int iPartId, int iStateId, ColorProperty prop, out Color result)
+			=> Win11ThemeColors.TryGet (ClassOf (hTheme), iPartId, iStateId, (int) prop, out result) ? S_OK : E_NOTIMPL;
 		public int UxThemeGetThemeEnumValue (IntPtr hTheme, int iPartId, int iStateId, EnumProperty prop, out int result) { result = 0; return E_NOTIMPL; }
 		public int UxThemeGetThemeFilename (IntPtr hTheme, int iPartId, int iStateId, FilenameProperty prop, out string result) { result = string.Empty; return E_NOTIMPL; }
 		public int UxThemeGetThemeInt (IntPtr hTheme, int iPartId, int iStateId, IntegerProperty prop, out int result) { result = 0; return E_NOTIMPL; }

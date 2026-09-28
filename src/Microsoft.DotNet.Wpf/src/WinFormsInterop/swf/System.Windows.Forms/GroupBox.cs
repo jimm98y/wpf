@@ -247,9 +247,68 @@ namespace System.Windows.Forms
 			Refresh ();
 		}
 
+		// .NET's GroupBoxRenderer.DrawThemedGroupBoxWithText.
+		private static void DrawThemedGroupBoxWithText (Graphics g, VisualStyles.VisualStyleRenderer renderer, Rectangle bounds,
+								 string text, Font font, Color textColor, TextFormatFlags flags)
+		{
+			Rectangle textBounds = bounds;
+			textBounds.Width -= 14;
+			Size size = TextRenderer.MeasureText (g, text, font, new Size (textBounds.Width, textBounds.Height), flags);
+			textBounds.Width = size.Width;
+			textBounds.Height = size.Height;
+			if ((flags & TextFormatFlags.Right) == TextFormatFlags.Right)
+				textBounds.X = bounds.Right - textBounds.Width - 7 + 1;
+			else
+				textBounds.X += 6;
+			TextRenderer.DrawText (g, text, font, textBounds, textColor, flags);
+
+			Rectangle box = bounds;
+			if (font != null) {
+				box.Y += font.Height / 2;
+				box.Height -= font.Height / 2;
+			}
+			Rectangle left = box, middle = box, right = box;
+			left.Width = 7;
+			middle.Width = Math.Max (0, textBounds.Width - 3);
+			if ((flags & TextFormatFlags.Right) == TextFormatFlags.Right) {
+				left.X = box.Right - 7;
+				middle.X = left.Left - middle.Width;
+				right.Width = middle.X - box.X;
+			} else {
+				middle.X = left.Right;
+				right.X = middle.Right;
+				right.Width = box.Right - right.X;
+			}
+			middle.Y = textBounds.Bottom;
+			middle.Height -= textBounds.Bottom - box.Top;
+			renderer.DrawBackground (g, box, left);
+			renderer.DrawBackground (g, box, middle);
+			renderer.DrawBackground (g, box, right);
+		}
+
 		protected override void OnPaint (PaintEventArgs e)
 		{
-			ThemeEngine.Current.DrawGroupBox (e.Graphics, ClientRectangle, this);
+			// .NET's OnPaint: with visual styles, GroupBoxRenderer's themed box -- the caption measured
+			// with word breaking into the width less fourteen (a caption too long for that wraps, as
+			// in Windows, and its second line sits under the box's contents), six in, the frame
+			// drawn in three pieces around it.
+			if (!Application.RenderWithVisualStyles || Width < 10 || Height < 10) {
+				ThemeEngine.Current.DrawGroupBox (e.Graphics, ClientRectangle, this);
+			} else {
+				TextFormatFlags flags = TextFormatFlags.TextBoxControl | TextFormatFlags.WordBreak
+					| TextFormatFlags.PreserveGraphicsClipping | TextFormatFlags.PreserveGraphicsTranslateTransform;
+				if (!ShowKeyboardCues)
+					flags |= TextFormatFlags.HidePrefix;
+				if (RightToLeft == RightToLeft.Yes)
+					flags |= TextFormatFlags.Right | TextFormatFlags.RightToLeft;
+				var state = Enabled ? VisualStyles.GroupBoxState.Normal : VisualStyles.GroupBoxState.Disabled;
+				var renderer = new VisualStyles.VisualStyleRenderer (Enabled
+					? VisualStyles.VisualStyleElement.Button.GroupBox.Normal : VisualStyles.VisualStyleElement.Button.GroupBox.Disabled);
+				Color textColor = foreground_color != Color.Empty || !Enabled
+					? (Enabled ? ForeColor : TextRenderer.DisabledTextColor (BackColor))
+					: renderer.GetColor (VisualStyles.ColorProperty.TextColor);
+				DrawThemedGroupBoxWithText (e.Graphics, renderer, new Rectangle (0, 0, Width, Height), Text, Font, textColor, flags);
+			}
 			base.OnPaint(e);
 		}
 
