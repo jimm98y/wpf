@@ -77,6 +77,10 @@ namespace System.Windows.Forms.VisualStyles
 				return true;
 			case "TREEVIEW":
 				return iPartId == 2;
+			case "REBAR":
+				// RP_BAND is in aero.msstyles too (BGTYPE NONE: it draws nothing), and
+				// ToolStripSystemRenderer asks for it before painting a tool bar's background.
+				return iPartId == 3;
 			}
 			return false;
 		}
@@ -188,6 +192,8 @@ namespace System.Windows.Forms.VisualStyles
 				t.PartScrollArrow (g, r, part == 1 ? ArrowDirection.Up : part == 2 ? ArrowDirection.Down
 							  : part == 3 ? ArrowDirection.Right : ArrowDirection.Left, state != 4);
 				return true;
+			case "REBAR":
+				return part == 3;   // RP_BAND: nothing to draw
 			case "TOOLBAR":
 				// aero.msstyles, Toolbar: part 0 is a border fill of #F0F0F0 with no border.
 				if (part == 0) {
@@ -216,7 +222,6 @@ namespace System.Windows.Forms.VisualStyles
 					t.PartPushButton (g, r, state == 3 ? 3 : 2);
 				return true;
 			case "TAB":
-			case "REBAR":
 			case "STATUS":
 			case "WINDOW":
 				return false;

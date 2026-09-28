@@ -34,6 +34,9 @@ namespace System.Windows.Forms.VisualStyles
 			/// <summary>SIZINGMARGINS, left, right, top, bottom: the rows and columns kept as they are
 			/// when the frame is stretched.</summary>
 			public (int L, int R, int T, int B) Margins;
+			/// <summary>SIZINGTYPE TILE: the frame repeated from the top-left corner of the bounds,
+			/// clipped at their right and bottom edges.</summary>
+			public bool Tile;
 			/// <summary>A glyph drawn over the background at its own size, centred (GLYPHTYPE
 			/// IMAGEGLYPH): the combo box's chevron.</summary>
 			public Frame Glyph;
@@ -58,7 +61,7 @@ namespace System.Windows.Forms.VisualStyles
 			if (bounds.Width <= 0 || bounds.Height <= 0)
 				return;
 			Rectangle dest = bounds;
-			if (!f.Stretch) {
+			if (!f.Stretch && !f.Tile) {
 				int w = Math.Min (f.Width, bounds.Width), h = Math.Min (f.Height, bounds.Height);
 				// Too small for the frame: scaled down whole, keeping its aspect (UNIFORMSIZING).
 				if (w < f.Width || h < f.Height)
@@ -395,6 +398,20 @@ namespace System.Windows.Forms.VisualStyles
 			return f;
 		}
 
+		/// <summary>RP_GRIPPER (5x4) and RP_GRIPPERVERT (4x5), tiled: one dot per tile, a 2x2 of white
+		/// at alpha 0xB2 whose lower-right pixel is #DD at 0xC5, with a black shadow at 0x3C to its
+		/// right and below. The vertical part is the same dot a row lower and a column to the left.</summary>
+		internal static Frame RebarGripper (bool vertical)
+		{
+			var f = new Frame (vertical ? 4 : 5, vertical ? 5 : 4) { Tile = true };
+			int ox = vertical ? 0 : 1, oy = vertical ? 1 : 0;
+			void Put (int x, int y, uint p) => f.Pixels [(y + oy) * f.Width + x + ox] = p;
+			Put (0, 0, 0xb2b2b2b2u); Put (1, 0, 0xb2b2b2b2u);
+			Put (0, 1, 0xb2b2b2b2u); Put (1, 1, 0xc5aaaaaau); Put (2, 1, 0x3c000000u);
+			Put (1, 2, 0x3c000000u); Put (2, 2, 0x3c000000u);
+			return f;
+		}
+
 		/// <summary>PP_MOVEOVERLAY, 127x18 stretched: the glow that sweeps along a progress bar's
 		/// fill -- green (#4DC94D) whose alpha falls away from the middle column like a bell, peak
 		/// 153 and a spread of 20 pixels, a little stronger along its second row.</summary>
@@ -531,9 +548,9 @@ namespace System.Windows.Forms.VisualStyles
 				var (l, r, t, bm) = f.Stretch ? f.Margins : (0, 0, 0, 0);
 				var argb = new int [w * h];
 				for (int y = 0; y < h; y++) {
-					int sy = Source (y, h, f.Height, t, bm);
+					int sy = f.Tile ? y % f.Height : Source (y, h, f.Height, t, bm);
 					for (int x = 0; x < w; x++) {
-						uint p = f.Pixels [sy * f.Width + Source (x, w, f.Width, l, r)];
+						uint p = f.Pixels [sy * f.Width + (f.Tile ? x % f.Width : Source (x, w, f.Width, l, r))];
 						argb [y * w + x] = (int) Straight (p);
 					}
 				}
@@ -753,14 +770,14 @@ namespace System.Windows.Forms.VisualStyles
 		static readonly Dictionary<(int cls, int part, int state), Frame> s_cache = new ();
 
 		const int Button = 1, ComboBox = 2, Edit = 3, Tab = 4, TrackBar = 5, TreeView = 6, ScrollBar = 7,
-			Header = 8, Progress = 9, Spin = 10, Toolbar = 11, Status = 12, MonthCal = 13;
+			Header = 8, Progress = 9, Spin = 10, Toolbar = 11, Status = 12, MonthCal = 13, Rebar = 14;
 
 		/// <summary>The frame uxtheme would take for a part and state at 96 DPI, or null for a part
 		/// that is not drawn from a frame.</summary>
 		internal static Frame Get (string cls, int part, int state)
 		{
 			int c = cls switch { "BUTTON" => Button, "COMBOBOX" => ComboBox, "EDIT" => Edit, "TAB" => Tab, "TRACKBAR" => TrackBar, "TREEVIEW" => TreeView, "SCROLLBAR" => ScrollBar,
-				"HEADER" => Header, "PROGRESS" => Progress, "SPIN" => Spin, "TOOLBAR" => Toolbar, "STATUS" => Status, "MONTHCAL" => MonthCal, _ => 0 };
+				"HEADER" => Header, "PROGRESS" => Progress, "SPIN" => Spin, "TOOLBAR" => Toolbar, "STATUS" => Status, "MONTHCAL" => MonthCal, "REBAR" => Rebar, _ => 0 };
 			if (c == 0)
 				return null;
 			lock (s_cache) {
@@ -810,6 +827,7 @@ namespace System.Windows.Forms.VisualStyles
 					},
 					Spin => part >= 1 && part <= 4 ? SpinButton (part, state) : null,
 					Toolbar => part == 1 || part == 2 ? ToolbarButton (state) : null,
+					Rebar => part == 1 || part == 2 ? RebarGripper (part == 2) : null,
 					Status => part switch {
 						// The bar: #F0F0F0 under a #D7D7D7 rule along its top (nine-grid 1/1/2/1).
 						0 => Stretched (Render (3, 4, new Layer (Box (0, 0, 3, 4), 0xfff0f0f0u), new Layer (Box (0, 0, 3, 1), 0xffd7d7d7u)), 1, 1, 2, 1),
