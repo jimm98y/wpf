@@ -770,7 +770,48 @@ namespace System.Windows.Forms.VisualStyles
 				4 => (0xffc8c8c8u, 0xfffefefeu),
 				_ => (0xff8d8d8du, 0xffffffffu),
 			};
-			return Stretched (Field (5, 5, 2, 1, border, border, 1, face, 1), 2, 2, 2, 2);
+			// Exact-area art: a rounded ring, outer radius 1.94 on the 5x5, inner 0.875 a pixel in.
+			return Stretched (ExactRing (5, 5, 1.9375f, 0.875f, border, face), 2, 2, 2, 2);
+		}
+
+		/// <summary>A rounded rectangle the size of the frame in <paramref name="border"/>, with a
+		/// rounded rectangle a pixel inside it in <paramref name="face"/>, each pixel the exact area
+		/// each covers -- the colour mixed by area, premultiplied by the alpha after that is rounded.</summary>
+		static Frame ExactRing (int w, int h, float outer, float inner, uint border, uint face)
+		{
+			List<PointF> o = RoundRectPolygon (0, 0, w, h, outer), i = RoundRectPolygon (1, 1, w - 1, h - 1, inner);
+			var f = new Frame (w, h);
+			for (int y = 0; y < h; y++)
+				for (int x = 0; x < w; x++) {
+					double co = Math.Abs (ClippedArea (o, x, y, x + 1, y + 1));
+					double ci = Math.Min (co, Math.Abs (ClippedArea (i, x, y, x + 1, y + 1)));
+					int a = (int) (co * 255 + 0.5);
+					if (a == 0)
+						continue;
+					uint px = (uint) a << 24;
+					for (int sh = 0; sh < 24; sh += 8) {
+						double straight = (((border >> sh) & 0xff) * (co - ci) + ((face >> sh) & 0xff) * ci) / co;
+						px |= (uint) Math.Min (255, (int) (straight * a / 255 + 0.5)) << sh;
+					}
+					f.Pixels [y * w + x] = px;
+				}
+			return f;
+		}
+
+		static List<PointF> RoundRectPolygon (float x0, float y0, float x1, float y1, float r)
+		{
+			var pts = new List<PointF> ();
+			if (r <= 0) {
+				pts.Add (new PointF (x0, y0)); pts.Add (new PointF (x1, y0)); pts.Add (new PointF (x1, y1)); pts.Add (new PointF (x0, y1));
+				return pts;
+			}
+			(float cx, float cy, float a0) [] corners = { (x1 - r, y0 + r, -90), (x1 - r, y1 - r, 0), (x0 + r, y1 - r, 90), (x0 + r, y0 + r, 180) };
+			foreach (var (cx, cy, a0) in corners)
+				for (int k = 0; k <= 64; k++) {
+					double t = (a0 + 90.0 * k / 64) * Math.PI / 180;
+					pts.Add (new PointF ((float) (cx + r * Math.Cos (t)), (float) (cy + r * Math.Sin (t))));
+				}
+			return pts;
 		}
 
 		/// <summary>EP_EDITBORDER_*, 5x5 nine-grid 2/2/2/2: a pale frame over a darker bottom
