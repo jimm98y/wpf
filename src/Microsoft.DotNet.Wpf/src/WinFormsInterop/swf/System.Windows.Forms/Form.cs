@@ -90,6 +90,22 @@ namespace System.Windows.Forms {
 		internal int			is_changing_visible_state;
 		internal bool			has_been_visible;
 		private bool			shown_raised;
+		private bool			shown_pending, host_window_up;
+
+		/// <summary>The host's native window for this form has been created, shown and (where the
+		/// system allowed it) activated: a Shown held back for it is raised now, posted, as .NET
+		/// posts it.</summary>
+		internal void HostWindowShown ()
+		{
+			host_window_up = true;
+			if (!shown_pending)
+				return;
+			shown_pending = false;
+			if (IsHandleCreated)
+				BeginInvoke (new MethodInvoker (() => OnShown (EventArgs.Empty)));
+			else
+				OnShown (EventArgs.Empty);
+		}
 		private bool			close_raised;
 		private bool			is_clientsize_set;
 		internal bool			suppress_closing_events;
@@ -2408,9 +2424,23 @@ namespace System.Windows.Forms {
 			}
 			
 			// Shown event is only called once, the first time the form is made visible
+			// POSTED, as .NET's OnLoad posts it (BeginInvoke(CallShownEvent)): Shown runs after the
+			// show has activated the form and focused its first control, so a handler that moves the
+			// focus -- ActiveControl = null, a Select() -- has the last word. Raised here, in line, it
+			// ran FIRST and the focus logic below undid it.
+			// AND AFTER THE NATIVE WINDOW EXISTS, where a host puts the form in one of its own
+			// (PresentationHost.TracksActivation): on Windows the window is activated inside
+			// ShowWindow, before Shown, and the host's window comes up a little after this -- its
+			// activation, which focuses the first control, landed after Shown and undid it. The host
+			// says when its window is up (HostWindowShown).
 			if (value && !shown_raised) {
-				this.OnShown (EventArgs.Empty);
 				shown_raised = true;
+				if (XplatUI.RunningWebGpuDriver && PresentationHost.TracksActivation (this) && !host_window_up)
+					shown_pending = true;
+				else if (IsHandleCreated)
+					BeginInvoke (new MethodInvoker (() => OnShown (EventArgs.Empty)));
+				else
+					this.OnShown (EventArgs.Empty);
 			}
 			
 			// Focus comes with ACTIVATION on Windows (WmActivate), and a window that is shown without

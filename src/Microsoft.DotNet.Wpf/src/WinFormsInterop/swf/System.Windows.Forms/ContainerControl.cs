@@ -70,7 +70,31 @@ namespace System.Windows.Forms {
 			}
 
 			set {
-				if (value==null || (active_control == value && active_control.Focused)) {
+				// NULL CLEARS IT, as .NET's SetActiveControl(null) does: the active chain is left (its
+				// Leave events fire) and, if the keyboard was inside, the container takes the focus
+				// itself (FocusActiveControlInternal with nothing active). This used to ignore null,
+				// so "ActiveControl = null" -- which a form uses to show with nothing focused -- left
+				// the first control focused and drawn as the default button.
+				if (value == null) {
+					if (active_control == null)
+						return;
+					bool had_focus = ContainsFocus;
+					Form owner = FindForm ();
+					Control leaving = GetMostDeeplyNestedActiveControl (owner == null ? this : owner);
+					while (leaving != this && leaving != null) {
+						leaving.FireLeave ();
+						if (leaving is ContainerControl cc)
+							cc.active_control = null;
+						leaving = leaving.Parent;
+					}
+					active_control = null;
+					if (this is Form)
+						CheckAcceptButton ();
+					if (had_focus && IsHandleCreated)
+						XplatUI.SetFocus (Handle);
+					return;
+				}
+				if (active_control == value && active_control.Focused) {
 					return;
 				}
 

@@ -925,16 +925,46 @@ namespace System.Windows.Forms.VisualStyles
 			return pts;
 		}
 
-		/// <summary>EP_EDITBORDER_*, 5x5 nine-grid 2/2/2/2: a pale frame over a darker bottom
-		/// line, which turns into two rows of the accent while the field has the focus.</summary>
+		/// <summary>EP_EDITBORDER_*, 5x5 nine-grid 2/2/2/2, premultiplied: a pale frame over a darker
+		/// bottom line, which turns into two rows of the accent while the field has the focus. The
+		/// frame is NOT symmetric: the column inside the right edge is a shade darker than the one
+		/// inside the left (#F7 against #FE at rest) and the right edge is #E6 where the left is #EC,
+		/// so a field's right side reads a little heavier. Written out per state (normal, hot,
+		/// focused, disabled) because no symmetric construction produces it.</summary>
 		internal static Frame EditBorder (int state)
 		{
-			Frame f = state switch {
-				2 => Field (5, 5, 2, 1.25f, 0xffecececu, 0xff838383u, 1.3125f, 0xfffafafau, 1),
-				3 => Field (5, 5, 1.8125f, 0.5f, 0xffecececu, 0xff0067c0u, 2, 0xffffffffu, 2),
-				4 => Field (5, 5, 2, 1.25f, 0xffecececu, 0xffecececu, 1.3125f, 0xfffbfbfbu, 1),
-				_ => Field (5, 5, 2, 1.25f, 0xffecececu, 0xff838383u, 1.3125f, 0xfffefefeu, 1),
+			uint [] px = state switch {
+				2 => new uint [] {
+				0x4f494949u, 0xe6d5d5d5u, 0xffecececu, 0xe7cfcfcfu, 0x54474747u,
+				0xebd9d9d9u, 0xfff7f7f7u, 0xfffafafau, 0xfff0f0f0u, 0xecd4d4d4u,
+				0xffecececu, 0xfffafafau, 0xfffafafau, 0xfff3f3f3u, 0xffe6e6e6u,
+				0xefddddddu, 0xffdadadau, 0xfffafafau, 0xffd9d9d9u, 0xf0cad1d6u,
+				0x5a535353u, 0xf68a8a8au, 0xff838383u, 0xf68a8a8au, 0x644e545au,
+				},
+				3 => new uint [] {
+				0x514b4b4bu, 0xe9d8d8d8u, 0xffecececu, 0xe9d8d8d8u, 0x5c464d52u,
+				0xebd9d9d9u, 0xfffbfbfbu, 0xffffffffu, 0xfffbfbfbu, 0xecccd2d8u,
+				0xffecececu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffdde4e9u,
+				0xff0067c0u, 0xff0067c0u, 0xff0067c0u, 0xff0067c0u, 0xff0067c0u,
+				0xe40d63aeu, 0xff0067c0u, 0xff0067c0u, 0xff0067c0u, 0xe40d63aeu,
+				},
+				4 => new uint [] {
+				0x524b4b4cu, 0xecd9dadau, 0xffecececu, 0xecd9dadau, 0x524b4b4cu,
+				0xecdadadau, 0xfff8f8f8u, 0xfffbfbfbu, 0xfff8f8f8u, 0xecdadadau,
+				0xffecececu, 0xfffbfbfbu, 0xfffbfbfbu, 0xfffbfbfbu, 0xffecececu,
+				0xeddbdbdbu, 0xfff8f8f8u, 0xfffbfbfbu, 0xfff8f8f8u, 0xeddbdbdbu,
+				0x57515151u, 0xecdadadau, 0xffedededu, 0xecdadadau, 0x57515151u,
+				},
+				_ => new uint [] {
+				0x4d474747u, 0xe3d2d2d2u, 0xffecececu, 0xe4cdcdcdu, 0x52454545u,
+				0xead9d9d9u, 0xfffafafau, 0xfffefefeu, 0xfff3f3f3u, 0xebd3d3d3u,
+				0xffecececu, 0xfffefefeu, 0xfffefefeu, 0xfff7f7f7u, 0xffe6e6e6u,
+				0xefddddddu, 0xffddddddu, 0xfffefefeu, 0xffddddddu, 0xefd8d8d8u,
+				0x5b545454u, 0xf88b8b8bu, 0xff838383u, 0xf88b8b8bu, 0x5b545454u,
+				},
 			};
+			var f = new Frame (5, 5);
+			Array.Copy (px, f.Pixels, 25);
 			return Stretched (f, 2, 2, 2, 2);
 		}
 

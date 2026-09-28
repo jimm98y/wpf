@@ -314,6 +314,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _form.VisibleChanged += OnFormVisibleChanged;
         if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: window + surface ready");
         Present();
+        _form.HostWindowShown();
     }
 
     // The OS frame has to say what the form says. Every window used to be created
