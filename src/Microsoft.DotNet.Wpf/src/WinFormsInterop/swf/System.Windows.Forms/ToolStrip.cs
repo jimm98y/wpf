@@ -242,20 +242,29 @@ namespace System.Windows.Forms
 			}
 		}
 
+		// .NET's: the padded client area, less the grip's thickness and margins along the strip when the
+		// grip shows (Flow and Table layouts never draw one).
 		public override Rectangle DisplayRectangle {
 			get {
-				if (this.orientation == Orientation.Horizontal)
-					if (this.grip_style == ToolStripGripStyle.Hidden || this.layout_style == ToolStripLayoutStyle.Flow || this.layout_style == ToolStripLayoutStyle.Table)
-						return new Rectangle (this.Padding.Left, this.Padding.Top, this.Width - this.Padding.Horizontal, this.Height - this.Padding.Vertical);
-					else
-						return new Rectangle (this.GripRectangle.Right + this.GripMargin.Right, this.Padding.Top, this.Width - this.Padding.Horizontal - this.GripRectangle.Right - this.GripMargin.Right, this.Height - this.Padding.Vertical);
-				else
-					if (this.grip_style == ToolStripGripStyle.Hidden || this.layout_style == ToolStripLayoutStyle.Flow || this.layout_style == ToolStripLayoutStyle.Table)
-						return new Rectangle (this.Padding.Left, this.Padding.Top, this.Width - this.Padding.Horizontal, this.Height - this.Padding.Vertical);
-					else
-						return new Rectangle (this.Padding.Left, this.GripRectangle.Bottom + this.GripMargin.Bottom + this.Padding.Top, this.Width - this.Padding.Horizontal, this.Height - this.Padding.Vertical - this.GripRectangle.Bottom - this.GripMargin.Bottom);
+				Rectangle r = new Rectangle (this.Padding.Left, this.Padding.Top, this.Width - this.Padding.Horizontal, this.Height - this.Padding.Vertical);
+				if (this.grip_style == ToolStripGripStyle.Hidden || this.layout_style == ToolStripLayoutStyle.Flow || this.layout_style == ToolStripLayoutStyle.Table)
+					return r;
+				if (this.orientation == Orientation.Horizontal) {
+					int taken = GripThickness + this.grip_margin.Horizontal;
+					r.Width -= taken;
+					if (this.RightToLeft != RightToLeft.Yes)
+						r.X += taken;
+				} else {
+					int taken = GripThickness + this.grip_margin.Vertical;
+					r.Y += taken;
+					r.Height -= taken;
+				}
+				return r;
 			}
 		}
+
+		// ToolStripGrip.GripThickness: five pixels under visual styles, three without.
+		internal static int GripThickness => ToolStripManager.VisualStylesEnabled ? 5 : 3;
 
 		[DefaultValue (DockStyle.Top)]
 		public override DockStyle Dock {
@@ -323,10 +332,26 @@ namespace System.Windows.Forms
 				if (this.grip_style == ToolStripGripStyle.Hidden)
 					return Rectangle.Empty;
 
-				if (this.orientation == Orientation.Horizontal)
-					return new Rectangle (this.grip_margin.Left + this.Padding.Left, this.Padding.Top, 3, this.Height);
-				else
-					return new Rectangle (this.Padding.Left, this.grip_margin.Top + this.Padding.Top, this.Width, 3);
+				// ToolStrip.SetupGrip: the grip stands just before the display rectangle, inside
+				// its margins.
+				Rectangle display = this.DisplayRectangle;
+				Rectangle grip = Rectangle.Empty;
+				if (this.orientation == Orientation.Horizontal) {
+					grip.X = Math.Max (0, display.X - GripThickness);
+					grip.Y = Math.Max (0, display.Top - this.grip_margin.Top);
+					grip.Width = GripThickness;
+					grip.Height = display.Height;
+					if (this.RightToLeft == RightToLeft.Yes)
+						grip.X = this.ClientRectangle.Right - grip.Width - this.grip_margin.Horizontal + this.grip_margin.Left;
+					else
+						grip.X -= this.grip_margin.Right;
+				} else {
+					grip.X = display.Left;
+					grip.Y = display.Top - (GripThickness + this.grip_margin.Bottom);
+					grip.Width = display.Width;
+					grip.Height = GripThickness;
+				}
+				return grip;
 			}
 		}
 
@@ -1041,15 +1066,12 @@ namespace System.Windows.Forms
 			if (eh != null)
 				eh (this, e);
 
-			if (!(this is MenuStrip)) {
-				if (this.orientation == Orientation.Horizontal)
-					e.Graphics.TranslateTransform (2, 0);
-				else
-					e.Graphics.TranslateTransform (0, 2);
-			}
-
-			this.Renderer.DrawGrip (new ToolStripGripRenderEventArgs (e.Graphics, this, this.GripRectangle, this.GripDisplayStyle, this.grip_style));
-			e.Graphics.ResetTransform ();
+			// .NET paints the grip as an item, in its own coordinates.
+			Rectangle grip = this.GripRectangle;
+			var state = e.Graphics.Save ();
+			e.Graphics.TranslateTransform (grip.X, grip.Y);
+			this.Renderer.DrawGrip (new ToolStripGripRenderEventArgs (e.Graphics, this, grip, this.GripDisplayStyle, this.grip_style));
+			e.Graphics.Restore (state);
 		}
 
 		protected virtual void OnRendererChanged (EventArgs e)
