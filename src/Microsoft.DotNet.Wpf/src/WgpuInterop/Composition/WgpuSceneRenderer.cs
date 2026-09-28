@@ -923,6 +923,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             DrawData d = _drawDataPool.Count > 0 ? _drawDataPool.Pop() : new DrawData();
             d.Verts.Clear(); d.Indices.Clear(); d.Draws.Clear(); d.HasText = false; d.ClearPaper = null;
             d.DrawInfo.Clear();
+            // Keyed by draw index, so they belong to this pass's draws and go with them.
+            d.GradientPaper?.Clear(); d.ClearDraws?.Clear();
             d.VbOffset = d.IbOffset = -1;
             _inUseDrawData.Add(d);
             return d;
@@ -992,6 +994,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// <summary>Per linear-gradient draw (by index into <see cref="Draws"/>), the colour it
             /// leaves over a device box when that is one 8-bit colour -- see <see cref="GradientPaperAt"/>.</summary>
             public Dictionary<int, Func<float, float, float, float, RgbaColor?>>? GradientPaper;  // lazily: most passes have no gradient
+            /// <summary>Draws (by index into <see cref="Draws"/>) that write nothing -- a gradient
+            /// clear at every stop -- and so touch no paper.</summary>
+            public Dictionary<int, bool>? ClearDraws;
             // Byte offsets of this pass's vertices/indices inside the frame's shared batched geometry
             // buffers (BuildBatchedGeometry). -1 = no geometry / not yet assigned this frame.
             public int VbOffset = -1, IbOffset = -1;
@@ -3291,7 +3296,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             foreach (uint li in mesh.Indices)
                 data.Indices.Add(baseVertex + li);
             data.Draws.Add(new DrawItem(firstIndex, (uint)mesh.Indices.Length, clip, kind, bindGroup, sourceCopy: _srcCopy));
-            if (fill.Brush is LinearGradientBrush lgPaper && lgPaper.Bands > 0 && opacityF >= 0.999f
+            // A gradient clear at every stop writes nothing, as a clear solid fill does not, and the
+            // paper under it is still the paper: a checked tool strip button's wash in a colour table
+            // that leaves it empty, under its caption.
+            if (fill.Brush is LinearGradientBrush lgClear && !_srcCopy && Array.TrueForAll(lgClear.Stops, st => st.Color.A <= 0f))
+                (data.ClearDraws ??= new())[data.Draws.Count - 1] = true;
+            else if (fill.Brush is LinearGradientBrush lgPaper && lgPaper.Bands > 0 && opacityF >= 0.999f
                 && Matrix3x2.Invert(world, out Matrix3x2 fromDevice))
             {
                 byte[] ramp = BuildBandRamp(lgPaper.Stops, lgPaper.Bands);
@@ -4951,6 +4961,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             float cx0 = c.X, cy0 = c.Y, cx1 = c.X + (float) c.W, cy1 = c.Y + (float) c.H;
             float bx0 = Math.Max(x0, cx0), by0 = Math.Max(y0, cy0), bx1 = Math.Min(x1, cx1), by1 = Math.Min(y1, cy1);
             bool opaque = uniform && a >= 0.999f && !d.SourceCopy && d.IndexCount == 6;
+            if (data.ClearDraws is { } clearDraws && clearDraws.ContainsKey(index))
+                return new PaperInfo(0f, 0f, 0f, 0f, (RgbaColor?) null);
             // A fill of a wholly transparent colour writes nothing (a Color.Transparent selection or
             // hover wash), so it touches no paper at all -- it used to count as a different colour.
             if (uniform && a <= 0f && !d.SourceCopy && (d.Kind == FillKind.Solid || d.Kind == FillKind.Shape))

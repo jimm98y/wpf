@@ -43,6 +43,10 @@ namespace System.Windows.Forms.VisualStyles
 			/// <summary>Larger glyphs for larger buttons (IMAGESELECTTYPE SIZE): each is taken in
 			/// place of <see cref="Glyph"/> once the button is at least its size square.</summary>
 			public (int MinSize, Frame Glyph) [] LargerGlyphs;
+			/// <summary>Every pixel clear: a state the theme draws as nothing (a tool bar button at
+			/// rest). Worked out on first use.</summary>
+			public bool IsClear => _clear ??= Array.TrueForAll (Pixels, p => p == 0) && Glyph == null && LargerGlyphs == null;
+			bool? _clear;
 			public Frame (int width, int height)
 			{
 				Width = width;
@@ -58,7 +62,10 @@ namespace System.Windows.Forms.VisualStyles
 		/// stretched one with its margins copied and its middle scaled by whole source pixels.</summary>
 		internal static void Draw (Graphics g, Frame f, Rectangle bounds)
 		{
-			if (bounds.Width <= 0 || bounds.Height <= 0)
+			// A clear frame is not blitted at all. It would leave the same pixels, but as an image
+			// under whatever is drawn next: text on a tool bar button at rest then could not see
+			// the strip's colour through it and blended onto the wrong paper.
+			if (bounds.Width <= 0 || bounds.Height <= 0 || f.IsClear)
 				return;
 			Rectangle dest = bounds;
 			if (!f.Stretch && !f.Tile) {
