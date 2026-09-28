@@ -611,7 +611,7 @@ namespace System.Windows.Forms.VisualStyles
 		/// <summary>Rasterizes the layers, in order, source-over, per sample; a pixel is the mean of
 		/// its sixteen samples.</summary>
 		internal static Frame Render (int width, int height, params Layer [] layers)
-			=> RenderSampled (width, height, s_sx, s_sy, layers);
+			=> RenderSampled (width, height, s_msx, s_msy, layers);
 
 		// The sixteen sample positions of the check box and radio button art, in 128ths of a pixel:
 		// solved from the theme's own images -- ten of them at once (unchecked boxes and rings in three
