@@ -1043,6 +1043,13 @@ namespace System.Windows.Forms
 			pevent.InternalConnectedArea = CalculateConnectedArea ();
 
 			this.Renderer.DrawToolStripBorder (pevent);
+
+			// .NET erases these corners with the parent's background and clips them out of all the
+			// painting after; filling them last leaves the same pixels.
+			if (this.Renderer is ToolStripProfessionalRenderer pro && pro.GetTransparentRects (this) is Rectangle [] corners)
+				using (var parent = new SolidBrush (Parent.BackColor))
+					foreach (Rectangle c in corners)
+						e.Graphics.FillRectangle (parent, c);
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]

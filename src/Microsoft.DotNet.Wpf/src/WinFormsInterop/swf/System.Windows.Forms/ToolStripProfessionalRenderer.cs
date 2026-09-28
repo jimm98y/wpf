@@ -50,6 +50,29 @@ namespace System.Windows.Forms
 			get { return this.rounded_edges; }
 			set { this.rounded_edges = value; }
 		}
+
+		/// <summary>.NET's GetTransparentRegion: the pixels at the corners of a rounded tool strip
+		/// (not a drop-down, menu or status strip) that show the parent instead.</summary>
+		internal Rectangle [] GetTransparentRects (ToolStrip toolStrip)
+		{
+			if (toolStrip is ToolStripDropDown || toolStrip is MenuStrip || toolStrip is StatusStrip || !RoundedEdges
+			    || toolStrip.Parent == null)
+				return null;
+			var r = new Rectangle (Point.Empty, toolStrip.Size);
+			var topRight = new Point (r.Width - 1, 0);
+			var bottomLeft = new Point (0, r.Height - 1);
+			var bottomRight = new Point (r.Width - 1, r.Height - 1);
+			bool overflow = toolStrip.OverflowButton.Visible;
+			return new [] {
+				new Rectangle (0, 0, 1, 1),
+				new Rectangle (bottomLeft, new Size (2, 1)),
+				new Rectangle (bottomLeft.X, bottomLeft.Y - 1, 1, 2),
+				new Rectangle (bottomRight.X - 1, bottomRight.Y, 2, 1),
+				new Rectangle (bottomRight.X, bottomRight.Y - 1, 1, 2),
+				overflow ? new Rectangle (topRight.X - 1, topRight.Y, 1, 1) : new Rectangle (topRight.X - 2, topRight.Y, 2, 1),
+				overflow ? new Rectangle (topRight.X, topRight.Y, 1, 2) : new Rectangle (topRight.X, topRight.Y, 1, 3),
+			};
+		}
 		#endregion
 
 		private bool UseSystemColors => ColorTable.UseSystemColors || !ToolStripManager.VisualStylesEnabled;
