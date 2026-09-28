@@ -4043,6 +4043,9 @@ namespace System.Windows.Forms
 		#region Subclasses
 
 		internal class HeaderControl : Control {
+			// Windows' header control double-buffers: its captions are memory-DC text.
+			internal override bool GdiTextOnMemorySurface => true;
+
 
 			ListView owner;
 			bool column_resize_active = false;

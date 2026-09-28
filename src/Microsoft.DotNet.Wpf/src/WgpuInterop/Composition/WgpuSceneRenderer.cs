@@ -3860,9 +3860,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // label's text drawn to its bottom row put the slack below the label, outside the
                     // background rectangle, and the paper came back unknown.
                     paper = PaperUnder(data,
-                        MathF.Max(MathF.Min(p0.X, p1.X) - 1f, clip.X), MathF.Max(MathF.Min(p0.Y, p1.Y) - 1f, clip.Y),
+                        // Slack across only: the ClearType filter spills a glyph sideways, never up
+                        // or down, and a row of the box above or below the ink reached the grid line
+                        // under a list view item -- a fill of another colour -- and lost the paper.
+                        MathF.Max(MathF.Min(p0.X, p1.X) - 1f, clip.X), MathF.Max(MathF.Floor(MathF.Min(p0.Y, p1.Y)), clip.Y),
                         MathF.Min(MathF.Max(p0.X, p1.X) + 2f, clip.X + (float) clip.W),
-                        MathF.Min(MathF.Max(p0.Y, p1.Y) + 2f, clip.Y + (float) clip.H),
+                        MathF.Min(MathF.Ceiling(MathF.Max(p0.Y, p1.Y)), clip.Y + (float) clip.H),
                         n => new Vector2((n.X + 1f) * 0.5f * width + _devOX, (1f - n.Y) * 0.5f * height + _devOY));
                     if (paper is { } pp)
                         key = key * 397 ^ (1L << 40 | (_windowBlendForRun ? 1L << 41 : 0)
