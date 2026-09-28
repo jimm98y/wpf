@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -75,7 +75,24 @@ namespace System.Windows.Forms.VisualStyles
 					w = h = Math.Min (w * f.Height / f.Width, h);
 				dest = new Rectangle (bounds.X + (bounds.Width - w) / 2, bounds.Y + (bounds.Height - h) / 2, w, h);
 			}
-			g.DrawImage (Blit (f, dest.Width, dest.Height), dest.X, dest.Y, dest.Width, dest.Height);
+			Bitmap img = Blit (f, dest.Width, dest.Height);
+			// A stretched frame whose middle is CLEAR -- a ring, the today marker -- is blitted as its
+			// four edges only. Whole, it lay as an image under the text inside it, which then could not
+			// see the paper it stands on (the selected day's wash) and blended a level off GDI.
+			if (f.Stretch && Hollow (f) is (int hl, int hr, int ht, int hb)
+			    && hl + hr < dest.Width && ht + hb < dest.Height) {
+				int w = dest.Width, h = dest.Height;
+				void Piece (int x, int y, int pw, int ph)
+				{
+					if (pw > 0 && ph > 0)
+						g.DrawImage (img, new Rectangle (dest.X + x, dest.Y + y, pw, ph), new Rectangle (x, y, pw, ph), GraphicsUnit.Pixel);
+				}
+				Piece (0, 0, w, ht);
+				Piece (0, h - hb, w, hb);
+				Piece (0, ht, hl, h - ht - hb);
+				Piece (w - hr, ht, hr, h - ht - hb);
+			} else
+				g.DrawImage (img, dest.X, dest.Y, dest.Width, dest.Height);
 
 			// A stretched frame whose middle is one opaque colour gets that middle again as a solid
 			// fill -- the same pixels, but text drawn on the face then stands on a paper colour the
@@ -566,6 +583,24 @@ namespace System.Windows.Forms.VisualStyles
 				if (b > 0 && Uniform (f, c, l, r, t, b - 1)) { b--; grew = true; }
 			}
 			return (c, l, r, t, b);
+		}
+
+		/// <summary>The margins round a stretched frame's CLEAR middle, grown out as far as it stays
+		/// clear; null when the middle holds anything.</summary>
+		static (int l, int r, int t, int b)? Hollow (Frame f)
+		{
+			var (l, r, t, b) = f.Margins;
+			if (l + r >= f.Width || t + b >= f.Height || !Uniform (f, 0u, l, r, t, b))
+				return null;
+			bool grew = true;
+			while (grew) {
+				grew = false;
+				if (l > 0 && Uniform (f, 0u, l - 1, r, t, b)) { l--; grew = true; }
+				if (r > 0 && Uniform (f, 0u, l, r - 1, t, b)) { r--; grew = true; }
+				if (t > 0 && Uniform (f, 0u, l, r, t - 1, b)) { t--; grew = true; }
+				if (b > 0 && Uniform (f, 0u, l, r, t, b - 1)) { b--; grew = true; }
+			}
+			return (l, r, t, b);
 		}
 
 		static bool Uniform (Frame f, uint c, int l, int r, int t, int b)

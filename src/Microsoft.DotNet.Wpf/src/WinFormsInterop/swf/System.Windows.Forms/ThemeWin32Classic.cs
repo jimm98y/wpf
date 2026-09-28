@@ -3792,12 +3792,16 @@ namespace System.Windows.Forms
 			// starts the clock.
 			if (fx.OutsideAlphas.Count == 0) {
 				dc.BeginSnapshot (client, client, 0f);
+				monthcal_picture_depth++;
 				DrawMonthCalendarPicture (dc, client, mc);
+				monthcal_picture_depth--;
 				dc.EndSnapshot ();
 			}
 			foreach (int a in fx.OutsideAlphas) {
 				dc.BeginSnapshot (client, client, a / 255f, windowBlend: true);
+				monthcal_picture_depth++;
 				DrawMonthCalendarPicture (dc, client, mc);
+				monthcal_picture_depth--;
 				dc.EndSnapshot ();
 			}
 			dc.Restore (outside);
@@ -3807,12 +3811,14 @@ namespace System.Windows.Forms
 			dc.IntersectClip (fx.Z);
 			dc.FillRectangle (ResPool.GetSolidBrush (Color.White), fx.Z);
 			Rectangle old_to = ZoomRect (fx.A, fx.B, p, true, fx.Z), new_to = ZoomRect (fx.A, fx.B, p, false, fx.Z);
+			monthcal_picture_depth++;
 			dc.BeginSnapshot (fx.Z, old_to, 1f, stretchBlt: true);
 			mc.WithZoom (fx.From, () => DrawMonthCalendarPicture (dc, client, mc));
 			dc.EndSnapshot ();
 			dc.BeginSnapshot (fx.Z, new_to, (int) (p * 255.0) / 255f);
 			DrawMonthCalendarPicture (dc, client, mc);
 			dc.EndSnapshot ();
+			monthcal_picture_depth--;
 			dc.Restore (grid);
 		}
 
@@ -3835,6 +3841,10 @@ namespace System.Windows.Forms
 		/// <summary>One whole picture of the calendar: the view and the frame round it, which comctl32's
 		/// zoom pictures include -- drawn after the effect instead, the frame was washed out by every
 		/// frame's blend of a picture without it.</summary>
+		/// <summary>Above zero while a picture for the zoom effect (comctl32's memory DCs) is drawn.</summary>
+		private int monthcal_picture_depth;
+		private bool footer_memory;
+
 		private void DrawMonthCalendarPicture (Graphics dc, Rectangle clip_rectangle, MonthCalendar mc)
 		{
 			DrawMonthCalendarView (dc, clip_rectangle, mc);
@@ -3921,9 +3931,13 @@ namespace System.Windows.Forms
 						client_rectangle.Width,
 						date_cell_size.Height + 2);
 			// draw the today date if it's set
+			footer_memory = dc.memory_surface_text;
 			if (mc.ShowToday && bottom_rect.IntersectsWith (clip_rectangle)) 
 			{
 				dc.FillRectangle (GetControlBackBrush (mc.BackColor), bottom_rect);
+				// The footer, like the heading, is drawn onto the window, outside comctl32's double
+				// buffer (fringe 57, not the dates' 58) -- except inside the zoom's pictures.
+				dc.memory_surface_text = monthcal_picture_depth > 0;
 				if (mc.ShowToday) {
 					string today_text = "Today: " + mc.TodayDate.ToShortDateString();
 					// comctl32's footer is its string 4433, " %s %s", over "Today:" and the date: it
@@ -4014,6 +4028,7 @@ namespace System.Windows.Forms
 					}
 				}
 			}
+			dc.memory_surface_text = footer_memory;
 			
 			Brush border_brush;
 			
@@ -4087,7 +4102,16 @@ namespace System.Windows.Forms
 				// The heading names whatever is on show: the month, the year, the decade or the century.
 				string title_text = mc.Zoom == MonthCalendar.ZoomLevel.Days
 					? this_month.ToString ("MMMM yyyy") : mc.ZoomTitle;
+				// The heading is the one thing comctl32 draws straight onto the window rather than into
+				// its double buffer, so its text takes the window surface's ClearType rule (fringe 57
+				// where the buffered dates below it are 58) -- read off stock's zoom frames, in which the
+				// old heading stays on screen round the grid.
+				// Inside the zoom's pictures, though, the heading is in comctl32's memory DC like
+				// everything else.
+				bool title_memory = dc.memory_surface_text;
+				dc.memory_surface_text = monthcal_picture_depth > 0;
 				dc.DrawString (title_text, ZoomScaled (MonthCalendarTitleFont (mc)), ResPool.GetSolidBrush (MonthCalendarTitleForeColor (mc)), title_rect, mc.centered_format);
+				dc.memory_surface_text = title_memory;
 
 				if (mc.ShowYearUpDown) {
 					Rectangle year_rect;

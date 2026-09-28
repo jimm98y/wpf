@@ -68,23 +68,43 @@ fn fs_layer(in : VSOut) -> @location(0) vec4<f32> {
 // GDI's constant-alpha AlphaBlend onto a WINDOW surface, measured on a cloaked window over every
 // source/destination pair: floor(s a / 255) + floor(d (255 - a) / 255) -- each term truncated on its
 // own, where a memory DIB rounds the sum. Two draws make it out of fixed-function blending: the
-// first scales the destination by (1 - a) and takes a quarter level off (reverse-subtract), which
-// the 8-bit store then rounds to exactly floor(d (255 - a) / 255); the second adds the picture's
-// s a / 255 less a quarter level, which lands on the now whole destination as floor(s a / 255).
-const WINDOW_BIAS : f32 = 0.25 / 255.0;
+// first scales the destination by (1 - a) and takes WINDOW_BIAS off (reverse-subtract), which the
+// 8-bit store then rounds to exactly floor(d (255 - a) / 255); the second adds the picture's
+// s a / 255 less the same, which lands on the now whole destination as floor(s a / 255). Rounding
+// x - b is floor(x) for every x in steps of 1/255 only when b lies in (254/255 - 1/2, 1/2) of a level
+// -- a quarter level rounded 150 * 224 / 255 = 131.76 up to 132.
+const WINDOW_BIAS : f32 = 0.498 / 255.0;
+
+// The source pixel GDI's stretches take for this destination pixel: the centre pick
+// c(i) = ((2i + 1) s) / (2d) in INTEGERS. A float sampler at the pixel centre lands a hair under
+// the exact ties -- (2 x 99 + 1) x 106 / (2 x 199) is 53 exactly -- and took the row before.
+fn gdi_pick(uv : vec2<f32>) -> vec2<i32> {
+    let size = vec2<i32>(textureDimensions(tex));
+    let d = vec2<i32>(round(1.0 / abs(vec2<f32>(dpdx(uv.x), dpdy(uv.y)))));
+    let i = clamp(vec2<i32>(floor(uv * vec2<f32>(d))), vec2<i32>(0), d - vec2<i32>(1));
+    return min(((2 * i + vec2<i32>(1)) * size) / (2 * d), size - vec2<i32>(1));
+}
+
+@fragment
+fn fs_layer_point(in : VSOut) -> @location(0) vec4<f32> {
+    let keep = textureSampleLevel(tex, samp, in.uv, 0.0) * 0.0;
+    return (textureLoad(tex, gdi_pick(in.uv), 0) + keep) * in.color.a;
+}
 
 @fragment
 fn fs_window_fade(in : VSOut) -> @location(0) vec4<f32> {
     // Only where the picture has something: a pixel its drawing never reached is transparent, and
     // there the destination must stay as it is (GDI's pictures are opaque everywhere).
-    let t = textureSample(tex, samp, in.uv);
+    let keep = textureSampleLevel(tex, samp, in.uv, 0.0) * 0.0;
+    let t = textureLoad(tex, gdi_pick(in.uv), 0) + keep;
     let bias = select(0.0, WINDOW_BIAS, t.a > 0.0);
     return vec4<f32>(bias, bias, bias, in.color.a * t.a);
 }
 
 @fragment
 fn fs_window_add(in : VSOut) -> @location(0) vec4<f32> {
-    let t = textureSample(tex, samp, in.uv);
+    let keep = textureSampleLevel(tex, samp, in.uv, 0.0) * 0.0;
+    let t = textureLoad(tex, gdi_pick(in.uv), 0) + keep;
     return vec4<f32>(max(t.rgb * in.color.a - vec3<f32>(WINDOW_BIAS), vec3<f32>(0.0)), 0.0);
 }
 

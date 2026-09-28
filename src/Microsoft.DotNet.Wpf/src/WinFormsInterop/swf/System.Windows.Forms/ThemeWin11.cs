@@ -1866,6 +1866,8 @@ namespace System.Windows.Forms
 				return;
 			Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, mc.Focused ? 1 : 4), cell);
 			if (mc.Focused)
+				FillSelectedWash (dc, Rectangle.Inflate (cell, -1, -1));
+			if (mc.Focused)
 				DrawFocusRectInverted (dc, Rectangle.Inflate (cell, -1, -1), MonthCalSelectedWash, Point.Empty);
 		}
 
@@ -1873,6 +1875,16 @@ namespace System.Windows.Forms
 		/// white: its 0x33 wash (#001C33 premultiplied) over white -- the pixels a focus rectangle one in
 		/// from the border lands on.</summary>
 		private static readonly Color MonthCalSelectedWash = Color.FromArgb (204, 232, 255);
+
+		/// <summary>The wash inside state 1's accent border again, as the solid colour it composes to
+		/// on the calendar's white. Not a pixel changes; what it buys is text that KNOWS its paper --
+		/// an image under the date made the paper unknown, and its fringes came out a level off
+		/// GDI's blend of black on this blue.</summary>
+		private void FillSelectedWash (Graphics dc, Rectangle inside)
+		{
+			if (inside.Width > 0 && inside.Height > 0)
+				dc.FillRectangle (ResPool.GetSolidBrush (MonthCalSelectedWash), inside);
+		}
 
 		/// <summary>user32's DrawFocusRect, for a native control: PATINVERT with the 50% grey
 		/// checkerboard, so the pixels of its outline are
@@ -2012,6 +2024,8 @@ namespace System.Windows.Forms
 			// With the focus it is state 1 instead, the accent round a wash of it.
 			if (sweepAngle >= 360) {
 				Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, mc.Focused ? 1 : 4), Rectangle.Inflate (rect, 1, 1));
+				if (mc.Focused)
+					FillSelectedWash (dc, rect);
 				// And the focus rectangle a pixel in, as round the current cell of a zoomed view:
 				// comctl32 draws it on the focused day whenever the calendar has the focus, not only
 				// while a click is held.

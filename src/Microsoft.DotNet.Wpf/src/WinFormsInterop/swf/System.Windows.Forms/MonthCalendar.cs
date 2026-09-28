@@ -43,6 +43,10 @@ namespace System.Windows.Forms {
 	[DefaultEvent("DateChanged")]
 	[Designer ("System.Windows.Forms.Design.MonthCalendarDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
 	public class MonthCalendar : Control {
+		// comctl32 paints the calendar through CCBeginDoubleBuffer -- a memory DC, where win32k blends its
+		// ClearType text: fringe levels 58/144/219 where the window-surface rule gives 57/143/219.
+		internal override bool GdiTextOnMemorySurface => true;
+
 		#region Local variables
 		ArrayList		annually_bolded_dates;
 		ArrayList		monthly_bolded_dates;

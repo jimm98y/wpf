@@ -524,7 +524,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // visual. A shared 1x1 white coverage texture is bound for solid/bounds quads.
         private static string IdShaderWgsl => ShaderSource.Get("IdShader");
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd, LayerStretchAnd, LayerWindowFade, LayerWindowAdd }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd, LayerStretchAnd, LayerWindowFade, LayerWindowAdd, LayerPoint }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind, bool SourceCopy), IntPtr> _pipelines = new();
@@ -1682,7 +1682,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 EmitLayerQuad(outData, outFormat, FillKind.LayerWindowAdd, cl.SubView, 1f, 1f, 1f, opacity, dx, dy, dw, dh, clip, width, height);
             }
             else
-                EmitLayerQuad(outData, outFormat, snap.GdiStretch ? FillKind.LayerStretchAnd : FillKind.Layer, cl.SubView, 1f, 1f, 1f, opacity, dx, dy, dw, dh, clip, width, height);
+                EmitLayerQuad(outData, outFormat, snap.GdiStretch ? FillKind.LayerStretchAnd : FillKind.LayerPoint, cl.SubView, 1f, 1f, 1f, opacity, dx, dy, dw, dh, clip, width, height);
         }
 
         private static readonly bool s_traceLayerMiss =
@@ -2524,7 +2524,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             float r, float g, float b, float a, int devX, int devY, int texW, int texH, Scissor clip, int width, int height)
         {
             if (clip.IsEmpty) return;
-            IntPtr sampler = kind is FillKind.Layer or FillKind.LayerStretchAnd or FillKind.LayerWindowFade or FillKind.LayerWindowAdd ? NearestSampler() : LinearSampler();
+            IntPtr sampler = kind is FillKind.Layer or FillKind.LayerStretchAnd or FillKind.LayerWindowFade or FillKind.LayerWindowAdd or FillKind.LayerPoint ? NearestSampler() : LinearSampler();
             IntPtr bindGroup = CreateSampledBindGroup(format, kind, view, sampler);
             DeferReleaseBindGroup(bindGroup);
 
@@ -4004,6 +4004,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         MathF.Min(MathF.Ceiling(MathF.Max(p0.Y, p1.Y)), clip.Y + (float) clip.H),
                         n => new Vector2((n.X + 1f) * 0.5f * width + _devOX, (1f - n.Y) * 0.5f * height + _devOY),
                         out Func<int, int, RgbaColor?>? field);
+                    if (s_paperAt is { } at && at.X >= p0.X - 1 && at.X <= p1.X + 2 && at.Y >= p0.Y && at.Y <= p1.Y)
+                        Console.Error.WriteLine($"[paperat] box=({p0.X:0.0},{p0.Y:0.0})-({p1.X:0.0},{p1.Y:0.0}) clip=({clip.X},{clip.Y},{clip.W},{clip.H}) paper={(paper is { } pq ? $"{ToByte(pq.R)},{ToByte(pq.G)},{ToByte(pq.B)}" : "none")} field={(field != null)} window={_windowBlendForRun} last={s_lastPaperWhy} chain={s_paperChain}");
                     if (field is not null)
                     {
                         // The field's colours over the box are part of the mask: every row and column
@@ -4806,6 +4808,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                              Func<Vector2, Vector2> fromNdc, out Func<int, int, RgbaColor?>? field)
         {
             field = null;
+            if (s_paperAt is not null) s_paperChain = $"want=({x0},{y0},{x1},{y1})";
             List<DrawItem> draws = data.Draws;
             List<PaperInfo> info = data.DrawInfo;
             RgbaColor? same = null;
@@ -4818,6 +4821,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (kind is FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) continue;
                 PaperInfo b = info[i];
                 if (!b.Touches(x0, y0, x1, y1)) continue;
+                if (s_paperAt is not null) s_paperChain += $" [{kind} ({b.X0},{b.Y0},{b.X1},{b.Y1}) {(b.Solid is { } sc ? $"{ToByte(sc.R)},{ToByte(sc.G)},{ToByte(sc.B)}" : "-")} covers={b.Covers(x0, y0, x1, y1)}]";
                 if (b.Solid is null && b.Gradient is { } banding && same is null && b.Covers(x0, y0, x1, y1)
                     && banding(x0, y0, x1, y1) is null)
                 {
@@ -4867,6 +4871,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     stack?.Add(b);
                     continue;
                 }
+                if (s_paperAt is not null) s_lastPaperWhy = $"{draws[i].Kind} box=({b.X0},{b.Y0},{b.X1},{b.Y1}) solid={(b.Solid is { } bs ? $"{ToByte(bs.R)},{ToByte(bs.G)},{ToByte(bs.B)}" : "-")}";
                 if (s_tracePaper)
                 {
                     DrawItem d = draws[i];
@@ -5107,8 +5112,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly Dictionary<string, int> s_paperTally = new();
         private static int s_paperRuns;
 
+        /// <summary>WPF_TEXT_PAPER_AT=x,y: say what paper the run whose box holds that device point got.</summary>
+        private static readonly Vector2? s_paperAt = Environment.GetEnvironmentVariable("WPF_TEXT_PAPER_AT") is { Length: > 0 } pa
+            && pa.Split(',') is { Length: 2 } pp && float.TryParse(pp[0], out float pax) && float.TryParse(pp[1], out float pay)
+            ? new Vector2(pax, pay) : null;
+        [ThreadStatic] private static string? s_lastPaperWhy;
+        [ThreadStatic] private static string? s_paperChain;
+
         private static RgbaColor? TracePaper(string why, RgbaColor? paper)
         {
+            if (s_paperAt is not null) s_lastPaperWhy = why;
             if (!s_tracePaper) return paper;
             lock (s_paperTally)
             {
@@ -6483,7 +6496,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         private static IntPtr BindGroupFor(DrawItem d, IntPtr atlasBindGroup) => d.Kind switch
         {
-            FillKind.Textured or FillKind.Layer or FillKind.LayerStretchAnd or FillKind.LayerWindowFade or FillKind.LayerWindowAdd or FillKind.Blur or FillKind.Shadow or
+            FillKind.Textured or FillKind.Layer or FillKind.LayerStretchAnd or FillKind.LayerWindowFade or FillKind.LayerWindowAdd or FillKind.LayerPoint or FillKind.Blur or FillKind.Shadow or
             FillKind.Clip or FillKind.Coverage or FillKind.MaskBrush or FillKind.MaskImage or
             FillKind.ShapeBrush or        // group 0 = gradient ramp + sampler + brush params
             FillKind.BrushAlpha or FillKind.Id or FillKind.Stroke or
@@ -6882,6 +6895,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 FillKind.LayerStretchAnd => "fs_layer_and",
                 FillKind.LayerWindowFade => "fs_window_fade",
                 FillKind.LayerWindowAdd => "fs_window_add",
+                FillKind.LayerPoint => "fs_layer_point",
                 FillKind.Blur => "fs_blur",
                 FillKind.Shadow => "fs_shadow",
                 FillKind.Clip => "fs_clip",
