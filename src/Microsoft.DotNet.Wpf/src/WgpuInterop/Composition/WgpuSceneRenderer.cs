@@ -3242,7 +3242,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         float t = len2 > 0f ? Vector2.Dot(p - grad.Start, axis) / len2 - tShift : 0f;
                         // A pixel exactly on a band boundary keeps the LOWER band, as GDI+'s does (two of the menu
                         // strip's twelve steps land on a half and came out a column early).
-                        float u = banded ? (grad.Bands * Math.Clamp(t, 0f, 1f) + 0.5f - 1e-3f) / (grad.Bands + 1) : t;
+                        // NOT clamped here: u must stay affine across the quad, and the shift puts the left
+                        // vertex just below 0 -- clamping it bent the interpolation along the whole left
+                        // side. The sampler's clamp-to-edge pads the ends.
+                        float u = banded ? (grad.Bands * t + 0.5f - 1e-3f) / (grad.Bands + 1) : t;
                         AddVertex(data.Verts, ToNdc(Vector2.Transform(p, world), width, height), 1f, 1f, 1f, opacityF, u, 0.5f);
                     }
                     break;
