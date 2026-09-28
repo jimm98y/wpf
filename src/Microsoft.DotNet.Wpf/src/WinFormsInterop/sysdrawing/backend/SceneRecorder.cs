@@ -75,6 +75,33 @@ namespace System.Drawing.WebGpuBackend
             _translateDepth++;
         }
 
+        private int _snapshotDepth;
+
+        public void PushSnapshot(float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh, float opacity)
+        {
+            var container = new SceneVisual
+            {
+                Snapshot = new SceneSnapshot { Source = new Rect(sx, sy, sw, sh), Dest = new Rect(dx, dy, dw, dh) },
+                Opacity = Math.Clamp(opacity, 0f, 1f),
+            };
+            Target.Children.Add(container);
+            _stack.Add(container);
+            _snapshotDepth++;
+        }
+
+        public void PopSnapshot()
+        {
+            // Unwind to (and including) the innermost snapshot container.
+            if (_snapshotDepth == 0) return;
+            while (_stack.Count > 1)
+            {
+                SceneVisual top = _stack[_stack.Count - 1];
+                _stack.RemoveAt(_stack.Count - 1);
+                if (top.Snapshot != null) break;
+            }
+            _snapshotDepth--;
+        }
+
         public void ResetTransform()
         {
             while (_translateDepth > 0 && _stack.Count > 1)

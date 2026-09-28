@@ -246,6 +246,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return c.BindGroupCopy;
         }
         private readonly Dictionary<long, CachedMask> _maskCache = new();
+        // Filtered subpixel coverage by shape alone, before the ink/paper weighting; CPU bytes, so it
+        // outlives the GPU masks' eviction and is simply dropped whole when it grows past the limit.
+        private readonly Dictionary<long, PathRasterizer.SubpixelMask> _rawSubpixel = new();
+        private const int RawSubpixelLimit = 8192;
         // Gradient ramp textures keyed by their stops: a 256x1 RGBA ramp was rebuilt + re-uploaded EVERY
         // frame per gradient fill (each an unreclaimable Metal command buffer on wgpu-native), so a
         // gradient-heavy page bursts past the 4096 limit. Cached across frames like masks; evicted when unused.
@@ -1460,6 +1464,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 clip = Intersect(parentClip, DeviceBounds(v.Clip.Value, world, width, height));
 
             double vOpacity = Math.Clamp(v.Opacity, 0.0, 1.0);
+            if (v.Snapshot is { } snap)
+            {
+                EmitSnapshot(v, snap, world, (float)(inheritedOpacity * vOpacity), clip, outData, plan, width, height, outFormat);
+                return;
+            }
             // NOTE: v.BitmapCached (CacheMode="BitmapCache") is deliberately NOT considered here.
             // Routing such a subtree through the layer path was tried and measured; on repeat
             // frames the UNCACHED path already issues zero bind groups, because the per-shape
@@ -1630,6 +1639,42 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 EmitCachedLayer(cl, groupOpacity, clip, outData, outFormat, width, height);
                 return;
             }
+        }
+
+        /// <summary>A snapshot visual (<see cref="SceneVisual.Snapshot"/>): its subtree baked 1:1 over
+        /// the source rectangle -- cached like any layer, so an unchanging picture is rendered once
+        /// however many frames stretch it -- then drawn into the destination with nearest sampling.</summary>
+        private void EmitSnapshot(SceneVisual v, SceneSnapshot snap, Matrix3x2 world, float opacity, Scissor clip,
+            DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat outFormat)
+        {
+            // A transparent snapshot is still BAKED: it is how a caller makes the picture ahead of the
+            // frames that show it (a zoom's first frame, before its clock starts).
+            if (snap.Source.Width <= 0 || snap.Source.Height <= 0 || snap.Dest.Width <= 0 || snap.Dest.Height <= 0)
+                return;
+            Scissor region = DeviceBounds(snap.Source, world, width, height);
+            if (region.IsEmpty) return;
+            // The picture does not depend on the opacity it is drawn at -- the bake is at full -- so the
+            // key leaves it out, or a fade would bake its picture again every frame.
+            double vOpacity = v.Opacity;
+            v.Opacity = 1.0;
+            long key = LayerCacheKey(v, world, region) ^ 0x534E4150L;          // 'SNAP'
+            v.Opacity = vOpacity;
+            if (!_layerCache.TryGetValue(key, out CachedLayer? cl))
+            {
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                cl = RenderLayerToCache(v, world, region, region, plan, width, height);
+                _layerCache[key] = cl;
+                if (s_traceLayerMiss)
+                    Console.Error.WriteLine($"[snapmiss] region=({region.X},{region.Y},{region.W},{region.H}) key={key:X} {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms");
+            }
+            cl.LastFrame = _frameId;
+            if (opacity <= 0f) return;
+            Vector2 d0 = Vector2.Transform(new Vector2((float)snap.Dest.X, (float)snap.Dest.Y), world);
+            Vector2 d1 = Vector2.Transform(new Vector2((float)(snap.Dest.X + snap.Dest.Width), (float)(snap.Dest.Y + snap.Dest.Height)), world);
+            int dx = (int)MathF.Round(d0.X), dy = (int)MathF.Round(d0.Y);
+            int dw = (int)MathF.Round(d1.X) - dx, dh = (int)MathF.Round(d1.Y) - dy;
+            if (dw <= 0 || dh <= 0) return;
+            EmitLayerQuad(outData, outFormat, FillKind.Layer, cl.SubView, 1f, 1f, 1f, opacity, dx, dy, dw, dh, clip, width, height);
         }
 
         private static readonly bool s_traceLayerMiss =
@@ -3906,6 +3951,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M21);
                 key = key * 31 + BitConverter.SingleToInt32Bits(world.M22);
                 key = key * 31 + phase;
+                long shapeKey = key, clipKey = 17;
                 // Subpixel text is a DIFFERENT MASK of the same shape -- three channels instead of
                 // one -- so it needs its own key, or a run drawn once with ClearType and once without
                 // (a rotated copy, a layered window) would be handed the other one's texture.
@@ -3991,11 +4037,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         key = key * 31 + kv.Key;
                         key = key * 31 + rc.Item1;
                         key = key * 31 + rc.Item2;
+                        clipKey = ((clipKey * 31 + kv.Key) * 31 + rc.Item1) * 31 + rc.Item2;
                     }
                 }
                 // The per-glyph scan types change the mask too.
                 if (PathRasterizer.GlyphDropoutForRun is { } glyphDrop && subpixel)
-                    foreach (var kv in glyphDrop) key = key * 41 + (kv.Key * 8 + kv.Value);
+                    foreach (var kv in glyphDrop)
+                    {
+                        key = key * 41 + (kv.Key * 8 + kv.Value);
+                        clipKey = clipKey * 41 + (kv.Key * 8 + kv.Value);
+                    }
                 Dictionary<int, (int Left, int Right)>? deviceColClip = PathRasterizer.GlyphColClipForRun;
                 Dictionary<int, (int Left, int Right)>? localColClip = null;
                 if (deviceColClip is not null && subpixel)
@@ -4008,6 +4059,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         key = key * 29 + kv.Key;
                         key = key * 29 + cc.Item1;
                         key = key * 29 + cc.Item2;
+                        clipKey = ((clipKey * 29 + kv.Key) * 29 + cc.Item1) * 29 + cc.Item2;
                     }
                 }
                 if (!_maskCache.TryGetValue(key, out CachedMask? cm))
@@ -4062,16 +4114,42 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             s_contrastFilter == 1 || (s_contrastFilter == 2 && !_symmetricSmoothing)
                             || (s_contrastFilter == -1 && _contrastForRun);
                         PathRasterizer.SubpixelMask sm;
-                        PathRasterizer.GlyphRowClipForRun = localClip;
-                        PathRasterizer.GlyphColClipForRun = localColClip;
-                        try { sm = PathRasterizer.RasterizeSubpixel(TransformGeometry(normGeom, phased),
-                                                    CurveFlattener.GlyphTolerance); }
-                        finally
+                        // THE LAMPS DO NOT DEPEND ON THE INK, THE PAPER OR THE TARGET: only the
+                        // weighting below does. So the filtered coverage is kept by shape, and the same
+                        // text drawn onto another paper, in another colour or into a layer (a calendar
+                        // zoom's snapshot of the view being left) re-weights it instead of rasterizing
+                        // every glyph again -- that was 190 ms, the whole of the zoom's first frame.
+                        long rawKey = shapeKey;
+                        rawKey = rawKey * 31 + PathRasterizer.SubpixelRowsForRun;
+                        rawKey = rawKey * 31 + PathRasterizer.PpemForRun;
+                        rawKey = rawKey * 31 + PathRasterizer.SimBoldPixelsForRun;
+                        rawKey = rawKey * 31 + PathRasterizer.DropoutForRun;
+                        rawKey = rawKey * 31 + (PathRasterizer.SymmetricVerticalForRun ? 1 : 0)
+                                 + (PathRasterizer.ContrastFilterForRun ? 2 : 0) + (_aliasedEdges ? 4 : 0);
+                        rawKey = rawKey * 397 ^ clipKey;
+                        if (_rawSubpixel.TryGetValue(rawKey, out PathRasterizer.SubpixelMask raw))
                         {
                             PathRasterizer.SubpixelRowsForRun = 0; PathRasterizer.DropoutForRun = 0;
                             PathRasterizer.SimBoldPixelsForRun = 0;
-                            PathRasterizer.GlyphRowClipForRun = deviceClip;
-                            PathRasterizer.GlyphColClipForRun = deviceColClip;
+                            sm = raw.IsEmpty ? raw
+                                : new PathRasterizer.SubpixelMask((byte[]) raw.Rgba.Clone(), raw.Width, raw.Height, raw.OriginX, raw.OriginY);
+                        }
+                        else
+                        {
+                            PathRasterizer.GlyphRowClipForRun = localClip;
+                            PathRasterizer.GlyphColClipForRun = localColClip;
+                            try { sm = PathRasterizer.RasterizeSubpixel(TransformGeometry(normGeom, phased),
+                                                        CurveFlattener.GlyphTolerance); }
+                            finally
+                            {
+                                PathRasterizer.SubpixelRowsForRun = 0; PathRasterizer.DropoutForRun = 0;
+                                PathRasterizer.SimBoldPixelsForRun = 0;
+                                PathRasterizer.GlyphRowClipForRun = deviceClip;
+                                PathRasterizer.GlyphColClipForRun = deviceColClip;
+                            }
+                            if (_rawSubpixel.Count >= RawSubpixelLimit) _rawSubpixel.Clear();
+                            _rawSubpixel[rawKey] = sm.IsEmpty ? sm
+                                : new PathRasterizer.SubpixelMask((byte[]) sm.Rgba.Clone(), sm.Width, sm.Height, sm.OriginX, sm.OriginY);
                         }
                         if (sm.IsEmpty) return;
                         // Corrected AFTER the filter, and it was worth checking which way round:

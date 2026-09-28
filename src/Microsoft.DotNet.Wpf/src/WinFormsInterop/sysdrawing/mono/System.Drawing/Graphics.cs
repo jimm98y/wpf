@@ -3538,6 +3538,17 @@ namespace System.Drawing
 		}
 
 		
+		/// <summary>Draw what follows as a picture of <paramref name="source"/> stretched into
+		/// <paramref name="dest"/> at <paramref name="opacity"/>, until <see cref="EndSnapshot"/>: GDI's
+		/// StretchBlt / AlphaBlend of an off-screen bitmap. Without a GPU recorder the content is drawn
+		/// where it is, unstretched and opaque.</summary>
+		internal void BeginSnapshot (RectangleF source, RectangleF dest, float opacity)
+			=> GpuRecorder?.PushSnapshot (source.X, source.Y, source.Width, source.Height, dest.X, dest.Y, dest.Width, dest.Height, opacity);
+
+		internal void EndSnapshot () => GpuRecorder?.PopSnapshot ();
+
+		internal bool CanSnapshot => GpuRecorder != null;
+
 		public void TranslateTransform (float dx, float dy, MatrixOrder order)
 		{			
 			// WinForms draws a composite control by translating to each part's bounds, drawing it at

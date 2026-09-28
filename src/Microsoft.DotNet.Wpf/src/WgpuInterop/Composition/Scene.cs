@@ -748,6 +748,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
     }
 
+    /// <summary>A snapshot's source rectangle (rendered 1:1) and the rectangle it is stretched into,
+    /// both in the visual's local space. See <see cref="SceneVisual.Snapshot"/>.</summary>
+    internal sealed class SceneSnapshot
+    {
+        public Rect Source { get; set; }
+        public Rect Dest { get; set; }
+    }
+
     internal sealed class SceneVisual
     {
         /// <summary>Stable visual identity (the milcore protocol handle); rendered into the
@@ -789,6 +797,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// free, so forcing a bitmap layer measured as no faster and slightly less faithful.
         /// </summary>
         public bool BitmapCached { get; set; }
+
+        /// <summary>When set, the subtree is a SNAPSHOT: it is rendered 1:1 over
+        /// <see cref="SceneSnapshot.Source"/> into its own texture, and that texture is drawn stretched
+        /// into <see cref="SceneSnapshot.Dest"/> with nearest sampling at <see cref="Opacity"/> -- what
+        /// GDI's StretchBlt and AlphaBlend do to a bitmap, which is how Windows animates (a month
+        /// calendar zooming between views stretches pictures of the two, it does not lay them out
+        /// again at each size).</summary>
+        public SceneSnapshot? Snapshot { get; set; }
 
         /// <summary>
         /// RenderOptions.EdgeMode. Aliased means the app deliberately wants hard edges (pixel

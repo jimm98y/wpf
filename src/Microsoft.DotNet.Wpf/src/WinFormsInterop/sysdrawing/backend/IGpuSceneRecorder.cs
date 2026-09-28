@@ -62,6 +62,12 @@ namespace System.Drawing
         // is how WinForms draws a composite control's parts: ToolStrip translates to each item's
         // bounds, draws it at the origin, and resets.
         void PushTranslate(float dx, float dy);
+
+        /// <summary>Record what follows as a picture: rendered 1:1 over the source rectangle, then
+        /// stretched (nearest) into the destination at <paramref name="opacity"/> -- StretchBlt and
+        /// AlphaBlend. Ended by <see cref="PopSnapshot"/>.</summary>
+        void PushSnapshot(float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh, float opacity);
+        void PopSnapshot();
         void ResetTransform();
 
         // Graphics.Save / Restore: the transform, clip and compositing mode as they stand, and
