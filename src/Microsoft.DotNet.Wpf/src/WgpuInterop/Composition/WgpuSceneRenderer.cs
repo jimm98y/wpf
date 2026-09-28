@@ -989,6 +989,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// Filled lazily by <see cref="PaperUnder"/>, in step with <see cref="Draws"/>, so a draw is
             /// measured once however many runs ask.</summary>
             public readonly List<PaperInfo> DrawInfo = new();
+            /// <summary>Per linear-gradient draw (by index into <see cref="Draws"/>), the colour it
+            /// leaves over a device box when that is one 8-bit colour -- see <see cref="GradientPaperAt"/>.</summary>
+            public readonly Dictionary<int, Func<float, float, float, float, RgbaColor?>> GradientPaper = new();
             // Byte offsets of this pass's vertices/indices inside the frame's shared batched geometry
             // buffers (BuildBatchedGeometry). -1 = no geometry / not yet assigned this frame.
             public int VbOffset = -1, IbOffset = -1;
@@ -3271,6 +3274,40 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             foreach (uint li in mesh.Indices)
                 data.Indices.Add(baseVertex + li);
             data.Draws.Add(new DrawItem(firstIndex, (uint)mesh.Indices.Length, clip, kind, bindGroup, sourceCopy: _srcCopy));
+            if (fill.Brush is LinearGradientBrush lgPaper && opacityF >= 0.999f && Matrix3x2.Invert(world, out Matrix3x2 fromDevice))
+            {
+                byte[] ramp = BuildGradientRamp(lgPaper.Stops, lgPaper.Bands);
+                Vector2 start = lgPaper.Start, axis = lgPaper.End - lgPaper.Start;
+                float ox = _devOX, oy = _devOY;
+                data.GradientPaper[data.Draws.Count - 1] = (x0, y0, x1, y1) => GradientPaperAt(ramp, start, axis, fromDevice, ox, oy, x0, y0, x1, y1);
+            }
+        }
+
+        /// <summary>The colour a Pad linear gradient leaves over the device box, or null unless it
+        /// is ONE colour there: every ramp texel the linear sampler can reach from any point of the
+        /// box -- the t of its four corners, a texel either side -- is the same opaque colour. With
+        /// GDI+'s sixteen bands a menu strip's gradient is a staircase of flat steps, so the text on
+        /// it almost always stands on one grey.</summary>
+        private static RgbaColor? GradientPaperAt(byte[] ramp, Vector2 start, Vector2 axis, Matrix3x2 fromDevice,
+                                                  float ox, float oy, float x0, float y0, float x1, float y1)
+        {
+            float len2 = axis.LengthSquared();
+            if (len2 <= 0f) return null;
+            float tMin = float.MaxValue, tMax = float.MinValue;
+            foreach (Vector2 c in new[] { new Vector2(x0, y0), new Vector2(x1, y0), new Vector2(x0, y1), new Vector2(x1, y1) })
+            {
+                Vector2 p = Vector2.Transform(c - new Vector2(ox, oy), fromDevice);
+                float t = Math.Clamp(Vector2.Dot(p - start, axis) / len2, 0f, 1f);
+                tMin = MathF.Min(tMin, t); tMax = MathF.Max(tMax, t);
+            }
+            int n = ramp.Length / 4;
+            int i0 = Math.Clamp((int) MathF.Floor(tMin * n - 0.5f) - 1, 0, n - 1);
+            int i1 = Math.Clamp((int) MathF.Floor(tMax * n - 0.5f) + 2, 0, n - 1);
+            for (int i = i0; i <= i1; i++)
+                if (ramp[i * 4] != ramp[i0 * 4] || ramp[i * 4 + 1] != ramp[i0 * 4 + 1]
+                    || ramp[i * 4 + 2] != ramp[i0 * 4 + 2] || ramp[i * 4 + 3] != 255)
+                    return null;
+            return RgbaColor.FromBytes(ramp[i0 * 4], ramp[i0 * 4 + 1], ramp[i0 * 4 + 2], 255);
         }
 
         // Fills an arbitrary path with any brush; AA is in the coverage mask.
@@ -4605,13 +4642,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             List<DrawItem> draws = data.Draws;
             List<PaperInfo> info = data.DrawInfo;
             RgbaColor? same = null;
-            for (int i = info.Count; i < draws.Count; i++) info.Add(MeasureDraw(data, draws[i], fromNdc));
+            for (int i = info.Count; i < draws.Count; i++) info.Add(MeasureDraw(data, i, draws[i], fromNdc));
             for (int i = draws.Count - 1; i >= 0; i--)
             {
                 FillKind kind = draws[i].Kind;
                 if (kind is FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) continue;
                 PaperInfo b = info[i];
                 if (!b.Touches(x0, y0, x1, y1)) continue;
+                if (b.Solid is null && b.Gradient is { } gradientAt && b.Covers(x0, y0, x1, y1)
+                    && gradientAt(x0, y0, x1, y1) is { } flat)
+                {
+                    if (same is { } sg && !SameColour(sg, flat))
+                        return TracePaper("solid-mixed", null);
+                    return TracePaper("gradient", flat);
+                }
                 if (b.Solid is { } solid)
                 {
                     // A fill of the colour already found changes nothing where it lands, edges
@@ -4663,12 +4707,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // An OUTLINE (a stroked rounded rectangle) has its stroke half-width here, else -1. It
             // writes nothing inside its hole, so a box wholly in there is not touched by it.
             private readonly float _stroke;
+            /// <summary>A rectangle filled with a linear gradient: its colour over a box, if one.</summary>
+            public readonly Func<float, float, float, float, RgbaColor?>? Gradient;
 
             public PaperInfo(float x0, float y0, float x1, float y1, RgbaColor? solid)
             {
                 X0 = x0; Y0 = y0; X1 = x1; Y1 = y1; Solid = solid;
                 Shape = false; _toLocal = default; _halfX = _halfY = _corner = _pixel = 0f;
-                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f; _stroke = -1f;
+                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f; _stroke = -1f; Gradient = null;
+            }
+
+            public PaperInfo(float x0, float y0, float x1, float y1, Func<float, float, float, float, RgbaColor?> gradient)
+                : this(x0, y0, x1, y1, (RgbaColor?) null)
+            {
+                Gradient = gradient;
             }
 
             /// <summary>An outline: fs_shape's stroke, coverage 0.5 - (|d| - stroke) / pixel.</summary>
@@ -4680,7 +4732,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 float px = MathF.Sqrt(toLocal.M11 * toLocal.M11 + toLocal.M21 * toLocal.M21);
                 float py = MathF.Sqrt(toLocal.M12 * toLocal.M12 + toLocal.M22 * toLocal.M22);
                 _pixel = MathF.Max(0.5f * (px + py), 1e-6f);
-                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f; _stroke = stroke;
+                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f; _stroke = stroke; Gradient = null;
             }
 
             public PaperInfo(float x0, float y0, float x1, float y1, RgbaColor solid, Matrix3x2 toLocal,
@@ -4692,7 +4744,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 float px = MathF.Sqrt(toLocal.M11 * toLocal.M11 + toLocal.M21 * toLocal.M21);
                 float py = MathF.Sqrt(toLocal.M12 * toLocal.M12 + toLocal.M22 * toLocal.M22);
                 _pixel = MathF.Max(0.5f * (px + py), 1e-6f);
-                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f; _stroke = -1f;
+                _aligned = false; _sx0 = _sy0 = _sx1 = _sy1 = 0f; _stroke = -1f; Gradient = null;
                 if (MathF.Abs(toLocal.M12) < 1e-6f && MathF.Abs(toLocal.M21) < 1e-6f
                     && Matrix3x2.Invert(toLocal, out Matrix3x2 toDevice))
                 {
@@ -4763,7 +4815,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
-        private static PaperInfo MeasureDraw(DrawData data, DrawItem d, Func<Vector2, Vector2> fromNdc)
+        private static PaperInfo MeasureDraw(DrawData data, int index, DrawItem d, Func<Vector2, Vector2> fromNdc)
         {
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
             List<uint> idx = data.Indices;
@@ -4790,7 +4842,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // A fill of a wholly transparent colour writes nothing (a Color.Transparent selection or
             // hover wash), so it touches no paper at all -- it used to count as a different colour.
             if (uniform && a <= 0f && !d.SourceCopy && (d.Kind == FillKind.Solid || d.Kind == FillKind.Shape))
-                return new PaperInfo(0f, 0f, 0f, 0f, null);
+                return new PaperInfo(0f, 0f, 0f, 0f, (RgbaColor?) null);
             // A FILLED analytic shape (EmitShape): vertices 0, 1 and 3 of its quad sit at local
             // (-ex,-ey), (ex,-ey) and (-ex,ey), which fixes the device-to-local map. Its colour is
             // premultiplied and opaque here, so it is the colour. An ellipse (corner < 0) or an
@@ -4825,12 +4877,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         return new PaperInfo(bx0, by0, bx1, by1, new RgbaColor(r, g, bl, 1f), toLocal,
                                              halfX, halfY, corner);
                 }
-                return new PaperInfo(bx0, by0, bx1, by1, null);
+                return new PaperInfo(bx0, by0, bx1, by1, (RgbaColor?) null);
             }
             // A RECTANGLE: a solid quad whose four corners are the box's four corners.
-            bool rect = d.Kind == FillKind.Solid && opaque && corners.Count == 4
+            bool quad = opaque && corners.Count == 4
                         && corners.Contains((x0, y0)) && corners.Contains((x1, y0))
                         && corners.Contains((x0, y1)) && corners.Contains((x1, y1));
+            // A rectangle of a linear gradient: paper wherever the gradient is one colour.
+            if (d.Kind == FillKind.Textured && quad && data.GradientPaper.TryGetValue(index, out var gradient))
+                return new PaperInfo(bx0, by0, bx1, by1, gradient);
+            bool rect = d.Kind == FillKind.Solid && quad;
             return new PaperInfo(bx0, by0, bx1, by1, rect ? new RgbaColor(r, g, bl, 1f) : null);
         }
 
