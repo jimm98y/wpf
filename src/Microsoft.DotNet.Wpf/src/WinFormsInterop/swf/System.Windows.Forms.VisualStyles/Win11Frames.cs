@@ -1012,19 +1012,20 @@ namespace System.Windows.Forms.VisualStyles
 			} else {
 				float dot = look switch { 1 => 3.2422f, 2 => 2.0157f, _ => 2.5156f };
 				layers.Add (new Layer (Circle (6.5f, 6.5f, outer), Marked (look)));
-				// The dot stands in a dark ring about a pixel wide, black at an alpha that grows from
-				// top to bottom (about 0.04 to 0.15) -- the accent darkens round the dot, most below it.
-				(float rs, float dy, float top, float bottom) = look switch {
-					1 => (4.1875f, 0.2813f, 0.0402f, 0.1289f), 2 => (2.961f, 0.0859f, 0.0344f, 0.1563f), 3 => (0f, 0f, 0f, 0f),
-					_ => (3.5312f, 0.0234f, 0.0344f, 0.1523f),
+				// The dot stands in a dark ring a pixel wide: black at about 0.055 down to the middle,
+				// then deepening to the bottom (0.16, 0.21 pressed) -- an elevation gradient, the accent
+				// darkest just below the dot.
+				(float rs, float top, float bottom, float y0, float y1) = look switch {
+					1 => (4.2578f, 0.0537f, 0.1561f, 6.1953f, 9.2578f),
+					2 => (2.9845f, 0.0556f, 0.2147f, 6.0625f, 9.9375f),
+					3 => (0f, 0f, 0f, 0f, 0f),
+					_ => (3.5f, 0.0556f, 0.16f, 6.0781f, 8.75f),
 				};
-				if (rs > 0) {
-					float y0 = 6.5f - rs, span = 2 * rs;
-					layers.Add (new Layer (Circle (6.5f, 6.5f + dy, rs), (x, y) => {
-						float t = Math.Clamp ((y - y0) / span, 0, 1);
+				if (rs > 0)
+					layers.Add (new Layer (Circle (6.5f, 6.5f, rs), (x, y) => {
+						float t = Math.Clamp ((y - y0) / (y1 - y0), 0, 1);
 						return (uint) Math.Clamp (Math.Round ((top + (bottom - top) * t) * 255), 0, 255) << 24;
 					}));
-				}
 				layers.Add (new Layer (Circle (6.5f, 6.5f, dot), 0xffffffffu));
 			}
 			return RenderArt (13, 13, layers.ToArray ());
