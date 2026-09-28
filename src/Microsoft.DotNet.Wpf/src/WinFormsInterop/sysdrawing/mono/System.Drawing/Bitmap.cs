@@ -281,7 +281,13 @@ namespace System.Drawing
 
 		public void MakeTransparent ()
 		{
-			Color clr = GetPixel(0,0);			
+			// .NET's: the BOTTOM-left pixel's colour (LightGray for an empty bitmap), and nothing at all
+			// when that pixel is already translucent -- proceeding would key out some unrelated colour.
+			Color clr = Color.LightGray;
+			if (Width > 0 && Height > 0)
+				clr = GetPixel (0, Height - 1);
+			if (clr.A < 255)
+				return;
 			MakeTransparent (clr);
 		}
 
