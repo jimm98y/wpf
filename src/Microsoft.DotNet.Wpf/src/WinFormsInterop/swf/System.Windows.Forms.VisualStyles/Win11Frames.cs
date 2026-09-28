@@ -1468,11 +1468,11 @@ namespace System.Windows.Forms.VisualStyles
 			int w = part <= 2 ? 8 : 7;
 			(float x0, float y0, float x1, float y1) = part switch { 1 => (1f, 1f, 7f, 16f), 2 => (1f, 0f, 7f, 15f), 3 => (0f, 1f, 6f, 16f), _ => (1f, 1f, 7f, 16f) };
 			(bool tl, bool tr, bool br, bool bl) = part switch { 1 => (true, true, false, false), 2 => (false, false, true, true), 3 => (false, true, true, false), _ => (true, false, false, true) };
-			float r0 = part == 2 || part == 3 ? 2.0625f : 2f;
-			Shape outer = Corners (x0, y0, x1, y1, r0, tl, tr, br, bl);
-			Shape inner = Corners (x0 + 1, y0 + 1, x1 - 1, y1 - 1, 0.75f, tl, tr, br, bl);
+			// Under the art's own pattern the outer corners are radius 2 and the face's radius 1.
+			Shape outer = Corners (x0, y0, x1, y1, 2, tl, tr, br, bl);
+			Shape inner = Corners (x0 + 1, y0 + 1, x1 - 1, y1 - 1, 1, tl, tr, br, bl);
 			float bandY = y1 - 1;
-			Frame f = RenderSampled (w, 16, s_msx, s_msy, new Layer (Box (0, 0, w, 16), 0xfff0f0f0u),
+			Frame f = RenderArt (w, 16, new Layer (Box (0, 0, w, 16), 0xfff0f0f0u),
 					  new Layer (outer, (x, y) => y >= bandY ? band : border), new Layer (inner, face));
 			Stretched (f, part == 4 ? 4 : part == 3 ? 3 : 4, part == 4 ? 2 : 3, part == 2 ? 8 : 9, 3);
 			// The arrow: exact-area art (alphas down to 5), an up-pointing triangle -- apex (3.5, 1.43),
