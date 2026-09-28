@@ -261,12 +261,12 @@ namespace System.Windows.Forms.VisualStyles
 
 		/// <summary>A polygon's exact area coverage of each pixel (the polygon clipped to the pixel's
 		/// square), as premultiplied <paramref name="rgb"/>.</summary>
-		internal static Frame RenderExactArea (int w, int h, List<PointF> poly, uint rgb)
+		internal static Frame RenderExactArea (int w, int h, List<PointF> poly, uint rgb, double opacity = 1)
 		{
 			var f = new Frame (w, h);
 			for (int y = 0; y < h; y++)
 				for (int x = 0; x < w; x++) {
-					double a = Math.Abs (ClippedArea (poly, x, y, x + 1, y + 1));
+					double a = Math.Abs (ClippedArea (poly, x, y, x + 1, y + 1)) * opacity;
 					uint alpha = (uint) Math.Min (255, (int) (a * 255 + 0.5));
 					if (alpha != 0)
 						f.Pixels [y * w + x] = Premultiply (rgb, alpha);
@@ -1147,9 +1147,10 @@ namespace System.Windows.Forms.VisualStyles
 			=> ExactRing (w, h, outer, inner, border, border, face);
 
 		/// <summary>As above, the border's last row in <paramref name="bottom"/>.</summary>
-		static Frame ExactRing (int w, int h, float outer, float inner, uint border, uint bottom, uint face, float bottomInset = 0)
+		static Frame ExactRing (int w, int h, float outer, float inner, uint border, uint bottom, uint face, float bottomInset = 0,
+					float outerN = 2, float innerN = 2)
 		{
-			List<PointF> o = RoundRectPolygon (0, 0, w, h, outer), i = RoundRectPolygon (1, 1, w - 1, h - 1, inner);
+			List<PointF> o = RoundRectPolygon (0, 0, w, h, outer, outerN), i = RoundRectPolygon (1, 1, w - 1, h - 1, inner, innerN);
 			var f = new Frame (w, h);
 			for (int y = 0; y < h; y++)
 				for (int x = 0; x < w; x++) {
@@ -1173,7 +1174,9 @@ namespace System.Windows.Forms.VisualStyles
 			return f;
 		}
 
-		static List<PointF> RoundRectPolygon (float x0, float y0, float x1, float y1, float r)
+		/// <summary>A rounded rectangle's outline. <paramref name="n"/> is the corners' superellipse
+		/// exponent: 2 is a circular arc; the tool bar's buttons are drawn a little squarer (1.8).</summary>
+		static List<PointF> RoundRectPolygon (float x0, float y0, float x1, float y1, float r, float n = 2)
 		{
 			var pts = new List<PointF> ();
 			if (r <= 0) {
@@ -1183,8 +1186,12 @@ namespace System.Windows.Forms.VisualStyles
 			(float cx, float cy, float a0) [] corners = { (x1 - r, y0 + r, -90), (x1 - r, y1 - r, 0), (x0 + r, y1 - r, 90), (x0 + r, y0 + r, 180) };
 			foreach (var (cx, cy, a0) in corners)
 				for (int k = 0; k <= 64; k++) {
-					double t = (a0 + 90.0 * k / 64) * Math.PI / 180;
-					pts.Add (new PointF ((float) (cx + r * Math.Cos (t)), (float) (cy + r * Math.Sin (t))));
+					double t = (a0 + 90.0 * k / 64) * Math.PI / 180, c = Math.Cos (t), sn = Math.Sin (t);
+					if (n != 2) {
+						c = Math.Sign (c) * Math.Pow (Math.Abs (c), 2 / n);
+						sn = Math.Sign (sn) * Math.Pow (Math.Abs (sn), 2 / n);
+					}
+					pts.Add (new PointF ((float) (cx + r * c), (float) (cy + r * sn)));
 				}
 			return pts;
 		}
@@ -1511,7 +1518,7 @@ namespace System.Windows.Forms.VisualStyles
 			// base y = 5, half-width 3.34 -- with its base corners cut at 2.57 either side of the
 			// centre, then turned: 7x6 for up/down, 6x7 across. Within 4 levels of the theme image.
 			int gw = part <= 2 ? 7 : 6, gh = part <= 2 ? 6 : 7;
-			var tri = new List<PointF> { new PointF (3.5f, 1.4297f), new PointF (3.5f + 3.3438f, 5f), new PointF (3.5f - 3.3438f, 5f) };
+			var tri = new List<PointF> { new PointF (3.5f, 1.4219f), new PointF (3.5f + 3.3438f, 5f), new PointF (3.5f - 3.3438f, 5f) };
 			const float Cut = 2.5703f;
 			tri = ClipEdge (tri, q => q.X >= 3.5f - Cut, (a, b) => new PointF (3.5f - Cut, a.Y + (b.Y - a.Y) * (3.5f - Cut - a.X) / (b.X - a.X)));
 			tri = ClipEdge (tri, q => q.X <= 3.5f + Cut, (a, b) => new PointF (3.5f + Cut, a.Y + (b.Y - a.Y) * (3.5f + Cut - a.X) / (b.X - a.X)));
@@ -1525,6 +1532,8 @@ namespace System.Windows.Forms.VisualStyles
 				};
 			}
 			uint alpha = state switch { 3 => 0x9bu, 4 => 0x5cu, _ => 0xe4u };
+			// The coverage is rounded to eight bits, then scaled by the look's alpha and rounded again
+			// -- the theme's own two roundings (one rounding lands two levels off on its edges).
 			Frame g = RenderExactArea (gw, gh, tri, 0);
 			for (int i = 0; i < g.Pixels.Length; i++)
 				g.Pixels [i] = (uint) ((g.Pixels [i] >> 24) * alpha / 255.0 + 0.5) << 24;
@@ -1553,10 +1562,16 @@ namespace System.Windows.Forms.VisualStyles
 		static Frame ToolbarButton (int state)
 		{
 			bool hot = state == 2 || state == 8, deep = state == 3 || state == 5 || state == 6;
-			Frame f = !hot && !deep ? new Frame (7, 18)
-				: Render (7, 18,
-					new Layer (RoundRect (0, 0, 7, 17, 3), hot ? 0xffcce8ffu : 0xff99d1ffu),
-					new Layer (RoundRect (1, 1, 6, 16, 2), hot ? 0xffe5f3ffu : 0xffcce8ffu));
+			var f = new Frame (7, 18);
+			if (hot || deep) {
+				// Exact-area art (its corner pixels carry alphas of 10, 158 and 247), seventeen rows of
+				// the eighteen, with corners squarer than a circle: superellipses of exponent 1.8 and
+				// radius 2.68 round a face of 1.825 (exponent 1.93 hot, 1.83 pressed). Every pixel is
+				// within a level of the theme image; circular corners missed the third corner pixel.
+				Frame ring = hot ? ExactRing (7, 17, 2.68f, 1.825f, 0xffcce8ffu, 0xffcce8ffu, 0xffe5f3ffu, 0, 1.8f, 1.925f)
+					: ExactRing (7, 17, 2.68f, 1.825f, 0xff99d1ffu, 0xff99d1ffu, 0xffcce8ffu, 0, 1.8f, 1.8313f);
+				Array.Copy (ring.Pixels, f.Pixels, ring.Pixels.Length);
+			}
 			return Stretched (f, 3, 3, 13, 4);
 		}
 
