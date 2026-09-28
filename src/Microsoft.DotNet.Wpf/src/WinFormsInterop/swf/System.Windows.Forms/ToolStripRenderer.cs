@@ -589,8 +589,11 @@ namespace System.Windows.Forms
 				Rectangle light = r, dark = r;
 				light.Offset (-1, -1);
 				dark.Offset (1, 1);
-				g.FillEllipse (highlight, Place (light));
-				g.FillEllipse (shadow, Place (dark));
+				// Rasterized as GDI+ does under .NET's TranslateTransform + ScaleTransform.
+				if (!g.TryFillGdipAntialiased (highlight, System.Drawing.WebGpuBackend.GdipAntialias.Ellipse (light.X, light.Y, light.Width, light.Height), scale, 0, 0, scale, ox, oy))
+					g.FillEllipse (highlight, Place (light));
+				if (!g.TryFillGdipAntialiased (shadow, System.Drawing.WebGpuBackend.GdipAntialias.Ellipse (dark.X, dark.Y, dark.Width, dark.Height), scale, 0, 0, scale, ox, oy))
+					g.FillEllipse (shadow, Place (dark));
 			}
 			g.SmoothingMode = old;
 		}

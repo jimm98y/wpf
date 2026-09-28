@@ -294,6 +294,30 @@ namespace System.Drawing
 			return true;
 		}
 
+		/// <summary>An antialiased solid fill of GDI+ Beziers as GDI+ rasterizes it (WebGpuBackend.
+		/// GdipAntialias, exact against gdiplus.dll): the colour with the coverage as its alpha, drawn
+		/// as an image. <paramref name="m11"/>.. is the world matrix the caller would have set; the
+		/// recorder's own translation must be whole pixels.</summary>
+		internal bool TryFillGdipAntialiased (Brush brush, PointF [] beziers, float m11, float m12, float m21, float m22, float dx, float dy)
+		{
+			if (GpuRecorder == null || nativeObject != IntPtr.Zero || GpuAliased || !(brush is SolidBrush sb))
+				return false;
+			GpuRecorder.GetTranslation (out float tx, out float ty);
+			if (tx != (int) tx || ty != (int) ty)
+				return false;
+			if (!WebGpuBackend.GdipAntialias.Fill (beziers, m11, m12, m21, m22, dx, dy, out byte [] alpha, out Rectangle r))
+				return false;
+			Color c = sb.Color;
+			var rgba = new byte [r.Width * r.Height * 4];
+			for (int i = 0; i < alpha.Length; i++) {
+				int d = i * 4;
+				rgba [d] = c.R; rgba [d + 1] = c.G; rgba [d + 2] = c.B;
+				rgba [d + 3] = (byte) ((alpha [i] * c.A + 127) / 255);
+			}
+			GpuRecorder.DrawImage (rgba, r.Width, r.Height, r.X, r.Y, r.Width, r.Height);
+			return true;
+		}
+
 		bool TryGradient (Brush b, out GradientDesc g)
 		{
 			g = default;
@@ -2575,7 +2599,12 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			// GDI+ antialiases at PixelOffsetMode.None with each pixel's CENTRE on the integer
 			// coordinate; the recorder's pixel i spans [i, i + 1], so the outline moves half a pixel.
-			if (RecordSolid (brush) && !GpuAliased) { GpuRecorder.FillEllipse (x + 0.5f, y + 0.5f, width, height, ArgbOf (brush)); return; }
+			if (RecordSolid (brush) && !GpuAliased) {
+				if (TryFillGdipAntialiased (brush, WebGpuBackend.GdipAntialias.Ellipse (x, y, width, height), 1, 0, 0, 1, 0, 0))
+					return;
+				GpuRecorder.FillEllipse (x + 0.5f, y + 0.5f, width, height, ArgbOf (brush));
+				return;
+			}
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }

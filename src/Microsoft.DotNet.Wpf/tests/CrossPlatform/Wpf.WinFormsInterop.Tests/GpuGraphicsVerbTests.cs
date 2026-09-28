@@ -163,6 +163,19 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(new[] { 248, 247, 246, 246, 245, 245, 244, 244, 243, 243, 242, 241 }, rows);
         }
 
+        [Fact]
+        public void AntialiasedEllipse_IsGdiPlusCoverage()
+        {
+            // FillEllipse(3.11, 3.812, 3.285, 5.582) with SmoothingMode.AntiAlias, as gdiplus.dll
+            // draws it onto a transparent bitmap: the alpha of columns 3..6, rows 4..9.
+            Assert.True(GdipAntialias.Fill(GdipAntialias.Ellipse(3.11f, 3.812f, 3.285f, 5.582f), 1, 0, 0, 1, 0, 0,
+                                           out byte[] alpha, out Rectangle r));
+            int At(int x, int y) => x < r.X || y < r.Y || x >= r.Right || y >= r.Bottom ? 0 : alpha[(y - r.Y) * r.Width + x - r.X];
+            var rows = new List<string>();
+            for (int y = 4; y <= 9; y++) rows.Add($"{At(3, y)} {At(4, y)} {At(5, y)} {At(6, y)}");
+            Assert.Equal(new[] { "0 40 120 8", "0 223 255 135", "32 255 255 207", "56 255 255 239", "8 247 255 175", "0 143 247 64" }, rows);
+        }
+
         private static void CollectRects(object visual, List<string> rows)
         {
             foreach (object p in (IEnumerable)visual.GetType().GetProperty("Content").GetValue(visual))
