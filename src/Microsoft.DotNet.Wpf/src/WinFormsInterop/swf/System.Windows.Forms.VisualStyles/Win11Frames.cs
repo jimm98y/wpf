@@ -940,30 +940,31 @@ namespace System.Windows.Forms.VisualStyles
 			var layers = new List<Layer> ();
 			if (mark == 0) {
 				(uint border, uint face) = Unmarked (look);
-				layers.Add (new Layer (RoundRect (0, 0, 13, 13, 3.1211f), border));
-				layers.Add (new Layer (RoundRect (1, 1, 12, 12, 1.9922f), face));
+				layers.Add (new Layer (RoundRect (0, 0, 13, 13, 3), border));
+				layers.Add (new Layer (RoundRect (1, 1, 12, 12, 2), face));
 			} else {
-				layers.Add (new Layer (RoundRect (0, 0, 13, 13, 3.1211f), Marked (look)));
+				layers.Add (new Layer (RoundRect (0, 0, 13, 13, 3), Marked (look)));
 				Shape glyph = mark switch {
-					// Solved under the art's own sample pattern (s_markX/Y): the tick is within 15
-					// levels of the theme image over its whole area, the dash within 1.
+					// Fitted under the art's own pattern (RenderArt).
 					1 => Stroke (0.6992f, 3.5157f, 6.7813f, 5.4883f, 8.8398f, 9.5352f, 4.75f),
-					2 => Stroke (0.7031f, 4.2109f, 6.6641f, 8.7578f, 6.6719f),
+					2 => Stroke (0.7656f, 4.2109f, 6.6016f, 8.7578f, 6.6719f),
 					_ => (x, y) => Stroke (0.75f, 4.25f, 4.25f, 8.75f, 8.75f) (x, y) || Stroke (0.75f, 8.75f, 4.25f, 4.25f, 8.75f) (x, y),
 				};
 				uint ink = 0xffffffffu;
 				if (look == 2 && mark == 1) {
 					// Pressed, the mark is thinner and not quite opaque: white at 0.835 (tick) and
-					// 0.761 (dash) over the pressed accent.
-					glyph = Stroke (0.5078f, 3.375f, 6.7891f, 5.5234f, 8.8906f, 9.6719f, 4.7266f);
+					// 0.839 (dash) over the pressed accent.
+					glyph = Stroke (0.5703f, 3.375f, 6.8204f, 5.5859f, 8.8906f, 9.6719f, 4.6641f);
 					ink = (uint) Math.Round (0.8352 * 255) << 24 | 0xffffffu;
 				} else if (look == 2 && mark == 2) {
-					glyph = Stroke (0.6406f, 4.1328f, 6.6016f, 8.8125f, 6.5859f);
-					ink = (uint) Math.Round (0.7609 * 255) << 24 | 0xffffffu;
+					glyph = Stroke (0.6406f, 4.1953f, 6.6641f, 8.8125f, 6.7109f);
+					ink = (uint) Math.Round (0.839 * 255) << 24 | 0xffffffu;
 				}
 				layers.Add (new Layer (glyph, ink));
 			}
-			return RenderSampled (13, 13, s_msx, s_msy, layers.ToArray ());
+			// Under the art's own pattern the box is a whole-number rounded square: radius 3 round
+			// a face of radius 2 one pixel in.
+			return RenderArt (13, 13, layers.ToArray ());
 		}
 
 		/// <summary>BP_RADIOBUTTON, 13x13, true size: a ring, or the accent disc under a white dot
@@ -974,11 +975,12 @@ namespace System.Windows.Forms.VisualStyles
 			bool check = state > 4;
 			int look = (state - 1) % 4;
 			var layers = new List<Layer> ();
-			const float outer = 6.4883f;
+			// Under the art's own pattern the ring is radius 6.5 round a face of 5.5.
+			const float outer = 6.5f;
 			if (!check) {
 				(uint border, uint face) = Unmarked (look);
 				layers.Add (new Layer (Circle (6.5f, 6.5f, outer), border));
-				layers.Add (new Layer (Circle (6.5f, 6.5f, 5.4883f), face));
+				layers.Add (new Layer (Circle (6.5f, 6.5f, 5.5f), face));
 				if (look == 2)
 					layers.Add (new Layer (Circle (6.5f, 6.5f, 1.9844f), 0xffffffffu));
 			} else {
@@ -987,14 +989,14 @@ namespace System.Windows.Forms.VisualStyles
 				// The dot stands on a soft shadow: a black disc a little larger than it and a little
 				// below, at about an eighth -- the accent ring darkens round the dot, most at the bottom.
 				(float rs, float dy, float sa) = look switch {
-					1 => (3.9875f, 0.4922f, 0.1246f), 2 => (2.7297f, 0.4844f, 0.1148f), 3 => (0f, 0f, 0f),
-					_ => (3.2335f, 0.3555f, 0.1422f),
+					1 => (3.9875f, 0.5469f, 0.1246f), 2 => (2.8235f, 0.4844f, 0.1109f), 3 => (0f, 0f, 0f),
+					_ => (3.2023f, 0.3555f, 0.1461f),
 				};
 				if (rs > 0)
 					layers.Add (new Layer (Circle (6.5f, 6.5f + dy, rs), (uint) Math.Round (sa * 255) << 24));
 				layers.Add (new Layer (Circle (6.5f, 6.5f, dot), 0xffffffffu));
 			}
-			return RenderSampled (13, 13, s_msx, s_msy, layers.ToArray ());
+			return RenderArt (13, 13, layers.ToArray ());
 		}
 
 		/// <summary>A bordered field: the outer rounded rectangle is the border, its bottom

@@ -1176,7 +1176,8 @@ namespace System.Drawing
         {
             static CommonHandles()
             {
-#if DEBUG
+// corefx's DebugHandleTracker is not part of this port.
+#if DEBUG && FEATURE_DEBUG_HANDLE_TRACKER
                 // Setup the DebugHandleTracker
                 DebugHandleTracker.Initialize();
                 AppDomain.CurrentDomain.DomainUnload += new EventHandler(CurrentDomain_DomainUnload);
@@ -1205,7 +1206,7 @@ namespace System.Drawing
             /// </summary>
             public static readonly int Kernel = System.Internal.HandleCollector.RegisterType("Kernel", 0, 1000);
 
-#if DEBUG
+#if DEBUG && FEATURE_DEBUG_HANDLE_TRACKER
             private static void CurrentDomain_DomainUnload(object sender, EventArgs e)
             {
                 DebugHandleTracker.CheckLeaks();
