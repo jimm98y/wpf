@@ -2959,6 +2959,9 @@ namespace System.Drawing
 
 		public void IntersectClip (Rectangle rect)
 		{			
+			// The recorder too, as the RectangleF overload does: this one had no recording path, so
+			// every integer clip -- TextRenderer's, a theme part's -- was dropped under the GPU.
+			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, false); return; }
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRectI (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, CombineMode.Intersect);
 			CheckDrawStatus (status);

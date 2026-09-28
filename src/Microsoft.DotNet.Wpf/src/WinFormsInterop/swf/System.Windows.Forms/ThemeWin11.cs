@@ -986,6 +986,18 @@ namespace System.Windows.Forms
 			// it has the focus. That underline is how Windows says where you are typing; ours drew the
 			// bottom colour on all four sides, which made every input heavier than stock's and left the
 			// focus saying nothing at all.
+			// A text box's client edge is what uxtheme's NC paint draws for a themed Edit: the
+			// EP_EDITBORDER_NOSCROLL part (normal, focused or disabled) over the window, clipped to
+			// the two-pixel ring outside the client.
+			if (sunken && control is TextBoxBase && bounds.Width > 4 && bounds.Height > 4) {
+				int state = !control.Enabled ? 4 : control.Focused ? 3 : 1;
+				var renderer = new VisualStyles.VisualStyleRenderer (VisualStyles.VisualStyleElement.CreateElement ("EDIT", 6, state));
+				renderer.DrawBackground (dc, bounds, new Rectangle (bounds.X, bounds.Y, bounds.Width, 2));
+				renderer.DrawBackground (dc, bounds, new Rectangle (bounds.X, bounds.Bottom - 2, bounds.Width, 2));
+				renderer.DrawBackground (dc, bounds, new Rectangle (bounds.X, bounds.Y + 2, 2, bounds.Height - 4));
+				renderer.DrawBackground (dc, bounds, new Rectangle (bounds.Right - 2, bounds.Y + 2, 2, bounds.Height - 4));
+				return;
+			}
 			if (sunken && IsTextInput (control)) {
 				bool enabled = control == null || control.Enabled;
 				Color sides = enabled ? InputFrameLight : ButtonBorderDisabled;
