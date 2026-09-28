@@ -71,7 +71,12 @@ namespace Wpf.WinFormsInterop.Tests
             // DrawToBitmap into a System.Drawing bitmap and lays the two buttons out a row
             // apart from where the live control puts them. When the two harnesses disagree the
             // window wins: it is the thing being matched.
-            ["monthcalendar"] = (1, 4355),
+            // Re-measured 2026-09-28, not raised: until then OUR calendar drew the today ring and the
+            // "Today:" footer from the clock instead of TodayDate, so this specimen (TodayDate pinned
+            // to 9/1) compared a different footer every day and failed on most of them. Now both
+            // say 9/1/2026 and ring the 1st; every remaining pixel is text -- GDI+ in this harness
+            // against the native control's GDI, the footer 3 px right from GDI+'s wider measure.
+            ["monthcalendar"] = (0, 4440),
             // Windows' DrawToBitmap draws a spin box without its children, so the edit and the
             // buttons are all ink here; drawing the buttons with the SPIN parts (as UpDownButtons
             // does) moved the live window's NUD region 19,689 -> 1,467 and this count by 4. Shrinking

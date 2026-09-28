@@ -783,8 +783,10 @@ namespace System.Windows.Forms {
 					this.Invalidate ();
 				}
 			}
+			// Unset, it is the day it is now -- not the day the control was made, which went stale
+			// on a calendar left open past midnight. .NET's getter does the same.
 			get {
-				return today_date;
+				return today_date_set ? today_date : DateTime.Now.Date;
 			}
 		}
 
@@ -2416,7 +2418,7 @@ namespace System.Windows.Forms {
 					}
 					break;
 				case HitArea.TodayLink: {
-					DateTime date = DateTime.Now.Date;
+					DateTime date = TodayDate.Date;
 					if (date >= MinDate && date <= MaxDate) {
 						this.SetSelectionRange (date, date);
 						this.OnDateSelected (new DateRangeEventArgs (SelectionStart, SelectionEnd));

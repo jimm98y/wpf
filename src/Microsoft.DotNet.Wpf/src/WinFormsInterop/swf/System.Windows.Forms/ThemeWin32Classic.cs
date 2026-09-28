@@ -3898,7 +3898,7 @@ namespace System.Windows.Forms
 			{
 				dc.FillRectangle (GetControlBackBrush (mc.BackColor), bottom_rect);
 				if (mc.ShowToday) {
-					string today_text = "Today: " + DateTime.Now.ToShortDateString();
+					string today_text = "Today: " + mc.TodayDate.ToShortDateString();
 					// comctl32's footer is its string 4433, " %s %s", over "Today:" and the date: it
 					// starts with a space, which both the button's width and the text's place include.
 					string footer = " " + today_text;
@@ -4594,7 +4594,8 @@ namespace System.Windows.Forms
 					       MonthCalendarDateBounds (mc, dc, rectangle), MonthCalendarDateFormat (mc));
 
 			// today circle if needed
-			if (mc.ShowTodayCircle && date == DateTime.Now.Date) {
+			// TodayDate, not the clock: a calendar told what today is rings that day, as comctl32 does.
+			if (mc.ShowTodayCircle && date == mc.TodayDate.Date) {
 				DrawTodayCircle (dc, interior);
 			}
 
