@@ -1861,8 +1861,12 @@ namespace System.Windows.Forms
 			if (!richtext) {
 				int saved_requested_height = requested_height;
 				if (!document.multiline) {
-					if (PreferredHeight != Height) {
-						SetBoundsCore (Left, Top, Width, PreferredHeight, BoundsSpecified.Height);
+					// .NET's AdjustHeight: only an AutoSize box takes its preferred height; any other
+					// keeps the height it was given (the edit in a combo box is a line of the font
+					// plus SM_CYEDGE, and was cut back a row when its handle came).
+					int height = AutoSize || requested_height <= 0 ? PreferredHeight : requested_height;
+					if (height != Height) {
+						SetBoundsCore (Left, Top, Width, height, BoundsSpecified.Height);
 					}
 				} else {
 					SetBoundsCore (Left, Top, Width, Math.Max(PreferredHeight, requested_height), BoundsSpecified.Height);
