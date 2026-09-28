@@ -146,11 +146,31 @@ namespace System.Windows.Forms
 
 			bool sunken = (h.initial_ex_style & WindowExStyles.WS_EX_CLIENTEDGE) != 0;
 			bool plain = (h.initial_style & WindowStyles.WS_BORDER) != 0;
-			if (!sunken && !plain) return;
+			bool staticEdge = (h.initial_ex_style & WindowExStyles.WS_EX_STATICEDGE) != 0;
+			if (!sunken && !plain && !staticEdge) return;
 
 			// A top-level window's frame belongs to the host, which draws a real one around it.
 			Control c = Control.FromHandle(handle);
 			if (c is Form) return;
+
+			if (staticEdge && !sunken && !plain)
+			{
+				// win32k's xxxDrawWindowFrame: DrawEdge(BDR_SUNKENOUTER) -- COLOR_BTNSHADOW along the
+				// top and left, then COLOR_BTNHIGHLIGHT along the bottom and right, over the corners.
+				try
+				{
+					using (var dark = new SolidBrush(SystemColors.ControlDark))
+					using (var light = new SolidBrush(SystemColors.ControlLightLight))
+					{
+						dc.FillRectangle(dark, 0, 0, h.width - 1, 1);
+						dc.FillRectangle(dark, 0, 0, 1, h.height - 1);
+						dc.FillRectangle(light, 0, h.height - 1, h.width, 1);
+						dc.FillRectangle(light, h.width - 1, 0, 1, h.height);
+					}
+				}
+				catch (Exception ex) { T("DrawWindowBorder: " + ex.Message); }
+				return;
+			}
 
 			try { ThemeEngine.Current.DrawControlBorder(dc, new Rectangle(0, 0, h.width, h.height), c, sunken); }
 			catch (Exception ex) { T("DrawWindowBorder: " + ex.Message); }

@@ -92,6 +92,16 @@ namespace System.Windows.Forms
 			DrawTextInternal (dc, text, font, bounds, foreColor, backColor, flags, false);
 		}
 
+		/// <summary>.NET's colour for text drawn disabled on <paramref name="backColor"/>.</summary>
+		internal static Color DisabledTextColor (Color backColor)
+		{
+			if (SystemInformation.HighContrast)
+				return SystemColors.GrayText;
+			if (!ControlPaint.IsDarker (backColor, SystemColors.Control))
+				return SystemColors.ControlDark;
+			return ControlPaint.Dark (backColor);
+		}
+
 		public static Size MeasureText (string text, Font font)
 		{
 			return MeasureTextInternal (Hwnd.GraphicsContext, text, font, MaxSize, TextFormatFlags.Bottom, false);

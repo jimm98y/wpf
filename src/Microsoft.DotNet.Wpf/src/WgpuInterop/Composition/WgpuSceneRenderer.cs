@@ -3854,9 +3854,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     GeometryMax(coverageGeometry, out float gmaxX, out float gmaxY);
                     Vector2 p0 = Vector2.Transform(new Vector2(gminX, gminY), world);
                     Vector2 p1 = Vector2.Transform(new Vector2(gmaxX, gmaxY), world);
+                    // Only what the clip lets through can be written, so only that has to be paper: a
+                    // label's text drawn to its bottom row put the slack below the label, outside the
+                    // background rectangle, and the paper came back unknown.
                     paper = PaperUnder(data,
-                        MathF.Min(p0.X, p1.X) - 1f, MathF.Min(p0.Y, p1.Y) - 1f,
-                        MathF.Max(p0.X, p1.X) + 2f, MathF.Max(p0.Y, p1.Y) + 2f,
+                        MathF.Max(MathF.Min(p0.X, p1.X) - 1f, clip.X), MathF.Max(MathF.Min(p0.Y, p1.Y) - 1f, clip.Y),
+                        MathF.Min(MathF.Max(p0.X, p1.X) + 2f, clip.X + (float) clip.W),
+                        MathF.Min(MathF.Max(p0.Y, p1.Y) + 2f, clip.Y + (float) clip.H),
                         n => new Vector2((n.X + 1f) * 0.5f * width + _devOX, (1f - n.Y) * 0.5f * height + _devOY));
                     if (paper is { } pp)
                         key = key * 397 ^ (1L << 40 | (long) ToByte(pp.R) << 16
@@ -4604,7 +4608,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 if (X0 > x0 || Y0 > y0 || X1 < x1 || Y1 < y1) return false;
                 if (!Shape) return true;
-                return Inside(x0, y0) && Inside(x1, y0) && Inside(x0, y1) && Inside(x1, y1);
+                // fs_shape samples each pixel at its CENTRE, so the pixels the box holds are covered
+                // when the corner pixels' centres are -- testing the box's outer edges failed every
+                // run whose slack reached the shape's own edge (a label's text on its bottom row).
+                float cx0 = x0 + 0.5f, cy0 = y0 + 0.5f, cx1 = MathF.Max(cx0, x1 - 0.5f), cy1 = MathF.Max(cy0, y1 - 0.5f);
+                return Inside(cx0, cy0) && Inside(cx1, cy0) && Inside(cx0, cy1) && Inside(cx1, cy1);
             }
 
             // fs_shape's rounded-rectangle distance, and its test for full coverage.
@@ -4614,7 +4622,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 float qx = MathF.Abs(p.X) - _halfX + _corner, qy = MathF.Abs(p.Y) - _halfY + _corner;
                 float ox = MathF.Max(qx, 0f), oy = MathF.Max(qy, 0f);
                 float d = MathF.Sqrt(ox * ox + oy * oy) + MathF.Min(MathF.Max(qx, qy), 0f) - _corner;
-                return 0.5f - d / _pixel >= 1f;
+                // Full to eight bits: anything within half a level of 1 stores as 255, and a pixel
+                // centre on the shape's edge row sits at d = -0.5 exactly, give or take the float.
+                return 0.5f - d / _pixel >= 1f - 0.5f / 255f;
             }
         }
 

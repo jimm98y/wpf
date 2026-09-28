@@ -383,38 +383,90 @@ namespace System.Windows.Forms
 			set { base.ImeMode = value; }
 		}
 
+		/// <summary>The width of the frame Windows puts round a Static window: WS_BORDER for
+		/// FixedSingle and the static edge SS_SUNKEN turns into for Fixed3D are both one pixel.
+		/// Win32 keeps it out of the client area; this driver draws it over the window's own edge
+		/// (XplatUIWebGpu.DrawWindowBorder), so the label leaves it out of its own layout.</summary>
+		private int BorderInset => border_style == BorderStyle.None ? 0 : 1;
+
+		/// <summary>The client rectangle as Windows gives it to the label: inside the border.</summary>
+		private Rectangle StaticClientRectangle => Rectangle.Inflate (ClientRectangle, -BorderInset, -BorderInset);
+
+		// .NET's Label.GetBordersAndPadding. SizeFromClientSize is the frame on both sides; Fixed3D
+		// asks for two pixels more on top of it.
+		private Size GetBordersAndPadding ()
+		{
+			Size size = Padding.Size;
+			if (UseCompatibleTextRendering) {
+				if (BorderStyle != BorderStyle.None) {
+					size.Height += 6;
+					size.Width += 2;
+				} else {
+					size.Height += 3;
+				}
+			} else {
+				size += new Size (2 * BorderInset, 2 * BorderInset);
+				if (BorderStyle == BorderStyle.Fixed3D)
+					size += new Size (2, 2);
+			}
+			return size;
+		}
+
+		internal virtual bool UseGDIMeasuring ()
+		{
+			return FlatStyle == FlatStyle.System || !UseCompatibleTextRendering;
+		}
+
+		// .NET's Label.CreateTextFormatFlags: word breaking only when the text does not fit on one
+		// line in the space it has.
+		private TextFormatFlags CreateTextFormatFlags ()
+		{
+			return CreateTextFormatFlags (Size - GetBordersAndPadding ());
+		}
+
+		private TextFormatFlags CreateTextFormatFlags (Size constrainingSize)
+		{
+			TextFormatFlags flags = ControlPaint.CreateTextFormatFlags (this, TextAlign, AutoEllipsis, UseMnemonic);
+			if (!TextRequiresWordBreak (constrainingSize, flags))
+				flags &= ~(TextFormatFlags.TextBoxControl | TextFormatFlags.WordBreak);
+			return flags;
+		}
+
+		// .NET's MeasureTextCache, without the cache.
+		private Size UnconstrainedTextSize (TextFormatFlags flags)
+		{
+			return TextRenderer.MeasureText (Text, Font, new Size (int.MaxValue, int.MaxValue), flags & ~TextFormatFlags.WordBreak);
+		}
+
+		private bool TextRequiresWordBreak (Size size, TextFormatFlags flags)
+		{
+			return UnconstrainedTextSize (flags).Width > size.Width;
+		}
+
+		// .NET's Label.GetPreferredSizeCore. An unconstrained dimension arrives as zero, which .NET's
+		// Control.GetPreferredSize turns into int.MaxValue before it gets here.
 		internal override Size GetPreferredSizeCore (Size proposed)
 		{
-			Size borders_and_paddings = new Size(Padding.Horizontal, Padding.Vertical);
+			if (proposed.Width == 0)
+				proposed.Width = int.MaxValue;
+			if (proposed.Height == 0)
+				proposed.Height = int.MaxValue;
+			Size borders = GetBordersAndPadding ();
+			proposed -= borders;
+			proposed = new Size (Math.Max (proposed.Width, 0), Math.Max (proposed.Height, 0));
 			Size size;
-
-			// A BORDER costs height; the text on its own does not. This used to add three pixels even
-			// to a borderless label, on top of a height measured with GDI+ -- which is already a pixel
-			// a line taller than GDI's. Four pixels too tall is enough to matter: every one of these
-			// labels sits directly above a control, and the label paints its own background, so the
-			// surplus was drawn straight over that control's top border.
-			if (use_compatible_text_rendering && border_style != BorderStyle.None)
-				borders_and_paddings.Height += 3;
-
-			if (Text == string.Empty) {
-				size = new Size (0, Font.Height);
+			if (string.IsNullOrEmpty (Text)) {
+				size = new Size (0, TextRenderer.MeasureText ("0", Font, new Size (int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Height);
+			} else if (UseGDIMeasuring ()) {
+				TextFormatFlags flags = FlatStyle != FlatStyle.System ? CreateTextFormatFlags (proposed) : TextFormatFlags.Default;
+				size = TextRequiresWordBreak (proposed, flags)
+					? TextRenderer.MeasureText (Text, Font, proposed, flags)
+					: UnconstrainedTextSize (flags);
 			} else {
-				int proposed_width = proposed.Width <= 1 ? int.MaxValue : (proposed.Width - borders_and_paddings.Width);
-				// The measurement already leaves the margin the text is drawn inside, so the three
-				// pixels that used to be added on top of it made every label that sizes itself four
-				// pixels wider than the same label in Windows.
-				size = Size.Ceiling (TextRenderer.MeasureString (Text, Font, proposed_width, string_format));
-
-				// The HEIGHT is GDI's, which is what Windows makes a label: exactly as tall as the
-				// lines of text in it. TextRenderer answers for GDI and already turns GDI+'s line
-				// spacing into GDI's, so ask it rather than repeating the conversion here.
-				Size gdi = TextRenderer.MeasureText (Text, Font, new Size (proposed_width, int.MaxValue),
-				                                    TextFormatFlags.WordBreak);
-				if (gdi.Height > 0)
-					size.Height = gdi.Height;
+				int width = proposed.Width >= int.MaxValue - borders.Width ? int.MaxValue : proposed.Width;
+				size = Size.Ceiling (TextRenderer.MeasureString (Text, Font, width, string_format));
 			}
-
-			return size + borders_and_paddings;
+			return size + borders;
 		}
 
 		public override	Size GetPreferredSize (Size proposedSize)
@@ -607,10 +659,21 @@ namespace System.Windows.Forms
 			base.OnPaddingChanged (e);
 		}
 
+		// .NET's Label.OnPaint: GDI text through TextRenderer inside the border and the padding,
+		// and GDI+ only for a label that asks for compatible text rendering.
 		protected override void OnPaint (PaintEventArgs e)
 		{
-			ThemeElements.LabelPainter.Draw (e.Graphics, ClientRectangle, this);
-			base.OnPaint(e);
+			if (UseCompatibleTextRendering) {
+				ThemeElements.LabelPainter.Draw (e.Graphics, ClientRectangle, this);
+				base.OnPaint (e);
+				return;
+			}
+			Rectangle rect = System.Windows.Forms.Layout.LayoutUtils.DeflateRect (StaticClientRectangle, Padding);
+			if (Image != null)
+				DrawImage (e.Graphics, Image, rect, RtlTranslateAlignment (ImageAlign));
+			Color color = Enabled ? ForeColor : TextRenderer.DisabledTextColor (BackColor);
+			TextRenderer.DrawTextInternal (e, Text, Font, rect, color, CreateTextFormatFlags (), false);
+			base.OnPaint (e);
 		}
 
 		protected override void OnParentChanged (EventArgs e)

@@ -134,6 +134,15 @@ namespace System.Windows.Forms
 			return format;
 		}
 
+		// .NET's HLSColor luminosity, 0..240, rounded the way it rounds it.
+		private static int Luminosity (Color c)
+		{
+			int max = Math.Max (Math.Max (c.R, c.G), c.B), min = Math.Min (Math.Min (c.R, c.G), c.B);
+			return ((max + min) * 240 + 255) / 510;
+		}
+
+		internal static bool IsDarker (Color c1, Color c2) => Luminosity (c1) < Luminosity (c2);
+
 		internal static TextFormatFlags CreateTextFormatFlags (Control control, ContentAlignment alignment, bool showEllipsis, bool useMnemonic)
 		{
 			alignment = control.RtlTranslateContentInternal (alignment);

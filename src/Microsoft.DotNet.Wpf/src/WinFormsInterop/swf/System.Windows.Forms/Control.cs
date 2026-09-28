@@ -4716,7 +4716,7 @@ namespace System.Windows.Forms
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
 		protected ContentAlignment RtlTranslateAlignment(ContentAlignment align) {
-			if (right_to_left == RightToLeft.No) {
+			if (RightToLeft == RightToLeft.No) {
 				return align;
 			}
 
@@ -4754,7 +4754,7 @@ namespace System.Windows.Forms
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
 		protected HorizontalAlignment RtlTranslateAlignment(HorizontalAlignment align) {
-			if ((right_to_left == RightToLeft.No) || (align == HorizontalAlignment.Center)) {
+			if ((RightToLeft == RightToLeft.No) || (align == HorizontalAlignment.Center)) {
 				return align;
 			}
 
@@ -4768,7 +4768,7 @@ namespace System.Windows.Forms
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
 		protected LeftRightAlignment RtlTranslateAlignment(LeftRightAlignment align) {
-			if (right_to_left == RightToLeft.No) {
+			if (RightToLeft == RightToLeft.No) {
 				return align;
 			}
 
