@@ -453,6 +453,7 @@ namespace System.Windows.Forms
 					document.multiline = value;
 
 					SetStyle (ControlStyles.FixedHeight, !value);
+					document.UpdateFontMargins ();
 					FixupHeight ();
 					
 					if (Parent != null)
@@ -1085,6 +1086,8 @@ namespace System.Windows.Forms
 			if (delayed_font_or_color_change) {
 				TextBoxBase_FontOrColorChanged (this, e);
 			}
+			// The edit control takes its font-info margins when it is created, at the size it has then.
+			document.UpdateFontMargins ();
 			FixupHeight ();
 		}
 
@@ -1842,6 +1845,10 @@ namespace System.Windows.Forms
 			
 			// Draw the viewable document
 			document.Draw(g, clippingArea);
+
+			Rectangle corner = ScrollBarCorner;
+			if (!corner.IsEmpty && corner.IntersectsWith (clippingArea))
+				ThemeEngine.Current.DrawScrollBarCorner (g, corner);
 		}
 
 		private void FixupHeight ()
@@ -2016,27 +2023,42 @@ namespace System.Windows.Forms
 			int hmod = vscroll.Visible ? vscroll.Width : 0;
 			int vmod = hscroll.Visible ? hscroll.Height : 0;
 
+			// Inside the frame. Windows puts a text box's scroll bars in its non-client area, within
+			// the border; this driver draws that border over the control's own edge, so bars laid
+			// against the edge had it painted across them and stood two pixels further out than a
+			// stock box's.
+			Rectangle inner = Rectangle.Inflate (ClientRectangle, -TextFrameWidth, -TextFrameWidth);
+
 			if (GetInheritedRtoL () == RightToLeft.Yes) {
-				hscroll.Bounds = new Rectangle (ClientRectangle.Left + hmod, 
-					Math.Max(0, ClientRectangle.Height - hscroll.Height), 
-					ClientSize.Width, 
+				hscroll.Bounds = new Rectangle (inner.Left + hmod, 
+					Math.Max(0, inner.Bottom - hscroll.Height), 
+					Math.Max(0, inner.Width - hmod), 
 					hscroll.Height);
 
-				vscroll.Bounds = new Rectangle (ClientRectangle.Left, 
-					ClientRectangle.Top, 
+				vscroll.Bounds = new Rectangle (inner.Left, 
+					inner.Top, 
 					vscroll.Width, 
-					Math.Max(0, ClientSize.Height - (vmod)));
+					Math.Max(0, inner.Height - vmod));
 			} else {
-				hscroll.Bounds = new Rectangle (ClientRectangle.Left, 
-					Math.Max(0, ClientRectangle.Height - hscroll.Height), 
-					Math.Max(0, ClientSize.Width - hmod), 
+				hscroll.Bounds = new Rectangle (inner.Left, 
+					Math.Max(0, inner.Bottom - hscroll.Height), 
+					Math.Max(0, inner.Width - hmod), 
 					hscroll.Height);
 
 				vscroll.Bounds = new Rectangle (
-					Math.Max(0, ClientRectangle.Right - vscroll.Width), 
-					ClientRectangle.Top, 
+					Math.Max(0, inner.Right - vscroll.Width), 
+					inner.Top, 
 					vscroll.Width, 
-					Math.Max(0, ClientSize.Height - vmod));
+					Math.Max(0, inner.Height - vmod));
+			}
+		}
+
+		/// <summary>The square between the two scroll bars, when both show.</summary>
+		private Rectangle ScrollBarCorner {
+			get {
+				if (!vscroll.Visible || !hscroll.Visible)
+					return Rectangle.Empty;
+				return new Rectangle (vscroll.Left, hscroll.Top, vscroll.Width, hscroll.Height);
 			}
 		}
 
@@ -2353,6 +2375,7 @@ namespace System.Windows.Forms
 				return;
 			applied_font = Font;
 			applied_fore_color = ForeColor;
+			document.UpdateFontMargins ();
 
 			document.SuspendRecalc ();
 			// Font changes apply to the whole document

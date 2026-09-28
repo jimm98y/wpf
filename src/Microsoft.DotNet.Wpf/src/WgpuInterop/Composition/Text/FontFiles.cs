@@ -359,7 +359,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>One name record of the face at <paramref name="sfnt"/>, English preferred.
         /// </summary>
-        private static string? NameById(byte[] d, int sfnt, int wanted)
+        internal static string? NameById(byte[] d, int sfnt, int wanted)
         {
             Dictionary<string, int> tables = SfntTables(d, sfnt);
             if (!tables.TryGetValue("name", out int nameOff) || nameOff + 6 > d.Length) return null;

@@ -553,6 +553,40 @@ namespace System.Windows.Forms {
 					right_margin = 2;
 					break;
 			}
+			font_left_margin = font_right_margin = 0;
+			UpdateFontMargins ();
+		}
+
+		int font_left_margin, font_right_margin;
+
+		/// <summary>Replaces the font's share of the left and right margins, leaving the rest --
+		/// the border's, and any a hosting control set by hand -- as it is.</summary>
+		internal void UpdateFontMargins ()
+		{
+			left_margin -= font_left_margin;
+			right_margin -= font_right_margin;
+			font_left_margin = font_right_margin = 0;
+
+			// Edit_SetFont ends in Edit_SetMargin(EC_LEFTMARGIN | EC_RIGHTMARGIN, EC_USEFONTINFO): each
+			// side becomes min(tmAveCharWidth / 2, the font's largest overhang on that side), and both
+			// are dropped again when the formatting rect would be narrower than two average characters.
+			// A single-line WinForms box ends with none (EM_GETMARGINS reads 0 on every one of them),
+			// a multiline one keeps them: Segoe UI 9pt's text starts 3px further in. The rich edit
+			// control has margins of its own.
+			if (!multiline || owner is RichTextBox)
+				return;
+			Font font = owner.Font;
+			float emPx = font.SizeInPoints * 96f / 72f;
+			if (!System.Drawing.WebGpuBackend.TextMetrics.TryGetAverageCharWidth (font.FontFamily.Name, font.Bold, font.Italic, emPx, out int ave)
+			    || !System.Drawing.WebGpuBackend.TextMetrics.TryGetMaxNegativeBearings (font.FontFamily.Name, font.Bold, font.Italic, emPx, out int negA, out int negC))
+				return;
+			int left = Math.Min (ave / 2, -negA), right = Math.Min (ave / 2, -negC);
+			if (owner.ClientSize.Width - left_margin - right_margin - left - right < 2 * ave)
+				return;
+			font_left_margin = left;
+			font_right_margin = right;
+			left_margin += left;
+			right_margin += right;
 		}
 
 		internal void SuspendRecalc ()

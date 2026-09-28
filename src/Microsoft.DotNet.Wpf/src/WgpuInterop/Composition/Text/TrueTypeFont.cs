@@ -272,6 +272,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _scale = BaseEmPixels / (float)unitsPerEm;
             _numGlyphs = U16(maxp + 4);
             _numHMetrics = U16(hhea + 34);
+            _minLeftSideBearing = (short) U16(hhea + 12);
+            _minRightSideBearing = (short) U16(hhea + 14);
 
             _hmtxOffset = hmtx;
             _advanceWidths = new ushort[_numHMetrics];
@@ -427,6 +429,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             width = 0;
             if (_xAvgCharWidth <= 0 || _unitsPerEm <= 0) return false;
             width = (int) Math.Floor (_xAvgCharWidth * (double) ppem / _unitsPerEm + 0.5);
+            return true;
+        }
+
+        private readonly short _minLeftSideBearing, _minRightSideBearing;
+
+        /// <summary>GetCharWidthInfo's lMaxNegA and lMaxNegC at a pixel size: how far any glyph
+        /// overhangs its cell on the left and right, as a negative number or zero. The edit control
+        /// takes its EC_USEFONTINFO margins from them. fontdrvhost's lQueryDEVICEMETRICS scales
+        /// hhea's minLeftSideBearing / minRightSideBearing and rounds half up -- except for one face:
+        /// bComputeIFISIZE fingerprints the unique name (name id 3) "Microsoft Sans Serif Regular",
+        /// and bComputeMaxGlyph then zeroes both for an unrotated square scale.</summary>
+        internal bool TryGetMaxNegativeBearings(int ppem, out int negA, out int negC)
+        {
+            negA = negC = 0;
+            if (_unitsPerEm <= 0) return false;
+            if (FontFiles.NameById(_data, _sfntBase, 3) == "Microsoft Sans Serif Regular") return true;
+            negA = Math.Min(0, (int) Math.Floor (_minLeftSideBearing * (double) ppem / _unitsPerEm + 0.5));
+            negC = Math.Min(0, (int) Math.Floor (_minRightSideBearing * (double) ppem / _unitsPerEm + 0.5));
             return true;
         }
 

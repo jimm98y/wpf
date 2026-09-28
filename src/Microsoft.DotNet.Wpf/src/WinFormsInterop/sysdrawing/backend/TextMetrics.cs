@@ -141,6 +141,16 @@ namespace System.Drawing.WebGpuBackend
             return face is TrueTypeFont ttf && ttf.TryGetAverageCharWidth(ppem, out width);
         }
 
+        /// <summary>GetCharWidthInfo's lMaxNegA / lMaxNegC for this family and style at this pixel size.</summary>
+        internal static bool TryGetMaxNegativeBearings(string family, bool bold, bool italic, float emPx, out int negA, out int negC)
+        {
+            negA = negC = 0;
+            int ppem = (int) Math.Round(emPx);
+            if (ppem <= 0) return false;
+            IFont face = FontFor((bold ? 1 : 0) | (italic ? 2 : 0), family);
+            return face is TrueTypeFont ttf && ttf.TryGetMaxNegativeBearings(ppem, out negA, out negC);
+        }
+
         // One instance per family and style. A family that ships a real bold or italic file gets
         // that file; one that does not has the style synthesized from its regular face, which is
         // what the flags on TrueTypeFont do.
