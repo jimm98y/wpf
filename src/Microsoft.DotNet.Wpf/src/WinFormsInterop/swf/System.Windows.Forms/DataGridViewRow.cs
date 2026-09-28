@@ -347,9 +347,214 @@ namespace System.Windows.Forms
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
+		// .NET's, as it is.
 		public virtual DataGridViewAdvancedBorderStyle AdjustRowHeaderBorderStyle (DataGridViewAdvancedBorderStyle dataGridViewAdvancedBorderStyleInput, DataGridViewAdvancedBorderStyle dataGridViewAdvancedBorderStylePlaceholder, bool singleVerticalBorderAdded, bool singleHorizontalBorderAdded, bool isFirstDisplayedRow, bool isLastVisibleRow)
 		{
-			throw new NotImplementedException();
+			if (DataGridView != null && DataGridView.ApplyVisualStylesToHeaderCells)
+			{
+				switch (dataGridViewAdvancedBorderStyleInput.All)
+				{
+				case DataGridViewAdvancedCellBorderStyle.Inset:
+					if (isFirstDisplayedRow && !DataGridView.ColumnHeadersVisible)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.None;
+					}
+					dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+					dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+					dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.None;
+					return dataGridViewAdvancedBorderStylePlaceholder;
+				case DataGridViewAdvancedCellBorderStyle.Outset:
+					if (isFirstDisplayedRow && !DataGridView.ColumnHeadersVisible)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.None;
+					}
+					dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.None;
+					return dataGridViewAdvancedBorderStylePlaceholder;
+				case DataGridViewAdvancedCellBorderStyle.OutsetPartial:
+					if (isFirstDisplayedRow && !DataGridView.ColumnHeadersVisible)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.OutsetDouble;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.None;
+					}
+					if (DataGridView.RightToLeftInternal)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.OutsetDouble;
+					}
+					dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.None;
+					return dataGridViewAdvancedBorderStylePlaceholder;
+				case DataGridViewAdvancedCellBorderStyle.OutsetDouble:
+					if (isFirstDisplayedRow && !DataGridView.ColumnHeadersVisible)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.OutsetDouble;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.None;
+					}
+					if (DataGridView.RightToLeftInternal)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.OutsetDouble;
+					}
+					dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.None;
+					return dataGridViewAdvancedBorderStylePlaceholder;
+				case DataGridViewAdvancedCellBorderStyle.InsetDouble:
+					if (isFirstDisplayedRow && !DataGridView.ColumnHeadersVisible)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.InsetDouble;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.None;
+					}
+					if (DataGridView.RightToLeftInternal)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.InsetDouble;
+					}
+					dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+					dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.None;
+					return dataGridViewAdvancedBorderStylePlaceholder;
+				case DataGridViewAdvancedCellBorderStyle.Single:
+					if (isFirstDisplayedRow && !DataGridView.ColumnHeadersVisible)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.Single;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.None;
+					}
+					dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Single;
+					dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Single;
+					dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.None;
+					return dataGridViewAdvancedBorderStylePlaceholder;
+				}
+			}
+			else
+			{
+				switch (dataGridViewAdvancedBorderStyleInput.All)
+				{
+				case DataGridViewAdvancedCellBorderStyle.Inset:
+					if (isFirstDisplayedRow & singleHorizontalBorderAdded)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.InsetDouble;
+						dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+						dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+						return dataGridViewAdvancedBorderStylePlaceholder;
+					}
+					break;
+				case DataGridViewAdvancedCellBorderStyle.Outset:
+					if (isFirstDisplayedRow & singleHorizontalBorderAdded)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.OutsetDouble;
+						dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+						dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+						return dataGridViewAdvancedBorderStylePlaceholder;
+					}
+					break;
+				case DataGridViewAdvancedCellBorderStyle.OutsetPartial:
+					if (DataGridView != null && DataGridView.RightToLeftInternal)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+						dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.OutsetDouble;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.OutsetDouble;
+						dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					}
+					if (isFirstDisplayedRow)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = ((DataGridView != null && DataGridView.ColumnHeadersVisible) ? DataGridViewAdvancedCellBorderStyle.Outset : DataGridViewAdvancedCellBorderStyle.OutsetDouble);
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.OutsetPartial;
+					}
+					dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = (isLastVisibleRow ? DataGridViewAdvancedCellBorderStyle.Outset : DataGridViewAdvancedCellBorderStyle.OutsetPartial);
+					return dataGridViewAdvancedBorderStylePlaceholder;
+				case DataGridViewAdvancedCellBorderStyle.OutsetDouble:
+					if (DataGridView != null && DataGridView.RightToLeftInternal)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+						dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.OutsetDouble;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.OutsetDouble;
+						dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					}
+					if (isFirstDisplayedRow)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = ((DataGridView != null && DataGridView.ColumnHeadersVisible) ? DataGridViewAdvancedCellBorderStyle.Outset : DataGridViewAdvancedCellBorderStyle.OutsetDouble);
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					}
+					dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.Outset;
+					return dataGridViewAdvancedBorderStylePlaceholder;
+				case DataGridViewAdvancedCellBorderStyle.InsetDouble:
+					if (DataGridView != null && DataGridView.RightToLeftInternal)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+						dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.InsetDouble;
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.InsetDouble;
+						dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+					}
+					if (isFirstDisplayedRow)
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = ((DataGridView != null && DataGridView.ColumnHeadersVisible) ? DataGridViewAdvancedCellBorderStyle.Inset : DataGridViewAdvancedCellBorderStyle.InsetDouble);
+					}
+					else
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+					}
+					dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.Inset;
+					return dataGridViewAdvancedBorderStylePlaceholder;
+				case DataGridViewAdvancedCellBorderStyle.Single:
+					if (!isFirstDisplayedRow || (DataGridView != null && DataGridView.ColumnHeadersVisible))
+					{
+						dataGridViewAdvancedBorderStylePlaceholder.LeftInternal = DataGridViewAdvancedCellBorderStyle.Single;
+						dataGridViewAdvancedBorderStylePlaceholder.TopInternal = DataGridViewAdvancedCellBorderStyle.None;
+						dataGridViewAdvancedBorderStylePlaceholder.BottomInternal = DataGridViewAdvancedCellBorderStyle.Single;
+						dataGridViewAdvancedBorderStylePlaceholder.RightInternal = DataGridViewAdvancedCellBorderStyle.Single;
+						return dataGridViewAdvancedBorderStylePlaceholder;
+					}
+					break;
+				}
+			}
+			return dataGridViewAdvancedBorderStyleInput;
 		}
 
 		public override object Clone ()
@@ -623,7 +828,10 @@ namespace System.Windows.Forms
 			rowBounds.Width = DataGridView.RowHeadersWidth;
 			graphics.FillRectangle (Brushes.White, rowBounds);
 	
-			HeaderCell.PaintWork (graphics, clipBounds, rowBounds, rowIndex, rowState, HeaderCell.InheritedStyle, DataGridView.AdvancedRowHeadersBorderStyle, paintParts);
+			DataGridViewAdvancedBorderStyle border = AdjustRowHeaderBorderStyle (DataGridView.AdvancedRowHeadersBorderStyle,
+				new DataGridViewAdvancedBorderStyle (), DataGridView.SingleVerticalBorderAdded, DataGridView.SingleHorizontalBorderAdded,
+				isFirstDisplayedRow, isLastVisibleRow);
+			HeaderCell.PaintWork (graphics, clipBounds, rowBounds, rowIndex, rowState, HeaderCell.InheritedStyle, border, paintParts);
 		}
 
 		internal override void SetDataGridView (DataGridView dataGridView)

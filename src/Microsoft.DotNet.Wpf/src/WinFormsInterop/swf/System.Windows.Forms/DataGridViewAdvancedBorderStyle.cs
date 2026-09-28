@@ -56,6 +56,12 @@ namespace System.Windows.Forms {
 			}
 		}
 
+		// .NET's unchecked setters, for the Adjust*BorderStyle placeholders.
+		internal DataGridViewAdvancedCellBorderStyle LeftInternal { set { left = value; } }
+		internal DataGridViewAdvancedCellBorderStyle RightInternal { set { right = value; } }
+		internal DataGridViewAdvancedCellBorderStyle TopInternal { set { top = value; } }
+		internal DataGridViewAdvancedCellBorderStyle BottomInternal { set { bottom = value; } }
+
 		public DataGridViewAdvancedCellBorderStyle Bottom {
 			get { return bottom; }
 			set {

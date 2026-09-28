@@ -156,7 +156,8 @@ namespace System.Windows.Forms {
 			advancedColumnHeadersBorderStyle = new DataGridViewAdvancedBorderStyle();
 			advancedColumnHeadersBorderStyle.All = DataGridViewAdvancedCellBorderStyle.Single;
 			advancedRowHeadersBorderStyle = new DataGridViewAdvancedBorderStyle();
-			advancedRowHeadersBorderStyle.All = DataGridViewAdvancedCellBorderStyle.Single;
+			// .NET's default, RowHeadersBorderStyle Raised.
+			advancedRowHeadersBorderStyle.All = DataGridViewAdvancedCellBorderStyle.OutsetPartial;
 			alternatingRowsDefaultCellStyle = new DataGridViewCellStyle();
 			allowUserToAddRows = true;
 			allowUserToDeleteRows = true;
@@ -203,7 +204,7 @@ namespace System.Windows.Forms {
 			isCurrentCellDirty = false;
 			multiSelect = true;
 			readOnly = false;
-			rowHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
+			rowHeadersBorderStyle = DataGridViewHeaderBorderStyle.Raised;
 			rowHeadersDefaultCellStyle = (DataGridViewCellStyle) columnHeadersDefaultCellStyle.Clone ();
 			rowHeadersVisible = true;
 			rowHeadersWidth = 41;
@@ -489,6 +490,20 @@ namespace System.Windows.Forms {
 		/// content from x+2, and every column's own line on its last pixel.</summary>
 		internal int FirstColumnGutter
 			=> !RowHeadersVisible && AdvancedCellBorderStyle.All == DataGridViewAdvancedCellBorderStyle.Single ? 1 : 0;
+
+		// .NET's.
+		internal bool SingleVerticalBorderAdded
+			=> !RowHeadersVisible && (AdvancedCellBorderStyle.All == DataGridViewAdvancedCellBorderStyle.Single
+						  || CellBorderStyle == DataGridViewCellBorderStyle.SunkenVertical);
+
+		internal bool SingleHorizontalBorderAdded
+			=> !ColumnHeadersVisible && (AdvancedCellBorderStyle.All == DataGridViewAdvancedCellBorderStyle.Single
+						     || CellBorderStyle == DataGridViewCellBorderStyle.SunkenHorizontal);
+
+		internal bool ApplyVisualStylesToHeaderCells
+			=> Application.RenderWithVisualStyles && EnableHeadersVisualStyles;
+
+		internal bool RightToLeftInternal => RightToLeft == RightToLeft.Yes;
 
 		internal int BorderWidth {
 			get {
@@ -1075,6 +1090,13 @@ namespace System.Windows.Forms {
 			set {
 				if (rowHeadersBorderStyle != value) {
 					rowHeadersBorderStyle = value;
+					// .NET's mapping onto the advanced style.
+					advancedRowHeadersBorderStyle.All = value switch {
+						DataGridViewHeaderBorderStyle.Single => DataGridViewAdvancedCellBorderStyle.Single,
+						DataGridViewHeaderBorderStyle.Raised => DataGridViewAdvancedCellBorderStyle.OutsetPartial,
+						DataGridViewHeaderBorderStyle.Sunken => DataGridViewAdvancedCellBorderStyle.InsetDouble,
+						_ => DataGridViewAdvancedCellBorderStyle.None,
+					};
 					OnRowHeadersBorderStyleChanged(EventArgs.Empty);
 				}
 			}
