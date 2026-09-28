@@ -1269,8 +1269,7 @@ namespace System.Windows.Forms.VisualStyles
 			Shape edge = dir < 2 ? Box (0, 0, 1, 17) : Box (0, 0, 17, 1);
 			Frame f = Stretched (Render (17, 17, new Layer (Box (0, 0, 17, 17), ScrollFace), new Layer (edge, 0xffffffffu)), 8, 8, 8, 8);
 			if (look > 0) {
-				f.Glyph = s_arrowsExact.TryGetValue (state, out var exact) ? ArrowExact (dir, 13, exact)
-					: Arrow (dir, 13, s_arrows [dir, look - 1]);
+				f.Glyph = ArrowFillet (dir, look);
 				// The glyph is picked by the button's smaller side (IMAGESELECTTYPE SIZE): the theme's
 				// MINSIZE1..3 give 13 px below 21, 16 px from 21, 20 px from 26; its fourth image, 32
 				// px, carries no MINSIZE and uxtheme takes it from 32 (the 39 and 52 px ones are never
@@ -1282,28 +1281,59 @@ namespace System.Windows.Forms.VisualStyles
 			return f;
 		}
 
-		// The 13-pixel glyphs as exact-area rounded triangles (ArrowExact), by SBP_ARROWBTN state:
-		// cx, apex, base, half-width, rounding and alpha, fitted to each state's image in its own
-		// up-pointing frame. The theme's arrows are not one shape turned four ways -- the up arrow
-		// sits lower in its frame than the others -- so each state has its own.
-		static readonly Dictionary<int, (float cx, float apex, float bse, float hw, float r, float a)> s_arrowsExact = new () {
-			{ 2, (7.0067f, 4.6446f, 9.1335f, 3.3488f, 1.2494f, 0.5783f) },
-			{ 3, (7.0033f, 3.3524f, 9.5647f, 4.1248f, 0.0601f, 0.5758f) },
-			{ 4, (7.0014f, 4.6894f, 8.9636f, 3.0488f, 1.041f, 0.3171f) },
-			{ 6, (7.0007f, 3.439f, 8.218f, 3.4148f, 1.166f, 0.5755f) },
-			{ 7, (6.9926f, 4.2855f, 7.62f, 2.5323f, 1.0144f, 0.5715f) },
-			{ 8, (7.0038f, 3.7203f, 7.9402f, 3.0029f, 1.0633f, 0.3171f) },
-			{ 10, (7.0003f, 3.4365f, 8.187f, 3.3997f, 1.1884f, 0.5772f) },
-			{ 11, (7.0001f, 4.1498f, 7.7007f, 2.6621f, 0.9254f, 0.5762f) },
-			{ 12, (7.0069f, 4.0129f, 7.8686f, 2.927f, 1.137f, 0.3178f) },
-			{ 14, (6.9917f, 3.6447f, 8.1573f, 3.36f, 1.2195f, 0.577f) },
-			{ 15, (7.002f, 4.2508f, 7.6448f, 2.5576f, 0.9837f, 0.5759f) },
-			{ 16, (7.0075f, 4.0973f, 7.8453f, 2.9338f, 1.1589f, 0.319f) },
-			{ 17, (6.9983f, 4.7767f, 8.9188f, 2.9754f, 1.0841f, 0.4479f) },
-			{ 18, (6.9999f, 3.7229f, 7.9468f, 3.0319f, 1.0557f, 0.4468f) },
-			{ 19, (7.0107f, 3.9429f, 7.9005f, 2.9773f, 1.1006f, 0.4484f) },
-			{ 20, (7.003f, 3.6502f, 7.9866f, 3.0914f, 1.0115f, 0.4478f) },
+		// The 13-pixel glyphs: EXACT-AREA triangles with their corners FILLETED -- rounded inside,
+		// the apex by more than the base corners, which is what leaves the tip flat -- one shape per
+		// look, the same in all four directions except that the up arrow stands a pixel lower in its
+		// frame. Apex, base, half-width (about x = 7), apex radius, base radius and alpha in the
+		// up-pointing frame, by look: hot, pressed, disabled, and the bar's hover. Each is within 4
+		// to 14 levels of every direction's image (the old rounded-triangle fits: 55 to 139).
+		static readonly (float apex, float bse, float hw, float ra, float rb, float a) [] s_arrowFillets = {
+			(1.3125f, 9.375f, 5.6484f, 1.7266f, 1.1563f, 0.5778f),
+			(2.2813f, 8.625f, 4.375f, 1.4063f, 0.8906f, 0.5778f),
+			(1.7813f, 8.9941f, 5.002f, 1.5938f, 1f, 0.318f),
+			(1.75f, 9f, 4.9844f, 1.6094f, 1f, 0.4489f),
 		};
+
+		static Frame ArrowFillet (int dir, int look)
+		{
+			var t = s_arrowFillets [look - 1];
+			float dy = dir == 0 ? 1 : 0;
+			var tri = new [] { new PointF (7, t.apex + dy), new PointF (7 + t.hw, t.bse + dy), new PointF (7 - t.hw, t.bse + dy) };
+			float [] radius = { t.ra, t.rb, t.rb };
+			var poly = new List<PointF> ();
+			for (int i = 0; i < 3; i++) {
+				PointF p0 = tri [(i + 2) % 3], p1 = tri [i], p2 = tri [(i + 1) % 3];
+				double ax = p0.X - p1.X, ay = p0.Y - p1.Y, bx = p2.X - p1.X, by = p2.Y - p1.Y;
+				double la = Math.Sqrt (ax * ax + ay * ay), lb = Math.Sqrt (bx * bx + by * by);
+				ax /= la; ay /= la; bx /= lb; by /= lb;
+				double half = Math.Acos (Math.Clamp (ax * bx + ay * by, -1, 1)) / 2, r = radius [i];
+				double sx = ax + bx, sy = ay + by, sl = Math.Sqrt (sx * sx + sy * sy);
+				double cx = p1.X + sx / sl * r / Math.Sin (half), cy = p1.Y + sy / sl * r / Math.Sin (half);
+				double tan = r / Math.Tan (half);
+				double a1 = Math.Atan2 (p1.Y + ay * tan - cy, p1.X + ax * tan - cx), a2 = Math.Atan2 (p1.Y + by * tan - cy, p1.X + bx * tan - cx), d = a2 - a1;
+				while (d > Math.PI) d -= 2 * Math.PI;
+				while (d < -Math.PI) d += 2 * Math.PI;
+				for (int k = 0; k <= 16; k++) {
+					double u = a1 + d * k / 16;
+					float ux = (float) (cx + r * Math.Cos (u)), uy = (float) (cy + r * Math.Sin (u));
+					// up-frame (U, V) to the device: down (U, 13 - V), left (V, U), right (13 - V, U).
+					poly.Add (dir switch {
+						1 => new PointF (ux, 13 - uy),
+						2 => new PointF (uy, ux),
+						3 => new PointF (13 - uy, ux),
+						_ => new PointF (ux, uy),
+					});
+				}
+			}
+			var f = new Frame (13, 13);
+			for (int y = 0; y < 13; y++)
+				for (int x = 0; x < 13; x++) {
+					uint alpha = (uint) Math.Min (255, (int) (Math.Abs (ClippedArea (poly, x, y, x + 1, y + 1)) * t.a * 255 + 0.5));
+					if (alpha != 0)
+						f.Pixels [y * 13 + x] = alpha << 24;
+				}
+			return f;
+		}
 
 		// Apex, base, half-width, corner radius, alpha and centre of each arrow, by direction and
 		// look (hot, pressed, disabled, hover), fitted in the arrow's own up-pointing frame: the
@@ -1364,41 +1394,6 @@ namespace System.Windows.Forms.VisualStyles
 			return Render (n, n, new Layer (shape, (uint) Math.Round (t.a * 255) << 24));
 		}
 
-		/// <summary>SBP_ARROWBTN's 13-pixel glyph as the theme holds it: EXACT-AREA art (its
-		/// partial pixels are not sixteenths of the full one), a triangle -- apex at (cx, apex),
-		/// base on y = bse, hw either side, in the up-pointing frame -- grown by r (Minkowski, which
-		/// rounds its corners), at alpha a, turned to face <paramref name="dir"/>.</summary>
-		static Frame ArrowExact (int dir, int n, (float cx, float apex, float bse, float hw, float r, float a) t)
-		{
-			var tri = new [] { new PointF (t.cx, t.apex), new PointF (t.cx + t.hw, t.bse), new PointF (t.cx - t.hw, t.bse) };
-			var poly = new List<PointF> ();
-			const int Seg = 24;
-			for (int i = 0; i < 3; i++) {
-				PointF p0 = tri [(i + 2) % 3], p1 = tri [i], p2 = tri [(i + 1) % 3];
-				double a1 = Math.Atan2 (-(p1.X - p0.X), p1.Y - p0.Y), a2 = Math.Atan2 (-(p2.X - p1.X), p2.Y - p1.Y);
-				while (a2 < a1) a2 += 2 * Math.PI;
-				for (int k = 0; k <= Seg; k++) {
-					double u = a1 + (a2 - a1) * k / Seg;
-					float ux = (float) (p1.X + t.r * Math.Cos (u)), uy = (float) (p1.Y + t.r * Math.Sin (u));
-					// up-frame (U, V) to the device: down (U, n - V), left (V, U), right (n - V, U).
-					poly.Add (dir switch {
-						1 => new PointF (ux, n - uy),
-						2 => new PointF (uy, ux),
-						3 => new PointF (n - uy, ux),
-						_ => new PointF (ux, uy),
-					});
-				}
-			}
-			var f = new Frame (n, n);
-			for (int y = 0; y < n; y++)
-				for (int x = 0; x < n; x++) {
-					double c = Math.Abs (ClippedArea (poly, x, y, x + 1, y + 1));
-					uint alpha = (uint) Math.Min (255, (int) (c * t.a * 255 + 0.5));
-					if (alpha != 0)
-						f.Pixels [y * n + x] = alpha << 24;
-				}
-			return f;
-		}
 
 		/// <summary>An upward triangle -- apex at (<paramref name="cx"/>, <paramref name="apex"/>),
 		/// base on y = <paramref name="bse"/>, <paramref name="hw"/> either side -- grown by
