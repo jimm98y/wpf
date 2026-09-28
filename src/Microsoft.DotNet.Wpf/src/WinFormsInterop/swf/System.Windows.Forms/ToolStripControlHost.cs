@@ -107,7 +107,7 @@ namespace System.Windows.Forms
 					this.control_align = value;
 					
 					if (control != null)
-						control.Bounds = AlignInRectangle (this.Bounds, control.Size, this.control_align);
+						SyncControlBounds ();
 				}
 			}
 		}
@@ -296,10 +296,30 @@ namespace System.Windows.Forms
 				control.Dispose ();
 		}
 		
+		// .NET's OnBoundsChanged: the control is first given the item's bounds less its padding,
+		// and only if it will not take them is its own size aligned in the item. Aligning its own
+		// size straight away left a hosted progress bar at its default fifteen rows in a sixteen-
+		// row item.
+		private void SyncControlBounds ()
+		{
+			Rectangle inner = new Rectangle (Bounds.X + Padding.Left, Bounds.Y + Padding.Top,
+			                                 Bounds.Width - Padding.Horizontal, Bounds.Height - Padding.Vertical);
+			// Through the layout path, BoundsSpecified.None, as .NET does: the control's own
+			// (specified) size -- which is what its preferred size answers with -- is left alone,
+			// so the item's size cannot feed back into it.
+			System.Windows.Forms.Layout.IArrangedElement element = control;
+			Rectangle target = AlignInRectangle (this.Bounds, inner.Size, this.control_align);
+			element.SetBounds (target.X, target.Y, target.Width, target.Height, BoundsSpecified.None);
+			if (control.Bounds != target) {
+				target = AlignInRectangle (this.Bounds, control.Size, this.control_align);
+				element.SetBounds (target.X, target.Y, target.Width, target.Height, BoundsSpecified.None);
+			}
+		}
+
 		protected override void OnBoundsChanged ()
 		{
 			if (control != null)
-				control.Bounds = AlignInRectangle (this.Bounds, control.Size, this.control_align);
+				SyncControlBounds ();
 
 			base.OnBoundsChanged ();
 		}
@@ -356,7 +376,7 @@ namespace System.Windows.Forms
 			base.OnLayout (e);
 			
 			if (control != null)
-				control.Bounds = AlignInRectangle (this.Bounds, control.Size, this.control_align);
+				SyncControlBounds ();
 		}
 		
 		protected virtual void OnLeave (EventArgs e)
@@ -436,7 +456,7 @@ namespace System.Windows.Forms
 			this.control.Visible = visible;
 
 			if (control != null)
-				control.Bounds = AlignInRectangle (this.Bounds, control.Size, this.control_align);
+				SyncControlBounds ();
 		}
 		#endregion
 

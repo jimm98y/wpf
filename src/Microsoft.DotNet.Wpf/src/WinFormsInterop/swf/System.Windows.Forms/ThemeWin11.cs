@@ -2051,11 +2051,12 @@ namespace System.Windows.Forms
 			if (fraction <= 0)
 				return;
 
-			// One continuous fill, not the classic row of blocks.
-			Rectangle fill = Rectangle.Inflate (bounds, -1, -1);
-			// TRUNCATED, not rounded: a stock bar at this value ends one column earlier than rounding
-			// puts it -- ours ran green to 124 where Windows' trough starts at 124.
-			fill.Width = (int) (fill.Width * Math.Min (1.0, fraction));
+			// comctl32's Progress_PaintThemed: the PP_FILL part in a rectangle MulDiv(width, value -
+			// min, max - min) wide from the client's left edge (PP_TRANSPARENTBAR's content margins
+			// are zero), and the fill image's outermost pixel on every side is clear, so the green is
+			// that rectangle less one all round.
+			int filled = (int) (((long) bounds.Width * (ctrl.Value - ctrl.Minimum) + range / 2) / range);
+			Rectangle fill = new Rectangle (bounds.X + 1, bounds.Y + 1, Math.Min (filled, bounds.Width) - 2, bounds.Height - 2);
 			if (fill.Width <= 0 || fill.Height <= 0)
 				return;
 			dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), fill);

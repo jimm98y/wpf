@@ -1309,6 +1309,10 @@ namespace System.Windows.Forms
 
 				requested_height = height;
 				height = SnapHeight (height);
+			} else if (DropDownStyle != ComboBoxStyle.Simple) {
+				// A drop-down combo box's height is its own: the native control ignores the height
+				// it is moved to, whoever moves it -- a tool strip host sizing it to its item too.
+				height = SnapHeight (height);
 			}
 
 			base.SetBoundsCore (x, y, width, height, specified);

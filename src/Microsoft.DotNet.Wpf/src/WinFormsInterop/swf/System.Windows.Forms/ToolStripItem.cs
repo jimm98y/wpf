@@ -583,9 +583,15 @@ namespace System.Windows.Forms
 			get { return this.placement == ToolStripItemPlacement.Overflow; }
 		}
 		
+		// .NET's UseAmbientMargin: until the margin is set by hand it follows DefaultMargin, which
+		// depends on the owner -- an item on a status strip takes the status strip's.
+		private bool use_ambient_margin = true;
+
 		public Padding Margin {
 			get { return this.margin; }
 			set {
+				if (this.margin != value)
+					use_ambient_margin = false;
 				this.margin = value; 
 				this.CalculateAutoSize ();
 			}
@@ -854,7 +860,9 @@ namespace System.Windows.Forms
 		#region Protected Properties
 		protected virtual bool DefaultAutoToolTip { get { return false; } }
 		protected virtual ToolStripItemDisplayStyle DefaultDisplayStyle { get { return ToolStripItemDisplayStyle.ImageAndText; } }
-		protected internal virtual Padding DefaultMargin { get { return new Padding (0, 1, 0, 2); } }
+		protected internal virtual Padding DefaultMargin {
+			get { return owner is StatusStrip ? new Padding (0, 2, 0, 0) : new Padding (0, 1, 0, 2); }
+		}
 		protected virtual Padding DefaultPadding { get { return new Padding (); } }
 		protected virtual Size DefaultSize { get { return new Size (23, 23); } }
 		protected internal virtual bool DismissWhenClicked { get { return true; } }
@@ -1916,6 +1924,8 @@ namespace System.Windows.Forms
 			set {
 				if (this.owner != value) {
 					this.owner = value;
+					if (use_ambient_margin && this.margin != DefaultMargin)
+						this.margin = DefaultMargin;
 					if (this.owner != null)
 						this.CalculateAutoSize ();
 					OnOwnerChanged (EventArgs.Empty);
