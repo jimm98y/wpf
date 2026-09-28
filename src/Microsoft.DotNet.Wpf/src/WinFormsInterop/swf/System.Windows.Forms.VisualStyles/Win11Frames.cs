@@ -736,7 +736,7 @@ namespace System.Windows.Forms.VisualStyles
 		internal static Frame DropDownButton (int state)
 		{
 			var (border, bottom, face) = ComboLook (state);
-			Frame f = Stretched (Field (7, 21, 2, 1, border, bottom, 1.0625f, face, 1), 3, 3, 7, 8);
+			Frame f = Stretched (ExactRing (7, 21, 1.9375f, 0.875f, border, bottom, face), 3, 3, 7, 8);
 			f.Glyph = Chevron (state);
 			return f;
 		}
@@ -745,7 +745,7 @@ namespace System.Windows.Forms.VisualStyles
 		internal static Frame ComboReadOnly (int state)
 		{
 			var (border, bottom, face) = ComboLook (state);
-			return Stretched (Field (7, 21, 2, 1, border, bottom, 1.0625f, face, 1), 3, 3, 4, 4);
+			return Stretched (ExactRing (7, 21, 1.9375f, 0.875f, border, bottom, face), 3, 3, 4, 4);
 		}
 
 		/// <summary>CP_DROPDOWNBUTTONRIGHT/LEFT, the button inside an editable combo box: nothing
@@ -778,6 +778,10 @@ namespace System.Windows.Forms.VisualStyles
 		/// rounded rectangle a pixel inside it in <paramref name="face"/>, each pixel the exact area
 		/// each covers -- the colour mixed by area, premultiplied by the alpha after that is rounded.</summary>
 		static Frame ExactRing (int w, int h, float outer, float inner, uint border, uint face)
+			=> ExactRing (w, h, outer, inner, border, border, face);
+
+		/// <summary>As above, the border's last row in <paramref name="bottom"/>.</summary>
+		static Frame ExactRing (int w, int h, float outer, float inner, uint border, uint bottom, uint face)
 		{
 			List<PointF> o = RoundRectPolygon (0, 0, w, h, outer), i = RoundRectPolygon (1, 1, w - 1, h - 1, inner);
 			var f = new Frame (w, h);
@@ -790,7 +794,8 @@ namespace System.Windows.Forms.VisualStyles
 						continue;
 					uint px = (uint) a << 24;
 					for (int sh = 0; sh < 24; sh += 8) {
-						double straight = (((border >> sh) & 0xff) * (co - ci) + ((face >> sh) & 0xff) * ci) / co;
+						uint edge = y == h - 1 ? bottom : border;
+						double straight = (((edge >> sh) & 0xff) * (co - ci) + ((face >> sh) & 0xff) * ci) / co;
 						px |= (uint) Math.Min (255, (int) (straight * a / 255 + 0.5)) << sh;
 					}
 					f.Pixels [y * w + x] = px;

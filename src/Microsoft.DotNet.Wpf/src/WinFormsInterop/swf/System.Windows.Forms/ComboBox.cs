@@ -1428,7 +1428,19 @@ namespace System.Windows.Forms
 				Invalidate (button_area);
 			}
 
-			if (textbox_ctrl != null) {
+			if (textbox_ctrl != null && VisualStyles.VisualStyleRenderer.IsSupported
+			    && FlatStyle != FlatStyle.Flat && FlatStyle != FlatStyle.Popup) {
+				// comctl32's ComboBox_CalcControlRects: the edit stands inside the themed border's
+				// three-pixel margins, as tall as a line of the font plus SM_CYEDGE, and stops a
+				// scroll bar's width short of the right margin, where the button goes. The text
+				// sits on the edit's top row.
+				const int Margin = 3;
+				textbox_ctrl.TopMargin = 0;
+				textbox_ctrl.AutoSize = false;
+				textbox_ctrl.Location = new Point (text_area.X + Margin, text_area.Y + Margin);
+				textbox_ctrl.Width = Math.Max (0, text_area.Width - 2 * Margin - (dropdown_style == ComboBoxStyle.Simple ? 0 : SystemInformation.VerticalScrollBarWidth));
+				textbox_ctrl.Height = TextRenderer.GdiLineHeight (Font) + 2;
+			} else if (textbox_ctrl != null) {
 				int text_border = border + 1;
 				// A row HIGHER than the side inset. Windows draws an editable combo box's text one row
 				// above the caption of the drop-down-list variant beside it, and matching the two put

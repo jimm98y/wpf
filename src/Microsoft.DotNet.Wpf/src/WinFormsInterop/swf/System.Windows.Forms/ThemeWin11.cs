@@ -395,11 +395,15 @@ namespace System.Windows.Forms
 				// comctl32 draws a themed combo box whole from the theme: a drop-down list is the
 				// CP_READONLY face over the entire control, an editable one the CP_BORDER frame,
 				// and a simple one that frame round its edit field; the drop button comes after.
+				// Both parts are partly transparent at their corners, and comctl32 paints the parent's
+				// background under them first (DrawThemeParentBackground) -- not the combo's own colour.
 				switch (comboBox.DropDownStyle) {
 				case ComboBoxStyle.DropDownList:
+					g.FillRectangle (ResPool.GetSolidBrush (comboBox.Parent?.BackColor ?? ColorControl), comboBox.ClientRectangle);
 					Win11Frames.Draw (g, Win11Frames.ComboReadOnly (ComboReadOnlyState (comboBox)), comboBox.ClientRectangle);
 					return;
 				case ComboBoxStyle.DropDown:
+					g.FillRectangle (ResPool.GetSolidBrush (comboBox.Parent?.BackColor ?? ColorControl), comboBox.ClientRectangle);
 					Win11Frames.Draw (g, Win11Frames.ComboBorder (ComboBorderState (comboBox)), comboBox.ClientRectangle);
 					return;
 				default:

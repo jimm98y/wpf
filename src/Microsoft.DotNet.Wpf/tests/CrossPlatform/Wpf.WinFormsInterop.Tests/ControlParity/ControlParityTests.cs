@@ -125,8 +125,8 @@ namespace Wpf.WinFormsInterop.Tests
             // "drawn at all" threshold. The window agrees and by much more: 9,303 off the
             // captured difference across the two combo boxes.
             ["combobox-editable"] = (4, 300),
-            // The chevron drawn as exact-area art: ink 11 -> 4.
-            ["combobox-list"] = (4, 225),
+            // The chevron drawn as exact-area art: ink 11 -> 4; the parent colour under the corners: 1.
+            ["combobox-list"] = (1, 225),
             // Windows leaves the control's last row clear -- its frame's bottom edge sits a row above
             // ours did -- and the etched hairline is #DCDCDC, not #DFDFDF. Both measured on the live
             // window, where the group box went from 212,532 to 181,740.
