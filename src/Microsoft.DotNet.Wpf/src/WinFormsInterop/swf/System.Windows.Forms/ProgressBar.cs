@@ -417,6 +417,7 @@ namespace System.Windows.Forms
 				if (value < Minimum || value > Maximum)
 					throw new ArgumentOutOfRangeException ("Value", string.Format("'{0}' is not a valid value for 'Value'. 'Value' should be between 'Minimum' and 'Maximum'", value));
 				val = value;
+				SetHighlightTimer (true);
 				Refresh ();
 			}
 		}
@@ -453,6 +454,7 @@ namespace System.Windows.Forms
 			base.OnHandleCreated (e);
 
 			UpdateAreas ();
+			SetHighlightTimer (true);
 		}
 
 		protected override void OnBackColorChanged (EventArgs e)
@@ -465,8 +467,69 @@ namespace System.Windows.Forms
 			base.OnForeColorChanged (e);
 		}
 			
+		// ---- the themed highlight -------------------------------------------------------------
+		//
+		// comctl32's Progress_SetHighlightTimer / Progress_TimerProc / Progress_PaintThemed: a bar
+		// whose value is strictly between its minimum and maximum waits a second (the theme's 1000),
+		// then repaints at the theme's 30 frames a second; every themed paint moves the glow on by
+		// the theme's 12 pixels (see ThemeWin11.DrawModernProgressBar), and when it has run off the
+		// end the bar goes quiet and the wait starts again.
+
+		/// <summary>Where the glow is, in pixels along the fill; meaningful while HighlightActive.</summary>
+		internal int highlight_pos;
+		internal bool HighlightActive => highlight_step != null && highlight_step.Enabled;
+		Timer highlight_delay, highlight_step;
+
+		/// <summary>How many bars are sweeping right now: a capture that must hold still waits for 0.</summary>
+		internal static int s_active_highlights;
+
+		bool HighlightAllowed => IsHandleCreated && Style != ProgressBarStyle.Marquee && val != Minimum && val != Maximum
+					  && ThemeEngine.Current.ProgressBarAnimates;
+
+		void SetHighlightTimer (bool start)
+		{
+			if (!start || !HighlightAllowed) {
+				highlight_delay?.Stop ();
+				return;
+			}
+			if (HighlightActive || (highlight_delay != null && highlight_delay.Enabled))
+				return;
+			if (highlight_delay == null) {
+				highlight_delay = new Timer { Interval = 1000 };
+				highlight_delay.Tick += delegate {
+					highlight_delay.Stop ();
+					if (!HighlightAllowed)
+						return;
+					highlight_pos = 0;
+					if (highlight_step == null) {
+						highlight_step = new Timer { Interval = 1000 / 30 };
+						highlight_step.Tick += delegate { Invalidate (); };
+					}
+					highlight_step.Start ();
+					s_active_highlights++;
+				};
+			}
+			highlight_delay.Start ();
+		}
+
+		/// <summary>The glow has left the fill: stop, and wait to go again.</summary>
+		internal void EndHighlight ()
+		{
+			if (HighlightActive) {
+				highlight_step.Stop ();
+				s_active_highlights--;
+			}
+			highlight_pos = 0;
+			SetHighlightTimer (true);
+		}
+
 		protected override void OnHandleDestroyed (EventArgs e)
 		{
+			if (HighlightActive) {
+				highlight_step.Stop ();
+				s_active_highlights--;
+			}
+			highlight_delay?.Stop ();
 			Animation.Forget (this);
 			base.OnHandleDestroyed (e);
 		}

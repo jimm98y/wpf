@@ -293,6 +293,69 @@ namespace System.Windows.Forms.VisualStyles
 			return f;
 		}
 
+		/// <summary>PP_MOVEOVERLAY, 127x18 stretched: the glow that sweeps along a progress bar's
+		/// fill -- green (#4DC94D) whose alpha falls away from the middle column like a bell, peak
+		/// 153 and a spread of 20 pixels, a little stronger along its second row.</summary>
+		internal static Frame ProgressMoveOverlay ()
+		{
+			if (s_moveOverlay != null)
+				return s_moveOverlay;
+			var f = new Frame (127, 18);
+			for (int y = 0; y < 18; y++)
+				for (int x = 0; x < 127; x++) {
+					double d = x - 62.5 + 0.5;
+					double a = 153 * Math.Exp (-d * d / (2 * 20.0 * 20.0)) * (y == 1 ? 201 / 152.0 : 1);
+					int ia = Math.Min (255, (int) (a + 0.5));
+					if (ia > 0)
+						f.Pixels [y * 127 + x] = Premultiply (0x4dc94du, (uint) ia);
+				}
+			return s_moveOverlay = Stretched (f, 0, 0, 0, 0);
+		}
+
+		/// <summary>PP_PULSEOVERLAY, 42x18, sizing margins 21/20: a white sheen along the bottom six
+		/// rows, fading in over the first dozen columns and out over the last ten.</summary>
+		internal static Frame ProgressPulseOverlay ()
+		{
+			if (s_pulseOverlay != null)
+				return s_pulseOverlay;
+			int [] rows = { 12, 43, 70, 80, 90, 96 };
+			var f = new Frame (42, 18);
+			for (int y = 12; y < 18; y++)
+				for (int x = 0; x < 42; x++) {
+					double c = Math.Clamp ((x - 3.5) / 8.0, 0, 1) * Math.Clamp ((37 - x) / 9.0, 0, 1);
+					int ia = (int) (rows [y - 12] * c + 0.5);
+					if (ia > 0)
+						f.Pixels [y * 42 + x] = Premultiply (0xffffffu, (uint) ia);
+				}
+			return s_pulseOverlay = Stretched (f, 21, 20, 0, 0);
+		}
+
+		static Frame s_moveOverlay, s_pulseOverlay;
+
+		/// <summary>A frame blitted into <paramref name="bounds"/> and blended at a constant
+		/// <paramref name="alpha"/> (0..255), as AlphaBlend's SourceConstantAlpha does.</summary>
+		internal static void DrawFaded (Graphics g, Frame f, Rectangle bounds, int alpha)
+		{
+			if (bounds.Width <= 0 || bounds.Height <= 0 || alpha <= 0)
+				return;
+			Bitmap src = Blit (f, bounds.Width, bounds.Height);
+			using var bmp = new Bitmap (bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
+			BitmapData sd = src.LockBits (new Rectangle (0, 0, bounds.Width, bounds.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+			BitmapData dd = bmp.LockBits (new Rectangle (0, 0, bounds.Width, bounds.Height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+			var row = new int [bounds.Width];
+			for (int y = 0; y < bounds.Height; y++) {
+				Marshal.Copy (sd.Scan0 + y * sd.Stride, row, 0, bounds.Width);
+				for (int x = 0; x < row.Length; x++) {
+					uint p = (uint) row [x];
+					row [x] = (int) ((p & 0xffffffu) | (((p >> 24) * (uint) alpha + 127) / 255) << 24);
+				}
+				Marshal.Copy (row, 0, dd.Scan0 + y * dd.Stride, bounds.Width);
+			}
+			src.UnlockBits (sd);
+			bmp.UnlockBits (dd);
+			g.DrawImage (bmp, bounds.X, bounds.Y, bounds.Width, bounds.Height);
+		}
+
 		// ---- border-fill parts ---------------------------------------------------------------
 
 		/// <summary>A BGTYPE BORDERFILL part: FILLCOLOR inside a BORDERSIZE frame of BORDERCOLOR,

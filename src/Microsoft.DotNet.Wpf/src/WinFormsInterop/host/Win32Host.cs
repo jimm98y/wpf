@@ -379,6 +379,13 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
             wantSave = false;
             _repaintAsked = true;   // come back: the save is still owed
         }
+        // WF_WEBGPU_SAVE_QUIET=1 holds it further, until no progress bar is in the middle of its
+        // highlight sweep -- the moment a comparison with another capture can hold still.
+        if (wantSave && Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE_QUIET") == "1" && ActiveHighlights() > 0)
+        {
+            wantSave = false;
+            _repaintAsked = true;
+        }
         if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk && !wantSave && !_repaintAsked) return;
         _repaintAsked = false;
 
@@ -403,6 +410,14 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
             CocoaHost.SaveRgbaPng(rgba, _wgpu.DeviceWidth, _wgpu.DeviceHeight, named);
             Console.WriteLine($"saved GPU-rendered frame -> {named}");
         }
+    }
+
+    private static FieldInfo s_activeHighlights;
+
+    private static int ActiveHighlights()
+    {
+        s_activeHighlights ??= typeof(ProgressBar).GetField("s_active_highlights", BindingFlags.NonPublic | BindingFlags.Static);
+        return s_activeHighlights?.GetValue(null) is int n ? n : 0;
     }
 
     /// <summary>Take the window down because the form closed itself (an OK button rather than the

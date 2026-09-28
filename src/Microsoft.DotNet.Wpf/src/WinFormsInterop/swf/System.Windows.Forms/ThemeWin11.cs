@@ -2037,6 +2037,39 @@ namespace System.Windows.Forms
 		private static readonly Color HeaderInnerEdge = Color.FromArgb (241, 241, 241);
 		private static readonly Color InputFrameInner = Color.FromArgb (254, 254, 254);
 
+		/// <summary>comctl32's Progress_PaintThemed + Progress_PaintThemedHighlight, for a bar that is
+		/// sweeping (ProgressBar.HighlightActive): each paint moves the glow on 12 pixels; PP_MOVEOVERLAY
+		/// (127 wide) ends at that position, clipped to the fill; PP_PULSEOVERLAY lies along the fill's
+		/// foot at MulDiv(pos, 511, fill + 127), rising to 255 and falling back; once the glow is past
+		/// the end nothing is drawn and the bar goes quiet until its next wait is up.</summary>
+		private void DrawProgressHighlight (Graphics dc, ProgressBar ctrl, Rectangle part)
+		{
+			if (!ctrl.HighlightActive || part.Width <= 0 || part.Height <= 0)
+				return;
+			const int Cx = 127, Cy = 18, Step = 12;
+			ctrl.highlight_pos += Step;
+			int pos = ctrl.highlight_pos;
+			bool drawn = false;
+			GraphicsState state = dc.Save ();
+			dc.IntersectClip (part);
+			var move = new Rectangle (part.X + pos - Cx, part.Y, Cx, part.Height);
+			if (move.X < part.Right) {
+				Win11Frames.Draw (dc, Win11Frames.ProgressMoveOverlay (), move);
+				drawn = true;
+			}
+			int span = part.Width + Cx;
+			if (pos < span) {
+				int a = MulDiv (pos, 511, span);
+				if (a > 255)
+					a = (byte) (255 - a);
+				Win11Frames.DrawFaded (dc, Win11Frames.ProgressPulseOverlay (), new Rectangle (part.X, part.Bottom - Cy, part.Width, Cy), a);
+				drawn = true;
+			}
+			dc.Restore (state);
+			if (!drawn)
+				ctrl.EndHighlight ();
+		}
+
 		private void DrawModernProgressBar (Graphics dc, ProgressBar ctrl)
 		{
 			Rectangle bounds = ctrl.ClientRectangle;
@@ -2083,8 +2116,9 @@ namespace System.Windows.Forms
 			if (fill.Width <= 0 || fill.Height <= 0)
 				return;
 			dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), fill);
+			DrawProgressHighlight (dc, ctrl, new Rectangle (bounds.X, bounds.Y, Math.Min (filled, bounds.Width), bounds.Height));
 
-			// NO SWEEPING HIGHLIGHT. There used to be one here, with a comment saying a stock progress
+			// (Superseded -- the glow is comctl32's, see DrawProgressHighlight.) NO SWEEPING HIGHLIGHT. There used to be one here, with a comment saying a stock progress
 			// bar whose value never changes is still not a static image. That is not true, and it is
 			// cheap to check: capture the stock window three times and its progress bar is BYTE
 			// IDENTICAL every time, while ours differed from itself by 130,950 between two captures
