@@ -2831,7 +2831,8 @@ namespace System.Windows.Forms
 				if (item_height == 0)
 					item_height =  control.Font.Height + 2;
 
-				int y = top + item_height - (control.v_marker % item_height); // scroll bar offset
+				// On each item's LAST row, as comctl32 draws them -- not the next item's first.
+				int y = top + item_height - 1 - (control.v_marker % item_height); // scroll bar offset
 				while (y < control_size.Height) {
 					dc.DrawLine (SystemPens.Control, 0, y, control_size.Width, y);
 					y += item_height;
