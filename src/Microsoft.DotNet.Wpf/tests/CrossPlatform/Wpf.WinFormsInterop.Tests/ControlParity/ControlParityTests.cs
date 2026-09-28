@@ -74,8 +74,10 @@ namespace Wpf.WinFormsInterop.Tests
             ["monthcalendar"] = (1, 4355),
             // Windows' DrawToBitmap draws a spin box without its children, so the edit and the
             // buttons are all ink here; drawing the buttons with the SPIN parts (as UpDownButtons
-            // does) moved the live window's NUD region 19,689 -> 1,467 and this count by 4.
-            ["numericupdown"] = (2164, 282),
+            // does) moved the live window's NUD region 19,689 -> 1,467 and this count by 4. Shrinking
+            // their margins on pixel centres, as uxtheme does, took the live region to 1,353 and
+            // this count up 2 -- ink Windows' bitmap does not have at all.
+            ["numericupdown"] = (2166, 282),
 
             // Our text-input frames are drawn on WM_NCPAINT, and DrawToBitmap renders the CLIENT area
             // only, so our border is absent from every one of these. Windows' native edit control

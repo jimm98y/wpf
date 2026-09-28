@@ -2449,13 +2449,25 @@ namespace System.Windows.Forms
 					Rectangle client = dtp.ClientRectangle;
 					int w = SystemInformation.VerticalScrollBarWidth;
 					Rectangle spin = new Rectangle (client.Right - 2 - w, client.Top + 2, w, Math.Max (0, client.Height - 4));
-					Rectangle up_bounds = new Rectangle (spin.X, spin.Y, spin.Width, spin.Height / 2);
-					Rectangle down_bounds = new Rectangle (spin.X, up_bounds.Bottom, spin.Width, spin.Height - up_bounds.Height);
-					var disabled = VisualStyles.PushButtonState.Disabled;
-					UpDownBaseDrawButton (dc, up_bounds, true, !dtp.Enabled ? disabled
-						: dtp.is_up_pressed ? VisualStyles.PushButtonState.Pressed : VisualStyles.PushButtonState.Normal);
-					UpDownBaseDrawButton (dc, down_bounds, false, !dtp.Enabled ? disabled
-						: dtp.is_down_pressed ? VisualStyles.PushButtonState.Pressed : VisualStyles.PushButtonState.Normal);
+					if (VisualStyles.VisualStyleRenderer.IsSupported) {
+						// CUpDown::OnPaint: both halves h/2 tall, the up one from the top and the down one up
+						// from the bottom -- an odd height leaves the middle row to the control colour behind
+						// -- each drawn with its SPIN part.
+						dc.FillRectangle (SystemBrushes.Control, spin);
+						int half = spin.Height / 2;
+						DrawSpinPart (dc, new Rectangle (spin.X, spin.Y, spin.Width, half), true,
+							      !dtp.Enabled ? 4 : dtp.is_up_pressed ? 3 : 1);
+						DrawSpinPart (dc, new Rectangle (spin.X, spin.Bottom - half, spin.Width, half), false,
+							      !dtp.Enabled ? 4 : dtp.is_down_pressed ? 3 : 1);
+					} else {
+						Rectangle up_bounds = new Rectangle (spin.X, spin.Y, spin.Width, spin.Height / 2);
+						Rectangle down_bounds = new Rectangle (spin.X, up_bounds.Bottom, spin.Width, spin.Height - up_bounds.Height);
+						var disabled = VisualStyles.PushButtonState.Disabled;
+						UpDownBaseDrawButton (dc, up_bounds, true, !dtp.Enabled ? disabled
+							: dtp.is_up_pressed ? VisualStyles.PushButtonState.Pressed : VisualStyles.PushButtonState.Normal);
+						UpDownBaseDrawButton (dc, down_bounds, false, !dtp.Enabled ? disabled
+							: dtp.is_down_pressed ? VisualStyles.PushButtonState.Pressed : VisualStyles.PushButtonState.Normal);
+					}
 				}
 			}
 
@@ -2487,6 +2499,15 @@ namespace System.Windows.Forms
 		// the check box and short of the button, _RecomputeSizingSEC makes every field as wide as
 		// the widest value it can hold and centres the line, _DrawSubedits draws each one with
 		// DrawText in that rectangle -- numbers right-aligned, names and literals centred.
+		/// <summary>A SPIN part, SPNP_UP or SPNP_DOWN, in the given state (1 normal, 2 hot, 3 pressed,
+		/// 4 disabled), the way DrawThemeBackground draws it.</summary>
+		internal static void DrawSpinPart (Graphics g, Rectangle bounds, bool up, int state)
+		{
+			if (bounds.Width <= 0 || bounds.Height <= 0)
+				return;
+			new VisualStyles.VisualStyleRenderer ("SPIN", up ? 1 : 2, state).DrawBackground (g, bounds);
+		}
+
 		internal static Rectangle DateTimePickerFieldArea (DateTimePicker dtp)
 		{
 			// The themed picker's client is the whole window: its fields start where this puts them

@@ -187,11 +187,14 @@ namespace System.Windows.Forms.VisualStyles
 			if (lo + hi >= source)
 				return d * source / size;
 			if (lo + hi >= size) {
-				// Smaller than its two margins: they share the space in proportion, the far one
-				// still counted from the far end, and nothing is left for the middle.
+				// Smaller than its two margins: they share the space in proportion (the near one
+				// rounded down) and nothing is left for the middle. Each margin is shrunk on its
+				// pixel CENTRES, a tie going to the lower row -- measured through uxtheme on the
+				// SPIN parts at 5..13 rows, where the up button's 9-row margin into 6 takes rows
+				// 0 and 2 and the down button's 8 into 4 takes row 0.
 				int near = lo * size / (lo + hi), far = size - near;
-				return d < near ? d * lo / Math.Max (1, near)
-					: source - 1 - (size - 1 - d) * hi / Math.Max (1, far);
+				return d < near ? ((2 * d + 1) * lo - 1) / (2 * Math.Max (1, near))
+					: source - hi + ((2 * (d - near) + 1) * hi - 1) / (2 * Math.Max (1, far));
 			}
 			if (d < lo)
 				return d;

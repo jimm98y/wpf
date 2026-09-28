@@ -480,8 +480,8 @@ namespace System.Windows.Forms {
 		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
 		public int PreferredHeight {
 			get {
-				// Make it proportional
-				return (int) Math.Ceiling (TextLineHeight * 1.5);
+				// .NET's: the font's height and room for the border.
+				return FontHeight + SystemInformation.BorderSize.Height * 4 + 3;
 			}
 		}
 
