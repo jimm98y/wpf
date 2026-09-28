@@ -1829,6 +1829,18 @@ namespace System.Windows.Forms {
 				ControlPaint.DrawBorder (g, owner.ClientRectangle, ThemeEngine.Current.ColorWindowFrame, ButtonBorderStyle.Solid);
 			}
 
+			// The edit control draws its text clipped to its formatting rectangle -- the client
+			// inside the margins -- so a glyph's ClearType fringe that falls in the left margin is
+			// not drawn (a toolstrip box's "find" lost the lamp left of its 'f' in Windows).
+			System.Drawing.Drawing2D.GraphicsState text_clip = null;
+			if (!owner.richtext) {
+				int fx0 = offset_x + left_margin, fx1 = owner.Width - offset_x - right_margin;
+				if (fx1 > fx0) {
+					text_clip = g.Save ();
+					g.IntersectClip (new Rectangle (fx0, 0, fx1 - fx0, owner.Height));
+				}
+			}
+
 			/// Make sure that we aren't drawing one more line then we need to
 			line = GetLine (end - 1);
 			if (line != null && clip.Bottom == offset_y + line.Y + line.height - viewport_y)
@@ -1971,6 +1983,8 @@ namespace System.Windows.Forms {
 				line.DrawEnding (g, line_y);
 				line_no++;
 			}
+			if (text_clip != null)
+				g.Restore (text_clip);
 		}
 
 		private int GetLineEnding (string line, int start, out LineEnding ending)
