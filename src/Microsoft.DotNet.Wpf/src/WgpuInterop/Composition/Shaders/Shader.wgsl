@@ -14,7 +14,11 @@ fn fs_solid(in : VSOut) -> @location(0) vec4<f32> {
 fn fs_textured(in : VSOut) -> @location(0) vec4<f32> {
     let s = textureSample(tex, samp, in.uv);
     let a = s.a * in.color.a;          // image/ramp alpha * accumulated opacity
-    return vec4<f32>(s.rgb * a, a);    // premultiply
+    // Premultiplied to EIGHT BITS, as GDI+ premultiplies an ARGB image before it blends it (and
+    // as WPF's PBGRA textures hold it): the blend then adds the destination term to a whole
+    // level, so a translucent icon lands where GDI+'s round(c*a) + round(dst*(1-a)) puts it --
+    // a pixel of #81 at 0xB3 on #F0 is 163 there, 162 blended in float.
+    return vec4<f32>(round(s.rgb * a * 255.0) / 255.0, a);
 }
 
 @fragment
