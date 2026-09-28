@@ -1010,7 +1010,7 @@ namespace System.Windows.Forms.VisualStyles
 				if (look == 2)
 					layers.Add (new Layer (Circle (6.5f, 6.5f, 1.9844f), 0xffffffffu));
 			} else {
-				float dot = look switch { 1 => 3.2422f, 2 => 2.0157f, _ => 2.5156f };
+				float dot = look switch { 1 => 3.2422f, 2 => 2.0157f, 3 => 2.5156f, _ => 2.513f };
 				layers.Add (new Layer (Circle (6.5f, 6.5f, outer), Marked (look)));
 				// The dot stands in a dark ring a pixel wide: black at about 0.055 down to the middle,
 				// then deepening to the bottom (0.16, 0.21 pressed) -- an elevation gradient, the accent
@@ -1019,7 +1019,7 @@ namespace System.Windows.Forms.VisualStyles
 					1 => (4.2578f, 0.0537f, 0.1561f, 6.1953f, 9.2578f),
 					2 => (2.9845f, 0.0556f, 0.2147f, 6.0625f, 9.9375f),
 					3 => (0f, 0f, 0f, 0f, 0f),
-					_ => (3.5f, 0.0556f, 0.16f, 6.0781f, 8.75f),
+					_ => (3.5013f, 0.0538f, 0.1602f, 6.27f, 8.8664f),
 				};
 				if (rs > 0)
 					layers.Add (new Layer (Circle (6.5f, 6.5f, rs), (x, y) => {

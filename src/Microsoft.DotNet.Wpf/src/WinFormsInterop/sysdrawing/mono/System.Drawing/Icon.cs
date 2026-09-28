@@ -577,7 +577,12 @@ namespace System.Drawing
 			
 			bmp.UnlockBits (bits);
 
-			bmp = new Bitmap (bmp); // This makes a 32bpp image out of an indexed one
+			// This makes a 32bpp image out of an indexed one. A 32bpp icon is one already, and the
+			// copy is a draw, which premultiplies and back: its half-transparent pixels came out a
+			// level or two darker than the file (a data grid's row arrow, 0xEA at alpha 0xEF, read
+			// back as 0xE8).
+			if (bih.biBitCount < 32)
+				bmp = new Bitmap (bmp);
 
 			// Apply the mask to make properly transparent
 			bytesPerLine = (int)((((bih.biWidth) + 31) & ~31) >> 3);
@@ -626,7 +631,26 @@ namespace System.Drawing
 			// (a) we have no control over the bitmap instance we return (i.e. it could be disposed)
 			// (b) the palette, flags won't match MS results. See MonoTests.System.Drawing.Imaging.IconCodecTest.
 			//     Image16 for the differences
-			return new Bitmap (GetInternalBitmap ());
+			Bitmap source = GetInternalBitmap ();
+			if (source.PixelFormat != PixelFormat.Format32bppArgb)
+				return new Bitmap (source);
+			// A 32bpp icon's pixels are copied, not drawn: a draw premultiplies and back, and its
+			// half-transparent pixels came out a level or two darker than the file. .NET copies them.
+			var copy = new Bitmap (source.Width, source.Height, PixelFormat.Format32bppArgb);
+			var rect = new Rectangle (0, 0, source.Width, source.Height);
+			BitmapData from = source.LockBits (rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+			BitmapData to = copy.LockBits (rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+			try {
+				var row = new byte [source.Width * 4];
+				for (int y = 0; y < source.Height; y++) {
+					Marshal.Copy ((IntPtr) (from.Scan0.ToInt64 () + (long) from.Stride * y), row, 0, row.Length);
+					Marshal.Copy (row, 0, (IntPtr) (to.Scan0.ToInt64 () + (long) to.Stride * y), row.Length);
+				}
+			} finally {
+				copy.UnlockBits (to);
+				source.UnlockBits (from);
+			}
+			return copy;
 		}
 #endif
 		public override string ToString ()
