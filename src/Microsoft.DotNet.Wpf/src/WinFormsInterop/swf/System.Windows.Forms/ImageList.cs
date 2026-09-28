@@ -80,7 +80,8 @@ namespace System.Windows.Forms
 	public sealed class ImageList : System.ComponentModel.Component
 	{
 		#region Private Fields
-		private const ColorDepth DefaultColorDepth = ColorDepth.Depth8Bit;
+		// .NET's default (new ImageList().ColorDepth), not Mono's 8-bit.
+		private const ColorDepth DefaultColorDepth = ColorDepth.Depth32Bit;
 		private static readonly Size DefaultImageSize = new Size(16, 16);
 		private static readonly Color DefaultTransparentColor = Color.Transparent;
 		private object tag;
@@ -496,6 +497,7 @@ namespace System.Windows.Forms
 						graphics.DrawImage(image, imageRect, imageX, 0, imageWidth, imageHeight, GraphicsUnit.Pixel, imageAttributes);
 						graphics.Dispose();
 
+						HandleRoundTrip(bitmap);
 						ReduceColorDepth(bitmap);
 						list.Add(bitmap);
 					}
@@ -543,8 +545,40 @@ namespace System.Windows.Forms
 				if (imageAttributes != null)
 					imageAttributes.Dispose ();
 
+				HandleRoundTrip (bitmap);
 				ReduceColorDepth (bitmap);
 				return bitmap;
+			}
+
+			/// <summary>What a BITMAP (not an icon) looks like once it has been through the native image
+			/// list and back, as .NET's ImageList puts it there: AddToHandle hands comctl32 the colour
+			/// bitmap from Bitmap.GetHbitmap(), which composites each pixel over LightGray (211) and
+			/// keeps its alpha, and the 32-bit list then premultiplies that colour by the alpha again.
+			/// Drawn straight, a half-transparent pixel of a toolbar icon comes out darker than it
+			/// should -- #F6 at alpha 160 is stored as #92 and lands on #F0 as #B5, which is what the
+			/// stock property grid's toolbar shows. Measured by pushing ramps through the stock list.</summary>
+			private static unsafe void HandleRoundTrip (Bitmap bitmap)
+			{
+				BitmapData data = bitmap.LockBits (new Rectangle (0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+				try {
+					for (int y = 0; y < data.Height; y++) {
+						uint* row = (uint*) ((byte*) data.Scan0 + y * data.Stride);
+						for (int x = 0; x < data.Width; x++) {
+							uint p = row [x], a = p >> 24;
+							if (a == 0 || a == 255)
+								continue;
+							uint Channel (int shift)
+							{
+								uint c = (p >> shift) & 0xff;
+								uint comp = (uint) (c * a / 255.0 + 211 * (1 - a / 255.0) + 0.5);
+								return ((comp * a + 127) / 255) << shift;
+							}
+							row [x] = a << 24 | Channel (16) | Channel (8) | Channel (0);
+						}
+					}
+				} finally {
+					bitmap.UnlockBits (data);
+				}
 			}
 
 			private void RecreateHandle()
