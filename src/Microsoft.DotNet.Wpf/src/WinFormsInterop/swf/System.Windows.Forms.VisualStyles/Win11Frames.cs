@@ -621,6 +621,11 @@ namespace System.Windows.Forms.VisualStyles
 		static readonly float [] s_markX = { 8, 10, 24, 29, 34, 32, 50, 64, 62, 78, 96, 94, 99, 106, 118, 121 };
 		static readonly float [] s_markY = { 100, 44, 72, 7, 62, 116, 50, 104, 24, 85, 12, 66, 121, 56, 84, 25 };
 		static readonly float [] s_msx = Array.ConvertAll (s_markX, v => v / 128f), s_msy = Array.ConvertAll (s_markY, v => v / 128f);
+		// The same solve with the push button's images added: better for the button, a little worse
+		// for the marks, so the button keeps its own copy.
+		static readonly float [] s_pushX = { 7, 10, 24, 29, 36, 32, 52, 64, 62, 74, 95, 93, 99, 105, 118, 121 };
+		static readonly float [] s_pushY = { 102, 44, 72, 7, 60, 114, 51, 102, 26, 85, 14, 66, 121, 55, 84, 24 };
+		static readonly float [] s_psx = Array.ConvertAll (s_pushX, v => v / 128f), s_psy = Array.ConvertAll (s_pushY, v => v / 128f);
 
 		internal static Frame RenderSampled (int width, int height, float [] s_sx, float [] s_sy, params Layer [] layers)
 		{
@@ -852,9 +857,9 @@ namespace System.Windows.Forms.VisualStyles
 			};
 			// Under the art's own sample pattern (s_markX/Y), the geometry refitted to the theme image.
 			Paint edge = raised ? Shaded (border, 9, 10, 0.21f) : (x, y) => border;
-			Frame f = RenderSampled (13, 11, s_msx, s_msy,
-				new Layer (RoundRect (1.0078f, 1, 12.0312f, 10, 4.0312f), edge),
-				new Layer (RoundRect (2.0078f, 2, 11.0312f, 9, 3.0938f), face));
+			Frame f = RenderSampled (13, 11, s_psx, s_psy,
+				new Layer (RoundRect (1.0f, 1, 12.0195f, 10, 4.0117f), edge),
+				new Layer (RoundRect (2.0f, 2, 11.0195f, 9, 3.1172f), face));
 			f.Stretch = true;
 			f.Margins = (6, 6, 5, 5);
 			return f;

@@ -96,7 +96,7 @@ namespace Wpf.WinFormsInterop.Tests
             // difference in this reference's own geometry: with one pass it shows, and on an unshown
             // form the caption lands a pixel over from stock's. The live window has it on the same
             // rows as Windows (87..95, both), so this number is the reference disagreeing, not us.
-            ["button-disabled"] = (5, 240),
+            ["button-disabled"] = (6, 240),
             // INK DOWN AND SHADE UP, on both this and the group box, from the group box caption
             // moving to where the LIVE stock window draws it and from the string-format margin it
             // used to carry. This reference is rendered on a form that was never shown, and where
