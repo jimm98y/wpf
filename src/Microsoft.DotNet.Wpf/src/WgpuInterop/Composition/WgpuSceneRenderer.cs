@@ -524,7 +524,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // visual. A shared 1x1 white coverage texture is bound for solid/bounds quads.
         private static string IdShaderWgsl => ShaderSource.Get("IdShader");
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd, LayerStretchAnd }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd, LayerStretchAnd, LayerWindowFade, LayerWindowAdd }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind, bool SourceCopy), IntPtr> _pipelines = new();
@@ -1676,7 +1676,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int dx = (int)MathF.Round(d0.X), dy = (int)MathF.Round(d0.Y);
             int dw = (int)MathF.Round(d1.X) - dx, dh = (int)MathF.Round(d1.Y) - dy;
             if (dw <= 0 || dh <= 0) return;
-            EmitLayerQuad(outData, outFormat, snap.GdiStretch ? FillKind.LayerStretchAnd : FillKind.Layer, cl.SubView, 1f, 1f, 1f, opacity, dx, dy, dw, dh, clip, width, height);
+            if (snap.WindowBlend)
+            {
+                EmitLayerQuad(outData, outFormat, FillKind.LayerWindowFade, cl.SubView, 1f, 1f, 1f, opacity, dx, dy, dw, dh, clip, width, height);
+                EmitLayerQuad(outData, outFormat, FillKind.LayerWindowAdd, cl.SubView, 1f, 1f, 1f, opacity, dx, dy, dw, dh, clip, width, height);
+            }
+            else
+                EmitLayerQuad(outData, outFormat, snap.GdiStretch ? FillKind.LayerStretchAnd : FillKind.Layer, cl.SubView, 1f, 1f, 1f, opacity, dx, dy, dw, dh, clip, width, height);
         }
 
         private static readonly bool s_traceLayerMiss =
@@ -2518,7 +2524,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             float r, float g, float b, float a, int devX, int devY, int texW, int texH, Scissor clip, int width, int height)
         {
             if (clip.IsEmpty) return;
-            IntPtr sampler = kind is FillKind.Layer or FillKind.LayerStretchAnd ? NearestSampler() : LinearSampler();
+            IntPtr sampler = kind is FillKind.Layer or FillKind.LayerStretchAnd or FillKind.LayerWindowFade or FillKind.LayerWindowAdd ? NearestSampler() : LinearSampler();
             IntPtr bindGroup = CreateSampledBindGroup(format, kind, view, sampler);
             DeferReleaseBindGroup(bindGroup);
 
@@ -6477,7 +6483,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         private static IntPtr BindGroupFor(DrawItem d, IntPtr atlasBindGroup) => d.Kind switch
         {
-            FillKind.Textured or FillKind.Layer or FillKind.LayerStretchAnd or FillKind.Blur or FillKind.Shadow or
+            FillKind.Textured or FillKind.Layer or FillKind.LayerStretchAnd or FillKind.LayerWindowFade or FillKind.LayerWindowAdd or FillKind.Blur or FillKind.Shadow or
             FillKind.Clip or FillKind.Coverage or FillKind.MaskBrush or FillKind.MaskImage or
             FillKind.ShapeBrush or        // group 0 = gradient ramp + sampler + brush params
             FillKind.BrushAlpha or FillKind.Id or FillKind.Stroke or
@@ -6874,6 +6880,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 FillKind.TextSubpixelAdd => "fs_text_subpixel_add",
                 FillKind.Layer => "fs_layer",
                 FillKind.LayerStretchAnd => "fs_layer_and",
+                FillKind.LayerWindowFade => "fs_window_fade",
+                FillKind.LayerWindowAdd => "fs_window_add",
                 FillKind.Blur => "fs_blur",
                 FillKind.Shadow => "fs_shadow",
                 FillKind.Clip => "fs_clip",
@@ -6927,6 +6935,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // dst *= (1 - coverage), per channel.
                     blend.color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.OneMinusSrc };
                     blend.alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.OneMinusSrcAlpha };
+                }
+                else if (kind == FillKind.LayerWindowFade)
+                {
+                    // dst = dst (1 - a) - bias; alpha untouched. See fs_window_fade.
+                    blend.color = new WGPUBlendComponent { operation = WGPUBlendOperation.ReverseSubtract, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.OneMinusSrcAlpha };
+                    blend.alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.One };
+                }
+                else if (kind == FillKind.LayerWindowAdd)
+                {
+                    // dst += picture a - bias; alpha untouched.
+                    blend.color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.One };
+                    blend.alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.One };
                 }
                 else if (kind == FillKind.TextSubpixelAdd)
                 {

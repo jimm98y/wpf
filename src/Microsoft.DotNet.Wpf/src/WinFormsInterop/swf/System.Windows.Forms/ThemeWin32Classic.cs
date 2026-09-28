@@ -3783,9 +3783,10 @@ namespace System.Windows.Forms
 			var outside = dc.Save ();
 			dc.ExcludeClip (fx.Z);
 			mc.WithZoom (fx.From, () => DrawMonthCalendarPicture (dc, client, mc));
-			// One blend per frame so far, each at its own alpha: a GPU blend rounded to the 8-bit
-			// target is GDI's constant-alpha AlphaBlend exactly (round((s a + d (255 - a)) / 255),
-			// probed over every source/destination pair), so the sum comes out as the screen's did.
+			// One blend per frame so far, each at its own alpha, as each frame blends onto the WINDOW:
+			// there GDI's constant-alpha AlphaBlend truncates its two terms separately --
+			// floor(s a / 255) + floor(d (255 - a) / 255), probed on a cloaked window over every
+			// source/destination pair, and every one of stock's frame-to-frame steps agrees.
 			// The picture is one cached layer however many times it is drawn. The first frame draws
 			// it at nothing, which is where it is made -- as comctl32 paints its pictures before it
 			// starts the clock.
@@ -3795,7 +3796,7 @@ namespace System.Windows.Forms
 				dc.EndSnapshot ();
 			}
 			foreach (int a in fx.OutsideAlphas) {
-				dc.BeginSnapshot (client, client, a / 255f);
+				dc.BeginSnapshot (client, client, a / 255f, windowBlend: true);
 				DrawMonthCalendarPicture (dc, client, mc);
 				dc.EndSnapshot ();
 			}

@@ -3543,9 +3543,10 @@ namespace System.Drawing
 		/// StretchBlt / AlphaBlend of an off-screen bitmap. Without a GPU recorder the content is drawn
 		/// where it is, unstretched and opaque. <paramref name="stretchBlt"/> stretches as StretchBlt does in
 		/// a DC's default BLACKONWHITE mode (a shrink ANDs the pixels it drops into those it keeps);
-		/// otherwise it is point-sampled, as AlphaBlend stretches.</summary>
-		internal void BeginSnapshot (RectangleF source, RectangleF dest, float opacity, bool stretchBlt = false)
-			=> GpuRecorder?.PushSnapshot (source.X, source.Y, source.Width, source.Height, dest.X, dest.Y, dest.Width, dest.Height, opacity, stretchBlt);
+		/// otherwise it is point-sampled, as AlphaBlend stretches. <paramref name="windowBlend"/> blends as
+		/// AlphaBlend does onto a WINDOW's surface, where each term is truncated on its own.</summary>
+		internal void BeginSnapshot (RectangleF source, RectangleF dest, float opacity, bool stretchBlt = false, bool windowBlend = false)
+			=> GpuRecorder?.PushSnapshot (source.X, source.Y, source.Width, source.Height, dest.X, dest.Y, dest.Width, dest.Height, opacity, stretchBlt, windowBlend);
 
 		internal void EndSnapshot () => GpuRecorder?.PopSnapshot ();
 

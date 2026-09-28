@@ -1,4 +1,4 @@
-//#include _VSOut.wgsl
+﻿//#include _VSOut.wgsl
 
 //#include _VertexCommon.wgsl
 
@@ -63,6 +63,29 @@ fn fs_text_subpixel_add(in : VSOut) -> @location(0) vec4<f32> {
 fn fs_layer(in : VSOut) -> @location(0) vec4<f32> {
     // The layer texture is already premultiplied; scale it by the group opacity.
     return textureSample(tex, samp, in.uv) * in.color.a;
+}
+
+// GDI's constant-alpha AlphaBlend onto a WINDOW surface, measured on a cloaked window over every
+// source/destination pair: floor(s a / 255) + floor(d (255 - a) / 255) -- each term truncated on its
+// own, where a memory DIB rounds the sum. Two draws make it out of fixed-function blending: the
+// first scales the destination by (1 - a) and takes a quarter level off (reverse-subtract), which
+// the 8-bit store then rounds to exactly floor(d (255 - a) / 255); the second adds the picture's
+// s a / 255 less a quarter level, which lands on the now whole destination as floor(s a / 255).
+const WINDOW_BIAS : f32 = 0.25 / 255.0;
+
+@fragment
+fn fs_window_fade(in : VSOut) -> @location(0) vec4<f32> {
+    // Only where the picture has something: a pixel its drawing never reached is transparent, and
+    // there the destination must stay as it is (GDI's pictures are opaque everywhere).
+    let t = textureSample(tex, samp, in.uv);
+    let bias = select(0.0, WINDOW_BIAS, t.a > 0.0);
+    return vec4<f32>(bias, bias, bias, in.color.a * t.a);
+}
+
+@fragment
+fn fs_window_add(in : VSOut) -> @location(0) vec4<f32> {
+    let t = textureSample(tex, samp, in.uv);
+    return vec4<f32>(max(t.rgb * in.color.a - vec3<f32>(WINDOW_BIAS), vec3<f32>(0.0)), 0.0);
 }
 
 // GDI's StretchBlt in the BLACKONWHITE mode a fresh DC starts in, measured off gdi32 itself with

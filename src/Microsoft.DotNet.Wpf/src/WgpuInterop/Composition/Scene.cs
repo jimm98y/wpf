@@ -758,6 +758,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// the pixels a shrink drops are ANDed into the ones it keeps -- rather than point-sampled
         /// as AlphaBlend (and COLORONCOLOR) do.</summary>
         public bool GdiStretch { get; set; }
+        /// <summary>Blended at its opacity as GDI's constant-alpha AlphaBlend blends onto a WINDOW
+        /// surface -- each of the two terms truncated on its own -- rather than as a memory DIB (and
+        /// the GPU) do, rounding their sum.</summary>
+        public bool WindowBlend { get; set; }
     }
 
     internal sealed class SceneVisual
