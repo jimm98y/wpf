@@ -325,7 +325,7 @@ namespace System.Windows.Forms
 			StatusStrip ss = (StatusStrip)e.ToolStrip;
 			
 			if (ss.SizingGrip == true)
-				DrawSizingGrip (e.Graphics, ss.SizeGripBounds);
+				PaintSizingGrip (e.Graphics, ss, SystemBrushes.ButtonHighlight, SystemBrushes.GrayText);
 			
 			ToolStripRenderEventHandler eh = (ToolStripRenderEventHandler)Events [RenderStatusStripSizingGripEvent];
 			if (eh != null)
@@ -559,6 +559,40 @@ namespace System.Windows.Forms
 		private void DrawSizingGrip (Graphics g, Rectangle rect)
 		{
 			ThemeEngine.Current.StatusStripSizingGrip (g, rect);
+		}
+
+		// .NET's s_baseSizeGripRectangles: the dots of the grip, counted from the corner.
+		private static readonly Rectangle [] s_baseSizeGripRectangles = {
+			new Rectangle (12, 0, 2, 2), new Rectangle (8, 4, 2, 2), new Rectangle (4, 8, 2, 2), new Rectangle (0, 12, 2, 2),
+			new Rectangle (8, 0, 2, 2), new Rectangle (4, 4, 2, 2), new Rectangle (0, 8, 2, 2),
+			new Rectangle (4, 0, 2, 2), new Rectangle (0, 4, 2, 2), new Rectangle (1, 1, 2, 2),
+		};
+
+		/// <summary>.NET's OnRenderStatusStripSizingGrip: antialiased dots, each a highlight a pixel up and
+		/// left of a shadow, laid out in a 20-unit design scaled to the grip's height and hung from the
+		/// corner two pixels in. The scale is applied to the rectangles here rather than through the
+		/// transform, which gives the same outlines.</summary>
+		private static void PaintSizingGrip (Graphics g, StatusStrip strip, Brush highlight, Brush shadow)
+		{
+			Rectangle bounds = strip.SizeGripBounds;
+			if (bounds.Width <= 0 || bounds.Height <= 0)
+				return;
+			float scale = bounds.Height / 20f;
+			bool rtl = strip.RightToLeft == RightToLeft.Yes;
+			const int CornerOffset = 2;
+			float ox = rtl ? bounds.Left + CornerOffset : bounds.Right - CornerOffset, oy = bounds.Bottom - CornerOffset;
+			SmoothingMode old = g.SmoothingMode;
+			g.SmoothingMode = SmoothingMode.AntiAlias;
+			RectangleF Place (Rectangle r) => new RectangleF (ox + r.X * scale, oy + r.Y * scale, r.Width * scale, r.Height * scale);
+			foreach (Rectangle b in s_baseSizeGripRectangles) {
+				var r = new Rectangle (rtl ? b.X : -b.X - b.Width, -b.Y - b.Height, b.Width, b.Height);
+				Rectangle light = r, dark = r;
+				light.Offset (-1, -1);
+				dark.Offset (1, 1);
+				g.FillEllipse (highlight, Place (light));
+				g.FillEllipse (shadow, Place (dark));
+			}
+			g.SmoothingMode = old;
 		}
 		#endregion
 	}

@@ -91,7 +91,15 @@ namespace System.Windows.Forms
 		
 		[Browsable (false)]
 		public Rectangle SizeGripBounds {
-			get { return new Rectangle (this.Width - 12, 0, 12, this.Height); }
+			get {
+				// .NET's: 12 wide and at most 22 tall, in the bottom corner on the reading side.
+				if (!SizingGrip)
+					return Rectangle.Empty;
+				int height = Math.Min (22, ClientRectangle.Height), width = 12;
+				return RightToLeft == RightToLeft.Yes
+					? new Rectangle (0, Height - height, width, height)
+					: new Rectangle (Width - width, Height - height, width, height);
+			}
 		}
 		
 		[DefaultValue (true)]

@@ -2573,6 +2573,9 @@ namespace System.Drawing
 		{
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
+			// GDI+ antialiases at PixelOffsetMode.None with each pixel's CENTRE on the integer
+			// coordinate; the recorder's pixel i spans [i, i + 1], so the outline moves half a pixel.
+			if (RecordSolid (brush) && !GpuAliased) { GpuRecorder.FillEllipse (x + 0.5f, y + 0.5f, width, height, ArgbOf (brush)); return; }
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
 			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
