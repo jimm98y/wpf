@@ -250,6 +250,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // outlives the GPU masks' eviction and is simply dropped whole when it grows past the limit.
         private readonly Dictionary<long, PathRasterizer.SubpixelMask> _rawSubpixel = new();
         private const int RawSubpixelLimit = 8192;
+        /// <summary>WPF_RAW_SUBPIXEL=0 rasterizes every mask variant afresh.</summary>
+        private static readonly bool s_rawSubpixelCache = Environment.GetEnvironmentVariable("WPF_RAW_SUBPIXEL") != "0";
         // Gradient ramp textures keyed by their stops: a 256x1 RGBA ramp was rebuilt + re-uploaded EVERY
         // frame per gradient fill (each an unreclaimable Metal command buffer on wgpu-native), so a
         // gradient-heavy page bursts past the 4096 limit. Cached across frames like masks; evicted when unused.
@@ -522,7 +524,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // visual. A shared 1x1 white coverage texture is bound for solid/bounds quads.
         private static string IdShaderWgsl => ShaderSource.Get("IdShader");
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd, LayerStretchAnd }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind, bool SourceCopy), IntPtr> _pipelines = new();
@@ -1674,7 +1676,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int dx = (int)MathF.Round(d0.X), dy = (int)MathF.Round(d0.Y);
             int dw = (int)MathF.Round(d1.X) - dx, dh = (int)MathF.Round(d1.Y) - dy;
             if (dw <= 0 || dh <= 0) return;
-            EmitLayerQuad(outData, outFormat, FillKind.Layer, cl.SubView, 1f, 1f, 1f, opacity, dx, dy, dw, dh, clip, width, height);
+            EmitLayerQuad(outData, outFormat, snap.GdiStretch ? FillKind.LayerStretchAnd : FillKind.Layer, cl.SubView, 1f, 1f, 1f, opacity, dx, dy, dw, dh, clip, width, height);
         }
 
         private static readonly bool s_traceLayerMiss =
@@ -2516,7 +2518,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             float r, float g, float b, float a, int devX, int devY, int texW, int texH, Scissor clip, int width, int height)
         {
             if (clip.IsEmpty) return;
-            IntPtr sampler = kind == FillKind.Layer ? NearestSampler() : LinearSampler();
+            IntPtr sampler = kind is FillKind.Layer or FillKind.LayerStretchAnd ? NearestSampler() : LinearSampler();
             IntPtr bindGroup = CreateSampledBindGroup(format, kind, view, sampler);
             DeferReleaseBindGroup(bindGroup);
 
@@ -4127,7 +4129,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         rawKey = rawKey * 31 + (PathRasterizer.SymmetricVerticalForRun ? 1 : 0)
                                  + (PathRasterizer.ContrastFilterForRun ? 2 : 0) + (_aliasedEdges ? 4 : 0);
                         rawKey = rawKey * 397 ^ clipKey;
-                        if (_rawSubpixel.TryGetValue(rawKey, out PathRasterizer.SubpixelMask raw))
+                        if (s_rawSubpixelCache && _rawSubpixel.TryGetValue(rawKey, out PathRasterizer.SubpixelMask raw))
                         {
                             PathRasterizer.SubpixelRowsForRun = 0; PathRasterizer.DropoutForRun = 0;
                             PathRasterizer.SimBoldPixelsForRun = 0;
@@ -6475,7 +6477,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         private static IntPtr BindGroupFor(DrawItem d, IntPtr atlasBindGroup) => d.Kind switch
         {
-            FillKind.Textured or FillKind.Layer or FillKind.Blur or FillKind.Shadow or
+            FillKind.Textured or FillKind.Layer or FillKind.LayerStretchAnd or FillKind.Blur or FillKind.Shadow or
             FillKind.Clip or FillKind.Coverage or FillKind.MaskBrush or FillKind.MaskImage or
             FillKind.ShapeBrush or        // group 0 = gradient ramp + sampler + brush params
             FillKind.BrushAlpha or FillKind.Id or FillKind.Stroke or
@@ -6871,6 +6873,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 FillKind.TextSubpixelMultiply => "fs_text_subpixel_multiply",
                 FillKind.TextSubpixelAdd => "fs_text_subpixel_add",
                 FillKind.Layer => "fs_layer",
+                FillKind.LayerStretchAnd => "fs_layer_and",
                 FillKind.Blur => "fs_blur",
                 FillKind.Shadow => "fs_shadow",
                 FillKind.Clip => "fs_clip",

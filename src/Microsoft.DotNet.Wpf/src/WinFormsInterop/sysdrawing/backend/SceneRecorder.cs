@@ -77,11 +77,11 @@ namespace System.Drawing.WebGpuBackend
 
         private int _snapshotDepth;
 
-        public void PushSnapshot(float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh, float opacity)
+        public void PushSnapshot(float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh, float opacity, bool gdiStretch)
         {
             var container = new SceneVisual
             {
-                Snapshot = new SceneSnapshot { Source = new Rect(sx, sy, sw, sh), Dest = new Rect(dx, dy, dw, dh) },
+                Snapshot = new SceneSnapshot { Source = new Rect(sx, sy, sw, sh), Dest = new Rect(dx, dy, dw, dh), GdiStretch = gdiStretch },
                 Opacity = Math.Clamp(opacity, 0f, 1f),
             };
             Target.Children.Add(container);

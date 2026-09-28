@@ -3780,13 +3780,20 @@ namespace System.Windows.Forms
 			// it as far as the frames so far have taken it (each frame AlphaBlends it over the screen).
 			Rectangle client = mc.ClientRectangle;
 			double p = fx.Progress;
+			// The two pictures are painted into comctl32's MEMORY DCs, and GDI blends ClearType
+			// text on a memory surface by win32k's rule, not the window surface's -- their glyphs'
+			// fringes are a few levels off the calendar at rest. What stays on screen round the
+			// grid is the window's own.
+			bool memory = dc.memory_surface_text;
 			var outside = dc.Save ();
 			dc.ExcludeClip (fx.Z);
 			mc.WithZoom (fx.From, () => DrawMonthCalendarView (dc, client, mc));
 			// Even at nothing yet: the effect's first frame is where both pictures are made, as
 			// comctl32 paints them into its memory DCs before it starts the clock.
 			dc.BeginSnapshot (client, client, (float) fx.Outside);
+			dc.memory_surface_text = true;
 			DrawMonthCalendarView (dc, client, mc);
+			dc.memory_surface_text = memory;
 			dc.EndSnapshot ();
 			dc.Restore (outside);
 			// The grid: its background (MC_GRIDBACKGROUND, white), the old view's picture stretched
@@ -3795,12 +3802,14 @@ namespace System.Windows.Forms
 			dc.IntersectClip (fx.Z);
 			dc.FillRectangle (ResPool.GetSolidBrush (Color.White), fx.Z);
 			Rectangle old_to = ZoomRect (fx.A, fx.B, p, true, fx.Z), new_to = ZoomRect (fx.A, fx.B, p, false, fx.Z);
-			dc.BeginSnapshot (fx.Z, old_to, 1f);
+			dc.memory_surface_text = true;
+			dc.BeginSnapshot (fx.Z, old_to, 1f, stretchBlt: true);
 			mc.WithZoom (fx.From, () => DrawMonthCalendarView (dc, client, mc));
 			dc.EndSnapshot ();
 			dc.BeginSnapshot (fx.Z, new_to, (int) (p * 255.0) / 255f);
 			DrawMonthCalendarView (dc, client, mc);
 			dc.EndSnapshot ();
+			dc.memory_surface_text = memory;
 			dc.Restore (grid);
 		}
 

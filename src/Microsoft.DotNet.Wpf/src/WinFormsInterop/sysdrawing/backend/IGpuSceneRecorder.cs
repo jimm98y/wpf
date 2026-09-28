@@ -66,7 +66,7 @@ namespace System.Drawing
         /// <summary>Record what follows as a picture: rendered 1:1 over the source rectangle, then
         /// stretched (nearest) into the destination at <paramref name="opacity"/> -- StretchBlt and
         /// AlphaBlend. Ended by <see cref="PopSnapshot"/>.</summary>
-        void PushSnapshot(float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh, float opacity);
+        void PushSnapshot(float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh, float opacity, bool gdiStretch);
         void PopSnapshot();
         void ResetTransform();
 

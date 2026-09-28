@@ -754,6 +754,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     {
         public Rect Source { get; set; }
         public Rect Dest { get; set; }
+        /// <summary>Stretched as GDI's StretchBlt stretches in its default BLACKONWHITE mode --
+        /// the pixels a shrink drops are ANDed into the ones it keeps -- rather than point-sampled
+        /// as AlphaBlend (and COLORONCOLOR) do.</summary>
+        public bool GdiStretch { get; set; }
     }
 
     internal sealed class SceneVisual

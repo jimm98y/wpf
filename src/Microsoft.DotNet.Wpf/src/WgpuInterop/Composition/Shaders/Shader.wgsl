@@ -65,6 +65,38 @@ fn fs_layer(in : VSOut) -> @location(0) vec4<f32> {
     return textureSample(tex, samp, in.uv) * in.color.a;
 }
 
+// GDI's StretchBlt in the BLACKONWHITE mode a fresh DC starts in, measured off gdi32 itself with
+// a bitmap whose every pixel names its own row and column: destination pixel i takes the source
+// the centre DDA picks, c(i) = ((2i + 1) * s) / (2d), ANDed bit by bit with every source pixel
+// the DDA stepped over since the previous one -- (c(i-1), c(i)] -- on both axes. Enlarging steps
+// over nothing, so that is plain replication. The destination size comes from the quad's own UV
+// slope, the source size from the texture.
+fn and_range(i : i32, s : i32, d : i32) -> vec2<i32> {
+    let c = ((2 * i + 1) * s) / (2 * d);
+    var lo = 0;
+    if (i > 0) { lo = min(((2 * i - 1) * s) / (2 * d) + 1, c); }
+    return vec2<i32>(lo, c);
+}
+
+@fragment
+fn fs_layer_and(in : VSOut) -> @location(0) vec4<f32> {
+    let size = vec2<i32>(textureDimensions(tex));
+    let d = vec2<i32>(round(1.0 / abs(vec2<f32>(dpdx(in.uv.x), dpdy(in.uv.y)))));
+    let i = clamp(vec2<i32>(floor(in.uv * vec2<f32>(d))), vec2<i32>(0), d - vec2<i32>(1));
+    let rx = and_range(i.x, size.x, d.x);
+    let ry = and_range(i.y, size.y, d.y);
+    var v = vec4<u32>(255u);
+    for (var y = ry.x; y <= ry.y; y = y + 1) {
+        for (var x = rx.x; x <= rx.y; x = x + 1) {
+            let p = vec4<u32>(round(textureLoad(tex, vec2<i32>(x, y), 0) * 255.0));
+            v = v & p;
+        }
+    }
+    // Keeps the sampler in the pipeline's layout, which the bind group is made against.
+    let keep = textureSampleLevel(tex, samp, in.uv, 0.0) * 0.0;
+    return (vec4<f32>(v) / 255.0 + keep) * in.color.a;
+}
+
 // Separable blur. The blur axis step (uv units), sigma and tap radius are carried in
 // the (constant) vertex colour, so no uniform buffer is needed.
 //
