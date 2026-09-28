@@ -991,7 +991,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public readonly List<PaperInfo> DrawInfo = new();
             /// <summary>Per linear-gradient draw (by index into <see cref="Draws"/>), the colour it
             /// leaves over a device box when that is one 8-bit colour -- see <see cref="GradientPaperAt"/>.</summary>
-            public readonly Dictionary<int, Func<float, float, float, float, RgbaColor?>> GradientPaper = new();
+            public Dictionary<int, Func<float, float, float, float, RgbaColor?>>? GradientPaper;  // lazily: most passes have no gradient
             // Byte offsets of this pass's vertices/indices inside the frame's shared batched geometry
             // buffers (BuildBatchedGeometry). -1 = no geometry / not yet assigned this frame.
             public int VbOffset = -1, IbOffset = -1;
@@ -3219,17 +3219,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 case LinearGradientBrush grad:
                 {
-                    IntPtr view = GetOrCreateRampView(grad.Stops, grad.Bands);
-                    bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, LinearSampler());
+                    // GDI+'s bands are HARD steps: band k = round(bands * t) at each pixel centre. A
+                    // 256-texel ramp under a linear sampler blurs each step over a texel and lands it a
+                    // column early; a (bands + 1)-texel ramp sampled NEAREST at (bands t + 0.5) / (bands + 1)
+                    // picks exactly texel round(bands t) -- u is affine in t, so it interpolates per pixel.
+                    bool banded = grad.Bands > 0;
+                    IntPtr view = banded ? GetOrCreateBandView(grad.Stops, grad.Bands) : GetOrCreateRampView(grad.Stops, grad.Bands);
+                    bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, banded ? NearestSampler() : LinearSampler());
                     DeferReleaseBindGroup(bindGroup);
                     kind = FillKind.Textured;
 
                     Vector2 axis = grad.End - grad.Start;
                     float len2 = axis.LengthSquared();
+                    // AND AT GDI+'S PIXEL CENTRES. A banded gradient is System.Drawing's, and GDI+'s
+                    // default PixelOffsetMode puts a pixel's centre on the integer coordinate, half a
+                    // device pixel before the GPU samples it: every step landed a column early.
+                    float tShift = 0f;
+                    if (banded && len2 > 0f && Matrix3x2.Invert(world, out Matrix3x2 invW))
+                        tShift = Vector2.Dot(Vector2.TransformNormal(new Vector2(0.5f, 0.5f), invW), axis) / len2;
                     foreach (Vector2 p in mesh.Positions)
                     {
-                        float t = len2 > 0f ? Vector2.Dot(p - grad.Start, axis) / len2 : 0f;
-                        AddVertex(data.Verts, ToNdc(Vector2.Transform(p, world), width, height), 1f, 1f, 1f, opacityF, t, 0.5f);
+                        float t = len2 > 0f ? Vector2.Dot(p - grad.Start, axis) / len2 - tShift : 0f;
+                        // A pixel exactly on a band boundary keeps the LOWER band, as GDI+'s does (two of the menu
+                        // strip's twelve steps land on a half and came out a column early).
+                        float u = banded ? (grad.Bands * Math.Clamp(t, 0f, 1f) + 0.5f - 1e-3f) / (grad.Bands + 1) : t;
+                        AddVertex(data.Verts, ToNdc(Vector2.Transform(p, world), width, height), 1f, 1f, 1f, opacityF, u, 0.5f);
                     }
                     break;
                 }
@@ -3274,12 +3288,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             foreach (uint li in mesh.Indices)
                 data.Indices.Add(baseVertex + li);
             data.Draws.Add(new DrawItem(firstIndex, (uint)mesh.Indices.Length, clip, kind, bindGroup, sourceCopy: _srcCopy));
-            if (fill.Brush is LinearGradientBrush lgPaper && opacityF >= 0.999f && Matrix3x2.Invert(world, out Matrix3x2 fromDevice))
+            if (fill.Brush is LinearGradientBrush lgPaper && lgPaper.Bands > 0 && opacityF >= 0.999f
+                && Matrix3x2.Invert(world, out Matrix3x2 fromDevice))
             {
-                byte[] ramp = BuildGradientRamp(lgPaper.Stops, lgPaper.Bands);
+                byte[] ramp = BuildBandRamp(lgPaper.Stops, lgPaper.Bands);
+                int bands = lgPaper.Bands;
                 Vector2 start = lgPaper.Start, axis = lgPaper.End - lgPaper.Start;
                 float ox = _devOX, oy = _devOY;
-                data.GradientPaper[data.Draws.Count - 1] = (x0, y0, x1, y1) => GradientPaperAt(ramp, start, axis, fromDevice, ox, oy, x0, y0, x1, y1);
+                (data.GradientPaper ??= new())[data.Draws.Count - 1] = (x0, y0, x1, y1) => GradientPaperAt(ramp, bands, start, axis, fromDevice, ox, oy, x0, y0, x1, y1);
             }
         }
 
@@ -3288,21 +3304,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// box -- the t of its four corners, a texel either side -- is the same opaque colour. With
         /// GDI+'s sixteen bands a menu strip's gradient is a staircase of flat steps, so the text on
         /// it almost always stands on one grey.</summary>
-        private static RgbaColor? GradientPaperAt(byte[] ramp, Vector2 start, Vector2 axis, Matrix3x2 fromDevice,
+        private static RgbaColor? GradientPaperAt(byte[] ramp, int bands, Vector2 start, Vector2 axis, Matrix3x2 fromDevice,
                                                   float ox, float oy, float x0, float y0, float x1, float y1)
         {
             float len2 = axis.LengthSquared();
             if (len2 <= 0f) return null;
             float tMin = float.MaxValue, tMax = float.MinValue;
-            foreach (Vector2 c in new[] { new Vector2(x0, y0), new Vector2(x1, y0), new Vector2(x0, y1), new Vector2(x1, y1) })
+            // GDI+ samples a pixel at its integer corner (see the mesh fill): the first and last
+            // pixels of the box are sampled at x0 and x1 - 1.
+            float sx1 = MathF.Max(x0, x1 - 1f), sy1 = MathF.Max(y0, y1 - 1f);
+            foreach (Vector2 c in new[] { new Vector2(x0, y0), new Vector2(sx1, y0), new Vector2(x0, sy1), new Vector2(sx1, sy1) })
             {
                 Vector2 p = Vector2.Transform(c - new Vector2(ox, oy), fromDevice);
                 float t = Math.Clamp(Vector2.Dot(p - start, axis) / len2, 0f, 1f);
                 tMin = MathF.Min(tMin, t); tMax = MathF.Max(tMax, t);
             }
+            // The bands the box's pixel centres can fall in.
             int n = ramp.Length / 4;
-            int i0 = Math.Clamp((int) MathF.Floor(tMin * n - 0.5f) - 1, 0, n - 1);
-            int i1 = Math.Clamp((int) MathF.Floor(tMax * n - 0.5f) + 2, 0, n - 1);
+            int i0 = Math.Clamp((int) MathF.Floor(tMin * bands + 0.5f - 1e-3f), 0, n - 1);
+            int i1 = Math.Clamp((int) MathF.Floor(tMax * bands + 0.5f - 1e-3f), 0, n - 1);
             for (int i = i0; i <= i1; i++)
                 if (ramp[i * 4] != ramp[i0 * 4] || ramp[i * 4 + 1] != ramp[i0 * 4 + 1]
                     || ramp[i * 4 + 2] != ramp[i0 * 4 + 2] || ramp[i * 4 + 3] != 255)
@@ -3611,6 +3631,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                    new Vector2(((RadialGradientBrush)gradient).RadiusX, ((RadialGradientBrush)gradient).RadiusY));
 
             byte[] uni = BuildBrushParams(gradient, g0, g1, 0f, 0f, 0f, 0f, (float)Math.Clamp(opacity, 0.0, 1.0));
+            // A banded (GDI+) linear gradient: its bands and the half-pixel shift to GDI+'s pixel
+            // centres, for fs_shapebrush (misc.z, misc.w) -- the same rule as the mesh fill.
+            if (gradient is LinearGradientBrush banded && banded.Bands > 0)
+            {
+                Span<float> mf = MemoryMarshal.Cast<byte, float>((Span<byte>) uni);
+                Vector2 axis = banded.End - banded.Start;
+                float len2 = axis.LengthSquared();
+                mf[14] = banded.Bands;
+                if (len2 > 0f && Matrix3x2.Invert(world, out Matrix3x2 invW))
+                    mf[15] = Vector2.Dot(Vector2.TransformNormal(new Vector2(0.5f, 0.5f), invW), axis) / len2;
+            }
             IntPtr ubuf = GetOrCreateUniform(uni);
             IntPtr rampView = GetOrCreateRampView(BrushStops(gradient), BrushBands(gradient));
             IntPtr bg = CreateBrushBindGroup(format, FillKind.ShapeBrush, IntPtr.Zero, rampView, ubuf, uni.Length, _srcCopy);
@@ -4884,7 +4915,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         && corners.Contains((x0, y0)) && corners.Contains((x1, y0))
                         && corners.Contains((x0, y1)) && corners.Contains((x1, y1));
             // A rectangle of a linear gradient: paper wherever the gradient is one colour.
-            if (d.Kind == FillKind.Textured && quad && data.GradientPaper.TryGetValue(index, out var gradient))
+            if (d.Kind == FillKind.Textured && quad && data.GradientPaper is { } gp && gp.TryGetValue(index, out var gradient))
                 return new PaperInfo(bx0, by0, bx1, by1, gradient);
             bool rect = d.Kind == FillKind.Solid && quad;
             return new PaperInfo(bx0, by0, bx1, by1, rect ? new RgbaColor(r, g, bl, 1f) : null);
@@ -7506,6 +7537,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var (tex, view) = CreateRgbaTexture(BuildGradientRamp(stops, bands), GradientRampTexels, 1);
             _rampCache[key] = (tex, view, _frameId);
             return view;
+        }
+
+        private readonly Dictionary<long, (IntPtr Tex, IntPtr View, long LastFrame)> _bandCache = new();
+
+        private IntPtr GetOrCreateBandView(GradientStop[] stops, int bands)
+        {
+            var h = new HashCode();
+            foreach (GradientStop st in stops) { h.Add(st.Offset); h.Add(st.Color.R); h.Add(st.Color.G); h.Add(st.Color.B); h.Add(st.Color.A); }
+            h.Add(bands);
+            long key = h.ToHashCode();
+            if (_bandCache.TryGetValue(key, out (IntPtr Tex, IntPtr View, long LastFrame) e))
+            {
+                _bandCache[key] = (e.Tex, e.View, _frameId);
+                return e.View;
+            }
+            var (tex, view) = CreateRgbaTexture(BuildBandRamp(stops, bands), bands + 1, 1);
+            _bandCache[key] = (tex, view, _frameId);
+            return view;
+        }
+
+        /// <summary>A banded gradient's bands + 1 colours: band k is the stops' colour at k / bands.</summary>
+        private static byte[] BuildBandRamp(GradientStop[] stops, int bands)
+        {
+            var ramp = new byte[(bands + 1) * 4];
+            for (int k = 0; k <= bands; k++)
+            {
+                RgbaColor c = SampleStops(stops, k / (float) bands);
+                ramp[k * 4 + 0] = ToByte(c.R); ramp[k * 4 + 1] = ToByte(c.G);
+                ramp[k * 4 + 2] = ToByte(c.B); ramp[k * 4 + 3] = ToByte(c.A);
+            }
+            return ramp;
         }
 
         private static byte[] BuildGradientRamp(GradientStop[] stops, int bands)
