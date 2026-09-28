@@ -39,7 +39,7 @@ namespace Wpf.WinFormsInterop.Tests
         /// sixteenth of coverage. Lower it when a frame gets closer.</summary>
         private static readonly Dictionary<int, long> Ceiling = new()
         {
-            [1] = 158,      // PUSHBUTTON, 6 frames of 13x11
+            [1] = 137,      // PUSHBUTTON, 6 frames of 13x11
             [2] = 694,      // RADIOBUTTON, 8 frames of 13x13
             [3] = 1985,     // CHECKBOX, 20 frames of 13x13
         };

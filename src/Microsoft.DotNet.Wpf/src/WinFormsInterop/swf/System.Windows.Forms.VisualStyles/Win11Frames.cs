@@ -942,8 +942,11 @@ namespace System.Windows.Forms.VisualStyles
 				_ => (0xffd0d0d0u, 0xfffdfdfdu, true),   // normal
 			};
 			// The art's own pattern and whole-number geometry (see s_orbX); the raised looks darken
-			// the border over its bottom row, 14% by the lowest half pixel.
-			Paint edge = raised ? Shaded (border, 9, 9.5f, 0.14f) : (x, y) => border;
+			// the border over its bottom row, 14% by the lowest half pixel -- but only as far as 3.25
+			// pixels from the right edge: the bottom-right corner keeps the border colour (the art is
+			// not mirror-symmetric there; the bottom-left corner is darkened).
+			Paint shaded = Shaded (border, 9, 9.5f, 0.14f);
+			Paint edge = raised ? (x, y) => x <= 13 - 3.25f ? shaded (x, y) : border : (x, y) => border;
 			Frame f = RenderArt (13, 11,
 				new Layer (RoundRect (1, 1, 12, 10, 4), edge),
 				new Layer (RoundRect (2, 2, 11, 9, 3), face));
@@ -1626,12 +1629,12 @@ namespace System.Windows.Forms.VisualStyles
 
 		/// <summary>The combo box's chevron, 10x19, in the state's ink. Exact-area art like the
 		/// Explorer tree glyph (its faintest pixels carry alpha 6): a 0.76-pixel stroke from
-		/// (1.05, 7.87) down to (5, 11.81) and back up, round-joined, its ends 0.07 past those points
-		/// with their corners rounded by 0.29 -- 5 to 14 levels from the theme image per look.</summary>
+		/// (1.05, 7.87) down to (5, 11.81) and back up, round-joined, its ends 0.10 past those points
+		/// with their corners rounded by 0.35 -- no pixel more than a level from the theme image.</summary>
 		static Frame Chevron (int state)
 		{
 			uint ink = state switch { 2 => 0x1f1f1fu, 4 => 0xa8a8a8u, _ => 0x3f3f3fu };
-			return RenderExactArea (10, 19, RoundJoinChevron (1.0547f, 7.8672f, 5f, 11.8125f, 8.9453f, 7.8672f, 0.7555f, 0.0742f, 0.2941f), ink);
+			return RenderExactArea (10, 19, RoundJoinChevron (1.0547f, 7.8672f, 5f, 11.8125f, 8.9453f, 7.8672f, 0.7555f, 0.0984f, 0.3516f), ink);
 		}
 
 		/// <summary>The border and face of an unmarked check box or radio button.</summary>
