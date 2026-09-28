@@ -40,8 +40,8 @@ namespace Wpf.WinFormsInterop.Tests
         private static readonly Dictionary<int, long> Ceiling = new()
         {
             [1] = 2288,     // PUSHBUTTON, 6 frames of 13x11
-            [2] = 9269,     // RADIOBUTTON, 8 frames of 13x13
-            [3] = 10998,    // CHECKBOX, 20 frames of 13x13
+            [2] = 4123,     // RADIOBUTTON, 8 frames of 13x13
+            [3] = 5001,     // CHECKBOX, 20 frames of 13x13
         };
 
         [Theory]

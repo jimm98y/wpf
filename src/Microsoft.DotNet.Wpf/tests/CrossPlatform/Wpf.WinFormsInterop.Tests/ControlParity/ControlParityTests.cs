@@ -112,9 +112,9 @@ namespace Wpf.WinFormsInterop.Tests
             // theme's on a few pixels -- the one and five ink pixels the two clear/checked boxes
             // gained, against 7 to 348 every other button, radio and check specimen lost.
             ["checkbox"] = (203, 210),
-            ["checkbox-clear"] = (207, 210),
-            ["checkbox-disabled"] = (204, 290),
-            ["checkedlistbox"] = (4, 1060),
+            ["checkbox-clear"] = (203, 210),
+            ["checkbox-disabled"] = (203, 290),
+            ["checkedlistbox"] = (0, 1060),
             // The chevron grew to the size Windows draws it and the editable field's text moved up a
             // row, both measured against the live window -- where these two went from 93k of
             // difference to 55k. This reference, drawn on a form that was never shown, disagrees by a
@@ -150,7 +150,7 @@ namespace Wpf.WinFormsInterop.Tests
             ["progressbar"] = (0, 2100),
             ["progressbar-full"] = (0, 4000),
             ["radio"] = (88, 160),
-            ["radio-clear"] = (94, 155),
+            ["radio-clear"] = (91, 155),
             // A THIRD harness case. Our StatusStrip renders its panel with no caption in this
             // path -- the row ink is flat background on every row -- while Windows' has "Ready"
             // on rows 7..18. On SCREEN ours draws its panel text correctly, so this is the
