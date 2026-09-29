@@ -1849,8 +1849,12 @@ namespace System.Windows.Forms
 		// itself goes accent blue and the cell stays white.
 		protected override Color MonthCalendarHoverForeColor (MonthCalendar mc)
 		{
-			return ButtonBorderHover;
+			return MonthCalHotInk;
 		}
+
+		/// <summary>0066CC: the calendar's ink under the pointer -- heading, day or zoomed cell -- read
+		/// off stock's full-coverage pixels. Not the buttons' hover accent (005FB8).</summary>
+		private static readonly Color MonthCalHotInk = Color.FromArgb (0, 102, 204);
 
 		protected override Color MonthCalendarHoverBackColor (MonthCalendar mc)
 		{
@@ -1864,12 +1868,30 @@ namespace System.Windows.Forms
 		{
 			if (cell.Width <= 2 || cell.Height <= 2)
 				return;
-			Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, mc.Focused ? 1 : 4), cell);
+			// Selected and under the pointer: state 3, whose shade along the inside of its top and left
+			// is what the focus dots there invert.
+			bool hot = monthcal_zoomed_hot && mc.Focused;
+			Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, hot ? 3 : mc.Focused ? 1 : 4), cell);
 			if (mc.Focused)
-				FillSelectedWash (dc, Rectangle.Inflate (cell, -1, -1));
+				FillSelectedWash (dc, hot ? Rectangle.FromLTRB (cell.X + 2, cell.Y + 2, cell.Right - 1, cell.Bottom - 1)
+					: Rectangle.Inflate (cell, -1, -1));
 			if (mc.Focused)
-				DrawFocusRectInverted (dc, Rectangle.Inflate (cell, -1, -1), MonthCalSelectedWash, Point.Empty);
+				DrawFocusRectInverted (dc, Rectangle.Inflate (cell, -1, -1), MonthCalSelectedWash, MonthCalPictureOrigin ?? Point.Empty,
+					hot ? MonthCalSelectedHotShade : (Color?) null);
 		}
+
+		/// <summary>State 3's shade inside its top and left edges, on the calendar's white.</summary>
+		private static readonly Color MonthCalSelectedHotShade = Color.FromArgb (201, 231, 255);
+
+		// MC_GRIDCELLBACKGROUND state 2 behind the zoomed cell the pointer is on; its text goes blue.
+		protected override void MonthCalendarDrawZoomedHot (Graphics dc, MonthCalendar mc, Rectangle cell)
+		{
+			if (cell.Width > 2 && cell.Height > 2)
+				Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, 2), cell);
+		}
+
+		// 0066CC: the full-coverage ink of a stock zoomed cell under the pointer.
+		protected override Color MonthCalendarZoomedHotForeColor (MonthCalendar mc) => MonthCalHotInk;
 
 		/// <summary>What MC_GRIDCELLBACKGROUND state 1 leaves inside its accent border on the calendar's
 		/// white: its 0x33 wash (#001C33 premultiplied) over white -- the pixels a focus rectangle one in
@@ -1896,19 +1918,23 @@ namespace System.Windows.Forms
 		/// pictures: the 28th and the 29th follow their cells, the months view's Sep the client. The
 		/// recorder has no XOR, so this is told what is underneath, which is one colour wherever it
 		/// is used.</summary>
-		private void DrawFocusRectInverted (Graphics dc, Rectangle r, Color under, Point origin)
+		private void DrawFocusRectInverted (Graphics dc, Rectangle r, Color under, Point origin, Color? underTopLeft = null)
 		{
 			if (r.Width <= 0 || r.Height <= 0)
 				return;
 			Brush brush = ResPool.GetSolidBrush (Color.FromArgb (255 - under.R, 255 - under.G, 255 - under.B));
+			// The top and left edges may stand on another colour (state 3's inner shade); the corner
+			// where they meet is not dotted, so one colour per edge is all it takes.
+			Color tl = underTopLeft ?? under;
+			Brush tl_brush = ResPool.GetSolidBrush (Color.FromArgb (255 - tl.R, 255 - tl.G, 255 - tl.B));
 			int right = r.Right - 1, bottom = r.Bottom - 1;
 			bool Dot (int x, int y) => ((x - origin.X + y - origin.Y) & 1) == 1;
 			for (int x = r.X; x <= right; x++) {
-				if (Dot (x, r.Y)) dc.FillRectangle (brush, x, r.Y, 1, 1);
+				if (Dot (x, r.Y)) dc.FillRectangle (tl_brush, x, r.Y, 1, 1);
 				if (bottom != r.Y && Dot (x, bottom)) dc.FillRectangle (brush, x, bottom, 1, 1);
 			}
 			for (int y = r.Y + 1; y < bottom; y++) {
-				if (Dot (r.X, y)) dc.FillRectangle (brush, r.X, y, 1, 1);
+				if (Dot (r.X, y)) dc.FillRectangle (tl_brush, r.X, y, 1, 1);
 				if (right != r.X && Dot (right, y)) dc.FillRectangle (brush, right, y, 1, 1);
 			}
 		}
@@ -1917,7 +1943,8 @@ namespace System.Windows.Forms
 		// heading is something you can click.
 		protected override Color MonthCalendarTitleForeColor (MonthCalendar mc)
 		{
-			return mc.HoverTitle ? ButtonBorderHover : ColorControlText;
+			// Not in the decades, where the heading leads nowhere further out: stock leaves it black.
+			return mc.HoverTitle && mc.Zoom != MonthCalendar.ZoomLevel.Decades ? MonthCalHotInk : ColorControlText;
 		}
 
 		// Stock draws these in plain black, not the grey the classic theme uses.
@@ -2014,6 +2041,8 @@ namespace System.Windows.Forms
 		// Windows fills a selected day with a plain rectangle. The classic theme fills a pie -- a
 		// circle for a lone day -- so once FillPie actually drew something the cell came out as an
 		// ellipse.
+		protected override bool MonthCalendarFramesEachSelectedDay => true;
+
 		protected override void MonthCalendarFillSelection (Graphics dc, MonthCalendar mc, Rectangle rect,
 					   Brush brush, float startAngle, float sweepAngle)
 		{
@@ -2023,14 +2052,23 @@ namespace System.Windows.Forms
 			// ring goes into, a pixel outside the one this is handed.
 			// With the focus it is state 1 instead, the accent round a wash of it.
 			if (sweepAngle >= 360) {
-				Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, mc.Focused ? 1 : 4), Rectangle.Inflate (rect, 1, 1));
+				// Under the pointer as well: state 3, as a zoomed view's cell (stock's hovered 27th).
+				bool hot = monthcal_zoomed_hot && mc.Focused;
+				Rectangle cell = Rectangle.Inflate (rect, 1, 1);
+				Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, hot ? 3 : mc.Focused ? 1 : 4), cell);
 				if (mc.Focused)
-					FillSelectedWash (dc, rect);
+					FillSelectedWash (dc, hot ? Rectangle.FromLTRB (cell.X + 2, cell.Y + 2, cell.Right - 1, cell.Bottom - 1) : rect);
+				if (!monthcal_focus_day)
+					return;
+				if (hot) {
+					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? new Point (rect.X - 1, rect.Y - 1), MonthCalSelectedHotShade);
+					return;
+				}
 				// And the focus rectangle a pixel in, as round the current cell of a zoomed view:
 				// comctl32 draws it on the focused day whenever the calendar has the focus, not only
 				// while a click is held.
 				if (mc.Focused)
-					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, new Point (rect.X - 1, rect.Y - 1));
+					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? new Point (rect.X - 1, rect.Y - 1));
 				return;
 			}
 			dc.FillRectangle (brush, rect);

@@ -1368,7 +1368,7 @@ namespace System.Windows.Forms {
 			for (int i=0; i < CalendarDimensions.Width * CalendarDimensions.Height; i ++) {
 				if (i == 0) {
 					calendars[i] = new Rectangle (
-						new Point (ClientRectangle.X + 1, ClientRectangle.Y + 1),
+						new Point (ClientRectangle.X + CalendarOrigin, ClientRectangle.Y + CalendarOrigin),
 						month_size);
 				} else {
 					// calendar on the next row
@@ -1396,7 +1396,7 @@ namespace System.Windows.Forms {
 						// make sure it's not a previous button
 						if (i == 0) {
 							Rectangle button_rect = new Rectangle(
-								new Point (calendars[i].X + button_x_offset, (title_size.Height - button_size.Height)/2),
+								new Point (calendars[i].X + button_x_offset, calendars[i].Y + (title_size.Height - button_size.Height)/2),
 								button_size);
 							if (button_rect.Contains (point)) {
 								return new HitTestInfo (HitArea.PrevMonthButton, point, new DateTime (1, 1, 1));
@@ -1405,7 +1405,7 @@ namespace System.Windows.Forms {
 						// make sure it's not the next button
 						if (i % CalendarDimensions.Height == 0 && i % CalendarDimensions.Width == calendar_dimensions.Width - 1) {
 							Rectangle button_rect = new Rectangle(
-								new Point (calendars[i].Right - button_x_offset - button_size.Width, (title_size.Height - button_size.Height)/2),
+								new Point (calendars[i].Right - button_x_offset - button_size.Width, calendars[i].Y + (title_size.Height - button_size.Height)/2),
 								button_size);
 							if (button_rect.Contains (point)) {
 								return new HitTestInfo (HitArea.NextMonthButton, point, new DateTime (1, 1, 1));
@@ -1778,14 +1778,14 @@ namespace System.Windows.Forms {
 						int month_index = (i * CalendarDimensions.Width) + j;
 						Rectangle month_rect = new Rectangle ( new Point (0, 0), month_size);
 						if (j == 0) {
-							month_rect.X = this.ClientRectangle.X + 1;
+							month_rect.X = this.ClientRectangle.X + CalendarOrigin;
 						} else {
-							month_rect.X = this.ClientRectangle.X + 1 + ((j)*(month_size.Width+calendar_spacing.Width));
+							month_rect.X = this.ClientRectangle.X + CalendarOrigin + ((j)*(month_size.Width+calendar_spacing.Width));
 						}
 						if (i == 0) {
-							month_rect.Y = this.ClientRectangle.Y + 1;
+							month_rect.Y = this.ClientRectangle.Y + CalendarOrigin;
 						} else {
-							month_rect.Y = this.ClientRectangle.Y + 1 + ((i)*(month_size.Height+calendar_spacing.Height));
+							month_rect.Y = this.ClientRectangle.Y + CalendarOrigin + ((i)*(month_size.Height+calendar_spacing.Height));
 						}
 						// see if the point is inside
 						if (month_rect.Contains (month_title_click_location)) {
@@ -1843,8 +1843,8 @@ namespace System.Windows.Forms {
 				// invalidate the prev monthbutton
 				this.Invalidate(
 					new Rectangle (
-						this.ClientRectangle.X + 1 + button_x_offset,
-						this.ClientRectangle.Y + 1 + (title_size.Height - button_size.Height)/2,
+						this.ClientRectangle.X + CalendarOrigin + button_x_offset,
+						this.ClientRectangle.Y + CalendarOrigin + (title_size.Height - button_size.Height)/2,
 						button_size.Width,
 						button_size.Height));
 				int scroll = (scroll_change == 0 ? CalendarDimensions.Width * CalendarDimensions.Height : scroll_change);
@@ -1854,7 +1854,7 @@ namespace System.Windows.Forms {
 				this.Invalidate(
 					new Rectangle (
 						this.ClientRectangle.Right - 1 - button_x_offset - button_size.Width,
-						this.ClientRectangle.Y + 1 + (title_size.Height - button_size.Height)/2,
+						this.ClientRectangle.Y + CalendarOrigin + (title_size.Height - button_size.Height)/2,
 						button_size.Width,
 						button_size.Height));
 				int scroll = (scroll_change == 0 ? CalendarDimensions.Width * CalendarDimensions.Height : scroll_change);
@@ -1879,7 +1879,7 @@ namespace System.Windows.Forms {
 				this.Invalidate(
 					new Rectangle (
 						this.ClientRectangle.Right - 1 - button_x_offset - button_size.Width,
-						this.ClientRectangle.Y + 1 + (title_size.Height - button_size.Height)/2,
+						this.ClientRectangle.Y + CalendarOrigin + (title_size.Height - button_size.Height)/2,
 						button_size.Width,
 						button_size.Height));
 			}					
@@ -1887,8 +1887,8 @@ namespace System.Windows.Forms {
 			if (this.is_previous_clicked) {
 				this.Invalidate(
 					new Rectangle (
-						this.ClientRectangle.X + 1 + button_x_offset,
-						this.ClientRectangle.Y + 1 + (title_size.Height - button_size.Height)/2,
+						this.ClientRectangle.X + CalendarOrigin + button_x_offset,
+						this.ClientRectangle.Y + CalendarOrigin + (title_size.Height - button_size.Height)/2,
 						button_size.Width,
 						button_size.Height));
 			}
@@ -1958,6 +1958,9 @@ namespace System.Windows.Forms {
 			public Rectangle A, B, Z;
 			public int StartTick;
 			public bool Started;
+			/// <summary>What the pointer was on in the view being left: its picture is of that moment.</summary>
+			public int FromHoverCell = -1;
+			public DateTime FromHoverDate = DateTime.MinValue;
 			public double Progress;
 			/// <summary>Outside the grid each frame AlphaBlends the new view over what is on the
 			/// screen, at that frame's progress x 255 -- so what is there is every frame's blend so far,
@@ -2000,8 +2003,10 @@ namespace System.Windows.Forms {
 		/// rectangle of every StretchBlt and AlphaBlend a stock zoom out of the days makes.</summary>
 		private Rectangle ZoomEffectGrid (ZoomLevel level)
 		{
-			Rectangle grid = ZoomGridRect (level);
-			return level == ZoomLevel.Days ? new Rectangle (grid.X, grid.Y - 1, grid.Width, grid.Height + 1) : grid;
+			// The same rectangle at every level: a zoom out of the months into the years takes its
+			// pictures from (5,34,217,106) too, a row taller than the zoomed grid's three rows of 35.
+			Rectangle days = ZoomGridRect (ZoomLevel.Days);
+			return new Rectangle (days.X, days.Y - 1, days.Width, days.Height + 1);
 		}
 
 		private void StartZoomEffect (ZoomLevel from, ZoomLevel to, int cell)
@@ -2021,6 +2026,16 @@ namespace System.Windows.Forms {
 			fx.Z = to > from ? fx.A : fx.B;
 			zoom = to;
 			zoom_effect = fx;
+			// The pointer has not moved, but the view under it has: comctl32 finds what it is on in
+			// the new view at once -- a stock zoom's first picture already has that cell hot.
+			fx.FromHoverCell = hover_zoom_cell;
+			fx.FromHoverDate = hover_date;
+			if (last_mouse is Point at) {
+				hover_zoom_cell = to != ZoomLevel.Days ? ZoomCellAt (at) : -1;
+				// Not HitTest: its layout is still the view being left's until the next paint, and it put
+				// the pointer a row lower (5 October where the 27th was under it).
+				hover_date = to == ZoomLevel.Days ? DayInGridAt (at) : DateTime.MinValue;
+			}
 			if (zoom_timer == null) {
 				zoom_timer = new Timer { Interval = ZoomMilliseconds * 4 / 100 };   // 250 x 0.04 = 10 ms
 				zoom_timer.Tick += (s, e) => TickZoomEffect ();
@@ -2072,17 +2087,37 @@ namespace System.Windows.Forms {
 			zoom_timer?.Stop ();
 			if (zoom_effect == null) return;
 			zoom_effect = null;
+			// What the zoom leaves on screen is its last picture -- a memory DC's. The heading, whose
+			// text the zoom changed, is painted again onto the window as it ends; the footer is not,
+			// so until something repaints it its text is the picture's (fringe 58), not the window's
+			// (57). Both read off stock's frames: the old screen round the grid of the NEXT zoom.
+			header_from_zoom_picture = false;
+			footer_from_zoom_picture = true;
 			Invalidate ();
 		}
+
+		/// <summary>Whether the heading / the footer on screen are still the last zoom picture's, not
+		/// yet painted onto the window again.</summary>
+		internal bool HeaderFromZoomPicture => header_from_zoom_picture;
+		internal bool FooterFromZoomPicture => footer_from_zoom_picture;
+		private bool header_from_zoom_picture, footer_from_zoom_picture;
 
 		/// <summary>Draw with the calendar at another zoom level for a moment: the picture of the view
 		/// being left.</summary>
 		internal void WithZoom (ZoomLevel level, Action draw)
 		{
 			ZoomLevel was = zoom;
+			int was_cell = hover_zoom_cell;
+			DateTime was_date = hover_date;
 			zoom = level;
-			try { draw (); } finally { zoom = was; }
+			if (zoom_effect != null && level == zoom_effect.From) {
+				hover_zoom_cell = zoom_effect.FromHoverCell;
+				hover_date = zoom_effect.FromHoverDate;
+			}
+			try { draw (); } finally { zoom = was; hover_zoom_cell = was_cell; hover_date = was_date; }
 		}
+
+		private Point? last_mouse;
 
 		/// <summary>Which cell of the current zoomed view the calendar is sitting on.</summary>
 		/// <summary>Which cell of <paramref name="level"/> the calendar's current date falls in.
@@ -2201,23 +2236,37 @@ namespace System.Windows.Forms {
 		{
 			ZoomLevel was = zoom;
 			ZoomLevel entering;
+			DateTime start;
 			switch (zoom) {
 				case ZoomLevel.Months:
 					if (index >= 12) return;
-					current_month = new DateTime (current_month.Year, index + 1, 1);
+					start = new DateTime (current_month.Year, index + 1, 1);
 					entering = ZoomLevel.Days;
 					break;
 				case ZoomLevel.Years:
-					current_month = new DateTime (ZoomFirst + index, current_month.Month, 1);
+					start = new DateTime (ZoomFirst + index, 1, 1);
 					entering = ZoomLevel.Months;
 					break;
 				case ZoomLevel.Decades:
-					current_month = new DateTime (ZoomFirst + index * 10, current_month.Month, 1);
+					start = new DateTime (ZoomFirst + index * 10, 1, 1);
 					entering = ZoomLevel.Years;
 					break;
 				default:
 					return;
 			}
+			// comctl32 SELECTS what was picked -- the whole month, year or decade -- which the selection
+			// then trims to MaxSelectionCount from its END, and shows where that end falls: picking the
+			// 2020s selects Dec 25-31 2029 and highlights 2029, picking a year highlights its December,
+			// picking September selects the 24th to the 30th. Read off stock's own pictures.
+			DateTime end = entering == ZoomLevel.Days ? start.AddMonths (1).AddDays (-1)
+				: entering == ZoomLevel.Months ? start.AddYears (1).AddDays (-1)
+				: start.AddYears (10).AddDays (-1);
+			if (start < MinDate) start = MinDate.Date;
+			if (end > MaxDate) end = MaxDate.Date;
+			if (start > end)
+				return;
+			SetSelectionRange (start, end);
+			current_month = new DateTime (SelectionEnd.Year, SelectionEnd.Month, 1);
 			// Stepping in, the new view grows out of the cell that was picked.
 			zoom = was;
 			StartZoomEffect (was, entering, index);
@@ -2267,22 +2316,66 @@ namespace System.Windows.Forms {
 
 		/// <summary>Which of the two arrows either side of the heading the pointer is on, if any.
 		/// Windows colours the one under the pointer, as it colours the heading.</summary>
+		/// <summary>The cell of a zoomed view the pointer is on, or -1.</summary>
+		internal int HoverZoomCell => hover_zoom_cell;
+		private int hover_zoom_cell = -1;
+
 		internal bool HoverPrevious => hover_previous;
 		internal bool HoverNext => hover_next;
 		private bool hover_previous, hover_next;
 
+		/// <summary>The day a hit test landed on, if it landed on one. A day of the month before or after
+		/// is reported with its date in hit_time -- Time is left empty for those -- so reading Time
+		/// alone never hovered them.</summary>
+		/// <summary>The day of the days view's grid (the dates under the day names) at a client point,
+		/// or MinValue.</summary>
+		private DateTime DayInGridAt (Point at)
+		{
+			Rectangle grid = ZoomGridRect (ZoomLevel.Days);
+			int cw = date_cell_size.Width, ch = date_cell_size.Height;
+			int top = grid.Y + ch;                       // below the day names
+			if (cw <= 0 || ch <= 0 || at.X < grid.X || at.X >= grid.X + 7 * cw || at.Y < top || at.Y >= top + 6 * ch)
+				return DateTime.MinValue;
+			int col = (at.X - grid.X) / cw, row = (at.Y - top) / ch;
+			return GetFirstDateInMonthGrid (current_month).AddDays (row * 7 + col).Date;
+		}
+
+		/// <summary>How far in from the client's corner the first month stands -- the theme's margin,
+		/// where the theme draws it. Hit testing assumed one pixel, so under the Windows 11 theme's five
+		/// every click and hover landed four pixels up and left of what was drawn: the bottom quarter
+		/// of each day picked the day below it.</summary>
+		private int CalendarOrigin => ThemeEngine.Current.MonthCalendarMargin (this);
+
+		private static DateTime HoveredDateOf (HitTestInfo hti)
+		{
+			switch (hti.HitArea) {
+				case HitArea.Date: return hti.Time.Date;
+				case HitArea.PrevMonthDate:
+				case HitArea.NextMonthDate: return hti.hit_time.Date;
+				default: return DateTime.MinValue;
+			}
+		}
+
 		private void MouseMoveHandler (object sender, MouseEventArgs e) {
+			last_mouse = e.Location;
 			HitTestInfo hti = this.HitTest (e.X, e.Y);
 
 			// Nothing tracked the pointer unless a button was down, so there was no hovered day to
 			// draw and Windows draws one.
-			DateTime over = hti.HitArea == HitArea.Date || hti.HitArea == HitArea.PrevMonthDate
-				   || hti.HitArea == HitArea.NextMonthDate ? hti.Time.Date : DateTime.MinValue;
+			DateTime over = HoveredDateOf (hti);
 			bool over_title = hti.HitArea == HitArea.TitleMonth || hti.HitArea == HitArea.TitleYear;
 			bool over_previous = hti.HitArea == HitArea.PrevMonthButton;
 			bool over_next = hti.HitArea == HitArea.NextMonthButton;
+			int over_cell = zoom != ZoomLevel.Days && !over_title && !over_previous && !over_next ? ZoomCellAt (e.Location) : -1;
+			if (over_cell != hover_zoom_cell) {
+				hover_zoom_cell = over_cell;
+				Invalidate ();
+			}
 			if (over != hover_date || over_title != hover_title
 				|| over_previous != hover_previous || over_next != hover_next) {
+				// A change over the heading has comctl32 paint the heading again, onto the window.
+				if (over_title != hover_title || over_previous != hover_previous || over_next != hover_next)
+					header_from_zoom_picture = false;
 				hover_date = over;
 				hover_title = over_title;
 				hover_previous = over_previous;
@@ -2324,7 +2417,13 @@ namespace System.Windows.Forms {
 		protected override void OnMouseLeave (EventArgs e)
 		{
 			base.OnMouseLeave (e);
+			if (hover_zoom_cell != -1) {
+				hover_zoom_cell = -1;
+				Invalidate ();
+			}
 			if (hover_date != DateTime.MinValue || hover_title || hover_previous || hover_next) {
+				if (hover_title || hover_previous || hover_next)
+					header_from_zoom_picture = false;
 				hover_date = DateTime.MinValue;
 				hover_title = false;
 				hover_previous = false;
@@ -2705,8 +2804,8 @@ namespace System.Windows.Forms {
 				DateTime this_month = this.current_month.AddMonths (i);
 				if (month.Year == this_month.Year && month.Month == this_month.Month) {
 					month_rect = new Rectangle (
-						this.ClientRectangle.X + 1 + (month_size.Width * (i%CalendarDimensions.Width)) + (this.calendar_spacing.Width * (i%CalendarDimensions.Width)),
-						this.ClientRectangle.Y + 1 + (month_size.Height * (i/CalendarDimensions.Width)) + (this.calendar_spacing.Height * (i/CalendarDimensions.Width)),
+						this.ClientRectangle.X + CalendarOrigin + (month_size.Width * (i%CalendarDimensions.Width)) + (this.calendar_spacing.Width * (i%CalendarDimensions.Width)),
+						this.ClientRectangle.Y + CalendarOrigin + (month_size.Height * (i/CalendarDimensions.Width)) + (this.calendar_spacing.Height * (i/CalendarDimensions.Width)),
 						month_size.Width,
 						month_size.Height);
 						break;

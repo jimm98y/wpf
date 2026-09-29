@@ -462,6 +462,38 @@ namespace System.Windows.Forms.VisualStyles
 		/// <summary>MC_GRIDCELLBACKGROUND state 1, selected with the focus: 7x7 nine-grid 3/3/3/3, the
 		/// accent round a fifth of the accent -- on white, #CCE8FF inside a #0078D4 line, its corners
 		/// at a fifth.</summary>
+		/// <summary>MC_GRIDCELLBACKGROUND state 2, hot: a flat accent wash, no border, its corners
+		/// softened -- the corner pixel lighter, the two beside it a step lighter. Read off a stock
+		/// zoomed view's cell under the pointer, on the calendar's white: 229/243/255 inside,
+		/// 231/244/255 beside the corner, 246/251/255 at it.</summary>
+		internal static Frame MonthCalHot ()
+		{
+			var f = new Frame (7, 7) { Stretch = true, Margins = (3, 3, 3, 3) };
+			for (int y = 0; y < 7; y++)
+				for (int x = 0; x < 7; x++) {
+					int ex = Math.Min (x, 6 - x), ey = Math.Min (y, 6 - y);
+					f.Pixels [y * 7 + x] = ex == 0 && ey == 0 ? 0x09000509u
+						: (ex == 0 && ey == 1) || (ex == 1 && ey == 0) ? 0x18000d18u : 0x1a000e1au;
+				}
+			return f;
+		}
+
+		/// <summary>MC_GRIDCELLBACKGROUND state 3, selected and hot: state 1's frame with a BLACK
+		/// border, and a pixel of shade inside it along the top and the left (201/231/255 on white,
+		/// 189/225/255 where they meet) -- the cell a click is on. Read off a stock zoomed view's
+		/// picture taken as the click lands.</summary>
+		internal static Frame MonthCalSelectedHot ()
+		{
+			var f = new Frame (7, 7) { Stretch = true, Margins = (3, 3, 3, 3) };
+			for (int y = 0; y < 7; y++)
+				for (int x = 0; x < 7; x++) {
+					bool edgeX = x == 0 || x == 6, edgeY = y == 0 || y == 6;
+					f.Pixels [y * 7 + x] = edgeX && edgeY ? 0x3300182au : edgeX || edgeY ? 0xff000000u
+						: x == 1 && y == 1 ? 0x42002442u : x == 1 || y == 1 ? 0x36001e36u : 0x33001c33u;
+				}
+			return f;
+		}
+
 		internal static Frame MonthCalSelectedFocused ()
 		{
 			var f = new Frame (7, 7) { Stretch = true, Margins = (3, 3, 3, 3) };
@@ -966,7 +998,9 @@ namespace System.Windows.Forms.VisualStyles
 					},
 					MonthCal => part == 5 && (state == 5 || state == 6) ? MonthCalToday ()
 						: part == 5 && state == 4 ? MonthCalSelected ()
-						: part == 5 && state == 1 ? MonthCalSelectedFocused () : null,
+						: part == 5 && state == 1 ? MonthCalSelectedFocused ()
+						: part == 5 && state == 2 ? MonthCalHot ()
+						: part == 5 && state == 3 ? MonthCalSelectedHot () : null,
 					Tab => part switch {
 						>= 1 and <= 8 => TabItem (part, state),
 						9 => TabPane (),

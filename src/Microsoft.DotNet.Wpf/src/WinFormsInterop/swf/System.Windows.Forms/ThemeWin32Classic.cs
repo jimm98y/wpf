@@ -3790,6 +3790,7 @@ namespace System.Windows.Forms
 			// The picture is one cached layer however many times it is drawn. The first frame draws
 			// it at nothing, which is where it is made -- as comctl32 paints its pictures before it
 			// starts the clock.
+			MonthCalPictureOrigin = Point.Empty;
 			if (fx.OutsideAlphas.Count == 0) {
 				dc.BeginSnapshot (client, client, 0f);
 				monthcal_picture_depth++;
@@ -3813,12 +3814,15 @@ namespace System.Windows.Forms
 			Rectangle old_to = ZoomRect (fx.A, fx.B, p, true, fx.Z), new_to = ZoomRect (fx.A, fx.B, p, false, fx.Z);
 			monthcal_picture_depth++;
 			dc.BeginSnapshot (fx.Z, old_to, 1f, stretchBlt: true);
+			MonthCalPictureOrigin = fx.Z.Location;
 			mc.WithZoom (fx.From, () => DrawMonthCalendarPicture (dc, client, mc));
+			MonthCalPictureOrigin = Point.Empty;
 			dc.EndSnapshot ();
 			dc.BeginSnapshot (fx.Z, new_to, (int) (p * 255.0) / 255f);
 			DrawMonthCalendarPicture (dc, client, mc);
 			dc.EndSnapshot ();
 			monthcal_picture_depth--;
+			MonthCalPictureOrigin = null;
 			dc.Restore (grid);
 		}
 
@@ -3841,8 +3845,19 @@ namespace System.Windows.Forms
 		/// <summary>One whole picture of the calendar: the view and the frame round it, which comctl32's
 		/// zoom pictures include -- drawn after the effect instead, the frame was washed out by every
 		/// frame's blend of a picture without it.</summary>
+		/// <summary>Whether each day of a selected range is drawn as a selected day of its own, as
+		/// Windows 11's calendar frames every one (the classic theme runs one band across them).</summary>
+		protected virtual bool MonthCalendarFramesEachSelectedDay => false;
+		/// <summary>While a selected day is filled: whether it is the day the focus is on, the only one
+		/// of a range that carries the focus rectangle.</summary>
+		protected bool monthcal_focus_day = true;
+
 		/// <summary>Above zero while a picture for the zoom effect (comctl32's memory DCs) is drawn.</summary>
 		private int monthcal_picture_depth;
+		/// <summary>While a zoom picture is drawn, the origin of the DC comctl32 paints it into, which is
+		/// what a focus rectangle's checkerboard is aligned to: the old view's picture is painted into
+		/// the buffer over the grid, the new view's into one the size of the client.</summary>
+		protected Point? MonthCalPictureOrigin;
 		private bool footer_memory;
 
 		private void DrawMonthCalendarPicture (Graphics dc, Rectangle clip_rectangle, MonthCalendar mc)
@@ -3937,7 +3952,7 @@ namespace System.Windows.Forms
 				dc.FillRectangle (GetControlBackBrush (mc.BackColor), bottom_rect);
 				// The footer, like the heading, is drawn onto the window, outside comctl32's double
 				// buffer (fringe 57, not the dates' 58) -- except inside the zoom's pictures.
-				dc.memory_surface_text = monthcal_picture_depth > 0;
+				dc.memory_surface_text = monthcal_picture_depth > 0 || mc.FooterFromZoomPicture;
 				if (mc.ShowToday) {
 					string today_text = "Today: " + mc.TodayDate.ToShortDateString();
 					// comctl32's footer is its string 4433, " %s %s", over "Today:" and the date: it
@@ -4109,7 +4124,7 @@ namespace System.Windows.Forms
 				// Inside the zoom's pictures, though, the heading is in comctl32's memory DC like
 				// everything else.
 				bool title_memory = dc.memory_surface_text;
-				dc.memory_surface_text = monthcal_picture_depth > 0;
+				dc.memory_surface_text = monthcal_picture_depth > 0 || mc.HeaderFromZoomPicture;
 				dc.DrawString (title_text, ZoomScaled (MonthCalendarTitleFont (mc)), ResPool.GetSolidBrush (MonthCalendarTitleForeColor (mc)), title_rect, mc.centered_format);
 				dc.memory_surface_text = title_memory;
 
@@ -4389,9 +4404,16 @@ namespace System.Windows.Forms
 					       grid.Y + (i / MonthCalendar.ZoomColumns) * ch, cw, ch);
 				if (cell.Width <= 0 || cell.Height <= 0 || !clip.IntersectsWith (cell))
 					continue;
+				bool hot = i == mc.HoverZoomCell;
+				monthcal_zoomed_hot = hot;
 				if (current)
 					MonthCalendarDrawZoomedSelection (dc, mc, cell);
+				else if (hot)
+					MonthCalendarDrawZoomedHot (dc, mc, cell);
+				monthcal_zoomed_hot = false;
 				Color ink = outside ? mc.TrailingForeColor : mc.ForeColor;
+				if (hot && MonthCalendarZoomedHotForeColor (mc) is { IsEmpty: false } hot_ink)
+					ink = hot_ink;
 				if (zoom_cell_format == null)
 					zoom_cell_format = new StringFormat {
 						Alignment = StringAlignment.Center,
@@ -4406,11 +4428,23 @@ namespace System.Windows.Forms
 				if (cell_lines.Length == 1) {
 					dc.DrawString (text, cell_font, ink_brush, cell, zoom_cell_format);
 				} else {
-					int line_height = cell.Height / cell_lines.Length;
-					for (int l = 0; l < cell_lines.Length; l++)
-						dc.DrawString (cell_lines[l], cell_font, ink_brush,
-							       new Rectangle (cell.X, cell.Y + l * line_height, cell.Width, line_height),
-							       zoom_cell_format);
+					// comctl32 draws the decade as one block, as DrawText lays out lines: a line's pitch is
+					// the font's line height -- a days cell's, 15 at Segoe UI 9 -- the block is centred in
+					// the cell, and every line starts where the widest one does, centred. Measured off
+					// stock's own picture of the view: its lines are 15 apart and flush left, where
+					// halving the cell set them 17 apart and centred each.
+					int line_height = date_cell_size.Height;
+					int top = cell.Y + (cell.Height - line_height * cell_lines.Length) / 2;
+					int widest = 0;
+					foreach (string line in cell_lines)
+						widest = Math.Max (widest, (int) Math.Ceiling (dc.MeasureString (line, cell_font).Width));
+					for (int l = 0; l < cell_lines.Length; l++) {
+						int width = (int) Math.Ceiling (dc.MeasureString (cell_lines[l], cell_font).Width);
+						// Each line centred on its own box, the box being the widest line's, so that
+						// every line starts at the widest one's left edge.
+						var box = new Rectangle (cell.X + (cell.Width - widest) / 2, top + l * line_height, width, line_height);
+						dc.DrawString (cell_lines[l], cell_font, ink_brush, box, zoom_cell_format);
+					}
 				}
 			}
 		}
@@ -4453,6 +4487,18 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>How the cell the calendar is currently on is marked out.</summary>
+		/// <summary>While a zoomed cell's background is drawn: whether the pointer is on it.</summary>
+		protected bool monthcal_zoomed_hot;
+
+		/// <summary>The cell of a zoomed view the pointer is on (not the current one). None in the
+		/// classic theme.</summary>
+		protected virtual void MonthCalendarDrawZoomedHot (Graphics dc, MonthCalendar mc, Rectangle cell)
+		{
+		}
+
+		/// <summary>The ink of a zoomed cell under the pointer; Empty keeps the cell's own.</summary>
+		protected virtual Color MonthCalendarZoomedHotForeColor (MonthCalendar mc) => Color.Empty;
+
 		protected virtual void MonthCalendarDrawZoomedSelection (Graphics dc, MonthCalendar mc, Rectangle cell)
 		{
 			Rectangle box = Rectangle.Inflate (cell, -4, -2);
@@ -4591,7 +4637,18 @@ namespace System.Windows.Forms
 				}
 			}
 
-			if (date == mc.SelectionStart.Date && date == mc.SelectionEnd.Date) {
+			if (MonthCalendarFramesEachSelectedDay && date >= mc.SelectionStart.Date && date <= mc.SelectionEnd.Date) {
+				// Every selected day in its own frame, the focus drawn on one of them only.
+				date_color = MonthCalendarSelectionForeColor (mc);
+				bool selected_hot = date == mc.HoverDate.Date;
+				if (selected_hot && MonthCalendarZoomedHotForeColor (mc) is { IsEmpty: false } sel_hot_ink)
+					date_color = sel_hot_ink;
+				monthcal_zoomed_hot = selected_hot;
+				monthcal_focus_day = date == mc.SelectionStart.Date;
+				MonthCalendarFillSelection (dc, mc, Rectangle.Inflate (rectangle, inflate, inflate), ResPool.GetSolidBrush (MonthCalendarSelectionBackColor (mc)), 0, 360);
+				monthcal_focus_day = true;
+				monthcal_zoomed_hot = false;
+			} else if (date == mc.SelectionStart.Date && date == mc.SelectionEnd.Date) {
 				// see if the date is in the start of selection
 				date_color = MonthCalendarSelectionForeColor (mc);
 				// draw the left hand of the back ground
