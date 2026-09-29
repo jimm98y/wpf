@@ -3569,7 +3569,10 @@ namespace System.Windows.Forms {
 		protected override void OnBindingContextChanged (EventArgs e)
 		{
 			base.OnBindingContextChanged(e);
-			ReBind();
+			// Only a bound grid has anything to rebind. An unbound one rebinding lost its current cell
+			// and ended any edit in progress whenever a BindingContext was first created above it.
+			if (DataSource != null || DataManager != null)
+				ReBind();
 		}
 
 		protected virtual void OnBorderStyleChanged (EventArgs e)

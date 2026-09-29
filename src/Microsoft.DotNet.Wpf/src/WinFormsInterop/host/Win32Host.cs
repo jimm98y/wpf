@@ -1030,12 +1030,21 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         return bands;
     }
 
+    // The driver's blink clock (restarted when the caret is created, moved or shown, as user32's
+    // is); the host's own stopwatch only if the driver has none.
+    private MethodInfo _caretBlink;
+    private long BlinkMs()
+    {
+        _caretBlink ??= _driver.GetType().GetMethod("GetCaretBlinkElapsed", BindingFlags.NonPublic | BindingFlags.Instance);
+        return _caretBlink != null ? (long)_caretBlink.Invoke(_driver, null) : _blink.ElapsedMilliseconds;
+    }
+
     private Rectangle? GetCaretRect(int ox, int oy)
     {
         if (_getCaret == null) return null;
         object[] a = { 0, 0, 0, 0 };
         if (!(bool)_getCaret.Invoke(_driver, a)) return null;
-        if ((_blink.ElapsedMilliseconds / 530) % 2 != 0) return null;
+        if ((BlinkMs() / 530) % 2 != 0) return null;
         return new Rectangle((int)a[0] - ox, (int)a[1] - oy, Math.Max(1, (int)a[2]), (int)a[3]);
     }
     private bool CaretOn()
@@ -1043,7 +1052,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         if (_getCaret == null) return false;
         object[] a = { 0, 0, 0, 0 };
         if (!(bool)_getCaret.Invoke(_driver, a)) return false;
-        return (_blink.ElapsedMilliseconds / 530) % 2 == 0;
+        return (BlinkMs() / 530) % 2 == 0;
     }
 
     // ---- Win32 interop ----------------------------------------------------------

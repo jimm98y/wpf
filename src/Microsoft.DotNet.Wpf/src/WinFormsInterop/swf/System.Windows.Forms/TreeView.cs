@@ -1712,7 +1712,10 @@ namespace System.Windows.Forms {
 
 		private void DrawSelectionAndFocus(TreeNode node, Graphics dc, Rectangle r, bool inset)
 		{
-			if (Focused && focused_node == node && !full_row_select) {
+			// Not while focus cues are hidden (UISF_HIDEFOCUS): a tree the user has only clicked on
+			// shows its selection without a focus rectangle, as stock's does.
+			bool focusRect = Focused && ShowFocusCues && focused_node == node && !full_row_select;
+			if (focusRect) {
 				ControlPaint.DrawFocusRectangle (dc, r, ForeColor, BackColor);
 			}
 			// OwnerDrawText means the application draws the node's TEXT and nothing else: the control
@@ -1723,7 +1726,9 @@ namespace System.Windows.Forms {
 			if (draw_mode == TreeViewDrawMode.OwnerDrawAll)
 				return;
 
-			if (inset)
+			// The inset leaves room for the focus rectangle; with the cues hidden the highlight
+			// covers the whole node rectangle, as stock's does after a click.
+			if (inset && focusRect)
 				r.Inflate (-1, -1);
 
 			if (s_traceSelection && (node == highlighted_node || node == selected_node))

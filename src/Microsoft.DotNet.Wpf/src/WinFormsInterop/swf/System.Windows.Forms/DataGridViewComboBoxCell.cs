@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -127,8 +127,11 @@ namespace System.Windows.Forms {
 		[Browsable (false)]
 		public virtual ObjectCollection Items {
 			get {
-				if (DataGridView != null && DataGridView.BindingContext != null 
-				    && DataSource != null && !String.IsNullOrEmpty (ValueMember)) {
+				// The data source FIRST: asking a grid for its BindingContext can create the form's, and
+				// the change that raises had the grid rebind -- ending the edit this is being read for,
+				// which left the combo box of an edited cell empty.
+				if (DataSource != null && !String.IsNullOrEmpty (ValueMember)
+				    && DataGridView != null && DataGridView.BindingContext != null) {
 					items.ClearInternal ();
 					CurrencyManager dataManager = (CurrencyManager) DataGridView.BindingContext[DataSource];
 					if (dataManager != null && dataManager.Count > 0) {
@@ -360,12 +363,49 @@ namespace System.Windows.Forms {
 		}
 
 		protected override void OnMouseLeave (int rowIndex) {
+			if (MouseInDropDownButton (rowIndex)) {
+				s_hot_grid = null;
+				if (rowIndex >= 0)
+					DataGridView.InvalidateCell (ColumnIndex, rowIndex);
+			}
 			base.OnMouseLeave (rowIndex);
 		}
 
 		protected override void OnMouseMove (DataGridViewCellMouseEventArgs e) {
-			//Console.WriteLine ("MouseMove (Location: {0}", e.Location);
+			// .NET lights the whole read-only face when the pointer is over the drop-down BUTTON, and
+			// only then: PaintPrivate draws CP_READONLY in ComboBoxState.Hot while the pointer is
+			// inside the button's rectangle, and OnMouseMove repaints the cell as it crosses it.
+			if (DataGridView != null && e.RowIndex >= 0 && ThemedButtonCell) {
+				Rectangle value = CellValueBounds (new Rectangle (Point.Empty, Size));
+				bool inside = DropDownButtonBounds (value, InheritedStyle.Font).Contains (e.Location);
+				if (inside != MouseInDropDownButton (e.RowIndex)) {
+					s_hot_grid = inside ? DataGridView : null;
+					s_hot_row = e.RowIndex;
+					s_hot_column = e.ColumnIndex;
+					DataGridView.InvalidateCell (e.ColumnIndex, e.RowIndex);
+				}
+			}
 			base.OnMouseMove (e);
+		}
+
+		// Static, as .NET's s_mouseInDropDownButtonBounds is, and keyed by the cell's address: a
+		// click unshares the row and paints a CLONE of the cell the pointer entered.
+		static DataGridView s_hot_grid;
+		static int s_hot_row, s_hot_column;
+
+		bool MouseInDropDownButton (int rowIndex)
+			=> s_hot_grid != null && s_hot_grid == DataGridView && s_hot_row == rowIndex && s_hot_column == ColumnIndex;
+
+		bool ThemedButtonCell => Application.RenderWithVisualStyles && (FlatStyle == FlatStyle.Standard || FlatStyle == FlatStyle.System);
+
+		/// <summary>.NET's drop-down button: SM_CXHTHUMB wide at the value rectangle's right, and as
+		/// tall as a line of text plus eight.</summary>
+		static Rectangle DropDownButtonBounds (Rectangle value, Font font)
+		{
+			int num = Math.Min (SystemInformation.HorizontalScrollBarThumbWidth, value.Width - 6 - 1);
+			int lineHeight = TextRenderer.MeasureText (" ", font, new Size (int.MaxValue, int.MaxValue), TextFormatFlags.Default).Height;
+			int num2 = Math.Min (lineHeight + 8, value.Height);
+			return new Rectangle (value.Right - num, value.Top, num, num2);
 		}
 
 		protected override void Paint (Graphics graphics, Rectangle clipBounds, Rectangle cellBounds, int rowIndex, DataGridViewElementStates elementState, object value, object formattedValue, string errorText, DataGridViewCellStyle cellStyle, DataGridViewAdvancedBorderStyle advancedBorderStyle, DataGridViewPaintParts paintParts)
@@ -391,14 +431,24 @@ namespace System.Windows.Forms {
 				// text in the rectangle it leaves -- two in, a row down, a row short.
 				Rectangle value = CellValueBounds (cellBounds);
 				if (value.Width > 0 && value.Height > 0) {
-					int num = Math.Min (SystemInformation.HorizontalScrollBarThumbWidth, value.Width - 6 - 1);
-					int lineHeight = TextRenderer.MeasureText (graphics, " ", cellStyle.Font, new Size (int.MaxValue, int.MaxValue), TextFormatFlags.Default).Height;
-					int num2 = Math.Min (lineHeight + 8, value.Height);
-					new VisualStyles.VisualStyleRenderer (VisualStyles.VisualStyleElement.CreateElement ("COMBOBOX", 5, 1))
-						.DrawBackground (graphics, value);
+					Rectangle button = DropDownButtonBounds (value, cellStyle.Font);
+					int num = button.Width, num2 = button.Height;
+					// Hot (2) only while the pointer is over the button; the button part itself
+					// stays Normal whatever the face does.
+					// Under the face: not the cell's (selection) background but a ControlLightLight
+					// outline of the value rectangle -- .NET's PaintPrivate for a drop-down-button
+					// cell -- which is what the face's part-transparent corners stand on.
+					graphics.DrawRectangle (SystemPens.ControlLightLight, new Rectangle (value.X, value.Y, value.Width - 1, value.Height - 1));
+					var readOnly = new VisualStyles.VisualStyleRenderer (VisualStyles.VisualStyleElement.CreateElement ("COMBOBOX", 5, MouseInDropDownButton (rowIndex) ? 2 : 1));
+					readOnly.DrawBackground (graphics, value);
 					if (num > 0 && num2 > 0)
 						new VisualStyles.VisualStyleRenderer (VisualStyles.VisualStyleElement.CreateElement ("COMBOBOX", 1, 1))
-							.DrawBackground (graphics, new Rectangle (value.Right - num, value.Top, num, num2));
+							.DrawBackground (graphics, button);
+					// The text is the theme's text colour, selected or not: the face is the
+					// theme's, so .NET asks the theme and never uses SelectionForeColor here.
+					color = readOnly.GetColor (VisualStyles.ColorProperty.TextColor);
+					if (color.IsEmpty)
+						color = SystemColors.ControlText;
 					Rectangle text = Rectangle.Inflate (value, -2, -2);
 					text.X--;
 					text.Width++;

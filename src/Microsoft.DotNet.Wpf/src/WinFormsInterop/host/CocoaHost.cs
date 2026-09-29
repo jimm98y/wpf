@@ -110,12 +110,21 @@ internal sealed class CocoaHost : IWinFormsHost
 
     // The blinking text caret as a form-space rect (null when hidden/off-blink); the backing bitmaps
     // don't contain it, so it's a per-frame overlay quad.
+    // The driver's blink clock (restarted when the caret is created, moved or shown, as user32's
+    // is); the host's own stopwatch only if the driver has none.
+    private MethodInfo _caretBlink;
+    private long BlinkMs()
+    {
+        _caretBlink ??= _driver.GetType().GetMethod("GetCaretBlinkElapsed", BindingFlags.NonPublic | BindingFlags.Instance);
+        return _caretBlink != null ? (long)_caretBlink.Invoke(_driver, null) : _blink.ElapsedMilliseconds;
+    }
+
     private Rectangle? GetCaretRect(int ox, int oy)
     {
         if (_getCaret == null) return null;
         object[] a = { 0, 0, 0, 0 };
         if (!(bool)_getCaret.Invoke(_driver, a)) return null;
-        if ((_blink.ElapsedMilliseconds / 530) % 2 != 0) return null;   // ~530ms blink
+        if ((BlinkMs() / 530) % 2 != 0) return null;   // ~530ms blink
         return new Rectangle((int)a[0] - ox, (int)a[1] - oy, Math.Max(1, (int)a[2]), (int)a[3]);
     }
 
@@ -125,7 +134,7 @@ internal sealed class CocoaHost : IWinFormsHost
         if (_getCaret == null) return false;
         object[] a = { 0, 0, 0, 0 };
         if (!(bool)_getCaret.Invoke(_driver, a)) return false;
-        return (_blink.ElapsedMilliseconds / 530) % 2 == 0;
+        return (BlinkMs() / 530) % 2 == 0;
     }
 
     // ---- window + present -------------------------------------------------------
@@ -297,7 +306,7 @@ internal sealed class CocoaHost : IWinFormsHost
         if (_getCaret == null) return;
         object[] a = { 0, 0, 0, 0 };
         if (!(bool)_getCaret.Invoke(_driver, a)) return;
-        if ((_blink.ElapsedMilliseconds / 530) % 2 != 0) return;   // ~530ms blink
+        if ((BlinkMs() / 530) % 2 != 0) return;   // ~530ms blink
         int x = (int)a[0], y = (int)a[1], w = Math.Max(1, (int)a[2]), h = (int)a[3];
         using var g = Graphics.FromImage(dest);
         using var b = new SolidBrush(Color.Black);

@@ -1308,8 +1308,13 @@ namespace System.Windows.Forms
 				if (SelectedIndices.Contains (i))
 					state |= DrawItemState.Selected;
 					
-				if (has_focus && FocusedItem == i)
+				if (has_focus && FocusedItem == i) {
 					state |= DrawItemState.Focus;
+					// ODS_NOFOCUSRECT: a list the user has only clicked on (UISF_HIDEFOCUS) shows no
+					// focus rectangle, until the keyboard is used -- stock's clicked list has none.
+					if (!ShowFocusCues)
+						state |= DrawItemState.NoFocusRect;
+				}
 					
 				if (MultiColumn == false && hscrollbar != null && hscrollbar.Visible) {
 					rect.X -= hscrollbar.Value;

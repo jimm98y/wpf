@@ -2757,6 +2757,26 @@ namespace System.Windows.Forms {
 			IsYearGoingDown = false;
 		}
 
+		/// <summary>The next paint covers the whole control in one buffer. comctl32 repaints the
+		/// whole calendar when it gains or loses the focus, and a day selected by the same click is
+		/// painted in that picture: its focus rectangle's checkerboard follows the client's corner,
+		/// not the day's cell as it does when the day is repainted on its own.</summary>
+		internal bool repaint_whole;
+
+		protected override void OnGotFocus (EventArgs e)
+		{
+			repaint_whole = true;
+			Invalidate ();
+			base.OnGotFocus (e);
+		}
+
+		protected override void OnLostFocus (EventArgs e)
+		{
+			repaint_whole = true;
+			Invalidate ();
+			base.OnLostFocus (e);
+		}
+
 		// paint this control now
 		private void PaintHandler (object sender, PaintEventArgs pe) {
 			// NOT gated on Visible. A Paint event being raised IS the request to paint, and
@@ -2770,6 +2790,10 @@ namespace System.Windows.Forms {
     				return;
 
 			Draw (pe.ClipRectangle, pe.Graphics);
+			// Not while a button is held: comctl32 tracks the click without painting, so the
+			// focus repaint and the clicked day's own come out as ONE picture after the release.
+			if (Control.MouseButtons == MouseButtons.None)
+				repaint_whole = false;
 
 			// fire the new paint handler
 			if (this.Paint != null) 

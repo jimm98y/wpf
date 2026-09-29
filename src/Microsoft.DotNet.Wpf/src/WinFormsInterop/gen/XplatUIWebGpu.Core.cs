@@ -1729,12 +1729,29 @@ namespace System.Windows.Forms
 		// vertical bar at the screen position (the backing bitmaps don't contain the caret).
 		private IntPtr _caretHwnd; private int _caretX, _caretY, _caretW = 1, _caretH; private bool _caretVisible;
 
+		// user32 restarts the blink whenever the caret is created, moved or shown: it appears at once
+		// (an edit that has just taken the focus shows its caret) and goes off a blink time later.
+		// Hosts blinked it against a clock of their own, so a freshly focused edit could come up in
+		// the OFF half and show no caret for up to half a second.
+		private long _caretSince = Environment.TickCount64;
+
 		internal override void CreateCaret(IntPtr hwnd, int width, int height)
-		{ _caretHwnd = hwnd; _caretW = Math.Max(1, width); _caretH = height; }
+		{ _caretHwnd = hwnd; _caretW = Math.Max(1, width); _caretH = height; _caretSince = Environment.TickCount64; }
 		internal override void SetCaretPos(IntPtr hwnd, int x, int y)
-		{ _caretHwnd = hwnd; _caretX = x; _caretY = y; }
+		{
+			if (hwnd != _caretHwnd || x != _caretX || y != _caretY) _caretSince = Environment.TickCount64;
+			_caretHwnd = hwnd; _caretX = x; _caretY = y;
+		}
 		internal override void CaretVisible(IntPtr hwnd, bool visible)
-		{ if (hwnd == _caretHwnd) _caretVisible = visible; }
+		{
+			if (hwnd != _caretHwnd) return;
+			if (visible && !_caretVisible) _caretSince = Environment.TickCount64;
+			_caretVisible = visible;
+		}
+
+		/// <summary>Milliseconds since the caret last restarted its blink; a host shows it while
+		/// (this / CaretBlinkTime) is even.</summary>
+		internal long GetCaretBlinkElapsed() => Environment.TickCount64 - _caretSince;
 		internal override void DestroyCaret(IntPtr hwnd)
 		{ if (hwnd == _caretHwnd) { _caretHwnd = IntPtr.Zero; _caretVisible = false; } }
 

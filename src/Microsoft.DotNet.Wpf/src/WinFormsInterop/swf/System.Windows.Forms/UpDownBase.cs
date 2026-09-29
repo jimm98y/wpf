@@ -45,7 +45,6 @@ namespace System.Windows.Forms
 		#region UpDownSpinner Sub-class
 		internal sealed class UpDownSpinner : Control {
 			#region	Local Variables
-			private const int	InitialRepeatDelay = 50;
 			private UpDownBase	owner;
 			private Timer		tmrRepeat;
 			private Rectangle	top_button_rect;
@@ -53,8 +52,6 @@ namespace System.Windows.Forms
 			private int		mouse_pressed;
 			private int		mouse_x;
 			private int		mouse_y;
-			private int		repeat_delay;
-			private int		repeat_counter;
 			bool top_button_entered;
 			bool bottom_button_entered;
 			#endregion	// Local Variables
@@ -151,22 +148,20 @@ namespace System.Windows.Forms
 				}
 			}
 
+			// .NET's UpDownButtons: a step on the press, the first repeat 500 ms later, and each interval
+			// after that 7/10 of the one before (TimerHandler). Counting 10 ms ticks instead ran as fast
+			// as ticks arrived -- stock held down a second read 2,348 where ours read 2,346.
+			private const int DefaultTimerInterval = 500;
+			private int timer_interval;
+
 			private void tmrRepeat_Tick (object sender, EventArgs e)
 			{
-				if (repeat_delay > 1) {
-					repeat_counter++;
-
-					if (repeat_counter < repeat_delay) {
-						return;
-					}
-
-					repeat_counter = 0;
-					repeat_delay = (repeat_delay * 3 / 4);
-				}
-
 				if (mouse_pressed == 0) {
 					tmrRepeat.Enabled = false;
+					return;
 				}
+				timer_interval = Math.Max (1, timer_interval * 7 / 10);
+				tmrRepeat.Interval = timer_interval;
 
 				if ((mouse_pressed == 1) && top_button_rect.Contains(mouse_x, mouse_y)) {
 					owner.UpButton();
@@ -181,6 +176,11 @@ namespace System.Windows.Forms
 			#region Protected Instance Methods
 			protected override void OnMouseDown (MouseEventArgs e)
 			{
+				// .NET's UpDownButtons.OnMouseDown focuses the control first, whichever button: the
+				// edit takes the focus (and shows its caret) as the value starts to spin.
+				if (!owner.txtView.Focused)
+					owner.txtView.Focus ();
+
 				if (e.Button != MouseButtons.Left) {
 					return;
 				}
@@ -197,9 +197,9 @@ namespace System.Windows.Forms
 				mouse_y = e.Y;
 				Capture = true;
 
+				timer_interval = DefaultTimerInterval;
+				tmrRepeat.Interval = timer_interval;
 				tmrRepeat.Enabled = true;
-				repeat_counter = 0;
-				repeat_delay = InitialRepeatDelay;
 
 				Refresh ();
 			}
@@ -228,9 +228,9 @@ namespace System.Windows.Forms
 				
 				if (before != after) {
 					if (after == ButtonState.Pushed) {
+						timer_interval = DefaultTimerInterval;
+						tmrRepeat.Interval = timer_interval;
 						tmrRepeat.Enabled = true;
-						repeat_counter = 0;
-						repeat_delay = InitialRepeatDelay;
 
 						// fire off one right now too for good luck
 						if (mouse_pressed == 1)

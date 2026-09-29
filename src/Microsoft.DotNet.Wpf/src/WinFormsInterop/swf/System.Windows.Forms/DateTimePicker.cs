@@ -1779,12 +1779,52 @@ namespace System.Windows.Forms {
 		void OnMouseLeave (object sender, EventArgs e)
 		{
 			drop_down_button_entered = false;
+			pointer_on_spin = false;
+			if (hover_up || hover_down) {
+				hover_up = hover_down = false;
+				Invalidate (drop_down_arrow_rect);
+			}
 			if (ThemeEngine.Current.DateTimePickerBorderHasHotElementStyle)
 				Invalidate ();
 		}
 
+		/// <summary>Which half of the up-down the pointer is on: msctls_updown32 hot-tracks each.</summary>
+		internal bool hover_up, hover_down;
+
+		/// <summary>The pointer is over the up-down, which to Windows is outside the picker.</summary>
+		internal bool pointer_on_spin;
+
+		/// <summary>The up-down's two halves as comctl32 places its child: the client less two pixels
+		/// top, bottom and right, SM_CXVSCROLL wide, each half h/2 tall from its end.</summary>
+		internal void GetSpinHalves (out Rectangle up, out Rectangle down)
+		{
+			Rectangle client = ClientRectangle;
+			int w = SystemInformation.VerticalScrollBarWidth;
+			Rectangle spin = new Rectangle (client.Right - 2 - w, client.Top + 2, w, Math.Max (0, client.Height - 4));
+			int half = spin.Height / 2;
+			up = new Rectangle (spin.X, spin.Y, spin.Width, half);
+			down = new Rectangle (spin.X, spin.Bottom - half, spin.Width, half);
+		}
+
 		void OnMouseMove (object sender, MouseEventArgs e)
 		{
+			if (ShowUpDown) {
+				GetSpinHalves (out Rectangle up, out Rectangle down);
+				bool on_up = up.Contains (e.Location), on_down = down.Contains (e.Location);
+				if (on_up != hover_up || on_down != hover_down) {
+					hover_up = on_up;
+					hover_down = on_down;
+					Invalidate (drop_down_arrow_rect);
+				}
+				// comctl32's up-down is a CHILD window: the pointer on it has left the picker, whose
+				// border drops back from hot to normal.
+				bool on_spin = Rectangle.Union (up, down).Contains (e.Location);
+				if (on_spin != pointer_on_spin) {
+					pointer_on_spin = on_spin;
+					if (ThemeEngine.Current.DateTimePickerBorderHasHotElementStyle)
+						Invalidate ();
+				}
+			}
 			if (!is_drop_down_visible &&
 				ThemeEngine.Current.DateTimePickerDropDownButtonHasHotElementStyle &&
 				drop_down_button_entered != drop_down_arrow_rect.Contains (e.Location)) {

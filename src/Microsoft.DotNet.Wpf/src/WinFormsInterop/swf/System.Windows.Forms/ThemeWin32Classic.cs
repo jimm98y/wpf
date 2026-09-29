@@ -1591,7 +1591,7 @@ namespace System.Windows.Forms
 				ResPool.GetSolidBrush (fore_color),
 				item_rect, ctrl.StringFormat);
 					
-			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus) {
+			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus && (e.State & DrawItemState.NoFocusRect) == 0) {
 				CPDrawFocusRectangle (e.Graphics, item_rect,
 					fore_color, back_color);
 			}
@@ -1636,7 +1636,7 @@ namespace System.Windows.Forms
 					text_draw, string_format);
 			}
 			
-			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus) {
+			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus && (e.State & DrawItemState.NoFocusRect) == 0) {
 				CPDrawFocusRectangle (e.Graphics, e.Bounds, fore_color, back_color);
 			}
 
@@ -2463,9 +2463,9 @@ namespace System.Windows.Forms
 						dc.FillRectangle (SystemBrushes.Control, spin);
 						int half = spin.Height / 2;
 						DrawSpinPart (dc, new Rectangle (spin.X, spin.Y, spin.Width, half), true,
-							      !dtp.Enabled ? 4 : dtp.is_up_pressed ? 3 : 1);
+							      !dtp.Enabled ? 4 : dtp.is_up_pressed ? 3 : dtp.hover_up ? 2 : 1);
 						DrawSpinPart (dc, new Rectangle (spin.X, spin.Bottom - half, spin.Width, half), false,
-							      !dtp.Enabled ? 4 : dtp.is_down_pressed ? 3 : 1);
+							      !dtp.Enabled ? 4 : dtp.is_down_pressed ? 3 : dtp.hover_down ? 2 : 1);
 					} else {
 						Rectangle up_bounds = new Rectangle (spin.X, spin.Y, spin.Width, spin.Height / 2);
 						Rectangle down_bounds = new Rectangle (spin.X, up_bounds.Bottom, spin.Width, spin.Height - up_bounds.Height);
@@ -2793,7 +2793,7 @@ namespace System.Windows.Forms
 					       ResPool.GetSolidBrush (fore_color),
 					       caption, ctrl.StringFormat);
 					
-			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus)
+			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus && (e.State & DrawItemState.NoFocusRect) == 0)
 				CPDrawFocusRectangle (e.Graphics, e.Bounds, fore_color, back_color);
 		}
 		
@@ -3181,6 +3181,20 @@ namespace System.Windows.Forms
 				format.Trimming = StringTrimming.EllipsisCharacter;
 
 			Rectangle highlight_rect = text_rect;
+			// List view: comctl32 selects the label -- the text's own width with two pixels either
+			// side -- over the item's cell, from its left edge and top row. The text rectangle above
+			// was moved three left and a row up to seat the text, so the band is not built from it.
+			// Stock's selected "List one" is 45 wide, its text 41.
+			if (control.View == View.List) {
+				highlight_rect.X = full_rect.X;
+				highlight_rect.Y = full_rect.Y;
+				highlight_rect.Height = full_rect.Height;
+				if (!string.IsNullOrEmpty (item.Text)) {
+					int text_w = TextRenderer.MeasureText (item.Text, item.Font, new Size (int.MaxValue, int.MaxValue),
+						TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
+					highlight_rect.Width = Math.Min (text_w + 4, full_rect.Right - highlight_rect.X);
+				}
+			}
 			if (control.View == View.Details) { // Adjustments for Details view
 				// The band starts a pixel inside the label's own rectangle and stops on the same column:
 				// measured against a stock list, whose selected row is one narrower than the row it lays
@@ -3198,7 +3212,9 @@ namespace System.Windows.Forms
 			else if (item.Selected && !control.HideSelection)
 				dc.FillRectangle (SystemBrushes.Control, highlight_rect);
 			else
-				dc.FillRectangle (ResPool.GetSolidBrush (item.BackColor), text_rect);
+				// Not the moved text rectangle in List view: that reaches a row up, over the bottom
+				// of the band of a selected item above.
+				dc.FillRectangle (ResPool.GetSolidBrush (item.BackColor), control.View == View.List ? highlight_rect : text_rect);
 			
 			Brush textBrush =
 				!control.Enabled ? SystemBrushes.ControlLight :
@@ -3228,10 +3244,13 @@ namespace System.Windows.Forms
 				if (control.HotTracking && item.Hot)
 					font = item.HotFont;
 
-				if (item.Selected && control.Focused)
-					dc.DrawString (item.Text, font, textBrush, highlight_rect, format);
-				else
-					dc.DrawString (item.Text, font, textBrush, text_rect, format);
+				// The label keeps its place when the row is selected: the band starts a pixel in, the
+				// text does not move with it (stock's selected label starts on its unselected column).
+				// Only the width is the band's, where the band is narrower than the label.
+				Rectangle label_rect = text_rect;
+				if (item.Selected && control.Focused && control.View == View.Details)
+					label_rect.Width = Math.Min (text_rect.Width, highlight_rect.Right - text_rect.X);
+				dc.DrawString (item.Text, font, textBrush, label_rect, format);
 			}
 
 			// The focus rectangle is drawn once the whole row is on screen, not here: this method
@@ -4497,6 +4516,20 @@ namespace System.Windows.Forms
 		{
 		}
 
+		/// <summary>Behind the day under the pointer: the hover colour a pixel inside the cell.</summary>
+		protected virtual void MonthCalendarDrawHoverDay (Graphics dc, MonthCalendar mc, Rectangle day)
+		{
+			Color wash = MonthCalendarHoverBackColor (mc);
+			if (wash == Color.Empty)
+				return;
+			Rectangle cell = Rectangle.Inflate (day, -1, -1);
+			if (cell.Width > 0 && cell.Height > 0)
+				dc.FillRectangle (ResPool.GetSolidBrush (wash), cell);
+		}
+
+		/// <summary>The ink of today's date when it is not selected; Empty keeps the date's own.</summary>
+		protected virtual Color MonthCalendarTodayForeColor (MonthCalendar mc) => Color.Empty;
+
 		/// <summary>The ink of a zoomed cell under the pointer; Empty keeps the cell's own.</summary>
 		protected virtual Color MonthCalendarZoomedHotForeColor (MonthCalendar mc) => Color.Empty;
 
@@ -4630,14 +4663,8 @@ namespace System.Windows.Forms
 			// the hover wash as well, and the selected frame blended over it came out a shade dark.
 			bool hovered = date == mc.HoverDate.Date && (date < mc.SelectionStart.Date || date > mc.SelectionEnd.Date);
 
-			if (hovered) {
-				Color wash = MonthCalendarHoverBackColor (mc);
-				if (wash != Color.Empty) {
-					Rectangle cell = Rectangle.Inflate (rectangle, inflate, inflate);
-					if (cell.Width > 0 && cell.Height > 0)
-						dc.FillRectangle (ResPool.GetSolidBrush (wash), cell);
-				}
-			}
+			if (hovered)
+				MonthCalendarDrawHoverDay (dc, mc, rectangle);
 
 			if (MonthCalendarFramesEachSelectedDay && date >= mc.SelectionStart.Date && date <= mc.SelectionEnd.Date) {
 				// Every selected day in its own frame, the focus drawn on one of them only.
@@ -4693,6 +4720,11 @@ namespace System.Windows.Forms
 			// establish if it's a bolded font
 			Font font = mc.IsBoldedDate (date) ? mc.bold_font : mc.Font;
 
+			// Today, when it is not the selection, is written in the theme's today colour.
+			if (date == mc.TodayDate.Date && (date < mc.SelectionStart.Date || date > mc.SelectionEnd.Date)
+			    && MonthCalendarTodayForeColor (mc) is { IsEmpty: false } today_ink)
+				date_color = today_ink;
+
 			// just draw the date now
 			if (hovered) {
 				Color hover = MonthCalendarHoverForeColor (mc);
@@ -4710,11 +4742,15 @@ namespace System.Windows.Forms
 			}
 
 			// draw the selection grid
-			if (mc.is_date_clicked && mc.clicked_date == date) {
+			if (MonthCalendarDrawsClickedFrame && mc.is_date_clicked && mc.clicked_date == date) {
 				Pen pen = ResPool.GetDashPen (Color.Black, DashStyle.Dot);
 				dc.DrawRectangle (pen, interior);
 			}
 		}
+
+		/// <summary>Whether a clicked day gets the classic theme's dotted frame round its interior.
+		/// comctl32 has no such mark: the day's own focus rectangle is all it shows.</summary>
+		protected virtual bool MonthCalendarDrawsClickedFrame => true;
 
 		/// <summary>The font the month and year are set in. The classic theme emboldens them.</summary>
 		protected virtual Font MonthCalendarTitleFont (MonthCalendar mc) => mc.bold_font;
@@ -6801,7 +6837,7 @@ namespace System.Windows.Forms
 				dc.FillRectangle (ResPool.GetSolidBrush (tb.BackColor), clip_rectangle);
 			}
 			
-			if (tb.Focused) {
+			if (tb.Focused && tb.ShowFocusCues) {
 				CPDrawFocusRectangle(dc, area, tb.ForeColor, tb.BackColor);
 			}
 

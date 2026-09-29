@@ -1715,6 +1715,33 @@ namespace System.Windows.Forms
 				get { return ToolBarButtonStyle.PushButton; }
 				set { }
 			}
+
+			// .NET's PropertyGrid toolbar marks the item the pointer (or the keyboard) is on with a
+			// dashed black border over the hot frame, so it can be seen at a glance. Read off a stock
+			// grid: three pixels on, one off, each edge starting its own dash -- the top and the
+			// right from the top corners, the bottom from the left, the left from a pixel below the
+			// top -- on the button's own outline, which is a row shorter than the item: .NET's
+			// DrawDashedBorer takes a pixel off the bounds' height so the dashes sit on the themed
+			// background rather than under it.
+			protected override void OnPaint (PaintEventArgs e)
+			{
+				base.OnPaint (e);
+				if (!Selected || !Enabled)
+					return;
+				int r = Width - 1, b = Height - 2;
+				if (r <= 0 || b <= 0)
+					return;
+				Brush ink = Brushes.Black;
+				Graphics g = e.Graphics;
+				for (int k = 0, x = 0; x <= r; x++, k++)
+					if (k % 4 < 3) g.FillRectangle (ink, x, 0, 1, 1);
+				for (int k = 0, y = 0; y < b; y++, k++)
+					if (k % 4 < 3) g.FillRectangle (ink, r, y, 1, 1);
+				for (int k = 0, x = 0; x < r; x++, k++)
+					if (k % 4 < 3) g.FillRectangle (ink, x, b, 1, 1);
+				for (int k = 0, y = 1; y <= b; y++, k++)
+					if (k % 4 < 3) g.FillRectangle (ink, 0, y, 1, 1);
+			}
 		}
 		
 		// needed! this little helper makes it possible to draw a different toolbar border

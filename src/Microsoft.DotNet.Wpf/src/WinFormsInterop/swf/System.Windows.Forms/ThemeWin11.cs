@@ -262,7 +262,7 @@ namespace System.Windows.Forms
 			g.FillRectangle (ResPool.GetSolidBrush (parent), client);
 			int state = !dateTimePicker.Enabled ? 4
 				  : dateTimePicker.Focused || dateTimePicker.is_drop_down_visible ? 3
-				  : dateTimePicker.Entered ? 2 : 1;
+				  : dateTimePicker.Entered && !dateTimePicker.pointer_on_spin ? 2 : 1;
 			VisualStyles.Win11Frames.Draw (g, VisualStyles.Win11Frames.ComboBorder (state), client);
 		}
 
@@ -322,7 +322,7 @@ namespace System.Windows.Forms
 						       ResPool.GetSolidBrush (fore), caption, format);
 				format.Dispose ();
 			}
-			if (!inField && (e.State & DrawItemState.Focus) == DrawItemState.Focus)
+			if (!inField && (e.State & DrawItemState.Focus) == DrawItemState.Focus && (e.State & DrawItemState.NoFocusRect) == 0)
 				CPDrawFocusRectangle (e.Graphics, e.Bounds, fore, back);
 		}
 
@@ -1377,7 +1377,10 @@ namespace System.Windows.Forms
 			int length = Math.Max (1, right - left);
 
 			int min = tb.Minimum, max = tb.Maximum;
-			int value = tb.thumb_pressed ? tb.Minimum + tb.thumb_mouseclick : tb.Value;
+			// comctl32 draws the thumb at its position whether or not it is held: a drag moves the
+			// value (OnMouseMoveTB), and the press itself moves nothing. thumb_mouseclick is the
+			// press's PIXEL, and reading it as a value threw the held thumb off the control.
+			int value = tb.Value;
 			// WinForms hands a vertical bar its value upside down, so that the minimum is at the
 			// bottom.
 			if (vert)
@@ -1422,6 +1425,13 @@ namespace System.Windows.Forms
 
 		/// <summary>comctl32's thumb state: disabled, pressed, hot, focused (unless focus cues are
 		/// hidden), else normal.</summary>
+		// The thumb has a hot state (it goes near-black under the pointer), so entering and leaving it
+		// has to repaint it -- the classic theme's answer, false, left it blue under the pointer.
+		public override bool TrackBarHasHotThumbStyle => true;
+
+		// The arrows have hot and pressed looks of their own, so entering and leaving them repaints.
+		public override bool ScrollBarHasHotElementStyles => true;
+
 		private static int TrackBarThumbState (TrackBar tb)
 			=> !tb.Enabled ? 5 : tb.thumb_pressed ? 3 : tb.ThumbEntered ? 2
 			 : tb.Focused && tb.ShowFocusCues ? 4 : 1;
@@ -1895,6 +1905,18 @@ namespace System.Windows.Forms
 		// 0066CC: the full-coverage ink of a stock zoomed cell under the pointer.
 		protected override Color MonthCalendarZoomedHotForeColor (MonthCalendar mc) => MonthCalHotInk;
 
+		// The day under the pointer is MC_GRIDCELLBACKGROUND hot over its whole cell, as a zoomed cell is.
+		protected override void MonthCalendarDrawHoverDay (Graphics dc, MonthCalendar mc, Rectangle day)
+		{
+			if (day.Width > 2 && day.Height > 2)
+				Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, 2), day);
+		}
+
+		protected override bool MonthCalendarDrawsClickedFrame => false;
+
+		// Stock writes today's date in the accent blue once the selection is elsewhere.
+		protected override Color MonthCalendarTodayForeColor (MonthCalendar mc) => MonthCalHotInk;
+
 		/// <summary>What MC_GRIDCELLBACKGROUND state 1 leaves inside its accent border on the calendar's
 		/// white: its 0x33 wash (#001C33 premultiplied) over white -- the pixels a focus rectangle one in
 		/// from the border lands on.</summary>
@@ -2068,14 +2090,14 @@ namespace System.Windows.Forms
 				if (!monthcal_focus_day)
 					return;
 				if (hot) {
-					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? new Point (rect.X - 1, rect.Y - 1), MonthCalSelectedHotShade);
+					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? (mc.repaint_whole ? Point.Empty : new Point (rect.X - 1, rect.Y - 1)), MonthCalSelectedHotShade);
 					return;
 				}
 				// And the focus rectangle a pixel in, as round the current cell of a zoomed view:
 				// comctl32 draws it on the focused day whenever the calendar has the focus, not only
 				// while a click is held.
 				if (mc.Focused)
-					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? new Point (rect.X - 1, rect.Y - 1));
+					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? (mc.repaint_whole ? Point.Empty : new Point (rect.X - 1, rect.Y - 1)));
 				return;
 			}
 			dc.FillRectangle (brush, rect);
@@ -2298,9 +2320,13 @@ namespace System.Windows.Forms
 			// SBP_ARROWBTN: up/down/left/right in fours (normal, hot, pressed, disabled), then the
 			// four hover states.
 			int d1 = bar.vert ? 0 : 2, d2 = bar.vert ? 1 : 3;
-			int ArrowState (int dir) => !bar.Enabled ? dir * 4 + 4 : hover ? 17 + dir : dir * 4 + 1;
-			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", 1, ArrowState (d1)), first);
-			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", 1, ArrowState (d2)), second);
+			// Each arrow its own state: pressed, hot under the pointer (the larger, darker glyph), else
+			// the bar's hover. Only the bar's hover was ever drawn, so the arrow under the pointer came
+			// out in the smaller, lighter look.
+			int ArrowState (int dir, bool entered, bool pressed) => !bar.Enabled ? dir * 4 + 4
+				: pressed ? dir * 4 + 3 : entered ? dir * 4 + 2 : hover ? 17 + dir : dir * 4 + 1;
+			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", 1, ArrowState (d1, bar.FirstButtonEntered, bar.firstbutton_state == ButtonState.Pushed)), first);
+			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", 1, ArrowState (d2, bar.SecondButtonEntered, bar.secondbutton_state == ButtonState.Pushed)), second);
 			if (!bar.Enabled || thumb.Width <= 0 || thumb.Height <= 0)
 				return;
 			// SBP_THUMBBTNVERT / HORZ: normal, or SCRBS_HOVER.
@@ -2656,7 +2682,7 @@ namespace System.Windows.Forms
 				e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
 						       ResPool.GetSolidBrush (fore), text, ctrl.StringFormat);
 
-			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus)
+			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus && (e.State & DrawItemState.NoFocusRect) == 0)
 				CPDrawFocusRectangle (e.Graphics, text, fore, back);
 		}
 
