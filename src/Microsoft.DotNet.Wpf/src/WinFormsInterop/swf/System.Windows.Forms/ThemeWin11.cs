@@ -1882,6 +1882,8 @@ namespace System.Windows.Forms
 
 		/// <summary>State 3's shade inside its top and left edges, on the calendar's white.</summary>
 		private static readonly Color MonthCalSelectedHotShade = Color.FromArgb (201, 231, 255);
+		/// <summary>State 3's four inner corners, on white.</summary>
+		private static readonly Color MonthCalSelectedHotCorner = Color.FromArgb (189, 225, 255);
 
 		// MC_GRIDCELLBACKGROUND state 2 behind the zoomed cell the pointer is on; its text goes blue.
 		protected override void MonthCalendarDrawZoomedHot (Graphics dc, MonthCalendar mc, Rectangle cell)
@@ -1928,10 +1930,15 @@ namespace System.Windows.Forms
 			Color tl = underTopLeft ?? under;
 			Brush tl_brush = ResPool.GetSolidBrush (Color.FromArgb (255 - tl.R, 255 - tl.G, 255 - tl.B));
 			int right = r.Right - 1, bottom = r.Bottom - 1;
+			// And state 3's four inner corners are darker again: a dot there is their negative.
+			Brush corner_brush = underTopLeft != null
+				? ResPool.GetSolidBrush (Color.FromArgb (255 - MonthCalSelectedHotCorner.R, 255 - MonthCalSelectedHotCorner.G, 255 - MonthCalSelectedHotCorner.B))
+				: null;
 			bool Dot (int x, int y) => ((x - origin.X + y - origin.Y) & 1) == 1;
 			for (int x = r.X; x <= right; x++) {
-				if (Dot (x, r.Y)) dc.FillRectangle (tl_brush, x, r.Y, 1, 1);
-				if (bottom != r.Y && Dot (x, bottom)) dc.FillRectangle (brush, x, bottom, 1, 1);
+				bool corner = x == r.X || x == right;
+				if (Dot (x, r.Y)) dc.FillRectangle (corner && corner_brush != null ? corner_brush : tl_brush, x, r.Y, 1, 1);
+				if (bottom != r.Y && Dot (x, bottom)) dc.FillRectangle (corner && corner_brush != null ? corner_brush : brush, x, bottom, 1, 1);
 			}
 			for (int y = r.Y + 1; y < bottom; y++) {
 				if (Dot (r.X, y)) dc.FillRectangle (tl_brush, r.X, y, 1, 1);
