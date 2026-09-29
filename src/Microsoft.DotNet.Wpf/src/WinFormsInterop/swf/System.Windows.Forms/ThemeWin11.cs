@@ -1873,7 +1873,7 @@ namespace System.Windows.Forms
 			bool hot = monthcal_zoomed_hot && mc.Focused;
 			Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, hot ? 3 : mc.Focused ? 1 : 4), cell);
 			if (mc.Focused)
-				FillSelectedWash (dc, hot ? Rectangle.FromLTRB (cell.X + 2, cell.Y + 2, cell.Right - 1, cell.Bottom - 1)
+				FillSelectedWash (dc, hot ? Rectangle.FromLTRB (cell.X + 2, cell.Y + 2, cell.Right - 2, cell.Bottom - 2)
 					: Rectangle.Inflate (cell, -1, -1));
 			if (mc.Focused)
 				DrawFocusRectInverted (dc, Rectangle.Inflate (cell, -1, -1), MonthCalSelectedWash, MonthCalPictureOrigin ?? Point.Empty,
@@ -2057,7 +2057,7 @@ namespace System.Windows.Forms
 				Rectangle cell = Rectangle.Inflate (rect, 1, 1);
 				Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, hot ? 3 : mc.Focused ? 1 : 4), cell);
 				if (mc.Focused)
-					FillSelectedWash (dc, hot ? Rectangle.FromLTRB (cell.X + 2, cell.Y + 2, cell.Right - 1, cell.Bottom - 1) : rect);
+					FillSelectedWash (dc, hot ? Rectangle.FromLTRB (cell.X + 2, cell.Y + 2, cell.Right - 2, cell.Bottom - 2) : rect);
 				if (!monthcal_focus_day)
 					return;
 				if (hot) {

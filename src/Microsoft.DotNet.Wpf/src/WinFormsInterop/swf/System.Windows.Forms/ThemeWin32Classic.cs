@@ -4625,8 +4625,9 @@ namespace System.Windows.Forms
 
 			// The pointer's own day takes the hover colour, unless it is selected: a selected day
 			// keeps the colour that says so.
-			bool hovered = date == mc.HoverDate.Date && date != mc.SelectionStart.Date
-				   && date != mc.SelectionEnd.Date;
+			// ...any selected day, that is, not only the ends of a range: a hovered 27th inside one took
+			// the hover wash as well, and the selected frame blended over it came out a shade dark.
+			bool hovered = date == mc.HoverDate.Date && (date < mc.SelectionStart.Date || date > mc.SelectionEnd.Date);
 
 			if (hovered) {
 				Color wash = MonthCalendarHoverBackColor (mc);

@@ -479,8 +479,8 @@ namespace System.Windows.Forms.VisualStyles
 		}
 
 		/// <summary>MC_GRIDCELLBACKGROUND state 3, selected and hot: state 1's frame with a BLACK
-		/// border, and a pixel of shade inside it along the top and the left (201/231/255 on white,
-		/// 189/225/255 where they meet) -- the cell a click is on. Read off a stock zoomed view's
+		/// border, and a pixel of shade inside it along the top and the left (201/231/255 on white),
+		/// darker still (189/225/255) at all four inner corners -- the cell a click is on. Read off a stock zoomed view's
 		/// picture taken as the click lands.</summary>
 		internal static Frame MonthCalSelectedHot ()
 		{
@@ -489,7 +489,7 @@ namespace System.Windows.Forms.VisualStyles
 				for (int x = 0; x < 7; x++) {
 					bool edgeX = x == 0 || x == 6, edgeY = y == 0 || y == 6;
 					f.Pixels [y * 7 + x] = edgeX && edgeY ? 0x3300182au : edgeX || edgeY ? 0xff000000u
-						: x == 1 && y == 1 ? 0x42002442u : x == 1 || y == 1 ? 0x36001e36u : 0x33001c33u;
+						: (x == 1 || x == 5) && (y == 1 || y == 5) ? 0x42002442u : x == 1 || y == 1 ? 0x36001e36u : 0x33001c33u;
 				}
 			return f;
 		}
