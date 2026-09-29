@@ -3798,10 +3798,11 @@ namespace System.Windows.Forms
 				monthcal_picture_depth--;
 				dc.EndSnapshot ();
 			}
-			foreach (int a in fx.OutsideAlphas) {
+			for (int k = 0; k < fx.OutsideAlphas.Count; k++) {
+				int a = fx.OutsideAlphas [k];
 				dc.BeginSnapshot (client, client, a / 255f, windowBlend: true);
 				monthcal_picture_depth++;
-				DrawMonthCalendarPicture (dc, client, mc);
+				mc.WithHeadingHot (fx.OutsideHeadingHot [k], () => DrawMonthCalendarPicture (dc, client, mc));
 				monthcal_picture_depth--;
 				dc.EndSnapshot ();
 			}

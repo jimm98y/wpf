@@ -1966,6 +1966,10 @@ namespace System.Windows.Forms {
 			/// screen, at that frame's progress x 255 -- so what is there is every frame's blend so far,
 			/// each rounded to 8 bits as GDI rounds it. These are those frames' alphas, in order.</summary>
 			public readonly List<int> OutsideAlphas = new List<int> ();
+			/// <summary>Whether the heading was hot in the picture each of those frames blended: the
+			/// first frame is painted inside the button-down, before the button-up is seen.</summary>
+			public readonly List<bool> OutsideHeadingHot = new List<bool> ();
+			public bool StartHoverTitle;
 		}
 
 		internal ZoomEffectState ZoomEffect => zoom_effect;
@@ -2028,6 +2032,7 @@ namespace System.Windows.Forms {
 			zoom_effect = fx;
 			// The pointer has not moved, but the view under it has: comctl32 finds what it is on in
 			// the new view at once -- a stock zoom's first picture already has that cell hot.
+			fx.StartHoverTitle = hover_title;
 			fx.FromHoverCell = hover_zoom_cell;
 			fx.FromHoverDate = hover_date;
 			if (last_mouse is Point at) {
@@ -2065,9 +2070,9 @@ namespace System.Windows.Forms {
 				string alphas = Environment.GetEnvironmentVariable ("WF_ZOOM_FREEZE_ALPHAS");
 				if (!string.IsNullOrEmpty (alphas))
 					foreach (string a0 in alphas.Split (','))
-						fx.OutsideAlphas.Add (int.Parse (a0));
+						AddOutsideBlend (fx, int.Parse (a0));
 				else
-					fx.OutsideAlphas.Add ((int) (s_zoomFreeze * 255.0));
+					AddOutsideBlend (fx, (int) (s_zoomFreeze * 255.0));
 				Invalidate ();
 				zoom_timer.Stop ();
 				return;
@@ -2078,8 +2083,22 @@ namespace System.Windows.Forms {
 				return;
 			}
 			fx.Progress = p;
-			fx.OutsideAlphas.Add ((int) (p * 255.0));
+			AddOutsideBlend (fx, (int) (p * 255.0));
 			Invalidate ();
+		}
+
+		private void AddOutsideBlend (ZoomEffectState fx, int alpha)
+		{
+			fx.OutsideHeadingHot.Add (fx.OutsideAlphas.Count == 0 ? fx.StartHoverTitle : hover_title);
+			fx.OutsideAlphas.Add (alpha);
+		}
+
+		/// <summary>Draw with the heading's hot state as it was in one frame's picture.</summary>
+		internal void WithHeadingHot (bool hot, Action draw)
+		{
+			bool was = hover_title;
+			hover_title = hot;
+			try { draw (); } finally { hover_title = was; }
 		}
 
 		private void EndZoomEffect ()
@@ -2093,6 +2112,9 @@ namespace System.Windows.Forms {
 			// (57). Both read off stock's frames: the old screen round the grid of the NEXT zoom.
 			header_from_zoom_picture = false;
 			footer_from_zoom_picture = true;
+			// ...and paints it without the hot state: only the pointer moving, or the button coming up
+			// (capture released), sets it again.
+			hover_title = hover_previous = hover_next = false;
 			Invalidate ();
 		}
 
@@ -2357,7 +2379,12 @@ namespace System.Windows.Forms {
 		}
 
 		private void MouseMoveHandler (object sender, MouseEventArgs e) {
+			// comctl32 hot-tracks the pointer's POSITION: a move to where it already was changes
+			// nothing (stock's second click on the heading finds it still not hot).
+			bool moved = last_mouse != e.Location;
 			last_mouse = e.Location;
+			if (!moved && !click_state [0])
+				return;
 			HitTestInfo hti = this.HitTest (e.X, e.Y);
 
 			// Nothing tracked the pointer unless a button was down, so there was no hovered day to
@@ -2690,6 +2717,16 @@ namespace System.Windows.Forms {
 		// to check if the mouse has come up on this control
 		private void MouseUpHandler (object sender, MouseEventArgs e)
 		{
+			// Releasing the button releases the capture, and the move that follows has comctl32 find
+			// what the pointer is on again -- the heading goes hot from the zoom's second frame.
+			if ((e.Button & MouseButtons.Left) != 0) {
+				HitTestInfo up_hit = HitTest (e.X, e.Y);
+				bool over_title = up_hit.HitArea == HitArea.TitleMonth || up_hit.HitArea == HitArea.TitleYear;
+				if (over_title != hover_title) {
+					hover_title = over_title;
+					Invalidate ();
+				}
+			}
 			if ((e.Button & MouseButtons.Left) == 0) {
 				if (show_today && (this.ContextMenu == null))
 					today_menu.Show (this, new Point (e.X, e.Y));
