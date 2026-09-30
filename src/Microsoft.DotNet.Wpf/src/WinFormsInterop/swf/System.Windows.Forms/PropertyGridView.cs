@@ -311,6 +311,15 @@ namespace System.Windows.Forms.PropertyGridInternal {
 
 		protected override bool ProcessDialogKey (Keys keyData) {
 			GridEntry selectedItem = this.SelectedGridItem;
+			// F4 opens the selected entry's editor, the drop-down or else the dialog -- .NET's
+			// F4Selection. Without it a keyboard could reach an entry and never open its editor.
+			if (keyData == Keys.F4 && selectedItem != null && selectedItem.GridItemType != GridItemType.Category) {
+				if (grid_textbox.DropDownButtonVisible)
+					DropDownEdit ();
+				else if (grid_textbox.DialogButtonVisible)
+					DialogButtonClicked (this, EventArgs.Empty);
+				return true;
+			}
 			if (selectedItem != null
 			    && grid_textbox.Visible) {
 				switch (keyData) {
