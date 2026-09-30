@@ -152,7 +152,10 @@ namespace System.Windows.Forms
 
 		public  override void DrawOwnerDrawFocusRectangle (DrawItemEventArgs e)
 		{
-			if (e.State == DrawItemState.Focus)
+			// .NET's DrawItemEventArgs.DrawFocusRectangle: Focus set and NoFocusRect not. Testing the
+			// state for EQUALITY with Focus meant a focused item that was also selected -- the usual
+			// case -- never got its rectangle, in every owner-drawn list.
+			if ((e.State & (DrawItemState.Focus | DrawItemState.NoFocusRect)) == DrawItemState.Focus)
 				CPDrawFocusRectangle (e.Graphics, e.Bounds, e.ForeColor, e.BackColor);
 		}
 		#endregion	// OwnerDraw Support

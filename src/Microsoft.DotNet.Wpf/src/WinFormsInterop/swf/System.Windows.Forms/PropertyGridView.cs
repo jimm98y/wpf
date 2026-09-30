@@ -846,6 +846,43 @@ namespace System.Windows.Forms.PropertyGridInternal {
 
 		#endregion
 
+		/// <summary>.NET's LogicalMaxListBoxHeight: a list of standard values stops growing here.</summary>
+		private const int MaxListBoxHeight = 200;
+
+		/// <summary>tmMaxCharWidth of the grid's font, which .NET adds to a list's width as padding.</summary>
+		private int MaxCharWidth ()
+		{
+			// The widest a character of the face gets; "W" stands for it closely enough in the fonts a
+			// grid is set in, and the measurement is GDI's (no padding).
+			return TextRenderer.MeasureText ("W", Font, new Size (int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding).Width;
+		}
+
+		/// <summary>.NET's GetRectangle (row, RowValue): the value cell of an entry's row.</summary>
+		private Rectangle ValueRectangle (GridEntry entry)
+		{
+			int width = ClientRectangle.Width - (vbar.Visible ? vbar.Width : 0);
+			return new Rectangle (SplitterLocation + 1, entry.Top, width - SplitterLocation - 1, RowHeight);
+		}
+
+		private void listBox_DrawItem (object sender, DrawItemEventArgs e)
+		{
+			if (e.Index < 0 || !(sender is ListBox list))
+				return;
+			e.DrawBackground ();
+			e.DrawFocusRectangle ();
+			// .NET: bounds a pixel down and a pixel left, then GridEntry.PaintValue -- the text where
+			// the grid puts a value's text in its cell.
+			Rectangle bounds = e.Bounds;
+			bounds.Y += 1;
+			bounds.X -= 1;
+			string text = list.Items [e.Index].ToString ();
+			bool selected = (e.State & DrawItemState.Selected) != 0;
+			var text_bounds = new Rectangle (bounds.X, bounds.Y, bounds.Width - 4, bounds.Height);
+			TextRenderer.DrawText (e.Graphics, text, Font, text_bounds, selected ? SystemColors.HighlightText : ForeColor,
+				TextFormatFlags.TextBoxControl | TextFormatFlags.ExpandTabs | TextFormatFlags.NoClipping
+				| TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine | LabelFlags);
+		}
+
 		private void listBox_MouseUp (object sender, MouseEventArgs e) {
 			AcceptListBoxSelection (sender);
 		}
@@ -894,17 +931,26 @@ namespace System.Windows.Forms.PropertyGridInternal {
 					ICollection std_values = entry.AcceptedValues;
 					if (std_values != null) {
 						if (dropdown_list == null) {
-							dropdown_list = new ListBox ();
+							// .NET's GridViewListBox: no border of its own (the holder has the one
+							// line round it), owner drawn, on the grid's own background.
+							dropdown_list = new ListBox {
+								BorderStyle = BorderStyle.None,
+								IntegralHeight = false,
+								DrawMode = DrawMode.OwnerDrawFixed,
+							};
 							dropdown_list.KeyDown += new KeyEventHandler (listBox_KeyDown);
 							dropdown_list.MouseUp += new MouseEventHandler (listBox_MouseUp);
+							dropdown_list.DrawItem += listBox_DrawItem;
 						}
+						dropdown_list.BackColor = BackColor;
+						dropdown_list.Font = Font;
 						dropdown_list.Items.Clear ();
-						dropdown_list.BorderStyle = BorderStyle.FixedSingle;
-						// A row of the list is a row of the grid. Left to size itself from the font it came out
-						// four pixels shorter than the rows the list drops out of, so the values sat cramped
-						// against one another and the list stood shorter than the space it had claimed.
-						dropdown_list.ItemHeight = row_height;
-						int selected_index = 0;
+						// A row of the list is a row of the grid's strip (RowHeight), a pixel under the
+						// grid's pitch; left to size itself from the font it came out four pixels short.
+						dropdown_list.ItemHeight = RowHeight;
+						// Nothing selected when the value is none of the list's (a flags value such as
+						// "Cheese, Basil"): .NET's GetCurrentValueIndex answers -1 and the list keeps it.
+						int selected_index = -1;
 						int i = 0;
 						string valueText = entry.ValueText;
 						foreach (object obj in std_values) {
@@ -913,9 +959,21 @@ namespace System.Windows.Forms.PropertyGridInternal {
 								selected_index = i;
 							i++;
 						}
-						dropdown_list.Height = row_height * Math.Min (dropdown_list.Items.Count, 15);
-						dropdown_list.Width = ClientRectangle.Width - SplitterLocation - (vbar.Visible ? vbar.Width : 0);
-						if (std_values.Count > 0)
+						// .NET: as tall as its rows up to a limit (a line of text at the least), as wide as
+						// the widest value plus border, padding (the widest character) and a scroll bar,
+						// and never narrower than the value column.
+						int widest = 0;
+						foreach (object item in dropdown_list.Items)
+							widest = Math.Max (widest, TextRenderer.MeasureText (item.ToString (), Font,
+								new Size (int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width);
+						widest += 2 + MaxCharWidth () + SystemInformation.VerticalScrollBarWidth;
+						// PreferredHeight: the rows plus the allowance ListBox makes for a border
+						// (BorderSize * 4 + 3), which .NET's list keeps -- its BorderStyle stays Fixed3D,
+						// only the window style loses the border. Stock's 2, 5 and 7 rows: 43, 97, 133.
+						int preferred = RowHeight * dropdown_list.Items.Count + SystemInformation.BorderSize.Height * 4 + 3;
+						dropdown_list.Height = Math.Max (Font.Height + 2, Math.Min (MaxListBoxHeight, preferred));
+						dropdown_list.Width = Math.Max (widest, ValueRectangle (entry).Width);
+						if (selected_index != -1)
 							dropdown_list.SelectedIndex = selected_index;
 						DropDownControl (dropdown_list);
 					}
@@ -1124,13 +1182,19 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			} else {
 				dropdown_form.FormBorderStyle = FormBorderStyle.None;
 				dropdown_form.SizeGripStyle = SizeGripStyle.Hide;
-				dropdown_form.Padding = Padding.Empty;
+				// The holder's WS_BORDER: one line round the control, outside it.
+				dropdown_form.Padding = new Padding (1);
+				dropdown_form.Size = new Size (control.Width + 2, control.Height + 2);
 			}
 
 			dropdown_form.Controls.Add (control);
-			dropdown_form.Width = Math.Max (ClientRectangle.Width - SplitterLocation - (vbar.Visible ? vbar.Width : 0), 
-							control.Width);
-			dropdown_form.Location = PointToScreen (new Point (grid_textbox.Right - dropdown_form.Width, grid_textbox.Location.Y + row_height));
+			// .NET's DropDownControl: at least the value cell and a pixel wide, its right edge on the
+			// cell's, and a pixel below the row.
+			GridEntry selected_entry = SelectedGridItem as GridEntry;
+			Rectangle value_rect = selected_entry != null ? ValueRectangle (selected_entry)
+				: new Rectangle (grid_textbox.Left, grid_textbox.Top, grid_textbox.Width, row_height);
+			dropdown_form.Width = Math.Max (value_rect.Width + 1, dropdown_form.Width);
+			dropdown_form.Location = PointToScreen (new Point (value_rect.Right - dropdown_form.Width, value_rect.Bottom + 1));
 			RepositionInScreenWorkingArea (dropdown_form);
 			Point location = dropdown_form.Location;
 
@@ -1242,6 +1306,21 @@ namespace System.Windows.Forms.PropertyGridInternal {
 
 		internal class PropertyGridDropDown : Form 
 		{
+			// Focus cues ON: .NET shows the holder with SW_SHOWNA, never activating it, so the
+			// UIS_INITIALIZE that hides a window's cues never reaches it -- stock's lists draw the
+			// focus rectangle on their current row however the drop-down was opened.
+			public PropertyGridDropDown ()
+			{
+				show_focus_cues = true;
+			}
+
+			protected override void OnPaint (PaintEventArgs e)
+			{
+				base.OnPaint (e);
+				if (Padding.All == 1)
+					e.Graphics.DrawRectangle (SystemPens.WindowFrame, 0, 0, Width - 1, Height - 1);
+			}
+
 			protected override CreateParams CreateParams {
 				get {
 					CreateParams cp = base.CreateParams;
