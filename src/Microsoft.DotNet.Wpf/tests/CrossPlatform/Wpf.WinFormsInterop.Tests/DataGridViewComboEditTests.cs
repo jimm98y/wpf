@@ -43,5 +43,42 @@ namespace Wpf.WinFormsInterop.Tests
             editor = Assert.IsAssignableFrom<ComboBox>(grid.EditingControl);
             Assert.Equal("Green", editor.SelectedItem);
         }
+
+        private static void Click(DataGridView grid, int col, int row, int x, int y)
+        {
+            var e = new DataGridViewCellMouseEventArgs(col, row, x, y, new MouseEventArgs(MouseButtons.Left, 1, 0, 0, 0));
+            typeof(DataGridView).GetMethod("OnCellMouseClick", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(grid, new object[] { e });
+        }
+
+        // .NET's DataGridViewComboBoxCell.OnMouseClick: the click that makes the cell current only
+        // selects it; the next one begins the edit, and drops the list only on the drop-down button.
+        [Fact]
+        public void ASecondClickOnTheCurrentComboCell_BeginsTheEdit()
+        {
+            using var form = new Form { ClientSize = new Size(400, 200) };
+            var grid = new DataGridView { Dock = DockStyle.Fill, AllowUserToAddRows = false };
+            grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Text" });
+            var combo = new DataGridViewComboBoxColumn { HeaderText = "Combo", Width = 70 };
+            combo.Items.AddRange("Red", "Green");
+            grid.Columns.Add(combo);
+            grid.Rows.Add("one", "Red");
+            form.Controls.Add(grid);
+            form.CreateControl();
+            grid.CreateControl();
+
+            grid.CurrentCell = grid.Rows[0].Cells[1];
+            // entered through the mouse, as a click on it enters it
+            typeof(DataGridViewCell).GetMethod("OnEnterInternal", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(grid.CurrentCell, new object[] { 0, true });
+
+            Click(grid, 1, 0, 10, 8);
+            Assert.False(grid.IsCurrentCellInEditMode, "the click that made the cell current only selects it");
+
+            Click(grid, 1, 0, 10, 8);
+            Assert.True(grid.IsCurrentCellInEditMode, "the next click begins the edit");
+            var editor = Assert.IsAssignableFrom<ComboBox>(grid.EditingControl);
+            Assert.False(editor.DroppedDown, "off the drop-down button the list stays up");
+        }
     }
 }

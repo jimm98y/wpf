@@ -1266,6 +1266,15 @@ namespace System.Windows.Forms
 			text_size.Height += 2;
 		}
 
+		/// <summary>The pixel offset a vertical scroll value stands for: rows in the report view.</summary>
+		int VScrollPixels (int value) => view == View.Details ? value * Math.Max (1, ItemSize.Height) : value;
+
+		/// <summary>A list view's horizontal scroll unit: one column of items.</summary>
+		int ListColumnWidth => Math.Max (1, UseCustomColumnWidth ? custom_column_width : ItemSize.Width + x_spacing);
+
+		/// <summary>The pixel offset a horizontal scroll value stands for.</summary>
+		int HScrollPixels (int value) => view == View.List ? value * ListColumnWidth : value;
+
 		private void SetScrollValue (ScrollBar scrollbar, int val)
 		{
 			int max;
@@ -1349,12 +1358,18 @@ namespace System.Windows.Forms
 					h_scroll.Width = client_area.Width;
 				}
 
-				if (view == View.List)
-					h_scroll.SmallChange = item_size.Width + ThemeEngine.Current.ListViewHorizontalSpacing;
-				else
+				if (view == View.List) {
+					// comctl32 scrolls a list view by COLUMNS (ListView_LUpdateScrollBars): the range
+					// is the columns less one, the page the columns wholly in view. In pixels the
+					// thumb came out a tenth long.
+					int column = ListColumnWidth;
+					h_scroll.Maximum = Math.Max (0, (layout_wd + column - 1) / column - 1);
+					h_scroll.SmallChange = 1;
+					h_scroll.LargeChange = Math.Max (1, h_scroll.Width / column);
+				} else {
 					h_scroll.SmallChange = Font.Height;
-
-				h_scroll.LargeChange = client_area.Width;
+					h_scroll.LargeChange = client_area.Width;
+				}
 				height -= h_scroll.Height;
 			}
 
@@ -1373,14 +1388,17 @@ namespace System.Windows.Forms
 				}
 
 				if (view == View.Details) {
-					// Need to update Maximum if using LargeChange with value other than the visible area
-					int headerPlusOneItem = header_control.Height + item_size.Height;
-					v_scroll.LargeChange = v_scroll.Height > headerPlusOneItem ? v_scroll.Height - headerPlusOneItem : 0;
-					v_scroll.Maximum = v_scroll.Maximum > headerPlusOneItem ? v_scroll.Maximum - headerPlusOneItem : 0;
-				} else
+					// comctl32's report view scrolls by ROWS (ListView_RUpdateScrollBars): the range is
+					// the items less one, the page the rows wholly below the header.
+					int row = Math.Max (1, item_size.Height);
+					int header = header_control.Visible ? header_control.Height : 0;
+					v_scroll.Maximum = Math.Max (0, items.Count - 1);
+					v_scroll.LargeChange = Math.Max (1, (v_scroll.Height - header) / row);
+					v_scroll.SmallChange = 1;
+				} else {
 					v_scroll.LargeChange = v_scroll.Height;
-
-				v_scroll.SmallChange = item_size.Height;
+					v_scroll.SmallChange = item_size.Height;
+				}
 				width -= v_scroll.Width;
 			}
 			
@@ -3348,6 +3366,8 @@ namespace System.Windows.Forms
 
 			switch (View) {
 			case View.Details:
+				Scroll (v_scroll, -SystemInformation.MouseWheelScrollLines * lines);
+				break;
 			case View.SmallIcon:
 				Scroll (v_scroll, -ItemSize.Height * SystemInformation.MouseWheelScrollLines * lines);
 				break;
@@ -3355,7 +3375,9 @@ namespace System.Windows.Forms
 				Scroll (v_scroll, -(ItemSize.Height + ThemeEngine.Current.ListViewVerticalSpacing)  * lines);
 				break;
 			case View.List:
-				Scroll (h_scroll, -ItemSize.Width * lines);
+				// A notch is the wheel's lines in COLUMNS, but never a whole page: stock's three-column
+				// list moves two a notch (MouseWheelScrollLines 3, capped at the page less one).
+				Scroll (h_scroll, -lines * Math.Max (1, Math.Min (SystemInformation.MouseWheelScrollLines, h_scroll.LargeChange - 1)));
 				break;
 			case View.Tile:
 				if (!Application.VisualStylesEnabled)
@@ -3390,11 +3412,11 @@ namespace System.Windows.Forms
 			
 			// Avoid unnecessary flickering, when button is
 			// kept pressed at the end
-			if (h_marker != h_scroll.Value) {
+			if (h_marker != HScrollPixels (h_scroll.Value)) {
 				
-				int pixels = h_marker - h_scroll.Value;
+				int pixels = h_marker - HScrollPixels (h_scroll.Value);
 				
-				h_marker = h_scroll.Value;
+				h_marker = HScrollPixels (h_scroll.Value);
 				if (header_control.Visible)
 					XplatUI.ScrollWindow (header_control.Handle, pixels, 0, false);
 
@@ -3408,15 +3430,15 @@ namespace System.Windows.Forms
 			
 			// Avoid unnecessary flickering, when button is
 			// kept pressed at the end
-			if (v_marker != v_scroll.Value) {
-				int pixels = v_marker - v_scroll.Value;
+			if (v_marker != VScrollPixels (v_scroll.Value)) {
+				int pixels = v_marker - VScrollPixels (v_scroll.Value);
 				Rectangle area = item_control.ClientRectangle;
 				if (header_control.Visible) {
 					area.Y += header_control.Height;
 					area.Height -= header_control.Height;
 				}
 
-				v_marker = v_scroll.Value;
+				v_marker = VScrollPixels (v_scroll.Value);
 				XplatUI.ScrollWindow (item_control.Handle, area, 0, pixels, false);
 			}
 		}
@@ -3751,17 +3773,20 @@ namespace System.Windows.Forms
 				return;
 
 			if (View != View.Details) {
+				// In columns in a list view, as its bar counts them.
+				int unit = view == View.List ? ListColumnWidth : 1;
 				if (bounds.Left < 0)
-					h_scroll.Value += bounds.Left;
+					h_scroll.Value += (bounds.Left - unit + 1) / unit;
 				// Don't shift right unless right-to-left layout is active. (Xamarin bug 22483)
 				else if (this.RightToLeftLayout && bounds.Right > view_rect.Right)
-					h_scroll.Value += (bounds.Right - view_rect.Right);
+					h_scroll.Value += (bounds.Right - view_rect.Right + unit - 1) / unit;
 			}
 
+			int vunit = view == View.Details ? Math.Max (1, ItemSize.Height) : 1;
 			if (bounds.Top < view_rect.Y)
-				v_scroll.Value += bounds.Top - view_rect.Y;
+				v_scroll.Value += (bounds.Top - view_rect.Y - vunit + 1) / vunit;
 			else if (bounds.Bottom > view_rect.Bottom)
-				v_scroll.Value += (bounds.Bottom - view_rect.Bottom);
+				v_scroll.Value += (bounds.Bottom - view_rect.Bottom + vunit - 1) / vunit;
 		}
 
 		public ListViewItem FindItemWithText (string text)

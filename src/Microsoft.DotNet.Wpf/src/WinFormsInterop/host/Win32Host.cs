@@ -549,6 +549,16 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 MouseMove(lParam); ApplyCursor(); Frame(); return IntPtr.Zero;
             case 0x02A3:        // WM_MOUSELEAVE
                 _trackingLeave = false;
+                // Not always a leave: Windows cancels the tracking -- and posts this -- around a
+                // capture change as well, so a click on a list's scroll track "left" the window with
+                // the pointer still on the bar, and the bar shut under it. Only a pointer that is
+                // really over another window has left.
+                if (GetCursorPos(out POINT at) && WindowFromPoint(at) == hwnd)
+                {
+                    var again = new TRACKMOUSEEVENT { cbSize = (uint)Marshal.SizeOf<TRACKMOUSEEVENT>(), dwFlags = 0x2 /* TME_LEAVE */, hwndTrack = hwnd };
+                    _trackingLeave = TrackMouseEvent(ref again);
+                    return IntPtr.Zero;
+                }
                 _leaveAll?.Invoke(_driver, null);
                 Frame();
                 return IntPtr.Zero;
@@ -1104,6 +1114,8 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     [DllImport("user32")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
     [StructLayout(LayoutKind.Sequential)] private struct TRACKMOUSEEVENT { public uint cbSize, dwFlags; public IntPtr hwndTrack; public uint dwHoverTime; }
     [DllImport("user32")] private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT e);
+    [DllImport("user32")] private static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32")] private static extern IntPtr WindowFromPoint(POINT p);
     private readonly MethodInfo _leaveAll;
     private bool _trackingLeave;
     [DllImport("user32")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);

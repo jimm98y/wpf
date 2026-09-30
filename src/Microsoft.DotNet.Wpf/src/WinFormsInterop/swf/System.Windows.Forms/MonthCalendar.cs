@@ -2757,24 +2757,30 @@ namespace System.Windows.Forms {
 			IsYearGoingDown = false;
 		}
 
-		/// <summary>The next paint covers the whole control in one buffer. comctl32 repaints the
-		/// whole calendar when it gains or loses the focus, and a day selected by the same click is
-		/// painted in that picture: its focus rectangle's checkerboard follows the client's corner,
-		/// not the day's cell as it does when the day is repainted on its own.</summary>
-		internal bool repaint_whole;
+		/// <summary>Where the buffer comctl32 paints into starts: the corner of the area being
+		/// repainted. A focus rectangle's checkerboard is pinned to it, so a day repainted on its own
+		/// follows its cell and a whole repaint (the focus arriving or leaving) the client's corner.
+		/// comctl32 does not paint while it tracks a click, so everything invalidated from the press
+		/// to the release comes out as ONE picture -- the union of those areas.</summary>
+		internal Point paint_origin;
+		Rectangle? click_area;
 
 		protected override void OnGotFocus (EventArgs e)
 		{
-			repaint_whole = true;
 			Invalidate ();
 			base.OnGotFocus (e);
 		}
 
 		protected override void OnLostFocus (EventArgs e)
 		{
-			repaint_whole = true;
 			Invalidate ();
 			base.OnLostFocus (e);
+		}
+
+		protected override void OnMouseDown (MouseEventArgs e)
+		{
+			click_area = Rectangle.Empty;
+			base.OnMouseDown (e);
 		}
 
 		// paint this control now
@@ -2789,11 +2795,13 @@ namespace System.Windows.Forms {
 			if (Width <= 0 || Height <= 0)
     				return;
 
+			Rectangle area = pe.ClipRectangle;
+			if (click_area is Rectangle held) {
+				area = held.IsEmpty ? area : Rectangle.Union (held, area);
+				click_area = Control.MouseButtons == MouseButtons.None ? null : area;
+			}
+			paint_origin = area.Location;
 			Draw (pe.ClipRectangle, pe.Graphics);
-			// Not while a button is held: comctl32 tracks the click without painting, so the
-			// focus repaint and the clicked day's own come out as ONE picture after the release.
-			if (Control.MouseButtons == MouseButtons.None)
-				repaint_whole = false;
 
 			// fire the new paint handler
 			if (this.Paint != null) 

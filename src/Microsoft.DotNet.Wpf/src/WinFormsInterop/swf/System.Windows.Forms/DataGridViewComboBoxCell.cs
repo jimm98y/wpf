@@ -323,17 +323,33 @@ namespace System.Windows.Forms {
 				return new Size (39, 22);
 		}
 
+		/// <summary>.NET's PositionEditingPanel: the editor goes inside the cell's borders, not over
+		/// them -- over them it came out a pixel wide, its drop-down chevron a pixel right.</summary>
+		public override void PositionEditingControl (bool setLocation, bool setSize, Rectangle cellBounds, Rectangle cellClip, DataGridViewCellStyle cellStyle, bool singleVerticalBorderAdded, bool singleHorizontalBorderAdded, bool isFirstDisplayedColumn, bool isFirstDisplayedRow)
+		{
+			base.PositionEditingControl (setLocation, setSize, CellValueBounds (cellBounds), cellClip, cellStyle,
+				singleVerticalBorderAdded, singleHorizontalBorderAdded, isFirstDisplayedColumn, isFirstDisplayedRow);
+		}
+
 		protected override void OnDataGridViewChanged () {
 			// Here we're supposed to do something with DataSource, etc, according to MSDN.
 			base.OnDataGridViewChanged ();
 		}
 
+		// .NET: the click that makes a combo cell current only selects it; a click on the cell once
+		// it IS current begins the edit, and drops the list when it lands on the drop-down button.
+		// Ours never began an edit from the mouse at all.
+		bool ignore_next_mouse_click;
+
 		protected override void OnEnter (int rowIndex, bool throughMouseClick) {
 			base.OnEnter (rowIndex, throughMouseClick);
+			if (DataGridView != null && throughMouseClick && DataGridView.EditMode != DataGridViewEditMode.EditOnEnter)
+				ignore_next_mouse_click = true;
 		}
 
 		protected override void OnLeave (int rowIndex, bool throughMouseClick) {
 			base.OnLeave (rowIndex, throughMouseClick);
+			ignore_next_mouse_click = false;
 		}
 
 		protected override void OnMouseDown (DataGridViewCellMouseEventArgs e) {
@@ -356,6 +372,26 @@ namespace System.Windows.Forms {
 
 		protected override void OnMouseClick (DataGridViewCellMouseEventArgs e) {
 			base.OnMouseClick (e);
+			if (DataGridView == null)
+				return;
+			Point current = DataGridView.CurrentCellAddress;
+			if (current.X != e.ColumnIndex || current.Y != e.RowIndex)
+				return;
+			if (ignore_next_mouse_click) {
+				ignore_next_mouse_click = false;
+				return;
+			}
+			var editor = DataGridView.EditingControl as ComboBox;
+			if ((editor == null || !editor.DroppedDown) && DataGridView.EditMode != DataGridViewEditMode.EditProgrammatically
+			    && DataGridView.BeginEdit (true)) {
+				editor = DataGridView.EditingControl as ComboBox;
+				// CheckDropDownList: on the button, the list comes down too.
+				if (editor != null && DisplayStyle != DataGridViewComboBoxDisplayStyle.Nothing) {
+					Rectangle value = CellValueBounds (new Rectangle (Point.Empty, Size));
+					if (DropDownButtonBounds (value, InheritedStyle.Font).Contains (e.Location))
+						editor.DroppedDown = true;
+				}
+			}
 		}
 
 		protected override void OnMouseEnter (int rowIndex) {

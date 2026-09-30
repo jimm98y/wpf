@@ -4792,7 +4792,7 @@ namespace System.Windows.Forms {
 			// several turns of the wheel. Measure the row instead, and only fall back on
 			// SmallChange when there are no rows to measure.
 			int rowHeight = Rows.Count > 0
-				? Rows[Math.Min (Rows.Count - 1, Math.Max (0, first_row_index))].Height + 1
+				? Rows[Math.Min (Rows.Count - 1, Math.Max (0, first_row_index))].Height
 				: 0;
 			if (rowHeight <= 1) rowHeight = verticalScrollBar.SmallChange;
 			int delta = SystemInformation.MouseWheelScrollLines * rowHeight;
@@ -4974,30 +4974,39 @@ namespace System.Windows.Forms {
 				if (gridHeight > Size.Height)
 					verticalVisible = true;
 
-				if (horizontalScrollBar.Visible && (gridHeight + horizontalScrollBar.Height) > Size.Height)
+				// In one pass, each bar from the other's NEED, as .NET's ComputeLayout decides them: this
+				// read the bars' Visible, which is the last layout's answer -- and false on any form not
+				// on screen (DrawToBitmap, printing) -- so the second bar came a layout late, or never.
+				if (verticalVisible && (gridWidth + verticalScrollBar.Width) > Size.Width)
+					horizontalVisible = true;
+				if (horizontalVisible && (gridHeight + horizontalScrollBar.Height) > Size.Height)
 					verticalVisible = true;
-				if (verticalScrollBar.Visible && (gridWidth + verticalScrollBar.Width) > Size.Width) 
+				if (verticalVisible && (gridWidth + verticalScrollBar.Width) > Size.Width)
 					horizontalVisible = true;
 
+				// .NET's ComputeLayout: the ranges are the SCROLLING bands' -- the columns without the
+				// row headers, the rows without the column headers -- and a page is the data area,
+				// the inside of the border less the headers and the other bar.
+				int dataWidth = ClientSize.Width - 2 * BorderWidth - (rowHeadersVisible ? rowHeadersWidth : 0)
+					- (verticalVisible ? verticalScrollBar.Width : 0);
+				int dataHeight = ClientSize.Height - 2 * BorderWidth - (columnHeadersVisible ? columnHeadersHeight : 0)
+					- (horizontalVisible ? horizontalScrollBar.Height : 0);
+
 				if (horizontalVisible) {
+					int columnsWidth = gridWidth - (rowHeadersVisible ? rowHeadersWidth : 0);
 					horizontalScrollBar.Minimum = 0;
-					horizontalScrollBar.Maximum = gridWidth;
+					horizontalScrollBar.Maximum = Math.Max (1, columnsWidth);
 					horizontalScrollBar.SmallChange = Columns[first_col_index].Width;
-					int largeChange = ClientSize.Width - rowHeadersWidth - horizontalScrollBar.Height;
-					if (largeChange <= 0)
-						largeChange = ClientSize.Width;
-					horizontalScrollBar.LargeChange = largeChange;
+					horizontalScrollBar.LargeChange = Math.Max (0, Math.Min (dataWidth, columnsWidth));
 				}
 
 				if (verticalVisible) {
+					int rowsHeight = gridHeight - (columnHeadersVisible ? columnHeadersHeight : 0);
 					verticalScrollBar.Minimum = 0;
-					verticalScrollBar.Maximum = gridHeight;
+					verticalScrollBar.Maximum = Math.Max (1, rowsHeight);
 					int first_row_height = Rows.Count > 0 ? Rows[Math.Min (Rows.Count - 1, first_row_index)].Height : 0;
 					verticalScrollBar.SmallChange = first_row_height + 1;
-					int largeChange = ClientSize.Height - columnHeadersHeight - verticalScrollBar.Width;
-					if (largeChange <= 0)
-						largeChange = ClientSize.Height;
-					verticalScrollBar.LargeChange = largeChange;
+					verticalScrollBar.LargeChange = Math.Max (0, dataHeight);
 				}
 
 				// Force the visibility of the scrollbars *after* computing the scrolling values,
@@ -5966,6 +5975,27 @@ namespace System.Windows.Forms {
 		}
 
 		internal void OnVScrollBarScroll (object sender, ScrollEventArgs e)
+		{
+			OnVScrollBarScrollRows (e);
+			// .NET keeps the bar on a row boundary: its value is ComputeHeightOfScrolledOffRows, the
+			// height of the rows above the first displayed one. A notch stepped a row and a PIXEL
+			// (SmallChange), and left the thumb three pixels low after three rows.
+			if (e.Type != ScrollEventType.ThumbTrack && Rows.Count > 0) {
+				int scrolledOff = 0;
+				for (int i = 0; i < first_row_index && i < Rows.Count; i++)
+					if (Rows[i].Visible)
+						scrolledOff += Rows[i].Height;
+				// Back into the event as well: the bar applies e.NewValue AFTER raising Scroll, and a
+				// page click put the thumb back where the page left it, off the row boundary.
+				e.NewValue = scrolledOff;
+				if (verticalScrollBar.Visible && verticalScrollBar.Value != scrolledOff) {
+					verticalScrollBar.SafeValueSet (scrolledOff);
+					verticalScrollingOffset = verticalScrollBar.Value;
+				}
+			}
+		}
+
+		void OnVScrollBarScrollRows (ScrollEventArgs e)
 		{
 			verticalScrollingOffset = e.NewValue;
 			if (Rows.Count == 0)

@@ -3250,7 +3250,16 @@ namespace System.Windows.Forms
 				Rectangle label_rect = text_rect;
 				if (item.Selected && control.Focused && control.View == View.Details)
 					label_rect.Width = Math.Min (text_rect.Width, highlight_rect.Right - text_rect.X);
-				dc.DrawString (item.Text, font, textBrush, label_rect, format);
+				// Clipped where comctl32 clips it, the label less its three-pixel margin (the text's
+				// own origin): a glyph that overhangs to the left -- the crossbar of an "f" -- stops
+				// there instead of fringing the column.
+				if (control.View == View.Details) {
+					var clip = dc.Save ();
+					dc.IntersectClip (Rectangle.FromLTRB (label_rect.X + 3, label_rect.Y, label_rect.Right, label_rect.Bottom));
+					dc.DrawString (item.Text, font, textBrush, label_rect, format);
+					dc.Restore (clip);
+				} else
+					dc.DrawString (item.Text, font, textBrush, label_rect, format);
 			}
 
 			// The focus rectangle is drawn once the whole row is on screen, not here: this method

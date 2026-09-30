@@ -2090,14 +2090,14 @@ namespace System.Windows.Forms
 				if (!monthcal_focus_day)
 					return;
 				if (hot) {
-					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? (mc.repaint_whole ? Point.Empty : new Point (rect.X - 1, rect.Y - 1)), MonthCalSelectedHotShade);
+					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? mc.paint_origin, MonthCalSelectedHotShade);
 					return;
 				}
 				// And the focus rectangle a pixel in, as round the current cell of a zoomed view:
 				// comctl32 draws it on the focused day whenever the calendar has the focus, not only
 				// while a click is held.
 				if (mc.Focused)
-					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? (mc.repaint_whole ? Point.Empty : new Point (rect.X - 1, rect.Y - 1)));
+					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? mc.paint_origin);
 				return;
 			}
 			dc.FillRectangle (brush, rect);
