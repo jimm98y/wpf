@@ -95,7 +95,7 @@ namespace System.Windows.Forms.Theming.Default
 				
 				dc.Clip = piece.region;
 				dc.Clip.Intersect (clip_rectangle);
-				dc.DrawString (label.Text, font, 
+				dc.DrawStringMono (label.Text, font, 
 						ThemeEngine.Current.ResPool.GetSolidBrush (color), 
 						client_rect, label.string_format);
 			
@@ -115,7 +115,7 @@ namespace System.Windows.Forms.Theming.Default
 				dc.Clip = text_region;
 				dc.Clip.Intersect (clip_rectangle);
 				if (!dc.Clip.IsEmpty (dc))
-					dc.DrawString(label.Text, label.Font, 
+					dc.DrawStringMono(label.Text, label.Font, 
 						ThemeEngine.Current.ResPool.GetSolidBrush(label.ForeColor),
 						client_rect, label.string_format);
 			}

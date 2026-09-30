@@ -1996,14 +1996,19 @@ namespace System.Windows.Forms
 
 		internal void RepositionScrollBars ()
 		{
+			// The bars are laid out against the list's OUTER edge (items_area is inset by the border).
+			// A single-line border is WS_BORDER, and the driver starts a WS_BORDER window's children
+			// inside it, as Windows starts its client area there -- so they are placed a pixel back
+			// out, or they land one row and one column in and cover the right-hand border.
+			int origin = border_style == BorderStyle.FixedSingle ? 1 : 0;
 			if (vscrollbar.is_visible) {
 				vscrollbar.Size = new Size (vscrollbar.Width, items_area.Height);
-				vscrollbar.Location = new Point (items_area.Right, items_area.Y);
+				vscrollbar.Location = new Point (items_area.Right - origin, items_area.Y - origin);
 			}
 
 			if (hscrollbar.is_visible) {
 				hscrollbar.Size = new Size (items_area.Width, hscrollbar.Height);
-				hscrollbar.Location = new Point (items_area.X, items_area.Bottom);
+				hscrollbar.Location = new Point (items_area.X - origin, items_area.Bottom - origin);
 			}
 		}
 

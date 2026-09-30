@@ -1,9 +1,9 @@
-// A colour editor for the property grid.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 //
-// Windows shows a colour property as a swatch of the colour followed by its name, and opens a
-// three-tab picker when the row's button is pressed: a palette of fixed colours, the named web
-// colours, and the system colours. Without an editor registered for Color the grid falls back to
-// the type converter's standard values, which is a plain list of names and no swatch at all.
+// A colour editor for the property grid, ported from .NET's System.Windows.Forms.Design
+// (System/Drawing/Design/ColorEditor*.cs) so the drop-down is stock's own: the same tab control,
+// owner-drawn lists, palette geometry and key handling.
 //
 // Stock keeps this in System.Windows.Forms.Design, an assembly an application never references; the
 // grid finds it through a type-descriptor table installed by the designer. Ours lives in the
@@ -16,22 +16,30 @@ using System.Windows.Forms.Design;
 
 namespace System.Drawing.Design
 {
+	/// <summary>
+	///  Provides an editor for visually picking a color.
+	/// </summary>
 	public partial class ColorEditor : UITypeEditor
 	{
+		/// <summary>
+		///  Edits the given object value using the editor style provided by ColorEditor.GetEditStyle.
+		/// </summary>
 		public override object EditValue (ITypeDescriptorContext context, IServiceProvider provider, object value)
 		{
-			IWindowsFormsEditorService service = provider == null
+			IWindowsFormsEditorService editorService = provider == null
 				? null
 				: provider.GetService (typeof (IWindowsFormsEditorService)) as IWindowsFormsEditorService;
-			if (service == null)
+			if (editorService == null)
 				return value;
 
-			using (ColorUI ui = new ColorUI (this)) {
-				ui.Start (service, value);
-				service.DropDownControl (ui);
-				if (ui.Value is Color && (Color) ui.Value != Color.Empty)
-					value = ui.Value;
-				ui.End ();
+			using (ColorUI colorUI = new ColorUI (this)) {
+				colorUI.Start (editorService, value);
+				editorService.DropDownControl (colorUI);
+
+				if (colorUI.Value is Color colorValue && colorValue != Color.Empty)
+					value = colorValue;
+
+				colorUI.End ();
 			}
 			return value;
 		}
@@ -48,16 +56,10 @@ namespace System.Drawing.Design
 
 		public override void PaintValue (PaintValueEventArgs e)
 		{
-			if (!(e.Value is Color))
-				return;
-			using (SolidBrush brush = new SolidBrush ((Color) e.Value))
-				e.Graphics.FillRectangle (brush, e.Bounds);
-		}
-
-		internal void PaintValue (Color colour, Graphics g, Rectangle bounds)
-		{
-			using (SolidBrush brush = new SolidBrush (colour))
-				g.FillRectangle (brush, bounds);
+			if (e.Value is Color color) {
+				using (SolidBrush brush = new SolidBrush (color))
+					e.Graphics.FillRectangle (brush, e.Bounds);
+			}
 		}
 	}
 }

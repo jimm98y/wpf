@@ -224,7 +224,7 @@ namespace System.Windows.Forms
 					e.Graphics.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (Color.White),
 					                          0, 0, ClientSize.Width, white);
 
-				e.Graphics.DrawString (msgbox_text, this.Font, ThemeEngine.Current.ResPool.GetSolidBrush (SystemColors.ControlText), text_rect);
+				e.Graphics.DrawStringMono (msgbox_text, this.Font, ThemeEngine.Current.ResPool.GetSolidBrush (SystemColors.ControlText), text_rect);
 				if (icon_image != null)
 					e.Graphics.DrawIcon (icon_image, new Rectangle (icon_left, (white - icon_box) / 2,
 					                                               icon_box, icon_box));

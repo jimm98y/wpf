@@ -436,7 +436,7 @@ namespace System.Windows.Forms.Theming.Default
 				if (tab.Alignment == TabAlignment.Left) {
 					dc.TranslateTransform (bounds.Left, bounds.Bottom);
 					dc.RotateTransform (-90);
-					dc.DrawString (page.Text, tab.Font,
+					dc.DrawStringMono (page.Text, tab.Font,
 						SystemBrushes.ControlText, 
 						tab.Padding.X - 2, // drawstring adds some extra unwanted leading spaces, so trimming
 						tab.Padding.Y,
@@ -445,7 +445,7 @@ namespace System.Windows.Forms.Theming.Default
 				} else if (tab.Alignment == TabAlignment.Right) {
 					dc.TranslateTransform (bounds.Right, bounds.Top);
 					dc.RotateTransform (90);
-					dc.DrawString (page.Text, tab.Font,
+					dc.DrawStringMono (page.Text, tab.Font,
 						SystemBrushes.ControlText, 
 						tab.Padding.X - 2, // drawstring adds some extra unwanted leading spaces, so trimming
 						tab.Padding.Y,
@@ -481,7 +481,7 @@ namespace System.Windows.Forms.Theming.Default
 						str_rect.X += tab.ImageList.ImageSize.Width + 2;
 						str_rect.Width -= tab.ImageList.ImageSize.Width + 2;
 					}
-					dc.DrawString (page.Text, tab.Font,
+					dc.DrawStringMono (page.Text, tab.Font,
 						SystemBrushes.ControlText,
 						str_rect, 
 						defaultFormatting);

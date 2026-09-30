@@ -1905,6 +1905,22 @@ namespace System.Drawing
 		/// bad fitting does. The faces that agreed with the old formula -- Segoe UI, Verdana,
 		/// Tahoma, Consolas -- are the ones whose truncated design ascent happens to equal their
 		/// VDMX ascent, which is why this hid behind four correct faces.</para></summary>
+		/// <summary>GDI+'s baseline: the cell ascent in pixels, rounded.</summary>
+		static float GdiPlusAscent (Font font, float emPx)
+		{
+			FontFamily family = font.FontFamily;
+			if (family == null)
+				return MathF.Round (0.8f * emPx);
+			try {
+				int em = family.GetEmHeight (font.Style);
+				if (em <= 0)
+					return MathF.Round (0.8f * emPx);
+				return MathF.Round (family.GetCellAscent (font.Style) * emPx / em);
+			} catch (Exception) {
+				return MathF.Round (0.8f * emPx);
+			}
+		}
+
 		static float Ascent (Font font, float emPx)
 		{
 			FontFamily family = font.FontFamily;
@@ -1931,6 +1947,29 @@ namespace System.Drawing
 		/// <summary>Whether this drawing is standing in for GDI rather than GDI+ -- set while
 		/// TextRenderer draws through here, since the two align a line of text differently.</summary>
 		internal bool gdi_text_metrics;
+
+		/// <summary>Set while the port's own controls draw text through DrawString (DrawStringMono).
+		/// Mono's controls call DrawString where .NET draws with GDI, so they keep GDI's baseline --
+		/// tmAscent below the top -- while a caller of the public DrawString gets GDI+'s.</summary>
+		internal bool gdi_ascent;
+
+		// The port's controls: DrawString with GDI's baseline. See gdi_ascent.
+		internal void DrawStringMono (string s, Font font, Brush brush, RectangleF layoutRectangle, StringFormat format)
+		{
+			bool saved = gdi_ascent;
+			gdi_ascent = true;
+			try { DrawString (s, font, brush, layoutRectangle, format); } finally { gdi_ascent = saved; }
+		}
+		internal void DrawStringMono (string s, Font font, Brush brush, RectangleF layoutRectangle)
+			=> DrawStringMono (s, font, brush, layoutRectangle, null);
+		internal void DrawStringMono (string s, Font font, Brush brush, PointF point)
+			=> DrawStringMono (s, font, brush, new RectangleF (point.X, point.Y, 0, 0), null);
+		internal void DrawStringMono (string s, Font font, Brush brush, PointF point, StringFormat format)
+			=> DrawStringMono (s, font, brush, new RectangleF (point.X, point.Y, 0, 0), format);
+		internal void DrawStringMono (string s, Font font, Brush brush, float x, float y)
+			=> DrawStringMono (s, font, brush, new RectangleF (x, y, 0, 0), null);
+		internal void DrawStringMono (string s, Font font, Brush brush, float x, float y, StringFormat format)
+			=> DrawStringMono (s, font, brush, new RectangleF (x, y, 0, 0), format);
 
 		/// <summary>Set while a control that stands in for a NATIVE Win32 one paints its text.
 		/// Windows' own month calendar draws its "Today: ..." line without pair kerning; a WinForms
@@ -2167,7 +2206,12 @@ namespace System.Drawing
 				// pixel: every caption in the application sat one pixel below the same caption in
 				// Windows. The recorder turns the y it is given into a baseline by dropping 0.8 of the
 				// em size, so what it wants is the ascent less that.
-				float baseline = Ascent (font, emPx) - 0.8f * emPx;
+				// GDI+ itself puts the baseline at the font's CELL ascent scaled to the em, snapped to
+				// the nearest pixel (Segoe UI at 12 px: 12.95, so 13) -- a row below GDI's tmAscent
+				// (12), which is what TextRenderer and the port's own controls stand in for. Measured
+				// on stock .NET: an owner-drawn list's DrawString text (the colour and cursor editors)
+				// sat a row higher in ours.
+				float baseline = (gdi_text_metrics || gdi_ascent ? Ascent (font, emPx) : GdiPlusAscent (font, emPx)) - 0.8f * emPx;
 				float ty = layoutRectangle.Y;
 				if (format != null && layoutRectangle.Height > 0) {
 					// What is being aligned depends on which drawing this is standing in for. GDI+ centres its

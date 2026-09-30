@@ -1,5 +1,5 @@
-// The drop-down the colour editor opens: three tabs, the palette, the named web colours and the
-// system colours, exactly as Windows arranges them.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Collections.Generic;
 using System.Reflection;
@@ -10,286 +10,346 @@ namespace System.Drawing.Design
 {
 	public partial class ColorEditor
 	{
-		private sealed class ColorUI : Control
+		/// <summary>
+		///  Editor UI for the color editor.
+		/// </summary>
+		private sealed partial class ColorUI : Control
 		{
-			private readonly ColorEditor editor;
-			private IWindowsFormsEditorService service;
-			private object value;
+			private readonly ColorEditor _editor;
+			private IWindowsFormsEditorService _edSvc;
+			private object _value;
+			private ColorEditorTabControl _tabControl;
+			private TabPage _systemTabPage;
+			private TabPage _commonTabPage;
+			private TabPage _paletteTabPage;
+			private ListBox _lbSystem;
+			private ListBox _lbCommon;
+			private ColorPalette _pal;
+			private Color[] _systemColorConstants;
+			private Color[] _colorConstants;
+			private Color[] _customColors;
+			private bool _commonHeightSet;
+			private bool _systemHeightSet;
 
-			private TabControl tabs;
-			private TabPage palette_page, web_page, system_page;
-			private ListBox web_list, system_list;
-			private ColorPalette palette;
-			private Color[] colour_values, system_colour_values, custom_colours;
-
-			internal ColorUI (ColorEditor owner)
+			public ColorUI (ColorEditor editor)
 			{
-				editor = owner;
-				Build ();
+				_editor = editor;
+				InitializeComponent ();
+				AdjustListBoxItemHeight ();
 			}
 
-			internal object Value {
-				get { return value; }
-			}
-
+			/// <summary>
+			///  Array of standard colors.
+			/// </summary>
 			private Color[] ColorValues {
-				get {
-					if (colour_values == null) {
-						colour_values = ConstantsOf (typeof (Color));
-						Array.Sort (colour_values, new StandardColorComparer ());
-					}
-					return colour_values;
-				}
+				get { return _colorConstants ?? (_colorConstants = GetConstants (typeof (Color))); }
 			}
 
-			private Color[] SystemColorValues {
-				get {
-					if (system_colour_values == null) {
-						system_colour_values = ConstantsOf (typeof (SystemColors));
-						Array.Sort (system_colour_values, new SystemColorComparer ());
-					}
-					return system_colour_values;
-				}
-			}
-
+			/// <summary>
+			///  Retrieves the array of custom colors for our use.
+			/// </summary>
 			private Color[] CustomColors {
 				get {
-					if (custom_colours == null) {
-						custom_colours = new Color[ColorPalette.CellsCustom];
-						for (int i = 0; i < custom_colours.Length; i++)
-							custom_colours[i] = Color.White;
+					if (_customColors == null) {
+						_customColors = new Color[ColorPalette.CellsCustom];
+						for (int i = 0; i < ColorPalette.CellsCustom; i++)
+							_customColors[i] = Color.White;
 					}
-					return custom_colours;
+					return _customColors;
 				}
 			}
 
-			/// <summary>Every public static Color property a type declares, which is how the two
-			/// lists of named colours are built.</summary>
-			private static Color[] ConstantsOf (Type type)
+			/// <summary>
+			///  Allows someone else to close our dropdown.
+			/// </summary>
+			public IWindowsFormsEditorService EditorService {
+				get { return _edSvc; }
+			}
+
+			/// <summary>
+			///  Array of system colors.
+			/// </summary>
+			private Color[] SystemColorValues {
+				get { return _systemColorConstants ?? (_systemColorConstants = GetConstants (typeof (SystemColors))); }
+			}
+
+			public object Value {
+				get { return _value; }
+			}
+
+			public void End ()
 			{
-				var found = new List<Color> ();
-				foreach (PropertyInfo property in type.GetProperties ()) {
-					if (property.PropertyType != typeof (Color))
-						continue;
-					MethodInfo getter = property.GetGetMethod ();
-					if (getter == null || !getter.IsPublic || !getter.IsStatic)
-						continue;
-					object read = property.GetValue (null, null);
-					if (read is Color)
-						found.Add ((Color) read);
+				_edSvc = null;
+				_value = null;
+			}
+
+			private void AdjustColorUIHeight ()
+			{
+				// Compute the default size for the color UI
+				Size size = _pal.Size;
+				Rectangle rectItemSize = _tabControl.GetTabRect (0);
+				int CMARGIN = 0;
+				Size = new Size (size.Width + 2 * CMARGIN, size.Height + 2 * CMARGIN + rectItemSize.Height);
+				_tabControl.Size = Size;
+			}
+
+			private void AdjustListBoxItemHeight ()
+			{
+				_lbSystem.ItemHeight = Font.Height + 2;
+				_lbCommon.ItemHeight = Font.Height + 2;
+			}
+
+			/// <summary>
+			///  Takes the given color and looks for an instance in the ColorValues table.
+			/// </summary>
+			private Color GetBestColor (Color color)
+			{
+				Color[] colors = ColorValues;
+				int rgb = color.ToArgb ();
+				for (int i = 0; i < colors.Length; i++) {
+					if (colors[i].ToArgb () == rgb)
+						return colors[i];
 				}
-				return found.ToArray ();
+				return color;
 			}
 
-			private void Build ()
+			/// <summary>
+			///  Retrieves an array of color constants for the given object.
+			/// </summary>
+			private static Color[] GetConstants (Type enumType)
 			{
-				palette_page = new TabPage ("Custom");
-				web_page = new TabPage ("Web");
-				system_page = new TabPage ("System");
+				MethodAttributes attrs = MethodAttributes.Public | MethodAttributes.Static;
+				PropertyInfo[] props = enumType.GetProperties ();
 
-				tabs = new TabControl { Dock = DockStyle.Fill, TabStop = false };
-				tabs.TabPages.Add (palette_page);
-				tabs.TabPages.Add (web_page);
-				tabs.TabPages.Add (system_page);
-				tabs.SelectedIndexChanged += OnTabChanged;
+				List<Color> colorList = new List<Color> ();
 
-				web_list = MakeList ();
-				system_list = MakeList ();
+				for (int i = 0; i < props.Length; i++) {
+					PropertyInfo prop = props[i];
+					if (prop.PropertyType != typeof (Color))
+						continue;
 
-				foreach (Color colour in ColorValues)
-					web_list.Items.Add (colour);
-				foreach (Color colour in SystemColorValues)
-					system_list.Items.Add (colour);
+					MethodInfo method = prop.GetGetMethod ();
+					if (method == null || (method.Attributes & attrs) != attrs)
+						continue;
 
-				palette = new ColorPalette (CustomColors);
-				palette.Picked += OnPalettePicked;
-				// The palette sizes itself to its cells; read that before docking it, because docking
-				// hands its size over to the page it is on -- which is nothing at all until the drop-down
-				// has been given a size, so asking afterwards sized the whole picker to a few pixels and
-				// it appeared not to open.
-				Size natural = palette.Size;
-				palette.Dock = DockStyle.Fill;
+					if (!(prop.GetValue (null, null) is Color outColor))
+						continue;
 
-				palette_page.Controls.Add (palette);
-				web_page.Controls.Add (web_list);
-				system_page.Controls.Add (system_list);
-				Controls.Add (tabs);
+					colorList.Add (outColor);
+				}
 
-				// Room for the row of tabs above the page. The control has no handle yet, so the tab
-				// control cannot say how tall its own row is; the font it will use can.
-				int strip = Font.Height + 12;
-				Size = new Size (natural.Width + 8, natural.Height + strip + 8);
+				return colorList.ToArray ();
 			}
 
-			private ListBox MakeList ()
+			private void InitializeComponent ()
 			{
-				ListBox list = new ListBox {
+				_paletteTabPage = new TabPage ("Custom");
+				_commonTabPage = new TabPage ("Web");
+				_systemTabPage = new TabPage ("System");
+
+				AccessibleName = "Color Picker";
+
+				_tabControl = new ColorEditorTabControl ();
+				_tabControl.TabPages.Add (_paletteTabPage);
+				_tabControl.TabPages.Add (_commonTabPage);
+				_tabControl.TabPages.Add (_systemTabPage);
+				_tabControl.TabStop = false;
+				_tabControl.SelectedTab = _systemTabPage;
+				_tabControl.SelectedIndexChanged += OnTabControlSelChange;
+				_tabControl.Dock = DockStyle.Fill;
+				_tabControl.Resize += OnTabControlResize;
+
+				_lbSystem = new ColorEditorListBox {
 					DrawMode = DrawMode.OwnerDrawFixed,
 					BorderStyle = BorderStyle.FixedSingle,
 					IntegralHeight = false,
-					Sorted = false,
-					Dock = DockStyle.Fill,
+					Sorted = false
 				};
-				list.ItemHeight = Font.Height + 2;
-				list.Click += OnListClicked;
-				list.DrawItem += OnListDrawItem;
-				list.KeyDown += OnListKeyDown;
-				return list;
-			}
 
-			private void OnTabChanged (object sender, EventArgs e)
-			{
-				TabPage page = tabs.SelectedTab;
-				if (page != null && page.Controls.Count > 0)
-					page.Controls[0].Focus ();
-			}
+				_lbSystem.Click += OnListClick;
+				_lbSystem.DrawItem += OnListDrawItem;
+				_lbSystem.KeyDown += OnListKeyDown;
+				_lbSystem.Dock = DockStyle.Fill;
+				_lbSystem.FontChanged += OnFontChanged;
 
-			private void OnListClicked (object sender, EventArgs e)
-			{
-				ListBox list = sender as ListBox;
-				if (list != null && list.SelectedItem is Color)
-					value = list.SelectedItem;
-				Close ();
-			}
+				_lbCommon = new ColorEditorListBox {
+					DrawMode = DrawMode.OwnerDrawFixed,
+					BorderStyle = BorderStyle.FixedSingle,
+					IntegralHeight = false,
+					Sorted = false
+				};
 
-			private void OnListKeyDown (object sender, KeyEventArgs e)
-			{
-				if (e.KeyCode == Keys.Return)
-					OnListClicked (sender, EventArgs.Empty);
-			}
+				_lbCommon.Click += OnListClick;
+				_lbCommon.DrawItem += OnListDrawItem;
+				_lbCommon.KeyDown += OnListKeyDown;
+				_lbCommon.Dock = DockStyle.Fill;
 
-			private void OnListDrawItem (object sender, DrawItemEventArgs e)
-			{
-				ListBox list = sender as ListBox;
-				if (list == null || e.Index < 0 || e.Index >= list.Items.Count)
-					return;
-				Color colour = (Color) list.Items[e.Index];
-				e.DrawBackground ();
+				Array.Sort (ColorValues, StandardColorComparer.Instance);
+				Array.Sort (SystemColorValues, new SystemColorComparer ());
 
-				var swatch = new Rectangle (e.Bounds.X + 2, e.Bounds.Y + 2, 22, e.Bounds.Height - 4);
-				editor.PaintValue (colour, e.Graphics, swatch);
-				e.Graphics.DrawRectangle (SystemPens.WindowText, swatch.X, swatch.Y,
-							  swatch.Width - 1, swatch.Height - 1);
-				using (SolidBrush ink = new SolidBrush (e.ForeColor))
-					e.Graphics.DrawString (colour.Name, Font, ink, e.Bounds.X + 26, e.Bounds.Y);
-			}
+				_lbCommon.Items.Clear ();
+				foreach (Color color in ColorValues)
+					_lbCommon.Items.Add (color);
 
-			private void OnPalettePicked (object sender, EventArgs e)
-			{
-				ColorPalette source = sender as ColorPalette;
-				if (source != null)
-					value = BestMatch (source.SelectedColor);
-				Close ();
-			}
+				_lbSystem.Items.Clear ();
+				foreach (Color color in SystemColorValues)
+					_lbSystem.Items.Add (color);
 
-			/// <summary>A colour picked out of the palette comes back as a bare RGB value; if one of
-			/// the named colours is the same colour, hand that back instead so the grid shows a name
-			/// rather than three numbers.</summary>
-			private Color BestMatch (Color colour)
-			{
-				int rgb = colour.ToArgb ();
-				foreach (Color known in ColorValues)
-					if (known.ToArgb () == rgb)
-						return known;
-				return colour;
-			}
+				_pal = new ColorPalette (this, CustomColors);
+				_pal.Picked += OnPalettePick;
 
-			private void Close ()
-			{
-				if (service != null)
-					service.CloseDropDown ();
+				_paletteTabPage.Controls.Add (_pal);
+				_systemTabPage.Controls.Add (_lbSystem);
+				_commonTabPage.Controls.Add (_lbCommon);
+
+				Controls.Add (_tabControl);
 			}
 
 			protected override void OnGotFocus (EventArgs e)
 			{
 				base.OnGotFocus (e);
-				OnTabChanged (this, EventArgs.Empty);
+				OnTabControlSelChange (this, EventArgs.Empty);
+			}
+
+			private void OnFontChanged (object sender, EventArgs e)
+			{
+				_commonHeightSet = _systemHeightSet = false;
+			}
+
+			private void OnListClick (object sender, EventArgs e)
+			{
+				if (sender is ListBox lb && lb.SelectedItem is Color selectedColor)
+					_value = selectedColor;
+
+				if (_edSvc != null)
+					_edSvc.CloseDropDown ();
+			}
+
+			private void OnListDrawItem (object sender, DrawItemEventArgs die)
+			{
+				if (!(sender is ListBox lb))
+					return;
+
+				Color value = (Color) lb.Items[die.Index];
+				Font font = Font;
+
+				if (lb == _lbCommon && !_commonHeightSet) {
+					lb.ItemHeight = lb.Font.Height;
+					_commonHeightSet = true;
+				} else if (lb == _lbSystem && !_systemHeightSet) {
+					lb.ItemHeight = lb.Font.Height;
+					_systemHeightSet = true;
+				}
+
+				Graphics graphics = die.Graphics;
+				die.DrawBackground ();
+
+				_editor.PaintValue (value, graphics, new Rectangle (die.Bounds.X + 2, die.Bounds.Y + 2, 22, die.Bounds.Height - 4));
+				graphics.DrawRectangle (SystemPens.WindowText, new Rectangle (die.Bounds.X + 2, die.Bounds.Y + 2, 22 - 1, die.Bounds.Height - 4 - 1));
+				Brush foreBrush = new SolidBrush (die.ForeColor);
+				graphics.DrawString (value.Name, font, foreBrush, die.Bounds.X + 26, die.Bounds.Y);
+				foreBrush.Dispose ();
+			}
+
+			private void OnListKeyDown (object sender, KeyEventArgs ke)
+			{
+				if (ke.KeyCode == Keys.Return)
+					OnListClick (sender, EventArgs.Empty);
+			}
+
+			private void OnPalettePick (object sender, EventArgs e)
+			{
+				if (sender is ColorPalette palette)
+					_value = GetBestColor (palette.SelectedColor);
+
+				if (_edSvc != null)
+					_edSvc.CloseDropDown ();
+			}
+
+			protected override void OnFontChanged (EventArgs e)
+			{
+				base.OnFontChanged (e);
+				AdjustListBoxItemHeight ();
+				AdjustColorUIHeight ();
+			}
+
+			private void OnTabControlResize (object sender, EventArgs e)
+			{
+				Rectangle rectTabControl = _tabControl.TabPages[0].ClientRectangle;
+				Rectangle rectItemSize = _tabControl.GetTabRect (1);
+				rectTabControl.Y = 0;
+				rectTabControl.Height -= rectTabControl.Y;
+				int CMARGIN = 2;
+				_lbSystem.SetBounds (CMARGIN, rectTabControl.Y + 2 * CMARGIN,
+						     rectTabControl.Width - CMARGIN,
+						     _pal.Size.Height - rectItemSize.Height + 2 * CMARGIN);
+				_lbCommon.Bounds = _lbSystem.Bounds;
+				_pal.Location = new Point (0, rectTabControl.Y);
+			}
+
+			private void OnTabControlSelChange (object sender, EventArgs e)
+			{
+				TabPage selectedPage = _tabControl.SelectedTab;
+
+				if (selectedPage != null && selectedPage.Controls.Count > 0)
+					selectedPage.Controls[0].Focus ();
 			}
 
 			protected override bool ProcessDialogKey (Keys keyData)
 			{
-				// Tab moves between the three pages. There is nothing else for it to do in a
-				// drop-down, and ctrl-tab is awkward to reach from here.
-				if ((keyData & Keys.Alt) == 0 && (keyData & Keys.Control) == 0
+				// We treat tab characters as switching tab pages. In most other contexts,
+				// ctrl-tab switches tab pages, but I couldn't get that to work, and besides,
+				// then there would be nothing for tab to do in this editor.
+				if ((keyData & Keys.Alt) == 0
+				    && (keyData & Keys.Control) == 0
 				    && (keyData & Keys.KeyCode) == Keys.Tab) {
-					int selected = tabs.SelectedIndex;
-					if (selected != -1) {
-						bool forward = (keyData & Keys.Shift) == 0;
-						int count = tabs.TabPages.Count;
-						tabs.SelectedIndex = forward
-							? (selected + 1) % count
-							: (selected + count - 1) % count;
+					// Logic taken straight out of TabBase
+					bool forward = (keyData & Keys.Shift) == 0;
+					int sel = _tabControl.SelectedIndex;
+					if (sel != -1) {
+						int count = _tabControl.TabPages.Count;
+						sel = forward ? (sel + 1) % count : (sel + count - 1) % count;
+						_tabControl.SelectedTab = _tabControl.TabPages[sel];
 						return true;
 					}
 				}
+
 				return base.ProcessDialogKey (keyData);
 			}
 
-			/// <summary>Open on whichever page holds the colour the property already has.</summary>
-			internal void Start (IWindowsFormsEditorService editorService, object current)
+			public void Start (IWindowsFormsEditorService edSvc, object value)
 			{
-				service = editorService;
-				value = current;
-				if (!(current is Color))
-					return;
+				_edSvc = edSvc;
+				_value = value;
 
-				Color colour = (Color) current;
-				TabPage page = palette_page;
-				foreach (Color known in ColorValues)
-					if (known.Equals (colour)) {
-						web_list.SelectedItem = colour;
-						page = web_page;
-						break;
-					}
-				if (page == palette_page)
-					foreach (Color known in SystemColorValues)
-						if (known.Equals (colour)) {
-							system_list.SelectedItem = colour;
-							page = system_page;
+				AdjustColorUIHeight ();
+
+				// Now look for the current color so we can select the proper tab.
+				if (value != null) {
+					Color[] values = ColorValues;
+					TabPage selectedTab = _paletteTabPage;
+
+					for (int i = 0; i < values.Length; i++) {
+						if (values[i].Equals (value)) {
+							_lbCommon.SelectedItem = value;
+							selectedTab = _commonTabPage;
 							break;
 						}
-				if (page == palette_page)
-					palette.SelectedColor = colour;
-				tabs.SelectedTab = page;
-			}
+					}
 
-			internal void End ()
-			{
-				service = null;
-				value = null;
-			}
-		}
+					if (selectedTab == _paletteTabPage) {
+						values = SystemColorValues;
+						for (int i = 0; i < values.Length; i++) {
+							if (values[i].Equals (value)) {
+								_lbSystem.SelectedItem = value;
+								selectedTab = _systemTabPage;
+								break;
+							}
+						}
+					}
 
-		/// <summary>Greys first and then by hue, which is the order the web list reads in.</summary>
-		private sealed class StandardColorComparer : System.Collections.IComparer
-		{
-			public int Compare (object first, object second)
-			{
-				Color left = (Color) first, right = (Color) second;
-				if (left.A < right.A) return -1;
-				if (left.A > right.A) return 1;
-
-				float leftHue = left.GetHue (), rightHue = right.GetHue ();
-				if (left.GetSaturation () == 0f) leftHue = -1f;
-				if (right.GetSaturation () == 0f) rightHue = -1f;
-
-				float difference = leftHue - rightHue;
-				if (difference == 0f) {
-					difference = left.GetBrightness () - right.GetBrightness ();
-					if (difference == 0f)
-						return string.Compare (left.Name, right.Name, StringComparison.Ordinal);
+					_tabControl.SelectedTab = selectedTab;
 				}
-				return difference < 0f ? -1 : 1;
-			}
-		}
-
-		/// <summary>By name, which is all the system list needs.</summary>
-		private sealed class SystemColorComparer : System.Collections.IComparer
-		{
-			public int Compare (object first, object second)
-			{
-				return string.Compare (((Color) first).Name, ((Color) second).Name,
-						       StringComparison.OrdinalIgnoreCase);
 			}
 		}
 	}

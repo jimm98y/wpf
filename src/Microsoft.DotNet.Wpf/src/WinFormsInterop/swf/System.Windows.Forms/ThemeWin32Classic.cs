@@ -907,10 +907,10 @@ namespace System.Windows.Forms
 			text_rect.Height = Math.Max (button.Font.Height, text_rect.Height);
 			
 			if (button.Enabled) {					
-				dc.DrawString(button.Text, button.Font, ResPool.GetSolidBrush (button.ForeColor), text_rect, button.text_format);
+				dc.DrawStringMono(button.Text, button.Font, ResPool.GetSolidBrush (button.ForeColor), text_rect, button.text_format);
 			} else {
 				if (button.FlatStyle == FlatStyle.Flat || button.FlatStyle == FlatStyle.Popup) {
-					dc.DrawString(button.Text, button.Font, ResPool.GetSolidBrush (ColorGrayText), text_rect, button.text_format);
+					dc.DrawStringMono(button.Text, button.Font, ResPool.GetSolidBrush (ColorGrayText), text_rect, button.text_format);
 				} else {
 					CPDrawStringDisabled (dc, button.Text, button.Font, button.BackColor, text_rect, button.text_format);
 				}
@@ -1539,9 +1539,9 @@ namespace System.Windows.Forms
 				text_format.FormatFlags |= StringFormatFlags.NoWrap;
 			}
 			if (button_base.Enabled) {
-				dc.DrawString (button_base.Text, button_base.Font, ResPool.GetSolidBrush (button_base.ForeColor), text_rectangle, text_format);			
+				dc.DrawStringMono (button_base.Text, button_base.Font, ResPool.GetSolidBrush (button_base.ForeColor), text_rectangle, text_format);			
 			} else if (button_base.FlatStyle == FlatStyle.Flat || button_base.FlatStyle == FlatStyle.Popup) {
-				dc.DrawString (button_base.Text, button_base.Font, SystemBrushes.ControlDarkDark, text_rectangle, text_format);
+				dc.DrawStringMono (button_base.Text, button_base.Font, SystemBrushes.ControlDarkDark, text_rectangle, text_format);
 			} else {
 				CPDrawStringDisabled (dc, button_base.Text, button_base.Font, button_base.BackColor, text_rectangle, text_format);
 			}
@@ -1590,7 +1590,7 @@ namespace System.Windows.Forms
 			e.Graphics.FillRectangle (ResPool.GetSolidBrush
 				(back_color), item_rect);
 
-			e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
+			e.Graphics.DrawStringMono (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
 				ResPool.GetSolidBrush (fore_color),
 				item_rect, ctrl.StringFormat);
 					
@@ -1634,7 +1634,7 @@ namespace System.Windows.Forms
 			e.Graphics.FillRectangle (ResPool.GetSolidBrush (back_color), e.Bounds);
 
 			if (e.Index != -1) {
-				e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
+				e.Graphics.DrawStringMono (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
 					ResPool.GetSolidBrush (fore_color),
 					text_draw, string_format);
 			}
@@ -1793,7 +1793,7 @@ namespace System.Windows.Forms
 				text_rect.Y += text_rect.Height / 2 - grid.CaptionFont.Height / 2;
 				text_rect.Height = grid.CaptionFont.Height;
 
-				g.DrawString (grid.CaptionText, grid.CaptionFont,
+				g.DrawStringMono (grid.CaptionText, grid.CaptionFont,
 					      ResPool.GetSolidBrush (grid.CaptionForeColor),
 					      text_rect);
 			}
@@ -1925,7 +1925,7 @@ namespace System.Windows.Forms
 			format.LineAlignment = StringAlignment.Center;
 			format.Trimming = StringTrimming.Character;
 
-			g.DrawString (style.HeaderText, grid.CurrentTableStyle.HeaderFont, 
+			g.DrawStringMono (style.HeaderText, grid.CurrentTableStyle.HeaderFont, 
 				ResPool.GetSolidBrush (grid.CurrentTableStyle.CurrentHeaderForeColor), 
 				bounds, format);
 
@@ -1998,7 +1998,7 @@ namespace System.Windows.Forms
 			text_size = g.MeasureString (table_name, bold_font).ToSize();
 			text_rect = new Rectangle(new Point(bounds.X + 3, bounds.Y + bounds.Height - text_size.Height), text_size);
 
-			g.DrawString (table_name,
+			g.DrawStringMono (table_name,
 				      bold_font, ResPool.GetSolidBrush (grid.ParentRowsForeColor), text_rect, text_format);
 
 			foreach (PropertyDescriptor pd in ((ICustomTypeDescriptor)row.view).GetProperties()) {
@@ -2014,7 +2014,7 @@ namespace System.Windows.Forms
 				text_rect.Size = g.MeasureString (text, grid.Font).ToSize();
 				text_rect.Y = bounds.Y + bounds.Height - text_rect.Height; // XXX
 
-				g.DrawString (text,
+				g.DrawStringMono (text,
 					      grid.Font, ResPool.GetSolidBrush (grid.ParentRowsForeColor), text_rect, text_format);
 			}
 
@@ -2075,7 +2075,7 @@ namespace System.Windows.Forms
 			// Draw arrow
 			if (is_current_row) {
 				if (grid.IsChanging) {
-					g.DrawString ("...", grid.Font,
+					g.DrawStringMono ("...", grid.Font,
 						      ResPool.GetSolidBrush (grid.CurrentTableStyle.CurrentHeaderForeColor),
 						      bounds);
 				} else {
@@ -2243,7 +2243,7 @@ namespace System.Windows.Forms
 
 				g.DrawRectangle (pen, outline);
 
-				g.DrawString (relation_text, grid.LinkFont, ResPool.GetSolidBrush (grid.LinkColor),
+				g.DrawStringMono (relation_text, grid.LinkFont, ResPool.GetSolidBrush (grid.LinkColor),
 					      outline, string_format);
 
 				if (row_rect.X + row_rect.Width > rect_cell.X + rect_cell.Width) {
@@ -2740,7 +2740,7 @@ namespace System.Windows.Forms
 			/* Text */
 			if (box.Text.Length != 0) {
 				if (box.Enabled) {
-					dc.DrawString (box.Text, box.Font, ResPool.GetSolidBrush (box.ForeColor), GroupBoxCaptionIndent, 0, text_format);
+					dc.DrawStringMono (box.Text, box.Font, ResPool.GetSolidBrush (box.ForeColor), GroupBoxCaptionIndent, 0, text_format);
 				} else {
 					CPDrawStringDisabled (dc, box.Text, box.Font, box.BackColor, 
 							      new RectangleF (GroupBoxCaptionIndent, 0, width,  box.Font.Height), text_format);
@@ -2792,7 +2792,7 @@ namespace System.Windows.Forms
 			// keeps the row's own rectangle.
 			Rectangle caption = e.Bounds;
 			caption.X -= 1;
-			e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
+			e.Graphics.DrawStringMono (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
 					       ResPool.GetSolidBrush (fore_color),
 					       caption, ctrl.StringFormat);
 					
@@ -2955,7 +2955,7 @@ namespace System.Windows.Forms
 							rect.Width -= image_width;
 						}
 
-						dc.DrawString (col.Text, control.Font, SystemBrushes.ControlText, rect, col.Format);
+						dc.DrawStringMono (col.Text, control.Font, SystemBrushes.ControlText, rect, col.Format);
 					}
 					int right = control.GetReorderedColumn (control.Columns.Count - 1).Rect.Right - control.h_marker;
 					if (right < control.Right) {
@@ -2999,7 +2999,7 @@ namespace System.Windows.Forms
 			if (rect.Width <= 0)
 				return;
 			color = Color.FromArgb (0x7f, ColorControlText.R, ColorControlText.G, ColorControlText.B);
-			dc.DrawString (col.Text, view.Font, ResPool.GetSolidBrush (color), rect, col.Format);
+			dc.DrawStringMono (col.Text, view.Font, ResPool.GetSolidBrush (color), rect, col.Format);
 			dc.DrawLine (ResPool.GetSizedPen (ColorHighlight, 2), target_x, 0, target_x, col.Rect.Height);
 		}
 
@@ -3227,7 +3227,7 @@ namespace System.Windows.Forms
 			// Tile view renders its Text in a different fashion
 			if (control.View == View.Tile && Application.VisualStylesEnabled) {
 				// Item.Text is drawn using its first subitem's bounds
-				dc.DrawString (item.Text, item.Font, textBrush, item.SubItems [0].Bounds, format);
+				dc.DrawStringMono (item.Text, item.Font, textBrush, item.SubItems [0].Bounds, format);
 
 				int count = Math.Min (control.Columns.Count, item.SubItems.Count);
 				for (int i = 1; i < count; i++) {
@@ -3237,7 +3237,7 @@ namespace System.Windows.Forms
 
 					Brush itemBrush = item.Selected && control.Focused ? 
 						SystemBrushes.HighlightText : GetControlForeBrush (sub_item.ForeColor);
-					dc.DrawString (sub_item.Text, sub_item.Font, itemBrush, sub_item.Bounds, format);
+					dc.DrawStringMono (sub_item.Text, sub_item.Font, itemBrush, sub_item.Bounds, format);
 				}
 			} else
 			
@@ -3259,10 +3259,10 @@ namespace System.Windows.Forms
 				if (control.View == View.Details) {
 					var clip = dc.Save ();
 					dc.IntersectClip (Rectangle.FromLTRB (label_rect.X + 3, label_rect.Y, label_rect.Right, label_rect.Bottom));
-					dc.DrawString (item.Text, font, textBrush, label_rect, format);
+					dc.DrawStringMono (item.Text, font, textBrush, label_rect, format);
 					dc.Restore (clip);
 				} else
-					dc.DrawString (item.Text, font, textBrush, label_rect, format);
+					dc.DrawStringMono (item.Text, font, textBrush, label_rect, format);
 			}
 
 			// The focus rectangle is drawn once the whole row is on screen, not here: this method
@@ -3340,12 +3340,12 @@ namespace System.Windows.Forms
 							
 				dc.FillRectangle (bg, sub_item_rect);
 				if (subItem.Text != null && subItem.Text.Length > 0)
-					dc.DrawString (subItem.Text, sub_item_font,
+					dc.DrawStringMono (subItem.Text, sub_item_font,
 							text, sub_item_text_rect, format);
 			} else {
 				dc.FillRectangle (sub_item_back_br, sub_item_rect);
 				if (subItem.Text != null && subItem.Text.Length > 0)
-					dc.DrawString (subItem.Text, sub_item_font,
+					dc.DrawStringMono (subItem.Text, sub_item_font,
 							sub_item_fore_br,
 							sub_item_text_rect, format);
 			}
@@ -3392,7 +3392,7 @@ namespace System.Windows.Forms
 			}
 
 			sformat.LineAlignment = StringAlignment.Near;
-			dc.DrawString (group.Header, font, SystemBrushes.Highlight, text_bounds, sformat);
+			dc.DrawStringMono (group.Header, font, SystemBrushes.Highlight, text_bounds, sformat);
 			dc.DrawLine (pen, header_bounds.Left, header_bounds.Top + text_height, header_bounds.Left + ListViewGroupLineWidth, 
 					header_bounds.Top + text_height);
 
@@ -3701,7 +3701,7 @@ namespace System.Windows.Forms
 				e.Graphics.FillRectangle (brush_back, e.Bounds);
 			
 			if (item.Enabled) {
-				e.Graphics.DrawString (item.Text, e.Font,
+				e.Graphics.DrawStringMono (item.Text, e.Font,
 					brush_text,
 					rect_text, string_format);
 				
@@ -3717,13 +3717,13 @@ namespace System.Windows.Forms
 				}
 			} else {
 				if ((item.Status & DrawItemState.Selected) != DrawItemState.Selected) {
-					e.Graphics.DrawString (item.Text, e.Font, Brushes.White, 
+					e.Graphics.DrawStringMono (item.Text, e.Font, Brushes.White, 
 							       new RectangleF(rect_text.X + 1, rect_text.Y + 1, rect_text.Width, rect_text.Height),
 							       string_format);
 
 				}
 				
-				e.Graphics.DrawString (item.Text, e.Font, ResPool.GetSolidBrush(ColorGrayText), rect_text, string_format);
+				e.Graphics.DrawStringMono (item.Text, e.Font, ResPool.GetSolidBrush(ColorGrayText), rect_text, string_format);
 			}
 
 			if (!item.MenuBar && item.Shortcut != Shortcut.None && item.ShowShortcut) {
@@ -3733,15 +3733,15 @@ namespace System.Windows.Forms
 				rect.Width -= item.XTab;
 
 				if (item.Enabled) {
-					e.Graphics.DrawString (str, e.Font, brush_text, rect, string_format_menu_shortcut);
+					e.Graphics.DrawStringMono (str, e.Font, brush_text, rect, string_format_menu_shortcut);
 				} else {
 					if ((item.Status & DrawItemState.Selected) != DrawItemState.Selected) {
-						e.Graphics.DrawString (str, e.Font, Brushes.White, 
+						e.Graphics.DrawStringMono (str, e.Font, Brushes.White, 
 								       new RectangleF(rect.X + 1, rect.Y + 1, rect.Width, rect_text.Height),
 								       string_format_menu_shortcut);
 
 					}
-					e.Graphics.DrawString (str, e.Font, ResPool.GetSolidBrush(ColorGrayText), rect, string_format_menu_shortcut);
+					e.Graphics.DrawStringMono (str, e.Font, ResPool.GetSolidBrush(ColorGrayText), rect, string_format_menu_shortcut);
 				}
 			}
 
@@ -4070,7 +4070,7 @@ namespace System.Windows.Forms
 						Math.Max(client_rectangle.Bottom - date_cell_size.Height - 1 - margin, 0),
 							Math.Max(client_rectangle.Width - today_offset, 0),
 							date_cell_size.Height);
-					dc.DrawString (today_text, MonthCalendarTodayFont (mc), GetControlForeBrush (mc.ForeColor), today_rect, text_format);
+					dc.DrawStringMono (today_text, MonthCalendarTodayFont (mc), GetControlForeBrush (mc.ForeColor), today_rect, text_format);
 					text_format.Dispose ();
 					}
 				}
@@ -4157,7 +4157,7 @@ namespace System.Windows.Forms
 				// everything else.
 				bool title_memory = dc.memory_surface_text;
 				dc.memory_surface_text = monthcal_picture_depth > 0 || mc.HeaderFromZoomPicture;
-				dc.DrawString (title_text, ZoomScaled (MonthCalendarTitleFont (mc)), ResPool.GetSolidBrush (MonthCalendarTitleForeColor (mc)), title_rect, mc.centered_format);
+				dc.DrawStringMono (title_text, ZoomScaled (MonthCalendarTitleFont (mc)), ResPool.GetSolidBrush (MonthCalendarTitleForeColor (mc)), title_rect, mc.centered_format);
 				dc.memory_surface_text = title_memory;
 
 				if (mc.ShowYearUpDown) {
@@ -4167,7 +4167,7 @@ namespace System.Windows.Forms
 					
 					mc.GetYearNameRectangles (title_rect, row * mc.CalendarDimensions.Width + col, out year_rect, out upRect, out downRect);
 					dc.FillRectangle (ResPool.GetSolidBrush (SystemColors.Control), year_rect);
-					dc.DrawString (this_month.ToString ("yyyy"), mc.bold_font, ResPool.GetSolidBrush (Color.Black), year_rect, mc.centered_format);
+					dc.DrawStringMono (this_month.ToString ("yyyy"), mc.bold_font, ResPool.GetSolidBrush (Color.Black), year_rect, mc.centered_format);
 					
 					upState = mc.IsYearGoingUp ? ButtonState.Pushed : ButtonState.Normal;
 					downState = mc.IsYearGoingDown ? ButtonState.Pushed : ButtonState.Normal;
@@ -4258,7 +4258,7 @@ namespace System.Windows.Forms
 						name_rect.X = day_rect.X + (day_rect.Width - day_name_width) / 2;
 						name_rect.Width = day_name_width;
 					}
-					dc.DrawString (day_name, day_font, ResPool.GetSolidBrush (MonthCalendarDayNameColor (mc)), name_rect, mc.centered_format);
+					dc.DrawStringMono (day_name, day_font, ResPool.GetSolidBrush (MonthCalendarDayNameColor (mc)), name_rect, mc.centered_format);
 				}
 				
 				// draw the vertical divider
@@ -4309,7 +4309,7 @@ namespace System.Windows.Forms
 					int week = mc.GetWeekOfYear (current_date);	
 
 					if (draw_row) {
-						dc.DrawString (
+						dc.DrawStringMono (
 							week.ToString(),
 							mc.Font,
 							ResPool.GetSolidBrush (mc.TitleBackColor),
@@ -4458,7 +4458,7 @@ namespace System.Windows.Forms
 				// asks nothing of it that a day number does not.
 				string[] cell_lines = text.Split (new string [] { Environment.NewLine }, StringSplitOptions.None);
 				if (cell_lines.Length == 1) {
-					dc.DrawString (text, cell_font, ink_brush, cell, zoom_cell_format);
+					dc.DrawStringMono (text, cell_font, ink_brush, cell, zoom_cell_format);
 				} else {
 					// comctl32 draws the decade as one block, as DrawText lays out lines: a line's pitch is
 					// the font's line height -- a days cell's, 15 at Segoe UI 9 -- the block is centred in
@@ -4475,7 +4475,7 @@ namespace System.Windows.Forms
 						// Each line centred on its own box, the box being the widest line's, so that
 						// every line starts at the widest one's left edge.
 						var box = new Rectangle (cell.X + (cell.Width - widest) / 2, top + l * line_height, width, line_height);
-						dc.DrawString (cell_lines[l], cell_font, ink_brush, box, zoom_cell_format);
+						dc.DrawStringMono (cell_lines[l], cell_font, ink_brush, box, zoom_cell_format);
 					}
 				}
 			}
@@ -4744,7 +4744,7 @@ namespace System.Windows.Forms
 					date_color = hover;
 			}
 
-			dc.DrawString (MonthCalendarDayText (mc, date), ZoomScaled (font), ResPool.GetSolidBrush (date_color),
+			dc.DrawStringMono (MonthCalendarDayText (mc, date), ZoomScaled (font), ResPool.GetSolidBrush (date_color),
 					       MonthCalendarDateBounds (mc, dc, rectangle), MonthCalendarDateFormat (mc));
 
 			// today circle if needed
@@ -5603,7 +5603,7 @@ namespace System.Windows.Forms
 					}
 				}
 		
-				dc.DrawString (text, sb.Font, ResPool.GetSolidBrush (sb.ForeColor),
+				dc.DrawStringMono (text, sb.Font, ResPool.GetSolidBrush (sb.ForeColor),
 						new Rectangle(area.X + 2, area.Y + 2, area.Width - 4, area.Height - 4), string_format);
 				string_format.Dispose ();
 			} else if (sb.ShowPanels) {
@@ -5721,7 +5721,7 @@ namespace System.Windows.Forms
 
 			RectangleF clip_bounds = dc.ClipBounds;
 			dc.SetClip (area);
-			dc.DrawString (text, panel.Parent.Font, br_forecolor, string_rect, string_format);			
+			dc.DrawStringMono (text, panel.Parent.Font, br_forecolor, string_rect, string_format);			
 			dc.SetClip (clip_bounds);
 
 			if (panel.Icon != null) {
@@ -6037,7 +6037,7 @@ namespace System.Windows.Forms
 			}
 			
 			if (item.Button.Enabled)
-				dc.DrawString (item.Button.Text, control.Font, SystemBrushes.ControlText, text_rect, format);
+				dc.DrawStringMono (item.Button.Text, control.Font, SystemBrushes.ControlText, text_rect, format);
 			else
 				CPDrawStringDisabled (dc, item.Button.Text, control.Font, control.BackColor, text_rect, format);
 		}
@@ -6262,7 +6262,7 @@ namespace System.Windows.Forms
 												rect.Height - (2 * balloon_bordersize));
 			
 			Font titlefont = new Font (control.Font.FontFamily, control.Font.Size, control.Font.Style | FontStyle.Bold, control.Font.Unit);
-			dc.DrawString (control.Title, titlefont, solidbrush, titlerect, control.Format);
+			dc.DrawStringMono (control.Title, titlefont, solidbrush, titlerect, control.Format);
 			
 			// Text
 			Rectangle textrect = new Rectangle (rect.X + balloon_bordersize, 
@@ -6272,7 +6272,7 @@ namespace System.Windows.Forms
 
 			StringFormat textformat = control.Format;
 			textformat.LineAlignment = StringAlignment.Far;
-			dc.DrawString (control.Text, control.Font, solidbrush, textrect, textformat);
+			dc.DrawStringMono (control.Text, control.Font, solidbrush, textrect, textformat);
 		}
 
 		public override Rectangle BalloonWindowRect (NotifyIcon.BalloonWindow control)
@@ -7119,7 +7119,7 @@ namespace System.Windows.Forms
 				format.LineAlignment = StringAlignment.Center;
 
 				if (tb.IntersectsWith (clip))
-					dc.DrawString (window_caption, WindowBorderFont,
+					dc.DrawStringMono (window_caption, WindowBorderFont,
 						ThemeEngine.Current.ResPool.GetSolidBrush (Color.White),
 						tb, format);
 			}
@@ -8186,10 +8186,10 @@ namespace System.Windows.Forms
 		{
 			CPColor cpcolor = ResPool.GetCPColor (color);
 			
-			dc.DrawString (s, font, ResPool.GetSolidBrush(cpcolor.LightLight), 
+			dc.DrawStringMono (s, font, ResPool.GetSolidBrush(cpcolor.LightLight), 
 				       new RectangleF(layoutRectangle.X + 1, layoutRectangle.Y + 1, layoutRectangle.Width, layoutRectangle.Height),
 				       format);
-			dc.DrawString (s, font, ResPool.GetSolidBrush (cpcolor.Dark), layoutRectangle, format);
+			dc.DrawStringMono (s, font, ResPool.GetSolidBrush (cpcolor.Dark), layoutRectangle, format);
 		}
 
 		public override void CPDrawStringDisabled (IDeviceContext dc, string s, Font font, Color color, Rectangle layoutRectangle, TextFormatFlags format)
@@ -8403,7 +8403,7 @@ namespace System.Windows.Forms
 				sf.LineAlignment=StringAlignment.Center;
 
 
-				graphics.DrawString("?", font, ResPool.GetSolidBrush (color), captionRect.X+captionRect.Width/2+shift, captionRect.Y+captionRect.Height/2+shift+lineWidth/2, sf);
+				graphics.DrawStringMono("?", font, ResPool.GetSolidBrush (color), captionRect.X+captionRect.Width/2+shift, captionRect.Y+captionRect.Height/2+shift+lineWidth/2, sf);
 
 				sf.Dispose();				
 				font.Dispose();

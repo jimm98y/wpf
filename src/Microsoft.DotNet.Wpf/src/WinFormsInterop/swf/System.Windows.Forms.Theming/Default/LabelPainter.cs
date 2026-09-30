@@ -88,7 +88,7 @@ namespace System.Windows.Forms.Theming.Default
 			rect.Height = Math.Max(rect.Height, label.Font.Height);
 
 			if (label.Enabled) {
-				dc.DrawString (label.Text, label.Font,
+				dc.DrawStringMono (label.Text, label.Font,
 					ThemeEngine.Current.ResPool.GetSolidBrush (label.ForeColor),
 					rect, label.string_format);
 			} else {

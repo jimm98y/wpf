@@ -1,5 +1,5 @@
-// The palette page of the colour picker: eight by eight cells, the first forty-eight fixed and the
-// last sixteen left for colours the user mixes.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Windows.Forms;
 
@@ -7,17 +7,29 @@ namespace System.Drawing.Design
 {
 	public partial class ColorEditor
 	{
-		internal class ColorPalette : Control
+		/// <summary>
+		///  A control to display the color palette.
+		/// </summary>
+		private partial class ColorPalette : Control
 		{
-			internal const int CellsAcross = 8;
-			internal const int CellsDown = 8;
-			internal const int CellsCustom = 16;            // the last row and the one above it
-			internal const int TotalCells = CellsAcross * CellsDown;
-			internal const int CellSize = 16;
-			internal const int MarginWidth = 8;
+			public const int CellsAcross = 8;
+			public const int CellsDown = 8;
+			public const int CellsCustom = 16; // last cells
+			public const int TotalCells = CellsAcross * CellsDown;
+			public const int CellSize = 16;
+			public const int MarginWidth = 8;
 
-			// Read off the stock palette, in OLE order (0x00bbggrr).
-			private static readonly int[] StaticCells = new int[] {
+			// .NET scales these once to the initial system DPI; the port runs at 96 dpi, where the
+			// scaled values are the logical ones.
+			private static readonly int s_cellSizeX = CellSize;
+			private static readonly int s_cellSizeY = CellSize;
+			private static readonly int s_marginX = MarginWidth;
+			private static readonly int s_marginY = MarginWidth;
+
+			// OBJID_CLIENT, the object id NotifyWinEvent is given for a cell's focus change.
+			private const int OBJID_CLIENT = -4;
+
+			private static readonly int[] s_staticCells = new int[] {
 				0x00ffffff, 0x00c0c0ff, 0x00c0e0ff, 0x00c0ffff,
 				0x00c0ffc0, 0x00ffffc0, 0x00ffc0c0, 0x00ffc0ff,
 
@@ -37,170 +49,376 @@ namespace System.Drawing.Design
 				0x00004000, 0x00404000, 0x00400000, 0x00400040
 			};
 
-			private readonly Color[] static_colours;
-			private readonly Color[] custom_colours;
-			private Color selected_colour;
-			private Point focus_cell;
+			private readonly Color[] _staticColors;
+			private Color _selectedColor;
+			private Point _focus;
+			protected EventHandler _onPicked;
+			private readonly ColorUI _colorUI;
 
-			internal event EventHandler Picked;
-
-			internal ColorPalette (Color[] customColours)
+			public ColorPalette (ColorUI colorUI, Color[] customColors)
 			{
-				static_colours = new Color[TotalCells - CellsCustom];
-				for (int i = 0; i < StaticCells.Length; i++)
-					static_colours[i] = ColorTranslator.FromOle (StaticCells[i]);
-				custom_colours = customColours;
+				_colorUI = colorUI;
+				SetStyle (ControlStyles.Opaque, true);
 
-				SetStyle (ControlStyles.Opaque | ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
-					  | ControlStyles.Selectable, true);
 				BackColor = SystemColors.Control;
-				Size = new Size (CellsAcross * (CellSize + MarginWidth) + MarginWidth + 2,
-						 CellsDown * (CellSize + MarginWidth) + MarginWidth + 2);
+
+				Size = new Size (
+					CellsAcross * (s_cellSizeX + s_marginX) + s_marginX + 2,
+					CellsDown * (s_cellSizeY + s_marginY) + s_marginY + 2);
+
+				_staticColors = new Color[TotalCells - CellsCustom];
+
+				for (int i = 0; i < s_staticCells.Length; i++)
+					_staticColors[i] = ColorTranslator.FromOle (s_staticCells[i]);
+
+				CustomColors = customColors;
 			}
 
-			internal Color SelectedColor {
-				get { return selected_colour; }
+			public Color[] CustomColors { get; }
+
+			internal int FocusedCell {
+				get { return Get1DFrom2D (_focus); }
+			}
+
+			public Color SelectedColor {
+				get { return _selectedColor; }
 				set {
-					if (value == selected_colour)
-						return;
-					selected_colour = value;
-					focus_cell = CellOf (value);
-					Invalidate ();
+					if (!value.Equals (_selectedColor)) {
+						InvalidateSelection ();
+						_selectedColor = value;
+
+						SetFocus (GetCellFromColor (value));
+						InvalidateSelection ();
+					}
 				}
 			}
 
-			internal Color ColorAt (int cell)
-			{
-				if (cell < 0 || cell >= TotalCells)
-					return Color.Empty;
-				return cell < TotalCells - CellsCustom
-					? static_colours[cell]
-					: custom_colours[cell - (TotalCells - CellsCustom)];
+			public event EventHandler Picked {
+				add { _onPicked += value; }
+				remove { _onPicked -= value; }
 			}
 
-			private Point CellOf (Color colour)
+			protected override AccessibleObject CreateAccessibilityInstance ()
 			{
-				for (int i = 0; i < TotalCells; i++)
-					if (ColorAt (i).ToArgb () == colour.ToArgb ())
-						return new Point (i % CellsAcross, i / CellsAcross);
-				return new Point (-1, -1);
+				return new ColorPaletteAccessibleObject (this);
 			}
 
-			private static Rectangle CellBounds (int across, int down)
+			protected EventHandler Get_onPicked ()
 			{
-				return new Rectangle (MarginWidth + across * (CellSize + MarginWidth),
-						      MarginWidth + down * (CellSize + MarginWidth),
-						      CellSize, CellSize);
+				return _onPicked;
 			}
 
-			private int CellAt (Point point)
+			protected void OnPicked (EventArgs e, EventHandler onPicked)
 			{
-				for (int down = 0; down < CellsDown; down++)
-					for (int across = 0; across < CellsAcross; across++) {
-						// The margin around a cell belongs to it, so the whole grid is live
-						// rather than only the coloured squares.
-						Rectangle live = Rectangle.Inflate (CellBounds (across, down),
-										    MarginWidth / 2, MarginWidth / 2);
-						if (live.Contains (point))
-							return across + down * CellsAcross;
+				if (onPicked != null)
+					onPicked (this, e);
+			}
+
+			private static void FillRectWithCellBounds (int across, int down, ref Rectangle rect)
+			{
+				rect.X = s_marginX + across * (s_cellSizeX + s_marginX);
+				rect.Y = s_marginY + down * (s_cellSizeY + s_marginY);
+				rect.Width = s_cellSizeX;
+				rect.Height = s_cellSizeY;
+			}
+
+			private Point GetCellFromColor (Color c)
+			{
+				for (int y = 0; y < CellsDown; y++) {
+					for (int x = 0; x < CellsAcross; x++) {
+						if (GetColorFromCell (x, y).Equals (c))
+							return new Point (x, y);
 					}
-				return -1;
+				}
+				return Point.Empty;
 			}
 
-			protected override void OnMouseDown (MouseEventArgs e)
+			private Color GetColorFromCell (int across, int down)
 			{
-				base.OnMouseDown (e);
-				int cell = CellAt (new Point (e.X, e.Y));
-				if (cell < 0)
-					return;
-				Focus ();
-				focus_cell = new Point (cell % CellsAcross, cell / CellsAcross);
-				selected_colour = ColorAt (cell);
-				Invalidate ();
-				OnPicked ();
+				return GetColorFromCell (Get1DFrom2D (across, down));
+			}
+
+			private Color GetColorFromCell (int index)
+			{
+				if (index < TotalCells - CellsCustom)
+					return _staticColors[index];
+
+				return CustomColors[index - TotalCells + CellsCustom];
+			}
+
+			private static Point GetCell2DFromLocationMouse (int x, int y)
+			{
+				int across = x / (s_cellSizeX + s_marginX);
+				int down = y / (s_cellSizeY + s_marginY);
+
+				// Check if we're outside the cells
+				if (across < 0 || down < 0 || across >= CellsAcross || down >= CellsDown)
+					return new Point (-1, -1);
+
+				// Check if we're in the margin
+				if ((x - (s_cellSizeX + s_marginX) * across) < s_marginX
+				    || (y - (s_cellSizeY + s_marginY) * down) < s_marginY)
+					return new Point (-1, -1);
+
+				return new Point (across, down);
+			}
+
+			private static int GetCellFromLocationMouse (int x, int y)
+			{
+				return Get1DFrom2D (GetCell2DFromLocationMouse (x, y));
+			}
+
+			private static int Get1DFrom2D (Point pt)
+			{
+				return Get1DFrom2D (pt.X, pt.Y);
+			}
+
+			private static int Get1DFrom2D (int x, int y)
+			{
+				if (x == -1 || y == -1)
+					return -1;
+
+				return x + CellsAcross * y;
+			}
+
+			private static Point Get2DFrom1D (int cell)
+			{
+				int x = cell % CellsAcross;
+				int y = cell / CellsAcross;
+				return new Point (x, y);
+			}
+
+			private void InvalidateSelection ()
+			{
+				for (int y = 0; y < CellsDown; y++) {
+					for (int x = 0; x < CellsAcross; x++) {
+						if (SelectedColor.Equals (GetColorFromCell (x, y))) {
+							Rectangle r = default (Rectangle);
+							FillRectWithCellBounds (x, y, ref r);
+							Invalidate (Rectangle.Inflate (r, 5, 5));
+							break;
+						}
+					}
+				}
+			}
+
+			private void InvalidateFocus ()
+			{
+				Rectangle r = default (Rectangle);
+				FillRectWithCellBounds (_focus.X, _focus.Y, ref r);
+				Invalidate (Rectangle.Inflate (r, 5, 5));
+				// .NET: PInvoke.NotifyWinEvent(EVENT_OBJECT_FOCUS, this, OBJID_CLIENT, 1 + cell).
+				AccessibilityNotifyClients (AccessibleEvents.Focus, OBJID_CLIENT, 1 + Get1DFrom2D (_focus.X, _focus.Y));
 			}
 
 			protected override bool IsInputKey (Keys keyData)
 			{
-				switch (keyData & Keys.KeyCode) {
+				switch (keyData) {
 				case Keys.Left:
 				case Keys.Right:
 				case Keys.Up:
 				case Keys.Down:
-				case Keys.Return:
-				case Keys.Space:
+				case Keys.Enter:
 					return true;
-				}
-				return base.IsInputKey (keyData);
-			}
-
-			protected override void OnKeyDown (KeyEventArgs e)
-			{
-				base.OnKeyDown (e);
-				int x = focus_cell.X < 0 ? 0 : focus_cell.X;
-				int y = focus_cell.Y < 0 ? 0 : focus_cell.Y;
-				switch (e.KeyCode) {
-				case Keys.Left: x--; break;
-				case Keys.Right: x++; break;
-				case Keys.Up: y--; break;
-				case Keys.Down: y++; break;
-				case Keys.Return:
-				case Keys.Space:
-					selected_colour = ColorAt (x + y * CellsAcross);
-					OnPicked ();
-					return;
+				// If we don't do this in ProcessDialogKey, VS will take it from us
+				case Keys.F2:
+					return false;
 				default:
-					return;
+					return base.IsInputKey (keyData);
 				}
-				if (x < 0 || y < 0 || x >= CellsAcross || y >= CellsDown)
-					return;
-				focus_cell = new Point (x, y);
-				selected_colour = ColorAt (x + y * CellsAcross);
+			}
+
+			protected virtual void LaunchDialog (int customIndex)
+			{
 				Invalidate ();
-			}
+				_colorUI.EditorService.CloseDropDown (); // It will be closed anyway as soon as it sees the WM_ACTIVATE
+				CustomColorDialog dialog = new CustomColorDialog ();
 
-			private void OnPicked ()
-			{
-				EventHandler handler = Picked;
-				if (handler != null)
-					handler (this, EventArgs.Empty);
-			}
-
-			protected override void OnPaint (PaintEventArgs e)
-			{
-				e.Graphics.FillRectangle (new SolidBrush (BackColor), ClientRectangle);
-				for (int down = 0; down < CellsDown; down++)
-					for (int across = 0; across < CellsAcross; across++) {
-						int cell = across + down * CellsAcross;
-						Rectangle bounds = CellBounds (across, down);
-						using (SolidBrush brush = new SolidBrush (ColorAt (cell)))
-							e.Graphics.FillRectangle (brush, bounds);
-						e.Graphics.DrawRectangle (SystemPens.ControlText, bounds.X, bounds.Y,
-									  bounds.Width - 1, bounds.Height - 1);
-
-						// The cell that is picked is boxed, the one with the keyboard is
-						// dotted -- the same two marks Windows uses.
-						if (ColorAt (cell).ToArgb () == selected_colour.ToArgb ()) {
-							Rectangle box = Rectangle.Inflate (bounds, 2, 2);
-							e.Graphics.DrawRectangle (SystemPens.ControlText, box.X, box.Y,
-										  box.Width - 1, box.Height - 1);
-						}
-						if (Focused && focus_cell.X == across && focus_cell.Y == down)
-							ControlPaint.DrawFocusRectangle (e.Graphics,
-											 Rectangle.Inflate (bounds, 3, 3));
+				// .NET saves and restores the Win32 focus (GetFocus/SetFocus); the port's windowing
+				// layer carries the same two calls without a P/Invoke.
+				IntPtr hwndFocus = XplatUI.GetFocus ();
+				try {
+					DialogResult result = dialog.ShowDialog ();
+					if (result != DialogResult.Cancel) {
+						CustomColors[customIndex] = dialog.Color;
+						SelectedColor = CustomColors[customIndex];
+						OnPicked (EventArgs.Empty, Get_onPicked ());
 					}
+
+					dialog.Dispose ();
+				} finally {
+					if (hwndFocus != IntPtr.Zero)
+						XplatUI.SetFocus (hwndFocus);
+				}
 			}
 
 			protected override void OnGotFocus (EventArgs e)
 			{
 				base.OnGotFocus (e);
-				Invalidate ();
+				InvalidateFocus ();
+			}
+
+			protected override void OnKeyDown (KeyEventArgs e)
+			{
+				base.OnKeyDown (e);
+				switch (e.KeyCode) {
+				case Keys.Enter:
+					SelectedColor = GetColorFromCell (_focus.X, _focus.Y);
+					InvalidateFocus ();
+					OnPicked (EventArgs.Empty, Get_onPicked ());
+					break;
+				case Keys.Space:
+					SelectedColor = GetColorFromCell (_focus.X, _focus.Y);
+					InvalidateFocus ();
+					break;
+				case Keys.Left:
+					SetFocus (new Point (_focus.X - 1, _focus.Y));
+					break;
+				case Keys.Right:
+					SetFocus (new Point (_focus.X + 1, _focus.Y));
+					break;
+				case Keys.Up:
+					SetFocus (new Point (_focus.X, _focus.Y - 1));
+					break;
+				case Keys.Down:
+					SetFocus (new Point (_focus.X, _focus.Y + 1));
+					break;
+				}
 			}
 
 			protected override void OnLostFocus (EventArgs e)
 			{
 				base.OnLostFocus (e);
-				Invalidate ();
+				InvalidateFocus ();
+			}
+
+			protected override void OnMouseDown (MouseEventArgs me)
+			{
+				base.OnMouseDown (me);
+				if (me.Button == MouseButtons.Left) {
+					Point cell2D = GetCell2DFromLocationMouse (me.X, me.Y);
+
+					if (cell2D.X != -1 && cell2D.Y != -1 && cell2D != _focus)
+						SetFocus (cell2D);
+				}
+			}
+
+			protected override void OnMouseMove (MouseEventArgs me)
+			{
+				base.OnMouseMove (me);
+				if (me.Button == MouseButtons.Left && Bounds.Contains (me.X, me.Y)) {
+					Point cell2D = GetCell2DFromLocationMouse (me.X, me.Y);
+
+					if (cell2D.X != -1 && cell2D.Y != -1 && cell2D != _focus)
+						SetFocus (cell2D);
+				}
+			}
+
+			protected override void OnMouseUp (MouseEventArgs me)
+			{
+				base.OnMouseUp (me);
+
+				if (me.Button == MouseButtons.Left) {
+					Point cell2D = GetCell2DFromLocationMouse (me.X, me.Y);
+					if (cell2D.X != -1 && cell2D.Y != -1) {
+						SetFocus (cell2D);
+						SelectedColor = GetColorFromCell (_focus.X, _focus.Y);
+						OnPicked (EventArgs.Empty, Get_onPicked ());
+					}
+				} else if (me.Button == MouseButtons.Right) {
+					int cell = GetCellFromLocationMouse (me.X, me.Y);
+					if (cell >= TotalCells - CellsCustom && cell < TotalCells)
+						LaunchDialog (cell - TotalCells + CellsCustom);
+				}
+			}
+
+			protected override void OnPaint (PaintEventArgs pe)
+			{
+				Graphics graphics = pe.Graphics;
+				using (SolidBrush brush = new SolidBrush (BackColor))
+					graphics.FillRectangle (brush, ClientRectangle);
+
+				Rectangle rect = new Rectangle (s_marginX, s_marginY, s_cellSizeX, s_cellSizeY);
+
+				bool drawSelected = false;
+
+				for (int y = 0; y < CellsDown; y++) {
+					for (int x = 0; x < CellsAcross; x++) {
+						Color color = GetColorFromCell (Get1DFrom2D (x, y));
+
+						FillRectWithCellBounds (x, y, ref rect);
+
+						if (color.Equals (SelectedColor) && !drawSelected) {
+							ControlPaint.DrawBorder (
+								graphics,
+								Rectangle.Inflate (rect, 3, 3),
+								SystemColors.ControlText,
+								ButtonBorderStyle.Solid);
+
+							drawSelected = true;
+						}
+
+						if (_focus.X == x && _focus.Y == y && Focused) {
+							ControlPaint.DrawFocusRectangle (
+								graphics,
+								Rectangle.Inflate (rect, 5, 5),
+								SystemColors.ControlText,
+								SystemColors.Control);
+						}
+
+						ControlPaint.DrawBorder (
+							graphics,
+							Rectangle.Inflate (rect, 2, 2),
+							SystemColors.Control, 2, ButtonBorderStyle.Inset,
+							SystemColors.Control, 2, ButtonBorderStyle.Inset,
+							SystemColors.Control, 2, ButtonBorderStyle.Inset,
+							SystemColors.Control, 2, ButtonBorderStyle.Inset);
+
+						PaintValue (color, graphics, rect);
+					}
+				}
+			}
+
+			private static void PaintValue (Color color, Graphics g, Rectangle rect)
+			{
+				using (SolidBrush brush = new SolidBrush (color))
+					g.FillRectangle (brush, rect);
+			}
+
+			protected override bool ProcessDialogKey (Keys keyData)
+			{
+				if (keyData == Keys.F2) {
+					// No ctrl, alt, shift.
+					int cell = Get1DFrom2D (_focus.X, _focus.Y);
+					if (cell >= TotalCells - CellsCustom && cell < TotalCells) {
+						LaunchDialog (cell - TotalCells + CellsCustom);
+						return true;
+					}
+				}
+
+				return base.ProcessDialogKey (keyData);
+			}
+
+			private void SetFocus (Point newFocus)
+			{
+				// Make sure newFocus is within correct range of cells
+				if (newFocus.X < 0)
+					newFocus.X = 0;
+
+				if (newFocus.Y < 0)
+					newFocus.Y = 0;
+
+				if (newFocus.X >= CellsAcross)
+					newFocus.X = CellsAcross - 1;
+
+				if (newFocus.Y >= CellsDown)
+					newFocus.Y = CellsDown - 1;
+
+				if (_focus != newFocus) {
+					InvalidateFocus ();
+					_focus = newFocus;
+					InvalidateFocus ();
+				}
 			}
 		}
 	}

@@ -569,7 +569,23 @@ namespace System.Windows.Forms {
 		public Rectangle GetTabRect (int index)
 		{
 			TabPage page = GetTab (index);
-			return page.TabBounds;
+			// .NET asks the native control (TCM_GETITEMRECT), which has a tab's rectangle as soon as
+			// the tab exists -- its height is the font's. Ours lays the tabs out only once the control
+			// has been sized, so a caller measuring first (the colour editor sizes its drop-down from
+			// tab 0) got an empty rectangle and a drop-down a tab strip short.
+			// (.NET's GetTabRect creates the handle first, and the item size is known only then.)
+			if (page.TabBounds.Height == 0) {
+				if (!IsHandleCreated)
+					CreateHandle ();
+				CalcTabRows ();
+				SizeTabs ();
+			}
+			// A control not sized yet lays its tabs out with no height at all; the native control
+			// still reports the item's height (TCM_GETITEMRECT), and that is what a caller sizes by.
+			Rectangle tab = page.TabBounds;
+			if (tab.Height == 0 && !Multiline)
+				tab.Height = ItemSize.Height;
+			return tab;
 		}
 
 		public Control GetControl (int index)

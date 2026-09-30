@@ -82,7 +82,7 @@ namespace System.Drawing.Design
 					StringFormatFlags.NoWrap | StringFormatFlags.NoFontFallback) {
 					LineAlignment = StringAlignment.Far,
 				};
-				e.Graphics.DrawString ("abcd", font, SystemBrushes.ActiveCaptionText, e.Bounds, format);
+				e.Graphics.DrawStringMono ("abcd", font, SystemBrushes.ActiveCaptionText, e.Bounds, format);
 			}
 		}
 	}

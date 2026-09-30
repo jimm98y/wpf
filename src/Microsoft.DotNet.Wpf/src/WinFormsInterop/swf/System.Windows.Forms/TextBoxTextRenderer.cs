@@ -68,9 +68,9 @@ namespace System.Windows.Forms
 		{
 			if (!use_textrenderer) {
 				if (showNonPrint)
-					g.DrawString (text, font, ThemeEngine.Current.ResPool.GetSolidBrush (color), x, y, sf_nonprinting);
+					g.DrawStringMono (text, font, ThemeEngine.Current.ResPool.GetSolidBrush (color), x, y, sf_nonprinting);
 				else
-					g.DrawString (text, font, ThemeEngine.Current.ResPool.GetSolidBrush (color), x, y, sf_printing);
+					g.DrawStringMono (text, font, ThemeEngine.Current.ResPool.GetSolidBrush (color), x, y, sf_printing);
 			} else {
 				// NoClipping, because a glyph whose outline reaches left of where the pen sits --
 				// the diagonal of a 4, an italic f -- was being cut off at the layout rectangle's

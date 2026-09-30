@@ -1765,7 +1765,7 @@ namespace System.Windows.Forms {
 					ThemeEngine.Current.ColorHighlightText : node.ForeColor);
 			if (text_color.IsEmpty)
 				text_color = ForeColor;
-			dc.DrawString (node.Text, font,
+			dc.DrawStringMono (node.Text, font,
 					ThemeEngine.Current.ResPool.GetSolidBrush (text_color),
 					node.Bounds, string_format);
 		}

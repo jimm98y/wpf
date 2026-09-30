@@ -1536,7 +1536,7 @@ namespace System.Windows.Forms
 						text_rect = new Rectangle (t_x, t_y, t_w, t_h);
 					}
 					
-					gr.DrawString (Text, Font, Brushes.White, text_rect, text_format);
+					gr.DrawStringMono (Text, Font, Brushes.White, text_rect, text_format);
 				}
 				
 				switch (popupButtonState) {
@@ -2150,7 +2150,7 @@ namespace System.Windows.Forms
 				}
 			}
 
-			gr.DrawString (dcbi.Name, e.Font , ThemeEngine.Current.ResPool.GetSolidBrush (foreColor), new Point (ox + 24 + xPos, oy + (height - e.Font.Height) / 2));
+			gr.DrawStringMono (dcbi.Name, e.Font , ThemeEngine.Current.ResPool.GetSolidBrush (foreColor), new Point (ox + 24 + xPos, oy + (height - e.Font.Height) / 2));
 			gr.DrawImage (dcbi.ImageList.Images [dcbi.ImageIndex], new Rectangle (new Point (ox + xPos + 2, oy), new Size (16, 16)));
 			
 			if (!recorded) {

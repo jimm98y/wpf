@@ -279,6 +279,8 @@ namespace System.Windows.Forms
 		// the accent round it, while the list below highlights its selected row in the full #0078D7.
 		// Ours used the selection colour for both, so the closed field came out as a solid blue
 		// slab. The list's own frame is #646464, not the light grey a plain bordered control gets.
+		private static readonly Color ListBoxSingle = Color.FromArgb (122, 122, 122);
+		private static readonly Color ListBoxSingleFocused = Color.FromArgb (23, 23, 23);
 		private static readonly Color ComboFieldOpenFace = Color.FromArgb (204, 228, 247);
 
 		/// <summary>A resting combo field, #FDFDFD -- the same very-slightly-off white a button
@@ -318,7 +320,7 @@ namespace System.Windows.Forms
 				// A list item's text starts the same column in: comctl32's list box draws it at the
 				// row's edge plus its margin, which DrawString's own margin overshoots by one.
 				caption.X -= 1;
-				e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
+				e.Graphics.DrawStringMono (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
 						       ResPool.GetSolidBrush (fore), caption, format);
 				format.Dispose ();
 			}
@@ -1023,6 +1025,11 @@ namespace System.Windows.Forms
 			Color edge;
 			if (IsPopupList (control))
 				edge = PopupBorder;
+			else if (!sunken && control is ListBox)
+				// A list box with WS_BORDER is themed (uxtheme's Listbox border), not the plain window
+				// frame a panel gets: #7A7A7A at rest and #171717 with the focus, measured on stock
+				// FixedSingle list boxes (the colour editor's lists have the focus).
+				edge = control.Focused ? ListBoxSingleFocused : ListBoxSingle;
 			else if (!sunken)
 				// A plain WS_BORDER -- what a panel with FixedSingle asks for -- is the window frame
 				// colour, not the light grey a themed frame gets and not black either: Windows moved
@@ -2532,7 +2539,13 @@ namespace System.Windows.Forms
 
 		private void DrawModernTabControl (Graphics dc, Rectangle area, TabControl tab)
 		{
-			dc.FillRectangle (ResPool.GetSolidBrush (tab.BackColor), area);
+			// Behind the row of tabs is the PARENT: a themed tab control is transparent there
+			// (DrawThemeParentBackground), so stock's colour editor, on the drop-down's white, shows
+			// white beside its tabs where ours showed the control grey.
+			if (tab.Parent != null)
+				tab.PaintParentBackground (dc, area);
+			else
+				dc.FillRectangle (ResPool.GetSolidBrush (tab.BackColor), area);
 			if (tab.TabCount == 0)
 				return;
 
@@ -2637,7 +2650,7 @@ namespace System.Windows.Forms
 					// From the tab's BASE left edge: the selected one is drawn standing proud, two pixels
 					// wider to the left, and its caption does not move with the decoration.
 					int capX = bounds.X + (selected ? TabControlSelectedDelta.X : 0);
-					dc.DrawString (page.Text, tab.Font, ResPool.GetSolidBrush (fore),
+					dc.DrawStringMono (page.Text, tab.Font, ResPool.GetSolidBrush (fore),
 						       new Rectangle (capX, row.Y + (selected ? -1 : 1),
 						                      Math.Min (capBox, bounds.Width), row.Height),
 						       format);
@@ -2687,7 +2700,7 @@ namespace System.Windows.Forms
 						 (e.State & DrawItemState.Inactive) != DrawItemState.Inactive, false);
 
 			if (text.Width > 0)
-				e.Graphics.DrawString (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
+				e.Graphics.DrawStringMono (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
 						       ResPool.GetSolidBrush (fore), text, ctrl.StringFormat);
 
 			if ((e.State & DrawItemState.Focus) == DrawItemState.Focus && (e.State & DrawItemState.NoFocusRect) == 0)
