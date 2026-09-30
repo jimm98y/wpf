@@ -45,7 +45,7 @@ namespace System.Windows.Forms
 
 		public override bool CanConvertFrom (ITypeDescriptorContext context, Type sourceType)
 		{
-			if (sourceType == typeof (byte []))
+			if (sourceType == typeof (byte []) || sourceType == typeof (string))
 				return true;
 			return base.CanConvertFrom (context, sourceType);
 		}
@@ -60,6 +60,13 @@ namespace System.Windows.Forms
 		public override object ConvertFrom (ITypeDescriptorContext context,
 				CultureInfo culture, object value)
 		{
+			// A standard cursor by its name on Cursors ("Hand"), as .NET's converter reads it back.
+			if (value is string text) {
+				text = text.Trim ();
+				foreach (PropertyInfo prop in typeof (Cursors).GetProperties ())
+					if (string.Equals (prop.Name, text, StringComparison.OrdinalIgnoreCase))
+						return prop.GetValue (null, null);
+			}
 			byte [] val = value as byte [];
 			if (val == null)
 				return base.ConvertFrom (context, culture, value);
@@ -80,6 +87,14 @@ namespace System.Windows.Forms
 
 			if ( !(value is Cursor))
 				throw new ArgumentException("object must be of class Cursor", "value");
+
+			// .NET writes a standard cursor as its name on Cursors -- "Hand", not the
+			// "[Cursor:Hand]" of Cursor.ToString -- which is what a property grid shows.
+			if (destinationType == typeof (string)) {
+				foreach (PropertyInfo prop in typeof (Cursors).GetProperties ())
+					if (prop.GetValue (null, null) == value)
+						return prop.Name;
+			}
 
 			if (destinationType == typeof (byte [])) {
 				Cursor			c;

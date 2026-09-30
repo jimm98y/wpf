@@ -82,6 +82,10 @@ namespace System.Windows.Forms.PropertyGridInternal
 		public override bool Expandable {
 			get {
 				TypeConverter converter = GetConverter ();
+				// Nothing to expand into without a value: .NET shows no glyph on a null Image,
+				// whatever its converter would say about one.
+				if (PropertyDescriptor != null && Value == null)
+					return false;
 				if (converter != null)
 					return converter.GetPropertiesSupported ((ITypeDescriptorContext)this);
 
@@ -815,6 +819,11 @@ namespace System.Windows.Forms.PropertyGridInternal
 			object[] propertyOwners = this.Values;
 			string[] propertyNames = GetMergedPropertyNames (propertyOwners);
 			GridItemCollection items = new GridItemCollection ();
+			// .NET's GridEntry.GetPropEntries: sorted by display name only when the grid sorts
+			// alphabetically, and never an array's elements; otherwise the converter's order.
+			bool alphabetical = property_grid != null && (property_grid.PropertySort & PropertySort.Alphabetical) != 0;
+			Type type = propertyOwners != null && propertyOwners.Length > 0 && propertyOwners [0] != null ? propertyOwners [0].GetType () : null;
+			items.KeepOrder = !alphabetical || (type != null && type.IsArray);
 
 			foreach (string propertyName in propertyNames) {
 				PropertyDescriptor[] properties = new PropertyDescriptor[propertyOwners.Length];

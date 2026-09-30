@@ -487,6 +487,21 @@ namespace System.Windows.Forms
 			}
 		}
 
+		private Color category_splitter_color = SystemColors.Control;
+
+		/// <summary>.NET's line along the top of every category but the first
+		/// (CategoryGridEntry.PaintLabel/PaintValue); the grid had no such property or line.</summary>
+		[DefaultValue (typeof (Color), "Control")]
+		public Color CategorySplitterColor {
+			get { return category_splitter_color; }
+			set {
+				if (category_splitter_color == value)
+					return;
+				category_splitter_color = value;
+				property_grid_view?.Invalidate ();
+			}
+		}
+
 		[DefaultValue ("Color [InactiveBorder]")]
 		public Color LineColor {
 			get {
@@ -1588,10 +1603,16 @@ namespace System.Windows.Forms
 				return;
 
 			GridItemCollection reordered = new GridItemCollection ();
+			bool alphabetical = (property_sort & PropertySort.Alphabetical) != 0;
+			// In the order the entries come in: those are already in .NET's order (GetChildGridItems),
+			// and categories are sorted by name below.
+			reordered.KeepOrder = true;
 
 			if (property_sort == PropertySort.Alphabetical || property_sort == PropertySort.NoSort) {
 				alphabetic_toolbarbutton.Pushed = true;
 				categorized_toolbarbutton.Pushed = false;
+				// Flattened out of the categories: sorted across all of them unless NoSort.
+				reordered.KeepOrder = !alphabetical;
 				foreach (GridItem item in rootItem.GridItems) {
 					if (item.GridItemType == GridItemType.Category) {
 						foreach (GridItem categoryChild in item.GridItems) {
@@ -1628,6 +1649,7 @@ namespace System.Windows.Forms
 						// Create category grid items if they already don't
 						category_item = new CategoryGridEntry (this, categoryName, rootItem);
 						category_item.Expanded = true;
+						category_item.GridItems.KeepOrder = !alphabetical;
 						categories.Add (category_item);
 					}
 
@@ -1639,6 +1661,7 @@ namespace System.Windows.Forms
 			}
 
 			rootItem.GridItems.Clear ();
+			rootItem.GridItems.KeepOrder = true;
 			rootItem.GridItems.AddRange (reordered);
 		}
 

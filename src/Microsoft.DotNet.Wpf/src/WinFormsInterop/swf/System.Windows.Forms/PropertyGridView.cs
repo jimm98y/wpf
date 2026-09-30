@@ -771,6 +771,11 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				DrawGridItemLabel (grid_item, pevent, depth, new Rectangle (0, yLoc, divider, RowHeight));
 				using (Pen pen = new Pen (property_grid.LineColor))
 					pevent.Graphics.DrawLine (pen, divider, yLoc - 1, divider, yLoc + RowHeight);
+				// A category after the first carries the splitter colour along its top.
+				if (grid_item.GridItemType == GridItemType.Category && grid_item.Parent != null
+				    && grid_item.Parent.GridItems.IndexOf (grid_item) > 0)
+					using (Pen pen = new Pen (property_grid.CategorySplitterColor))
+						pevent.Graphics.DrawLine (pen, 0, yLoc - 1, width, yLoc - 1);
 
 				if (grid_item.Expandable) {
 					// GridEntry.OutlineRectangle: 16 square, OutlineIconPadding / 2 in per depth step,
