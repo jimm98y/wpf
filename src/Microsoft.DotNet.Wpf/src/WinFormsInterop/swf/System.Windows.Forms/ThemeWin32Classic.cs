@@ -1726,7 +1726,7 @@ namespace System.Windows.Forms
 			}
 			bool is_flat = style == FlatStyle.Flat || style == FlatStyle.Popup;
 			if (!is_flat && clippingArea.IntersectsWith (comboBox.TextArea))
-				ControlPaint.DrawBorder3D (g, comboBox.TextArea, Border3DStyle.Sunken);
+				CPDrawBorder3D (g, comboBox.TextArea, Border3DStyle.Sunken, Border3DSide.All);
 		}
 		public override bool CombBoxBackgroundHasHotElementStyle (ComboBox comboBox)
 		{
@@ -7047,7 +7047,7 @@ namespace System.Windows.Forms
 
 			Pen pen = ResPool.GetPen (ColorControl);
 			Rectangle borders = new Rectangle (0, 0, form.Width, form.Height);
-			ControlPaint.DrawBorder3D (dc, borders, Border3DStyle.Raised);
+			CPDrawBorder3D (dc, borders, Border3DStyle.Raised, Border3DSide.All);
 			// The 3d border is only 2 pixels wide, so we draw the innermost pixels ourselves
 			borders = new Rectangle (2, 2, form.Width - 5, form.Height - 5);
 			for (int i = 2; i < bdwidth; i++) {

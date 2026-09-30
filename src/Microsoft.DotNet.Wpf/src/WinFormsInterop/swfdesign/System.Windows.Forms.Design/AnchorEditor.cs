@@ -1,178 +1,373 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 //
-// System.Windows.Forms.Design.AnchorEditor.cs
-//
-//
-// For creating type editors see the *great* tutorial:
-//  "Walkthrough: implement a UI Type Editor"
-//
-// Author:
-//   Dennis Hayes 
-//   Miguel de Icaza (miguel@novell.com)
-// (C) 2006 Novell, Inc.  http://www.ximian.com
-//
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
+// Ported from dotnet/winforms (System.Windows.Forms.Design/src/System/Windows/Forms/Design/
+// AnchorEditor.cs + AnchorEditor.AnchorUI.cs), replacing Mono's Bezier-drawing AnchorSelector.
+// The port runs at 96 dpi, so every ScaleHelper value is its logical one.
 
-using System;
-using System.Drawing;
 using System.ComponentModel;
+using System.Drawing;
 using System.Drawing.Design;
-using System.Windows.Forms;
 
 namespace System.Windows.Forms.Design
 {
-	public sealed class AnchorEditor : UITypeEditor
+	/// <summary>
+	///  Provides a design-time editor for specifying the <see cref="Control.Anchor"/> property.
+	/// </summary>
+	public sealed partial class AnchorEditor : UITypeEditor
 	{
-		#region Public Instance Constructors
+		private AnchorUI _anchorUI;
 
-		public AnchorEditor()
+		public AnchorEditor ()
 		{
 		}
 
-		#endregion Public Instance Constructors
-
-		#region Override implementation of UITypeEditor
-
-		public override object EditValue(ITypeDescriptorContext context, IServiceProvider provider, Object value)
+		public override object EditValue (ITypeDescriptorContext context, IServiceProvider provider, object value)
 		{
-			IWindowsFormsEditorService editor_service = null;
-				
-			if (provider != null){
-				editor_service = provider.GetService (typeof (IWindowsFormsEditorService))
-					as IWindowsFormsEditorService;
-			}
+			IWindowsFormsEditorService editorService = provider == null
+				? null
+				: provider.GetService (typeof (IWindowsFormsEditorService)) as IWindowsFormsEditorService;
+			if (editorService == null)
+				return value;
 
-			if (editor_service != null){
-				AnchorSelector anchor_selector = new AnchorSelector (editor_service, (AnchorStyles) value);
-				editor_service.DropDownControl (anchor_selector);
+			if (_anchorUI == null)
+				_anchorUI = new AnchorUI ();
 
-				value = anchor_selector.AnchorStyles;
-			}
+			_anchorUI.Start (editorService, value);
+			editorService.DropDownControl (_anchorUI);
+			value = _anchorUI.Value;
+			_anchorUI.End ();
 
 			return value;
 		}
 
-		public override UITypeEditorEditStyle GetEditStyle(ITypeDescriptorContext context)
+		public override UITypeEditorEditStyle GetEditStyle (ITypeDescriptorContext context)
 		{
 			return UITypeEditorEditStyle.DropDown;
 		}
 
-		#endregion Override implementation of UITypeEditor
-	}
+		/// <summary>
+		///  User Interface for the AnchorEditor.
+		/// </summary>
+		private class AnchorUI : Control
+		{
+			private readonly SpringControl _bottom;
+			private readonly ContainerPlaceholder _container = new ContainerPlaceholder ();
+			private readonly ControlPlaceholder _control = new ControlPlaceholder ();
+			private readonly SpringControl _left;
+			private readonly SpringControl _right;
+			private readonly SpringControl[] _tabOrder;
+			private readonly SpringControl _top;
+			private IWindowsFormsEditorService _editorService;
+			private AnchorStyles _oldAnchor;
 
-	internal class AnchorSelector : UserControl
-	{
-	        /// <summary> 
-	        /// Required designer variable.
-	        /// </summary>
-	        private System.ComponentModel.IContainer components = null;
-	
-	        protected override void Dispose(bool disposing)
-	        {
-			if (disposing && (components != null)) {
-				components.Dispose();
+			public AnchorUI ()
+			{
+				_left = new SpringControl (this) { AccessibleRole = AccessibleRole.CheckButton };
+				_right = new SpringControl (this) { AccessibleRole = AccessibleRole.CheckButton };
+				_top = new SpringControl (this) { AccessibleRole = AccessibleRole.CheckButton };
+				_bottom = new SpringControl (this) { AccessibleRole = AccessibleRole.CheckButton };
+				_tabOrder = new SpringControl[] { _left, _top, _right, _bottom };
+
+				InitializeComponent ();
 			}
-			base.Dispose(disposing);
-	        }
-	
-	        private void InitializeComponent()
-	        {
-	            this.SuspendLayout();
-	            this.Name = "AnchorSelector";
-	            this.Size = new System.Drawing.Size (150, 120);
-	            this.ResumeLayout(false);
-	        }
 
-		public AnchorStyles AnchorStyles {
-			get {
-				return styles;
+			public object Value { get; private set; }
+
+			public void End ()
+			{
+				_editorService = null;
+				Value = null;
+			}
+
+			public virtual AnchorStyles GetSelectedAnchor ()
+			{
+				AnchorStyles baseVar = 0;
+				if (_left.IsSolid)
+					baseVar |= AnchorStyles.Left;
+
+				if (_top.IsSolid)
+					baseVar |= AnchorStyles.Top;
+
+				if (_bottom.IsSolid)
+					baseVar |= AnchorStyles.Bottom;
+
+				if (_right.IsSolid)
+					baseVar |= AnchorStyles.Right;
+
+				return baseVar;
+			}
+
+			// .NET's ScaleHelper.ScaleToInitialSystemDpi(...) values at 96 dpi: the logical ones.
+			internal virtual void InitializeComponent ()
+			{
+				int XBORDER = SystemInformation.Border3DSize.Width;
+				int YBORDER = SystemInformation.Border3DSize.Height;
+				SuspendLayout ();
+
+				const int pixel_10 = 10;
+				const int pixel_30 = 30;
+				const int pixel_40 = 40;
+				const int pixel_60 = 60;
+				const int pixel_90 = 90;
+
+				SetBounds (0, 0, pixel_90, pixel_90);
+
+				AccessibleName = "Anchor Editor";
+
+				_container.Location = new Point (0, 0);
+				_container.Size = new Size (pixel_90, pixel_90);
+				_container.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Bottom | AnchorStyles.Right;
+
+				_control.Location = new Point (pixel_30, pixel_30);
+				_control.Size = new Size (pixel_30, pixel_30);
+				_control.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Bottom | AnchorStyles.Right;
+
+				_right.Location = new Point (pixel_60, pixel_40);
+				_right.Size = new Size (pixel_30 - XBORDER, pixel_10);
+				_right.TabIndex = 2;
+				_right.TabStop = true;
+				_right.Anchor = AnchorStyles.Right;
+				_right.AccessibleName = "Right";
+
+				_left.Location = new Point (XBORDER, pixel_40);
+				_left.Size = new Size (pixel_30 - XBORDER, pixel_10);
+				_left.TabIndex = 0;
+				_left.TabStop = true;
+				_left.Anchor = AnchorStyles.Left;
+				_left.AccessibleName = "Left";
+
+				_top.Location = new Point (pixel_40, YBORDER);
+				_top.Size = new Size (pixel_10, pixel_30 - YBORDER);
+				_top.TabIndex = 1;
+				_top.TabStop = true;
+				_top.Anchor = AnchorStyles.Top;
+				_top.AccessibleName = "Top";
+
+				_bottom.Location = new Point (pixel_40, pixel_60);
+				_bottom.Size = new Size (pixel_10, pixel_30 - YBORDER);
+				_bottom.TabIndex = 3;
+				_bottom.TabStop = true;
+				_bottom.Anchor = AnchorStyles.Bottom;
+				_bottom.AccessibleName = "Bottom";
+
+				Controls.Clear ();
+				Controls.AddRange (new Control[] {
+					_container
+				});
+
+				_container.Controls.Clear ();
+				_container.Controls.AddRange (new Control[] {
+					_control,
+					_top,
+					_left,
+					_bottom,
+					_right
+				});
+				ResumeLayout (false);
+			}
+
+			protected override void OnGotFocus (EventArgs e)
+			{
+				base.OnGotFocus (e);
+				_top.Focus ();
+			}
+
+			private void SetValue ()
+			{
+				Value = GetSelectedAnchor ();
+			}
+
+			public void Start (IWindowsFormsEditorService edSvc, object value)
+			{
+				_editorService = edSvc;
+				Value = value;
+
+				if (value is AnchorStyles) {
+					AnchorStyles anchorStyles = (AnchorStyles) value;
+					_left.IsSolid = (anchorStyles & AnchorStyles.Left) == AnchorStyles.Left;
+					_top.IsSolid = (anchorStyles & AnchorStyles.Top) == AnchorStyles.Top;
+					_bottom.IsSolid = (anchorStyles & AnchorStyles.Bottom) == AnchorStyles.Bottom;
+					_right.IsSolid = (anchorStyles & AnchorStyles.Right) == AnchorStyles.Right;
+					_oldAnchor = anchorStyles;
+				} else {
+					_oldAnchor = AnchorStyles.Top | AnchorStyles.Left;
+				}
+			}
+
+			private void Teardown (bool saveAnchor)
+			{
+				if (!saveAnchor)
+					Value = _oldAnchor;
+
+				_editorService.CloseDropDown ();
+			}
+
+			private class ContainerPlaceholder : Control
+			{
+				public ContainerPlaceholder ()
+				{
+					BackColor = SystemColors.Window;
+					ForeColor = SystemColors.WindowText;
+					TabStop = false;
+				}
+
+				protected override void OnPaint (PaintEventArgs e)
+				{
+					Rectangle rc = ClientRectangle;
+					ControlPaint.DrawBorder3D (e.Graphics, rc, Border3DStyle.Sunken);
+				}
+			}
+
+			private class ControlPlaceholder : Control
+			{
+				public ControlPlaceholder ()
+				{
+					BackColor = SystemColors.Control;
+					TabStop = false;
+					SetStyle (ControlStyles.Selectable, false);
+				}
+
+				protected override void OnPaint (PaintEventArgs e)
+				{
+					Rectangle rc = ClientRectangle;
+					ControlPaint.DrawButton (e.Graphics, rc, ButtonState.Normal);
+				}
+			}
+
+			private class SpringControl : Control
+			{
+				private readonly AnchorUI _picker;
+				internal bool _focused;
+				internal bool _solid;
+
+				public SpringControl (AnchorUI picker)
+				{
+					if (picker == null)
+						throw new ArgumentNullException ("picker");
+					_picker = picker;
+					TabStop = true;
+				}
+
+				protected override AccessibleObject CreateAccessibilityInstance ()
+				{
+					return new SpringControlAccessibleObject (this);
+				}
+
+				public bool IsSolid {
+					get { return _solid; }
+					set {
+						if (_solid != value) {
+							_solid = value;
+							_picker.SetValue ();
+							Invalidate ();
+						}
+					}
+				}
+
+				protected override void OnGotFocus (EventArgs e)
+				{
+					if (!_focused) {
+						_focused = true;
+						Invalidate ();
+					}
+
+					base.OnGotFocus (e);
+				}
+
+				protected override void OnLostFocus (EventArgs e)
+				{
+					if (_focused) {
+						_focused = false;
+						Invalidate ();
+					}
+
+					base.OnLostFocus (e);
+				}
+
+				protected override void OnMouseDown (MouseEventArgs e)
+				{
+					IsSolid = !_solid;
+					Focus ();
+				}
+
+				protected override void OnPaint (PaintEventArgs e)
+				{
+					Rectangle rc = ClientRectangle;
+
+					if (_solid) {
+						e.Graphics.FillRectangle (SystemBrushes.ControlDark, rc);
+						e.Graphics.DrawRectangle (SystemPens.WindowFrame, rc.X, rc.Y, rc.Width - 1, rc.Height - 1);
+					} else {
+						ControlPaint.DrawFocusRectangle (e.Graphics, rc);
+					}
+
+					if (_focused) {
+						rc.Inflate (-2, -2);
+						ControlPaint.DrawFocusRectangle (e.Graphics, rc);
+					}
+				}
+
+				protected override bool ProcessDialogChar (char charCode)
+				{
+					if (charCode == ' ') {
+						IsSolid = !_solid;
+						return true;
+					}
+
+					return base.ProcessDialogChar (charCode);
+				}
+
+				protected override bool ProcessDialogKey (Keys keyData)
+				{
+					if ((keyData & Keys.KeyCode) == Keys.Return && (keyData & (Keys.Alt | Keys.Control)) == 0) {
+						_picker.Teardown (true);
+						return true;
+					}
+
+					if ((keyData & Keys.KeyCode) == Keys.Escape && (keyData & (Keys.Alt | Keys.Control)) == 0) {
+						_picker.Teardown (false);
+						return true;
+					}
+
+					if ((keyData & Keys.KeyCode) == Keys.Tab && (keyData & (Keys.Alt | Keys.Control)) == 0) {
+						for (int i = 0; i < _picker._tabOrder.Length; i++) {
+							if (_picker._tabOrder[i] == this) {
+								i += (keyData & Keys.Shift) == 0 ? 1 : -1;
+								i = i < 0 ? i + _picker._tabOrder.Length : i % _picker._tabOrder.Length;
+								_picker._tabOrder[i].Focus ();
+								break;
+							}
+						}
+
+						return true;
+					}
+
+					return base.ProcessDialogKey (keyData);
+				}
+
+				private class SpringControlAccessibleObject : ControlAccessibleObject
+				{
+					public SpringControlAccessibleObject (SpringControl owner) : base (owner)
+					{
+					}
+
+					public override string DefaultAction {
+						get { return ((SpringControl) Owner).IsSolid ? "Uncheck" : "Check"; }
+					}
+
+					public override AccessibleStates State {
+						get {
+							AccessibleStates state = base.State;
+
+							if (((SpringControl) Owner).IsSolid)
+								state |= AccessibleStates.Checked;
+
+							return state;
+						}
+					}
+				}
 			}
 		}
-		
-	        AnchorStyles styles;
-	
-	        public AnchorSelector (IWindowsFormsEditorService editor_service, AnchorStyles startup)
-	        {
-			styles = startup;
-			
-			InitializeComponent();
-			BackColor = Color.White;
-	        }
-	
-	        void PaintState(Graphics g, int x1, int y1, int x2, int y2, AnchorStyles v)
-	        {
-			if ((styles & v) != 0)
-				g.DrawLine(SystemPens.MenuText, x1, y1, x2, y2);
-			else {
-				int xf = (x1 == x2) ? 10 : 0;
-				int yf = (y1 == y2) ? 10 : 0;
-				
-				g.DrawBezier(SystemPens.MenuText,
-					     new Point(x1, y1),
-					     new Point((x1+x2)/2+xf, (y1+y2)/2-yf),
-					     new Point((x1+x2)/2-xf, (y1+y2)/2+yf),
-					     new Point(x2, y2));
-			}
-	        }
-	
-	        protected override void OnPaint (PaintEventArgs e)
-	        {
-			Graphics g = e.Graphics;
-			int w3 = Width / 3;
-			int h3 = Height / 3;
-			int w2 = Width/2;
-			int h2 = Height/2;
-			
-			g.FillRectangle(Brushes.Black, new Rectangle(w3, h3, w3, h3));
-			
-			PaintState (g, 0, h2, w3, h2, AnchorStyles.Left);
-			PaintState (g, w3 * 2, h2, Width, h2, AnchorStyles.Right);
-			PaintState (g, w2, 0, w2, h3, AnchorStyles.Top);
-			PaintState (g, w2, h3 * 2, w2, Height, AnchorStyles.Bottom);
-	        }
-		
-	        protected override void OnClick (EventArgs ee)
-	        {
-			Point e = PointToClient (MousePosition);
-			int w3 = Width / 3;
-			int h3 = Height / 3;
-			
-			if (e.X <= w3 && e.Y > h3 && e.Y < h3 * 2)
-				styles = styles ^ AnchorStyles.Left;
-			else if (e.Y < h3 && e.X > w3 && e.X < w3 * 2)
-				styles = styles ^ AnchorStyles.Top;
-			else if (e.X > w3 * 2 && e.Y > h3 && e.Y < h3 * 2)
-				styles = styles ^ AnchorStyles.Right;
-			else if (e.Y > h3 * 2 && e.X > w3 && e.X < w3 * 2)
-				styles = styles ^ AnchorStyles.Bottom;
-			else
-				base.OnClick(ee);
-			Invalidate();
-	        }
-
-	        protected override void OnDoubleClick (EventArgs ee)
-	        {
-			OnClick (ee);
-		}
-
 	}
-	
 }

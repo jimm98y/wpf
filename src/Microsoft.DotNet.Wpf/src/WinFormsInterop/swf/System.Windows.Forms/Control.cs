@@ -4526,6 +4526,37 @@ namespace System.Windows.Forms
 			toInvoke.OnClick(e);
 		}
 
+		/// <summary>uxtheme's DrawThemeParentBackground: have this control's PARENT paint -- its
+		/// background and its own OnPaint -- into <paramref name="bounds"/> of this control, as it
+		/// would under it, so a themed part that is partly transparent shows what is really behind it.
+		/// Filling with the parent's BackColor instead lost everything the parent draws: the dock
+		/// editor's buttons stand on a container that paints a sunken frame, and the frame showed
+		/// through stock's rounded corners and not through ours.</summary>
+		internal void PaintParentBackground (Graphics g, Rectangle bounds)
+		{
+			Control p = parent;
+			if (p == null || bounds.Width <= 0 || bounds.Height <= 0)
+				return;
+			// Into a bitmap of the area and then drawn in, rather than by translating this control's
+			// own Graphics round the parent's paint: done that way (Save, IntersectClip, translate,
+			// Restore) everything the button drew afterwards went missing on the GPU path. Not yet
+			// explained; the bitmap keeps the parent's drawing away from the control's Graphics.
+			using (var bmp = new Bitmap (bounds.Width, bounds.Height))
+			using (Graphics bg = Graphics.FromImage (bmp)) {
+				bg.TranslateTransform (-(Left + bounds.X), -(Top + bounds.Y));
+				var area = new Rectangle (Left + bounds.X, Top + bounds.Y, bounds.Width, bounds.Height);
+				using (var pe = new PaintEventArgs (bg, area)) {
+					try {
+						p.OnPaintBackground (pe);
+						p.OnPaint (pe);
+					} catch (Exception ex) {
+						Console.Error.WriteLine ("[parentbg] " + ex.Message);
+					}
+				}
+				g.DrawImage (bmp, bounds.X, bounds.Y, bounds.Width, bounds.Height);
+			}
+		}
+
 		protected void InvokePaint(Control c, PaintEventArgs e) {
 			c.OnPaint (e);
 		}

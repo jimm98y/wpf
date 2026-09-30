@@ -60,6 +60,11 @@
 
   <ItemGroup>
     <Compile Include="swfdesign/**/*.cs" />
+    <!-- .NET's SelectionPanelBase (the radio-button panel behind ContentAlignmentEditor and
+         DockEditor) is internal to BOTH assemblies, with no InternalsVisibleTo between them, so
+         System.Design compiles its own copy from the WinForms sources. Its ShowFocusCues override
+         is per-assembly (swfdesign/System.Drawing.Design/SelectionPanelFocusCues.Design.cs). -->
+    <Compile Include="swf/System.Drawing.Design/SelectionPanelBase*.cs" Link="swfdesign/System.Drawing.Design/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

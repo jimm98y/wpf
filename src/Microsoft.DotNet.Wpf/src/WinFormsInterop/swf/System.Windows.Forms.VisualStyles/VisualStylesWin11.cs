@@ -239,8 +239,8 @@ namespace System.Windows.Forms.VisualStyles
 
 		public int UxThemeDrawThemeParentBackground (IDeviceContext dc, Rectangle bounds, Control childControl)
 		{
-			if (dc is Graphics g && childControl?.Parent is Control parent)
-				g.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (parent.BackColor), bounds);
+			if (dc is Graphics g && childControl?.Parent != null)
+				childControl.PaintParentBackground (g, bounds);
 			return S_OK;
 		}
 

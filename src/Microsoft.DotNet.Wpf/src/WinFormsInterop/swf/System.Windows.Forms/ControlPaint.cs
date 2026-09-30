@@ -324,8 +324,48 @@ namespace System.Windows.Forms {
 		}
 
 		public static void DrawBorder3D( Graphics graphics, Rectangle rectangle, Border3DStyle style, Border3DSide sides) {
+			// .NET's ControlPaint.DrawBorder3D is DrawEdge: the classic two-pixel bevel in the
+			// system colours, whatever the theme. The theme's CPDrawBorder3D flattens a 3D border to
+			// Windows 11's hairline, which is right for a CONTROL's own border (a sunken text box is a
+			// themed frame in Windows) and wrong for an application or editor that asks ControlPaint
+			// for a bevel: the anchor editor's sunken frame came out a single #838383 line.
+			DrawEdge (graphics, rectangle, (int) style, sides, false);
+		}
 
-			ThemeEngine.Current.CPDrawBorder3D (graphics, rectangle, style, sides);
+		/// <summary>user32's DrawEdge in managed code: an outer and an inner ring, each a top-left and
+		/// a bottom-right colour (BDR_* bits of <paramref name="edge"/>), the bottom and right lines
+		/// running the full length so they own the far corners. BF_SOFT (push buttons) swaps which
+		/// shade of the pair each ring takes on the top-left.</summary>
+		internal static void DrawEdge (Graphics g, Rectangle r, int edge, Border3DSide sides, bool soft)
+		{
+			const int RaisedOuter = 0x1, SunkenOuter = 0x2, RaisedInner = 0x4, SunkenInner = 0x8, Adjust = 0x2000;
+			if ((edge & Adjust) != 0)
+				r.Inflate (2, 2);
+			Color highlight = SystemColors.ControlLightLight, light = SystemColors.ControlLight;
+			Color shadow = SystemColors.ControlDark, dark = SystemColors.ControlDarkDark;
+			Color? outerTL = null, outerBR = null, innerTL = null, innerBR = null;
+			if ((edge & RaisedOuter) != 0) { outerTL = soft ? highlight : light; outerBR = dark; }
+			else if ((edge & SunkenOuter) != 0) { outerTL = soft ? dark : shadow; outerBR = highlight; }
+			if ((edge & RaisedInner) != 0) { innerTL = soft ? light : highlight; innerBR = shadow; }
+			else if ((edge & SunkenInner) != 0) { innerTL = soft ? shadow : dark; innerBR = light; }
+			void Ring (Rectangle q, Color? tl, Color? br)
+			{
+				if (q.Width <= 0 || q.Height <= 0)
+					return;
+				if (tl is Color a) {
+					using var b = new SolidBrush (a);
+					if ((sides & Border3DSide.Left) != 0) g.FillRectangle (b, q.X, q.Y, 1, q.Height - 1);
+					if ((sides & Border3DSide.Top) != 0) g.FillRectangle (b, q.X, q.Y, q.Width - 1, 1);
+				}
+				if (br is Color c) {
+					using var b = new SolidBrush (c);
+					if ((sides & Border3DSide.Right) != 0) g.FillRectangle (b, q.Right - 1, q.Y, 1, q.Height);
+					if ((sides & Border3DSide.Bottom) != 0) g.FillRectangle (b, q.X, q.Bottom - 1, q.Width, 1);
+				}
+			}
+			Ring (r, outerTL, outerBR);
+			r.Inflate (-1, -1);
+			Ring (r, innerTL, innerBR);
 		}
 
 		public static void DrawButton( Graphics graphics, int x, int y, int width, int height, ButtonState state) {
@@ -333,8 +373,20 @@ namespace System.Windows.Forms {
 		}
 
 		public static void DrawButton( Graphics graphics, Rectangle rectangle, ButtonState state) {
-
-			ThemeEngine.Current.CPDrawButton (graphics, rectangle, state);
+			// .NET's DrawFrameControl(DFC_BUTTON, DFCS_BUTTONPUSH): the face in the control colour
+			// inside a soft raised edge, or a soft SUNKEN one when pushed (checked shows pushed too);
+			// flat is a single ControlDark line. Measured against a stock ControlPaint.DrawButton
+			// (Pushed): ControlDarkDark then ControlDark on the top-left, ControlLightLight then
+			// ControlLight on the bottom-right.
+			using (var face = new SolidBrush (SystemColors.Control))
+				graphics.FillRectangle (face, rectangle);
+			bool down = (state & (ButtonState.Pushed | ButtonState.Checked)) != 0;
+			if ((state & ButtonState.Flat) != 0) {
+				using (var pen = new Pen (SystemColors.ControlDark))
+					graphics.DrawRectangle (pen, rectangle.X, rectangle.Y, rectangle.Width - 1, rectangle.Height - 1);
+				return;
+			}
+			DrawEdge (graphics, rectangle, down ? 0x2 | 0x8 : 0x1 | 0x4, Border3DSide.All, true);
 		}
 
 

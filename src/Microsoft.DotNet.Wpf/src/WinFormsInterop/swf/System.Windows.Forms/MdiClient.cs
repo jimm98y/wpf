@@ -173,7 +173,7 @@ namespace System.Windows.Forms {
 				Rectangle clip;
 				clip = new Rectangle (0, 0, Width, Height);
 
-				ControlPaint.DrawBorder3D (pe.Graphics, clip, Border3DStyle.Sunken);
+				ThemeEngine.Current.CPDrawBorder3D (pe.Graphics, clip, Border3DStyle.Sunken, Border3DSide.All);
 				XplatUI.PaintEventEnd (ref m, Handle, false, pe);
 				m.Result = IntPtr.Zero;
 				return ;

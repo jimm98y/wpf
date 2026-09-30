@@ -529,6 +529,11 @@ namespace System.Windows.Forms
 				: button is RadioButton rb && rb.Checked;
 			int state = !button.Enabled ? 4 : button.Pressed || on ? 3 : button.Entered ? 2
 				  : button.IsDefault || button.Focused ? 5 : 1;
+			// The frame is partly transparent (its rounded corners), so .NET's
+			// ButtonStandardAdapter has the parent paint under it first (DrawParentBackground) --
+			// only for a button left on the default back colour, which is the one the theme draws.
+			if (button.UseVisualStyleBackColor || button.BackColor == SystemColors.Control)
+				button.PaintParentBackground (dc, button.ClientRectangle);
 			Win11Frames.Draw (dc, Win11Frames.PushButton (state), button.ClientRectangle);
 			Rectangle r = Rectangle.Inflate (button.ClientRectangle, -1, -1);
 			r.Width -= 1;
@@ -860,16 +865,19 @@ namespace System.Windows.Forms
 			int right = rectangle.Right - 1, bottom = rectangle.Bottom - 1;
 			SmoothingMode old = dc.SmoothingMode;
 			dc.SmoothingMode = SmoothingMode.None;
-			for (int x = rectangle.X; x <= right; x++)
-				if (((x - rectangle.X) & 1) == 0) {
-					dc.FillRectangle (brush, x, rectangle.Y, 1, 1);
-					dc.FillRectangle (brush, x, bottom, 1, 1);
-				}
-			for (int y = rectangle.Y; y <= bottom; y++)
-				if (((y - rectangle.Y) & 1) == 0) {
-					dc.FillRectangle (brush, rectangle.X, y, 1, 1);
-					dc.FillRectangle (brush, right, y, 1, 1);
-				}
+			// One checkerboard over the whole outline, anchored on the rectangle's corner: .NET's
+			// ControlPaint pen is a 2x2 brush phased by (X + Y) so the corner is always a dot, which
+			// puts a dot wherever (x - X) + (y - Y) is even. Counting each edge from its own start
+			// put the right and bottom edges out of step whenever the width or height was even.
+			bool Dot (int x, int y) => (((x - rectangle.X) + (y - rectangle.Y)) & 1) == 0;
+			for (int x = rectangle.X; x <= right; x++) {
+				if (Dot (x, rectangle.Y)) dc.FillRectangle (brush, x, rectangle.Y, 1, 1);
+				if (Dot (x, bottom)) dc.FillRectangle (brush, x, bottom, 1, 1);
+			}
+			for (int y = rectangle.Y + 1; y < bottom; y++) {
+				if (Dot (rectangle.X, y)) dc.FillRectangle (brush, rectangle.X, y, 1, 1);
+				if (Dot (right, y)) dc.FillRectangle (brush, right, y, 1, 1);
+			}
 			dc.SmoothingMode = old;
 		}
 

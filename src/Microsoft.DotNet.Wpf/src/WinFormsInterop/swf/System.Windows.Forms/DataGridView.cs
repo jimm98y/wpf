@@ -4935,7 +4935,7 @@ namespace System.Windows.Forms {
 					g.DrawRectangle (Pens.Black, new Rectangle (bounds.Left, bounds.Top, bounds.Width - 1, bounds.Height - 1));
 					break;
 				case BorderStyle.Fixed3D:
-					ControlPaint.DrawBorder3D (g, bounds, Border3DStyle.Sunken);
+					ThemeEngine.Current.CPDrawBorder3D (g, bounds, Border3DStyle.Sunken, Border3DSide.All);
 					break;
 			}
 
