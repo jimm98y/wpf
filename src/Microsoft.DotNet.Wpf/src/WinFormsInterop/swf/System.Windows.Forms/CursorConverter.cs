@@ -121,15 +121,29 @@ namespace System.Windows.Forms
 			return base.ConvertTo (context, culture, value, destinationType);
 		}
 
+		/// <summary>The order .NET's converter hands the standard cursors out in -- the order of the
+		/// properties in the shipped Cursors type, read off a stock app at run time (reflection's
+		/// order, which is not the alphabetical one its source declares them in). A cursor editor
+		/// lists them in this order.</summary>
+		private static readonly string [] StandardOrder = {
+			"AppStarting", "Arrow", "Cross", "Default", "IBeam", "No", "SizeAll", "SizeNESW", "SizeNS",
+			"SizeNWSE", "SizeWE", "UpArrow", "WaitCursor", "Help", "Hand", "HSplit", "VSplit", "NoMove2D",
+			"NoMoveHoriz", "NoMoveVert", "PanEast", "PanNE", "PanNorth", "PanNW", "PanSE", "PanSouth",
+			"PanSW", "PanWest",
+		};
+
 		public override StandardValuesCollection GetStandardValues (ITypeDescriptorContext context)
 		{
-			PropertyInfo[] props = typeof (Cursors).GetProperties();
-			
 			ArrayList vals = new ArrayList ();
-
-			for (int i = 0; i < props.Length; i++) {
-				vals.Add (props [i].GetValue (null, null));
+			foreach (string name in StandardOrder) {
+				PropertyInfo prop = typeof (Cursors).GetProperty (name, BindingFlags.Static | BindingFlags.Public);
+				if (prop != null)
+					vals.Add (prop.GetValue (null, null));
 			}
+			// anything Cursors has that the list does not, after it
+			foreach (PropertyInfo prop in typeof (Cursors).GetProperties (BindingFlags.Static | BindingFlags.Public))
+				if (prop.PropertyType == typeof (Cursor) && Array.IndexOf (StandardOrder, prop.Name) < 0)
+					vals.Add (prop.GetValue (null, null));
 			return new StandardValuesCollection (vals);
 		}
 

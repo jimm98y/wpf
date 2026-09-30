@@ -1170,31 +1170,49 @@ namespace System.Windows.Forms.PropertyGridInternal {
 
 		private void ShowDropDownControl (Control control, bool resizeable) 
 		{
-			dropdown_form.Size = control.Size;
-			control.Dock = DockStyle.Fill;
-
-			if (resizeable) {
-				dropdown_form.Padding = dropdown_form_padding;
-				dropdown_form.Width += dropdown_form_padding.Right;
-				dropdown_form.Height += dropdown_form_padding.Bottom;
-				dropdown_form.FormBorderStyle = FormBorderStyle.Sizable;
-				dropdown_form.SizeGripStyle = SizeGripStyle.Show;
-			} else {
-				dropdown_form.FormBorderStyle = FormBorderStyle.None;
-				dropdown_form.SizeGripStyle = SizeGripStyle.Hide;
-				// The holder's WS_BORDER: one line round the control, outside it.
-				dropdown_form.Padding = new Padding (1);
-				dropdown_form.Size = new Size (control.Width + 2, control.Height + 2);
-			}
-
+			// Parented first, with its handle, and only then measured -- .NET's SetDropDownControl.
+			// A list that snaps to whole rows (IntegralHeight) has its real height only once it has a
+			// handle: measured before that, the cursor editor's 310 made a holder 22 pixels taller
+			// than the 288 of list it holds.
 			dropdown_form.Controls.Add (control);
+			// (Handle, not CreateControl: that skips a control that is not visible, and the holder
+			// is not shown yet.)
+			_ = dropdown_form.Handle;
+			_ = control.Handle;
+			control.Dock = DockStyle.None;
+
+			// .NET's DropDownHolder: one line round the control, outside it (its WS_BORDER), and for a
+			// resizable editor a bar the height of a scroll bar and a pixel more under it -- or over it,
+			// when the drop-down has to open upwards -- with the grip in the corner. Ours was a
+			// sizable window frame.
+			dropdown_form.FormBorderStyle = FormBorderStyle.None;
+			dropdown_form.SizeGripStyle = SizeGripStyle.Hide;
+			// the grid's background under the bar, as .NET's holder takes the grid view's BackColor
+			dropdown_form.BackColor = BackColor;
+			int bar = resizeable ? PropertyGridDropDown.ResizeBarSize : 0;
+			dropdown_form.Resizable = resizeable;
+			dropdown_form.ResizeUp = false;
+			dropdown_form.Padding = new Padding (1, 1, 1, 1 + bar);
+			dropdown_form.Size = new Size (control.Width + 2, control.Height + 2 + bar);
+
+			control.Dock = DockStyle.Fill;
 			// .NET's DropDownControl: at least the value cell and a pixel wide, its right edge on the
 			// cell's, and a pixel below the row.
 			GridEntry selected_entry = SelectedGridItem as GridEntry;
 			Rectangle value_rect = selected_entry != null ? ValueRectangle (selected_entry)
 				: new Rectangle (grid_textbox.Left, grid_textbox.Top, grid_textbox.Width, row_height);
 			dropdown_form.Width = Math.Max (value_rect.Width + 1, dropdown_form.Width);
-			dropdown_form.Location = PointToScreen (new Point (value_rect.Right - dropdown_form.Width, value_rect.Bottom + 1));
+			Point below = PointToScreen (new Point (value_rect.Right - dropdown_form.Width, value_rect.Bottom + 1));
+			Rectangle work = Screen.FromControl (this).WorkingArea;
+			if (work.Bottom < below.Y + dropdown_form.Height + grid_textbox.Height) {
+				// No room below: above the row, the bar on top.
+				below.Y = PointToScreen (new Point (0, value_rect.Top)).Y - dropdown_form.Height;
+				dropdown_form.ResizeUp = true;
+				if (bar > 0)
+					dropdown_form.Padding = new Padding (1, 1 + bar, 1, 1);
+			}
+			below.X = Math.Min (work.Right - dropdown_form.Width, Math.Max (work.X, below.X));
+			dropdown_form.Location = below;
 			RepositionInScreenWorkingArea (dropdown_form);
 			Point location = dropdown_form.Location;
 
@@ -1306,6 +1324,39 @@ namespace System.Windows.Forms.PropertyGridInternal {
 
 		internal class PropertyGridDropDown : Form 
 		{
+			/// <summary>.NET's s_resizeBarSize: a scroll bar's height and the divider.</summary>
+			internal static int ResizeBarSize => SystemInformation.HorizontalScrollBarHeight + 1;
+			internal bool Resizable;
+			private bool resize_up;
+			internal bool ResizeUp {
+				get { return resize_up; }
+				set { if (resize_up != value) { resize_up = value; grip?.Dispose (); grip = null; } }
+			}
+			private Bitmap grip;
+			private Point drag_from;
+			private Rectangle drag_bounds;
+			private bool dragging;
+
+			/// <summary>ControlPaint's size grip mirrored for the lower-left corner (and flipped for the
+			/// upper-left), on a transparent ground -- .NET's GetSizeGripGlyph.</summary>
+			private Bitmap Grip ()
+			{
+				int size = SystemInformation.HorizontalScrollBarHeight;
+				if (grip != null)
+					return grip;
+				var plain = new Bitmap (size, size);
+				using (Graphics g = Graphics.FromImage (plain))
+					ControlPaint.DrawSizeGrip (g, BackColor, 0, 0, size, size);
+				grip = new Bitmap (size, size);
+				for (int y = 0; y < size; y++)
+					for (int x = 0; x < size; x++) {
+						Color c = plain.GetPixel (size - 1 - x, ResizeUp ? size - 1 - y : y);
+						grip.SetPixel (x, y, c.ToArgb () == BackColor.ToArgb () ? Color.Transparent : c);
+					}
+				plain.Dispose ();
+				return grip;
+			}
+
 			// Focus cues ON: .NET shows the holder with SW_SHOWNA, never activating it, so the
 			// UIS_INITIALIZE that hides a window's cues never reaches it -- stock's lists draw the
 			// focus rectangle on their current row however the drop-down was opened.
@@ -1317,8 +1368,61 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			protected override void OnPaint (PaintEventArgs e)
 			{
 				base.OnPaint (e);
-				if (Padding.All == 1)
-					e.Graphics.DrawRectangle (SystemPens.WindowFrame, 0, 0, Width - 1, Height - 1);
+				if (Resizable) {
+					// .NET draws in the client area inside its border; ours includes the border, a pixel
+					// in. The grip and the divider sit where .NET's Height-relative sums put them.
+					int size = SystemInformation.HorizontalScrollBarHeight;
+					int inner = Height - 2;
+					if (grip != null && grip.Height != size) { grip.Dispose (); grip = null; }
+					var place = new Rectangle (1, 1 + (ResizeUp ? 0 : inner + 2 - size), size, size);
+					var state = e.Graphics.Save ();
+					e.Graphics.IntersectClip (new Rectangle (1, 1, Width - 2, Height - 2));
+					e.Graphics.DrawImage (Grip (), place);
+					int y = 1 + (ResizeUp ? ResizeBarSize - 1 : inner + 2 - ResizeBarSize);
+					e.Graphics.DrawLine (SystemPens.ControlDark, 1, y, Width - 1, y);
+					e.Graphics.Restore (state);
+				}
+				e.Graphics.DrawRectangle (SystemPens.WindowFrame, 0, 0, Width - 1, Height - 1);
+			}
+
+			private bool InBar (Point p)
+				=> Resizable && (ResizeUp ? p.Y < 1 + ResizeBarSize : p.Y >= Height - 1 - ResizeBarSize);
+
+			protected override void OnMouseDown (MouseEventArgs e)
+			{
+				base.OnMouseDown (e);
+				if (e.Button == MouseButtons.Left && InBar (e.Location)) {
+					dragging = true;
+					drag_from = PointToScreen (e.Location);
+					drag_bounds = Bounds;
+					Capture = true;
+				}
+			}
+
+			protected override void OnMouseMove (MouseEventArgs e)
+			{
+				base.OnMouseMove (e);
+				Cursor = dragging || InBar (e.Location) ? Cursors.SizeNESW : Cursors.Default;
+				if (!dragging)
+					return;
+				Point now = PointToScreen (e.Location);
+				int dx = now.X - drag_from.X, dy = now.Y - drag_from.Y;
+				int min_w = SystemInformation.VerticalScrollBarWidth * 4, min_h = SystemInformation.HorizontalScrollBarHeight * 4;
+				int w = Math.Max (min_w, drag_bounds.Width - dx);
+				int h = Math.Max (min_h, drag_bounds.Height + (ResizeUp ? -dy : dy));
+				// The right edge stays put (the grip is on the left); the top too unless it opens upwards.
+				int x = drag_bounds.Right - w;
+				int top = ResizeUp ? drag_bounds.Bottom - h : drag_bounds.Y;
+				SetBounds (x, top, w, h);
+			}
+
+			protected override void OnMouseUp (MouseEventArgs e)
+			{
+				base.OnMouseUp (e);
+				if (dragging) {
+					dragging = false;
+					Capture = false;
+				}
 			}
 
 			protected override CreateParams CreateParams {

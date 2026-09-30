@@ -7,11 +7,7 @@ namespace System.Windows.Forms {
 		internal override IntPtr InitializeDriver() { return IntPtr.Zero; }
 		internal override void ShutdownDriver(IntPtr token) {  }
 		internal override int CaptionHeight { get { return default(int); } }
-		internal override Size CursorSize { get { return default(Size); } }
-		internal override bool DragFullWindows { get { return default(bool); } }
-		internal override Size DragSize { get { return default(Size); } }
 		internal override Size FrameBorderSize { get { return default(Size); } }
-		internal override Size IconSize { get { return default(Size); } }
 		internal override Size MaxWindowTrackSize { get { return default(Size); } }
 		// False here meant Control.show_focus_cues started false and nothing ever set it, so no
 		// button, check box or radio button drew a focus rectangle -- ShouldPaintFocusRectangle
@@ -24,8 +20,6 @@ namespace System.Windows.Forms {
 		internal override bool MenuAccessKeysUnderlined { get { return false; } }
 		internal override Size MinimizedWindowSpacingSize { get { return default(Size); } }
 		internal override Size MinimumWindowSize { get { return default(Size); } }
-		internal override Size SmallIconSize { get { return default(Size); } }
-		internal override int MouseButtonCount { get { return default(int); } }
 		internal override bool MouseButtonsSwapped { get { return default(bool); } }
 		// Generated as default(bool) -- false -- which is a claim that the machine has no wheel.
 		// Every head this driver serves has one, and SystemInformation.MouseWheelPresent is what
@@ -113,7 +107,5 @@ namespace System.Windows.Forms {
 		internal override int SendInput(IntPtr hwnd, System.Collections.Queue keys) { return 0; }
 		internal override void ResetMouseHover(IntPtr hwnd) {  }
 		internal override void RaiseIdle(EventArgs e) {  }
-		internal override int KeyboardSpeed { get { return default(int); } }
-		internal override int KeyboardDelay { get { return default(int); } }
 	}
 }

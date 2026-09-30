@@ -38,72 +38,39 @@ namespace System.Drawing.Design
 			return UITypeEditorEditStyle.DropDown;
 		}
 
+		/// <summary>.NET's CursorEditor.CursorUI: an owner-drawn list of the converter's standard
+		/// cursors, 310 tall (IntegralHeight left on, so whole rows of it), each row a small-icon
+		/// square on the control colour with the cursor stretched into it and its name beside it.
+		/// Ours was a list of its own design -- 21-pixel rows, eight of them, sorted by name.</summary>
 		private sealed class CursorUI : ListBox
 		{
 			private IWindowsFormsEditorService service;
 			private object value;
+			private readonly TypeConverter converter = TypeDescriptor.GetConverter (typeof (Cursor));
 
 			internal CursorUI ()
 			{
+				Height = 310;
+				ItemHeight = Math.Max (4 + Cursors.Default.Size.Height, Font.Height);
 				DrawMode = DrawMode.OwnerDrawFixed;
 				BorderStyle = BorderStyle.None;
-				IntegralHeight = false;
-				ItemHeight = 21;
-				Height = 21 * 8;
-
-				foreach (var entry in Standard ())
-					Items.Add (entry);
+				if (converter.GetStandardValuesSupported ())
+					foreach (object cursor in converter.GetStandardValues ())
+						Items.Add (cursor);
 			}
 
 			internal object Value {
 				get { return value; }
 			}
 
-			/// <summary>Every cursor Cursors declares, which is the same list Windows offers.</summary>
-			private static IEnumerable<Entry> Standard ()
-			{
-				var found = new List<Entry> ();
-				foreach (PropertyInfo property in typeof (Cursors).GetProperties ()) {
-					if (property.PropertyType != typeof (Cursor))
-						continue;
-					MethodInfo getter = property.GetGetMethod ();
-					if (getter == null || !getter.IsPublic || !getter.IsStatic)
-						continue;
-					Cursor cursor = property.GetValue (null, null) as Cursor;
-					if (cursor != null)
-						found.Add (new Entry (property.Name, cursor));
-				}
-				found.Sort ((a, b) => string.Compare (a.Name, b.Name, StringComparison.Ordinal));
-				return found;
-			}
-
-			private sealed class Entry
-			{
-				internal readonly string Name;
-				internal readonly Cursor Cursor;
-
-				internal Entry (string name, Cursor cursor)
-				{
-					Name = name;
-					Cursor = cursor;
-				}
-
-				public override string ToString ()
-				{
-					return Name;
-				}
-			}
-
 			internal void Start (IWindowsFormsEditorService editorService, object current)
 			{
 				service = editorService;
 				value = current;
-				SelectedIndex = -1;
-				Cursor cursor = current as Cursor;
-				if (cursor == null)
+				if (current == null)
 					return;
 				for (int i = 0; i < Items.Count; i++)
-					if (((Entry) Items[i]).Cursor == cursor) {
+					if (Items [i] == current) {
 						SelectedIndex = i;
 						break;
 					}
@@ -118,38 +85,41 @@ namespace System.Drawing.Design
 			protected override void OnClick (EventArgs e)
 			{
 				base.OnClick (e);
-				Entry picked = SelectedItem as Entry;
-				if (picked != null)
-					value = picked.Cursor;
+				value = SelectedItem;
 				if (service != null)
 					service.CloseDropDown ();
 			}
 
-			protected override void OnKeyDown (KeyEventArgs e)
+			protected override bool ProcessDialogKey (Keys keyData)
 			{
-				base.OnKeyDown (e);
-				if (e.KeyCode == Keys.Return)
+				if ((keyData & Keys.KeyCode) == Keys.Return && (keyData & (Keys.Alt | Keys.Control)) == 0) {
 					OnClick (EventArgs.Empty);
+					return true;
+				}
+				return base.ProcessDialogKey (keyData);
 			}
 
 			protected override void OnDrawItem (DrawItemEventArgs e)
 			{
-				if (e.Index < 0 || e.Index >= Items.Count)
+				base.OnDrawItem (e);
+				if (e.Index == -1)
 					return;
-				Entry entry = (Entry) Items[e.Index];
+				Cursor cursor = (Cursor) Items [e.Index];
+				string text = converter.ConvertToString (cursor);
+				Font font = e.Font;
+				// The small-icon size: .NET scales the cursor's icon to it (ScaleSmallIconToDpi).
+				int width = SystemInformation.SmallIconSize.Width;
 				e.DrawBackground ();
-
-				var glyph = new Rectangle (e.Bounds.X + 2, e.Bounds.Y + 2,
-							   e.Bounds.Height - 4, e.Bounds.Height - 4);
+				var square = new Rectangle (e.Bounds.X + 2, e.Bounds.Y + 2, width, e.Bounds.Height - 4);
+				e.Graphics.FillRectangle (SystemBrushes.Control, square);
+				e.Graphics.DrawRectangle (SystemPens.WindowText, new Rectangle (square.X, square.Y, width - 1, square.Height - 1));
 				try {
-					entry.Cursor.Draw (e.Graphics, glyph);
+					cursor.DrawStretched (e.Graphics, square);
 				} catch {
-					// A cursor with no drawable image just leaves the square empty.
+					// a cursor without an image leaves its square empty
 				}
 				using (SolidBrush ink = new SolidBrush (e.ForeColor))
-					e.Graphics.DrawString (entry.Name, Font, ink,
-							       e.Bounds.X + e.Bounds.Height + 2, e.Bounds.Y + 2);
-				e.DrawFocusRectangle ();
+					e.Graphics.DrawString (text, font, ink, e.Bounds.X + width + 4, e.Bounds.Y + (e.Bounds.Height - font.Height) / 2);
 			}
 		}
 	}

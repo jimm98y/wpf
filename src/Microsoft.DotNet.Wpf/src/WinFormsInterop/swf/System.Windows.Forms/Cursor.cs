@@ -267,7 +267,9 @@ namespace System.Windows.Forms {
 
 		public Size Size {
 			get {
-				return size;
+				// A standard cursor carries no image size of its own; .NET answers SM_CXCURSOR x
+				// SM_CYCURSOR for it (32 x 32), and the cursor editor sizes its rows from that.
+				return size.IsEmpty ? SystemInformation.CursorSize : size;
 			}
 		}
 		
