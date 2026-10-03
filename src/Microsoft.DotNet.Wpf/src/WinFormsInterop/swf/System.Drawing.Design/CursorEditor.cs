@@ -107,8 +107,7 @@ namespace System.Drawing.Design
 				Cursor cursor = (Cursor) Items [e.Index];
 				string text = converter.ConvertToString (cursor);
 				Font font = e.Font;
-				// The small-icon size: .NET scales the cursor's icon to it (ScaleSmallIconToDpi).
-				int width = SystemInformation.SmallIconSize.Width;
+				int width = cursor.Size.Width;   // .NET: the cursor's own icon width, 32 at 96 dpi (GetCursorWidthForDpi)
 				e.DrawBackground ();
 				var square = new Rectangle (e.Bounds.X + 2, e.Bounds.Y + 2, width, e.Bounds.Height - 4);
 				e.Graphics.FillRectangle (SystemBrushes.Control, square);

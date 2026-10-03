@@ -355,19 +355,8 @@ namespace System.Windows.Forms {
 		protected override void OnMouseDown (DataGridViewCellMouseEventArgs e) {
 			base.OnMouseDown (e);
 
-			if (!ReadOnly)
-			{
-				// Any mouse-click on the cell should be passed along to any
-				// combo-box control.
-				if (IsInEditMode)
-				{
-					DataGridViewComboBoxEditingControl cb
-						= (DataGridView.EditingControl
-							as DataGridViewComboBoxEditingControl);
-					if (cb != null)
-						cb.OnMouseDownInternal (e);
-				}
-			}
+			// Not passed on to the editing combo box, as Mono did: there every press dropped its list.
+			// .NET's cell drops the list only from OnMouseClick, and only on the drop-down button.
 		}
 
 		protected override void OnMouseClick (DataGridViewCellMouseEventArgs e) {
@@ -413,7 +402,12 @@ namespace System.Windows.Forms {
 			// inside the button's rectangle, and OnMouseMove repaints the cell as it crosses it.
 			if (DataGridView != null && e.RowIndex >= 0 && ThemedButtonCell) {
 				Rectangle value = CellValueBounds (new Rectangle (Point.Empty, Size));
-				bool inside = DropDownButtonBounds (value, InheritedStyle.Font).Contains (e.Location);
+				// The hot zone: for a themed DropDownButton cell it is the whole value rectangle
+				// (.NET's PaintPrivate sets dropDownButtonRect = valBounds there), so the face lights
+				// wherever the pointer is on the cell; only for a ComboBox-style cell is it the button.
+				Rectangle hot = DisplayStyle == DataGridViewComboBoxDisplayStyle.DropDownButton
+					? value : DropDownButtonBounds (value, InheritedStyle.Font);
+				bool inside = hot.Contains (e.Location);
 				if (inside != MouseInDropDownButton (e.RowIndex)) {
 					s_hot_grid = inside ? DataGridView : null;
 					s_hot_row = e.RowIndex;

@@ -1,12 +1,11 @@
 //
 // System.Windows.Forms.Design.StringCollectionEditor
-// 
+//
 // Author:
 //   Ivan N. Zlatev <contact@i-nz.net>
-// 
+//
 // (C) 2007 Ivan N. Zlatev
-// 
-
+//
 //
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
@@ -15,10 +14,10 @@
 // distribute, sublicense, and/or sell copies of the Software, and to
 // permit persons to whom the Software is furnished to do so, subject to
 // the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -31,6 +30,7 @@
 using System;
 using System.ComponentModel;
 using System.ComponentModel.Design;
+using System.Drawing;
 using System.Drawing.Design;
 using System.Windows.Forms;
 
@@ -38,124 +38,175 @@ namespace System.Windows.Forms.Design
 {
 	internal class StringCollectionEditor : CollectionEditor
 	{
-
-		private class StringCollectionEditForm : CollectionEditor.CollectionForm
+		/// <summary>.NET's StringCollectionEditor.StringCollectionForm with its StringCollectionEditor.resx
+		/// applied in code: a two-column table -- the instruction across the top, a 6-pixel gap, the
+		/// text box filling the rest, OK and Cancel at the bottom right -- in a font-scaled form
+		/// (designed at 6 x 13) with 12/9/12/10 padding, a help button and no icon. The port's own
+		/// form was a fixed 402 x 228 layout of its own design.</summary>
+		private class StringCollectionForm : CollectionEditor.CollectionForm
 		{
+			private Label _instruction;
+			private TextBox _textEntry;
+			private Button _okButton;
+			private Button _cancelButton;
+			private TableLayoutPanel _overarchingLayoutPanel;
+			private readonly StringCollectionEditor _editor;
 
-			private System.Windows.Forms.TextBox txtItems;
-			private System.Windows.Forms.Label label1;
-			private System.Windows.Forms.Button butOk;
-			private System.Windows.Forms.Button butCancel;
-
-			public StringCollectionEditForm (CollectionEditor editor) : base (editor)
+			public StringCollectionForm (CollectionEditor editor) : base (editor)
 			{
+				_editor = (StringCollectionEditor) editor;
 				InitializeComponent ();
+				HookEvents ();
 			}
 
-#region Windows Form Designer generated code
-
-
-			private void InitializeComponent()
+			private void Edit1_keyDown (object sender, KeyEventArgs e)
 			{
-				this.txtItems = new System.Windows.Forms.TextBox();
-				this.label1 = new System.Windows.Forms.Label();
-				this.butOk = new System.Windows.Forms.Button();
-				this.butCancel = new System.Windows.Forms.Button();
-				this.SuspendLayout();
-				// 
-				// txtItems
-				// 
-				this.txtItems.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
-																			  | System.Windows.Forms.AnchorStyles.Left)
-																			 | System.Windows.Forms.AnchorStyles.Right)));
-				this.txtItems.Location = new System.Drawing.Point(12, 25);
-				this.txtItems.Multiline = true;
-				this.txtItems.AcceptsTab = true;
-				this.txtItems.Name = "txtItems";
-				this.txtItems.ScrollBars = System.Windows.Forms.ScrollBars.Both;
-				this.txtItems.Size = new System.Drawing.Size(378, 168);
-				this.txtItems.TabIndex = 1;
-				// 
-				// label1
-				// 
-				this.label1.AutoSize = true;
-				this.label1.Location = new System.Drawing.Point(9, 9);
-				this.label1.Name = "label1";
-				this.label1.Size = new System.Drawing.Size(227, 13);
-				this.label1.TabIndex = 0;
-				this.label1.Text = "&Enter the strings in the collection (one per line):";
-				// 
-				// butOk
-				// 
-				this.butOk.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-				this.butOk.DialogResult = System.Windows.Forms.DialogResult.OK;
-				this.butOk.Location = new System.Drawing.Point(234, 199);
-				this.butOk.Name = "butOk";
-				this.butOk.Size = new System.Drawing.Size(75, 23);
-				this.butOk.TabIndex = 3;
-				this.butOk.Text = "OK";
-				this.butOk.Click += new System.EventHandler(this.butOk_Click);
-				// 
-				// butCancel
-				// 
-				this.butCancel.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-				this.butCancel.DialogResult = System.Windows.Forms.DialogResult.Cancel;
-				this.butCancel.Location = new System.Drawing.Point(315, 199);
-				this.butCancel.Name = "butCancel";
-				this.butCancel.Size = new System.Drawing.Size(75, 23);
-				this.butCancel.TabIndex = 4;
-				this.butCancel.Text = "Cancel";
-				this.butCancel.Click += new System.EventHandler(this.butCancel_Click);
-				// 
-				// StringEditorForm
-				// 
-				this.ClientSize = new System.Drawing.Size(402, 228);
-				this.Controls.Add(this.butCancel);
-				this.Controls.Add(this.butOk);
-				this.Controls.Add(this.label1);
-				this.Controls.Add(this.txtItems);
-				this.CancelButton = butCancel;
-				this.MaximizeBox = false;
-				this.MinimizeBox = false;
-				this.Name = "StringEditorForm";
-				this.Text = "String Collection Editor";
-				this.ResumeLayout(false);
-				this.PerformLayout();
+				if (e.KeyCode != Keys.Escape)
+					return;
+				_cancelButton.PerformClick ();
+				e.Handled = true;
 			}
 
-#endregion
-			protected override void OnEditValueChanged ()
+			private void StringCollectionEditor_HelpButtonClicked (object sender, CancelEventArgs e)
 			{
-				object[] items = base.Items;
-				string text = String.Empty;
+				e.Cancel = true;
+				_editor.ShowHelpInternal ();
+			}
 
-				for (int i=0; i < items.Length; i++) {
-					if (items[i] is string) {
-						text += ((string) items[i]);
-						if (i != items.Length - 1) // no new line after the last one
-							text += Environment.NewLine;
+			private void Form_HelpRequested (object sender, HelpEventArgs e)
+			{
+				_editor.ShowHelpInternal ();
+			}
+
+			private void HookEvents ()
+			{
+				_textEntry.KeyDown += Edit1_keyDown;
+				_okButton.Click += OKButton_click;
+				HelpButtonClicked += StringCollectionEditor_HelpButtonClicked;
+			}
+
+			private void InitializeComponent ()
+			{
+				_instruction = new Label ();
+				_textEntry = new TextBox ();
+				_okButton = new Button ();
+				_cancelButton = new Button ();
+				_overarchingLayoutPanel = new TableLayoutPanel ();
+				_overarchingLayoutPanel.SuspendLayout ();
+				SuspendLayout ();
+
+				_instruction.AutoSize = true;
+				_instruction.Location = new Point (12, 10);
+				_instruction.Margin = new Padding (0);
+				_instruction.Size = new Size (227, 13);
+				_instruction.TabIndex = 0;
+				_instruction.Text = "&Enter the strings in the collection (one per line):";
+				_instruction.Name = "instruction";
+
+				_textEntry.Dock = DockStyle.Fill;
+				_textEntry.Location = new Point (12, 27);
+				_textEntry.Margin = new Padding (0);
+				_textEntry.Multiline = true;
+				_textEntry.ScrollBars = ScrollBars.Both;
+				_textEntry.Size = new Size (451, 213);
+				_textEntry.TabIndex = 0;
+				_textEntry.WordWrap = false;
+				_textEntry.AcceptsTab = true;
+				_textEntry.AcceptsReturn = true;
+				_textEntry.Name = "textEntry";
+
+				_okButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+				_okButton.AutoSize = true;
+				_okButton.Location = new Point (304, 248);
+				_okButton.Margin = new Padding (0, 5, 3, 0);
+				_okButton.Size = new Size (75, 23);
+				_okButton.TabIndex = 1;
+				_okButton.Text = "OK";
+				_okButton.DialogResult = DialogResult.OK;
+				_okButton.Name = "okButton";
+
+				_cancelButton.Anchor = AnchorStyles.Bottom | AnchorStyles.Right;
+				_cancelButton.AutoSize = true;
+				_cancelButton.Location = new Point (385, 248);
+				_cancelButton.Margin = new Padding (3, 5, 0, 0);
+				_cancelButton.Size = new Size (75, 23);
+				_cancelButton.TabIndex = 2;
+				_cancelButton.Text = "Cancel";
+				_cancelButton.DialogResult = DialogResult.Cancel;
+				_cancelButton.Name = "cancelButton";
+
+				_overarchingLayoutPanel.ColumnCount = 2;
+				_overarchingLayoutPanel.ColumnStyles.Add (new ColumnStyle (SizeType.Percent, 100F));
+				_overarchingLayoutPanel.ColumnStyles.Add (new ColumnStyle (SizeType.AutoSize, 78F));
+				_overarchingLayoutPanel.RowCount = 4;
+				_overarchingLayoutPanel.RowStyles.Add (new RowStyle (SizeType.AutoSize, 13F));
+				_overarchingLayoutPanel.RowStyles.Add (new RowStyle (SizeType.Absolute, 6F));
+				_overarchingLayoutPanel.RowStyles.Add (new RowStyle (SizeType.Percent, 100F));
+				_overarchingLayoutPanel.RowStyles.Add (new RowStyle (SizeType.AutoSize, 29F));
+				_overarchingLayoutPanel.Dock = DockStyle.Fill;
+				_overarchingLayoutPanel.Location = new Point (12, 9);
+				_overarchingLayoutPanel.Size = new Size (451, 262);
+				_overarchingLayoutPanel.TabIndex = 0;
+				_overarchingLayoutPanel.Controls.Add (_instruction, 0, 0);
+				_overarchingLayoutPanel.Controls.Add (_textEntry, 0, 2);
+				_overarchingLayoutPanel.Controls.Add (_okButton, 0, 3);
+				_overarchingLayoutPanel.Controls.Add (_cancelButton, 1, 3);
+				_overarchingLayoutPanel.SetColumnSpan (_instruction, 2);
+				_overarchingLayoutPanel.SetColumnSpan (_textEntry, 2);
+				_overarchingLayoutPanel.Name = "overarchingLayoutPanel";
+
+				Location = new Point (7, 7);
+				AutoScaleDimensions = new SizeF (6F, 13F);
+				AutoScaleMode = AutoScaleMode.Font;
+				ClientSize = new Size (475, 281);
+				MinimumSize = new Size (300, 200);
+				Padding = new Padding (12, 9, 12, 10);
+				StartPosition = FormStartPosition.CenterScreen;
+				Text = "String Collection Editor";
+				Controls.Add (_overarchingLayoutPanel);
+				HelpButton = true;
+				MaximizeBox = false;
+				MinimizeBox = false;
+				Name = "StringCollectionEditor";
+				ShowIcon = false;
+				ShowInTaskbar = false;
+				_overarchingLayoutPanel.ResumeLayout (false);
+				_overarchingLayoutPanel.PerformLayout ();
+				HelpRequested += Form_HelpRequested;
+				ResumeLayout (false);
+				PerformLayout ();
+			}
+
+			private void OKButton_click (object sender, EventArgs e)
+			{
+				string[] lines = _textEntry.Text.Split ('\n');
+				for (int i = 0; i < lines.Length; i++)
+					lines[i] = lines[i].TrimEnd ('\r');
+
+				if (lines.Length != Items.Length) {
+					UpdateItems (lines);
+					return;
+				}
+				for (int i = 0; i < lines.Length; ++i) {
+					if (!lines[i].Equals (Items[i]?.ToString ())) {
+						UpdateItems (lines);
+						return;
 					}
 				}
-				txtItems.Text = text;
+				DialogResult = DialogResult.Cancel;
 			}
 
-			private void butOk_Click (object sender, EventArgs e)
+			private void UpdateItems (string[] newLines)
 			{
-				if (this.txtItems.Text == String.Empty) {
-					base.Items = new string[0];
-				} else {
-					string[] items = txtItems.Lines;
-					bool lastLineEmpty = items[items.Length-1].Trim ().Length == 0;
-					object[] objects = new object[lastLineEmpty ? items.Length-1 : items.Length];
-					for (int i=0; i < objects.Length; i++)
-						objects[i] = (object)items[i];
-					base.Items = objects;
-				}
+				// A last empty line is not an item.
+				if (newLines.Length > 0 && newLines[newLines.Length - 1].Length == 0)
+					Array.Resize (ref newLines, newLines.Length - 1);
+				Items = newLines;
 			}
 
-			private void butCancel_Click (object sender, EventArgs e)
+			protected override void OnEditValueChanged ()
 			{
-				this.Close ();
+				_textEntry.Text = string.Join (Environment.NewLine, Items);
 			}
 		}
 
@@ -163,10 +214,11 @@ namespace System.Windows.Forms.Design
 		{
 		}
 
+		internal void ShowHelpInternal () => ShowHelp ();
 
 		protected override CollectionEditor.CollectionForm CreateCollectionForm ()
 		{
-			return new StringCollectionEditForm (this);
+			return new StringCollectionForm (this);
 		}
 	}
 }

@@ -5844,10 +5844,10 @@ namespace System.Windows.Forms {
 							BeginEdit (true);
 					}
 				}
-			} else {
-				if (cell != null && throughMouseClick)
-					BeginEdit (true);
 			}
+			// (Clicking the cell that is already current does not begin an edit here, on the
+			// mouse-down: .NET leaves that to the cell's OnMouseClick, which for a combo box cell
+			// also decides whether the list comes down.)
 
 			return true;
 		}

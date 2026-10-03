@@ -1,4 +1,4 @@
-﻿// Permission is hereby granted, free of charge, to any person obtaining
+// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -5498,7 +5498,11 @@ namespace System.Windows.Forms
 			}
 		
 			ValidationFailed = false;
-			if (CanSelect) {
+			// Not a form: .NET sends a form's click to DefWindowProc (a Form has no UserMouse style),
+			// which leaves the focus where it was -- clicking bare form in stock focuses nothing.
+			// Selecting the form handed the focus to its first tab stop, which then wore the
+			// focused-button accent.
+			if (CanSelect && !(this is Form)) {
 				Select (true, true);
 			}
 			if (!ValidationFailed) {

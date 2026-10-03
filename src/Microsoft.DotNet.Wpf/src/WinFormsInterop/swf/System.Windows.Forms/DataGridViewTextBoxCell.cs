@@ -183,16 +183,32 @@ namespace System.Windows.Forms {
 				return new Size (21, 20);
 		}
 
+		// .NET: the click that makes a text cell current only selects it; a left click on the cell
+		// once it IS current begins the edit. (Mono began it on the mouse-down, in the grid.)
+		bool ignore_next_mouse_click;
+
 		protected override void OnEnter (int rowIndex, bool throughMouseClick)
 		{
+			if (DataGridView != null && throughMouseClick)
+				ignore_next_mouse_click = true;
 		}
 
 		protected override void OnLeave (int rowIndex, bool throughMouseClick)
 		{
+			ignore_next_mouse_click = false;
 		}
 
 		protected override void OnMouseClick (DataGridViewCellMouseEventArgs e)
 		{
+			if (DataGridView == null)
+				return;
+			Point current = DataGridView.CurrentCellAddress;
+			if (current.X != e.ColumnIndex || current.Y != e.RowIndex || e.Button != MouseButtons.Left)
+				return;
+			if (ignore_next_mouse_click)
+				ignore_next_mouse_click = false;
+			else if (DataGridView.EditMode != DataGridViewEditMode.EditProgrammatically)
+				DataGridView.BeginEdit (true);
 		}
 
 		protected override void Paint (Graphics graphics, Rectangle clipBounds, Rectangle cellBounds, int rowIndex, DataGridViewElementStates cellState, object value, object formattedValue, string errorText, DataGridViewCellStyle cellStyle, DataGridViewAdvancedBorderStyle advancedBorderStyle, DataGridViewPaintParts paintParts)

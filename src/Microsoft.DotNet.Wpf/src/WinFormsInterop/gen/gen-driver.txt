@@ -35,7 +35,6 @@
 		internal override void OverrideCursor(IntPtr cursor) {  }
 		internal override IntPtr DefineCursor(Bitmap bitmap, Bitmap mask, Color cursor_pixel, Color mask_pixel, int xHotSpot, int yHotSpot) { return IntPtr.Zero; }
 		internal override IntPtr DefineStdCursor(StdCursor id) { return IntPtr.Zero; }
-		internal override Bitmap DefineStdCursorBitmap(StdCursor id) { return default(Bitmap); }
 		internal override void DestroyCursor(IntPtr cursor) {  }
 		internal override void GetCursorInfo(IntPtr cursor, out int width, out int height, out int hotspot_x, out int hotspot_y) { width = default(int); height = default(int); hotspot_x = default(int); hotspot_y = default(int); }
 		internal override void GrabInfo(out IntPtr hwnd, out bool GrabConfined, out Rectangle GrabArea) { hwnd = default(IntPtr); GrabConfined = default(bool); GrabArea = default(Rectangle); }

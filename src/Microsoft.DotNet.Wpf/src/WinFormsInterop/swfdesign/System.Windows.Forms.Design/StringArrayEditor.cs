@@ -55,7 +55,8 @@ namespace System.Windows.Forms.Design
 
 		protected override object SetItems (object editValue, object[] value)
 		{
-			if (!(editValue is Array))
+			// .NET: an Array or nothing is replaced with a new array of the edited items.
+			if (!(editValue is Array || editValue == null) || value == null)
 				return editValue;
 
 			Array typeArray = Array.CreateInstance (base.CollectionItemType, value.Length);
@@ -65,7 +66,7 @@ namespace System.Windows.Forms.Design
 
 		protected override Type CreateCollectionItemType ()
 		{
-			return base.CollectionType.GetElementType ();
+			return base.CollectionType.GetElementType () ?? typeof (string[]);
 		}
 	}
 }

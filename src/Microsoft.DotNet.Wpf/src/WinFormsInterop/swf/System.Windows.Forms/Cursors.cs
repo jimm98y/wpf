@@ -282,7 +282,7 @@ namespace System.Windows.Forms {
 		public static Cursor SizeNESW {
 			get {
 				if (size_nesw == null) {
-					if (XplatUI.RunningOnUnix) {
+					if (XplatUI.RunningOnUnixPlatform) {   // the platform, not the drawing backend: Windows has the cursor
 						size_nesw = new Cursor(typeof(Cursor), "NESW.cur");
 						size_nesw.name = "SizeNESW";
 					} else {
@@ -307,7 +307,7 @@ namespace System.Windows.Forms {
 		public static Cursor SizeNWSE {
 			get {
 				if (size_nwse == null) {
-					if (XplatUI.RunningOnUnix) {
+					if (XplatUI.RunningOnUnixPlatform) {   // the platform, not the drawing backend: Windows has the cursor
 						size_nwse = new Cursor(typeof(Cursor), "NWSE.cur");
 						size_nwse.name = "SizeNWSE";
 					} else {
