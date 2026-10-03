@@ -37,6 +37,7 @@
   <ItemGroup>
     <Compile Include="AssemblyInfo.cs" />
     <Compile Include="Forwards.cs" />
+    <Compile Include="Forwards.Editors.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -44,6 +45,9 @@
          System.ComponentModel.TypeConverter declare Point, Size, Rectangle and the converters too,
          so the names are ambiguous without one. The alias says which assembly each forward means. -->
     <ProjectReference Include="../System.Drawing.WebGpu.csproj" Aliases="mono" />
+    <!-- The file editors (ImageEditor, BitmapEditor, MetafileEditor, IconEditor) live in WinForms, as
+         .NET keeps them in its designer assembly: they open a file dialog, which System.Drawing cannot. -->
+    <ProjectReference Include="../../System.Windows.Forms.WebGpu.csproj" Aliases="swf" />
   </ItemGroup>
 
 </Project>

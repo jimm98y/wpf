@@ -30,8 +30,6 @@ extern alias mono;
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Design.IToolboxItemProvider))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Design.IToolboxService))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Design.IToolboxUser))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Design.IconEditor))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Design.ImageEditor))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Design.PaintValueEventArgs))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Design.PropertyValueUIHandler))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Design.PropertyValueUIItem))]

@@ -102,6 +102,9 @@ namespace System.Windows.Forms
             return false;
         }
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetActiveWindow();
+
         private static bool Show(FileDialogRequest request, bool open,
                                  out string[] fileNames, out int filterIndex)
         {
@@ -123,7 +126,10 @@ namespace System.Windows.Forms
                 var ofn = new OPENFILENAME
                 {
                     lStructSize = Marshal.SizeOf<OPENFILENAME>(),
-                    hwndOwner = IntPtr.Zero,
+                    // Owned by the window the user is in, as WinForms' own dialogs are: ownerless, the
+                    // dialog was not modal to it, opened in the screen's corner and got a taskbar entry.
+                    // The host's windows are real HWNDs on this (the UI) thread, so the active one is it.
+                    hwndOwner = GetActiveWindow(),
                     lpstrFilter = ToNativeFilter(request.Filter),
                     nFilterIndex = Math.Max(1, request.FilterIndex),
                     lpstrFile = buffer,
