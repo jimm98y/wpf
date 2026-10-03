@@ -22,15 +22,28 @@
 // Authors:
 //	Alexander Olk	alex.olk@googlemail.com
 //
+
+// The managed font dialog, laid out and behaving as Windows' own (comdlg32's FORMATDLGORD31
+// template, as Windows 11 shows it). It is the only font dialog the port has, on every platform.
 //
+// What Windows' dialog is made of, read off the running dialog (control ids, rectangles at 96 DPI,
+// styles), and reproduced here control for control:
+//   stc1 "&Font:"        11,11  60x15     cmb1  11,26 147x119  CBS_SIMPLE, owner-drawn, sorted
+//   stc2 "Font st&yle:" 165,11  66x15     cmb2 165,26 111x124  CBS_SIMPLE, owner-drawn
+//   stc3 "&Size:"       284,11  45x15     cmb3 285,26  54x115  CBS_SIMPLE, owner-drawn
+//   grp1 "Effects"       11,158 147x117   chx1 "Stri&keout" 20,179  chx2 "&Underline" 20,200
+//   stc4 "&Color:"       20,221 (hidden)  cmb4 20,237 123x20 (hidden unless ShowColor)
+//   grp2 "Sample"       165,158 174x70    stc5 (the sample's rectangle) 177,180 150x37
+//   stc7 "Sc&ript:"     165,239 45x15     cmb5 165,255 174x20  CBS_DROPDOWNLIST
+//   stc6 (description)   11,280 329x33    IDOK 347,26 68x23  IDCANCEL 347,52  Apply 347,78  Help 347,104
+// in a 431x319 client, in the dialog font (MS Shell Dlg, 8 point). The three lists are simple
+// combo boxes -- an edit field over a list that is always open -- as Windows' are; the font and
+// style lists draw each entry in the face it names.
 
-// NOT COMPLETE - work in progress
-
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
-using System.Text.RegularExpressions;
 using System;
-using System.Collections;
 
 namespace System.Windows.Forms
 {
@@ -54,654 +67,331 @@ namespace System.Windows.Forms
 		private bool showColor = false;
 		private bool showEffects = true;
 		private bool showHelp = false;
-		
 		private bool fontMustExist = false;
-		
-		private Panel examplePanel;
-		
-		private Button okButton;
-		private Button cancelButton;
-		private Button applyButton;
-		private Button helpButton;
-		
-		private TextBox fontTextBox;
-		private TextBox fontstyleTextBox;
-		private TextBox fontsizeTextBox;
-		
-		private MouseWheelListBox fontListBox;
-		private MouseWheelListBox fontstyleListBox;
-		private MouseWheelListBox fontsizeListBox;
-		
-		private GroupBox effectsGroupBox;
-		private CheckBox strikethroughCheckBox;
-		private CheckBox underlinedCheckBox;
-		private ComboBox scriptComboBox;
-		
-		private Label fontLabel;
-		private Label fontstyleLabel;
-		private Label sizeLabel;
-		private Label scriptLabel;
-		
-		private GroupBox exampleGroupBox;
-		
-		private ColorComboBox colorComboBox;
-		
-		private string currentFontName;
-		
-		private float currentSize;
-		
-		private FontFamily currentFamily;
-		
-		private FontStyle currentFontStyle;
-		
-		private bool underlined = false;
-		private bool strikethrough = false;
-		
-		private Hashtable fontHash = new Hashtable();
-		
-		// The ladder Windows offers for a scalable face, which begins at EIGHT. Ours began at six,
-		// so every font dialog opened with two sizes Windows does not list.
-		private int[] a_sizes = {
-			8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72
-		};
-		
-		// char set stuff is only here to make me happy :-)
-		private string [] char_sets_names = {
-			"Western",
-			"Symbol",
-			"Shift Jis",
-			"Hangul",
-			"GB2312",
-			"BIG5",
-			"Greek",
-			"Turkish",
-			"Hebrew",
-			"Arabic",
-			"Baltic",
-			"Vietname",
-			"Cyrillic",
-			"East European",
-			"Thai",
-			"Johab",
-			"Mac",
-			"OEM",
-			"VISCII",
-			"TCVN",
-			"KOI-8",
-			"ISO-8859-3",
-			"ISO-8859-4",
-			"ISO-8859-10",
-			"Celtic"
-		};
-		
-		private string [] char_sets = {
-			"AaBbYyZz",
-			"Symbol",
-			"Aa" + (char)0x3042 + (char)0x3041 + (char)0x30a2  + (char)0x30a1 + (char)0x4e9c + (char)0x5b87,
-			(char)0xac00 + (char)0xb098 + (char)0xb2e4 + "AaBYyZz",
-			new String(new Char [] {(char)0x5fae, (char)0x8f6f, (char)0x4e2d, (char)0x6587, (char)0x8f6f, (char)0x4ef6}),
-			new String(new Char [] {(char)0x4e2d, (char)0x6587, (char)0x5b57, (char)0x578b, (char)0x7bc4, (char)0x4f8b}),
-			"AaBb" + (char)0x0391 + (char)0x03b1 + (char)0x0392 + (char)0x03b2,
-			"AaBb" + (char)0x011e + (char)0x011f + (char)0x015e + (char)0x015f,
-			"AaBb" + (char)0x05e0 + (char)0x05e1 + (char)0x05e9 + (char)0x05ea,
-			"AaBb" + (char)0x0627 + (char)0x0628 + (char)0x062c + (char)0x062f + (char)0x0647 + (char)0x0648 + (char)0x0632,
-			"AaBbYyZz",
-			"AaBb" + (char)0x01a0 + (char)0x01a1 + (char)0x01af + (char)0x01b0,
-			"AaBb" + (char)0x0411 + (char)0x0431 + (char)0x0424 + (char)0x0444,
-			"AaBb" + (char)0xc1 + (char)0xe1 + (char)0xd4 + (char)0xf4,
-			"AaBb" + (char)0x0e2d + (char)0x0e31 + (char)0x0e01 + (char)0x0e29 + (char)0x0e23 + (char)0x0e44 + (char)0x0e17 +(char)0x0e22,
-			(char)0xac00 + (char)0xb098 + (char)0xb2e4 + "AaBYyZz",
-			"AaBbYyZz",
-			"AaBb" + (char)0xf8 + (char)0xf1 + (char)0xfd,
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
-			""
-		};
-		
-		private string example_panel_text;
-		
-		private bool internal_change = false;
-		
+
+		private Label fontLabel, styleLabel, sizeLabel, scriptLabel, colorLabel, descriptionLabel;
+		private ComboBox fontCombo, styleCombo, sizeCombo, scriptCombo;
+		private ColorComboBox colorCombo;
+		private GroupBox effectsGroup, sampleGroup;
+		private CheckBox strikeoutCheck, underlineCheck;
+		private SampleBox sample;
+		private Button okButton, cancelButton, applyButton, helpButton;
+
+		// The families on offer, and the one being shown.
+		private List<FontDialogFamily> families;
+		private FontDialogFamily currentFamily;
+		private FontDialogFace currentFace;
+		private float currentSize = 9;
+		private bool internal_change;
+
+		// The ladder Windows offers for a scalable face.
+		private static readonly int [] a_sizes = { 8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72 };
+
 		#region Public Constructors
-		public FontDialog( )
+		public FontDialog ()
 		{
 			form = new DialogForm (this);
-			example_panel_text = char_sets [0];
-			
-			okButton = new Button( );
-			cancelButton = new Button( );
-			applyButton = new Button( );
-			helpButton = new Button( );
-			
-			fontTextBox = new TextBox( );
-			fontstyleTextBox = new TextBox( );
-			fontsizeTextBox = new TextBox( );
-			
-			fontListBox = new MouseWheelListBox ();
-			fontsizeListBox = new MouseWheelListBox ();
-			fontstyleListBox = new MouseWheelListBox ();
-			
-			fontLabel = new Label( );
-			fontstyleLabel = new Label( );
-			sizeLabel = new Label( );
-			scriptLabel = new Label( );
-			
-			exampleGroupBox = new GroupBox( );
-			
-			effectsGroupBox = new GroupBox( );
-			underlinedCheckBox = new CheckBox( );
-			strikethroughCheckBox = new CheckBox( );
-			scriptComboBox = new ComboBox( );
-			
-			examplePanel = new Panel( );
-			
-			colorComboBox = new ColorComboBox( this );
-			
-			exampleGroupBox.SuspendLayout( );
-			effectsGroupBox.SuspendLayout( );
-			form.SuspendLayout( );
-			
+			form.SuspendLayout ();
+
+			form.Text = "Font";
 			form.FormBorderStyle = FormBorderStyle.FixedDialog;
+			form.MinimizeBox = false;
 			form.MaximizeBox = false;
-			
-			// fontsizeListBox
-			fontsizeListBox.Location = new Point( 284, 47 );
-			fontsizeListBox.Size = new Size( 52, 95 );
-			fontsizeListBox.TabIndex = 10;
-			fontListBox.Sorted = true;
-			// fontTextBox
-			fontTextBox.Location = new Point( 16, 26 );
-			fontTextBox.Size = new Size( 140, 21 );
-			fontTextBox.TabIndex = 5;
-			fontTextBox.Text = "";
-			// fontstyleLabel
-			fontstyleLabel.Location = new Point( 164, 10 );
-			fontstyleLabel.Size = new Size( 100, 16 );
-			fontstyleLabel.TabIndex = 1;
-			// The words the real dialog uses, read off it: "Font style:", "Sample", "Strikeout",
-			// "Underline". Ours had a capital S, and called the other three something else entirely.
-			fontstyleLabel.Text = "Font style:";
-			// typesizeTextBox
-			fontsizeTextBox.Location = new Point( 284, 26 );
-			fontsizeTextBox.Size = new Size( 52, 21 );
-			fontsizeTextBox.TabIndex = 7;
-			fontsizeTextBox.Text = "";
-			fontsizeTextBox.MaxLength = 2;
-			// schriftartListBox
-			fontListBox.Location = new Point( 16, 47 );
-			fontListBox.Size = new Size( 140, 95 );
-			fontListBox.TabIndex = 8;
-			fontListBox.Sorted = true;
-			// exampleGroupBox
-			exampleGroupBox.Controls.Add( examplePanel );
-			exampleGroupBox.FlatStyle = FlatStyle.System;
-			exampleGroupBox.Location = new Point( 164, 158 );
-			exampleGroupBox.Size = new Size( 172, 70 );
-			exampleGroupBox.TabIndex = 12;
-			exampleGroupBox.TabStop = false;
-			exampleGroupBox.Text = "Sample";
-			// fontstyleListBox
-			fontstyleListBox.Location = new Point( 164, 47 );
-			fontstyleListBox.Size = new Size( 112, 95 );
-			fontstyleListBox.TabIndex = 9;
-			// schriftartLabel
-			fontLabel.Location = new Point( 16, 10 );
-			fontLabel.Size = new Size( 88, 16 );
-			fontLabel.TabIndex = 0;
-			fontLabel.Text = "Font:";
-			// effectsGroupBox
-			effectsGroupBox.Controls.Add( underlinedCheckBox );
-			effectsGroupBox.Controls.Add( strikethroughCheckBox );
-			effectsGroupBox.Controls.Add( colorComboBox );
-			effectsGroupBox.FlatStyle = FlatStyle.System;
-			effectsGroupBox.Location = new Point( 16, 158 );
-			effectsGroupBox.Size = new Size( 140, 116 );
-			effectsGroupBox.TabIndex = 11;
-			effectsGroupBox.TabStop = false;
-			effectsGroupBox.Text = "Effects";
-			// strikethroughCheckBox
-			strikethroughCheckBox.FlatStyle = FlatStyle.System;
-			strikethroughCheckBox.Location = new Point( 8, 16 );
-			strikethroughCheckBox.TabIndex = 0;
-			strikethroughCheckBox.Text = "Strikeout";
-			// colorComboBox
-			colorComboBox.Location = new Point( 8, 70 );
-			colorComboBox.Size = new Size( 130, 21 );
-			// sizeLabel
-			sizeLabel.Location = new Point( 284, 10 );
-			sizeLabel.Size = new Size( 100, 16 );
-			sizeLabel.TabIndex = 2;
-			sizeLabel.Text = "Size:";
-			// scriptComboBox
-			scriptComboBox.Location = new Point( 164, 253 );
-			scriptComboBox.Size = new Size( 172, 21 );
-			scriptComboBox.TabIndex = 14;
-			scriptComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
-			// okButton
-			okButton.FlatStyle = FlatStyle.System;
-			okButton.Location = new Point( 352, 26 );
-			okButton.Size = new Size( 70, 23 );
-			okButton.TabIndex = 3;
-			okButton.Text = "OK";
-			// cancelButton
-			cancelButton.FlatStyle = FlatStyle.System;
-			cancelButton.Location = new Point( 352, 52 );
-			cancelButton.Size = new Size( 70, 23 );
-			cancelButton.TabIndex = 4;
-			cancelButton.Text = "Cancel";
-			// applyButton
-			applyButton.FlatStyle = FlatStyle.System;
-			applyButton.Location = new Point( 352, 78 );
-			applyButton.Size = new Size( 70, 23 );
-			applyButton.TabIndex = 5;
-			applyButton.Text = "Apply";
-			// helpButton
-			helpButton.FlatStyle = FlatStyle.System;
-			helpButton.Location = new Point( 352, 104 );
-			helpButton.Size = new Size( 70, 23 );
-			helpButton.TabIndex = 6;
-			helpButton.Text = "Help";
-			// underlinedCheckBox
-			underlinedCheckBox.FlatStyle = FlatStyle.System;
-			underlinedCheckBox.Location = new Point( 8, 36 );
-			underlinedCheckBox.TabIndex = 1;
-			underlinedCheckBox.Text = "Underline";
-			// fontstyleTextBox
-			fontstyleTextBox.Location = new Point( 164, 26 );
-			fontstyleTextBox.Size = new Size( 112, 21 );
-			fontstyleTextBox.TabIndex = 6;
-			fontstyleTextBox.Text = "";
-			// scriptLabel
-			scriptLabel.Location = new Point( 164, 236 );
-			scriptLabel.Size = new Size( 100, 16 );
-			scriptLabel.TabIndex = 13;
-			scriptLabel.Text = "Script:";
-			// examplePanel
-			examplePanel.Location = new Point( 8, 20 );
-			examplePanel.TabIndex = 0;
-			examplePanel.Size = new Size( 156, 40 );
-			examplePanel.BorderStyle = BorderStyle.Fixed3D;
-			
+			form.ShowIcon = false;
+			form.ShowInTaskbar = false;
+			form.StartPosition = FormStartPosition.CenterScreen;
+			form.AutoScaleMode = AutoScaleMode.None;
+			form.Font = DialogFont;
+			form.ClientSize = new Size (431, 319);
+
+			fontLabel = MakeLabel ("&Font:", 11, 11, 60, 15);
+			styleLabel = MakeLabel ("Font st&yle:", 165, 11, 66, 15);
+			sizeLabel = MakeLabel ("&Size:", 284, 11, 45, 15);
+			scriptLabel = MakeLabel ("Sc&ript:", 165, 239, 45, 15);
+			colorLabel = MakeLabel ("&Color:", 20, 221, 45, 15);
+			descriptionLabel = MakeLabel ("", 11, 280, 329, 33);
+			descriptionLabel.UseMnemonic = false;
+
+			fontCombo = MakeList (11, 26, 147, 119, 19);
+			fontCombo.DrawItem += OnDrawFontItem;
+			// Windows' combo window is 124 high, its list cut to whole items (99): the same picture.
+			styleCombo = MakeList (165, 26, 111, 119, 19);
+			styleCombo.DrawItem += OnDrawStyleItem;
+			sizeCombo = MakeList (285, 26, 54, 115, 13);
+			sizeCombo.DrawItem += OnDrawSizeItem;
+
+			effectsGroup = new GroupBox { Text = "Effects", Location = new Point (11, 158), Size = new Size (147, 117), TabStop = false };
+			sampleGroup = new GroupBox { Text = "Sample", Location = new Point (165, 158), Size = new Size (174, 70), TabStop = false };
+			strikeoutCheck = new SystemCheckBox { Text = "Stri&keout", Location = new Point (20, 179), Size = new Size (74, 16) };
+			underlineCheck = new SystemCheckBox { Text = "&Underline", Location = new Point (20, 200), Size = new Size (77, 16) };
+			colorCombo = new ColorComboBox (this) { Location = new Point (20, 237), Size = new Size (123, 20) };
+			sample = new SampleBox (this) { Location = new Point (177, 180), Size = new Size (150, 37) };
+
+			// Owner-drawn in Windows' dialog too, which is what makes it 20 high rather than 21.
+			scriptCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, DrawMode = DrawMode.OwnerDrawFixed,
+				ItemHeight = 14, SelectionItemHeight = 14, Location = new Point (165, 255), Size = new Size (174, 20) };
+			scriptCombo.DrawItem += OnDrawScriptItem;
+
+			okButton = MakeButton ("OK", 26);
+			cancelButton = MakeButton ("Cancel", 52);
+			applyButton = MakeButton ("&Apply", 78);
+			helpButton = MakeButton ("&Help", 104);
+
+			// Windows' tab order, which is also its z-order: the group boxes come after what they
+			// frame, so they are drawn beneath it.
+			Control [] order = { fontLabel, fontCombo, styleLabel, styleCombo, sizeLabel, sizeCombo,
+				strikeoutCheck, underlineCheck, colorLabel, colorCombo, sample, effectsGroup, sampleGroup,
+				descriptionLabel, scriptLabel, scriptCombo, okButton, cancelButton, applyButton, helpButton };
+			for (int i = 0; i < order.Length; i++)
+				order [i].TabIndex = i;
+			form.Controls.AddRange (order);
+
 			form.AcceptButton = okButton;
 			form.CancelButton = cancelButton;
-			
-			form.Controls.Add( scriptComboBox );
-			form.Controls.Add( scriptLabel );
-			form.Controls.Add( exampleGroupBox );
-			form.Controls.Add( effectsGroupBox );
-			form.Controls.Add( fontsizeListBox );
-			form.Controls.Add( fontstyleListBox );
-			form.Controls.Add( fontListBox );
-			form.Controls.Add( fontsizeTextBox );
-			form.Controls.Add( fontstyleTextBox );
-			form.Controls.Add( fontTextBox );
-			form.Controls.Add( cancelButton );
-			form.Controls.Add( okButton );
-			form.Controls.Add( sizeLabel );
-			form.Controls.Add( fontstyleLabel );
-			form.Controls.Add( fontLabel );
-			form.Controls.Add( applyButton );
-			form.Controls.Add( helpButton );
-			
-			exampleGroupBox.ResumeLayout( false );
-			effectsGroupBox.ResumeLayout( false );
-			
-			form.Size = new Size( 430, 318 );
-			
-			form.FormBorderStyle = FormBorderStyle.FixedDialog;
-			form.MaximizeBox = false;
-			
-			form.Text = "Font";
-			
-			form.ResumeLayout( false );
-			
-			scriptComboBox.BeginUpdate ();
-			scriptComboBox.Items.AddRange (char_sets_names);
-			scriptComboBox.SelectedIndex = 0;
-			scriptComboBox.EndUpdate ();
-			
-			applyButton.Hide( );
-			helpButton.Hide( );
-			colorComboBox.Hide( );
-			
-			cancelButton.Click += new EventHandler( OnClickCancelButton );
-			okButton.Click += new EventHandler( OnClickOkButton );
-			applyButton.Click += new EventHandler (OnApplyButton);
-			examplePanel.Paint += new PaintEventHandler( OnPaintExamplePanel );
-			// Windows shows each family IN ITS OWN FACE and each style in that style -- it is how you
-			// pick a font by looking at it rather than by reading its name. Ours drew every line in
-			// the dialog's own font, which is the one thing this list is not for.
-			fontListBox.DrawMode = DrawMode.OwnerDrawFixed;
-			fontListBox.DrawItem += new DrawItemEventHandler( OnDrawItemFontListBox );
-			fontstyleListBox.DrawMode = DrawMode.OwnerDrawFixed;
-			fontstyleListBox.DrawItem += new DrawItemEventHandler( OnDrawItemFontStyleListBox );
-			fontListBox.SelectedIndexChanged += new EventHandler( OnSelectedIndexChangedFontListBox );
-			fontsizeListBox.SelectedIndexChanged += new EventHandler( OnSelectedIndexChangedSizeListBox );
-			fontstyleListBox.SelectedIndexChanged += new EventHandler( OnSelectedIndexChangedFontStyleListBox );
-			underlinedCheckBox.CheckedChanged += new EventHandler( OnCheckedChangedUnderlinedCheckBox );
-			strikethroughCheckBox.CheckedChanged += new EventHandler( OnCheckedChangedStrikethroughCheckBox );
-			scriptComboBox.SelectedIndexChanged += new EventHandler (OnSelectedIndexChangedScriptComboBox);
-			
-			fontTextBox.KeyPress += new KeyPressEventHandler (OnFontTextBoxKeyPress);
-			fontstyleTextBox.KeyPress += new KeyPressEventHandler (OnFontStyleTextBoxKeyPress);
-			fontsizeTextBox.KeyPress += new KeyPressEventHandler (OnFontSizeTextBoxKeyPress);
-			
-			fontTextBox.TextChanged += new EventHandler (OnFontTextBoxTextChanged);
-			fontstyleTextBox.TextChanged += new EventHandler (OnFontStyleTextTextChanged);
-			fontsizeTextBox.TextChanged += new EventHandler (OnFontSizeTextBoxTextChanged);
-			
-			fontTextBox.KeyDown += new KeyEventHandler (OnFontTextBoxKeyDown);
-			fontstyleTextBox.KeyDown += new KeyEventHandler (OnFontStyleTextBoxKeyDown);
-			fontsizeTextBox.KeyDown += new KeyEventHandler (OnFontSizeTextBoxKeyDown);
-			
-			fontTextBox.MouseWheel += new MouseEventHandler (OnFontTextBoxMouseWheel);
-			fontstyleTextBox.MouseWheel += new MouseEventHandler (OnFontStyleTextBoxMouseWheel);
-			fontsizeTextBox.MouseWheel += new MouseEventHandler (OnFontSizeTextBoxMouseWheel);
-			
+			okButton.DialogResult = DialogResult.OK;
+			cancelButton.DialogResult = DialogResult.Cancel;
+
+			applyButton.Hide ();
+			helpButton.Hide ();
+			colorLabel.Hide ();
+			colorCombo.Hide ();
+
+			form.ResumeLayout (false);
+
+			fontCombo.SelectedIndexChanged += OnFontSelected;
+			styleCombo.SelectedIndexChanged += OnStyleSelected;
+			sizeCombo.SelectedIndexChanged += OnSizeSelected;
+			scriptCombo.SelectedIndexChanged += OnScriptSelected;
+			fontCombo.TextUpdate += OnFontTyped;
+			styleCombo.TextUpdate += OnStyleTyped;
+			sizeCombo.TextUpdate += OnSizeTyped;
+			strikeoutCheck.CheckedChanged += (s, e) => sample.Invalidate ();
+			underlineCheck.CheckedChanged += (s, e) => sample.Invalidate ();
+			applyButton.Click += OnApplyButton;
+			form.FormClosed += (s, e) => {
+				if (form.DialogResult == DialogResult.OK)
+					BuildResult ();
+			};
+
 			PopulateFontList ();
+			CreateFontSizeListItems ();
 		}
 		#endregion	// Public Constructors
-		
-		#region Public Instance Properties
-		public Font Font
+
+		/// <summary>The dialog font: MS Shell Dlg at 8 point, which Windows maps to Microsoft Sans
+		/// Serif (FontSubstitutes). Asked for by its real name so every platform gets the same face
+		/// where it is installed, and its fallback where it is not.</summary>
+		private static Font DialogFont => new Font ("Microsoft Sans Serif", 8.25f);
+
+		private Label MakeLabel (string text, int x, int y, int w, int h)
+			=> new StaticText { Text = text, Location = new Point (x, y), Size = new Size (w, h), AutoSize = false };
+
+		/// <summary>A BS_AUTOCHECKBOX as comctl32 v6 draws it: the themed box at the left, centred
+		/// down the control, and the caption three pixels after it -- DrawText(DT_VCENTER |
+		/// DT_SINGLELINE) with no padding, which the standard adapter adds.</summary>
+		private sealed class SystemCheckBox : CheckBox
 		{
-			get {
-				return font;
-			}
-			
-			set {
-				if (value != null) {
-					font = new Font(value, value.Style);
-					
-					currentFontStyle = font.Style;
-					currentSize = font.SizeInPoints;
-					currentFontName = font.Name;
-					
-					strikethroughCheckBox.Checked = font.Strikeout;
-					underlinedCheckBox.Checked = font.Underline;
-					
-					int index = fontListBox.FindString (currentFontName);
-					
-					if (index != -1) {
-						fontListBox.SelectedIndex = index;
-					} else {
-						fontListBox.SelectedIndex = 0;
-					}
-					
-					UpdateFontSizeListBox ();
-					UpdateFontStyleListBox ();
-					
-					fontListBox.TopIndex = fontListBox.SelectedIndex;
+			protected override void OnPaint (PaintEventArgs e)
+			{
+				using (var b = new SolidBrush (BackColor))
+					e.Graphics.FillRectangle (b, ClientRectangle);
+				var state = Enabled
+					? (Checked ? VisualStyles.CheckBoxState.CheckedNormal : VisualStyles.CheckBoxState.UncheckedNormal)
+					: (Checked ? VisualStyles.CheckBoxState.CheckedDisabled : VisualStyles.CheckBoxState.UncheckedDisabled);
+				if (Enabled && MouseIsDown)
+					state += 2;
+				else if (Enabled && MouseIsOver)
+					state += 1;
+				CheckBoxRenderer.DrawCheckBox (e.Graphics, new Point (0, (Height - 13) / 2), state);
+				var text = new Rectangle (16, 0, Width - 16, Height);
+				TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding;
+				if (!ShowKeyboardCues)
+					flags |= TextFormatFlags.HidePrefix;
+				TextRenderer.DrawText (e.Graphics, Text, Font, text, Enabled ? ForeColor : SystemColors.GrayText, flags);
+				if (Focused && ShowFocusCues) {
+					Size size = TextRenderer.MeasureText (e.Graphics, Text, Font, text.Size, flags);
+					var focus = new Rectangle (text.X - 1, (Height - size.Height) / 2 - 1, size.Width + 2, size.Height + 2);
+					ControlPaint.DrawFocusRectangle (e.Graphics, focus);
 				}
 			}
 		}
-		
-		[DefaultValue(false)]
-		public bool FontMustExist
+
+		/// <summary>An SS_LEFT static, as the dialog's labels are: DrawText(DT_LEFT | DT_WORDBREAK |
+		/// DT_EXPANDTABS) at the control's origin. A Label pads its text (TextRenderer's
+		/// glyph-overhang margin), which put every caption here three pixels right of Windows'.</summary>
+		private sealed class StaticText : Label
 		{
-			get {
-				return fontMustExist;
-			}
-			
-			set {
-				fontMustExist = value;
+			protected override void OnPaint (PaintEventArgs e)
+			{
+				TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.WordBreak
+					| TextFormatFlags.ExpandTabs | TextFormatFlags.NoPadding;
+				if (!UseMnemonic)
+					flags |= TextFormatFlags.NoPrefix;
+				else if (!ShowKeyboardCues)
+					flags |= TextFormatFlags.HidePrefix;
+				Color color = Enabled ? ForeColor : SystemColors.GrayText;
+				TextRenderer.DrawText (e.Graphics, Text, Font, ClientRectangle, color, flags);
 			}
 		}
 
-		[DefaultValue ("Color [Black]")]
-		public Color Color
+		private ComboBox MakeList (int x, int y, int w, int h, int itemHeight)
+			=> new ComboBox {
+				DropDownStyle = ComboBoxStyle.Simple,
+				DrawMode = DrawMode.OwnerDrawFixed,
+				ItemHeight = itemHeight,
+				// comdlg32 answers 14 for the selection field: a 20-pixel edit over the list.
+				SelectionItemHeight = 14,
+				// The heights are Windows' own lists, already whole items; snapping again would cut one.
+				IntegralHeight = false,
+				Location = new Point (x, y),
+				Size = new Size (w, h),
+			};
+
+		private Button MakeButton (string text, int y)
+			=> new Button { Text = text, Location = new Point (347, y), Size = new Size (68, 23) };
+
+		#region Public Instance Properties
+		public Font Font
 		{
+			get { return font; }
+			set {
+				if (value != null) {
+					font = new Font (value, value.Style);
+					currentSize = font.SizeInPoints;
+					strikeoutCheck.Checked = font.Strikeout;
+					underlineCheck.Checked = font.Underline;
+				}
+			}
+		}
+
+		[DefaultValue(false)]
+		public bool FontMustExist {
+			get { return fontMustExist; }
+			set { fontMustExist = value; }
+		}
+
+		[DefaultValue ("Color [Black]")]
+		public Color Color {
 			set {
 				color = value;
-				examplePanel.Invalidate( );
+				sample?.Invalidate ();
 			}
-			
-			get {
-				return color;
-			}
+			get { return color; }
 		}
-		
+
 		[DefaultValue(true)]
-		public bool AllowSimulations
-		{
-			set {
-				allowSimulations = value;
-			}
-			
-			get {
-				return allowSimulations;
-			}
+		public bool AllowSimulations {
+			set { allowSimulations = value; }
+			get { return allowSimulations; }
 		}
-		
+
 		[DefaultValue(true)]
-		public bool AllowVectorFonts
-		{
-			set {
-				allowVectorFonts = value;
-			}
-			
-			get {
-				return allowVectorFonts;
-			}
+		public bool AllowVectorFonts {
+			set { allowVectorFonts = value; }
+			get { return allowVectorFonts; }
 		}
-		
+
 		[DefaultValue(true)]
-		public bool AllowVerticalFonts
-		{
-			set {
-				allowVerticalFonts = value;
-			}
-			
-			get {
-				return allowVerticalFonts;
-			}
+		public bool AllowVerticalFonts {
+			set { allowVerticalFonts = value; }
+			get { return allowVerticalFonts; }
 		}
-		
+
 		[DefaultValue(true)]
-		public bool AllowScriptChange
-		{
-			set {
-				allowScriptChange = value;
-			}
-			
-			get {
-				return allowScriptChange;
-			}
+		public bool AllowScriptChange {
+			set { allowScriptChange = value; }
+			get { return allowScriptChange; }
 		}
-		
+
 		[DefaultValue(false)]
-		public bool FixedPitchOnly
-		{
+		public bool FixedPitchOnly {
 			set {
 				if (fixedPitchOnly != value) {
 					fixedPitchOnly = value;
 					PopulateFontList ();
 				}
 			}
-			
-			get {
-				return fixedPitchOnly;
-			}
+			get { return fixedPitchOnly; }
 		}
-		
+
 		[DefaultValue(0)]
-		public int MaxSize
-		{
+		public int MaxSize {
 			set {
-				maxSize = value;
-				
-				if (maxSize < 0)
-					maxSize = 0;
-				
+				maxSize = Math.Max (0, value);
 				if (maxSize < minSize)
 					minSize = maxSize;
-				
-				CreateFontSizeListBoxItems ();
+				CreateFontSizeListItems ();
 			}
-			
-			get {
-				return maxSize;
-			}
+			get { return maxSize; }
 		}
-		
+
 		[DefaultValue(0)]
-		public int MinSize
-		{
+		public int MinSize {
 			set {
-				minSize = value;
-				
-				if (minSize < 0)
-					minSize = 0;
-				
+				minSize = Math.Max (0, value);
 				if (minSize > maxSize)
 					maxSize = minSize;
-				
-				CreateFontSizeListBoxItems ();
-				
-				if (minSize > currentSize)
-					if (font != null) {
-						font.Dispose();
-						
-						currentSize = minSize;
-						
-						font = new Font( currentFamily, currentSize, currentFontStyle );
-						
-						UpdateExamplePanel ();
-						
-						fontsizeTextBox.Text = currentSize.ToString ();
-					}
+				CreateFontSizeListItems ();
 			}
-			
-			get {
-				return minSize;
-			}
+			get { return minSize; }
 		}
-		
+
 		[DefaultValue(false)]
-		public bool ScriptsOnly
-		{
-			set {
-				scriptsOnly = value;
-			}
-			
-			get {
-				return scriptsOnly;
-			}
+		public bool ScriptsOnly {
+			set { scriptsOnly = value; }
+			get { return scriptsOnly; }
 		}
-		
+
 		[DefaultValue(false)]
-		public bool ShowApply
-		{
+		public bool ShowApply {
 			set {
-				if (value != showApply)
-				{
-					showApply = value;
-					if (showApply)
-						applyButton.Show ();
-					else
-						applyButton.Hide ();
-					
-					form.Refresh();
-				}
-				
+				showApply = value;
+				applyButton.Visible = value;
 			}
-			
-			get {
-				return showApply;
-			}
+			get { return showApply; }
 		}
-		
+
 		[DefaultValue(false)]
-		public bool ShowColor
-		{
+		public bool ShowColor {
 			set {
-				if (value != showColor)
-				{
-					showColor = value;
-					if (showColor)
-						colorComboBox.Show ();
-					else
-						colorComboBox.Hide ();
-					
-					form.Refresh();
-				}
+				showColor = value;
+				colorLabel.Visible = value && showEffects;
+				colorCombo.Visible = value && showEffects;
 			}
-			
-			get {
-				return showColor;
-			}
+			get { return showColor; }
 		}
-		
+
 		[DefaultValue(true)]
-		public bool ShowEffects
-		{
+		public bool ShowEffects {
 			set {
-				if (value != showEffects)
-				{
-					showEffects = value;
-					if (showEffects)
-						effectsGroupBox.Show ();
-					else
-						effectsGroupBox.Hide ();
-					
-					form.Refresh();
-				}
+				showEffects = value;
+				effectsGroup.Visible = value;
+				strikeoutCheck.Visible = value;
+				underlineCheck.Visible = value;
+				colorLabel.Visible = value && showColor;
+				colorCombo.Visible = value && showColor;
 			}
-			
-			get {
-				return showEffects;
-			}
+			get { return showEffects; }
 		}
-		
+
 		[DefaultValue(false)]
-		public bool ShowHelp
-		{
+		public bool ShowHelp {
 			set {
-				if (value != showHelp)
-				{
-					showHelp = value;
-					if (showHelp)
-						helpButton.Show ();
-					else
-						helpButton.Hide ();
-					
-					form.Refresh();
-				}
+				showHelp = value;
+				helpButton.Visible = value;
 			}
-			
-			get {
-				return showHelp;
-			}
+			get { return showHelp; }
 		}
-		
 		#endregion	// Public Instance Properties
-		
+
 		#region Protected Instance Properties
-		/// <summary>The CHOOSEFONT flags the properties stand for, as .NET keeps them.</summary>
 		protected int Options {
-			get {
-				int o = Win32FontDialog.CF_SCREENFONTS | Win32FontDialog.CF_TTONLY;
-				if (showEffects) o |= Win32FontDialog.CF_EFFECTS;
-				if (!allowSimulations) o |= Win32FontDialog.CF_NOSIMULATIONS;
-				if (!allowVectorFonts) o |= Win32FontDialog.CF_NOVECTORFONTS;
-				if (!allowVerticalFonts) o |= Win32FontDialog.CF_NOVERTFONTS;
-				if (!allowScriptChange) o |= Win32FontDialog.CF_SELECTSCRIPT;
-				if (fixedPitchOnly) o |= Win32FontDialog.CF_FIXEDPITCHONLY;
-				if (fontMustExist) o |= Win32FontDialog.CF_FORCEFONTEXIST;
-				if (scriptsOnly) o |= Win32FontDialog.CF_SCRIPTSONLY;
-				if (showApply) o |= Win32FontDialog.CF_APPLY;
-				if (showHelp) o |= Win32FontDialog.CF_SHOWHELP;
-				return o;
-			}
+			get { return 0; }
 		}
 		#endregion	// Protected Instance Properties
-		
+
 		#region Public Instance Methods
-		public override void Reset( )
+		public override void Reset ()
 		{
 			color = Color.Black;
 			allowSimulations = true;
@@ -709,26 +399,17 @@ namespace System.Windows.Forms
 			allowVerticalFonts = true;
 			allowScriptChange = true;
 			fixedPitchOnly = false;
-			
 			maxSize = 0;
 			minSize = 0;
-			CreateFontSizeListBoxItems ();
-			
 			scriptsOnly = false;
-			
-			showApply = false;
-			applyButton.Hide ();
-			
-			showColor = false;
-			colorComboBox.Hide ();
-			
-			showEffects = true;
-			effectsGroupBox.Show ();
-			
-			showHelp = false;
-			helpButton.Hide ();
-			
-			form.Refresh ();
+			ShowApply = false;
+			ShowColor = false;
+			ShowEffects = true;
+			ShowHelp = false;
+			fontMustExist = false;
+			font = null;
+			PopulateFontList ();
+			CreateFontSizeListItems ();
 		}
 
 		public override string ToString ()
@@ -738,40 +419,41 @@ namespace System.Windows.Forms
 			return String.Concat (base.ToString (), ", Font: ", font.ToString ());
 		}
 		#endregion	// Public Instance Methods
-		
+
 		#region Protected Instance Methods
 		protected override IntPtr HookProc (IntPtr hWnd, int msg, IntPtr wparam, IntPtr lparam)
 		{
 			return base.HookProc (hWnd, msg, wparam, lparam);
 		}
 
-		protected override bool RunDialog( IntPtr hWndOwner )
+		protected override bool RunDialog (IntPtr hWndOwner)
 		{
-			// Windows' own ChooseFont where there is one, as stock WinForms shows -- see Win32FontDialog.
-			if (Win32FontDialog.Available) {
-				ranOnPlatform = true;
-				Font chosen = font;
-				Color chosenColor = color;
-				if (!Win32FontDialog.Show (Options, font ?? Control.DefaultFont, minSize, maxSize, showColor,
-				                           ref chosen, ref chosenColor, (f, c) => {
-					                           Font = f;
-					                           color = c;
-					                           OnApply (EventArgs.Empty);
-				                           }))
-					return false;
-				if (chosen != font)
-					Font = chosen;
-				color = chosenColor;
-				return true;
-			}
-
-			form.Refresh();
-			
+			// What Windows does on WM_INITDIALOG: select the face the font names, then its style
+			// and size, and put the focus in the font name with the whole of it selected.
+			Font initial = font ?? form.Font;
+			internal_change = true;
+			int index = FindFamily (initial);
+			fontCombo.SelectedIndex = index;
+			if (index >= 0)
+				fontCombo.TopIndex = index;
+			currentFamily = index >= 0 ? families [index] : null;
+			FillStyles (initial.Style & (FontStyle.Bold | FontStyle.Italic), initial.Name);
+			currentSize = initial.SizeInPoints;
+			SelectSize ();
+			// DEFAULT_CHARSET stands for the system's ANSI code page's character set.
+			FillScripts (initial.GdiCharSet == 1 ? (byte) 238 : initial.GdiCharSet);
+			strikeoutCheck.Checked = initial.Strikeout;
+			underlineCheck.Checked = initial.Underline;
+			internal_change = false;
+			form.ActiveControl = fontCombo;
+			fontCombo.SelectAll ();
+			sample.Invalidate ();
 			return true;
 		}
 
 		internal void OnApplyButton (object sender, EventArgs e)
 		{
+			BuildResult ();
 			OnApply (e);
 		}
 
@@ -782,131 +464,195 @@ namespace System.Windows.Forms
 				apply (this, e);
 		}
 		#endregion	// Protected Instance Methods
-		
-		void OnClickCancelButton( object sender, EventArgs e )
-		{
-			form.DialogResult = DialogResult.Cancel;
-		}
-		
-		void OnClickOkButton( object sender, EventArgs e )
-		{
-			form.DialogResult = DialogResult.OK;
-		}
-		
-		void OnPaintExamplePanel( object sender, PaintEventArgs e )
-		{
-			SolidBrush brush = ThemeEngine.Current.ResPool.GetSolidBrush( color );
-			
-			e.Graphics.FillRectangle( ThemeEngine.Current.ResPool.GetSolidBrush( SystemColors.Control ), 0, 0, 156, 40 );
-			
-			SizeF fontSizeF = e.Graphics.MeasureString( example_panel_text, font );
-			
-			int text_width = (int)fontSizeF.Width;
-			int text_height = (int)fontSizeF.Height;
-			
-			int x = ( examplePanel.Width / 2 ) - ( text_width / 2 );
-			if ( x < 0 ) x = 0;
-			
-			int y = ( examplePanel.Height / 2 ) - ( text_height / 2 );
-			
-			e.Graphics.DrawStringMono( example_panel_text, font, brush, new Point( x, y ) );
-		}
-		
-		void OnSelectedIndexChangedFontListBox( object sender, EventArgs e )
-		{
-			if ( fontListBox.SelectedIndex != -1 )
-			{
-				currentFamily = FindByName( fontListBox.Items[ fontListBox.SelectedIndex ].ToString( ) );
-				
-				fontTextBox.Text = currentFamily.Name;
-				
-				internal_change = true;
-				
-				UpdateFontStyleListBox( );
-				
-				UpdateFontSizeListBox ();
-				
-				UpdateExamplePanel ();
-				
-				form.Select(fontTextBox);
-				
-				internal_change = false;
-			}
-		}
-		
-		void OnSelectedIndexChangedSizeListBox( object sender, EventArgs e )
-		{
-			if ( fontsizeListBox.SelectedIndex != -1 )
-			{
-				currentSize = (float)System.Convert.ToDouble( fontsizeListBox.Items[ fontsizeListBox.SelectedIndex ] );
-				
-				fontsizeTextBox.Text = currentSize.ToString( );
-				
-				UpdateExamplePanel( );
-				
-				if (!internal_change)
-					form.Select(fontsizeTextBox);
-			}
-		}
-		
-		void OnSelectedIndexChangedFontStyleListBox( object sender, EventArgs e )
-		{
-			if ( fontstyleListBox.SelectedIndex != -1 )
-			{
-				switch ( fontstyleListBox.SelectedIndex )
-				{
-				case 0:
-					currentFontStyle = FontStyle.Regular;
-					break;
-				case 1:
-					currentFontStyle = FontStyle.Bold;
-					break;
-				case 2:
-					currentFontStyle = FontStyle.Italic;
-					break;
-				case 3:
-					currentFontStyle = FontStyle.Bold | FontStyle.Italic;
-					break;
-				default:
-					currentFontStyle = FontStyle.Regular;
-					break;
-				}
-				
-				if (underlined) 
-					currentFontStyle = currentFontStyle | FontStyle.Underline;
-				
-				if (strikethrough)
-					currentFontStyle = currentFontStyle | FontStyle.Strikeout;
-				
-				fontstyleTextBox.Text = fontstyleListBox.Items[ fontstyleListBox.SelectedIndex ].ToString( );
-				
-				if (!internal_change) {
-					UpdateExamplePanel( );
-					
-					form.Select(fontstyleTextBox);
-				}
-			}
-		}
-		
-		/// <summary>Fonts made for the two lists, kept because a list repaints far more often than it
-		/// changes and building one of these is not free. A family that will not instantiate -- a
-		/// symbol face, a broken installation -- falls back to the dialog's own font rather than
-		/// taking the dialog down with it.</summary>
-		private System.Collections.Generic.Dictionary<string, Font> preview_fonts
-			= new System.Collections.Generic.Dictionary<string, Font> ();
 
-		private Font PreviewFont (string family, FontStyle style)
+		/// <summary>The font the dialog currently describes, as OK hands it back.</summary>
+		private Font CurrentFont ()
 		{
-			string key = family + "/" + (int) style;
-			Font f;
-			if (preview_fonts.TryGetValue (key, out f))
+			FontStyle style = currentFace != null ? currentFace.Style : FontStyle.Regular;
+			if (strikeoutCheck.Checked) style |= FontStyle.Strikeout;
+			if (underlineCheck.Checked) style |= FontStyle.Underline;
+			string name = currentFace != null ? currentFace.GdiName : currentFamily != null ? currentFamily.Name : form.Font.Name;
+			try {
+				return new Font (name, currentSize, style);
+			} catch (ArgumentException) {
+				return new Font (form.Font.FontFamily, currentSize, style);
+			}
+		}
+
+		private void BuildResult ()
+		{
+			font = CurrentFont ();
+		}
+
+		#region The lists
+		private int FindFamily (Font f)
+		{
+			if (families == null)
+				return -1;
+			for (int i = 0; i < families.Count; i++)
+				if (string.Equals (families [i].Name, f.Name, StringComparison.OrdinalIgnoreCase))
+					return i;
+			// A face's own legacy name ("Segoe UI Semibold") belongs to the family that holds it.
+			for (int i = 0; i < families.Count; i++)
+				foreach (FontDialogFace face in families [i].Faces)
+					if (string.Equals (face.GdiName, f.Name, StringComparison.OrdinalIgnoreCase))
+						return i;
+			return families.Count > 0 ? 0 : -1;
+		}
+
+		private void FillStyles (FontStyle wanted, string gdiName)
+		{
+			styleCombo.BeginUpdate ();
+			styleCombo.Items.Clear ();
+			int select = -1;
+			if (currentFamily != null) {
+				for (int i = 0; i < currentFamily.Faces.Count; i++) {
+					FontDialogFace face = currentFamily.Faces [i];
+					styleCombo.Items.Add (face.Name);
+					if (select < 0 && face.Style == wanted && string.Equals (face.GdiName, gdiName, StringComparison.OrdinalIgnoreCase))
+						select = i;
+				}
+				if (select < 0)
+					for (int i = 0; i < currentFamily.Faces.Count; i++)
+						if (currentFamily.Faces [i].Style == wanted && !currentFamily.Faces [i].Simulated) { select = i; break; }
+				if (select < 0 && styleCombo.Items.Count > 0)
+					select = 0;
+			}
+			styleCombo.EndUpdate ();
+			styleCombo.SelectedIndex = select;
+			if (select >= 0)
+				styleCombo.TopIndex = select;
+			currentFace = select >= 0 ? currentFamily.Faces [select] : null;
+		}
+
+		private void SelectSize ()
+		{
+			string text = ((int) Math.Round (currentSize)).ToString ();
+			int index = sizeCombo.FindStringExact (text);
+			sizeCombo.SelectedIndex = index;
+			if (index >= 0)
+				sizeCombo.TopIndex = index;
+			else
+				sizeCombo.Text = text;
+		}
+
+		private void FillScripts (byte charset)
+		{
+			scriptCombo.BeginUpdate ();
+			scriptCombo.Items.Clear ();
+			int select = 0;
+			if (currentFamily != null)
+				for (int i = 0; i < currentFamily.Scripts.Count; i++) {
+					scriptCombo.Items.Add (currentFamily.Scripts [i].Name);
+					if (currentFamily.Scripts [i].CharSet == charset)
+						select = i;
+				}
+			scriptCombo.EndUpdate ();
+			if (scriptCombo.Items.Count > 0)
+				scriptCombo.SelectedIndex = select;
+		}
+
+		private void CreateFontSizeListItems ()
+		{
+			sizeCombo.BeginUpdate ();
+			sizeCombo.Items.Clear ();
+			foreach (int i in a_sizes)
+				if ((minSize == 0 || i >= minSize) && (maxSize == 0 || i <= maxSize))
+					sizeCombo.Items.Add (i.ToString ());
+			sizeCombo.EndUpdate ();
+		}
+
+		private void PopulateFontList ()
+		{
+			families = FontDialogFamily.Enumerate (fixedPitchOnly);
+			fontCombo.BeginUpdate ();
+			fontCombo.Items.Clear ();
+			foreach (FontDialogFamily family in families)
+				fontCombo.Items.Add (family.Name);
+			fontCombo.EndUpdate ();
+		}
+
+		private void OnFontSelected (object sender, EventArgs e)
+		{
+			if (internal_change || fontCombo.SelectedIndex < 0)
+				return;
+			internal_change = true;
+			currentFamily = families [fontCombo.SelectedIndex];
+			FontStyle keep = currentFace != null ? currentFace.Style : FontStyle.Regular;
+			FillStyles (keep, null);
+			FillScripts (scriptCombo.SelectedIndex >= 0 && currentFamily.Scripts.Count > 0 ? CurrentCharSet () : (byte) 1);
+			internal_change = false;
+			sample.Invalidate ();
+			styleCombo.Invalidate ();
+		}
+
+		private byte CurrentCharSet ()
+		{
+			string name = scriptCombo.SelectedItem as string;
+			foreach (FontDialogScript s in currentFamily.Scripts)
+				if (s.Name == name)
+					return s.CharSet;
+			return 1;
+		}
+
+		private void OnStyleSelected (object sender, EventArgs e)
+		{
+			if (internal_change || styleCombo.SelectedIndex < 0 || currentFamily == null)
+				return;
+			currentFace = currentFamily.Faces [styleCombo.SelectedIndex];
+			sample.Invalidate ();
+		}
+
+		private void OnSizeSelected (object sender, EventArgs e)
+		{
+			if (internal_change || sizeCombo.SelectedIndex < 0)
+				return;
+			currentSize = float.Parse ((string) sizeCombo.Items [sizeCombo.SelectedIndex]);
+			sample.Invalidate ();
+		}
+
+		private void OnScriptSelected (object sender, EventArgs e)
+		{
+			sample.Invalidate ();
+		}
+
+		private void OnFontTyped (object sender, EventArgs e)
+		{
+			int found = fontCombo.FindStringExact (fontCombo.Text);
+			if (found < 0)
+				found = fontCombo.FindString (fontCombo.Text);
+			if (found >= 0)
+				fontCombo.TopIndex = found;
+		}
+
+		private void OnStyleTyped (object sender, EventArgs e)
+		{
+			int found = styleCombo.FindString (styleCombo.Text);
+			if (found >= 0)
+				styleCombo.TopIndex = found;
+		}
+
+		private void OnSizeTyped (object sender, EventArgs e)
+		{
+			if (float.TryParse (sizeCombo.Text, out float size) && size > 0) {
+				currentSize = size;
+				sample.Invalidate ();
+			}
+		}
+		#endregion
+
+		#region Drawing
+		private readonly Dictionary<string, Font> preview_fonts = new Dictionary<string, Font> ();
+
+		/// <summary>The face an entry is drawn in, at the dialog font's size. A face that will not
+		/// instantiate falls back to the dialog font rather than taking the dialog down.</summary>
+		private Font PreviewFont (string gdiName, FontStyle style)
+		{
+			string key = gdiName + "/" + (int) style;
+			if (preview_fonts.TryGetValue (key, out Font f))
 				return f;
 			try {
-				f = new Font (family, this.Font.SizeInPoints, style);
-				// A family that has no such face is silently substituted; if the name did not survive
-				// the round trip it is not the face that was asked for, so do not pretend it is.
-				if (string.Compare (f.FontFamily.Name, family, StringComparison.OrdinalIgnoreCase) != 0)
-					f = null;
+				f = new Font (gdiName, PreviewSize, style);
 			} catch {
 				f = null;
 			}
@@ -914,450 +660,112 @@ namespace System.Windows.Forms
 			return f;
 		}
 
-		private void DrawPreviewItem (DrawItemEventArgs e, string text, Font preview)
+		/// <summary>The size the font and style lists draw their entries at.</summary>
+		private const float PreviewSize = 10.5f;
+
+		private void DrawEntry (DrawItemEventArgs e, string text, Font face, int indent = 0)
 		{
-			e.DrawBackground ();
-			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
+			bool selected = (e.State & DrawItemState.Selected) != 0;
+			Color back = selected ? SystemColors.Highlight : SystemColors.Window;
 			Color fore = selected ? SystemColors.HighlightText : SystemColors.WindowText;
-			e.Graphics.DrawStringMono (text, preview ?? this.Font,
-			                       ThemeEngine.Current.ResPool.GetSolidBrush (fore),
-			                       e.Bounds.X, e.Bounds.Y);
+			using (var b = new SolidBrush (back))
+				e.Graphics.FillRectangle (b, e.Bounds);
+			Rectangle r = e.Bounds;
+			r.X += indent;
+			r.Width -= indent;
+			TextRenderer.DrawText (e.Graphics, text, face ?? form.Font, r, fore,
+				TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
 		}
 
-		void OnDrawItemFontListBox (object sender, DrawItemEventArgs e)
+		private void OnDrawFontItem (object sender, DrawItemEventArgs e)
 		{
-			if (e.Index < 0 || e.Index >= fontListBox.Items.Count)
+			if (e.Index < 0 || e.Index >= families.Count)
 				return;
-			string family = fontListBox.Items [e.Index] as string;
-			DrawPreviewItem (e, family, PreviewFont (family, FontStyle.Regular));
+			FontDialogFamily family = families [e.Index];
+			FontDialogFace face = family.Faces.Count > 0 ? family.DefaultFace : null;
+			DrawEntry (e, family.Name, face != null ? PreviewFont (face.GdiName, face.Style) : null);
 		}
 
-		void OnDrawItemFontStyleListBox (object sender, DrawItemEventArgs e)
+		private void OnDrawStyleItem (object sender, DrawItemEventArgs e)
 		{
-			if (e.Index < 0 || e.Index >= fontstyleListBox.Items.Count)
+			if (currentFamily == null || e.Index < 0 || e.Index >= currentFamily.Faces.Count)
 				return;
-			string name = fontstyleListBox.Items [e.Index] as string;
-			FontStyle style = FontStyle.Regular;
-			if (name == "Bold") style = FontStyle.Bold;
-			else if (name == "Italic") style = FontStyle.Italic;
-			else if (name == "Bold Italic") style = FontStyle.Bold | FontStyle.Italic;
-
-			// In the SELECTED family, because that is the face the style belongs to.
-			string family = fontListBox.SelectedIndex >= 0
-				? fontListBox.Items [fontListBox.SelectedIndex] as string
-				: this.Font.FontFamily.Name;
-			DrawPreviewItem (e, name, PreviewFont (family, style));
+			FontDialogFace face = currentFamily.Faces [e.Index];
+			DrawEntry (e, face.Name, PreviewFont (face.GdiName, face.Style));
 		}
 
-		void OnCheckedChangedUnderlinedCheckBox( object sender, EventArgs e )
+		private void OnDrawSizeItem (object sender, DrawItemEventArgs e)
 		{
-			if ( underlinedCheckBox.Checked ) {
-				currentFontStyle = currentFontStyle | FontStyle.Underline;
-				underlined = true;
-			}
-			else {
-				currentFontStyle = currentFontStyle ^ FontStyle.Underline;
-				underlined = false;
-			}
-			
-			UpdateExamplePanel( );
-		}
-		
-		void OnCheckedChangedStrikethroughCheckBox( object sender, EventArgs e )
-		{
-			if ( strikethroughCheckBox.Checked ) {
-				currentFontStyle = currentFontStyle | FontStyle.Strikeout;
-				strikethrough = true;
-			}
-			else {
-				currentFontStyle = currentFontStyle ^ FontStyle.Strikeout;
-				strikethrough = false;
-			}
-			
-			UpdateExamplePanel( );
-		}
-		
-		bool internal_textbox_change = false;
-		
-		void OnFontTextBoxMouseWheel (object sender, MouseEventArgs e)
-		{
-			fontListBox.SendMouseWheelEvent (e);
-		}
-		
-		void OnFontStyleTextBoxMouseWheel (object sender, MouseEventArgs e)
-		{
-			fontstyleListBox.SendMouseWheelEvent (e);
-		}
-		
-		void OnFontSizeTextBoxMouseWheel (object sender, MouseEventArgs e)
-		{
-			fontsizeListBox.SendMouseWheelEvent (e);
-		}
-		
-		void OnFontTextBoxKeyDown (object sender, KeyEventArgs e)
-		{
-			// Forward these keys on to the font style listbox
-			switch (e.KeyCode) {
-				case Keys.Up:
-				case Keys.Down:
-				case Keys.PageDown:
-				case Keys.PageUp:
-					fontListBox.HandleKeyDown (e.KeyCode);
-					break;
-			}
-		}
-		
-		void OnFontStyleTextBoxKeyDown (object sender, KeyEventArgs e)
-		{
-			// Forward these keys on to the font style listbox
-			switch (e.KeyCode) {
-				case Keys.Up:
-				case Keys.Down:
-				case Keys.PageDown:
-				case Keys.PageUp:
-					fontstyleListBox.HandleKeyDown (e.KeyCode);
-					break;
-			}
-		}
-		
-		void OnFontSizeTextBoxKeyDown (object sender, KeyEventArgs e)
-		{
-			// Forward these keys on to the font size listbox
-			switch (e.KeyCode) {
-				case Keys.Up:
-				case Keys.Down:
-				case Keys.PageDown:
-				case Keys.PageUp:
-					fontsizeListBox.HandleKeyDown (e.KeyCode);
-					break;
-			}
-		}
-		
-		void OnFontTextBoxKeyPress (object sender, KeyPressEventArgs e)
-		{
-			internal_textbox_change = true;
-			
-			if (fontListBox.SelectedIndex > -1)
-				fontListBox.SelectedIndex = -1;
-		}
-		
-		void OnFontStyleTextBoxKeyPress (object sender, KeyPressEventArgs e)
-		{
-			internal_textbox_change = true;
-			
-			if (fontstyleListBox.SelectedIndex > -1)
-				fontstyleListBox.SelectedIndex = -1;
-		}
-		
-		void OnFontSizeTextBoxKeyPress (object sender, KeyPressEventArgs e)
-		{
-			if (Char.IsLetter (e.KeyChar) || Char.IsWhiteSpace (e.KeyChar) || Char.IsPunctuation (e.KeyChar) || e.KeyChar == ',') {
-				e.Handled = true;
-				return; 
-			}
-			
-			internal_textbox_change = true;
-		}
-		
-		void OnFontTextBoxTextChanged (object sender, EventArgs e)
-		{
-			if (!internal_textbox_change)
+			if (e.Index < 0 || e.Index >= sizeCombo.Items.Count)
 				return;
-			
-			internal_textbox_change = false;
-			
-			string search = fontTextBox.Text;
-			
-			// Look for an exact match
-			int found = fontListBox.FindStringExact (search);
-			
-			if (found != ListBox.NoMatches) {
-				fontListBox.SelectedIndex = found;
-				return;
-			}
-			
-			// Look for a partial match
-			found = fontListBox.FindString (search);
-			
-			if (found != ListBox.NoMatches) {
-				fontListBox.TopIndex = found;
-				return;
-			}
+			// Entries in the dialog font stand a pixel further in than the font list's previews.
+			DrawEntry (e, (string) sizeCombo.Items [e.Index], null, 1);
+		}
 
-			// No match, scroll to the top
-			if (fontListBox.Items.Count > 0)
-				fontListBox.TopIndex = 0;
-		}
-		
-		void OnFontStyleTextTextChanged (object sender, EventArgs e)
+		private void OnDrawScriptItem (object sender, DrawItemEventArgs e)
 		{
-			if (!internal_textbox_change)
+			if (e.Index < 0 || e.Index >= scriptCombo.Items.Count)
 				return;
-			
-			internal_textbox_change = false;
+			// The closed list's field draws its item a pixel further in again.
+			DrawEntry (e, (string) scriptCombo.Items [e.Index], null, (e.State & DrawItemState.ComboBoxEdit) != 0 ? 2 : 1);
+		}
 
-			// Look for an exact match
-			int found = fontstyleListBox.FindStringExact (fontstyleTextBox.Text);
+		/// <summary>The sample: the script's sample text in the font being built, centred in the
+		/// rectangle Windows keeps a hidden static for.</summary>
+		private sealed class SampleBox : Control
+		{
+			private readonly FontDialog owner;
 
-			if (found != ListBox.NoMatches)
-				fontstyleListBox.SelectedIndex = found;
-		}
-		
-		void OnFontSizeTextBoxTextChanged (object sender, EventArgs e)
-		{
-			if (!internal_textbox_change)
-				return;
-			
-			internal_textbox_change = false;
-			
-			if (fontsizeTextBox.Text.Length == 0)
-				return;
-			
-			for (int i = 0; i < fontsizeListBox.Items.Count; i++) {
-				string name = fontsizeListBox.Items [i] as string;
-				
-				if (name.StartsWith(fontsizeTextBox.Text)) {
-					if (name == fontsizeTextBox.Text)
-						fontsizeListBox.SelectedIndex = i;
-					else
-						fontsizeListBox.TopIndex = i;
-					
-					break;
-				}
-			}
-		}
-		
-		void OnSelectedIndexChangedScriptComboBox (object sender, EventArgs e)
-		{
-			string tmp_str = char_sets [scriptComboBox.SelectedIndex];
-			
-			if (tmp_str.Length > 0) {
-				example_panel_text = tmp_str;
-				
-				UpdateExamplePanel ();
-			}
-		}
-		
-		void UpdateExamplePanel( )
-		{
-			if (font != null)
-				font.Dispose();
-			
-			font = new Font( currentFamily, currentSize, currentFontStyle );
-			
-			examplePanel.Invalidate( );
-		}
-		
-		void UpdateFontSizeListBox ()
-		{
-			int index = fontsizeListBox.FindString(((int)Math.Round ((currentSize))).ToString());
-			
-			if (index != -1)
-				fontsizeListBox.SelectedIndex = index;
-			else 
-				fontsizeListBox.SelectedIndex = 0;
-		}
-		
-		void UpdateFontStyleListBox( )
-		{
-			// don't know if that works, IsStyleAvailable returns true for all styles under X
-			
-			fontstyleListBox.BeginUpdate( );
-			
-			fontstyleListBox.Items.Clear( );
-			
-			int index = -1;
-			int to_select = 0;
-			
-			if ( currentFamily.IsStyleAvailable( FontStyle.Regular ) )
+			public SampleBox (FontDialog owner)
 			{
-				index = fontstyleListBox.Items.Add( "Regular" );
-				
-				if ((currentFontStyle & FontStyle.Regular) == FontStyle.Regular)
-					to_select = index;
+				this.owner = owner;
+				SetStyle (ControlStyles.Selectable, false);
+				TabStop = false;
 			}
-			
-			if ( currentFamily.IsStyleAvailable( FontStyle.Bold ) )
-			{
-				index = fontstyleListBox.Items.Add( "Bold" );
-				
-				if ((currentFontStyle & FontStyle.Bold) == FontStyle.Bold)
-					to_select = index;
-			}
-			
-			if ( currentFamily.IsStyleAvailable( FontStyle.Italic ) )
-			{
-				index = fontstyleListBox.Items.Add( "Italic" );
-				
-				if ((currentFontStyle & FontStyle.Italic) == FontStyle.Italic)
-					to_select = index;
-			}
-			
-			if ( currentFamily.IsStyleAvailable( FontStyle.Bold ) && currentFamily.IsStyleAvailable( FontStyle.Italic ) )
-			{
-				index = fontstyleListBox.Items.Add( "Bold Italic" );
-				
-				if ((currentFontStyle & (FontStyle.Bold | FontStyle.Italic)) == (FontStyle.Bold | FontStyle.Italic))
-					to_select = index;
-			}
-			
-			if (fontstyleListBox.Items.Count > 0) {
-				fontstyleListBox.SelectedIndex = to_select;
 
-				switch ((string)fontstyleListBox.SelectedItem) {
-					case "Regular":
-						currentFontStyle = FontStyle.Regular;
-						break;
-					case "Bold":
-						currentFontStyle = FontStyle.Bold;
-						break;
-					case "Italic":
-						currentFontStyle = FontStyle.Italic;
-						break;
-					case "Bold Italic":
-						currentFontStyle = FontStyle.Bold | FontStyle.Italic;
-						break;
-				}
-				
-				if (strikethroughCheckBox.Checked)
-					currentFontStyle |= FontStyle.Strikeout;
-				if (underlinedCheckBox.Checked)
-					currentFontStyle |= FontStyle.Underline;
-			}
-			
-			fontstyleListBox.EndUpdate( );
-		}
-		
-		FontFamily FindByName( string name )
-		{
-			return fontHash[ name ] as FontFamily;
-		}
-		
-		void CreateFontSizeListBoxItems ()
-		{
-			fontsizeListBox.BeginUpdate ();
-			
-			fontsizeListBox.Items.Clear();
-			
-			if (minSize == 0 && maxSize == 0)
+			protected override void OnPaint (PaintEventArgs e)
 			{
-				foreach (int i in a_sizes)
-					fontsizeListBox.Items.Add (i.ToString());
-			} else {
-				foreach (int i in a_sizes) {
-					if (i >= minSize && i <= maxSize)
-						fontsizeListBox.Items.Add (i.ToString());
-				}
+				using (var b = new SolidBrush (SystemColors.Control))
+					e.Graphics.FillRectangle (b, ClientRectangle);
+				string text = owner.SampleText ();
+				using (Font f = owner.CurrentFont ())
+					TextRenderer.DrawText (e.Graphics, text, f, ClientRectangle,
+						owner.showEffects ? owner.color : SystemColors.ControlText,
+						TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
 			}
-			
-			fontsizeListBox.EndUpdate ();
 		}
 
-		#region Private Methods
-		private void PopulateFontList ()
+		private string SampleText ()
 		{
-			fontListBox.Items.Clear ();
-			fontHash.Clear ();
-
-			fontListBox.BeginUpdate ();
-
-			foreach (FontFamily ff in FontFamily.Families) {
-				if (!fontHash.ContainsKey (ff.Name)) {
-					if (!fixedPitchOnly || (IsFontFamilyFixedPitch (ff))) {
-						fontListBox.Items.Add (ff.Name);
-						fontHash.Add (ff.Name, ff);
-					}
-				}
-			}
-			
-			fontListBox.EndUpdate ();
-			CreateFontSizeListBoxItems ();
-
-			if (fixedPitchOnly)
-				this.Font = new Font (FontFamily.GenericMonospace, 8.25f);
-			else
-				this.Font = form.Font;	
-		}
-		
-		private bool IsFontFamilyFixedPitch (FontFamily family)
-		{
-			FontStyle fs;
-			
-			if (family.IsStyleAvailable (FontStyle.Regular))
-				fs = FontStyle.Regular;
-			else if (family.IsStyleAvailable (FontStyle.Bold))
-				fs = FontStyle.Bold;
-			else if (family.IsStyleAvailable (FontStyle.Italic))
-				fs = FontStyle.Italic;
-			else if (family.IsStyleAvailable (FontStyle.Strikeout))
-				fs = FontStyle.Strikeout;
-			else if (family.IsStyleAvailable (FontStyle.Underline))
-				fs = FontStyle.Underline;
-			else
-				return false;
-
-			Font f = new Font (family.Name, 10, fs);
-
-			if (TextRenderer.MeasureString ("i", f).Width == TextRenderer.MeasureString ("w", f).Width)
-				return true;
-				
-			return false;
+			if (currentFamily != null && scriptCombo.SelectedIndex >= 0 && scriptCombo.SelectedIndex < currentFamily.Scripts.Count)
+				return currentFamily.Scripts [scriptCombo.SelectedIndex].Sample;
+			return "AaBbYyZz";
 		}
 		#endregion
-		
+
 		internal class ColorComboBox : ComboBox
 		{
 			internal class ColorComboBoxItem
 			{
-				private Color color;
-				private string name;
-				
-				public ColorComboBoxItem( Color color, string name )
+				public ColorComboBoxItem (Color color, string name)
 				{
-					this.color = color;
-					this.name = name;
-				}
-				
-				public Color Color
-				{
-					set {
-						color = value;
-					}
-					
-					get {
-						return color;
-					}
-				}
-				
-				public string Name
-				{
-					set {
-						name = value;
-					}
-					
-					get {
-						return name;
-					}
+					Color = color;
+					Name = name;
 				}
 
-				public override string ToString()
-				{
-					return this.Name;
-				}
+				public Color Color { get; set; }
+				public string Name { get; set; }
+				public override string ToString () => Name;
 			}
-			
-			private Color selectedColor;
-			
-			private FontDialog fontDialog;
-			
-			public ColorComboBox( FontDialog fontDialog )
+
+			private readonly FontDialog fontDialog;
+
+			public ColorComboBox (FontDialog fontDialog)
 			{
 				this.fontDialog = fontDialog;
-				
 				DropDownStyle = ComboBoxStyle.DropDownList;
 				DrawMode = DrawMode.OwnerDrawFixed;
-				
-				Items.AddRange (new object[] {
+				Items.AddRange (new object [] {
 					new ColorComboBoxItem (Color.Black, "Black"),
 					new ColorComboBoxItem (Color.Maroon, "Maroon"),
 					new ColorComboBoxItem (Color.Green, "Green"),
@@ -1365,53 +773,42 @@ namespace System.Windows.Forms
 					new ColorComboBoxItem (Color.Navy, "Navy"),
 					new ColorComboBoxItem (Color.Purple, "Purple"),
 					new ColorComboBoxItem (Color.Teal, "Teal"),
- 					new ColorComboBoxItem (Color.Gray, "Gray"),
- 					new ColorComboBoxItem (Color.Silver, "Silver"),
- 					new ColorComboBoxItem (Color.Red, "Red"),
+					new ColorComboBoxItem (Color.Gray, "Gray"),
+					new ColorComboBoxItem (Color.Silver, "Silver"),
+					new ColorComboBoxItem (Color.Red, "Red"),
 					new ColorComboBoxItem (Color.Lime, "Lime"),
- 					new ColorComboBoxItem (Color.Yellow, "Yellow"),
- 					new ColorComboBoxItem (Color.Blue, "Blue"),
+					new ColorComboBoxItem (Color.Yellow, "Yellow"),
+					new ColorComboBoxItem (Color.Blue, "Blue"),
 					new ColorComboBoxItem (Color.Fuchsia, "Fuchsia"),
 					new ColorComboBoxItem (Color.Aqua, "Aqua"),
- 					new ColorComboBoxItem (Color.White, "White") }
-				);
-				
+					new ColorComboBoxItem (Color.White, "White") });
 				SelectedIndex = 0;
 				MaxDropDownItems = 16;
 			}
-			
-			protected override void OnDrawItem( DrawItemEventArgs e )
+
+			protected override void OnDrawItem (DrawItemEventArgs e)
 			{
-				if ( e.Index == -1 )
+				if (e.Index == -1)
 					return;
-				
-				ColorComboBoxItem ccbi = Items[ e.Index ] as ColorComboBoxItem;
-				
+				var item = (ColorComboBoxItem) Items [e.Index];
+				bool selected = (e.State & DrawItemState.Selected) != 0;
+				using (var back = new SolidBrush (selected ? SystemColors.Highlight : SystemColors.Window))
+					e.Graphics.FillRectangle (back, e.Bounds);
+				using (var swatch = new SolidBrush (item.Color))
+					e.Graphics.FillRectangle (swatch, e.Bounds.X + 3, e.Bounds.Y + 3, 16, e.Bounds.Height - 6);
+				e.Graphics.DrawRectangle (Pens.Black, e.Bounds.X + 2, e.Bounds.Y + 2, 17, e.Bounds.Height - 5);
 				Rectangle r = e.Bounds;
-				r.X = r.X + 24;
-				
-				if ( ( e.State & DrawItemState.Selected ) == DrawItemState.Selected )
-				{
-					e.Graphics.FillRectangle( ThemeEngine.Current.ResPool.GetSolidBrush( Color.Blue ), e.Bounds ); // bot blue
-					e.Graphics.FillRectangle( ThemeEngine.Current.ResPool.GetSolidBrush( ccbi.Color ), e.Bounds.X + 3, e.Bounds.Y + 3, e.Bounds.X + 16, e.Bounds.Bottom - 3 );
-					e.Graphics.DrawRectangle( ThemeEngine.Current.ResPool.GetPen( Color.Black ), e.Bounds.X + 2, e. Bounds.Y + 2, e.Bounds.X + 17, e.Bounds.Bottom - 3 );
-					e.Graphics.DrawStringMono( ccbi.Name, this.Font, ThemeEngine.Current.ResPool.GetSolidBrush( Color.White ), r );
-				}
-				else
-				{
-					e.Graphics.FillRectangle( ThemeEngine.Current.ResPool.GetSolidBrush( Color.White ), e.Bounds );
-					e.Graphics.FillRectangle( ThemeEngine.Current.ResPool.GetSolidBrush( ccbi.Color ), e.Bounds.X + 3, e.Bounds.Y + 3, e.Bounds.X + 16, e.Bounds.Bottom - 3 );
-					e.Graphics.DrawRectangle( ThemeEngine.Current.ResPool.GetPen( Color.Black ), e.Bounds.X + 2, e. Bounds.Y + 2, e.Bounds.X + 17, e.Bounds.Bottom - 3 );
-					e.Graphics.DrawStringMono( ccbi.Name, this.Font, ThemeEngine.Current.ResPool.GetSolidBrush( Color.Black ), r );
-				}
+				r.X += 24;
+				r.Width -= 24;
+				TextRenderer.DrawText (e.Graphics, item.Name, Font, r, selected ? SystemColors.HighlightText : SystemColors.WindowText,
+					TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
 			}
-			
-			protected override void OnSelectedIndexChanged( EventArgs e )
+
+			protected override void OnSelectedIndexChanged (EventArgs e)
 			{
-				ColorComboBoxItem ccbi = Items[ SelectedIndex ] as ColorComboBoxItem;
-				selectedColor = ccbi.Color;
-				
-				fontDialog.Color = selectedColor;
+				base.OnSelectedIndexChanged (e);
+				if (SelectedIndex >= 0)
+					fontDialog.Color = ((ColorComboBoxItem) Items [SelectedIndex]).Color;
 			}
 		}
 
@@ -1420,13 +817,62 @@ namespace System.Windows.Forms
 			remove { Events.RemoveHandler (EventApply, value); }
 		}
 	}
-		
-	internal class MouseWheelListBox : ListBox
+
+	/// <summary>A family as the font dialog lists it: its name, its faces in the order Windows
+	/// shows them, and the scripts it covers.</summary>
+	internal sealed class FontDialogFamily
 	{
-		public void SendMouseWheelEvent(MouseEventArgs e)
+		public string Name;
+		public List<FontDialogFace> Faces = new List<FontDialogFace> ();
+		public List<FontDialogScript> Scripts = new List<FontDialogScript> ();
+
+		/// <summary>The face the font list draws the family's name in: its regular one.</summary>
+		public FontDialogFace DefaultFace {
+			get {
+				foreach (FontDialogFace f in Faces)
+					if (!f.Simulated && f.Style == FontStyle.Regular)
+						return f;
+				return Faces [0];
+			}
+		}
+
+		/// <summary>The families installed, in the dialog's order. (Provisional: one per
+		/// System.Drawing family, the four GDI styles.)</summary>
+		internal static List<FontDialogFamily> Enumerate (bool fixedPitchOnly)
 		{
-			OnMouseWheel (e);
+			var list = new List<FontDialogFamily> ();
+			var seen = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
+			foreach (FontFamily ff in FontFamily.Families) {
+				if (!seen.Add (ff.Name))
+					continue;
+				var family = new FontDialogFamily { Name = ff.Name };
+				foreach (var (name, style) in new [] { ("Regular", FontStyle.Regular), ("Italic", FontStyle.Italic), ("Bold", FontStyle.Bold), ("Bold Italic", FontStyle.Bold | FontStyle.Italic) })
+					if (ff.IsStyleAvailable (style))
+						family.Faces.Add (new FontDialogFace { Name = name, GdiName = ff.Name, Style = style });
+				if (family.Faces.Count == 0)
+					continue;
+				family.Scripts.Add (new FontDialogScript { Name = "Central European", CharSet = 238, Sample = "AaBbÁáÔô" });
+				family.Scripts.Add (new FontDialogScript { Name = "Western", CharSet = 0, Sample = "AaBbYyZz" });
+				list.Add (family);
+			}
+			list.Sort ((a, b) => string.Compare (a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase));
+			return list;
 		}
 	}
-}
 
+	internal sealed class FontDialogFace
+	{
+		public string Name;
+		/// <summary>The legacy (GDI) family name the face is reached by, and its style there.</summary>
+		public string GdiName;
+		public FontStyle Style;
+		public bool Simulated;
+	}
+
+	internal sealed class FontDialogScript
+	{
+		public string Name;
+		public byte CharSet;
+		public string Sample;
+	}
+}

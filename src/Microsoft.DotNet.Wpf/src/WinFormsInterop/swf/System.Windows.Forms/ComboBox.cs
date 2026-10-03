@@ -638,6 +638,15 @@ namespace System.Windows.Forms
 			get { return TextLineHeight + 8; }
 		}
 
+		/// <summary>The selection field's item height of an owner-drawn combo box (what it answers
+		/// WM_MEASUREITEM for item -1 with); null, as .NET, for ItemHeight.</summary>
+		internal int? SelectionItemHeight { get; set; }
+
+		/// <summary>The selection field as comctl32 sizes it, in every style: the font's line plus
+		/// eight, or -- owner-drawn -- the selection field's item height plus six.</summary>
+		int FieldHeight =>
+			DrawMode != DrawMode.Normal ? (SelectionItemHeight ?? ItemHeight) + 6 : PreferredHeight;
+
 		[Browsable (false)]
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		public override int SelectedIndex {
@@ -798,6 +807,13 @@ namespace System.Windows.Forms
 
 		internal TextBox UIATextBox {
 			get { return textbox_ctrl; }
+		}
+
+		/// <summary>CB_SETTOPINDEX / CB_GETTOPINDEX: the first item the open list of a simple combo
+		/// box shows. As Windows, it stops where the last page is full.</summary>
+		internal int TopIndex {
+			get { return listbox_ctrl != null ? listbox_ctrl.FirstVisibleItem () : 0; }
+			set { listbox_ctrl?.EnsureTop (value); }
 		}
 
 		internal ComboListBox UIAComboListBox {
@@ -1125,7 +1141,7 @@ namespace System.Windows.Forms
 		{
 			base.OnHandleCreated (e);
 
-			SetBoundsCore (Left, Top, Width, PreferredHeight, BoundsSpecified.None);
+			SetBoundsCore (Left, Top, Width, FieldHeight, BoundsSpecified.None);
 
 			if (textbox_ctrl != null)
 				Controls.AddImplicit (textbox_ctrl);
@@ -1394,7 +1410,7 @@ namespace System.Windows.Forms
 			int border = ThemeEngine.Current.Border3DSize.Width;
 
 			text_area = ClientRectangle;
-			text_area.Height = PreferredHeight;
+			text_area.Height = FieldHeight;
 			
 			// A simple combo's list stands directly under the edit field and, unless IntegralHeight
 			// is off, is cut to whole items plus its two-pixel sunken frame top and bottom -- what a
@@ -1993,18 +2009,18 @@ namespace System.Windows.Forms
 
 		int SnapHeight (int height)
 		{
-			if (DropDownStyle == ComboBoxStyle.Simple && height > PreferredHeight) {
+			if (DropDownStyle == ComboBoxStyle.Simple && height > FieldHeight) {
 				if (IntegralHeight) {
 					int border = ThemeEngine.Current.Border3DSize.Height;
-					int lb_height = (height - PreferredHeight - 2) - border * 2;
+					int lb_height = (height - FieldHeight - 2) - border * 2;
 					if (lb_height > ItemHeight) {
 						int partial = (lb_height) % ItemHeight;
 						height -= partial;
 					} else if (lb_height < ItemHeight)
-						height = PreferredHeight;
+						height = FieldHeight;
 				}
 			} else
-				height = PreferredHeight;
+				height = FieldHeight;
 
 			return height;
 		}
@@ -2637,8 +2653,16 @@ namespace System.Windows.Forms
 				if (dropdown_style == ComboBoxStyle.Simple)
 					textarea_drawable = Rectangle.Inflate (textarea_drawable, -2, -2);
 
-				if (vscrollbar_ctrl != null && show_scrollbar)
+				if (vscrollbar_ctrl != null && show_scrollbar) {
 					textarea_drawable.Width -= vscrollbar_ctrl.Width;
+					// Inside that frame too, as comctl32's list keeps its bar in its client area:
+					// docked, it covered the frame's right and bottom edges.
+					if (dropdown_style == ComboBoxStyle.Simple) {
+						vscrollbar_ctrl.Dock = DockStyle.None;
+						vscrollbar_ctrl.Bounds = new Rectangle (textarea_drawable.Right, textarea_drawable.Y,
+							vscrollbar_ctrl.Width, textarea_drawable.Height);
+					}
+				}
 
 				last_item = LastVisibleItem ();
 			}

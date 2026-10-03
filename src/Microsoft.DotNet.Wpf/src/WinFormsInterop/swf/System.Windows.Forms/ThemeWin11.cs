@@ -340,9 +340,11 @@ namespace System.Windows.Forms
 		{
 			// A drop-down list's field is the face of the theme's CP_READONLY frame in the
 			// control's state, so its text stands on that exact colour.
-			if (comboBox.DropDownStyle == ComboBoxStyle.DropDownList && comboBox.FlatStyle != FlatStyle.Flat
+			if (ButtonLike (comboBox) && comboBox.FlatStyle != FlatStyle.Flat
 			    && comboBox.FlatStyle != FlatStyle.Popup)
 				return Color.FromArgb ((int) Win11Frames.ComboFace (ComboReadOnlyState (comboBox)));
+			if (comboBox.DropDownStyle == ComboBoxStyle.DropDownList && comboBox.DrawMode != DrawMode.Normal)
+				return comboBox.Enabled ? comboBox.BackColor : ColorControl;
 			if (!comboBox.Enabled)
 				return ColorControl;
 			if (comboBox.DroppedDown || comboBox.PointerOver)
@@ -381,6 +383,12 @@ namespace System.Windows.Forms
 				rect_checkrect.Y + (rect_checkrect.Height - box.Height) / 2, box.Width, box.Height));
 		}
 
+		/// <summary>Whether a drop-down list is drawn as the button Windows 11 makes of one. Only when
+		/// comctl32 draws its field itself: an OWNER-DRAWN list (the font dialog's script list) keeps
+		/// the editable combo's CP_BORDER frame round a window-coloured field, chevron and all.</summary>
+		private static bool ButtonLike (ComboBox c)
+			=> c.DropDownStyle == ComboBoxStyle.DropDownList && c.DrawMode == DrawMode.Normal;
+
 		/// <summary>CP_READONLY's state for a drop-down list: disabled, pressed while its list is
 		/// down, hot under the pointer.</summary>
 		private static int ComboReadOnlyState (ComboBox c)
@@ -400,11 +408,12 @@ namespace System.Windows.Forms
 				// Both parts are partly transparent at their corners, and comctl32 paints the parent's
 				// background under them first (DrawThemeParentBackground) -- not the combo's own colour.
 				switch (comboBox.DropDownStyle) {
-				case ComboBoxStyle.DropDownList:
+				case ComboBoxStyle.DropDownList when ButtonLike (comboBox):
 					g.FillRectangle (ResPool.GetSolidBrush (comboBox.Parent?.BackColor ?? ColorControl), comboBox.ClientRectangle);
 					Win11Frames.Draw (g, Win11Frames.ComboReadOnly (ComboReadOnlyState (comboBox)), comboBox.ClientRectangle);
 					return;
 				case ComboBoxStyle.DropDown:
+				case ComboBoxStyle.DropDownList:
 					g.FillRectangle (ResPool.GetSolidBrush (comboBox.Parent?.BackColor ?? ColorControl), comboBox.ClientRectangle);
 					Win11Frames.Draw (g, Win11Frames.ComboBorder (ComboBorderState (comboBox)), comboBox.ClientRectangle);
 					return;
@@ -446,7 +455,7 @@ namespace System.Windows.Forms
 		public override void ComboBoxDrawNormalDropDownButton (ComboBox comboBox, Graphics g, Rectangle clippingArea, Rectangle area, ButtonState state)
 		{
 			int st = (state & ButtonState.Inactive) != 0 ? 4
-				: comboBox.DropDownStyle == ComboBoxStyle.DropDownList ? 1
+				: ButtonLike (comboBox) ? 1
 				: (state & ButtonState.Pushed) != 0 || comboBox.DroppedDown ? 3
 				: comboBox.DropDownButtonEntered ? 2 : 1;
 			// The themed button stands one pixel in from the control's edge, not a 3D border's two:

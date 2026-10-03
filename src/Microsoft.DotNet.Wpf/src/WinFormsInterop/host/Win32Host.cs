@@ -384,6 +384,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
 
         if (_form.MinimizeBox) style |= WS_MINIMIZEBOX;
         if (_form.MaximizeBox && _form.FormBorderStyle == FormBorderStyle.Sizable) style |= WS_MAXIMIZEBOX;
+        // .NET's Form.CreateParams: no icon means a modal-dialog frame, which is what keeps Windows
+        // from putting its default application icon in the caption (this class registers none).
+        if (!_form.ShowIcon) exStyle |= 0x00000001;   // WS_EX_DLGMODALFRAME
         return (style, exStyle);
     }
 
