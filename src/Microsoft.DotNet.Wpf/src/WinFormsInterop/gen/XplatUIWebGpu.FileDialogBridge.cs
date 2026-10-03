@@ -30,6 +30,15 @@ namespace System.Windows.Forms
         public bool OverwritePrompt;
     }
 
+    /// <summary>What a folder browser is asking for, in FolderBrowserDialog's terms.</summary>
+    internal sealed class FolderDialogRequest
+    {
+        public string Description;
+        public bool UseDescriptionForTitle;
+        public string InitialDirectory;
+        public string SelectedPath;
+    }
+
     /// <summary>
     /// The platform's file and folder browsers. Installed by the integration layer, which can reach
     /// WPF's Microsoft.Win32 dialogs; null when nothing is hosting, and then Mono's own managed
@@ -42,7 +51,28 @@ namespace System.Windows.Forms
 
         bool ShowSave(FileDialogRequest request, out string[] fileNames, out int filterIndex);
 
-        bool ShowFolder(string description, string initialPath, out string selectedPath);
+        bool ShowFolder(FolderDialogRequest request, out string selectedPath);
+
+        // The asynchronous forms, the only ones the browser, iOS and Android can serve: their run
+        // loops cannot be re-entered, so a picker there answers later rather than from the call.
+        // A bridge whose platform CAN block inherits these, which simply run the call.
+        System.Threading.Tasks.Task<(bool ok, string[] fileNames, int filterIndex)> ShowOpenAsync(FileDialogRequest request)
+        {
+            bool ok = ShowOpen(request, out string[] names, out int index);
+            return System.Threading.Tasks.Task.FromResult((ok, names, index));
+        }
+
+        System.Threading.Tasks.Task<(bool ok, string[] fileNames, int filterIndex)> ShowSaveAsync(FileDialogRequest request)
+        {
+            bool ok = ShowSave(request, out string[] names, out int index);
+            return System.Threading.Tasks.Task.FromResult((ok, names, index));
+        }
+
+        System.Threading.Tasks.Task<(bool ok, string selectedPath)> ShowFolderAsync(FolderDialogRequest request)
+        {
+            bool ok = ShowFolder(request, out string path);
+            return System.Threading.Tasks.Task.FromResult((ok, path));
+        }
 
         /// <summary>Whether ShowFolder is worth calling at all.
         /// <para>Needed because "the user cancelled" and "this bridge has no folder browser" are both
@@ -64,7 +94,7 @@ namespace System.Windows.Forms
         /// runs exactly as before.</para></summary>
         internal static IFileDialogBridge FileDialogBridge
         {
-            get => s_fileDialogBridge ?? Win32FileDialogBridge.Default;
+            get => s_fileDialogBridge ?? Win32FileDialogBridge.Default ?? MacFileDialogBridge.Default;
             set => s_fileDialogBridge = value;
         }
 

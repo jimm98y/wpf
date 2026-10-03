@@ -6,6 +6,10 @@
 // NSSavePanel (Microsoft.Win32 file dialogs). Uses the same Objective-C runtime
 // P/Invoke approach as CocoaWindow -- no child processes, no WinForms.
 //
+// Link-compiled into WindowsBase (public, for every WPF assembly) and into WinForms (internal, for
+// a standalone WinForms app on macOS). Each supplies its accessibility and EnsureApplication in a
+// part of its own: CocoaDialogs.Wpf.cs, and the WinForms file dialog bridge.
+//
 
 using System;
 using System.Collections.Generic;
@@ -13,9 +17,15 @@ using System.Runtime.InteropServices;
 
 namespace MS.Internal.Interop
 {
-    /// <summary>Modal AppKit dialogs, callable from any WPF assembly on macOS.</summary>
-    public static class CocoaDialogs
+    // No accessibility here on purpose: each assembly's own part states it (public in WindowsBase,
+    // internal in WinForms).
+#pragma warning disable IDE0040
+    static partial class CocoaDialogs
+#pragma warning restore IDE0040
     {
+        /// <summary>Makes sure NSApplication is up before a panel runs.</summary>
+        private static partial void EnsureApplication();
+
         private static readonly bool s_debug =
             Environment.GetEnvironmentVariable("WPF_COCOA_DIALOG_LOG") == "1";
 
@@ -26,7 +36,7 @@ namespace MS.Internal.Interop
         /// </summary>
         public static int ShowAlert(string text, string caption, string[] buttons, int alertStyle)
         {
-            CocoaWindow.EnsureApplication();
+            EnsureApplication();
             IntPtr alert = Send(Send(Cls("NSAlert"), Sel("alloc")), Sel("init"));
             SendVoidPtr(alert, Sel("setMessageText:"), NSStr(caption ?? string.Empty));
             SendVoidPtr(alert, Sel("setInformativeText:"), NSStr(text ?? string.Empty));
@@ -47,7 +57,7 @@ namespace MS.Internal.Interop
         /// </summary>
         public static string[] ShowOpenPanel(string title, string initialDirectory, bool multiselect, bool chooseDirectories)
         {
-            CocoaWindow.EnsureApplication();
+            EnsureApplication();
             IntPtr panel = Send(Cls("NSOpenPanel"), Sel("openPanel"));
             ConfigurePanel(panel, title, initialDirectory);
             SendVoidBool(panel, Sel("setCanChooseFiles:"), !chooseDirectories);
@@ -79,7 +89,7 @@ namespace MS.Internal.Interop
         /// </summary>
         public static string ShowSavePanel(string title, string initialDirectory, string defaultFileName)
         {
-            CocoaWindow.EnsureApplication();
+            EnsureApplication();
             IntPtr panel = Send(Cls("NSSavePanel"), Sel("savePanel"));
             ConfigurePanel(panel, title, initialDirectory);
             if (!string.IsNullOrEmpty(defaultFileName))

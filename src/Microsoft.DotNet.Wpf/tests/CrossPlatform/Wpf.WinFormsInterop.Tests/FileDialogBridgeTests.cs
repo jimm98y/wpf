@@ -8,8 +8,8 @@
 // against the real thing on Windows it is 555x385 where Windows shows an 839x497 Explorer window
 // with a navigation pane, a breadcrumb bar and a details view -- a different program's window, not a
 // layout to be adjusted into shape. So on Windows the platform's own is called instead, through
-// comdlg32 (which forwards to the same modern picker on Vista and later) rather than through
-// IFileDialog, so that no COM interface has to be declared to get it.
+// comdlg32 (which forwards to the same modern picker on Vista and later), and folders through the
+// shell's IFileOpenDialog called by vtable, so that no COM interface has to be declared to get it.
 //
 // Two things are asserted, and the second is where the bugs live:
 //
@@ -76,20 +76,14 @@ namespace Wpf.WinFormsInterop.Tests
         }
 
         [Fact]
-        public void ABridgeThatDoesNotDoFolders_SaysSoRatherThanReturningCancelled()
+        public void OnWindows_TheFolderPickerIsTheShells()
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "only Windows installs one by default");
 
+            // The shell's IFileOpenDialog (FOS_PICKFOLDERS), reached through its vtable: so the
+            // bridge takes folders, and FolderBrowserDialog never falls back to the managed tree.
             object bridge = CurrentBridge();
-            bool supports = (bool)BridgeType.GetProperty("SupportsFolder")!.GetValue(bridge)!;
-            Assert.False(supports,
-                "comdlg32 has no folder picker, so this bridge must decline folders -- otherwise "
-                + "FolderBrowserDialog reports Cancel and never shows the managed tree");
-
-            object[] args = { "pick a folder", null, null };
-            bool shown = (bool)BridgeType.GetMethod("ShowFolder")!.Invoke(bridge, args)!;
-            Assert.False(shown);
-            Assert.Null(args[2]);
+            Assert.True((bool)BridgeType.GetProperty("SupportsFolder")!.GetValue(bridge)!);
         }
 
         // ---- what comes back ----------------------------------------------------------------------

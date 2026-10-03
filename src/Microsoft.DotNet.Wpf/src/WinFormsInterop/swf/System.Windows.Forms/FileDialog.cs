@@ -709,7 +709,34 @@ namespace System.Windows.Forms
 		/// <summary>Hand the request to the platform's own browser and take its answer.</summary>
 		private bool RunPlatformDialog (IFileDialogBridge bridge)
 		{
-			var request = new FileDialogRequest {
+			FileDialogRequest request = PlatformRequest ();
+			string [] selected;
+			int chosenFilter;
+			bool accepted = fileDialogType == FileDialogType.SaveFileDialog
+				? bridge.ShowSave (request, out selected, out chosenFilter)
+				: bridge.ShowOpen (request, out selected, out chosenFilter);
+			return accepted && AcceptPlatformAnswer (selected, chosenFilter);
+		}
+
+		/// <summary>The platform's browser, not waited for: see CommonDialog.ShowDialogAsync.</summary>
+		public override async System.Threading.Tasks.Task<DialogResult> ShowDialogAsync ()
+		{
+			IFileDialogBridge bridge = XplatUIWebGpu.FileDialogBridge;
+			if (bridge == null)
+				return await base.ShowDialogAsync ();
+			FileDialogRequest request = PlatformRequest ();
+			var answer = fileDialogType == FileDialogType.SaveFileDialog
+				? await bridge.ShowSaveAsync (request)
+				: await bridge.ShowOpenAsync (request);
+			return answer.ok && AcceptPlatformAnswer (answer.fileNames, answer.filterIndex) ? DialogResult.OK : DialogResult.Cancel;
+		}
+
+		public override System.Threading.Tasks.Task<DialogResult> ShowDialogAsync (IWin32Window owner)
+			=> ShowDialogAsync ();
+
+		private FileDialogRequest PlatformRequest ()
+		{
+			return new FileDialogRequest {
 				Title = DialogTitle,
 				Filter = Filter,
 				FilterIndex = FilterIndex,
@@ -721,16 +748,10 @@ namespace System.Windows.Forms
 				Multiselect = multiSelect,
 				OverwritePrompt = fileDialogType == FileDialogType.SaveFileDialog && overwritePrompt,
 			};
+		}
 
-			string [] selected;
-			int chosenFilter;
-			bool accepted = fileDialogType == FileDialogType.SaveFileDialog
-				? bridge.ShowSave (request, out selected, out chosenFilter)
-				: bridge.ShowOpen (request, out selected, out chosenFilter);
-
-			if (!accepted)
-				return false;
-
+		private bool AcceptPlatformAnswer (string [] selected, int chosenFilter)
+		{
 			fileNames = selected ?? new string [0];
 			if (chosenFilter > 0)
 				FilterIndex = chosenFilter;

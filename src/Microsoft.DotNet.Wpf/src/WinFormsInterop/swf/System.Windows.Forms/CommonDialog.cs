@@ -136,6 +136,19 @@ namespace System.Windows.Forms {
 
 			return form.DialogResult;
 		}
+		/// <summary>The dialog shown without blocking: the answer arrives when the user gives it.
+		/// A port extension, as WPF's Microsoft.Win32 dialogs have one: on the browser, iOS and Android
+		/// no call can wait for a picker (their run loops cannot be re-entered), so this is the form
+		/// that works on every platform. Elsewhere it is ShowDialog.</summary>
+		public virtual System.Threading.Tasks.Task<DialogResult> ShowDialogAsync ()
+		{
+			return System.Threading.Tasks.Task.FromResult (ShowDialog ());
+		}
+
+		public virtual System.Threading.Tasks.Task<DialogResult> ShowDialogAsync (IWin32Window owner)
+		{
+			return System.Threading.Tasks.Task.FromResult (ShowDialog (owner));
+		}
 		#endregion	// Public Instance Methods
 
 		#region Protected Instance Methods

@@ -14,11 +14,8 @@
 // is); a platform-gated DllImport is not that, and costs the other heads nothing because nothing
 // outside OperatingSystem.IsWindows() ever reaches it.
 //
-// FOLDERS ARE NOT DONE HERE, and the reason is the same rule read the other way. The modern folder
-// picker is IFileDialog with FOS_PICKFOLDERS and there is no comdlg32 entry point for it;
-// SHBrowseForFolder exists and is plain P/Invoke, but it shows the OLD tree, which is not what
-// Windows' own FolderBrowserDialog shows any more. Rather than swap one mismatch for another,
-// ShowFolder says no and the managed dialog runs.
+// FOLDERS are the one picker comdlg32 has no entry point for; Win32FileDialogBridge.Folder.cs
+// reaches the shell's own through its vtable, without declaring a COM interface.
 
 using System;
 using System.Runtime.InteropServices;
@@ -26,7 +23,7 @@ using System.Text;
 
 namespace System.Windows.Forms
 {
-    internal sealed class Win32FileDialogBridge : IFileDialogBridge
+    internal sealed partial class Win32FileDialogBridge : IFileDialogBridge
     {
         /// <summary>The bridge for this platform, or null where there is no common dialog to call.
         /// Used only when nothing else has installed one -- a host that brings its own (the WPF
@@ -90,17 +87,6 @@ namespace System.Windows.Forms
 
         public bool ShowSave(FileDialogRequest request, out string[] fileNames, out int filterIndex)
             => Show(request, open: false, out fileNames, out filterIndex);
-
-        /// <summary>No. See the note at the top of this file: there is no comdlg32 folder picker,
-        /// and the one Windows shows now cannot be reached without declaring COM interfaces. Saying
-        /// so here is what keeps the managed tree reachable.</summary>
-        public bool SupportsFolder => false;
-
-        public bool ShowFolder(string description, string initialPath, out string selectedPath)
-        {
-            selectedPath = null;
-            return false;
-        }
 
         [DllImport("user32.dll")]
         private static extern IntPtr GetActiveWindow();

@@ -272,6 +272,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaDragDrop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaDialogs.Wpf.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\MacClipboard.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitClipboard.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidClipboard.cs" />

@@ -404,18 +404,51 @@ namespace System.Windows.Forms.Integration
                 return true;
             }
 
-            public bool ShowFolder(string description, string initialPath, out string selectedPath)
+            public bool ShowFolder(SWF.FolderDialogRequest request, out string selectedPath)
             {
                 selectedPath = null;
 
                 var dlg = new Microsoft.Win32.OpenFolderDialog();
-                if (!string.IsNullOrEmpty(description)) dlg.Title = description;
-                if (!string.IsNullOrEmpty(initialPath)) dlg.InitialDirectory = initialPath;
+                if (!string.IsNullOrEmpty(request.Description)) dlg.Title = request.Description;
+                if (!string.IsNullOrEmpty(request.InitialDirectory)) dlg.InitialDirectory = request.InitialDirectory;
+                if (!string.IsNullOrEmpty(request.SelectedPath)) dlg.FolderName = request.SelectedPath;
 
                 if (dlg.ShowDialog(OwnerWindow()) != true) return false;
 
                 selectedPath = dlg.FolderName;
                 return true;
+            }
+
+            // The browser, iOS and Android answer only later (WPF's ShowDialogAsync); a synchronous
+            // ShowDialog there throws, naming ShowDialogAsync, which is the message a WinForms
+            // caller needs too.
+            public async System.Threading.Tasks.Task<(bool ok, string[] fileNames, int filterIndex)> ShowOpenAsync(SWF.FileDialogRequest request)
+            {
+                var dlg = new Microsoft.Win32.OpenFileDialog();
+                Apply(dlg, request);
+                dlg.Multiselect = request.Multiselect;
+                dlg.CheckFileExists = request.CheckFileExists;
+                if (await dlg.ShowDialogAsync(OwnerWindow()) != true) return (false, null, 0);
+                return (true, request.Multiselect ? dlg.FileNames : new[] { dlg.FileName }, dlg.FilterIndex);
+            }
+
+            public async System.Threading.Tasks.Task<(bool ok, string[] fileNames, int filterIndex)> ShowSaveAsync(SWF.FileDialogRequest request)
+            {
+                var dlg = new Microsoft.Win32.SaveFileDialog();
+                Apply(dlg, request);
+                dlg.OverwritePrompt = request.OverwritePrompt;
+                if (await dlg.ShowDialogAsync(OwnerWindow()) != true) return (false, null, 0);
+                return (true, new[] { dlg.FileName }, dlg.FilterIndex);
+            }
+
+            public async System.Threading.Tasks.Task<(bool ok, string selectedPath)> ShowFolderAsync(SWF.FolderDialogRequest request)
+            {
+                var dlg = new Microsoft.Win32.OpenFolderDialog();
+                if (!string.IsNullOrEmpty(request.Description)) dlg.Title = request.Description;
+                if (!string.IsNullOrEmpty(request.InitialDirectory)) dlg.InitialDirectory = request.InitialDirectory;
+                if (!string.IsNullOrEmpty(request.SelectedPath)) dlg.FolderName = request.SelectedPath;
+                if (await dlg.ShowDialogAsync(OwnerWindow()) != true) return (false, null);
+                return (true, dlg.FolderName);
             }
 
             private static void Apply(Microsoft.Win32.FileDialog dlg, SWF.FileDialogRequest request)

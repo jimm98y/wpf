@@ -270,6 +270,29 @@ namespace System.Windows.Forms {
 			ShowNewFolderButton = true;
 		}
 		
+		private FolderDialogRequest PlatformRequest ()
+			=> new FolderDialogRequest {
+				Description = descriptionLabel.Text,
+				UseDescriptionForTitle = useDescriptionForTitle,
+				SelectedPath = selectedPath,
+			};
+
+		/// <summary>The platform's folder picker, not waited for: see CommonDialog.ShowDialogAsync.</summary>
+		public override async System.Threading.Tasks.Task<DialogResult> ShowDialogAsync ()
+		{
+			IFileDialogBridge bridge = XplatUIWebGpu.FileDialogBridge;
+			if (bridge == null || !bridge.SupportsFolder)
+				return await base.ShowDialogAsync ();
+			var answer = await bridge.ShowFolderAsync (PlatformRequest ());
+			if (!answer.ok)
+				return DialogResult.Cancel;
+			selectedPath = answer.selectedPath;
+			return DialogResult.OK;
+		}
+
+		public override System.Threading.Tasks.Task<DialogResult> ShowDialogAsync (IWin32Window owner)
+			=> ShowDialogAsync ();
+
 		protected override bool RunDialog (IntPtr hWndOwner)
 		{
 			// Use the platform's folder browser where there is one -- see FileDialog.RunDialog.
@@ -277,7 +300,7 @@ namespace System.Windows.Forms {
 			if (bridge != null && bridge.SupportsFolder) {
 				ranOnPlatform = true;
 				string picked;
-				if (!bridge.ShowFolder (descriptionLabel.Text, selectedPath, out picked))
+				if (!bridge.ShowFolder (PlatformRequest (), out picked))
 					return false;
 				selectedPath = picked;
 				return true;
