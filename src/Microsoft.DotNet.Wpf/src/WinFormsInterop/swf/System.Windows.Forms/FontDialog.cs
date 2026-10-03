@@ -441,7 +441,7 @@ namespace System.Windows.Forms
 			currentSize = initial.SizeInPoints;
 			SelectSize ();
 			// DEFAULT_CHARSET stands for the system's ANSI code page's character set.
-			FillScripts (initial.GdiCharSet == 1 ? (byte) 238 : initial.GdiCharSet);
+			FillScripts (initial.GdiCharSet == 1 ? FontDialogFamily.CharSetOfCodePage (FontDialogFamily.AnsiCodePage) : initial.GdiCharSet);
 			strikeoutCheck.Checked = initial.Strikeout;
 			underlineCheck.Checked = initial.Underline;
 			internal_change = false;
@@ -673,8 +673,13 @@ namespace System.Windows.Forms
 			Rectangle r = e.Bounds;
 			r.X += indent;
 			r.Width -= indent;
+			// Clipped to the item, as the list's own DC is: the last row's text must not reach the frame.
+			System.Drawing.Region clip = e.Graphics.Clip;
+			e.Graphics.SetClip (e.Bounds, System.Drawing.Drawing2D.CombineMode.Intersect);
 			TextRenderer.DrawText (e.Graphics, text, face ?? form.Font, r, fore,
-				TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
+				TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix
+				| TextFormatFlags.NoPadding | TextFormatFlags.NoClipping);
+			e.Graphics.Clip = clip;
 		}
 
 		private void OnDrawFontItem (object sender, DrawItemEventArgs e)
@@ -683,7 +688,8 @@ namespace System.Windows.Forms
 				return;
 			FontDialogFamily family = families [e.Index];
 			FontDialogFace face = family.Faces.Count > 0 ? family.DefaultFace : null;
-			DrawEntry (e, family.Name, face != null ? PreviewFont (face.GdiName, face.Style) : null);
+			string preview = !string.IsNullOrEmpty (family.PreviewName) ? family.PreviewName : face?.GdiName;
+			DrawEntry (e, family.Name, preview != null ? PreviewFont (preview, FontStyle.Regular) : null);
 		}
 
 		private void OnDrawStyleItem (object sender, DrawItemEventArgs e)
@@ -823,6 +829,8 @@ namespace System.Windows.Forms
 	internal sealed class FontDialogFamily
 	{
 		public string Name;
+		/// <summary>The GDI face the font list draws the family's name in.</summary>
+		public string PreviewName;
 		public List<FontDialogFace> Faces = new List<FontDialogFace> ();
 		public List<FontDialogScript> Scripts = new List<FontDialogScript> ();
 
@@ -836,28 +844,66 @@ namespace System.Windows.Forms
 			}
 		}
 
-		/// <summary>The families installed, in the dialog's order. (Provisional: one per
-		/// System.Drawing family, the four GDI styles.)</summary>
+		/// <summary>The families installed, as Windows' font dialog lists them (ChooseFontModel: fms.dll's
+		/// grouping and naming, comdlg32's orders), built once from the font files in load order.</summary>
 		internal static List<FontDialogFamily> Enumerate (bool fixedPitchOnly)
 		{
 			var list = new List<FontDialogFamily> ();
-			var seen = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
-			foreach (FontFamily ff in FontFamily.Families) {
-				if (!seen.Add (ff.Name))
-					continue;
-				var family = new FontDialogFamily { Name = ff.Name };
-				foreach (var (name, style) in new [] { ("Regular", FontStyle.Regular), ("Italic", FontStyle.Italic), ("Bold", FontStyle.Bold), ("Bold Italic", FontStyle.Bold | FontStyle.Italic) })
-					if (ff.IsStyleAvailable (style))
-						family.Faces.Add (new FontDialogFace { Name = name, GdiName = ff.Name, Style = style });
-				if (family.Faces.Count == 0)
-					continue;
-				family.Scripts.Add (new FontDialogScript { Name = "Central European", CharSet = 238, Sample = "AaBbÁáÔô" });
-				family.Scripts.Add (new FontDialogScript { Name = "Western", CharSet = 0, Sample = "AaBbYyZz" });
-				list.Add (family);
+			foreach (ChooseFontModel.Family f in Model) {
+				var family = new FontDialogFamily { Name = f.Name, PreviewName = f.RepresentativeGdiName };
+				foreach (ChooseFontModel.Face face in f.Faces) {
+					FontStyle style = FontStyle.Regular;
+					if (face.GdiWeight >= 700) style |= FontStyle.Bold;
+					if (face.GdiItalic) style |= FontStyle.Italic;
+					family.Faces.Add (new FontDialogFace { Name = face.Name, GdiName = face.GdiFamilyName, Style = style, Simulated = face.IsSimulated });
+				}
+				foreach (ChooseFontModel.Script script in f.Scripts)
+					family.Scripts.Add (new FontDialogScript { Name = script.Name, CharSet = script.CharSet, Sample = script.Sample });
+				if (family.Faces.Count > 0)
+					list.Add (family);
 			}
-			list.Sort ((a, b) => string.Compare (a.Name, b.Name, StringComparison.CurrentCultureIgnoreCase));
 			return list;
 		}
+
+		private static List<ChooseFontModel.Family> s_model;
+
+		private static List<ChooseFontModel.Family> Model {
+			get {
+				if (s_model == null)
+					s_model = ChooseFontModel.Build (Microsoft.Wpf.Interop.WebGpu.Composition.Text.FontFiles.LoadOrder (), AnsiCodePage, SystemLanguageId);
+				return s_model;
+			}
+		}
+
+		[System.Runtime.InteropServices.DllImport ("kernel32.dll")]
+		private static extern int GetACP ();
+
+		[System.Runtime.InteropServices.DllImport ("kernel32.dll")]
+		private static extern ushort GetSystemDefaultLangID ();
+
+		/// <summary>The system ANSI code page, whose script the dialog lists first and DEFAULT_CHARSET means.</summary>
+		internal static int AnsiCodePage {
+			get {
+				if (OperatingSystem.IsWindows ())
+					try { return GetACP (); } catch (EntryPointNotFoundException) { }
+				return System.Globalization.CultureInfo.InstalledUICulture.TextInfo.ANSICodePage;
+			}
+		}
+
+		/// <summary>The system locale's LANGID, which picks the legacy (GDI) family names.</summary>
+		internal static int SystemLanguageId {
+			get {
+				if (OperatingSystem.IsWindows ())
+					try { return GetSystemDefaultLangID (); } catch (EntryPointNotFoundException) { }
+				return System.Globalization.CultureInfo.InstalledUICulture.LCID & 0xffff;
+			}
+		}
+
+		/// <summary>The GDI character set of a Windows ANSI code page.</summary>
+		internal static byte CharSetOfCodePage (int cp) => cp switch {
+			874 => 222, 932 => 128, 936 => 134, 949 => 129, 950 => 136, 1250 => 238, 1251 => 204,
+			1253 => 161, 1254 => 162, 1255 => 177, 1256 => 178, 1257 => 186, 1258 => 163, _ => 0,
+		};
 	}
 
 	internal sealed class FontDialogFace

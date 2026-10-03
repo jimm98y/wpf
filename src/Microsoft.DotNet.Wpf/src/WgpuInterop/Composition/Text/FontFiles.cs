@@ -769,6 +769,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static IReadOnlyCollection<string> ScannedFamilyNames() => ScannedFamilies().Keys;
 
+        /// <summary>The installed TrueType/OpenType files in the order the system loads them -- the
+        /// order that decides which of two equal faces a font list shows first. On Windows that is
+        /// GDI's: Marlett (a system font the registry does not list), then HKLM's and HKCU's
+        /// ...\CurrentVersion\Fonts in RegEnumValue order (the per-user hive's package subkeys
+        /// included, which is where packaged fonts register). Elsewhere, the font directories' files
+        /// in name order.</summary>
+        public static IReadOnlyList<string> LoadOrder()
+        {
+            var order = new List<string>();
+            if (OperatingSystem.IsWindows())
+            {
+                if (Locate("marlett.ttf") is string marlett) order.Add(marlett);
+                order.AddRange(RegistryFontFiles());
+            }
+            else
+            {
+                foreach (string dir in s_directories.Value)
+                {
+                    try
+                    {
+                        var files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
+                        Array.Sort(files, StringComparer.Ordinal);
+                        order.AddRange(files);
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+            }
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var result = new List<string>();
+            foreach (string path in order)
+            {
+                string ext = Path.GetExtension(path);
+                if ((ext.Equals(".ttf", StringComparison.OrdinalIgnoreCase) || ext.Equals(".otf", StringComparison.OrdinalIgnoreCase)
+                     || ext.Equals(".ttc", StringComparison.OrdinalIgnoreCase)) && seen.Add(path) && File.Exists(path))
+                    result.Add(path);
+            }
+            return result;
+        }
+
         /// <summary>Every font file the REGISTRY names, which is where Windows keeps the ones that
         /// are not in a font directory.
         /// <para>An application can install a font for itself, and a packaged one does it as a
