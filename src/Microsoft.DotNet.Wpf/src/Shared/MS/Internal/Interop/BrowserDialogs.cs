@@ -163,6 +163,16 @@ namespace MS.Internal.Interop
             }
         }
 
+        /// <summary>
+        ///  The browser's own message boxes: window.alert for a box with only OK, window.confirm for
+        ///  OK and Cancel (true is OK). Those are the only two the page can show; their buttons are
+        ///  the browser's, in its language. Any other set of buttons has no native form here, and the
+        ///  caller draws its own.
+        /// </summary>
+        internal static void Alert(string message) => Js.Alert(message ?? string.Empty);
+
+        internal static bool Confirm(string message) => Js.Confirm(message ?? string.Empty);
+
         /// <summary>The browser-window.js exports, bound the same way BrowserWindow binds its own.</summary>
         private static partial class Js
         {
@@ -176,6 +186,12 @@ namespace MS.Internal.Interop
 
             [JSImport("offerDownload", Module)]
             internal static partial bool OfferDownload(string path, string mimeType);
+
+            [JSImport("showAlert", Module)]
+            internal static partial void Alert(string message);
+
+            [JSImport("showConfirm", Module)]
+            internal static partial bool Confirm(string message);
         }
     }
 }

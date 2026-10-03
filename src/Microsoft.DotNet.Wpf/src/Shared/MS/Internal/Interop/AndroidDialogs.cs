@@ -50,6 +50,13 @@ namespace MS.Internal.Interop
 
         /// <summary>A path in the app's cache directory, for the write that precedes an export.</summary>
         string ReserveSavePath(string suggestedName);
+
+        /// <summary>
+        ///  Shows the platform's AlertDialog with up to three buttons and completes with the index of
+        ///  the one pressed. Backing out (the back gesture, a tap outside) answers
+        ///  <paramref name="cancelIndex"/>; with -1 the dialog cannot be backed out of.
+        /// </summary>
+        Task<int> ShowAlertAsync(string title, string message, string[] buttons, int cancelIndex);
     }
 
     /// <summary>
@@ -77,5 +84,8 @@ namespace MS.Internal.Interop
 
         internal static string ReserveSavePath(string suggestedName)
             => IsAvailable ? Host.ReserveSavePath(suggestedName) : null;
+
+        internal static Task<int> ShowAlertAsync(string title, string message, string[] buttons, int cancelIndex)
+            => IsAvailable ? Host.ShowAlertAsync(title, message, buttons, cancelIndex) : Task.FromResult(-1);
     }
 }

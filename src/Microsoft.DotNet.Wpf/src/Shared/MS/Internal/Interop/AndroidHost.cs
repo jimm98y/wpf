@@ -1100,6 +1100,50 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
 
     public bool ContainsData(string mimeType) => false;
 
+    // ---- message boxes --------------------------------------------------------
+    //
+    // IAndroidDialogHost.ShowAlertAsync: the platform's AlertDialog. It has three button slots, and
+    // they are filled in WinForms/WPF order so the first button is the POSITIVE one (the default,
+    // trailing), the second NEGATIVE and the third NEUTRAL -- Yes/No/Cancel reads Cancel ... No Yes,
+    // as Android lays out a three-button alert. A box with more than three buttons cannot be one, and
+    // the caller draws its own instead (-1).
+
+    public Task<int> ShowAlertAsync(string title, string message, string[] buttons, int cancelIndex)
+    {
+        if (buttons is null || buttons.Length == 0 || buttons.Length > 3) return Task.FromResult(-1);
+
+        var completion = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Show()
+        {
+            try
+            {
+                var builder = new AlertDialog.Builder(_activity);
+                if (!string.IsNullOrEmpty(title)) builder.SetTitle(title);
+                builder.SetMessage(message ?? string.Empty);
+                builder.SetPositiveButton(buttons[0], (s, e) => completion.TrySetResult(0));
+                if (buttons.Length > 1) builder.SetNegativeButton(buttons[1], (s, e) => completion.TrySetResult(1));
+                if (buttons.Length > 2) builder.SetNeutralButton(buttons[2], (s, e) => completion.TrySetResult(2));
+                builder.SetCancelable(cancelIndex >= 0);
+                builder.SetOnCancelListener(new AlertCancel(() => completion.TrySetResult(cancelIndex)));
+                builder.Show();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"WPF Android: the alert could not be shown: {e}");
+                completion.TrySetResult(-1);
+            }
+        }
+        _activity.RunOnUiThread(Show);
+        return completion.Task;
+    }
+
+    private sealed class AlertCancel : Java.Lang.Object, IDialogInterfaceOnCancelListener
+    {
+        private readonly Action _cancelled;
+        public AlertCancel(Action cancelled) => _cancelled = cancelled;
+        public void OnCancel(IDialogInterface? dialog) => _cancelled();
+    }
+
     // ---- file dialogs ---------------------------------------------------------
     //
     // IAndroidDialogHost, over the Storage Access Framework. See AndroidDialogs.cs for why this is

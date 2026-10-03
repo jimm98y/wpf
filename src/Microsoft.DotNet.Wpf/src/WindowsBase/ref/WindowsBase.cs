@@ -311,6 +311,7 @@ namespace MS.Internal.Interop
         System.Threading.Tasks.Task<bool> ExportFileAsync(string path, string mimeType);
         System.Threading.Tasks.Task<string[]> PickFilesAsync(string[] mimeTypes, bool multiple, bool directory);
         string ReserveSavePath(string suggestedName);
+        System.Threading.Tasks.Task<int> ShowAlertAsync(string title, string message, string[] buttons, int cancelIndex);
     }
     public partial interface IAndroidHost
     {

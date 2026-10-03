@@ -38,6 +38,7 @@ namespace System.Windows.Forms
 		YesNoCancel 		= 3,
 		YesNo 			= 4,
 		RetryCancel 		= 5,
+		CancelTryContinue	= 6,
 	}
 }
 

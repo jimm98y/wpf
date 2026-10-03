@@ -82,6 +82,7 @@
     <Compile Include="gen/XplatUIWebGpu.Metrics.cs" />
     <Compile Include="gen/XplatUIWebGpu.Cursors.cs" />
     <Compile Include="gen/XplatUIWebGpu.FileDialogBridge.cs" />
+    <Compile Include="gen/XplatUIWebGpu.MessageBoxBridge.cs" />
     <Compile Include="shims/*.cs" />
 
     <!-- The WebBrowser control and its HtmlDocument object model. OUTSIDE swf/ on purpose: that

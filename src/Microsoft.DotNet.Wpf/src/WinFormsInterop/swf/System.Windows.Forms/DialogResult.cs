@@ -40,7 +40,9 @@ namespace System.Windows.Forms {
 		Retry	= 4,
 		Ignore	= 5,
 		Yes	= 6,
-		No	= 7
+		No	= 7,
+		TryAgain	= 10,
+		Continue	= 11
 	}
 }
 

@@ -833,6 +833,13 @@ export function clipboardHasPng() {
     return clipPng !== null && clipPng.length > 0;
 }
 
+// ---- message boxes ----------------------------------------------------------------------------
+
+// The page's own modal prompts. Both block the page until answered, which is why a message box can
+// use them although nothing else on this head can wait: the browser runs the modal loop itself.
+export function showAlert(message) { window.alert(message); }
+export function showConfirm(message) { return window.confirm(message); }
+
 // ---- file dialogs -----------------------------------------------------------------------------
 //
 // A browser has no file SYSTEM to show a path from, so "open a file" and "save a file" mean

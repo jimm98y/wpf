@@ -359,6 +359,7 @@ namespace System.Windows.Forms.Integration
         {
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
             XplatUIWebGpu.FileDialogBridge ??= new WpfFileDialogBridge();
+            XplatUIWebGpu.MessageBoxBridge ??= new WpfMessageBoxBridge();
         }
 
         /// <summary>
@@ -478,6 +479,64 @@ namespace System.Windows.Forms.Integration
             }
         }
 
+        /// <summary>
+        /// WPF's MessageBox, so a hosted WinForms app prompts as the WPF half of it does: user32's
+        /// box on Windows, NSAlert on macOS, the native alert where the head has one, WPF's own box
+        /// on Linux (whose desktop has no message box to call). The two toolkits number buttons,
+        /// icons, options and results alike (they are user32's values), so only the default button
+        /// needs translating.
+        /// </summary>
+        private sealed class WpfMessageBoxBridge : SWF.IMessageBoxBridge
+        {
+            public bool TryShow(SWF.MessageBoxRequest request, out SWF.DialogResult result)
+            {
+                System.Windows.MessageBoxResult answer = System.Windows.MessageBox.Show(OwnerWindowForPrompt(), request.Text ?? "", request.Caption ?? "",
+                    (System.Windows.MessageBoxButton)(int)request.Buttons, (System.Windows.MessageBoxImage)(int)request.Icon,
+                    DefaultResult(request), (System.Windows.MessageBoxOptions)(int)request.Options);
+                result = (SWF.DialogResult)(int)answer;
+                return true;
+            }
+
+            public async System.Threading.Tasks.Task<SWF.DialogResult?> ShowAsync(SWF.MessageBoxRequest request)
+            {
+                System.Windows.MessageBoxResult answer = await System.Windows.MessageBox.ShowAsync(OwnerWindowForPrompt(), request.Text ?? "", request.Caption ?? "",
+                    (System.Windows.MessageBoxButton)(int)request.Buttons, (System.Windows.MessageBoxImage)(int)request.Icon,
+                    DefaultResult(request), (System.Windows.MessageBoxOptions)(int)request.Options);
+                return (SWF.DialogResult)(int)answer;
+            }
+
+            /// <summary>The result of the button WinForms names as the default (Button1..3).</summary>
+            private static System.Windows.MessageBoxResult DefaultResult(SWF.MessageBoxRequest request)
+            {
+                System.Windows.MessageBoxResult[] order = request.Buttons switch
+                {
+                    SWF.MessageBoxButtons.OKCancel => new[] { System.Windows.MessageBoxResult.OK, System.Windows.MessageBoxResult.Cancel },
+                    SWF.MessageBoxButtons.AbortRetryIgnore => new[] { System.Windows.MessageBoxResult.Abort, System.Windows.MessageBoxResult.Retry, System.Windows.MessageBoxResult.Ignore },
+                    SWF.MessageBoxButtons.YesNoCancel => new[] { System.Windows.MessageBoxResult.Yes, System.Windows.MessageBoxResult.No, System.Windows.MessageBoxResult.Cancel },
+                    SWF.MessageBoxButtons.YesNo => new[] { System.Windows.MessageBoxResult.Yes, System.Windows.MessageBoxResult.No },
+                    SWF.MessageBoxButtons.RetryCancel => new[] { System.Windows.MessageBoxResult.Retry, System.Windows.MessageBoxResult.Cancel },
+                    SWF.MessageBoxButtons.CancelTryContinue => new[] { System.Windows.MessageBoxResult.Cancel, System.Windows.MessageBoxResult.TryAgain, System.Windows.MessageBoxResult.Continue },
+                    _ => new[] { System.Windows.MessageBoxResult.OK },
+                };
+                int i = request.DefaultButton switch
+                {
+                    SWF.MessageBoxDefaultButton.Button2 => 1,
+                    SWF.MessageBoxDefaultButton.Button3 => 2,
+                    _ => 0,
+                };
+                return i < order.Length ? order[i] : order[0];
+            }
+
+            private static Window OwnerWindowForPrompt()
+            {
+                System.Windows.Application app = System.Windows.Application.Current;
+                if (app == null) return null;
+                foreach (Window w in app.Windows)
+                    if (w.IsActive) return w;
+                return app.MainWindow;
+            }
+        }
+
         private sealed class WpfClipboardBridge : SWF.IClipboardBridge
         {
             public bool TryGetText(out string text)
@@ -587,6 +646,7 @@ namespace System.Windows.Forms.Integration
             XplatUIWebGpu.GetInstance();
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
             XplatUIWebGpu.FileDialogBridge ??= new WpfFileDialogBridge();
+            XplatUIWebGpu.MessageBoxBridge ??= new WpfMessageBoxBridge();
             StartTopLevelPump();
 
             // An application that hosts WinForms through its OWN HwndHost subclass never
@@ -659,6 +719,7 @@ namespace System.Windows.Forms.Integration
             // driver's assembly cannot see WPF's Clipboard, so the host lends it one.
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
             XplatUIWebGpu.FileDialogBridge ??= new WpfFileDialogBridge();
+            XplatUIWebGpu.MessageBoxBridge ??= new WpfMessageBoxBridge();
 
             _container.CreateControl();
             _container.Show();          // registers the window tree with the driver and paints it

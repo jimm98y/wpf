@@ -610,8 +610,55 @@ namespace System.Windows
                     ShowCore(owner, messageBoxText, caption, button, icon, defaultResult, options));
             }
 
-            return ManagedMessageBox.ShowAsync(
-                messageBoxText, caption, PortableButtons(button), icon, defaultResult);
+            return ShowNativeOrManagedAsync(messageBoxText, caption, button, icon, defaultResult);
+        }
+
+        /// <summary>
+        /// The platform's own alert where the head has one that can carry these buttons --
+        /// UIAlertController on iOS, AlertDialog on Android (up to three), window.alert/confirm in the
+        /// browser (OK, or OK and Cancel) -- and WPF's managed box where it has not.
+        /// </summary>
+        private static async System.Threading.Tasks.Task<MessageBoxResult> ShowNativeOrManagedAsync(
+            string messageBoxText, string caption, MessageBoxButton button, MessageBoxImage icon, MessageBoxResult defaultResult)
+        {
+            (string Label, MessageBoxResult Result)[] buttons = PortableButtons(button);
+            string[] labels = Array.ConvertAll(buttons, b => b.Label);
+            int cancel = Array.FindIndex(buttons, b => b.Result == MessageBoxResult.Cancel);
+            if (cancel < 0 && buttons.Length == 1) cancel = 0;
+            int preferred = Array.FindIndex(buttons, b => b.Result == defaultResult);
+
+            try
+            {
+                if (OperatingSystem.IsIOS() && MS.Internal.Interop.UIKitAlerts.IsAvailable)
+                {
+                    int i = await MS.Internal.Interop.UIKitAlerts.ShowAlertAsync(caption, messageBoxText, labels, cancel,
+                                                                                    preferred < 0 ? 0 : preferred).ConfigureAwait(true);
+                    if (i >= 0 && i < buttons.Length) return buttons[i].Result;
+                }
+                else if (OperatingSystem.IsAndroid() && MS.Internal.Interop.AndroidDialogs.IsAvailable && buttons.Length <= 3)
+                {
+                    int i = await MS.Internal.Interop.AndroidDialogs.ShowAlertAsync(caption, messageBoxText, labels, cancel).ConfigureAwait(true);
+                    if (i >= 0 && i < buttons.Length) return buttons[i].Result;
+                }
+                else if (OperatingSystem.IsBrowser() && MS.Internal.Interop.BrowserDialogs.IsAvailable)
+                {
+                    // The page's prompts have no title; the caption leads the message, as browsers show it.
+                    string text = string.IsNullOrEmpty(caption) ? messageBoxText : caption + "\n\n" + messageBoxText;
+                    if (button == MessageBoxButton.OK)
+                    {
+                        MS.Internal.Interop.BrowserDialogs.Alert(text);
+                        return MessageBoxResult.OK;
+                    }
+                    if (button == MessageBoxButton.OKCancel)
+                        return MS.Internal.Interop.BrowserDialogs.Confirm(text) ? MessageBoxResult.OK : MessageBoxResult.Cancel;
+                }
+            }
+            catch (Exception)
+            {
+                // The platform's alert could not be shown: draw ours rather than answer for the user.
+            }
+
+            return await ManagedMessageBox.ShowAsync(messageBoxText, caption, buttons, icon, defaultResult).ConfigureAwait(true);
         }
 
         private static MessageBoxResult ShowPortable(string messageBoxText, string caption,

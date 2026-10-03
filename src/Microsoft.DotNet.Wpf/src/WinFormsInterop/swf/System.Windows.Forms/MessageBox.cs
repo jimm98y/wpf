@@ -83,6 +83,8 @@ namespace System.Windows.Forms
 			HelpNavigator help_navigator;
 			object help_param;
 			AlertType		alert_type;
+			MessageBoxIcon		msgbox_icon;
+			MessageBoxOptions	msgbox_options;
 			#endregion	// MessageBoxFrom Local Variables
 			
 			#region MessageBoxForm Constructors
@@ -91,6 +93,7 @@ namespace System.Windows.Forms
 					       bool displayHelpButton)
 			{
 				show_help = displayHelpButton;
+				msgbox_icon = icon;
 
 				switch (icon) {
 					case MessageBoxIcon.None: {
@@ -149,6 +152,7 @@ namespace System.Windows.Forms
 				: this (owner, text, caption, buttons, icon, displayHelpButton)
 			{
 				msgbox_default = defaultButton;
+				msgbox_options = options;
 			}
 
 			public MessageBoxForm (IWin32Window owner, string text, string caption,
@@ -198,8 +202,25 @@ namespace System.Windows.Forms
 				get { return help_param; }
 			}
 			
+			/// <summary>The box as the platform's message box is asked for it.</summary>
+			internal MessageBoxRequest Request => new MessageBoxRequest {
+				Text = msgbox_text,
+				Caption = Text,
+				Buttons = msgbox_buttons,
+				Icon = msgbox_icon,
+				DefaultButton = msgbox_default,
+				Options = msgbox_options,
+				ShowHelp = show_help,
+			};
+
 			public DialogResult RunDialog ()
 			{
+				// The platform's own message box wherever there is one: user32's, AppKit's, or what a
+				// WPF host shows. This managed form is for when there is none.
+				IMessageBoxBridge bridge = XplatUIWebGpu.MessageBoxBridge;
+				if (bridge != null && bridge.TryShow (Request, out DialogResult answer))
+					return answer;
+
 				this.StartPosition = FormStartPosition.CenterScreen;
 
 				if (size_known == false) {
@@ -299,6 +320,10 @@ namespace System.Windows.Forms
 
 					case MessageBoxButtons.RetryCancel:
 						buttoncount = 2;
+						break;
+
+					case MessageBoxButtons.CancelTryContinue:
+						buttoncount = 3;
 						break;
 					
 					default:
@@ -454,6 +479,13 @@ namespace System.Windows.Forms
 						case MessageBoxButtons.RetryCancel: {
 							buttons[0] = AddRetryButton (0);
 							buttons[1] = AddCancelButton (1);
+							break;
+						}
+
+						case MessageBoxButtons.CancelTryContinue: {
+							buttons[0] = AddCancelButton (0);
+							buttons[1] = AddButton ("&Try Again", 1, (s, e) => { DialogResult = DialogResult.TryAgain; Close (); });
+							buttons[2] = AddButton ("&Continue", 2, (s, e) => { DialogResult = DialogResult.Continue; Close (); });
 							break;
 						}
 					}
@@ -618,6 +650,29 @@ namespace System.Windows.Forms
 		#endregion	// Constructors
 
 		#region Public Static Methods
+		/// <summary>The message box without blocking: the answer arrives when the user gives it. A port
+		/// extension, as WPF's MessageBox.ShowAsync: on the browser, iOS and Android nothing can wait
+		/// for a prompt (their run loops cannot be re-entered), so this is the form that works on
+		/// every platform. Elsewhere it is Show.</summary>
+		public static System.Threading.Tasks.Task<DialogResult> ShowAsync (string text, string caption = "",
+			MessageBoxButtons buttons = MessageBoxButtons.OK, MessageBoxIcon icon = MessageBoxIcon.None,
+			MessageBoxDefaultButton defaultButton = MessageBoxDefaultButton.Button1, MessageBoxOptions options = 0)
+			=> ShowAsync (null, text, caption, buttons, icon, defaultButton, options);
+
+		public static async System.Threading.Tasks.Task<DialogResult> ShowAsync (IWin32Window owner, string text, string caption = "",
+			MessageBoxButtons buttons = MessageBoxButtons.OK, MessageBoxIcon icon = MessageBoxIcon.None,
+			MessageBoxDefaultButton defaultButton = MessageBoxDefaultButton.Button1, MessageBoxOptions options = 0)
+		{
+			var form = new MessageBoxForm (owner, text, caption, buttons, icon, defaultButton, options, false);
+			IMessageBoxBridge bridge = XplatUIWebGpu.MessageBoxBridge;
+			if (bridge != null) {
+				DialogResult? answer = await bridge.ShowAsync (form.Request);
+				if (answer.HasValue)
+					return answer.Value;
+			}
+			return form.RunDialog ();
+		}
+
 		public static DialogResult Show (string text)
 		{
 			MessageBoxForm form = new MessageBoxForm (null, text, string.Empty, MessageBoxButtons.OK, MessageBoxIcon.None);
