@@ -78,6 +78,8 @@ namespace System.Windows.Forms {
 
 		#region Local Variables
 		internal DialogForm	form;
+		/// <summary>Set by RunDialog when it ran the platform's dialog instead of the managed form.</summary>
+		internal bool ranOnPlatform;
 		private object tag;
 		#endregion Local Variables
 
@@ -123,7 +125,13 @@ namespace System.Windows.Forms {
 			}
 			
 			// This is an internal derived CommonDialog
-			if (RunDialog (form.Handle))
+			ranOnPlatform = false;
+			bool ok = RunDialog (form.Handle);
+			// The platform's own dialog has been and gone: its answer is the result, and the
+			// managed form must not be shown after it.
+			if (ranOnPlatform)
+				return ok ? DialogResult.OK : DialogResult.Cancel;
+			if (ok)
 				form.ShowDialog (owner);
 
 			return form.DialogResult;

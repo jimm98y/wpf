@@ -749,8 +749,10 @@ namespace System.Windows.Forms
 			// different dialogs. Mono's managed one below is the fallback, and still the only
 			// option where there is no common dialog to call.
 			IFileDialogBridge bridge = XplatUIWebGpu.FileDialogBridge;
-			if (bridge != null)
+			if (bridge != null) {
+				ranOnPlatform = true;
 				return RunPlatformDialog (bridge);
+			}
 
 			ReadConfigValues ();
 			form.Text = DialogTitle;

@@ -154,7 +154,17 @@ namespace System.Windows.Forms
                     ofn.Flags |= OFN_OVERWRITEPROMPT;
                 }
 
-                bool ok = open ? GetOpenFileNameW(ref ofn) : GetSaveFileNameW(ref ofn);
+                // In comctl32 v6, as CommonDialog.ShowDialog's ThemingScope runs every dialog.
+                bool ok;
+                IntPtr cookie = Win32ThemingScope.Enter();
+                try
+                {
+                    ok = open ? GetOpenFileNameW(ref ofn) : GetSaveFileNameW(ref ofn);
+                }
+                finally
+                {
+                    Win32ThemingScope.Leave(cookie);
+                }
                 if (!ok)
                 {
                     int why = CommDlgExtendedError();

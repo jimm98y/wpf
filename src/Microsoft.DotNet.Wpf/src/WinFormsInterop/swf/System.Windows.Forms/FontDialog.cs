@@ -681,8 +681,22 @@ namespace System.Windows.Forms
 		#endregion	// Public Instance Properties
 		
 		#region Protected Instance Properties
+		/// <summary>The CHOOSEFONT flags the properties stand for, as .NET keeps them.</summary>
 		protected int Options {
-			get { return 0; }
+			get {
+				int o = Win32FontDialog.CF_SCREENFONTS | Win32FontDialog.CF_TTONLY;
+				if (showEffects) o |= Win32FontDialog.CF_EFFECTS;
+				if (!allowSimulations) o |= Win32FontDialog.CF_NOSIMULATIONS;
+				if (!allowVectorFonts) o |= Win32FontDialog.CF_NOVECTORFONTS;
+				if (!allowVerticalFonts) o |= Win32FontDialog.CF_NOVERTFONTS;
+				if (!allowScriptChange) o |= Win32FontDialog.CF_SELECTSCRIPT;
+				if (fixedPitchOnly) o |= Win32FontDialog.CF_FIXEDPITCHONLY;
+				if (fontMustExist) o |= Win32FontDialog.CF_FORCEFONTEXIST;
+				if (scriptsOnly) o |= Win32FontDialog.CF_SCRIPTSONLY;
+				if (showApply) o |= Win32FontDialog.CF_APPLY;
+				if (showHelp) o |= Win32FontDialog.CF_SHOWHELP;
+				return o;
+			}
 		}
 		#endregion	// Protected Instance Properties
 		
@@ -733,6 +747,24 @@ namespace System.Windows.Forms
 
 		protected override bool RunDialog( IntPtr hWndOwner )
 		{
+			// Windows' own ChooseFont where there is one, as stock WinForms shows -- see Win32FontDialog.
+			if (Win32FontDialog.Available) {
+				ranOnPlatform = true;
+				Font chosen = font;
+				Color chosenColor = color;
+				if (!Win32FontDialog.Show (Options, font ?? Control.DefaultFont, minSize, maxSize, showColor,
+				                           ref chosen, ref chosenColor, (f, c) => {
+					                           Font = f;
+					                           color = c;
+					                           OnApply (EventArgs.Empty);
+				                           }))
+					return false;
+				if (chosen != font)
+					Font = chosen;
+				color = chosenColor;
+				return true;
+			}
+
 			form.Refresh();
 			
 			return true;
