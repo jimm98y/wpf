@@ -2617,6 +2617,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 case WpfTextRunDraw natural:
                     EmitWpfNaturalText(natural, world, opacity, clip, width, height, format, data);
                     break;
+                case GdiPlusTextDraw gdiPlus:
+                    EmitGdiPlusText(gdiPlus, world, opacity, clip, width, height, format, data);
+                    break;
             }
         }
 
@@ -5658,7 +5661,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return resolved;
         }
 
-        private static Text.IFont? LoadFamily(string family, int style)
+        internal static Text.IFont? LoadFamily(string family, int style)
         {
             bool bold = (style & 1) != 0, italic = (style & 2) != 0;
             string? path = Text.FontFiles.Find(family, bold, italic);

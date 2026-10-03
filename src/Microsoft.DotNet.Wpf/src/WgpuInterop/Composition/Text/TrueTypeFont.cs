@@ -215,6 +215,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _xAvgCharWidth = (short) U16(os2 + 2);
             }
             _vdmx = tables.TryGetValue("VDMX", out int vdmx) ? vdmx : -1;
+            _isFixedPitch = tables.TryGetValue("post", out int postTable) && postTable + 16 <= _data.Length
+                            && U32(postTable + 12) != 0;
             GdiContrastPalette = ComputeGdiContrastPalette(tables);
 
             // Outlines are OPTIONAL, because a colour BITMAP font has none.
@@ -611,6 +613,67 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// measure it the way the fitting does.</summary>
         internal int UnitsPerEmForHinting => _unitsPerEm;
 
+        // ---- What GDI+'s text imager asks of a face (GdiPlusText) ----
+
+        /// <summary>post.isFixedPitch: what IDWriteFontFace1::IsMonospacedFont answers.</summary>
+        internal bool IsFixedPitch => _isFixedPitch;
+        private readonly bool _isFixedPitch;
+
+        /// <summary>usWinAscent / usWinDescent: GDI+'s cell ascent and descent.</summary>
+        internal int WinAscent => _winAscent;
+        internal int WinDescent => _winDescent;
+
+        /// <summary>The design advance (hmtx), in font units.</summary>
+        internal int DesignAdvance(int glyphId) => (int)MathF.Round(AdvanceWidth(glyphId));
+
+        /// <summary>The glyph's design ink box in x (glyf header), in font units; false for a glyph
+        /// with no outline.</summary>
+        internal bool TryGetDesignXExtent(int glyphId, out int xMin, out int xMax)
+        {
+            xMin = xMax = 0;
+            if (_glyfOffset < 0 || glyphId < 0 || glyphId >= _numGlyphs || _loca.Length == 0) return false;
+            uint start = _loca[glyphId], end = _loca[glyphId + 1];
+            if (end <= start) return false;
+            int p = _glyfOffset + (int)start;
+            xMin = (short)U16(p + 2); xMax = (short)U16(p + 6);
+            return true;
+        }
+
+        /// <summary>GpFaceRealization::SearchVdmxTable: the FIRST ratio record with bCharSet 1 whose
+        /// ratio covers 1:1 governs, and within its group only an exact yPelHeight answers. (Unlike
+        /// GDI's own lookup, a miss there does not go on to the next ratio.)</summary>
+        internal bool TryGetGdiPlusVdmx(int ppem, out int yMax, out int yMin)
+        {
+            yMax = yMin = 0;
+            if (_vdmx < 0 || _vdmx + 6 > _data.Length) return false;
+            int numRatios = U16(_vdmx + 4);
+            int ratios = _vdmx + 6, offsets = ratios + numRatios * 4;
+            if (offsets + numRatios * 2 > _data.Length) return false;
+            for (int i = 0; i < numRatios; i++)
+            {
+                int r = ratios + i * 4;
+                int cs = _data[r], xr = _data[r + 1], ys = _data[r + 2], ye = _data[r + 3];
+                if (cs != 1 || !(xr == 0 || (ys * 96 <= xr * 96 && xr * 96 <= ye * 96))) continue;
+                int group = _vdmx + U16(offsets + i * 2);
+                if (group + 4 > _data.Length) return false;
+                int recs = U16(group), startSize = _data[group + 2], endSize = _data[group + 3];
+                if (ppem < startSize || ppem > endSize) return false;
+                for (int k = 0; k < recs && group + 10 + 6 * k <= _data.Length; k++)
+                {
+                    int e = group + 4 + 6 * k;
+                    int size = U16(e);
+                    if (size == ppem) { yMax = (short)U16(e + 2); yMin = (short)U16(e + 4); return true; }
+                    if (size > ppem) return false;
+                }
+                return false;
+            }
+            return false;
+        }
+
+        /// <summary>The number of glyphs the face's EBLC strike holds at this ppem (what
+        /// IDWriteGdiPlusFontFace::GetEmbeddedBitmapCount reports), 0 when it ships none.</summary>
+        internal int EmbeddedBitmapCount(int ppem) => _metricStrikes?.GlyphCountAt(ppem) ?? 0;
+
         /// <summary>One glyph's contours in font units, y up -- what the fitting works on.</summary>
         internal List<(Vector2[] Pts, bool[] On)>? ContoursForHinting(int glyphId)
         {
@@ -668,6 +731,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Whether this instance is a synthesized BOLD.</summary>
         internal bool SynthesizesBold => _emboldenStrength > 0f;
+
+        /// <summary>Whether this face shears an upright file to stand in for an italic.</summary>
+        internal bool SynthesizesOblique => _shear != 0f;
 
         private TrueTypeInterpreter? Interpreter()
         {
@@ -1741,6 +1807,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return interpreter is not null && interpreter.PrepareForSize(pixelsPerEm) && interpreter.GridFitInhibited;
         }
 
+        /// <summary>The 'gasp' DOGRAY bit at this ppem (IDWriteGdiPlusFontFace::IsGrayscaleFontSize):
+        /// true for a face with no 'gasp'.</summary>
+        internal bool GaspDoGray(int ppem)
+        {
+            if (_gasp < 0) return true;
+            int ranges = U16(_gasp + 2);
+            int at = _gasp + 4;
+            for (int i = 0; i < ranges; i++, at += 4)
+                if (ppem <= U16(at))
+                    return (U16(at + 2) & 2) != 0;
+            return true;
+        }
+
         private bool FaceWantsGridFit(float pixelsPerEm)
         {
             if (_gasp < 0 || s_alwaysFit) return true;
@@ -2183,30 +2262,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return figures.Count > 0;
         }
 
-        /// <summary>The glyph fitted the way DirectWrite fits it for WPF: one run of the face's own
-        /// program under DirectWrite's rendering-mode word (<see cref="TrueTypeInterpreter.DWriteFlags"/>,
-        /// 0x51 natural or 0x71 natural symmetric), in device pixels, y down, baseline at 0.
-        /// <para>None of GDI's machinery applies. Its compatible-width realization -- the bi-level
-        /// measuring pass, the phase, the compatible advance -- hangs off bit 1 of the word, which
-        /// DirectWrite's natural modes never set, and the adjustments this class makes after a GDI fit
-        /// are approximations of GDI, not of anything DirectWrite does.</para>
-        /// <para>False when the face has no program for the glyph, or the program fails; the caller
-        /// then draws the scaled outline, as DirectWrite does when grid fitting is off.</para>
-        /// <para><paramref name="dropout"/> is the scan converter's dropout mode for the glyph, as
-        /// fsg_ExecuteGlyph takes it -- SCANCTRL and SCANTYPE as the glyph's own program leaves them,
-        /// else as the pre-program did -- in <see cref="PathRasterizer.DropoutForRun"/>'s terms
-        /// (SCANTYPE + 1, or 0 for none).</para></summary>
-        internal bool TryGetDWriteFittedOutline(int glyphId, float pixelsPerEm, int flags, out List<PathFigure> figures,
-                                                out int dropout, Func<int[], int[], int[], bool>? postFit = null)
+        /// <summary>One run of the face's program under DirectWrite's mode word -- the fit behind
+        /// <see cref="TryGetDWriteFittedOutline"/> -- or null when there is none.</summary>
+        private GlyphProgram? DWriteFit(int glyphId, float pixelsPerEm, int flags, out int dropout)
         {
-            figures = s_noFigures;
             dropout = 0;
             if (pixelsPerEm <= 0f || glyphId < 0 || glyphId >= _numGlyphs || _glyfOffset < 0 || _loca.Length == 0)
-                return false;
+                return null;
             uint start = _loca[glyphId], end = _loca[glyphId + 1];
-            if (end <= start) return false;
+            if (end <= start) return null;
             TrueTypeInterpreter? interpreter = Interpreter();
-            if (interpreter is null) return false;
+            if (interpreter is null) return null;
 
             int savedFlags = TrueTypeInterpreter.DWriteFlags;
             bool savedBi = TrueTypeInterpreter.BiLevelPass, savedSub = SubpixelFitting;
@@ -2226,7 +2292,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 glyph = (short)U16(_glyfOffset + (int)start) >= 0
                     ? ReadGlyphProgram(glyphId)
                     : ReadCompositeProgram(interpreter, glyphId, pixelsPerEm, 0);
-                if (glyph is null || !interpreter.Hint(glyph, pixelsPerEm)) return false;
+                if (glyph is null || !interpreter.Hint(glyph, pixelsPerEm)) return null;
                 int ctrl = glyph.ScanControl >= 0 ? glyph.ScanControl : interpreter.PrepScanControl;
                 int type = glyph.ScanType >= 0 ? glyph.ScanType : interpreter.PrepScanType;
                 int scan = DoScanControl(ctrl, (int)MathF.Round(pixelsPerEm)) ? type : 2;
@@ -2243,6 +2309,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 SubpixelFitting = savedSub;
             }
 
+            return glyph;
+        }
+
+        /// <summary>The distance the program leaves between the horizontal phantom points under
+        /// DirectWrite's mode word, in 26.6; false where the glyph has no outline or program.</summary>
+        internal bool TryGetDWriteFittedSpan64(int glyphId, float pixelsPerEm, int flags, out int span64)
+        {
+            var key = (glyphId, BitConverter.SingleToInt32Bits(pixelsPerEm), flags);
+            lock (_dwriteSpans)
+                if (_dwriteSpans.TryGetValue(key, out span64)) return span64 != int.MinValue;
+            GlyphProgram? glyph = DWriteFit(glyphId, pixelsPerEm, flags, out _);
+            span64 = glyph is null ? int.MinValue : glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount];
+            lock (_dwriteSpans)
+            {
+                if (_dwriteSpans.Count > HintedCacheLimit) _dwriteSpans.Clear();
+                _dwriteSpans[key] = span64;
+            }
+            return span64 != int.MinValue;
+        }
+
+        private readonly Dictionary<(int, int, int), int> _dwriteSpans = new();
+
+        /// <summary>The glyph fitted the way DirectWrite fits it for WPF: one run of the face's own
+        /// program under DirectWrite's rendering-mode word (<see cref="TrueTypeInterpreter.DWriteFlags"/>,
+        /// 0x51 natural or 0x71 natural symmetric), in device pixels, y down, baseline at 0.
+        /// <para>None of GDI's machinery applies. Its compatible-width realization -- the bi-level
+        /// measuring pass, the phase, the compatible advance -- hangs off bit 1 of the word, which
+        /// DirectWrite's natural modes never set, and the adjustments this class makes after a GDI fit
+        /// are approximations of GDI, not of anything DirectWrite does.</para>
+        /// <para>False when the face has no program for the glyph, or the program fails; the caller
+        /// then draws the scaled outline, as DirectWrite does when grid fitting is off.</para>
+        /// <para><paramref name="dropout"/> is the scan converter's dropout mode for the glyph, as
+        /// fsg_ExecuteGlyph takes it -- SCANCTRL and SCANTYPE as the glyph's own program leaves them,
+        /// else as the pre-program did -- in <see cref="PathRasterizer.DropoutForRun"/>'s terms
+        /// (SCANTYPE + 1, or 0 for none).</para></summary>
+        internal bool TryGetDWriteFittedOutline(int glyphId, float pixelsPerEm, int flags, out List<PathFigure> figures,
+                                                out int dropout, Func<int[], int[], int[], bool>? postFit = null)
+        {
+            figures = s_noFigures;
+            GlyphProgram? glyph = DWriteFit(glyphId, pixelsPerEm, flags, out dropout);
+            if (glyph is null) return false;
             int[] gx = glyph.X, gy = glyph.Y;
             if (postFit is not null)
             {

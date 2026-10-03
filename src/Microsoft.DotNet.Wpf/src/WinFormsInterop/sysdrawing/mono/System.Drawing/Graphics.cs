@@ -1986,6 +1986,10 @@ namespace System.Drawing
 		/// reads it too, as .NET's maps it to the font's quality (NONANTIALIASED_QUALITY).</summary>
 		TextRenderingHint recorded_text_hint = TextRenderingHint.SystemDefault;
 
+		/// <summary>TextContrast on a recording Graphics (GDI+'s default is 4): the gamma table
+		/// GDI+'s text blend goes through (see TryDrawGdiPlusText).</summary>
+		int recorded_text_contrast = 4;
+
 		bool BiLevelText => recorded_text_hint == TextRenderingHint.SingleBitPerPixel
 			|| recorded_text_hint == TextRenderingHint.SingleBitPerPixelGridFit;
 
@@ -2131,6 +2135,53 @@ namespace System.Drawing
 			return left == 0f ? 0f : left + (float) Math.Ceiling (font.Height / 6f * 1.5f);
 		}
 
+		/// <summary>WF_GDIPLUS_TEXT=0 draws the public DrawString through the GDI pipeline again.</summary>
+		static readonly bool s_gdiPlusText = Environment.GetEnvironmentVariable ("WF_GDIPLUS_TEXT") != "0";
+
+		/// <summary>Graphics.DrawString as gdiplus.dll draws it on its fast path (FastTextImager):
+		/// its own layout -- natural hinted advances, 1.03 tracking, em/6 margins, an unrounded
+		/// baseline -- and its own ClearType (DirectWrite's 6x1 glyph bitmaps through GDI's filter
+		/// and GDI+'s TextContrast blend). False where GDI+ would take its FULL imager (Line Services:
+		/// tabs, line breaks, wrapping, RTL or vertical formats, tab stops, complex scripts, hot-key
+		/// prefixes, italic overhang past the margins) or where the realization is not modelled
+		/// (the bi-level ones: SingleBitPerPixel[GridFit], AntiAliasGridFit where the face's gasp
+		/// does not grey, ClearType at a size drawn from embedded bitmaps; simulated bold; a
+		/// simulated italic under the antialiased hints; underline/strikeout): those keep being
+		/// drawn the way they always were, below. The antialiased hints are GDI+'s too: 4x4 glyphs
+		/// through its text gamma table.</summary>
+		bool TryDrawGdiPlusText (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
+		{
+			if (!s_gdiPlusText || font.Underline || font.Strikeout)
+				return false;
+			string family = font.FontFamily?.Name;
+			if (string.IsNullOrEmpty (family))
+				return false;
+			int style = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
+			int flags = 0, align = 0, lineAlign = 0;
+			bool typographic = false, hotkey = false;
+			if (format != null) {
+				if (format.TabStopCount > 0)
+					return false;
+				flags = (int) format.FormatFlags;
+				typographic = format.IsTypographic;
+				// GenericTypographic's own flags (FitBlackBox | LineLimit | NoClip), which the
+				// GDI+-less StringFormat does not carry.
+				if (typographic)
+					flags |= 0x6004;
+				align = (int) format.Alignment;
+				lineAlign = (int) format.LineAlignment;
+				hotkey = format.HotkeyPrefix != Text.HotkeyPrefix.None;
+			}
+			object layout = WebGpuBackend.TextMetrics.LayoutGdiPlus (s, family, style, font.SizeInPoints,
+				rect.X, rect.Y, rect.Width, rect.Height, flags, typographic, align, lineAlign, hotkey,
+				(int) recorded_text_hint, recorded_text_contrast, out bool empty);
+			if (layout == null)
+				return false;
+			if (!empty)
+				GpuRecorder.DrawGdiPlusText (layout, s, ArgbOf (brush), style, family);
+			return true;
+		}
+
 		public void DrawString (string s, Font font, Brush brush, RectangleF layoutRectangle, StringFormat format)
 		{
 			if (font == null)
@@ -2140,6 +2191,12 @@ namespace System.Drawing
 			if (s == null || s.Length == 0)
 				return;
 			if (GpuRecorder != null && brush is SolidBrush) {
+				// The public DrawString is GDI+'s, and GDI+ text is its own pipeline: where its fast
+				// imager would draw the string, draw it that way (see TryDrawGdiPlusText). The port's
+				// own controls stand in for GDI text and keep the path below.
+				if (!gdi_text_metrics && !gdi_ascent && !memory_surface_text
+				    && TryDrawGdiPlusText (s, font, brush, layoutRectangle, format))
+					return;
 				// GDI+ DrawString positions by the layout rect's top-left; em size in pixels ~ points*96/72.
 				// Honour the StringFormat alignment (buttons/labels centre text in a rect) by measuring
 				// the run and offsetting within the layout rectangle. MeasureString uses libgdiplus for
@@ -3822,7 +3879,7 @@ namespace System.Drawing
 		[MonoTODO ("This property does not do anything when used with libgdiplus.")]
 		public int TextContrast {
 			get {	
-                                if (nativeObject == IntPtr.Zero) return 4;   // recording-only
+                                if (nativeObject == IntPtr.Zero) return recorded_text_contrast;   // recording-only
                                 int contrast;
 					
                                 Status status = GDIPlus.GdipGetTextContrast (nativeObject, out contrast);
@@ -3831,7 +3888,7 @@ namespace System.Drawing
 			}
 
                         set {
-                                if (nativeObject == IntPtr.Zero) return;
+                                if (nativeObject == IntPtr.Zero) { if (value >= 0 && value <= 12) recorded_text_contrast = value; return; }
                                 Status status = GDIPlus.GdipSetTextContrast (nativeObject, value);
 				CheckDrawStatus (status);
 			}

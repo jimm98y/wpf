@@ -376,6 +376,16 @@ namespace System.Drawing.WebGpuBackend
             // at present time by the renderer that owns the font.
             => Add(new GlyphRunDraw(text, new Vector2(x, y + emPx * 0.8f), emPx, Rgba(argb), simulations, fontFamily));
 
+        public void DrawGdiPlusText(object layout, string text, int argb, int simulations, string fontFamily)
+        {
+            var run = (Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Run)layout;
+            // The same string as an ordinary run on the same baseline: bounds, hashing, hit testing,
+            // and the drawing wherever the device transform is not one GDI+'s fast path takes.
+            var fallback = new GlyphRunDraw(text, new Vector2(run.OriginX, run.OriginY), run.Em, Rgba(argb),
+                                            simulations, fontFamily);
+            Add(new GdiPlusTextDraw(run, fontFamily, simulations & 3, argb, fallback));
+        }
+
         // A colour as WinForms states it. WHICH SPACE depends on the one the compositor blends in,
         // and the two have to agree or every blend is wrong.
         //

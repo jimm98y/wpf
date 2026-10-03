@@ -148,6 +148,28 @@ namespace System.Drawing.WebGpuBackend
             return (int)Math.Round(width);
         }
 
+        /// <summary>Graphics.DrawString as GDI+'s FastTextImager lays it out (GdiPlusText.Layout):
+        /// an opaque layout for IGpuSceneRecorder.DrawGdiPlusText, or null where GDI+ would take its
+        /// full imager -- tabs, line breaks, wrapping, RTL/vertical formats, complex scripts,
+        /// hot-key prefixes, italic overhang past the margins -- or the realization asked for is
+        /// not modelled; the caller then draws the string as it always has. <paramref name="empty"/>
+        /// is a string GDI+ draws nothing for (all spaces).</summary>
+        internal static object LayoutGdiPlus(string text, string family, int style, float sizePt,
+                                             float x, float y, float width, float height, int formatFlags,
+                                             bool typographic, int align, int lineAlign, bool hotkeyPrefix,
+                                             int hint, int contrast, out bool empty)
+        {
+            empty = false;
+            TrueTypeFont face = GdiPlusText.Face(family, style);
+            if (face is null) return null;
+            GdiPlusText.Run run = GdiPlusText.Layout(face, family, sizePt, text, x, y, width, height, formatFlags,
+                                                     typographic, align, lineAlign, hotkeyPrefix, hint);
+            if (run is null) return null;
+            run.Contrast = contrast;
+            empty = run.Glyphs.Length == 0;
+            return run;
+        }
+
         /// <summary>The ascent and descent GDI reports for this family and style at this pixel
         /// size -- the line box every control that sizes itself to a line of text is measured
         /// against. False when the family cannot be resolved to a face.

@@ -134,6 +134,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
         }
 
+        /// <summary>How many glyphs the strikes at this y ppem index: each index subtable's
+        /// first..last range, summed (GDI+ asks DirectWrite this to decide whether a size is drawn
+        /// from the bitmaps).</summary>
+        public int GlyphCountAt(int ppem)
+        {
+            int count = 0;
+            foreach (Strike st in _strikes)
+            {
+                if (st.PpemY != ppem) continue;
+                for (int k = 0; k < st.NumIndexSubTables; k++)
+                {
+                    int e = st.IndexSubTableArray + k * 8;
+                    if (e + 4 > _data.Length) break;
+                    int first = U16(e), last = U16(e + 2);
+                    if (last >= first) count += last - first + 1;
+                }
+            }
+            return count;
+        }
+
         /// <summary>True when the font actually carries usable strikes.</summary>
         public bool HasStrikes => _strikes.Count > 0 || _sbixStrikes.Count > 0;
 

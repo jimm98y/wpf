@@ -104,6 +104,7 @@ namespace System.Drawing {
 			// new StringFormat (StringFormat.GenericTypographic) got a format that was no longer
 			// typographic, and the margin it was asking to be rid of came straight back.
 			IsTypographic = format.IsTypographic;
+			TabStopCount = format.TabStopCount;
 			_measurableRanges = (format._measurableRanges == null)
 				? null : (CharacterRange []) format._measurableRanges.Clone ();
 			if (GDIPlus.Initialized) {
@@ -348,8 +349,13 @@ namespace System.Drawing {
 			}
 		}
 
+                /// <summary>How many tab stops were set, kept where there is no GDI+ to hold them: a
+                /// format with tab stops is one GDI+'s fast text imager refuses.</summary>
+                internal int TabStopCount;
+
                 public void SetTabStops(float firstTabOffset, float[] tabStops)
                 {
+			TabStopCount = tabStops?.Length ?? 0;
 			if (!GDIPlus.Initialized) return;
 			Status status = GDIPlus.GdipSetStringFormatTabStops(nativeStrFmt, firstTabOffset, tabStops.Length, tabStops);
 			GDIPlus.CheckStatus (status);

@@ -605,9 +605,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (p is WpfTextRunDraw t)
                 foreach (DrawingPrimitive f in t.Fallback) yield return f;
+            else if (p is GdiPlusTextDraw g)
+                yield return g.Fallback;
             else
                 yield return p;
         }
+    }
+
+    /// <summary>A string as GDI+'s Graphics.DrawString draws it on its fast path: glyphs already
+    /// laid out by <see cref="Text.GdiPlusText.Layout"/>, drawn through GDI+'s ClearType pipeline
+    /// (WgpuSceneRenderer.EmitGdiPlusText). <see cref="Fallback"/> is the same string as an ordinary
+    /// string run: what bounds, hashing and hit testing read, and what is drawn when the device
+    /// transform is not one GDI+'s fast imager would take.</summary>
+    internal sealed class GdiPlusTextDraw : DrawingPrimitive
+    {
+        public GdiPlusTextDraw(Text.GdiPlusText.Run run, string family, int style, int argb, GlyphRunDraw fallback)
+        {
+            Run = run; FontFamily = family; Style = style; Argb = argb; Fallback = fallback;
+        }
+
+        public Text.GdiPlusText.Run Run { get; }
+        public string FontFamily { get; }
+        /// <summary>1 bold, 2 italic, as the face was resolved for the layout.</summary>
+        public int Style { get; }
+        /// <summary>The brush as GDI+ holds it, not premultiplied.</summary>
+        public int Argb { get; }
+        public GlyphRunDraw Fallback { get; }
     }
 
     internal sealed class GlyphRunDraw : DrawingPrimitive

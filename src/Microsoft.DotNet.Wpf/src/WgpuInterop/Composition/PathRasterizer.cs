@@ -1538,7 +1538,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             FillRule fillRule, int originX, int originY, int width, int height, int nSub,
             GdiScanRows? walk = null)
         {
-            int nCols = width * SubpixelsPerPixel * 2, nRows = height * nSub;
+            int perPixel = DropoutColumnsPerPixel > 0 ? DropoutColumnsPerPixel : SubpixelsPerPixel * 2;
+            int nCols = width * perPixel, nRows = height * nSub;
             int scanType = DropoutForRun - 1;
             bool stubs = s_dropoutStubs && (scanType & 1) != 0, smart = (scanType & 4) != 0;
             // Into the scan converter's frame: sample q at x'=q+1/2, sub-row j (counted from the
@@ -1548,7 +1549,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 var a = new Vector2[poly.Count];
                 for (int i = 0; i < a.Length; i++)
-                    a[i] = new Vector2((poly[i].X - originX) * 6f + 0.5f - GdiSamplePhase,
+                    a[i] = new Vector2((poly[i].X - originX) * perPixel + 0.5f - GdiSamplePhase,
                                        nRows - ((poly[i].Y - originY) * nSub + 0.5f - GdiSubrowPhase));
                 P.Add(a);
             }
@@ -1676,7 +1677,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // box, and its dropout fill is clamped into the row below, which is where GDI
                     // draws it. With five rows a pixel the same rounding can take one row more.
                     // y-up rows [B, T) map to y-down rows [-T, -B). WPF_CT_BOX_MEASURE=0.
-                    int S = Math.Max(1, nSub), X = SubpixelsPerPixel * 2;
+                    int S = Math.Max(1, nSub), X = perPixel;
                     long ymax = -(long) gy0 * S, ymin = -(long) gy1 * S;
                     long xmin = (long) gx0 * X, xmax = (long) gx1 * X;
                     long rMin = (ymin + 0x1f) >> 6, rMax = (ymax + 0x20) >> 6;
@@ -1689,8 +1690,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     rowMin = -T;
                     rowMax = -B;
                 }
-                xMin = Math.Max(0, (colMin - originX) * SubpixelsPerPixel * 2);
-                xMax = Math.Min(nCols, (colMax - originX) * SubpixelsPerPixel * 2);
+                xMin = Math.Max(0, (colMin - originX) * perPixel);
+                xMax = Math.Min(nCols, (colMax - originX) * perPixel);
                 yMin = Math.Max(0, nRows - (rowMax - originY) * nSub);
                 yMax = Math.Min(nRows, nRows - (rowMin - originY) * nSub);
                 // ...AND THE DROPOUT'S OWN LIMITS ARE THAT BOX IN SCAN ROWS, not rounded out to whole
@@ -3015,6 +3016,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        /// <summary>Sample columns a pixel for <see cref="GdiDropoutFills"/>; 0 is the ClearType six.</summary>
+        [ThreadStatic] private static int DropoutColumnsPerPixel;
+
         /// <summary>The whole of it for one glyph: its figures, in pixels, into per-sub-row
         /// crossing lists in the frame GdiTableFilterRowset pairs -- rows counted from the top,
         /// x as the sample centre's own expression so the span test lands on the index exactly,
@@ -3052,12 +3056,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
             }
 
-            // The dropout pass works on the ClearType lamp grid; a bi-level scan has none of it.
-            if (dropout > 0 && xScale == SubpixelsPerPixel * 2)
+            // The dropout pass works on the ClearType lamp grid (six columns a pixel), or on the
+            // 4x4 grid of GDI+'s antialiased glyphs; a bi-level scan has none of it.
+            if (dropout > 0 && (xScale == SubpixelsPerPixel * 2 || xScale == 4))
             {
                 List<List<Vector2>> polys = Flatten(path, CurveFlattener.GlyphTolerance);
-                int saved = DropoutForRun;
+                int saved = DropoutForRun, savedCols = DropoutColumnsPerPixel;
                 DropoutForRun = dropout;
+                DropoutColumnsPerPixel = xScale;
                 try
                 {
                     foreach ((int col, int subRow) in GdiDropoutFills(polys, path.FillRule, originX, originY,
@@ -3065,7 +3071,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         if (col >= 0 && col < nCols && subRow >= 0 && subRow < nRows)
                             bits[subRow * nCols + col] = true;
                 }
-                finally { DropoutForRun = saved; }
+                finally { DropoutForRun = saved; DropoutColumnsPerPixel = savedCols; }
             }
             return bits;
         }

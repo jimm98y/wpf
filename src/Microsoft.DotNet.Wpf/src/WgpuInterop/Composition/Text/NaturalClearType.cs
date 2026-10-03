@@ -66,16 +66,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// face has a program for it (else the scaled outline), then scan-converted at six samples a
         /// pixel across and <paramref name="nSub"/> rows down.</summary>
         internal static GlyphBits Rasterize(TrueTypeFont font, int glyphId, float pixelsPerEm, int nSub,
-                                            bool gridFit = true)
+                                            bool gridFit = true, int scalerFlags = 0, bool forceGridFit = false)
         {
-            int flags = nSub > 1 ? SymmetricFlags : NaturalFlags;
+            // scalerFlags overrides the mode word: GDI+'s glyphs are fitted with word 1 (see GdiPlusText).
+            int flags = scalerFlags != 0 ? scalerFlags : nSub > 1 ? SymmetricFlags : NaturalFlags;
             int dropout = 0;
             List<PathFigure> figures;
             // Simulated bold: the outline is emboldened where the scaler is not given the bitmap
             // smear (see EmboldenOutline): NATURAL_SYMMETRIC, and past 50ppem.
             int ppem = (int)MathF.Floor(pixelsPerEm + 0.5f);
             bool outlineBold = font.SynthesizesBold && (nSub > 1 || ppem > 50);
-            if (!gridFit || !font.WantsGridFit(pixelsPerEm)
+            if (!gridFit || (!forceGridFit && !font.WantsGridFit(pixelsPerEm))
                 || !font.TryGetDWriteFittedOutline(glyphId, pixelsPerEm, flags, out figures, out dropout,
                                                    outlineBold ? (x, y, ends) => EmboldenOutline(x, y, ends, ppem) : null))
             {
@@ -568,20 +569,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// reproduces for WinForms; the scan and the filter are the natural mode's (6x1).</summary>
         internal static GlyphBits RasterizeGdiClassic(TrueTypeFont font, int glyphId, float pixelsPerEm)
         {
+            if (!TryGetGdiClassicOutline(font, glyphId, pixelsPerEm, out List<PathFigure>? figures, out int dropout))
+                return s_empty;
+            // GDI_CLASSIC is scanned 6x1 too, so a simulated bold is the bitmap smear up to 50ppem.
+            GlyphBits bits = Scan(figures, 1, dropout);
+            return font.SynthesizesBold ? Embolden(bits, (int)MathF.Floor(pixelsPerEm + 0.5f)) : bits;
+        }
+
+        /// <summary>The GDI_CLASSIC fit itself (see <see cref="RasterizeGdiClassic"/>), in device pixels.</summary>
+        internal static bool TryGetGdiClassicOutline(TrueTypeFont font, int glyphId, float pixelsPerEm,
+                                                     out List<PathFigure> figures, out int dropout)
+        {
             bool savedSub = TrueTypeFont.SubpixelFitting, savedCt = TrueTypeFont.ClearTypeRendering;
             bool? savedSym = TrueTypeInterpreter.SymmetricAnswerOverride;
             bool savedMove = TrueTypeInterpreter.DWriteMovePoint;
-            List<PathFigure>? figures;
-            int dropout;
+            dropout = 0;
             try
             {
                 TrueTypeFont.SubpixelFitting = true;
                 TrueTypeFont.ClearTypeRendering = true;
                 TrueTypeInterpreter.SymmetricAnswerOverride = false;
                 TrueTypeInterpreter.DWriteMovePoint = true;
-                if (!((IHintedGlyphFont)font).TryGetHintedOutline(glyphId, pixelsPerEm, out figures) || figures is null)
-                    return s_empty;
+                if (!((IHintedGlyphFont)font).TryGetHintedOutline(glyphId, pixelsPerEm, out List<PathFigure>? got) || got is null)
+                {
+                    figures = new List<PathFigure>();
+                    return false;
+                }
+                figures = got;
                 dropout = Math.Max(0, font.GlyphDropout(glyphId, pixelsPerEm));
+                return true;
             }
             finally
             {
@@ -590,9 +606,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeInterpreter.SymmetricAnswerOverride = savedSym;
                 TrueTypeInterpreter.DWriteMovePoint = savedMove;
             }
-            // GDI_CLASSIC is scanned 6x1 too, so a simulated bold is the bitmap smear up to 50ppem.
-            GlyphBits bits = Scan(figures, 1, dropout);
-            return font.SynthesizesBold ? Embolden(bits, (int)MathF.Floor(pixelsPerEm + 0.5f)) : bits;
         }
 
         /// <summary>DirectWrite's rounding of a float to an int in GlyphRunAnalysis: truncate, then
