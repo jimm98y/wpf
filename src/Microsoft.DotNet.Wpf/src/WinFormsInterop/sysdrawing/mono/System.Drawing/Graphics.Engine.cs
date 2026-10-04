@@ -149,6 +149,91 @@ namespace System.Drawing
 			return true;
 		}
 
+		// ---- pens: each call builds the path GDI+'s flat API builds for it ---------------------------
+
+		bool EngineDrawPath (Pen pen, GpPath path)
+		{
+			if (pen == null || path == null || gp == null) return false;
+			GpGraphics e = Engine ();
+			if (e == null) return false;
+			return e.DrawPath (pen, path);
+		}
+
+		/// <summary>GpGraphics::DrawLines: the points as they are (no repeat dropped), one figure,
+		/// closed for a polygon.</summary>
+		bool EngineDrawLines (Pen pen, PointF [] pts, bool closed)
+		{
+			if (pen == null || pts == null || pts.Length < 2 || gp == null) return false;
+			var types = new byte [pts.Length];
+			for (int i = 1; i < types.Length; i++) types [i] = 1;
+			if (closed) types [types.Length - 1] |= 0x80;
+			return EngineDrawPath (pen, new GpPath ((PointF []) pts.Clone (), types, FillMode.Alternate));
+		}
+
+		bool EngineDrawLines (Pen pen, Point [] pts, bool closed)
+			=> pts != null && EngineDrawLines (pen, Array.ConvertAll (pts, p => (PointF) p), closed);
+
+		bool EngineDrawLine (Pen pen, float x1, float y1, float x2, float y2)
+			=> EngineDrawLines (pen, new [] { new PointF (x1, y1), new PointF (x2, y2) }, false);
+
+		bool EngineDrawRects (Pen pen, RectangleF [] rects)
+		{
+			if (pen == null || rects == null || gp == null) return false;
+			GpGraphics e = Engine ();
+			if (e == null) return false;
+			return e.DrawRects (pen, rects);
+		}
+
+		bool EngineDrawArc (Pen pen, float x, float y, float w, float h, float start, float sweep)
+		{
+			if (pen == null || gp == null) return false;
+			var p = new GpPath ();
+			if (!p.AddArc (x, y, w, h, start, sweep)) return false;
+			return EngineDrawPath (pen, p);
+		}
+
+		bool EngineDrawEllipse (Pen pen, float x, float y, float w, float h)
+		{
+			if (pen == null || gp == null) return false;
+			var p = new GpPath ();
+			p.AddEllipse (x, y, w, h);
+			return EngineDrawPath (pen, p);
+		}
+
+		bool EngineDrawPie (Pen pen, float x, float y, float w, float h, float start, float sweep)
+		{
+			if (pen == null || gp == null) return false;
+			var p = new GpPath ();
+			p.AddPie (x, y, w, h, start, sweep);
+			return EngineDrawPath (pen, p);
+		}
+
+		bool EngineDrawBeziers (Pen pen, PointF [] pts)
+		{
+			if (pen == null || pts == null || gp == null) return false;
+			if (pts.Length < 4) return gp != null;
+			var p = new GpPath ();
+			if (!p.AddBeziers (pts, pts.Length)) return false;
+			return EngineDrawPath (pen, p);
+		}
+
+		bool EngineDrawCurve (Pen pen, PointF [] pts, float tension, int offset, int segments)
+		{
+			if (pen == null || pts == null || pts.Length < 2 || gp == null) return false;
+			var p = new GpPath ();
+			if (!p.AddCurve (pts, pts.Length, tension, offset, segments)) return false;
+			return EngineDrawPath (pen, p);
+		}
+
+		bool EngineDrawClosedCurve (Pen pen, PointF [] pts, float tension)
+		{
+			if (pen == null || pts == null || pts.Length < 3 || gp == null) return false;
+			var p = new GpPath ();
+			if (!p.AddClosedCurve (pts, pts.Length, tension)) return false;
+			return EngineDrawPath (pen, p);
+		}
+
+
 		// ---- state the engine keeps itself --------------------------------------------------------
 
 		void EngineClipRect (RectangleF r, CombineMode mode) => EngineState ()?.CombineClip (r, mode);

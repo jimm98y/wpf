@@ -955,6 +955,7 @@ namespace System.Drawing
 		
 		public void DrawArc (Pen pen, float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			if (EngineDrawArc (pen, x, y, width, height, startAngle, sweepAngle)) return;
 			if (PrintStroke (pen, gp => gp.AddArc (x, y, width, height, startAngle, sweepAngle))) return;
 			Status status;
 			if (pen == null)
@@ -969,6 +970,7 @@ namespace System.Drawing
    		// int sweepAngle. However, GdipDrawArcI uses also float for the startAngle and sweepAngle params
    		public void DrawArc (Pen pen, int x, int y, int width, int height, int startAngle, int sweepAngle)
 		{
+			if (EngineDrawArc (pen, x, y, width, height, startAngle, sweepAngle)) return;
 			if (PrintStroke (pen, gp => gp.AddArc (x, y, width, height, startAngle, sweepAngle))) return;
 			Status status;
 			if (pen == null)
@@ -980,6 +982,7 @@ namespace System.Drawing
 
 		public void DrawBezier (Pen pen, PointF pt1, PointF pt2, PointF pt3, PointF pt4)
 		{
+			if (EngineDrawBeziers (pen, new [] { pt1, pt2, pt3, pt4 })) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBezier (pt1, pt2, pt3, pt4); DrawPath (pen, gp); } return; }
 			Status status;
 			if (pen == null)
@@ -990,6 +993,7 @@ namespace System.Drawing
 
 		public void DrawBezier (Pen pen, Point pt1, Point pt2, Point pt3, Point pt4)
 		{
+			if (EngineDrawBeziers (pen, new PointF [] { pt1, pt2, pt3, pt4 })) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBezier (pt1, pt2, pt3, pt4); DrawPath (pen, gp); } return; }
 			Status status;
 			if (pen == null)
@@ -1000,6 +1004,7 @@ namespace System.Drawing
 
 		public void DrawBezier (Pen pen, float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4)
 		{
+			if (EngineDrawBeziers (pen, new [] { new PointF (x1, y1), new PointF (x2, y2), new PointF (x3, y3), new PointF (x4, y4) })) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBezier (x1, y1, x2, y2, x3, y3, x4, y4); DrawPath (pen, gp); } return; }
 			Status status;
 			if (pen == null)
@@ -1010,6 +1015,7 @@ namespace System.Drawing
 
 		public void DrawBeziers (Pen pen, Point [] points)
 		{
+			if (EngineDrawBeziers (pen, ToF (points))) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBeziers (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1035,6 +1041,7 @@ namespace System.Drawing
 
 		public void DrawBeziers (Pen pen, PointF [] points)
 		{
+			if (EngineDrawBeziers (pen, points)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBeziers (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1061,6 +1068,7 @@ namespace System.Drawing
 		
 		public void DrawClosedCurve (Pen pen, PointF [] points)
 		{
+			if (EngineDrawClosedCurve (pen, points, 0.5f)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1074,6 +1082,7 @@ namespace System.Drawing
 		
 		public void DrawClosedCurve (Pen pen, Point [] points)
 		{
+			if (EngineDrawClosedCurve (pen, ToF (points), 0.5f)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1089,6 +1098,7 @@ namespace System.Drawing
 		// GDI+ call doesn't support it (issue spotted using Gendarme's AvoidUnusedParametersRule)
 		public void DrawClosedCurve (Pen pen, Point [] points, float tension, FillMode fillmode)
 		{
+			if (EngineDrawClosedCurve (pen, ToF (points), tension)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1104,6 +1114,7 @@ namespace System.Drawing
 		// GDI+ call doesn't support it (issue spotted using Gendarme's AvoidUnusedParametersRule)
 		public void DrawClosedCurve (Pen pen, PointF [] points, float tension, FillMode fillmode)
 		{
+			if (EngineDrawClosedCurve (pen, points, tension)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1117,6 +1128,7 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, Point [] points)
 		{
+			if (points != null && EngineDrawCurve (pen, ToF (points), 0.5f, 0, points.Length - 1)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1130,6 +1142,7 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, PointF [] points)
 		{
+			if (points != null && EngineDrawCurve (pen, points, 0.5f, 0, points.Length - 1)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1143,6 +1156,7 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, PointF [] points, float tension)
 		{
+			if (points != null && EngineDrawCurve (pen, points, tension, 0, points.Length - 1)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1156,6 +1170,7 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, Point [] points, float tension)
 		{
+			if (points != null && EngineDrawCurve (pen, ToF (points), tension, 0, points.Length - 1)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1169,6 +1184,7 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, PointF [] points, int offset, int numberOfSegments)
 		{
+			if (EngineDrawCurve (pen, points, 0.5f, offset, numberOfSegments)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, offset, numberOfSegments, 0.5f); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1182,6 +1198,7 @@ namespace System.Drawing
 
 		public void DrawCurve (Pen pen, Point [] points, int offset, int numberOfSegments, float tension)
 		{
+			if (EngineDrawCurve (pen, ToF (points), tension, offset, numberOfSegments)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, offset, numberOfSegments, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1195,6 +1212,7 @@ namespace System.Drawing
 
 		public void DrawCurve (Pen pen, PointF [] points, int offset, int numberOfSegments, float tension)
 		{
+			if (EngineDrawCurve (pen, points, tension, offset, numberOfSegments)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, offset, numberOfSegments, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1223,6 +1241,7 @@ namespace System.Drawing
 
 		public void DrawEllipse (Pen pen, int x, int y, int width, int height)
 		{
+			if (EngineDrawEllipse (pen, x, y, width, height)) return;
 			if (PrintStroke (pen, gp => gp.AddEllipse (x, y, width, height))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1238,6 +1257,7 @@ namespace System.Drawing
 
 		public void DrawEllipse (Pen pen, float x, float y, float width, float height)
 		{
+			if (EngineDrawEllipse (pen, x, y, width, height)) return;
 			if (PrintStroke (pen, gp => gp.AddEllipse (x, y, width, height))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1610,6 +1630,7 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, PointF pt1, PointF pt2)
 		{
+			if (EngineDrawLine (pen, pt1.X, pt1.Y, pt2.X, pt2.Y)) return;
 			if (GpuRecorder != null) { DrawLine (pen, pt1.X, pt1.Y, pt2.X, pt2.Y); return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1619,6 +1640,7 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, Point pt1, Point pt2)
 		{
+			if (EngineDrawLine (pen, pt1.X, pt1.Y, pt2.X, pt2.Y)) return;
 			if (PrintStroke (pen, gp => gp.AddLine (pt1, pt2))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1635,6 +1657,7 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, int x1, int y1, int x2, int y2)
 		{
+			if (EngineDrawLine (pen, x1, y1, x2, y2)) return;
 			if (PrintStroke (pen, gp => gp.AddLine (x1, y1, x2, y2))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1651,6 +1674,7 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, float x1, float y1, float x2, float y2)
 		{
+			if (EngineDrawLine (pen, x1, y1, x2, y2)) return;
 			if (PrintStroke (pen, gp => gp.AddLine (x1, y1, x2, y2))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1670,6 +1694,7 @@ namespace System.Drawing
 
 		public void DrawLines (Pen pen, PointF [] points)
 		{
+			if (EngineDrawLines (pen, points, false)) return;
 			if (points != null && PrintStroke (pen, gp => gp.AddLines (points))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1687,6 +1712,7 @@ namespace System.Drawing
 
 		public void DrawLines (Pen pen, Point [] points)
 		{
+			if (EngineDrawLines (pen, points, false)) return;
 			if (points != null && PrintStroke (pen, gp => gp.AddLines (points))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1704,6 +1730,7 @@ namespace System.Drawing
 
 		public void DrawPath (Pen pen, GraphicsPath path)
 		{
+			if (path != null && EngineDrawPath (pen, path.gp)) return;
 			if (path != null && PrintStroke (pen, path)) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1744,6 +1771,7 @@ namespace System.Drawing
 		
 		public void DrawPie (Pen pen, float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			if (EngineDrawPie (pen, x, y, width, height, startAngle, sweepAngle)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddPie (x, y, width, height, startAngle, sweepAngle); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1756,6 +1784,7 @@ namespace System.Drawing
    		// int sweepAngle. However, GdipDrawPieI uses also float for the startAngle and sweepAngle params
    		public void DrawPie (Pen pen, int x, int y, int width, int height, int startAngle, int sweepAngle)
 		{
+			if (EngineDrawPie (pen, x, y, width, height, startAngle, sweepAngle)) return;
 			if (GpuRecorder != null) { DrawPie (pen, (float) x, (float) y, (float) width, (float) height, (float) startAngle, (float) sweepAngle); return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1765,6 +1794,7 @@ namespace System.Drawing
 
 		public void DrawPolygon (Pen pen, Point [] points)
 		{
+			if (EngineDrawLines (pen, points, true)) return;
 			if (points != null && PrintStroke (pen, gp => gp.AddPolygon (points))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1784,6 +1814,7 @@ namespace System.Drawing
 
 		public void DrawPolygon (Pen pen, PointF [] points)
 		{
+			if (EngineDrawLines (pen, points, true)) return;
 			if (points != null && PrintStroke (pen, gp => gp.AddPolygon (points))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1810,6 +1841,7 @@ namespace System.Drawing
 
 		public void DrawRectangle (Pen pen, float x, float y, float width, float height)
 		{
+			if (EngineDrawRects (pen, new [] { new RectangleF (x, y, width, height) })) return;
 			if (PrintStroke (pen, gp => gp.AddRectangle (new RectangleF (x, y, width, height)))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1834,6 +1866,7 @@ namespace System.Drawing
 
 		public void DrawRectangle (Pen pen, int x, int y, int width, int height)
 		{
+			if (EngineDrawRects (pen, new [] { new RectangleF (x, y, width, height) })) return;
 			if (PrintStroke (pen, gp => gp.AddRectangle (new RectangleF (x, y, width, height)))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1858,6 +1891,7 @@ namespace System.Drawing
 
 		public void DrawRectangles (Pen pen, RectangleF [] rects)
 		{
+			if (EngineDrawRects (pen, rects)) return;
 			if (GpuRecorder != null) { foreach (RectangleF r in rects) DrawRectangle (pen, r.X, r.Y, r.Width, r.Height); return; }
 			if (pen == null)
 				throw new ArgumentNullException ("image");
@@ -1869,6 +1903,7 @@ namespace System.Drawing
 
 		public void DrawRectangles (Pen pen, Rectangle [] rects)
 		{
+			if (rects != null && EngineDrawRects (pen, Array.ConvertAll (rects, r => (RectangleF) r))) return;
 			if (GpuRecorder != null) { foreach (Rectangle r in rects) DrawRectangle (pen, r); return; }
 			if (pen == null)
 				throw new ArgumentNullException ("image");

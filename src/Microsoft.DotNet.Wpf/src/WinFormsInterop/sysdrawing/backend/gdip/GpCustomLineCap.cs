@@ -101,6 +101,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return true;
         }
 
+        public float GetInsetWidth (float w) => w;
+
         public static GpCustomLineCap CreateArrow (float width, float height, bool filled)
         {
             var c = new GpCustomLineCap { IsArrow = true, ArrowWidth = width, ArrowHeight = height, ArrowFilled = filled };

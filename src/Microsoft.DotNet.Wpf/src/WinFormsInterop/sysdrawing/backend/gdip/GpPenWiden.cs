@@ -11,6 +11,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             => throw new NotImplementedException ("GpPathWidener");
         public static partial RectangleF WidenedBounds (GpPath path, Pen pen, GpMatrix? matrix)
             => throw new NotImplementedException ("GpPath::GetBounds with a pen");
+
+        public static GpPath GetWidenedPath (GpPath path, DpPen pen, GpMatrix? m, float flatness, float dpi) => null;
+        public static GpPath CreateDashedPath (GpPath path, DpPen pen, GpMatrix? m, float dpiX, float dpiY, float scale, bool flag) => null;
     }
 
     internal static partial class GpPathWarp

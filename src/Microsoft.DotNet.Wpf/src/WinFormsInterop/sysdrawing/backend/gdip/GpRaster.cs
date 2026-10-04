@@ -54,6 +54,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// included); spans go to <paramref name="sink"/> through <paramref name="clip"/>.</summary>
         public static void FillPath (PointF[] pts, byte[] types, int count, in GpMatrix toDevice, bool winding, int aa,
                                      ISpanSink sink, GpClip clip, Rectangle drawBounds)
+            => FillPath (pts, types, count, toDevice, winding, aa, sink, clip, drawBounds, false);
+
+        /// <summary>RasterizePath with its nominal flag: <paramref name="nominal"/> strokes the path as
+        /// one-pixel lines (InitializeNominal, enumeration type 0, winding fill) instead of filling it.</summary>
+        public static void FillPath (PointF[] pts, byte[] types, int count, in GpMatrix toDevice, bool winding, int aa,
+                                     ISpanSink sink, GpClip clip, Rectangle drawBounds, bool nominal)
         {
             if (count < 2) return;
             var ctx = new EdgeContext { Aa = aa };
@@ -70,10 +76,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             var m = new GpMatrix { M11 = toDevice.M11 * 16f, M12 = toDevice.M12 * 16f, M21 = toDevice.M21 * 16f, M22 = toDevice.M22 * 16f,
                                    Dx = toDevice.Dx * 16f, Dy = toDevice.Dy * 16f };
             m.Complexity = m.ComputeComplexity ();
-            Enumerate (pts, types, count, m, ctx.HasClip ? new[] { ctx.ClipLeft, ctx.ClipTop, ctx.ClipRight, ctx.ClipBottom } : null, 1,
-                       (b, n, term) => InitializeEdges (ctx, b, n));
+            int[] clipFix = ctx.HasClip ? new[] { ctx.ClipLeft, ctx.ClipTop, ctx.ClipRight, ctx.ClipBottom } : null;
+            if (nominal)
+                Enumerate (pts, types, count, m, clipFix, 0, (b, n, term) => InitializeNominal (ctx, b, n));
+            else
+                Enumerate (pts, types, count, m, clipFix, 1, (b, n, term) => InitializeEdges (ctx, b, n));
             if (ctx.Edges.Count == 0) return;
-            Rasterize (ctx, winding, aa, sink, clip);
+            // csinc w27, w14, wzr, eq: a nominal stroke always fills winding.
+            Rasterize (ctx, nominal || winding, aa, sink, clip);
         }
 
         // ---- path enumeration -----------------------------------------------------------------------
@@ -141,6 +151,72 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         internal static void EnumerateForFlatten (GpPath path, in GpMatrix m, PointBatch batch)
             => Enumerate (path.PointArray (), path.TypeArray (), path.Count, m, null, 2, batch);
+
+        // ---- InitializeNominal @18002e7b0 -------------------------------------------------------------
+        //
+        // A polyline of 28.4 points becomes the outline of a one-pixel-wide band: each segment is
+        // offset by half a pixel along its minor axis (the octant picks one of four nominal vectors),
+        // the ends pushed out half a pixel along the major axis, and at a change of octant the outer
+        // side takes the corner point. The two sides go to InitializeEdges separately, the right side
+        // in reverse, so together they close the band.
+
+        static readonly int[] s_octantDir = { 0, 2, 0, 2, 3, 3, 1, 1 };            // @1802af6a0
+        static readonly int[] s_nomX = { 0, -8, 0, 8 }, s_nomY = { -8, 0, 8, 0 };  // @1802af6c0
+
+        static int Octant (int dx, int dy)
+        {
+            int o = dx < 0 ? 1 : 0;
+            if (dy < 0) o |= 2;
+            if (Math.Abs (dx) < Math.Abs (dy)) o |= 4;
+            return s_octantDir [o];
+        }
+
+        static void InitializeNominal (EdgeContext ctx, int[] b, int n)
+        {
+            if (n < 2) return;
+            var left = new List<int> ();
+            var right = new List<int> ();   // in the order GDI+ writes it, downwards
+            int px = b [0], py = b [1];
+            int dir = Octant (b [2] - px, b [3] - py);
+            left.Add (px - s_nomX [dir]); left.Add (py - s_nomY [dir]);
+            int d1 = (dir + 1) & 3;
+            left.Add (px + s_nomX [d1]); left.Add (py + s_nomY [d1]);
+            int segs = n - 1;
+            for (int i = 1; ; i++) {
+                int x0 = b [i * 2 - 2], y0 = b [i * 2 - 1], x1 = b [i * 2], y1 = b [i * 2 + 1];
+                int vx = s_nomX [dir], vy = s_nomY [dir];
+                left.Add (x0 + vx); left.Add (y0 + vy);
+                right.Add (x0 - vx); right.Add (y0 - vy);
+                left.Add (x1 + vx); left.Add (y1 + vy);
+                right.Add (x1 - vx); right.Add (y1 - vy);
+                if (--segs == 0) {
+                    int dm = (dir - 1) & 3;
+                    left.Add (x1 + s_nomX [dm]); left.Add (y1 + s_nomY [dm]);
+                    left.Add (x1 - vx); left.Add (y1 - vy);
+                    InitializeEdges (ctx, left.ToArray (), left.Count / 2);
+                    if (right.Count >= 4) {
+                        var r = new int [right.Count];
+                        for (int k = 0, m = right.Count / 2; k < m; k++) { r [k * 2] = right [(m - 1 - k) * 2]; r [k * 2 + 1] = right [(m - 1 - k) * 2 + 1]; }
+                        InitializeEdges (ctx, r, r.Length / 2);
+                    }
+                    return;
+                }
+                int x2 = b [i * 2 + 2], y2 = b [i * 2 + 3];
+                int nd = Octant (x2 - x1, y2 - y1);
+                if (nd != dir) {
+                    if ((long) (y1 - y0) * (x2 - x1) <= (long) (x1 - x0) * (y2 - y1)) {
+                        int t = (dir - 1) & 3;
+                        if (nd != t) { left.Add (x1 + s_nomX [t]); left.Add (y1 + s_nomY [t]); }
+                        right.Add (x1); right.Add (y1);
+                    } else {
+                        int t = (dir + 1) & 3;
+                        if (nd != t) { right.Add (x1 - s_nomX [t]); right.Add (y1 - s_nomY [t]); }
+                        left.Add (x1); left.Add (y1);
+                    }
+                }
+                dir = nd;
+            }
+        }
 
         // ---- InitializeEdges ------------------------------------------------------------------------
 
