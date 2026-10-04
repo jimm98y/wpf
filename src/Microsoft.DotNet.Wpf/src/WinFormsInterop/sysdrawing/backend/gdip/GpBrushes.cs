@@ -11,10 +11,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
 {
     internal sealed partial class GpGraphics
     {
-        bool CanFillBrush (Brush brush) => false;
+        bool CanFillBrush (Brush brush) => brush is TextureBrush;
 
         GpSpan CreateBrushSpan (Brush brush, GpScan scan, Rectangle draw)
         {
+            switch (brush) {
+            case TextureBrush tb:
+                return CreateTextureSpan (tb, scan);
+            }
             return null;
         }
     }

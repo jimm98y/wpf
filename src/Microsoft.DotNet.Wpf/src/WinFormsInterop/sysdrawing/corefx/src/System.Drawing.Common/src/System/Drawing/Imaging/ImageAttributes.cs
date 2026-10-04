@@ -293,6 +293,8 @@ namespace System.Drawing.Imaging
             return a;
         }
 
+        internal GpRecolor Recolor => _recolor;
+
         /// <summary>The wrap mode an image is drawn with, for the GPU path.</summary>
         internal WrapMode WrapModeForDrawing => _wrapMode;
 
