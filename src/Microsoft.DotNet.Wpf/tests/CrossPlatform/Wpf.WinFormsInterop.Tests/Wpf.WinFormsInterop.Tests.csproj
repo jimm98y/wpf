@@ -84,6 +84,7 @@
     <None Include="Fixtures/Images/*" CopyToOutputDirectory="PreserveNewest" LinkBase="Fixtures/Images" />
     <!-- Metafiles recorded and read by real GDI+ (Fixtures/Metafiles/oracle): what the managed
          Metafile is held to (MetafileTests). -->
+    <Compile Remove="Fixtures/Metafiles/oracle/**" />
     <None Include="Fixtures/Metafiles/**/*.emf;Fixtures/Metafiles/**/*.wmf;Fixtures/Metafiles/**/*.txt;Fixtures/Metafiles/**/*.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

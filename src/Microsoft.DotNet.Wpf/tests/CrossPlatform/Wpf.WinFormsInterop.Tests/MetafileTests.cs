@@ -214,5 +214,83 @@ namespace Wpf.WinFormsInterop.Tests
             }
             Assert.True(sb.Length == 0, sb.ToString());
         }
+
+        public static TheoryData<string> EnumFiles() => new TheoryData<string> { "gdi.emf", "placeable.wmf", "fillrect_int.emf", "state.emf", "text.emf" };
+
+        static string FixturePath(string name) =>
+            File.Exists(Path.Combine(Dir, "samples", name)) ? Path.Combine(Dir, "samples", name) : Path.Combine(Dir, "plus", name);
+
+        /// <summary>EnumerateMetafile hands the callback the records GDI+ hands it: type, flags, size.</summary>
+        [Theory]
+        [MemberData(nameof(EnumFiles))]
+        public void Enumeration_reports_GdiPlus_records(string name)
+        {
+            using var mf = new Metafile(FixturePath(name));
+            var got = new List<string>();
+            using (var bmp = new Bitmap(10, 10))
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                GpMetafilePlayer.Enumerate(g, mf, new[] { new PointF(0, 0), new PointF(10, 0), new PointF(0, 10) }, mf.RealBounds, GraphicsUnit.Pixel,
+                    (t, f, n, d, cb) => { got.Add($"{((int)t):x} f={f:x} n={n}"); mf.PlayRecord(t, f, n, Copy(d, n)); return true; }, IntPtr.Zero, null);
+            }
+            string[] want = File.ReadAllLines(Path.Combine(Dir, "enum", name + ".txt"));
+            Assert.Equal(string.Join(" | ", want), string.Join(" | ", got));
+        }
+
+        static byte[] Copy(IntPtr p, int n)
+        {
+            var b = new byte[n];
+            if (n > 0) System.Runtime.InteropServices.Marshal.Copy(p, b, 0, n);
+            return b;
+        }
+
+        public static TheoryData<string> SampleFiles() => new TheoryData<string> { "gdi.emf", "gdi_noframe.emf", "placeable.wmf", "placeable1440.wmf", "placeable0.wmf" };
+
+        /// <summary>GDI-only metafiles drawn as GDI+ draws them (GDI aliased; text within a tolerance).</summary>
+        [Theory]
+        [MemberData(nameof(SampleFiles))]
+        public void Played_Gdi_records_match_GdiPlus_pixels(string name)
+        {
+            using var mf = new Metafile(Path.Combine(Dir, "samples", name));
+            using Bitmap ours = PlayInto(mf, 120, 90, new RectangleF(5, 5, 110, 80));
+            using var theirs = (Bitmap)Image.FromFile(Path.Combine(Dir, "samples", "play", Path.GetFileNameWithoutExtension(name) + ".png"));
+            string outDir = Environment.GetEnvironmentVariable("MF_PLAYOUT");
+            if (!string.IsNullOrEmpty(outDir)) ours.Save(Path.Combine(outDir, "s_" + Path.GetFileNameWithoutExtension(name) + ".png"), ImageFormat.Png);
+            double f = Differ(ours, theirs, 64, out int n);
+            Assert.True(f < 0.08, $"{n} pixels ({f:P1}) differ from GDI+'s");
+        }
+
+        public static TheoryData<string> BareWmfFiles() => new TheoryData<string> { "bare.wmf", "bare_nomap.wmf", "shapes.wmf" };
+
+        /// <summary>A WMF with no placeable header becomes the EMF GDI makes of it (SetWinMetaFileBits with
+        /// no METAFILEPICT) -- record for record, on the screen the fixtures were made on (3840 x 1200 px,
+        /// 1040 x 320 mm). Text records are compared by type only: GDI fills in the font's advances and ink
+        /// box, which the conversion does not measure; for the same reason the header bounds are only
+        /// checked where nothing but shapes was drawn.</summary>
+        [Theory]
+        [MemberData(nameof(BareWmfFiles))]
+        public void Bare_wmf_converts_to_the_EMF_GDI_makes(string name)
+        {
+            byte[] wmf = File.ReadAllBytes(Path.Combine(Dir, "samples", name));
+            byte[] theirs = File.ReadAllBytes(Path.Combine(Dir, "samples", "conv", Path.GetFileNameWithoutExtension(name) + ".emf"));
+            var dev = new GpRefDevice { HorzRes = 3840, VertRes = 1200, HorzSize = 1040, VertSize = 320, LogPixelsX = 96, LogPixelsY = 96, IsDisplay = true, DesktopDpiX = 96, DesktopDpiY = 96 };
+            byte[] ours = GpWmfToEmf.Convert(wmf, dev, out GpMetafileHeader header);
+            Assert.NotNull(ours);
+            var a = GpMetafileEdit.Records(ours).ToList();
+            var b = GpMetafileEdit.Records(theirs).ToList();
+            Assert.Equal(string.Join(",", b.Select(r => r.Type)), string.Join(",", a.Select(r => r.Type)));
+            var diffs = new List<string>();
+            for (int i = 1; i < a.Count; i++)
+            {
+                if (a[i].Type == 84) continue;
+                if (!ours.AsSpan(a[i].Offset, a[i].Size).SequenceEqual(theirs.AsSpan(b[i].Offset, b[i].Size)))
+                    diffs.Add($"record {i} (type {a[i].Type})");
+            }
+            Assert.True(diffs.Count == 0, "differ from GDI's: " + string.Join(", ", diffs));
+            Assert.Equal(theirs.AsSpan(52, 8).ToArray(), ours.AsSpan(52, 8).ToArray());     // records, handles
+            if (name == "shapes.wmf") Assert.Equal(theirs.Length, ours.Length);
+            if (name == "shapes.wmf")
+                Assert.Equal(theirs.AsSpan(8, 32).ToArray(), ours.AsSpan(8, 32).ToArray());   // bounds and frame
+        }
     }
 }

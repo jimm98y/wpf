@@ -309,6 +309,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     GdiPlayer.BeginWmf(d);
                     foreach (var rec in GpWmfToEmf.WmfRecords(d.Wmf))
                     {
+                        if (rec.Function == 0) break;   // META_EOF is not enumerated
                         if (!Report(0x10000 | rec.Function, 0, d.Wmf, rec.Offset + 6, rec.Size - 6)) return;
                     }
                     return;
