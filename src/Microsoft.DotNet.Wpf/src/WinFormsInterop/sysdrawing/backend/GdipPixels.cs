@@ -171,6 +171,68 @@ namespace System.Drawing
             }
         }
 
+        /// <summary>The FixedHalftone252 palette with a transparent entry after it (CHalftone::
+        /// GetFixedPalette 0x180203760, type 8): six levels of red, seven of green, six of blue,
+        /// blue fastest, each level 255*i/(n-1) rounded; then transparent black.</summary>
+        internal static Color[] Halftone252Palette ()
+        {
+            var p = new Color [253];
+            int k = 0;
+            for (int r = 0; r < 6; r++)
+                for (int g = 0; g < 7; g++)
+                    for (int b = 0; b < 6; b++)
+                        p [k++] = Color.FromArgb (255, Level (r, 6), Level (g, 7), Level (b, 6));
+            p [k] = Color.FromArgb (0);
+            return p;
+
+            static int Level (int i, int n) => (int) MathF.Round (255f / (n - 1) * i, MidpointRounding.AwayFromZero);
+        }
+
+        /// <summary>Floyd-Steinberg error diffusion into <paramref name="palette"/>, as
+        /// ScanOperation::ErrorDiffusion (0x1800bc980) runs it: errors in sixteenths carried in two
+        /// row buffers, even rows right to left and odd rows left to right (serpentine), the colour
+        /// clamped to 0..255 and looked up through the halftone table, the error measured from that
+        /// entry, 7/16 ahead, 3/16 below behind, 5/16 below, 1/16 below ahead. Alpha is ignored
+        /// (the threshold is 0). One index byte per pixel, rows unpadded.</summary>
+        internal static byte[] ErrorDiffuse (GdipFrame f, Color[] palette)
+        {
+            int w = f.Width, h = f.Height;
+            var idx = new byte [w * h];
+            var map = new IndexMap (palette);
+            var pal = new int [palette.Length];
+            for (int i = 0; i < pal.Length; i++) pal [i] = palette [i].ToArgb ();
+            // Pixel i's red, green and blue at [3*(i+2) ..], two pixels of margin on each side.
+            var cur = new int [(w + 6) * 3];
+            var next = new int [(w + 6) * 3];
+            var row = new uint [w];
+            for (int y = 0; y < h; y++) {
+                (cur, next) = (next, cur);
+                Array.Clear (next);
+                ReadArgb (f, 0, y, w, row, 0);
+                for (int i = 0; i < w; i++) {
+                    uint c = row [i];
+                    cur [3 * i + 6] += (int) ((c >> 16) & 0xff) * 16;
+                    cur [3 * i + 7] += (int) ((c >> 8) & 0xff) * 16;
+                    cur [3 * i + 8] += (int) (c & 0xff) * 16;
+                }
+                bool leftToRight = (y & 1) != 0;
+                int step = leftToRight ? 1 : -1;
+                for (int n = 0, i = leftToRight ? 0 : w - 1; n < w; n++, i += step) {
+                    int o = 3 * i + 6;
+                    int r = Math.Clamp (cur [o] >> 4, 0, 255), g = Math.Clamp (cur [o + 1] >> 4, 0, 255), b = Math.Clamp (cur [o + 2] >> 4, 0, 255);
+                    int k = map [(uint) (r << 16 | g << 8 | b)];
+                    idx [y * w + i] = (byte) k;
+                    int er = r - ((pal [k] >> 16) & 0xff), eg = g - ((pal [k] >> 8) & 0xff), eb = b - (pal [k] & 0xff);
+                    int ahead = o + 3 * step, behind = o - 3 * step;
+                    cur [ahead] += er * 7; cur [ahead + 1] += eg * 7; cur [ahead + 2] += eb * 7;
+                    next [behind] += er * 3; next [behind + 1] += eg * 3; next [behind + 2] += eb * 3;
+                    next [o] += er * 5; next [o + 1] += eg * 5; next [o + 2] += eb * 5;
+                    next [ahead] += er; next [ahead + 1] += eg; next [ahead + 2] += eb;
+                }
+            }
+            return idx;
+        }
+
         /// <summary>The palette of a lock of <paramref name="f"/> in <paramref name="lockFormat"/>
         /// (GpMemoryBitmap::InternalLockBits 0x1800402d8 and its unlock): the bitmap's OWN palette
         /// when it has one, otherwise the default palette of the lock's format (null when that is

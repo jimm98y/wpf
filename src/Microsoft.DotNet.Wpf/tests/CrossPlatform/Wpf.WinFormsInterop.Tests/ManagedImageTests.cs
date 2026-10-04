@@ -76,6 +76,18 @@ namespace Wpf.WinFormsInterop.Tests
 
         /// <summary>A lock of the whole bitmap as the oracle writes it: "stride=N:" then the rows,
         /// each cut to its pixels.</summary>
+        /// <summary>A <see cref="Lock"/>-style "...:hex" string with the bits after each row's last
+        /// pixel cleared, for formats whose pixels do not fill a byte: GDI+ leaves its heap there.</summary>
+        private static string MaskTail(string s, int width, PixelFormat f)
+        {
+            int bits = Image.GetPixelFormatSize(f) * width, rem = bits % 8, colon = s.LastIndexOf(':');
+            if (rem == 0 || colon < 0 || s.StartsWith("EX")) return s;
+            int rowBytes = (bits + 7) / 8;
+            byte[] all = Convert.FromHexString(s.Substring(colon + 1));
+            for (int i = rowBytes - 1; i < all.Length; i += rowBytes) all[i] &= (byte)(0xff << (8 - rem));
+            return s.Substring(0, colon + 1) + Hex(all);
+        }
+
         private static string Lock(Bitmap b, PixelFormat f)
         {
             try
@@ -143,7 +155,7 @@ namespace Wpf.WinFormsInterop.Tests
                 if (jpeg) CompareJpeg(what, mine, argb.GetString()!, bad);
                 else Check("argb", mine, argb.GetString());
                 if (!jpeg && o.TryGetProperty("native", out JsonElement native))
-                    Check("native", Lock(bmp, bmp.PixelFormat), native.GetString());
+                    Check("native", MaskTail(Lock(bmp, bmp.PixelFormat), bmp.Width, bmp.PixelFormat), MaskTail(native.GetString()!, bmp.Width, bmp.PixelFormat));
             }
             if (!frames) return;
             foreach (Guid g in img.FrameDimensionsList)
@@ -340,9 +352,8 @@ namespace Wpf.WinFormsInterop.Tests
                 }
                 catch (Exception e) { ours = "EX " + e.GetType().Name; }
                 string theirs = Api.GetProperty("lock_from32_" + pf).GetString()!;
-                // Into an INDEXED format GDI+ halftones with its own mapping, which this does not
-                // reproduce (nearest palette entry instead): the layout must agree, not the indices.
-                if ((pf & PixelFormat.Indexed) != 0) { ours = ours.Split(':')[0]; theirs = theirs.Split(':')[0]; }
+                // The bits after a row's last 1/4bpp pixel are whatever gdiplus.dll's heap held.
+                ours = MaskTail(ours, 3, pf); theirs = MaskTail(theirs, 3, pf);
                 if (ours != theirs) bad.Add($"lock {pf}: ours {ours}, GDI+ {theirs}");
             }
             foreach (PixelFormat pf in new[] { PixelFormat.Format24bppRgb, PixelFormat.Format16bppRgb565, PixelFormat.Format32bppPArgb, PixelFormat.Format64bppArgb, PixelFormat.Format48bppRgb, PixelFormat.Format16bppArgb1555 })
@@ -388,17 +399,6 @@ namespace Wpf.WinFormsInterop.Tests
                     continue;
                 }
                 using var clone = src.Clone(new Rectangle(1, 0, 4, 3), pf);
-                if ((pf & PixelFormat.Indexed) != 0)
-                {
-                    // The palette GDI+ converts with, exactly; its halftoned indices, not (see LockBits).
-                    if (clone.PixelFormat != pf) bad.Add($"clone {pf}: format {clone.PixelFormat}");
-                    var want = o.GetProperty("palette").GetProperty("entries").EnumerateArray().Select(x => x.GetString());
-                    if (string.Join(" ", clone.Palette.Entries.Select(c => ((uint)c.ToArgb()).ToString("x8"))) != string.Join(" ", want))
-                        bad.Add($"clone {pf}: palette differs");
-                    if (clone.Palette.Flags != o.GetProperty("palette").GetProperty("flags").GetInt32())
-                        bad.Add($"clone {pf}: palette flags {clone.Palette.Flags}");
-                    continue;
-                }
                 Compare("clone_" + pf, clone, o, bad, jpeg: false, frames: false);
             }
             foreach (RotateFlipType rf in Enum.GetValues(typeof(RotateFlipType)).Cast<RotateFlipType>().Distinct())

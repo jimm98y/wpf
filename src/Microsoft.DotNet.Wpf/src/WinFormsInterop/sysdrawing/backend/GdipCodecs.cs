@@ -252,7 +252,10 @@ namespace System.Drawing
             if (indexed != null && indexedPalette != null) {
                 Color[] palette = Colors (indexedPalette);
                 var frame = FromPacked (indexed, w, w, h, PixelFormat.Format8bppIndexed, palette);
-                frame.PaletteFlags = PaletteFlagsOf (palette) & (int) PaletteFlags.HasAlpha;
+                // GpWicDecoder::SetPalette (0x180044ec8): HasAlpha from the WIC palette, GrayScale
+                // when every entry is grey AND there are more than two of them.
+                frame.PaletteFlags = PaletteFlagsOf (palette);
+                if (palette.Length <= 2) frame.PaletteFlags &= ~(int) PaletteFlags.GrayScale;
                 img = new GdipImageData (frame);
                 img.Flags = FlagReadOnly | FlagRealPixelSize | FlagRealDpi | FlagRgb | ((frame.PaletteFlags & (int) PaletteFlags.HasAlpha) != 0 ? FlagAlpha : 0);
             } else {
@@ -566,20 +569,26 @@ namespace System.Drawing
 
         static void WriteGif (GdipFrame f, Stream stream)
         {
+            // GpWicGifEncoder takes 8bpp indexed as it stands; a 1 or 4bpp bitmap reaches it converted
+            // to 8bpp the way ConvertFormat converts (the 216-colour halftone cube plus the system
+            // colours, matched through the halftone table) -- its own palette is not kept.
+            if (f.IsIndexed && f.Format != PixelFormat.Format8bppIndexed)
+                f = GdipPixels.Convert (f, new Rectangle (0, 0, f.Width, f.Height), PixelFormat.Format8bppIndexed, conversionPalette: true);
             if (f.IsIndexed && f.Palette != null && f.Palette.Length > 0) {
                 var indices = new byte [f.Width * f.Height];
-                int bits = f.BitsPerPixel;
                 for (int y = 0; y < f.Height; y++)
-                    for (int x = 0; x < f.Width; x++) {
-                        int o = y * f.Stride;
-                        indices [y * f.Width + x] = bits == 8 ? f.Bits [o + x]
-                            : bits == 4 ? (byte) ((f.Bits [o + (x >> 1)] >> ((x & 1) == 0 ? 4 : 0)) & 15)
-                            : (byte) ((f.Bits [o + (x >> 3)] >> (7 - (x & 7))) & 1);
-                    }
-                ManagedGifEncoder.WriteIndexed (stream, f.Width, f.Height, indices, Words (f.Palette));
+                    Buffer.BlockCopy (f.Bits, y * f.Stride, indices, y * f.Width, f.Width);
+                // GpWicGifEncoder::SetPalette (0x1801093b0): the first entry whose alpha is exactly
+                // zero becomes the transparent index.
+                ManagedGifEncoder.WriteIndexed (stream, f.Width, f.Height, indices, Words (f.Palette), transparentBelow: 1);
                 return;
             }
-            ManagedGifEncoder.Write (stream, Bgra (f), f.Width, f.Height, f.Width * 4);
+            // Anything else GpWicGifEncoder::BeginSink (0x1801052e0) takes as 32bpp BGRA and has a
+            // WIC format converter turn into 8bpp indexed: the FixedHalftone252 palette plus a
+            // transparent entry, error diffusion, alpha threshold 0.
+            Color[] palette = GdipPixels.Halftone252Palette ();
+            byte[] idx = GdipPixels.ErrorDiffuse (f, palette);
+            ManagedGifEncoder.WriteIndexed (stream, f.Width, f.Height, idx, Words (palette), transparentBelow: 1);
         }
 
         static ManagedRaster TiffPage (GdipFrame f)
