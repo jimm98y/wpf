@@ -19,12 +19,30 @@ namespace System.Drawing.WebGpuBackend.Gdip
         uint[] _buf;
         protected GpSpan (GpScan scan) { Scan = scan; }
         public uint[] Buffer => _buf;
-        public void OutputSpan (int y, int left, int right)
+        public virtual void OutputSpan (int y, int left, int right)
         {
             int n = right - left;
             if (n <= 0) return;
             _buf = Scan.Next (left, y, n);
             Fill (_buf, y, left, n);
+        }
+
+        /// <summary>For a span that asks the scan for a part of [left, right) only (or none of it):
+        /// the scan buffer for [x, x + n), at least <paramref name="reserve"/> long because the
+        /// antialiaser scales [left, right) of whatever buffer the scan holds last -- GDI+'s
+        /// GetCurrentBuffer.</summary>
+        protected uint[] NextBuffer (int x, int y, int n, int reserve)
+        {
+            _buf = Scan.Next (x, y, n);
+            return Reserve (reserve);
+        }
+
+        /// <summary>The scan's current (last) buffer, grown to <paramref name="n"/> keeping what it holds.</summary>
+        protected uint[] Reserve (int n)
+        {
+            Scan.Reserve (n);
+            _buf = Scan.Buffer;
+            return _buf;
         }
         /// <summary>Writes the brush's premultiplied colours for pixels x .. x + n - 1 of row y.</summary>
         protected abstract void Fill (uint[] buf, int y, int x, int n);
