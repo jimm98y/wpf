@@ -2569,6 +2569,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             public Contour(Vector2[] points, bool[] onCurve) { Points = points; OnCurve = onCurve; }
         }
 
+        /// <summary>A glyph's contours in font design units (y up), composites resolved: the
+        /// outline DirectWrite's GetGlyphRunOutline streams at an em of unitsPerEm (GDI+'s
+        /// GpFaceRealization::GetGlyphPath asks for it so).</summary>
+        internal List<(Vector2[] Points, bool[] OnCurve)> DesignContours(int glyphId)
+        {
+            var list = new List<(Vector2[], bool[])>();
+            foreach (Contour c in ReadGlyphContours(glyphId, 0)) list.Add((c.Points, c.OnCurve));
+            return list;
+        }
+
         // Reads a glyph's contours in font units, resolving composite components.
         private List<Contour> ReadGlyphContours(int gid, int depth)
         {

@@ -152,7 +152,10 @@ namespace System.Drawing {
 		/// it asked for, and nothing either side of it.</summary>
 		internal bool IsTypographic;
 
-		public static StringFormat GenericTypographic => new StringFormat (StringFormatFlags.NoWrap) { IsTypographic = true };
+		/// <summary>GDI+'s typographic format: FitBlackBox | LineLimit | NoClip (0x6004), no trimming,
+		/// no margins or tracking (GpStringFormat::GenericTypographic).</summary>
+		public static StringFormat GenericTypographic
+			=> new StringFormat (StringFormatFlags.FitBlackBox | StringFormatFlags.LineLimit | StringFormatFlags.NoClip) { IsTypographic = true, Trimming = StringTrimming.None };
 
 		public StringDigitSubstitute DigitSubstitutionMethod => _digitSubstitute;
 

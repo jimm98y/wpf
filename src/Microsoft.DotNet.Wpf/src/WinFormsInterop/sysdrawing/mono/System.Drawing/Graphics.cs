@@ -3392,6 +3392,9 @@ namespace System.Drawing
 			if (regcount == 0)
 				return new Region[0];
 
+			Region[] gpRegions = GdiPlusCharacterRanges (text, font, layoutRect, stringFormat, regcount);
+			if (gpRegions != null)
+				return gpRegions;
 			if (s_gpuRasterMode)
 				return MeasureCharacterRangesManaged (text, font, layoutRect, stringFormat, regcount);
 
@@ -3465,6 +3468,10 @@ namespace System.Drawing
 
 			if (print_mode)
 				return PrintMeasureString (text, font, layoutRect, managedFormat, out _, out _);
+
+			// GDI+'s own measurement (FullTextImager's nominal layout, GpTextLayout).
+			if (GdiPlusMeasure (text, font, layoutRect, managedFormat, out SizeF gpSize, out _, out _))
+				return gpSize;
 
 			if (s_gpuRasterMode) {
 				// Managed measurement (no libgdiplus), consistent with the WGSL-rendered font.
@@ -3568,6 +3575,9 @@ namespace System.Drawing
 
 			if (print_mode)
 				return PrintMeasureString (text, font, rect, stringFormat, out charactersFitted, out linesFilled);
+
+			if (GdiPlusMeasure (text, font, rect, stringFormat, out SizeF gpSize, out charactersFitted, out linesFilled))
+				return gpSize;
 
 			IntPtr format = (stringFormat == null) ? IntPtr.Zero : stringFormat.NativeObject;
 

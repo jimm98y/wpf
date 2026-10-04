@@ -18,10 +18,4 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public static partial void Warp (GpPath path, GpMatrix? matrix, PointF[] dest, RectangleF src, WarpMode mode, float flatness)
             => throw new NotImplementedException ("GpPath::WarpAndFlattenSelf");
     }
-
-    internal static partial class GpPathText
-    {
-        public static partial void AddString (GpPath path, string s, FontFamily family, int style, float emSize, RectangleF layout, StringFormat format)
-            => throw new NotImplementedException ("GpPath::AddString");
-    }
 }
