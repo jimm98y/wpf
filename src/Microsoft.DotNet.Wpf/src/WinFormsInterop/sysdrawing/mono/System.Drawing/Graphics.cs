@@ -2271,6 +2271,10 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (s == null || s.Length == 0)
 				return;
+			// A bitmap's Graphics: GDI+'s own pipeline, into the pixels (Graphics.Engine.cs).
+			if (!gdi_text_metrics && !gdi_ascent && !memory_surface_text
+			    && EngineDrawString (s, font, brush, layoutRectangle, format))
+				return;
 			if (GpuRecorder != null && brush is SolidBrush) {
 				// The public DrawString is GDI+'s, and GDI+ text is its own pipeline: where its fast
 				// imager would draw the string, draw it that way (see TryDrawGdiPlusText). The port's

@@ -149,6 +149,34 @@ namespace System.Drawing
 			return true;
 		}
 
+		/// <summary>DrawString on a bitmap: GDI+'s own text, laid out and composited by the engine
+		/// (GpText). False where the engine does not draw this string.</summary>
+		bool EngineDrawString (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
+		{
+			if (gp == null || image_target == null || !s_gdiPlusText || font.Underline || font.Strikeout)
+				return false;
+			string family = font.FontFamily?.Name;
+			if (string.IsNullOrEmpty (family))
+				return false;
+			int style = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
+			int flags = 0, align = 0, lineAlign = 0;
+			bool typographic = false, hotkey = false;
+			if (format != null) {
+				if (format.TabStopCount > 0)
+					return false;
+				flags = (int) format.FormatFlags;
+				typographic = format.IsTypographic;
+				if (typographic)
+					flags |= 0x6004;
+				align = (int) format.Alignment;
+				lineAlign = (int) format.LineAlignment;
+				hotkey = format.HotkeyPrefix != Text.HotkeyPrefix.None;
+			}
+			GpGraphics e = Engine ();
+			if (e == null || !e.CanFill (brush)) return false;
+			return e.DrawString (s, family, style, font.SizeInPoints, brush, rect, flags, typographic, align, lineAlign, hotkey);
+		}
+
 		// ---- state the engine keeps itself --------------------------------------------------------
 
 		void EngineClipRect (RectangleF r, CombineMode mode) => EngineState ()?.CombineClip (r, mode);

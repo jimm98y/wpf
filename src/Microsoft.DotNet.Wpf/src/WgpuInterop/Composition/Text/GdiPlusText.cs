@@ -93,9 +93,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             public bool HasClip;
             public float ClipX, ClipY, ClipW, ClipH;
             public float Em;
-            /// <summary>Render mode, the hint it came from: 5 ClearType (6x1 glyphs, filter,
-            /// CTBlendSolid); 3 and 4 antialiased (4x4 glyphs, coverage by max, the gamma table).</summary>
+            /// <summary>Render mode (GpFaceRealization +0x1c): 5 ClearType (6x1 glyphs, filter,
+            /// CTBlendSolid); 3 and 4 antialiased (4x4 glyphs, coverage by max, the gamma table);
+            /// 1 bi-level grid-fitted, 2 bi-level unfitted (1x1 glyphs, the brush where they are set).</summary>
             public int Mode;
+            /// <summary>The TextRenderingHint asked for (SystemDefault resolved).</summary>
+            public int Hint;
             /// <summary>ulClearTypeFilter's other table (Courier New and its kin).</summary>
             public bool FixedFilter;
             /// <summary>Graphics.TextContrast, 0..12: which TextContrast tables the blend uses.</summary>
@@ -133,22 +136,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static Run? Layout(TrueTypeFont font, string family, float sizePt, string text,
                                     float x, float y, float rw, float rh,
                                     int formatFlags, bool typographic, int align, int lineAlign,
-                                    bool hotkeyPrefix, int hint, float dpi = 96f)
+                                    bool hotkeyPrefix, int hint, float dpi = 96f, bool biLevel = false)
         {
             if (string.IsNullOrEmpty(text) || font is null) return null;
             if (hint == HintSystemDefault) hint = HintClearTypeGridFit;   // a ClearType desktop
-            // The realizations modelled: ClearType (5), and the 4x4 antialiased ones (3 grid-fitted,
-            // 4 not). The bi-level hints keep the old path.
-            if (hint != HintClearTypeGridFit && hint != HintAntiAliasGridFit && hint != HintAntiAlias) return null;
+            // The realizations: ClearType (5), the 4x4 antialiased ones (3 grid-fitted, 4 not), and
+            // -- for a caller that draws them (biLevel) -- the bi-level ones (1 grid-fitted, 2 not).
+            if (hint < HintSingleBitPerPixelGridFit || hint > HintClearTypeGridFit) return null;
+            if (!biLevel && (hint == HintSingleBitPerPixelGridFit || hint == HintSingleBitPerPixel)) return null;
             // Format flags & 0x40000003: right to left, vertical. MeasureTrailingSpaces changes the
             // trailing-space handling, which is not modelled.
             if ((formatFlags & (FlagRightToLeft | FlagVertical | 0x40000000 | FlagMeasureTrailingSpaces)) != 0)
                 return null;
             // A simulated bold is DirectWrite's simulated face, whose advances it widens itself.
             if (font.SynthesizesBold) return null;
-            // A simulated oblique is modelled for ClearType only: DirectWrite's 4x4 glyphs of a
-            // sheared face are not the upright fit sheared (Tahoma, Microsoft Sans Serif italic).
-            if (font.SynthesizesOblique && hint != HintClearTypeGridFit) return null;
+            // A simulated oblique is modelled for ClearType and bi-level only (below): DirectWrite's
+            // 4x4 glyphs of a sheared face are not the upright fit sheared (Tahoma, Microsoft Sans
+            // Serif italic).
 
             // The device's resolution: 96 for a window, the printer's for a printed page, where GDI+
             // runs the same imager at the device's em (and the caller's rectangle is in its pixels).
@@ -158,10 +162,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // Realize: under ClearType a face DirectWrite draws from its embedded bitmaps at this size,
             // and Marlett, are realized bi-level with GDI-classic widths; under AntiAliasGridFit a
             // size the 'gasp' does not grey is bi-level. Not modelled.
+            // GpFaceRealization::Realize turns the hint's flag word into the render mode (+0x1c) and
+            // the advance type (+0x20): 1 bi-level grid-fitted (GDI classic advances), 2 bi-level
+            // not fitted (design), 3 and 4 antialiased (classic / design), 5 ClearType (GDI natural).
+            int mode = hint;
             if (hint == HintClearTypeGridFit
                 && (font.EmbeddedBitmapCount(ppemRound) > 100 || string.Equals(family, "Marlett", StringComparison.OrdinalIgnoreCase)))
-                return null;
-            if (hint == HintAntiAliasGridFit && !font.GaspDoGray(ppemRound)) return null;
+                mode = 1;   // flags & ~0x410000 | 0x800000
+            if (hint == HintAntiAliasGridFit && !font.GaspDoGray(ppemRound)) mode = 1;   // flags & ~0x10000
+            if (mode <= 2 && !biLevel) return null;
+            if (font.SynthesizesOblique && (mode == 3 || mode == 4)) return null;
 
             // CharacterAttributes bit 0x80 sends the string to the full imager: every control
             // character (tab, CR, LF), the complex scripts, and a hot-key prefix.
@@ -209,25 +219,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 totalNom -= nom[n - 1] * em / upem;
                 n--;
             }
-            if (n == 0) return new Run { Em = em, Mode = hint };
+            if (n == 0) return new Run { Em = em, Mode = mode, Hint = hint };
 
             float cellH = (float)(font.WinAscent + font.WinDescent) * em / upem;
             if (lm != 0f) cellH = em * 0.125f + cellH;
             // QuantizeTransform widens to VDMX only when the realization flags & 0x340000 are clear:
-            // not for AntiAlias (0x118000).
-            DeviceAscentDescent(font, scale, out int ascDev, out int descDev, vdmx: hint != HintAntiAlias);
+            // not for AntiAlias (0x118000) or SingleBitPerPixel (0x48000).
+            DeviceAscentDescent(font, scale, out int ascDev, out int descDev,
+                                vdmx: hint != HintAntiAlias && hint != HintSingleBitPerPixel);
 
-            // FastDrawGlyphsNominal for a fixed-pitch face and for the hints that do not fit.
-            bool nominal = font.IsFixedPitch || hint == HintAntiAlias;
-            var run = new Run { Em = em, Mode = hint, FixedFilter = font.GdiContrastPalette };
+            // FastDrawGlyphsNominal for a fixed-pitch face and for the hints that do not fit
+            // (IsGridFittedTextRealizationMethod: 1, 3 and 5 fit).
+            bool nominal = font.IsFixedPitch || hint == HintAntiAlias || hint == HintSingleBitPerPixel;
+            var run = new Run { Em = em, Mode = mode, Hint = hint, FixedFilter = font.GdiContrastPalette };
+            // The advance type: 2 GDI natural (ClearType), 1 GDI classic (the other grid-fitted
+            // realizations, the bi-level one a ClearType face falls back to included), 0 design.
+            int advType = mode == 5 ? 2 : hint == HintAntiAlias || hint == HintSingleBitPerPixel ? 0 : 1;
 
             // The advance type the realization asks for: GDI natural for ClearType, GDI classic for
             // AntiAliasGridFit, design for AntiAlias -- in design units.
             var adv = new int[n]; var lsb = new int[n]; var rsb = new int[n];
             for (int i = 0; i < n; i++)
             {
-                if (hint == HintClearTypeGridFit) NaturalMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
-                else if (hint == HintAntiAliasGridFit) ClassicMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
+                if (advType == 2) NaturalMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
+                else if (advType == 1) ClassicMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
                 else DesignMetrics(font, gids[i], out adv[i], out lsb[i], out rsb[i]);
             }
 
@@ -810,6 +825,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             static int Mul(int v, int a) { int w = v * a + 0x80; return ((w + (w >> 8)) >> 8) & 0xff; }
             static byte Over(int src, int d, int a) { int w = d * (255 - a) + 0x80; return (byte)((src + ((w + (w >> 8)) >> 8)) & 0xff); }
         }
+
+        /// <summary>The TextContrast inverse table: Inv[contrast][v].</summary>
+        internal static int ContrastInverse(int contrast, int v) => ContrastTables[contrast * 512 + 256 + v];
 
         /// <summary>The three channel levels (0..6) of a gaOutTable index.</summary>
         internal static (int R, int G, int B) LevelsOf(int index)

@@ -3058,7 +3058,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             // The dropout pass works on the ClearType lamp grid (six columns a pixel), or on the
             // 4x4 grid of GDI+'s antialiased glyphs; a bi-level scan has none of it.
-            if (dropout > 0 && (xScale == SubpixelsPerPixel * 2 || xScale == 4))
+            if (dropout > 0 && (xScale == SubpixelsPerPixel * 2 || xScale == 4 || xScale == 1))
             {
                 List<List<Vector2>> polys = Flatten(path, CurveFlattener.GlyphTolerance);
                 int saved = DropoutForRun, savedCols = DropoutColumnsPerPixel;

@@ -28,6 +28,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
         /// <summary>Writes the brush's premultiplied colours for pixels x .. x + n - 1 of row y.</summary>
         protected abstract void Fill (uint[] buf, int y, int x, int n);
+        /// <summary>The brush's colours for a span without asking the scan for its buffer (the text
+        /// outputs scale or blend them themselves).</summary>
+        public void Colors (int y, int x, int n, uint[] buf) => Fill (buf, y, x, n);
     }
 
     internal sealed class SolidSpan : GpSpan

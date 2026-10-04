@@ -175,6 +175,79 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
 
+        // ---- ClearType text (scan types 2 and 3) -------------------------------------------------
+        //
+        // EpAlphaBlender::BuildPipeline @18002a9e8 for a ClearType scan: never the linear pipeline;
+        // the destination is brought to canonical ARGB -- as it is for ARGB and 32bppRgb (whose
+        // format is taken as ARGB), untouched for PARGB (the blend works on the premultiplied
+        // bytes), converted for the rest (ReadRMW_24/16_CT_*, ConvertIntoCanonical) -- then
+        // ScanOperation::CTBlendSolid @1800c7f70 (a solid brush, colour not premultiplied) or
+        // ClearTypeBlend<ClearTypeCARGBBlend> @1800c7d58 (a brush span's colours) per pixel whose
+        // level is not 0, and the pixel goes back (WriteRMW / ConvertFromCanonical). The result's
+        // alpha is always 0xff.
+
+        /// <summary>Blends <paramref name="n"/> pixels from (<paramref name="x"/>, <paramref name="y"/>)
+        /// with ClearType levels <paramref name="lv"/>[<paramref name="lvAt"/>..] (gaOutTable indices)
+        /// and either the solid brush <paramref name="argb"/> or the brush span's premultiplied
+        /// colours in <paramref name="colors"/>.</summary>
+        public void ClearType (int x, int y, int n, byte[] lv, int lvAt, uint argb, uint[] colors, int contrast)
+        {
+            Flush ();
+            if (y < 0 || y >= _work.Height) return;
+            if (x < 0) { lvAt -= x; n += x; x = 0; }
+            n = Math.Min (n, _work.Width - x);
+            if (n <= 0) return;
+            if (colors == null && (argb >> 24) == 0) return;
+            byte[] bits = _work.Bits;
+            int row = y * _work.Stride;
+            uint[] tmp = null;
+            bool is16 = _format == PixelFormat.Format16bppRgb565 || _format == PixelFormat.Format16bppRgb555;
+            bool raw32 = _format == PixelFormat.Format32bppArgb || _format == PixelFormat.Format32bppPArgb || _format == PixelFormat.Format32bppRgb;
+            if (!raw32) {
+                tmp = new uint [n];
+                if (is16) for (int i = 0; i < n; i++) tmp [i] = Expand16 (Get16 (bits, row + (x + i) * 2), _format == PixelFormat.Format16bppRgb565);
+                else if (_format == PixelFormat.Format24bppRgb)
+                    for (int i = 0; i < n; i++) { int o = row + (x + i) * 3; tmp [i] = 0xff000000u | (uint) bits [o + 2] << 16 | (uint) bits [o + 1] << 8 | bits [o]; }
+                else GdipPixels.ReadArgb (_work, x, y, n, tmp, 0);
+            }
+            for (int i = 0; i < n; i++) {
+                int level = lv [lvAt + i];
+                if (level == 0) continue;
+                uint c = colors != null ? colors [i] : argb;
+                uint d = raw32 ? Get32 (bits, row + (x + i) * 4) : tmp [i];
+                uint r = CTBlend (level, c, d, contrast);
+                if (raw32) Put32 (bits, row + (x + i) * 4, r);
+                else if (is16) {
+                    int k = ((x + i) & 3) | (y & 3) << 2;
+                    Put16 (bits, row + (x + i) * 2, Quantize (r & 0xff, r & 0xff00, r & 0xff0000, k, _format == PixelFormat.Format16bppRgb565));
+                }
+                else if (_format == PixelFormat.Format24bppRgb) {
+                    int o = row + (x + i) * 3;
+                    bits [o] = (byte) r; bits [o + 1] = (byte) (r >> 8); bits [o + 2] = (byte) (r >> 16);
+                }
+                else tmp [i] = r;
+            }
+            if (!raw32 && !is16 && _format != PixelFormat.Format24bppRgb) GdipPixels.WriteArgb (_work, x, y, n, tmp, 0);
+        }
+
+        /// <summary>CTBlendSolid / ClearTypeCARGBBlend for one pixel: full coverage of an opaque
+        /// colour is the colour; else per channel, through the TextContrast tables,
+        /// Inv[(int) ((Dir[c] - Dir[d]) * A * level / 1530.0 + Dir[d] + 0.5) &amp; 0xff].</summary>
+        public static uint CTBlend (int level, uint c, uint d, int contrast)
+        {
+            uint a = c >> 24;
+            if (a == 0) return d;
+            if (level == 0x72 && a == 0xff) return c;
+            (int l0, int l1, int l2) = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.LevelsOf (level);
+            uint r = Ch ((int) (c >> 16) & 0xff, (int) (d >> 16) & 0xff, l0);
+            uint g = Ch ((int) (c >> 8) & 0xff, (int) (d >> 8) & 0xff, l1);
+            uint b = Ch ((int) c & 0xff, (int) d & 0xff, l2);
+            return 0xff000000u | r << 16 | g << 8 | b;
+
+            uint Ch (int bc, int dc, int l)
+                => l == 0 ? (uint) dc : Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.BlendChannel (bc, (int) a, dc, l, contrast);
+        }
+
         // ---- 16bpp: ordered dither (Dither_sRGB_565 @1800c5fd0, Dither_Blend_sRGB_565 @1800c5db0, the
         // 555 pair @1800c5f10 / @1800c5c60), and the high-quality BlendLinear_sRGB_565/555<0>
         // @1800c6fa8 (partial-alpha runs blended in 64 bits, opaque runs dithered, transparent left).

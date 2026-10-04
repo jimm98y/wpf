@@ -680,6 +680,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// IDWriteGdiPlusFontFace::GetEmbeddedBitmapCount reports), 0 when it ships none.</summary>
         internal int EmbeddedBitmapCount(int ppem) => _metricStrikes?.GlyphCountAt(ppem) ?? 0;
 
+        /// <summary>A glyph's 1-bit EBDT bitmap at exactly this ppem, whether or not this face draws
+        /// its strikes for GDI (DirectWrite's bi-level raster type takes the strike whenever the
+        /// size has one: TrueTypeRasterizer::NewTransform keeps flag 0x40 when fs_FindBlocForPpem
+        /// finds a bloc).</summary>
+        internal bool TryGetStrikeGlyph(int glyphId, int ppem, out BitmapGlyph glyph)
+        {
+            glyph = default;
+            if (_metricStrikes is null || _metricStrikes.GlyphCountAt(ppem) == 0) return false;
+            return _metricStrikes.TryGetGlyphBitmap(glyphId, out glyph, ppem) && glyph.Mono && glyph.PpemY == ppem;
+        }
+
         /// <summary>One glyph's contours in font units, y up -- what the fitting works on.</summary>
         internal List<(Vector2[] Pts, bool[] On)>? ContoursForHinting(int glyphId)
         {
@@ -2268,8 +2279,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return figures.Count > 0;
         }
 
+        /// <summary>DirectWrite's word for its bi-level raster type (DWRITE_RASTER_TYPE 0, the glyphs
+        /// GDI+ draws SingleBitPerPixelGridFit with): TrueTypeRasterizer::NewTransform hands the
+        /// scaler 0 for a 1x1 overscale -- no ClearType bit at all. <see cref="TrueTypeInterpreter.DWriteFlags"/>
+        /// cannot carry 0 (that means GDI's word), so it travels as a bit the word never has, and the
+        /// fit runs as the bi-level pass with whole-pixel x (checked against DirectWrite's own raster
+        /// type 0 bitmaps: 27,000 glyphs, eight faces, four styles, 8..27ppem, exact but for the
+        /// embedded-bitmap sizes and the simulated bold).</summary>
+        internal const int DWriteBiLevelWord = 0x10000;
+
         /// <summary>One run of the face's program under DirectWrite's mode word -- the fit behind
         /// <see cref="TryGetDWriteFittedOutline"/> -- or null when there is none.</summary>
+
         private GlyphProgram? DWriteFit(int glyphId, float pixelsPerEm, int flags, out int dropout)
         {
             dropout = 0;
@@ -2287,13 +2308,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             GlyphProgram? glyph;
             try
             {
+                bool bi = flags == DWriteBiLevelWord;
                 TrueTypeInterpreter.DWriteFlags = flags;
-                TrueTypeInterpreter.BiLevelPass = false;
+                TrueTypeInterpreter.BiLevelPass = bi;
                 TrueTypeInterpreter.CompatibleAdvance64 = 0;
                 TrueTypeInterpreter.BiLevelSpan64 = 0;
                 TrueTypeInterpreter.HintDepth = 0;
                 TrueTypeInterpreter.SimBoldAdvanceUnits = 0;
-                SubpixelFitting = true;
+                SubpixelFitting = !bi;
 
                 glyph = (short)U16(_glyfOffset + (int)start) >= 0
                     ? ReadGlyphProgram(glyphId)
