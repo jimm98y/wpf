@@ -55,12 +55,18 @@ namespace System.Windows.Media.Imaging
     internal readonly struct ManagedTiffPage
     {
         internal ManagedTiffPage(byte[] bgra, int width, int height, double dpiX, double dpiY)
+            : this(bgra, width, height, dpiX, dpiY, null)
+        {
+        }
+
+        internal ManagedTiffPage(byte[] bgra, int width, int height, double dpiX, double dpiY, ManagedTiffPageInfo? info)
         {
             Bgra = bgra;
             Width = width;
             Height = height;
             DpiX = dpiX;
             DpiY = dpiY;
+            Info = info;
         }
 
         internal byte[] Bgra { get; }
@@ -68,6 +74,40 @@ namespace System.Windows.Media.Imaging
         internal int Height { get; }
         internal double DpiX { get; }
         internal double DpiY { get; }
+
+        /// <summary>How the page was stored, and every tag of its directory.</summary>
+        internal ManagedTiffPageInfo? Info { get; }
+    }
+
+    /// <summary>One IFD entry, its value bytes normalised to little-endian.</summary>
+    internal readonly struct ManagedTiffTag
+    {
+        internal ManagedTiffTag(int tag, int type, int count, byte[] value)
+        {
+            Tag = tag; Type = type; Count = count; Value = value;
+        }
+
+        internal int Tag { get; }
+        internal int Type { get; }
+        internal int Count { get; }
+        internal byte[] Value { get; }
+    }
+
+    /// <summary>A page's storage, as the file describes it.</summary>
+    internal sealed class ManagedTiffPageInfo
+    {
+        internal int Photometric;
+        internal int SamplesPerPixel;
+        internal int BitsPerSample;
+        internal int Compression;
+        /// <summary>True when the page carries an alpha sample.</summary>
+        internal bool HasAlpha;
+        /// <summary>For a palette or bilevel/greyscale page of at most 8 bits: one index (or level)
+        /// per pixel, row-major, before any expansion.</summary>
+        internal byte[]? Indices;
+        /// <summary>A palette page's colour map as 0xFFRRGGBB words.</summary>
+        internal uint[]? Palette;
+        internal List<ManagedTiffTag> Tags = new();
     }
 
     internal static class ManagedTiffDecoder
@@ -160,6 +200,7 @@ namespace System.Windows.Media.Imaging
         private static ManagedTiffPage DecodePage(byte[] data, int ifdOffset, bool bigEndian, out long nextIfd)
         {
             var entries = new Dictionary<ushort, IfdEntry>();
+            var order = new List<IfdEntry>();
 
             int count = ReadU16(data, ifdOffset, bigEndian);
             int entryBase = ifdOffset + 2;
@@ -176,6 +217,7 @@ namespace System.Windows.Media.Imaging
                     offset + 8);
 
                 entries[entry.Tag] = entry;
+                order.Add(entry);
             }
 
             int afterEntries = entryBase + count * 12;
@@ -248,6 +290,9 @@ namespace System.Windows.Media.Imaging
             }
 
             var bgra = new byte[width * height * 4];
+            bool keepIndices = bits <= 8 && samplesPerPixel == 1
+                && (photometric == PhotometricPalette || photometric == PhotometricBlackIsZero || photometric == PhotometricWhiteIsZero);
+            byte[]? indices = keepIndices ? new byte[width * height] : null;
 
             // Strips and tiles differ only in the GEOMETRY of the block: how big it is, where it
             // lands, and how long a row inside it is. Everything after that -- the bounds check, the
@@ -269,7 +314,7 @@ namespace System.Windows.Media.Imaging
                     ApplyHorizontalPredictor(raw, blockBytesPerRow, rowCount, blockPixelWidth, samplesPerPixel, bits);
                 }
 
-                EmitBlock(raw, bgra, width, blockBytesPerRow, firstRow, rowCount, firstColumn, columnCount,
+                EmitBlock(raw, bgra, indices, width, blockBytesPerRow, firstRow, rowCount, firstColumn, columnCount,
                           samplesPerPixel, bits, photometric, palette, premultiplied);
                 return true;
             }
@@ -314,7 +359,8 @@ namespace System.Windows.Media.Imaging
                     }
                 }
 
-                return new ManagedTiffPage(bgra, width, height, dpiX, dpiY);
+                return new ManagedTiffPage(bgra, width, height, dpiX, dpiY,
+                    Describe(data, order, bigEndian, photometric, samplesPerPixel, bits, compression, extraSamples, palette, indices));
             }
 
             uint[] stripOffsets = GetArray(data, entries, TagStripOffsets, bigEndian);
@@ -350,7 +396,8 @@ namespace System.Windows.Media.Imaging
                 }
             }
 
-            return new ManagedTiffPage(bgra, width, height, dpiX, dpiY);
+            return new ManagedTiffPage(bgra, width, height, dpiX, dpiY,
+                Describe(data, order, bigEndian, photometric, samplesPerPixel, bits, compression, extraSamples, palette, indices));
         }
 
         /// <summary>
@@ -358,7 +405,7 @@ namespace System.Windows.Media.Imaging
         /// <paramref name="bytesPerRow"/> is the stride WITHIN the block, which for a tile is wider
         /// than <paramref name="columnCount"/> whenever the tile hangs over an edge of the image.
         /// </summary>
-        private static void EmitBlock(byte[] raw, byte[] bgra, int width, int bytesPerRow,
+        private static void EmitBlock(byte[] raw, byte[] bgra, byte[]? indices, int width, int bytesPerRow,
                                       int firstRow, int rowCount, int firstColumn, int columnCount,
                                       int samplesPerPixel, int bits,
                                       int photometric, uint[] palette, bool premultiplied)
@@ -380,6 +427,11 @@ namespace System.Windows.Media.Imaging
 
                     byte r, g, b;
                     byte a = 255;
+
+                    if (indices != null)
+                    {
+                        indices[(firstRow + row) * width + firstColumn + x] = (byte)ReadSample(raw, rowStart, sampleBase, bits);
+                    }
 
                     switch (photometric)
                     {
@@ -450,6 +502,105 @@ namespace System.Windows.Media.Imaging
                     bgra[destination + 3] = a;
                 }
             }
+        }
+
+        // How the page was stored, and its directory as tags: what System.Drawing reports as the
+        // image's pixel format and property items.
+        private static ManagedTiffPageInfo Describe(byte[] data, List<IfdEntry> order, bool bigEndian,
+            int photometric, int samplesPerPixel, int bits, int compression, uint[] extraSamples,
+            uint[] colorMap, byte[]? indices)
+        {
+            var info = new ManagedTiffPageInfo
+            {
+                Photometric = photometric,
+                SamplesPerPixel = samplesPerPixel,
+                BitsPerSample = bits,
+                Compression = compression,
+                HasAlpha = samplesPerPixel >= (photometric == PhotometricRgb ? 4 : 2) && extraSamples.Length > 0,
+                Indices = indices,
+            };
+            if (photometric == PhotometricPalette && colorMap.Length >= 3)
+            {
+                int n = colorMap.Length / 3;
+                info.Palette = new uint[n];
+                for (int i = 0; i < n; i++)
+                {
+                    info.Palette[i] = 0xFF000000u | ((colorMap[i] >> 8) << 16) | ((colorMap[n + i] >> 8) << 8) | (colorMap[2 * n + i] >> 8);
+                }
+            }
+            foreach (IfdEntry e in order)
+            {
+                if (TagValue(data, e, bigEndian) is byte[] value)
+                {
+                    info.Tags.Add(new ManagedTiffTag(e.Tag, e.Type, (int)e.Count, value));
+                }
+            }
+            return info;
+        }
+
+        /// <summary>An entry's value bytes, little-endian whatever the file's order, or null when
+        /// the entry points outside the file.</summary>
+        private static byte[]? TagValue(byte[] data, IfdEntry e, bool bigEndian)
+        {
+            int size = TypeSize(e.Type);
+            if (size == 0 || e.Count < 0 || e.Count > (1 << 24)) return null;
+            long total = size * e.Count;
+            int start = total <= 4 ? e.ValueOffset : (int)ReadU32(data, e.ValueOffset, bigEndian);
+            if (start < 0 || start + total > data.Length) return null;
+            var value = new byte[total];
+            Array.Copy(data, start, value, 0, (int)total);
+            if (bigEndian)
+            {
+                // Swap each element; a RATIONAL is two LONGs, a DOUBLE one eight-byte word.
+                int unit = e.Type is 5 or 10 ? 4 : size;
+                if (unit > 1)
+                {
+                    for (int o = 0; o + unit <= value.Length; o += unit)
+                    {
+                        Array.Reverse(value, o, unit);
+                    }
+                }
+            }
+            return value;
+        }
+
+        /// <summary>
+        ///  The tags of an EXIF block (the TIFF structure inside a JPEG's APP1 "Exif\0\0" segment,
+        ///  starting at its byte-order mark): IFD0, then the Exif and GPS sub-directories it points
+        ///  at, in that order. Each value is little-endian.
+        /// </summary>
+        internal static List<ManagedTiffTag> ReadExif(byte[] tiff)
+        {
+            var tags = new List<ManagedTiffTag>();
+            if (!IsTiff(tiff)) return tags;
+            bool bigEndian = tiff[0] == 'M';
+            var visited = new HashSet<long>();
+
+            void Walk(long ifd, bool followSubIfds)
+            {
+                if (ifd <= 0 || ifd + 2 > tiff.Length || !visited.Add(ifd)) return;
+                int count = ReadU16(tiff, (int)ifd, bigEndian);
+                var subs = new List<long>();
+                for (int i = 0; i < count; i++)
+                {
+                    int offset = (int)ifd + 2 + i * 12;
+                    if (offset + 12 > tiff.Length) break;
+                    var entry = new IfdEntry((ushort)ReadU16(tiff, offset, bigEndian), (ushort)ReadU16(tiff, offset + 2, bigEndian),
+                                             ReadU32(tiff, offset + 4, bigEndian), offset + 8);
+                    if (TagValue(tiff, entry, bigEndian) is byte[] value)
+                    {
+                        tags.Add(new ManagedTiffTag(entry.Tag, entry.Type, (int)entry.Count, value));
+                    }
+                    if (followSubIfds && (entry.Tag == 0x8769 || entry.Tag == 0x8825))
+                    {
+                        subs.Add(ReadU32(tiff, offset + 8, bigEndian));
+                    }
+                }
+                foreach (long sub in subs) Walk(sub, false);
+            }
+
+            Walk(ReadU32(tiff, 4, bigEndian), true);
+            return tags;
         }
 
         private static byte Unpremultiply(byte channel, byte alpha) =>

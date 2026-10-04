@@ -766,9 +766,19 @@ namespace System.Drawing
 
 		public float GetHeight (float dpi)
 		{
-			// Managed line height for a recording-only font (no native): em pixels * ~1.16 leading.
-			if (fontObject == IntPtr.Zero)
-				return _sizeInPoints * dpi / 72f * 1.16f;
+			// A managed font: GDI+'s own rule, the face's line spacing over its em, at the em in pixels
+			// (Segoe UI 9pt at 96 dpi: 2724 / 2048 * 12 = 15.96). The face's metrics come from its file.
+			if (fontObject == IntPtr.Zero) {
+				int style = (_bold ? 1 : 0) | (_italic ? 2 : 0);
+				var face = WebGpuBackend.PrintText.Face (_name, style);
+				float em = _sizeInPoints * dpi / 72f;
+				if (face != null) {
+					WebGpuBackend.FaceMetrics fm = WebGpuBackend.FaceMetrics.Of (face);
+					if (fm.UnitsPerEm > 0 && fm.LineSpacing > 0)
+						return fm.LineSpacing * em / fm.UnitsPerEm;
+				}
+				return em * 1.16f;
+			}
 
 			float size;
 			Status status = GDIPlus.GdipGetFontHeightGivenDPI (fontObject, dpi, out size);

@@ -22,6 +22,8 @@
 
 #nullable enable
 
+using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace System.Windows.Media.Imaging
@@ -30,9 +32,16 @@ namespace System.Windows.Media.Imaging
     internal readonly struct ManagedGifFrame
     {
         internal ManagedGifFrame(byte[] bgra, int delayMilliseconds)
+            : this(bgra, delayMilliseconds, 0, -1)
+        {
+        }
+
+        internal ManagedGifFrame(byte[] bgra, int delayMilliseconds, int disposal, int transparentIndex)
         {
             Bgra = bgra;
             DelayMilliseconds = delayMilliseconds;
+            Disposal = disposal;
+            TransparentIndex = transparentIndex;
         }
 
         /// <summary>Composed canvas for this frame, logical-screen sized, 4 bytes per pixel.</summary>
@@ -40,6 +49,25 @@ namespace System.Windows.Media.Imaging
 
         /// <summary>How long this frame is shown. Zero when the file did not say.</summary>
         internal int DelayMilliseconds { get; }
+
+        /// <summary>The graphic control extension's disposal method (0 when there was none).</summary>
+        internal int Disposal { get; }
+
+        /// <summary>The frame's transparent colour index, or -1.</summary>
+        internal int TransparentIndex { get; }
+    }
+
+    /// <summary>What a GIF says about itself beyond its frames -- what System.Drawing hands out as
+    /// the image's property items (loop count, global palette, background index).</summary>
+    internal sealed class ManagedGifInfo
+    {
+        /// <summary>The NETSCAPE2.0 loop count, or -1 when the file carries no such extension.</summary>
+        internal int LoopCount = -1;
+        /// <summary>The global colour table as RGB triples, or null.</summary>
+        internal byte[]? GlobalTable;
+        internal int BackgroundIndex;
+        /// <summary>Image blocks in the file.</summary>
+        internal int ImageCount;
     }
 
     internal static class ManagedGifDecoder
@@ -58,6 +86,7 @@ namespace System.Windows.Media.Imaging
 
         // Extension labels.
         private const byte GraphicControlLabel = 0xF9;
+        private const byte ApplicationLabel = 0xFF;
 
         // Disposal methods, from the graphic control extension's packed field.
         private const int DisposalNone = 0;         // "unspecified" -- treat as leave-in-place
@@ -76,16 +105,24 @@ namespace System.Windows.Media.Imaging
         ///  predecessors, so callers can show any one of them without replaying the animation.
         /// </summary>
         internal static List<ManagedGifFrame> Decode(byte[] data, out int width, out int height)
-            => Decode(data, out width, out height, out _, out _);
+            => Decode(data, out width, out height, out _, out _, out _);
 
         /// <summary>
         /// As above, and additionally hands back the file's own indexed picture when it holds a
         /// SINGLE full-screen image -- the shape a static GIF has. <paramref name="indexed"/> is
-        /// null for an animation, whose composed canvas is not any one palette's image.
+        /// null for an animation, whose composed canvas is not any one palette's image. The
+        /// palette is 0xAARRGGBB words, the transparent index an entry of alpha zero.
         /// </summary>
         internal static List<ManagedGifFrame> Decode(byte[] data, out int width, out int height,
-            out byte[]? indexed, out BitmapPalette? indexedPalette)
+            out byte[]? indexed, out uint[]? indexedPalette)
+            => Decode(data, out width, out height, out indexed, out indexedPalette, out _);
+
+        /// <summary>As above, and also what the file says about itself.</summary>
+        internal static List<ManagedGifFrame> Decode(byte[] data, out int width, out int height,
+            out byte[]? indexed, out uint[]? indexedPalette, out ManagedGifInfo info,
+            bool restoreToBackgroundColor = false)
         {
+            info = new ManagedGifInfo();
             LastFullScreenIndices = null;
             LastFullScreenPalette = null;
             LastFullScreenTransparentIndex = -1;
@@ -104,6 +141,7 @@ namespace System.Windows.Media.Imaging
             }
 
             byte packed = ReadByte(data, ref pos);
+            info.BackgroundIndex = pos < data.Length ? data[pos] : 0;
             pos += 2;                                   // background colour index, pixel aspect ratio
 
             byte[]? globalTable = null;
@@ -111,6 +149,7 @@ namespace System.Windows.Media.Imaging
             {
                 globalTable = ReadColorTable(data, ref pos, 2 << (packed & 0x07));
             }
+            info.GlobalTable = globalTable;
 
             int imageCount = 0;
             var frames = new List<ManagedGifFrame>();
@@ -142,6 +181,11 @@ namespace System.Windows.Media.Imaging
                     {
                         ReadGraphicControl(data, ref pos, out transparentIndex, out delayMilliseconds, out disposal);
                     }
+                    else if (label == ApplicationLabel && TryReadLoopCount(data, pos, out int loops))
+                    {
+                        info.LoopCount = loops;
+                        SkipSubBlocks(data, ref pos);
+                    }
                     else
                     {
                         SkipSubBlocks(data, ref pos);
@@ -164,13 +208,21 @@ namespace System.Windows.Media.Imaging
                 DecodeImage(data, ref pos, canvas, width, height, globalTable, transparentIndex,
                             out int frameLeft, out int frameTop, out int frameWidth, out int frameHeight);
 
-                frames.Add(new ManagedGifFrame((byte[])canvas.Clone(), delayMilliseconds));
+                frames.Add(new ManagedGifFrame((byte[])canvas.Clone(), delayMilliseconds, disposal, transparentIndex));
 
                 // Apply this frame's disposal so the NEXT one starts from the right canvas.
                 switch (disposal)
                 {
                     case DisposalRestoreBackground:
-                        ClearRect(canvas, width, frameLeft, frameTop, frameWidth, frameHeight);
+                        // restoreToBackgroundColor: to the screen's background colour, opaque (as
+                        // GDI+ composes); otherwise to nothing, as every browser does.
+                        uint fill = 0;
+                        if (restoreToBackgroundColor && globalTable != null && info.BackgroundIndex * 3 + 2 < globalTable.Length)
+                        {
+                            int bi = info.BackgroundIndex * 3;
+                            fill = 0xFF000000u | ((uint)globalTable[bi] << 16) | ((uint)globalTable[bi + 1] << 8) | globalTable[bi + 2];
+                        }
+                        ClearRect(canvas, width, frameLeft, frameTop, frameWidth, frameHeight, fill);
                         break;
 
                     case DisposalRestorePrevious when restorePoint is not null:
@@ -196,22 +248,22 @@ namespace System.Windows.Media.Imaging
 
             indexed = null;
             indexedPalette = null;
+            info.ImageCount = imageCount;
             if (imageCount == 1 && LastFullScreenIndices != null && LastFullScreenPalette != null)
             {
                 indexed = LastFullScreenIndices;
 
                 int entries = LastFullScreenPalette.Length / 3;
-                var colors = new List<Color>(entries);
+                var colors = new uint[entries];
                 for (int i = 0; i < entries; i++)
                 {
                     // The transparent index is a hole in the picture; in an indexed bitmap that is
                     // an entry whose alpha is zero.
-                    byte a = i == LastFullScreenTransparentIndex ? (byte)0 : (byte)255;
-                    colors.Add(Color.FromArgb(a,
-                        LastFullScreenPalette[i * 3], LastFullScreenPalette[i * 3 + 1],
-                        LastFullScreenPalette[i * 3 + 2]));
+                    uint a = i == LastFullScreenTransparentIndex ? 0u : 255u;
+                    colors[i] = (a << 24) | ((uint)LastFullScreenPalette[i * 3] << 16)
+                              | ((uint)LastFullScreenPalette[i * 3 + 1] << 8) | LastFullScreenPalette[i * 3 + 2];
                 }
-                indexedPalette = new BitmapPalette(colors);
+                indexedPalette = colors;
             }
 
             LastFullScreenIndices = null;
@@ -221,6 +273,23 @@ namespace System.Windows.Media.Imaging
         }
 
         // ---- blocks ----------------------------------------------------------------------
+
+        /// <summary>
+        ///  The NETSCAPE2.0 (or ANIMEXTS1.0) application extension at <paramref name="pos"/>: an
+        ///  11-byte identifier block, then a sub-block whose first byte is 1 and whose next two are
+        ///  the loop count, 0 meaning forever.
+        /// </summary>
+        private static bool TryReadLoopCount(byte[] data, int pos, out int loops)
+        {
+            loops = 0;
+            if (pos + 16 > data.Length || data[pos] != 11) return false;
+            string id = System.Text.Encoding.ASCII.GetString(data, pos + 1, 11);
+            if (id != "NETSCAPE2.0" && id != "ANIMEXTS1.0") return false;
+            int sub = pos + 12;
+            if (data[sub] < 3 || data[sub + 1] != 1) return false;
+            loops = data[sub + 2] | (data[sub + 3] << 8);
+            return true;
+        }
 
         private static void ReadGraphicControl(byte[] data, ref int pos,
                                                out int transparentIndex, out int delayMilliseconds, out int disposal)
@@ -380,7 +449,7 @@ namespace System.Windows.Media.Imaging
             return row * 2 + 1;
         }
 
-        private static void ClearRect(byte[] canvas, int canvasWidth, int left, int top, int width, int height)
+        private static void ClearRect(byte[] canvas, int canvasWidth, int left, int top, int width, int height, uint fill = 0)
         {
             for (int y = top; y < top + height; y++)
             {
@@ -398,10 +467,10 @@ namespace System.Windows.Media.Imaging
                     }
 
                     int offset = rowStart + x * 4;
-                    canvas[offset + 0] = 0;
-                    canvas[offset + 1] = 0;
-                    canvas[offset + 2] = 0;
-                    canvas[offset + 3] = 0;
+                    canvas[offset + 0] = (byte)fill;
+                    canvas[offset + 1] = (byte)(fill >> 8);
+                    canvas[offset + 2] = (byte)(fill >> 16);
+                    canvas[offset + 3] = (byte)(fill >> 24);
                 }
             }
         }

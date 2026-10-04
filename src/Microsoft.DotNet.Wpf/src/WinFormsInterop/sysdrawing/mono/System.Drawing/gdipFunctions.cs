@@ -140,18 +140,11 @@ namespace System.Drawing
 				}
 			}
 
-			GdiplusStartupInput input = GdiplusStartupInput.MakeGdiplusStartupInput();
-			GdiplusStartupOutput output = GdiplusStartupOutput.MakeGdiplusStartupOutput();
-			try {
-				GdiplusStartup (ref GdiPlusToken, ref input, ref output);
-				Initialized = true;
-			}
-			// DllNotFoundException (no libgdiplus, e.g. the browser) as well as the classic
-			// TypeInitializationException: leave Initialized = false so the managed-only path is used.
-			catch (Exception) {
-				Console.Error.WriteLine (
-					"* System.Drawing: libgdiplus unavailable; running managed-only (GPU-raster) drawing path.");
-			}
+			// GDI+ is NOT started. System.Drawing is managed on every platform (images, pens, brushes,
+			// paths, text, printing), so Initialized stays false and every type takes its managed
+			// path -- Windows included. What still has a GDI+ entry point (a Metafile) starts GDI+
+			// itself, the first time one of its P/Invokes is resolved (GdiPlusResolver), so a process
+			// that never touches one never loads gdiplus.dll or libgdiplus at all.
 
 			// under MS 1.x this event is raised only for the default application domain
 #if !NETSTANDARD1_6

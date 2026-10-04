@@ -23,14 +23,52 @@ using System.IO;
 
 namespace System.Windows.Media.Imaging
 {
-    internal static class ManagedGifEncoder
+    // The byte-level half, shared with System.Drawing; ManagedGifEncoder.Wpf.cs (PresentationCore)
+    // takes a BitmapSource.
+    internal static partial class ManagedGifEncoder
     {
         private const int MaxColors = 256;
         private const byte AlphaThreshold = 128;
 
-        internal static void Save(BitmapSource source, Stream stream)
+        /// <summary>
+        /// Writes an indexed picture as it stands: its own palette (up to 256 entries, the table
+        /// padded to a power of two) and its indices, one byte per pixel. The first entry whose alpha
+        /// is below the threshold becomes the transparent index. Nothing is quantised, so a palettised
+        /// bitmap round-trips exactly.
+        /// </summary>
+        internal static void WriteIndexed(Stream stream, int width, int height, byte[] indices, uint[] palette)
         {
-            byte[] bgra = source.CopyPixelsForManagedComposition(out int width, out int height, out int stride);
+            if (indices == null || width <= 0 || height <= 0 || palette == null || palette.Length == 0)
+            {
+                throw new InvalidOperationException("The bitmap has no pixels to encode.");
+            }
+
+            int count = Math.Min(palette.Length, MaxColors);
+            var rgb = new byte[count * 3];
+            int transparentIndex = -1;
+            for (int i = 0; i < count; i++)
+            {
+                rgb[i * 3] = (byte)(palette[i] >> 16);
+                rgb[i * 3 + 1] = (byte)(palette[i] >> 8);
+                rgb[i * 3 + 2] = (byte)palette[i];
+                if (transparentIndex < 0 && (palette[i] >> 24) < AlphaThreshold) transparentIndex = i;
+            }
+
+            int tableBits = 1;
+            while ((1 << tableBits) < count) tableBits++;
+            int tableSize = 1 << tableBits;
+
+            WriteHeader(stream, width, height, tableBits);
+            WriteColorTable(stream, rgb, count, tableSize);
+            if (transparentIndex >= 0) WriteGraphicControl(stream, transparentIndex);
+            WriteImageDescriptor(stream, width, height);
+            WriteLzw(stream, indices, tableBits);
+            stream.WriteByte(0x3B);     // trailer
+        }
+
+        /// <summary>Writes straight BGRA as a single-frame GIF, choosing the palette (see the header).</summary>
+        internal static void Write(Stream stream, byte[] bgra, int width, int height, int stride)
+        {
             if (bgra == null || width <= 0 || height <= 0)
             {
                 throw new InvalidOperationException("The bitmap has no pixels to encode.");

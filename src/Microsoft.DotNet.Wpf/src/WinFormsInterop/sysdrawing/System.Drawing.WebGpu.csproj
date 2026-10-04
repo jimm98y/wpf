@@ -48,6 +48,10 @@
     <Compile Include="../../ReachFramework/Pdf/SfntReader.cs" Link="pdf/SfntReader.cs" />
     <Compile Include="../../ReachFramework/Pdf/PdfFontCache.cs" Link="pdf/PdfFontCache.cs" />
     <Compile Include="../../ReachFramework/Pdf/PdfImageCache.cs" Link="pdf/PdfImageCache.cs" />
+    <!-- WPF's managed image codecs, shared rather than copied: every Image/Bitmap/Icon is read and
+         written with them (backend/GdipCodecs.cs gives them GDI+'s semantics). The BitmapSource
+         halves (*.Wpf.cs) stay in PresentationCore. -->
+    <Compile Include="../../Shared/MS/Internal/Imaging/*.cs" LinkBase="imaging" />
     <!-- macOS's print system for a STANDALONE WinForms app (host/CocoaHost), shared with WPF:
          NSPrintOperation over PDFKit. Hosted heads print through WPF's own PlatformPrint instead
          (WindowsFormsHost installs PrintSystem.Bridge), so PlatformPrint itself is not linked:

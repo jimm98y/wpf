@@ -23,36 +23,21 @@
 //
 
 using System;
-using System.Windows.Media;
-using MS.Internal;
+using System.Collections.Generic;
 
 namespace System.Windows.Media.Imaging
 {
-    internal static class ManagedPixelConverter
+    // The byte-level half, shared with System.Drawing; ManagedPixelConverter.Wpf.cs (PresentationCore)
+    // takes WPF's PixelFormat and BitmapPalette.
+    internal static partial class ManagedPixelConverter
     {
         /// <summary>
         /// True if <see cref="ToBgra32"/> understands this format. Callers fall back to their own
         /// best effort for anything else rather than producing confidently wrong pixels.
         /// </summary>
-        internal static bool CanConvert(PixelFormat format) => Bpp(format) > 0;
+        internal static bool CanConvert(ManagedPixelLayout format) => Bpp(format) > 0;
 
-        private static int Bpp(PixelFormat format)
-        {
-            PixelFormatEnum f = format.Format;
-            return f switch
-            {
-                PixelFormatEnum.BlackWhite or PixelFormatEnum.Indexed1 => 1,
-                PixelFormatEnum.Gray2 or PixelFormatEnum.Indexed2 => 2,
-                PixelFormatEnum.Gray4 or PixelFormatEnum.Indexed4 => 4,
-                PixelFormatEnum.Gray8 or PixelFormatEnum.Indexed8 => 8,
-                PixelFormatEnum.Bgr555 or PixelFormatEnum.Bgr565 or PixelFormatEnum.Gray16 => 16,
-                PixelFormatEnum.Bgr24 or PixelFormatEnum.Rgb24 => 24,
-                PixelFormatEnum.Bgr32 or PixelFormatEnum.Bgra32 or PixelFormatEnum.Pbgra32 => 32,
-                PixelFormatEnum.Rgb48 => 48,
-                PixelFormatEnum.Rgba64 or PixelFormatEnum.Prgba64 => 64,
-                _ => 0,
-            };
-        }
+        private static int Bpp(ManagedPixelLayout format) => ManagedPixelLayouts.BitsPerPixel(format);
 
         /// <summary>
         /// Expands <paramref name="src"/> into a straight (non-premultiplied) BGRA32 buffer of
@@ -60,16 +45,16 @@ namespace System.Windows.Media.Imaging
         /// understand, or when an indexed format arrives without the palette it needs.
         /// </summary>
         internal static byte[] ToBgra32(byte[] src, int srcStride, int width, int height,
-            PixelFormat format, BitmapPalette palette)
+            ManagedPixelLayout format, uint[] palette)
         {
             int bpp = Bpp(format);
             if (bpp == 0 || src == null || width <= 0 || height <= 0) return null;
 
             // An indexed format is nothing but offsets into its palette; without one there is no
             // picture to produce, and inventing a greyscale ramp would be worse than declining.
-            bool indexed = format.Palettized;
-            System.Collections.Generic.IList<Color> colors = palette?.Colors;
-            if (indexed && (colors == null || colors.Count == 0)) return null;
+            bool indexed = ManagedPixelLayouts.IsIndexed(format);
+            uint[] colors = palette;
+            if (indexed && (colors == null || colors.Length == 0)) return null;
 
             var dst = new byte[checked(width * 4 * height)];
 
@@ -94,8 +79,8 @@ namespace System.Windows.Media.Imaging
 
                         if (indexed)
                         {
-                            Color c = colors[v < colors.Count ? v : colors.Count - 1];
-                            b = c.B; g = c.G; r = c.R; a = c.A;
+                            uint c = colors[v < colors.Length ? v : colors.Length - 1];
+                            b = (byte)c; g = (byte)(c >> 8); r = (byte)(c >> 16); a = (byte)(c >> 24);
                         }
                         else
                         {
@@ -109,23 +94,23 @@ namespace System.Windows.Media.Imaging
                         int si = rowStart + x * (bpp / 8);
                         if (si + bpp / 8 > src.Length) return null;
 
-                        switch (format.Format)
+                        switch (format)
                         {
-                            case PixelFormatEnum.Indexed8:
+                            case ManagedPixelLayout.Indexed8:
                             {
                                 int v = src[si];
-                                Color c = colors[v < colors.Count ? v : colors.Count - 1];
-                                b = c.B; g = c.G; r = c.R; a = c.A;
+                                uint c = colors[v < colors.Length ? v : colors.Length - 1];
+                                b = (byte)c; g = (byte)(c >> 8); r = (byte)(c >> 16); a = (byte)(c >> 24);
                                 break;
                             }
-                            case PixelFormatEnum.Gray8:
+                            case ManagedPixelLayout.Gray8:
                                 b = g = r = src[si];
                                 break;
-                            case PixelFormatEnum.Gray16:
+                            case ManagedPixelLayout.Gray16:
                                 // Little-endian 16-bit sample; the high byte IS the 8-bit value.
                                 b = g = r = src[si + 1];
                                 break;
-                            case PixelFormatEnum.Bgr555:
+                            case ManagedPixelLayout.Bgr555:
                             {
                                 int v = src[si] | (src[si + 1] << 8);
                                 r = Scale5((v >> 10) & 0x1F);
@@ -133,7 +118,7 @@ namespace System.Windows.Media.Imaging
                                 b = Scale5(v & 0x1F);
                                 break;
                             }
-                            case PixelFormatEnum.Bgr565:
+                            case ManagedPixelLayout.Bgr565:
                             {
                                 int v = src[si] | (src[si + 1] << 8);
                                 r = Scale5((v >> 11) & 0x1F);
@@ -141,32 +126,32 @@ namespace System.Windows.Media.Imaging
                                 b = Scale5(v & 0x1F);
                                 break;
                             }
-                            case PixelFormatEnum.Bgr24:
+                            case ManagedPixelLayout.Bgr24:
                                 b = src[si]; g = src[si + 1]; r = src[si + 2];
                                 break;
-                            case PixelFormatEnum.Rgb24:
+                            case ManagedPixelLayout.Rgb24:
                                 r = src[si]; g = src[si + 1]; b = src[si + 2];
                                 break;
-                            case PixelFormatEnum.Bgr32:
+                            case ManagedPixelLayout.Bgr32:
                                 // The fourth byte is undefined padding, NOT alpha.
                                 b = src[si]; g = src[si + 1]; r = src[si + 2];
                                 break;
-                            case PixelFormatEnum.Bgra32:
+                            case ManagedPixelLayout.Bgra32:
                                 b = src[si]; g = src[si + 1]; r = src[si + 2]; a = src[si + 3];
                                 break;
-                            case PixelFormatEnum.Pbgra32:
+                            case ManagedPixelLayout.Pbgra32:
                                 a = src[si + 3];
                                 b = Unpremultiply(src[si], a);
                                 g = Unpremultiply(src[si + 1], a);
                                 r = Unpremultiply(src[si + 2], a);
                                 break;
-                            case PixelFormatEnum.Rgb48:
+                            case ManagedPixelLayout.Rgb48:
                                 r = src[si + 1]; g = src[si + 3]; b = src[si + 5];
                                 break;
-                            case PixelFormatEnum.Rgba64:
+                            case ManagedPixelLayout.Rgba64:
                                 r = src[si + 1]; g = src[si + 3]; b = src[si + 5]; a = src[si + 7];
                                 break;
-                            case PixelFormatEnum.Prgba64:
+                            case ManagedPixelLayout.Prgba64:
                                 a = src[si + 7];
                                 r = Unpremultiply(src[si + 1], a);
                                 g = Unpremultiply(src[si + 3], a);
@@ -195,16 +180,16 @@ namespace System.Windows.Media.Imaging
         /// application that asked to quantise an image and then looked at Format -- or saved it --
         /// was told something untrue.
         /// </summary>
-        internal static byte[] FromBgra32(byte[] bgra, int width, int height, PixelFormat dest,
-            BitmapPalette palette, out int stride)
+        internal static byte[] FromBgra32(byte[] bgra, int width, int height, ManagedPixelLayout dest,
+            uint[] palette, out int stride)
         {
             stride = 0;
             int bpp = Bpp(dest);
             if (bpp == 0 || bgra == null || width <= 0 || height <= 0) return null;
 
-            bool indexed = dest.Palettized;
-            System.Collections.Generic.IList<Color> colors = palette?.Colors;
-            if (indexed && (colors == null || colors.Count == 0)) return null;
+            bool indexed = ManagedPixelLayouts.IsIndexed(dest);
+            uint[] colors = palette;
+            if (indexed && (colors == null || colors.Length == 0)) return null;
 
             stride = checked((width * bpp + 7) / 8);
             var dst = new byte[checked(stride * height)];
@@ -212,8 +197,8 @@ namespace System.Windows.Media.Imaging
             // Nearest-colour matching is a scan of up to 256 entries per pixel, and the images that
             // reach it are overwhelmingly made of few distinct colours (that is why they are being
             // palettised), so remembering each answer turns almost all of them into a lookup.
-            var nearest = indexed ? new System.Collections.Generic.Dictionary<int, int>() : null;
-            int maxIndex = indexed ? Math.Min(colors.Count, 1 << bpp) - 1 : 0;
+            var nearest = indexed ? new Dictionary<int, int>() : null;
+            int maxIndex = indexed ? Math.Min(colors.Length, 1 << bpp) - 1 : 0;
 
             for (int y = 0; y < height; y++)
             {
@@ -234,15 +219,15 @@ namespace System.Windows.Media.Imaging
                             nearest[key] = value;
                         }
                     }
-                    else if (bpp < 8 || dest.Format == PixelFormatEnum.Gray8 || dest.Format == PixelFormatEnum.Gray16)
+                    else if (bpp < 8 || dest == ManagedPixelLayout.Gray8 || dest == ManagedPixelLayout.Gray16)
                     {
                         // Greyscale destinations quantise the Rec.601 luma to the levels available.
                         int luma = (r * 77 + g * 150 + b * 29) >> 8;
                         int levels = (1 << bpp) - 1;
-                        value = dest.Format switch
+                        value = dest switch
                         {
-                            PixelFormatEnum.Gray16 => luma,          // high byte only; see below
-                            PixelFormatEnum.Gray8 => luma,
+                            ManagedPixelLayout.Gray16 => luma,          // high byte only; see below
+                            ManagedPixelLayout.Gray8 => luma,
                             // ROUND to the nearest level rather than truncating. Truncating makes
                             // the top level unreachable except from an exact 255 -- for BlackWhite,
                             // where there is only one level above zero, that turns every grey but
@@ -264,42 +249,42 @@ namespace System.Windows.Media.Imaging
                     }
 
                     int di = rowStart + x * (bpp / 8);
-                    switch (dest.Format)
+                    switch (dest)
                     {
-                        case PixelFormatEnum.Indexed8:
+                        case ManagedPixelLayout.Indexed8:
                             dst[di] = (byte)value;
                             break;
-                        case PixelFormatEnum.Gray8:
+                        case ManagedPixelLayout.Gray8:
                             dst[di] = (byte)value;
                             break;
-                        case PixelFormatEnum.Gray16:
+                        case ManagedPixelLayout.Gray16:
                             dst[di] = (byte)value; dst[di + 1] = (byte)value;
                             break;
-                        case PixelFormatEnum.Bgr555:
+                        case ManagedPixelLayout.Bgr555:
                         {
                             int v = ((r * 31 / 255) << 10) | ((g * 31 / 255) << 5) | (b * 31 / 255);
                             dst[di] = (byte)(v & 0xFF); dst[di + 1] = (byte)(v >> 8);
                             break;
                         }
-                        case PixelFormatEnum.Bgr565:
+                        case ManagedPixelLayout.Bgr565:
                         {
                             int v = ((r * 31 / 255) << 11) | ((g * 63 / 255) << 5) | (b * 31 / 255);
                             dst[di] = (byte)(v & 0xFF); dst[di + 1] = (byte)(v >> 8);
                             break;
                         }
-                        case PixelFormatEnum.Bgr24:
+                        case ManagedPixelLayout.Bgr24:
                             dst[di] = b; dst[di + 1] = g; dst[di + 2] = r;
                             break;
-                        case PixelFormatEnum.Rgb24:
+                        case ManagedPixelLayout.Rgb24:
                             dst[di] = r; dst[di + 1] = g; dst[di + 2] = b;
                             break;
-                        case PixelFormatEnum.Bgr32:
+                        case ManagedPixelLayout.Bgr32:
                             dst[di] = b; dst[di + 1] = g; dst[di + 2] = r; dst[di + 3] = 255;
                             break;
-                        case PixelFormatEnum.Bgra32:
+                        case ManagedPixelLayout.Bgra32:
                             dst[di] = b; dst[di + 1] = g; dst[di + 2] = r; dst[di + 3] = a;
                             break;
-                        case PixelFormatEnum.Pbgra32:
+                        case ManagedPixelLayout.Pbgra32:
                             dst[di] = (byte)(b * a / 255); dst[di + 1] = (byte)(g * a / 255);
                             dst[di + 2] = (byte)(r * a / 255); dst[di + 3] = a;
                             break;
@@ -313,14 +298,13 @@ namespace System.Windows.Media.Imaging
             return dst;
         }
 
-        private static int NearestPaletteIndex(System.Collections.Generic.IList<Color> colors,
-            int maxIndex, byte r, byte g, byte b)
+        internal static int NearestPaletteIndex(uint[] colors, int maxIndex, byte r, byte g, byte b)
         {
             int best = 0, bestDistance = int.MaxValue;
             for (int i = 0; i <= maxIndex; i++)
             {
-                Color c = colors[i];
-                int dr = c.R - r, dg = c.G - g, db = c.B - b;
+                uint c = colors[i];
+                int dr = (int)((c >> 16) & 0xFF) - r, dg = (int)((c >> 8) & 0xFF) - g, db = (int)(c & 0xFF) - b;
                 int distance = dr * dr + dg * dg + db * db;
                 if (distance < bestDistance)
                 {

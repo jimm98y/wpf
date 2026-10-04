@@ -60,6 +60,17 @@ namespace Wpf.WinFormsInterop.Tests
         /// <para>Two of these are the harness rather than the drawing, and are marked. Before
         /// spending time on a number here, look at the pictures -- the failure message prints both
         /// renders and the difference as character maps.</para></summary>
+        // RE-MEASURED 2026-10-04, every entry at once, because the harness's RASTERIZER
+        // changed: the bitmap DrawToBitmap draws into is no longer a GDI+ object. It used to be
+        // gdiplus.dll that put our controls' pixels down -- and, for every caption, real GDI on the
+        // bitmap's HDC -- so these numbers measured our painting code through Windows' own
+        // rasterizers. The image layer is managed now (no GDI+ anywhere), and a bitmap's drawing is
+        // rendered by the managed CPU rasterizer (System.Drawing backend/SceneRaster.cs). Shapes,
+        // fills, images and blends come out as GDI+ writes them -- the ink of eleven specimens went
+        // DOWN -- while text is the outline drawn in grey, not GDI's ClearType, and that is every
+        // entry that went up (label, button, list boxes, calendar: all text). The live window, which
+        // renders text through the GDI pipeline, is unaffected and is still the authority; the next
+        // phase (a GDI+-exact CPU rasterizer, text included) lowers these again.
         private static readonly Dictionary<string, (int Ink, int Shade)> Allowed = new()
         {
             // Ours draws the value and the spin arrows; Windows' DrawToBitmap draws neither, because
@@ -76,23 +87,23 @@ namespace Wpf.WinFormsInterop.Tests
             // to 9/1) compared a different footer every day and failed on most of them. Now both
             // say 9/1/2026 and ring the 1st; every remaining pixel is text -- GDI+ in this harness
             // against the native control's GDI, the footer 3 px right from GDI+'s wider measure.
-            ["monthcalendar"] = (0, 4440),
+            ["monthcalendar"] = (272, 4440),
             // Windows' DrawToBitmap draws a spin box without its children, so the edit and the
             // buttons are all ink here; drawing the buttons with the SPIN parts (as UpDownButtons
             // does) moved the live window's NUD region 19,689 -> 1,467 and this count by 4. Shrinking
             // their margins on pixel centres, as uxtheme does, took the live region to 1,353 and
             // this count up 2 -- ink Windows' bitmap does not have at all.
             // Exact-area arrows: ink 2166 -> 2162.
-            ["numericupdown"] = (2162, 282),
+            ["numericupdown"] = (2158, 282),
 
             // Our text-input frames are drawn on WM_NCPAINT, and DrawToBitmap renders the CLIENT area
             // only, so our border is absent from every one of these. Windows' native edit control
             // prints its own frame into the bitmap, so its border is present. Visible only where the
             // field is the control colour: a white field makes the border ink on both sides and the
             // difference lands in shade instead.
-            ["textbox-readonly"] = (839, 153),
+            ["textbox-readonly"] = (794, 197),
 
-            ["button"] = (1, 345),
+            ["button"] = (13, 345),
             // RAISED, and only ever on the live window's authority. Windows 11 does not emboss disabled
             // text -- one flat #A0A0A0 pass, where the base drew a light copy at (1,1) and the real one
             // on top. Against the live stock window that took this button's text from 1.26 times
@@ -101,14 +112,14 @@ namespace Wpf.WinFormsInterop.Tests
             // difference in this reference's own geometry: with one pass it shows, and on an unshown
             // form the caption lands a pixel over from stock's. The live window has it on the same
             // rows as Windows (87..95, both), so this number is the reference disagreeing, not us.
-            ["button-disabled"] = (6, 240),
+            ["button-disabled"] = (35, 240),
             // INK DOWN AND SHADE UP, on both this and the group box, from the group box caption
             // moving to where the LIVE stock window draws it and from the string-format margin it
             // used to carry. This reference is rendered on a form that was never shown, and where
             // the two disagree the live window is the authority -- see the disabled button above,
             // which has the same note for the same reason. Ink 148 -> 106 here and 266 -> 168 there
             // says the shapes agree better than they did; the shade is a few edge pixels either way.
-            ["button-flat"] = (98, 398),
+            ["button-flat"] = (61, 398),
             // The check GLYPH moved up a row to sit where the live window beside ours puts it, so these
             // three moved with it: the ink is the same or better, the shade a few pixels worse
             // against a reference drawn on a form that was never shown. The live window is the
@@ -116,10 +127,10 @@ namespace Wpf.WinFormsInterop.Tests
             // theme's frames now (Win11Frames), whose corner antialiasing is a sixteenth off the
             // theme's on a few pixels -- the one and five ink pixels the two clear/checked boxes
             // gained, against 7 to 348 every other button, radio and check specimen lost.
-            ["checkbox"] = (203, 210),
-            ["checkbox-clear"] = (203, 210),
-            ["checkbox-disabled"] = (203, 290),
-            ["checkedlistbox"] = (0, 1060),
+            ["checkbox"] = (116, 210),
+            ["checkbox-clear"] = (116, 210),
+            ["checkbox-disabled"] = (124, 290),
+            ["checkedlistbox"] = (28, 1060),
             // The chevron grew to the size Windows draws it and the editable field's text moved up a
             // row, both measured against the live window -- where these two went from 93k of
             // difference to 55k. This reference, drawn on a form that was never shown, disagrees by a
@@ -131,31 +142,31 @@ namespace Wpf.WinFormsInterop.Tests
             // captured difference across the two combo boxes.
             ["combobox-editable"] = (0, 300),
             // The chevron drawn as exact-area art: ink 11 -> 4; the parent colour under the corners: 1.
-            ["combobox-list"] = (1, 225),
+            ["combobox-list"] = (6, 225),
             // Windows leaves the control's last row clear -- its frame's bottom edge sits a row above
             // ours did -- and the etched hairline is #DCDCDC, not #DFDFDF. Both measured on the live
             // window, where the group box went from 212,532 to 181,740.
-            ["groupbox"] = (151, 195),
+            ["groupbox"] = (86, 223),
             // A horizontal scroll bar's thumb was placed without the leading arrow's width at startup
             // (see ScrollBar.OnHandleCreated), which put it eighteen pixels left of Windows'. Fixing
             // that, the missing white leading edge and the thumb's extra pixel took both bars to zero
             // position error against the live window.
             ["hscrollbar"] = (0, 1),
-            ["label"] = (76, 110),
-            ["label-disabled"] = (76, 120),
-            ["linklabel"] = (331, 110),
+            ["label"] = (57, 112),
+            ["label-disabled"] = (53, 120),
+            ["linklabel"] = (150, 140),
             // The row caption moved a pixel left and the selection band grew two to the right, both
             // measured against the live window -- where this control went from 276k of difference to
             // 77k, with its text now landing on Windows' exact columns. This reference, drawn on a
             // form that was never shown, disagrees by 158 pixels of shade; see the note on tabcontrol.
-            ["listbox"] = (0, 1344),
+            ["listbox"] = (41, 1344),
             ["listview"] = (0, 1837),
             // Windows animates a progress bar, so its shades differ between two runs a second
             // apart while its ink does not. The shade numbers here are a ceiling with room for that.
             ["progressbar"] = (0, 2100),
             ["progressbar-full"] = (0, 4000),
-            ["radio"] = (88, 160),
-            ["radio-clear"] = (88, 155),
+            ["radio"] = (50, 160),
+            ["radio-clear"] = (50, 155),
             // A THIRD harness case. Our StatusStrip renders its panel with no caption in this
             // path -- the row ink is flat background on every row -- while Windows' has "Ready"
             // on rows 7..18. On SCREEN ours draws its panel text correctly, so this is the
@@ -181,11 +192,11 @@ namespace Wpf.WinFormsInterop.Tests
             // The INK figure here is that page fill and nothing else, so it moves whenever the tab
             // geometry does and is not a quality signal; the SHADE figure is the one to read.
             // Tabs drawn from the TAB parts as Tab_Paint picks them: ink 11981 -> 11940.
-            ["tabcontrol"] = (11940, 295),
-            ["textbox"] = (0, 764),
+            ["tabcontrol"] = (11970, 295),
+            ["textbox"] = (39, 764),
             // The remaining shade is the dots being antialiased differently, not drawn differently:
             // Windows renders text with ClearType and we render it grey. See the glyph parity suite.
-            ["textbox-password"] = (0, 602),
+            ["textbox-password"] = (16, 602),
             // The slider is nineteen rows and the channel one row up, both measured on the live window,
             // and the ticks now snap to a column instead of being spread over two by a fractional x.
             ["trackbar"] = (0, 10),
@@ -196,7 +207,7 @@ namespace Wpf.WinFormsInterop.Tests
             // fills it with, which is 2,740 off the window and moves five faint pixels across
             // the "drawn at all" line here. Shade -- the measure that can see a ramp -- improved.
             // Ink 14 -> 0: the expander is TVP_GLYPH's flat bands, not a ramp.
-            ["treeview"] = (0, 1062),
+            ["treeview"] = (32, 1062),
             ["vscrollbar"] = (0, 1),
         };
 

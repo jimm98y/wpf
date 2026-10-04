@@ -51,6 +51,15 @@ namespace System.Drawing
 		// else falls through to libgdiplus so nothing regresses.
 		internal IGpuSceneRecorder GpuRecorder;
 
+		// The bitmap this Graphics draws into (FromImage): its drawing is a recorded scene the
+		// bitmap renders onto its pixels when they are needed (Bitmap.FlushDrawing).
+		internal Bitmap image_target;
+
+		/// <summary>What has been recorded so far, handed over (a SceneVisual, or null when nothing
+		/// was), the state -- transform, clips, saved states -- carried on for what comes next.</summary>
+		internal object TakeRecordedScene ()
+			=> GpuRecorder is WebGpuBackend.SceneRecorder r ? r.TakeScene () : null;
+
 		// GPU-raster mode: route ALL text measurement to the managed metrics (no libgdiplus) — for
 		// both layout (control sizing) and paint. Correct because we render every run with the same
 		// font, so controls are sized to fit what's actually drawn. A browser prerequisite.
@@ -181,14 +190,32 @@ namespace System.Drawing
 		internal readonly struct HatchTile
 		{
 			public readonly byte[] Rgba; public readonly int W, H; public readonly float Size;
-			public HatchTile (byte[] rgba, int w, int h, float size) { Rgba = rgba; W = w; H = h; Size = size; }
+			// A TextureBrush's tile: its pixels one unit each, under the brush transform.
+			public readonly float[] Texture;
+			public HatchTile (byte[] rgba, int w, int h, float size, float[] texture = null) { Rgba = rgba; W = w; H = h; Size = size; Texture = texture; }
 		}
 		bool TryHatch (Brush b, out HatchTile tile)
 		{
 			tile = default;
-			if (GpuRecorder == null || !(b is Drawing2D.HatchBrush hb)) return false;
+			if (GpuRecorder == null) return false;
+			if (b is TextureBrush tb) {
+				byte[] rgba = tb.TileRgba (out int tw, out int th);
+				tile = new HatchTile (rgba, tw, th, 0f, tb.TransformElements);
+				return true;
+			}
+			if (!(b is Drawing2D.HatchBrush hb)) return false;
 			tile = BuildHatchTile (hb.HatchStyle, hb.ForegroundColor, hb.BackgroundColor);
 			return true;
+		}
+
+		// A tiled fill: a hatch's pattern, or a texture's image repeated from the origin of its brush
+		// transform at the transform's scale (its rotation and shear are not carried).
+		void FillTile (GradientShape shape, float x, float y, float w, float h, float [] polyXY, HatchTile t)
+		{
+			if (t.Texture == null) { GpuRecorder.FillHatch (shape, x, y, w, h, polyXY, t.Rgba, t.W, t.H, t.Size); return; }
+			float [] m = t.Texture;
+			float sx = (float) Math.Sqrt (m [0] * m [0] + m [1] * m [1]), sy = (float) Math.Sqrt (m [2] * m [2] + m [3] * m [3]);
+			GpuRecorder.FillTexture (shape, x, y, w, h, polyXY, t.Rgba, t.W, t.H, t.W * sx, t.H * sy, m [4], m [5]);
 		}
 		// 8x8 pattern; Size is its extent in POINTS so cells are ~1 device px (fine dithers read as the
 		// intended grey, line hatches stay crisp) and the pattern scales with DPI.
@@ -346,20 +373,56 @@ namespace System.Drawing
 				GpuRecorder.DrawScene (page.Scene, 0, 0, page.Width, page.Height, dx, dy, dw, dh);
 				return true;
 			}
-			if (GpuRecorder == null || !(image is Bitmap bmp)) return false;
+			if (GpuRecorder == null || !(image is Bitmap bmp) || bmp.managed == null) return false;
 			int w = bmp.Width, h = bmp.Height;
-			var data = bmp.LockBits (new Rectangle (0, 0, w, h), Imaging.ImageLockMode.ReadOnly, Imaging.PixelFormat.Format32bppArgb);
-			try {
-				byte[] buf = new byte[data.Stride * h];
-				System.Runtime.InteropServices.Marshal.Copy (data.Scan0, buf, 0, buf.Length);
-				byte[] rgba = new byte[w * h * 4];
-				for (int yy = 0; yy < h; yy++)
-					for (int xx = 0; xx < w; xx++) {
-						int s = yy * data.Stride + xx * 4, d = (yy * w + xx) * 4;
-						rgba[d] = buf[s + 2]; rgba[d + 1] = buf[s + 1]; rgba[d + 2] = buf[s + 0]; rgba[d + 3] = buf[s + 3];
-					}
-				GpuRecorder.DrawImage (rgba, w, h, dx, dy, dw, dh);
-			} finally { bmp.UnlockBits (data); }
+			if (RecordBitmapScenes (bmp, 0, 0, w, h, dx, dy, dw, dh)) return true;
+			GdipFrame frame = bmp.Data.Frame;
+			byte[] px = GdipPixels.ToRgba (frame, new Rectangle (0, 0, w, h));
+			if (image_target != null) px = IntoBitmap (px);
+			GpuRecorder.DrawImage (px, w, h, dx, dy, dw, dh);
+			return true;
+		}
+
+		// An image drawn INTO a bitmap goes through GDI+'s premultiplied blend on the way: a
+		// translucent pixel comes out of the bitmap as the premultiply's round trip leaves it (a
+		// disabled tool-strip image, 70% alpha, reads a level lighter otherwise). Done to the pixels
+		// as they are recorded, so the bitmap drawn later as a scene shows what GDI+ would have stored.
+		// The CPU rasterizer, which does the premultiplied blend itself, is handed the original
+		// (WebGpuBackend.SceneRaster.Original).
+		static byte[] IntoBitmap (byte[] rgba)
+		{
+			byte[] stored = null;
+			for (int i = 0; i + 3 < rgba.Length; i += 4) {
+				int a = rgba [i + 3];
+				if (a == 255) continue;
+				stored ??= (byte []) rgba.Clone ();
+				for (int k = 0; k < 3; k++)
+					stored [i + k] = (byte) GdipPixels.Unpremultiply (GdipPixels.Premultiply (rgba [i + k], a), a);
+			}
+			if (stored == null) return rgba;
+			WebGpuBackend.SceneRaster.Original.AddOrUpdate (stored, rgba);
+			return stored;
+		}
+
+		// A bitmap that has been drawn into and not read since is drawn as what was drawn: its pixels
+		// first (unless it was transparent when drawing began), then each recorded scene, mapped from
+		// the bitmap's (sx, sy, sw, sh) onto (dx, dy, dw, dh) and clipped to it -- the same renderer as
+		// the rest of the window, rather than a CPU rasterization of it.
+		bool RecordBitmapScenes (Bitmap bmp, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh)
+		{
+			if (bmp == image_target || !bmp.TryGetRecording (out object[] scenes, out bool baseNeeded)) return false;
+			if (baseNeeded) {
+				GdipFrame frame = bmp.managed.Frame;
+				int x0 = Math.Max (0, (int) Math.Floor (sx)), y0 = Math.Max (0, (int) Math.Floor (sy));
+				int x1 = Math.Min (frame.Width, (int) Math.Ceiling (sx + sw)), y1 = Math.Min (frame.Height, (int) Math.Ceiling (sy + sh));
+				if (x1 > x0 && y1 > y0) {
+					float kx = dw / sw, ky = dh / sh;
+					GpuRecorder.DrawImage (GdipPixels.ToRgba (frame, new Rectangle (x0, y0, x1 - x0, y1 - y0)), x1 - x0, y1 - y0,
+						dx + (x0 - sx) * kx, dy + (y0 - sy) * ky, (x1 - x0) * kx, (y1 - y0) * ky);
+				}
+			}
+			foreach (object scene in scenes)
+				GpuRecorder.DrawScene (scene, sx, sy, sw, sh, dx, dy, dw, dh);
 			return true;
 		}
 		static PointF [] ToF (Point [] p)
@@ -370,14 +433,28 @@ namespace System.Drawing
 			return r;
 		}
 
-		// A parallelogram given as three points (upper-left, upper-right, lower-left) that is an upright
-		// rectangle draws as one; a rotated or sheared one falls through.
+		// A parallelogram given as three points (upper-left, upper-right, lower-left): an upright
+		// rectangle draws as one; a rotated or sheared one draws the unit rectangle under the affine
+		// map that takes it onto the three points.
 		bool RecordImagePoints (Image image, PointF [] dest, RectangleF? src, GraphicsUnit unit, Imaging.ImageAttributes attrs)
 		{
 			if (GpuRecorder == null || image == null || dest == null || dest.Length < 3) return false;
-			if (dest [0].Y != dest [1].Y || dest [0].X != dest [2].X) return false;
-			var rect = new RectangleF (dest [0].X, dest [0].Y, dest [1].X - dest [0].X, dest [2].Y - dest [0].Y);
-			return RecordImage (image, rect, src ?? new RectangleF (0, 0, image.Width, image.Height), unit, attrs);
+			RectangleF source = src ?? new RectangleF (0, 0, image.Width, image.Height);
+			if (dest [0].Y == dest [1].Y && dest [0].X == dest [2].X) {
+				var rect = new RectangleF (dest [0].X, dest [0].Y, dest [1].X - dest [0].X, dest [2].Y - dest [0].Y);
+				return RecordImage (image, rect, source, unit, attrs);
+			}
+			if (nativeObject != IntPtr.Zero) return false;
+			// (0,0) -> p0, (1,0) -> p1, (0,1) -> p2, in the world, prepended to the world transform.
+			float [] saved = (float []) rec_world.Clone ();
+			float [] map = { dest [1].X - dest [0].X, dest [1].Y - dest [0].Y, dest [2].X - dest [0].X, dest [2].Y - dest [0].Y, dest [0].X, dest [0].Y };
+			RecordedCombine (map, MatrixOrder.Prepend);
+			try {
+				return RecordImage (image, new RectangleF (0, 0, 1, 1), source, unit, attrs);
+			} finally {
+				rec_world = saved;
+				PushRecordedTransform ();
+			}
 		}
 
 		// Record a Bitmap draw with a source rectangle and image attributes applied to its pixels. False
@@ -393,32 +470,28 @@ namespace System.Drawing
 				GpuRecorder.DrawScene (page.Scene, src.X, src.Y, src.Width, src.Height, dest.X, dest.Y, dest.Width, dest.Height);
 				return true;
 			}
-			if (GpuRecorder == null || !(image is Bitmap bmp)) return false;
+			if (GpuRecorder == null || !(image is Bitmap bmp) || bmp.managed == null) return false;
 			if (unit != GraphicsUnit.Pixel) {
 				float ux = UnitToPixels (unit, bmp.HorizontalResolution), uy = UnitToPixels (unit, bmp.VerticalResolution);
 				src = new RectangleF (src.X * ux, src.Y * uy, src.Width * ux, src.Height * uy);
 			}
 			if (src.Width <= 0 || src.Height <= 0 || dest.Width == 0 || dest.Height == 0) return true;
+			// Attributes recolour pixels, so a recorded bitmap is rendered first; without them it
+			// can be drawn as its recording.
+			if (attrs == null && RecordBitmapScenes (bmp, src.X, src.Y, src.Width, src.Height, dest.X, dest.Y, dest.Width, dest.Height))
+				return true;
+			GdipFrame frame = bmp.Data.Frame;
 			int x0 = Math.Max (0, (int) Math.Floor (src.X)), y0 = Math.Max (0, (int) Math.Floor (src.Y));
-			int x1 = Math.Min (bmp.Width, (int) Math.Ceiling (src.Right)), y1 = Math.Min (bmp.Height, (int) Math.Ceiling (src.Bottom));
+			int x1 = Math.Min (frame.Width, (int) Math.Ceiling (src.Right)), y1 = Math.Min (frame.Height, (int) Math.Ceiling (src.Bottom));
 			int w = x1 - x0, h = y1 - y0;
 			if (w <= 0 || h <= 0) return true;
 			// Clamping the source to the bitmap shrinks the destination in proportion.
 			float kx = dest.Width / src.Width, ky = dest.Height / src.Height;
 			var d = new RectangleF (dest.X + (x0 - src.X) * kx, dest.Y + (y0 - src.Y) * ky, w * kx, h * ky);
-			var data = bmp.LockBits (new Rectangle (x0, y0, w, h), Imaging.ImageLockMode.ReadOnly, Imaging.PixelFormat.Format32bppArgb);
-			try {
-				byte[] buf = new byte[data.Stride * h];
-				System.Runtime.InteropServices.Marshal.Copy (data.Scan0, buf, 0, buf.Length);
-				byte[] rgba = new byte[w * h * 4];
-				for (int yy = 0; yy < h; yy++)
-					for (int xx = 0; xx < w; xx++) {
-						int si = yy * data.Stride + xx * 4, o = (yy * w + xx) * 4;
-						rgba[o] = buf[si + 2]; rgba[o + 1] = buf[si + 1]; rgba[o + 2] = buf[si + 0]; rgba[o + 3] = buf[si + 3];
-					}
-				attrs?.Apply (rgba, Imaging.ColorAdjustType.Bitmap);
-				GpuRecorder.DrawImage (rgba, w, h, d.X, d.Y, d.Width, d.Height);
-			} finally { bmp.UnlockBits (data); }
+			byte[] rgba = GdipPixels.ToRgba (frame, new Rectangle (x0, y0, w, h));
+			attrs?.Apply (rgba, Imaging.ColorAdjustType.Bitmap);
+			if (image_target != null) rgba = IntoBitmap (rgba);
+			GpuRecorder.DrawImage (rgba, w, h, d.X, d.Y, d.Width, d.Height);
 			return true;
 		}
 
@@ -624,6 +697,17 @@ namespace System.Drawing
 		public void Clear (Color color)
 		{
 			Status status;
+			if (image_target != null && GpuRecorder is WebGpuBackend.SceneRecorder rec) {
+				// A bitmap's every pixel BECOMES the colour (transparent included) -- a replace, not a
+				// blend. With nothing clipping it that is done to the pixels now, and whatever was
+				// drawn before is gone; under a clip it is recorded as a SourceCopy fill.
+				if (!rec.HasClip) { image_target.ClearTo (color); return; }
+				const float Big = 1 << 20;
+				rec.SetCompositingMode (true);
+				rec.FillRect (-Big, -Big, Big * 2, Big * 2, color.ToArgb ());
+				rec.SetCompositingMode (_compositingMode == CompositingMode.SourceCopy);
+				return;
+			}
 			if (GpuRecorder != null) {
 				// Clear fills the ENTIRE surface. A recorder has no surface of its own, but a
 				// window's scene is clipped to that window, so a rectangle large enough to cover
@@ -786,6 +870,11 @@ namespace System.Drawing
 		public void Dispose ()
 		{
 			RunDisposeHook ();
+			if (image_target != null) {
+				Bitmap target = image_target;
+				image_target = null;
+				target.TakeDrawing (this, detach: true);
+			}
 			// Recording-only Graphics (GPU-raster, no libgdiplus backing): nothing native to free.
 			if (nativeObject == IntPtr.Zero) { disposed = true; GpuRecorder = null; return; }
 			Status status;
@@ -1299,6 +1388,7 @@ namespace System.Drawing
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, 
                                 ImageAttributes imageAttr)
 		{
+			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (destPoints == null)
@@ -1323,6 +1413,7 @@ namespace System.Drawing
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, 
                                 ImageAttributes imageAttr)
 		{
+			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (destPoints == null)
@@ -2648,6 +2739,7 @@ namespace System.Drawing
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			if (GpuRecorder != null) { RecordRegionClip (region, true); return; }
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRegion (nativeObject, region.NativeObject, CombineMode.Exclude);
 			CheckDrawStatus (status);
@@ -2745,7 +2837,7 @@ namespace System.Drawing
 				return;
 			}
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
+			if (TryHatch (brush, out HatchTile eh)) { FillTile (GradientShape.Ellipse, x, y, width, height, null, eh); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
                         Status status = GDIPlus.GdipFillEllipse (nativeObject, brush.NativeBrush, x, y, width, height);
 			CheckDrawStatus (status);
@@ -2757,7 +2849,7 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
+			if (TryHatch (brush, out HatchTile eh)) { FillTile (GradientShape.Ellipse, x, y, width, height, null, eh); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
 			Status status = GDIPlus.GdipFillEllipseI (nativeObject, brush.NativeBrush, x, y, width, height);
 			CheckDrawStatus (status);
@@ -2782,7 +2874,7 @@ namespace System.Drawing
 				bool nonZero = path.FillMode == FillMode.Winding;
 				if (TryHatch (brush, out HatchTile ht)) {
 					foreach (float [] xy in contours)
-						GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, xy, ht.Rgba, ht.W, ht.H, ht.Size);
+						FillTile (GradientShape.Polygon, 0, 0, 0, 0, xy, ht);
 					return;
 				}
 				if (TryGradient (brush, out GradientDesc gd)) {
@@ -2806,7 +2898,7 @@ namespace System.Drawing
 			// the month calendar fills the selected day with a pie and then writes the day
 			// number over it in the background colour, so today's date came out invisible.
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (rect.X, rect.Y, rect.Width, rect.Height, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Ellipse, rect.X, rect.Y, rect.Width, rect.Height, null, ph.Rgba, ph.W, ph.H, ph.Size); return; }
+			if (TryHatch (brush, out HatchTile ph)) { FillTile (GradientShape.Ellipse, rect.X, rect.Y, rect.Width, rect.Height, null, ph); return; }
 			if (TryGradient (brush, out GradientDesc pg)) { GpuRecorder.FillGradient (GradientShape.Ellipse, rect.X, rect.Y, rect.Width, rect.Height, null, pg); return; }
 			Status status = GDIPlus.GdipFillPie (nativeObject, brush.NativeBrush, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
 			CheckDrawStatus (status);
@@ -2819,7 +2911,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			// Approximate as a full ellipse fill (covers the common full-circle case, e.g. a radio dot).
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
+			if (TryHatch (brush, out HatchTile eh)) { FillTile (GradientShape.Ellipse, x, y, width, height, null, eh); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
 			Status status = GDIPlus.GdipFillPieI (nativeObject, brush.NativeBrush, x, y, width, height, startAngle, sweepAngle);
 			CheckDrawStatus (status);
@@ -2831,7 +2923,7 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile eh)) { GpuRecorder.FillHatch (GradientShape.Ellipse, x, y, width, height, null, eh.Rgba, eh.W, eh.H, eh.Size); return; }
+			if (TryHatch (brush, out HatchTile eh)) { FillTile (GradientShape.Ellipse, x, y, width, height, null, eh); return; }
 			if (TryGradient (brush, out GradientDesc ge)) { GpuRecorder.FillGradient (GradientShape.Ellipse, x, y, width, height, null, ge); return; }
 			Status status = GDIPlus.GdipFillPie (nativeObject, brush.NativeBrush, x, y, width, height, startAngle, sweepAngle);
 			CheckDrawStatus (status);
@@ -2845,7 +2937,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (RecordSolid (brush)) { RecordFillPolygon (Flatten (points), false, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
+			if (TryHatch (brush, out HatchTile ph)) { FillTile (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon2 (nativeObject, brush.NativeBrush, points, points.Length);
 			CheckDrawStatus (status);
@@ -2859,7 +2951,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (RecordSolid (brush)) { RecordFillPolygon (Flatten (points), false, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
+			if (TryHatch (brush, out HatchTile ph)) { FillTile (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon2I (nativeObject, brush.NativeBrush, points, points.Length);
 			CheckDrawStatus (status);
@@ -2873,7 +2965,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (RecordSolid (brush)) { RecordFillPolygon (Flatten (points), fillMode == FillMode.Winding, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
+			if (TryHatch (brush, out HatchTile ph)) { FillTile (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygonI (nativeObject, brush.NativeBrush, points, points.Length, fillMode);
 			CheckDrawStatus (status);
@@ -2887,7 +2979,7 @@ namespace System.Drawing
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (RecordSolid (brush)) { RecordFillPolygon (Flatten (points), fillMode == FillMode.Winding, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile ph)) { GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph.Rgba, ph.W, ph.H, ph.Size); return; }
+			if (TryHatch (brush, out HatchTile ph)) { FillTile (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), ph); return; }
 			if (TryGradient (brush, out GradientDesc gp)) { GpuRecorder.FillGradient (GradientShape.Polygon, 0, 0, 0, 0, Flatten (points), gp); return; }
 			Status status = GDIPlus.GdipFillPolygon (nativeObject, brush.NativeBrush, points, points.Length, fillMode);
 			CheckDrawStatus (status);
@@ -2916,7 +3008,7 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillRect (x, y, width, height, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile rh)) { GpuRecorder.FillHatch (GradientShape.Rect, x, y, width, height, null, rh.Rgba, rh.W, rh.H, rh.Size); return; }
+			if (TryHatch (brush, out HatchTile rh)) { FillTile (GradientShape.Rect, x, y, width, height, null, rh); return; }
 			if (TryExactLinearGradient (brush, x, y, width, height)) return;
 			if (TryGradient (brush, out GradientDesc gd)) { GpuRecorder.FillGradient (GradientShape.Rect, x, y, width, height, null, gd); return; }
 
@@ -2930,7 +3022,7 @@ namespace System.Drawing
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillRect (x, y, width, height, ArgbOf (brush)); return; }
-			if (TryHatch (brush, out HatchTile rh)) { GpuRecorder.FillHatch (GradientShape.Rect, x, y, width, height, null, rh.Rgba, rh.W, rh.H, rh.Size); return; }
+			if (TryHatch (brush, out HatchTile rh)) { FillTile (GradientShape.Rect, x, y, width, height, null, rh); return; }
 			if (TryExactLinearGradient (brush, x, y, width, height)) return;
 			if (TryGradient (brush, out GradientDesc gd)) { GpuRecorder.FillGradient (GradientShape.Rect, x, y, width, height, null, gd); return; }
 
@@ -2984,6 +3076,10 @@ namespace System.Drawing
 		
 		public void Flush (FlushIntention intention)
 		{
+			if (image_target != null) {
+				image_target.TakeDrawing (this, detach: false);
+				return;
+			}
 			if (nativeObject == IntPtr.Zero) {
 				return;
 			}
@@ -3079,9 +3175,17 @@ namespace System.Drawing
 			if (image == null) 
 				throw new ArgumentNullException ("image");
 
-			// No libgdiplus (browser): the image has no native handle -> return a null-native Graphics.
-			// The GPU-raster path records verbs / measures text managed, so it never touches the (absent)
-			// native drawing surface. This backs Hwnd.GraphicsContext (the shared measurement Graphics).
+			// A managed bitmap: a recording Graphics whose scene the bitmap renders onto its pixels
+			// when they are wanted (Bitmap.FlushDrawing), or draws as a nested scene when it is drawn.
+			if (image is Bitmap bitmap && bitmap.managed != null) {
+				if ((bitmap.PixelFormat & PixelFormat.Indexed) != 0)
+					throw new Exception (Locale.GetText ("A Graphics object cannot be created from an image that has an indexed pixel format."));
+				Graphics g = WebGpuBackend.GpuRaster.NewRecording ();
+				g.image_target = bitmap;
+				bitmap.AttachGraphics (g);
+				return g;
+			}
+			// Neither a bitmap nor a metafile (a print preview's page): nothing to draw on.
 			if (image.nativeObject == IntPtr.Zero)
 				return new Graphics (IntPtr.Zero, image);
 
@@ -3135,6 +3239,7 @@ namespace System.Drawing
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			if (GpuRecorder != null) { RecordRegionClip (region, false); return; }
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRegion (nativeObject, region.NativeObject, CombineMode.Intersect);
 			CheckDrawStatus (status);
@@ -3633,6 +3738,34 @@ namespace System.Drawing
 			return bounds;
 		}
 
+		// A region as a recorded clip: one rectangle as a rectangle, several as a path of them, none
+		// as an empty clip.
+		void RecordRegionClip (Region region, bool exclude)
+		{
+			if (region.IsInfinite (this)) {
+				if (exclude) GpuRecorder.SetClipRect (0, 0, 0, 0, false);
+				return;
+			}
+			RectangleF[] scans = region.GetRegionScans (null);
+			if (scans.Length == 1) {
+				GpuRecorder.SetClipRect (scans [0].X, scans [0].Y, scans [0].Width, scans [0].Height, exclude);
+				return;
+			}
+			if (scans.Length == 0) {
+				if (!exclude) GpuRecorder.SetClipRect (0, 0, 0, 0, false);
+				return;
+			}
+			var xy = new float [scans.Length * 8];
+			var types = new byte [scans.Length * 4];
+			for (int i = 0; i < scans.Length; i++) {
+				RectangleF r = scans [i];
+				float [] c = { r.Left, r.Top, r.Right, r.Top, r.Right, r.Bottom, r.Left, r.Bottom };
+				Array.Copy (c, 0, xy, i * 8, 8);
+				types [i * 4] = 0; types [i * 4 + 1] = 1; types [i * 4 + 2] = 1; types [i * 4 + 3] = 0x81;
+			}
+			GpuRecorder.SetClipPath (xy, types, true, exclude);
+		}
+
 		public void SetClip (Region region, CombineMode combineMode)
 		{
 			if (region == null)
@@ -3649,9 +3782,8 @@ namespace System.Drawing
 				// the right place, in the right colour, and painted over.
 				if (print_mode) GpuRecorder.ResetAllClips ();
 				else GpuRecorder.ClearClip ();
-				RectangleF bounds = RegionBounds (region);
-				if (bounds.Width > 0 && bounds.Height > 0)
-					GpuRecorder.SetClipRect (bounds.X, bounds.Y, bounds.Width, bounds.Height, false);
+				if (combineMode == CombineMode.Exclude) RecordRegionClip (region, true);
+				else if (!region.IsInfinite (this)) RecordRegionClip (region, false);
 				return;
 			}
 			if (nativeObject == IntPtr.Zero) return;
@@ -3774,7 +3906,7 @@ namespace System.Drawing
 
 		public RectangleF ClipBounds {
 			get {
-                                if (nativeObject == IntPtr.Zero) return print_mode ? RecordedVisibleBounds () : new RectangleF (0, 0, 1 << 20, 1 << 20);
+                                if (nativeObject == IntPtr.Zero) return print_mode || image_target != null ? RecordedVisibleBounds () : new RectangleF (0, 0, 1 << 20, 1 << 20);
                                 RectangleF rect = new RectangleF ();
                                 Status status = GDIPlus.GdipGetClipBounds (nativeObject, out rect);
 				CheckDrawStatus (status);
@@ -3826,7 +3958,7 @@ namespace System.Drawing
 
 		public float DpiX {
 			get {
-                                if (nativeObject == IntPtr.Zero) return print_mode ? print_dpi_x : 96f;   // recording-only
+                                if (nativeObject == IntPtr.Zero) return print_mode ? print_dpi_x : image_target != null ? image_target.HorizontalResolution : 96f;   // recording-only
                                 float x;
 
        				Status status = GDIPlus.GdipGetDpiX (nativeObject, out x);
@@ -3837,7 +3969,7 @@ namespace System.Drawing
 
 		public float DpiY {
 			get {
-                                if (nativeObject == IntPtr.Zero) return print_mode ? print_dpi_y : 96f;   // recording-only
+                                if (nativeObject == IntPtr.Zero) return print_mode ? print_dpi_y : image_target != null ? image_target.VerticalResolution : 96f;   // recording-only
                                 float y;
 
        				Status status = GDIPlus.GdipGetDpiY (nativeObject, out y);
@@ -4044,7 +4176,7 @@ namespace System.Drawing
 
 		public RectangleF VisibleClipBounds {
 			get {
-                                if (nativeObject == IntPtr.Zero) return print_mode ? RecordedVisibleBounds () : new RectangleF (0, 0, 1 << 20, 1 << 20);  // recording-only
+                                if (nativeObject == IntPtr.Zero) return print_mode || image_target != null ? RecordedVisibleBounds () : new RectangleF (0, 0, 1 << 20, 1 << 20);  // recording-only
                                 RectangleF rect;
 					
                                 Status status = GDIPlus.GdipGetVisibleClipBounds (nativeObject, out rect);

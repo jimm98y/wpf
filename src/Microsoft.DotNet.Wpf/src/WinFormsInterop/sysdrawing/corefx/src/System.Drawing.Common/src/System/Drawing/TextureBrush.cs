@@ -2,8 +2,13 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System.Runtime.InteropServices;
-using System.Diagnostics;
+//
+// A TextureBrush with no GDI+ brush behind it: the tile (the image, cut to the destination
+// rectangle and recoloured by any ImageAttributes when the brush is made, as GDI+ does), the wrap
+// mode and the brush transform, held here. Graphics records a fill with it as a tiled image
+// (Graphics.TryTexture).
+//
+
 using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -12,11 +17,9 @@ namespace System.Drawing
 {
     public sealed class TextureBrush : Brush
     {
-        // When creating a texture brush from a metafile image, the dstRect
-        // is used to specify the size that the metafile image should be
-        // rendered at in the device units of the destination graphics.
-        // It is NOT used to crop the metafile image, so only the width 
-        // and height values matter for metafiles.
+        private Bitmap _tile;
+        private WrapMode _wrapMode;
+        private float[] _transform = { 1f, 0f, 0f, 1f, 0f, 0f };
 
         public TextureBrush(Image bitmap) : this(bitmap, WrapMode.Tile)
         {
@@ -28,19 +31,8 @@ namespace System.Drawing
             {
                 throw new ArgumentNullException(nameof(image));
             }
-
-            if (wrapMode < WrapMode.Tile || wrapMode > WrapMode.Clamp)
-            {
-                throw new InvalidEnumArgumentException(nameof(wrapMode), unchecked((int)wrapMode), typeof(WrapMode));
-            }
-
-            IntPtr brush = IntPtr.Zero;
-            int status = SafeNativeMethods.Gdip.GdipCreateTexture(new HandleRef(image, image.nativeImage),
-                                                   (int)wrapMode,
-                                                   out brush);
-            SafeNativeMethods.Gdip.CheckStatus(status);
-
-            SetNativeBrushInternal(brush);
+            CheckWrap(wrapMode);
+            Init(image, wrapMode, null, null);
         }
 
         public TextureBrush(Image image, WrapMode wrapMode, RectangleF dstRect)
@@ -49,48 +41,13 @@ namespace System.Drawing
             {
                 throw new ArgumentNullException(nameof(image));
             }
-            
-            if (wrapMode < WrapMode.Tile || wrapMode > WrapMode.Clamp)
-            {
-                throw new InvalidEnumArgumentException(nameof(wrapMode), unchecked((int)wrapMode), typeof(WrapMode));
-            }
-
-            IntPtr brush = IntPtr.Zero;
-            int status = SafeNativeMethods.Gdip.GdipCreateTexture2(new HandleRef(image, image.nativeImage),
-                                                    unchecked((int)wrapMode),
-                                                    dstRect.X,
-                                                    dstRect.Y,
-                                                    dstRect.Width,
-                                                    dstRect.Height,
-                                                    out brush);
-            SafeNativeMethods.Gdip.CheckStatus(status);
-
-            SetNativeBrushInternal(brush);
+            CheckWrap(wrapMode);
+            Init(image, wrapMode, dstRect, null);
         }
 
         public TextureBrush(Image image, WrapMode wrapMode, Rectangle dstRect)
+            : this(image, wrapMode, (RectangleF)dstRect)
         {
-            if (image == null)
-            {
-                throw new ArgumentNullException(nameof(image));
-            }
-
-            if (wrapMode < WrapMode.Tile || wrapMode > WrapMode.Clamp)
-            {
-                throw new InvalidEnumArgumentException(nameof(wrapMode), unchecked((int)wrapMode), typeof(WrapMode));
-            }
-
-            IntPtr brush = IntPtr.Zero;
-            int status = SafeNativeMethods.Gdip.GdipCreateTexture2I(new HandleRef(image, image.nativeImage),
-                                                     unchecked((int)wrapMode),
-                                                     dstRect.X,
-                                                     dstRect.Y,
-                                                     dstRect.Width,
-                                                     dstRect.Height,
-                                                     out brush);
-            SafeNativeMethods.Gdip.CheckStatus(status);
-
-            SetNativeBrushInternal(brush);
         }
 
         public TextureBrush(Image image, RectangleF dstRect) : this(image, dstRect, null) { }
@@ -101,68 +58,91 @@ namespace System.Drawing
             {
                 throw new ArgumentNullException(nameof(image));
             }
-
-            IntPtr brush = IntPtr.Zero;
-            int status = SafeNativeMethods.Gdip.GdipCreateTextureIA(new HandleRef(image, image.nativeImage),
-                                                     new HandleRef(imageAttr, (imageAttr == null) ?
-                                                       IntPtr.Zero : imageAttr.nativeImageAttributes),
-                                                     dstRect.X,
-                                                     dstRect.Y,
-                                                     dstRect.Width,
-                                                     dstRect.Height,
-                                                     out brush);
-            SafeNativeMethods.Gdip.CheckStatus(status);
-
-            SetNativeBrushInternal(brush);
+            Init(image, WrapMode.Tile, dstRect, imageAttr);
         }
 
         public TextureBrush(Image image, Rectangle dstRect) : this(image, dstRect, null) { }
 
         public TextureBrush(Image image, Rectangle dstRect, ImageAttributes imageAttr)
+            : this(image, (RectangleF)dstRect, imageAttr)
         {
-            if (image == null)
+        }
+
+        private TextureBrush()
+        {
+        }
+
+        private static void CheckWrap(WrapMode wrapMode)
+        {
+            if (wrapMode < WrapMode.Tile || wrapMode > WrapMode.Clamp)
             {
-                throw new ArgumentNullException(nameof(image));
+                throw new InvalidEnumArgumentException(nameof(wrapMode), unchecked((int)wrapMode), typeof(WrapMode));
             }
-
-            IntPtr brush = IntPtr.Zero;
-            int status = SafeNativeMethods.Gdip.GdipCreateTextureIAI(new HandleRef(image, image.nativeImage),
-                                                     new HandleRef(imageAttr, (imageAttr == null) ?
-                                                       IntPtr.Zero : imageAttr.nativeImageAttributes),
-                                                     dstRect.X,
-                                                     dstRect.Y,
-                                                     dstRect.Width,
-                                                     dstRect.Height,
-                                                     out brush);
-            SafeNativeMethods.Gdip.CheckStatus(status);
-
-            SetNativeBrushInternal(brush);
         }
 
-        internal TextureBrush(IntPtr nativeBrush)
+        private void Init(Image image, WrapMode wrapMode, RectangleF? dstRect, ImageAttributes imageAttr)
         {
-            Debug.Assert(nativeBrush != IntPtr.Zero, "Initializing native brush with null.");
-            SetNativeBrushInternal(nativeBrush);
+            _wrapMode = wrapMode;
+            var whole = new Rectangle(0, 0, image.Width, image.Height);
+            Rectangle r = whole;
+            if (dstRect is RectangleF d)
+            {
+                r = Rectangle.Intersect(whole, Rectangle.Truncate(d));
+                if (r.Width <= 0 || r.Height <= 0)
+                {
+                    throw new OutOfMemoryException();
+                }
+            }
+            if (!(image is Bitmap bmp))
+            {
+                _tile = new Bitmap(Math.Max(1, r.Width), Math.Max(1, r.Height));
+                return;
+            }
+            _tile = bmp.Clone(r, PixelFormat.Format32bppArgb);
+            if (imageAttr != null)
+            {
+                GdipFrame f = _tile.Data.Frame;
+                byte[] rgba = GdipPixels.ToRgba(f, new Rectangle(0, 0, f.Width, f.Height));
+                imageAttr.Apply(rgba, ColorAdjustType.Brush);
+                var row = new uint[f.Width];
+                for (int y = 0; y < f.Height; y++)
+                {
+                    for (int x = 0; x < f.Width; x++)
+                    {
+                        int o = (y * f.Width + x) * 4;
+                        row[x] = (uint)rgba[o + 3] << 24 | (uint)rgba[o] << 16 | (uint)rgba[o + 1] << 8 | rgba[o + 2];
+                    }
+                    GdipPixels.WriteArgb(f, 0, y, f.Width, row, 0);
+                }
+            }
         }
+
+        /// <summary>The tile as straight RGBA, and the brush transform (m11 m12 m21 m22 dx dy).</summary>
+        internal byte[] TileRgba(out int width, out int height)
+        {
+            GdipFrame f = _tile.Data.Frame;
+            width = f.Width;
+            height = f.Height;
+            return GdipPixels.ToRgba(f, new Rectangle(0, 0, width, height));
+        }
+
+        internal float[] TransformElements => _transform;
 
         public override object Clone()
         {
-            IntPtr cloneBrush = IntPtr.Zero;
-            int status = SafeNativeMethods.Gdip.GdipCloneBrush(new HandleRef(this, NativeBrush), out cloneBrush);
-            SafeNativeMethods.Gdip.CheckStatus(status);
-
-            return new TextureBrush(cloneBrush);
+            return new TextureBrush
+            {
+                _tile = (Bitmap)_tile.Clone(),
+                _wrapMode = _wrapMode,
+                _transform = (float[])_transform.Clone(),
+            };
         }
 
         public Matrix Transform
         {
             get
             {
-                var matrix = new Matrix();
-                int status = SafeNativeMethods.Gdip.GdipGetTextureTransform(new HandleRef(this, NativeBrush), new HandleRef(matrix, matrix.nativeMatrix));
-                SafeNativeMethods.Gdip.CheckStatus(status);
-
-                return matrix;
+                return new Matrix(_transform[0], _transform[1], _transform[2], _transform[3], _transform[4], _transform[5]);
             }
             set
             {
@@ -170,9 +150,7 @@ namespace System.Drawing
                 {
                     throw new ArgumentNullException(nameof(value));
                 }
-
-                int status = SafeNativeMethods.Gdip.GdipSetTextureTransform(new HandleRef(this, NativeBrush), new HandleRef(value, value.nativeMatrix));
-                SafeNativeMethods.Gdip.CheckStatus(status);
+                _transform = value.Elements;
             }
         }
 
@@ -180,21 +158,12 @@ namespace System.Drawing
         {
             get
             {
-                int mode = 0;
-                int status = SafeNativeMethods.Gdip.GdipGetTextureWrapMode(new HandleRef(this, NativeBrush), out mode);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-
-                return (WrapMode)mode;
+                return _wrapMode;
             }
             set
             {
-                if (value < WrapMode.Tile || value > WrapMode.Clamp)
-                {
-                    throw new InvalidEnumArgumentException(nameof(value), unchecked((int)value), typeof(WrapMode));
-                }
-    
-                int status = SafeNativeMethods.Gdip.GdipSetTextureWrapMode(new HandleRef(this, NativeBrush), unchecked((int)value));
-                SafeNativeMethods.Gdip.CheckStatus(status);
+                CheckWrap(value);
+                _wrapMode = value;
             }
         }
 
@@ -202,18 +171,13 @@ namespace System.Drawing
         {
             get
             {
-                IntPtr image;
-                int status = SafeNativeMethods.Gdip.GdipGetTextureImage(new HandleRef(this, NativeBrush), out image);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-
-                return Image.CreateImageObject(image);
+                return (Image)_tile.Clone();
             }
         }
 
         public void ResetTransform()
         {
-            int status = SafeNativeMethods.Gdip.GdipResetTextureTransform(new HandleRef(this, NativeBrush));
-            SafeNativeMethods.Gdip.CheckStatus(status);
+            _transform = new float[] { 1f, 0f, 0f, 1f, 0f, 0f };
         }
 
         public void MultiplyTransform(Matrix matrix) => MultiplyTransform(matrix, MatrixOrder.Prepend);
@@ -224,50 +188,41 @@ namespace System.Drawing
             {
                 throw new ArgumentNullException(nameof(matrix));
             }
-
-            // Multiplying the transform by a disposed matrix is a nop in GDI+, but throws
-            // with the libgdiplus backend. Simulate a nop for compatability with GDI+.
-            if (matrix.nativeMatrix == IntPtr.Zero)
-            {
-                return;
-            }
-
-            int status = SafeNativeMethods.Gdip.GdipMultiplyTextureTransform(new HandleRef(this, NativeBrush),
-                                                              new HandleRef(matrix, matrix.nativeMatrix),
-                                                              order);
-            SafeNativeMethods.Gdip.CheckStatus(status);
+            Combine(matrix.Elements, order);
         }
 
         public void TranslateTransform(float dx, float dy) => TranslateTransform(dx, dy, MatrixOrder.Prepend);
 
         public void TranslateTransform(float dx, float dy, MatrixOrder order)
-        {
-            int status = SafeNativeMethods.Gdip.GdipTranslateTextureTransform(new HandleRef(this, NativeBrush),
-                                                               dx,
-                                                               dy,
-                                                               order);
-            SafeNativeMethods.Gdip.CheckStatus(status);
-        }
+            => Combine(new float[] { 1, 0, 0, 1, dx, dy }, order);
 
         public void ScaleTransform(float sx, float sy) => ScaleTransform(sx, sy, MatrixOrder.Prepend);
 
         public void ScaleTransform(float sx, float sy, MatrixOrder order)
-        {
-            int status = SafeNativeMethods.Gdip.GdipScaleTextureTransform(new HandleRef(this, NativeBrush),
-                                                           sx,
-                                                           sy,
-                                                           order);
-            SafeNativeMethods.Gdip.CheckStatus(status);
-        }
+            => Combine(new float[] { sx, 0, 0, sy, 0, 0 }, order);
 
         public void RotateTransform(float angle) => RotateTransform(angle, MatrixOrder.Prepend);
 
         public void RotateTransform(float angle, MatrixOrder order)
         {
-            int status = SafeNativeMethods.Gdip.GdipRotateTextureTransform(new HandleRef(this, NativeBrush),
-                                                            angle,
-                                                            order);
-            SafeNativeMethods.Gdip.CheckStatus(status);
+            double a = angle * Math.PI / 180.0;
+            float cos = (float)Math.Cos(a), sin = (float)Math.Sin(a);
+            Combine(new float[] { cos, sin, -sin, cos, 0, 0 }, order);
+        }
+
+        private void Combine(float[] m, MatrixOrder order)
+        {
+            if (order == MatrixOrder.Prepend) Matrix.Mul(m, _transform, _transform);
+            else Matrix.Mul(_transform, m, _transform);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _tile?.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 }

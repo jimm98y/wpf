@@ -179,6 +179,14 @@ namespace System.Drawing.WebGpuBackend
         void Stroke(PagePath path, SceneBrush brush, StrokeStyle style);
         /// <summary>False when the run cannot be drawn as text; its outlines are then filled.</summary>
         bool Text(PageText run);
+
+        /// <summary>The compositing mode of the primitive about to be emitted
+        /// (CompositingMode.SourceCopy replaces the destination). Only a raster device cares.</summary>
+        void SourceCopy(bool on) { }
+
+        /// <summary>A screen DrawString laid out by GDI+'s fast imager, offered whole before it is
+        /// turned into glyphs: a raster device can draw it as GDI+ does. False to take the glyphs.</summary>
+        bool GdiPlusText(GdiPlusTextDraw draw) => false;
     }
 
     internal static class ScenePageWalker
@@ -214,6 +222,7 @@ namespace System.Drawing.WebGpuBackend
 
         private static void Emit(DrawingPrimitive p, IPageSink sink)
         {
+            sink.SourceCopy(p.SourceCopy);
             switch (p)
             {
                 case GeometryFill fill:
@@ -239,6 +248,8 @@ namespace System.Drawing.WebGpuBackend
                 case WpfTextRunDraw run:
                     if (!sink.Text(FromPlaced(run)))
                         foreach (DrawingPrimitive f in run.Fallback) Emit(f, sink);
+                    break;
+                case GdiPlusTextDraw gdiPlus when sink.GdiPlusText(gdiPlus):
                     break;
                 case GdiPlusTextDraw gdiPlus:
                     if (FromGdiPlus(gdiPlus) is not PageText g || !sink.Text(g))

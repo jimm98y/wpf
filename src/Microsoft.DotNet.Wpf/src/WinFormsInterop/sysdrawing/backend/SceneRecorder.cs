@@ -14,9 +14,42 @@ namespace System.Drawing.WebGpuBackend
 {
     internal sealed class SceneRecorder : IGpuSceneRecorder
     {
-        private readonly SceneVisual _root = new SceneVisual();
+        private SceneVisual _root = new SceneVisual();
 
         internal SceneVisual Scene => _root;
+
+        /// <summary>Hands over what has been recorded (null when nothing has) and starts a fresh scene
+        /// with the same state stack -- transform, clips, snapshots -- reopened, so recording carries
+        /// on exactly as before. What a bitmap's Graphics does when the bitmap's pixels are wanted.</summary>
+        internal SceneVisual TakeScene()
+        {
+            SceneVisual taken = _root;
+            List<Spec> specs = Specs();
+            _root = new SceneVisual();
+            _levels.Clear();
+            _continuations.Clear();
+            foreach (Spec s in specs) Open(s);
+            return IsEmpty(taken) ? null : taken;
+        }
+
+        private static bool IsEmpty(SceneVisual v)
+        {
+            if (v.Content.Count > 0) return false;
+            foreach (SceneVisual c in v.Children)
+                if (!IsEmpty(c)) return false;
+            return true;
+        }
+
+        /// <summary>Whether a clip is in force.</summary>
+        internal bool HasClip
+        {
+            get
+            {
+                foreach (Level l in _levels)
+                    if (l.Spec.Kind == Kind.Clip) return true;
+                return false;
+            }
+        }
 
         public SceneRecorder() { }
 
@@ -397,6 +430,30 @@ namespace System.Drawing.WebGpuBackend
             // sRGB->linear conversion here (unlike solid fills), matching the DrawImage path.
             Add(new GeometryFill(geo,
                 new ImageBrush(tileRgba, tileW, tileH, TileMode.Tile, tileSize, tileSize)));
+        }
+
+        public void FillTexture(GradientShape shape, float x, float y, float w, float h, float[] polyXY,
+                                byte[] tileRgba, int tileW, int tileH, float unitW, float unitH, float originX, float originY)
+        {
+            // An image brush tiles from its local origin, so the fill is drawn in a container moved
+            // to the brush's origin, the shape moved back by as much.
+            Geometry geo = shape switch
+            {
+                GradientShape.Ellipse => new EllipseGeometry(new Vector2(x - originX + w / 2f, y - originY + h / 2f), w / 2f, h / 2f),
+                GradientShape.Polygon => new PolygonGeometry(Shifted(ToVecs(polyXY), -originX, -originY)),
+                _ => new RectangleGeometry(new Rect(x - originX, y - originY, w, h)),
+            };
+            var fill = new GeometryFill(geo, new ImageBrush(tileRgba, tileW, tileH, TileMode.Tile, unitW, unitH));
+            if (originX == 0f && originY == 0f) { Add(fill); return; }
+            var moved = new SceneVisual { Offset = new Vector2(originX, originY) };
+            moved.Content.Add(fill);
+            Add(new NestedVisualDraw(moved));
+        }
+
+        private static Vector2[] Shifted(Vector2[] pts, float dx, float dy)
+        {
+            for (int i = 0; i < pts.Length; i++) pts[i] = new Vector2(pts[i].X + dx, pts[i].Y + dy);
+            return pts;
         }
 
         public void FillPolygon(float[] xy, int argb)

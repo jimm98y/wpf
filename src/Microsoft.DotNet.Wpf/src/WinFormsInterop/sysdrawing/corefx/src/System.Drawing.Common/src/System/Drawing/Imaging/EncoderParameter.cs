@@ -70,6 +70,26 @@ namespace System.Drawing.Imaging
             }
         }
 
+        /// <summary>The first value as a 32-bit integer (a LONG, a SHORT or a BYTE parameter), for the
+        /// managed encoders, which read their parameters rather than hand them to GDI+.</summary>
+        internal long FirstValue
+        {
+            get
+            {
+                if (_parameterValue == IntPtr.Zero || _numberOfValues < 1) return 0;
+                switch (_parameterValueType)
+                {
+                    case EncoderParameterValueType.ValueTypeByte:
+                    case EncoderParameterValueType.ValueTypeUndefined:
+                        return Marshal.ReadByte(_parameterValue);
+                    case EncoderParameterValueType.ValueTypeShort:
+                        return (ushort)Marshal.ReadInt16(_parameterValue);
+                    default:
+                        return (uint)Marshal.ReadInt32(_parameterValue);
+                }
+            }
+        }
+
         public void Dispose()
         {
             Dispose(true);

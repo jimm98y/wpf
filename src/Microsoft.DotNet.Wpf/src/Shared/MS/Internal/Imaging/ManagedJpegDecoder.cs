@@ -79,10 +79,21 @@ namespace System.Windows.Media.Imaging
         }
 
         internal static byte[] Decode(byte[] data, out int width, out int height)
+            => Decode(data, out width, out height, libjpegCompatible: false);
+
+        /// <summary>
+        /// <paramref name="libjpegCompatible"/> reconstructs the way the IJG library does --
+        /// jidctint's integer "islow" IDCT, jdsample's fancy (triangle) chroma upsampling and
+        /// jdcolor's fixed-point YCbCr tables -- which is how GDI+ reads a JPEG; otherwise a
+        /// float IDCT with replicated chroma.
+        /// </summary>
+        internal static byte[] Decode(byte[] data, out int width, out int height, bool libjpegCompatible)
         {
-            var d = new ManagedJpegDecoder(data);
+            var d = new ManagedJpegDecoder(data) { _libjpeg = libjpegCompatible };
             return d.Run(out width, out height);
         }
+
+        private bool _libjpeg;
 
         private byte[] Run(out int width, out int height)
         {
@@ -697,6 +708,11 @@ namespace System.Windows.Media.Imaging
                 return bgra;
             }
 
+            if (_libjpeg)
+            {
+                return ReconstructLibjpeg(bgra);
+            }
+
             Component cy = _components[0], cb = _components[1], cr = _components[2];
             int strideY = cy.BlocksPerLineForMcu * 8;
             int strideCb = cb.BlocksPerLineForMcu * 8;
@@ -745,6 +761,11 @@ namespace System.Windows.Media.Imaging
                 for (int bx = 0; bx < c.BlocksPerLineForMcu; bx++)
                 {
                     int coeffOffset = 64 * (by * c.BlocksPerLineForMcu + bx);
+                    if (_libjpeg)
+                    {
+                        IdctIslow(c.Coeff, coeffOffset, quant, c.Samples, by * 8 * w + bx * 8, w);
+                        continue;
+                    }
                     for (int i = 0; i < 64; i++)
                     {
                         work[i] = c.Coeff[coeffOffset + i] * quant[i];
@@ -814,5 +835,260 @@ namespace System.Windows.Media.Imaging
         }
 
         private static byte Clamp(int v) => v < 0 ? (byte)0 : v > 255 ? (byte)255 : (byte)v;
+
+        // ---- the IJG reconstruction (libjpegCompatible) ---------------------------------------
+
+        private const int ConstBits = 13, Pass1Bits = 2;
+
+        // jidctint.c's jpeg_idct_islow: two integer passes, columns then rows.
+        private static void IdctIslow(short[] coef, int off, ushort[] quant, byte[] dst, int dstOff, int dstStride)
+        {
+            Span<int> ws = stackalloc int[64];
+            for (int col = 0; col < 8; col++)
+            {
+                int q0 = coef[off + col] * quant[col];
+                if (coef[off + 8 + col] == 0 && coef[off + 16 + col] == 0 && coef[off + 24 + col] == 0 && coef[off + 32 + col] == 0
+                    && coef[off + 40 + col] == 0 && coef[off + 48 + col] == 0 && coef[off + 56 + col] == 0)
+                {
+                    int dc = q0 << Pass1Bits;
+                    for (int k = 0; k < 8; k++) ws[k * 8 + col] = dc;
+                    continue;
+                }
+                Span<int> o = stackalloc int[8];
+                Butterfly(q0, coef[off + 8 + col] * quant[8 + col], coef[off + 16 + col] * quant[16 + col],
+                          coef[off + 24 + col] * quant[24 + col], coef[off + 32 + col] * quant[32 + col],
+                          coef[off + 40 + col] * quant[40 + col], coef[off + 48 + col] * quant[48 + col],
+                          coef[off + 56 + col] * quant[56 + col], o, ConstBits - Pass1Bits);
+                for (int k = 0; k < 8; k++) ws[k * 8 + col] = o[k];
+            }
+            Span<int> r8 = stackalloc int[8];
+            for (int row = 0; row < 8; row++)
+            {
+                int r = row * 8, d = dstOff + row * dstStride;
+                if (ws[r + 1] == 0 && ws[r + 2] == 0 && ws[r + 3] == 0 && ws[r + 4] == 0 && ws[r + 5] == 0 && ws[r + 6] == 0 && ws[r + 7] == 0)
+                {
+                    byte v = Clamp(Descale(ws[r], Pass1Bits + 3) + 128);
+                    for (int k = 0; k < 8; k++) dst[d + k] = v;
+                    continue;
+                }
+                Butterfly(ws[r], ws[r + 1], ws[r + 2], ws[r + 3], ws[r + 4], ws[r + 5], ws[r + 6], ws[r + 7],
+                          r8, ConstBits + Pass1Bits + 3);
+                for (int k = 0; k < 8; k++) dst[d + k] = Clamp(r8[k] + 128);
+            }
+        }
+
+        private static int Descale(int x, int n) => (x + (1 << (n - 1))) >> n;
+
+        // The islow butterfly on one line of eight; outputs descaled by 'shift'.
+        private static void Butterfly(int i0, int i1, int i2, int i3, int i4, int i5, int i6, int i7, Span<int> o, int shift)
+        {
+            int z2 = i2, z3 = i6;
+            int z1 = (z2 + z3) * 4433;
+            int tmp2 = z1 + z3 * -15137;
+            int tmp3 = z1 + z2 * 6270;
+            int tmp0 = (i0 + i4) << ConstBits;
+            int tmp1 = (i0 - i4) << ConstBits;
+            int tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3, tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
+            tmp0 = i7; tmp1 = i5; tmp2 = i3; tmp3 = i1;
+            z1 = tmp0 + tmp3; z2 = tmp1 + tmp2; z3 = tmp0 + tmp2; int z4 = tmp1 + tmp3;
+            int z5 = (z3 + z4) * 9633;
+            tmp0 *= 2446; tmp1 *= 16819; tmp2 *= 25172; tmp3 *= 12299;
+            z1 *= -7373; z2 *= -20995; z3 *= -16069; z4 *= -3196;
+            z3 += z5; z4 += z5;
+            tmp0 += z1 + z3; tmp1 += z2 + z4; tmp2 += z2 + z3; tmp3 += z1 + z4;
+            o[0] = Descale(tmp10 + tmp3, shift); o[7] = Descale(tmp10 - tmp3, shift);
+            o[1] = Descale(tmp11 + tmp2, shift); o[6] = Descale(tmp11 - tmp2, shift);
+            o[2] = Descale(tmp12 + tmp1, shift); o[5] = Descale(tmp12 - tmp1, shift);
+            o[3] = Descale(tmp13 + tmp0, shift); o[4] = Descale(tmp13 - tmp0, shift);
+        }
+
+        // jdsample.c: a component's plane at the image's full resolution -- the triangle filters
+        // for 2x1 and 2x2, replication otherwise; edges replicate the last real sample row/column
+        // (jdmainct's bottom pointers), not the block padding.
+        private byte[] Upsample(Component c, out int ow)
+        {
+            int stride = c.BlocksPerLineForMcu * 8, rows = c.BlocksPerColumnForMcu * 8;
+            int fx = _hMax / c.H, fy = _vMax / c.V;
+            int dw = (_frameWidth * c.H + _hMax - 1) / _hMax, dh = (_frameHeight * c.V + _vMax - 1) / _vMax;
+            ow = dw * fx;
+            int oh = dh * fy, width = ow;
+            var outp = new byte[ow * oh];
+            int lastRow = Math.Min(dh, rows) - 1;
+            byte S(int x, int y) => c.Samples[Math.Clamp(y, 0, lastRow) * stride + Math.Clamp(x, 0, dw - 1)];
+            if (fx == 2 && fy == 1)
+            {
+                for (int y = 0; y < oh; y++)
+                    for (int x = 0; x < dw; x++)
+                    {
+                        int v = S(x, y) * 3;
+                        outp[y * width + 2 * x] = x == 0 ? S(x, y) : (byte)((v + S(x - 1, y) + 1) >> 2);
+                        outp[y * width + 2 * x + 1] = x == dw - 1 ? S(x, y) : (byte)((v + S(x + 1, y) + 2) >> 2);
+                    }
+                return outp;
+            }
+            if (fx == 2 && fy == 2)
+            {
+                for (int y = 0; y < dh; y++)
+                    for (int v = 0; v < 2; v++)
+                    {
+                        int other = v == 0 ? y - 1 : y + 1;
+                        int o = (2 * y + v) * width;
+                        int Col(int x) => S(x, y) * 3 + S(x, other);
+                        if (dw == 1)
+                        {
+                            int only = Col(0);
+                            outp[o] = (byte)((only * 4 + 8) >> 4);
+                            outp[o + 1] = (byte)((only * 4 + 7) >> 4);
+                            continue;
+                        }
+                        int thisSum = Col(0), nextSum = Col(1), lastSum;
+                        outp[o++] = (byte)((thisSum * 4 + 8) >> 4);
+                        outp[o++] = (byte)((thisSum * 3 + nextSum + 7) >> 4);
+                        lastSum = thisSum; thisSum = nextSum;
+                        for (int x = 2; x < dw; x++)
+                        {
+                            nextSum = Col(x);
+                            outp[o++] = (byte)((thisSum * 3 + lastSum + 8) >> 4);
+                            outp[o++] = (byte)((thisSum * 3 + nextSum + 7) >> 4);
+                            lastSum = thisSum; thisSum = nextSum;
+                        }
+                        outp[o++] = (byte)((thisSum * 3 + lastSum + 8) >> 4);
+                        outp[o] = (byte)((thisSum * 4 + 7) >> 4);
+                    }
+                return outp;
+            }
+            for (int y = 0; y < oh; y++)
+                for (int x = 0; x < ow; x++)
+                    outp[y * width + x] = S(x / fx, y / fy);
+            return outp;
+        }
+
+        // jdcolor.c's tables: FIX(1.40200) and FIX(1.77200) rounded and shifted; the two green
+        // terms kept at 16 fractional bits, the Cb one carrying the rounding half.
+        private static readonly int[] s_crR = BuildYcc(91881, 0, true), s_cbB = BuildYcc(116130, 0, true);
+        private static readonly int[] s_crG = BuildYcc(-46802, 0, false), s_cbG = BuildYcc(-22554, 1 << 15, false);
+
+        private static int[] BuildYcc(int fix, int bias, bool shifted)
+        {
+            var t = new int[256];
+            for (int i = 0; i < 256; i++)
+            {
+                int x = i - 128;
+                t[i] = shifted ? (fix * x + (1 << 15)) >> 16 : fix * x + bias;
+            }
+            return t;
+        }
+
+        private byte[] ReconstructLibjpeg(byte[] bgra)
+        {
+            byte[] yp = Upsample(_components[0], out int wy);
+            byte[] cbp = Upsample(_components[1], out int wcb);
+            byte[] crp = Upsample(_components[2], out int wcr);
+            for (int y = 0; y < _frameHeight; y++)
+                for (int x = 0; x < _frameWidth; x++)
+                {
+                    int Y = yp[y * wy + x], Cb = cbp[y * wcb + x], Cr = crp[y * wcr + x];
+                    int o = (y * _frameWidth + x) * 4;
+                    bgra[o + 2] = Clamp(Y + s_crR[Cr]);
+                    bgra[o + 1] = Clamp(Y + ((s_cbG[Cb] + s_crG[Cr]) >> 16));
+                    bgra[o] = Clamp(Y + s_cbB[Cb]);
+                    bgra[o + 3] = 255;
+                }
+            return bgra;
+        }
+
+        // ---- metadata --------------------------------------------------------------------
+
+        /// <summary>
+        ///  What a JPEG says about itself without decoding a pixel: the JFIF density, the EXIF block
+        ///  (the TIFF structure after APP1's "Exif\0\0"), the quantisation tables in natural order,
+        ///  and the frame's component count. The markers are walked up to the first scan.
+        /// </summary>
+        internal static ManagedJpegInfo ReadInfo(byte[] data)
+        {
+            var info = new ManagedJpegInfo();
+            if (data.Length < 4 || data[0] != 0xFF || data[1] != 0xD8) return info;
+            int pos = 2;
+            while (pos + 4 <= data.Length)
+            {
+                if (data[pos] != 0xFF) { pos++; continue; }
+                byte marker = data[pos + 1];
+                if (marker == 0xFF) { pos++; continue; }
+                pos += 2;
+                if (marker == 0xD8 || (marker >= 0xD0 && marker <= 0xD7) || marker == 0x01) continue;
+                if (marker == 0xD9 || marker == 0xDA) break;
+                int len = (data[pos] << 8) | data[pos + 1];
+                int body = pos + 2, end = pos + len;
+                if (len < 2 || end > data.Length) break;
+                switch (marker)
+                {
+                    case 0xE0 when len >= 16 && data[body] == 'J' && data[body + 1] == 'F' && data[body + 2] == 'I' && data[body + 3] == 'F' && data[body + 4] == 0:
+                        info.HasJfif = true;
+                        info.DensityUnit = data[body + 7];
+                        info.DensityX = (data[body + 8] << 8) | data[body + 9];
+                        info.DensityY = (data[body + 10] << 8) | data[body + 11];
+                        break;
+                    case 0xE1 when len >= 16 && data[body] == 'E' && data[body + 1] == 'x' && data[body + 2] == 'i' && data[body + 3] == 'f' && data[body + 4] == 0:
+                        if (info.Exif == null)
+                        {
+                            info.Exif = new byte[end - (body + 6)];
+                            Array.Copy(data, body + 6, info.Exif, 0, info.Exif.Length);
+                        }
+                        break;
+                    case 0xEE when len >= 14 && data[body] == 'A' && data[body + 1] == 'd' && data[body + 2] == 'o' && data[body + 3] == 'b' && data[body + 4] == 'e':
+                        info.AdobeTransform = data[body + 11];
+                        break;
+                    case 0xDB:
+                        for (int q = body; q < end;)
+                        {
+                            int pq = data[q] >> 4, tq = data[q] & 15;
+                            q++;
+                            var table = new ushort[64];
+                            for (int k = 0; k < 64 && q < end; k++)
+                            {
+                                int v = pq == 0 ? data[q++] : (data[q] << 8) | data[q + 1];
+                                if (pq != 0) q += 2;
+                                table[ZigZag[k]] = (ushort)v;
+                            }
+                            if (tq < 4) info.Quant[tq] = table;
+                        }
+                        break;
+                    case 0xC0: case 0xC1: case 0xC2: case 0xC3:
+                        if (len >= 8)
+                        {
+                            info.Progressive = marker == 0xC2;
+                            info.Height = (data[body + 1] << 8) | data[body + 2];
+                            info.Width = (data[body + 3] << 8) | data[body + 4];
+                            info.Components = data[body + 5];
+                            for (int c = 0; c < info.Components && c < 4 && body + 6 + c * 3 + 2 < end; c++)
+                            {
+                                info.ComponentQuant[c] = data[body + 6 + c * 3 + 2];
+                            }
+                        }
+                        break;
+                }
+                pos = end;
+            }
+            return info;
+        }
+    }
+
+    /// <summary>See <see cref="ManagedJpegDecoder.ReadInfo"/>.</summary>
+    internal sealed class ManagedJpegInfo
+    {
+        internal bool HasJfif;
+        /// <summary>JFIF density unit: 0 aspect ratio only, 1 dots per inch, 2 dots per centimetre.</summary>
+        internal int DensityUnit;
+        internal int DensityX, DensityY;
+        /// <summary>The EXIF TIFF structure, from its byte-order mark; null when there is none.</summary>
+        internal byte[] Exif;
+        /// <summary>The Adobe APP14 colour transform, or -1 when there is no Adobe segment.</summary>
+        internal int AdobeTransform = -1;
+        /// <summary>Quantisation tables by id, natural (row-major) order.</summary>
+        internal readonly ushort[][] Quant = new ushort[4][];
+        internal readonly int[] ComponentQuant = new int[4];
+        internal int Components;
+        internal int Width, Height;
+        internal bool Progressive;
     }
 }

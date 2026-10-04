@@ -56,6 +56,10 @@ namespace System.Drawing
 
         public override object Clone()
         {
+            if (NativeBrush == IntPtr.Zero)
+            {
+                return new SolidBrush(_color);
+            }
             IntPtr clonedBrush = IntPtr.Zero;
             int status = SafeNativeMethods.Gdip.GdipCloneBrush(new HandleRef(this, NativeBrush), out clonedBrush);
             SafeNativeMethods.Gdip.CheckStatus(status);
@@ -82,7 +86,7 @@ namespace System.Drawing
         {
             get
             {
-                if (_color == Color.Empty)
+                if (_color == Color.Empty && NativeBrush != IntPtr.Zero)
                 {
                     int colorARGB;
                     int status = SafeNativeMethods.Gdip.GdipGetSolidFillColor(new HandleRef(this, NativeBrush), out colorARGB);
@@ -122,6 +126,7 @@ namespace System.Drawing
         // Sets the color even if the brush is considered immutable.
         private void InternalSetColor(Color value)
         {
+            if (NativeBrush == IntPtr.Zero) { _color = value; return; }
             int status = SafeNativeMethods.Gdip.GdipSetSolidFillColor(new HandleRef(this, NativeBrush), value.ToArgb());
             SafeNativeMethods.Gdip.CheckStatus(status);
 

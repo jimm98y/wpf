@@ -51,6 +51,13 @@ namespace System.Drawing.Imaging
             _entries = new Color[1];
         }
 
+        /// <summary>A managed image's palette, as GDI+ would hand it out.</summary>
+        internal ColorPalette(int flags, Color[] entries)
+        {
+            _flags = flags;
+            _entries = entries;
+        }
+
         internal void ConvertFromMemory(IntPtr memory)
         {
             // Memory layout is:

@@ -30,6 +30,10 @@ namespace System.Drawing
         // Hatch fill of a shape: a small RGBA pattern tile (tileW x tileH) tiled every tileSize points.
         void FillHatch(GradientShape shape, float x, float y, float w, float h, float[] polyXY,
                        byte[] tileRgba, int tileW, int tileH, float tileSize);
+        /// <summary>A TextureBrush fill of a shape: the tile (tileW x tileH pixels) repeated every
+        /// (unitW, unitH) units from (originX, originY).</summary>
+        void FillTexture(GradientShape shape, float x, float y, float w, float h, float[] polyXY,
+                         byte[] tileRgba, int tileW, int tileH, float unitW, float unitH, float originX, float originY);
         void FillPolygon(float[] xy, int argb);   // flattened x0,y0,x1,y1,…
         /// <summary>Several closed contours (each flattened x0,y0,x1,y1,…) filled as ONE region under
         /// the fill rule: GDI+'s Alternate is even-odd, Winding is non-zero. A path with a hole, or a

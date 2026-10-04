@@ -19,10 +19,10 @@
 // distribute, sublicense, and/or sell copies of the Software, and to
 // permit persons to whom the Software is furnished to do so, subject to
 // the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -30,6 +30,13 @@
 // LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+//
+//
+// An Icon as .NET's System.Drawing has it: the file's bytes, and the one entry of its directory it
+// stands for, chosen by Windows' own rules (nearest size, then the deepest colour depth the display
+// can show). Its pictures come from the managed ICO decoder (shared with WPF); nothing here asks
+// GDI+. Handle is the OS's own HICON on Windows (CreateIconFromResourceEx, user32) and a managed
+// token elsewhere (backend/WindowsImaging.cs), so FromHandle round-trips on every platform.
 //
 
 using System.Collections;
@@ -39,10 +46,11 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.Serialization;
 using System.Runtime.InteropServices;
+using System.Windows.Media.Imaging;
 
 namespace System.Drawing
 {
-	[Serializable]	
+	[Serializable]
 #if !MONOTOUCH
 	[Editor ("System.Drawing.Design.IconEditor, " + Consts.AssemblySystem_Drawing_Design, typeof (System.Drawing.Design.UITypeEditor))]
 #endif
@@ -50,67 +58,20 @@ namespace System.Drawing
 
 	public sealed class Icon : MarshalByRefObject, ISerializable, ICloneable, IDisposable
 	{
-		[StructLayout(LayoutKind.Sequential)]
-		internal struct IconDirEntry {		
-			internal byte	width;		// Width of icon
-			internal byte	height;		// Height of icon
-			internal byte	colorCount;	// colors in icon 
-			internal byte	reserved;	// Reserved
-			internal ushort planes;         // Color Planes
-			internal ushort	bitCount;       // Bits per pixel
-			internal uint	bytesInRes;     // bytes in resource
-			internal uint	imageOffset;	// position in file 
-			internal bool	ignore;		// for unsupported images (vista 256 png)
-		}; 
+		// What .NET compares an entry's depth against: a 32-bit display.
+		const int DisplayBitDepth = 32;
 
-		[StructLayout(LayoutKind.Sequential)]
-		internal struct IconDir {
-			internal ushort			idReserved;   // Reserved
-			internal ushort			idType;       // resource type (1 for icons)
-			internal ushort			idCount;      // how many images?
-			internal IconDirEntry []	idEntries;    // the entries for each image
-		};
-		
-		[StructLayout(LayoutKind.Sequential)]
-		internal struct BitmapInfoHeader {
-            		internal uint	biSize; 
-			internal int	biWidth; 
-			internal int	biHeight; 
-			internal ushort	biPlanes; 
-			internal ushort	biBitCount; 
-			internal uint	biCompression; 
-			internal uint	biSizeImage; 
-			internal int	biXPelsPerMeter; 
-			internal int	biYPelsPerMeter; 
-			internal uint	biClrUsed; 
-			internal uint	biClrImportant; 
-		};
-
-		[StructLayout(LayoutKind.Sequential)]	// added baseclass for non bmp image format support
-		internal abstract class ImageData {
-		};
-
-		[StructLayout(LayoutKind.Sequential)]
-		internal class IconImage : ImageData {
-			internal BitmapInfoHeader	iconHeader;	//image header
-			internal uint []		iconColors;	//colors table
-			internal byte []		iconXOR;	// bits for XOR mask
-			internal byte []		iconAND;	//bits for AND mask
-		};
-
-		[StructLayout(LayoutKind.Sequential)]
-		internal class IconDump : ImageData {
-			internal byte []		data;
-		};
-
+		private byte [] iconData;
 		private Size iconSize;
+		private ManagedImageDecoder.IcoEntry best;
+		private int bestBitDepth;
+		private bool hasBest;
+
 		private IntPtr handle = IntPtr.Zero;
-		private IconDir	iconDir;
-		private ushort id;
-		private ImageData [] imageData;
+		private bool ownHandle = true;
 		private bool undisposable;
 		private bool disposed;
-		private Bitmap bitmap;
+		private Bitmap bitmap;   // GetInternalBitmap's cache
 
 		private Icon ()
 		{
@@ -120,23 +81,10 @@ namespace System.Drawing
 		private Icon (IntPtr handle)
 		{
 			this.handle = handle;
-			// FromHicon keeps the ALPHA; FromHbitmap does not. This used to build the alpha-correct
-			// bitmap and then throw it away on Windows in favour of the icon's colour bitmap alone,
-			// which turns every 32-bit icon -- and every icon Windows itself hands out is one -- into
-			// the same picture on an opaque black square. GetIconInfo is still worth asking, but only
-			// for the SIZE.
-			bitmap = Bitmap.FromHicon (handle);
-			iconSize = new Size (bitmap.Width, bitmap.Height);
-			if (!GDIPlus.RunningOnUnix ()) {
-				IconInfo ii;
-				GDIPlus.GetIconInfo (handle, out ii);
-				if (!ii.IsIcon)
-					throw new NotImplementedException (Locale.GetText ("Handle doesn't represent an ICON."));
-
-				// If this structure defines an icon, the hot spot is always in the center of the icon
-				iconSize = new Size (ii.xHotspot * 2, ii.yHotspot * 2);
-			}
-			undisposable = true;
+			ownHandle = false;
+			if (OperatingSystem.IsWindows () && !WebGpuBackend.WindowsImaging.IsManagedHandle (handle) && !WebGpuBackend.WindowsImaging.IsIcon (handle))
+				throw new ArgumentException (Locale.GetText ("Handle doesn't represent an ICON."));
+			iconSize = WebGpuBackend.WindowsImaging.IconSize (handle);
 		}
 #endif
 
@@ -148,68 +96,17 @@ namespace System.Drawing
 		public Icon (Icon original, Size size)
 		{
 			if (original == null)
-				throw new ArgumentException ("original");
-
-			iconSize = size;
-			iconDir = original.iconDir;
-			
-			int count = iconDir.idCount;
-			if (count > 0) {
-				imageData = original.imageData;
-				id = UInt16.MaxValue;
-
-				for (ushort i=0; i < count; i++) {
-					IconDirEntry ide = iconDir.idEntries [i];
-					if (((ide.height == size.Height) || (ide.width == size.Width)) && !ide.ignore) {
-						id = i;
-						break;
-					}
-				}
-
-				// if a perfect match isn't found we look for the biggest icon *smaller* than specified
-				if (id == UInt16.MaxValue) { 
-					int requested = Math.Min (size.Height, size.Width);
-					// previously best set to 1st image, as this might not be smallest changed loop to check all
-					IconDirEntry? best = null; 
-					for (ushort i=0; i < count; i++) {
-						IconDirEntry ide = iconDir.idEntries [i];
-						if (((ide.height < requested) || (ide.width < requested)) && !ide.ignore) {
-							if (best == null) {
-								best = ide;
-								id = i;
-							} else if ((ide.height > best.Value.height) || (ide.width > best.Value.width)) {
-								best = ide;
-								id = i;
-							}
-						}
-					}
-				}
-
-				// last one, if nothing better can be found
-				if (id == UInt16.MaxValue) {
-					int i = count;
-					while (id == UInt16.MaxValue && i > 0) {
-						i--;
-						if (!iconDir.idEntries [i].ignore)
-							id = (ushort) i;
-					}
-				}
-
-				if (id == UInt16.MaxValue)
-					throw new ArgumentException ("Icon", "No valid icon image found");
-
-				iconSize.Height = iconDir.idEntries [id].height;
-				iconSize.Width = iconDir.idEntries [id].width;
+				throw new ArgumentNullException ("original");
+			iconData = original.iconData;
+			if (iconData != null) {
+				Initialize (size.Width, size.Height);
 			} else {
-				iconSize.Height = size.Height;
-				iconSize.Width = size.Width;
+				iconSize = original.iconSize;
+				bitmap = original.ToBitmap ();
 			}
-
-			if (original.bitmap != null)
-				bitmap = (Bitmap) original.bitmap.Clone ();
 		}
 
-		public Icon (Stream stream) : this (stream, 32, 32) 
+		public Icon (Stream stream) : this (stream, 0, 0)
 		{
 		}
 
@@ -218,11 +115,8 @@ namespace System.Drawing
 			InitFromStreamWithSize (stream, width, height);
 		}
 
-		public Icon (string fileName)
+		public Icon (string fileName) : this (fileName, 0, 0)
 		{
-			using (FileStream fs = File.OpenRead (fileName)) {
-				InitFromStreamWithSize (fs, 32, 32);
-			}
 		}
 
 		public Icon (Type type, string resource)
@@ -239,30 +133,25 @@ namespace System.Drawing
 					string msg = Locale.GetText ("Resource '{0}' was not found.", resource);
 					throw new FileNotFoundException (msg);
 				}
-				InitFromStreamWithSize (s, 32, 32);		// 32x32 is default
+				InitFromStreamWithSize (s, 0, 0);
 			}
 		}
 
 		private Icon (SerializationInfo info, StreamingContext context)
 		{
-			MemoryStream dataStream = null;
-			int width=0;
-			int height=0;
+			byte [] data = null;
+			Size size = Size.Empty;
 			foreach (SerializationEntry serEnum in info) {
-				if (String.Compare(serEnum.Name, "IconData", true) == 0) {
-					dataStream = new MemoryStream ((byte []) serEnum.Value);
-				}
-				if (String.Compare(serEnum.Name, "IconSize", true) == 0) {
-					Size iconSize = (Size) serEnum.Value;
-					width = iconSize.Width;
-					height = iconSize.Height;
-				}
+				if (String.Compare(serEnum.Name, "IconData", true) == 0)
+					data = (byte []) serEnum.Value;
+				if (String.Compare(serEnum.Name, "IconSize", true) == 0)
+					size = (Size) serEnum.Value;
 			}
-			if (dataStream != null) {
-				dataStream.Seek (0, SeekOrigin.Begin);
-				InitFromStreamWithSize (dataStream, width, height);
+			if (data != null) {
+				iconData = data;
+				Initialize (size.Width, size.Height);
 			}
-                }
+		}
 
 		internal Icon (string resourceName, bool undisposable)
 		{
@@ -271,7 +160,7 @@ namespace System.Drawing
 					string msg = Locale.GetText ("Resource '{0}' was not found.", resourceName);
 					throw new FileNotFoundException (msg);
 				}
-				InitFromStreamWithSize (s, 32, 32);		// 32x32 is default
+				InitFromStreamWithSize (s, 0, 0);
 			}
 			this.undisposable = true;
 		}
@@ -280,53 +169,59 @@ namespace System.Drawing
 		{
 			MemoryStream ms = new MemoryStream ();
 			Save (ms);
-			si.AddValue ("IconSize", this.Size, typeof (Size));
 			si.AddValue ("IconData", ms.ToArray ());
+			si.AddValue ("IconSize", this.Size, typeof (Size));
 		}
 
-		public Icon (Stream stream, Size size) : 
+		public Icon (Stream stream, Size size) :
 			this (stream, size.Width, size.Height)
 		{
 		}
-		
+
 		public Icon (string fileName, int width, int height)
 		{
 			using (FileStream fs = File.OpenRead (fileName)) {
 				InitFromStreamWithSize (fs, width, height);
 			}
 		}
-	
-		public Icon (string fileName, Size size)
+
+		public Icon (string fileName, Size size) : this (fileName, size.Width, size.Height)
 		{
-			using (FileStream fs = File.OpenRead (fileName)) {
-				InitFromStreamWithSize (fs, size.Width, size.Height);
-			}
 		}
 
-		[MonoLimitation ("The same icon, SystemIcons.WinLogo, is returned for all file types.")]
 		public static Icon ExtractAssociatedIcon (string filePath)
 		{
 			if (String.IsNullOrEmpty (filePath))
 				throw new ArgumentException (Locale.GetText ("Null or empty path."), "filePath");
 			if (!File.Exists (filePath))
 				throw new FileNotFoundException (Locale.GetText ("Couldn't find specified file."), filePath);
+			// Windows knows which icon a file shows (shell32); elsewhere there is no such association.
+			if (OperatingSystem.IsWindows ()) {
+				var path = new System.Text.StringBuilder (filePath, 260);
+				ushort index = 0;
+				IntPtr hicon = ExtractAssociatedIconW (IntPtr.Zero, path, ref index);
+				if (hicon != IntPtr.Zero) {
+					var icon = new Icon (hicon);
+					icon.ownHandle = true;
+					return icon;
+				}
+			}
+			return (Icon) SystemIcons.WinLogo.Clone ();
+		}
 
-			return SystemIcons.WinLogo;
-		}	
+		[DllImport ("shell32.dll", CharSet = CharSet.Unicode)]
+		static extern IntPtr ExtractAssociatedIconW (IntPtr hinst, System.Text.StringBuilder path, ref ushort index);
 
 		public void Dispose ()
 		{
 			// SystemIcons requires this
 			if (undisposable)
 				return;
-			
+
 			if (!disposed) {
-#if !MONOTOUCH
-				if (GDIPlus.RunningOnWindows () && (handle != IntPtr.Zero)) {
-					GDIPlus.DestroyIcon (handle);
-					handle = IntPtr.Zero;
-				}
-#endif
+				if (handle != IntPtr.Zero && ownHandle)
+					WebGpuBackend.WindowsImaging.DestroyIcon (handle);
+				handle = IntPtr.Zero;
 				if (bitmap != null) {
 					bitmap.Dispose ();
 					bitmap = null;
@@ -340,7 +235,7 @@ namespace System.Drawing
 		{
 			return new Icon (this, Size);
 		}
-		
+
 #if !MONOTOUCH
 		public static Icon FromHandle (IntPtr handle)
 		{
@@ -350,274 +245,47 @@ namespace System.Drawing
 			return new Icon (handle);
 		}
 #endif
-		private void SaveIconImage (BinaryWriter writer, IconImage ii)
-		{
-			BitmapInfoHeader bih = ii.iconHeader;
-			writer.Write (bih.biSize);
-			writer.Write (bih.biWidth);
-			writer.Write (bih.biHeight);
-			writer.Write (bih.biPlanes);
-			writer.Write (bih.biBitCount);
-			writer.Write (bih.biCompression);
-			writer.Write (bih.biSizeImage);
-			writer.Write (bih.biXPelsPerMeter);
-			writer.Write (bih.biYPelsPerMeter);
-			writer.Write (bih.biClrUsed);
-			writer.Write (bih.biClrImportant);
-
-			//now write color table
-			int colCount = ii.iconColors.Length;
-			for (int j=0; j < colCount; j++)
-				writer.Write (ii.iconColors [j]);
-
-			//now write XOR Mask
-			writer.Write (ii.iconXOR);
-
-			//now write AND Mask
-			writer.Write (ii.iconAND);
-		}
-
-		private void SaveIconDump (BinaryWriter writer, IconDump id)
-		{
-			writer.Write (id.data);
-		}
-
-		private void SaveIconDirEntry (BinaryWriter writer, IconDirEntry ide, uint offset)
-		{
-			writer.Write (ide.width);
-			writer.Write (ide.height);
-			writer.Write (ide.colorCount);
-			writer.Write (ide.reserved);
-			writer.Write (ide.planes);
-			writer.Write (ide.bitCount);
-			writer.Write (ide.bytesInRes);
-			writer.Write ((offset == UInt32.MaxValue) ? ide.imageOffset : offset);
-		}
-
-		private void SaveAll (BinaryWriter writer)
-		{
-			writer.Write (iconDir.idReserved);
-			writer.Write (iconDir.idType);
-			ushort count = iconDir.idCount;
-			writer.Write (count);
-
-			for (int i=0; i < (int)count; i++) {
-				SaveIconDirEntry (writer, iconDir.idEntries [i], UInt32.MaxValue);
-			}
-
-			for (int i=0; i < (int)count; i++) {
-
-				//FIXME: HACK: 1 (out of the 8) vista type icons had additional bytes (value:0)
-				//between images. This fixes the issue, but perhaps shouldnt include in production?
-				while (writer.BaseStream.Length < iconDir.idEntries[i].imageOffset)
-					writer.Write ((byte) 0);
-
-				if (imageData [i] is IconDump)
-					SaveIconDump (writer, (IconDump) imageData [i]);
-				else
-					SaveIconImage (writer, (IconImage) imageData [i]);
-			}
-		}
-		// TODO: check image not ignored (presently this method doesnt seem to be called unless width/height 
-		// refer to image)
-		private void SaveBestSingleIcon (BinaryWriter writer, int width, int height)
-		{
-			writer.Write (iconDir.idReserved);
-			writer.Write (iconDir.idType);
-			writer.Write ((ushort)1);
-
-			// find best entry and save it
-			int best = 0;
-			int bitCount = 0;
-			for (int i=0; i < iconDir.idCount; i++) {
-				IconDirEntry ide = iconDir.idEntries [i];
-				if ((width == ide.width) && (height == ide.height)) {
-					if (ide.bitCount >= bitCount) {
-						bitCount = ide.bitCount;
-						best = i;
-					}
-				}
-			}
-
-			SaveIconDirEntry (writer, iconDir.idEntries [best], 22);
-			SaveIconImage (writer, (IconImage) imageData [best]);
-		}
-
-		private void SaveBitmapAsIcon (BinaryWriter writer)
-		{
-			writer.Write ((ushort)0);	// idReserved must be 0
-			writer.Write ((ushort)1);	// idType must be 1
-			writer.Write ((ushort)1);	// only one icon
-
-			// when transformed into a bitmap only a single image exists
-			IconDirEntry ide = new IconDirEntry ();
-			ide.width = (byte) bitmap.Width;
-			ide.height = (byte) bitmap.Height;
-			ide.colorCount = 0;	// 32 bbp == 0, for palette size
-			ide.reserved = 0;	// always 0
-			ide.planes = 0;
-			ide.bitCount = 32;
-			ide.imageOffset = 22;	// 22 is the first icon position (for single icon files)
-
-			BitmapInfoHeader bih = new BitmapInfoHeader ();
-			bih.biSize = (uint) Marshal.SizeOf (typeof (BitmapInfoHeader));
-			bih.biWidth = bitmap.Width;
-			bih.biHeight = 2 * bitmap.Height; // include both XOR and AND images
-			bih.biPlanes = 1;
-			bih.biBitCount = 32;
-			bih.biCompression = 0;
-			bih.biSizeImage = 0;
-			bih.biXPelsPerMeter = 0;
-			bih.biYPelsPerMeter = 0;
-			bih.biClrUsed = 0;
-			bih.biClrImportant = 0;
-
-			IconImage ii = new IconImage ();
-			ii.iconHeader = bih;
-			ii.iconColors = new uint [0];	// no palette
-			int xor_size = (((bih.biBitCount * bitmap.Width + 31) & ~31) >> 3) * bitmap.Height;
-			ii.iconXOR = new byte [xor_size];
-			int p = 0;
-			for (int y = bitmap.Height - 1; y >=0; y--) {
-				for (int x = 0; x < bitmap.Width; x++) {
-					Color c = bitmap.GetPixel (x, y);
-					ii.iconXOR [p++] = c.B;
-					ii.iconXOR [p++] = c.G;
-					ii.iconXOR [p++] = c.R;
-					ii.iconXOR [p++] = c.A;
-				}
-			}
-			int and_line_size = (((Width + 31) & ~31) >> 3);	// must be a multiple of 4 bytes
-			int and_size = and_line_size * bitmap.Height;
-			ii.iconAND = new byte [and_size];
-
-			ide.bytesInRes = (uint) (bih.biSize + xor_size + and_size);
-
-			SaveIconDirEntry (writer, ide, UInt32.MaxValue);
-			SaveIconImage (writer, ii);
-		}
-
-		private void Save (Stream outputStream, int width, int height)
-		{
-			BinaryWriter writer = new BinaryWriter (outputStream);
-			// if we have the icon information then save from this
-			if (iconDir.idEntries != null) {
-				if ((width == -1) && (height == -1))
-					SaveAll (writer);
-				else
-					SaveBestSingleIcon (writer, width, height);
-			} else if (bitmap != null) {
-				// if the icon was created from a bitmap then convert it
-				SaveBitmapAsIcon (writer);
-			}
-			writer.Flush ();
-		}
 
 		public void Save (Stream outputStream)
 		{
 			if (outputStream == null)
-				throw new NullReferenceException ("outputStream");
-
-			// save every icons available
-			Save (outputStream, -1, -1);
+				throw new ArgumentNullException ("outputStream");
+			// The file it was read from, every entry (.NET writes its icon data back verbatim).
+			if (iconData != null) {
+				outputStream.Write (iconData, 0, iconData.Length);
+				return;
+			}
+			SaveBitmapAsIcon (outputStream, ToBitmap ());
 		}
-#if !MONOTOUCH
-		internal Bitmap BuildBitmapOnWin32 ()
+
+		// An icon made from a handle has no file: a single 32-bit entry, its alpha the shape.
+		static void SaveBitmapAsIcon (Stream s, Bitmap bmp)
 		{
-			Bitmap bmp;
-
-			if (imageData == null)
-				return new Bitmap (32, 32);
-
-			IconImage ii = (IconImage) imageData [id];
-			BitmapInfoHeader bih = ii.iconHeader;
-			int biHeight = bih.biHeight / 2;
-
-			int ncolors = (int)bih.biClrUsed;
-			if ((ncolors == 0) && (bih.biBitCount < 24))
-				ncolors = (int)(1 << bih.biBitCount);
-
-			switch (bih.biBitCount) {
-			case 1:
-				bmp = new Bitmap (bih.biWidth, biHeight, PixelFormat.Format1bppIndexed);
-				break;
-			case 4:
-				bmp = new Bitmap (bih.biWidth, biHeight, PixelFormat.Format4bppIndexed);
-				break;
-			case 8:
-				bmp = new Bitmap (bih.biWidth, biHeight, PixelFormat.Format8bppIndexed);
-				break;
-			case 24:
-				bmp = new Bitmap (bih.biWidth, biHeight, PixelFormat.Format24bppRgb);
-				break;
-			case 32:
-				bmp = new Bitmap (bih.biWidth, biHeight, PixelFormat.Format32bppArgb);
-				break;
-			default:
-				string msg = Locale.GetText ("Unexpected number of bits: {0}", bih.biBitCount);
-				throw new Exception (msg);
+			int w = bmp.Width, h = bmp.Height;
+			int xorSize = w * 4 * h, andStride = ((w + 31) / 32) * 4, andSize = andStride * h;
+			var w2 = new BinaryWriter (s);
+			w2.Write ((ushort) 0); w2.Write ((ushort) 1); w2.Write ((ushort) 1);
+			w2.Write ((byte) (w >= 256 ? 0 : w)); w2.Write ((byte) (h >= 256 ? 0 : h)); w2.Write ((byte) 0); w2.Write ((byte) 0);
+			w2.Write ((ushort) 1); w2.Write ((ushort) 32); w2.Write ((uint) (40 + xorSize + andSize)); w2.Write ((uint) 22);
+			w2.Write (40); w2.Write (w); w2.Write (h * 2); w2.Write ((ushort) 1); w2.Write ((ushort) 32);
+			w2.Write (0); w2.Write (xorSize + andSize); w2.Write (0); w2.Write (0); w2.Write (0); w2.Write (0);
+			uint[] argb = GdipPixels.ToArgb (bmp.Data.Frame, new Rectangle (0, 0, w, h));
+			for (int y = h - 1; y >= 0; y--)
+				for (int x = 0; x < w; x++) w2.Write (argb [y * w + x]);
+			for (int y = h - 1; y >= 0; y--) {
+				var row = new byte [andStride];
+				for (int x = 0; x < w; x++) if ((argb [y * w + x] >> 24) == 0) row [x >> 3] |= (byte) (0x80 >> (x & 7));
+				w2.Write (row);
 			}
-
-			if (bih.biBitCount < 24) {
-				ColorPalette pal = bmp.Palette; // Managed palette
-
-				for (int i = 0; i < ii.iconColors.Length; i++) {
-					pal.Entries[i] = Color.FromArgb ((int)ii.iconColors[i] | unchecked((int)0xff000000));
-				}
-				bmp.Palette = pal;
-			}
-
-			int bytesPerLine = (int)((((bih.biWidth * bih.biBitCount) + 31) & ~31) >> 3);
-			BitmapData bits = bmp.LockBits (new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.WriteOnly, bmp.PixelFormat);
-
-			for (int y = 0; y < biHeight; y++) {
-				Marshal.Copy (ii.iconXOR, bytesPerLine * y, 
-					(IntPtr)(bits.Scan0.ToInt64() + bits.Stride * (biHeight - 1 - y)), bytesPerLine);
-			}
-			
-			bmp.UnlockBits (bits);
-
-			// This makes a 32bpp image out of an indexed one. A 32bpp icon is one already, and the
-			// copy is a draw, which premultiplies and back: its half-transparent pixels came out a
-			// level or two darker than the file (a data grid's row arrow, 0xEA at alpha 0xEF, read
-			// back as 0xE8).
-			if (bih.biBitCount < 32)
-				bmp = new Bitmap (bmp);
-
-			// Apply the mask to make properly transparent
-			bytesPerLine = (int)((((bih.biWidth) + 31) & ~31) >> 3);
-			for (int y = 0; y < biHeight; y++) {
-				for (int x = 0; x < bih.biWidth / 8; x++) {
-					for (int bit = 7; bit >= 0; bit--) {
-						if (((ii.iconAND[y * bytesPerLine +x] >> bit) & 1) != 0) {
-							bmp.SetPixel (x*8 + 7-bit, biHeight - y - 1, Color.Transparent);
-						}
-					}
-				}
-			}
-
-			return bmp;
+			w2.Flush ();
 		}
 
+#if !MONOTOUCH
+		/// <summary>The picture Graphics.DrawIcon draws (ToBitmap's, kept).</summary>
 		internal Bitmap GetInternalBitmap ()
 		{
-			if (bitmap == null) {
-				if (GDIPlus.RunningOnUnix ()) {
-					// Mono's libgdiplus doesn't require to keep the stream alive when loading images
-					using (MemoryStream ms = new MemoryStream ()) {
-						// save the current icon
-						Save (ms, Width, Height);
-						ms.Position = 0;
-
-						// libgdiplus can now decode icons
-						bitmap = (Bitmap) Image.LoadFromStream (ms, false);
-					}
-				} else {
-					// MS GDI+ ICO codec is more limited than the MS Icon class
-					// so we can't, reliably, get bitmap using it. We need to do this the "slow" way
-					bitmap = BuildBitmapOnWin32 ();
-				}
-			}
+			if (bitmap == null)
+				bitmap = ToBitmap ();
 			return bitmap;
 		}
 
@@ -627,58 +295,82 @@ namespace System.Drawing
 			if (disposed)
 				throw new ObjectDisposedException (Locale.GetText ("Icon instance was disposed."));
 
-			// note: we can't return the original image because
-			// (a) we have no control over the bitmap instance we return (i.e. it could be disposed)
-			// (b) the palette, flags won't match MS results. See MonoTests.System.Drawing.Imaging.IconCodecTest.
-			//     Image16 for the differences
-			Bitmap source = GetInternalBitmap ();
-			if (source.PixelFormat != PixelFormat.Format32bppArgb)
-				return new Bitmap (source);
-			// A 32bpp icon's pixels are copied, not drawn: a draw premultiplies and back, and its
-			// half-transparent pixels came out a level or two darker than the file. .NET copies them.
-			var copy = new Bitmap (source.Width, source.Height, PixelFormat.Format32bppArgb);
-			var rect = new Rectangle (0, 0, source.Width, source.Height);
-			BitmapData from = source.LockBits (rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-			BitmapData to = copy.LockBits (rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-			try {
-				var row = new byte [source.Width * 4];
-				for (int y = 0; y < source.Height; y++) {
-					Marshal.Copy ((IntPtr) (from.Scan0.ToInt64 () + (long) from.Stride * y), row, 0, row.Length);
-					Marshal.Copy (row, 0, (IntPtr) (to.Scan0.ToInt64 () + (long) to.Stride * y), row.Length);
+			if (iconData != null && hasBest) {
+				// A PNG entry is that PNG's pixels, in a plain 32bppArgb bitmap of its own.
+				if (best.IsPng) {
+					using (var ms = new MemoryStream (iconData, best.Offset, Math.Min (best.Size, iconData.Length - best.Offset)))
+					using (var png = new Bitmap (ms)) {
+						GdipFrame f = GdipPixels.Convert (png.Data.Frame, new Rectangle (0, 0, png.Width, png.Height), PixelFormat.Format32bppArgb, false);
+						f.DpiX = f.DpiY = 96f;
+						return new Bitmap (new GdipImageData (f) { Flags = GdipImageData.NewFlags (PixelFormat.Format32bppArgb) });
+					}
 				}
-			} finally {
-				copy.UnlockBits (to);
-				source.UnlockBits (from);
+				// A 32-bit entry is copied, its alpha as it stands (.NET reads the bits itself, and an
+				// entry whose alpha is all zero stays transparent).
+				if (bestBitDepth == 32) {
+					var bmp = new Bitmap (iconSize.Width, iconSize.Height, PixelFormat.Format32bppArgb);
+					GdipFrame f = bmp.managed.Frame;
+					int src = best.Offset + 40, line = iconSize.Width * 4;
+					for (int y = 0; y < iconSize.Height; y++) {
+						int from = src + (iconSize.Height - 1 - y) * line;
+						if (from + line <= iconData.Length)
+							Buffer.BlockCopy (iconData, from, f.Bits, y * f.Stride, line);
+					}
+					return bmp;
+				}
+				// Anything shallower is the icon drawn: its colours where the AND mask says opaque.
+				byte [] bgra = ManagedImageDecoder.DecodeIcoEntry (iconData, best, out int w, out int h, out _);
+				for (int i = 0; i + 3 < bgra.Length; i += 4) if (bgra [i + 3] == 0) bgra [i] = bgra [i + 1] = bgra [i + 2] = 0;
+				var drawn = new Bitmap (iconSize.Width, iconSize.Height, PixelFormat.Format32bppArgb);
+				GdipFrame d = drawn.managed.Frame;
+				var row = new uint [iconSize.Width];
+				for (int y = 0; y < iconSize.Height; y++) {
+					for (int x = 0; x < iconSize.Width; x++) {
+						int sx = w == iconSize.Width ? x : x * w / iconSize.Width, sy = h == iconSize.Height ? y : y * h / iconSize.Height;
+						int o = (sy * w + sx) * 4;
+						row [x] = (uint) bgra [o + 3] << 24 | (uint) bgra [o + 2] << 16 | (uint) bgra [o + 1] << 8 | bgra [o];
+					}
+					GdipPixels.WriteArgb (d, 0, y, iconSize.Width, row, 0);
+				}
+				return drawn;
 			}
-			return copy;
+			if (bitmap != null)
+				return (Bitmap) bitmap.Clone ();
+			if (handle != IntPtr.Zero)
+				return Bitmap.FromHicon (handle);
+			return new Bitmap (32, 32);
 		}
 #endif
 		public override string ToString ()
 		{
 			//is this correct, this is what returned by .Net
-			return "<Icon>";			
+			return "<Icon>";
 		}
-		
+
 #if !MONOTOUCH
 		[Browsable (false)]
 		public IntPtr Handle {
 			get {
-				// note: this handle doesn't survive the lifespan of the icon instance
-				if (!disposed && (handle == IntPtr.Zero)) {
-					if (GDIPlus.RunningOnUnix ()) {
-						handle = GetInternalBitmap ().NativeObject;
-					} else {
-						// remember that this block executes only with MS GDI+
-						IconInfo ii = new IconInfo ();
-						ii.IsIcon = true;
-						ii.hbmColor = ToBitmap ().GetHbitmap ();
-						ii.hbmMask = ii.hbmColor;
-						handle = GDIPlus.CreateIconIndirect (ref ii);
+				if (disposed)
+					throw new ObjectDisposedException (Locale.GetText ("Icon instance was disposed."));
+				if (handle == IntPtr.Zero) {
+					if (OperatingSystem.IsWindows () && iconData != null && hasBest) {
+						// The OS reads the entry itself, as .NET hands it CreateIconFromResourceEx.
+						var entry = new byte [Math.Min (best.Size, iconData.Length - best.Offset)];
+						Buffer.BlockCopy (iconData, best.Offset, entry, 0, entry.Length);
+						handle = CreateIconFromResourceEx (entry, entry.Length, true, 0x00030000, iconSize.Width, iconSize.Height, 0);
 					}
+					if (handle == IntPtr.Zero)
+						using (Bitmap b = ToBitmap ())
+							handle = b.GetHicon ();
+					ownHandle = true;
 				}
 				return handle;
 			}
 		}
+
+		[DllImport ("user32.dll")]
+		static extern IntPtr CreateIconFromResourceEx (byte [] bits, int size, bool icon, int version, int cx, int cy, int flags);
 #endif
 		[Browsable (false)]
 		public int Height {
@@ -704,200 +396,65 @@ namespace System.Drawing
 		{
 			Dispose ();
 		}
-			
+
 		private void InitFromStreamWithSize (Stream stream, int width, int height)
 		{
-			//read the icon header
-			if (stream == null || stream.Length == 0)
-				throw new System.ArgumentException ("The argument 'stream' must be a picture that can be used as a Icon", "stream");
-			
-			BinaryReader reader = new BinaryReader (stream);
+			if (stream == null)
+				throw new ArgumentException ("The argument 'stream' must be a picture that can be used as a Icon", "stream");
+			iconData = Image.ReadAll (stream);
+			Initialize (width, height);
+		}
 
-			//iconDir = new IconDir ();
-			iconDir.idReserved = reader.ReadUInt16();
-			if (iconDir.idReserved != 0) //must be 0
-				throw new System.ArgumentException ("Invalid Argument", "stream");
-			
-			iconDir.idType = reader.ReadUInt16();
-			if (iconDir.idType != 1) //must be 1
-				throw new System.ArgumentException ("Invalid Argument", "stream");
-
-			ushort dirEntryCount = reader.ReadUInt16();
-			imageData = new ImageData [dirEntryCount]; 
-			iconDir.idCount = dirEntryCount; 
-			iconDir.idEntries = new IconDirEntry [dirEntryCount];
-			bool sizeObtained = false;
-			// now read in the IconDirEntry structures
-			for (int i = 0; i < dirEntryCount; i++) {
-				IconDirEntry ide;
-				ide.width = reader.ReadByte ();
-				ide.height = reader.ReadByte ();
-				ide.colorCount = reader.ReadByte ();
-				ide.reserved = reader.ReadByte ();
-				ide.planes = reader.ReadUInt16 ();
-				ide.bitCount = reader.ReadUInt16 ();
-				ide.bytesInRes = reader.ReadUInt32 ();
-				ide.imageOffset = reader.ReadUInt32 ();
-#if false
-Console.WriteLine ("Entry: {0}", i);
-Console.WriteLine ("\tide.width: {0}", ide.width);
-Console.WriteLine ("\tide.height: {0}", ide.height);
-Console.WriteLine ("\tide.colorCount: {0}", ide.colorCount);
-Console.WriteLine ("\tide.reserved: {0}", ide.reserved);
-Console.WriteLine ("\tide.planes: {0}", ide.planes);
-Console.WriteLine ("\tide.bitCount: {0}", ide.bitCount);
-Console.WriteLine ("\tide.bytesInRes: {0}", ide.bytesInRes);
-Console.WriteLine ("\tide.imageOffset: {0}", ide.imageOffset);
-#endif
-				// Vista 256x256 icons points directly to a PNG bitmap
-				// 256x256 icons are decoded as 0x0 (width and height are encoded as BYTE)
-				// and we ignore them just like MS does (at least up to fx 2.0) 
-				// Added: storing data so it can be saved back
-				if ((ide.width == 0) && (ide.height == 0))
-					ide.ignore = true;
-				else
-					ide.ignore = false;
-
-				iconDir.idEntries [i] = ide;
-
-				//is this is the best fit??
-				if (!sizeObtained) {
-					if (((ide.height == height) || (ide.width == width)) && !ide.ignore) {
-						this.id = (ushort) i;
-						sizeObtained = true;
-						this.iconSize.Height = ide.height;
-						this.iconSize.Width = ide.width;
-					}
+		// .NET's Icon.Initialize: Windows' rules for picking an icon's image --
+		//  1. the closest size;  2. of those, the deepest colour depth not exceeding the display's;
+		//  3. if all exceed it, the shallowest. Depths past 8bpp all count as what they say.
+		private void Initialize (int width, int height)
+		{
+			if (iconData.Length < 6 || iconData [0] != 0 || iconData [1] != 0 || iconData [2] != 1 || iconData [3] != 0)
+				throw new ArgumentException ("The argument 'picture' must be a picture that can be used as a Icon", "picture");
+			// Zero asks for the system's icon size.
+			if (width == 0) width = 32;
+			if (height == 0) height = 32;
+			ManagedImageDecoder.IcoEntry [] entries;
+			try {
+				entries = ManagedImageDecoder.ReadIcoDirectory (iconData);
+			} catch (InvalidDataException) {
+				throw new ArgumentException ("The argument 'picture' must be a picture that can be used as a Icon", "picture");
+			}
+			hasBest = false;
+			foreach (var entry in entries) {
+				int depth;
+				if (entry.ColorCount != 0) {
+					depth = 4;
+					if (entry.ColorCount < 0x10) depth = 1;
+				} else {
+					depth = entry.BitCount;
+				}
+				if (depth == 0) depth = 8;
+				bool update;
+				if (!hasBest) update = true;
+				else {
+					int bestDelta = Math.Abs (best.Width - width) + Math.Abs (best.Height - height);
+					int thisDelta = Math.Abs (entry.Width - width) + Math.Abs (entry.Height - height);
+					update = thisDelta < bestDelta
+						|| (thisDelta == bestDelta && ((depth <= DisplayBitDepth && depth > bestBitDepth) || (bestBitDepth > DisplayBitDepth && depth < bestBitDepth)));
+				}
+				if (update) {
+					best = entry;
+					bestBitDepth = depth;
+					hasBest = true;
 				}
 			}
-
-			// throw error if no valid entries found
-			int valid = 0;
-			for (int i = 0; i < dirEntryCount; i++) {
-				if (!(iconDir.idEntries [i].ignore))
-					valid++;
-			}
-
-			if (valid == 0) 
+			if (!hasBest)
 				throw new Win32Exception (0, "No valid icon entry were found.");
-
-			// if we havent found the best match, return the one with the
-			// largest size. Is this approach correct??
-			if (!sizeObtained){
-				uint largestSize = 0;
-				for (int j=0; j<dirEntryCount; j++){ 
-					if (iconDir.idEntries [j].bytesInRes >= largestSize && !iconDir.idEntries [j].ignore)	{
-						largestSize = iconDir.idEntries [j].bytesInRes;
-						this.id = (ushort) j;
-						this.iconSize.Height = iconDir.idEntries [j].height;
-						this.iconSize.Width = iconDir.idEntries [j].width;
-					}
-				}
+			// What the entry really is: a PNG, or a DIB whose header says its depth.
+			if (best.IsPng) bestBitDepth = 32;
+			else if (best.Offset + 16 <= iconData.Length) {
+				int bits = iconData [best.Offset + 14] | (iconData [best.Offset + 15] << 8);
+				if (bits == 32) bestBitDepth = 32;
+				else if (bestBitDepth == 32) bestBitDepth = bits;
 			}
-			
-			//now read in the icon data
-			for (int j = 0; j<dirEntryCount; j++) 
-			{
-				// process ignored into IconDump
-				if (iconDir.idEntries [j].ignore) {
-					IconDump id = new IconDump ();
-					stream.Seek (iconDir.idEntries [j].imageOffset, SeekOrigin.Begin);
-					id.data = new byte [iconDir.idEntries [j].bytesInRes];
-					stream.Read (id.data, 0, id.data.Length);
-					imageData [j] = id;
-					continue;
-				}
-				// standard image
-				IconImage iidata = new IconImage();
-				BitmapInfoHeader bih = new BitmapInfoHeader();
-				stream.Seek (iconDir.idEntries [j].imageOffset, SeekOrigin.Begin);
-				byte [] buffer = new byte [iconDir.idEntries [j].bytesInRes];
-				stream.Read (buffer, 0, buffer.Length);
-				BinaryReader bihReader = new BinaryReader (new MemoryStream(buffer));
-				bih.biSize = bihReader.ReadUInt32 ();
-				bih.biWidth = bihReader.ReadInt32 ();
-				bih.biHeight = bihReader.ReadInt32 ();
-				bih.biPlanes = bihReader.ReadUInt16 ();
-				bih.biBitCount = bihReader.ReadUInt16 ();
-				bih.biCompression = bihReader.ReadUInt32 ();
-				bih.biSizeImage = bihReader.ReadUInt32 ();
-				bih.biXPelsPerMeter = bihReader.ReadInt32 ();
-				bih.biYPelsPerMeter = bihReader.ReadInt32 ();
-				bih.biClrUsed = bihReader.ReadUInt32 ();
-				bih.biClrImportant = bihReader.ReadUInt32 ();
-#if false
-Console.WriteLine ("Entry: {0}", j);
-Console.WriteLine ("\tbih.biSize: {0}", bih.biSize);
-Console.WriteLine ("\tbih.biWidth: {0}", bih.biWidth);
-Console.WriteLine ("\tbih.biHeight: {0}", bih.biHeight);
-Console.WriteLine ("\tbih.biPlanes: {0}", bih.biPlanes);
-Console.WriteLine ("\tbih.biBitCount: {0}", bih.biBitCount);
-Console.WriteLine ("\tbih.biCompression: {0}", bih.biCompression);
-Console.WriteLine ("\tbih.biSizeImage: {0}", bih.biSizeImage);
-Console.WriteLine ("\tbih.biXPelsPerMeter: {0}", bih.biXPelsPerMeter);
-Console.WriteLine ("\tbih.biYPelsPerMeter: {0}", bih.biYPelsPerMeter);
-Console.WriteLine ("\tbih.biClrUsed: {0}", bih.biClrUsed);
-Console.WriteLine ("\tbih.biClrImportant: {0}", bih.biClrImportant);
-#endif
-				iidata.iconHeader = bih;
-				//Read the number of colors used and corresponding memory occupied by
-				//color table. Fill this memory chunk into rgbquad[]
-				int numColors;
-				switch (bih.biBitCount){
-					case 1: numColors = 2;
-						break;
-					case 4: numColors = 16;
-						break;
-					case 8: numColors = 256;
-						break;
-					default: numColors = 0;
-						break;
-				}
-				
-				iidata.iconColors = new uint [numColors];
-				for (int i=0; i<numColors; i++)
-					iidata.iconColors [i] = bihReader.ReadUInt32 ();
-
-				//XOR mask is immediately after ColorTable and its size is 
-				//icon height* no. of bytes per line
-				
-				//icon height is half of BITMAPINFOHEADER.biHeight, since it contains
-				//both XOR as well as AND mask bytes
-				int iconHeight = bih.biHeight/2;
-				
-				//bytes per line should should be uint aligned
-				int numBytesPerLine = ((((bih.biWidth * bih.biPlanes * bih.biBitCount)+ 31)>>5)<<2);
-				
-				//Determine the XOR array Size
-				int xorSize = numBytesPerLine * iconHeight;
-				iidata.iconXOR = new byte [xorSize];
-				int nread = bihReader.Read (iidata.iconXOR, 0, xorSize);
-				if (nread != xorSize) {
-					string msg = Locale.GetText ("{0} data length expected {1}, read {2}", "XOR", xorSize, nread);
-					throw new ArgumentException (msg, "stream");
-				}
-				
-				//Determine the AND array size
-				numBytesPerLine = (int)((((bih.biWidth) + 31) & ~31) >> 3);
-				int andSize = numBytesPerLine * iconHeight;
-				iidata.iconAND = new byte [andSize];
-				nread = bihReader.Read (iidata.iconAND, 0, andSize);
-				// A 32-bit image carries its transparency in alpha, and Windows reads one whose AND
-				// mask was left off -- .NET's own DataGridView and PropertyGrid icons are written so.
-				// Treat the missing mask as all zero (opaque, the alpha decides).
-				if (nread == 0 && bih.biBitCount == 32) {
-					nread = andSize;
-				}
-				if (nread != andSize) {
-					string msg = Locale.GetText ("{0} data length expected {1}, read {2}", "AND", andSize, nread);
-					throw new ArgumentException (msg, "stream");
-				}
-				
-				imageData [j] = iidata;
-				bihReader.Dispose ();
-			}			
-
-			reader.Dispose ();
+			iconSize = new Size (best.Width, best.Height);
 		}
 	}
 }

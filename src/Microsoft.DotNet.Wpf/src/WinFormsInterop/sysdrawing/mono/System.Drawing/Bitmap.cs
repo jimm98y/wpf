@@ -4,7 +4,7 @@
 // Copyright (C) 2002 Ximian, Inc.  http://www.ximian.com
 // Copyright (C) 2004 Novell, Inc.  http://www.novell.com
 //
-// Authors: 
+// Authors:
 //	Alexandre Pigolkine (pigolkine@gmx.de)
 //	Christian Meyer (Christian.Meyer@cs.tum.edu)
 //	Miguel de Icaza (miguel@ximian.com)
@@ -22,10 +22,10 @@
 // distribute, sublicense, and/or sell copies of the Software, and to
 // permit persons to whom the Software is furnished to do so, subject to
 // the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -34,7 +34,18 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
+//
+// A MANAGED bitmap (see Image.cs): pixels in a GdipImageData, never a GDI+ object.
+//
+// Drawing INTO a bitmap (Graphics.FromImage) records a scene, as drawing on a window does. The scene
+// stays recorded until something needs the bitmap's pixels -- GetPixel, LockBits, Save, a clone, an
+// ImageAttributes draw -- and is then rasterized onto them on the CPU (WebGpuBackend.SceneRaster).
+// Drawn onto another Graphics with nothing in between that needs pixels, the recording is drawn as
+// the nested scene it is, so a bitmap used as a back buffer reaches the screen through the same
+// renderer as the window around it.
+//
 
+using System.Collections.Generic;
 using System.IO;
 using System.Drawing.Imaging;
 using System.Reflection;
@@ -57,20 +68,9 @@ namespace System.Drawing
 		{
 		}
 
-		internal Bitmap (IntPtr ptr)
+		internal Bitmap (GdipImageData data)
 		{
-			nativeObject = ptr;
-		}
-
-		// Usually called when cloning images that need to have
-		// not only the handle saved, but also the underlying stream
-		// (when using MS GDI+ and IStream we must ensure the stream stays alive for all the life of the Image)
-		internal Bitmap(IntPtr ptr, Stream stream)
-		{
-			// under Win32 stream is owned by SD/GDI+ code
-			if (GDIPlus.RunningOnWindows ())
-				this.stream = stream;
-			nativeObject = ptr;
+			managed = data;
 		}
 
 		public Bitmap (int width, int height) : this (width, height, PixelFormat.Format32bppArgb)
@@ -81,67 +81,47 @@ namespace System.Drawing
 		{
 			if (g == null)
 				throw new ArgumentNullException ("g");
-
-			IntPtr bmp;
-			Status s = GDIPlus.GdipCreateBitmapFromGraphics (width, height, g.nativeObject, out bmp);
-			GDIPlus.CheckStatus (s);
-			nativeObject = bmp;						
+			// GdipCreateBitmapFromGraphics: premultiplied, at the Graphics' resolution.
+			Create (width, height, PixelFormat.Format32bppPArgb);
+			managed.Frame.DpiX = g.DpiX;
+			managed.Frame.DpiY = g.DpiY;
 		}
 
 		public Bitmap (int width, int height, PixelFormat format)
 		{
-			managedWidth = width; managedHeight = height;
-			// No libgdiplus (browser; WF_NO_GDIPLUS): the pixels are held here instead -- see
-			// Image.managedPixels.
-			if (!GDIPlus.Initialized) {
-				if (width <= 0 || height <= 0)
-					throw new ArgumentException ("Parameter is not valid.");
-				managedPixels = new int [checked (width * height)];
-				managedFormat = format;
-			}
-			if (GDIPlus.Initialized) {
-				IntPtr bmp;
-				Status s = GDIPlus.GdipCreateBitmapFromScan0 (width, height, 0, format, IntPtr.Zero, out bmp);
-				GDIPlus.CheckStatus (s);
-				nativeObject = bmp;
-			}
+			Create (width, height, format);
+		}
+
+		void Create (int width, int height, PixelFormat format)
+		{
+			if (width <= 0 || height <= 0 || !GdipPixels.Creatable (format))
+				throw new ArgumentException ("Parameter is not valid.");
+			managed = new GdipImageData (new GdipFrame (width, height, format)) { Flags = GdipImageData.NewFlags (format) };
+			// A new bitmap of an alpha format is transparent black: nothing to draw under a recording.
+			blank = Image.IsAlphaPixelFormat (format);
 		}
 
 		public Bitmap (Image original) : this (original, original.Width, original.Height) {}
 
-		public Bitmap (Stream stream)  : this (stream, false) {} 
+		public Bitmap (Stream stream)  : this (stream, false) {}
 
 		public Bitmap (string filename) : this (filename, false) {}
 
 		public Bitmap (Image original, Size newSize)  : this(original, newSize.Width, newSize.Height) {}
-		
+
 		public Bitmap (Stream stream, bool useIcm)
 		{
-			if (!GDIPlus.Initialized) { InitManaged (stream); return; }
-			// false: stream is owned by user code
-			nativeObject = InitFromStream (stream);
+			if (stream == null)
+				throw new ArgumentNullException ("stream");
+			managed = GdipCodecs.Decode (ReadAll (stream));
 		}
 
 		public Bitmap (string filename, bool useIcm)
 		{
 			if (filename == null)
 				throw new ArgumentNullException ("filename");
-			if (!GDIPlus.Initialized) {
-				using (var fs = File.OpenRead (filename))
-					InitManaged (fs);
-				return;
-			}
-
-			IntPtr imagePtr;
-			Status st;
-
-			if (useIcm)
-				st = GDIPlus.GdipCreateBitmapFromFileICM (filename, out imagePtr);
-			else
-				st = GDIPlus.GdipCreateBitmapFromFile (filename, out imagePtr);
-
-			GDIPlus.CheckStatus (st);
-			nativeObject = imagePtr;
+			byte [] data = File.ReadAllBytes (filename);
+			managed = GdipCodecs.Decode (data);
 		}
 
 		public Bitmap (Type type, string resource)
@@ -153,42 +133,34 @@ namespace System.Drawing
 			if (type == null)
 				throw new NullReferenceException();
 
-			Stream s = type.GetTypeInfo ().Assembly.GetManifestResourceStream (type, resource);
-			if (s == null) {
-				string msg = Locale.GetText ("Resource '{0}' was not found.", resource);
-				throw new FileNotFoundException (msg);
+			using (Stream s = type.GetTypeInfo ().Assembly.GetManifestResourceStream (type, resource)) {
+				if (s == null) {
+					string msg = Locale.GetText ("Resource '{0}' was not found.", resource);
+					throw new FileNotFoundException (msg);
+				}
+				managed = GdipCodecs.Decode (ReadAll (s));
 			}
-
-			if (!GDIPlus.Initialized) { InitManaged (s); return; }
-			nativeObject = InitFromStream (s);
-			// under Win32 stream is owned by SD/GDI+ code
-			if (GDIPlus.RunningOnWindows ())
-				stream = s;
 		}
 
 		public Bitmap (Image original, int width, int height)  : this(width, height, PixelFormat.Format32bppArgb)
 		{
-			if (managedPixels != null) { ScaleManaged (original, width, height); return; }
-			Graphics graphics = Graphics.FromImage(this);
-
-			graphics.DrawImage(original, 0, 0, width, height);
-			graphics.Dispose();
+			if (original == null)
+				throw new ArgumentNullException ("original");
+			using (Graphics graphics = Graphics.FromImage (this))
+				graphics.DrawImage (original, 0, 0, width, height);
 		}
 
 		public Bitmap (int width, int height, int stride, PixelFormat format, IntPtr scan0)
 		{
-			if (!GDIPlus.Initialized) {
-				managedWidth = width; managedHeight = height; managedFormat = format;
-				managedPixels = new int [checked (width * height)];
-				if (scan0 != IntPtr.Zero)
-					ManagedPixels.Read (scan0, stride, format, managedPixels, width, new Rectangle (0, 0, width, height));
+			Create (width, height, format);
+			if (scan0 == IntPtr.Zero)
 				return;
-			}
-			IntPtr bmp;
-				
-			Status status = GDIPlus.GdipCreateBitmapFromScan0 (width, height, stride, format, scan0, out bmp);
-			GDIPlus.CheckStatus (status);	
-			nativeObject = bmp;						 								
+			// GDI+ draws straight into the caller's memory; this copies it in, once.
+			GdipFrame f = managed.Frame;
+			int rowBytes = (width * Image.GetPixelFormatSize (format) + 7) / 8;
+			for (int y = 0; y < height; y++)
+				Marshal.Copy (scan0 + y * stride, f.Bits, y * f.Stride, rowBytes);
+			blank = false;
 		}
 
 		private Bitmap (SerializationInfo info, StreamingContext context)
@@ -197,102 +169,171 @@ namespace System.Drawing
 		}
 
 		#endregion
+
+		// ---- recorded drawing -------------------------------------------------------------------
+
+		// Graphics drawing into this bitmap (FromImage), and scenes they finished, not yet rasterized.
+		readonly List<Graphics> drawing = new List<Graphics> ();
+		readonly List<object> pending = new List<object> ();
+		// The pixels are transparent black and have never been written: a recording drawn as a nested
+		// scene needs nothing under it.
+		bool blank;
+
+		internal void AttachGraphics (Graphics g)
+		{
+			lock (drawing) drawing.Add (g);
+		}
+
+		/// <summary>A Graphics on this bitmap finished (Flush or Dispose): its scene so far joins the
+		/// pending ones. <paramref name="detach"/> when it is gone for good.</summary>
+		internal void TakeDrawing (Graphics g, bool detach)
+		{
+			lock (drawing) {
+				object scene = g.TakeRecordedScene ();
+				if (scene != null) pending.Add (scene);
+				if (detach) drawing.Remove (g);
+			}
+		}
+
+		// Every open Graphics' drawing so far, moved to the pending list.
+		void CollectDrawing ()
+		{
+			lock (drawing) {
+				foreach (Graphics g in drawing) {
+					object scene = g.TakeRecordedScene ();
+					if (scene != null) pending.Add (scene);
+				}
+			}
+		}
+
+		/// <summary>Renders whatever has been drawn into this bitmap onto its pixels. Everything that
+		/// reads or writes pixels goes through here first.</summary>
+		internal void FlushDrawing ()
+		{
+			if (managed == null) return;
+			object[] scenes;
+			lock (drawing) {
+				if (drawing.Count == 0 && pending.Count == 0) return;
+				CollectDrawing ();
+				scenes = pending.ToArray ();
+				pending.Clear ();
+			}
+			if (scenes.Length == 0) return;
+			WebGpuBackend.SceneRaster.Render (managed.Frame, scenes);
+			blank = false;
+		}
+
+		/// <summary>Clear() on a Graphics of this bitmap with nothing clipping it: every pixel becomes
+		/// <paramref name="color"/>, and whatever was drawn before is overwritten with them.</summary>
+		internal void ClearTo (Color color)
+		{
+			lock (drawing) {
+				CollectDrawing ();
+				pending.Clear ();
+			}
+			GdipFrame f = managed.Frame;
+			var row = new uint [f.Width];
+			uint argb = (uint) color.ToArgb ();
+			for (int i = 0; i < row.Length; i++) row [i] = argb;
+			for (int y = 0; y < f.Height; y++) GdipPixels.WriteArgb (f, 0, y, f.Width, row, 0);
+			blank = color.A == 0 && Image.IsAlphaPixelFormat (f.Format);
+		}
+
+		/// <summary>For drawing this bitmap as a scene: true with the scenes recorded into it (oldest
+		/// first) when there are any and none of them needs the pixels under it to be right --
+		/// <paramref name="baseNeeded"/> says whether its pixels must be drawn first.</summary>
+		internal bool TryGetRecording (out object[] scenes, out bool baseNeeded)
+		{
+			scenes = null;
+			baseNeeded = !blank;
+			lock (drawing) {
+				if (drawing.Count == 0 && pending.Count == 0) return false;
+				CollectDrawing ();
+				bool text = false;
+				foreach (object s in pending) {
+					if (WebGpuBackend.SceneRaster.NeedsDestination (s)) return false;
+					text |= WebGpuBackend.SceneRaster.HasText (s);
+				}
+				// Without text the CPU rasterizer draws it as GDI+ does, blends and all.
+				if (!text) return false;
+				scenes = pending.ToArray ();
+				return scenes.Length > 0;
+			}
+		}
+
 		// methods
 		public Color GetPixel (int x, int y) {
-			if (IsManagedPixels) {
-				CheckBounds (x, y);
-				return Color.FromArgb (managedPixels [y * managedWidth + x]);
-			}
-			
-			int argb;				
-			
-			Status s = GDIPlus.GdipBitmapGetPixel(nativeObject, x, y, out argb);
-			GDIPlus.CheckStatus (s);
-
-			return Color.FromArgb(argb);		
+			GdipFrame f = Data.Frame;
+			CheckBounds (f, x, y);
+			if (!GdipPixels.Convertible (f.Format))
+				throw new ArgumentException ("Parameter is not valid.");
+			var px = new uint [1];
+			GdipPixels.ReadArgb (f, x, y, 1, px, 0);
+			return Color.FromArgb (unchecked ((int) px [0]));
 		}
 
 		public void SetPixel (int x, int y, Color color)
 		{
-			if (IsManagedPixels) {
-				CheckBounds (x, y);
-				managedPixels [y * managedWidth + x] = color.ToArgb ();
-				return;
-			}
-			Status s = GDIPlus.GdipBitmapSetPixel (nativeObject, x, y, color.ToArgb ());
-			if (s == Status.InvalidParameter) {
-				// check is done in case of an error only to avoid another
-				// unmanaged call for normal (successful) calls
-				if ((this.PixelFormat & PixelFormat.Indexed) != 0) {
-					string msg = Locale.GetText ("SetPixel cannot be called on indexed bitmaps.");
-					throw new InvalidOperationException (msg);
-				}
-			}
-			GDIPlus.CheckStatus (s);
+			GdipFrame f = Data.Frame;
+			if (f.IsIndexed)
+				throw new InvalidOperationException ("SetPixel is not supported for images with indexed pixel formats.");
+			CheckBounds (f, x, y);
+			if (!GdipPixels.Convertible (f.Format))
+				throw new ArgumentException ("Parameter is not valid.");
+			GdipPixels.WriteArgb (f, x, y, 1, new [] { (uint) color.ToArgb () }, 0);
+			blank = false;
+		}
+
+		static void CheckBounds (GdipFrame f, int x, int y)
+		{
+			if (x < 0 || x >= f.Width)
+				throw new ArgumentOutOfRangeException ("x", "Parameter must be positive and < Width.");
+			if (y < 0 || y >= f.Height)
+				throw new ArgumentOutOfRangeException ("y", "Parameter must be positive and < Height.");
 		}
 
 		public Bitmap Clone (Rectangle rect, PixelFormat format)
 		{
-			if (IsManagedPixels) return CloneManaged (rect, format);
-			IntPtr bmp;			
-			Status status = GDIPlus.GdipCloneBitmapAreaI (rect.X, rect.Y, rect.Width, rect.Height,
-				format, nativeObject, out bmp);
-			GDIPlus.CheckStatus (status);
-			return new Bitmap (bmp);
-       		}
-		
+			GdipFrame f = Data.Frame;
+			if (rect.Width <= 0 || rect.Height <= 0 || rect.X < 0 || rect.Y < 0 || rect.Right > f.Width || rect.Bottom > f.Height
+			    || !GdipPixels.Convertible (format) || !GdipPixels.Convertible (f.Format))
+				throw new OutOfMemoryException ();
+			GdipFrame copy = GdipPixels.Convert (f, rect, format, conversionPalette: !f.IsIndexed || format != f.Format);
+			// GDI+ keeps the source's alpha flag on a clone, whatever the clone's format.
+			return new Bitmap (new GdipImageData (copy) { Flags = GdipImageData.NewFlags (format) | (managed.Flags & (int) ImageFlags.HasAlpha) });
+		}
+
 		public Bitmap Clone (RectangleF rect, PixelFormat format)
 		{
-			if (IsManagedPixels) return CloneManaged (Rectangle.Truncate (rect), format);
-			IntPtr bmp;			
-			Status status = GDIPlus.GdipCloneBitmapArea (rect.X, rect.Y, rect.Width, rect.Height,
-				format, nativeObject, out bmp);
-			GDIPlus.CheckStatus (status);
-			return new Bitmap (bmp);
+			return Clone (new Rectangle ((int) rect.X, (int) rect.Y, (int) rect.Width, (int) rect.Height), format);
 		}
 
 		public static Bitmap FromHicon (IntPtr hicon)
-		{	
-			IntPtr bitmap;	
-			Status status = GDIPlus.GdipCreateBitmapFromHICON (hicon, out bitmap);
-			GDIPlus.CheckStatus (status);
-			return new Bitmap (bitmap);
+		{
+			return new Bitmap (WebGpuBackend.WindowsImaging.FromHicon (hicon));
 		}
 
-		public static Bitmap FromResource (IntPtr hinstance, string bitmapName)	//TODO: Untested
+		public static Bitmap FromResource (IntPtr hinstance, string bitmapName)
 		{
-			IntPtr bitmap;	
-			Status status = GDIPlus.GdipCreateBitmapFromResource (hinstance, bitmapName, out bitmap);
-			GDIPlus.CheckStatus (status);
-			return new Bitmap (bitmap);
+			return new Bitmap (WebGpuBackend.WindowsImaging.FromResource (hinstance, bitmapName));
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public IntPtr GetHbitmap ()
 		{
-			return GetHbitmap(Color.Gray);
+			return GetHbitmap(Color.LightGray);
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public IntPtr GetHbitmap (Color background)
 		{
-			IntPtr HandleBmp;
-			
-			Status status = GDIPlus.GdipCreateHBITMAPFromBitmap (nativeObject, out HandleBmp, background.ToArgb ());
-			GDIPlus.CheckStatus (status);
-
-			return  HandleBmp;
+			return WebGpuBackend.WindowsImaging.GetHbitmap (Data.Frame, background);
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public IntPtr GetHicon ()
 		{
-			IntPtr HandleIcon;
-			
-			Status status = GDIPlus.GdipCreateHICONFromBitmap (nativeObject, out HandleIcon);
-			GDIPlus.CheckStatus (status);
-
-			return  HandleIcon;			
+			return WebGpuBackend.WindowsImaging.GetHicon (Data.Frame);
 		}
 
 		public BitmapData LockBits (Rectangle rect, ImageLockMode flags, PixelFormat format)
@@ -301,14 +342,68 @@ namespace System.Drawing
 			return LockBits (rect, flags, format, result);
 		}
 
+		// ---- LockBits ---------------------------------------------------------------------------
+		//
+		// In the bitmap's own format, with whole bytes to the row's start, a lock is the bitmap's own
+		// memory, pinned, at the bitmap's stride -- what GDI+ hands out, writes visible at once. In
+		// any other format it is a copy converted out (unless the lock is write-only) and converted
+		// back on unlock (unless it is read-only); a ReadWrite lock writes back even untouched, and
+		// loses what the round trip loses, as GDI+'s does.
+
+		sealed class LockState
+		{
+			internal Rectangle Rect;
+			internal ImageLockMode Mode;
+			internal PixelFormat Format;
+			internal GCHandle Pin;
+			internal IntPtr Buffer;
+			internal int Stride;
+		}
+
+		LockState locked;
+
 		public
 		BitmapData LockBits (Rectangle rect, ImageLockMode flags, PixelFormat format, BitmapData bitmapData)
 		{
-			if (IsManagedPixels) return LockManaged (rect, flags, format, bitmapData);
-			Status status = GDIPlus.GdipBitmapLockBits (nativeObject, ref rect, flags, format, bitmapData);
-			//NOTE: scan0 points to piece of memory allocated in the unmanaged space
-			GDIPlus.CheckStatus (status);
+			if (bitmapData == null)
+				throw new ArgumentException ("Parameter is not valid.");
+			GdipFrame f = Data.Frame;
+			if (rect.Width <= 0 || rect.Height <= 0 || rect.X < 0 || rect.Y < 0 || rect.Right > f.Width || rect.Bottom > f.Height)
+				throw new ArgumentException ("Parameter is not valid.");
+			if ((flags & (ImageLockMode.ReadOnly | ImageLockMode.WriteOnly)) == 0)
+				throw new ArgumentException ("Parameter is not valid.");
+			if (locked != null)
+				throw new InvalidOperationException ("Bitmap region is already locked.");
+			bool direct = format == f.Format && (rect.X * f.BitsPerPixel) % 8 == 0;
+			if (!direct && (!GdipPixels.Convertible (format) || !GdipPixels.Convertible (f.Format)))
+				throw new ArgumentException ("Parameter is not valid.");
 
+			var state = new LockState { Rect = rect, Mode = flags, Format = format };
+			if (direct) {
+				state.Pin = GCHandle.Alloc (f.Bits, GCHandleType.Pinned);
+				state.Stride = f.Stride;
+				state.Buffer = state.Pin.AddrOfPinnedObject () + rect.Y * f.Stride + rect.X * f.BitsPerPixel / 8;
+			} else {
+				int bpp = Image.GetPixelFormatSize (format);
+				state.Stride = ((rect.Width * bpp + 31) / 32) * 4;
+				state.Buffer = Marshal.AllocHGlobal (state.Stride * rect.Height);
+				var bytes = new byte [state.Stride];
+				var argb = new uint [rect.Width];
+				Color[] palette = (format & PixelFormat.Indexed) != 0 ? (f.IsIndexed ? f.Palette : GdipPixels.DefaultPalette (format, out _)) : null;
+				var cache = new Dictionary<uint, int> ();
+				for (int y = 0; y < rect.Height; y++) {
+					if ((flags & ImageLockMode.ReadOnly) != 0) {
+						GdipPixels.ReadArgb (f, rect.X, rect.Y + y, rect.Width, argb, 0);
+						GdipPixels.WriteArgb (bytes, 0, format, palette, 0, rect.Width, argb, 0, cache);
+					}
+					Marshal.Copy (bytes, 0, state.Buffer + y * state.Stride, state.Stride);
+				}
+			}
+			bitmapData.Width = rect.Width; bitmapData.Height = rect.Height; bitmapData.Stride = state.Stride;
+			bitmapData.PixelFormat = format; bitmapData.Scan0 = state.Buffer;
+			bitmapData.Reserved = (int) flags;
+			locked = state;
+			if ((flags & ImageLockMode.WriteOnly) != 0) blank = false;
 			return bitmapData;
 		}
 
@@ -325,125 +420,71 @@ namespace System.Drawing
 		}
 
 		public void MakeTransparent (Color transparentColor)
-		{							
-			// We have to draw always over a 32-bitmap surface that supports alpha channel
-			Bitmap	bmp = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
-			Graphics gr = Graphics.FromImage(bmp);
-			Rectangle destRect = new Rectangle(0, 0, Width, Height);
-			ImageAttributes imageAttr = new ImageAttributes();
-			
-			imageAttr.SetColorKey(transparentColor,	transparentColor);
-
-			gr.DrawImage (this, destRect, 0, 0, Width, Height, GraphicsUnit.Pixel, imageAttr);					
-			
-			IntPtr oldBmp = nativeObject;
-			nativeObject = bmp.nativeObject;
-			bmp.nativeObject = oldBmp;
-
-			gr.Dispose();
-			bmp.Dispose();
-			imageAttr.Dispose();
+		{
+			// GDI+ draws the bitmap through a colour key into a new 32bppArgb one: what matches goes
+			// transparent black, and everything else takes the premultiplied round trip of a draw.
+			GdipFrame f = Data.Frame;
+			var dst = new GdipFrame (f.Width, f.Height, PixelFormat.Format32bppArgb);
+			var row = new uint [f.Width];
+			uint key = (uint) transparentColor.ToArgb () & 0xffffff;
+			for (int y = 0; y < f.Height; y++) {
+				GdipPixels.ReadArgb (f, 0, y, f.Width, row, 0);
+				for (int x = 0; x < row.Length; x++)
+					row [x] = (row [x] & 0xffffff) == key ? 0u : GdipPixels.UnpremultiplyArgb (GdipPixels.PremultiplyArgb (row [x]));
+				GdipPixels.WriteArgb (dst, 0, y, f.Width, row, 0);
+			}
+			managed = new GdipImageData (dst) { Flags = GdipImageData.NewFlags (PixelFormat.Format32bppArgb) };
+			blank = false;
 		}
 
 		public void SetResolution (float xDpi, float yDpi)
 		{
-			Status status = GDIPlus.GdipBitmapSetResolution (nativeObject, xDpi, yDpi);
-			GDIPlus.CheckStatus (status);
+			if (!(xDpi > 0) || !(yDpi > 0))
+				throw new ArgumentException ("Parameter is not valid.");
+			GdipFrame f = Data.Frame;
+			f.DpiX = xDpi;
+			f.DpiY = yDpi;
 		}
 
 		public void UnlockBits (BitmapData bitmapdata)
 		{
-			if (IsManagedPixels) { UnlockManaged (bitmapdata); return; }
-			Status status = GDIPlus.GdipBitmapUnlockBits (nativeObject, bitmapdata);
-			GDIPlus.CheckStatus (status);
-		}
-	
-		// ---- managed pixels (no GDI+): see Image.managedPixels ----------------------------------
-
-		void CheckBounds (int x, int y)
-		{
-			if (x < 0 || y < 0 || x >= managedWidth || y >= managedHeight)
-				throw new ArgumentOutOfRangeException (x < 0 || x >= managedWidth ? "x" : "y");
-		}
-
-		// PNG through the renderer's own decoder; BMP read here. Anything else needs a codec this
-		// managed path does not have, and says so.
-		void InitManaged (Stream stream)
-		{
-			if (stream == null)
-				throw new ArgumentNullException ("stream");
-			byte [] data;
-			using (var ms = new MemoryStream ()) { stream.CopyTo (ms); data = ms.ToArray (); }
-			if (!ManagedPixels.Decode (data, out int w, out int h, out int [] argb, out float dpiX, out float dpiY))
-				throw new ArgumentException ("Parameter is not valid: only PNG and BMP images can be read without GDI+.");
-			managedWidth = w; managedHeight = h; managedPixels = argb;
-			managedDpiX = dpiX; managedDpiY = dpiY;
-			managedFormat = PixelFormat.Format32bppArgb;
-		}
-
-		void ScaleManaged (Image original, int width, int height)
-		{
-			if (!(original is Bitmap ob) || !ob.IsManagedPixels) return;
-			int sw = ob.managedWidth, sh = ob.managedHeight;
-			for (int y = 0; y < height; y++)
-				for (int x = 0; x < width; x++)
-					managedPixels [y * width + x] = ob.managedPixels [Math.Min (sh - 1, y * sh / height) * sw + Math.Min (sw - 1, x * sw / width)];
-		}
-
-		internal Bitmap CloneManaged (Rectangle rect, PixelFormat format)
-		{
-			if (rect.X < 0 || rect.Y < 0 || rect.Width <= 0 || rect.Height <= 0 || rect.Right > managedWidth || rect.Bottom > managedHeight)
-				throw new OutOfMemoryException ();
-			var b = new Bitmap (rect.Width, rect.Height, format);
-			for (int y = 0; y < rect.Height; y++)
-				Array.Copy (managedPixels, (rect.Y + y) * managedWidth + rect.X, b.managedPixels, y * rect.Width, rect.Width);
-			b.managedDpiX = managedDpiX; b.managedDpiY = managedDpiY;
-			return b;
-		}
-
-		BitmapData LockManaged (Rectangle rect, ImageLockMode flags, PixelFormat format, BitmapData data)
-		{
-			if (rect.X < 0 || rect.Y < 0 || rect.Width <= 0 || rect.Height <= 0 || rect.Right > managedWidth || rect.Bottom > managedHeight)
+			if (bitmapdata == null)
 				throw new ArgumentException ("Parameter is not valid.");
-			int bpp = ManagedPixels.BytesPerPixel (format);
-			if (bpp == 0)
-				throw new ArgumentException ("Parameter is not valid: pixel format " + format + " is not supported without GDI+.");
-			int stride = (rect.Width * bpp + 3) & ~3;
-			IntPtr buf = Marshal.AllocHGlobal (stride * rect.Height);
-			if ((flags & ImageLockMode.ReadOnly) != 0 || flags == ImageLockMode.ReadWrite || (flags & ImageLockMode.WriteOnly) == 0)
-				ManagedPixels.Write (managedPixels, managedWidth, rect, buf, stride, format);
-			data.Width = rect.Width; data.Height = rect.Height; data.Stride = stride;
-			data.PixelFormat = format; data.Scan0 = buf;
-			data.Reserved = (int) flags;
-			lock (s_locks) s_locks [buf] = rect;
-			return data;
-		}
-
-		void UnlockManaged (BitmapData data)
-		{
-			if (data == null || data.Scan0 == IntPtr.Zero) return;
-			Rectangle rect;
-			lock (s_locks) {
-				if (!s_locks.TryGetValue (data.Scan0, out rect)) return;
-				s_locks.Remove (data.Scan0);
+			LockState state = locked;
+			if (state == null || bitmapdata.Scan0 != state.Buffer)
+				throw new ArgumentException ("Parameter is not valid.");
+			locked = null;
+			if (state.Pin.IsAllocated) {
+				state.Pin.Free ();
+			} else {
+				GdipFrame f = managed.Frame;
+				if ((state.Mode & ImageLockMode.WriteOnly) != 0) {
+					Rectangle rect = state.Rect;
+					var bytes = new byte [state.Stride];
+					var argb = new uint [rect.Width];
+					Color[] palette = (state.Format & PixelFormat.Indexed) != 0 ? (f.IsIndexed ? f.Palette : GdipPixels.DefaultPalette (state.Format, out _)) : null;
+					var cache = new Dictionary<uint, int> ();
+					for (int y = 0; y < rect.Height; y++) {
+						Marshal.Copy (state.Buffer + y * state.Stride, bytes, 0, state.Stride);
+						GdipPixels.ReadArgb (bytes, 0, state.Format, palette, 0, rect.Width, argb, 0);
+						GdipPixels.WriteArgb (f, rect.X, rect.Y + y, rect.Width, argb, 0, cache);
+					}
+				}
+				Marshal.FreeHGlobal (state.Buffer);
 			}
-			var flags = (ImageLockMode) data.Reserved;
-			if ((flags & ImageLockMode.WriteOnly) != 0)
-				ManagedPixels.Read (data.Scan0, data.Stride, data.PixelFormat, managedPixels, managedWidth, rect);
-			Marshal.FreeHGlobal (data.Scan0);
-			data.Scan0 = IntPtr.Zero;
+			bitmapdata.Scan0 = IntPtr.Zero;
 		}
 
-		static readonly System.Collections.Generic.Dictionary<IntPtr, Rectangle> s_locks = new System.Collections.Generic.Dictionary<IntPtr, Rectangle> ();
-
-		internal void SaveManagedPng (Stream stream)
+		protected override void Dispose (bool disposing)
 		{
-			var rgba = new byte [managedWidth * managedHeight * 4];
-			for (int i = 0; i < managedPixels.Length; i++) {
-				int v = managedPixels [i];
-				rgba [i * 4] = (byte) (v >> 16); rgba [i * 4 + 1] = (byte) (v >> 8); rgba [i * 4 + 2] = (byte) v; rgba [i * 4 + 3] = (byte) (v >> 24);
+			LockState state = locked;
+			locked = null;
+			if (state != null) {
+				if (state.Pin.IsAllocated) state.Pin.Free ();
+				else if (state.Buffer != IntPtr.Zero) Marshal.FreeHGlobal (state.Buffer);
 			}
-			ManagedPixels.EncodePng (stream, rgba, managedWidth, managedHeight);
+			lock (drawing) { drawing.Clear (); pending.Clear (); }
+			base.Dispose (disposing);
 		}
-}
+	}
 }

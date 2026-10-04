@@ -2,171 +2,73 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// Managed image decoding for platforms without native WIC. Decodes PNG (all
-// standard bit depths and color types, tRNS transparency, Adam7 interlace),
-// JPEG (baseline and progressive, via ManagedJpegDecoder), GIF (every frame,
-// composed -- ManagedGifDecoder), TIFF (baseline, LZW/PackBits/Deflate --
-// ManagedTiffDecoder), ICO and uncompressed BMP into straight BGRA32, and
-// materializes the result as a managed-backed BitmapSource.
+// Managed image decoding. Decodes PNG (all standard bit depths and color types, tRNS
+// transparency, Adam7 interlace), JPEG (baseline and progressive, via ManagedJpegDecoder), GIF
+// (every frame, composed -- ManagedGifDecoder), TIFF (baseline, LZW/PackBits/Deflate --
+// ManagedTiffDecoder), ICO and BMP (uncompressed, bitfields, RLE4/RLE8) into straight BGRA32 or,
+// where the file is already one, a narrow indexed or greyscale layout.
+//
+// This is the byte-level half, shared by WPF and by System.Drawing (the WinForms port links it);
+// neither side's image types appear here. PresentationCore's ManagedImageDecoder.Wpf.cs turns the
+// result into a BitmapSource; System.Drawing's codec bridge turns it into a GDI+-shaped Bitmap.
 //
 // Every format this repo can ENCODE it can now also decode, which had not been
 // true of GIF and TIFF: the stack wrote files it could not read back.
 //
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 
 namespace System.Windows.Media.Imaging
 {
-    internal static class ManagedImageDecoder
+    internal static partial class ManagedImageDecoder
     {
-        /// <summary>
-        /// Decodes an image from a stream or URI into a managed-backed BitmapSource (Bgra32).
-        /// The URI is used when <paramref name="stream"/> is null: file URIs open directly;
-        /// anything else (pack://, http) goes through WPF's request helper.
-        /// </summary>
-        internal static BitmapSource Decode(Uri uri, Stream stream) => DecodeAll(uri, stream)[0];
+        // ---- sniffing ------------------------------------------------------------------
 
-        /// <summary>
-        /// Decodes every frame an image carries: the frames of an animated GIF or the pages of a
-        /// multi-page TIFF, and a single-element list for every other format. Each frame is frozen.
-        /// </summary>
-        /// <remarks>
-        /// GIF frames arrive already composed onto the logical screen, so any one of them can be
-        /// shown on its own; see ManagedGifDecoder for why that matters.
-        /// </remarks>
-        internal static List<BitmapSource> DecodeAll(Uri uri, Stream stream)
-        {
-            byte[] data = ReadAllBytes(uri, stream);
+        internal static bool IsPng(byte[] data) =>
+            data.Length > 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G';
 
-            if (ManagedGifDecoder.IsGif(data))
-            {
-                List<ManagedGifFrame> gifFrames = ManagedGifDecoder.Decode(data, out int gifWidth, out int gifHeight,
-                    out byte[] gifIndexed, out BitmapPalette gifPalette);
-                if (gifIndexed != null && gifPalette != null)
-                {
-                    // A static GIF is an Indexed8 picture and keeps its own format.
-                    return new List<BitmapSource>(1)
-                    {
-                        Materialize(gifIndexed, gifWidth, gifHeight, 96, 96,
-                            PixelFormats.Indexed8, gifPalette, gifWidth),
-                    };
-                }
+        internal static bool IsBmp(byte[] data) => data.Length > 2 && data[0] == 'B' && data[1] == 'M';
 
-                var decoded = new List<BitmapSource>(gifFrames.Count);
-                foreach (ManagedGifFrame frame in gifFrames)
-                {
-                    decoded.Add(Materialize(frame.Bgra, gifWidth, gifHeight, 96, 96));
-                }
-                return decoded;
-            }
+        internal static bool IsJpeg(byte[] data) => data.Length > 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF;
 
-            if (ManagedTiffDecoder.IsTiff(data))
-            {
-                List<ManagedTiffPage> pages = ManagedTiffDecoder.Decode(data);
-                var decoded = new List<BitmapSource>(pages.Count);
-                foreach (ManagedTiffPage page in pages)
-                {
-                    decoded.Add(Materialize(page.Bgra, page.Width, page.Height,
-                                            page.DpiX > 0 ? page.DpiX : 96,
-                                            page.DpiY > 0 ? page.DpiY : 96));
-                }
-                return decoded;
-            }
-
-            byte[] bgra;
-            int width, height;
-            double dpiX = 96, dpiY = 96;
-
-            if (data.Length > 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G')
-            {
-                bgra = DecodePng(data, out width, out height, out dpiX, out dpiY,
-                    out PixelFormat pngFormat, out BitmapPalette pngPalette, out int pngStride);
-                if (pngStride != 0)
-                {
-                    return new List<BitmapSource>(1)
-                    {
-                        Materialize(bgra, width, height, dpiX, dpiY, pngFormat, pngPalette, pngStride),
-                    };
-                }
-            }
-            else if (data.Length > 2 && data[0] == 'B' && data[1] == 'M')
-            {
-                bgra = DecodeBmp(data, out width, out height,
-                    out PixelFormat bmpFormat, out BitmapPalette bmpPalette, out int bmpStride);
-                if (bmpStride != 0)
-                {
-                    return new List<BitmapSource>(1)
-                    {
-                        Materialize(bgra, width, height, dpiX, dpiY, bmpFormat, bmpPalette, bmpStride),
-                    };
-                }
-            }
-            else if (data.Length > 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
-            {
-                bgra = ManagedJpegDecoder.Decode(data, out width, out height);
-            }
-            else if (data.Length > 6 && data[0] == 0 && data[1] == 0 && data[2] == 1 && data[3] == 0)
-            {
-                bgra = DecodeIco(data, out width, out height);
-            }
-            else
-            {
-                // NotSupportedException, not PlatformNotSupportedException: this is what WPF has always
-                // thrown for image data it cannot decode, and callers (and BitmapImage's own tests)
-                // match on the exact type. It is also the more accurate of the two now that these
-                // codecs run everywhere -- an unrecognised format is unsupported on every platform,
-                // not unsupported on this one.
-                throw new NotSupportedException(
-                    "Only PNG, JPEG, GIF, TIFF, ICO and uncompressed BMP can be decoded: "
-                    + "the data matched none of them.");
-            }
-
-            return new List<BitmapSource>(1) { Materialize(bgra, width, height, dpiX, dpiY) };
-        }
-
-        private static BitmapSource Materialize(byte[] bgra, int width, int height, double dpiX, double dpiY)
-            => Materialize(bgra, width, height, dpiX, dpiY, PixelFormats.Bgra32, null, width * 4);
-
-        private static BitmapSource Materialize(byte[] pixels, int width, int height, double dpiX, double dpiY,
-            PixelFormat format, BitmapPalette palette, int stride)
-        {
-            var source = BitmapSource.Create(width, height, dpiX, dpiY, format, palette, pixels, stride);
-            source.Freeze();
-            return source;
-        }
-
-        private static byte[] ReadAllBytes(Uri uri, Stream stream)
-        {
-            if (stream != null)
-            {
-                using var ms = new MemoryStream();
-                stream.CopyTo(ms);
-                return ms.ToArray();
-            }
-
-            ArgumentNullException.ThrowIfNull(uri);
-
-            if (uri.IsFile)
-            {
-                return File.ReadAllBytes(uri.LocalPath);
-            }
-
-            using Stream response = MS.Internal.WpfWebRequestHelper.CreateRequestAndGetResponseStream(uri);
-            using var buffer = new MemoryStream();
-            response.CopyTo(buffer);
-            return buffer.ToArray();
-        }
+        internal static bool IsIco(byte[] data) =>
+            data.Length > 6 && data[0] == 0 && data[1] == 0 && data[2] == 1 && data[3] == 0;
 
         // ---- PNG -----------------------------------------------------------------------
 
-        private static byte[] DecodePng(byte[] data, out int width, out int height, out double dpiX, out double dpiY,
-            out PixelFormat narrowFormat, out BitmapPalette narrowPalette, out int narrowStride,
+        /// <summary>How a PNG is stored, beyond its pixels.</summary>
+        internal struct PngInfo
+        {
+            internal int BitDepth;
+            internal int ColorType;
+            internal bool Interlaced;
+            /// <summary>A tRNS chunk was present.</summary>
+            internal bool HasTransparency;
+            internal bool HasPhys;
+            internal int PhysUnit;
+            internal uint PpmX, PpmY;
+            /// <summary>gAMA, in units of 1/100000; -1 when absent.</summary>
+            internal long Gamma;
+            /// <summary>sRGB rendering intent; -1 when absent.</summary>
+            internal int SrgbIntent;
+        }
+
+        internal static byte[] DecodePng(byte[] data, out int width, out int height, out double dpiX, out double dpiY,
+            out ManagedPixelLayout narrowFormat, out uint[] narrowPalette, out int narrowStride,
             bool allowNarrow = true)
+            => DecodePng(data, out width, out height, out dpiX, out dpiY, out narrowFormat, out narrowPalette,
+                         out narrowStride, out _, allowNarrow);
+
+        internal static byte[] DecodePng(byte[] data, out int width, out int height, out double dpiX, out double dpiY,
+            out ManagedPixelLayout narrowFormat, out uint[] narrowPalette, out int narrowStride, out PngInfo info,
+            bool allowNarrow = true, bool roundGray16 = false)
         {
             int pos = 8;
             width = 0; height = 0; dpiX = 96; dpiY = 96;
+            info = new PngInfo { Gamma = -1, SrgbIntent = -1 };
             int bitDepth = 0, colorType = 0, interlace = 0;
             byte[] palette = null;   // rgb triples
             byte[] trns = null;      // per-color-type transparency chunk
@@ -204,11 +106,21 @@ namespace System.Windows.Media.Imaging
                         Array.Copy(data, body, trns, 0, len);
                         break;
                     case 0x70485973:   // pHYs
+                        info.HasPhys = true;
+                        info.PpmX = (uint)ReadU32(data, body);
+                        info.PpmY = (uint)ReadU32(data, body + 4);
+                        info.PhysUnit = data[body + 8];
                         if (data[body + 8] == 1)   // pixels per metre
                         {
                             dpiX = ReadU32(data, body) * 0.0254;
                             dpiY = ReadU32(data, body + 4) * 0.0254;
                         }
+                        break;
+                    case 0x67414D41:   // gAMA
+                        if (len >= 4) info.Gamma = (uint)ReadU32(data, body);
+                        break;
+                    case 0x73524742:   // sRGB
+                        if (len >= 1) info.SrgbIntent = data[body];
                         break;
                     case 0x49444154:   // IDAT
                         idat.Write(data, body, len);
@@ -224,6 +136,11 @@ namespace System.Windows.Media.Imaging
             {
                 throw new InvalidDataException("PNG has no image data.");
             }
+
+            info.BitDepth = bitDepth;
+            info.ColorType = colorType;
+            info.Interlaced = interlace != 0;
+            info.HasTransparency = trns != null;
 
             int channels = colorType switch
             {
@@ -244,7 +161,7 @@ namespace System.Windows.Media.Imaging
             }
             byte[] rawBytes = raw.GetBuffer();
 
-            // Keep the file's own format where WPF has one for it, rather than expanding everything
+            // Keep the file's own format where there is one for it, rather than expanding everything
             // to 32bpp. A palette PNG is Indexed1/2/4/8 and a greyscale one is BlackWhite/Gray2/4/8;
             // reporting Bgra32 for them told applications the wrong Format, handed back a null
             // Palette, and cost 32x the memory for a 1bpp image.
@@ -256,7 +173,7 @@ namespace System.Windows.Media.Imaging
             // A greyscale PNG carrying a tRNS transparent-colour key is excluded too: the
             // transparency it describes cannot be expressed in a Gray format, and dropping it would
             // silently make transparent pixels opaque.
-            narrowFormat = default;
+            narrowFormat = ManagedPixelLayout.Unknown;
             narrowPalette = null;
             narrowStride = 0;
             // allowNarrow is false where the caller composites the result itself and needs BGRA --
@@ -266,21 +183,7 @@ namespace System.Windows.Media.Imaging
 
             if (narrow)
             {
-                narrowFormat = colorType == 3
-                    ? bitDepth switch
-                    {
-                        1 => PixelFormats.Indexed1,
-                        2 => PixelFormats.Indexed2,
-                        4 => PixelFormats.Indexed4,
-                        _ => PixelFormats.Indexed8,
-                    }
-                    : bitDepth switch
-                    {
-                        1 => PixelFormats.BlackWhite,
-                        2 => PixelFormats.Gray2,
-                        4 => PixelFormats.Gray4,
-                        _ => PixelFormats.Gray8,
-                    };
+                narrowFormat = colorType == 3 ? ManagedPixelLayouts.Indexed(bitDepth) : ManagedPixelLayouts.Gray(bitDepth);
 
                 if (colorType == 3)
                 {
@@ -290,15 +193,15 @@ namespace System.Windows.Media.Imaging
                     }
 
                     int entries = palette.Length / 3;
-                    var colors = new List<Color>(entries);
+                    var colors = new uint[entries];
                     for (int i = 0; i < entries; i++)
                     {
                         // tRNS on a palette image is a per-entry alpha table, shorter than the
                         // palette when the trailing entries are opaque.
-                        byte a = trns != null && i < trns.Length ? trns[i] : (byte)255;
-                        colors.Add(Color.FromArgb(a, palette[i * 3], palette[i * 3 + 1], palette[i * 3 + 2]));
+                        uint a = trns != null && i < trns.Length ? trns[i] : 255u;
+                        colors[i] = (a << 24) | ((uint)palette[i * 3] << 16) | ((uint)palette[i * 3 + 1] << 8) | palette[i * 3 + 2];
                     }
-                    narrowPalette = new BitmapPalette(colors);
+                    narrowPalette = colors;
                 }
 
                 narrowStride = (width * bitDepth + 7) / 8;
@@ -314,7 +217,7 @@ namespace System.Windows.Media.Imaging
             if (interlace == 0)
             {
                 DecodePass(rawBytes, ref rawPos, bgra, width, height, width, 0, 0, 1, 1,
-                    bitDepth, colorType, channels, palette, trns);
+                    bitDepth, colorType, channels, palette, trns, roundGray16: roundGray16);
             }
             else
             {
@@ -332,7 +235,7 @@ namespace System.Windows.Media.Imaging
                         continue;
                     }
                     DecodePass(rawBytes, ref rawPos, bgra, pw, ph, width, x0[p], y0[p], dx[p], dy[p],
-                        bitDepth, colorType, channels, palette, trns);
+                        bitDepth, colorType, channels, palette, trns, roundGray16: roundGray16);
                 }
             }
             return bgra;
@@ -345,7 +248,7 @@ namespace System.Windows.Media.Imaging
         private static void DecodePass(byte[] raw, ref int rawPos, byte[] bgra,
             int passWidth, int passHeight, int outWidth, int outX0, int outY0, int outDx, int outDy,
             int bitDepth, int colorType, int channels, byte[] palette, byte[] trns,
-            byte[] packed = null, int packedStride = 0)
+            byte[] packed = null, int packedStride = 0, bool roundGray16 = false)
         {
             int bitsPerPixel = channels * bitDepth;
             int rowBytes = (passWidth * bitsPerPixel + 7) / 8;
@@ -405,7 +308,7 @@ namespace System.Windows.Media.Imaging
                 {
                     // For a palette or greyscale PNG the UNFILTERED SCANLINE IS ALREADY the packed
                     // pixel row -- PNG filtering is per byte, and an Indexed4 row really is two
-                    // pixels to the byte in exactly the layout WPF wants. So the narrow formats do
+                    // pixels to the byte in exactly the layout wanted. So the narrow formats do
                     // not need packing so much as they need not to be expanded. (Only reached for
                     // non-interlaced images, where a pass row maps 1:1 onto an output row.)
                     Array.Copy(row, 0, packed, y * packedStride, Math.Min(rowBytes, packedStride));
@@ -413,7 +316,7 @@ namespace System.Windows.Media.Imaging
                 else
                 {
                     EmitRow(row, bgra, passWidth, (outY0 + y * outDy) * outWidth + outX0, outDx,
-                        bitDepth, colorType, palette, trns);
+                        bitDepth, colorType, palette, trns, roundGray16);
                 }
                 (prev, row) = (row, prev);
             }
@@ -421,8 +324,10 @@ namespace System.Windows.Media.Imaging
 
         /// <summary>Converts one unfiltered scanline to BGRA at the given output pixel index/step.</summary>
         private static void EmitRow(byte[] row, byte[] bgra, int passWidth, int outIndex, int outStep,
-            int bitDepth, int colorType, byte[] palette, byte[] trns)
+            int bitDepth, int colorType, byte[] palette, byte[] trns, bool roundGray16 = false)
         {
+            // roundGray16: a 16-bit grey sample ROUNDED to eight bits (as GDI+ reads one) rather
+            // than cut to its high byte.
             // Per-sample reader across 1/2/4/8/16-bit packing; 16-bit keeps the high byte.
             int bitPos = 0;
             int Sample()
@@ -452,8 +357,10 @@ namespace System.Windows.Media.Imaging
                 {
                     case 0:   // grayscale (+ optional tRNS gray key)
                     {
+                        int full = bitDepth == 16 ? (row[bitPos] << 8) | row[bitPos + 1] : 0;
                         int v = Sample();
                         byte gg = (byte)(subByte ? v * 255 / grayMax : v);
+                        if (bitDepth == 16 && roundGray16) gg = (byte)((full * 255 + 32767) / 65535);
                         r = g = b = gg;
                         if (trns != null && trns.Length >= 2 && v == ((trns[0] << 8) | trns[1]) % (grayMax + 1))
                         {
@@ -507,13 +414,29 @@ namespace System.Windows.Media.Imaging
 
         // ---- ICO -----------------------------------------------------------------------
 
-        /// <summary>
-        /// Decodes a Windows .ico: picks the largest/deepest entry and decodes it. Each entry is
-        /// either an embedded PNG or a BMP DIB (BITMAPINFOHEADER, no file header) whose biHeight is
-        /// doubled to cover the trailing 1-bpp AND mask. Supports 1/4/8-bit indexed, 24-bit and
-        /// 32-bit color, applying the AND mask (and the 32-bit alpha when present).
-        /// </summary>
-        private static byte[] DecodeIco(byte[] data, out int width, out int height)
+        /// <summary>One image of an .ico directory.</summary>
+        internal readonly struct IcoEntry
+        {
+            internal IcoEntry(int index, int width, int height, int colorCount, int planes, int bitCount, int size, int offset, bool isPng)
+            {
+                Index = index; Width = width; Height = height; ColorCount = colorCount; Planes = planes;
+                BitCount = bitCount; Size = size; Offset = offset; IsPng = isPng;
+            }
+
+            internal int Index { get; }
+            /// <summary>The directory's width and height, 256 for a stored 0.</summary>
+            internal int Width { get; }
+            internal int Height { get; }
+            internal int ColorCount { get; }
+            internal int Planes { get; }
+            internal int BitCount { get; }
+            internal int Size { get; }
+            internal int Offset { get; }
+            internal bool IsPng { get; }
+        }
+
+        /// <summary>The directory of a Windows .ico (or .cur).</summary>
+        internal static IcoEntry[] ReadIcoDirectory(byte[] data)
         {
             int count = data[4] | (data[5] << 8);
             if (count <= 0 || 6 + count * 16 > data.Length)
@@ -521,33 +444,70 @@ namespace System.Windows.Media.Imaging
                 throw new InvalidDataException("Corrupt ICO directory.");
             }
 
-            // Choose the best entry: largest area, then greatest bit depth.
-            int best = -1;
-            long bestScore = -1;
+            var entries = new IcoEntry[count];
             for (int i = 0; i < count; i++)
             {
                 int e = 6 + i * 16;
-                int w = data[e] == 0 ? 256 : data[e];
-                int h = data[e + 1] == 0 ? 256 : data[e + 1];
-                int bits = data[e + 6] | (data[e + 7] << 8);
-                long score = (long)w * h * 100 + bits;
+                int off = ReadU32LE(data, e + 12);
+                int size = ReadU32LE(data, e + 8);
+                bool png = off >= 0 && off + 4 <= data.Length
+                        && data[off] == 0x89 && data[off + 1] == 'P' && data[off + 2] == 'N' && data[off + 3] == 'G';
+                entries[i] = new IcoEntry(i,
+                    data[e] == 0 ? 256 : data[e],
+                    data[e + 1] == 0 ? 256 : data[e + 1],
+                    data[e + 2],
+                    data[e + 4] | (data[e + 5] << 8),
+                    data[e + 6] | (data[e + 7] << 8),
+                    size, off, png);
+            }
+            return entries;
+        }
+
+        /// <summary>
+        /// Decodes a Windows .ico: picks the largest/deepest entry and decodes it.
+        /// </summary>
+        internal static byte[] DecodeIco(byte[] data, out int width, out int height)
+        {
+            IcoEntry[] entries = ReadIcoDirectory(data);
+
+            // Choose the best entry: largest area, then greatest bit depth.
+            int best = 0;
+            long bestScore = -1;
+            for (int i = 0; i < entries.Length; i++)
+            {
+                long score = (long)entries[i].Width * entries[i].Height * 100 + entries[i].BitCount;
                 if (score > bestScore)
                 {
                     bestScore = score;
-                    best = e;
+                    best = i;
                 }
             }
 
-            int imgSize = ReadU32LE(data, best + 8);
-            int imgOff = ReadU32LE(data, best + 12);
-            if (imgOff < 0 || imgSize < 0 || imgOff + imgSize > data.Length || imgOff + 8 > data.Length)
+            return DecodeIcoEntry(data, entries[best], out width, out height, out _);
+        }
+
+        /// <summary>
+        /// Decodes one entry of an .ico to straight BGRA. Each entry is either an embedded PNG or a
+        /// BMP DIB (BITMAPINFOHEADER, no file header) whose biHeight is doubled to cover the trailing
+        /// 1-bpp AND mask. Supports 1/4/8-bit indexed, 16-, 24- and 32-bit colour, applying the AND
+        /// mask (and the 32-bit alpha when present). <paramref name="dibBitCount"/> is what the
+        /// entry's own header says it is (32 for a PNG entry).
+        /// </summary>
+        internal static byte[] DecodeIcoEntry(byte[] data, IcoEntry entry, out int width, out int height, out int dibBitCount)
+        {
+            int imgSize = entry.Size;
+            int imgOff = entry.Offset;
+            if (imgOff < 0 || imgSize < 0 || imgOff + 8 > data.Length)
             {
                 throw new InvalidDataException("Corrupt ICO entry.");
             }
+            // Some writers overstate the last entry's size; what is there is what there is.
+            imgSize = Math.Min(imgSize, data.Length - imgOff);
 
             // PNG-compressed entry (common for 256x256): decode directly.
-            if (data[imgOff] == 0x89 && data[imgOff + 1] == 'P' && data[imgOff + 2] == 'N' && data[imgOff + 3] == 'G')
+            if (entry.IsPng)
             {
+                dibBitCount = 32;
                 byte[] png = new byte[imgSize];
                 Array.Copy(data, imgOff, png, 0, imgSize);
                 return DecodePng(png, out width, out height, out _, out _, out _, out _, out _, allowNarrow: false);
@@ -561,10 +521,11 @@ namespace System.Windows.Media.Imaging
             int bitCount = data[p + 14] | (data[p + 15] << 8);
             int compression = ReadU32LE(data, p + 16);
             int clrUsed = ReadU32LE(data, p + 32);
+            dibBitCount = bitCount;
             if (compression != BiRgb && compression != BiBitFields && compression != BiAlphaBitFields)
             {
-                throw new PlatformNotSupportedException(
-                    "Only uncompressed or bitfield ICO DIB entries are supported without native WIC.");
+                throw new NotSupportedException(
+                    "Only uncompressed or bitfield ICO DIB entries can be decoded.");
             }
 
             DibChannels channels = DibChannels.Read(data, p, hdrSize, compression, bitCount);
@@ -594,6 +555,9 @@ namespace System.Windows.Media.Imaging
             int colorStride = ((width * bitCount + 31) / 32) * 4;
             int maskStride = ((width + 31) / 32) * 4;
             int maskOff = xorOff + colorStride * height;
+            // A 32-bit image carries its transparency in alpha, and Windows reads one whose AND mask
+            // was left off -- .NET's own DataGridView and PropertyGrid icons are written so.
+            bool haveMask = maskOff + maskStride * height <= data.Length;
 
             var bgra = new byte[width * height * 4];
             bool anyAlpha = false;
@@ -603,6 +567,10 @@ namespace System.Windows.Media.Imaging
                 int srcY = height - 1 - y;   // DIB rows are bottom-up
                 int colorRow = xorOff + srcY * colorStride;
                 int maskRow = maskOff + srcY * maskStride;
+                if (colorRow + colorStride > data.Length)
+                {
+                    throw new InvalidDataException("ICO pixel data is truncated.");
+                }
                 for (int x = 0; x < width; x++)
                 {
                     byte r, g, b, a = 255;
@@ -627,7 +595,7 @@ namespace System.Windows.Media.Imaging
                         b = data[pe]; g = data[pe + 1]; r = data[pe + 2];
                     }
 
-                    if (bitCount != 32)
+                    if (bitCount != 32 && haveMask)
                     {
                         // AND mask: 1 = transparent, 0 = opaque.
                         int bit = (data[maskRow + (x >> 3)] >> (7 - (x & 7))) & 1;
@@ -648,7 +616,7 @@ namespace System.Windows.Media.Imaging
                     int maskRow = maskOff + srcY * maskStride;
                     for (int x = 0; x < width; x++)
                     {
-                        int bit = (data[maskRow + (x >> 3)] >> (7 - (x & 7))) & 1;
+                        int bit = haveMask ? (data[maskRow + (x >> 3)] >> (7 - (x & 7))) & 1 : 0;
                         bgra[(y * width + x) * 4 + 3] = bit == 1 ? (byte)0 : (byte)255;
                     }
                 }
@@ -671,7 +639,7 @@ namespace System.Windows.Media.Imaging
                 case 1:
                     return (data[rowOff + (x >> 3)] >> (7 - (x & 7))) & 0x01;
                 default:
-                    throw new PlatformNotSupportedException($"Unsupported ICO DIB bit depth {bitCount}.");
+                    throw new NotSupportedException($"Unsupported ICO DIB bit depth {bitCount}.");
             }
         }
 
@@ -686,6 +654,8 @@ namespace System.Windows.Media.Imaging
         // picture and the other is no picture, from the same bytes.
 
         private const int BiRgb = 0;
+        private const int BiRle8 = 1;
+        private const int BiRle4 = 2;
         private const int BiBitFields = 3;
         private const int BiAlphaBitFields = 6;
 
@@ -699,7 +669,7 @@ namespace System.Windows.Media.Imaging
         /// blue swapped, which looks like a colour-management problem rather than a decoder that
         /// skipped four DWORDs of the header.
         /// </remarks>
-        private readonly struct DibChannels
+        internal readonly struct DibChannels
         {
             private readonly uint _r, _g, _b, _a;
             private readonly int _rShift, _gShift, _bShift, _aShift;
@@ -713,6 +683,11 @@ namespace System.Windows.Media.Imaging
                 (_bShift, _bMax) = Describe(b);
                 (_aShift, _aMax) = Describe(a);
             }
+
+            internal uint RedMask => _r;
+            internal uint GreenMask => _g;
+            internal uint BlueMask => _b;
+            internal uint AlphaMask => _a;
 
             /// <summary>What BI_RGB means at each depth: 555 at 16 bits, BGRA at 32.</summary>
             internal static DibChannels Default(int bpp) => bpp == 16
@@ -795,21 +770,46 @@ namespace System.Windows.Media.Imaging
         }
 
         /// <summary>Reads one 16- or 32-bit DIB pixel.</summary>
-        private static uint ReadDibPixel(byte[] data, int offset, int bpp) =>
+        internal static uint ReadDibPixel(byte[] data, int offset, int bpp) =>
             bpp == 16
                 ? (uint)(data[offset] | (data[offset + 1] << 8))
                 : (uint)ReadU32LE(data, offset);
 
         // ---- BMP -----------------------------------------------------------------------
 
-        private static byte[] DecodeBmp(byte[] data, out int width, out int height,
-            out PixelFormat narrowFormat, out BitmapPalette narrowPalette, out int narrowStride)
+        /// <summary>How a BMP is stored, beyond its pixels.</summary>
+        internal struct BmpInfo
         {
-            narrowFormat = default;
+            internal int BitCount;
+            internal int Compression;
+            internal int HeaderSize;
+            /// <summary>biXPelsPerMeter / biYPelsPerMeter (0 when the file left them unset).</summary>
+            internal int PpmX, PpmY;
+            internal bool TopDown;
+            internal DibChannels Channels;
+            /// <summary>For a 16/24/32-bit file: where its pixel rows start, and their stride.</summary>
+            internal int PixelOffset, FileStride;
+        }
+
+        internal static byte[] DecodeBmp(byte[] data, out int width, out int height,
+            out ManagedPixelLayout narrowFormat, out uint[] narrowPalette, out int narrowStride)
+            => DecodeBmp(data, out width, out height, out narrowFormat, out narrowPalette, out narrowStride, out _);
+
+        internal static byte[] DecodeBmp(byte[] data, out int width, out int height,
+            out ManagedPixelLayout narrowFormat, out uint[] narrowPalette, out int narrowStride, out BmpInfo info)
+        {
+            narrowFormat = ManagedPixelLayout.Unknown;
             narrowPalette = null;
             narrowStride = 0;
+            info = default;
+
+            if (data.Length < 54)
+            {
+                throw new InvalidDataException("BMP header is truncated.");
+            }
 
             int pixelOffset = BitConverter.ToInt32(data, 10);
+            int headerSize = BitConverter.ToInt32(data, 14);
             width = BitConverter.ToInt32(data, 18);
             int rawHeight = BitConverter.ToInt32(data, 22);
             int bpp = BitConverter.ToUInt16(data, 28);
@@ -817,47 +817,61 @@ namespace System.Windows.Media.Imaging
 
             bool topDown = rawHeight < 0;
             height = Math.Abs(rawHeight);
+            bool rle = (compression == BiRle8 && bpp == 8) || (compression == BiRle4 && bpp == 4);
             bool palettized = bpp == 1 || bpp == 4 || bpp == 8;
             if (width <= 0 || height == 0 || (bpp != 16 && bpp != 24 && bpp != 32 && !palettized) ||
-                (compression != BiRgb && compression != BiBitFields && compression != BiAlphaBitFields))
+                (compression != BiRgb && compression != BiBitFields && compression != BiAlphaBitFields && !rle))
             {
-                throw new PlatformNotSupportedException(
-                    "Only uncompressed or bitfield 1/4/8/16/24/32-bit BMP is supported without native WIC.");
+                throw new NotSupportedException(
+                    "Only uncompressed, bitfield or RLE 1/4/8/16/24/32-bit BMP can be decoded.");
+            }
+
+            info.BitCount = bpp;
+            info.Compression = compression;
+            info.HeaderSize = headerSize;
+            info.TopDown = topDown;
+            if (headerSize >= 40)
+            {
+                info.PpmX = BitConverter.ToInt32(data, 38);
+                info.PpmY = BitConverter.ToInt32(data, 42);
             }
 
             int srcStride = ((width * bpp + 7) / 8 + 3) & ~3;
 
-            // A palettised BMP is already the packed picture: its rows are Indexed1/4/8 in WPF's own
-            // layout, just bottom-up and padded to a four-byte boundary. These used to be rejected
-            // outright -- 1/4/8-bit BMPs are what icons, old assets and many screenshots are -- and
-            // the only work needed is to unflip the rows and drop the padding.
+            // A palettised BMP is already the packed picture: its rows are Indexed1/4/8 in the
+            // codecs' own layout, just bottom-up and padded to a four-byte boundary. These used to be
+            // rejected outright -- 1/4/8-bit BMPs are what icons, old assets and many screenshots are
+            // -- and the only work needed is to unflip the rows and drop the padding.
             if (palettized)
             {
-                int headerSize = BitConverter.ToInt32(data, 14);
                 int tableOffset = 14 + headerSize;
+                if (headerSize == 40 && (compression == BiBitFields || compression == BiAlphaBitFields))
+                {
+                    tableOffset += compression == BiAlphaBitFields ? 16 : 12;
+                }
                 int used = data.Length > 50 ? BitConverter.ToInt32(data, 46) : 0;
-                int entries = used > 0 ? used : 1 << bpp;
+                int entries = used > 0 && used <= (1 << bpp) ? used : 1 << bpp;
                 if (tableOffset + entries * 4 > data.Length)
                 {
                     throw new InvalidDataException("BMP colour table is truncated.");
                 }
 
-                var colors = new List<Color>(entries);
+                var colors = new uint[entries];
                 for (int i = 0; i < entries; i++)
                 {
                     int e = tableOffset + i * 4;   // B, G, R, reserved
-                    colors.Add(Color.FromRgb(data[e + 2], data[e + 1], data[e]));
+                    colors[i] = 0xFF000000u | ((uint)data[e + 2] << 16) | ((uint)data[e + 1] << 8) | data[e];
                 }
-                narrowPalette = new BitmapPalette(colors);
-                narrowFormat = bpp switch
-                {
-                    1 => PixelFormats.Indexed1,
-                    4 => PixelFormats.Indexed4,
-                    _ => PixelFormats.Indexed8,
-                };
+                narrowPalette = colors;
+                narrowFormat = ManagedPixelLayouts.Indexed(bpp);
 
                 narrowStride = (width * bpp + 7) / 8;
                 var packed = new byte[checked(narrowStride * height)];
+                if (rle)
+                {
+                    DecodeRle(data, pixelOffset, compression == BiRle4, width, height, topDown, packed, narrowStride);
+                    return packed;
+                }
                 for (int y = 0; y < height; y++)
                 {
                     int srcRow = pixelOffset + (topDown ? y : height - 1 - y) * srcStride;
@@ -872,12 +886,19 @@ namespace System.Windows.Media.Imaging
 
             // 24-bit is plain BGR triples and has no bitfield form to interpret; 16- and 32-bit are
             // whatever the masks say (see DibChannels).
-            DibChannels channels = DibChannels.Read(data, 14, BitConverter.ToInt32(data, 14), compression, bpp);
+            DibChannels channels = DibChannels.Read(data, 14, headerSize, compression, bpp);
+            info.Channels = channels;
+            info.PixelOffset = pixelOffset;
+            info.FileStride = srcStride;
 
             var bgra = new byte[width * height * 4];
             for (int y = 0; y < height; y++)
             {
                 int srcRow = pixelOffset + (topDown ? y : height - 1 - y) * srcStride;
+                if (srcRow + (width * bpp + 7) / 8 > data.Length)
+                {
+                    throw new InvalidDataException("BMP pixel data is truncated.");
+                }
                 for (int x = 0; x < width; x++)
                 {
                     int s = srcRow + x * bpp / 8;
@@ -897,6 +918,74 @@ namespace System.Windows.Media.Imaging
                 }
             }
             return bgra;
+        }
+
+        /// <summary>
+        /// BI_RLE8 / BI_RLE4: pairs of (count, value) runs, and escapes after a zero count -- 0 end
+        /// of line, 1 end of bitmap, 2 a delta (dx, dy), anything else a literal run padded to a
+        /// word. Pixels the stream skips stay index 0, as GDI leaves them. Written into
+        /// <paramref name="packed"/> top-down.
+        /// </summary>
+        private static void DecodeRle(byte[] data, int pos, bool four, int width, int height, bool topDown,
+            byte[] packed, int stride)
+        {
+            int x = 0, row = 0;   // row counts from the first stored row (the bottom, unless top-down)
+            void Put(int value)
+            {
+                if (x < width && row < height)
+                {
+                    int y = topDown ? row : height - 1 - row;
+                    if (four)
+                    {
+                        int i = y * stride + (x >> 1);
+                        packed[i] |= (byte)((value & 15) << ((x & 1) == 0 ? 4 : 0));
+                    }
+                    else
+                    {
+                        packed[y * stride + x] = (byte)value;
+                    }
+                }
+                x++;
+            }
+
+            while (pos + 1 < data.Length && row < height)
+            {
+                int count = data[pos], value = data[pos + 1];
+                pos += 2;
+                if (count > 0)
+                {
+                    for (int i = 0; i < count; i++)
+                    {
+                        Put(four ? ((i & 1) == 0 ? value >> 4 : value & 15) : value);
+                    }
+                    continue;
+                }
+                switch (value)
+                {
+                    case 0:
+                        x = 0; row++;
+                        break;
+                    case 1:
+                        return;
+                    case 2:
+                        if (pos + 1 >= data.Length) return;
+                        x += data[pos]; row += data[pos + 1];
+                        pos += 2;
+                        break;
+                    default:
+                    {
+                        int n = value;
+                        int bytes = four ? (n + 1) / 2 : n;
+                        for (int i = 0; i < n && pos + (four ? i / 2 : i) < data.Length; i++)
+                        {
+                            int b = data[pos + (four ? i / 2 : i)];
+                            Put(four ? ((i & 1) == 0 ? b >> 4 : b & 15) : b);
+                        }
+                        pos += (bytes + 1) & ~1;
+                        break;
+                    }
+                }
+            }
         }
 
         private static int ReadU32(byte[] data, int pos) =>

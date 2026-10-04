@@ -77,6 +77,13 @@
     <Compile Include="../Wpf.Printing.Tests/PdfReader.cs" Link="PdfReader.cs" />
   </ItemGroup>
 
+  <!-- Image samples written by real GDI+ (and by hand for what GDI+ never writes), with what GDI+
+       reads back from each: the oracle the managed Image layer is held to (ManagedImageTests).
+       Fixtures/Images/oracle/gen.ps1 regenerates them under Windows PowerShell 5.1. -->
+  <ItemGroup>
+    <None Include="Fixtures/Images/*" CopyToOutputDirectory="PreserveNewest" LinkBase="Fixtures/Images" />
+  </ItemGroup>
+
   <!-- The comparison needs a Windows to compare against; elsewhere it is not built at all. -->
   <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
     <Compile Remove="ControlParity/**/*.cs" />

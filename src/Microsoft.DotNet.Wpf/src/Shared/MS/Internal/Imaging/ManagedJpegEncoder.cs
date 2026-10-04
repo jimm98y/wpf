@@ -23,11 +23,14 @@ using System.IO;
 
 namespace System.Windows.Media.Imaging
 {
-    internal static class ManagedJpegEncoder
+    // The byte-level half, shared with System.Drawing; ManagedJpegEncoder.Wpf.cs (PresentationCore)
+    // takes a BitmapSource.
+    internal static partial class ManagedJpegEncoder
     {
-        internal static void Save(BitmapSource source, Stream stream, int quality)
+        /// <summary>Writes straight BGRA (the alpha dropped) as a baseline JPEG.</summary>
+        internal static void Write(Stream stream, byte[] bgra, int width, int height, int stride,
+                                   double dpiX, double dpiY, int quality)
         {
-            byte[] bgra = source.CopyPixelsForManagedComposition(out int width, out int height, out int stride);
             if (bgra == null || width <= 0 || height <= 0)
             {
                 throw new InvalidOperationException("The bitmap has no pixels to encode.");
@@ -36,7 +39,7 @@ namespace System.Windows.Media.Imaging
             byte[] luminanceQuant = ScaleTable(s_luminanceQuant, quality);
             byte[] chrominanceQuant = ScaleTable(s_chrominanceQuant, quality);
 
-            WriteMarkers(stream, width, height, source.DpiX, source.DpiY, luminanceQuant, chrominanceQuant);
+            WriteMarkers(stream, width, height, dpiX, dpiY, luminanceQuant, chrominanceQuant);
             WriteScan(stream, bgra, width, height, stride, luminanceQuant, chrominanceQuant);
 
             stream.WriteByte(0xFF);

@@ -62,7 +62,8 @@ namespace System.Drawing
 
 		bool ManagedState => nativeObject == IntPtr.Zero;
 
-		float BasePerInch => print_mode ? 100f : 96f;
+		// Recording units per inch: a page's hundredths, a bitmap's own resolution, a screen's 96.
+		float BasePerInch => print_mode ? 100f : image_target != null ? image_target.HorizontalResolution : 96f;
 
 		// Recording units per page unit.
 		float UnitScale (GraphicsUnit u)
@@ -158,10 +159,12 @@ namespace System.Drawing
 		// The printable area as the caller sees it: in world units.
 		RectangleF RecordedVisibleBounds ()
 		{
-			RectangleF v = print_visible;
+			// A bitmap's surface is its pixels; a page's, its printable area.
+			RectangleF v = image_target != null ? new RectangleF (0, 0, image_target.Width, image_target.Height) : print_visible;
 			var pts = new [] { new PointF (v.Left, v.Top), new PointF (v.Right, v.Top), new PointF (v.Left, v.Bottom), new PointF (v.Right, v.Bottom) };
 			// Recording units are device / (dpi/100); go page-unit-free through the device space.
-			for (int i = 0; i < 4; i++) pts [i] = new PointF (pts [i].X * print_dpi_x / 100f, pts [i].Y * print_dpi_y / 100f);
+			if (image_target == null)
+				for (int i = 0; i < 4; i++) pts [i] = new PointF (pts [i].X * print_dpi_x / 100f, pts [i].Y * print_dpi_y / 100f);
 			RecordedTransformPoints (CoordinateSpace.World, CoordinateSpace.Device, pts);
 			float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
 			foreach (PointF p in pts) { x0 = Math.Min (x0, p.X); y0 = Math.Min (y0, p.Y); x1 = Math.Max (x1, p.X); y1 = Math.Max (y1, p.Y); }
@@ -226,7 +229,8 @@ namespace System.Drawing
 			if (TryHatch (brush, out HatchTile ht)) {
 				foreach (PointF [] sub in FlattenSubpaths (path))
 					if (sub.Length >= 3)
-						GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, ToXY (sub), ht.Rgba, ht.W, ht.H, ht.Size * 100f / 96f);
+						if (ht.Texture != null) FillTile (GradientShape.Polygon, 0, 0, 0, 0, ToXY (sub), ht);
+						else GpuRecorder.FillHatch (GradientShape.Polygon, 0, 0, 0, 0, ToXY (sub), ht.Rgba, ht.W, ht.H, ht.Size * 100f / 96f);
 				return true;
 			}
 			if (TryGradient (brush, out GradientDesc gd)) {
