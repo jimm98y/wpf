@@ -310,6 +310,85 @@ namespace MetafileOracle
                 g.DrawDriverString(new ushort[] { 36, 37, 38 }, f, Brushes.Red, new[] { P(0, 10), P(8, 10), P(16, 10) }, 1, null);
                 g.DrawDriverString(new ushort[] { 36, 37 }, f, Brushes.Red, new[] { P(0, 10), P(8, 10) }, 0, new Matrix(1, 0, 0, 1, 2, 3));
             };
+            // ---- playback coverage: what is drawn, at sizes where the pixels say something ----------
+            d["fills"] = g =>
+            {
+                g.FillRects(new HatchBrush(HatchStyle.DiagonalCross, Color.Navy, Color.LightYellow), new[] { R(0, 0, 40, 30) });
+                g.FillRects(new HatchBrush(HatchStyle.LargeCheckerBoard, Color.FromArgb(160, 200, 0, 0)), new[] { R(40, 0, 40, 30) });
+                g.FillEllipse(new HatchBrush(HatchStyle.Weave, Color.DarkGreen, Color.White), R(80, 0, 40, 30));
+                var tb = new TextureBrush(Checker(6, 5, PixelFormat.Format32bppArgb), WrapMode.TileFlipXY);
+                tb.ScaleTransform(3, 2);
+                tb.RotateTransform(20);
+                g.FillRects(tb, new[] { R(0, 30, 60, 40) });
+                var tc = new TextureBrush(Checker(5, 5, PixelFormat.Format24bppRgb), WrapMode.Clamp);
+                tc.TranslateTransform(70, 40);
+                tc.ScaleTransform(4, 4);
+                g.FillEllipse(tc, R(60, 30, 60, 40));
+            };
+            d["gradients"] = g =>
+            {
+                var lg = new LinearGradientBrush(R(0, 0, 60, 30), Color.Red, Color.Blue, 15f, true);
+                lg.SetSigmaBellShape(0.4f, 0.9f);
+                g.FillRects(lg, new[] { R(0, 0, 60, 30) });
+                var lg2 = new LinearGradientBrush(P(60, 0), P(80, 10), Color.FromArgb(200, 0, 160, 0), Color.Yellow);
+                lg2.WrapMode = WrapMode.TileFlipX;
+                g.FillRects(lg2, new[] { R(60, 0, 60, 30) });
+                var gp = new GraphicsPath(); gp.AddEllipse(0, 30, 60, 40);
+                var pg = new PathGradientBrush(gp);
+                pg.CenterColor = Color.White; pg.SurroundColors = new[] { Color.Purple };
+                pg.FocusScales = P(0.3f, 0.4f);
+                g.FillPath(pg, gp);
+                var pg2 = new PathGradientBrush(new[] { P(60, 30), P(120, 35), P(110, 70), P(65, 65) });
+                pg2.SurroundColors = new[] { Color.Red, Color.Lime, Color.Blue, Color.Yellow };
+                pg2.CenterColor = Color.Gray;
+                pg2.InterpolationColors = new ColorBlend(3) { Colors = new[] { Color.Black, Color.Orange, Color.White }, Positions = new float[] { 0, 0.5f, 1 } };
+                g.FillRects(pg2, new[] { R(60, 30, 60, 40) });
+            };
+            d["strokes"] = g =>
+            {
+                g.SetAntiAliasMode(SmoothingMode.AntiAlias);
+                var p1 = new Pen(Color.Maroon, 4) { DashStyle = DashStyle.DashDotDot, DashCap = DashCap.Triangle };
+                g.DrawLines(p1, new[] { P(5, 5), P(115, 10) }, false);
+                var p2 = new Pen(Color.Navy, 9) { CompoundArray = new float[] { 0, 0.2f, 0.4f, 0.6f, 0.8f, 1 }, LineJoin = LineJoin.Round };
+                g.DrawRects(p2, new[] { R(10, 20, 40, 30) });
+                var p3 = new Pen(Color.DarkGreen, 3) { StartCap = LineCap.RoundAnchor, EndCap = LineCap.ArrowAnchor, LineJoin = LineJoin.MiterClipped };
+                g.DrawLines(p3, new[] { P(60, 20), P(110, 30), P(70, 50), P(110, 65) }, false);
+                var p4 = new Pen(Color.Black, 2);
+                p4.CustomEndCap = new AdjustableArrowCap(4, 5, false);
+                p4.DashPattern = new float[] { 3, 1, 1, 1 };
+                g.DrawBeziers(p4, new[] { P(5, 70), P(30, 40), P(60, 90), P(90, 60) });
+                var p5 = new Pen(new LinearGradientBrush(P(0, 0), P(120, 0), Color.Red, Color.Blue), 5) { Alignment = PenAlignment.Inset };
+                g.DrawEllipse(p5, R(15, 25, 30, 20));
+            };
+            d["clipxf"] = g =>
+            {
+                g.FillRects(Brushes.LightGray, new[] { R(0, 0, 120, 80) });
+                g.TranslateWorldTransform(60, 40, MatrixOrder.Prepend);
+                g.RotateWorldTransform(25, MatrixOrder.Prepend);
+                g.SetClipRect(R(-40, -25, 80, 50), CombineMode.Replace);
+                var gp = new GraphicsPath(); gp.AddEllipse(-30, -30, 50, 60);
+                g.SetClipPath(gp, CombineMode.Exclude);
+                g.FillRects(Brushes.SteelBlue, new[] { R(-60, -40, 120, 80) });
+                g.ResetWorldTransform();
+                g.ScaleWorldTransform(2, 1.5f, MatrixOrder.Prepend);
+                g.SetClipRect(R(5, 5, 20, 20), CombineMode.Union);
+                g.FillEllipse(Brushes.Crimson, R(0, 0, 40, 40));
+                g.ResetClip();
+                g.DrawLines(Pens.Black, new[] { P(0, 0), P(60, 53) }, false);
+            };
+            d["imagewrap"] = g =>
+            {
+                g.FillRects(Brushes.Khaki, new[] { R(0, 0, 120, 80) });
+                var bmp = Checker(4, 3, PixelFormat.Format32bppArgb);
+                var ia = new ImageAttributes(); ia.SetWrapMode(WrapMode.TileFlipXY);
+                g.DrawImage(bmp, R(0, 0, 60, 40), R(-2, -2, 10, 9), GraphicsUnit.Pixel, ia);
+                var ib = new ImageAttributes(); ib.SetWrapMode(WrapMode.Clamp, Color.FromArgb(128, 0, 0, 255));
+                g.DrawImage(bmp, R(60, 0, 60, 40), R(-1, -1, 6, 5), GraphicsUnit.Pixel, ib);
+                g.SetInterpolationMode(InterpolationMode.NearestNeighbor);
+                g.DrawImagePoints(Checker(5, 4, PixelFormat.Format24bppRgb), new[] { P(10, 45), P(70, 50), P(5, 78) }, R(0, 0, 5, 4), GraphicsUnit.Pixel, null);
+                g.SetInterpolationMode(InterpolationMode.HighQualityBicubic);
+                g.DrawImage(bmp, R(75, 42, 40, 35), R(0, 0, 4, 3), GraphicsUnit.Pixel, null);
+            };
             return d;
         }
     }

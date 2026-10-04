@@ -58,6 +58,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             TrueTypeFont font = GdipText.Face (family, style);
             if (font == null) return false;
             int hint = ResolvedTextHint ();
+            if (s_trace) Console.Error.WriteLine ($"GPTEXT DrawString '{s}' {family} {sizePt}pt m=[{m.M11} {m.M12} {m.M21} {m.M22} {m.Dx} {m.Dy}] hint={hint} flags={formatFlags:x}");
             // FastTextImager::Initialize: a positive axis scale only. Translation-only here; a
             // turned or sheared transform goes the full imager's way.
             if (m.M12 != 0f || m.M21 != 0f || m.M11 != 1f || m.M22 != 1f)
