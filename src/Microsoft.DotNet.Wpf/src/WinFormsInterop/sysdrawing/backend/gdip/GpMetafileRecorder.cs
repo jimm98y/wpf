@@ -492,6 +492,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
         }
 
+        /// <summary>GpGraphics::GetImageDestPageSize on the metafile's context: an image's size in
+        /// the current page units (a Pixel size at the image's resolution, against the desktop's).</summary>
+        public void GetImageDestPageSize(float ix, float iy, float w, float h, GraphicsUnit unit, out float dw, out float dh)
+        {
+            PageMultipliers(_state.PageUnit, _state.PageScale, out float pmx, out float pmy);
+            if (unit != GraphicsUnit.Pixel)
+            {
+                PageMultipliers(unit, 1f, out float mx, out float my);
+                dh = (my * h) / pmy;
+                dw = (mx * w) / pmx;
+                return;
+            }
+            dh = (DpiY * h) / (pmy * iy);
+            dw = (DpiX * w) / (pmx * ix);
+        }
+
         /// <summary>World to device: the world transform, the page scaling, the container's.</summary>
         GpMat WorldToDevice
         {

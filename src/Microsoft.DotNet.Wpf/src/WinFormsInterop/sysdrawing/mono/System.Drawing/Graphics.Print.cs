@@ -63,7 +63,7 @@ namespace System.Drawing
 		bool ManagedState => nativeObject == IntPtr.Zero;
 
 		// Recording units per inch: a page's hundredths, a bitmap's own resolution, a screen's 96.
-		float BasePerInch => print_mode ? 100f : image_target != null ? image_target.HorizontalResolution : 96f;
+		float BasePerInch => print_mode ? 100f : mf_rec != null ? mf_rec.DpiX : image_target != null ? image_target.HorizontalResolution : 96f;
 
 		// Recording units per page unit.
 		float UnitScale (GraphicsUnit u)

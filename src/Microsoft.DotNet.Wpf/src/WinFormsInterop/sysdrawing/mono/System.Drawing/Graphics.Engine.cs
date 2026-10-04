@@ -97,6 +97,7 @@ namespace System.Drawing
 
 		bool EngineFillRects (Brush brush, RectangleF [] rects)
 		{
+			if (mf_rec != null) { mf_rec.FillRects (brush, rects); return true; }
 			GpGraphics e = Engine ();
 			if (e == null) return false;
 			return e.FillRects (brush, rects);
@@ -104,6 +105,7 @@ namespace System.Drawing
 
 		bool EngineFillPolygon (Brush brush, PointF [] pts, FillMode mode)
 		{
+			if (mf_rec != null) { mf_rec.FillPolygon (brush, pts, mode); return true; }
 			if (gp == null) return false;
 			var p = new GpPath (mode);
 			p.AddPolygon (pts, pts.Length);
@@ -112,6 +114,7 @@ namespace System.Drawing
 
 		bool EngineFillEllipse (Brush brush, float x, float y, float w, float h)
 		{
+			if (mf_rec != null) { mf_rec.FillEllipse (brush, new RectangleF (x, y, w, h)); return true; }
 			if (gp == null) return false;
 			var p = new GpPath ();
 			p.AddEllipse (x, y, w, h);
@@ -120,6 +123,7 @@ namespace System.Drawing
 
 		bool EngineFillPie (Brush brush, float x, float y, float w, float h, float start, float sweep)
 		{
+			if (mf_rec != null) { mf_rec.FillPie (brush, new RectangleF (x, y, w, h), start, sweep); return true; }
 			if (gp == null) return false;
 			var p = new GpPath ();
 			p.AddPie (x, y, w, h, start, sweep);
@@ -128,6 +132,7 @@ namespace System.Drawing
 
 		bool EngineFillClosedCurve (Brush brush, PointF [] pts, float tension, FillMode mode)
 		{
+			if (mf_rec != null) { mf_rec.FillClosedCurve (brush, pts, tension, mode); return true; }
 			if (gp == null) return false;
 			var p = new GpPath (mode);
 			p.AddClosedCurve (pts, pts.Length, tension);
@@ -136,6 +141,7 @@ namespace System.Drawing
 
 		bool EngineFillRegion (Brush brush, Region region)
 		{
+			if (mf_rec != null) { mf_rec.FillRegion (brush, region); return true; }
 			GpGraphics e = Engine ();
 			if (e == null) return false;
 			return e.FillRegion (brush, region.gp);
@@ -143,6 +149,7 @@ namespace System.Drawing
 
 		bool EngineClear (Color color)
 		{
+			if (mf_rec != null) { mf_rec.Clear (color); return true; }
 			GpGraphics e = Engine ();
 			if (e == null) return false;
 			e.Clear (color);
@@ -163,7 +170,9 @@ namespace System.Drawing
 		/// closed for a polygon.</summary>
 		bool EngineDrawLines (Pen pen, PointF [] pts, bool closed)
 		{
-			if (pen == null || pts == null || pts.Length < 2 || gp == null) return false;
+			if (pen == null || pts == null) return false;
+			if (mf_rec != null) { mf_rec.DrawLines (pen, pts, closed); return true; }
+			if (pts.Length < 2 || gp == null) return false;
 			var types = new byte [pts.Length];
 			for (int i = 1; i < types.Length; i++) types [i] = 1;
 			if (closed) types [types.Length - 1] |= 0x80;
@@ -178,7 +187,9 @@ namespace System.Drawing
 
 		bool EngineDrawRects (Pen pen, RectangleF [] rects)
 		{
-			if (pen == null || rects == null || gp == null) return false;
+			if (pen == null || rects == null) return false;
+			if (mf_rec != null) { mf_rec.DrawRects (pen, rects); return true; }
+			if (gp == null) return false;
 			GpGraphics e = Engine ();
 			if (e == null) return false;
 			return e.DrawRects (pen, rects);
@@ -186,7 +197,9 @@ namespace System.Drawing
 
 		bool EngineDrawArc (Pen pen, float x, float y, float w, float h, float start, float sweep)
 		{
-			if (pen == null || gp == null) return false;
+			if (pen == null) return false;
+			if (mf_rec != null) { mf_rec.DrawArc (pen, new RectangleF (x, y, w, h), start, sweep); return true; }
+			if (gp == null) return false;
 			var p = new GpPath ();
 			if (!p.AddArc (x, y, w, h, start, sweep)) return false;
 			return EngineDrawPath (pen, p);
@@ -194,7 +207,9 @@ namespace System.Drawing
 
 		bool EngineDrawEllipse (Pen pen, float x, float y, float w, float h)
 		{
-			if (pen == null || gp == null) return false;
+			if (pen == null) return false;
+			if (mf_rec != null) { mf_rec.DrawEllipse (pen, new RectangleF (x, y, w, h)); return true; }
+			if (gp == null) return false;
 			var p = new GpPath ();
 			p.AddEllipse (x, y, w, h);
 			return EngineDrawPath (pen, p);
@@ -202,7 +217,9 @@ namespace System.Drawing
 
 		bool EngineDrawPie (Pen pen, float x, float y, float w, float h, float start, float sweep)
 		{
-			if (pen == null || gp == null) return false;
+			if (pen == null) return false;
+			if (mf_rec != null) { mf_rec.DrawPie (pen, new RectangleF (x, y, w, h), start, sweep); return true; }
+			if (gp == null) return false;
 			var p = new GpPath ();
 			p.AddPie (x, y, w, h, start, sweep);
 			return EngineDrawPath (pen, p);
@@ -210,8 +227,10 @@ namespace System.Drawing
 
 		bool EngineDrawBeziers (Pen pen, PointF [] pts)
 		{
-			if (pen == null || pts == null || gp == null) return false;
-			if (pts.Length < 4) return gp != null;
+			if (pen == null || pts == null) return false;
+			if (mf_rec != null) { mf_rec.DrawBeziers (pen, pts); return true; }
+			if (gp == null) return false;
+			if (pts.Length < 4) return true;
 			var p = new GpPath ();
 			if (!p.AddBeziers (pts, pts.Length)) return false;
 			return EngineDrawPath (pen, p);
@@ -219,7 +238,9 @@ namespace System.Drawing
 
 		bool EngineDrawCurve (Pen pen, PointF [] pts, float tension, int offset, int segments)
 		{
-			if (pen == null || pts == null || pts.Length < 2 || gp == null) return false;
+			if (pen == null || pts == null) return false;
+			if (mf_rec != null) { mf_rec.DrawCurve (pen, pts, offset, segments, tension); return true; }
+			if (pts.Length < 2 || gp == null) return false;
 			var p = new GpPath ();
 			if (!p.AddCurve (pts, pts.Length, tension, offset, segments)) return false;
 			return EngineDrawPath (pen, p);
@@ -227,7 +248,9 @@ namespace System.Drawing
 
 		bool EngineDrawClosedCurve (Pen pen, PointF [] pts, float tension)
 		{
-			if (pen == null || pts == null || pts.Length < 3 || gp == null) return false;
+			if (pen == null || pts == null) return false;
+			if (mf_rec != null) { mf_rec.DrawClosedCurve (pen, pts, tension); return true; }
+			if (pts.Length < 3 || gp == null) return false;
 			var p = new GpPath ();
 			if (!p.AddClosedCurve (pts, pts.Length, tension)) return false;
 			return EngineDrawPath (pen, p);
@@ -256,6 +279,7 @@ namespace System.Drawing
 		/// <summary>GdipDrawImage / GdipDrawImageI: at (x, y), the image's physical size.</summary>
 		bool EngineDrawImage (Image image, float x, float y)
 		{
+			if (MetaDrawImage (image, x, y)) return true;
 			if (gp == null || image == null) return false;
 			GpGraphics e = Engine ();
 			GdipFrame f = e == null ? null : EngineFrame (image);
@@ -267,6 +291,7 @@ namespace System.Drawing
 		/// <summary>GdipDrawImageRect(I).</summary>
 		bool EngineDrawImage (Image image, RectangleF dst)
 		{
+			if (MetaDrawImage (image, dst)) return true;
 			if (gp == null || image == null) return false;
 			GpGraphics e = Engine ();
 			GdipFrame f = e == null ? null : EngineFrame (image);
@@ -277,6 +302,7 @@ namespace System.Drawing
 		/// <summary>GdipDrawImageRectRect(I).</summary>
 		bool EngineDrawImage (Image image, RectangleF dst, RectangleF src, GraphicsUnit unit, ImageAttributes ia)
 		{
+			if (MetaDrawImage (image, dst, src, unit, ia)) return true;
 			if (gp == null || image == null) return false;
 			GpGraphics e = Engine ();
 			GdipFrame f = e == null ? null : EngineFrame (image);
@@ -288,6 +314,7 @@ namespace System.Drawing
 		/// <summary>GdipDrawImagePointRect(I): at (x, y), the source rectangle's size in its unit.</summary>
 		bool EngineDrawImage (Image image, float x, float y, RectangleF src, GraphicsUnit unit)
 		{
+			if (MetaDrawImage (image, x, y, src, unit)) return true;
 			if (gp == null || image == null) return false;
 			GpGraphics e = Engine ();
 			GdipFrame f = e == null ? null : EngineFrame (image);
@@ -300,6 +327,7 @@ namespace System.Drawing
 		/// <summary>GdipDrawImagePoints(I) (src null: the image's bounds, Pixel) and GdipDrawImagePointsRect(I).</summary>
 		bool EngineDrawImage (Image image, PointF [] pts, RectangleF? src, GraphicsUnit unit, ImageAttributes ia)
 		{
+			if (MetaDrawImage (image, pts, src, unit, ia)) return true;
 			if (gp == null || image == null || pts == null) return false;
 			GpGraphics e = Engine ();
 			GdipFrame f = e == null ? null : EngineFrame (image);
@@ -450,15 +478,36 @@ namespace System.Drawing
 
 		// ---- state the engine keeps itself --------------------------------------------------------
 
-		void EngineClipRect (RectangleF r, CombineMode mode) => EngineState ()?.CombineClip (r, mode);
+		// A metafile's Graphics records each (GpGraphics::SetClip* -> MetafileRecorder::RecordSetClip*).
+
+		void EngineClipRect (RectangleF r, CombineMode mode)
+		{
+			mf_rec?.SetClipRect (r, mode);
+			EngineState ()?.CombineClip (r, mode);
+		}
 
 		void EngineClipPath (GraphicsPath path, CombineMode mode)
-			=> EngineState ()?.CombineClip (path.gp.PointArray (), path.gp.TypeArray (), path.gp.FillMode, mode);
+		{
+			mf_rec?.SetClipPath (path, mode);
+			EngineState ()?.CombineClip (path.gp.PointArray (), path.gp.TypeArray (), path.gp.FillMode, mode);
+		}
 
-		void EngineClipRegion (Region region, CombineMode mode) => EngineState ()?.CombineClip (region.gp, mode);
+		void EngineClipRegion (Region region, CombineMode mode)
+		{
+			mf_rec?.SetClipRegion (region, mode);
+			EngineState ()?.CombineClip (region.gp, mode);
+		}
 
-		void EngineResetClip () => gp?.ResetClip ();
+		void EngineResetClip ()
+		{
+			mf_rec?.ResetClip ();
+			gp?.ResetClip ();
+		}
 
-		void EngineOffsetClip (float dx, float dy) => EngineState ()?.OffsetClip (dx, dy);
+		void EngineOffsetClip (float dx, float dy)
+		{
+			mf_rec?.OffsetClip (dx, dy);
+			EngineState ()?.OffsetClip (dx, dy);
+		}
 	}
 }

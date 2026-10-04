@@ -85,6 +85,67 @@ namespace Wpf.WinFormsInterop.Tests
         public void Flush(FlushIntention f) => _r.Flush(f);
     }
 
+    /// <summary>The scenarios through Graphics.FromImage(metafile), with exactly the calls the oracle
+    /// (oracle/mfo.cs, GRec) makes on .NET Framework's Graphics.</summary>
+    internal sealed class GraphicsRec : IRec
+    {
+        private readonly Graphics g;
+        public GraphicsRec(Graphics g) { this.g = g; }
+        public void Clear(Color c) => g.Clear(c);
+        public void FillRects(Brush b, RectangleF[] r) => g.FillRectangles(b, r);
+        public void DrawRects(Pen p, RectangleF[] r) => g.DrawRectangles(p, r);
+        public void FillPolygon(Brush b, PointF[] pts, FillMode mode) => g.FillPolygon(b, pts, mode);
+        public void DrawLines(Pen p, PointF[] pts, bool closed) { if (closed) g.DrawPolygon(p, pts); else g.DrawLines(p, pts); }
+        public void FillEllipse(Brush b, RectangleF r) => g.FillEllipse(b, r);
+        public void DrawEllipse(Pen p, RectangleF r) => g.DrawEllipse(p, r);
+        public void FillPie(Brush b, RectangleF r, float s, float w) => g.FillPie(b, r.X, r.Y, r.Width, r.Height, s, w);
+        public void DrawPie(Pen p, RectangleF r, float s, float w) => g.DrawPie(p, r, s, w);
+        public void DrawArc(Pen p, RectangleF r, float s, float w) => g.DrawArc(p, r, s, w);
+        public void FillPath(Brush b, GraphicsPath path) => g.FillPath(b, path);
+        public void DrawPath(Pen p, GraphicsPath path) => g.DrawPath(p, path);
+        public void FillClosedCurve(Brush b, PointF[] pts, float t, FillMode m) => g.FillClosedCurve(b, pts, m, t);
+        public void DrawClosedCurve(Pen p, PointF[] pts, float t) => g.DrawClosedCurve(p, pts, t, FillMode.Alternate);
+        public void DrawCurve(Pen p, PointF[] pts, int o, int n, float t) => g.DrawCurve(p, pts, o, n, t);
+        public void DrawBeziers(Pen p, PointF[] pts) => g.DrawBeziers(p, pts);
+        public void FillRegion(Brush b, Region r) => g.FillRegion(b, r);
+        public void DrawImage(Image img, RectangleF d, RectangleF s, GraphicsUnit u, ImageAttributes? ia)
+        {
+            if (ia == null) g.DrawImage(img, d, s, u);
+            else g.DrawImage(img, Rectangle.Round(d), s.X, s.Y, s.Width, s.Height, u, ia);
+        }
+        public void DrawImagePoints(Image img, PointF[] d, RectangleF s, GraphicsUnit u, ImageAttributes? ia) => g.DrawImage(img, d, s, u, ia);
+        public void DrawString(string s, Font f, RectangleF r, StringFormat? fmt, Brush b) => g.DrawString(s, f, b, r, fmt);
+        // No public Graphics verb: the oracle calls GdipDrawDriverString itself.
+        public void DrawDriverString(ushort[] t, Font f, Brush b, PointF[] pos, int flags, Matrix? m) => g.mf_rec.DrawDriverString(t, f, b, pos, flags, m!);
+        public void SetWorldTransform(Matrix m) => g.Transform = m;
+        public void ResetWorldTransform() => g.ResetTransform();
+        public void MultiplyWorldTransform(Matrix m, MatrixOrder o) => g.MultiplyTransform(m, o);
+        public void TranslateWorldTransform(float dx, float dy, MatrixOrder o) => g.TranslateTransform(dx, dy, o);
+        public void ScaleWorldTransform(float sx, float sy, MatrixOrder o) => g.ScaleTransform(sx, sy, o);
+        public void RotateWorldTransform(float a, MatrixOrder o) => g.RotateTransform(a, o);
+        public void SetPageTransform(GraphicsUnit u, float s) { g.PageUnit = u; g.PageScale = s; }
+        public void SetClipRect(RectangleF r, CombineMode m) => g.SetClip(r, m);
+        public void SetClipPath(GraphicsPath p, CombineMode m) => g.SetClip(p, m);
+        public void SetClipRegion(Region r, CombineMode m) => g.SetClip(r, m);
+        public void ResetClip() => g.ResetClip();
+        public void OffsetClip(float dx, float dy) => g.TranslateClip(dx, dy);
+        public object Save() => g.Save();
+        public void Restore(object s) => g.Restore((GraphicsState)s);
+        public object BeginContainer(RectangleF d, RectangleF s, GraphicsUnit u) => g.BeginContainer(d, s, u);
+        public object BeginContainerNoParams() => g.BeginContainer();
+        public void EndContainer(object s) => g.EndContainer((GraphicsContainer)s);
+        public void SetAntiAliasMode(SmoothingMode m) => g.SmoothingMode = m;
+        public void SetTextRenderingHint(TextRenderingHint h) => g.TextRenderingHint = h;
+        public void SetTextContrast(int c) => g.TextContrast = c;
+        public void SetInterpolationMode(InterpolationMode m) => g.InterpolationMode = m;
+        public void SetPixelOffsetMode(PixelOffsetMode m) => g.PixelOffsetMode = m;
+        public void SetCompositingMode(CompositingMode m) => g.CompositingMode = m;
+        public void SetCompositingQuality(CompositingQuality q) => g.CompositingQuality = q;
+        public void SetRenderingOrigin(int x, int y) => g.RenderingOrigin = new Point(x, y);
+        public void Comment(byte[] d) => g.AddMetafileComment(d);
+        public void Flush(FlushIntention f) => g.Flush(f);
+    }
+
     public sealed class MetafileTests
     {
         private static readonly string Dir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Metafiles");
@@ -130,11 +191,61 @@ namespace Wpf.WinFormsInterop.Tests
 
         private static string Hex(byte[] b) => Convert.ToHexString(b).ToLowerInvariant();
 
+        /// <summary>The same scenario through the public API: Graphics.FromImage(metafile), disposed to end it.</summary>
+        internal static byte[] RecordThroughGraphics(string scenario, EmfType type)
+        {
+            var ms = new MemoryStream();
+            using (var mf = new Metafile(ms, IntPtr.Zero, type))
+            {
+                using (Graphics g = Graphics.FromImage(mf))
+                    MetafileScenarios.All()[scenario](new GraphicsRec(g));
+                // GpMetafile::GetGraphicsContext: once per recording, and never after it ended.
+                Assert.Throws<OutOfMemoryException>(() => Graphics.FromImage(mf));
+            }
+            return ms.ToArray();
+        }
+
         [Theory]
         [MemberData(nameof(Scenarios))]
         public void Recorded_EmfPlus_records_are_GdiPlus_bytes(string scenario)
+            => AssertSameEmfPlus(Record(scenario, EmfType.EmfPlusOnly), scenario);
+
+        /// <summary>Graphics.FromImage(metafile) hands every verb to the recorder as GDI+'s Graphics does.</summary>
+        [Theory]
+        [MemberData(nameof(Scenarios))]
+        public void Graphics_on_a_metafile_records_GdiPlus_bytes(string scenario)
+            => AssertSameEmfPlus(RecordThroughGraphics(scenario, EmfType.EmfPlusOnly), scenario);
+
+        [Fact]
+        public void A_metafile_has_one_Graphics()
         {
-            byte[] ours = Record(scenario, EmfType.EmfPlusOnly);
+            using var mf = new Metafile(new MemoryStream(), IntPtr.Zero, EmfType.EmfPlusOnly);
+            using (Graphics g = Graphics.FromImage(mf))
+            {
+                Assert.Throws<OutOfMemoryException>(() => Graphics.FromImage(mf));
+                Assert.Equal(96f, g.DpiX);
+            }
+            Assert.Equal(ImageFormat.Emf, mf.RawFormat);
+        }
+
+        /// <summary>DrawImage(metafile, rect) on a bitmap is the playback of its bounds into the rectangle.</summary>
+        [Theory]
+        [MemberData(nameof(Scenarios))]
+        public void DrawImage_of_a_metafile_is_its_playback(string scenario)
+        {
+            using var mf = new Metafile(Path.Combine(Dir, "plus", scenario + ".emf"));
+            using Bitmap want = PlayInto(mf, 120, 90, new RectangleF(5, 5, 110, 80));
+            using var got = new Bitmap(120, 90, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(got))
+            {
+                g.Clear(Color.White);
+                g.DrawImage(mf, new RectangleF(5, 5, 110, 80));
+            }
+            Assert.Equal(0, Differ(got, want, 0, out _));
+        }
+
+        static void AssertSameEmfPlus(byte[] ours, string scenario)
+        {
             byte[] theirs = File.ReadAllBytes(Path.Combine(Dir, "plus", scenario + ".emf"));
             var a = EmfPlusRecords(ours);
             var b = EmfPlusRecords(theirs);
@@ -230,8 +341,8 @@ namespace Wpf.WinFormsInterop.Tests
             using (var bmp = new Bitmap(10, 10))
             using (Graphics g = Graphics.FromImage(bmp))
             {
-                GpMetafilePlayer.Enumerate(g, mf, new[] { new PointF(0, 0), new PointF(10, 0), new PointF(0, 10) }, mf.RealBounds, GraphicsUnit.Pixel,
-                    (t, f, n, d, cb) => { got.Add($"{((int)t):x} f={f:x} n={n}"); mf.PlayRecord(t, f, n, Copy(d, n)); return true; }, IntPtr.Zero, null);
+                g.EnumerateMetafile(mf, new PointF(0, 0),
+                    (t, f, n, d, cb) => { got.Add($"{((int)t):x} f={f:x} n={n}"); mf.PlayRecord(t, f, n, Copy(d, n)); return true; });
             }
             string[] want = File.ReadAllLines(Path.Combine(Dir, "enum", name + ".txt"));
             Assert.Equal(string.Join(" | ", want), string.Join(" | ", got));

@@ -627,11 +627,12 @@ namespace System.Drawing
 			}
 		}
 		
-				public void AddMetafileComment (byte [] data)
+		public void AddMetafileComment (byte [] data)
 		{
 			if (data == null)
 				throw new ArgumentNullException ("data");
 			// Only a Graphics recording a metafile keeps comments; any other ignores them, as GDI+ does.
+			mf_rec?.Comment (data);
 		}
 
 		// GDI+'s container and state ids share one counter (DpContext's Uniqueness and depth).
@@ -677,6 +678,10 @@ namespace System.Drawing
 				container = GpMatrix.Multiply (c, outer);
 			}
 			int token = SaveState (true);
+			if (mf_rec != null) {
+				if (rects == true) mf_rec.BeginContainer (dst, src, unit, (uint) token);
+				else mf_rec.BeginContainerNoParams ((uint) token);
+			}
 			if (gp != null) {
 				if (rects == true) gp.BeginContainer (token, dst, src, unit);
 				else gp.BeginContainer (token);
@@ -705,6 +710,7 @@ namespace System.Drawing
 		int SaveState (bool container)
 		{
 			int token = GpuRecorder != null ? GpuRecorder.SaveState () : ++_stateCounter;
+			if (mf_rec != null && !container) mf_rec.Save ((uint) token);
 			RecordedSave (token);
 			if (gp != null) {
 				SyncEngine ();
@@ -893,6 +899,13 @@ namespace System.Drawing
 		public void Dispose ()
 		{
 			if (disposed) return;
+			if (mf_rec != null) {
+				// GpGraphics::~GpGraphics on a metafile: the recording ends (EndRecording).
+				GpMetafileRecorder rec = mf_rec;
+				mf_rec = null;
+				if (deviceContextHdc != IntPtr.Zero) { rec.ReleaseHdc (); deviceContextHdc = IntPtr.Zero; }
+				rec.End ();
+			}
 			if (deviceContextHdc != IntPtr.Zero) {
 				try { EndHdc (); } catch (Exception) { }
 				deviceContextHdc = IntPtr.Zero;
@@ -1763,6 +1776,7 @@ namespace System.Drawing
 
 		public void DrawPath (Pen pen, GraphicsPath path)
 		{
+			if (mf_rec != null && pen != null && path != null) { mf_rec.DrawPath (pen, path); return; }
 			if (path != null && EngineDrawPath (pen, path.gp)) return;
 			if (path != null && PrintStroke (pen, path)) return;
 			if (pen == null)
@@ -2339,6 +2353,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (s == null || s.Length == 0)
 				return;
+			if (mf_rec != null) { mf_rec.DrawString (s, font, layoutRectangle, format, brush); return; }
 			// A bitmap's Graphics: GDI+'s own pipeline, into the pixels (Graphics.Engine.cs).
 			if (!gdi_text_metrics && !gdi_ascent && !memory_surface_text
 			    && EngineDrawString (s, font, brush, layoutRectangle, format))
@@ -2535,228 +2550,11 @@ namespace System.Drawing
 						if (container == null)
 				throw new ArgumentNullException ("container");
 			// GpGraphics::EndContainer: Restore with the container's id.
+			mf_rec?.EndContainer (container.NativeObject);
 			RestoreState ((int) container.NativeObject);
 			
 		}
 
-		private const string MetafileEnumeration = "Metafiles enumeration, for both WMF and EMF formats, isn't supported.";
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point destPoint, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF destPoint, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF destPoint, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point destPoint, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF destPoint, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point destPoint, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point destPoint, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF destPoint, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF destPoint, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point destPoint, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, Rectangle srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, Rectangle srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, Point destPoint, Rectangle srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, RectangleF srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, RectangleF srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO (MetafileEnumeration)]
-		public void EnumerateMetafile (Metafile metafile, PointF destPoint, RectangleF srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-		{
-			throw new NotImplementedException ();
-		}
-	
 		public void ExcludeClip (Rectangle rect)
 		{
 						EngineClipRect (rect, CombineMode.Exclude);
@@ -2909,6 +2707,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("brush");
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			if (mf_rec != null) { mf_rec.FillPath (brush, path); return; }
 			if (EngineFillPath (brush, path.gp)) return;
 			if (PrintFill (brush, path)) return;
 			if (brush == null)
@@ -3169,6 +2968,7 @@ namespace System.Drawing
 		
 		public void Flush (FlushIntention intention)
 		{
+			mf_rec?.Flush (intention);
 			if (image_target != null) {
 				image_target.TakeDrawing (this, detach: false);
 				if (hdc_surface != null) PresentHdc ();
@@ -3282,6 +3082,9 @@ namespace System.Drawing
 			// A managed bitmap: the managed GDI+ engine draws on its pixels; what the engine leaves
 			// to the recorder (GDI text) is recorded and rendered onto them before the engine's next
 			// verb, or drawn as a nested scene when the bitmap is drawn first.
+			// A metafile being recorded: its one Graphics (GpMetafile::GetGraphicsContext).
+			if (image is Metafile mf)
+				return ForMetafile (mf);
 			if (image is Bitmap bitmap && bitmap.managed != null) {
 				if ((bitmap.PixelFormat & PixelFormat.Indexed) != 0)
 					throw new Exception (Locale.GetText ("A Graphics object cannot be created from an image that has an indexed pixel format."));
@@ -3316,6 +3119,11 @@ namespace System.Drawing
 			// GDI+ hands out one DC at a time.
 			if (deviceContextHdc != IntPtr.Zero)
 				throw new InvalidOperationException ("Object is currently in use elsewhere.");
+			if (mf_rec != null) {
+				// GpGraphics::GetHdc on a metafile: the recording's own DC, after an EmfPlusGetDC.
+				deviceContextHdc = mf_rec.GetHdc ();
+				return deviceContextHdc;
+			}
 			if (hdc_surface != null) {
 				// A DC's Graphics hands back the DC, with what was drawn so far on it.
 				PresentHdc ();
@@ -3676,6 +3484,7 @@ namespace System.Drawing
 				throw new ArgumentNullException ("matrix");
 
 						// GpMatrix::Multiply onto the world transform, prepended or appended.
+			mf_rec?.MultiplyWorldTransform (matrix, order);
 			GpMatrix w = RecWorld;
 			w.Multiply (matrix.Gp, order == MatrixOrder.Append);
 			SetRecWorld (w);
@@ -3699,6 +3508,11 @@ namespace System.Drawing
 		{
 			if (hdc == IntPtr.Zero || hdc != deviceContextHdc)
 				throw new ArgumentException ("Parameter is not valid.");
+			if (mf_rec != null) {
+				mf_rec.ReleaseHdc ();
+				deviceContextHdc = IntPtr.Zero;
+				return;
+			}
 			EndHdc ();
 			deviceContextHdc = IntPtr.Zero;
 		}
@@ -3715,6 +3529,7 @@ namespace System.Drawing
 
 		public void ResetTransform ()
 		{
+			mf_rec?.ResetWorldTransform ();
 			rec_world = new float [] { 1f, 0f, 0f, 1f, 0f, 0f };
 			PushRecordedTransform ();
 		}
@@ -3722,7 +3537,9 @@ namespace System.Drawing
 		public void Restore (GraphicsState gstate)
 		{
 			// the possible NRE thrown by gstate.nativeState match MS behaviour
-			RestoreState (gstate.nativeState);
+			int token = gstate.nativeState;
+			mf_rec?.Restore ((uint) token);
+			RestoreState (token);
 		}
 
 		public void RotateTransform (float angle)
@@ -3732,7 +3549,8 @@ namespace System.Drawing
 
 		public void RotateTransform (float angle, MatrixOrder order)
 		{
-						GpMatrix w = RecWorld;
+			mf_rec?.RotateWorldTransform (angle, order);
+			GpMatrix w = RecWorld;
 			w.Rotate (angle, order == MatrixOrder.Append);
 			SetRecWorld (w);
 			
@@ -3750,7 +3568,8 @@ namespace System.Drawing
 
 		public void ScaleTransform (float sx, float sy, MatrixOrder order)
 		{
-                        			GpMatrix w = RecWorld;
+			mf_rec?.ScaleWorldTransform (sx, sy, order);
+			GpMatrix w = RecWorld;
 			w.Scale (sx, sy, order == MatrixOrder.Append);
 			SetRecWorld (w);
 			
@@ -3786,7 +3605,8 @@ namespace System.Drawing
 			if (g == null)
 				throw new ArgumentNullException ("g");
 			
-						// The other Graphics' clip, in device space.
+			// The other Graphics' clip, in device space.
+			if (mf_rec != null) mf_rec.SetClipRegion (g.Clip, combineMode);
 			if (gp != null) {
 				SyncEngine ();
 				GpRegion other = g.gp?.AppClip;
@@ -3965,7 +3785,8 @@ namespace System.Drawing
 			// the origin and resetting -- ToolStrip does exactly this per item. The recorder ignored
 			// the transform, so every item was drawn at the same place and their labels sat on top of
 			// one another.
-						GpMatrix w = RecWorld;
+			mf_rec?.TranslateWorldTransform (dx, dy, order);
+			GpMatrix w = RecWorld;
 			w.Translate (dx, dy, order == MatrixOrder.Append);
 			SetRecWorld (w);
 			
@@ -4012,21 +3833,22 @@ namespace System.Drawing
 				if ((uint) value > 1)
 					throw new ArgumentException ("Parameter is not valid.");
 				_compositingMode = value;
+				mf_rec?.SetCompositingMode (value);
 				GpuRecorder?.SetCompositingMode (value == CompositingMode.SourceCopy);
 			}
 		}
 
 		public CompositingQuality CompositingQuality {
 			get { return _compositingQuality; }
-			set { _compositingQuality = value; }
+			set { _compositingQuality = value; mf_rec?.SetCompositingQuality (value); }
 		}
 
 		public float DpiX {
-			get { return print_mode ? print_dpi_x : image_target != null ? image_target.HorizontalResolution : 96f; }
+			get { return mf_rec != null ? mf_rec.DpiX : print_mode ? print_dpi_x : image_target != null ? image_target.HorizontalResolution : 96f; }
 		}
 
 		public float DpiY {
-			get { return print_mode ? print_dpi_y : image_target != null ? image_target.VerticalResolution : 96f; }
+			get { return mf_rec != null ? mf_rec.DpiY : print_mode ? print_dpi_y : image_target != null ? image_target.VerticalResolution : 96f; }
 		}
 
 		public InterpolationMode InterpolationMode {
@@ -4038,6 +3860,7 @@ namespace System.Drawing
 				if (value == InterpolationMode.Default || value == InterpolationMode.Low) value = InterpolationMode.Bilinear;
 				else if (value == InterpolationMode.High) value = InterpolationMode.HighQualityBicubic;
 				_interpolation = value;
+				mf_rec?.SetInterpolationMode (value);
 			}
 		}
 
@@ -4065,6 +3888,7 @@ namespace System.Drawing
 				if ((double) value < 1e-9 || value > 1000000000f)
 					throw new ArgumentException ("Parameter is not valid.");
 				rec_page_scale = value;
+				mf_rec?.SetPageTransform (rec_unit, rec_page_scale);
 				PushRecordedTransform ();
 			}
 		}
@@ -4077,6 +3901,7 @@ namespace System.Drawing
 				if (value == GraphicsUnit.World)
 					throw new ArgumentException ("Parameter is not valid.");
 				rec_unit = value;
+				mf_rec?.SetPageTransform (rec_unit, rec_page_scale);
 				PushRecordedTransform ();
 			}
 		}
@@ -4087,12 +3912,13 @@ namespace System.Drawing
 				if ((uint) value >= 5)
 					throw new ArgumentException ("Parameter is not valid.");
 				_pixelOffset = value;
+				mf_rec?.SetPixelOffsetMode (value);
 			}
 		}
 
 		public Point RenderingOrigin {
 			get { return _renderingOrigin; }
-			set { _renderingOrigin = value; }
+			set { _renderingOrigin = value; mf_rec?.SetRenderingOrigin (value.X, value.Y); }
 		}
 
 		public SmoothingMode SmoothingMode {
@@ -4100,6 +3926,8 @@ namespace System.Drawing
 			set {
 				if ((uint) value >= 6)
 					throw new ArgumentException ("Parameter is not valid.");
+				// GdipSetSmoothingMode records the mode as the caller gave it.
+				mf_rec?.SetAntiAliasMode (value);
 				// GDI+ stores Default and HighSpeed as None, HighQuality as AntiAlias.
 				gpu_smoothing = value == SmoothingMode.Default || value == SmoothingMode.HighSpeed ? SmoothingMode.None
 					: value == SmoothingMode.HighQuality ? SmoothingMode.AntiAlias : value;
@@ -4113,6 +3941,7 @@ namespace System.Drawing
 				if ((uint) value > 12)
 					throw new ArgumentException ("Parameter is not valid.");
 				recorded_text_contrast = value;
+				mf_rec?.SetTextContrast (value);
 			}
 		}
 
@@ -4122,6 +3951,7 @@ namespace System.Drawing
 				if ((uint) value >= 6)
 					throw new ArgumentException ("Parameter is not valid.");
 				recorded_text_hint = value;
+				mf_rec?.SetTextRenderingHint (value);
 			}
 		}
 
@@ -4135,6 +3965,7 @@ namespace System.Drawing
 				// GdipSetWorldTransform refuses a singular matrix.
 				if (!value.Gp.IsInvertible)
 					throw new ArgumentException ("Parameter is not valid.");
+				mf_rec?.SetWorldTransform (value);
 				SetRecWorld (value.Gp);
 			}
 		}

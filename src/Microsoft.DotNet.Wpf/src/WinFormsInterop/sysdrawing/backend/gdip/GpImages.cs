@@ -124,6 +124,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
         // ---- GpGraphics::GetImageDestPageSize ---------------------------------------------------------
 
         public void GetImageDestPageSize (GdipFrame img, float w, float h, GraphicsUnit unit, out float dw, out float dh)
+            => GetImageDestPageSize (img.DpiX, img.DpiY, w, h, unit, out dw, out dh);
+
+        /// <summary>The same for any image, by its resolution (a metafile's is its header's).</summary>
+        public void GetImageDestPageSize (float ix, float iy, float w, float h, GraphicsUnit unit, out float dw, out float dh)
         {
             GetPageMultipliers (out float pmx, out float pmy);
             if (unit != GraphicsUnit.Pixel) {
@@ -132,7 +136,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 dw = (mx * w) / pmx;
                 return;
             }
-            float ix = img.DpiX, iy = img.DpiY;
             dh = (DpiY * h) / (pmy * iy);
             dw = (DpiX * w) / (pmx * ix);
         }
