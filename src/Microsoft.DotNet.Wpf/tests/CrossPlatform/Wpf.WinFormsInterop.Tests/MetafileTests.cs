@@ -525,8 +525,11 @@ namespace Wpf.WinFormsInterop.Tests
 
         // EmfOnly playback is GDI drawing into GDI+'s DIB, and GDI's vectors, regions, clips and
         // blit rectangles are ported exactly: every scenario but these is pixel for pixel. Not yet:
-        // imageunits, whose StretchDIBits images GDI+ first resamples itself (MfEnumState::OutputDIB).
-        static readonly HashSet<string> EmfOnlyInexact = new HashSet<string> { "imageunits" };
+        // imageunits, whose StretchDIBits images GDI+ first resamples itself (MfEnumState::OutputDIB);
+        // and the text scenarios, whose ExtTextOut playback still reads its ppem rule off GDI's pixels
+        // and approximates turned text with one lamp level (GpGdiPlayer.Text.cs). They keep the 2%
+        // tolerance they were added under.
+        static readonly HashSet<string> EmfOnlyInexact = new HashSet<string> { "imageunits", "text", "text_lines", "text_xform" };
 
         [Theory]
         [MemberData(nameof(PlaybackScenarios))]
