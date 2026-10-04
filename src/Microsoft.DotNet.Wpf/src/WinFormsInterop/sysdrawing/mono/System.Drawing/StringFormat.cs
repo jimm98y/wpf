@@ -41,7 +41,8 @@ namespace System.Drawing {
 
 		private StringAlignment _align, _lineAlign;
 		private StringFormatFlags _flags;
-		private StringTrimming _trimming;
+				// GpStringFormat's defaults: Trimming Character.
+		private StringTrimming _trimming = StringTrimming.Character;
 		private HotkeyPrefix _hotkey;
 		private StringDigitSubstitute _digitSubstitute = StringDigitSubstitute.User;
 		private int _digitLanguage = GDIPlus.LANG_NEUTRAL;
@@ -152,7 +153,8 @@ namespace System.Drawing {
 		/// it asked for, and nothing either side of it.</summary>
 		internal bool IsTypographic;
 
-		public static StringFormat GenericTypographic => new StringFormat (StringFormatFlags.NoWrap) { IsTypographic = true };
+				// GpStringFormat::GenericTypographic: FitBlackBox | LineLimit | NoClip, no trimming.
+		public static StringFormat GenericTypographic => new StringFormat (StringFormatFlags.FitBlackBox | StringFormatFlags.LineLimit | StringFormatFlags.NoClip) { IsTypographic = true, _trimming = StringTrimming.None };
 
 		public StringDigitSubstitute DigitSubstitutionMethod => _digitSubstitute;
 

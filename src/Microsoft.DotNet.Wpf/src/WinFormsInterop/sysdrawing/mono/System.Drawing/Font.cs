@@ -189,7 +189,9 @@ namespace System.Drawing
 		// font/family. Mirrors setProperties minus family.Name (uses the requested name directly).
 		void SetPropertiesManaged (string name, float emSize, FontStyle style, GraphicsUnit unit, byte charSet, bool isVertical)
 		{
-			_name = string.IsNullOrEmpty (name) ? "Microsoft Sans Serif" : name;
+						// GDI+: a family that is not installed fails, and System.Drawing then uses Microsoft Sans
+			// Serif; one that is takes the name as the font declares it.
+			_name = (string.IsNullOrEmpty (name) ? null : WebGpuBackend.Gdip.GpFontFamily.Canonical (name)) ?? "Microsoft Sans Serif";
 			_fontFamily = new FontFamily (_name, true);   // managed-only family (no libgdiplus)
 			_size = emSize;
 			_unit = unit;

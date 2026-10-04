@@ -182,34 +182,22 @@ namespace System.Drawing.Drawing2D
 			RotateAt (angle, point, MatrixOrder.Prepend);
 		}
 
-		// System.Drawing's own managed RotateAt (it is not a GDI+ entry point): the elements set
-		// through GdipSetMatrixElements.
+		// System.Drawing's RotateAt: translate, rotate, translate back through GDI+'s own matrix
+		// verbs, in the order the operation is applied.
 		public void RotateAt (float angle, PointF point, MatrixOrder order)
 		{
 			if ((order < MatrixOrder.Prepend) || (order > MatrixOrder.Append))
 				throw new ArgumentException ("order");
-
-			angle *= (float) (Math.PI / 180.0);  // degrees to radians
-			float cos = (float) Math.Cos (angle);
-			float sin = (float) Math.Sin (angle);
-			float e4 = -point.X * cos + point.Y * sin + point.X;
-			float e5 = -point.X * sin - point.Y * cos + point.Y;
-			float [] m0 = Elements;
-
-			if (order == MatrixOrder.Prepend)
-				Gp = new GpMatrix (cos * m0[0] + sin * m0[2],
-								cos * m0[1] + sin * m0[3],
-								-sin * m0[0] + cos * m0[2],
-								-sin * m0[1] + cos * m0[3],
-								e4 * m0[0] + e5 * m0[2] + m0[4],
-								e4 * m0[1] + e5 * m0[3] + m0[5]);
-			else
-				Gp = new GpMatrix (m0[0] * cos + m0[1] * -sin,
-								m0[0] * sin + m0[1] * cos,
-								m0[2] * cos + m0[3] * -sin,
-								m0[2] * sin + m0[3] * cos,
-								m0[4] * cos + m0[5] * -sin + e4,
-								m0[4] * sin + m0[5] * cos + e5);
+			bool append = order == MatrixOrder.Append;
+			if (!append) {
+				Gp.Translate (point.X, point.Y, false);
+				Gp.Rotate (angle, false);
+				Gp.Translate (-point.X, -point.Y, false);
+			} else {
+				Gp.Translate (-point.X, -point.Y, true);
+				Gp.Rotate (angle, true);
+				Gp.Translate (point.X, point.Y, true);
+			}
 		}
 
 		public void Scale (float scaleX, float scaleY)
@@ -241,7 +229,7 @@ namespace System.Drawing.Drawing2D
 				throw new ArgumentNullException ("pts");
 			for (int i = 0; i < pts.Length; i++) {
 				PointF p = Gp.Transform (new PointF (pts [i].X, pts [i].Y));
-				pts [i] = new Point ((int) (p.X + 0.5f), (int) (p.Y + 0.5f));
+				pts [i] = new Point ((int) MathF.Floor (p.X + 0.5f), (int) MathF.Floor (p.Y + 0.5f));
 			}
 		}
 
@@ -258,7 +246,7 @@ namespace System.Drawing.Drawing2D
 				throw new ArgumentNullException ("pts");
 			for (int i = 0; i < pts.Length; i++) {
 				PointF p = Gp.VectorTransform (new PointF (pts [i].X, pts [i].Y));
-				pts [i] = new Point ((int) (p.X + 0.5f), (int) (p.Y + 0.5f));
+				pts [i] = new Point ((int) MathF.Floor (p.X + 0.5f), (int) MathF.Floor (p.Y + 0.5f));
 			}
 		}
 

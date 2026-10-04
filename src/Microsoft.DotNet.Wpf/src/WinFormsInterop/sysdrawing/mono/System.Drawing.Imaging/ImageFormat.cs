@@ -100,9 +100,19 @@ namespace System.Drawing.Imaging {
 		
 		public override string ToString () 
 		{
-			if (name != null)
+						if (name != null)
 				return name;
-
+			// System.Drawing names the formats it knows by their Guid, however the object was made.
+			if (guid == MemoryBmp.Guid) return "MemoryBMP";
+			if (guid == Bmp.Guid) return "Bmp";
+			if (guid == Emf.Guid) return "Emf";
+			if (guid == Wmf.Guid) return "Wmf";
+			if (guid == Gif.Guid) return "Gif";
+			if (guid == Jpeg.Guid) return "Jpeg";
+			if (guid == Png.Guid) return "Png";
+			if (guid == Tiff.Guid) return "Tiff";
+			if (guid == Exif.Guid) return "Exif";
+			if (guid == Icon.Guid) return "Icon";
 			return ("[ImageFormat: " + guid.ToString () + "]");
 		}
 

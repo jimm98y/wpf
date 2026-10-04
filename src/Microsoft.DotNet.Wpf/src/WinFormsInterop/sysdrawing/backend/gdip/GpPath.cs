@@ -201,8 +201,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public void AddEllipse (float x, float y, float w, float h)
         {
             var p = new PointF [13];
+            // As compiled (@180087c60): x * (w / 2) + (left + w / 2).
+            float hw = w * 0.5f, hh = h * 0.5f, cx = x + hw, cy = y + hh;
             for (int i = 0; i < 13; i++)
-                p [i] = new PointF (s_ellipse [2 * i] * w * 0.5f + x + w * 0.5f, s_ellipse [2 * i + 1] * h * 0.5f + y + h * 0.5f);
+                p [i] = new PointF (s_ellipse [2 * i] * hw + cx, s_ellipse [2 * i + 1] * hh + cy);
             StartFigure ();
             AddBeziers (p, 13);
             CloseFigure ();

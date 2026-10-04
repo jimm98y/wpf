@@ -176,7 +176,12 @@ namespace System.Drawing
 		}
 
 		public CustomLineCap CustomEndCap {
-			get { return (CustomLineCap) _customEnd?.Clone (); }
+						get {
+				// GdipGetPenCustomEndCap hands back null, which System.Drawing turns into
+				// InvalidParameter.
+				if (_customEnd == null) throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				return (CustomLineCap) _customEnd.Clone ();
+			}
 			set {
 				if (!isModifiable)
 					throw ReadOnly ();
@@ -188,7 +193,10 @@ namespace System.Drawing
 		}
 
 		public CustomLineCap CustomStartCap {
-			get { return (CustomLineCap) _customStart?.Clone (); }
+						get {
+				if (_customStart == null) throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				return (CustomLineCap) _customStart.Clone ();
+			}
 			set {
 				if (!isModifiable)
 					throw ReadOnly ();
@@ -224,12 +232,13 @@ namespace System.Drawing
 
 		public float [] DashPattern {
 			get {
-				if (_dash != null && _dash.Length > 0)
+								if (_dash != null && _dash.Length > 0)
 					return (float []) _dash.Clone ();
 				// special case (not handled inside GDI+)
 				if (DashStyle == DashStyle.Custom)
 					return new float [] { 1.0f };
-				return new float [0];
+				// System.Drawing: a solid pen has no dash pattern to give.
+				throw new InvalidOperationException ();
 			}
 			set {
 				if (!isModifiable)
