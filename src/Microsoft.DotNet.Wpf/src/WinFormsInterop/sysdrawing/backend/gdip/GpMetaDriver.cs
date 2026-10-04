@@ -156,8 +156,48 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
                 return true;
             }
+            // Every DriverMeta caller asks for path clipping first (SetupPathClipping @1800deb48).
+            if (SetupPathClipping(dc, vis)) return true;
             dc.SaveDC();
             dc.ExtSelectClipRgn(vis, 1);
+            return true;
+        }
+
+        /// <summary>SetupPathClipping @1800deb48: an application clip that is one path, with no
+        /// container clip, is that path (and the surface's bounds when the path goes past them);
+        /// anything else is the visible region's outline (GpPath::GpPath(DpRegion*)) as a path.</summary>
+        bool SetupPathClipping(GpEmfDc dc, DpRegion vis)
+        {
+            GpRegion app = _state.Clip;
+            PathToGdi cp;
+            if (app != null && app.IsLeaf && _state.ContainerClip == null)
+            {
+                RectangleF mb = MetafileDeviceBounds();
+                int left = (int)mb.Left, top = (int)mb.Top, right = (int)mb.Right, bottom = (int)mb.Bottom;
+                if (app.Type != GpRegion.NodePath)
+                {
+                    Rectangle b = vis.IsEmpty ? Rectangle.Empty : vis.Bounds;
+                    Rectangle r = Rectangle.Intersect(b, Rectangle.FromLTRB(left, top, right, bottom));
+                    dc.SaveDC();
+                    dc.IntersectClipRect(r.Left, r.Top, r.Right, r.Bottom);
+                    return true;
+                }
+                var path = new GpPath(app.Points, app.Types, app.Fill);
+                cp = new PathToGdi(path, GpMatrix.CreateIdentity(), 0x10, null);
+                if (!cp.Valid) return false;
+                dc.SaveDC();
+                cp.AndClip(dc, null);
+                Rectangle pb = vis.IsEmpty ? Rectangle.Empty : vis.Bounds;
+                if (pb.Left < left || right < pb.Right || pb.Top < top || bottom < pb.Bottom)
+                    dc.IntersectClipRect(left, top, right, bottom);
+                return true;
+            }
+            GpPath outline = GpRegionToPath.Convert(vis);
+            if (outline == null) return false;
+            cp = new PathToGdi(new GpPath(outline.PointArray(), outline.TypeArray(), System.Drawing.Drawing2D.FillMode.Alternate), GpMatrix.CreateIdentity(), 0x10, null);
+            if (!cp.Valid) return false;
+            dc.SaveDC();
+            cp.AndClip(dc, null);
             return true;
         }
 

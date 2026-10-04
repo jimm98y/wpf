@@ -14,7 +14,7 @@
 //   ConvertBitmapToGdi @1800d76d8  the pixels to a DIB: alpha that does not vary by more than 3 is
 //       one level (none at all from 0xfc up; nothing drawn below 4), anything else a 1bpp mask dithered
 //       against HT_16x16; the colours palettized in the order they appear (black and white first,
-//       PaletteSorter) into 1, 4 or 8 bits, or kept 24-bit past 256
+//       PaletteSorter) into 1, 4 or 8 bits, or past 256 dithered to 16bpp RGB555
 //   ConvertBitmapToGdi::StretchBlt @1800d9e60  HALFTONE twice; a mask as SRCPAINT then the colours
 //       SRCAND, a single level as SRCINVERT / mask PatBlt (DPa) / SRCINVERT, either between GDI+'s
 //       "TNPP" 0x106 / 0x107 comments (SetSrcCopyOnly @1802242d8); an opaque bitmap SRCCOPY
@@ -107,17 +107,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 Mask = mask;
                 if (!fits)
                 {
-                    Bpp = 24;
-                    int stride24 = (w * 3 + 3) & ~3;
-                    Bits = new byte[stride24 * h];
-                    for (int r = 0; r < h; r++)
-                        for (int c = 0; c < w; c++)
-                        {
-                            uint v = rgb[r * w + c];
-                            Bits[r * stride24 + c * 3] = (byte)(v >> 16);
-                            Bits[r * stride24 + c * 3 + 1] = (byte)(v >> 8);
-                            Bits[r * stride24 + c * 3 + 2] = (byte)v;
-                        }
+                    // Past 256 colours, with flag 8 (every DriverMeta caller passes 0x108): the 24-bit
+                    // DIB made a GpBitmap and ConvertTo16BppAndFlip @18007e9f0 draws it upside down
+                    // into a 16bpp RGB555 bitmap (SourceCopy, nearest neighbour, half-pixel offset),
+                    // which GDI+ dithers (Dither_sRGB_555); its top-down rows are the bottom-up DIB.
+                    Bpp = 16;
+                    Bits = To16BppAndFlip(rgb, w, h);
                     Palette = new uint[0];
                 }
                 else
@@ -158,6 +153,47 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     Palette = pal.ToArray();
                 }
                 Valid = true;
+            }
+
+            /// <summary>ConvertTo16BppAndFlip @18007e9f0: <paramref name="rgb"/> is the bottom-up DIB's
+            /// COLORREFs; the result is the 16bpp RGB555 rows, bottom row first.</summary>
+            static byte[] To16BppAndFlip(uint[] rgb, int w, int h)
+            {
+                using var src = new Bitmap(w, h, PixelFormat.Format24bppRgb);
+                BitmapData sd = src.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format24bppRgb);
+                try
+                {
+                    var row = new byte[sd.Stride];
+                    for (int y = 0; y < h; y++)
+                    {
+                        int r = h - 1 - y;      // the DIB is bottom-up: image row y is DIB row h-1-y
+                        for (int c = 0; c < w; c++)
+                        {
+                            uint v = rgb[r * w + c];
+                            row[c * 3] = (byte)(v >> 16); row[c * 3 + 1] = (byte)(v >> 8); row[c * 3 + 2] = (byte)v;
+                        }
+                        System.Runtime.InteropServices.Marshal.Copy(row, 0, sd.Scan0 + y * sd.Stride, sd.Stride);
+                    }
+                }
+                finally { src.UnlockBits(sd); }
+                using var dst = new Bitmap(w, h, PixelFormat.Format16bppRgb555);
+                using (Graphics g = Graphics.FromImage(dst))
+                {
+                    g.CompositingMode = CompositingMode.SourceCopy;
+                    g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.DrawImage(src, new RectangleF(0, h, w, -h), new RectangleF(0, 0, w, h), GraphicsUnit.Pixel);
+                }
+                int stride = (w * 2 + 3) & ~3;
+                var bits = new byte[stride * h];
+                BitmapData dd = dst.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format16bppRgb555);
+                try
+                {
+                    for (int y = 0; y < h; y++)
+                        System.Runtime.InteropServices.Marshal.Copy(dd.Scan0 + y * dd.Stride, bits, y * stride, w * 2);
+                }
+                finally { dst.UnlockBits(dd); }
+                return bits;
             }
 
             public byte[] Bmi(bool mask)
@@ -253,6 +289,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
         bool BrushFillUsingBitmap(Rectangle rect, Brush brush, PathToGdi clip)
         {
             if (rect.Width <= 0 || rect.Height <= 0) return false;
+            if (brush is LinearGradientBrush lg)
+            {
+                int special = SpecialGradientType(lg);
+                if (special == 1 || special == 2) return GradientBands(rect, lg, special == 2, clip);
+            }
             int w = rect.Width, h = rect.Height;
             if (w > 0x200 || h > 0x200)
             {
@@ -303,6 +344,95 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return cb.Valid;
         }
 
+        /// <summary>GpLineGradient::GetSpecialGradientType @18006eca0: the brush's transform through
+        /// world to device; 2 when it neither rotates nor shears (the colour changes along x only),
+        /// 1 when it is a quarter turn (along y only), 3 otherwise.</summary>
+        int SpecialGradientType(LinearGradientBrush lg)
+        {
+            GpMatrix m = GpMatrix.Multiply(lg.Xform, DeviceMatrix);
+            if ((m.Complexity & ~3) == 0) return 2;
+            const float eps = 0.000596046447753906f;
+            if (eps <= Math.Abs(m.M11) || Math.Abs(m.M12) < eps || Math.Abs(m.M21) < eps) return 3;
+            return eps <= Math.Abs(m.M22) ? 3 : 1;
+        }
+
+        /// <summary>DriverMeta::BrushFillUsingBitmap's gradient bands: the brush rendered into one row
+        /// (or column) of the rectangle (CreateBitmapAndFillWithBrush under world to device, the
+        /// context's interpolation and pixel offset), cut into runs whose channels stay within one
+        /// (two past 128 pixels) of the run's first pixel, each run a rectangle filled with a solid
+        /// brush (alpha through the mask brush) under the null pen; the last run takes the last
+        /// pixel's colour.</summary>
+        bool GradientBands(Rectangle rect, LinearGradientBrush brush, bool horizontal, PathToGdi clip)
+        {
+            int w = horizontal ? rect.Width : 1, h = horizontal ? 1 : rect.Height;
+            GpMatrix m = DeviceMatrix;
+            uint[] px;
+            using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.CompositingMode = CompositingMode.SourceCopy;
+                    g.InterpolationMode = (InterpolationMode)_state.Interp;
+                    g.PixelOffsetMode = _state.PixelOffset;
+                    var t = new Matrix(m.M11, m.M12, m.M21, m.M22, m.Dx - rect.X, m.Dy - rect.Y);
+                    if (!t.IsInvertible) return false;
+                    g.Transform = t;
+                    var inv = t.Clone();
+                    inv.Invert();
+                    var corners = new[] { new PointF(0, 0), new PointF(w, 0), new PointF(w, h), new PointF(0, h) };
+                    inv.TransformPoints(corners);
+                    g.FillPolygon(brush, corners);
+                }
+                px = Argb(bmp);
+            }
+            GpEmfDc dc = ContextHdc();
+            bool saved = SetupClipping(dc, rect);
+            if (clip != null)
+            {
+                if (!saved) { dc.SaveDC(); saved = true; }
+                clip.AndClip(dc, null);
+            }
+            GpEmfDc.GdiObject oldPen = dc.SelectObject(GpEmfDc.Stock(8));
+            int n = horizontal ? w : h;
+            int thr = (horizontal ? rect.Width : rect.Height) < 0x81 ? 1 : 2;
+            uint refc = px[0];
+            int start = 0;
+            uint last = 0;
+            for (int i = 1; i <= n; i++)
+            {
+                uint c;
+                if (i == n) c = last;
+                else
+                {
+                    uint p = px[i];
+                    last = p;
+                    bool brk = Diff(p >> 16, refc >> 16) >= thr || Diff(p >> 8, refc >> 8) >= thr
+                        || Diff(p, refc) >= thr || Diff(p >> 24, refc >> 24) >= thr;
+                    if (!brk) continue;
+                    c = refc;
+                    refc = p;
+                }
+                uint a = c >> 24;
+                if (a > 1)
+                {
+                    RectangleF band = horizontal
+                        ? new RectangleF(rect.X + start, rect.Y, i - start, rect.Height)
+                        : new RectangleF(rect.X, rect.Y + start, rect.Width, i - start);
+                    GpEmfDc.GdiObject hb = GpEmfDc.CreateSolidBrush(((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff));
+                    var cr = new RectFToGdi(new[] { band }, GpMatrix.CreateIdentity(), null);
+                    if (a < 0xfe) cr.AlphaFill(dc, hb, SetAlpha(dc, a, false, false));
+                    else cr.Fill(dc, hb, 0xf00021, true);
+                    dc.DeleteObject(hb);
+                }
+                start = i;
+            }
+            dc.SelectObject(oldPen);
+            RestoreClipping(dc, saved);
+            return true;
+
+            static int Diff(uint x, uint y) => Math.Abs((int)(x & 0xff) - (int)(y & 0xff));
+        }
+
         /// <summary>AdjustForMaximumSize @1800d36b0.</summary>
         static void AdjustForMaximumSize(ref int big, ref int small)
         {
@@ -328,16 +458,89 @@ namespace System.Drawing.WebGpuBackend.Gdip
             Rectangle? draw = DrawRect(Finish(l, t, r, b));
             if (!draw.HasValue || TotallyClipped(draw.Value)) return;
             lock (GpMetaDriverState.Lock)
-                DriverDrawImage(draw.Value, bitmap, pts, src);
+            {
+                if ((full.Complexity & ~3) != 0) { DrawImageRotated(draw.Value, bitmap, pts, src, full); return; }
+                DriverDrawImage(draw.Value, bitmap, pts, src, DeviceMatrix);
+            }
+        }
+
+        /// <summary>GpGraphics::DrvDrawImage @180011828 on the metafile driver when the source to device
+        /// matrix rotates or shears: each of the image's axes scaled so that neither of its components
+        /// is more than a device pixel per image pixel, the image drawn under that into a 32bpp ARGB
+        /// bitmap of the result's bounds (+1, rounded; the context's pixel offset, a fresh ImageAttributes
+        /// wrapping TileFlipXY), the clip intersected with the destination parallelogram (recorded as
+        /// EmfPlusSetClipPath, and put back as EmfPlusSetClipRegion), and the bitmap drawn axis-aligned
+        /// over the parallelogram's device bounds under an identity world to device.</summary>
+        void DrawImageRotated(Rectangle draw, Bitmap image, PointF[] pts, RectangleF src, GpMat full)
+        {
+            float a = Math.Max(Math.Abs(full.M11), Math.Abs(full.M12));
+            float f1 = a > 1f ? 1f / a : 1f;
+            a = Math.Max(Math.Abs(full.M21), Math.Abs(full.M22));
+            float f2 = a > 1f ? 1f / a : 1f;
+            var m2 = new GpMat(f1 * full.M11, f1 * full.M12, f2 * full.M21, f2 * full.M22, full.Dx, full.Dy);
+            float l = src.X, t = src.Y, r = src.X + src.Width, b = src.Y + src.Height;
+            m2.TransformBounds(ref l, ref t, ref r, ref b);
+            int w = (int)((r - l) + 1f + 0.5f), h = (int)((b - t) + 1f + 0.5f);
+            float dl = src.X, dt = src.Y, dr = src.X + src.Width, db = src.Y + src.Height;
+            full.TransformBounds(ref dl, ref dt, ref dr, ref db);
+            if (w <= 0 || h <= 0) return;
+            uint[] px;
+            using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.Clear(Color.Transparent);
+                    g.TranslateTransform(-l, -t);
+                    g.MultiplyTransform(new Matrix(m2.M11, m2.M12, m2.M21, m2.M22, m2.Dx, m2.Dy));
+                    g.PixelOffsetMode = _state.PixelOffset;
+                    using var ia = new ImageAttributes();
+                    ia.SetWrapMode(WrapMode.TileFlipXY);
+                    g.DrawImage(image, new[] { new PointF(src.X, src.Y), new PointF(src.Right, src.Y), new PointF(src.X, src.Bottom) }, src, GraphicsUnit.Pixel, ia);
+                }
+                px = Argb(bmp);
+            }
+            // CombineClip(parallelogram, Intersect): a device half pixel back when the pixel offset is half.
+            float ox = 0f, oy = 0f;
+            if (_state.PixelOffset == PixelOffsetMode.HighQuality || _state.PixelOffset == PixelOffsetMode.Half)
+            {
+                ox = -0.5f; oy = -0.5f;
+                GpMatrix inv = DeviceMatrix;
+                if (inv.Complexity != 0 && inv.Invert())
+                {
+                    ox = inv.M11 * -0.5f + inv.M21 * -0.5f;
+                    oy = inv.M12 * -0.5f + inv.M22 * -0.5f;
+                }
+            }
+            var quad = new[]
+            {
+                new PointF(pts[0].X + ox, pts[0].Y + oy), new PointF(pts[1].X + ox, pts[1].Y + oy),
+                new PointF(pts[1].X - pts[0].X + pts[2].X + ox, pts[2].Y - pts[0].Y + pts[1].Y + oy),
+                new PointF(pts[2].X + ox, pts[2].Y + oy),
+            };
+            GpRegion savedClip = _state.Clip?.Clone();
+            using (var clipPath = new GraphicsPath(FillMode.Alternate))
+            {
+                clipPath.AddPolygon(quad);
+                RecordClipPath(clipPath, CombineMode.Intersect);
+                CombineClip(GpRegion.FromPath(clipPath.gp.PointArray(), clipPath.gp.TypeArray(), clipPath.gp.FillMode), CombineMode.Intersect);
+            }
+            var dpts = new[] { new PointF(dl, dt), new PointF(dr, dt), new PointF(dl, db) };
+            DriverDrawImage(draw, px, w, h, dpts, new RectangleF(0, 0, w, h), GpMatrix.CreateIdentity());
+            // SetClip(the saved clip, Replace): the clip GetClip gave back, in world space.
+            using (Region back = savedClip == null ? new Region() : WorldClip(savedClip))
+                RecordClipRegion(back, CombineMode.Replace);
+            _state.Clip = savedClip;
         }
 
         /// <summary>DriverMeta::DrawImage @1800d46b0.</summary>
-        void DriverDrawImage(Rectangle draw, Bitmap image, PointF[] pts, RectangleF src)
+        void DriverDrawImage(Rectangle draw, Bitmap image, PointF[] pts, RectangleF src, GpMatrix w2d)
+            => DriverDrawImage(draw, null, image.Width, image.Height, pts, src, w2d, image);
+
+        void DriverDrawImage(Rectangle draw, uint[] argb, int bw, int bh, PointF[] pts, RectangleF src, GpMatrix w2d, Bitmap image = null)
         {
-            GpMatrix w2d = DeviceMatrix;
             if ((w2d.Complexity & ~3) != 0 || pts[0].X != pts[2].X || pts[0].Y != pts[1].Y)
             {
-                DrawImageAsTexture(draw, image, pts, src);
+                if (image != null) DrawImageAsTexture(draw, image, pts, src);
                 return;
             }
             var p = new int[6];
@@ -348,7 +551,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (sh < 0f) { sy += sh; sh = -sh; (p[1], p[5]) = (p[5], p[1]); }
             int ih = Floor(sh + 0.5f), iw = Floor(sw + 0.5f), iy = Floor(sy + 0.5f), ix = Floor(sx + 0.5f);
             if (iw < 1 || ih < 1) return;
-            var cb = new BitmapToGdi(Argb(image), image.Width, image.Height, new Rectangle(ix, iy, iw, ih));
+            var cb = new BitmapToGdi(argb ?? Argb(image), bw, bh, new Rectangle(ix, iy, iw, ih));
             if (!cb.Valid || cb.Nothing) return;
             int minx = Math.Min(p[0], p[2]), maxx = Math.Max(p[0], p[2]);
             int miny = Math.Min(p[1], p[5]), maxy = Math.Max(p[1], p[5]);

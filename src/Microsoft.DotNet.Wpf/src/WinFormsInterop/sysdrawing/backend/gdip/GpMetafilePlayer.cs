@@ -288,6 +288,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
             public void End()
             {
+                // Draw32BppDib: what GDI played into the DIB, onto the destination.
+                try { if (!_aborted) GdiPlayer?.Finish(); } catch (ArgumentException) { }
                 if (_saved != null)
                 {
                     try { Target.Restore(_saved); } catch (ArgumentException) { }
