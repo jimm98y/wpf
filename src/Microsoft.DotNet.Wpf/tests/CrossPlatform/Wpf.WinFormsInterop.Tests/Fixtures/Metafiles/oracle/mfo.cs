@@ -103,6 +103,26 @@ static class Program
         return s.ToString();
     }
 
+    [DllImport("gdi32.dll")] static extern IntPtr CreateSolidBrush(int c);
+    [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
+    [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr h);
+    [DllImport("gdi32.dll")] static extern bool Rectangle(IntPtr hdc, int l, int t, int r, int b);
+
+    /// <summary>The GetHdc scenario MetafileTests replays: GDI+ drawing, GDI drawing on the
+    /// recording's HDC, GDI+ drawing again.</summary>
+    public static void GetHdcScenario(Graphics g)
+    {
+        g.FillRectangle(Brushes.Red, 10, 10, 30, 20);
+        IntPtr hdc = g.GetHdc();
+        IntPtr b = CreateSolidBrush(0xff0000);
+        IntPtr old = SelectObject(hdc, b);
+        Rectangle(hdc, 20, 20, 60, 50);
+        SelectObject(hdc, old);
+        DeleteObject(b);
+        g.ReleaseHdc(hdc);
+        g.FillRectangle(Brushes.Green, 40, 5, 20, 20);
+    }
+
     [DllImport("gdi32.dll")] static extern int GetDeviceCaps(IntPtr hdc, int i);
     [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
 
@@ -254,6 +274,23 @@ static class Program
                     Console.WriteLine(t + " " + ((int)t).ToString("x") + " f=" + flags.ToString("x") + " n=" + size + " " + Hex(buf, 0, Math.Min(size, 96)));
                     return true;
                 }));
+            }
+            return 0;
+        }
+        if (cmd == "gethdc")
+        {
+            // gethdc <EmfOnly|EmfPlusDual> <out.emf> : GDI drawing through a recording's GetHdc
+            var type = (EmfType)Enum.Parse(typeof(EmfType), a[1]);
+            using (var screen = Graphics.FromHwnd(IntPtr.Zero))
+            {
+                IntPtr refDc = screen.GetHdc();
+                var ms = new MemoryStream();
+                using (var mf = new Metafile(ms, refDc, type))
+                {
+                    using (var g = Graphics.FromImage(mf)) GetHdcScenario(g);
+                }
+                screen.ReleaseHdc(refDc);
+                File.WriteAllBytes(a[2], ms.ToArray());
             }
             return 0;
         }

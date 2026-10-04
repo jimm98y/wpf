@@ -66,6 +66,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return GetMetaFileBitsEx(hmf, n, b) == n ? b : null;
         }
 
+        [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateEnhMetaFileW(IntPtr hdcRef, string file, IntPtr rect, string desc);
+        [DllImport("gdi32.dll")] static extern IntPtr CloseEnhMetaFile(IntPtr hdc);
+
+        /// <summary>A GDI EMF DC on the screen, for a caller's GetHdc on a recording: what it draws
+        /// is spliced into the recording when the DC is released.</summary>
+        public static IntPtr CreateEmfDc() => CreateEnhMetaFileW(IntPtr.Zero, null, IntPtr.Zero, null);
+
+        /// <summary>The EMF a CreateEmfDc DC recorded; the DC is gone afterwards.</summary>
+        public static byte[] CloseEmfDc(IntPtr hdc)
+        {
+            IntPtr h = CloseEnhMetaFile(hdc);
+            if (h == IntPtr.Zero) return null;
+            try { return EnhMetaFileBits(h); }
+            finally { DeleteEnhMetaFile(h); }
+        }
+
         public static IntPtr ToHenhmetafile(byte[] emf) => SetEnhMetaFileBits((uint)emf.Length, emf);
         public static IntPtr ToHmetafile(byte[] wmf) => SetMetaFileBitsEx((uint)wmf.Length, wmf);
         public static void DeleteEmf(IntPtr h) { if (h != IntPtr.Zero) DeleteEnhMetaFile(h); }

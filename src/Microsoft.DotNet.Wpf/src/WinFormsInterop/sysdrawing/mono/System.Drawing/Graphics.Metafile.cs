@@ -30,6 +30,18 @@ namespace System.Drawing
 		/// null for any other Graphics.</summary>
 		internal GpMetafileRecorder mf_rec;
 
+		/// <summary>FromHdc of the handle a recording's GetHdc gave out where there is no GDI (off
+		/// Windows): a Graphics drawing into the same recording, which its disposal does not end.</summary>
+		bool mf_borrowed;
+
+		Graphics SharedForMetafileHdc ()
+		{
+			var g = new Graphics (IntPtr.Zero, null);
+			g.mf_rec = mf_rec;
+			g.mf_borrowed = true;
+			return g;
+		}
+
 		/// <summary>GpMetafile::GetGraphicsContext: the recording's one Graphics.</summary>
 		static Graphics ForMetafile (Metafile mf)
 		{

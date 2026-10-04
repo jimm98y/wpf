@@ -1567,26 +1567,38 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         bool _hdcOut;
+        IntPtr _userDc;
 
-        /// <summary>RecordGetDC: the EmfPlusGetDC record, and the comment flushed so the GDI drawing a
-        /// caller does next lands after it. An HDC into the recording exists only on Windows'
-        /// GDI EMF DC, which this recorder does not have: GDI+ hands one out, this cannot.</summary>
+        /// <summary>GpGraphics::GetHdc @180015e18 on a metafile: the HDC's saved level put back, then
+        /// RecordGetDC (the EmfPlusGetDC record, the comment flushed so the GDI drawing a caller does
+        /// next lands after it), and the metafile's own HDC handed out. On Windows that is a GDI EMF DC on
+        /// the screen whose records ReleaseHdc splices into this recording; elsewhere there is no GDI
+        /// and the handle is zero (Graphics makes it one FromHdc maps back to the recording).</summary>
         public IntPtr GetHdc()
         {
             CheckOpen();
             if (_hdcOut) throw new InvalidOperationException("Object is currently in use elsewhere.");
+            lock (GpMetaDriverState.Lock) ResetHdc();
             if (HasStream)
             {
                 WriteRecordHeader(0, 0x4004, 0, null);
                 _comment.Flush();
             }
             _hdcOut = true;
-            throw new PlatformNotSupportedException("A managed metafile recording has no GDI device context.");
+            if (OperatingSystem.IsWindows())
+                _userDc = GpWindowsMetafile.CreateEmfDc();
+            return _userDc;
         }
 
         public void ReleaseHdc()
         {
+            if (!_hdcOut) return;
             _hdcOut = false;
+            if (_userDc == IntPtr.Zero || !OperatingSystem.IsWindows()) return;
+            byte[] emf = GpWindowsMetafile.CloseEmfDc(_userDc);
+            _userDc = IntPtr.Zero;
+            if (emf != null)
+                lock (GpMetaDriverState.Lock) Dc.Splice(emf);
         }
 
         // ---- the end: MetafileRecorder::EndRecording ---------------------------------------------------

@@ -899,11 +899,17 @@ namespace System.Drawing
 		public void Dispose ()
 		{
 			if (disposed) return;
-			if (mf_rec != null) {
+			if (mf_rec != null && mf_borrowed) {
+				mf_rec = null;
+			} else if (mf_rec != null) {
 				// GpGraphics::~GpGraphics on a metafile: the recording ends (EndRecording).
 				GpMetafileRecorder rec = mf_rec;
 				mf_rec = null;
-				if (deviceContextHdc != IntPtr.Zero) { rec.ReleaseHdc (); deviceContextHdc = IntPtr.Zero; }
+				if (deviceContextHdc != IntPtr.Zero) {
+					rec.ReleaseHdc ();
+					lock (s_pseudoHdc) s_pseudoHdc.Remove (deviceContextHdc);
+					deviceContextHdc = IntPtr.Zero;
+				}
 				rec.End ();
 			}
 			if (deviceContextHdc != IntPtr.Zero) {
@@ -3120,8 +3126,15 @@ namespace System.Drawing
 			if (deviceContextHdc != IntPtr.Zero)
 				throw new InvalidOperationException ("Object is currently in use elsewhere.");
 			if (mf_rec != null) {
-				// GpGraphics::GetHdc on a metafile: the recording's own DC, after an EmfPlusGetDC.
+				// GpGraphics::GetHdc on a metafile: the recording's own DC, after an EmfPlusGetDC. Where
+				// there is no GDI the handle is this Graphics' own: FromHdc of it draws into the recording.
 				deviceContextHdc = mf_rec.GetHdc ();
+				if (deviceContextHdc == IntPtr.Zero) {
+					lock (s_pseudoHdc) {
+						deviceContextHdc = (IntPtr) (++s_pseudoNext);
+						s_pseudoHdc [deviceContextHdc] = this;
+					}
+				}
 				return deviceContextHdc;
 			}
 			if (hdc_surface != null) {
@@ -3162,6 +3175,7 @@ namespace System.Drawing
 		/// <summary>FromHdc of a handle this Graphics gave out: a Graphics on the same target.</summary>
 		Graphics SharedForHdc ()
 		{
+			if (mf_rec != null) return SharedForMetafileHdc ();
 			if (image_target != null) {
 				Graphics g = FromImage (image_target);
 				return g;
@@ -3510,6 +3524,7 @@ namespace System.Drawing
 				throw new ArgumentException ("Parameter is not valid.");
 			if (mf_rec != null) {
 				mf_rec.ReleaseHdc ();
+				lock (s_pseudoHdc) s_pseudoHdc.Remove (deviceContextHdc);
 				deviceContextHdc = IntPtr.Zero;
 				return;
 			}

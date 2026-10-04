@@ -754,7 +754,120 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return true;
         }
 
-        /// <summary>A record written as it stands (GDI drawing spliced in from a caller's HDC).</summary>
-        public void Raw(byte[] record) => _w.AddRaw(record);
+        // ---- GDI drawing a caller did on the metafile's HDC -----------------------------------------
+
+        /// <summary>The records of an EMF a caller drew into through GetHdc, as if drawn on this DC:
+        /// its objects take slots in this file's table, its bounds join the header's, and the state
+        /// it leaves (mode, origins, ROP2, clip, save levels) is this DC's from then on.</summary>
+        public void Splice(byte[] emf)
+        {
+            var map = new Dictionary<int, int>();
+            int o = 0;
+            while (o + 8 <= emf.Length)
+            {
+                int type = Le.I32(emf, o), size = Le.I32(emf, o + 4);
+                if (size < 8 || o + size > emf.Length) break;
+                if (type == 1)
+                {
+                    int l = Le.I32(emf, o + 8), t = Le.I32(emf, o + 12), r = Le.I32(emf, o + 16), b = Le.I32(emf, o + 20);
+                    if (r >= l && b >= t) _w.AddBounds(l, t, r, b);
+                    o += size;
+                    continue;
+                }
+                if (type == 14) break;
+                var rec = new byte[size];
+                Buffer.BlockCopy(emf, o, rec, 0, size);
+                Remap(rec, type, map);
+                Track(rec, type);
+                _w.AddRaw(rec);
+                o += size;
+            }
+        }
+
+        // Where a record names an object: (offset of the index, whether it creates or deletes one).
+        static int HandleOffset(int type, out int kind)
+        {
+            kind = 0;
+            switch (type)
+            {
+                case 38: case 39: case 49: case 82: case 93: case 94: case 95: case 99: case 122: kind = 1; return 8;
+                case 40: case 101: kind = 2; return 8;
+                case 37: case 48: case 50: case 51: case 100: return 8;
+                case 71: return 28;     // FILLRGN ihBrush
+                case 72: return 28;     // FRAMERGN ihBrush
+                default: return -1;
+            }
+        }
+
+        void Remap(byte[] rec, int type, Dictionary<int, int> map)
+        {
+            int at = HandleOffset(type, out int kind);
+            if (at < 0 || at + 4 > rec.Length) return;
+            int h = Le.I32(rec, at);
+            if ((h & unchecked((int)0x80000000)) != 0) return;
+            if (kind == 1)
+            {
+                int slot = AllocSlot();
+                _w.UseHandle(slot);
+                map[h] = slot;
+                Le.W32(rec, at, slot);
+                return;
+            }
+            if (!map.TryGetValue(h, out int mine)) return;
+            Le.W32(rec, at, mine);
+            if (kind == 2)
+            {
+                _slots[mine] = false;
+                _free.Add(mine);
+                map.Remove(h);
+            }
+        }
+
+        void Track(byte[] rec, int type)
+        {
+            switch (type)
+            {
+                case 33: _saved.Add(_s.Clone()); break;
+                case 34:
+                {
+                    int rel = Le.I32(rec, 8);
+                    int target = rel < 0 ? _saved.Count + rel : rel - 1;
+                    if (target >= 0 && target < _saved.Count) { _s = _saved[target]; _saved.RemoveRange(target, _saved.Count - target); }
+                    break;
+                }
+                case 17: _s.MapMode = Le.I32(rec, 8); break;
+                case 12: _s.VpOrgX = Le.I32(rec, 8); _s.VpOrgY = Le.I32(rec, 12); break;
+                case 10: _s.WinOrgX = Le.I32(rec, 8); _s.WinOrgY = Le.I32(rec, 12); break;
+                case 20: _s.Rop2 = Le.I32(rec, 8); break;
+                case 19: _s.PolyFill = Le.I32(rec, 8); break;
+                case 24: _s.TextColor = (uint)Le.I32(rec, 8); break;
+                case 25: _s.BkColor = (uint)Le.I32(rec, 8); break;
+                case 18: _s.BkMode = Le.I32(rec, 8); break;
+                case 75:
+                {
+                    int cb = Le.I32(rec, 8), mode = Le.I32(rec, 12);
+                    if (cb == 0) { if (mode == 5) _s.Clip = null; }
+                    else
+                    {
+                        int n = Le.I32(rec, 16 + 8);
+                        var r = new DpRegion();
+                        DpRegion acc = null;
+                        for (int i = 0; i < n; i++)
+                        {
+                            int p = 16 + 32 + i * 16;
+                            var q = DpRegion.FromRect(Le.I32(rec, p), Le.I32(rec, p + 4), Le.I32(rec, p + 8) - Le.I32(rec, p), Le.I32(rec, p + 12) - Le.I32(rec, p + 4));
+                            acc = acc == null ? q : DpRegion.Combine(acc, q, DpRegion.Op.Or);
+                        }
+                        CombineClip(acc ?? r, mode);
+                    }
+                    break;
+                }
+                case 30:
+                    _s.Clip = _s.Clip == null
+                        ? DpRegion.FromRect(Le.I32(rec, 8), Le.I32(rec, 12), Le.I32(rec, 16) - Le.I32(rec, 8), Le.I32(rec, 20) - Le.I32(rec, 12))
+                        : DpRegion.Combine(_s.Clip, DpRegion.FromRect(Le.I32(rec, 8), Le.I32(rec, 12), Le.I32(rec, 16) - Le.I32(rec, 8), Le.I32(rec, 20) - Le.I32(rec, 12)), DpRegion.Op.And);
+                    break;
+            }
+        }
     }
 }
