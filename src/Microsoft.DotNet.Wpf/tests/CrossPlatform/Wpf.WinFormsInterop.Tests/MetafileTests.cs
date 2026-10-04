@@ -446,19 +446,14 @@ namespace Wpf.WinFormsInterop.Tests
         static string RecordTypes(byte[] emf) => string.Join(",", GpMetafileEdit.Records(emf).Select(r => r.Type));
 
         /// <summary>The scenarios whose every down-level record is GDI+'s, byte for byte. Not yet:
-        /// images (a rotated image: GDI+ renders the parallelogram at its own resolution through a
-        /// path clip) and text.</summary>
+        /// text (DrawString / DrawDriverString record nothing down-level).</summary>
         public static TheoryData<string> GdiExactScenarios()
         {
             var d = new TheoryData<string>();
             foreach (string name in MetafileScenarios.All().Keys)
-                if (name != "images" && name != "text") d.Add(name);
+                if (name != "text") d.Add(name);
             return d;
         }
-
-        // The EMF+ half of these dual files is held elsewhere (Recorded_EmfPlus_records_are_GdiPlus_bytes):
-        // their images' PNG streams and gradient objects are not GDI+'s bytes yet.
-        static readonly HashSet<string> DualEmfPlusPending = new HashSet<string> { "brushes", "imageunits" };
 
         [Theory]
         [MemberData(nameof(GdiExactScenarios))]
@@ -472,9 +467,6 @@ namespace Wpf.WinFormsInterop.Tests
         [MemberData(nameof(GdiExactScenarios))]
         public void EmfPlusDual_records_are_GdiPlus_bytes(string scenario)
         {
-            // pens: the closing no-op PatBlt spans the EMF+ bounds, and GDI+ bounds a custom line cap
-            // tighter than GpMetafileRecorder.CustomCapRadius does.
-            if (scenario == "pens" || DualEmfPlusPending.Contains(scenario)) return;
             string diff = GdiDiff(RecordDownLevel(scenario, EmfType.EmfPlusDual), File.ReadAllBytes(Path.Combine(Dir, "dual", scenario + ".emf")));
             Assert.True(diff.Length == 0, diff);
         }
@@ -509,11 +501,8 @@ namespace Wpf.WinFormsInterop.Tests
             return d;
         }
 
-        // Not yet: GDI's HALFTONE stretching of masked bitmaps (images, imageunits, brushes: GpGdiPlayer
-        // plays the SRCPAINT/SRCAND pair as its outcome, interpolated as GDI+ interpolates), text (the
-        // EMF has no ExtTextOut yet), and the dual pens file, whose frame differs by the EMF+ bounds of a
-        // custom line cap.
-        static readonly HashSet<string> PlaybackPending = new HashSet<string> { "images", "imageunits", "brushes", "text", "pens" };
+        // Not yet: text (the EMF has no ExtTextOut yet).
+        static readonly HashSet<string> PlaybackPending = new HashSet<string> { "text" };
 
         [Theory]
         [MemberData(nameof(PlaybackScenarios))]

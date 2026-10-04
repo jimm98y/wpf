@@ -38,7 +38,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
     internal sealed partial class GpGdiPlayer : IDisposable
     {
         readonly GpMetafilePlayer.Session _s;
-        readonly Graphics _t;
+        Graphics _t;
 
         abstract class GdiObj : IDisposable { public virtual void Dispose() { } }
 
@@ -125,6 +125,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         public void Dispose()
         {
+            if (_canvas != null) { _t.Dispose(); _t = _target; _canvas.Dispose(); _canvas = null; }
             foreach (var o in _objects) o?.Dispose();
             _dc.Clip?.Dispose();
             _path?.Dispose();
@@ -170,11 +171,33 @@ namespace System.Drawing.WebGpuBackend.Gdip
             // The frame onto the destination (PlayEnhMetaFile maps rclFrame onto the rectangle it is
             // given); the destination here is the unit square of the playback's world.
             RectangleF dst = _s.EmfDest;
+            GpMat toDevice = _s.EmfWorldToDevice;
+            // GpGraphics::EnumEmf: GDI plays the picture into a DIB of the destination's device size.
+            if (StartCanvas(DestCorners(dst)))
+            {
+                // MetafilePlayer::EnumerateEmfRecords hands PlayEnhMetaFile (0, 0, w - 1, h - 1): the
+                // frame spans the rectangle's extents.
+                dst = new RectangleF(0, 0, _cw - 1, _ch - 1);
+                toDevice = GpMat.Identity;
+            }
             double kx = 100.0 * _mmCx / _devCx, ky = 100.0 * _mmCy / _devCy;
             double fw = fr - fl, fh = fb - ft;
             double sx = fw != 0 ? dst.Width / fw : 1, sy = fh != 0 ? dst.Height / fh : 1;
+            if (Canvas)
+            {
+                // An empty frame: a reference pixel spans the whole DIB.
+                if (fw == 0) sx = dst.Width / kx;
+                if (fh == 0) sy = dst.Height / ky;
+            }
             var m = new GpMat((float)(kx * sx), 0, 0, (float)(ky * sy), (float)(dst.X - fl * sx), (float)(dst.Y - ft * sy));
-            _base = GpMat.Multiply(m, _s.EmfWorldToDevice);
+            _base = GpMat.Multiply(m, toDevice);
+        }
+
+        PointF[] DestCorners(RectangleF dst)
+        {
+            var p = new[] { new PointF(dst.X, dst.Y), new PointF(dst.Right, dst.Y), new PointF(dst.X, dst.Bottom) };
+            _s.EmfWorldToDevice.Transform(p);
+            return p;
         }
 
         public void BeginWmf(GpMetafileData d)
@@ -184,9 +207,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
             _dc.MapMode = 8;
             _dc.WinOrg = new Point(Math.Min(p.Left, p.Right), Math.Min(p.Top, p.Bottom));
             _dc.WinExt = new Size(Math.Max(1, Math.Abs(p.Right - p.Left)), Math.Max(1, Math.Abs(p.Bottom - p.Top)));
-            _dc.VpOrg = new Point(GpMetafileFormat.Round(dst.X), GpMetafileFormat.Round(dst.Y));
-            _dc.VpExt = new Size(Math.Max(1, GpMetafileFormat.Round(dst.Width)), Math.Max(1, GpMetafileFormat.Round(dst.Height)));
-            _base = _s.EmfWorldToDevice;
+            if (StartCanvas(DestCorners(dst)))
+            {
+                _dc.VpOrg = new Point(0, 0);
+                _dc.VpExt = new Size(_cw, _ch);
+                _base = GpMat.Identity;
+            }
+            else
+            {
+                _dc.VpOrg = new Point(GpMetafileFormat.Round(dst.X), GpMetafileFormat.Round(dst.Y));
+                _dc.VpExt = new Size(Math.Max(1, GpMetafileFormat.Round(dst.Width)), Math.Max(1, GpMetafileFormat.Round(dst.Height)));
+                _base = _s.EmfWorldToDevice;
+            }
             _objects = new GdiObj[Math.Max(16, (int)Le.U16(d.Wmf, 10))];
         }
 
@@ -259,12 +291,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
             _t.ResetTransform();
             _t.PageUnit = GraphicsUnit.Pixel;
             _t.PageScale = 1f;
-            Region vis = _s.BaseClip?.Clone();
+            Region vis = Canvas ? null : _s.BaseClip?.Clone();
             if (_dc.Clip != null) { if (vis == null) vis = _dc.Clip.Clone(); else vis.Intersect(_dc.Clip); }
             if (_dc.MetaClip != null) { if (vis == null) vis = _dc.MetaClip.Clone(); else vis.Intersect(_dc.MetaClip); }
             if (vis == null) _t.ResetClip(); else { _t.Clip = vis; vis.Dispose(); }
             _t.SmoothingMode = SmoothingMode.None;
-            _t.PixelOffsetMode = PixelOffsetMode.Half;
+            // GDI samples a DIB's pixels where GDI+ does without a pixel offset.
+            _t.PixelOffsetMode = Canvas ? PixelOffsetMode.None : PixelOffsetMode.Half;
             _t.CompositingMode = CompositingMode.SourceOver;
             _t.InterpolationMode = _dc.StretchMode == 4 ? InterpolationMode.HighQualityBilinear : InterpolationMode.NearestNeighbor;
         }
@@ -283,6 +316,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         // ---- raster operations on the target's pixels, as GDI plays them ----------------------------
+        //
+        // (A plain EMF or WMF plays into GDI+'s 32bpp DIB, where GpGdiPlayer.Raster.cs runs each raster
+        // operation on the pixels; what follows is for the GDI records an EMF+ file plays after GetDC.)
         //
         // GDI+'s down-level translucency is three raster operations GDI applies to the target's
         // pixels: PATINVERT the colour, AND (DPa / R2_MASKPEN) a 1bpp dither pattern, PATINVERT again;
@@ -364,7 +400,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         Bitmap pat = b.Mono ? Recolor(b.Pattern, _dc.TextColor, _dc.BkColor) : b.Pattern;
                         var tb = new TextureBrush(pat, WrapMode.Tile);
                         GpMat m = _base;
-                        tb.Transform = new Matrix(m.M11, m.M12, m.M21, m.M22, m.Dx + _dc.BrushOrg.X, m.Dy + _dc.BrushOrg.Y);
+                        // A GDI pattern is device pixels, tiled from the brush origin: never scaled.
+                        tb.Transform = new Matrix(1, 0, 0, 1, MathF.Round(m.Dx) + _dc.BrushOrg.X, MathF.Round(m.Dy) + _dc.BrushOrg.Y);
                         if (!ReferenceEquals(pat, b.Pattern)) pat.Dispose();
                         return tb;
                     }
@@ -433,6 +470,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _path.AddPath(devicePath, false);
                 return;
             }
+            if (fill && RopDraw(g => { using (Brush b = FillBrush()) if (b != null) g.FillPath(b, devicePath); })) fill = false;
+            if (stroke && RopDraw(g => { using (Pen p = StrokePen()) if (p != null) g.DrawPath(p, devicePath); })) stroke = false;
+            if (!fill && !stroke) return;
             Prepare();
             if (fill)
                 using (Brush b = FillBrush())
@@ -444,8 +484,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void Stroke(GraphicsPath devicePath)
         {
-            Prepare();
-            using (Pen p = StrokePen()) if (p != null) _t.DrawPath(p, devicePath);
+            if (!RopDraw(g => { using (Pen p = StrokePen()) if (p != null) g.DrawPath(p, devicePath); }))
+            {
+                Prepare();
+                using (Pen p = StrokePen()) if (p != null) _t.DrawPath(p, devicePath);
+            }
             devicePath.Dispose();
         }
 
@@ -850,8 +893,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             uint ib = r.U32();
             Region rg = RgnData(r, cb);
             if (rg == null) return;
-            Prepare();
-            using (Brush b = BrushAt(ib)) if (b != null) _t.FillRegion(b, rg);
+            if (!RopDraw(g => { using (Brush b = BrushAt(ib)) if (b != null) g.FillRegion(b, rg); }))
+            {
+                Prepare();
+                using (Brush b = BrushAt(ib)) if (b != null) _t.FillRegion(b, rg);
+            }
             rg.Dispose();
         }
 
@@ -861,8 +907,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int cb = r.I32();
             Region rg = RgnData(r, cb);
             if (rg == null) return;
-            Prepare();
-            using (Brush b = FillBrush()) if (b != null) _t.FillRegion(b, rg);
+            if (!RopDraw(g => { using (Brush b = FillBrush()) if (b != null) g.FillRegion(b, rg); }))
+            {
+                Prepare();
+                using (Brush b = FillBrush()) if (b != null) _t.FillRegion(b, rg);
+            }
             rg.Dispose();
         }
 
@@ -1305,6 +1354,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void Blit(Bitmap bm, float xDest, float yDest, float cxDest, float cyDest, RectangleF src, int rop)
         {
             PointF[] d = ToTarget(new[] { new PointF(xDest, yDest), new PointF(xDest + cxDest, yDest), new PointF(xDest, yDest + cyDest) });
+            if (Canvas && RasterBlit(bm, d, src, rop, _dibBlit)) return;
             if (rop == 0x00AA0029) return;                                   // DSTCOPY: nothing
             if (bm == null && rop == 0x005A0049)                             // PATINVERT: cancelled by the next
             {
@@ -1497,6 +1547,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             r.Matrix6(); r.I32(); r.I32();
             int offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
             Bitmap bm = cbBmi > 0 ? Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits) : null;
+            _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
             Blit(bm, xd, yd, cx, cy, new RectangleF(xs, ys, cx, cy), rop);
             bm?.Dispose();
         }
@@ -1510,9 +1561,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
             int cxs = r.I32(), cys = r.I32();
             Bitmap bm = cbBmi > 0 ? Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits) : null;
+            _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
             Blit(bm, xd, yd, cx, cy, new RectangleF(xs, ys, cxs, cys), rop);
             bm?.Dispose();
         }
+
+        bool _dibBlit;
+
+        static int BitCount(byte[] b, int rec, int offBmi, int cbBmi)
+            => cbBmi >= 16 && rec + offBmi + 16 <= b.Length ? Le.U16(b, rec + offBmi + 14) : 0;
 
         void StretchDIBits(GpReader r, byte[] b, int o)
         {
@@ -1522,9 +1579,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
             r.I32();
             int rop = r.I32(), cxd = r.I32(), cyd = r.I32();
             Bitmap bm = Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits);
-            if (bm == null) { Blit(null, xd, yd, cxd, cyd, RectangleF.Empty, rop); return; }
-            // The source counts rows from the DIB's bottom.
-            Blit(bm, xd, yd, cxd, cyd, new RectangleF(xs, bm.Height - ys - cys, cxs, cys), rop);
+            _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
+            _dibBlit = true;
+            try
+            {
+                if (bm == null) { Blit(null, xd, yd, cxd, cyd, RectangleF.Empty, rop); return; }
+                // The source counts rows from the DIB's bottom.
+                Blit(bm, xd, yd, cxd, cyd, new RectangleF(xs, bm.Height - ys - cys, cxs, cys), rop);
+            }
+            finally { _dibBlit = false; }
             bm.Dispose();
         }
 
@@ -1535,6 +1598,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
             Bitmap bm = Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits);
             if (bm == null) return;
+            _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
             Blit(bm, xd, yd, cx, cy, new RectangleF(xs, bm.Height - ys - cy, cx, cy), 0x00CC0020);
             bm.Dispose();
         }
