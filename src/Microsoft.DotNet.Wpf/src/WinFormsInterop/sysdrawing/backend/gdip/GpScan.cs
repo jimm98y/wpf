@@ -109,7 +109,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (_sourceCopy) {
                     for (int i = 0; i < n; i++) {
                         uint c = s [i];
-                        if (_format == PixelFormat.Format32bppRgb) c |= 0xff000000u;
+                        // 32RGB is blended as ARGB with no conversion back (BuildPipeline 0x22009): the alpha is stored.
                         Put32 (bits, row + (x + i) * 4, c);
                     }
                 } else {

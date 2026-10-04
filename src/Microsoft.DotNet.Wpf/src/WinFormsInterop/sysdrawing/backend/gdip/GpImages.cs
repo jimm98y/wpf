@@ -477,8 +477,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             src = new RectangleF (x0, y0 - (float) r0, w, h);
             GdipFrame f = bmp;
-            if (ia?.Recolor != null && ia.Recolor.HasRecoloring (ColorAdjustType.Bitmap))
+            if (ia?.Recolor != null && ia.Recolor.HasRecoloring (ColorAdjustType.Bitmap)) {
+                ia.Recolor.Flush ();
                 f = ia.Recolor.Apply (bmp, ColorAdjustType.Bitmap);
+            }
             int n = Math.Max (0, r1 - r0);
             var px = new uint [bmp.Width * n];
             if (n > 0) {
