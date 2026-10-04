@@ -509,9 +509,11 @@ namespace Wpf.WinFormsInterop.Tests
             return d;
         }
 
-        // GDI+ plays an EMF's blits through GDI itself: raster operations on the target's pixels,
-        // which GpGdiPlayer does not do yet.
-        static readonly HashSet<string> PlaybackPending = new HashSet<string> { "images", "modes", "fillrect_float", "text", "brushes", "imageunits", "pens" };
+        // Not yet: GDI's HALFTONE stretching of masked bitmaps (images, imageunits, brushes: GpGdiPlayer
+        // plays the SRCPAINT/SRCAND pair as its outcome, interpolated as GDI+ interpolates), text (the
+        // EMF has no ExtTextOut yet), and the dual pens file, whose frame differs by the EMF+ bounds of a
+        // custom line cap.
+        static readonly HashSet<string> PlaybackPending = new HashSet<string> { "images", "imageunits", "brushes", "text", "pens" };
 
         [Theory]
         [MemberData(nameof(PlaybackScenarios))]
