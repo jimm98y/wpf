@@ -1,0 +1,152 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
+//
+// The managed Metafile held to REAL GDI+.
+//
+// Fixtures/Metafiles/plus holds what .NET Framework's System.Drawing (gdiplus.dll) recorded for each
+// scenario of Fixtures/Metafiles/MetafileScenarios.cs into an EmfPlusOnly metafile; the recorder
+// here runs the same scenario (the same source file, compiled against the fork) and its EMF+ records
+// must be the same bytes. Fixtures/Metafiles/samples are GDI-written EMF and WMF files and the
+// headers GDI+ derives from them. Fixtures/Metafiles/oracle has the programs that wrote both.
+//
+
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Drawing.Text;
+using System.Drawing.WebGpuBackend.Gdip;
+using System.IO;
+using System.Linq;
+using System.Text;
+using MetafileOracle;
+using Xunit;
+
+namespace Wpf.WinFormsInterop.Tests
+{
+    /// <summary>The recorder's API as the scenarios call it, with the save ids a Graphics would hand out.</summary>
+    internal sealed class RecorderRec : IRec
+    {
+        private readonly GpMetafileRecorder _r;
+        private uint _next = 1;
+        public RecorderRec(GpMetafileRecorder r) { _r = r; }
+        public void Clear(Color c) => _r.Clear(c);
+        public void FillRects(Brush b, RectangleF[] r) => _r.FillRects(b, r);
+        public void DrawRects(Pen p, RectangleF[] r) => _r.DrawRects(p, r);
+        public void FillPolygon(Brush b, PointF[] pts, FillMode mode) => _r.FillPolygon(b, pts, mode);
+        public void DrawLines(Pen p, PointF[] pts, bool closed) => _r.DrawLines(p, pts, closed);
+        public void FillEllipse(Brush b, RectangleF r) => _r.FillEllipse(b, r);
+        public void DrawEllipse(Pen p, RectangleF r) => _r.DrawEllipse(p, r);
+        public void FillPie(Brush b, RectangleF r, float s, float w) => _r.FillPie(b, r, s, w);
+        public void DrawPie(Pen p, RectangleF r, float s, float w) => _r.DrawPie(p, r, s, w);
+        public void DrawArc(Pen p, RectangleF r, float s, float w) => _r.DrawArc(p, r, s, w);
+        public void FillPath(Brush b, GraphicsPath path) => _r.FillPath(b, path);
+        public void DrawPath(Pen p, GraphicsPath path) => _r.DrawPath(p, path);
+        public void FillClosedCurve(Brush b, PointF[] pts, float t, FillMode m) => _r.FillClosedCurve(b, pts, t, m);
+        public void DrawClosedCurve(Pen p, PointF[] pts, float t) => _r.DrawClosedCurve(p, pts, t);
+        public void DrawCurve(Pen p, PointF[] pts, int o, int n, float t) => _r.DrawCurve(p, pts, o, n, t);
+        public void DrawBeziers(Pen p, PointF[] pts) => _r.DrawBeziers(p, pts);
+        public void FillRegion(Brush b, Region r) => _r.FillRegion(b, r);
+        public void DrawImage(Image img, RectangleF d, RectangleF s, GraphicsUnit u, ImageAttributes? ia) => _r.DrawImage(img, d, s, u, ia!);
+        public void DrawImagePoints(Image img, PointF[] d, RectangleF s, GraphicsUnit u, ImageAttributes? ia) => _r.DrawImagePoints(img, d, s, u, ia!);
+        public void DrawString(string s, Font f, RectangleF r, StringFormat? fmt, Brush b) => _r.DrawString(s, f, r, fmt!, b);
+        public void DrawDriverString(ushort[] t, Font f, Brush b, PointF[] pos, int flags, Matrix? m) => _r.DrawDriverString(t, f, b, pos, flags, m!);
+        public void SetWorldTransform(Matrix m) => _r.SetWorldTransform(m);
+        public void ResetWorldTransform() => _r.ResetWorldTransform();
+        public void MultiplyWorldTransform(Matrix m, MatrixOrder o) => _r.MultiplyWorldTransform(m, o);
+        public void TranslateWorldTransform(float dx, float dy, MatrixOrder o) => _r.TranslateWorldTransform(dx, dy, o);
+        public void ScaleWorldTransform(float sx, float sy, MatrixOrder o) => _r.ScaleWorldTransform(sx, sy, o);
+        public void RotateWorldTransform(float a, MatrixOrder o) => _r.RotateWorldTransform(a, o);
+        // Graphics.PageUnit and PageScale each record the page transform as it then stands; the
+        // oracle sets both, unit first.
+        private float _scale = 1f;
+        public void SetPageTransform(GraphicsUnit u, float s) { _r.SetPageTransform(u, _scale); _r.SetPageTransform(u, s); _scale = s; }
+        public void SetClipRect(RectangleF r, CombineMode m) => _r.SetClipRect(r, m);
+        public void SetClipPath(GraphicsPath p, CombineMode m) => _r.SetClipPath(p, m);
+        public void SetClipRegion(Region r, CombineMode m) => _r.SetClipRegion(r, m);
+        public void ResetClip() => _r.ResetClip();
+        public void OffsetClip(float dx, float dy) => _r.OffsetClip(dx, dy);
+        public object Save() { uint id = _next++; _r.Save(id); return id; }
+        public void Restore(object s) => _r.Restore((uint)s);
+        public object BeginContainer(RectangleF d, RectangleF s, GraphicsUnit u) { uint id = _next++; _r.BeginContainer(d, s, u, id); return id; }
+        public object BeginContainerNoParams() { uint id = _next++; _r.BeginContainerNoParams(id); return id; }
+        public void EndContainer(object s) => _r.EndContainer((uint)s);
+        public void SetAntiAliasMode(SmoothingMode m) => _r.SetAntiAliasMode(m);
+        public void SetTextRenderingHint(TextRenderingHint h) => _r.SetTextRenderingHint(h);
+        public void SetTextContrast(int c) => _r.SetTextContrast(c);
+        public void SetInterpolationMode(InterpolationMode m) => _r.SetInterpolationMode(m);
+        public void SetPixelOffsetMode(PixelOffsetMode m) => _r.SetPixelOffsetMode(m);
+        public void SetCompositingMode(CompositingMode m) => _r.SetCompositingMode(m);
+        public void SetCompositingQuality(CompositingQuality q) => _r.SetCompositingQuality(q);
+        public void SetRenderingOrigin(int x, int y) => _r.SetRenderingOrigin(x, y);
+        public void Comment(byte[] data) => _r.Comment(data);
+        public void Flush(FlushIntention f) => _r.Flush(f);
+    }
+
+    public sealed class MetafileTests
+    {
+        private static readonly string Dir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Metafiles");
+
+        public static TheoryData<string> Scenarios()
+        {
+            var d = new TheoryData<string>();
+            foreach (string name in MetafileScenarios.All().Keys) d.Add(name);
+            return d;
+        }
+
+        /// <summary>The EMF+ records of an EMF, in order, with the GDI comment each began in.</summary>
+        internal static List<(int Comment, byte[] Record)> EmfPlusRecords(byte[] emf)
+        {
+            var list = new List<(int, byte[])>();
+            int comment = 0;
+            foreach (var (o, type, size) in GpMetafileEdit.Records(emf))
+            {
+                int p = GpMetafileFormat.EmfPlusPayload(emf, o, out int n);
+                if (p < 0) continue;
+                int q = p;
+                while (q + 12 <= p + n)
+                {
+                    int rs = BitConverter.ToInt32(emf, q + 4);
+                    if (rs < 12 || q + rs > p + n) break;
+                    list.Add((comment, emf.AsSpan(q, rs).ToArray()));
+                    q += rs;
+                }
+                comment++;
+            }
+            return list;
+        }
+
+        internal static byte[] Record(string scenario, EmfType type)
+        {
+            var ms = new MemoryStream();
+            var mf = new Metafile(ms, IntPtr.Zero, type);
+            GpMetafileRecorder r = mf.TakeRecorder();
+            MetafileScenarios.All()[scenario](new RecorderRec(r));
+            r.End();
+            return ms.ToArray();
+        }
+
+        private static string Hex(byte[] b) => Convert.ToHexString(b).ToLowerInvariant();
+
+        [Theory]
+        [MemberData(nameof(Scenarios))]
+        public void Recorded_EmfPlus_records_are_GdiPlus_bytes(string scenario)
+        {
+            byte[] ours = Record(scenario, EmfType.EmfPlusOnly);
+            byte[] theirs = File.ReadAllBytes(Path.Combine(Dir, "plus", scenario + ".emf"));
+            var a = EmfPlusRecords(ours);
+            var b = EmfPlusRecords(theirs);
+            var sb = new StringBuilder();
+            int n = Math.Max(a.Count, b.Count);
+            for (int i = 0; i < n; i++)
+            {
+                string x = i < a.Count ? $"[{a[i].Comment}] {Hex(a[i].Record)}" : "(none)";
+                string y = i < b.Count ? $"[{b[i].Comment}] {Hex(b[i].Record)}" : "(none)";
+                if (x != y) sb.AppendLine($"record {i}:\n  ours   {x}\n  gdi+   {y}");
+            }
+            Assert.True(sb.Length == 0, sb.ToString());
+        }
+    }
+}
