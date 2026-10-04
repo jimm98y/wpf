@@ -298,14 +298,24 @@ namespace System.Drawing
 			if (rect.Width <= 0 || rect.Height <= 0 || rect.X < 0 || rect.Y < 0 || rect.Right > f.Width || rect.Bottom > f.Height
 			    || !GdipPixels.Convertible (format) || !GdipPixels.Convertible (f.Format))
 				throw new OutOfMemoryException ();
-			GdipFrame copy = GdipPixels.Convert (f, rect, format, conversionPalette: !f.IsIndexed || format != f.Format);
-			// GDI+ keeps the source's alpha flag on a clone, whatever the clone's format.
-			return new Bitmap (new GdipImageData (copy) { Flags = GdipImageData.NewFlags (format) | (managed.Flags & (int) ImageFlags.HasAlpha) });
+			// CopyOnWriteBitmap::Clone (0x1801cc578): the rectangle is copied in the bitmap's own
+			// format first, and only that copy is converted (ConvertFormat) when the format differs.
+			GdipFrame part = f;
+			if (format != f.Format && (rect.X * f.BitsPerPixel) % 8 != 0) {
+				part = GdipPixels.Convert (f, rect, f.Format, conversionPalette: false);
+				rect = new Rectangle (0, 0, rect.Width, rect.Height);
+			}
+			GdipFrame copy = GdipPixels.Convert (part, rect, format, conversionPalette: !f.IsIndexed || format != f.Format);
+			// GDI+ keeps the source's alpha flag on a clone, whatever the clone's format -- and an
+			// indexed clone has nothing else: one of an opaque bitmap does not claim alpha.
+			int newFlags = (format & PixelFormat.Indexed) != 0 ? 0 : GdipImageData.NewFlags (format);
+			return new Bitmap (new GdipImageData (copy) { Flags = newFlags | (managed.Flags & (int) ImageFlags.HasAlpha) });
 		}
 
 		public Bitmap Clone (RectangleF rect, PixelFormat format)
 		{
-			return Clone (new Rectangle ((int) rect.X, (int) rect.Y, (int) rect.Width, (int) rect.Height), format);
+			// GdipCloneBitmapArea (0x1800539d0) rounds each of the four, (int)(v + 0.5).
+			return Clone (new Rectangle ((int) (rect.X + 0.5f), (int) (rect.Y + 0.5f), (int) (rect.Width + 0.5f), (int) (rect.Height + 0.5f)), format);
 		}
 
 		public static Bitmap FromHicon (IntPtr hicon)
@@ -389,12 +399,16 @@ namespace System.Drawing
 				state.Buffer = Marshal.AllocHGlobal (state.Stride * rect.Height);
 				var bytes = new byte [state.Stride];
 				var argb = new uint [rect.Width];
-				Color[] palette = (format & PixelFormat.Indexed) != 0 ? (f.IsIndexed ? f.Palette : GdipPixels.DefaultPalette (format, out _)) : null;
-				var cache = new Dictionary<uint, int> ();
+				Color[] palette = GdipPixels.LockPalette (f, format);
+				if ((flags & ImageLockMode.ReadOnly) != 0 && !GdipPixels.PaletteFits (format, palette)) {
+					Marshal.FreeHGlobal (state.Buffer);
+					throw new ArgumentException ("Parameter is not valid.");
+				}
+				var map = palette != null ? new GdipPixels.IndexMap (palette) : null;
 				for (int y = 0; y < rect.Height; y++) {
 					if ((flags & ImageLockMode.ReadOnly) != 0) {
 						GdipPixels.ReadArgb (f, rect.X, rect.Y + y, rect.Width, argb, 0);
-						GdipPixels.WriteArgb (bytes, 0, format, palette, 0, rect.Width, argb, 0, cache);
+						GdipPixels.WriteArgb (bytes, 0, format, palette, 0, rect.Width, argb, 0, map);
 					}
 					Marshal.Copy (bytes, 0, state.Buffer + y * state.Stride, state.Stride);
 				}
@@ -462,12 +476,12 @@ namespace System.Drawing
 					Rectangle rect = state.Rect;
 					var bytes = new byte [state.Stride];
 					var argb = new uint [rect.Width];
-					Color[] palette = (state.Format & PixelFormat.Indexed) != 0 ? (f.IsIndexed ? f.Palette : GdipPixels.DefaultPalette (state.Format, out _)) : null;
-					var cache = new Dictionary<uint, int> ();
+					Color[] palette = GdipPixels.LockPalette (f, state.Format);
+					var map = f.IsIndexed ? new GdipPixels.IndexMap (f.Palette) : null;
 					for (int y = 0; y < rect.Height; y++) {
 						Marshal.Copy (state.Buffer + y * state.Stride, bytes, 0, state.Stride);
 						GdipPixels.ReadArgb (bytes, 0, state.Format, palette, 0, rect.Width, argb, 0);
-						GdipPixels.WriteArgb (f, rect.X, rect.Y + y, rect.Width, argb, 0, cache);
+						GdipPixels.WriteArgb (f, rect.X, rect.Y + y, rect.Width, argb, 0, map);
 					}
 				}
 				Marshal.FreeHGlobal (state.Buffer);

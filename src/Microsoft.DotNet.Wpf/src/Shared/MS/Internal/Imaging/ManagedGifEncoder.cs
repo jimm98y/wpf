@@ -33,10 +33,12 @@ namespace System.Windows.Media.Imaging
         /// <summary>
         /// Writes an indexed picture as it stands: its own palette (up to 256 entries, the table
         /// padded to a power of two) and its indices, one byte per pixel. The first entry whose alpha
-        /// is below the threshold becomes the transparent index. Nothing is quantised, so a palettised
-        /// bitmap round-trips exactly.
+        /// is below <paramref name="transparentBelow"/> (the threshold unless the caller has its own
+        /// rule; System.Drawing passes 1, GDI+'s alpha-exactly-zero) becomes the transparent index.
+        /// Nothing is quantised, so a palettised bitmap round-trips exactly.
         /// </summary>
-        internal static void WriteIndexed(Stream stream, int width, int height, byte[] indices, uint[] palette)
+        internal static void WriteIndexed(Stream stream, int width, int height, byte[] indices, uint[] palette,
+                                          int transparentBelow = AlphaThreshold)
         {
             if (indices == null || width <= 0 || height <= 0 || palette == null || palette.Length == 0)
             {
@@ -51,7 +53,7 @@ namespace System.Windows.Media.Imaging
                 rgb[i * 3] = (byte)(palette[i] >> 16);
                 rgb[i * 3 + 1] = (byte)(palette[i] >> 8);
                 rgb[i * 3 + 2] = (byte)palette[i];
-                if (transparentIndex < 0 && (palette[i] >> 24) < AlphaThreshold) transparentIndex = i;
+                if (transparentIndex < 0 && (palette[i] >> 24) < transparentBelow) transparentIndex = i;
             }
 
             int tableBits = 1;

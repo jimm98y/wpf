@@ -25,8 +25,18 @@ namespace System.Drawing
         internal int Width, Height, Stride;
         internal PixelFormat Format;
         internal byte[] Bits;
-        /// <summary>The palette of an indexed frame (null otherwise).</summary>
-        internal Color[] Palette;
+        /// <summary>The palette of an indexed frame (null otherwise). Setting it makes it the frame's
+        /// OWN palette (see <see cref="PaletteIsDefault"/>).</summary>
+        internal Color[] Palette
+        {
+            get => _palette;
+            set { _palette = value; PaletteIsDefault = false; }
+        }
+        private Color[] _palette;
+        /// <summary>True while an indexed frame has only the palette its format starts with: GDI+
+        /// keeps NO palette for such a bitmap (GpMemoryBitmap+0x68 is null) and a lock or write in
+        /// another indexed format uses that format's default palette instead of this one.</summary>
+        internal bool PaletteIsDefault;
         internal int PaletteFlags;
         internal float DpiX = 96f, DpiY = 96f;
 
@@ -39,7 +49,8 @@ namespace System.Drawing
             Bits = new byte[checked((long)Stride * height)];
             if ((format & PixelFormat.Indexed) != 0)
             {
-                Palette = GdipPixels.DefaultPalette(format, out PaletteFlags);
+                _palette = GdipPixels.DefaultPalette(format, out PaletteFlags);
+                PaletteIsDefault = true;
             }
         }
 
@@ -63,6 +74,7 @@ namespace System.Drawing
                 Bits = (byte[])Bits.Clone(),
                 Palette = Palette == null ? null : (Color[])Palette.Clone(),
                 PaletteFlags = PaletteFlags, DpiX = DpiX, DpiY = DpiY,
+                PaletteIsDefault = PaletteIsDefault,
             };
             return f;
         }
