@@ -36,8 +36,9 @@
 // on any platform, Windows included: its pixels, palette, frames and properties are a GdipImageData
 // (backend/GdipImage.cs), read and written by the codecs WPF uses (shared source, through
 // backend/GdipCodecs.cs, which gives them GDI+'s semantics) and converted with GDI+'s own arithmetic
-// (backend/GdipPixels.cs). Only a Metafile is still a GDI+ object (nativeObject); the members below
-// that serve it are the only ones left that call into GDI+, and only for it.
+// (backend/GdipPixels.cs). A Metafile is managed too: GDI+'s GpMetafile ported (backend/gdip,
+// mono/System.Drawing.Imaging/Metafile.cs), and every member below answers for it what GDI+'s
+// GpMetafile answers.
 //
 
 using System;
@@ -61,15 +62,13 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	public delegate bool GetThumbnailImageAbort();
 	private object tag;
 
-	// A Metafile's GDI+ object. Zero for every other image.
+	// No image has a GDI+ object any more; Graphics.cs at HEAD still names the handle, which is zero.
 	internal IntPtr nativeObject = IntPtr.Zero;
 	// The pixels and everything else a managed image holds (null for a Metafile).
 	internal GdipImageData managed;
 	// The dimensions of an image that is neither (a print preview's page, which is a scene).
 	internal int managedWidth = -1, managedHeight = -1;
 	internal float managedDpiX = 96f, managedDpiY = 96f;
-	// when using MS GDI+ and IStream we must ensure the stream stays alive for all the life of the Image
-	internal Stream stream;
 
 
 	// constructor
@@ -194,25 +193,6 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 		return FromBytes (ReadAll (stream));
 	}
 
-	// For compatiblity with CoreFX sources
-	internal static Image CreateImageObject (IntPtr nativeImage)
-	{
-		return CreateFromHandle (nativeImage);
-	}
-
-	// A GDI+ image object: only a Metafile is one now.
-	internal static Image CreateFromHandle (IntPtr handle)
-	{
-		ImageType type;
-		GDIPlus.CheckStatus (GDIPlus.GdipGetImageType (handle, out type));
-		switch (type) {
-		case ImageType.Metafile:
-			return new Metafile (handle);
-		default:
-			throw new NotSupportedException (Locale.GetText ("Unknown image type."));
-		}
-	}
-
 	public static int GetPixelFormatSize(PixelFormat pixfmt)
 	{
 		return ((int) pixfmt >> 8) & 0xff;
@@ -233,88 +213,21 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 		return ((pixfmt & PixelFormat.Extended) != 0);
 	}
 
-	// A Metafile's stream, handed to GDI+.
-	internal static IntPtr InitFromStream (Stream stream)
-	{
-		if (stream == null)
-			throw new ArgumentException ("stream");
-
-		IntPtr imagePtr;
-		Status st;
-
-		// Seeking required
-		if (!stream.CanSeek) {
-			byte[] buffer = new byte[256];
-			int index = 0;
-			int count;
-
-			do {
-				if (buffer.Length < index + 256) {
-					byte[] newBuffer = new byte[buffer.Length * 2];
-					Array.Copy(buffer, newBuffer, buffer.Length);
-					buffer = newBuffer;
-				}
-				count = stream.Read(buffer, index, 256);
-				index += count;
-			}
-			while (count != 0);
-
-			stream = new MemoryStream(buffer, 0, index);
-		}
-
-		if (GDIPlus.RunningOnUnix ()) {
-			// Unix, with libgdiplus
-			// We use a custom API for this, because there's no easy way
-			// to get the Stream down to libgdiplus.  So, we wrap the stream
-			// with a set of delegates.
-			GDIPlus.GdiPlusStreamHelper sh = new GDIPlus.GdiPlusStreamHelper (stream, true);
-
-			st = GDIPlus.GdipLoadImageFromDelegate_linux (sh.GetHeaderDelegate, sh.GetBytesDelegate,
-				sh.PutBytesDelegate, sh.SeekDelegate, sh.CloseDelegate, sh.SizeDelegate, out imagePtr);
-		} else {
-			st = GDIPlus.GdipLoadImageFromStream (new ComIStreamWrapper (stream), out imagePtr);
-		}
-
-		return st == Status.Ok ? imagePtr : IntPtr.Zero;
-	}
-
 	// non-static
 	public RectangleF GetBounds (ref GraphicsUnit pageUnit)
 	{
-		if (managed != null || nativeObject == IntPtr.Zero) {
-			pageUnit = GraphicsUnit.Pixel;
-			return new RectangleF (0, 0, Width, Height);
-		}
-		RectangleF source;
-
-		Status status = GDIPlus.GdipGetImageBounds (nativeObject, out source, ref pageUnit);
-		GDIPlus.CheckStatus (status);
-
-		return source;
+		if (this is Metafile mf)
+			return mf.MetafileBounds (ref pageUnit);
+		pageUnit = GraphicsUnit.Pixel;
+		return new RectangleF (0, 0, Width, Height);
 	}
 
 	public EncoderParameters GetEncoderParameterList(Guid encoder)
 	{
-		if (managed != null) return ManagedEncoderParameters (encoder);
-		Status status;
-		uint sz;
-
-		status = GDIPlus.GdipGetEncoderParameterListSize (nativeObject, ref encoder, out sz);
-		GDIPlus.CheckStatus (status);
-
-		IntPtr rawEPList = Marshal.AllocHGlobal ((int) sz);
-		EncoderParameters eps;
-
-		try {
-			status = GDIPlus.GdipGetEncoderParameterList (nativeObject, ref encoder, sz, rawEPList);
-			eps = EncoderParameters.ConvertFromMemory (rawEPList);
-			GDIPlus.CheckStatus (status);
-		}
-		finally {
-			Marshal.FreeHGlobal (rawEPList);
-		}
-
-		return eps;
+		// GpMetafile::GetEncoderParameterList asks a 1x1 32bpp bitmap.
+		if (this is Metafile mf)
+			mf.CheckPlayable ();
+		return ManagedEncoderParameters (encoder);
 	}
 
 	// What each managed encoder accepts: JPEG its quality, TIFF its compression, colour depth and
@@ -348,13 +261,11 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 				throw new ArgumentNullException ("dimension");
 			return dimension.Guid == managed.FrameDimension ? managed.FrameCount : 0;
 		}
-		uint count;
-		Guid guid = dimension.Guid;
-
-		Status status = GDIPlus.GdipImageGetFrameCount (nativeObject, ref guid, out count);
-		GDIPlus.CheckStatus (status);
-
-		return (int) count;
+		// GpMetafile::GetFrameCount: one, whatever the dimension.
+		if (dimension == null)
+			throw new NullReferenceException ();
+		((Metafile) this).CheckPlayable ();
+		return 1;
 	}
 
 	static PropertyItem CopyProperty (PropertyItem p)
@@ -367,35 +278,18 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 				if (p.Id == propid) return CopyProperty (p);
 			throw new ArgumentException ("Property cannot be found.");
 		}
-		int propSize;
-		IntPtr property;
-		PropertyItem item = new PropertyItem ();
-		GdipPropertyItem gdipProperty = new GdipPropertyItem ();
-		Status status;
-
-		status = GDIPlus.GdipGetPropertyItemSize (nativeObject, propid,
-									out propSize);
-		GDIPlus.CheckStatus (status);
-
-		/* Get PropertyItem */
-		property = Marshal.AllocHGlobal (propSize);
-		try {
-			status = GDIPlus.GdipGetPropertyItem (nativeObject, propid, propSize, property);
-			GDIPlus.CheckStatus (status);
-			gdipProperty = (GdipPropertyItem) Marshal.PtrToStructure (property,
-								typeof (GdipPropertyItem));
-			GdipPropertyItem.MarshalTo (gdipProperty, item);
-		}
-		finally {
-			Marshal.FreeHGlobal (property);
-		}
-		return item;
+		// A metafile has no property items: GDI+'s GpMetafile answers NotImplemented.
+		((Metafile) this).CheckPlayable ();
+		throw new NotImplementedException ("Not implemented.");
 	}
 
 	public Image GetThumbnailImage (int thumbWidth, int thumbHeight, Image.GetThumbnailImageAbort callback, IntPtr callbackData)
 	{
 		if ((thumbWidth <= 0) || (thumbHeight <= 0))
 			throw new OutOfMemoryException ("Invalid thumbnail size");
+		// GpMetafile::GetThumbnail: the metafile drawn into a bitmap of that size.
+		if (this is Metafile mf)
+			return mf.ToBitmap (thumbWidth, thumbHeight);
 
 		// GDI+ hands a thumbnail back premultiplied, the image drawn scaled into it.
 		Bitmap thumbnail = new Bitmap (thumbWidth, thumbHeight, PixelFormat.Format32bppPArgb);
@@ -414,8 +308,8 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			managed.Properties.RemoveAt (i);
 			return;
 		}
-		Status status = GDIPlus.GdipRemovePropertyItem (nativeObject, propid);
-		GDIPlus.CheckStatus (status);
+		((Metafile) this).CheckPlayable ();
+		throw new NotImplementedException ("Not implemented.");
 	}
 
 	public void RotateFlip (RotateFlipType rotateFlipType)
@@ -425,8 +319,9 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			d.Frame = WebGpuBackend.GdipTransform.RotateFlip (d.Frame, rotateFlipType);
 			return;
 		}
-		Status status = GDIPlus.GdipImageRotateFlip (nativeObject, rotateFlipType);
-		GDIPlus.CheckStatus (status);
+		// GpMetafile::RotateFlip is NotImplemented.
+		((Metafile) this).CheckPlayable ();
+		throw new NotImplementedException ("Not implemented.");
 	}
 
 	internal ImageCodecInfo findEncoderForFormat (ImageFormat format)
@@ -473,18 +368,10 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 				SaveManaged (fs, encoder, encoderParams);
 			return;
 		}
-		Status st;
-		Guid guid = encoder.Clsid;
-
-		if (encoderParams == null) {
-			st = GDIPlus.GdipSaveImageToFile (nativeObject, filename, ref guid, IntPtr.Zero);
-		} else {
-			IntPtr nativeEncoderParams = encoderParams.ConvertToMemory ();
-			st = GDIPlus.GdipSaveImageToFile (nativeObject, filename, ref guid, nativeEncoderParams);
-			Marshal.FreeHGlobal (nativeEncoderParams);
-		}
-
-		GDIPlus.CheckStatus (st);
+		// GpMetafile::SaveToFile: there is no metafile encoder; GDI+ renders the metafile into a
+		// bitmap of its size (GetBitmap) and saves that with the encoder asked for.
+		using (Bitmap b = ((Metafile) this).ToBitmap (0, 0))
+			b.Save (filename, encoder, encoderParams);
 	}
 
 	public void Save (Stream stream, ImageFormat format)
@@ -505,31 +392,9 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			SaveManaged (stream, encoder, encoderParams);
 			return;
 		}
-		Status st;
-		IntPtr nativeEncoderParams;
-		Guid guid = encoder.Clsid;
-
-		if (encoderParams == null)
-			nativeEncoderParams = IntPtr.Zero;
-		else
-			nativeEncoderParams = encoderParams.ConvertToMemory ();
-
-		try {
-			if (GDIPlus.RunningOnUnix ()) {
-				GDIPlus.GdiPlusStreamHelper sh = new GDIPlus.GdiPlusStreamHelper (stream, false);
-				st = GDIPlus.GdipSaveImageToDelegate_linux (nativeObject, sh.GetBytesDelegate, sh.PutBytesDelegate,
-					sh.SeekDelegate, sh.CloseDelegate, sh.SizeDelegate, ref guid, nativeEncoderParams);
-			} else {
-				st = GDIPlus.GdipSaveImageToStream (new HandleRef (this, nativeObject),
-					new ComIStreamWrapper (stream), ref guid, new HandleRef (encoderParams, nativeEncoderParams));
-			}
-		}
-		finally {
-			if (nativeEncoderParams != IntPtr.Zero)
-				Marshal.FreeHGlobal (nativeEncoderParams);
-		}
-
-		GDIPlus.CheckStatus (st);
+		// GpMetafile::SaveToStream, as SaveToFile.
+		using (Bitmap b = ((Metafile) this).ToBitmap (0, 0))
+			b.Save (stream, encoder, encoderParams);
 	}
 
 	// ---- saving, managed: one frame, or a multi-frame TIFF built up by SaveAdd -----------------------
@@ -590,12 +455,9 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			WriteMulti (false);
 			return;
 		}
-		Status st;
-
-		IntPtr nativeEncoderParams = encoderParams.ConvertToMemory ();
-		st = GDIPlus.GdipSaveAdd (nativeObject, nativeEncoderParams);
-		Marshal.FreeHGlobal (nativeEncoderParams);
-		GDIPlus.CheckStatus (st);
+		// GpMetafile::SaveAdd is NotImplemented.
+		((Metafile) this).CheckPlayable ();
+		throw new NotImplementedException ("Not implemented.");
 	}
 
 	public void SaveAdd (Image image, EncoderParameters encoderParams)
@@ -609,12 +471,9 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			WriteMulti (false);
 			return;
 		}
-		Status st;
-
-		IntPtr nativeEncoderParams = encoderParams.ConvertToMemory ();
-		st = GDIPlus.GdipSaveAddImage (nativeObject, image.NativeObject, nativeEncoderParams);
-		Marshal.FreeHGlobal (nativeEncoderParams);
-		GDIPlus.CheckStatus (st);
+		// GpMetafile::SaveAdd is NotImplemented.
+		((Metafile) this).CheckPlayable ();
+		throw new NotImplementedException ("Not implemented.");
 	}
 
 	public int SelectActiveFrame(FrameDimension dimension, int frameIndex)
@@ -632,12 +491,12 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			}
 			return frameIndex;
 		}
-		Guid guid = dimension.Guid;
-		Status st = GDIPlus.GdipImageSelectActiveFrame (nativeObject, ref guid, frameIndex);
-
-		GDIPlus.CheckStatus (st);
-
-		return frameIndex;
+		// GpMetafile::SelectActiveFrame accepts any frame of any dimension; System.Drawing then
+		// answers 0.
+		if (dimension == null)
+			throw new NullReferenceException ();
+		((Metafile) this).CheckPlayable ();
+		return 0;
 	}
 
 	public void SetPropertyItem(PropertyItem propitem)
@@ -652,27 +511,8 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			return;
 		}
 
-		int nItemSize =  Marshal.SizeOf (propitem.Value[0]);
-		int size = nItemSize * propitem.Value.Length;
-		IntPtr dest = Marshal.AllocHGlobal (size);
-		try {
-			GdipPropertyItem pi = new GdipPropertyItem ();
-			pi.id    = propitem.Id;
-			pi.len   = propitem.Len;
-			pi.type  = propitem.Type;
-
-			Marshal.Copy (propitem.Value, 0, dest, size);
-			pi.value = dest;
-
-			unsafe {
-				Status status = GDIPlus.GdipSetPropertyItem (nativeObject, &pi);
-
-				GDIPlus.CheckStatus (status);
-			}
-		}
-		finally {
-			Marshal.FreeHGlobal (dest);
-		}
+		((Metafile) this).CheckPlayable ();
+		throw new NotImplementedException ("Not implemented.");
 	}
 
 	// properties
@@ -680,12 +520,8 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	public int Flags {
 		get {
 			if (managed != null) return managed.Flags;
-			if (nativeObject == IntPtr.Zero) return 0;
-			int flags;
-
-			Status status = GDIPlus.GdipGetImageFlags (nativeObject, out flags);
-			GDIPlus.CheckStatus (status);
-			return flags;
+			if (this is Metafile mf) return mf.MetafileFlags;
+			return 0;
 		}
 	}
 
@@ -693,14 +529,9 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	public Guid[] FrameDimensionsList {
 		get {
 			if (managed != null) return new [] { managed.FrameDimension };
-			if (nativeObject == IntPtr.Zero) return new [] { FrameDimension.Page.Guid };
-			uint found;
-			Status status = GDIPlus.GdipImageGetFrameDimensionsCount (nativeObject, out found);
-			GDIPlus.CheckStatus (status);
-			Guid [] guid = new Guid [found];
-			status = GDIPlus.GdipImageGetFrameDimensionsList (nativeObject, guid, found);
-			GDIPlus.CheckStatus (status);
-			return guid;
+			// GpMetafile::GetFrameDimensionsList: one dimension, Page.
+			if (this is Metafile mf) mf.CheckPlayable ();
+			return new [] { FrameDimension.Page.Guid };
 		}
 	}
 
@@ -710,25 +541,16 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	public int Height {
 		get {
 			if (managed != null) return managed.Frame.Height;
-			if (nativeObject == IntPtr.Zero) return managedHeight < 0 ? 0 : managedHeight;
-			uint height;
-			Status status = GDIPlus.GdipGetImageHeight (nativeObject, out height);
-			GDIPlus.CheckStatus (status);
-
-			return (int)height;
+			if (this is Metafile mf) return mf.MetafileHeight;
+			return managedHeight < 0 ? 0 : managedHeight;
 		}
 	}
 
 	public float HorizontalResolution {
 		get {
 			if (managed != null) return managed.Frame.DpiX;
-			if (nativeObject == IntPtr.Zero) return managedDpiX;
-			float resolution;
-
-			Status status = GDIPlus.GdipGetImageHorizontalResolution (nativeObject, out resolution);
-			GDIPlus.CheckStatus (status);
-
-			return resolution;
+			if (this is Metafile mf) return mf.MetafileDpiX;
+			return managedDpiX;
 		}
 	}
 
@@ -748,22 +570,9 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			GdipFrame f = managed.Frame;
 			return new ColorPalette (f.Palette != null ? f.PaletteFlags : 0, f.Palette != null ? (Color []) f.Palette.Clone () : new Color [0]);
 		}
-		int bytes;
-		ColorPalette ret = new ColorPalette ();
-
-		Status st = GDIPlus.GdipGetImagePaletteSize (nativeObject, out bytes);
-		GDIPlus.CheckStatus (st);
-		IntPtr palette_data = Marshal.AllocHGlobal (bytes);
-		try {
-			st = GDIPlus.GdipGetImagePalette (nativeObject, palette_data, bytes);
-			GDIPlus.CheckStatus (st);
-			ret.ConvertFromMemory (palette_data);
-			return ret;
-		}
-
-		finally {
-			Marshal.FreeHGlobal (palette_data);
-		}
+		// A metafile has no palette: GDI+ reports a generic error.
+		((Metafile) this).CheckPlayable ();
+		throw Metafile.GenericError ();
 	}
 
 	internal void storeGDIPalette(ColorPalette palette)
@@ -779,43 +588,24 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			}
 			return;
 		}
-		IntPtr palette_data = palette.ConvertToMemory ();
-		if (palette_data == IntPtr.Zero) {
-			return;
-		}
-
-		try {
-			Status st = GDIPlus.GdipSetImagePalette (nativeObject, palette_data);
-			GDIPlus.CheckStatus (st);
-		}
-
-		finally {
-			Marshal.FreeHGlobal(palette_data);
-		}
+		((Metafile) this).CheckPlayable ();
+		throw new NotImplementedException ("Not implemented.");
 	}
 
 
 	public SizeF PhysicalDimension {
 		get {
 			// A bitmap's physical dimension is its size in pixels; only a metafile has another.
-			if (managed != null || nativeObject == IntPtr.Zero) return new SizeF (Width, Height);
-			float width,  height;
-			Status status = GDIPlus.GdipGetImageDimension (nativeObject, out width, out height);
-			GDIPlus.CheckStatus (status);
-
-			return new SizeF (width, height);
+			if (this is Metafile mf) return mf.MetafilePhysicalDimension;
+			return new SizeF (Width, Height);
 		}
 	}
 
 	public PixelFormat PixelFormat {
 		get {
 			if (managed != null) return managed.Frame.Format;
-			if (nativeObject == IntPtr.Zero) return PixelFormat.Format32bppArgb;
-			PixelFormat pixFormat;
-			Status status = GDIPlus.GdipGetImagePixelFormat (nativeObject, out pixFormat);
-			GDIPlus.CheckStatus (status);
-
-			return pixFormat;
+			if (this is Metafile mf) return mf.MetafilePixelFormat;
+			return PixelFormat.Format32bppArgb;
 		}
 	}
 
@@ -823,18 +613,9 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	public int[] PropertyIdList {
 		get {
 			if (managed != null) return managed.Properties.ConvertAll (p => p.Id).ToArray ();
-			uint propNumbers;
-
-			Status status = GDIPlus.GdipGetPropertyCount (nativeObject,
-									out propNumbers);
-			GDIPlus.CheckStatus (status);
-
-			int [] idList = new int [propNumbers];
-			status = GDIPlus.GdipGetPropertyIdList (nativeObject,
-								propNumbers, idList);
-			GDIPlus.CheckStatus (status);
-
-			return idList;
+			// GpMetafile::GetPropertyCount is zero.
+			if (this is Metafile mf) mf.CheckPlayable ();
+			return new int [0];
 		}
 	}
 
@@ -842,53 +623,17 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	public PropertyItem[] PropertyItems {
 		get {
 			if (managed != null) return managed.Properties.ConvertAll (CopyProperty).ToArray ();
-			int propNums, propsSize, propSize;
-			IntPtr properties, propPtr;
-			PropertyItem[] items;
-			GdipPropertyItem gdipProperty = new GdipPropertyItem ();
-			Status status;
-
-			status = GDIPlus.GdipGetPropertySize (nativeObject, out propsSize, out propNums);
-			GDIPlus.CheckStatus (status);
-
-			items =  new PropertyItem [propNums];
-
-			if (propNums == 0)
-				return items;
-
-			/* Get PropertyItem list*/
-			properties = Marshal.AllocHGlobal (propsSize * propNums);
-			try {
-				status = GDIPlus.GdipGetAllPropertyItems (nativeObject, propsSize,
-								propNums, properties);
-				GDIPlus.CheckStatus (status);
-
-				propSize = Marshal.SizeOf (gdipProperty);
-				propPtr = properties;
-
-				for (int i = 0; i < propNums; i++, propPtr = new IntPtr (propPtr.ToInt64 () + propSize)) {
-					gdipProperty = (GdipPropertyItem) Marshal.PtrToStructure
-						(propPtr, typeof (GdipPropertyItem));
-					items [i] = new PropertyItem ();
-					GdipPropertyItem.MarshalTo (gdipProperty, items [i]);
-				}
-			}
-			finally {
-				Marshal.FreeHGlobal (properties);
-			}
-			return items;
+			// GpMetafile::GetPropertySize is NotImplemented.
+			if (this is Metafile mf) mf.CheckPlayable ();
+			throw new NotImplementedException ("Not implemented.");
 		}
 	}
 
 	public ImageFormat RawFormat {
 		get {
 			if (managed != null) return new ImageFormat (managed.RawFormat);
-			if (nativeObject == IntPtr.Zero) return ImageFormat.MemoryBmp;
-			Guid guid;
-			Status st = GDIPlus.GdipGetImageRawFormat (nativeObject, out guid);
-
-			GDIPlus.CheckStatus (st);
-			return new ImageFormat (guid);
+			if (this is Metafile mf) return mf.MetafileRawFormat;
+			return ImageFormat.MemoryBmp;
 		}
 	}
 
@@ -909,13 +654,8 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	public float VerticalResolution {
 		get {
 			if (managed != null) return managed.Frame.DpiY;
-			if (nativeObject == IntPtr.Zero) return managedDpiY;
-			float resolution;
-
-			Status status = GDIPlus.GdipGetImageVerticalResolution (nativeObject, out resolution);
-			GDIPlus.CheckStatus (status);
-
-			return resolution;
+			if (this is Metafile mf) return mf.MetafileDpiY;
+			return managedDpiY;
 		}
 	}
 
@@ -925,21 +665,14 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	public int Width {
 		get {
 			if (managed != null) return managed.Frame.Width;
-			if (nativeObject == IntPtr.Zero) return managedWidth < 0 ? 0 : managedWidth;
-			uint width;
-			Status status = GDIPlus.GdipGetImageWidth (nativeObject, out width);
-			GDIPlus.CheckStatus (status);
-
-			return (int)width;
+			if (this is Metafile mf) return mf.MetafileWidth;
+			return managedWidth < 0 ? 0 : managedWidth;
 		}
 	}
 
 	internal IntPtr NativeObject{
 		get{
 			return nativeObject;
-		}
-		set	{
-			nativeObject = value;
 		}
 	}
 
@@ -964,53 +697,13 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	protected virtual void Dispose (bool disposing)
 	{
 		managed = null;
-		if (GDIPlus.GdiPlusToken != 0 && nativeObject != IntPtr.Zero) {
-			Status status = GDIPlus.GdipDisposeImage (nativeObject);
-			// dispose the stream (set under Win32 only if SD owns the stream) and ...
-			if (stream != null) {
-				stream.Dispose ();
-				stream = null;
-			}
-			// ... set nativeObject to null before (possibly) throwing an exception
-			nativeObject = IntPtr.Zero;
-			GDIPlus.CheckStatus (status);
-		}
 	}
 
 	public object Clone ()
 	{
 		if (managed != null) return new Bitmap (Data.Clone ());
-		if (nativeObject == IntPtr.Zero)
-			return MemberwiseClone ();
-		if (GDIPlus.RunningOnWindows () && stream != null)
-			return CloneFromStream ();
-
-		IntPtr newimage = IntPtr.Zero;
-		Status status = GDIPlus.GdipCloneImage (NativeObject, out newimage);
-		GDIPlus.CheckStatus (status);
-
-		return new Metafile (newimage);
-	}
-
-	// On win32, when cloning images that were originally created from a stream, we need to
-	// clone both the image and the stream to make sure the gc doesn't kill it
-	// (when using MS GDI+ and IStream we must ensure the stream stays alive for all the life of the Image)
-	object CloneFromStream ()
-	{
-		byte[] bytes = new byte [stream.Length];
-		MemoryStream ms = new MemoryStream (bytes);
-		int count = (stream.Length < 4096 ? (int) stream.Length : 4096);
-		byte[] buffer = new byte[count];
-		stream.Position = 0;
-		do {
-			count = stream.Read (buffer, 0, count);
-			ms.Write (buffer, 0, count);
-		} while (count == 4096);
-
-		IntPtr newimage = IntPtr.Zero;
-		newimage = InitFromStream (ms);
-
-		return new Metafile (newimage, ms);
+		if (this is Metafile mf) return mf.CloneMetafile ();
+		return MemberwiseClone ();
 	}
 
 }

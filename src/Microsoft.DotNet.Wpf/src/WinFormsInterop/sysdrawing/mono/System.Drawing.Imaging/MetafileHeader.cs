@@ -15,10 +15,10 @@
 // distribute, sublicense, and/or sell copies of the Software, and to
 // permit persons to whom the Software is furnished to do so, subject to
 // the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -27,85 +27,30 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
+//
+// GDI+'s MetafileHeader, managed: every field is what gdiplus.dll derives (GetEmfHeader /
+// GetWmfHeader, ported in backend/gdip/GpMetafileFormat.cs), not what a marshalled copy of it
+// happened to read -- .NET Framework's copy mis-marshalled EmfPlusHeaderSize and LogicalDpiX/Y; these
+// are GDI+'s own values.
+//
 
-using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
+using System.Drawing.WebGpuBackend.Gdip;
 
 namespace System.Drawing.Imaging {
 
-	[StructLayout(LayoutKind.Sequential, Pack=2)]
-	struct EnhMetafileHeader {
-		public int		type;
-		public int		size;
-		public Rectangle	bounds;
-		public Rectangle	frame;
-		public int		signature;
-		public int		version;
-		public int		bytes;
-		public int		records;
-		public short		handles;
-		public short		reserved;
-		public int		description;
-		public int		off_description;
-		public int		palette_entires;
-		public Size		device;
-		public Size		millimeters;
-	}
-
-	// hack: keep public type as Sequential while making it possible to get the required union
-	[StructLayout(LayoutKind.Explicit)]
-	struct MonoMetafileHeader {
-		[FieldOffset (0)]
-		public MetafileType	type;
-		[FieldOffset (4)]
-		public int		size;
-		[FieldOffset (8)]
-		public int		version;
-		[FieldOffset (12)]
-		public int		emf_plus_flags;
-		[FieldOffset (16)]
-		public float		dpi_x;
-		[FieldOffset (20)]
-		public float		dpi_y;
-		[FieldOffset (24)]
-		public int		x;
-		[FieldOffset (28)]
-		public int		y;
-		[FieldOffset (32)]
-		public int		width;
-		[FieldOffset (36)]
-		public int		height;
-		[FieldOffset (40)]
-		public WmfMetaHeader	wmf_header;
-		[FieldOffset (40)]
-		public EnhMetafileHeader emf_header;
-		[FieldOffset (128)]
-		public int		emfplus_header_size;
-		[FieldOffset (132)]
-		public int		logical_dpi_x;
-		[FieldOffset (136)]
-		public int		logical_dpi_y;
-	}
-
-	[MonoTODO ("Metafiles, both WMF and EMF formats, aren't supported.")]
-	[StructLayout(LayoutKind.Sequential)]
 	public sealed class MetafileHeader {
 
-		private MonoMetafileHeader header;
-		
-		//constructor
+		internal readonly GpMetafileHeader header;
 
-		internal MetafileHeader (IntPtr henhmetafile)
+		internal MetafileHeader (GpMetafileHeader header)
 		{
-			Marshal.PtrToStructure (henhmetafile, this);
+			this.header = header.Clone ();
 		}
 
-		// methods
-
-		[MonoTODO ("always returns false")]
+		// GDI+'s MetafileHeader::IsDisplay: an EMF+ file recorded against a display.
 		public bool IsDisplay ()
 		{
-			return false;
+			return IsEmfPlus () && (header.EmfPlusFlags & 1) != 0;
 		}
 
 		public bool IsEmf ()
@@ -135,7 +80,7 @@ namespace System.Drawing.Imaging {
 
 		public bool IsWmf ()
 		{
-			return (Type <= MetafileType.WmfPlaceable);
+			return (Type == MetafileType.Wmf || Type == MetafileType.WmfPlaceable);
 		}
 
 		public bool IsWmfPlaceable ()
@@ -146,48 +91,68 @@ namespace System.Drawing.Imaging {
 		// properties
 
 		public Rectangle Bounds {
-			get { return new Rectangle (header.x, header.y, header.width, header.height); }
+			get { return new Rectangle (header.X, header.Y, header.Width, header.Height); }
 		}
 
 		public float DpiX {
-			get { return header.dpi_x; }
+			get { return header.DpiX; }
 		}
-		
+
 		public float DpiY {
-			get { return header.dpi_y; }
+			get { return header.DpiY; }
 		}
-		
+
 		public int EmfPlusHeaderSize {
-			get { return header.emfplus_header_size; }
+			get { return header.EmfPlusHeaderSize; }
 		}
 
 		public int LogicalDpiX {
-			get { return header.logical_dpi_x; }
+			get { return header.LogicalDpiX; }
 		}
-		
+
 		public int LogicalDpiY {
-			get { return header.logical_dpi_y; }
+			get { return header.LogicalDpiY; }
 		}
 
 		public int MetafileSize {
-			get { return header.size; }
+			get { return header.Size; }
 		}
 
 		public MetafileType Type {
-			get { return header.type; }
+			get { return header.Type; }
 		}
 
 		public int Version {
-			get { return header.version; }
+			get { return header.Version; }
+		}
+
+		internal int EmfPlusFlags {
+			get { return header.EmfPlusFlags; }
+		}
+
+		// The EMF's ENHMETAHEADER3 as GDI+ keeps it in the header (the EmfHeader of System.Drawing's
+		// MetafileHeaderEmf).
+		internal byte[] EmfHeaderBytes {
+			get { return IsEmfOrEmfPlus () ? (byte[]) header.Raw.Clone () : null; }
 		}
 
 		// note: this always returns a new instance (where we can change
 		// properties even if they don't seems to affect anything)
 		public MetaHeader WmfHeader {
 			get {
-				if (IsWmf ())
-					 return new MetaHeader (header.wmf_header);
-				throw new ArgumentException ("WmfHeader only available on WMF files.");
+				if (!IsWmf ())
+					throw new ArgumentException ("Parameter is not valid.");
+				byte [] r = header.Raw;
+				var w = new WmfMetaHeader ();
+				w.file_type = Le.I16 (r, 0);
+				w.header_size = Le.I16 (r, 2);
+				w.version = Le.I16 (r, 4);
+				w.file_size_low = Le.U16 (r, 6);
+				w.file_size_high = Le.U16 (r, 8);
+				w.num_of_objects = Le.I16 (r, 10);
+				w.max_record_size = Le.I32 (r, 12);
+				w.num_of_params = Le.I16 (r, 16);
+				return new MetaHeader (w);
 			}
 		}
 	}

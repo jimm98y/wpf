@@ -82,6 +82,10 @@
        Fixtures/Images/oracle/gen.ps1 regenerates them under Windows PowerShell 5.1. -->
   <ItemGroup>
     <None Include="Fixtures/Images/*" CopyToOutputDirectory="PreserveNewest" LinkBase="Fixtures/Images" />
+    <!-- Metafiles recorded and read by real GDI+ (Fixtures/Metafiles/oracle): what the managed
+         Metafile is held to (MetafileTests). -->
+    <Compile Remove="Fixtures/Metafiles/oracle/**" />
+    <None Include="Fixtures/Metafiles/**/*.emf;Fixtures/Metafiles/**/*.wmf;Fixtures/Metafiles/**/*.txt;Fixtures/Metafiles/**/*.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The comparison needs a Windows to compare against; elsewhere it is not built at all. -->
