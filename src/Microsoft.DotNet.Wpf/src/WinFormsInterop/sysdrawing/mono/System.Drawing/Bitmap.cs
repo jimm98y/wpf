@@ -308,10 +308,9 @@ namespace System.Drawing
 				rect = new Rectangle (0, 0, rect.Width, rect.Height);
 			}
 			GdipFrame copy = GdipPixels.Convert (part, rect, format, conversionPalette: !f.IsIndexed || format != f.Format);
-			// GDI+ keeps the source's alpha flag on a clone, whatever the clone's format -- and an
-			// indexed clone has nothing else: one of an opaque bitmap does not claim alpha.
-			int newFlags = (format & PixelFormat.Indexed) != 0 ? 0 : GdipImageData.NewFlags (format);
-			return new Bitmap (new GdipImageData (copy) { Flags = newFlags | (managed.Flags & (int) ImageFlags.HasAlpha),
+			// GDI+ keeps the source's alpha flag on a clone, whatever the clone's format, and nothing
+			// else: a clone of an opaque bitmap into an alpha format does not claim alpha either.
+			return new Bitmap (new GdipImageData (copy) { Flags = managed.Flags & (int) ImageFlags.HasAlpha,
 				SourceBytes = whole ? managed.SourceBytes : null });
 		}
 
@@ -319,6 +318,47 @@ namespace System.Drawing
 		{
 			// GdipCloneBitmapArea (0x1800539d0) rounds each of the four, (int)(v + 0.5).
 			return Clone (new Rectangle ((int) (rect.X + 0.5f), (int) (rect.Y + 0.5f), (int) (rect.Width + 0.5f), (int) (rect.Height + 0.5f)), format);
+		}
+
+		/// <summary>Converts the bitmap to <paramref name="format"/> in place, as GDI+ 1.1's
+		/// GdipBitmapConvertFormat does (GdipHalftone has the details): into an indexed format through
+		/// <paramref name="palette"/> with the given dither, pixels whose alpha is below
+		/// <paramref name="alphaThresholdPercent"/> taking the palette's entry nearest transparent.</summary>
+		public void ConvertFormat (PixelFormat format, DitherType ditherType, PaletteType paletteType = PaletteType.Custom, ColorPalette palette = null, float alphaThresholdPercent = 0f)
+		{
+			if ((uint) ditherType > (uint) DitherType.ErrorDiffusion)
+				throw new ArgumentException ("Parameter is not valid.");
+			// GpLock on the bitmap: ObjectBusy while it is locked.
+			if (locked != null)
+				throw new InvalidOperationException ("Object is currently in use elsewhere.");
+			GdipImageData data = Data;
+			GdipFrame f = data.Frame;
+			GdipFrame converted = GdipHalftone.Convert (f, format, (int) ditherType, (int) paletteType, palette?.Entries, palette?.Flags ?? 0,
+				GdipHalftone.AlphaThreshold (alphaThresholdPercent));
+			if (converted == null) return;
+			// The cached ImageInfo keeps its flags and raw format; the file's bytes no longer describe
+			// the pixels.
+			data.Frame = converted;
+			data.SourceBytes = null;
+			blank = false;
+		}
+
+		/// <summary>Converts the bitmap to <paramref name="format"/> with System.Drawing.Common's
+		/// defaults: into an indexed format with error diffusion over an optimal palette of the
+		/// format's size and an alpha threshold of 0.25%; otherwise with no dither when the format is
+		/// deeper, solid when it is not.</summary>
+		public void ConvertFormat (PixelFormat format)
+		{
+			int target = ((int) format >> 8) & 0xff, current = ((int) PixelFormat >> 8) & 0xff;
+			if ((format & PixelFormat.Indexed) == 0) {
+				ConvertFormat (format, target <= current ? DitherType.Solid : DitherType.None);
+				return;
+			}
+			int colors = target switch { 1 => 2, 4 => 16, _ => 256 };
+			bool alpha = (format & PixelFormat.Alpha) != 0;
+			if (alpha) colors++;
+			ColorPalette optimal = ColorPalette.CreateOptimalPalette (colors, alpha, this);
+			ConvertFormat (format, DitherType.ErrorDiffusion, PaletteType.Custom, optimal, 0.25f);
 		}
 
 		public static Bitmap FromHicon (IntPtr hicon)
@@ -409,10 +449,8 @@ namespace System.Drawing
 				}
 				var map = palette != null ? new GdipPixels.IndexMap (palette) : null;
 				for (int y = 0; y < rect.Height; y++) {
-					if ((flags & ImageLockMode.ReadOnly) != 0) {
-						GdipPixels.ReadArgb (f, rect.X, rect.Y + y, rect.Width, argb, 0);
-						GdipPixels.WriteArgb (bytes, 0, format, palette, 0, rect.Width, argb, 0, map);
-					}
+					if ((flags & ImageLockMode.ReadOnly) != 0)
+						GdipPixels.Transfer (f.Bits, (rect.Y + y) * f.Stride, f.Format, f.Palette, rect.X, rect.Width, bytes, 0, format, palette, 0, argb, map);
 					Marshal.Copy (bytes, 0, state.Buffer + y * state.Stride, state.Stride);
 				}
 			}
@@ -483,8 +521,7 @@ namespace System.Drawing
 					var map = f.IsIndexed ? new GdipPixels.IndexMap (f.Palette) : null;
 					for (int y = 0; y < rect.Height; y++) {
 						Marshal.Copy (state.Buffer + y * state.Stride, bytes, 0, state.Stride);
-						GdipPixels.ReadArgb (bytes, 0, state.Format, palette, 0, rect.Width, argb, 0);
-						GdipPixels.WriteArgb (f, rect.X, rect.Y + y, rect.Width, argb, 0, map);
+						GdipPixels.Transfer (bytes, 0, state.Format, palette, 0, rect.Width, f.Bits, (rect.Y + y) * f.Stride, f.Format, f.Palette, rect.X, argb, map);
 					}
 				}
 				Marshal.FreeHGlobal (state.Buffer);

@@ -58,6 +58,42 @@ namespace System.Drawing.Imaging
             _entries = entries;
         }
 
+        /// <summary>
+        /// Creates a custom color palette of <paramref name="customColors"/>.
+        /// </summary>
+        public ColorPalette(params Color[] customColors) : this(0, customColors)
+        {
+        }
+
+        /// <summary>
+        /// Creates a standard color palette (GdipInitializePalette with no bitmap).
+        /// </summary>
+        public ColorPalette(PaletteType fixedPaletteType)
+        {
+            ColorPalette palette = InitializePalette(fixedPaletteType, 0, useTransparentColor: false, bitmap: null);
+            _flags = palette.Flags;
+            _entries = palette.Entries;
+        }
+
+        /// <summary>
+        /// Creates an optimal color palette of <paramref name="colors"/> entries for the colors in
+        /// <paramref name="bitmap"/> (GDI+'s median cut), its last entry transparent black when
+        /// <paramref name="useTransparentColor"/>.
+        /// </summary>
+        public static ColorPalette CreateOptimalPalette(int colors, bool useTransparentColor, Bitmap bitmap)
+            => InitializePalette((PaletteType)1, colors, useTransparentColor, bitmap);
+
+        // System.Drawing.Common hands GdipInitializePalette a 256-entry buffer; for Custom GDI+ leaves
+        // it as it is (here: zeros).
+        internal static ColorPalette InitializePalette(PaletteType fixedPaletteType, int colorCount, bool useTransparentColor, Bitmap bitmap)
+        {
+            uint[] p = GdipHalftone.InitializePalette((int)fixedPaletteType, colorCount, useTransparentColor, bitmap?.Data.Frame, out int flags)
+                       ?? new uint[256];
+            var entries = new Color[p.Length];
+            for (int i = 0; i < p.Length; i++) entries[i] = Color.FromArgb(unchecked((int)p[i]));
+            return new ColorPalette(flags, entries);
+        }
+
         internal void ConvertFromMemory(IntPtr memory)
         {
             // Memory layout is:

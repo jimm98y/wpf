@@ -28,7 +28,6 @@
 // threshold is 0), and the indices are packed by Quantize_8_4/8_1_Unaligned.
 //
 
-using System.Collections.Generic;
 using System.Drawing.Imaging;
 
 namespace System.Drawing
@@ -144,31 +143,15 @@ namespace System.Drawing
             }
         }
 
-        /// <summary>The palette GDI+ gives a bitmap CONVERTED to an indexed format (Clone): at 8bpp
-        /// the cube then the eight system colours it lacks; at 4bpp the eight primaries then the
-        /// eight system colours; at 1bpp black and white.</summary>
+        /// <summary>The palette GDI+ gives a bitmap CONVERTED to an indexed format (Clone:
+        /// CopyOnWriteBitmap::ConvertFormat(int) 0x18007e658 initializes FixedBlackAndWhite,
+        /// FixedHalftone8 or FixedHalftone216 for 1, 4 and 8bpp): at 8bpp the cube then the eight
+        /// system colours it lacks; at 4bpp the eight primaries then the eight system colours; at
+        /// 1bpp black and white.</summary>
         internal static Color[] ConversionPalette (PixelFormat format, out int flags)
         {
-            uint[] extra = { 0xffc0c0c0, 0xff808080, 0xff800000, 0xff008000, 0xff000080, 0xff808000, 0xff800080, 0xff008080 };
-            switch (format) {
-            case PixelFormat.Format1bppIndexed:
-                flags = 0x200;
-                return new [] { Color.FromArgb (unchecked ((int) 0xff000000)), Color.FromArgb (unchecked ((int) 0xffffffff)) };
-            case PixelFormat.Format4bppIndexed:
-                flags = 0x300;
-                var p4 = new List<uint> { 0xff000000, 0xff0000ff, 0xff00ff00, 0xff00ffff, 0xffff0000, 0xffff00ff, 0xffffff00, 0xffffffff };
-                p4.AddRange (extra);
-                return ToColors (p4.ToArray ());
-            default:
-                flags = 0x700;
-                var p8 = new List<uint> ();
-                for (int r = 0; r < 6; r++)
-                    for (int g = 0; g < 6; g++)
-                        for (int b = 0; b < 6; b++)
-                            p8.Add (0xff000000u | (uint) (r * 0x33) << 16 | (uint) (g * 0x33) << 8 | (uint) (b * 0x33));
-                p8.AddRange (extra);
-                return ToColors (p8.ToArray ());
-            }
+            int type = format == PixelFormat.Format1bppIndexed ? 2 : format == PixelFormat.Format4bppIndexed ? 3 : 7;
+            return ToColors (GdipHalftone.FixedPalette (type, out flags));
         }
 
         /// <summary>The FixedHalftone252 palette with a transparent entry after it (CHalftone::
@@ -485,6 +468,52 @@ namespace System.Drawing
             d [o] = (byte) v; d [o + 1] = (byte) (v >> 8);
         }
 
+        // ---- one row, format -> format ----------------------------------------------------------
+
+        private static bool IsExtended (PixelFormat f) => (f & PixelFormat.Extended) != 0;
+
+        /// <summary><paramref name="n"/> pixels of a row in <paramref name="sf"/> written into a row in
+        /// <paramref name="df"/>, as GDI+'s format conversion pipeline runs it (EpAlphaBlender::
+        /// BuildPipeline 0x18002a9e8, scan type 1 -- what ConvertFormat, Clone and a lock in another
+        /// format use). Through straight 32bpp ARGB, with two exceptions: 32bppPArgb into a format
+        /// with neither alpha nor extended range (24bpp, 32bppRgb, 555, 565) is read AS IF it were
+        /// straight ARGB -- the premultiplied colour, which is the colour composed on black; and
+        /// between two 48/64bpp formats the pixels stay in 16-bit linear light (Convert_48_sRGB64
+        /// 0x180212cc0, AlphaDivide_sRGB64 0x1801620b0, AlphaMultiply_sRGB64 0x180033010,
+        /// Quantize_sRGB64_48 0x18020eff0) and never pass through eight bits.</summary>
+        internal static void Transfer (byte[] src, int srcRow, PixelFormat sf, Color[] srcPalette, int sx, int n,
+                                       byte[] dst, int dstRow, PixelFormat df, Color[] dstPalette, int dx, uint[] buf, IndexMap map = null)
+        {
+            if (IsExtended (sf) && IsExtended (df)) {
+                for (int i = 0; i < n; i++) {
+                    int so = srcRow + (sx + i) * Image.GetPixelFormatSize (sf) / 8;
+                    short b = Get16 (src, so), g = Get16 (src, so + 2), r = Get16 (src, so + 4), a = 0x2000;
+                    if (sf != PixelFormat.Format48bppRgb) {
+                        a = Get16 (src, so + 6);
+                        if (sf == PixelFormat.Format64bppPArgb && (ushort) (a - 1) < 0x2001) {
+                            b = (short) ((b << 13) / a); g = (short) ((g << 13) / a); r = (short) ((r << 13) / a);
+                        }
+                    }
+                    int o = dstRow + (dx + i) * Image.GetPixelFormatSize (df) / 8;
+                    if (df == PixelFormat.Format64bppPArgb && sf != PixelFormat.Format48bppRgb && a != 0x2000) {
+                        if (a == 0) { b = g = r = 0; }
+                        else {
+                            b = (short) ((uint) (b * a * 8) >> 16); g = (short) ((uint) (g * a * 8) >> 16); r = (short) ((uint) (r * a * 8) >> 16);
+                        }
+                    }
+                    Put16 (dst, o, b); Put16 (dst, o + 2, g); Put16 (dst, o + 4, r);
+                    if (df != PixelFormat.Format48bppRgb) Put16 (dst, o + 6, a);
+                }
+                return;
+            }
+            PixelFormat read = sf == PixelFormat.Format32bppPArgb && (df & (PixelFormat.Alpha | PixelFormat.Extended)) == 0
+                               && (df & PixelFormat.Indexed) == 0 ? PixelFormat.Format32bppArgb : sf;
+            ReadArgb (src, srcRow, read, srcPalette, sx, n, buf, 0);
+            WriteArgb (dst, dstRow, df, dstPalette, dx, n, buf, 0, map);
+        }
+
+        private static short Get16 (byte[] s, int o) => (short) (s [o] | s [o + 1] << 8);
+
         /// <summary>Whether pixels of this format can be read and written at all (GDI+ refuses
         /// 16bpp greyscale and the CMYK/extended formats for anything but storage).</summary>
         internal static bool Convertible (PixelFormat format) => format switch
@@ -548,10 +577,8 @@ namespace System.Drawing
                 dst.Palette = ConversionPalette (format, out dst.PaletteFlags);
             var row = new uint [r.Width];
             var map = dst.IsIndexed ? new IndexMap (dst.Palette) : null;
-            for (int y = 0; y < r.Height; y++) {
-                ReadArgb (f, r.X, r.Y + y, r.Width, row, 0);
-                WriteArgb (dst, 0, y, r.Width, row, 0, map);
-            }
+            for (int y = 0; y < r.Height; y++)
+                Transfer (f.Bits, (r.Y + y) * f.Stride, f.Format, f.Palette, r.X, r.Width, dst.Bits, y * dst.Stride, format, dst.Palette, 0, row, map);
             return dst;
         }
     }
