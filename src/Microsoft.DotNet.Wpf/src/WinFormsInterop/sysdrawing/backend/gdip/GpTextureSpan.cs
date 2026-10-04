@@ -13,6 +13,10 @@
 //        PARGB, or recoloured (GpBitmap::Recolor -> ColorAdjust as Bitmap) when the ImageAttributes
 //        has any recolouring; the ImageAttributes constructor takes its wrap mode
 //
+// A wrapped path gradient fills with a GpTexture of its rendered rectangle
+// (GpPathGradient::CreateOutputSpan, GpPathGradientSpans.cs): the same output span, so the same
+// code -- the image spans of GpImageSpans.cs.
+//
 
 namespace System.Drawing.WebGpuBackend.Gdip
 {
@@ -22,9 +26,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             GdipFrame tile = tb.TileFrame;
             if (tile == null || tile.Width <= 0 || tile.Height <= 0) return null;
-            GpMatrix m = GpMatrix.Multiply (tb.Gp, WorldToDevice);
-            DpBitmapSrc src = Lock (tile);
-            int wrap = (int) tb.WrapMode;
+            return TextureOutputSpan (scan, Lock (tile), GpMatrix.Multiply (tb.Gp, WorldToDevice), (int) tb.WrapMode);
+        }
+
+        /// <summary>GpTexture::CreateOutputSpan @18006dd30 for a texture locked as <paramref name="src"/>,
+        /// <paramref name="m"/> its device matrix (texture to device).</summary>
+        GpSpan TextureOutputSpan (GpScan scan, DpBitmapSrc src, GpMatrix m, int wrap)
+        {
             if (IsIntegerTranslate (m) && (wrap & ~4) == 0)
                 return new GpIdentitySpan (scan, src, m, new DpImageAttr { Wrap = wrap, Clamp = 0 });
             GpMatrix t = m;

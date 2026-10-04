@@ -40,10 +40,8 @@
 //        @1800bef28 interpolating its weights across its span (blend factors through
 //        slowAdjustValue, renormalised) and writing the premultiplied colour
 //   GpTexture::CreateOutputSpan @18006dd30   always bilinear: DpOutputBilinearSpan_Identity for an
-//        integer translation in Tile or Clamp, else DpOutputBilinearSpan (the MMX one is off). The
-//        two texture spans below are this case's own minimal copy of GDI+'s bilinear sampling
-//        (DpOutputBilinearSpan::OutputSpan @18002a0a0, DpOutputBilinearSpan_Identity::OutputSpan
-//        @18002a650, ApplyWrapMode @180159608), to be unified with the image spans.
+//        integer translation in Tile or Clamp, else DpOutputBilinearSpan (the MMX one is off) -- the
+//        TextureBrush's own output span (GpTextureSpan.cs, the image spans of GpImageSpans.cs).
 //
 
 using System.Drawing.Drawing2D;
@@ -115,18 +113,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 pb.WrapInternal = wrap;
                 pb.Xform = saved;
             }
-            GdipFrame pargb = GdipPixels.Convert (frame, new Rectangle (0, 0, W, H), PixelFormat.Format32bppPArgb, false);
-            var px32 = new uint [W * H];
-            for (int row = 0; row < H; row++)
-                Buffer.BlockCopy (pargb.Bits, row * pargb.Stride, px32, row * W * 4, W * 4);
-
             // GpTexture::CreateOutputSpan: the texture transform (toBrush, prepended to the identity)
-            // times the world-to-device.
+            // times the world-to-device, over the bitmap locked as PARGB.
             GpMatrix tm = GpMatrix.Multiply (GpMatrix.Multiply (toBrush, GpMatrix.CreateIdentity ()), WorldToDevice);
-            int wm = (int) wrap;
-            if (GpPathGradientSpans.IsIntegerTranslate (tm) && (wm & ~4) == 0)
-                return new PgTextureIdentitySpan (scan, px32, W, H, wm, tm);
-            return new PgTextureBilinearSpan (scan, px32, W, H, wm, tm, _ctx.PixelOffset);
+            return TextureOutputSpan (scan, Lock (frame), tm, (int) wrap);
         }
     }
 
@@ -138,12 +128,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
         internal static int Ceil (float v) => (int) MathF.Ceiling (v);           // -floor(-v)
         internal static float Sixteenth (float v) => (float) (int) MathF.Floor (v * 16f + 0.5f) * 0.0625f;
 
-        /// <summary>GpMatrix::IsIntegerTranslate.</summary>
-        internal static bool IsIntegerTranslate (in GpMatrix m)
-        {
-            if ((m.Complexity & ~1) != 0) return false;
-            return MathF.Abs ((float) Round (m.Dx) - m.Dx) <= 0.015625f && MathF.Abs ((float) Round (m.Dy) - m.Dy) <= 0.015625f;
-        }
 
         /// <summary>GpMatrix::VectorTransform.</summary>
         internal static void VectorTransform (in GpMatrix m, ref float x, ref float y)
@@ -868,145 +852,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
                 px = GpPathGradientSpans.Pack (A, R, G, B, _gamma);
                 if (room != 0) { buf [o] = px; room--; }
-            }
-        }
-    }
-
-    // ---- the texture of a wrapped path gradient (GpTexture's bilinear spans, this case's copy) ------
-
-    internal static class PgWrap
-    {
-        static int Mod (int v, int n) => v < 0 ? n - (~v - ~v / n * n) - 1 : v - v / n * n;
-
-        static int ModFlip (int v, int n)
-        {
-            int m = Mod (v, n);
-            return ((v - m) / n & 1) != 0 ? n - m - 1 : m;
-        }
-
-        /// <summary>ApplyWrapMode @180159608.</summary>
-        public static void Apply (int mode, ref int x, ref int y, int w, int h)
-        {
-            switch (mode) {
-            case 0: x = Mod (x, w); y = Mod (y, h); break;
-            case 1: x = ModFlip (x, w); y = Mod (y, h); break;
-            case 2: x = Mod (x, w); y = ModFlip (y, h); break;
-            case 3: x = ModFlip (x, w); y = ModFlip (y, h); break;
-            }
-        }
-
-        public static int ModPublic (int v, int n) => Mod (v, n);
-    }
-
-    /// <summary>DpOutputBilinearSpan for a texture (clamp colour 0).</summary>
-    internal sealed class PgTextureBilinearSpan : GpSpan
-    {
-        readonly uint[] _px;
-        readonly int _w, _h, _wrap;
-        readonly GpMatrix _inv;
-
-        public PgTextureBilinearSpan (GpScan scan, uint[] px, int w, int h, int wrap, GpMatrix srcToDevice, PixelOffsetMode pom) : base (scan)
-        {
-            _px = px; _w = w; _h = h; _wrap = wrap;
-            if (pom == PixelOffsetMode.HighQuality || pom == PixelOffsetMode.Half) srcToDevice.Translate (0.5f, 0.5f, false);
-            _inv = GpMatrix.CreateIdentity ();
-            if (srcToDevice.IsInvertible) { _inv = srcToDevice; _inv.Invert (); }
-        }
-
-        protected override void Fill (uint[] buf, int y, int left, int n)
-        {
-            float x0 = left, y0 = y, x1 = left + n, y1 = y;
-            _inv.Transform (ref x0, ref y0);
-            _inv.Transform (ref x1, ref y1);
-            float sx = (x1 - x0) / (float) n, sy = (y1 - y0) / (float) n;
-            int w = _w, h = _h;
-            float u = x0, v = y0;
-            for (int i = 0; i < n; i++) {
-                int ix = (int) MathF.Floor (u), iy = (int) MathF.Floor (v);
-                int fx = (int) MathF.Floor ((u - (float) ix) * 2048f + 0.5f);
-                int fyw = (int) MathF.Floor ((v - (float) iy) * 2048f + 0.5f);
-                int ix1 = ix + 1, iy1 = iy + 1;
-                if ((uint) (w - 1) <= (uint) ix || (uint) (h - 1) <= (uint) iy) {
-                    PgWrap.Apply (_wrap, ref ix, ref iy, w, h);
-                    PgWrap.Apply (_wrap, ref ix1, ref iy1, w, h);
-                }
-                int row0 = iy < 0 || iy >= h ? -1 : iy * w;
-                int row1 = iy1 < 0 || iy1 >= h ? -1 : iy1 * w;
-                uint p00, p01, p10, p11;
-                if (ix < 0 || ix >= w) p00 = p01 = 0;
-                else {
-                    p00 = row0 < 0 ? 0 : _px [row0 + ix];
-                    p01 = row1 < 0 ? 0 : _px [row1 + ix];
-                }
-                if (ix1 < 0 || ix1 >= w) p10 = p11 = 0;
-                else {
-                    p10 = row0 < 0 ? 0 : _px [row0 + ix1];
-                    p11 = row1 < 0 ? 0 : _px [row1 + ix1];
-                }
-                if (ix1 < 0 || w <= ix || iy1 < 0 || h <= iy) buf [i] = 0;
-                else {
-                    int gy = 2048 - fyw;
-                    uint r = 0;
-                    for (int sh = 0; sh < 32; sh += 8) {
-                        int a00 = (int) (p00 >> sh & 0xff), a10 = (int) (p10 >> sh & 0xff), a01 = (int) (p01 >> sh & 0xff), a11 = (int) (p11 >> sh & 0xff);
-                        int t = ((a10 - a00) * fx + a00 * 0x800) * gy + ((a11 - a01) * fx + a01 * 0x800) * fyw + 0x200000;
-                        r |= ((uint) t >> 22 & 0xff) << sh;
-                    }
-                    buf [i] = r;
-                }
-                u += sx; v += sy;
-            }
-        }
-    }
-
-    /// <summary>DpOutputBilinearSpan_Identity for a texture: an integer translation, copied.</summary>
-    internal sealed class PgTextureIdentitySpan : GpSpan
-    {
-        readonly uint[] _px;
-        readonly int _w, _h, _wrap, _offX, _offY;
-        readonly bool _pow2;
-
-        public PgTextureIdentitySpan (GpScan scan, uint[] px, int w, int h, int wrap, in GpMatrix srcToDevice) : base (scan)
-        {
-            _px = px; _w = w; _h = h; _wrap = wrap;
-            _pow2 = ((w - 1) & w) == 0 && ((h - 1) & h) == 0;
-            _offX = -GpPathGradientSpans.Round (srcToDevice.Dx);
-            _offY = -GpPathGradientSpans.Round (srcToDevice.Dy);
-        }
-
-        protected override void Fill (uint[] buf, int y, int left, int n)
-        {
-            int sx = _offX + left, sy = _offY + y;
-            int w = _w, h = _h;
-            int o = 0;
-            if (_wrap == 0) {
-                if (_pow2) { sx &= w - 1; sy &= h - 1; }
-                else {
-                    if ((uint) w <= (uint) sx) sx = PgWrap.ModPublic (sx, w);
-                    if ((uint) h <= (uint) sy) sy = PgWrap.ModPublic (sy, h);
-                }
-                int row = sy * w;
-                int k = Math.Min (w - sx, n);
-                int rest = n - k;
-                for (int i = 0; i < k; i++) buf [o++] = _px [row + sx + i];
-                while (rest > 0) {
-                    int c = Math.Min (w, rest);
-                    rest -= c;
-                    for (int i = 0; i < c; i++) buf [o++] = _px [row + i];
-                }
-                return;
-            }
-            if ((uint) sy < (uint) h && sx < w && sx + n > 0) {
-                int row = sy * w, from = sx, cnt = n;
-                if (sx < 0) {
-                    for (int i = 0; i < -sx; i++) buf [o++] = 0;
-                    cnt += sx; from = 0;
-                }
-                int c = Math.Min (cnt, w - from);
-                for (int i = 0; i < c; i++) buf [o++] = _px [row + from + i];
-                for (int i = c; i < cnt; i++) buf [o++] = 0;
-            } else {
-                for (int i = 0; i < n; i++) buf [i] = 0;
             }
         }
     }
