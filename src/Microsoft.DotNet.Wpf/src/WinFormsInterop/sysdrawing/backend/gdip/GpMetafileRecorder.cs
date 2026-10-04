@@ -291,12 +291,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void Data(byte[] b) => _comment.Write(b, 0, b.Length);
         void Data(GpEmfPlusBuffer b) { byte[] a = b.ToArray(); _comment.Write(a, 0, a.Length); }
 
-        // WriteGdiComment: a dual metafile ends each record's comment, so GDI's rendering of the call
-        // follows it.
+        // WriteGdiComment: a dual metafile ends the comment after each drawing record, so GDI's
+        // rendering of the call follows it.
         void EndRecord()
         {
             if (_type == EmfType.EmfPlusDual) _comment.Flush();
         }
+
+        // A record that draws nothing (state, transforms, clipping, comments) stays in the comment the
+        // next records batch into, in a dual file as in an EMF+ only one.
+        void EndStateRecord() { }
 
         void ZeroDataRecord(int type, int flags)
         {
@@ -460,6 +464,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public GraphicsUnit PageUnit = GraphicsUnit.Display;
             public float PageScale = 1f;
             public GpMat Container = GpMat.Identity;   // container to device
+            // The application clip in device coordinates (null: infinite) and the clip the
+            // container began under (DpContext +0x1c0 / +0x198); never changed in place.
+            public GpRegion Clip;
+            public DpRegion ContainerClip;
             // DpContext's rendering state, as GpGraphics::ResetState leaves it: a setter that does
             // not change it records nothing.
             public PixelOffsetMode PixelOffset = PixelOffsetMode.Default;
@@ -1039,7 +1047,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 var d = new GpEmfPlusBuffer(); d.I32(bv); Data(d);
                 EndRecord();
             }
-            GdiFillRegion(brush, region);
+            GdiFillRegion(brush, region, bounds);
         }
 
         /// <summary>GetMetafileBounds, as FillRegion uses it: whole pixels, one wider and taller.</summary>
@@ -1196,7 +1204,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (!HasStream) { GdiTransformChanged(); return; }
             WriteRecordHeader(0x18, 0x402a, 0, null);
             var d = new GpEmfPlusBuffer(); d.Matrix(m); Data(d);
-            EndRecord();
+            EndStateRecord();
             GdiTransformChanged();
         }
 
@@ -1205,7 +1213,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             CheckOpen();
             _state.World = GpMat.Identity;
             ZeroDataRecord(0x402b, 0);
-            if (HasStream) EndRecord();
+            if (HasStream) EndStateRecord();
             GdiTransformChanged();
         }
 
@@ -1217,7 +1225,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 WriteRecordHeader(0x18, 0x402c, order == MatrixOrder.Append ? 0x2000 : 0, null);
                 var d = new GpEmfPlusBuffer(); d.Matrix(m); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiTransformChanged();
         }
@@ -1230,7 +1238,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 WriteRecordHeader(8, 0x402d, order == MatrixOrder.Append ? 0x2000 : 0, null);
                 var d = new GpEmfPlusBuffer(); d.F(dx); d.F(dy); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiTransformChanged();
         }
@@ -1243,7 +1251,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 WriteRecordHeader(8, 0x402e, order == MatrixOrder.Append ? 0x2000 : 0, null);
                 var d = new GpEmfPlusBuffer(); d.F(sx); d.F(sy); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiTransformChanged();
         }
@@ -1256,7 +1264,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 WriteRecordHeader(4, 0x402f, order == MatrixOrder.Append ? 0x2000 : 0, null);
                 var d = new GpEmfPlusBuffer(); d.F(angle); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiTransformChanged();
         }
@@ -1275,7 +1283,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 WriteRecordHeader(4, 0x4030, (int)unit, null);
                 var d = new GpEmfPlusBuffer(); d.F(scale); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiTransformChanged();
         }
@@ -1289,7 +1297,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 WriteRecordHeader(0x10, 0x4032, (int)mode << 8, null);
                 var d = new GpEmfPlusBuffer(); d.Rect(r); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiClipRect(r, mode);
         }
@@ -1301,7 +1309,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 int pid = RecordObject(path);
                 WriteRecordHeader(0, 0x4033, pid | ((int)mode << 8), null);
-                EndRecord();
+                EndStateRecord();
             }
             GdiClipPath(path, mode);
         }
@@ -1313,7 +1321,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 int rid = RecordObject(region);
                 WriteRecordHeader(0, 0x4034, rid | ((int)mode << 8), null);
-                EndRecord();
+                EndStateRecord();
             }
             GdiClipRegion(region, mode);
         }
@@ -1322,7 +1330,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             CheckOpen();
             ZeroDataRecord(0x4031, 0);
-            if (HasStream) EndRecord();
+            if (HasStream) EndStateRecord();
             GdiResetClip();
         }
 
@@ -1333,7 +1341,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 WriteRecordHeader(8, 0x4035, 0, null);
                 var d = new GpEmfPlusBuffer(); d.F(dx); d.F(dy); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiOffsetClip(dx, dy);
         }
@@ -1354,7 +1362,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 WriteRecordHeader(4, 0x4025, 0, null);
                 var d = new GpEmfPlusBuffer(); d.I32(depth); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiSave();
         }
@@ -1384,7 +1392,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 WriteRecordHeader(4, 0x4026, 0, null);
                 var d = new GpEmfPlusBuffer(); d.I32(depth); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiRestore(depth);
         }
@@ -1408,11 +1416,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _state.PageScale = 1f;
             }
             _state.ResetRendering();
+            BeginContainerClip();
             if (HasStream)
             {
                 WriteRecordHeader(0x24, 0x4027, (int)unit, null);
                 var d = new GpEmfPlusBuffer(); d.Rect(dst); d.Rect(src); d.I32(depth); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiSave();
         }
@@ -1430,11 +1439,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
             _state.PageUnit = GraphicsUnit.Display;
             _state.PageScale = 1f;
             _state.ResetRendering();
+            BeginContainerClip();
             if (HasStream)
             {
                 WriteRecordHeader(4, 0x4028, 0, null);
                 var d = new GpEmfPlusBuffer(); d.I32(depth); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiSave();
         }
@@ -1447,7 +1457,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 WriteRecordHeader(4, 0x4029, 0, null);
                 var d = new GpEmfPlusBuffer(); d.I32(depth); Data(d);
-                EndRecord();
+                EndStateRecord();
             }
             GdiRestore(depth);
         }
@@ -1462,7 +1472,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (m == _state.Smoothing) return;
             _state.Smoothing = m;
             ZeroDataRecord(0x401e, (((m & ~3) != 0 || m == 2) ? 1 : 0) | (m << 1));
-            if (HasStream) EndRecord();
+            if (HasStream) EndStateRecord();
         }
 
         public void SetTextRenderingHint(TextRenderingHint hint)
@@ -1471,7 +1481,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if ((int)hint == _state.TextHint) return;
             _state.TextHint = (int)hint;
             ZeroDataRecord(0x401f, (int)hint);
-            if (HasStream) EndRecord();
+            if (HasStream) EndStateRecord();
         }
 
         public void SetTextContrast(int contrast)
@@ -1481,7 +1491,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (contrast == _state.Contrast) return;
             _state.Contrast = contrast;
             ZeroDataRecord(0x4020, contrast);
-            if (HasStream) EndRecord();
+            if (HasStream) EndStateRecord();
         }
 
         public void SetInterpolationMode(InterpolationMode mode)
@@ -1490,7 +1500,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if ((int)mode == _state.Interp) return;
             _state.Interp = (int)mode;
             ZeroDataRecord(0x4021, (int)mode);
-            if (HasStream) EndRecord();
+            if (HasStream) EndStateRecord();
         }
 
         public void SetPixelOffsetMode(PixelOffsetMode mode)
@@ -1499,7 +1509,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (mode == _state.PixelOffset) return;
             _state.PixelOffset = mode;
             ZeroDataRecord(0x4022, (int)mode);
-            if (HasStream) EndRecord();
+            if (HasStream) EndStateRecord();
         }
 
         public void SetCompositingMode(CompositingMode mode)
@@ -1508,7 +1518,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if ((int)mode == _state.CompMode) return;
             _state.CompMode = (int)mode;
             ZeroDataRecord(0x4023, (int)mode);
-            if (HasStream) EndRecord();
+            if (HasStream) EndStateRecord();
         }
 
         public void SetCompositingQuality(CompositingQuality q)
@@ -1517,7 +1527,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if ((int)q == _state.CompQuality) return;
             _state.CompQuality = (int)q;
             ZeroDataRecord(0x4024, (int)q);
-            if (HasStream) EndRecord();
+            if (HasStream) EndStateRecord();
         }
 
         public void SetRenderingOrigin(int x, int y)
@@ -1529,7 +1539,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (!HasStream) return;
             WriteRecordHeader(8, 0x401d, 0, null);
             var d = new GpEmfPlusBuffer(); d.I32(x); d.I32(y); Data(d);
-            EndRecord();
+            EndStateRecord();
         }
 
         /// <summary>RecordComment: an EmfPlusComment, or a plain GDI comment in an EMF-only file.</summary>
@@ -1547,7 +1557,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             WriteRecordHeader(padded, 0x4003, padded - n, null);
             _comment.Write(data, 0, n);
             if (padded > n) _comment.Write(new byte[padded - n], 0, padded - n);
-            EndRecord();
+            EndStateRecord();
         }
 
         /// <summary>Graphics.Flush: GDI+ records nothing for it.</summary>
@@ -1557,26 +1567,38 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         bool _hdcOut;
+        IntPtr _userDc;
 
-        /// <summary>RecordGetDC: the EmfPlusGetDC record, and the comment flushed so the GDI drawing a
-        /// caller does next lands after it. An HDC into the recording exists only on Windows'
-        /// GDI EMF DC, which this recorder does not have: GDI+ hands one out, this cannot.</summary>
+        /// <summary>GpGraphics::GetHdc @180015e18 on a metafile: the HDC's saved level put back, then
+        /// RecordGetDC (the EmfPlusGetDC record, the comment flushed so the GDI drawing a caller does
+        /// next lands after it), and the metafile's own HDC handed out. On Windows that is a GDI EMF DC on
+        /// the screen whose records ReleaseHdc splices into this recording; elsewhere there is no GDI
+        /// and the handle is zero (Graphics makes it one FromHdc maps back to the recording).</summary>
         public IntPtr GetHdc()
         {
             CheckOpen();
             if (_hdcOut) throw new InvalidOperationException("Object is currently in use elsewhere.");
+            lock (GpMetaDriverState.Lock) ResetHdc();
             if (HasStream)
             {
                 WriteRecordHeader(0, 0x4004, 0, null);
                 _comment.Flush();
             }
             _hdcOut = true;
-            throw new PlatformNotSupportedException("A managed metafile recording has no GDI device context.");
+            if (OperatingSystem.IsWindows())
+                _userDc = GpWindowsMetafile.CreateEmfDc();
+            return _userDc;
         }
 
         public void ReleaseHdc()
         {
+            if (!_hdcOut) return;
             _hdcOut = false;
+            if (_userDc == IntPtr.Zero || !OperatingSystem.IsWindows()) return;
+            byte[] emf = GpWindowsMetafile.CloseEmfDc(_userDc);
+            _userDc = IntPtr.Zero;
+            if (emf != null)
+                lock (GpMetaDriverState.Lock) Dc.Splice(emf);
         }
 
         // ---- the end: MetafileRecorder::EndRecording ---------------------------------------------------
@@ -1619,20 +1641,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         static int RasterizerCeiling(float v) => (GpMetafileFormat.Round(v * 16.0f) + 0xf) >> 4;
 
-        // GpGraphics::NoOpPatBlt: DpContext::GetHdc saves the DC and turns ICM off, PatBlt with
-        // the do-nothing ROP, ReleaseHdc restores.
+        // GpGraphics::NoOpPatBlt @180099b78: DpContext::GetHdc (saving the DC and turning ICM off,
+        // unless the down-level drawing already did), PatBlt with the do-nothing ROP, ResetHdc.
         void NoOpPatBlt(int x, int y, int w, int h)
         {
-            Emf.Add(33, null);                      // EMR_SAVEDC
-            Emf.Add(98, Int32s(1));                 // EMR_SETICMMODE ICM_OFF
-            var b = new byte[92];
-            Le.W32(b, 0, x); Le.W32(b, 4, y); Le.W32(b, 8, x + w - 1); Le.W32(b, 12, y + h - 1);
-            Le.W32(b, 16, x); Le.W32(b, 20, y); Le.W32(b, 24, w); Le.W32(b, 28, h);
-            Le.W32(b, 32, 0x00AA0029);
-            Le.WF(b, 44, 1f); Le.WF(b, 56, 1f);     // xformSrc: identity
-            Emf.Add(76, b);                         // EMR_BITBLT
-            Emf.AddBounds(x, y, x + w - 1, y + h - 1);
-            Emf.Add(34, Int32s(-1));                // EMR_RESTOREDC
+            GpEmfDc dc = ContextHdc();
+            dc.PatBlt(x, y, w, h, 0x00AA0029);
+            ResetHdc();
         }
 
         static byte[] Int32s(params int[] v)

@@ -62,6 +62,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public int Hatch;
             public Bitmap Pattern;
             public bool Mono;
+            public bool OneBit;          // a 1bpp pattern (a mask for the raster idioms)
             public override void Dispose() => Pattern?.Dispose();
         }
 
@@ -281,10 +282,63 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return c;
         }
 
+        // ---- raster operations on the target's pixels, as GDI plays them ----------------------------
+        //
+        // GDI+'s down-level translucency is three raster operations GDI applies to the target's
+        // pixels: PATINVERT the colour, AND (DPa / R2_MASKPEN) a 1bpp dither pattern, PATINVERT again;
+        // what is left is the colour where the pattern is black. A translucent bitmap is the same with
+        // SRCINVERT; a masked one SRCPAINT's its 1bpp mask (which under HALFTONE stretching GDI copies)
+        // then SRCAND's the colours. These are played as their outcome: the pattern is in the target's
+        // pixels, aligned to its origin, as a GDI brush is.
+
+        GdiBrush _xor;                       // the colour a PATINVERT is waiting to cancel
+        Bitmap _xorImage;                    // a SRCINVERT bitmap waiting for its mask
+        PointF[] _xorImageDest;
+        RectangleF _xorImageSrc;
+        Bitmap _xorImageMask;                // the dither pattern ANDed between the two SRCINVERTs
+        Bitmap _mask;                        // a SRCPAINT 1bpp mask waiting for its colours
+        PointF[] _maskDest;
+
+        /// <summary>A texture of the pattern's black pixels in <paramref name="c"/>, the rest clear,
+        /// tiled in target pixels from the origin.</summary>
+        static TextureBrush PatternBrushOf(Bitmap pattern, Color c)
+        {
+            var t = new Bitmap(pattern.Width, pattern.Height, PixelFormat.Format32bppArgb);
+            for (int y = 0; y < pattern.Height; y++)
+                for (int x = 0; x < pattern.Width; x++)
+                    t.SetPixel(x, y, pattern.GetPixel(x, y).GetBrightness() < 0.5f ? c : Color.Transparent);
+            var tb = new TextureBrush(t, WrapMode.Tile);
+            t.Dispose();
+            return tb;
+        }
+
+        /// <summary>The brush a DPa / R2_MASKPEN fill paints: while a PATINVERT colour waits, the
+        /// colour through the pattern; else the pattern's black (AND keeps what is under white).</summary>
+        Brush MaskFillBrush()
+        {
+            GdiBrush b = _dc.Brush;
+            if (b == null || b.Pattern == null) return null;
+            if (_xorImage != null)
+            {
+                _xorImageMask?.Dispose();
+                _xorImageMask = (Bitmap)b.Pattern.Clone();
+                return null;
+            }
+            Color c = _xor != null ? (_xor.Pattern == null ? _xor.Color : Color.Black) : Color.Black;
+            TextureBrush tb = PatternBrushOf(b.Pattern, c);
+            // PlayEnhMetaFile moves the brush origin with the picture: the pattern starts where the
+            // metafile's device origin lands.
+            tb.TranslateTransform((float)Math.Round(_base.Dx), (float)Math.Round(_base.Dy));
+            return tb;
+        }
+
+        bool MaskFill => _dc.Rop2 == 9 && _dc.Brush != null && _dc.Brush.Pattern != null && _dc.Brush.OneBit;
+
         Brush FillBrush()
         {
             GdiBrush b = _dc.Brush;
             if (b == null || b.Style == 1 || Nop) return null;
+            if (MaskFill) return MaskFillBrush();
             switch (b.Style)
             {
                 case 0: return new SolidBrush(RopColor(b.Color));
@@ -633,7 +687,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             r.I32();
             int offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
             Bitmap bm = Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits);
-            Put(idx, new GdiBrush { Style = 3, Pattern = bm, Mono = mono });
+            bool oneBit = cbBmi >= 16 && o - 8 + offBmi + 15 < b.Length && Le.U16(b, o - 8 + offBmi + 14) == 1;
+            Put(idx, new GdiBrush { Style = 3, Pattern = bm, Mono = mono, OneBit = oneBit });
         }
 
         void CreatePalette(GpReader r)
@@ -1251,11 +1306,86 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             PointF[] d = ToTarget(new[] { new PointF(xDest, yDest), new PointF(xDest + cxDest, yDest), new PointF(xDest, yDest + cyDest) });
             if (rop == 0x00AA0029) return;                                   // DSTCOPY: nothing
+            if (bm == null && rop == 0x005A0049)                             // PATINVERT: cancelled by the next
+            {
+                _xor = _xor == null ? _dc.Brush : null;
+                return;
+            }
+            if (bm != null && rop == 0x00660046)                             // SRCINVERT: likewise, a bitmap
+            {
+                if (_xorImage == null)
+                {
+                    _xorImage = (Bitmap)bm.Clone();
+                    _xorImageDest = d;
+                    _xorImageSrc = src;
+                    return;
+                }
+                Bitmap img = _xorImage, mk = _xorImageMask;
+                _xorImage = null; _xorImageMask = null;
+                if (mk != null)
+                {
+                    DrawThroughPattern(img, _xorImageDest, _xorImageSrc, mk);
+                    mk.Dispose();
+                }
+                img.Dispose();
+                return;
+            }
+            if (bm != null && rop == 0x00EE0086 && IsTwoTone(bm))           // SRCPAINT: a mask, for the SRCAND next
+            {
+                _mask?.Dispose();
+                _mask = (Bitmap)bm.Clone();
+                _maskDest = d;
+                return;
+            }
+            if (bm != null && rop == 0x008800C6 && _mask != null)            // SRCAND after SRCPAINT's mask
+            {
+                Bitmap mk = _mask;
+                _mask = null;
+                if (_dc.StretchMode == 4)
+                {
+                    // HALFTONE: the stretched mask is copied, the stretched colours ANDed onto it.
+                    using (Bitmap sm = Stretched(mk, d, src, out int bx, out int by, InterpolationMode.NearestNeighbor))
+                    using (Bitmap si = Stretched(bm, d, src, out _, out _, InterpolationMode.HighQualityBilinear))
+                    {
+                        if (sm == null || si == null) { mk.Dispose(); return; }
+                        for (int y = 0; y < sm.Height; y++)
+                            for (int x = 0; x < sm.Width; x++)
+                            {
+                                Color a = sm.GetPixel(x, y), c = si.GetPixel(x, y);
+                                if (a.A == 0) continue;
+                                sm.SetPixel(x, y, a.GetBrightness() >= 0.5f ? Color.FromArgb(255, c) : Color.Black);
+                            }
+                        Prepare();
+                        _t.DrawImageUnscaled(sm, bx, by);
+                    }
+                    mk.Dispose();
+                    return;
+                }
+                using (var merged = new Bitmap(bm.Width, bm.Height, PixelFormat.Format32bppArgb))
+                {
+                    for (int y = 0; y < bm.Height; y++)
+                        for (int x = 0; x < bm.Width; x++)
+                        {
+                            bool on = x < mk.Width && y < mk.Height && mk.GetPixel(x, y).GetBrightness() >= 0.5f;
+                            Color c = bm.GetPixel(x, y);
+                            merged.SetPixel(x, y, on ? Color.FromArgb(255, c) : Color.Transparent);
+                        }
+                    Prepare();
+                    using (var ia = new ImageAttributes())
+                    {
+                        ia.SetWrapMode(WrapMode.TileFlipXY);
+                        _t.DrawImage(merged, d, src, GraphicsUnit.Pixel, ia);
+                    }
+                }
+                mk.Dispose();
+                return;
+            }
             Prepare();
             if (bm == null)
             {
                 Brush br = null;
-                if (rop == 0x00F00021) br = FillBrush();                     // PATCOPY
+                if (rop == 0x00A000C9) br = MaskFillBrush();                // DPa: the mask idiom
+                else if (rop == 0x00F00021) br = FillBrush();                // PATCOPY
                 else if (rop == 0x00000042) br = new SolidBrush(Color.Black); // BLACKNESS
                 else if (rop == 0x00FF0062) br = new SolidBrush(Color.White); // WHITENESS
                 if (br == null) return;
@@ -1275,6 +1405,77 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     ia.SetWrapMode(WrapMode.TileFlipXY);
                     _t.DrawImage(bm, d, src, GraphicsUnit.Pixel, ia);
                 }
+        }
+
+        static bool IsTwoTone(Bitmap bm)
+        {
+            for (int y = 0; y < bm.Height; y++)
+                for (int x = 0; x < bm.Width; x++)
+                {
+                    Color c = bm.GetPixel(x, y);
+                    if (!(c.R == 0 && c.G == 0 && c.B == 0) && !(c.R == 255 && c.G == 255 && c.B == 255)) return false;
+                }
+            return true;
+        }
+
+        /// <summary>The source stretched onto the parallelogram, in a bitmap of its box in target pixels.</summary>
+        Bitmap Stretched(Bitmap img, PointF[] d, RectangleF src, out int bx, out int by, InterpolationMode mode)
+        {
+            float minx = Math.Min(Math.Min(d[0].X, d[1].X), Math.Min(d[2].X, d[1].X + d[2].X - d[0].X));
+            float maxx = Math.Max(Math.Max(d[0].X, d[1].X), Math.Max(d[2].X, d[1].X + d[2].X - d[0].X));
+            float miny = Math.Min(Math.Min(d[0].Y, d[1].Y), Math.Min(d[2].Y, d[1].Y + d[2].Y - d[0].Y));
+            float maxy = Math.Max(Math.Max(d[0].Y, d[1].Y), Math.Max(d[2].Y, d[1].Y + d[2].Y - d[0].Y));
+            bx = (int)Math.Floor(minx); by = (int)Math.Floor(miny);
+            int bw = (int)Math.Ceiling(maxx) - bx, bh = (int)Math.Ceiling(maxy) - by;
+            if (bw <= 0 || bh <= 0 || bw > 8192 || bh > 8192) return null;
+            var tmp = new Bitmap(bw, bh, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(tmp))
+            {
+                g.PixelOffsetMode = PixelOffsetMode.Half;
+                g.InterpolationMode = mode;
+                var dd = new[] { new PointF(d[0].X - bx, d[0].Y - by), new PointF(d[1].X - bx, d[1].Y - by), new PointF(d[2].X - bx, d[2].Y - by) };
+                using (var ia = new ImageAttributes())
+                {
+                    ia.SetWrapMode(WrapMode.TileFlipXY);
+                    g.DrawImage(img, dd, src, GraphicsUnit.Pixel, ia);
+                }
+            }
+            return tmp;
+        }
+
+        /// <summary>The image where the pattern (tiled in target pixels) is black, the target elsewhere.</summary>
+        void DrawThroughPattern(Bitmap img, PointF[] d, RectangleF src, Bitmap pattern)
+        {
+            float minx = Math.Min(Math.Min(d[0].X, d[1].X), Math.Min(d[2].X, d[1].X + d[2].X - d[0].X));
+            float maxx = Math.Max(Math.Max(d[0].X, d[1].X), Math.Max(d[2].X, d[1].X + d[2].X - d[0].X));
+            float miny = Math.Min(Math.Min(d[0].Y, d[1].Y), Math.Min(d[2].Y, d[1].Y + d[2].Y - d[0].Y));
+            float maxy = Math.Max(Math.Max(d[0].Y, d[1].Y), Math.Max(d[2].Y, d[1].Y + d[2].Y - d[0].Y));
+            int bx = (int)Math.Floor(minx), by = (int)Math.Floor(miny);
+            int bw = (int)Math.Ceiling(maxx) - bx, bh = (int)Math.Ceiling(maxy) - by;
+            if (bw <= 0 || bh <= 0 || bw > 8192 || bh > 8192) return;
+            using (var tmp = new Bitmap(bw, bh, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(tmp))
+                {
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.InterpolationMode = _dc.StretchMode == 4 ? InterpolationMode.HighQualityBilinear : InterpolationMode.NearestNeighbor;
+                    var dd = new[] { new PointF(d[0].X - bx, d[0].Y - by), new PointF(d[1].X - bx, d[1].Y - by), new PointF(d[2].X - bx, d[2].Y - by) };
+                    using (var ia = new ImageAttributes())
+                    {
+                        ia.SetWrapMode(WrapMode.TileFlipXY);
+                        g.DrawImage(img, dd, src, GraphicsUnit.Pixel, ia);
+                    }
+                }
+                int pw = pattern.Width, ph = pattern.Height;
+                for (int y = 0; y < bh; y++)
+                    for (int x = 0; x < bw; x++)
+                    {
+                        int px = ((bx + x) % pw + pw) % pw, py = ((by + y) % ph + ph) % ph;
+                        if (pattern.GetPixel(px, py).GetBrightness() >= 0.5f) tmp.SetPixel(x, y, Color.Transparent);
+                    }
+                Prepare();
+                _t.DrawImageUnscaled(tmp, bx, by);
+            }
         }
 
         static ImageAttributes Inverted()

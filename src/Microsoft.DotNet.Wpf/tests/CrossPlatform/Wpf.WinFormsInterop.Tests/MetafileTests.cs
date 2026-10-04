@@ -371,6 +371,250 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.True(f < 0.08, $"{n} pixels ({f:P1}) differ from GDI+'s");
         }
 
+        // ---- down-level: what an EmfOnly / EmfPlusDual recording renders through GDI+'s metafile
+        // driver into the EMF DC, held to GDI+'s own recordings (Fixtures/Metafiles/emfonly and dual,
+        // `mfo rec <scenario> EmfOnly|EmfPlusDual` run inside an ARM64 Windows PowerShell, one process
+        // per scenario: the driver's state is process-wide, so each file is what a fresh gdiplus.dll
+        // records; and on Windows on ARM an x64 process runs gdiplus.dll's ARM64EC code, which rounds
+        // some float arithmetic differently from the native ARM64 code this port follows).
+
+        /// <summary>The screen the oracle recorded on (mfo hands GDI+ the screen DC).</summary>
+        internal static readonly GpRefDevice OracleScreen = new GpRefDevice
+        {
+            HorzRes = 3840, VertRes = 1200, HorzSize = 1040, VertSize = 320,
+            LogPixelsX = 96, LogPixelsY = 96, IsDisplay = true, DesktopDpiX = 96, DesktopDpiY = 96,
+        };
+
+        /// <summary>A scenario recorded down-level on the oracle's screen by a fresh driver.</summary>
+        internal static byte[] RecordDownLevel(string scenario, EmfType type)
+        {
+            lock (GpMetaDriverState.Lock)
+            {
+                GpMetaDriverState.Reset();
+                var ms = new MemoryStream();
+                GpMetafileRecorder r = GpMetafileRecorder.Create(null, OracleScreen, type, null, MetafileFrameUnit.GdiCompatible, null, ms, null);
+                MetafileScenarios.All()[scenario](new RecorderRec(r));
+                r.End();
+                byte[] emf = ms.ToArray();
+                string outDir = Environment.GetEnvironmentVariable("MF_GDIOUT");
+                if (!string.IsNullOrEmpty(outDir))
+                {
+                    string d = Path.Combine(outDir, type == EmfType.EmfOnly ? "emfonly" : "dual");
+                    Directory.CreateDirectory(d);
+                    File.WriteAllBytes(Path.Combine(d, scenario + ".emf"), emf);
+                }
+                return emf;
+            }
+        }
+
+        static string GdiDiff(byte[] ours, byte[] theirs)
+        {
+            var a = GpMetafileEdit.Records(ours).ToList();
+            var b = GpMetafileEdit.Records(theirs).ToList();
+            var sb = new StringBuilder();
+            // The header: bounds, frame, size, record and handle counts.
+            if (!ours.AsSpan(8, 32).SequenceEqual(theirs.AsSpan(8, 32)) || !ours.AsSpan(48, 10).SequenceEqual(theirs.AsSpan(48, 10)))
+                sb.AppendLine($"header:\n  ours   {Hex(ours.AsSpan(8, 50).ToArray())}\n  gdi+   {Hex(theirs.AsSpan(8, 50).ToArray())}");
+            // What GDI+ leaves unwritten is not compared: EMR_CREATEDIBPATTERNBRUSHPT's dword before
+            // the BITMAPINFO, and the padding of a DIB's rows (its buffers are not cleared).
+            static byte[] Rec(byte[] f, (int Offset, int Type, int Size) r)
+            {
+                byte[] x = f.AsSpan(r.Offset, r.Size).ToArray();
+                if (r.Type == 94 && x.Length >= 36) Array.Clear(x, 32, 4);
+                if (r.Type == 81 && x.Length >= 72)
+                {
+                    int offBmi = BitConverter.ToInt32(x, 48), offBits = BitConverter.ToInt32(x, 56);
+                    int w = BitConverter.ToInt32(x, offBmi + 4), h = Math.Abs(BitConverter.ToInt32(x, offBmi + 8));
+                    int bpp = BitConverter.ToUInt16(x, offBmi + 14);
+                    int stride = ((w * bpp + 31) >> 5) << 2, used = (w * bpp + 7) >> 3;
+                    for (int row = 0; row < h; row++)
+                        for (int k = used; k < stride; k++)
+                            if (offBits + row * stride + k < x.Length) x[offBits + row * stride + k] = 0;
+                }
+                return x;
+            }
+            int n = Math.Max(a.Count, b.Count);
+            for (int i = 1; i < n; i++)
+            {
+                string x = i < a.Count ? Hex(Rec(ours, a[i])) : "(none)";
+                string y = i < b.Count ? Hex(Rec(theirs, b[i])) : "(none)";
+                if (x != y) sb.AppendLine($"record {i}:\n  ours   {x}\n  gdi+   {y}");
+            }
+            return sb.ToString();
+        }
+
+        static string RecordTypes(byte[] emf) => string.Join(",", GpMetafileEdit.Records(emf).Select(r => r.Type));
+
+        /// <summary>The scenarios whose every down-level record is GDI+'s, byte for byte. Not yet:
+        /// images (a rotated image: GDI+ renders the parallelogram at its own resolution through a
+        /// path clip) and text.</summary>
+        public static TheoryData<string> GdiExactScenarios()
+        {
+            var d = new TheoryData<string>();
+            foreach (string name in MetafileScenarios.All().Keys)
+                if (name != "images" && name != "text") d.Add(name);
+            return d;
+        }
+
+        // The EMF+ half of these dual files is held elsewhere (Recorded_EmfPlus_records_are_GdiPlus_bytes):
+        // their images' PNG streams and gradient objects are not GDI+'s bytes yet.
+        static readonly HashSet<string> DualEmfPlusPending = new HashSet<string> { "brushes", "imageunits" };
+
+        [Theory]
+        [MemberData(nameof(GdiExactScenarios))]
+        public void EmfOnly_records_are_GdiPlus_bytes(string scenario)
+        {
+            string diff = GdiDiff(RecordDownLevel(scenario, EmfType.EmfOnly), File.ReadAllBytes(Path.Combine(Dir, "emfonly", scenario + ".emf")));
+            Assert.True(diff.Length == 0, diff);
+        }
+
+        [Theory]
+        [MemberData(nameof(GdiExactScenarios))]
+        public void EmfPlusDual_records_are_GdiPlus_bytes(string scenario)
+        {
+            // pens: the closing no-op PatBlt spans the EMF+ bounds, and GDI+ bounds a custom line cap
+            // tighter than GpMetafileRecorder.CustomCapRadius does.
+            if (scenario == "pens" || DualEmfPlusPending.Contains(scenario)) return;
+            string diff = GdiDiff(RecordDownLevel(scenario, EmfType.EmfPlusDual), File.ReadAllBytes(Path.Combine(Dir, "dual", scenario + ".emf")));
+            Assert.True(diff.Length == 0, diff);
+        }
+
+        /// <summary>Every scenario records down-level, in both types, into a file GDI itself reads.</summary>
+        [Theory]
+        [MemberData(nameof(Scenarios))]
+        public void Down_level_recording_is_a_valid_EMF(string scenario)
+        {
+            foreach (EmfType t in new[] { EmfType.EmfOnly, EmfType.EmfPlusDual })
+            {
+                byte[] emf = RecordDownLevel(scenario, t);
+                Assert.Equal(emf.Length, BitConverter.ToInt32(emf, 48));
+                Assert.Equal(GpMetafileEdit.Records(emf).Count(), BitConverter.ToInt32(emf, 52));
+                if (OperatingSystem.IsWindows())
+                {
+                    IntPtr h = GpWindowsMetafile.ToHenhmetafile(emf);
+                    Assert.NotEqual(IntPtr.Zero, h);
+                    GpWindowsMetafile.DeleteEmf(h);
+                }
+            }
+        }
+
+        /// <summary>Our down-level recording, played, is what GDI+ draws of its own (emfonly/play and
+        /// dual/play: `mfo play` of each fixture into 120 x 90 at (5, 5, 110, 80)). An EmfOnly file
+        /// plays its GDI records; a dual one its EMF+ records.</summary>
+        public static TheoryData<string> PlaybackScenarios()
+        {
+            var d = new TheoryData<string>();
+            foreach (string name in MetafileScenarios.All().Keys)
+                if (!PlaybackPending.Contains(name)) d.Add(name);
+            return d;
+        }
+
+        // Not yet: GDI's HALFTONE stretching of masked bitmaps (images, imageunits, brushes: GpGdiPlayer
+        // plays the SRCPAINT/SRCAND pair as its outcome, interpolated as GDI+ interpolates), text (the
+        // EMF has no ExtTextOut yet), and the dual pens file, whose frame differs by the EMF+ bounds of a
+        // custom line cap.
+        static readonly HashSet<string> PlaybackPending = new HashSet<string> { "images", "imageunits", "brushes", "text", "pens" };
+
+        [Theory]
+        [MemberData(nameof(PlaybackScenarios))]
+        public void Played_down_level_recording_matches_GdiPlus_pixels(string scenario)
+        {
+            foreach (EmfType t in new[] { EmfType.EmfOnly, EmfType.EmfPlusDual })
+            {
+                string kind = t == EmfType.EmfOnly ? "emfonly" : "dual";
+                using var mf = new Metafile(new MemoryStream(RecordDownLevel(scenario, t)));
+                using Bitmap ours = PlayInto(mf, 120, 90, new RectangleF(5, 5, 110, 80));
+                using var theirs = (Bitmap)Image.FromFile(Path.Combine(Dir, kind, "play", scenario + ".png"));
+                string outDir = Environment.GetEnvironmentVariable("MF_PLAYOUT");
+                if (!string.IsNullOrEmpty(outDir))
+                {
+                    Directory.CreateDirectory(Path.Combine(outDir, kind));
+                    ours.Save(Path.Combine(outDir, kind, scenario + ".png"), ImageFormat.Png);
+                }
+                double f = Differ(ours, theirs, 64, out int n);
+                Assert.True(f < 0.02, $"{kind}: {n} pixels ({f:P1}) differ from GDI+'s");
+            }
+        }
+
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern IntPtr CreateSolidBrush(int c);
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr hdc, IntPtr h);
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr h);
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")] static extern bool Rectangle(IntPtr hdc, int l, int t, int r, int b);
+
+        /// <summary>GDI drawing on a recording's GetHdc lands in the recording after the EmfPlusGetDC,
+        /// its objects in the file's handle table after GDI+'s, as GDI+'s own recording holds it
+        /// (gethdc.emf: mfo gethdc, the same calls).</summary>
+        [Theory]
+        [InlineData(EmfType.EmfOnly)]
+        [InlineData(EmfType.EmfPlusDual)]
+        public void GetHdc_on_a_recording_records_the_GDI_drawing(EmfType type)
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            byte[] ours;
+            lock (GpMetaDriverState.Lock)
+            {
+                GpMetaDriverState.Reset();
+                var ms = new MemoryStream();
+                using (var mf = new Metafile(ms, IntPtr.Zero, type))
+                using (Graphics g = Graphics.FromImage(mf))
+                {
+                    g.FillRectangle(Brushes.Red, 10, 10, 30, 20);
+                    IntPtr hdc = g.GetHdc();
+                    Assert.NotEqual(IntPtr.Zero, hdc);
+                    IntPtr b = CreateSolidBrush(0xff0000);
+                    IntPtr old = SelectObject(hdc, b);
+                    Rectangle(hdc, 20, 20, 60, 50);
+                    SelectObject(hdc, old);
+                    DeleteObject(b);
+                    g.ReleaseHdc(hdc);
+                    g.FillRectangle(Brushes.Green, 40, 5, 20, 20);
+                }
+                ours = ms.ToArray();
+            }
+            byte[] theirs = File.ReadAllBytes(Path.Combine(Dir, type == EmfType.EmfOnly ? "emfonly" : "dual", "gethdc.emf"));
+            // Recorded on a different reference device: the frame differs, nothing else.
+            Array.Copy(theirs, 24, ours, 24, 16);
+            string diff = GdiDiff(ours, theirs);
+            Assert.True(diff.Length == 0, diff);
+        }
+
+        /// <summary>Where there is no GDI, a recording's GetHdc is a handle FromHdc maps back to the
+        /// recording: what is drawn through it is recorded, and its disposal does not end the file.</summary>
+        [Fact]
+        public void GetHdc_on_a_recording_without_GDI_draws_into_the_recording()
+        {
+            if (OperatingSystem.IsWindows()) return;
+            var ms = new MemoryStream();
+            using (var mf = new Metafile(ms, IntPtr.Zero, EmfType.EmfPlusOnly))
+            using (Graphics g = Graphics.FromImage(mf))
+            {
+                IntPtr hdc = g.GetHdc();
+                Assert.NotEqual(IntPtr.Zero, hdc);
+                using (Graphics h = Graphics.FromHdc(hdc)) h.FillRectangle(Brushes.Red, 1, 2, 3, 4);
+                g.ReleaseHdc(hdc);
+                g.FillRectangle(Brushes.Blue, 5, 6, 7, 8);
+            }
+            var types = EmfPlusRecords(ms.ToArray()).Select(r => BitConverter.ToUInt16(r.Record, 0)).ToList();
+            Assert.Equal(new ushort[] { 0x4001, 0x4004, 0x400a, 0x400a, 0x4002 }, types);
+        }
+
+        public static TheoryData<string> GdiStructureScenarios()
+        {
+            var d = new TheoryData<string>();
+            foreach (string name in MetafileScenarios.All().Keys)
+                if (name != "text") d.Add(name);
+            return d;
+        }
+
+        /// <summary>Every scenario writes GDI+'s down-level records in GDI+'s order.</summary>
+        [Theory]
+        [MemberData(nameof(GdiStructureScenarios))]
+        public void Down_level_record_structure_is_GdiPlus(string scenario)
+        {
+            Assert.Equal(RecordTypes(File.ReadAllBytes(Path.Combine(Dir, "emfonly", scenario + ".emf"))), RecordTypes(RecordDownLevel(scenario, EmfType.EmfOnly)));
+            Assert.Equal(RecordTypes(File.ReadAllBytes(Path.Combine(Dir, "dual", scenario + ".emf"))), RecordTypes(RecordDownLevel(scenario, EmfType.EmfPlusDual)));
+        }
+
         public static TheoryData<string> BareWmfFiles() => new TheoryData<string> { "bare.wmf", "bare_nomap.wmf", "shapes.wmf" };
 
         /// <summary>A WMF with no placeable header becomes the EMF GDI makes of it (SetWinMetaFileBits with
