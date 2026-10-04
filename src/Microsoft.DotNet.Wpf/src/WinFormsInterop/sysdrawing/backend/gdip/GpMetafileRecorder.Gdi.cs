@@ -24,7 +24,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 probe.PageUnit = _state.PageUnit == GraphicsUnit.World ? GraphicsUnit.Display : _state.PageUnit;
                 probe.PageScale = _state.PageScale;
-                SizeF size = probe.MeasureString(s, font, new SizeF(layout.Width, layout.Height), format);
+                SizeF size;
+                bool vertical = format != null && (format.FormatFlags & StringFormatFlags.DirectionVertical) != 0;
+                if (!vertical && TryMeasure(s, font, layout, format, out SizeF measured)) size = measured;
+                else size = probe.MeasureString(s, font, new SizeF(layout.Width, layout.Height), format);
                 float x = layout.X, y = layout.Y;
                 StringAlignment a = format?.Alignment ?? StringAlignment.Near;
                 StringAlignment la = format?.LineAlignment ?? StringAlignment.Near;
@@ -55,6 +58,26 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GpMat m = WorldToDevice;
             m.TransformBounds(ref l, ref t, ref r, ref b);
             return new RectangleF(l, t, r - l, b - t);
+        }
+
+        /// <summary>FullTextImager::Measure in world units (GpTextLayout, the em in world units).</summary>
+        bool TryMeasure(string s, Font font, RectangleF layout, StringFormat format, out SizeF size)
+        {
+            size = SizeF.Empty;
+            string family = font.FontFamily.Name;
+            var face = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Face(family, (int)font.Style & 3);
+            GpFontFamily.Metrics? mm = GpFontFamily.Get(family, (FontStyle)((int)font.Style & 3));
+            if (face == null || mm == null) return false;
+            int flags = format != null ? (int)format.FormatFlags : 0;
+            bool typographic = format != null && format.IsTypographic;
+            bool hotkey = format != null && format.HotkeyPrefix != System.Drawing.Text.HotkeyPrefix.None;
+            float em = EmWorld(font);
+            GpTextLayout L = GpTextLayout.Build(face, mm.Value, s, em, layout.Width, flags, typographic, hotkey);
+            size = L.Measure(layout.Height, flags, out _, out _);
+            // What spills out of the rectangle is not measured.
+            if (layout.Width > 0f && size.Width > layout.Width) size.Width = layout.Width;
+            if (layout.Height > 0f && size.Height > layout.Height) size.Height = layout.Height;
+            return true;
         }
 
         /// <summary>RecordEmfPlusDrawDriverString @1800eb628 -> DriverStringImager::MeasureString

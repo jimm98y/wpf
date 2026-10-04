@@ -323,7 +323,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     if ((style & 12) != 0)
                     {
                         int len = line.WidthWithSpaces;
-                        float y0 = layout.Y + v / res;
+                        // On the display baseline (BuiltLine::SetDisplayBaseline: the snapped cell's).
+                        float y0 = cy;
                         if ((style & 4) != 0)
                             DecorationLine(face, brush, em, true, layout.X + u0 / res, y0, len / res, res, horizontal: true);
                         if ((style & 8) != 0)
@@ -361,7 +362,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>GlyphImager::AdjustGlyphAdvances over a whole run at a line's both ends: the
         /// device advances (ideal units) moved towards the nominal ones; returns the cell origin's
-        /// shift (+0x220).</summary>
+        /// shift (+0x220). What the alignment leaves at the run's end (TrailingAdjustCollector
+        /// @180247d90) goes onto the last glyph before the trailing spaces.</summary>
         static int AdjustGlyphAdvances(TrueTypeFont face, ushort[] gl, int[] nom, int[] dev, int space, int spaceNom,
                                        int formatFlags, int align, bool lead, bool trail, ref int m70, ref int m74,
                                        float em, float res, float f78, float sx)
@@ -373,6 +375,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int ts = 0, k2 = n, done = ls;
             while (done < n && gl[--k2] == space && dev[k2] != 0) { done++; dev[k2] = spaceNom; ts++; }
             int mid = n - ts - ls;
+            int bc = 0;                         // the trailing adjustment (local_bc)
+            int last = ls + mid - 1;            // the collector's glyph
+            void Collect() { if (last >= 0 && last < n) dev[last] += bc; }
             if (mid < 2)
             {
                 if (mid == 1) dev[ls] = nom[ls];
@@ -389,11 +394,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             bool rtlFlag = (formatFlags & 1) != 0 && (formatFlags & 2) == 0;
             int al = align;
             if (rtlFlag) al = al == 0 ? 2 : al == 2 ? 0 : al;
-            int Rnd(float v) => (int)MathF.Floor(v + 0.5f);
+            static int Rnd(float v) => (int)MathF.Floor(v + 0.5f);
+            bool skipZero = false;
             if ((formatFlags & 4) == 0 && (lead || trail))
             {
                 SideBearings(face, gl, ls, mid, em, sx, out int lsb16, out int rsb16);
-                bool skipZero = false;
                 if (lead)
                 {
                     int v = Rnd(f78 * lsb16 * 0.0625f);
@@ -418,13 +423,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         else skipZero = true;
                     }
                 }
-                if (!skipZero && delta == 0) return shift;
             }
-            else if (delta == 0) return shift;
+            if (!skipZero && delta == 0) { Collect(); return shift; }
 
             if (nsCount + spCount < 2)
             {
                 shift += delta / 2;
+                bc = delta - delta / 2;
+                Collect();
                 return shift;
             }
             int emIdeal = Rnd(em * res);
@@ -433,11 +439,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 if (trail)
                 {
-                    if (delta < -m74) { delta += m74; taken = -m74; }
+                    if (delta < -m74) { delta += m74; taken = -m74; bc = taken; }
                     else
                     {
-                        if (delta < emIdeal) return shift;
-                        delta -= emIdeal; taken = emIdeal;
+                        bc = delta;
+                        if (delta < emIdeal) { Collect(); return shift; }
+                        delta -= emIdeal; taken = emIdeal; bc = emIdeal;
                     }
                 }
             }
@@ -446,10 +453,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (lead && trail)
                 {
                     int mn = Math.Min(m70, m74);
-                    if (-2 * mn <= delta) { shift += delta / 2; return shift; }
+                    if (-2 * mn <= delta)
+                    {
+                        shift += delta / 2;
+                        bc = delta - delta / 2;
+                        Collect();
+                        return shift;
+                    }
                     delta += -2 * mn;
                     shift += mn;
-                    taken = mn;
+                    taken = mn; bc = mn;
                 }
             }
             else if (al == 2 && lead)
@@ -457,12 +470,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (delta < -m70) { delta += m70; shift += -m70; }
                 else
                 {
-                    if (delta < emIdeal) { shift += delta; return shift; }
+                    if (delta < emIdeal) { shift += delta; Collect(); return shift; }
                     delta -= emIdeal; shift += emIdeal;
                 }
             }
             int minSp = Rnd(em * res / 6f);
             bool spreadOverSpaces = false;
+            bool splitHalf = false;     // the Latin-script path (542c): the rest split about the run
             if (spCount >= 1)
             {
                 if (!(spNom < delta))
@@ -470,16 +484,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     int lim = Math.Max(spNom / 2, spCount * minSp);
                     if (!(delta < lim - spNom)) spreadOverSpaces = true;
                 }
-                if (!spreadOverSpaces && delta >= 1)
-                {
-                    // Latin script: the rest split about the run (the 542c path).
-                    shift += delta / 2;
-                    return shift;
-                }
+                if (!spreadOverSpaces && delta >= 1) splitHalf = true;
             }
-            else if (delta > 0)
+            else if (delta > 0) splitHalf = true;
+            if (splitHalf)
             {
                 shift += delta / 2;
+                bc = taken - delta / 2 + delta;
+                Collect();
                 return shift;
             }
             if (spreadOverSpaces)
@@ -487,6 +499,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int per = spCount != 0 ? (spDev + spCount / 2 + delta) / spCount : 0;
                 for (int k = ls; k < ls + mid; k++)
                     if (gl[k] == space && dev[k] != 0) dev[k] = per;
+                Collect();
                 return shift;
             }
             // Over the gaps between letters.
@@ -500,15 +513,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int runs = 0;
             for (int j = 0; j < mid;)
             {
-                int i = ls + j;
-                if (gl[i] == space && dev[i] != 0)
+                if (gl[ls + j] == space && dev[ls + j] != 0)
                 {
                     do { j++; } while (j < mid && gl[ls + j] == space && dev[ls + j] != 0);
                     runs++;
                 }
                 else
                 {
-                    if (j >= mid) break;
                     while (j < mid && !(gl[ls + j] == space && dev[ls + j] != 0)) j++;
                 }
             }
@@ -517,7 +528,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int per2, extra;
             if (gaps < 1)
             {
-                if (spCount == 0) return shift;
+                if (spCount == 0) { Collect(); return shift; }
                 spW += (delta + spCount / 2) / spCount;
                 per2 = 0; extra = 0;
             }
@@ -553,6 +564,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     prevSpace = gl[i] == space && dev[i] != 0;
                 }
             }
+            Collect();
             return shift;
         }
 
