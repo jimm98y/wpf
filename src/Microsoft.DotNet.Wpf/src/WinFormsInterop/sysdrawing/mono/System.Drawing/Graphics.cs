@@ -3295,8 +3295,15 @@ namespace System.Drawing
 		
 				public Color GetNearestColor (Color color)
 		{
-			// Every surface here is 32 bits a pixel: the colour is its own nearest.
-			return Color.FromArgb (color.ToArgb ());
+						// GpGraphics::GetNearestColor: a 16-bit surface rounds the colour down to its own levels
+			// (each channel's top bits, shifted back up); a 32-bit one keeps it.
+			uint c = (uint) color.ToArgb ();
+			PixelFormat f = image_target != null ? image_target.PixelFormat : PixelFormat.Format32bppArgb;
+			if (f == PixelFormat.Format16bppRgb565)
+				c = 0xff000000u | (c & 0xf80000) | (c & 0xfc00) | (c & 0xf8);
+			else if (f == PixelFormat.Format16bppRgb555 || f == PixelFormat.Format16bppArgb1555)
+				c = 0xff000000u | (c & 0xf80000) | (c & 0xf800) | (c & 0xf8);
+			return Color.FromArgb (unchecked ((int) c));
 		}
 
 		
@@ -3895,7 +3902,19 @@ namespace System.Drawing
 
 		public RectangleF ClipBounds {
 			get {
-				if (gp != null) { SyncEngine (); return new Region (gp.GetClip ()).Bounds (); }
+								if (gp != null) {
+					SyncEngine ();
+					// GpGraphics::GetClipBounds: the app clip's DEVICE region bounds, back in world units.
+					GpRegion app = gp.AppClip;
+					if (app == null) return new Region (gp.GetClip ()).Bounds ();
+					Rectangle d = app.Device (GpMatrix.CreateIdentity ()).Bounds;
+					if (!gp.DeviceToWorld (out GpMatrix inv)) return RectangleF.Empty;
+					var pts = new [] { new PointF (d.Left, d.Top), new PointF (d.Right, d.Top), new PointF (d.Left, d.Bottom), new PointF (d.Right, d.Bottom) };
+					inv.Transform (pts);
+					float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+					foreach (PointF p in pts) { x0 = Math.Min (x0, p.X); y0 = Math.Min (y0, p.Y); x1 = Math.Max (x1, p.X); y1 = Math.Max (y1, p.Y); }
+					return RectangleF.FromLTRB (x0, y0, x1, y1);
+				}
 				return print_mode || image_target != null ? RecordedVisibleBounds () : new RectangleF (0, 0, 1 << 20, 1 << 20);
 			}
 		}

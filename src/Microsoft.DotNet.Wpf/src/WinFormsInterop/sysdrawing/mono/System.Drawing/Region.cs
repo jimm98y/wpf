@@ -407,12 +407,15 @@ namespace System.Drawing
 			var body = new MemoryStream ();
 			var w = new BinaryWriter (body);
 			w.Write (RegionVersion);
-			w.Write (CountCombines (gp));
+						// GpRegion +0xa8: the child nodes, two per combine.
+			w.Write (2 * CountCombines (gp));
 			WriteNode (w, gp);
 			w.Flush ();
 			byte [] payload = body.ToArray ();
 			var all = new byte [payload.Length + 8];
-			BitConverter.GetBytes (payload.Length + 4).CopyTo (all, 0);
+						// GpObject::GetExternalData: the size of what follows the eight-byte header, and Crc32
+			// @1802268c0 of it (table CRC, initial 0, no final inversion).
+			BitConverter.GetBytes (payload.Length).CopyTo (all, 0);
 			BitConverter.GetBytes (Crc (payload)).CopyTo (all, 4);
 			payload.CopyTo (all, 8);
 			return new RegionData (all);
@@ -444,12 +447,13 @@ namespace System.Drawing
 
 		static uint Crc (byte [] data)
 		{
-			uint c = 0xffffffff;
+						uint c = 0;
 			foreach (byte b in data) {
-				c ^= b;
-				for (int k = 0; k < 8; k++) c = (c & 1) != 0 ? 0xedb88320u ^ (c >> 1) : c >> 1;
+				uint t = (c ^ b) & 0xff;
+				for (int k = 0; k < 8; k++) t = (t & 1) != 0 ? 0xedb88320u ^ (t >> 1) : t >> 1;
+				c = t ^ (c >> 8);
 			}
-			return ~c;
+			return c;
 		}
 
 		static GpRegion Deserialize (byte [] data)
