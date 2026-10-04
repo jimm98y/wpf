@@ -634,13 +634,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return w * 0.5f;
         }
 
-        // GpCustomLineCap::GetRadius @18007b9c0: the furthest the cap's paths reach, scaled by the
-        // pen width, the stroke path's widened by its own stroke.
+        // GpCustomLineCap::GetRadius @18007b9c0: the furthest the cap's paths reach once
+        // getTransformedPoints @18007c4f0 has scaled them by the larger of the pen width and the
+        // scale (about the hot spots, which every constructor leaves at 0); the stroke path's box
+        // corner grown by half its stroke (WidthScale x the pen width, at least the scale).
         static float CustomCapRadius(CustomLineCap cap, float penWidth, float scale)
         {
             if (penWidth <= 0f || cap.gp == null) return 0f;
             GpPath fill = cap.gp.FillPath, stroke = cap.gp.StrokePath;
-            float ws = cap.WidthScale * penWidth;
+            float ws = scale <= penWidth ? penWidth : scale;
             float best = 0f;
             if (fill != null)
                 foreach (PointF p in fill.Points)
@@ -1324,6 +1326,34 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 EndStateRecord();
             }
             GdiClipRegion(region, mode);
+        }
+
+        /// <summary>The EmfPlusSetClipPath GDI+'s own CombineClip records (DrvDrawImage), the clip itself
+        /// left to the caller.</summary>
+        void RecordClipPath(GraphicsPath path, CombineMode mode)
+        {
+            if (!HasStream) return;
+            int pid = RecordObject(path);
+            WriteRecordHeader(0, 0x4033, pid | ((int)mode << 8), null);
+            EndStateRecord();
+        }
+
+        /// <summary>The EmfPlusSetClipRegion of a GpGraphics::SetClip GDI+ makes itself.</summary>
+        void RecordClipRegion(Region region, CombineMode mode)
+        {
+            if (!HasStream) return;
+            int rid = RecordObject(region);
+            WriteRecordHeader(0, 0x4034, rid | ((int)mode << 8), null);
+            EndStateRecord();
+        }
+
+        /// <summary>GpGraphics::GetClip: the device clip back in world space.</summary>
+        Region WorldClip(GpRegion device)
+        {
+            GpRegion w = device.Clone();
+            GpMatrix inv = DeviceMatrix;
+            if (inv.Invert()) w.Transform(inv);
+            return new Region(w);
         }
 
         public void ResetClip()
