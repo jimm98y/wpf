@@ -1488,7 +1488,21 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void Blit(Bitmap bm, float xDest, float yDest, float cxDest, float cyDest, RectangleF src, int rop)
         {
             PointF[] d = ToTarget(new[] { new PointF(xDest, yDest), new PointF(xDest + cxDest, yDest), new PointF(xDest, yDest + cyDest) });
-            if (Canvas && RasterBlit(bm, d, src, rop, _dibBlit)) return;
+            if (Canvas)
+            {
+                // The destination as GDI places it (GrePatBlt @140187c30 through bCvtPts1
+                // @14018a430): each corner in 28.4, then to the nearest pixel, halves up.
+                GdiXform m = TargetWtoD();
+                if ((m.Accel & GdiXform.Scale) != 0)
+                {
+                    int ix = (int)xDest, iy = (int)yDest, icx = (int)cxDest, icy = (int)cyDest;
+                    m.Point(ix, iy, out int ax, out int ay);
+                    m.Point(ix + icx, iy + icy, out int bx, out int by);
+                    float x0 = ((ax >> 3) + 1) >> 1, y0 = ((ay >> 3) + 1) >> 1, x1 = ((bx >> 3) + 1) >> 1, y1 = ((by >> 3) + 1) >> 1;
+                    d = new[] { new PointF(x0, y0), new PointF(x1, y0), new PointF(x0, y1) };
+                }
+                if (RasterBlit(bm, d, src, rop, _dibBlit)) return;
+            }
             if (rop == 0x00AA0029) return;                                   // DSTCOPY: nothing
             if (bm == null && rop == 0x005A0049)                             // PATINVERT: cancelled by the next
             {

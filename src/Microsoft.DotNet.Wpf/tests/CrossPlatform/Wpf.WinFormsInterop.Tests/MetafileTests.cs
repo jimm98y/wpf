@@ -367,8 +367,9 @@ namespace Wpf.WinFormsInterop.Tests
             using var theirs = (Bitmap)Image.FromFile(Path.Combine(Dir, "samples", "play", Path.GetFileNameWithoutExtension(name) + ".png"));
             string outDir = Environment.GetEnvironmentVariable("MF_PLAYOUT");
             if (!string.IsNullOrEmpty(outDir)) ours.Save(Path.Combine(outDir, "s_" + Path.GetFileNameWithoutExtension(name) + ".png"), ImageFormat.Png);
+            // The shapes, lines and fills are GDI's exactly; what differs is the text.
             double f = Differ(ours, theirs, 64, out int n);
-            Assert.True(f < 0.08, $"{n} pixels ({f:P1}) differ from GDI+'s");
+            Assert.True(f < 0.02, $"{n} pixels ({f:P1}) differ from GDI+'s");
         }
 
         // ---- down-level: what an EmfOnly / EmfPlusDual recording renders through GDI+'s metafile
@@ -504,6 +505,11 @@ namespace Wpf.WinFormsInterop.Tests
         // Not yet: text (the EMF has no ExtTextOut yet).
         static readonly HashSet<string> PlaybackPending = new HashSet<string> { "text" };
 
+        // EmfOnly playback is GDI drawing into GDI+'s DIB, and GDI's vectors, regions, clips and
+        // blit rectangles are ported exactly: every scenario but these is pixel for pixel. Not yet:
+        // imageunits, whose StretchDIBits images GDI+ first resamples itself (MfEnumState::OutputDIB).
+        static readonly HashSet<string> EmfOnlyInexact = new HashSet<string> { "imageunits" };
+
         [Theory]
         [MemberData(nameof(PlaybackScenarios))]
         public void Played_down_level_recording_matches_GdiPlus_pixels(string scenario)
@@ -519,6 +525,12 @@ namespace Wpf.WinFormsInterop.Tests
                 {
                     Directory.CreateDirectory(Path.Combine(outDir, kind));
                     ours.Save(Path.Combine(outDir, kind, scenario + ".png"), ImageFormat.Png);
+                }
+                if (t == EmfType.EmfOnly && !EmfOnlyInexact.Contains(scenario))
+                {
+                    Differ(ours, theirs, 0, out int exact);
+                    Assert.True(exact == 0, $"{kind}: {exact} pixels differ from GDI+'s");
+                    continue;
                 }
                 double f = Differ(ours, theirs, 64, out int n);
                 Assert.True(f < 0.02, $"{kind}: {n} pixels ({f:P1}) differ from GDI+'s");
