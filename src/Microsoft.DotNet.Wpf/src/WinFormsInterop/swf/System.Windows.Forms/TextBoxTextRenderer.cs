@@ -81,6 +81,20 @@ namespace System.Windows.Forms
 			}
 		}
 		
+		// The text controls lay runs out with the port's own measurement, as the shared measuring
+		// context does (Hwnd.GraphicsContext): GDI+'s FullTextImager numbers leave out a run's
+		// trailing spaces, which drew "bold, red" as "bold ,red".
+		static SizeF PortMeasureString (Graphics g, string text, Font font)
+		{
+			bool was = g.port_measure;
+			g.port_measure = true;
+			try {
+				return g.MeasureString (text, font, 10000, sf_nonprinting);
+			} finally {
+				g.port_measure = was;
+			}
+		}
+
 		public static SizeF MeasureText (Graphics g, string text, Font font)
 		{
 			// Due to the way the TextBox currently works, it measures each
@@ -110,7 +124,7 @@ namespace System.Windows.Forms
 					SizeF size;
 					
 					if (!use_textrenderer)
-						size = g.MeasureString (text, font, 10000, sf_nonprinting);
+						size = PortMeasureString (g, text, font);
 					else
 						size = TextRenderer.MeasureTextInternal (g, text, font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix, false);
 				
@@ -121,7 +135,7 @@ namespace System.Windows.Forms
 			}
 			
 			if (!use_textrenderer)
-				return g.MeasureString (text, font, 10000, sf_nonprinting);
+				return PortMeasureString (g, text, font);
 			else
 				return TextRenderer.MeasureTextInternal (g, text, font, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix, false);
 		}
