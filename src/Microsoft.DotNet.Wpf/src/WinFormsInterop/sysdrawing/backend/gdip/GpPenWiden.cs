@@ -12,7 +12,48 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public static partial RectangleF WidenedBounds (GpPath path, Pen pen, GpMatrix? matrix)
             => throw new NotImplementedException ("GpPath::GetBounds with a pen");
 
-        public static GpPath GetWidenedPath (GpPath path, DpPen pen, GpMatrix? m, float flatness, float dpi) => null;
+        /// <summary>GpPath::GetWidenedPath @180089680: the outline of the stroke, in the space
+        /// <paramref name="m"/> maps to (device space for drawing). An Inset pen widens each closed
+        /// figure at twice the width and keeps what lies inside the path.</summary>
+        public static GpPath GetWidenedPath (GpPath path, DpPen pen, GpMatrix? m, float flatness, float dpi)
+        {
+            GpMatrix mm = m ?? GpMatrix.CreateIdentity ();
+            if (pen.Alignment != 1) return GetWidenedPathInternal (path, pen, mm, flatness, false);
+            return null;   // Inset: not yet
+        }
+
+        /// <summary>GpPath::GetWidenedPathInternal @18001c6e0.</summary>
+        static GpPath GetWidenedPathInternal (GpPath path, DpPen pen, GpMatrix m, float flatness, bool inset)
+        {
+            GpMatrix inv = m;
+            if (!inv.Invert ()) return null;
+            GpPath p = path.Clone ();
+            // Flattened (or transformed) in device space, then brought back.
+            p.Flatten (m, flatness);
+            if (p.Count > 0 && inv.Complexity != 0) {
+                for (int i = 0; i < p.Count; i++) p.Points [i] = inv.Transform (p.Points [i]);
+            }
+            GpPath caps = null;
+            if (pen.StartCap == 0xff || pen.EndCap == 0xff || (pen.StartCap & 0xf0) != 0 || (pen.EndCap & 0xf0) != 0) {
+                return null;   // GpEndCapCreator: not yet
+            }
+            if (pen.DashStyle != 0 && p.Count > 0) {
+                GpPath d = CreateDashedPath (p, pen, m, 0f, 0f, inset ? 0.5f : 1f, true);
+                if (d == null) return null;
+                p = d;
+            }
+            GpPath wide;
+            if (p.Count < 1) wide = caps;
+            else {
+                var w = new GpPathWidener (p, pen, m, 0f, 0f, inset);
+                wide = w.Widen ();
+            }
+            if (wide == null) return null;
+            if (caps != null) wide.AddPath (caps, false);
+            if (wide.Count > 0) wide.Transform (m);
+            return wide;
+        }
+
         public static GpPath CreateDashedPath (GpPath path, DpPen pen, GpMatrix? m, float dpiX, float dpiY, float scale, bool flag) => null;
     }
 
