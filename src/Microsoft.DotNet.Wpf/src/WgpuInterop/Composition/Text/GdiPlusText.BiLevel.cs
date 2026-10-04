@@ -149,5 +149,109 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             lv.Index[(gy + r - lv.Top) * lv.Width + gx + c - lv.Left] = 15;
             return lv;
         }
+
+        // ---- glyphs under a transform the fast imager refuses (FullTextImager's path) ----------
+        //
+        // GpGraphics::DrawPlacedGlyphs passes the device transform's linear part to
+        // CreateGlyphBitmapArray and asks for grid fitting only when it is axis-aligned or a quarter
+        // turn (GpFaceRealization +0xbc / +0xc0, from bGetDEVICEMETRICS @1800a2c08); otherwise the
+        // outline is scaled and turned unfitted (MakeRasterizerTransform with the matrix), scanned
+        // once at the raster type's overscale, and placed at round-half-away of its sample position.
+
+
+        /// <summary>The design outline scaled to <paramref name="em"/> and put through the 2x2
+        /// matrix (world y down), on the scaler's 26.6 grid, moved by (dx, dy) device pixels.</summary>
+        internal static List<PathFigure> TransformedOutline(TrueTypeFont font, int gid, float em,
+                                                            float m11, float m12, float m21, float m22, float dx, float dy)
+        {
+            var figures = new List<PathFigure>();
+            double k = em / (double)font.UnitsPerEmForHinting;
+            foreach ((System.Numerics.Vector2[] pts, bool[] on) in font.DesignContours(gid))
+            {
+                int n = pts.Length;
+                if (n < 2) continue;
+                var p = new System.Numerics.Vector2[n];
+                for (int i = 0; i < n; i++)
+                {
+                    double x = pts[i].X * k, y = -pts[i].Y * k;
+                    double X = m11 * x + m21 * y, Y = m12 * x + m22 * y;
+                    p[i] = new System.Numerics.Vector2((float)(Math.Round(X * 64) / 64) + dx, (float)(Math.Round(Y * 64) / 64) + dy);
+                }
+                int s0 = Array.IndexOf(on, true);
+                var q = new List<(System.Numerics.Vector2 P, bool On)>(n + 1);
+                if (s0 < 0)
+                {
+                    q.Add(((p[0] + p[1]) * 0.5f, true));
+                    for (int i = 1; i <= n; i++) q.Add((p[i % n], false));
+                }
+                else for (int i = 0; i < n; i++) q.Add((p[(s0 + i) % n], on[(s0 + i) % n]));
+                var f = new PathFigure(q[0].P) { Closed = true };
+                int c = q.Count, j = 1;
+                while (j <= c)
+                {
+                    var (pt, isOn) = q[j % c];
+                    if (isOn) { f.Segments.Add(new LineSegment(pt)); j++; continue; }
+                    var (nx, nOn) = q[(j + 1) % c];
+                    if (nOn) { f.Segments.Add(new QuadraticBezierSegment(pt, nx)); j += 2; }
+                    else { f.Segments.Add(new QuadraticBezierSegment(pt, (pt + nx) * 0.5f)); j += 1; }
+                }
+                figures.Add(f);
+            }
+            return figures;
+        }
+
+        /// <summary>An antialiased run under a general transform: each glyph's transformed outline
+        /// scanned 4x4 at its quarter-pixel phase, coverage by max (Levels.Index 0..15).</summary>
+        internal static Levels ComposeGreyTransformed(TrueTypeFont font, IReadOnlyList<ushort> gids, float em,
+                                                      float m11, float m12, float m21, float m22,
+                                                      float[] xs, float[] ys, int dropout)
+        {
+            int n = gids.Count;
+            var cov = new Dictionary<(int, int), int>();
+            for (int i = 0; i < n; i++)
+            {
+                int qx = NaturalClearType.RoundHalfAway(xs[i] * 4f), qy = NaturalClearType.RoundHalfAway(ys[i] * 4f);
+                int ix = FloorDiv(qx, 4), iy = FloorDiv(qy, 4);
+                List<PathFigure> figs = TransformedOutline(font, gids[i], em, m11, m12, m21, m22, (qx - 4 * ix) / 4f, (qy - 4 * iy) / 4f);
+                float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+                foreach (PathFigure f in figs)
+                {
+                    Take(f.Start);
+                    foreach (PathSegment sg in f.Segments)
+                        if (sg is LineSegment l) Take(l.Point);
+                        else if (sg is QuadraticBezierSegment qb) { Take(qb.Control); Take(qb.Point); }
+                }
+                void Take(System.Numerics.Vector2 v) { if (v.X < x0) x0 = v.X; if (v.X > x1) x1 = v.X; if (v.Y < y0) y0 = v.Y; if (v.Y > y1) y1 = v.Y; }
+                if (x0 > x1) continue;
+                int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
+                int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
+                bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figs), ox, oy, w, h, 4, dropout, 4);
+                if (bits is null) continue;
+                var c = new int[w * h];
+                for (int r = 0; r < h * 4; r++)
+                    for (int col = 0; col < w * 4; col++)
+                        if (bits[r * w * 4 + col]) c[(r >> 2) * w + (col >> 2)]++;
+                for (int r = 0; r < h; r++)
+                    for (int col = 0; col < w; col++)
+                    {
+                        int v = Math.Min(15, c[r * w + col]);
+                        if (v == 0) continue;
+                        var key = (ix + ox + col, iy + oy + r);
+                        if (!cov.TryGetValue(key, out int old) || v > old) cov[key] = v;
+                    }
+            }
+            var lv = new Levels { Grey = true };
+            if (cov.Count == 0) return lv;
+            int p0 = int.MaxValue, p1 = int.MinValue, r0 = int.MaxValue, r1 = int.MinValue;
+            foreach (var key in cov.Keys)
+            {
+                p0 = Math.Min(p0, key.Item1); p1 = Math.Max(p1, key.Item1);
+                r0 = Math.Min(r0, key.Item2); r1 = Math.Max(r1, key.Item2);
+            }
+            lv.Left = p0; lv.Top = r0; lv.Width = p1 - p0 + 1; lv.Height = r1 - r0 + 1;
+            lv.Index = new byte[lv.Width * lv.Height];
+            foreach (var kv in cov) lv.Index[(kv.Key.Item2 - r0) * lv.Width + kv.Key.Item1 - p0] = (byte)kv.Value;
+            return lv;
+        }
     }
 }

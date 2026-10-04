@@ -55,20 +55,32 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             if (string.IsNullOrEmpty (s) || brush == null || !CanFill (brush)) return false;
             GpMatrix m = WorldToDevice;
-            // FastTextImager::Initialize: a positive axis scale only. Translation-only here.
-            if (m.M12 != 0f || m.M21 != 0f || m.M11 != 1f || m.M22 != 1f) return false;
             TrueTypeFont font = GdipText.Face (family, style);
             if (font == null) return false;
             int hint = ResolvedTextHint ();
+            // FastTextImager::Initialize: a positive axis scale only. Translation-only here; a
+            // turned or sheared transform goes the full imager's way.
+            if (m.M12 != 0f || m.M21 != 0f || m.M11 != 1f || m.M22 != 1f)
+                return DrawTransformed (s, font, family, style, sizePt, brush, layout, formatFlags, typographic, align, lineAlign, hotkey, hint);
             GdipText.Run run = GdipText.Layout (font, family, sizePt, s, layout.X, layout.Y, layout.Width, layout.Height,
                                                 formatFlags, typographic, align, lineAlign, hotkey, hint,
                                                 DpiY, biLevel: true);
-            if (run == null) return false;
+            if (run == null)
+                return DrawLines (s, font, family, style, sizePt, brush, layout, formatFlags, typographic, align, lineAlign, hotkey, hint);
+            DrawRun (font, run, brush, run.HasClip);
+            return true;
+        }
+
+        /// <summary>One fast-imager run into the surface: its glyphs composed for the render mode,
+        /// the layout rectangle intersected into the clip when the run asks.</summary>
+        void DrawRun (TrueTypeFont font, GdipText.Run run, Brush brush, bool clipToLayout)
+        {
+            GpMatrix m = WorldToDevice;
             run.Contrast = _ctx.TextContrast;
-            if (run.Glyphs.Length == 0) return true;
+            if (run.Glyphs.Length == 0) return;
             float[] xs = GdipText.GlyphXs (run, run.OriginX + m.Dx);
             float y = run.OriginY + m.Dy;
-            if (s_trace) Console.Error.WriteLine ($"GPTEXT '{s}' mode={run.Mode} y={y} xs={string.Join (",", xs)} g={string.Join (",", run.Glyphs)}");
+            if (s_trace) Console.Error.WriteLine ($"GPTEXT mode={run.Mode} y={y} xs={string.Join (",", xs)} g={string.Join (",", run.Glyphs)}");
 
             GdipText.Levels lv;
             switch (run.Mode) {
@@ -85,11 +97,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 lv = GdipText.ComposeMono (font, run.Glyphs, run.Em, xs, y, gridFit: run.Mode == 1);
                 break;
             }
-            if (lv.Width == 0 || lv.Height == 0) return true;
+            if (lv.Width == 0 || lv.Height == 0) return;
 
             GpRegion saved = null;
             bool clipped = false;
-            if (run.HasClip) {
+            if (clipToLayout) {
                 saved = _ctx.AppClip?.Clone ();
                 clipped = true;
                 CombineClip (new RectangleF (run.ClipX, run.ClipY, run.ClipW, run.ClipH), CombineMode.Intersect);
@@ -98,6 +110,113 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 OutputText (lv, run.Mode, brush, run.Contrast);
             } finally {
                 if (clipped) { _ctx.AppClip = saved; UpdateVisibleClip (); }
+            }
+        }
+
+        /// <summary>FullTextImager under a transform that is not an axis scale: the nominal layout
+        /// (GpTextLayout, the ideal-unit origins GraphicsPath.AddString uses) taken to the device,
+        /// each glyph's outline turned with the transform and not fitted. Modelled for the
+        /// antialiased realizations; the others keep the old path.</summary>
+        bool DrawTransformed (string s, TrueTypeFont font, string family, int style, float sizePt, Brush brush, RectangleF layout,
+                              int formatFlags, bool typographic, int align, int lineAlign, bool hotkey, int hint)
+        {
+            if (hint != GdipText.HintAntiAlias && hint != GdipText.HintAntiAliasGridFit) return false;
+            if ((formatFlags & 0x40000003) != 0 || font.SynthesizesBold || font.SynthesizesOblique) return false;
+            foreach (char c in s)
+                if ((c < 0x20 && c != (char) 10 && c != (char) 13) || (c >= 0x590 && c < 0x1E00) || char.IsSurrogate (c)) return false;
+            GpFontFamily.Metrics? mm = GpFontFamily.Get (family, (FontStyle) (style & 3));
+            if (mm == null) return false;
+            GpFontFamily.Metrics fm = mm.Value;
+            GpMatrix m = WorldToDevice;
+            float em = sizePt * (DpiY / 72f);
+            GpTextLayout L = GpTextLayout.Build (font, fm, s, em, layout.Width, formatFlags, typographic, hotkey);
+            int margin = typographic ? 0 : GpTextLayout.IdealMargin;
+            int yTop = 0;
+            if (lineAlign != 0 && layout.Height > 0f) {
+                double rh = layout.Height * GpTextLayout.Ideal / (double) em;
+                double th = L.Lines.Count * (double) fm.LineSpacing * GpTextLayout.Ideal / fm.Em + (typographic ? 0 : GpTextLayout.Ideal / 8);
+                yTop = (int) Math.Floor (lineAlign == 1 ? (rh - th) / 2 : rh - th);
+            }
+            var gids = new System.Collections.Generic.List<ushort> ();
+            var xs = new System.Collections.Generic.List<float> ();
+            var ys = new System.Collections.Generic.List<float> ();
+            for (int li = 0; li < L.Lines.Count; li++) {
+                GpTextLayout.Line line = L.Lines [li];
+                int xIdeal = margin;
+                if (align != 0 && layout.Width > 0f) {
+                    double rw = layout.Width * GpTextLayout.Ideal / (double) em;
+                    xIdeal += (int) Math.Floor (align == 1 ? (rw - line.Width - 2 * margin) / 2 : rw - line.Width - 2 * margin);
+                }
+                int baseIdeal = (int) Math.Round ((fm.Ascent + li * (double) fm.LineSpacing) * GpTextLayout.Ideal / fm.Em) + yTop;
+                float oy = layout.Y + (float) (baseIdeal * (double) em / GpTextLayout.Ideal);
+                for (int g = 0; g < line.Glyphs.Count; g++) {
+                    float ox = layout.X + (float) ((xIdeal + line.X [g]) * (double) em / GpTextLayout.Ideal);
+                    PointF d = m.Transform (new PointF (ox, oy));
+                    gids.Add ((ushort) line.Glyphs [g]); xs.Add (d.X); ys.Add (d.Y);
+                }
+            }
+            if (gids.Count == 0) return true;
+            if (s_trace) {
+                var t = new System.Text.StringBuilder ("GPTEXTX");
+                for (int i = 0; i < xs.Count; i++) t.Append (' ').Append (xs [i].ToString ("R")).Append (',').Append (ys [i].ToString ("R"));
+                Console.Error.WriteLine (t);
+            }
+            GdipText.Levels lv = GdipText.ComposeGreyTransformed (font, gids, em, m.M11, m.M12, m.M21, m.M22,
+                                                                  xs.ToArray (), ys.ToArray (), 0);
+            if (lv.Width == 0 || lv.Height == 0) return true;
+            OutputText (lv, 4, brush, _ctx.TextContrast);
+            return true;
+        }
+
+        /// <summary>A string the fast imager refuses because it breaks into lines (a wrapping width,
+        /// or line feeds): FullTextImager's lines (GpTextLayout's breaks), each laid out and drawn
+        /// as the fast imager draws a line -- hinted advances from the rounded origin -- on a
+        /// baseline a rounded line spacing below the last, the whole clipped to the layout
+        /// rectangle unless NoClip. (Line Services' own ideal-unit placement, which puts glyphs a
+        /// few 512ths of a pixel off the fast imager's, is not distinguished.)</summary>
+        bool DrawLines (string s, TrueTypeFont font, string family, int style, float sizePt, Brush brush, RectangleF layout,
+                        int formatFlags, bool typographic, int align, int lineAlign, bool hotkey, int hint)
+        {
+            if ((formatFlags & 0x40000003) != 0) return false;
+            foreach (char c in s)
+                if ((c < 0x20 && c != (char) 10 && c != (char) 13) || (c >= 0x590 && c < 0x1E00) || char.IsSurrogate (c)) return false;
+            GpFontFamily.Metrics? mm = GpFontFamily.Get (family, (FontStyle) (style & 3));
+            if (mm == null) return false;
+            float em = sizePt * (DpiY / 72f);
+            GpTextLayout L = GpTextLayout.Build (font, mm.Value, s, em, layout.Width, formatFlags, typographic, hotkey);
+            if (L.Lines.Count < 2 && s.IndexOf ((char) 10) < 0) return false;
+            float ls = (float) (mm.Value.LineSpacing * (double) em / mm.Value.Em);
+            float totalH = L.Lines.Count * ls + (typographic ? 0f : em / 8f);
+            float top = layout.Y;
+            if (layout.Height > 0f && lineAlign == 1) top += (layout.Height - totalH) * 0.5f;
+            else if (layout.Height > 0f && lineAlign == 2) top += layout.Height - totalH;
+            var runs = new System.Collections.Generic.List<GdipText.Run> ();
+            float y0 = float.NaN;
+            for (int li = 0; li < L.Lines.Count; li++) {
+                GpTextLayout.Line line = L.Lines [li];
+                var sb = new System.Text.StringBuilder ();
+                foreach (int c in line.Chars) if (s [c] != (char) 13) sb.Append (s [c]);
+                string text = sb.ToString ();
+                if (text.Trim (' ').Length == 0) continue;
+                GdipText.Run run = GdipText.Layout (font, family, sizePt, text, layout.X, top, layout.Width, 0f,
+                                                    (formatFlags & ~0x1000) | 0x4000, typographic, align, 0, false, hint,
+                                                    DpiY, biLevel: true);
+                if (run == null) return false;
+                if (float.IsNaN (y0)) y0 = run.OriginY - li * ls;
+                run.OriginY = MathF.Floor (y0 + li * ls + 0.5f);
+                runs.Add (run);
+            }
+            bool clip = (formatFlags & 0x4000) == 0 && (layout.Width > 0f || layout.Height > 0f);
+            GpRegion saved = null;
+            if (clip) {
+                saved = _ctx.AppClip?.Clone ();
+                var r = new RectangleF (layout.X, layout.Y, layout.Width > 0f ? layout.Width : 1e6f, layout.Height > 0f ? layout.Height : 1e6f);
+                CombineClip (r, CombineMode.Intersect);
+            }
+            try {
+                foreach (GdipText.Run run in runs) DrawRun (font, run, brush, false);
+            } finally {
+                if (clip) { _ctx.AppClip = saved; UpdateVisibleClip (); }
             }
             return true;
         }
