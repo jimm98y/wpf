@@ -531,9 +531,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <summary>DriverMeta::StrokePath @1800d5ef0: a simple opaque pen as a GDI pen; anything else
         /// widened by GDI+ and filled (opaque solid: filled and outlined with a one-pixel bevel pen).</summary>
         void DriverStrokePath(Rectangle draw, GpPath path, Pen pen)
+            => DriverStrokePath(draw, path, DpPen.From(pen), pen.BrushRef is SolidBrush sb && sb.Color.A > 0xfd);
+
+        void DriverStrokePath(Rectangle draw, GpPath path, DpPen dp, bool opaqueBrush)
         {
-            DpPen dp = DpPen.From(pen);
-            bool opaque = pen.BrushRef is SolidBrush sb && sb.Color.A > 0xfd;
+            bool opaque = opaqueBrush && dp.Brush is SolidBrush sb && sb.Color.A > 0xfd;
             if (!(opaque && dp.IsSimple && dp.CompoundCount < 1))
             {
                 GpMatrix m = DeviceMatrix;

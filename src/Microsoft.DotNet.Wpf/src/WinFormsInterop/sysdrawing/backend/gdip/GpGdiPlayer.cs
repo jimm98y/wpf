@@ -1213,6 +1213,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void DrawText(string s, PointF logical, int options, RectangleF? clipRect, int[] dx)
         {
             if (string.IsNullOrEmpty(s) || _dc.Font == null) return;
+            if (Canvas && CanvasText(s, logical, options, clipRect, dx, (options & 0x10) != 0)) return;
             Prepare();
             int align = _dc.TextAlign;
             bool updateCp = (align & 1) != 0;

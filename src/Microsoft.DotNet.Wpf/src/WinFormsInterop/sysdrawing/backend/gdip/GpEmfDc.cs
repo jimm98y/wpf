@@ -727,17 +727,37 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return hSrc;
         }
 
-        /// <summary>ExtTextOutW, with the bounds the caller measured (GDI takes them from the font).</summary>
-        public bool ExtTextOutW(int x, int y, int options, int[] clip, string s, int[] dx, int graphicsMode,
-            float exScale, float eyScale, int[] bounds)
+        /// <summary>ExtTextOutW as an EMF DC records it (gdi32full MF_ExtTextOut @180062c00,
+        /// MREXTTEXTOUT::bInit @180060300, MTEXT::bInit @180069f50): the string and its advances --
+        /// the caller's, or with none GetTextExtentExPoint's partial extents of the string taken as
+        /// CHARACTERS (an ETO_GLYPH_INDEX string too) -- in GM_COMPATIBLE the reference device's
+        /// millimetres per hundred pixels as the scales, and as bounds what the kernel accumulates
+        /// for the draw (MDC::vFlushBounds @18005d358: win32k's box through the meta and clip
+        /// bounds, made inclusive); see <see cref="TextBox"/>.</summary>
+        public bool ExtTextOutW(int x, int y, int options, int[] clip, string s, int[] dx)
         {
             int n = s.Length;
+            GpGdiFont font = _s.Font is FontObject fo ? GpGdiFont.FromLogFont(fo.LogFont) : null;
+            if (dx == null && n > 0)
+            {
+                dx = new int[n];
+                for (int i = 0; i < n; i++) dx[i] = font != null ? font.CharAdvance(s[i]) : 0;
+            }
+            int graphicsMode = _s.GraphicsMode;
+            float exScale = 0f, eyScale = 0f;
+            if (graphicsMode == 1)
+            {
+                GpRefDevice dev = _w.Device;
+                exScale = (float)dev.HorzSize * _s.M11 * 100f / (float)dev.HorzRes;
+                eyScale = (float)dev.VertSize * _s.M22 * 100f / (float)dev.VertRes;
+            }
             int offString = 76;
             int strBytes = ((n * 2) + 3) & ~3;
-            int offDx = n > 0 ? offString + strBytes : 0;
-            int dxCount = dx == null ? 0 : dx.Length;
-            var b = new byte[68 + strBytes + dxCount * 4];
-            int[] box = bounds == null ? EmptyBox : Clip(bounds[0], bounds[1], bounds[2], bounds[3], true);
+            int offDx = offString + strBytes;
+            var b = new byte[68 + strBytes + n * 4];
+            int[] box = EmptyBox;
+            if (font != null && n > 0 && TextBox(font, x, y, options, s, dx, out int bl, out int bt, out int br, out int bb))
+                box = Clip(bl, bt, br - 1, bb - 1, true);
             Box(b, 0, box);
             Le.W32(b, 16, graphicsMode);
             Le.WF(b, 20, exScale); Le.WF(b, 24, eyScale);
@@ -745,13 +765,94 @@ namespace System.Drawing.WebGpuBackend.Gdip
             Le.W32(b, 36, n);
             Le.W32(b, 40, offString);
             Le.W32(b, 44, options);
-            if (clip != null) { Le.W32(b, 48, clip[0]); Le.W32(b, 52, clip[1]); Le.W32(b, 56, clip[2]); Le.W32(b, 60, clip[3]); }
+            if (clip != null && (options & 6) != 0) { Le.W32(b, 48, clip[0]); Le.W32(b, 52, clip[1]); Le.W32(b, 56, clip[2]); Le.W32(b, 60, clip[3]); }
             else { Le.W32(b, 56, -1); Le.W32(b, 60, -1); }
             Le.W32(b, 64, offDx);
             for (int i = 0; i < n; i++) Le.W16(b, 68 + i * 2, s[i]);
-            for (int i = 0; i < dxCount; i++) Le.W32(b, 68 + strBytes + i * 4, dx[i]);
+            for (int i = 0; i < n; i++) Le.W32(b, 68 + strBytes + i * 4, dx[i]);
             _w.Add(84, b);
             return true;
+        }
+
+        /// <summary>The box win32k accumulates for a text draw (GrepExtTextOutWLocked @1401a8a98 ->
+        /// ESTROBJ::bOpaqueArea @1401ad4f0), exclusive, in device pixels. Along the baseline the
+        /// glyphs' pens are the advances summed (vCharPos_H1 @1401aed88, unrotated; vCharPos_G1
+        /// @1401adf80, an escapement), and the extent is the least of 0 and each glyph's ink left
+        /// (GLYPHDATA fxA) past its pen, to the greatest of the total advance and each ink right
+        /// (fxAB); across, the font's ascent and descent. An unrotated run is that box at the
+        /// reference point (the bold simulation a pixel wider); a quarter turn the box turned, a
+        /// pixel longer along the baseline; any other angle the turned box's corners in 28.4,
+        /// floored and ceiled and grown by two pixels.</summary>
+        bool TextBox(GpGdiFont font, int x, int y, int options, string s, int[] dx, out int l, out int t, out int r, out int b)
+        {
+            l = t = r = b = 0;
+            ToDevice(x, y, out long fx, out long fy);
+            int n = s.Length;
+            bool glyphIndex = (options & 0x10) != 0;
+            int A = 0, B = 0, pen = 0;
+            for (int i = 0; i < n; i++)
+            {
+                int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
+                (int ia, int iab) = font.Ink(gid);
+                A = Math.Min(A, pen + ia);
+                B = Math.Max(B, pen + iab);
+                pen += dx[i] * 16;
+            }
+            B = Math.Max(B, pen);
+            int asc = font.Ascent * 16, dsc = -font.Descent * 16;       // ESTROBJ +0x64 / +0x6c
+            int align = (int)_s.TextAlign;
+            // The notional-to-device rotation: along the baseline (m11, m12), up (m21, m22).
+            double th = font.Escapement * Math.PI / 1800.0;
+            float m11 = (float)Math.Cos(th), m12 = (float)-Math.Sin(th);
+            float m21 = (float)-Math.Sin(th), m22 = (float)-Math.Cos(th);
+            if (font.Escapement % 900 == 0)
+            {
+                int q = ((font.Escapement / 900) % 4 + 4) % 4;
+                m11 = q == 0 ? 1 : q == 2 ? -1 : 0; m12 = q == 1 ? -1 : q == 3 ? 1 : 0;
+                m21 = q == 1 ? -1 : q == 3 ? 1 : 0; m22 = q == 0 ? -1 : q == 2 ? 1 : 0;
+            }
+            // Text alignment (ESTROBJ::vInit): the reference point moved to the baseline's left end.
+            if ((align & 0x18) == 0) { fx -= (long)Math.Round(asc * m21); fy -= (long)Math.Round(asc * m22); }
+            else if ((align & 0x18) == 8) { fx -= (long)Math.Round(dsc * m21); fy -= (long)Math.Round(dsc * m22); }
+            if ((align & 6) == 6) { fx -= (long)Math.Round(pen / 2 * m11); fy -= (long)Math.Round(pen / 2 * m12); }
+            else if ((align & 6) == 2) { fx -= (long)Math.Round(pen * m11); fy -= (long)Math.Round(pen * m12); }
+            int x0 = (int)((fx + 8) >> 4), y0 = (int)((fy + 8) >> 4);
+            if (font.Escapement == 0)
+            {
+                l = x0 + (A >> 4);
+                r = x0 + ((B + 15) >> 4) + (font.Face.SynthesizesBold ? 1 : 0);
+                t = y0 - ((asc + 15) >> 4);
+                b = y0 - (dsc >> 4);
+            }
+            else if (m12 == 0f && m21 == 0f)
+            {
+                if (m11 < 0f) { l = x0 - ((B + 15) >> 4); r = x0 - (A >> 4); }
+                else { l = x0 + (A >> 4); r = x0 + ((B + 15) >> 4); }
+                r += 1;
+                if (0f <= m22) { t = y0 + (dsc >> 4); b = y0 + ((asc + 15) >> 4); }
+                else { t = y0 - ((asc + 15) >> 4); b = y0 - (dsc >> 4); }
+            }
+            else if (m11 == 0f && m22 == 0f)
+            {
+                if (0f <= m21) { l = x0 + (dsc >> 4); r = x0 + ((asc + 15) >> 4); }
+                else { l = x0 - ((asc + 15) >> 4); r = x0 - (dsc >> 4); }
+                if (0f <= m12) { t = y0 + (A >> 4); b = y0 + ((B + 15) >> 4); }
+                else { t = y0 - ((B + 15) >> 4); b = y0 - (A >> 4); }
+                b += 1;
+            }
+            else
+            {
+                static int R(float v) => v < 0f ? -(int)Math.Floor(-v + 0.5) : (int)Math.Floor(v + 0.5);
+                int ax = R(A * m11), ay = R(A * m12), bx = R(B * m11), by = R(B * m12);
+                int ux = R(asc * m21), uy = R(asc * m22), dxx = R(m21 * dsc), dyy = R(dsc * m22);
+                long[] xs = { fx + ux + ax, fx + ux + bx, fx + dxx + bx, fx + dxx + ax };
+                long[] ys = { fy + uy + ay, fy + uy + by, fy + dyy + by, fy + dyy + ay };
+                long minX = Math.Min(Math.Min(xs[0], xs[1]), Math.Min(xs[2], xs[3])), maxX = Math.Max(Math.Max(xs[0], xs[1]), Math.Max(xs[2], xs[3]));
+                long minY = Math.Min(Math.Min(ys[0], ys[1]), Math.Min(ys[2], ys[3])), maxY = Math.Max(Math.Max(ys[0], ys[1]), Math.Max(ys[2], ys[3]));
+                l = (int)(minX >> 4) - 2; t = (int)(minY >> 4) - 2;
+                r = (int)((maxX + 15) >> 4) + 2; b = (int)((maxY + 15) >> 4) + 2;
+            }
+            return l < r && t < b;
         }
 
         // ---- GDI drawing a caller did on the metafile's HDC -----------------------------------------

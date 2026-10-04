@@ -389,6 +389,36 @@ namespace MetafileOracle
                 g.SetInterpolationMode(InterpolationMode.HighQualityBicubic);
                 g.DrawImage(bmp, R(75, 42, 40, 35), R(0, 0, 4, 3), GraphicsUnit.Pixel, null);
             };
+            // ---- text down-level: FullTextImager lines, the driver, GDI's ExtTextOutW ----------
+            d["text_lines"] = g =>
+            {
+                var f = new Font("Arial", 10f, FontStyle.Regular, GraphicsUnit.Point);
+                g.DrawString("Left aligned text", f, R(2, 2, 110, 20), null, Brushes.Black);
+                var c = new StringFormat(); c.Alignment = StringAlignment.Center;
+                g.DrawString("Centered", f, R(0, 18, 120, 20), c, Brushes.DarkRed);
+                var far = new StringFormat(); far.Alignment = StringAlignment.Far; far.LineAlignment = StringAlignment.Center;
+                g.DrawString("Far end", f, R(0, 30, 120, 20), far, Brushes.Navy);
+                g.DrawString("wrap these words over lines", new Font("Times New Roman", 11f, FontStyle.Regular, GraphicsUnit.Point), R(2, 46, 70, 44), null, Brushes.Green);
+                g.DrawString("  lead and trail  ", new Font("Tahoma", 9f, FontStyle.Bold, GraphicsUnit.Point), R(66, 52, 0, 0), null, Brushes.Black);
+                g.DrawString("Bold italic", new Font("Verdana", 9f, FontStyle.Bold | FontStyle.Italic, GraphicsUnit.Point), R(66, 68, 0, 0), null, Brushes.Black);
+                g.DrawDriverString(new ushort[] { 43, 72, 79, 79, 82 }, f, Brushes.Purple, new[] { P(80, 40), P(88, 40), P(95, 40), P(99, 40), P(103, 40) }, 0, null);
+                g.DrawDriverString(new ushort[] { 0x57, 0x58 }, f, Brushes.Purple, new[] { P(80, 50), P(90, 54) }, 1, null);
+            };
+            d["text_xform"] = g =>
+            {
+                var f = new Font("Segoe UI", 9f, FontStyle.Regular, GraphicsUnit.Point);
+                g.TranslateWorldTransform(3.5f, 2.25f, MatrixOrder.Prepend);
+                g.ScaleWorldTransform(1.5f, 1.5f, MatrixOrder.Prepend);
+                g.DrawString("Scaled 1.5", f, R(0, 0, 0, 0), null, Brushes.Black);
+                g.ResetWorldTransform();
+                g.SetPageTransform(GraphicsUnit.Millimeter, 1f);
+                g.DrawString("mm page", new Font("Arial", 3f, FontStyle.Italic, GraphicsUnit.Millimeter), R(2, 8, 0, 0), null, Brushes.Blue);
+                g.SetPageTransform(GraphicsUnit.Display, 1f);
+                g.SetClipRect(R(10, 40, 50, 12), CombineMode.Replace);
+                g.DrawString("Clipped by the clip", f, R(4, 38, 0, 0), null, Brushes.Maroon);
+                g.ResetClip();
+                g.DrawString("Clip to box", f, R(70, 60, 30, 10), null, Brushes.Black);
+            };
             return d;
         }
     }

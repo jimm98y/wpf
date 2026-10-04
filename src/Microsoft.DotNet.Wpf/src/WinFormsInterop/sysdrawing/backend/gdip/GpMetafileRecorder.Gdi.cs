@@ -24,10 +24,24 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 probe.PageUnit = _state.PageUnit == GraphicsUnit.World ? GraphicsUnit.Display : _state.PageUnit;
                 probe.PageScale = _state.PageScale;
-                SizeF size = probe.MeasureString(s, font, new SizeF(layout.Width, layout.Height), format);
+                SizeF size;
+                bool vertical = format != null && (format.FormatFlags & StringFormatFlags.DirectionVertical) != 0;
+                if (!vertical && TryMeasure(s, font, layout, format, out SizeF measured)) size = measured;
+                else size = probe.MeasureString(s, font, new SizeF(layout.Width, layout.Height), format);
                 float x = layout.X, y = layout.Y;
                 StringAlignment a = format?.Alignment ?? StringAlignment.Near;
                 StringAlignment la = format?.LineAlignment ?? StringAlignment.Near;
+                if (format != null && (format.FormatFlags & StringFormatFlags.DirectionVertical) != 0)
+                {
+                    // A vertical line runs down: the alignment is along y, the line alignment along
+                    // x, and the measured box is the line's across by its length, within the
+                    // rectangle.
+                    StringAlignment sw = a; a = la; la = sw;
+                    float across = size.Height, along = size.Width;
+                    if (layout.Width > 0f && across > layout.Width) across = layout.Width;
+                    if (layout.Height > 0f && along > layout.Height) along = layout.Height;
+                    size = new SizeF(across, along);
+                }
                 if (layout.Width > 0f)
                 {
                     if (a == StringAlignment.Center) x += (layout.Width - size.Width) / 2f;
@@ -46,21 +60,59 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return new RectangleF(l, t, r - l, b - t);
         }
 
-        // GpGraphics::DrawDriverString: the glyph positions' box, grown by the font's em height.
+        /// <summary>FullTextImager::Measure in world units (GpTextLayout, the em in world units).</summary>
+        bool TryMeasure(string s, Font font, RectangleF layout, StringFormat format, out SizeF size)
+        {
+            size = SizeF.Empty;
+            string family = font.FontFamily.Name;
+            var face = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Face(family, (int)font.Style & 3);
+            GpFontFamily.Metrics? mm = GpFontFamily.Get(family, (FontStyle)((int)font.Style & 3));
+            if (face == null || mm == null) return false;
+            int flags = format != null ? (int)format.FormatFlags : 0;
+            bool typographic = format != null && format.IsTypographic;
+            bool hotkey = format != null && format.HotkeyPrefix != System.Drawing.Text.HotkeyPrefix.None;
+            float em = EmWorld(font);
+            GpTextLayout L = GpTextLayout.Build(face, mm.Value, s, em, layout.Width, flags, typographic, hotkey);
+            size = L.Measure(layout.Height, flags, out _, out _);
+            // What spills out of the rectangle is not measured.
+            if (layout.Width > 0f && size.Width > layout.Width) size.Width = layout.Width;
+            if (layout.Height > 0f && size.Height > layout.Height) size.Height = layout.Height;
+            return true;
+        }
+
+        /// <summary>RecordEmfPlusDrawDriverString @1800eb628 -> DriverStringImager::MeasureString
+        /// @1800eaf08: from the first origin, each glyph's cell -- its design advance across, the
+        /// family's cell ascent above and descent below, through the record's matrix -- at its
+        /// origin, the union through world to device. (The vertical and realized-advance layouts
+        /// are measured as the plain one.)</summary>
         RectangleF? DriverStringBounds(ushort[] text, Font font, PointF[] positions, int flags, Matrix matrix)
         {
             if (positions == null || positions.Length == 0) return null;
-            float em = font.Size;
-            float l = float.MaxValue, t = float.MaxValue, r = -float.MaxValue, b = -float.MaxValue;
+            string family = font.FontFamily.Name;
+            var face = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Face(family, (int)font.Style & 3);
+            GpFontFamily.Metrics? mm = GpFontFamily.Get(family, (FontStyle)((int)font.Style & 3));
+            float em = EmWorld(font);
+            int upemCell = mm?.Em ?? 2048;
+            float k = em / upemCell;
+            float asc = (mm?.Ascent ?? (int)(upemCell * 0.9f)) * k, desc = (mm?.Descent ?? (int)(upemCell * 0.2f)) * k;
+            float l = positions[0].X, r = l, t = positions[0].Y, b = t;
             int n = (flags & 4) != 0 ? 1 : Math.Min(positions.Length, text.Length);
+            GpMat? gm = matrix != null ? GpMat.From(matrix) : (GpMat?)null;
             for (int i = 0; i < n; i++)
             {
+                if (text[i] == 0xffff) continue;
+                int gid = (flags & 1) != 0 && face != null ? face.GlyphIndex((char)text[i]) : text[i];
+                float adv = face != null ? face.DesignAdvance(gid) * (em / face.UnitsPerEmForHinting) : em;
+                float x0 = 0f, y0 = -asc, x1 = adv, y1 = desc;
+                if (gm.HasValue) gm.Value.TransformBounds(ref x0, ref y0, ref x1, ref y1);
                 PointF p = positions[i];
-                l = Math.Min(l, p.X); r = Math.Max(r, p.X + em);
-                t = Math.Min(t, p.Y - em); b = Math.Max(b, p.Y + em * 0.25f);
+                x0 += p.X; x1 += p.X; y0 += p.Y; y1 += p.Y;
+                if (x0 <= l) l = x0;
+                if (y0 <= t) t = y0;
+                if (r <= x1) r = x1;
+                if (b <= y1) b = y1;
             }
             GpMat m = WorldToDevice;
-            if (matrix != null) m = GpMat.Multiply(GpMat.From(matrix), m);
             m.TransformBounds(ref l, ref t, ref r, ref b);
             return new RectangleF(l, t, r - l, b - t);
         }
@@ -165,8 +217,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 DriverFillRegion(dev, brush);
         }
 
-        void GdiDrawString(string s, Font font, RectangleF layout, StringFormat format, Brush brush) { }
-        void GdiDrawDriverString(ushort[] text, Font font, Brush brush, PointF[] positions, int flags, Matrix matrix) { }
 
         // GpGraphics keeps the transform for itself; nothing reaches the HDC (the driver draws in
         // device coordinates).
