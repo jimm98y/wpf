@@ -173,6 +173,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// the DIB; null when nothing clips.</summary>
         bool[] ClipMask()
         {
+            if (Gdi)
+            {
+                GdiRgn c = GdiClip();
+                if (c == null) return null;
+                var m = new bool[_cw * _ch];
+                foreach (var q in c.Rects())
+                    for (int y = Math.Max(0, q.T); y < Math.Min(_ch, q.B); y++)
+                        for (int x = Math.Max(0, q.L); x < Math.Min(_cw, q.R); x++) m[y * _cw + x] = true;
+                return m;
+            }
             Region vis = null;
             if (_dc.Clip != null) vis = _dc.Clip.Clone();
             if (_dc.MetaClip != null) { if (vis == null) vis = _dc.MetaClip.Clone(); else vis.Intersect(_dc.MetaClip); }

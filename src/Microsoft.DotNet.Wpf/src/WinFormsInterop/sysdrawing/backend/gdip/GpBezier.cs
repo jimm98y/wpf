@@ -7,6 +7,12 @@
 // wpfgfx's bezier.cpp carries. Bezier32 works while the control hull, 16 out on every side, fits in
 // 14 bits; past that Bezier64 takes over with GDI's 2/3-pixel low error (4 << 32).
 //
+// GDI's own flattener (win32kbase EPATHOBJ::bFlatten's pprFlattenRec @1400725a0: BEZIER32::bInit
+// @140071a50, bNext @140071d30, BEZIER64::vInit @140072a20, bNext @140071f80) is the same
+// differencing with other constants: the hull is the control points' own box (no 16 margin), and the step tests are
+// TEST_MAGNITUDE_INITIAL 6 * 0x2aa0, TEST_MAGNITUDE_NORMAL 8 times that and its quarter for the
+// parent error. GDI flattens with no clip. The gdi flag selects those.
+//
 
 namespace System.Drawing.WebGpuBackend.Gdip
 {
@@ -17,6 +23,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         int _steps32;
         Hfd32 _x, _y;
         int _left, _top;
+        readonly int _normal, _parent;  // the step tests: halve past _normal, double while within _parent
         // Bezier64
         Hfd64 _xh, _yh, _xl, _yl;
         int _stepsHigh, _stepsLow;
@@ -27,15 +34,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary><paramref name="p"/>: four 28.4 control points as x0,y0..x3,y3; <paramref name="clip"/>
         /// left, top, right, bottom in 28.4 (or null).</summary>
-        public BezierFlattener (int[] p, int[] clip)
+        public BezierFlattener (int[] p, int[] clip) : this (p, clip, false) { }
+
+        /// <summary><paramref name="gdi"/>: GDI's constants (win32kbase BEZIER32 / BEZIER64), not GDI+'s.</summary>
+        public BezierFlattener (int[] p, int[] clip, bool gdi)
         {
             int minX = p [0], minY = p [1], maxX = p [0], maxY = p [1];
             for (int i = 1; i < 4; i++) {
                 minX = Math.Min (minX, p [i * 2]); minY = Math.Min (minY, p [i * 2 + 1]);
                 maxX = Math.Max (maxX, p [i * 2]); maxY = Math.Max (maxY, p [i * 2 + 1]);
             }
-            _left = minX - 16; _top = minY - 16;
-            int right = maxX + 16, bottom = maxY + 16;
+            int margin = gdi ? 0 : 16;
+            _left = minX - margin; _top = minY - margin;
+            int right = maxX + margin, bottom = maxY + margin;
+            int initial = gdi ? 6 * 0x2aa0 : 0x6000;
+            _normal = gdi ? initial << 3 : 0x30000;
+            _parent = _normal >> 2;
             uint or = 0;
             for (int i = 0; i < 4; i++) or |= (uint) (p [i * 2] - _left) | (uint) (p [i * 2 + 1] - _top);
             if ((or & 0xffffc000u) == 0) {
@@ -46,7 +60,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int shift = 0;
                 if (clip == null || (_left < clip [2] && _top < clip [3] && clip [0] < right && clip [1] < bottom)) {
                     while (true) {
-                        int t = 0x6000 << shift;
+                        int t = initial << shift;
                         if (_x.Error <= t && _y.Error <= t) break;
                         shift += 2;
                         _x.LazyHalve (shift); _y.LazyHalve (shift);
@@ -83,11 +97,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 buf [at * 2 + 1] = _y.Value + _top;
                 at++;
                 if (_steps32 == 0) { more = false; return original - room + 1; }
-                if (Math.Max (_x.Error, _y.Error) > 0x30000) {
+                if (Math.Max (_x.Error, _y.Error) > _normal) {
                     _x.Halve (); _y.Halve ();
                     _steps32 <<= 1;
                 }
-                while ((_steps32 & 1) == 0 && _x.ParentErrorBy4 <= 0xc000 && _y.ParentErrorBy4 <= 0xc000) {
+                while ((_steps32 & 1) == 0 && _x.ParentErrorBy4 <= _parent && _y.ParentErrorBy4 <= _parent) {
                     _x.Double (); _y.Double ();
                     _steps32 >>= 1;
                 }

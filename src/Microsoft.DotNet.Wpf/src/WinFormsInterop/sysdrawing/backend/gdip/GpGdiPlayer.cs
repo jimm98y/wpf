@@ -97,6 +97,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public Region Clip;
             public Region MetaClip;
             public Point BrushOrg;
+            // GDI's own state of the DIB's DC (GpGdiPlayer.Gdi.cs): the target's world transform,
+            // the virtual DC's, the clip and meta regions in device pixels.
+            public GdiXform GWorld = GdiXform.Identity, VWorld = GdiXform.Identity;
+            public bool GWorldIdentity = true, VWorldIdentity = true;
+            public GdiRgn GClip, GMeta;
             public Dc Clone()
             {
                 var d = (Dc)MemberwiseClone();
@@ -179,6 +184,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 // frame spans the rectangle's extents.
                 dst = new RectangleF(0, 0, _cw - 1, _ch - 1);
                 toDevice = GpMat.Identity;
+                GdiBeginEmf(h);
             }
             double kx = 100.0 * _mmCx / _devCx, ky = 100.0 * _mmCy / _devCy;
             double fw = fr - fl, fh = fb - ft;
@@ -212,6 +218,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _dc.VpOrg = new Point(0, 0);
                 _dc.VpExt = new Size(_cw, _ch);
                 _base = GpMat.Identity;
+                GdiBeginWmf();
             }
             else
             {
@@ -291,9 +298,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
             _t.ResetTransform();
             _t.PageUnit = GraphicsUnit.Pixel;
             _t.PageScale = 1f;
-            Region vis = Canvas ? null : _s.BaseClip?.Clone();
-            if (_dc.Clip != null) { if (vis == null) vis = _dc.Clip.Clone(); else vis.Intersect(_dc.Clip); }
-            if (_dc.MetaClip != null) { if (vis == null) vis = _dc.MetaClip.Clone(); else vis.Intersect(_dc.MetaClip); }
+            Region vis = Canvas ? GdiClipRegion() : _s.BaseClip?.Clone();
+            if (!Gdi)
+            {
+                if (_dc.Clip != null) { if (vis == null) vis = _dc.Clip.Clone(); else vis.Intersect(_dc.Clip); }
+                if (_dc.MetaClip != null) { if (vis == null) vis = _dc.MetaClip.Clone(); else vis.Intersect(_dc.MetaClip); }
+            }
             if (vis == null) _t.ResetClip(); else { _t.Clip = vis; vis.Dispose(); }
             _t.SmoothingMode = SmoothingMode.None;
             // GDI samples a DIB's pixels where GDI+ does without a pixel offset.
@@ -514,12 +524,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 case 90: PolyPolyCore(r, true, false); return;
                 case 91: PolyPolyCore(r, true, true); return;
                 case 56: case 92: PolyDraw(r, type == 92); return;
-                case 9: { int cx = r.I32(), cy = r.I32(); SetWindowExt(cx, cy); return; }
-                case 10: { int x = r.I32(), y = r.I32(); _dc.WinOrg = new Point(x, y); return; }
-                case 11: { int cx = r.I32(), cy = r.I32(); SetViewportExt(cx, cy); return; }
-                case 12: { int x = r.I32(), y = r.I32(); _dc.VpOrg = new Point(x, y); return; }
+                case 9: { int cx = r.I32(), cy = r.I32(); bool iso = _dc.MapMode >= 7; SetWindowExt(cx, cy); if (Gdi && iso) GdiSetTransform(); return; }
+                case 10: { int x = r.I32(), y = r.I32(); _dc.WinOrg = new Point(x, y); if (Gdi) GdiSetTransform(); return; }
+                case 11: { int cx = r.I32(), cy = r.I32(); bool iso = _dc.MapMode >= 7; SetViewportExt(cx, cy); if (Gdi && iso) GdiSetTransform(); return; }
+                case 12: { int x = r.I32(), y = r.I32(); _dc.VpOrg = new Point(x, y); if (Gdi) GdiSetTransform(); return; }
                 case 13: { int x = r.I32(), y = r.I32(); _dc.BrushOrg = new Point(x, y); return; }
-                case 17: SetMapMode(r.I32()); return;
+                case 17:
+                    {
+                        int old = _dc.MapMode, m = r.I32();
+                        SetMapMode(m);
+                        if (Gdi && (old != m || m == 7)) GdiSetTransform();
+                        return;
+                    }
                 case 18: _dc.BkMode = r.I32(); return;
                 case 19: _dc.PolyFill = r.I32(); return;
                 case 20: _dc.Rop2 = r.I32(); return;
@@ -532,12 +548,34 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 case 28: SetMetaRgn(); return;
                 case 29: { int l = r.I32(), t = r.I32(), rr = r.I32(), bb = r.I32(); ClipRectLogical(l, t, rr, bb, true); return; }
                 case 30: { int l = r.I32(), t = r.I32(), rr = r.I32(), bb = r.I32(); ClipRectLogical(l, t, rr, bb, false); return; }
-                case 31: { int xn = r.I32(), xd = r.I32(), yn = r.I32(), yd = r.I32(); ScaleExt(false, xn, xd, yn, yd); return; }
-                case 32: { int xn = r.I32(), xd = r.I32(), yn = r.I32(), yd = r.I32(); ScaleExt(true, xn, xd, yn, yd); return; }
+                case 31: { int xn = r.I32(), xd = r.I32(), yn = r.I32(), yd = r.I32(); ScaleExt(false, xn, xd, yn, yd); if (Gdi) GdiSetTransform(); return; }
+                case 32: { int xn = r.I32(), xd = r.I32(), yn = r.I32(), yd = r.I32(); ScaleExt(true, xn, xd, yn, yd); if (Gdi) GdiSetTransform(); return; }
                 case 33: _saved.Push(_dc.Clone()); return;
                 case 34: RestoreDc(r.I32()); return;
-                case 35: _dc.World = GpMat.FromElements(r.Matrix6()); return;
-                case 36: { float[] e = r.Matrix6(); ModifyWorld(e, r.I32()); return; }
+                case 35:
+                    {
+                        float[] e = r.Matrix6();
+                        _dc.World = GpMat.FromElements(e);
+                        if (Gdi)
+                        {
+                            ModifyWorld(ref _dc.VWorld, ref _dc.VWorldIdentity, e, 4);
+                            GdiSetTransform();
+                        }
+                        return;
+                    }
+                case 36:
+                    {
+                        float[] e = r.Matrix6();
+                        int mode = r.I32();
+                        ModifyWorld(e, mode);
+                        if (Gdi)
+                        {
+                            ModifyWorld(ref _dc.VWorld, ref _dc.VWorldIdentity, e, mode);
+                            if (mode == 2) ModifyWorld(ref _dc.GWorld, ref _dc.GWorldIdentity, e, 2);
+                            else GdiSetTransform();
+                        }
+                        return;
+                    }
                 case 37: SelectObject(r.U32()); return;
                 case 38: CreatePen(r); return;
                 case 39: CreateBrushIndirect(r); return;
@@ -553,17 +591,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 case 49: CreatePalette(r); return;
                 case 54: { int x = r.I32(), y = r.I32(); LineTo(x, y); return; }
                 case 57: _dc.ArcDirection = r.I32(); return;
-                case 58: _dc.MiterLimit = r.F(); return;
+                case 58: _dc.MiterLimit = (float)r.U32(); return;   // an integer (MRSETMITERLIMIT::bPlay)
                 case 59: BeginPath(); return;
                 case 60: _inPath = false; return;
-                case 61: _path?.CloseFigure(); return;
+                case 61: _path?.CloseFigure(); _gPath?.CloseFigure(); return;
                 case 62: PathOp(true, false); return;
                 case 63: PathOp(true, true); return;
                 case 64: PathOp(false, true); return;
-                case 65: _path?.Flatten(); return;
+                case 65: _path?.Flatten(); if (_gPath != null) _gPath = _gPath.Flattened(); return;
                 case 66: WidenPath(); return;
                 case 67: SelectClipPath(r.I32()); return;
-                case 68: _path?.Dispose(); _path = null; _inPath = false; return;
+                case 68: _path?.Dispose(); _path = null; _gPath = null; _inPath = false; return;
                 case 71: FillRgn(r); return;
                 case 72: FrameRgn(r); return;
                 case 74: PaintRgn(r); return;
@@ -691,6 +729,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
             uint idx = r.U32();
             int style = r.I32(), wx = r.I32(); r.I32();
             int color = r.I32();
+            if (Gdi && !_wmfCanvas && style != 5)
+            {
+                // EmfEnumState::CreatePen @1800b44d0: GDI+ makes the pen itself, cosmetic (one pixel)
+                // when it is no wider than a device pixel, else geometric with round caps and joins.
+                if (GdipCosmetic(wx)) { style = style is >= 0 and <= 4 or 8 ? style : 0; wx = 1; }
+                else style = (style is >= 0 and <= 4 or 6 ? style : 0) | 0x10000;
+            }
             Put(idx, new GdiPen { Style = style, Width = wx, Color = ColorRef(color) });
         }
 
@@ -705,6 +750,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 dashes = new float[numEntries];
                 for (int i = 0; i < numEntries; i++) dashes[i] = r.I32();
+            }
+            if (Gdi && !_wmfCanvas && brushStyle != 1 && GdipCosmetic(width))
+            {
+                // EmfEnumState::ExtCreatePen @1800b46a8: a pen no wider than a device pixel becomes a
+                // cosmetic one of its line style (PS_INSIDEFRAME as PS_SOLID), one pixel wide.
+                style &= 0xf;
+                if (style == 6) style = 0;
+                width = 1;
             }
             var pen = new GdiPen { Style = style, Width = width, Color = ColorRef(color), BrushStyle = brushStyle, Dashes = dashes };
             if (brushStyle == 1) pen.Style = (style & ~0xf) | 5;
@@ -762,11 +815,26 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             _path?.Dispose();
             _path = new GraphicsPath(PolyFill);
+            _gPath = Gdi ? new GdiPath() : null;
             _inPath = true;
         }
 
         void PathOp(bool fill, bool stroke)
         {
+            if (Gdi)
+            {
+                // NtGdiFillPath / NtGdiStrokeAndFillPath close every figure; StrokePath strokes the
+                // path as it is.
+                GdiPath gp = _gPath;
+                _gPath = null;
+                _path?.Dispose(); _path = null;
+                _inPath = false;
+                if (gp == null) return;
+                if (fill) gp.CloseAll();
+                if (fill) GdiFillPath(gp, _dc.PolyFill == 2);
+                if (stroke) GdiStroke(gp);
+                return;
+            }
             if (_path == null) return;
             _inPath = false;
             GraphicsPath p = _path;
@@ -778,6 +846,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void WidenPath()
         {
+            if (Gdi)
+            {
+                if (_gPath == null || _dc.Pen == null || !GeometricLineAttrs(_dc.Pen, out GdiLineAttrs la)) return;
+                GdiPath w = GdiWiden.Widen(_gPath, TargetWtoD(), la);
+                if (w != null) _gPath = w;
+                return;
+            }
             if (_path == null) return;
             using (Pen p = StrokePen())
                 if (p != null) _path.Widen(p);
@@ -785,6 +860,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void SelectClipPath(int mode)
         {
+            if (Gdi)
+            {
+                GdiPath gp = _gPath;
+                _gPath = null;
+                _path?.Dispose(); _path = null;
+                _inPath = false;
+                if (gp == null) return;
+                gp.CloseAll();
+                GdiSelectRgn(GdiRgn.FromSpans(GdiFill.Spans(gp, _dc.PolyFill == 2)), mode);
+                return;
+            }
             if (_path == null) return;
             _inPath = false;
             _path.FillMode = PolyFill;
@@ -818,6 +904,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void ClipRectLogical(int l, int t, int r, int b, bool exclude)
         {
+            if (Gdi) { GdiClipRect(l, t, r, b, exclude); return; }
             var p = new GraphicsPath();
             p.AddPolygon(ToTarget(new[] { new PointF(l, t), new PointF(r, t), new PointF(r, b), new PointF(l, b) }));
             CombineClip(new Region(p), exclude ? 4 : 1);
@@ -826,6 +913,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void OffsetClip(int dx, int dy)
         {
+            if (Gdi) { GdiOffsetClip(dx, dy); return; }
             if (_dc.Clip == null) return;
             PointF o = ToTarget(new PointF(0, 0)), d = ToTarget(new PointF(dx, dy));
             _dc.Clip.Translate(d.X - o.X, d.Y - o.Y);
@@ -833,6 +921,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void SetMetaRgn()
         {
+            if (Gdi)
+            {
+                if (_dc.GClip == null) return;
+                _dc.GMeta = _dc.GMeta == null ? _dc.GClip : GdiRgn.Combine(_dc.GMeta, _dc.GClip, 1);
+                _dc.GClip = null;
+                return;
+            }
             if (_dc.Clip == null) return;
             if (_dc.MetaClip == null) _dc.MetaClip = _dc.Clip;
             else { _dc.MetaClip.Intersect(_dc.Clip); _dc.Clip.Dispose(); }
@@ -866,6 +961,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void ExtSelectClipRgn(GpReader r)
         {
             int cb = r.I32(), mode = r.I32();
+            if (Gdi) { GdiExtSelectClipRgn(r, cb, mode); return; }
             if (mode == 5 && cb < 32)
             {
                 _dc.Clip?.Dispose();
@@ -891,6 +987,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
             r.Rect();
             int cb = r.I32();
             uint ib = r.U32();
+            if (Gdi)
+            {
+                GdiBrush saved = _dc.Brush;
+                if (ib < _objects.Length && _objects[ib] is GdiBrush gb) _dc.Brush = gb;
+                else if ((ib & 0x80000000) != 0) _dc.Brush = StockBrush((int)(ib & 0xff));
+                GdiFillRgn(r, cb);
+                _dc.Brush = saved;
+                return;
+            }
             Region rg = RgnData(r, cb);
             if (rg == null) return;
             if (!RopDraw(g => { using (Brush b = BrushAt(ib)) if (b != null) g.FillRegion(b, rg); }))
@@ -905,6 +1010,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             r.Rect();
             int cb = r.I32();
+            if (Gdi) { GdiFillRgn(r, cb); return; }
             Region rg = RgnData(r, cb);
             if (rg == null) return;
             if (!RopDraw(g => { using (Brush b = FillBrush()) if (b != null) g.FillRegion(b, rg); }))
@@ -937,11 +1043,20 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void MoveTo(float x, float y)
         {
             _dc.Pos = new PointF(x, y);
+            if (Gdi) { GdiMoveTo(); return; }
             if (_inPath) _path.StartFigure();
         }
 
         void LineTo(float x, float y)
         {
+            if (Gdi)
+            {
+                GdiPath gp = _inPath ? (_gPath ??= new GdiPath()) : new GdiPath();
+                GdiAddPoly(gp, new[] { new PointF(x, y) }, false, true, false);
+                _dc.Pos = new PointF(x, y);
+                if (!_inPath) GdiStroke(gp);
+                return;
+            }
             var a = new[] { _dc.Pos, new PointF(x, y) };
             _dc.Pos = a[1];
             var p = new GraphicsPath();
@@ -975,6 +1090,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void PolyPoints(PointF[] pts, int kind)
         {
             int count = pts.Length;
+            if (Gdi) { GdiPolyPoints(pts, kind); return; }
             var path = new GraphicsPath(PolyFill);
             switch (kind)
             {
@@ -1025,6 +1141,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void PolyPolyPoints(PointF[] pts, int[] counts, bool polygon)
         {
+            if (Gdi) { GdiPolyPolyPoints(pts, counts, polygon); return; }
             PointF[] dev = ToTarget(pts);
             var path = new GraphicsPath(PolyFill);
             int at = 0;
@@ -1054,6 +1171,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             var types = new byte[Math.Max(0, count)];
             for (int i = 0; i < count; i++) types[i] = r.U8();
             if (!r.Ok) return;
+            if (Gdi) { GdiPolyDraw(pts, types); return; }
             var path = new GraphicsPath(PolyFill);
             PointF cur = _dc.Pos;
             for (int i = 0; i < count; i++)

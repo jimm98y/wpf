@@ -1,0 +1,690 @@
+﻿// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
+//
+// The vector half of GDI's playback into GDI+'s 32bpp DIB (see GpGdiPlayer.Raster.cs): what GDI
+// does with a plain EMF's or WMF's lines, polygons, curves and paths, pixel for pixel. Points go to
+// 28.4 device units through GDI's own float matrices (GdiXform), fills through win32k's edge-table
+// scan converter (GdiFill), geometric pens through its widener (GdiWiden), clips are its regions
+// (GdiRgn).
+//
+// The transforms are those PlayEnhMetaFile sets up (gdi32full bInternalPlayEMF @18005f2e8):
+//
+//   the target DC is put in GM_ADVANCED and MM_TEXT, its world transform the frame mapped onto the
+//   rectangle: sx = (r - l) / (frame width) (r - l + 1 for an empty frame), likewise sy, then
+//   m11 = ((mmX * 100) / devX) * sx, m22 = ((mmY * 100) / devY) * sy, dx = l - frame.left * sx,
+//   dy = t - frame.top * sy, all in float; a scale within 0.999 .. 1.001 is made exactly 1;
+//   the records' map modes, window and viewport and world transforms go to a second, virtual DC
+//   (the metafile's own reference device); after each, MF::bSetTransform @18010a910 sets the
+//   target's world transform to the virtual DC's world-to-device transform combined with that
+//   frame mapping (NtGdiCombineTransform), except that ModifyWorldTransform's MWT_LEFTMULTIPLY is
+//   applied to the target as it is (MRMODIFYWORLDTRANSFORM::bPlay @18006c540).
+//
+// A WMF plays on the DC as GDI+ sets it up (MM_ANISOTROPIC, the placeable box onto the
+// destination), in GM_COMPATIBLE, where every point is snapped to a whole pixel
+// (EXFORMOBJR::bXformRound).
+//
+
+using System.Collections.Generic;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+
+namespace System.Drawing.WebGpuBackend.Gdip
+{
+    internal sealed partial class GpGdiPlayer
+    {
+        // PlayEnhMetaFile's frame mapping, the XFORM the target's world transform starts as.
+        float _b11 = 1, _b22 = 1, _bdx, _bdy;
+        bool _wmfCanvas;              // a WMF: GM_COMPATIBLE, no world transform
+        GdiPath _gPath;               // the path bracket, in 28.4 device units
+
+        /// <summary>GDI draws this record's vectors (into the DIB) rather than Graphics.</summary>
+        bool Gdi => Canvas;
+
+        // ---- the transforms ---------------------------------------------------------------------
+
+        /// <summary>bInternalPlayEMF's frame mapping onto (0, 0, w - 1, h - 1).</summary>
+        void GdiBeginEmf(byte[] h)
+        {
+            int fl = Le.I32(h, 24), ft = Le.I32(h, 28), fr = Le.I32(h, 32), fb = Le.I32(h, 36);
+            int devX = Le.I32(h, 72), devY = Le.I32(h, 76), mmX = Le.I32(h, 80), mmY = Le.I32(h, 84);
+            int rl = 0, rt = 0, rr = _cw - 1, rb = _ch - 1;
+            int rw = rr - rl, rh = rb - rt;
+            float sx = fr == fl ? (float)(rw + 1) : (float)rw / (float)(fr - fl);
+            float sy = fb == ft ? (float)(rh + 1) : (float)rh / (float)(fb - ft);
+            float m11 = (((float)mmX * 100f) / (float)devX) * sx;
+            float m22 = (((float)mmY * 100f) / (float)devY) * sy;
+            float dx = (float)rl - (float)fl * sx;
+            float dy = (float)rt - (float)ft * sy;
+            // The current world transform (identity) times that: 0 * dy + 1 * dx + 0.
+            dx = 0f * dy + 1f * dx + 0f;
+            dy = 1f * dy + 0f * dx + 0f;
+            const float lo = 0.999f, hi = 1.001f;   // 0x3f7fbe77, 0x3f8020c5
+            if (lo <= m11 && m11 <= hi && lo <= m22 && m22 <= hi) { m11 = 1f; m22 = 1f; }
+            _b11 = m11; _b22 = m22; _bdx = dx; _bdy = dy;
+            SetTargetWorld(m11, 0, 0, m22, dx, dy);
+            _dc.VWorld = GdiXform.Identity;
+            _dc.VWorldIdentity = true;
+        }
+
+        void GdiBeginWmf()
+        {
+            _wmfCanvas = true;
+            _dc.GWorld = GdiXform.Identity;
+            _dc.GWorldIdentity = true;
+        }
+
+        static bool IsIdentity(float m11, float m12, float m21, float m22, float dx, float dy)
+            => m11 == 1 && m12 == 0 && m21 == 0 && m22 == 1 && dx == 0 && dy == 0;
+
+        /// <summary>SetWorldTransform on the target (XDCOBJ::bModifyWorldTransform, MWT_SET).</summary>
+        void SetTargetWorld(float m11, float m12, float m21, float m22, float dx, float dy)
+        {
+            if (IsIdentity(m11, m12, m21, m22, dx, dy)) { _dc.GWorld = GdiXform.Identity; _dc.GWorldIdentity = true; return; }
+            _dc.GWorld = GdiXform.FromXform(m11, m12, m21, m22, dx, dy);
+            _dc.GWorldIdentity = false;
+        }
+
+        /// <summary>XDCOBJ::bModifyWorldTransform @140231c10 on a world transform.</summary>
+        static void ModifyWorld(ref GdiXform world, ref bool identity, float[] e, int mode)
+        {
+            switch (mode)
+            {
+                case 1:
+                    world = GdiXform.Identity; identity = true;
+                    return;
+                case 2:
+                case 3:
+                    {
+                        GdiXform m = GdiXform.FromXform(e[0], e[1], e[2], e[3], e[4], e[5]);
+                        if (!identity) m = mode == 2 ? GdiXform.Multiply(m, world) : GdiXform.Multiply(world, m);
+                        world = m;
+                        identity = world.M11 == 1 && world.M12 == 0 && world.M21 == 0 && world.M22 == 1 && world.Dx == 0 && world.Dy == 0
+                            && world.FxDx == 0 && world.FxDy == 0;
+                        if (identity) world = GdiXform.Identity;
+                        return;
+                    }
+                case 4:
+                    if (IsIdentity(e[0], e[1], e[2], e[3], e[4], e[5])) { world = GdiXform.Identity; identity = true; return; }
+                    world = GdiXform.FromXform(e[0], e[1], e[2], e[3], e[4], e[5]);
+                    identity = false;
+                    return;
+            }
+        }
+
+        /// <summary>A DC's page transform (DC::vUpdateWtoDXform): the scale (16 when the window and
+        /// viewport extents agree) and the offset in FIX, float and rounded.</summary>
+        static void PageXform(int mapMode, Point winOrg, Size winExt, Point vpOrg, Size vpExt,
+            out float m11, out float m22, out float dx, out float dy, out int fxDx, out int fxDy, out bool sixteen)
+        {
+            if (mapMode == 1 || (winExt.Width == vpExt.Width && winExt.Height == vpExt.Height))
+            {
+                m11 = m22 = 16f;
+                sixteen = true;
+            }
+            else
+            {
+                m11 = (float)(vpExt.Width << 4) / (float)winExt.Width;
+                m22 = (float)(vpExt.Height << 4) / (float)winExt.Height;
+                sixteen = false;
+            }
+            if (winOrg.X == 0 && winOrg.Y == 0)
+            {
+                if (vpOrg.X == 0 && vpOrg.Y == 0) { dx = dy = 0; fxDx = fxDy = 0; return; }
+                dx = (float)(vpOrg.X << 4); dy = (float)(vpOrg.Y << 4);
+                fxDx = vpOrg.X << 4; fxDy = vpOrg.Y << 4;
+                return;
+            }
+            if (sixteen)
+            {
+                dx = (float)(winOrg.X * -16); dy = (float)(winOrg.Y * -16);
+                if (vpOrg.X == 0 && vpOrg.Y == 0) { fxDx = winOrg.X * -16; fxDy = winOrg.Y * -16; return; }
+            }
+            else
+            {
+                dx = m11 * (float)(-winOrg.X);
+                dy = (float)(-winOrg.Y) * m22;
+            }
+            if (vpOrg.X != 0 || vpOrg.Y != 0)
+            {
+                dx = (float)(vpOrg.X << 4) + dx;
+                dy = (float)(vpOrg.Y << 4) + dy;
+            }
+            fxDx = GdiXform.FToL(dx); fxDy = GdiXform.FToL(dy);
+        }
+
+        /// <summary>A DC's world-to-device matrix from its world transform and page.</summary>
+        static GdiXform WtoD(in GdiXform world, bool worldIdentity, int mapMode, Point winOrg, Size winExt, Point vpOrg, Size vpExt)
+        {
+            PageXform(mapMode, winOrg, winExt, vpOrg, vpExt, out float m11, out float m22, out float dx, out float dy, out int fxDx, out int fxDy, out bool sixteen);
+            if (worldIdentity)
+            {
+                var m = new GdiXform { M11 = m11, M22 = m22, Dx = dx, Dy = dy, FxDx = fxDx, FxDy = fxDy };
+                m.Accel = sixteen ? 0xb : 9;
+                if (fxDx == 0 && fxDy == 0) m.Accel |= GdiXform.NoTranslation;
+                return m;
+            }
+            return GdiXform.WorldToDevice(world, m11, m22, dx, dy, sixteen);
+        }
+
+        /// <summary>The target's world-to-device matrix (EMF: MM_TEXT at the origin; WMF: the
+        /// player's page).</summary>
+        GdiXform TargetWtoD()
+        {
+            if (_wmfCanvas) return WtoD(GdiXform.Identity, true, _dc.MapMode, _dc.WinOrg, _dc.WinExt, _dc.VpOrg, _dc.VpExt);
+            return WtoD(_dc.GWorld, _dc.GWorldIdentity, 1, Point.Empty, new Size(1, 1), Point.Empty, new Size(1, 1));
+        }
+
+        /// <summary>MF::bSetTransform: the target's world transform the virtual DC's world-to-device
+        /// transform (NtGdiGetTransform 0x204, in logical units) combined with the frame mapping.</summary>
+        void GdiSetTransform()
+        {
+            if (_wmfCanvas) return;
+            GdiXform v = WtoD(_dc.VWorld, _dc.VWorldIdentity, _dc.MapMode, _dc.WinOrg, VirtualWinExt(), _dc.VpOrg, VirtualVpExt());
+            const float k = 0.0625f;
+            GdiXform a = GdiXform.FromXform(v.M11 * k, v.M12 * k, v.M21 * k, v.M22 * k, v.Dx * k, v.Dy * k);
+            GdiXform b = GdiXform.FromXform(_b11, 0, 0, _b22, _bdx, _bdy);
+            GdiXform c = GdiXform.Multiply(a, b);
+            SetTargetWorld(c.M11, c.M12, c.M21, c.M22, c.Dx, c.Dy);
+        }
+
+        // The virtual DC's extents (DC::iSetMapMode with the metafile's virtual resolution).
+        Size VirtualWinExt()
+        {
+            switch (_dc.MapMode)
+            {
+                case 2: return new Size(_mmCx * 10, _mmCy * 10);
+                case 3: return new Size(_mmCx * 100, _mmCy * 100);
+                case 4: return new Size(MulDiv(_mmCx, 1000, 254), MulDiv(_mmCy, 1000, 254));
+                case 5: return new Size(MulDiv(_mmCx, 10000, 254), MulDiv(_mmCy, 10000, 254));
+                case 6: return new Size(MulDiv(_mmCx, 14400, 254), MulDiv(_mmCy, 14400, 254));
+                case 1: return new Size(1, 1);
+            }
+            return _dc.WinExt;
+        }
+
+        Size VirtualVpExt()
+        {
+            if (_dc.MapMode >= 2 && _dc.MapMode <= 6) return new Size(_devCx, -_devCy);
+            if (_dc.MapMode == 1) return new Size(1, 1);
+            return _dc.VpExt;
+        }
+
+        static int MulDiv(int a, int b, int c) => (int)Math.Round((double)a * b / c, MidpointRounding.AwayFromZero);
+
+        /// <summary>A logical point in 28.4 device units (snapped to pixels in GM_COMPATIBLE).</summary>
+        void Fix(in GdiXform m, float x, float y, out int fx, out int fy)
+        {
+            m.Point((int)x, (int)y, out fx, out fy);
+            if (_wmfCanvas) { fx = (fx + 8) & ~15; fy = (fy + 8) & ~15; }
+        }
+
+        // ---- paths --------------------------------------------------------------------------------
+
+        /// <summary>Points (logical) as a path figure in device units; <paramref name="kind"/>: 0
+        /// lines, 1 Beziers after the first point.</summary>
+        void GdiAddPoly(GdiPath path, PointF[] pts, bool beziers, bool fromCurrent, bool close)
+        {
+            GdiXform m = TargetWtoD();
+            int n = pts.Length;
+            int i0 = 0;
+            if (fromCurrent)
+            {
+                Fix(m, _dc.Pos.X, _dc.Pos.Y, out int cx, out int cy);
+                if (path.Empty || path.Figures[path.Figures.Count - 1].Closed || _gMoved) path.MoveTo(cx, cy);
+            }
+            else
+            {
+                Fix(m, pts[0].X, pts[0].Y, out int x0, out int y0);
+                path.MoveTo(x0, y0);
+                i0 = 1;
+            }
+            _gMoved = false;
+            if (beziers)
+            {
+                for (int i = i0; i + 2 < n; i += 3)
+                {
+                    Fix(m, pts[i].X, pts[i].Y, out int ax, out int ay);
+                    Fix(m, pts[i + 1].X, pts[i + 1].Y, out int bx, out int by);
+                    Fix(m, pts[i + 2].X, pts[i + 2].Y, out int cx, out int cy);
+                    path.BezierTo(ax, ay, bx, by, cx, cy);
+                }
+            }
+            else
+                for (int i = i0; i < n; i++)
+                {
+                    Fix(m, pts[i].X, pts[i].Y, out int x, out int y);
+                    path.LineTo(x, y);
+                }
+            if (close) path.CloseFigure();
+        }
+
+        bool _gMoved;                 // a MoveTo since the path's last point
+
+        void GdiMoveTo()
+        {
+            _gMoved = true;
+            if (_inPath && _gPath != null)
+            {
+                GdiXform m = TargetWtoD();
+                Fix(m, _dc.Pos.X, _dc.Pos.Y, out int x, out int y);
+                _gPath.MoveTo(x, y);
+            }
+        }
+
+        // ---- drawing -------------------------------------------------------------------------------
+
+        /// <summary>A shape's path filled with the brush and outlined with the pen (or added to the
+        /// path bracket).</summary>
+        void GdiFillAndStroke(GdiPath p, bool fill, bool stroke)
+        {
+            if (_inPath) { _gPath ??= new GdiPath(); _gPath.Append(p); return; }
+            if (fill)
+            {
+                GdiPath f = p;
+                foreach (GdiPath.Figure fig in f.Figures) fig.Closed = true;
+                GdiFillPath(f, _dc.PolyFill == 2);
+            }
+            if (stroke) GdiStroke(p);
+        }
+
+        void GdiFillPath(GdiPath p, bool winding)
+        {
+            if (Nop || _dc.Brush == null || _dc.Brush.Style == 1) return;
+            Func<int, int, uint> pattern = PatternOf();
+            if (pattern == null) return;
+            GdiPaint(GdiFill.Spans(p, winding, new[] { 0, 0, _cw, _ch }), pattern);
+        }
+
+        void GdiStroke(GdiPath p)
+        {
+            GdiPen pen = _dc.Pen;
+            if (pen == null || pen.Null || Nop) return;
+            GdiXform m = TargetWtoD();
+            if (!GeometricLineAttrs(pen, out GdiLineAttrs la))
+            {
+                GdiCosmetic(p, Rgb(pen.Color));
+                return;
+            }
+            GdiPath wide = GdiWiden.Widen(p, m, la);
+            if (wide == null) return;
+            uint color = Rgb(pen.Color);
+            GdiPaint(GdiFill.Spans(wide, true, new[] { 0, 0, _cw, _ch }), (x, y) => color);
+        }
+
+        /// <summary>The pen as GDI realises it for a stroke: geometric (widened) or not.</summary>
+        bool GeometricLineAttrs(GdiPen pen, out GdiLineAttrs la)
+        {
+            la = default;
+            if (!pen.Geometric) return false;
+            la.Width = pen.Width;
+            la.MiterLimit = _dc.MiterLimit;
+            switch (pen.Style & 0xf00)
+            {
+                case 0x000: la.EndCap = 0; break;
+                case 0x100: la.EndCap = 1; break;
+                default: la.EndCap = 2; break;
+            }
+            switch (pen.Style & 0xf000)
+            {
+                case 0x0000: la.Join = 0; break;
+                case 0x1000: la.Join = 1; break;
+                default: la.Join = 2; break;
+            }
+            return true;
+        }
+
+        static GraphicsPath ToGraphicsPath(GdiPath p)
+        {
+            var gp = new GraphicsPath(FillMode.Winding);
+            foreach (GdiPath.Figure f in p.Figures)
+            {
+                gp.StartFigure();
+                for (int i = 1; i < f.Count; i++)
+                {
+                    if (f.Bezier[i] && i + 2 < f.Count)
+                    {
+                        gp.AddBezier(f.X[i - 1] / 16f, f.Y[i - 1] / 16f, f.X[i] / 16f, f.Y[i] / 16f, f.X[i + 1] / 16f, f.Y[i + 1] / 16f, f.X[i + 2] / 16f, f.Y[i + 2] / 16f);
+                        i += 2;
+                    }
+                    else gp.AddLine(f.X[i - 1] / 16f, f.Y[i - 1] / 16f, f.X[i] / 16f, f.Y[i] / 16f);
+                }
+                if (f.Closed) gp.CloseFigure();
+            }
+            return gp;
+        }
+
+        /// <summary>Spans painted with the brush (a colour or a pattern in device pixels) through the
+        /// clip, by the ROP2.</summary>
+        void GdiPaint(List<GdiSpan> spans, Func<int, int, uint> pattern)
+        {
+            if (spans.Count == 0) return;
+            int code = _dc.Rop2;
+            if (code != 13) _ropUsed = true;
+            GdiRgn clip = GdiClip();
+            BitmapData bd = _canvas.LockBits(new Rectangle(0, 0, _cw, _ch), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+            try
+            {
+                unsafe
+                {
+                    byte* base0 = (byte*)bd.Scan0;
+                    foreach (GdiSpan s in spans)
+                    {
+                        if (s.Y < 0 || s.Y >= _ch) continue;
+                        uint* row = (uint*)(base0 + s.Y * bd.Stride);
+                        int[] cx = clip?.Row(s.Y);
+                        if (clip != null && cx == null) continue;
+                        if (clip == null) PaintRun(row, s.Y, Math.Max(0, s.X0), Math.Min(_cw, s.X1), pattern, code);
+                        else
+                            for (int i = 0; i < cx.Length; i += 2)
+                            {
+                                int a = Math.Max(Math.Max(0, s.X0), cx[i]), b = Math.Min(Math.Min(_cw, s.X1), cx[i + 1]);
+                                if (a < b) PaintRun(row, s.Y, a, b, pattern, code);
+                            }
+                    }
+                }
+            }
+            finally { _canvas.UnlockBits(bd); }
+        }
+
+        static unsafe void PaintRun(uint* row, int y, int x0, int x1, Func<int, int, uint> pattern, int code)
+        {
+            for (int x = x0; x < x1; x++)
+            {
+                uint p = pattern(x, y) & 0xffffff;
+                row[x] = code == 13 ? (row[x] & 0xff000000) | p : (row[x] & 0xff000000) | (Rop2(code, p, row[x]) & 0xffffff);
+            }
+        }
+
+        /// <summary>The DC's clip region under its meta region (null: nothing clips).</summary>
+        GdiRgn GdiClip()
+        {
+            GdiRgn c = _dc.GClip, m = _dc.GMeta;
+            if (c == null) return m;
+            if (m == null) return c;
+            return GdiRgn.Combine(c, m, 1);
+        }
+
+        void GdiSelectRgn(GdiRgn rg, int mode)
+        {
+            if (mode == 5) { _dc.GClip = rg; return; }
+            GdiCombine(rg, mode);
+        }
+
+        /// <summary>The GDI clip as a Graphics Region (for what Graphics still draws: text, images).</summary>
+        Region GdiClipRegion()
+        {
+            GdiRgn c = GdiClip();
+            if (c == null) return null;
+            var r = new Region();
+            r.MakeEmpty();
+            foreach (var q in c.Rects())
+            {
+                int l = Math.Max(q.L, -1), t = Math.Max(q.T, -1), rr = Math.Min(q.R, _cw + 1), b = Math.Min(q.B, _ch + 1);
+                if (l < rr && t < b) r.Union(new Rectangle(l, t, rr - l, b - t));
+            }
+            return r;
+        }
+
+        // ---- clipping and regions ----------------------------------------------------------------
+
+        static readonly int Inf = 1 << 27;
+
+        /// <summary>The surface (vGet_sizlWindow): what a clip combines with when the DC has none.</summary>
+        GdiRgn Surface => GdiRgn.FromRect(0, 0, _cw, _ch);
+
+        /// <summary>DC::iCombine with an existing clip or, without one, RGN_AND the shape itself and
+        /// any other mode the surface combined with it.</summary>
+        void GdiCombine(GdiRgn shape, int mode)
+        {
+            if (_dc.GClip == null)
+            {
+                _dc.GClip = mode == 1 ? shape : GdiRgn.Combine(Surface, shape, mode);
+                return;
+            }
+            _dc.GClip = GdiRgn.Combine(_dc.GClip, shape, mode);
+        }
+
+        /// <summary>GreIntersectClipRect / GreExcludeClipRect @1400a4500: a scale-only transform maps
+        /// the corners (bCvtPts1, rounded to pixels) and the rectangle is ordered; otherwise the four
+        /// corners are a path (snapped to pixels) filled ALTERNATE.</summary>
+        void GdiClipRect(int l, int t, int r, int b, bool exclude)
+        {
+            GdiXform m = TargetWtoD();
+            int mode = exclude ? 4 : 1;
+            if ((m.Accel & GdiXform.Scale) != 0)
+            {
+                int x0 = l, y0 = t, x1 = r, y1 = b;
+                if ((m.Accel & 0x43) != 0x43)
+                {
+                    m.Point(l, t, out int fx0, out int fy0);
+                    m.Point(r, b, out int fx1, out int fy1);
+                    x0 = ((fx0 >> 3) + 1) >> 1; y0 = ((fy0 >> 3) + 1) >> 1;
+                    x1 = ((fx1 >> 3) + 1) >> 1; y1 = ((fy1 >> 3) + 1) >> 1;
+                }
+                if (x1 < x0) (x0, x1) = (x1, x0);
+                if (y1 < y0) (y0, y1) = (y1, y0);
+                GdiCombine(GdiRgn.FromRect(x0, y0, x1, y1), mode);
+                return;
+            }
+            var p = new GdiPath();
+            void P(int x, int y, out int fx, out int fy) { m.Point(x, y, out fx, out fy); fx = (fx + 8) & ~15; fy = (fy + 8) & ~15; }
+            P(l, t, out int ax, out int ay); P(r, t, out int bx, out int by); P(r, b, out int cx, out int cy); P(l, b, out int dx, out int dy);
+            p.MoveTo(ax, ay); p.LineTo(bx, by); p.LineTo(cx, cy); p.LineTo(dx, dy); p.CloseFigure();
+            GdiCombine(GdiRgn.FromSpans(GdiFill.Spans(p, false)), mode);
+        }
+
+        /// <summary>OffsetClipRgn: the offset through the transform's scale (logical to device).</summary>
+        void GdiOffsetClip(int dx, int dy)
+        {
+            if (_dc.GClip == null) return;
+            GdiXform m = TargetWtoD();
+            m.Vector(dx, dy, out int fx, out int fy);
+            _dc.GClip = _dc.GClip.Offset((fx + 8) >> 4, (fy + 8) >> 4);
+        }
+
+        /// <summary>An RGNDATA's rectangles.</summary>
+        static List<(int L, int T, int R, int B)> RgnRects(GpReader r, int size)
+        {
+            var list = new List<(int, int, int, int)>();
+            if (size < 32) return list;
+            r.I32(); r.I32();
+            int count = r.I32();
+            r.I32();
+            r.Rect();
+            for (int i = 0; i < count && r.Ok; i++)
+            {
+                int l = r.I32(), t = r.I32(), rr = r.I32(), b = r.I32();
+                list.Add((l, t, rr, b));
+            }
+            return list;
+        }
+
+        /// <summary>Rectangles through a matrix as a region: kept as they are under a unity scale with
+        /// no translation, otherwise their outline (RGNOBJ::bOutline) transformed, optionally snapped
+        /// to pixels, and filled ALTERNATE (RGNMEMOBJ::vCreate).</summary>
+        static GdiRgn RectsThrough(List<(int L, int T, int R, int B)> rects, in GdiXform m, bool round)
+        {
+            if ((m.Accel & 0x43) == 0x43) return GdiRgn.FromRects(rects);
+            var p = new GdiPath();
+            GdiXform mm = m;
+            void P(int x, int y, out int fx, out int fy)
+            {
+                mm.Point(x, y, out fx, out fy);
+                if (round) { fx = (fx + 8) & ~15; fy = (fy + 8) & ~15; }
+            }
+            foreach (var q in rects)
+            {
+                P(q.L, q.T, out int ax, out int ay); P(q.R, q.T, out int bx, out int by);
+                P(q.R, q.B, out int cx, out int cy); P(q.L, q.B, out int dx, out int dy);
+                p.MoveTo(ax, ay); p.LineTo(bx, by); p.LineTo(cx, cy); p.LineTo(dx, dy); p.CloseFigure();
+            }
+            return GdiRgn.FromSpans(GdiFill.Spans(p, false));
+        }
+
+        GdiXform BaseLToFx()
+        {
+            GdiXform w = GdiXform.FromXform(_b11, 0, 0, _b22, _bdx, _bdy);
+            return GdiXform.WorldToDevice(w, 16, 16, 0, 0, true);
+        }
+
+        /// <summary>MREXTSELECTCLIPRGN::bPlay @18006b730: the region made through the frame mapping
+        /// (ExtCreateRegion, GreExtCreateRegion @1400a3b10, snapped to pixels), then selected.</summary>
+        void GdiExtSelectClipRgn(GpReader r, int cb, int mode)
+        {
+            if (cb == 0 || cb < 32)
+            {
+                if (mode == 5) _dc.GClip = null;
+                return;
+            }
+            GdiRgn rg = _wmfCanvas ? GdiRgn.FromRects(RgnRects(r, cb)) : RectsThrough(RgnRects(r, cb), BaseLToFx(), true);
+            if (mode == 5) { _dc.GClip = rg; return; }
+            GdiCombine(rg, mode);
+        }
+
+        /// <summary>GreFillRgn @14018e9c8: the region in logical units, through the world-to-device
+        /// transform when that is not the identity.</summary>
+        void GdiFillRgn(GpReader r, int cb)
+        {
+            List<(int L, int T, int R, int B)> rects = RgnRects(r, cb);
+            if (rects.Count == 0 || Nop) return;
+            GdiXform m = TargetWtoD();
+            GdiRgn rg = RectsThrough(rects, m, _wmfCanvas);
+            Func<int, int, uint> pattern = PatternOf();
+            if (pattern == null) return;
+            var spans = new List<GdiSpan>();
+            foreach (var q in rg.Rects())
+                for (int y = q.T; y < q.B; y++) spans.Add(new GdiSpan(y, q.L, q.R));
+            spans.Sort((a, b) => a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X0.CompareTo(b.X0));
+            GdiPaint(spans, pattern);
+        }
+
+        // ---- the poly records ---------------------------------------------------------------------
+
+        /// <summary>kind: 0 PolyBezier, 1 Polygon, 2 Polyline, 3 PolyBezierTo, 4 PolylineTo.</summary>
+        void GdiPolyPoints(PointF[] pts, int kind)
+        {
+            int n = pts.Length;
+            switch (kind)
+            {
+                case 0: if (n < 4 || (n - 1) % 3 != 0) return; break;
+                case 1: case 2: if (n < 2) return; break;
+                case 3: if (n % 3 != 0) return; break;
+            }
+            GdiPath gp = _inPath ? (_gPath ??= new GdiPath()) : new GdiPath();
+            bool fromCurrent = kind >= 3;
+            GdiAddPoly(gp, pts, kind == 0 || kind == 3, fromCurrent, kind == 1);
+            if (fromCurrent) _dc.Pos = pts[n - 1];
+            if (_inPath) return;
+            if (kind == 1) GdiFillAndStroke(gp, true, true);
+            else GdiStroke(gp);
+        }
+
+        void GdiPolyPolyPoints(PointF[] pts, int[] counts, bool polygon)
+        {
+            GdiPath gp = _inPath ? (_gPath ??= new GdiPath()) : new GdiPath();
+            int at = 0;
+            foreach (int c in counts)
+            {
+                if (c < 0 || at + c > pts.Length) break;
+                if (c >= 2)
+                {
+                    var part = new PointF[c];
+                    Array.Copy(pts, at, part, 0, c);
+                    GdiAddPoly(gp, part, false, false, polygon);
+                }
+                at += c;
+            }
+            if (_inPath) return;
+            if (polygon) GdiFillAndStroke(gp, true, true);
+            else GdiStroke(gp);
+        }
+
+        /// <summary>PolyDraw: PT_MOVETO 6, PT_LINETO 2, PT_BEZIERTO 4, each optionally with
+        /// PT_CLOSEFIGURE 1.</summary>
+        void GdiPolyDraw(PointF[] pts, byte[] types)
+        {
+            GdiPath gp = _inPath ? (_gPath ??= new GdiPath()) : new GdiPath();
+            GdiXform m = TargetWtoD();
+            Fix(m, _dc.Pos.X, _dc.Pos.Y, out int cx, out int cy);
+            if (gp.Empty || _gMoved) gp.MoveTo(cx, cy);
+            _gMoved = false;
+            for (int i = 0; i < pts.Length; i++)
+            {
+                int t = types[i] & ~1;
+                Fix(m, pts[i].X, pts[i].Y, out int x, out int y);
+                if (t == 6) gp.MoveTo(x, y);
+                else if (t == 2) gp.LineTo(x, y);
+                else if (t == 4 && i + 2 < pts.Length)
+                {
+                    Fix(m, pts[i + 1].X, pts[i + 1].Y, out int x2, out int y2);
+                    Fix(m, pts[i + 2].X, pts[i + 2].Y, out int x3, out int y3);
+                    gp.BezierTo(x, y, x2, y2, x3, y3);
+                    i += 2;
+                }
+                _dc.Pos = pts[i];
+                if ((types[i] & 1) != 0) gp.CloseFigure();
+            }
+            if (!_inPath) GdiStroke(gp);
+        }
+
+        /// <summary>gdiplus IsPenCosmetic @1801f54a0: DPtoLP of (0, 0) and (128, 0); a pen is cosmetic
+        /// when width times 128 is no more than the logical span of those 128 device pixels.</summary>
+        bool GdipCosmetic(int width)
+        {
+            GdiXform m = TargetWtoD();
+            if (!m.Inverse(out GdiXform inv)) return false;
+            inv.Point2(0, 0, out int x0, out _);
+            inv.Point2(128 << 4, 0, out int x1, out _);
+            return width * 128 <= Math.Abs(x1 - x0);
+        }
+
+        /// <summary>A cosmetic stroke: GDI's grid-intersection lines, each segment's last pixel left
+        /// out, figures closed by a segment back to their start.</summary>
+        void GdiCosmetic(GdiPath p, uint color)
+        {
+            p = p.Flattened();
+            var lit = new List<(int X, int Y)>();
+            GdiLines.Style style = CosmeticStyle(_dc.Pen);
+            foreach (GdiPath.Figure f in p.Figures)
+            {
+                for (int i = 1; i < f.Count; i++) GdiLines.Line(f.X[i - 1], f.Y[i - 1], f.X[i], f.Y[i], style, lit);
+                if (f.Closed && f.Count > 1) GdiLines.Line(f.X[f.Count - 1], f.Y[f.Count - 1], f.X[0], f.Y[0], style, lit);
+            }
+            if (lit.Count == 0) return;
+            int code = _dc.Rop2;
+            if (code != 13) _ropUsed = true;
+            GdiRgn clip = GdiClip();
+            BitmapData bd = _canvas.LockBits(new Rectangle(0, 0, _cw, _ch), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+            try
+            {
+                unsafe
+                {
+                    byte* base0 = (byte*)bd.Scan0;
+                    foreach (var q in lit)
+                    {
+                        if ((uint)q.X >= (uint)_cw || (uint)q.Y >= (uint)_ch) continue;
+                        if (clip != null && !In(clip.Row(q.Y), q.X)) continue;
+                        uint* px = (uint*)(base0 + q.Y * bd.Stride) + q.X;
+                        *px = code == 13 ? color : Rop2(code, color, *px);
+                    }
+                }
+            }
+            finally { _canvas.UnlockBits(bd); }
+        }
+
+        static bool In(int[] row, int x)
+        {
+            if (row == null) return false;
+            for (int i = 0; i < row.Length; i += 2)
+            {
+                if (x < row[i]) return false;
+                if (x < row[i + 1]) return true;
+            }
+            return false;
+        }
+
+        /// <summary>The cosmetic pen's style (null when solid).</summary>
+        GdiLines.Style CosmeticStyle(GdiPen pen) => null;
+    }
+}
