@@ -351,6 +351,34 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 return ok;
             }
 
+            /// <summary>The path's pixels, for the clip the EMF DC keeps (its box bounds later records).</summary>
+            DpRegion DeviceRegion()
+            {
+                var pts = new PointF[NPts];
+                var types = new byte[NPts];
+                float k = 1f / Mult;
+                for (int i = 0; i < NPts; i++)
+                {
+                    pts[i] = new PointF(Pts[i * 2] * k, Pts[i * 2 + 1] * k);
+                    types[i] = Types != null ? Types[i] : (byte)1;
+                }
+                if (Types == null)
+                {
+                    int at = 0;
+                    for (int s = 0; s < Math.Max(NSub, 1); s++)
+                    {
+                        int c = NSub > 0 && s < Counts.Length ? Counts[s] : NPts;
+                        if (at < NPts) types[at] = 0;
+                        if (c > 0 && at + c - 1 < NPts) types[at + c - 1] |= 0x80;
+                        at += c;
+                    }
+                    if ((Flags & 0x10) != 0) for (int i = 1; i < NPts; i++) types[i] = 3;
+                }
+                var flat = new GpPath(pts, types, FillMode == 2 ? System.Drawing.Drawing2D.FillMode.Winding : System.Drawing.Drawing2D.FillMode.Alternate);
+                flat.Flatten(null, 0.25f);
+                return GpRegionRaster.FromPath(flat.PointArray(), flat.TypeArray(), flat.FillMode, GpMatrix.CreateIdentity());
+            }
+
             /// <summary>ConvertPathToGdi::AndClip @1802227b8: the path selected into the clip.</summary>
             public bool AndClip(GpEmfDc dc, DpRegion device)
             {
@@ -364,7 +392,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
                 else if (ok) ok = NSub == 1 ? dc.Polygon(Pts, NPts) : dc.PolyPolygon(Pts, Counts, NSub);
                 CleanupForIncreasedResolution(Mult, mode0, dc);
-                ok = ok && dc.EndPath() && dc.SelectClipPath(1, device);
+                ok = ok && dc.EndPath() && dc.SelectClipPath(1, device ?? DeviceRegion());
                 dc.SetPolyFillMode(fm);
                 return ok;
             }

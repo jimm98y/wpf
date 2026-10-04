@@ -415,11 +415,22 @@ namespace Wpf.WinFormsInterop.Tests
             // The header: bounds, frame, size, record and handle counts.
             if (!ours.AsSpan(8, 32).SequenceEqual(theirs.AsSpan(8, 32)) || !ours.AsSpan(48, 10).SequenceEqual(theirs.AsSpan(48, 10)))
                 sb.AppendLine($"header:\n  ours   {Hex(ours.AsSpan(8, 50).ToArray())}\n  gdi+   {Hex(theirs.AsSpan(8, 50).ToArray())}");
-            // EMR_CREATEDIBPATTERNBRUSHPT carries a dword GDI never writes (what its buffer held).
+            // What GDI+ leaves unwritten is not compared: EMR_CREATEDIBPATTERNBRUSHPT's dword before
+            // the BITMAPINFO, and the padding of a DIB's rows (its buffers are not cleared).
             static byte[] Rec(byte[] f, (int Offset, int Type, int Size) r)
             {
                 byte[] x = f.AsSpan(r.Offset, r.Size).ToArray();
                 if (r.Type == 94 && x.Length >= 36) Array.Clear(x, 32, 4);
+                if (r.Type == 81 && x.Length >= 72)
+                {
+                    int offBmi = BitConverter.ToInt32(x, 48), offBits = BitConverter.ToInt32(x, 56);
+                    int w = BitConverter.ToInt32(x, offBmi + 4), h = Math.Abs(BitConverter.ToInt32(x, offBmi + 8));
+                    int bpp = BitConverter.ToUInt16(x, offBmi + 14);
+                    int stride = ((w * bpp + 31) >> 5) << 2, used = (w * bpp + 7) >> 3;
+                    for (int row = 0; row < h; row++)
+                        for (int k = used; k < stride; k++)
+                            if (offBits + row * stride + k < x.Length) x[offBits + row * stride + k] = 0;
+                }
                 return x;
             }
             int n = Math.Max(a.Count, b.Count);
@@ -434,15 +445,20 @@ namespace Wpf.WinFormsInterop.Tests
 
         static string RecordTypes(byte[] emf) => string.Join(",", GpMetafileEdit.Records(emf).Select(r => r.Type));
 
-        /// <summary>The scenarios whose down-level drawing holds no bitmap or text: every record GDI+'s
-        /// writes, byte for byte.</summary>
+        /// <summary>The scenarios whose every down-level record is GDI+'s, byte for byte. Not yet:
+        /// images (a rotated image: GDI+ renders the parallelogram at its own resolution through a
+        /// path clip) and text.</summary>
         public static TheoryData<string> GdiExactScenarios()
         {
             var d = new TheoryData<string>();
             foreach (string name in MetafileScenarios.All().Keys)
-                if (name != "brushes" && name != "images" && name != "imageunits" && name != "text") d.Add(name);
+                if (name != "images" && name != "text") d.Add(name);
             return d;
         }
+
+        // The EMF+ half of these dual files is held elsewhere (Recorded_EmfPlus_records_are_GdiPlus_bytes):
+        // their images' PNG streams and gradient objects are not GDI+'s bytes yet.
+        static readonly HashSet<string> DualEmfPlusPending = new HashSet<string> { "brushes", "imageunits" };
 
         [Theory]
         [MemberData(nameof(GdiExactScenarios))]
@@ -458,20 +474,39 @@ namespace Wpf.WinFormsInterop.Tests
         {
             // pens: the closing no-op PatBlt spans the EMF+ bounds, and GDI+ bounds a custom line cap
             // tighter than GpMetafileRecorder.CustomCapRadius does.
-            if (scenario == "pens") return;
+            if (scenario == "pens" || DualEmfPlusPending.Contains(scenario)) return;
             string diff = GdiDiff(RecordDownLevel(scenario, EmfType.EmfPlusDual), File.ReadAllBytes(Path.Combine(Dir, "dual", scenario + ".emf")));
             Assert.True(diff.Length == 0, diff);
         }
 
-        /// <summary>Every scenario, bitmaps and text included: the same records in the same order.</summary>
+        /// <summary>Every scenario records down-level, in both types, into a file GDI itself reads.</summary>
+        [Theory]
+        [MemberData(nameof(Scenarios))]
+        public void Down_level_recording_is_a_valid_EMF(string scenario)
+        {
+            foreach (EmfType t in new[] { EmfType.EmfOnly, EmfType.EmfPlusDual })
+            {
+                byte[] emf = RecordDownLevel(scenario, t);
+                Assert.Equal(emf.Length, BitConverter.ToInt32(emf, 48));
+                Assert.Equal(GpMetafileEdit.Records(emf).Count(), BitConverter.ToInt32(emf, 52));
+                if (OperatingSystem.IsWindows())
+                {
+                    IntPtr h = GpWindowsMetafile.ToHenhmetafile(emf);
+                    Assert.NotEqual(IntPtr.Zero, h);
+                    GpWindowsMetafile.DeleteEmf(h);
+                }
+            }
+        }
+
         public static TheoryData<string> GdiStructureScenarios()
         {
             var d = new TheoryData<string>();
             foreach (string name in MetafileScenarios.All().Keys)
-                if (name != "brushes" && name != "images" && name != "imageunits" && name != "text") d.Add(name);
+                if (name != "text") d.Add(name);
             return d;
         }
 
+        /// <summary>Every scenario writes GDI+'s down-level records in GDI+'s order.</summary>
         [Theory]
         [MemberData(nameof(GdiStructureScenarios))]
         public void Down_level_record_structure_is_GdiPlus(string scenario)

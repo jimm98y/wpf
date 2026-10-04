@@ -165,7 +165,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 DriverFillRegion(dev, brush);
         }
 
-        void GdiDrawImage(Image image, RectangleF src, GpMat m, ImageAttributes ia) { }
         void GdiDrawString(string s, Font font, RectangleF layout, StringFormat format, Brush brush) { }
         void GdiDrawDriverString(ushort[] text, Font font, Brush brush, PointF[] positions, int flags, Matrix matrix) { }
 
