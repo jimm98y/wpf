@@ -69,35 +69,38 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (p.Count < 2) return 2;
             StrokePath = p.Clone ();
             StrokeLength = -ComputeCapLength (StrokePath);
-            return StrokeLength < 1.1920929e-07f ? 6 : 0;
+            // Unlike a fill path, a stroke path that never crosses the negative y axis is accepted
+            // (measured against gdiplus.dll: CustomLineCap(null, path) succeeds for any path).
+            return 0;
         }
 
-        /// <summary>ComputeCapLength @18007b5d8: the lowest y at which the path's segments cross the
-        /// y axis (0 when none does below it).</summary>
-        static float ComputeCapLength (GpPath p)
+        /// <summary>ComputeCapLength @18007b5d8: the lowest y (at most 0) at which the path's
+        /// segments cross the y axis; each point is paired with the one before it, the first with
+        /// the last only when the path ends closed.</summary>
+        internal static float ComputeCapLength (GpPath p)
         {
             float best = 0f;
             int n = p.Count;
             if (n < 2) return 0f;
+            PointF prev = (p.Types [n - 1] & 0x80) != 0 ? p.Points [n - 1] : p.Points [0];
             for (int i = 0; i < n; i++) {
-                PointF a = p.Points [i], b = p.Points [(i + 1) % n];
-                if (IntersectYAxis (a, b, out float y) && y < best) best = y;
+                PointF a = p.Points [i];
+                if (IntersectYAxis (a, prev, out float y) && y < best) best = y;
+                prev = a;
             }
             return best;
         }
 
-        /// <summary>intersect_line_yaxis: where segment a-b crosses x = 0.</summary>
+        /// <summary>intersect_line_yaxis @1800a5b30: where segment a-b crosses x = 0 (t in
+        /// [-eps, 1 + eps] along it from a).</summary>
         static bool IntersectYAxis (PointF a, PointF b, out float y)
         {
             y = 0f;
-            if ((a.X > 0f && b.X > 0f) || (a.X < 0f && b.X < 0f)) return false;
             float dx = b.X - a.X;
-            if (dx == 0f) {
-                if (a.X != 0f) return false;
-                y = Math.Min (a.Y, b.Y);
-                return true;
-            }
-            y = a.Y - a.X * (b.Y - a.Y) / dx;
+            if (MathF.Abs (dx) < 1.1920929e-07f) return false;
+            float t = -a.X / dx;
+            if (t < -1.1920929e-07f || 1.1920929e-07f < t - 1f) return false;
+            y = (b.Y - a.Y) * t + a.Y;
             return true;
         }
 

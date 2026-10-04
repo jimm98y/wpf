@@ -522,9 +522,12 @@ namespace System.Drawing.Drawing2D
 			GpPathWarp.Warp (gp, matrix?.Gp, destPoints, srcRect, warpMode, flatness);
 		}
 
-		public void Widen (Pen pen) => Widen (pen, null, FlatnessDefault);
+		// .NET widens at 2/3 (its GraphicsPath.Flatness), not GDI+'s FlatnessDefault.
+		const float WidenFlatness = 2.0f / 3.0f;
 
-		public void Widen (Pen pen, Matrix matrix) => Widen (pen, matrix, FlatnessDefault);
+		public void Widen (Pen pen) => Widen (pen, null, WidenFlatness);
+
+		public void Widen (Pen pen, Matrix matrix) => Widen (pen, matrix, WidenFlatness);
 
 		public void Widen (Pen pen, Matrix matrix, float flatness)
 		{
@@ -536,6 +539,7 @@ namespace System.Drawing.Drawing2D
 			if (wide == null) return;
 			gp.Points.Clear (); gp.Points.AddRange (wide.Points);
 			gp.Types.Clear (); gp.Types.AddRange (wide.Types);
+			gp.FillMode = FillMode.Winding;   // GpPath::Widen: the widened path fills winding
 			gp.Revalidate ();
 		}
 	}

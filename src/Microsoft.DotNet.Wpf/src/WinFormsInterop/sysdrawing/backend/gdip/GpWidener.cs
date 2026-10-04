@@ -164,7 +164,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         // ---- Widen ------------------------------------------------------------------------------
 
-        public GpPath Widen ()
+        public GpPath Widen (bool keepFlags = false)
         {
             if (!Valid) return null;
             var outP = new List<PointF> ();
@@ -227,7 +227,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
             } else if (_inv.Complexity != 0) _inv.Transform (pts);
             var types = outT.ToArray ();
-            for (int i = 0; i < types.Length; i++) types [i] = (byte) (types [i] & 0xbf);
+            if (!keepFlags)
+                for (int i = 0; i < types.Length; i++) types [i] = (byte) (types [i] & 0xbf);
             return new GpPath (pts, types, FillMode.Winding);
         }
 
