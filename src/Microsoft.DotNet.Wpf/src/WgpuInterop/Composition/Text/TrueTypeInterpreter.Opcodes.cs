@@ -159,19 +159,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             if (s_traceHint && (uint)i < _scaledCvt.Length)
                                 Console.Error.WriteLine($"      WCVTP cvt[{i}] {_scaledCvt[i] / 64f:0.0000}"
                                                         + $" -> {v / 64f:0.0000}px  (ppem {_ppem})");
-                            if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = v;
+                            if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = CvtWrite(v);
                             break;
                         }
                     case 0x70:                                                          // WCVTF
                         {
                             int v = Pop(), i = Pop();
-                            if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = Scale(v);
+                            if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = _stretched ? ScaleUnits(v, _cvtScale) : Scale(v);
                             break;
                         }
                     case 0x45:                                                          // RCVT
                         {
                             int i = Pop();
-                            int v = (uint) i < _scaledCvt.Length ? _scaledCvt[i] : 0;
+                            int v = (uint) i < _scaledCvt.Length ? CvtRead(_scaledCvt[i]) : 0;
                             // WPF_CVT_OVERRIDE=idx:val[,idx:val...] forces a control value, in
                             // 64ths, on the CLEARTYPE pass only. A debugging facility: when a
                             // glyph's error reduces to one control value -- which is where Times'
@@ -334,7 +334,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x1A: _gs.MinimumDistance = Pop(); break;                      // SMD
                     case 0x1D: _gs.ControlValueCutIn = Pop(); break;                    // SCVTCI
                     case 0x1E: _gs.SingleWidthCutIn = Pop(); break;                     // SSWCI
-                    case 0x1F: _gs.SingleWidthValue = Scale(Pop()); break;              // SSW
+                    case 0x1F: _gs.SingleWidthValue = _stretched ? ScaleUnits(Pop(), _cvtScale) : Scale(Pop()); break;              // SSW
                     case 0x3D: LatchRoundGrid(); _gs.Round = RoundMode.ToDoubleGrid; break;               // RTDG
                     case 0x4D: _gs.AutoFlip = true; break;                              // FLIPON
                     case 0x4E: _gs.AutoFlip = false; break;                             // FLIPOFF
@@ -618,10 +618,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // needing moves of at most 12/64, with no instruction in the
                                 // program touching them.</para>
                                 if (s_alignrpTouchedOnly && !BiLevelPass && ClearTypeInfo
-                                    && (IsHorizontalProjection
-                                        ? _iupXDone && (z.Tags[p] & TagTouchX) == 0
+                                    && (CtSideProjection
+                                        ? CtSideIupDone && (z.Tags[p] & CtSideTag) == 0
                                         : s_alignrpBothAxes
-                                          && _iupYDone && (z.Tags[p] & TagTouchY) == 0)
+                                          && OtherSideIupDone && (z.Tags[p] & OtherSideTag) == 0)
                                     && !PostIupExempt("ALIGNRP", p)) continue;
                                 LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, canProportion: true);
                                 MovePoint(z, p, -MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0));
@@ -788,11 +788,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // the move apply, not a condition on skipping at all.
                                 // WPF_CT_SHPIX_IUPY=0 restores the two-clause version.
                                 bool shpixApply =
-                                    _gs.ProjX == 0 && _gs.ProjY == 0x4000
+                                    PureOtherSideProjection
                                     && (_inComposite
                                         || ((uint) sp < (uint) z.PointCount
-                                            && (z.Tags[sp] & TagTouchY) != 0
-                                            && !(s_shpixAfterIupY && _iupYDone)));
+                                            && (z.Tags[sp] & OtherSideTag) != 0
+                                            && !(s_shpixAfterIupY && OtherSideIupDone)));
                                 // IN THE PRE-PROGRAM TOO. itrp_SHP_Common never asks which
                                 // program is running, and GDI's ClearType prep runs with the
                                 // ClearType bits set: Palatino Linotype Bold Italic's prep calls
@@ -1074,12 +1074,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // apart -- pt8 near 131 and pt13 near 150. Whatever GDI does here, it
                             // is neither "skip the block" nor "run the block as written".</para>
                             if (s_scfsXToo && !BiLevelPass && ClearTypeInfo
-                                && IsHorizontalProjection
-                                && (z.Tags[p] & TagTouchX) == 0
+                                && CtSideProjection
+                                && (z.Tags[p] & CtSideTag) == 0
                                 && !PostIupExempt("SCFS", p, value)) break;
                             if (s_scfsTouchedOnly && !BiLevelPass && ClearTypeInfo
-                                && !IsHorizontalProjection
-                                && (z.Tags[p] & TagTouchY) == 0
+                                && !CtSideProjection
+                                && (z.Tags[p] & OtherSideTag) == 0
                                 && !PostIupExempt("SCFS", p, value)) break;
                             MovePoint(z, p, value - Project(z.CurX[p], z.CurY[p]));
 
@@ -2232,8 +2232,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // should collapse to, and anything within the cut-in of it becomes it.
             int distance = original;
             if (_gs.SingleWidthCutIn > 0
-                && Math.Abs(distance - _gs.SingleWidthValue) < _gs.SingleWidthCutIn)
-                distance = distance >= 0 ? _gs.SingleWidthValue : -_gs.SingleWidthValue;
+                && Math.Abs(distance - CvtRead(_gs.SingleWidthValue)) < _gs.SingleWidthCutIn)
+                distance = distance >= 0 ? CvtRead(_gs.SingleWidthValue) : -CvtRead(_gs.SingleWidthValue);
 
             if (round) distance = RoundDistance(distance, linkType: linkType);
 
@@ -3285,13 +3285,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int minimum = EffectiveMinimumDistance() * stretch;
 
             if (_gs.SingleWidthCutIn > 0
-                && Math.Abs(value - _gs.SingleWidthValue * stretch) < _gs.SingleWidthCutIn * stretch)
+                && Math.Abs(value - CvtRead(_gs.SingleWidthValue) * stretch) < _gs.SingleWidthCutIn * stretch)
             {
                 if (_dumpActive)
                     Console.Error.WriteLine($"      SINGLE WIDTH snap cvt[{cvt}] {value / 64f:0.0000}px"
                         + $" -> {_gs.SingleWidthValue * stretch / 64f:0.0000}px"
                         + $" (cut-in {_gs.SingleWidthCutIn / 64f:0.0000})");
-                value = value >= 0 ? _gs.SingleWidthValue * stretch : -_gs.SingleWidthValue * stretch;
+                value = value >= 0 ? CvtRead(_gs.SingleWidthValue) * stretch : -CvtRead(_gs.SingleWidthValue) * stretch;
             }
 
             if (p >= z.PointCount) { if (setRp0) _gs.Rp0 = p; _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; return; }
@@ -4339,11 +4339,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // was hinted for ClearType and wants none of the backward-compatibility filtering:
                 // Constantia Bold Italic '@' at 12ppem DELTAPs an untouched point after IUP[y] and
                 // GDI moves it. WPF_CT_DELTA_NATIVE=0 filters in native mode too.
-                if (!s_deltaOnUntouchedY && !BiLevelPass && ClearTypeInfo && !IsHorizontalProjection
+                if (!s_deltaOnUntouchedY && !BiLevelPass && ClearTypeInfo && !CtSideProjection
                     && !(s_deltaNativeFree && NativeClearTypeMode)
                     && !(s_deltaCompositeApplies && _inComposite)
                     && (uint) p < (uint) z.PointCount
-                    && ((z.Tags[p] & TagTouchY) == 0 || (s_deltaAfterIupY && _iupYDone)))
+                    && ((z.Tags[p] & OtherSideTag) == 0 || (s_deltaAfterIupY && OtherSideIupDone)))
                     continue;
                 if (SkipDeltaInClearTypeDirection(z, p, compositeExempt: false)
                     && (!s_yTrace || Skipped("DELTA", p, amount)))
@@ -4477,18 +4477,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (s_deltasFreeInPrep && _inPreProgram) return false;
                 if (compositeExempt && _inComposite) return false;
                 bool axis = s_deltaReMode == 3
-                            ? !(_gs.FreeX == 0 && _gs.FreeY == 0x4000)
-                            : !(_gs.ProjX == 0 && _gs.ProjY == 0x4000);
+                            ? !PureOtherSideFreedom
+                            : !PureOtherSideProjection;
                 if (axis) return true;
                 // "-- or a composite (+0x171)": on the y projection the composite byte applies the
                 // delta before the touch and IUP clauses are asked. See s_deltaCompositeApplies.
                 if (s_deltaCompositeApplies && _inComposite) return false;
                 if (s_deltaReMode == 2) return false;          // axis test only
                 bool untouched = (uint) point >= (uint) z.PointCount
-                                 || (z.Tags[point] & TagTouchY) == 0;
+                                 || (z.Tags[point] & OtherSideTag) == 0;
                 if (s_deltaReMode == 4) return untouched;      // touched-y only
-                if (s_deltaReMode == 5) return _iupYDone;      // post-IUP[y] only
-                return _iupYDone || untouched;
+                if (s_deltaReMode == 5) return OtherSideIupDone;      // post-IUP[y] only
+                return OtherSideIupDone || untouched;
             }
             if (!DeltaInClearTypeDirection || NativeClearTypeMode || s_keepAllDeltas || BiLevelPass) return false;
             if (compositeExempt && _inComposite) return false;
@@ -4504,7 +4504,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // adjust the position of horizontal strokes ... hence they are kept"). WPF_CT_DELTA=inline
             // skips only what comes after IUP.
             if (s_keepInlineDeltas && !_iupDone) return false;
-            return !s_keepTouchedDeltas || (z.Tags[point] & TagTouchY) == 0;
+            return !s_keepTouchedDeltas || (z.Tags[point] & OtherSideTag) == 0;
         }
 
         private void ApplyControlValueDeltas(int rangeOffset)
@@ -4520,7 +4520,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         + $"{(fires ? $"FIRES {amount / 64f:0.0000}px" : "no")}"
                         + $" cvt now {((uint)index < _scaledCvt.Length ? _scaledCvt[index] / 64f : 0):0.0000}px");
                 if (!fires) continue;
-                if ((uint)index < _scaledCvt.Length) _scaledCvt[index] += amount;
+                if ((uint)index < _scaledCvt.Length) _scaledCvt[index] += CvtWrite(amount);
             }
         }
 
@@ -4534,7 +4534,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private static readonly int s_programPpem =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PROGRAM_PPEM"), out int pp) ? pp : 0;
-        private int ProgramPpem => s_programPpem > 0 ? s_programPpem : _ppem;
+        private int ProgramPpem => s_programPpem > 0 ? s_programPpem : StretchedPpem(_ppem);
 
         private bool DeltaApplies(int spec, int rangeOffset, out int amount)
         {

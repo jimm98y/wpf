@@ -65,6 +65,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// nothing else.</summary>
         internal const int NaturalScalerWord = 1;
 
+        /// <summary>The same word for a glyph turned a quarter (m00 == 0): fs__NewTransformation
+        /// @180070bc0 flips bit 2, so the scaler oversamples the glyph's y (the device x).</summary>
+        internal const int SidewaysScalerWord = NaturalScalerWord ^ 4;
+
         /// <summary>The word for GDI+'s 4x4 antialiased glyph bitmaps: 0x81, ClearType with bit 7
         /// ("ClearType grey") -- 1,728 of 1,728 test glyphs exact against DirectWrite's own (with the
         /// face's dropout control), where the natural word 1 gets 96 of 168. (The bi-level raster
@@ -103,6 +107,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             public bool FixedFilter;
             /// <summary>Graphics.TextContrast, 0..12: which TextContrast tables the blend uses.</summary>
             public int Contrast = DefaultContrast;
+            /// <summary>The world-to-device axis scale the run was laid out under (m11, m22): the
+            /// origin is in world units, the advances in device pixels.</summary>
+            public float Sx = 1f, Sy = 1f;
+            /// <summary>The 6x1 glyph of the run's i'th glyph at the device size it is drawn at.</summary>
+            public NaturalClearType.GlyphBits GlyphBits(TrueTypeFont font, int i)
+                => Sx == 1f && Sy == 1f ? Glyph(font, Glyphs[i], Em)
+                 : Sx == Sy ? Glyph(font, Glyphs[i], Em * Sx)
+                 : Glyph(font, Glyphs[i], AxisPpem(Em * Sx), AxisPpem(Em * Sy));
         }
 
         /// <summary>The face a family and style (1 bold, 2 italic) resolves to, loaded exactly as the
@@ -136,9 +148,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static Run? Layout(TrueTypeFont font, string family, float sizePt, string text,
                                     float x, float y, float rw, float rh,
                                     int formatFlags, bool typographic, int align, int lineAlign,
-                                    bool hotkeyPrefix, int hint, float dpi = 96f, bool biLevel = false)
+                                    bool hotkeyPrefix, int hint, float dpi = 96f, bool biLevel = false,
+                                    float sx = 1f, float sy = 1f)
         {
             if (string.IsNullOrEmpty(text) || font is null) return null;
+            // FastTextImager::Initialize@1800393c0 takes a positive axis scale: m11 > 0, m22 != 0
+            // (only m22 > 0 is modelled). The layout stays in world units (the rectangle, the em,
+            // the margins, the line box) and every DEVICE quantity -- scale16, the hinted
+            // advances, the margin room +0x90, the side bearings, the device ascent -- is the
+            // world one through m11 or m22; the caller takes the world origin to the device.
+            if (!(sx > 0f) || !(sy > 0f)) return null;
+            bool scaled = sx != 1f || sy != 1f;
             if (hint == HintSystemDefault) hint = HintClearTypeGridFit;   // a ClearType desktop
             // The realizations: ClearType (5), the 4x4 antialiased ones (3 grid-fitted, 4 not), and
             // -- for a caller that draws them (biLevel) -- the bi-level ones (1 grid-fitted, 2 not).
@@ -166,11 +186,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // the advance type (+0x20): 1 bi-level grid-fitted (GDI classic advances), 2 bi-level
             // not fitted (design), 3 and 4 antialiased (classic / design), 5 ClearType (GDI natural).
             int mode = hint;
+            // Realize@1800a22a0 asks about embedded bitmaps only for a matrix with m11 == +-m22.
+            bool squareXform = sx == sy;
+            if (squareXform && scaled) ppemRound = Floor(em * sx + 0.5f);
             if (hint == HintClearTypeGridFit
-                && (font.EmbeddedBitmapCount(ppemRound) > 100 || string.Equals(family, "Marlett", StringComparison.OrdinalIgnoreCase)))
+                && ((squareXform && font.EmbeddedBitmapCount(ppemRound) > 100) || string.Equals(family, "Marlett", StringComparison.OrdinalIgnoreCase)))
                 mode = 1;   // flags & ~0x410000 | 0x800000
             if (hint == HintAntiAliasGridFit && !font.GaspDoGray(ppemRound)) mode = 1;   // flags & ~0x10000
             if (mode <= 2 && !biLevel) return null;
+            // Under a scale only the ClearType realization is modelled (the stretched 6x1 fit).
+            if (scaled && mode != 5) return null;
             if (font.SynthesizesOblique && (mode == 3 || mode == 4)) return null;
 
             // CharacterAttributes bit 0x80 sends the string to the full imager: every control
@@ -204,7 +229,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 nom[i] = tracking != 1f ? Floor(a * tracking + 0.5f) : a;
             }
             int space = font.GlyphIndex(' ');
-            float scale = em / upem;
+            float scale = em / upem * sx;       // +0xb0: (em / upem) * m11
+            float scaleY = em / upem * sy;      // +0xbc
             int scale16 = Floor(scale * 65536f + 0.5f);
 
             // Initialize: the nominal width of ALL glyphs; the wrap test uses it before trailing
@@ -225,13 +251,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (lm != 0f) cellH = em * 0.125f + cellH;
             // QuantizeTransform widens to VDMX only when the realization flags & 0x340000 are clear:
             // not for AntiAlias (0x118000) or SingleBitPerPixel (0x48000).
-            DeviceAscentDescent(font, scale, out int ascDev, out int descDev,
+            DeviceAscentDescent(font, scaleY, out int ascDev, out int descDev,
                                 vdmx: hint != HintAntiAlias && hint != HintSingleBitPerPixel);
 
             // FastDrawGlyphsNominal for a fixed-pitch face and for the hints that do not fit
             // (IsGridFittedTextRealizationMethod: 1, 3 and 5 fit).
             bool nominal = font.IsFixedPitch || hint == HintAntiAlias || hint == HintSingleBitPerPixel;
-            var run = new Run { Em = em, Mode = mode, Hint = hint, FixedFilter = font.GdiContrastPalette };
+            var run = new Run { Em = em, Mode = mode, Hint = hint, FixedFilter = font.GdiContrastPalette, Sx = sx, Sy = sy };
             // The advance type: 2 GDI natural (ClearType), 1 GDI classic (the other grid-fitted
             // realizations, the bi-level one a ClearType face falls back to included), 0 design.
             int advType = mode == 5 ? 2 : hint == HintAntiAlias || hint == HintSingleBitPerPixel ? 0 : 1;
@@ -241,7 +267,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             var adv = new int[n]; var lsb = new int[n]; var rsb = new int[n];
             for (int i = 0; i < n; i++)
             {
-                if (advType == 2) NaturalMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
+                if (advType == 2 && scaled) NaturalMetrics(font, gids[i], em, sx, sy, out adv[i], out lsb[i], out rsb[i]);
+                else if (advType == 2) NaturalMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
                 else if (advType == 1) ClassicMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
                 else DesignMetrics(font, gids[i], out adv[i], out lsb[i], out rsb[i]);
             }
@@ -266,14 +293,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     rmin = Math.Min(rmin, cum + (int)(rsb[i] * scale * 16f));
                     cum += (int)(adv[i] * scale * 16f);
                 }
-                if ((float)(-lmin) > lm * 16f || (float)(-rmin) > rm * 16f) return null;
+                if ((float)(-lmin) > lm * sx * 16f || (float)(-rmin) > rm * sx * 16f) return null;
             }
 
             if (nominal)
             {
                 // FastDrawGlyphsNominal: every glyph, leading spaces included, from an unrounded
                 // origin, x += nom * scale16 / 65536.
-                Origin(x, y, align, lineAlign, rw, rh, totalNom, lm, rm, cellH, 0f, ascDev, out float nx, out float ny);
+                Origin(x, y, align, lineAlign, rw, rh, totalNom, lm, rm, cellH, 0f, ascDev, out float nx, out float ny, sy);
                 run.Glyphs = new ushort[n];
                 for (int i = 0; i < n; i++) run.Glyphs[i] = (ushort)gids[i];
                 run.Advances = new float[Math.Max(0, n - 1)];
@@ -288,12 +315,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int i = 0; i < n; i++) hint16[i] = Floor(adv[i] * scale + 0.5f) * 16;
 
             // The trailing margin available to absorb hinting growth (+0x90).
-            int m90 = align == 0 ? Floor(rm) : align == 1 ? Floor(Math.Min(lm, rm) * 2f) : Floor(lm);
+            float lmx = lm * sx, rmx = rm * sx;    // the margins on the device (* +0xd4)
+            int m90 = align == 0 ? Floor(rmx) : align == 1 ? Floor(Math.Min(lm, rm) * 2f * sx) : Floor(lmx);
             if (!noBlackBox)
             {
-                if (align == 0) m90 = Floor(rm) + (rmin >> 4);
-                else if (align == 1) m90 = 2 * Math.Min(Floor(lm) + (lmin >> 4), Floor(rm) + (rmin >> 4));
-                else m90 = Floor(lm) + (lmin >> 4);
+                if (align == 0) m90 = Floor(rmx) + (rmin >> 4);
+                else if (align == 1) m90 = 2 * Math.Min(Floor(lmx) + (lmin >> 4), Floor(rmx) + (rmin >> 4));
+                else m90 = Floor(lmx) + (lmin >> 4);
             }
 
             // ---- FastAdjustGlyphPositionsProportional ----
@@ -401,7 +429,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             // ---- GetDeviceBaselineOrigin + FastDrawGlyphsGridFit ----
-            Origin(x, y, align, lineAlign, rw, rh, totalNom, lm, rm, cellH, off94, ascDev, out float ox, out float oy);
+            Origin(x, y, align, lineAlign, rw, rh, totalNom, lm, rm, cellH, off94, ascDev, out float ox, out float oy, sy);
             run.Glyphs = new ushort[nmid];
             for (int j = 0; j < nmid; j++) run.Glyphs[j] = (ushort)gids[lead + j];
             run.Advances = new float[Math.Max(0, nmid - 1)];
@@ -466,6 +494,42 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (cache.Count > 8192) cache.Clear();
                 cache[key] = (advDu, lsbDu, rsbDu);
             }
+        }
+
+        /// <summary>NaturalMetrics under the world-to-device axis scale (sx, sy) GDI+ hands
+        /// GetGdiCompatibleGlyphAdvances/-Metrics as the transform. A square one is the plain
+        /// size em * sx (MakeRasterizerTransform rounds it to a whole ppem); a stretched one is
+        /// fitted at each axis' whole ppem (<see cref="Glyph(TrueTypeFont, int, int, int)"/>) and
+        /// its pixels go back to design units through the UNROUNDED device em: Arial Bold Italic
+        /// 'H' at em 16 under (1.1014, 1.4904) is 13 px, 13 * 2048 / 17.622 = 1511 units, where
+        /// the square 18 ppem gives 1479.</summary>
+        internal static void NaturalMetrics(TrueTypeFont font, int gid, float em, float sx, float sy,
+                                            out int advDu, out int lsbDu, out int rsbDu)
+        {
+            float ex = em * sx, ey = em * sy;
+            int ppx = AxisPpem(ex), ppy = AxisPpem(ey);
+            if (sx == sy || ppx == ppy) { NaturalMetrics(font, gid, ex, out advDu, out lsbDu, out rsbDu); return; }
+            int upem = font.UnitsPerEmForHinting;
+            int design = font.DesignAdvance(gid);
+            bool hasOutline = font.TryGetDesignXExtent(gid, out _, out _);
+            int sxs = TrueTypeInterpreter.StretchPpemX, sys = TrueTypeInterpreter.StretchPpemY;
+            TrueTypeInterpreter.StretchPpemX = ppx; TrueTypeInterpreter.StretchPpemY = ppy;
+            try
+            {
+                int ppem = Math.Max(ppx, ppy);
+                if (!font.TryGetDWriteFittedSpan64(gid, ppem, NaturalScalerWord, out int span64))
+                    span64 = (int)MathF.Round(design * 64f * ppx / upem, MidpointRounding.AwayFromZero);
+                int px = (span64 + (hasOutline ? 32 : 34)) >> 6;
+                advDu = (int)Math.Floor(px * (double)upem / ex + 0.5);
+                if (!OutlineXExtent(font, gid, ppem, out float x0, out float x1)) { lsbDu = 0; rsbDu = advDu; }
+                else
+                {
+                    int left = (int)MathF.Ceiling(x0 * 6f - 0.5f), right = (int)MathF.Floor(x1 * 6f + 0.5f);
+                    lsbDu = (int)Math.Floor(left * (double)upem / (6.0 * ex) + 0.5);
+                    rsbDu = (int)Math.Floor((6 * px - right) * (double)upem / (6.0 * ex) + 0.5);
+                }
+            }
+            finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
         }
 
         /// <summary>IDWriteFontFace::GetDesignGlyphMetrics: hmtx and the glyf box.</summary>
@@ -546,7 +610,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         private static void Origin(float x, float y, int align, int lineAlign, float rw, float rh, float totalNom,
-                                   float lm, float rm, float cellH, float off94, int ascDev, out float ox, out float oy)
+                                   float lm, float rm, float cellH, float off94, int ascDev, out float ox, out float oy,
+                                   float sy = 1f)
         {
             ox = x; oy = y;
             float tot = totalNom + lm + rm;
@@ -555,7 +620,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (lineAlign == 1) oy = (rh - cellH) * 0.5f + oy;
             else if (lineAlign == 2) oy = (rh - cellH) + oy;
             ox = off94 + lm + ox;
-            oy = oy - (float)(-ascDev);
+            // GetDeviceBaselineOrigin@1800391b0: y - (float)(+0xac) / m22, +0xac the negated ascent.
+            oy = sy == 1f ? oy - (float)(-ascDev) : oy - (float)(-ascDev) / sy;
         }
 
         /// <summary>FastTextImager::DrawString: the layout rectangle becomes a clip when the text box
@@ -601,6 +667,90 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static NaturalClearType.GlyphBits Glyph(TrueTypeFont font, int gid, float em)
             => NaturalClearType.Rasterize(font, gid, em, 1, gridFit: true, scalerFlags: NaturalScalerWord, forceGridFit: true);
 
+        /// <summary>The same glyph under a device transform that scales x and y apart (GDI+ text
+        /// played into a stretched device): DrawPlacedGlyphs hands CreateGlyphBitmapArray the world
+        /// em and the world-to-device matrix, MakeRasterizerTransform@18008fe48 (dwrite) does not
+        /// round an anisotropic matrix to a size, and the scaler hints the glyph at each axis' own
+        /// whole ppem (<see cref="TrueTypeInterpreter.StretchPpemX"/>). Equal ppems are the
+        /// ordinary glyph.</summary>
+        internal static NaturalClearType.GlyphBits Glyph(TrueTypeFont font, int gid, int ppemX, int ppemY)
+        {
+            if (ppemX == ppemY) return Glyph(font, gid, ppemX);
+            int sx = TrueTypeInterpreter.StretchPpemX, sy = TrueTypeInterpreter.StretchPpemY;
+            TrueTypeInterpreter.StretchPpemX = ppemX;
+            TrueTypeInterpreter.StretchPpemY = ppemY;
+            try
+            {
+                return NaturalClearType.Rasterize(font, gid, Math.Max(ppemX, ppemY), 1, gridFit: true,
+                                                  scalerFlags: NaturalScalerWord, forceGridFit: true);
+            }
+            finally
+            {
+                TrueTypeInterpreter.StretchPpemX = sx;
+                TrueTypeInterpreter.StretchPpemY = sy;
+            }
+        }
+
+        /// <summary>A glyph laid sideways in vertical text (FullTextImager::GetFontTransform's quarter
+        /// turn): the realization matrix maps the glyph's x onto device y and its y onto device -x,
+        /// so the scaler (scl_InitializeScaling) sizes the glyph's x by the device y scale and its y
+        /// by the device x scale, fits it there, and turns the fit afterwards (scl_PostTransformGlyph,
+        /// the matrix over its own stretch).</summary>
+        internal static NaturalClearType.GlyphBits GlyphSideways(TrueTypeFont font, int gid, int ppemAlong, int ppemAcross)
+        {
+            int sx = TrueTypeInterpreter.StretchPpemX, sy = TrueTypeInterpreter.StretchPpemY;
+            TrueTypeInterpreter.StretchPpemX = ppemAlong == ppemAcross ? 0 : ppemAlong;
+            TrueTypeInterpreter.StretchPpemY = ppemAlong == ppemAcross ? 0 : ppemAcross;
+            try
+            {
+                // fs__NewTransformation toggles word bit 2 for m00 == 0: ClearType on the glyph's y.
+                return NaturalClearType.RasterizeQuarterTurn(font, gid, Math.Max(ppemAlong, ppemAcross), SidewaysScalerWord);
+            }
+            finally
+            {
+                TrueTypeInterpreter.StretchPpemX = sx;
+                TrueTypeInterpreter.StretchPpemY = sy;
+            }
+        }
+
+        /// <summary>GetGdiCompatibleGlyphMetrics with isSideways (what GDI+'s
+        /// GetGlyphStringVerticalOriginOffsets asks the realization for): the glyph measured as if
+        /// laid sideways under the world-to-device axis scale (m11, m22) -- its advance is the
+        /// natural fit's span with the glyph's x sized by the device y scale, back in design units
+        /// through em * m22, and its vertical origin (sTypoAscender, for a face with no vertical
+        /// metrics) rounded to the pixels of the device x scale and back through em * m11.
+        /// Times New Roman's .notdef at em 20 under (1.1014, 1.4904): 1580 and 1395 (design 1593
+        /// and 1420); under (1.4, 1.4904) 1580 and 1390.</summary>
+        internal static void SidewaysMetrics(TrueTypeFont font, int gid, float em, float m11, float m22,
+                                             out int advDu, out int voyDu)
+        {
+            int upem = font.UnitsPerEmForHinting;
+            int along = AxisPpem(em * m22), across = AxisPpem(em * m11);
+            int sxs = TrueTypeInterpreter.StretchPpemX, sys = TrueTypeInterpreter.StretchPpemY;
+            TrueTypeInterpreter.StretchPpemX = along == across ? 0 : along;
+            TrueTypeInterpreter.StretchPpemY = along == across ? 0 : across;
+            try
+            {
+                bool hasOutline = font.TryGetDesignXExtent(gid, out _, out _);
+                if (!font.TryGetDWriteFittedSpan64(gid, Math.Max(along, across), SidewaysScalerWord, out int span64))
+                    span64 = (int)MathF.Round(font.DesignAdvance(gid) * 64f * along / upem, MidpointRounding.AwayFromZero);
+                int px = (span64 + (hasOutline ? 32 : 34)) >> 6;
+                advDu = (int)Math.Floor(px * (double)upem / (em * m22) + 0.5);
+            }
+            finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
+            int voyPx = (int)Math.Floor(font.TypoAscender * (double)across / upem + 0.5);
+            voyDu = (int)Math.Floor(voyPx * (double)upem / (em * m11) + 0.5);
+        }
+
+        /// <summary>A device em (the world em through one axis of the world-to-device matrix) as
+        /// the scaler sizes it: MakeRasterizerTransform's 16.16, rounded to a whole pixel (head
+        /// flags bit 3, set on every face this is used with).</summary>
+        internal static int AxisPpem(float deviceEm)
+        {
+            long f = (long)Math.Floor(Math.Abs(deviceEm) * 65536.0 + 0.5);
+            return (int)((f + 0x8000) >> 16);
+        }
+
         /// <summary>GetGlyphPos + the glyph bitmap's placement: the sample column glyph bit column 0
         /// lands on, and the row of bit row 0.</summary>
         internal static (int Sample, int Row) Place(NaturalClearType.GlyphBits g, float x, float y)
@@ -613,6 +763,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>fsc_OverscaleToSubPixel, ulClearTypeFilter and RenderGlyph for a run whose glyph
         /// i is <paramref name="glyphs"/>[i] placed at device (<paramref name="xs"/>[i], <paramref name="y"/>).</summary>
         internal static Levels Compose(IReadOnlyList<NaturalClearType.GlyphBits> glyphs, float[] xs, float y, bool fixedFilter)
+            => Compose(glyphs, xs, null, y, fixedFilter);
+
+        /// <summary>The same with each glyph on its own baseline (DrawDriverString's origins).</summary>
+        internal static Levels Compose(IReadOnlyList<NaturalClearType.GlyphBits> glyphs, float[] xs, float[]? ys, float y, bool fixedFilter)
         {
             int n = glyphs.Count;
             var place = new (int S, int R)[n];
@@ -621,7 +775,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 var g = glyphs[i];
                 if (g.IsEmpty) continue;
-                place[i] = Place(g, xs[i], y);
+                place[i] = Place(g, xs[i], ys is null ? y : ys[i]);
                 p0 = Math.Min(p0, FloorDiv(place[i].S, 6) - 1);
                 p1 = Math.Max(p1, FloorDiv(place[i].S + g.Width - 1, 6) + 1);
                 r0 = Math.Min(r0, place[i].R);

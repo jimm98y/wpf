@@ -235,7 +235,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// baseline: a descender's -0.5 becomes -1 rather than 0.</summary>
         private int ScaleY(int fontUnits)
         {
-            int sc = _childScaleY != 0 ? _childScaleY : _scale;
+            int sc = _childScaleY != 0 ? _childScaleY : _stretched ? _scaleY : _scale;
             if (!s_yScaleAway) return ScaleUnits(fontUnits, sc);
             long v = (long) fontUnits * sc;
             return (int) ((v + (v >> 63) + 0x8000) >> 16);
@@ -517,9 +517,101 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Running DirectWrite's natural modes, whose word has no compatible widths.</summary>
         internal static bool DWriteNatural => DWriteFlags != 0 && (DWriteFlags & 2) == 0;
+
+        /// <summary>ClearType oversampling the glyph's Y axis: bit 2 of the mode word, which
+        /// fs__NewTransformation@180070bc0 (dwrite) toggles for a ClearType word without bit 5 when
+        /// the transform's m00 is 0 -- a glyph turned a quarter, whose y is the device's x
+        /// (GDI+'s sideways glyphs in vertical text). Every ClearType-direction rule then keys on
+        /// the y axis where it keyed on x: SPVTCA[y] latches the sub-pixel rounding (itrp_SPVTCA_0
+        /// @180089560: word bit 0 and bit 2), a projection is off the ClearType axis only when it is
+        /// pure +X, the delta engine keeps a move only along pure +X freedom (itrp_DeltaEngine
+        /// @180080b78), and x -- no longer oversampled -- rounds to whole pixels.</summary>
+        internal static bool ClearTypeAxisY => DWriteFlags != 0 && (DWriteFlags & 5) == 5;
+
+        /// <summary>The x grid is the sixteenth one: ClearType fitting with x the oversampled axis.</summary>
+        private static bool SubpixelXHere => SubpixelFittingHere && !ClearTypeAxisY;
         private float _prepPpem = -1f;
 
         private int _scale;                    // 16.16: font units -> 26.6 pixels
+
+        /// <summary>A STRETCHED size: the whole-pixel ppem of each axis, for a glyph drawn under a
+        /// transform that scales x and y differently (GDI+ text played into a non-uniformly scaled
+        /// device). 0 for an ordinary size, and so is a pair that agrees. DirectWrite's
+        /// MakeRasterizerTransform does not round such a matrix to a size; scl_InitializeScaling
+        /// rounds each axis on its own (the face's head flags bit 3), hints with x and y scaled
+        /// apart, and fsg's post-transform is then the identity (the matrix over its own unrounded
+        /// stretch).</summary>
+        [ThreadStatic] internal static int StretchPpemX, StretchPpemY;
+        private int _prepStretchX, _prepStretchY;
+        private bool _stretched;
+        private int _scaleY;                   // 16.16, y's point scale when stretched
+        private int _cvtScale;                 // 16.16, the control values' (the larger axis)
+        private int _aspectX = 0x10000, _aspectY = 0x10000;
+
+        /// <summary>itrp_GetCVTScale@1801240e8: the aspect a control value read along the
+        /// projection vector is multiplied by -- x's for a pure x projection, y's for a pure y
+        /// one, otherwise sqrt((px*ax)^2 + (py*ay)^2) in DWrite's fixed point.</summary>
+        private int CvtAspect()
+        {
+            if (!_stretched) return 0x10000;
+            if (_gs.ProjY == 0) return _aspectX;
+            if (_gs.ProjX == 0) return _aspectY;
+            static int Sq14(int v) { int u = (v * v + 0x2000) >> 14; return (short)u << 2; }
+            int sum = DwFixMul(Sq14(_gs.ProjX), DwFixMul(_aspectX, _aspectX))
+                    + DwFixMul(Sq14(_gs.ProjY), DwFixMul(_aspectY, _aspectY));
+            if (sum > 0x10000) return 0x10000;
+            return (DwFracSqrt(sum * 0x4000) + 0x2000) >> 14;
+        }
+
+        /// <summary>DWRITE_FixMul@18006cfd0: 16.16, a half rounded away from zero.</summary>
+        internal static int DwFixMul(int a, int b)
+        {
+            long p = (long)a * b;
+            p = (p + (p >> 63) + 0x8000) >> 16;
+            return p > int.MaxValue ? int.MaxValue : p < int.MinValue ? int.MinValue : (int)p;
+        }
+
+        /// <summary>DWRITE_FixDiv@18006cf60.</summary>
+        internal static int DwFixDiv(int a, int b)
+        {
+            long half = b / 2;
+            if ((a < 0) != (b < 0)) half = -half;
+            long n = (long)a * 0x10000 + half;
+            if (b == 0) return n < 0 ? int.MaxValue : int.MaxValue;
+            long q = n / b;
+            return q > int.MaxValue ? int.MaxValue : q < int.MinValue ? int.MinValue : (int)q;
+        }
+
+        /// <summary>DWRITE_FracSqrt@18006d010: the square root of a 2.30 fraction, 2.30.</summary>
+        private static int DwFracSqrt(int v)
+        {
+            if (v < 0) return unchecked((int)0x80000000);
+            uint x = (uint)v, root = 0, bit = 0x10000000, rem = 0;
+            if (x > 0x3fffffff) { x -= 0x40000000; root = 0x40000000; }
+            do
+            {
+                rem = x;
+                if (bit + root <= rem) { rem -= bit + root; root += bit * 2; }
+                x = rem * 2;
+                bit >>= 1;
+            } while (bit != 0);
+            if (root < x) { rem = (x - root) * 2 - 1; root++; }
+            else rem <<= 2;
+            if (root < rem) root++;
+            return (int)root;
+        }
+
+        /// <summary>A control value (or the single width) as the program reads it along the
+        /// projection vector: itrp_GetCVTEntrySlow, FixMul by the aspect when the size is stretched.</summary>
+        private int CvtRead(int stored) => _stretched ? DwFixMul(stored, CvtAspect()) : stored;
+
+        /// <summary>WCVTP and DELTAC: a pixel value stored back through the aspect (itrp_WCVT,
+        /// itrp_ChangeCvtSlow divide by it).</summary>
+        private int CvtWrite(int pixels) => _stretched && pixels != 0 ? DwFixDiv(pixels, CvtAspect()) : pixels;
+
+        /// <summary>MPPEM and the delta instructions' size: the larger axis' ppem times the aspect
+        /// along the projection vector when stretched (itrp_MPPEM, itrp_DeltaEngine).</summary>
+        private int StretchedPpem(int ppem) => _stretched ? DwFixMul(ppem, CvtAspect()) & 0xffff : ppem;
 
         /// <summary>The scale that turns a distance measured in the ORIGINAL outline into pixels.
         /// The same as <see cref="_scale"/> for an ordinary glyph, and the identity for a composite,
@@ -600,7 +692,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     // x and y on their own magnitudes (max |m00|,|m01| and max |m10|,|m11|):
                     // Calibri Italic 'tcaron' shrinks its comma accent 0.956 by 0.935.
                     if (ChildScaleY16 != 0)
-                        _childScaleY = (int)(((long)_scale * ChildScaleY16 + 0x8000) >> 16);
+                        _childScaleY = (int)(((long)(_stretched ? _scaleY : _scale) * ChildScaleY16 + 0x8000) >> 16);
+                    else if (_stretched)
+                        _childScaleY = (int)(((long)_scaleY * ChildScale16 + 0x8000) >> 16);
                     if (s_childPhantomPlain) _phantomScale = _scale;
                     _scale = (int)(((long)_scale * ChildScale16 + 0x8000) >> 16);
                 }
@@ -735,7 +829,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     int dx = -_glyphZone.CurX[pp1];
                     int dy = s_pp1Origin == 3 ? 0 : -_glyphZone.CurY[pp1];
                     if (s_pp1Origin != 2)
-                        dx = BiLevelPass || !TrueTypeFont.SubpixelFitting ? (dx + 32) & ~63
+                        dx = BiLevelPass || !TrueTypeFont.SubpixelFitting || ClearTypeAxisY ? (dx + 32) & ~63
                            : s_pp1Sample ? RoundToSample(dx)
                            : (dx + 2) & ~3;
                     if (dx != 0 || dy != 0)
@@ -1478,7 +1572,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// ClearType ones in GDI. SVTCA[x] (itrp_SVTCA_1@14003f6f0) sets the same latch as
         /// (bit0 set &amp;&amp; bit2 clear), and SPVTL/SDPVTL RECOMPUTE it, which we never did.
         /// WPF_CT_AXIS_NOTPUREY=1.</summary>
-        private bool NotPureYProjection => !(_gs.ProjX == 0 && _gs.ProjY == 0x4000);
+        private bool NotPureYProjection => ClearTypeAxisY ? !(_gs.ProjX == 0x4000 && _gs.ProjY == 0)
+                                                          : !(_gs.ProjX == 0 && _gs.ProjY == 0x4000);
+
+        /// <summary>The projection is on the ClearType side (mostly x, or mostly y when y is the
+        /// ClearType axis), and the matching touch flag and IUP latch.</summary>
+        private bool CtSideProjection => ClearTypeAxisY ? !IsHorizontalProjection : IsHorizontalProjection;
+        private byte CtSideTag => ClearTypeAxisY ? TagTouchY : TagTouchX;
+        private byte OtherSideTag => ClearTypeAxisY ? TagTouchX : TagTouchY;
+        private bool CtSideIupDone => ClearTypeAxisY ? _iupYDone : _iupXDone;
+        /// <summary>The projection / freedom vector is pure along the axis ClearType does NOT
+        /// oversample (+Y normally, +X when y is the ClearType axis).</summary>
+        private bool PureOtherSideProjection => ClearTypeAxisY ? _gs.ProjX == 0x4000 && _gs.ProjY == 0 : _gs.ProjX == 0 && _gs.ProjY == 0x4000;
+        private bool PureOtherSideFreedom => ClearTypeAxisY ? _gs.FreeX == 0x4000 && _gs.FreeY == 0 : _gs.FreeX == 0 && _gs.FreeY == 0x4000;
+        private bool OtherSideIupDone => ClearTypeAxisY ? _iupXDone : _iupYDone;
 
         /// <summary>The grid the CURRENT round state was installed under: GDI binds it when the
         /// round-state instruction runs. Null until one has run.</summary>
@@ -1976,6 +2083,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool PrepareSize(float pixelsPerEm)
         {
             int ppem = (int)MathF.Round(pixelsPerEm);
+            // A STRETCHED size (see StretchPpemX): the larger axis is the size.
+            int sx = StretchPpemX, sy = StretchPpemY;
+            bool stretched = sx > 0 && sy > 0 && sx != sy;
+            if (stretched) ppem = Math.Max(sx, sy);
             if (ppem <= 0) return false;
             // 'prep' is cached by SIZE, and that is not enough: the face branches on what GETINFO
             // says, and Segoe UI's prep sets a different stem control value for ClearType than for
@@ -1984,9 +2095,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool clearType = ClearTypeInfo;
             if (_prepRun && Math.Abs(_prepPpem - pixelsPerEm) < 0.001f && _prepClearType == clearType
                 && _prepBiLevel == BiLevelPass && _prepDWriteFlags == DWriteFlags
-                && _prepSymOverride == SymmetricAnswerOverride && _prepDWriteMove == DWriteMovePoint)
+                && _prepSymOverride == SymmetricAnswerOverride && _prepDWriteMove == DWriteMovePoint
+                && _prepStretchX == (stretched ? sx : 0) && _prepStretchY == (stretched ? sy : 0))
                 return !_faulted;
 
+            _prepStretchX = stretched ? sx : 0;
+            _prepStretchY = stretched ? sy : 0;
+            _stretched = stretched;
             _prepPpem = pixelsPerEm;
             _prepClearType = clearType;
             _prepBiLevel = BiLevelPass;
@@ -2000,6 +2115,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _pointSize = ppem * 72 / 96;
             _scale = DivFix(ppem << 6, _unitsPerEm);
             _measureScale = _scale;
+            _cvtScale = _scale;
+            _scaleY = _scale;
+            _aspectX = _aspectY = 0x10000;
+            if (stretched)
+            {
+                // scl_InitializeScaling@18008a8d8 (dwrite.dll): the points are scaled by each
+                // axis' own scale (+0x184 x, +0x188 y, each rounded to a whole pixel for a face
+                // whose head flags ask for integer ppem -- the caller hands them in whole), the
+                // control values by the LARGER one (+0xe8), and +0x160/+0x164 hold the aspect,
+                // 0x10000 for the larger axis and smaller/larger for the other, which every
+                // control value, single width, MPPEM and delta size is multiplied by at read time
+                // (itrp_GetCVTScale@1801240e8). +0x170 (equal scales) is what is false here.
+                _scale = DivFix(sx << 6, _unitsPerEm);
+                _scaleY = DivFix(sy << 6, _unitsPerEm);
+                _measureScale = _scale;
+                long x16 = (long)sx << 16, y16 = (long)sy << 16;
+                if (sx < sy) _aspectX = (int)((x16 * 0x10000 + y16 / 2) / y16);
+                else _aspectY = (int)((y16 * 0x10000 + x16 / 2) / x16);
+            }
 
             _stack = new int[_maxStack];
             _top = 0;
@@ -2137,7 +2271,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 && InClearTypeDirection && !BiLevelPass
                 && (uint) i < (uint) _linearCvt.Length)
                 return _linearCvt[i];
-            return (uint) i < (uint) _scaledCvt.Length ? _scaledCvt[i] : 0;
+            return (uint) i < (uint) _scaledCvt.Length ? CvtRead(_scaledCvt[i]) : 0;
         }
 
         private void ScaleControlValues()
@@ -2147,7 +2281,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (_linearCvt.Length != _controlValues.Length)
                 _linearCvt = new int[_controlValues.Length];
             for (int i = 0; i < _controlValues.Length; i++)
-                _linearCvt[i] = _scaledCvt[i] = ScaleControlValue(_controlValues[i], _scale);
+                _linearCvt[i] = _scaledCvt[i] = ScaleControlValue(_controlValues[i], _cvtScale);
         }
 
         private void ResetGraphicsState()
@@ -2324,7 +2458,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (glyph.Composite && s_compositePp1 && glyph.CompositeAdvanceUnits >= 0)
             {
                 int v = z.CurX[glyph.PointCount];
-                int r = SubpixelFittingHere && !BiLevelPass ? (v + 2) & ~3 : Pix(v);
+                int r = SubpixelXHere && !BiLevelPass ? (v + 2) & ~3 : Pix(v);
                 z.CurX[glyph.PointCount] = z.OrgX[glyph.PointCount] = r;
                 // ...and the ORIGINAL pp2 moves with it (`org[pp2] += round(pp1) - pp1`), though
                 // the current one is then rebuilt from the advance. A program that measures from
@@ -2332,7 +2466,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // turns an original -42 into GDI's -41 and a sixteenth of -40.
                 if (s_compositePp2Org) z.OrgX[glyph.PointCount + 1] += r - v;
             }
-            else if (s_pp1Round == 1 || !SubpixelFittingHere)
+            else if (s_pp1Round == 1 || !SubpixelXHere)
                 z.CurX[glyph.PointCount] = Pix(z.CurX[glyph.PointCount]);
             else if (s_pp1Round == 2)
                 z.CurX[glyph.PointCount] = (z.CurX[glyph.PointCount] + 2) & ~3;
@@ -2387,6 +2521,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // not scaled a second time: Palatino Linotype 'y-dieresis' at 12ppem had its
                 // 427/64 advance scaled again to 160/64 before its own program, which then
                 // measured the dieresis off it -- GDI starts that program at 428.
+                // With y the ClearType axis x is off it: the advance rounds to a whole pixel.
+                6 when ClearTypeAxisY => z.CurX[glyph.PointCount]
+                     + Pix(glyph.Composite ? CompositeSpan(glyph)
+                           : ScalePhantomSpan(glyph.X[glyph.PointCount + 1] - glyph.X[glyph.PointCount])),
                 6 when glyph.Composite => z.CurX[glyph.PointCount]
                      + ((CompositeSpan(glyph) + 2) & ~3),
                 6 => z.CurX[glyph.PointCount]
@@ -2430,7 +2568,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 int pp1 = glyph.PointCount;
                 int org = z.OrgX[pp1];
-                int snapped = SubpixelFittingHere ? (org + 2) & ~3 : (org + 32) & ~63;
+                int snapped = SubpixelXHere ? (org + 2) & ~3 : (org + 32) & ~63;
                 int delta = snapped - org;
                 if (delta != 0)
                     for (int i = 0; i < glyph.PointCount; i++)
@@ -4664,7 +4802,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </para></summary>
         internal bool OnClearTypeAxis =>
             ClearTypeInfo && (s_ctInPrep || !_inPreProgram)
-            && (s_ctAxisLatched ? _ctAxisFlag : _gs.ProjX == 0x4000 && _gs.ProjY == 0) && SubpixelGridHere;
+            && (s_ctAxisLatched ? _ctAxisFlag : ClearTypeAxisY ? _gs.ProjX == 0 && _gs.ProjY == 0x4000 : _gs.ProjX == 0x4000 && _gs.ProjY == 0) && SubpixelGridHere;
 
         /// <summary>localGS+0xcc is LATCHED, not recomputed: itrp_SVTCA_0/_1, itrp_SPVTCA_0/_1,
         /// itrp_SPVTL, itrp_SDPVTL and itrp_WPV (SPVFS, read 2026-09-21) write it, i.e. every
@@ -4675,7 +4813,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         internal void LatchClearTypeAxis()
         {
-            _ctAxisFlag = ClearTypeInfo && _gs.ProjX == 0x4000 && _gs.ProjY == 0;
+            _ctAxisFlag = ClearTypeInfo && (ClearTypeAxisY ? _gs.ProjX == 0 && _gs.ProjY == 0x4000 : _gs.ProjX == 0x4000 && _gs.ProjY == 0);
             _ctDirFlag = NotPureYProjection;
         }
 
@@ -4762,7 +4900,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             //     (0, 0x4000)  -- pure, positive y
             // and skips everything else, so a diagonal freedom and a pure NEGATIVE y both go
             // where our |x| > |y| test kept them. WPF_CT_DELTA_FREE=loose restores it.
-            && (s_deltaFreeExact ? !(_gs.FreeX == 0 && _gs.FreeY == 0x4000) : IsHorizontalFreedom);
+            && (s_deltaFreeExact ? (ClearTypeAxisY ? !(_gs.FreeX == 0x4000 && _gs.FreeY == 0) : !(_gs.FreeX == 0 && _gs.FreeY == 0x4000))
+                                 : IsHorizontalFreedom != ClearTypeAxisY);
 
         private static readonly bool s_deltaFreeExact =
             Environment.GetEnvironmentVariable("WPF_CT_DELTA_FREE") != "loose";
@@ -4801,6 +4940,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (zoneA == 0 || zoneB == 0)
                 return DualProject(za.OrgX[a] - zb.OrgX[b], za.OrgY[a] - zb.OrgY[b]);
 
+            // itrp_MD@180083f40: with the two scales unequal (+0x170 clear) the font-unit
+            // distance is scaled per axis (+0x130 x, +0x140 y) and projected afterwards.
+            if (_stretched && _measureScale == _scale)
+                return DualProject(ScaleUnits(za.OrusX[a] - zb.OrusX[b], _scale),
+                                   ScaleUnits(za.OrusY[a] - zb.OrusY[b], _childScaleY != 0 ? _childScaleY : _scaleY));
             return ScaleUnits(DualProject(za.OrusX[a] - zb.OrusX[b], za.OrusY[a] - zb.OrusY[b]), _measureScale);
         }
 

@@ -509,6 +509,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private static readonly bool s_noDropout = Environment.GetEnvironmentVariable("WPF_NCT_NODROPOUT") == "1";
 
+        /// <summary>A glyph turned a quarter clockwise (GDI+'s sideways glyph in vertical text): the
+        /// fit the scaler makes before its post-transform, the figures mapped (x, y) -> (-y, x) --
+        /// glyph up to device right, the advance down -- and scanned as any other.</summary>
+        internal static GlyphBits RasterizeQuarterTurn(TrueTypeFont font, int glyphId, float pixelsPerEm, int scalerFlags)
+        {
+            if (!font.TryGetDWriteFittedOutline(glyphId, pixelsPerEm, scalerFlags, out List<PathFigure> figures, out int dropout))
+            {
+                dropout = 0;
+                if (!font.TryGetScaledOutline(glyphId, pixelsPerEm, out figures)) return s_empty;
+            }
+            static System.Numerics.Vector2 T(System.Numerics.Vector2 p) => new(-p.Y, p.X);
+            var turned = new List<PathFigure>(figures.Count);
+            foreach (PathFigure f in figures)
+            {
+                var nf = new PathFigure(T(f.Start)) { Closed = f.Closed };
+                foreach (PathSegment sg in f.Segments)
+                    nf.Segments.Add(sg switch
+                    {
+                        LineSegment l => new LineSegment(T(l.Point)),
+                        QuadraticBezierSegment q => new QuadraticBezierSegment(T(q.Control), T(q.Point)),
+                        CubicBezierSegment c => new CubicBezierSegment(T(c.Control1), T(c.Control2), T(c.Point)),
+                        _ => sg,
+                    });
+                turned.Add(nf);
+            }
+            return Scan(turned, 1, dropout);
+        }
+
         private static GlyphBits Scan(List<PathFigure> figures, int nSub, int dropout)
         {
             if (s_noDropout) dropout = 0;

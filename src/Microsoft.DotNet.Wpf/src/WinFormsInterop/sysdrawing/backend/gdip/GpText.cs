@@ -59,16 +59,284 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (font == null) return false;
             int hint = ResolvedTextHint ();
             if (s_trace) Console.Error.WriteLine ($"GPTEXT DrawString '{s}' {family} {sizePt}pt m=[{m.M11} {m.M12} {m.M21} {m.M22} {m.Dx} {m.Dy}] hint={hint} flags={formatFlags:x}");
-            // FastTextImager::Initialize: a positive axis scale only. Translation-only here; a
-            // turned or sheared transform goes the full imager's way.
-            if (m.M12 != 0f || m.M21 != 0f || m.M11 != 1f || m.M22 != 1f)
+            // FastTextImager::Initialize: a positive axis scale only (m11 > 0, m12 = m21 = 0,
+            // m22 != 0; m22 > 0 modelled). A turned or sheared transform goes the full imager's way.
+            bool axisScale = m.M12 == 0f && m.M21 == 0f && m.M11 > 0f && m.M22 > 0f;
+            bool identity = axisScale && m.M11 == 1f && m.M22 == 1f;
+            GdipText.Run run = null;
+            if (axisScale && !identity)
+                run = GdipText.Layout (font, family, sizePt, s, layout.X, layout.Y, layout.Width, layout.Height,
+                                       formatFlags, typographic, align, lineAlign, hotkey, hint,
+                                       DpiY, biLevel: true, sx: m.M11, sy: m.M22);
+            if (!identity) {
+                if (run != null) { DrawRun (font, run, brush, run.HasClip); return true; }
                 return DrawTransformed (s, font, family, style, sizePt, brush, layout, formatFlags, typographic, align, lineAlign, hotkey, hint);
-            GdipText.Run run = GdipText.Layout (font, family, sizePt, s, layout.X, layout.Y, layout.Width, layout.Height,
-                                                formatFlags, typographic, align, lineAlign, hotkey, hint,
-                                                DpiY, biLevel: true);
+            }
+            run = GdipText.Layout (font, family, sizePt, s, layout.X, layout.Y, layout.Width, layout.Height,
+                                   formatFlags, typographic, align, lineAlign, hotkey, hint,
+                                   DpiY, biLevel: true);
             if (run == null)
                 return DrawLines (s, font, family, style, sizePt, brush, layout, formatFlags, typographic, align, lineAlign, hotkey, hint);
             DrawRun (font, run, brush, run.HasClip);
+            return true;
+        }
+
+        /// <summary>GDI+'s FullTextImager for ONE vertical line (StringFormatFlags.DirectionVertical
+        /// with NoWrap): the Line Services layout GDI+ builds for it, in ideal units (2048 to the
+        /// em, r = 2048 / em per world unit), and the glyphs, the ellipsis and the underline drawn
+        /// the way FullTextImager::Render / RenderLine / GdipLscbkDrawGlyphs / GlyphImager draw them.
+        /// <list type="bullet">
+        /// <item>BuiltLine::BuiltLine @1800f3670: the margins are round(format margin * em * r)
+        /// (341 for the default 1/6), the room is round(extent * r) less both margins, and the line
+        /// starts at the margin plus GetPhysicalAlignment's share of what the line leaves of the
+        /// extent ((W - L) / 2 for centre, W - L for far, in integers).</item>
+        /// <item>Advances along the line: each glyph's design advance, tracked by 1.03 and rounded
+        /// unless typographic. A tab moves to the first stop past the pen (GetTabStops @1800f15e0:
+        /// round(r * (firstTabOffset + the tab stops so far)), every later stop the last interval
+        /// apart; no stops at all, no tab width).</item>
+        /// <item>EllipsisWord trimming (BuiltLine::CreateLine / RecreateLineEllipsis): the words that
+        /// fit in the room less the ellipsis, trailing white space hanging, then the ellipsis.
+        /// EllipsisInfo::EllipsisInfo @1800ef130 is U+2026; in a vertical format it asks the face
+        /// for a vertical variant and, when the face has none, keeps the glyph id the query left
+        /// behind -- 0, the .notdef -- drawn upright, its advance the design advance height.</item>
+        /// <item>Across the lines (Render @18003c900, RenderLine @18003cbe8, LogicalToXY @18003d548):
+        /// the text is lines x line spacing + 256 (em / 8) high, placed in round(width * r) by the
+        /// line alignment; a vertical line's baseline is its top plus the descent plus 256.</item>
+        /// <item>GlyphImager::GetDisplayCellOrigin @18003d690: each run's cell origin is put on the
+        /// device grid of an axis-scale transform (round(x * m11) / m11, likewise y), and the run's
+        /// glyphs follow at their hinted advances. A sideways glyph is realized under
+        /// GetFontTransform's quarter turn; the upright ellipsis takes GetGlyphStringVerticalOriginOffsets
+        /// @180024800: ((cellAscent - advance + cellDescent) / 2 - cellDescent, verticalOriginY)
+        /// through the realization.</item>
+        /// <item>GdipLscbkGetRunUnderlineInfo @1800f9580 / GdipLscbkDrawUnderline @1800f8940: the
+        /// underline round(-post.underlinePosition) ideal units off the baseline, drawn as a line
+        /// with an aliased pen of GetDevicePenWidth @1800770e8 pixels (max(1, round |w * m11|))
+        /// from the line start along the underlined runs.</item>
+        /// <item>FullTextImager::Draw @1800f0360: the layout rectangle intersected into the clip
+        /// unless NoClip.</item>
+        /// </list>
+        /// Modelled for ClearType under an axis-scale transform, single-glyph runs of sideways
+        /// (Latin) text, trimming None / Character / EllipsisWord; false otherwise.</summary>
+        public bool DrawStringVertical (string s, string family, int style, float sizePt, Brush brush, RectangleF layout,
+                                        int formatFlags, bool typographic, int align, int lineAlign, int hotkey,
+                                        int trimming, float firstTab, float[] tabs)
+        {
+            if (string.IsNullOrEmpty (s) || brush == null || !CanFill (brush)) return false;
+            if ((formatFlags & 0x2) == 0 || (formatFlags & 0x1000) == 0 || (formatFlags & 0x1) != 0) return false;
+            if ((style & 8) != 0) return false;                       // strikeout
+            GpMatrix m = WorldToDevice;
+            if (m.M12 != 0f || m.M21 != 0f || !(m.M11 > 0f) || !(m.M22 > 0f)) return false;
+            if (ResolvedTextHint () != GdipText.HintClearTypeGridFit) return false;
+            TrueTypeFont font = GdipText.Face (family, style & 3);
+            if (font == null || font.SynthesizesBold || font.SynthesizesOblique || font.HasVerticalMetrics) return false;
+            GpFontFamily.Metrics? mm = GpFontFamily.Get (family, (FontStyle) (style & 3));
+            if (mm == null) return false;
+            GpFontFamily.Metrics fm = mm.Value;
+            GsubTable gsub = font.Gsub;
+            if (gsub != null && (gsub.HasFeature ("DFLT", "vert") || gsub.HasFeature ("latn", "vert")
+                                 || gsub.HasFeature ("DFLT", "vrt2") || gsub.HasFeature ("latn", "vrt2"))) return false;
+            foreach (char c in s)
+                if ((c < 0x20 && c != '\t') || c >= 0x590 || (hotkey != 0 && c == '&')) return false;
+            if (trimming != 0 && trimming != 1 && trimming != 4) return false;
+            float em = sizePt * (DpiY / 72f);
+            if (!(em > 0f)) return false;
+            int upem = font.UnitsPerEmForHinting;
+            if (upem <= 0) return false;
+            const int Ideal = GpTextLayout.Ideal;
+            float r = Ideal / em;                                    // ideal units per world unit
+            static int Rnd (float v) => (int) MathF.Floor (v + 0.5f);
+            int Du (int du) => upem == Ideal ? du : (int) Math.Round (du * (double) Ideal / upem);
+            int lm = typographic ? 0 : Rnd (em * r / 6f), tm = lm;  // format margins 1/6 em
+            int extent = Rnd (layout.Height * r);
+            int room = extent < 1 ? 0x1000000 : Math.Max (0, extent - lm - tm);
+
+            // ---- Line Services: the pen along the line, in ideal units ----
+            var stops = new System.Collections.Generic.List<int> ();
+            int increment;
+            if (tabs != null && tabs.Length > 0) {
+                float cum = firstTab;
+                foreach (float t in tabs) { cum += t; stops.Add (Rnd (r * cum)); }
+                increment = Rnd (tabs [tabs.Length - 1] * r);
+            } else increment = Rnd (r * firstTab);
+            int NextStop (int pen)
+            {
+                foreach (int st in stops) if (st > pen) return st;
+                if (increment <= 0) return pen;
+                int last = stops.Count > 0 ? stops [stops.Count - 1] : 0;
+                while (last <= pen) last += increment;
+                return last;
+            }
+            int n = s.Length;
+            var gids = new int [n];
+            var penAt = new int [n + 1];
+            int pen = 0;
+            for (int i = 0; i < n; i++) {
+                penAt [i] = pen;
+                char c = s [i];
+                if (c == '\t') { gids [i] = -1; pen = NextStop (pen); continue; }
+                int g = font.GlyphIndex (c);
+                if (g <= 0) return false;                             // font fallback not modelled
+                gids [i] = g;
+                int a = font.DesignAdvance (g);
+                if (!typographic) a = Rnd (a * 1.03f);
+                pen += Du (a);
+            }
+            penAt [n] = pen;
+            // A run longer than one glyph places its later glyphs at hinted advances; not modelled.
+            for (int i = 1; i < n; i++)
+                if (gids [i] > 0 && gids [i - 1] > 0 && s [i] != ' ' && s [i - 1] != ' ') return false;
+
+            // The line end without trailing white space, and whether it overflows.
+            int End (int count)
+            {
+                int k = count;
+                while (k > 0 && (s [k - 1] == ' ' || s [k - 1] == '\t')) k--;
+                return penAt [k];
+            }
+            int keep = n;
+            bool ellipsis = false;
+            if (End (n) > room) {
+                if (trimming == 0) { }
+                else if (trimming == 1) {
+                    keep = 0;
+                    while (keep < n && penAt [keep + 1] <= room) keep++;
+                } else {
+                    int ellW = Du (font.TypoAscender - font.TypoDescender);
+                    int room2 = room - ellW;
+                    keep = 0;
+                    int k = 0;
+                    while (k < n) {
+                        int w0 = k;
+                        while (k < n && s [k] != ' ' && s [k] != '\t') k++;
+                        int wordEnd = k;
+                        while (k < n && (s [k] == ' ' || s [k] == '\t')) k++;
+                        if (penAt [wordEnd] > room2 && w0 > 0) break;
+                        if (penAt [wordEnd] > room2) return false;    // not even the first word
+                        keep = k;
+                    }
+                    ellipsis = true;
+                }
+            }
+            int contentEnd = ellipsis ? penAt [keep] : End (keep);
+            int ellAdv = ellipsis ? Du (font.TypoAscender - font.TypoDescender) : 0;
+            int L = contentEnd + ellAdv;
+            int u0 = lm;
+            if (extent >= 1) {
+                if (align == 1) u0 += (extent - (L + lm + tm)) / 2;
+                else if (align == 2) u0 += extent - (L + lm + tm);
+            }
+
+            // ---- across the lines ----
+            int lineH = Du (fm.LineSpacing * upem / fm.Em) + (typographic ? 0 : Ideal / 8);
+            int across = Rnd (layout.Width * r), vTop = 0;
+            if (layout.Width > 0f) {
+                if (lineAlign == 1) vTop = (across - lineH) / 2;
+                else if (lineAlign == 2) vTop = across - lineH;
+            }
+            int v = vTop + Du (font.WinDescent) + (typographic ? 0 : Ideal / 8);
+
+            // ---- draw ----
+            GpRegion saved = null;
+            bool clip = (formatFlags & 0x4000) == 0 && layout.Width != 0f && layout.Height != 0f;
+            if (clip) { saved = _ctx.AppClip?.Clone (); CombineClip (layout, CombineMode.Intersect); }
+            try {
+                // GetDisplayCellOrigin: the world cell origin onto the device grid.
+                PointF Cell (int vv, int uu)
+                {
+                    float x = layout.X + vv / r, y = layout.Y + uu / r;
+                    x = MathF.Floor (x * m.M11 + 0.5f) / m.M11;
+                    y = MathF.Floor (y * m.M22 + 0.5f) / m.M22;
+                    return m.Transform (new PointF (x, y));
+                }
+                int ppAlong = GdipText.AxisPpem (em * m.M22), ppAcross = GdipText.AxisPpem (em * m.M11);
+                bool fixedFilter = font.GdiContrastPalette;
+                for (int i = 0; i < keep; i++) {
+                    if (gids [i] < 0 || s [i] == ' ') continue;
+                    PointF d = Cell (v, u0 + penAt [i]);
+                    var bits = GdipText.GlyphSideways (font, gids [i], ppAlong, ppAcross);
+                    GdipText.Levels lv = GdipText.Compose (new [] { bits }, new [] { d.X }, d.Y, fixedFilter);
+                    if (lv.Width > 0 && lv.Height > 0) OutputText (lv, 5, brush, _ctx.TextContrast);
+                }
+                if (ellipsis) {
+                    PointF d = Cell (v, u0 + contentEnd);
+                    const int g0 = 0;
+                    // GetGlyphStringVerticalOriginOffsets: the realization's sideways GDI metrics.
+                    GdipText.SidewaysMetrics (font, g0, em, m.M11, m.M22, out int advW, out int voy);
+                    float ox = ((font.WinAscent - advW + font.WinDescent) * 0.5f - font.WinDescent);
+                    float sx = em / upem * m.M11, sy = em / upem * m.M22;
+                    float px = d.X + ox * sx, py = d.Y + voy * sy;
+                    var bits = GdipText.Glyph (font, g0, GdipText.AxisPpem (em * m.M11), GdipText.AxisPpem (em * m.M22));
+                    GdipText.Levels lv = GdipText.Compose (new [] { bits }, new [] { px }, py, fixedFilter);
+                    if (lv.Width > 0 && lv.Height > 0) OutputText (lv, 5, brush, _ctx.TextContrast);
+                }
+                if ((style & 4) != 0 && keep > 0) {
+                    int ulOff = Rnd (-font.UnderlinePosition * (em / upem) * r);
+                    float ulW = Rnd (font.UnderlineThickness * (em / upem) * r) / r;
+                    float devW = MathF.Max (1f, MathF.Floor (MathF.Abs (ulW * m.M11) + 0.5f));
+                    int len = penAt [keep];
+                    float x = layout.X + (v - ulOff) / r;
+                    var pts = new [] { new PointF (x, layout.Y + u0 / r), new PointF (x, layout.Y + (u0 + len) / r) };
+                    var path = new GpPath (pts, new byte [] { 0, 1 }, FillMode.Alternate);
+                    var dp = new DpPen { Width = devW, Unit = 2, Brush = brush };
+                    SmoothingMode sm = _ctx.Smoothing;
+                    _ctx.Smoothing = SmoothingMode.None;
+                    try { RenderDrawPath (GpStroke.Bounds (path, WorldToDevice, dp, DpiX), path, dp); }
+                    finally { _ctx.Smoothing = sm; }
+                }
+            } finally {
+                if (clip) { _ctx.AppClip = saved; UpdateVisibleClip (); }
+            }
+            return true;
+        }
+
+        /// <summary>GpGraphics::DrawDriverString @1800ea638 -> DriverStringImager (ctor @1800e9a00,
+        /// Draw @1800ea508, DrawGlyphRange @1800ea708): a font with an underline or a strikeout is
+        /// refused (status 2); each origin is the caller's world point through the world-to-device
+        /// transform alone (GetDriverStringGlyphOrigins @1800eab20, without RealizedAdvance); the
+        /// realization's matrix is world-to-device * em / upem * the record's matrix, of which only
+        /// the 2x2 part reaches the face (FD_XFORM), so a translation in it moves nothing; and the
+        /// glyphs go to DrawPlacedGlyphs at those device origins, x snapped to a sixth by
+        /// GetGlyphPos, y as it falls. Modelled for ClearType under an axis scale, without the
+        /// vertical and realized-advance options; false otherwise.</summary>
+        public bool DrawDriverString (ushort[] glyphs, string family, int style, float sizePt, Brush brush,
+                                      PointF[] positions, int options, Matrix matrix)
+        {
+            if (brush == null || !CanFill (brush) || (options & ~1) != 0) return false;
+            if ((style & 12) != 0) return true;   // InvalidParameter: GDI+ draws nothing
+            if (glyphs.Length == 0 || positions.Length < glyphs.Length) return false;
+            GpMatrix m = WorldToDevice;
+            if (m.M12 != 0f || m.M21 != 0f || !(m.M11 > 0f) || !(m.M22 > 0f)) return false;
+            float sx = m.M11, sy = m.M22;
+            if (matrix != null) {
+                float[] e = matrix.Elements;
+                if (e [1] != 0f || e [2] != 0f || !(e [0] > 0f) || !(e [3] > 0f)) return false;
+                sx *= e [0]; sy *= e [3];
+            }
+            TrueTypeFont font = GdipText.Face (family, style & 3);
+            if (font == null || font.SynthesizesBold) return false;
+            if (ResolvedTextHint () != GdipText.HintClearTypeGridFit) return false;
+            float em = sizePt * (DpiY / 72f);
+            if (!(em > 0f)) return false;
+            if (sx == sy && font.EmbeddedBitmapCount ((int) MathF.Floor (em * sx + 0.5f)) > 100) return false;
+            if (string.Equals (family, "Marlett", StringComparison.OrdinalIgnoreCase)) return false;
+            var run = new GdipText.Run { Em = em, Mode = 5, Hint = 5, FixedFilter = font.GdiContrastPalette,
+                                         Sx = sx, Sy = sy, Contrast = _ctx.TextContrast };
+            var gids = new System.Collections.Generic.List<ushort> ();
+            var xs = new System.Collections.Generic.List<float> ();
+            var ys = new System.Collections.Generic.List<float> ();
+            for (int i = 0; i < glyphs.Length; i++) {
+                int gid = (options & 1) != 0 ? font.GlyphIndex ((char) glyphs [i]) : glyphs [i];
+                if (gid == 0xffff) continue;
+                PointF d = m.Transform (positions [i]);
+                gids.Add ((ushort) gid); xs.Add (d.X); ys.Add (d.Y);
+            }
+            run.Glyphs = gids.ToArray ();
+            if (run.Glyphs.Length == 0) return true;
+            var bits = new NaturalClearType.GlyphBits [run.Glyphs.Length];
+            for (int i = 0; i < bits.Length; i++) bits [i] = run.GlyphBits (font, i);
+            GdipText.Levels lv = GdipText.Compose (bits, xs.ToArray (), ys.ToArray (), 0f, run.FixedFilter);
+            if (lv.Width == 0 || lv.Height == 0) return true;
+            OutputText (lv, 5, brush, run.Contrast);
             return true;
         }
 
@@ -79,15 +347,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GpMatrix m = WorldToDevice;
             run.Contrast = _ctx.TextContrast;
             if (run.Glyphs.Length == 0) return;
-            float[] xs = GdipText.GlyphXs (run, run.OriginX + m.Dx);
-            float y = run.OriginY + m.Dy;
+            // GetDeviceBaselineOrigin: the world origin through the transform (an axis scale and
+            // a translation), then FastDrawGlyphsGridFit rounds the device x.
+            float[] xs = GdipText.GlyphXs (run, run.Sx == 1f ? run.OriginX + m.Dx : m.M11 * run.OriginX + m.Dx);
+            float y = run.Sy == 1f ? run.OriginY + m.Dy : m.M22 * run.OriginY + m.Dy;
             if (s_trace) Console.Error.WriteLine ($"GPTEXT mode={run.Mode} y={y} xs={string.Join (",", xs)} g={string.Join (",", run.Glyphs)}");
 
             GdipText.Levels lv;
             switch (run.Mode) {
             case 5: {
                 var bits = new NaturalClearType.GlyphBits [run.Glyphs.Length];
-                for (int i = 0; i < bits.Length; i++) bits [i] = GdipText.Glyph (font, run.Glyphs [i], run.Em);
+                for (int i = 0; i < bits.Length; i++) bits [i] = run.GlyphBits (font, i);
                 lv = GdipText.Compose (bits, xs, y, run.FixedFilter);
                 break;
             }

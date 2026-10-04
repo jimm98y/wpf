@@ -39,6 +39,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public static void Draw(Graphics g, ushort[] glyphs, Font font, Brush brush, PointF[] positions, int options, Matrix matrix)
         {
             if (glyphs.Length == 0) return;
+            // GDI+'s own DriverStringImager where the engine models it.
+            if (g.EngineDrawDriverString(glyphs, font, brush, positions, options, matrix)) return;
             int style = ((font.Style & FontStyle.Bold) != 0 ? 1 : 0) | ((font.Style & FontStyle.Italic) != 0 ? 2 : 0);
             TrueTypeFont face = (options & CmapLookup) == 0 ? PrintText.Face(font.FontFamily.Name, style) : null;
             Dictionary<int, char> rev = face != null ? Reverse(face) : null;
