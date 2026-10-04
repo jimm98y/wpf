@@ -2687,9 +2687,8 @@ namespace System.Drawing
 	
 		public void ExcludeClip (Rectangle rect)
 		{
+						EngineClipRect (rect, CombineMode.Exclude);
 			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, true); return; }
-			if (nativeObject == IntPtr.Zero) return;
-			/*GDIP*/;
 			
 		}
 
@@ -2697,9 +2696,8 @@ namespace System.Drawing
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+						EngineClipRegion (region, CombineMode.Exclude);
 			if (GpuRecorder != null) { RecordRegionClip (region, true); return; }
-			if (nativeObject == IntPtr.Zero) return;
-			/*GDIP*/;
 			
 		}
 
@@ -3215,6 +3213,9 @@ namespace System.Drawing
 			if (image is Bitmap bitmap && bitmap.managed != null) {
 				if ((bitmap.PixelFormat & PixelFormat.Indexed) != 0)
 					throw new Exception (Locale.GetText ("A Graphics object cannot be created from an image that has an indexed pixel format."));
+								// GDI+ has no graphics context for these two (GpBitmap::GetGraphicsContext: OutOfMemory).
+				if (bitmap.PixelFormat == PixelFormat.Format16bppArgb1555 || bitmap.PixelFormat == PixelFormat.Format16bppGrayScale)
+					throw new OutOfMemoryException ();
 				Graphics g = WebGpuBackend.GpuRaster.NewRecording ();
 				g.image_target = bitmap;
 				GdipFrame frame = bitmap.managed.Frame;
@@ -3823,8 +3824,8 @@ namespace System.Drawing
 						var f = new PointF [pts.Length];
 			for (int i = 0; i < pts.Length; i++) f [i] = pts [i];
 			TransformPointsF (destSpace, srcSpace, f);
-			// GpMatrix::TransformPoints(Point*): each coordinate rounded as (int)(v + 0.5).
-			for (int i = 0; i < pts.Length; i++) pts [i] = new Point ((int) (f [i].X + 0.5f), (int) (f [i].Y + 0.5f));
+			// GpMatrix::TransformPoints(Point*): each coordinate floor(v + 0.5) (frintm).
+			for (int i = 0; i < pts.Length; i++) pts [i] = new Point ((int) MathF.Floor (f [i].X + 0.5f), (int) MathF.Floor (f [i].Y + 0.5f));
 		}
 
 		

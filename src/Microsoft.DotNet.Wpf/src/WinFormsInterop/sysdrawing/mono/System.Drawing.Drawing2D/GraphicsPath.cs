@@ -475,7 +475,7 @@ namespace System.Drawing.Drawing2D
 			if (wide == null) return false;
 			m.Transform (ref x, ref y);
 			DpRegion d = GpRegion.FromPath (wide.PointArray (), wide.TypeArray (), FillMode.Winding).Device (GpMatrix.CreateIdentity ());
-			return d.Contains ((int) (x + 0.5f), (int) (y + 0.5f));
+			return d.Contains ((int) MathF.Floor (x + 0.5f), (int) MathF.Floor (y + 0.5f));
 		}
 
 		public bool IsVisible (Point point) => IsVisible ((float) point.X, point.Y, null);
@@ -499,7 +499,7 @@ namespace System.Drawing.Drawing2D
 			GpMatrix m = graphics == null ? GpMatrix.CreateIdentity () : graphics.RegionWorldToDevice ();
 			DpRegion d = GpRegion.FromPath (gp.PointArray (), gp.TypeArray (), gp.FillMode).Device (m);
 			m.Transform (ref x, ref y);
-			return d.Contains ((int) (x + 0.5f), (int) (y + 0.5f));
+			return d.Contains ((int) MathF.Floor (x + 0.5f), (int) MathF.Floor (y + 0.5f));
 		}
 
 		public void SetMarkers () => gp.SetMarker ();

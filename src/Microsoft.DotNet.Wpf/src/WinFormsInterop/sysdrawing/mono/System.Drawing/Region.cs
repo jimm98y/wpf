@@ -269,7 +269,7 @@ namespace System.Drawing
 			GpMatrix m = ToDevice (g);
 			DpRegion d = gp.Device (m);
 			m.Transform (ref x, ref y);
-			return d.Contains ((int) (x + 0.5f), (int) (y + 0.5f));
+			return d.Contains ((int) MathF.Floor (x + 0.5f), (int) MathF.Floor (y + 0.5f));
 		}
 
 		public bool IsVisible (float x, float y, float width, float height) => IsVisible (x, y, width, height, null);
@@ -294,7 +294,7 @@ namespace System.Drawing
 			return !DpRegion.Combine (d, r, DpRegion.Op.And).IsEmpty;
 		}
 
-		static int Ceil (float v) => -(int) (long) -(double) v;
+		static int Ceil (float v) => -(int) Math.Floor (-(double) v);   // frintm of the negation
 
 		public bool IsVisible (float x, float y, float width, float height, Graphics g, bool unused) => IsVisible (x, y, width, height, g);
 

@@ -241,7 +241,7 @@ namespace System.Drawing.Drawing2D
 				throw new ArgumentNullException ("pts");
 			for (int i = 0; i < pts.Length; i++) {
 				PointF p = Gp.Transform (new PointF (pts [i].X, pts [i].Y));
-				pts [i] = new Point ((int) (p.X + 0.5f), (int) (p.Y + 0.5f));
+				pts [i] = new Point ((int) MathF.Floor (p.X + 0.5f), (int) MathF.Floor (p.Y + 0.5f));
 			}
 		}
 
@@ -258,7 +258,7 @@ namespace System.Drawing.Drawing2D
 				throw new ArgumentNullException ("pts");
 			for (int i = 0; i < pts.Length; i++) {
 				PointF p = Gp.VectorTransform (new PointF (pts [i].X, pts [i].Y));
-				pts [i] = new Point ((int) (p.X + 0.5f), (int) (p.Y + 0.5f));
+				pts [i] = new Point ((int) MathF.Floor (p.X + 0.5f), (int) MathF.Floor (p.Y + 0.5f));
 			}
 		}
 

@@ -218,7 +218,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public static int RasterizerCeiling (float v)
         {
             float f = v * 16f + 0.5f;
-            return ((int) f + 15) >> 4;
+            return ((int) MathF.Floor (f) + 15) >> 4;   // frintm, fcvtzs
         }
 
         /// <summary>GpMatrix::Transform(PointF*, POINT*, int) @180034b60. This matrix already carries
