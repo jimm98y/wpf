@@ -299,8 +299,12 @@ namespace System.Drawing
 			    || !GdipPixels.Convertible (format) || !GdipPixels.Convertible (f.Format))
 				throw new OutOfMemoryException ();
 			GdipFrame copy = GdipPixels.Convert (f, rect, format, conversionPalette: !f.IsIndexed || format != f.Format);
-			// GDI+ keeps the source's alpha flag on a clone, whatever the clone's format.
-			return new Bitmap (new GdipImageData (copy) { Flags = GdipImageData.NewFlags (format) | (managed.Flags & (int) ImageFlags.HasAlpha) });
+			// GDI+ keeps the source's alpha flag on a clone, whatever the clone's format; and the
+			// bytes the source was read from when the clone is all of it in its own format
+			// (CopyOnWriteBitmap::Clone @18007dd98).
+			bool whole = rect.X == 0 && rect.Y == 0 && rect.Width == f.Width && rect.Height == f.Height && format == f.Format;
+			return new Bitmap (new GdipImageData (copy) { Flags = GdipImageData.NewFlags (format) | (managed.Flags & (int) ImageFlags.HasAlpha),
+				SourceBytes = whole ? managed.SourceBytes : null });
 		}
 
 		public Bitmap Clone (RectangleF rect, PixelFormat format)

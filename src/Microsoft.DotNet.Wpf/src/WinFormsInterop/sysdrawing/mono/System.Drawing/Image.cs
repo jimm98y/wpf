@@ -317,6 +317,8 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 		if (managed != null) {
 			GdipImageData d = Data;
 			d.Frame = WebGpuBackend.GdipTransform.RotateFlip (d.Frame, rotateFlipType);
+			// CopyOnWriteBitmap::RotateFlip @1800835b8 releases the source stream and file name.
+			d.SourceBytes = null;
 			return;
 		}
 		// GpMetafile::RotateFlip is NotImplemented.

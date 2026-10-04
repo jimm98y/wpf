@@ -77,6 +77,13 @@ namespace System.Drawing
         /// read.</summary>
         internal static GdipImageData Decode (byte[] data)
         {
+            GdipImageData d = DecodeData (data);
+            d.SourceBytes = data;
+            return d;
+        }
+
+        static GdipImageData DecodeData (byte[] data)
+        {
             try {
                 if (ManagedImageDecoder.IsPng (data)) return DecodePng (data);
                 if (ManagedImageDecoder.IsBmp (data)) return DecodeBmp (data);

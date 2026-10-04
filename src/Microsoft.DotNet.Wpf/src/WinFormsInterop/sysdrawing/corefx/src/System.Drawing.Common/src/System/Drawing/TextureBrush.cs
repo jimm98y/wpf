@@ -25,6 +25,14 @@ namespace System.Drawing
         {
         }
 
+        /// <summary>GpTexture::SetData @18006fc90: the brush read from EMF+ keeps the bitmap it
+        /// read as its tile, in its own format and with the bytes it was read from (no clone).</summary>
+        internal TextureBrush(Bitmap tile, WrapMode wrapMode, bool adopt)
+        {
+            _wrapMode = wrapMode;
+            _tile = tile;
+        }
+
         public TextureBrush(Image image, WrapMode wrapMode)
         {
             if (image == null)

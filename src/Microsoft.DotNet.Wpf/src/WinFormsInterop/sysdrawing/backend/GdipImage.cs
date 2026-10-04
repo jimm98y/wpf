@@ -85,6 +85,10 @@ namespace System.Drawing
         /// frame shares <see cref="Properties"/>.</summary>
         internal List<PropertyItem>[] FrameProperties;
         internal int ActiveFrame;
+        /// <summary>The encoded bytes the image was read from (CopyOnWriteBitmap +0x48/+0x40, the
+        /// source stream or file): what GDI+ serialises the bitmap as (GetData @180080d90) until
+        /// RotateFlip or a colour adjustment lets them go. Drawing into it does not.</summary>
+        internal byte[] SourceBytes;
 
         internal GdipImageData(GdipFrame frame)
         {
@@ -99,6 +103,7 @@ namespace System.Drawing
             {
                 RawFormat = RawFormat, Flags = Flags, FrameDimension = FrameDimension,
                 Frames = Frames, FrameProperties = FrameProperties, ActiveFrame = ActiveFrame,
+                SourceBytes = SourceBytes,   // CopyOnWriteBitmap::Clone keeps the stream and file name
             };
             foreach (PropertyItem p in Properties)
                 c.Properties.Add(GdipCodecs.Property (p.Id, p.Type, p.Len, p.Value == null ? null : (byte[])p.Value.Clone ()));
