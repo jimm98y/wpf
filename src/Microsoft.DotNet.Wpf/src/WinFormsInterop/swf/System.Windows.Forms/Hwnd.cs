@@ -387,6 +387,9 @@ namespace System.Windows.Forms {
 				if (bmp_g == null) {
 					bmp = new Bitmap (1, 1, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
 					bmp_g = Graphics.FromImage (bmp);
+					// The controls' own measuring context: it measures the way they were laid out
+					// against Windows (the port's GDI stand-ins), not with GDI+'s FullTextImager.
+					bmp_g.port_measure = true;
 				}
 			
 				return bmp_g;
