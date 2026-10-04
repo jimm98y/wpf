@@ -34,6 +34,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return new GpMat(e[0], e[1], e[2], e[3], e[4], e[5]);
         }
 
+        public static GpMat FromElements(float[] e) => new GpMat(e[0], e[1], e[2], e[3], e[4], e[5]);
+
         public Matrix ToMatrix() => new Matrix(M11, M12, M21, M22, Dx, Dy);
 
         public bool IsIdentity => Complexity == 0;

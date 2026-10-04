@@ -58,6 +58,8 @@ namespace System.Drawing.Imaging {
 		// The header GDI+ keeps (this+0x20): read from the file, or built up by a recording.
 		internal GpMetafileHeader header;
 		internal GpMetafileRecorder recorder;
+		// The playback this metafile is being enumerated in (PlayRecord plays into it).
+		internal GpMetafilePlayer.Session playback;
 		// A handle handed to the constructor that GDI+ would delete when the metafile goes.
 		IntPtr ownedHandle;
 		bool ownedIsWmf;

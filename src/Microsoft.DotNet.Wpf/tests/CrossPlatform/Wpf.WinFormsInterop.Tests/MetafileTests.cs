@@ -148,5 +148,71 @@ namespace Wpf.WinFormsInterop.Tests
             }
             Assert.True(sb.Length == 0, sb.ToString());
         }
+
+        /// <summary>A metafile drawn as GDI+ draws it for Graphics.DrawImage(mf, rect): the source
+        /// is the metafile's bounds in pixels.</summary>
+        internal static Bitmap PlayInto(Metafile mf, int w, int h, RectangleF dest)
+        {
+            var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.White);
+                GpMetafilePlayer.Play(g, mf, new[] { dest.Location, new PointF(dest.Right, dest.Top), new PointF(dest.Left, dest.Bottom) },
+                    mf.RealBounds, GraphicsUnit.Pixel, null);
+            }
+            return bmp;
+        }
+
+        /// <summary>The fraction of pixels more than <paramref name="tol"/> apart in some channel.</summary>
+        internal static double Differ(Bitmap a, Bitmap b, int tol, out int count)
+        {
+            count = 0;
+            for (int y = 0; y < a.Height; y++)
+                for (int x = 0; x < a.Width; x++)
+                {
+                    Color p = a.GetPixel(x, y), q = b.GetPixel(x, y);
+                    if (Math.Abs(p.R - q.R) > tol || Math.Abs(p.G - q.G) > tol || Math.Abs(p.B - q.B) > tol || Math.Abs(p.A - q.A) > tol) count++;
+                }
+            return (double)count / (a.Width * a.Height);
+        }
+
+        [Theory]
+        [MemberData(nameof(Scenarios))]
+        public void Played_EmfPlus_matches_GdiPlus_pixels(string scenario)
+        {
+            using var mf = new Metafile(Path.Combine(Dir, "plus", scenario + ".emf"));
+            using Bitmap ours = PlayInto(mf, 120, 90, new RectangleF(5, 5, 110, 80));
+            using var theirs = (Bitmap)Image.FromFile(Path.Combine(Dir, "play", scenario + ".png"));
+            string outDir = Environment.GetEnvironmentVariable("MF_PLAYOUT");
+            if (!string.IsNullOrEmpty(outDir))
+            {
+                Directory.CreateDirectory(outDir);
+                ours.Save(Path.Combine(outDir, scenario + ".png"), ImageFormat.Png);
+            }
+            double f = Differ(ours, theirs, 64, out int n);
+            Assert.True(f < 0.02, $"{n} pixels ({f:P1}) differ from GDI+'s");
+        }
+
+        /// <summary>Every object GDI+ serialised, read back and serialised again, is the same bytes.</summary>
+        [Theory]
+        [MemberData(nameof(Scenarios))]
+        public void Objects_read_back_and_serialise_to_GdiPlus_bytes(string scenario)
+        {
+            byte[] theirs = File.ReadAllBytes(Path.Combine(Dir, "plus", scenario + ".emf"));
+            var sb = new StringBuilder();
+            foreach (var (_, rec) in EmfPlusRecords(theirs))
+            {
+                if (BitConverter.ToUInt16(rec, 0) != 0x4008) continue;
+                int flags = BitConverter.ToUInt16(rec, 2);
+                if ((flags & 0x8000) != 0) continue;
+                var type = (EmfPlusObjectType)((flags >> 8) & 0x7f);
+                object o = GpEmfPlusReader.Read(type, rec, 12, rec.Length - 12);
+                if (o == null) { sb.AppendLine($"{type}: not read"); continue; }
+                byte[] again = GpEmfPlusObjects.Serialize(o);
+                string a = Hex(rec.AsSpan(12).ToArray()), b = Hex(again);
+                if (a != b) sb.AppendLine($"{type}: gdi+ {a} / again {b}");
+            }
+            Assert.True(sb.Length == 0, sb.ToString());
+        }
     }
 }

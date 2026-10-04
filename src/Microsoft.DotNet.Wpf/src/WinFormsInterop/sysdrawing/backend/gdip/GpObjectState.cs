@@ -42,21 +42,23 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         public static bool PathGradientGamma(PathGradientBrush p) => p.GammaCorrection;
 
-        /// <summary>The boundary a path gradient keeps: its points (+0x90), or, made from a path, the
-        /// path (+0x88).</summary>
+        /// <summary>The boundary a path gradient keeps: made from a path, the path (+0x88, its point
+        /// list +0x90 left null); made from points, the points.</summary>
         public static void PathGradientBoundary(PathGradientBrush p, out PointF[] points, out GraphicsPath path)
         {
             points = null;
             path = null;
+            if (p.GpPath != null)
+            {
+                path = new GraphicsPath(p.GpPath.Clone());
+                return;
+            }
             if (p.GpPoints != null)
             {
                 int n = Math.Min(p.PointCount, p.GpPoints.Length);
                 points = new PointF[n];
                 Array.Copy(p.GpPoints, points, n);
-                return;
             }
-            if (p.GpPath != null)
-                path = new GraphicsPath(p.GpPath.Clone());
         }
 
         /// <summary>The surround colours GDI+ writes: one when the brush keeps a single colour
