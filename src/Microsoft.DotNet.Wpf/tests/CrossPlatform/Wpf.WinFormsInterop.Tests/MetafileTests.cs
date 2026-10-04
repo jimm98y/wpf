@@ -371,6 +371,115 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.True(f < 0.08, $"{n} pixels ({f:P1}) differ from GDI+'s");
         }
 
+        // ---- down-level: what an EmfOnly / EmfPlusDual recording renders through GDI+'s metafile
+        // driver into the EMF DC, held to GDI+'s own recordings (Fixtures/Metafiles/emfonly and dual,
+        // `mfo rec <scenario> EmfOnly|EmfPlusDual` run inside an ARM64 Windows PowerShell, one process
+        // per scenario: the driver's state is process-wide, so each file is what a fresh gdiplus.dll
+        // records; and on Windows on ARM an x64 process runs gdiplus.dll's ARM64EC code, which rounds
+        // some float arithmetic differently from the native ARM64 code this port follows).
+
+        /// <summary>The screen the oracle recorded on (mfo hands GDI+ the screen DC).</summary>
+        internal static readonly GpRefDevice OracleScreen = new GpRefDevice
+        {
+            HorzRes = 3840, VertRes = 1200, HorzSize = 1040, VertSize = 320,
+            LogPixelsX = 96, LogPixelsY = 96, IsDisplay = true, DesktopDpiX = 96, DesktopDpiY = 96,
+        };
+
+        /// <summary>A scenario recorded down-level on the oracle's screen by a fresh driver.</summary>
+        internal static byte[] RecordDownLevel(string scenario, EmfType type)
+        {
+            lock (GpMetaDriverState.Lock)
+            {
+                GpMetaDriverState.Reset();
+                var ms = new MemoryStream();
+                GpMetafileRecorder r = GpMetafileRecorder.Create(null, OracleScreen, type, null, MetafileFrameUnit.GdiCompatible, null, ms, null);
+                MetafileScenarios.All()[scenario](new RecorderRec(r));
+                r.End();
+                byte[] emf = ms.ToArray();
+                string outDir = Environment.GetEnvironmentVariable("MF_GDIOUT");
+                if (!string.IsNullOrEmpty(outDir))
+                {
+                    string d = Path.Combine(outDir, type == EmfType.EmfOnly ? "emfonly" : "dual");
+                    Directory.CreateDirectory(d);
+                    File.WriteAllBytes(Path.Combine(d, scenario + ".emf"), emf);
+                }
+                return emf;
+            }
+        }
+
+        static string GdiDiff(byte[] ours, byte[] theirs)
+        {
+            var a = GpMetafileEdit.Records(ours).ToList();
+            var b = GpMetafileEdit.Records(theirs).ToList();
+            var sb = new StringBuilder();
+            // The header: bounds, frame, size, record and handle counts.
+            if (!ours.AsSpan(8, 32).SequenceEqual(theirs.AsSpan(8, 32)) || !ours.AsSpan(48, 10).SequenceEqual(theirs.AsSpan(48, 10)))
+                sb.AppendLine($"header:\n  ours   {Hex(ours.AsSpan(8, 50).ToArray())}\n  gdi+   {Hex(theirs.AsSpan(8, 50).ToArray())}");
+            // EMR_CREATEDIBPATTERNBRUSHPT carries a dword GDI never writes (what its buffer held).
+            static byte[] Rec(byte[] f, (int Offset, int Type, int Size) r)
+            {
+                byte[] x = f.AsSpan(r.Offset, r.Size).ToArray();
+                if (r.Type == 94 && x.Length >= 36) Array.Clear(x, 32, 4);
+                return x;
+            }
+            int n = Math.Max(a.Count, b.Count);
+            for (int i = 1; i < n; i++)
+            {
+                string x = i < a.Count ? Hex(Rec(ours, a[i])) : "(none)";
+                string y = i < b.Count ? Hex(Rec(theirs, b[i])) : "(none)";
+                if (x != y) sb.AppendLine($"record {i}:\n  ours   {x}\n  gdi+   {y}");
+            }
+            return sb.ToString();
+        }
+
+        static string RecordTypes(byte[] emf) => string.Join(",", GpMetafileEdit.Records(emf).Select(r => r.Type));
+
+        /// <summary>The scenarios whose down-level drawing holds no bitmap or text: every record GDI+'s
+        /// writes, byte for byte.</summary>
+        public static TheoryData<string> GdiExactScenarios()
+        {
+            var d = new TheoryData<string>();
+            foreach (string name in MetafileScenarios.All().Keys)
+                if (name != "brushes" && name != "images" && name != "imageunits" && name != "text") d.Add(name);
+            return d;
+        }
+
+        [Theory]
+        [MemberData(nameof(GdiExactScenarios))]
+        public void EmfOnly_records_are_GdiPlus_bytes(string scenario)
+        {
+            string diff = GdiDiff(RecordDownLevel(scenario, EmfType.EmfOnly), File.ReadAllBytes(Path.Combine(Dir, "emfonly", scenario + ".emf")));
+            Assert.True(diff.Length == 0, diff);
+        }
+
+        [Theory]
+        [MemberData(nameof(GdiExactScenarios))]
+        public void EmfPlusDual_records_are_GdiPlus_bytes(string scenario)
+        {
+            // pens: the closing no-op PatBlt spans the EMF+ bounds, and GDI+ bounds a custom line cap
+            // tighter than GpMetafileRecorder.CustomCapRadius does.
+            if (scenario == "pens") return;
+            string diff = GdiDiff(RecordDownLevel(scenario, EmfType.EmfPlusDual), File.ReadAllBytes(Path.Combine(Dir, "dual", scenario + ".emf")));
+            Assert.True(diff.Length == 0, diff);
+        }
+
+        /// <summary>Every scenario, bitmaps and text included: the same records in the same order.</summary>
+        public static TheoryData<string> GdiStructureScenarios()
+        {
+            var d = new TheoryData<string>();
+            foreach (string name in MetafileScenarios.All().Keys)
+                if (name != "brushes" && name != "images" && name != "imageunits" && name != "text") d.Add(name);
+            return d;
+        }
+
+        [Theory]
+        [MemberData(nameof(GdiStructureScenarios))]
+        public void Down_level_record_structure_is_GdiPlus(string scenario)
+        {
+            Assert.Equal(RecordTypes(File.ReadAllBytes(Path.Combine(Dir, "emfonly", scenario + ".emf"))), RecordTypes(RecordDownLevel(scenario, EmfType.EmfOnly)));
+            Assert.Equal(RecordTypes(File.ReadAllBytes(Path.Combine(Dir, "dual", scenario + ".emf"))), RecordTypes(RecordDownLevel(scenario, EmfType.EmfPlusDual)));
+        }
+
         public static TheoryData<string> BareWmfFiles() => new TheoryData<string> { "bare.wmf", "bare_nomap.wmf", "shapes.wmf" };
 
         /// <summary>A WMF with no placeable header becomes the EMF GDI makes of it (SetWinMetaFileBits with
