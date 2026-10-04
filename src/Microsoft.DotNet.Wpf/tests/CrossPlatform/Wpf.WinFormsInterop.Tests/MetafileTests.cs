@@ -421,6 +421,12 @@ namespace Wpf.WinFormsInterop.Tests
             {
                 byte[] x = f.AsSpan(r.Offset, r.Size).ToArray();
                 if (r.Type == 94 && x.Length >= 36) Array.Clear(x, 32, 4);
+                // EMR_EXTTEXTOUTW: the string's padding to its dword (GDI copies the characters only).
+                if (r.Type == 84 && x.Length >= 76)
+                {
+                    int nChars = BitConverter.ToInt32(x, 44), offString = BitConverter.ToInt32(x, 48), offDx = BitConverter.ToInt32(x, 72);
+                    for (int k = offString + 2 * nChars; k < offDx && k < x.Length; k++) x[k] = 0;
+                }
                 if (r.Type == 81 && x.Length >= 72)
                 {
                     int offBmi = BitConverter.ToInt32(x, 48), offBits = BitConverter.ToInt32(x, 56);
@@ -445,13 +451,12 @@ namespace Wpf.WinFormsInterop.Tests
 
         static string RecordTypes(byte[] emf) => string.Join(",", GpMetafileEdit.Records(emf).Select(r => r.Type));
 
-        /// <summary>The scenarios whose every down-level record is GDI+'s, byte for byte. Not yet:
-        /// text (DrawString / DrawDriverString record nothing down-level).</summary>
+        /// <summary>The scenarios whose every down-level record is GDI+'s, byte for byte.</summary>
         public static TheoryData<string> GdiExactScenarios()
         {
             var d = new TheoryData<string>();
             foreach (string name in MetafileScenarios.All().Keys)
-                if (name != "text") d.Add(name);
+                d.Add(name);
             return d;
         }
 
@@ -591,7 +596,7 @@ namespace Wpf.WinFormsInterop.Tests
         {
             var d = new TheoryData<string>();
             foreach (string name in MetafileScenarios.All().Keys)
-                if (name != "text") d.Add(name);
+                d.Add(name);
             return d;
         }
 

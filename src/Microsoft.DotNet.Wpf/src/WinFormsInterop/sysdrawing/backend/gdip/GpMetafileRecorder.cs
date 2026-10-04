@@ -1171,6 +1171,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             CheckOpen();
             if (text == null || text.Length < 1) return;
+            // GpGraphics::DrawDriverString @1800ea638: a font with an underline or a strikeout is
+            // refused before anything is recorded.
+            if ((font.Style & (FontStyle.Underline | FontStyle.Strikeout)) != 0) return;
             int n = text.Length;
             RectangleF? bounds = DriverStringBounds(text, font, positions, flags, matrix);
             if (HasStream)

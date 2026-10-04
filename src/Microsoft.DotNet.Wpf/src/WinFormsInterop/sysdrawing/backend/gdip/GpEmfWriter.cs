@@ -36,6 +36,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             _description = description;
         }
 
+        public GpRefDevice Device => _dev;
         public int RecordCount => _records.Count + 2;
 
         /// <summary>A record with its type and size filled in from <paramref name="body"/>.</summary>
