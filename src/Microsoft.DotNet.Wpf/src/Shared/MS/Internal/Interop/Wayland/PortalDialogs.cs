@@ -49,6 +49,9 @@ namespace MS.Internal.Interop.Wayland
             public bool Completed;
             public uint Response = ResponseCancelled;
             public List<string> Uris = new();
+            /// <summary>Set for a Print.PreparePrint request: its results are dictionaries.</summary>
+            public bool Print;
+            public Dictionary<string, Dictionary<string, string>> Dictionaries = new();
         }
 
         private static PendingRequest? s_pending;
@@ -144,6 +147,65 @@ namespace MS.Internal.Interop.Wayland
             }
         }
 
+        private const string PrintInterface = "org.freedesktop.portal.Print";
+
+        /// <summary>
+        /// The desktop's own print dialog: org.freedesktop.portal.Print.PreparePrint. It shows the
+        /// printers, copies and page ranges the desktop offers and answers with GtkPrintSettings-style
+        /// keys ("printer", "n-copies", "collate", "print-pages", "page-ranges", ...). Only the DIALOG
+        /// goes through the portal; the job itself still goes to CUPS (see CupsPrint), because the
+        /// portal's Print call takes the document as a file descriptor this binding cannot pass.
+        /// Returns the chosen settings, or null when the user cancelled. <paramref name="shown"/> is false
+        /// when no dialog could be put up at all (no portal, no Print backend), which is the caller's
+        /// cue to draw its own rather than to treat it as a cancellation.
+        /// </summary>
+        internal static Dictionary<string, string>? ShowPrintPanel(string title, Dictionary<string, string> initialSettings, out bool shown)
+        {
+            shown = false;
+            if (!DBusLite.IsAvailable) return null;
+
+            string token = "wpf" + (uint)System.Threading.Interlocked.Increment(ref s_tokenCounter) + "_" + Environment.ProcessId;
+            string sender = DBusLite.UniqueName.TrimStart(':').Replace('.', '_');
+            string expectedPath = $"/org/freedesktop/portal/desktop/request/{sender}/{token}";
+
+            var pending = new PendingRequest { Path = expectedPath, Print = true };
+            s_pending = pending;
+            try
+            {
+                DBusLite.AddMatch($"type='signal',interface='{RequestInterface}',member='Response',path='{expectedPath}'");
+
+                var settings = new List<(string, object)>();
+                foreach (KeyValuePair<string, string> kv in initialSettings) settings.Add((kv.Key, kv.Value));
+                var options = new List<(string, object)> { ("handle_token", token), ("modal", true) };
+
+                if (!DBusLite.CallPortalWithDictionaries(PortalService, PortalPath, PrintInterface, "PreparePrint",
+                        ParentWindowHandle(), title ?? string.Empty,
+                        new[] { settings.ToArray(), Array.Empty<(string, object)>(), options.ToArray() }, out string actualPath))
+                {
+                    return null;
+                }
+                shown = true;
+                if (!string.Equals(actualPath, expectedPath, StringComparison.Ordinal))
+                {
+                    pending.Path = actualPath;
+                    DBusLite.AddMatch($"type='signal',interface='{RequestInterface}',member='Response',path='{actualPath}'");
+                }
+
+                DateTime deadline = DateTime.UtcNow.AddMinutes(10);
+                while (!pending.Completed && DateTime.UtcNow < deadline)
+                {
+                    WaylandDisplay.ReadEvents(16);
+                }
+
+                if (pending.Response != ResponseSuccess) return null;
+                return pending.Dictionaries.TryGetValue("settings", out var chosen) ? chosen : new Dictionary<string, string>();
+            }
+            finally
+            {
+                s_pending = null;
+            }
+        }
+
         /// <summary>
         /// Handle one D-Bus signal; called by the pump for every signal received.
         /// </summary>
@@ -158,7 +220,15 @@ namespace MS.Internal.Interop.Wayland
             }
             if (!string.Equals(DBusLite.GetPath(message), pending.Path, StringComparison.Ordinal)) return;
 
-            if (DBusLite.TryParsePortalResponse(message, "uris", out uint response, out List<string> uris))
+            if (pending.Print)
+            {
+                if (DBusLite.TryParsePortalDictionaries(message, out uint printResponse, out var dictionaries, out _))
+                {
+                    pending.Response = printResponse;
+                    pending.Dictionaries = dictionaries;
+                }
+            }
+            else if (DBusLite.TryParsePortalResponse(message, "uris", out uint response, out List<string> uris))
             {
                 pending.Response = response;
                 pending.Uris = uris;

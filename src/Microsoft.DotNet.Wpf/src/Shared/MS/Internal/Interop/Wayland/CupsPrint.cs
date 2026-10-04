@@ -14,9 +14,10 @@
 // booleans, uint32s and strings. Adding file-descriptor passing to DBusLite is a bigger and riskier
 // change than talking to CUPS directly, and CUPS is what the portal talks to anyway.
 //
-// The print DIALOG is therefore ours to draw, and it is drawn in WPF (see ManagedPrintDialog).
-// That works on this head for the same reason the managed message box does: Linux keeps a blocking
-// dispatcher loop, so a nested modal frame is possible here.
+// The print DIALOG is a different matter: Print.PreparePrint passes no file descriptor, only
+// dictionaries, so the desktop's own dialog is shown through the portal (PortalDialogs.ShowPrintPanel)
+// and its choice spooled here. Only where the session has no portal is the dialog drawn in WPF (see
+// ManagedPrintDialog), which works on this head because Linux keeps a blocking dispatcher loop.
 //
 // libcups is dlopen'd through the ordinary DllImport resolver, so a machine without it fails at the
 // first call rather than at load. That is caught and reported as "no printers", which is what a

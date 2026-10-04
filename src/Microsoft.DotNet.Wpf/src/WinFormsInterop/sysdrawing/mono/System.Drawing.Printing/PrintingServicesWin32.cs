@@ -301,9 +301,22 @@ namespace System.Drawing.Printing
 
 		internal static IntPtr CreateGraphicsContext (PrinterSettings settings, PageSettings default_page_settings)
 		{
-			IntPtr dc = IntPtr.Zero;
-			dc = Win32CreateDC (null, settings.PrinterName, null, IntPtr.Zero /* DEVMODE */);
-			return dc;
+			// With the settings' DEVMODE, as .NET creates it: without one the printer's defaults were
+			// used whatever the copies, orientation, duplex or paper said.
+			IntPtr devmode = IntPtr.Zero;
+			try {
+				devmode = DevModeInterop.GetHdevmode (settings, default_page_settings ?? settings.DefaultPageSettings);
+			} catch (InvalidPrinterException) {
+			}
+			IntPtr dm = devmode != IntPtr.Zero ? DevModeInterop.GlobalLock (devmode) : IntPtr.Zero;
+			try {
+				return Win32CreateDC (null, settings.PrinterName, null, dm);
+			} finally {
+				if (devmode != IntPtr.Zero) {
+					DevModeInterop.GlobalUnlock (devmode);
+					DevModeInterop.GlobalFree (devmode);
+				}
+			}
 		}
 
 		// Properties

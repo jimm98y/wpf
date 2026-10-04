@@ -105,6 +105,63 @@ namespace MS.Internal.Interop
             return UrlPath(Send(panel, Sel("URL")));
         }
 
+        /// <summary>
+        /// Runs NSPrintPanel on its own, over a copy of the shared NSPrintInfo -- macOS's print dialog
+        /// for a caller that chooses settings first and prints later, as WinForms' PrintDialog does.
+        /// The values passed in start the panel and come back as the user left them; false is a
+        /// cancellation. Page numbers are 1-based; <paramref name="allPages"/> true means no range.
+        /// </summary>
+        public static bool ShowPrintPanel(ref string printer, ref int copies, ref bool allPages, ref int firstPage,
+                                          ref int lastPage, ref bool landscape, bool showPageRange)
+        {
+            EnsureApplication();
+            IntPtr info = Send(Send(Cls("NSPrintInfo"), Sel("sharedPrintInfo")), Sel("copy"));
+            if (info == IntPtr.Zero) return false;
+
+            if (!string.IsNullOrEmpty(printer))
+            {
+                IntPtr p = SendPtrRet(Cls("NSPrinter"), Sel("printerWithName:"), NSStr(printer));
+                if (p != IntPtr.Zero) SendVoidPtr(info, Sel("setPrinter:"), p);
+            }
+            SendVoidNInt(info, Sel("setOrientation:"), landscape ? 1 : 0);   // NSPaperOrientationLandscape = 1
+            IntPtr dict = Send(info, Sel("dictionary"));
+            SendVoidPtrPtr(dict, Sel("setObject:forKey:"), SendPtrInt(Cls("NSNumber"), Sel("numberWithInt:"), Math.Max(1, copies)), NSStr("NSCopies"));
+            if (showPageRange && !allPages && firstPage > 0)
+            {
+                SendVoidPtrPtr(dict, Sel("setObject:forKey:"), SendPtrInt(Cls("NSNumber"), Sel("numberWithBool:"), 0), NSStr("NSAllPages"));
+                SendVoidPtrPtr(dict, Sel("setObject:forKey:"), SendPtrInt(Cls("NSNumber"), Sel("numberWithInt:"), firstPage), NSStr("NSFirstPage"));
+                SendVoidPtrPtr(dict, Sel("setObject:forKey:"), SendPtrInt(Cls("NSNumber"), Sel("numberWithInt:"), Math.Max(firstPage, lastPage)), NSStr("NSLastPage"));
+            }
+
+            IntPtr panel = Send(Cls("NSPrintPanel"), Sel("printPanel"));
+            // NSPrintPanelShowsCopies 1, ShowsPageRange 2, ShowsPaperSize 4, ShowsOrientation 8.
+            SendVoidNInt(panel, Sel("setOptions:"), 1 | (showPageRange ? 2 : 0) | 4 | 8);
+            if (SendNIntPtr(panel, Sel("runModalWithPrintInfo:"), info) != 1)   // NSModalResponseOK
+            {
+                return false;
+            }
+
+            IntPtr chosen = Send(info, Sel("printer"));
+            if (chosen != IntPtr.Zero)
+            {
+                IntPtr name = Send(chosen, Sel("name"));
+                if (name != IntPtr.Zero) printer = Marshal.PtrToStringUTF8(Send(name, Sel("UTF8String")));
+            }
+            landscape = (nint)Send(info, Sel("orientation")) == 1;
+            IntPtr n = SendPtrRet(dict, Sel("objectForKey:"), NSStr("NSCopies"));
+            if (n != IntPtr.Zero) copies = SendInt(n, Sel("intValue"));
+            IntPtr all = SendPtrRet(dict, Sel("objectForKey:"), NSStr("NSAllPages"));
+            allPages = all == IntPtr.Zero || SendBool(all, Sel("boolValue"));
+            if (!allPages)
+            {
+                IntPtr f = SendPtrRet(dict, Sel("objectForKey:"), NSStr("NSFirstPage"));
+                IntPtr l = SendPtrRet(dict, Sel("objectForKey:"), NSStr("NSLastPage"));
+                if (f != IntPtr.Zero) firstPage = SendInt(f, Sel("intValue"));
+                if (l != IntPtr.Zero) lastPage = SendInt(l, Sel("intValue"));
+            }
+            return true;
+        }
+
         private static void ConfigurePanel(IntPtr panel, string title, string initialDirectory)
         {
             if (!string.IsNullOrEmpty(title))
@@ -154,5 +211,10 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrRet(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNInt(IntPtr receiver, IntPtr selector, nint arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrUtf8(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.LPUTF8Str)] string arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtr(IntPtr receiver, IntPtr selector, IntPtr a, IntPtr b);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrInt(IntPtr receiver, IntPtr selector, int arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern int SendInt(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBool(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nint SendNIntPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
     }
 }

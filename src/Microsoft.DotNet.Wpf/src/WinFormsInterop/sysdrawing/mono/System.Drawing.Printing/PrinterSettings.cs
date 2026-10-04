@@ -321,22 +321,25 @@ namespace System.Drawing.Printing
 			throw new NotImplementedException();
 		} 
 
-		[MonoTODO("PrinterSettings.GetHdevmode")]
 		public IntPtr GetHdevmode()
 		{
-			throw new NotImplementedException();
+			if (!OperatingSystem.IsWindows ())
+				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
+			return DevModeInterop.GetHdevmode (this, DefaultPageSettings);
 		}
 
-		[MonoTODO("PrinterSettings.GetHdevmode")]
 		public IntPtr GetHdevmode(PageSettings pageSettings)
 		{
-			throw new NotImplementedException();
+			if (!OperatingSystem.IsWindows ())
+				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
+			return DevModeInterop.GetHdevmode (this, pageSettings);
 		}
 
-		[MonoTODO("PrinterSettings.GetHdevname")]
 		public IntPtr GetHdevnames()
 		{
-			throw new NotImplementedException();
+			if (!OperatingSystem.IsWindows ())
+				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
+			return DevModeInterop.GetHdevnames (this);
 		}
 		
 
@@ -352,16 +355,22 @@ namespace System.Drawing.Printing
 			throw new NotImplementedException();
 		}
 
-		[MonoTODO("PrinterSettings.SetHdevmode")]
 		public void SetHdevmode(IntPtr hdevmode)
 		{
-			throw new NotImplementedException();
+			if (!OperatingSystem.IsWindows ())
+				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
+			if (hdevmode == IntPtr.Zero)
+				throw new ArgumentException (nameof (hdevmode));
+			DevModeInterop.SetHdevmode (this, hdevmode);
 		}
 
-		[MonoTODO("PrinterSettings.SetHdevnames")]
 		public void SetHdevnames(IntPtr hdevnames)
 		{
-			throw new NotImplementedException();
+			if (!OperatingSystem.IsWindows ())
+				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
+			if (hdevnames == IntPtr.Zero)
+				throw new ArgumentException (nameof (hdevnames));
+			PrinterName = DevModeInterop.ReadDevice (hdevnames);
 		}
 		
 		public override string ToString()

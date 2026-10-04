@@ -360,6 +360,10 @@ namespace System.Windows.Forms.Integration
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
             XplatUIWebGpu.FileDialogBridge ??= new WpfFileDialogBridge();
             XplatUIWebGpu.MessageBoxBridge ??= new WpfMessageBoxBridge();
+            // Linux only: Windows and macOS have WinForms' own native print dialogs (PrintDlg,
+            // NSPrintPanel); on Linux WPF's PrintDialog shows the desktop portal's.
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+                SWF.PrintDialog.PlatformBridge ??= new WpfPrintDialogBridge();
         }
 
         /// <summary>
@@ -534,6 +538,51 @@ namespace System.Windows.Forms.Integration
                 foreach (Window w in app.Windows)
                     if (w.IsActive) return w;
                 return app.MainWindow;
+            }
+        }
+
+        /// <summary>
+        /// WinForms' PrintDialog through WPF's on Linux, which puts up the desktop's print dialog
+        /// (org.freedesktop.portal.Print) -- or WPF's own where the session has no portal -- and
+        /// answers with a print queue, a copy count and a page range, mapped back onto the
+        /// PrinterSettings WinForms prints with.
+        /// </summary>
+        private sealed class WpfPrintDialogBridge : SWF.IPrintDialogBridge
+        {
+            public bool? Show(SWF.PrintDialog d, System.Drawing.Printing.PrinterSettings settings, System.Drawing.Printing.PageSettings page)
+            {
+                var dlg = new System.Windows.Controls.PrintDialog
+                {
+                    UserPageRangeEnabled = d.AllowSomePages,
+                    MinPage = (uint)Math.Max(1, settings.MinimumPage),
+                    MaxPage = (uint)Math.Max(1, settings.MaximumPage == 0 ? 9999 : settings.MaximumPage),
+                };
+                if (d.AllowSomePages && settings.PrintRange == System.Drawing.Printing.PrintRange.SomePages)
+                {
+                    dlg.PageRangeSelection = System.Windows.Controls.PageRangeSelection.UserPages;
+                    dlg.PageRange = new System.Windows.Controls.PageRange(settings.FromPage, settings.ToPage);
+                }
+                if (dlg.ShowDialog() != true) return false;
+
+                // PrintQueue (System.Printing) and PrintTicket (ReachFramework) are read by name: two
+                // values are all this needs, and it keeps those assemblies out of this one's references.
+                object queue = typeof(System.Windows.Controls.PrintDialog).GetProperty("PrintQueue")?.GetValue(dlg);
+                if (queue?.GetType().GetProperty("Name")?.GetValue(queue) is string name && name.Length > 0)
+                    settings.PrinterName = name;
+                object ticket = typeof(System.Windows.Controls.PrintDialog).GetProperty("PrintTicket")?.GetValue(dlg);
+                if (ticket?.GetType().GetProperty("CopyCount")?.GetValue(ticket) is int copies && copies > 0)
+                    settings.Copies = (short)copies;
+                if (dlg.PageRangeSelection == System.Windows.Controls.PageRangeSelection.UserPages)
+                {
+                    settings.PrintRange = System.Drawing.Printing.PrintRange.SomePages;
+                    settings.FromPage = dlg.PageRange.PageFrom;
+                    settings.ToPage = dlg.PageRange.PageTo;
+                }
+                else
+                {
+                    settings.PrintRange = System.Drawing.Printing.PrintRange.AllPages;
+                }
+                return true;
             }
         }
 

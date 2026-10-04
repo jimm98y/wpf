@@ -211,15 +211,18 @@ namespace System.Drawing.Printing
 		}
 
 
-		[MonoTODO("PageSettings.CopyToHdevmode")]
 		public void CopyToHdevmode (IntPtr hdevmode){
-			throw new NotImplementedException ();
+			if (!OperatingSystem.IsWindows ())
+				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
+			DevModeInterop.CopyToHdevmode (this, hdevmode);
 		}
 
-
-		[MonoTODO("PageSettings.SetHdevmode")]
 		public void SetHdevmode (IntPtr hdevmode){
-			throw new NotImplementedException ();
+			if (!OperatingSystem.IsWindows ())
+				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
+			if (hdevmode == IntPtr.Zero)
+				throw new ArgumentException (nameof (hdevmode));
+			DevModeInterop.SetPageHdevmode (this, hdevmode);
 		}	
 
 		public override string ToString(){

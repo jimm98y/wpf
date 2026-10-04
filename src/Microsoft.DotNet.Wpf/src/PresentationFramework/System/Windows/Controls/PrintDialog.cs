@@ -437,10 +437,15 @@ namespace System.Windows.Controls
             int minPage = Math.Max(1, Math.Min((int)_minPage, (int)_maxPage));
             int maxPage = Math.Max(minPage, (int)_maxPage);
 
-            if (!ManagedPrintDialog.Show(printers, ref chosen, ref copies, ref firstPage, ref lastPage,
-                                         minPage, maxPage, _userPageRangeEnabled))
+            // The desktop's own print dialog where the session has the portal; ours where it has not.
+            if (!ShowPortalPrintDialog(printers, ref chosen, ref copies, ref firstPage, ref lastPage, out bool portalShown))
             {
-                return false;
+                if (portalShown) return false;
+                if (!ManagedPrintDialog.Show(printers, ref chosen, ref copies, ref firstPage, ref lastPage,
+                                             minPage, maxPage, _userPageRangeEnabled))
+                {
+                    return false;
+                }
             }
 
             // Match the chosen printer back to a PrintQueue, so everything downstream sees the same
@@ -469,6 +474,81 @@ namespace System.Windows.Controls
                 ticket.CopyCount = copies;
             }
 
+            return true;
+        }
+
+        /// <summary>
+        /// org.freedesktop.portal.Print.PreparePrint: the printers, copies and pages as the desktop asks
+        /// for them. GtkPrintSettings keys; "page-ranges" is zero-based, "1-3" in the dialog being "0-2".
+        /// False with <paramref name="shown"/> true is a cancellation; with it false there was no dialog.
+        /// </summary>
+        private
+        bool
+        ShowPortalPrintDialog(
+            MS.Internal.Interop.PrinterInfo[] printers,
+            ref MS.Internal.Interop.PrinterInfo chosen,
+            ref int copies,
+            ref int firstPage,
+            ref int lastPage,
+            out bool shown)
+        {
+            shown = false;
+            if (!MS.Internal.Interop.Wayland.PortalDialogs.IsAvailable) return false;
+
+            var initial = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["n-copies"] = copies.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            };
+            if (chosen != null) initial["printer"] = chosen.Name;
+            if (_userPageRangeEnabled && firstPage > 0 && lastPage >= firstPage)
+            {
+                initial["print-pages"] = "ranges";
+                initial["page-ranges"] = (firstPage - 1) + "-" + (lastPage - 1);
+            }
+
+            System.Collections.Generic.Dictionary<string, string> answer;
+            try
+            {
+                answer = MS.Internal.Interop.Wayland.PortalDialogs.ShowPrintPanel("Print", initial, out shown);
+            }
+            catch (Exception)
+            {
+                shown = false;
+                return false;
+            }
+            if (answer == null) return false;
+
+            if (answer.TryGetValue("printer", out string name))
+            {
+                foreach (MS.Internal.Interop.PrinterInfo printer in printers)
+                {
+                    if (string.Equals(printer.Name, name, StringComparison.Ordinal)
+                        || string.Equals(printer.DisplayName, name, StringComparison.Ordinal))
+                    {
+                        chosen = printer;
+                        break;
+                    }
+                }
+            }
+            if (answer.TryGetValue("n-copies", out string n) && int.TryParse(n, out int c) && c > 0) copies = c;
+
+            answer.TryGetValue("print-pages", out string which);
+            if (string.Equals(which, "ranges", StringComparison.Ordinal) && answer.TryGetValue("page-ranges", out string ranges))
+            {
+                // The first range is the one a WPF PageRange can carry.
+                string first = ranges.Split(',')[0];
+                string[] ends = first.Split('-');
+                if (int.TryParse(ends[0], out int from))
+                {
+                    int to = ends.Length > 1 && int.TryParse(ends[1], out int t) ? t : from;
+                    firstPage = from + 1;
+                    lastPage = to + 1;
+                }
+            }
+            else
+            {
+                firstPage = lastPage = 0;
+            }
             return true;
         }
 

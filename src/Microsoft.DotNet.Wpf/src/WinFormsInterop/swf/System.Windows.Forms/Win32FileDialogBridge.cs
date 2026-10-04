@@ -115,7 +115,7 @@ namespace System.Windows.Forms
                     // Owned by the window the user is in, as WinForms' own dialogs are: ownerless, the
                     // dialog was not modal to it, opened in the screen's corner and got a taskbar entry.
                     // The host's windows are real HWNDs on this (the UI) thread, so the active one is it.
-                    hwndOwner = GetActiveWindow(),
+                    hwndOwner = Win32DialogOwner.Get(),
                     lpstrFilter = ToNativeFilter(request.Filter),
                     nFilterIndex = Math.Max(1, request.FilterIndex),
                     lpstrFile = buffer,

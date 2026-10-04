@@ -28,7 +28,7 @@ namespace System.Windows.Forms
                 style |= MB_HELP;
             // ServiceNotification and DefaultDesktopOnly boxes have no owner, as in .NET.
             IntPtr owner = (request.Options & (MessageBoxOptions.ServiceNotification | MessageBoxOptions.DefaultDesktopOnly)) != 0
-                ? IntPtr.Zero : GetActiveWindow ();
+                ? IntPtr.Zero : Win32DialogOwner.Get ();
             int answer;
             IntPtr cookie = Win32ThemingScope.Enter ();
             try {

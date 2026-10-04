@@ -218,15 +218,34 @@ namespace System.Windows.Forms
 			}
 		}
 
-		[MonoTODO ("Stub, not implemented, will always use default dialog")]
+		/// <summary>On Windows, PrintDlgEx's property-sheet dialog rather than the classic PrintDlg one.</summary>
 		[DefaultValue (false)]
 		public bool UseEXDialog {
 			get { return use_ex_dialog; }
 			set { use_ex_dialog = value; }
 		}
 
+		/// <summary>The platform's print dialog where there is one, or null for none.</summary>
+		internal static IPrintDialogBridge PlatformBridge {
+			get => s_bridge ?? Win32PrintDialogBridge.Default ?? MacPrintDialogBridge.Default;
+			set => s_bridge = value;
+		}
+
+		private static IPrintDialogBridge s_bridge;
+
 		protected override bool RunDialog (IntPtr hwndOwner)
 		{
+			// The platform's own dialog wherever there is one; the managed form below is for when
+			// there is none.
+			IPrintDialogBridge bridge = PlatformBridge;
+			if (bridge != null) {
+				bool? answer = bridge.Show (this, PrinterSettings, document?.DefaultPageSettings);
+				if (answer.HasValue) {
+					ranOnPlatform = true;
+					return answer.Value;
+				}
+			}
+
 			if (allow_some_pages && PrinterSettings.FromPage > PrinterSettings.ToPage)
 				throw new ArgumentException ("FromPage out of range");
 

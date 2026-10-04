@@ -463,6 +463,214 @@ namespace MS.Internal.Interop.Wayland
             return true;
         }
 
+        /// <summary>
+        /// Call a portal method taking (s parent_window, s title, a{sv}...) -- any number of option
+        /// dictionaries, as Print.PreparePrint takes three (settings, page setup, options) -- and
+        /// return the Request object path, as CallPortalWithOptions does for one.
+        /// </summary>
+        internal static bool CallPortalWithDictionaries(string destination, string path, string iface, string method,
+                                                        string parentWindow, string title,
+                                                        (string Key, object Value)[][] dictionaries, out string requestPath)
+        {
+            requestPath = string.Empty;
+            if (Connection == IntPtr.Zero) return false;
+
+            IntPtr msg = dbus_message_new_method_call(destination, path, iface, method);
+            if (msg == IntPtr.Zero) return false;
+
+            try
+            {
+                byte* iter = stackalloc byte[IterSize];
+                dbus_message_iter_init_append(msg, iter);
+
+                IntPtr parent = Wl.Utf8(parentWindow);
+                dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &parent);
+                IntPtr titlePtr = Wl.Utf8(title);
+                dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &titlePtr);
+
+                foreach ((string Key, object Value)[] options in dictionaries)
+                {
+                    byte* array = stackalloc byte[IterSize];
+                    dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "{sv}", array);
+                    foreach ((string key, object value) in options)
+                    {
+                        byte* entry = stackalloc byte[IterSize];
+                        dbus_message_iter_open_container(array, DBUS_TYPE_DICT_ENTRY, null, entry);
+                        IntPtr keyPtr = Wl.Utf8(key);
+                        dbus_message_iter_append_basic(entry, DBUS_TYPE_STRING, &keyPtr);
+                        byte* variant = stackalloc byte[IterSize];
+                        switch (value)
+                        {
+                            case bool b:
+                                {
+                                    dbus_message_iter_open_container(entry, DBUS_TYPE_VARIANT, "b", variant);
+                                    int v = b ? 1 : 0;
+                                    dbus_message_iter_append_basic(variant, DBUS_TYPE_BOOLEAN, &v);
+                                    break;
+                                }
+                            case uint u:
+                                {
+                                    dbus_message_iter_open_container(entry, DBUS_TYPE_VARIANT, "u", variant);
+                                    dbus_message_iter_append_basic(variant, DBUS_TYPE_UINT32, &u);
+                                    break;
+                                }
+                            default:
+                                {
+                                    dbus_message_iter_open_container(entry, DBUS_TYPE_VARIANT, "s", variant);
+                                    IntPtr s = Wl.Utf8(value?.ToString() ?? string.Empty);
+                                    dbus_message_iter_append_basic(variant, DBUS_TYPE_STRING, &s);
+                                    break;
+                                }
+                        }
+                        dbus_message_iter_close_container(entry, variant);
+                        dbus_message_iter_close_container(array, entry);
+                    }
+                    dbus_message_iter_close_container(iter, array);
+                }
+
+                DBusError err;
+                dbus_error_init(&err);
+                IntPtr reply = dbus_connection_send_with_reply_and_block(Connection, msg, 10000, &err);
+                if (dbus_error_is_set(&err) != 0)
+                    WaylandDisplay.LogSink?.Invoke($"{iface}.{method} failed: " + Wl.FromUtf8(err.message));
+                dbus_error_free(&err);
+                if (reply == IntPtr.Zero) return false;
+
+                try
+                {
+                    byte* r = stackalloc byte[IterSize];
+                    if (dbus_message_iter_init(reply, r) == 0) return false;
+                    int type = dbus_message_iter_get_arg_type(r);
+                    if (type != DBUS_TYPE_OBJECT_PATH && type != DBUS_TYPE_STRING) return false;
+                    IntPtr p;
+                    dbus_message_iter_get_basic(r, &p);
+                    requestPath = Wl.FromUtf8(p);
+                    return true;
+                }
+                finally
+                {
+                    dbus_message_unref(reply);
+                }
+            }
+            finally
+            {
+                dbus_message_unref(msg);
+            }
+        }
+
+        /// <summary>
+        /// Parse a portal Response signal whose results hold dictionaries -- Print.PreparePrint's
+        /// "settings" and "page-setup" (a{sv} each) beside its "token" (u). Every nested value that is a
+        /// string, boolean, integer or double is returned as text, which is how GtkPrintSettings
+        /// states them anyway; top-level unsigned integers come back in <paramref name="uints"/>.
+        /// </summary>
+        internal static bool TryParsePortalDictionaries(IntPtr message, out uint response,
+                                                        out Dictionary<string, Dictionary<string, string>> dictionaries,
+                                                        out Dictionary<string, uint> uints)
+        {
+            response = 2;
+            dictionaries = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+            uints = new Dictionary<string, uint>(StringComparer.Ordinal);
+
+            byte* iter = stackalloc byte[IterSize];
+            if (dbus_message_iter_init(message, iter) == 0) return false;
+            if (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_UINT32) return false;
+            uint code;
+            dbus_message_iter_get_basic(iter, &code);
+            response = code;
+            if (dbus_message_iter_next(iter) == 0 || dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_ARRAY) return true;
+
+            byte* dict = stackalloc byte[IterSize];
+            dbus_message_iter_recurse(iter, dict);
+            while (dbus_message_iter_get_arg_type(dict) == DBUS_TYPE_DICT_ENTRY)
+            {
+                byte* entry = stackalloc byte[IterSize];
+                dbus_message_iter_recurse(dict, entry);
+                if (dbus_message_iter_get_arg_type(entry) == DBUS_TYPE_STRING)
+                {
+                    IntPtr keyPtr;
+                    dbus_message_iter_get_basic(entry, &keyPtr);
+                    string key = Wl.FromUtf8(keyPtr);
+                    if (dbus_message_iter_next(entry) != 0 && dbus_message_iter_get_arg_type(entry) == DBUS_TYPE_VARIANT)
+                    {
+                        byte* variant = stackalloc byte[IterSize];
+                        dbus_message_iter_recurse(entry, variant);
+                        int t = dbus_message_iter_get_arg_type(variant);
+                        if (t == DBUS_TYPE_ARRAY)
+                            dictionaries[key] = ReadStringDictionary(variant);
+                        else if (t == DBUS_TYPE_UINT32)
+                        {
+                            uint u;
+                            dbus_message_iter_get_basic(variant, &u);
+                            uints[key] = u;
+                        }
+                    }
+                }
+                if (dbus_message_iter_next(dict) == 0) break;
+            }
+            return true;
+        }
+
+        /// <summary>An a{sv} at <paramref name="array"/>, its scalar values as text.</summary>
+        private static Dictionary<string, string> ReadStringDictionary(byte* array)
+        {
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            byte* items = stackalloc byte[IterSize];
+            dbus_message_iter_recurse(array, items);
+            while (dbus_message_iter_get_arg_type(items) == DBUS_TYPE_DICT_ENTRY)
+            {
+                byte* entry = stackalloc byte[IterSize];
+                dbus_message_iter_recurse(items, entry);
+                if (dbus_message_iter_get_arg_type(entry) == DBUS_TYPE_STRING)
+                {
+                    IntPtr keyPtr;
+                    dbus_message_iter_get_basic(entry, &keyPtr);
+                    string key = Wl.FromUtf8(keyPtr);
+                    if (dbus_message_iter_next(entry) != 0 && dbus_message_iter_get_arg_type(entry) == DBUS_TYPE_VARIANT)
+                    {
+                        byte* variant = stackalloc byte[IterSize];
+                        dbus_message_iter_recurse(entry, variant);
+                        string? text = null;
+                        switch (dbus_message_iter_get_arg_type(variant))
+                        {
+                            case DBUS_TYPE_STRING:
+                                {
+                                    IntPtr sp;
+                                    dbus_message_iter_get_basic(variant, &sp);
+                                    text = Wl.FromUtf8(sp);
+                                    break;
+                                }
+                            case DBUS_TYPE_BOOLEAN:
+                                {
+                                    int b;
+                                    dbus_message_iter_get_basic(variant, &b);
+                                    text = b != 0 ? "true" : "false";
+                                    break;
+                                }
+                            case DBUS_TYPE_UINT32:
+                            case 'i':
+                                {
+                                    int v;
+                                    dbus_message_iter_get_basic(variant, &v);
+                                    text = v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                                    break;
+                                }
+                            case DBUS_TYPE_DOUBLE:
+                                {
+                                    double d;
+                                    dbus_message_iter_get_basic(variant, &d);
+                                    text = d.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                                    break;
+                                }
+                        }
+                        if (text is not null) result[key] = text;
+                    }
+                }
+                if (dbus_message_iter_next(items) == 0) break;
+            }
+            return result;
+        }
+
         /// <summary>Read a trailing uint (possibly variant-wrapped) from a signal's arguments.</summary>
         internal static bool TryGetUInt32Arg(IntPtr message, int index, out uint value)
         {

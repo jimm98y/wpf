@@ -112,7 +112,7 @@ namespace System.Windows.Forms
                 int hr;
                 IntPtr cookie = Win32ThemingScope.Enter ();
                 try {
-                    hr = CallPtr (dialog, Slot_Show, GetActiveWindow ());
+                    hr = CallPtr (dialog, Slot_Show, Win32DialogOwner.Get ());
                 } finally {
                     Win32ThemingScope.Leave (cookie);
                 }
