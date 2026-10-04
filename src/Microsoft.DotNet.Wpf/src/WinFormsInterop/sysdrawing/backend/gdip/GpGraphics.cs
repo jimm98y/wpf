@@ -444,9 +444,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (d.IsEmpty) return true;
             GpScan scan = NewScan ();
             GpSpan span = CreateSpan (brush, scan, d.Bounds);
-            if (span == null) return false;
-            foreach (Rectangle r in d.Rects ())
-                for (int y = r.Top; y < r.Bottom; y++) span.OutputSpan (y, r.Left, r.Right);
+            if (span == null) return true;
+            // DpRegion::Fill @1800dbc28: band by band, each row's spans left to right.
+            foreach (DpRegion.Band b in d.Bands)
+                for (int y = b.Top; y < b.Bottom; y++)
+                    for (int i = 0; i + 1 < b.X.Length; i += 2) span.OutputSpan (y, b.X [i], b.X [i + 1]);
             scan.End ();
             return true;
         }
