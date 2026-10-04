@@ -159,19 +159,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             if (s_traceHint && (uint)i < _scaledCvt.Length)
                                 Console.Error.WriteLine($"      WCVTP cvt[{i}] {_scaledCvt[i] / 64f:0.0000}"
                                                         + $" -> {v / 64f:0.0000}px  (ppem {_ppem})");
-                            if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = v;
+                            if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = CvtWrite(v);
                             break;
                         }
                     case 0x70:                                                          // WCVTF
                         {
                             int v = Pop(), i = Pop();
-                            if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = Scale(v);
+                            if ((uint)i < _scaledCvt.Length) _scaledCvt[i] = _stretched ? ScaleUnits(v, _cvtScale) : Scale(v);
                             break;
                         }
                     case 0x45:                                                          // RCVT
                         {
                             int i = Pop();
-                            int v = (uint) i < _scaledCvt.Length ? _scaledCvt[i] : 0;
+                            int v = (uint) i < _scaledCvt.Length ? CvtRead(_scaledCvt[i]) : 0;
                             // WPF_CVT_OVERRIDE=idx:val[,idx:val...] forces a control value, in
                             // 64ths, on the CLEARTYPE pass only. A debugging facility: when a
                             // glyph's error reduces to one control value -- which is where Times'
@@ -334,7 +334,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     case 0x1A: _gs.MinimumDistance = Pop(); break;                      // SMD
                     case 0x1D: _gs.ControlValueCutIn = Pop(); break;                    // SCVTCI
                     case 0x1E: _gs.SingleWidthCutIn = Pop(); break;                     // SSWCI
-                    case 0x1F: _gs.SingleWidthValue = Scale(Pop()); break;              // SSW
+                    case 0x1F: _gs.SingleWidthValue = _stretched ? ScaleUnits(Pop(), _cvtScale) : Scale(Pop()); break;              // SSW
                     case 0x3D: LatchRoundGrid(); _gs.Round = RoundMode.ToDoubleGrid; break;               // RTDG
                     case 0x4D: _gs.AutoFlip = true; break;                              // FLIPON
                     case 0x4E: _gs.AutoFlip = false; break;                             // FLIPOFF
@@ -2232,8 +2232,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // should collapse to, and anything within the cut-in of it becomes it.
             int distance = original;
             if (_gs.SingleWidthCutIn > 0
-                && Math.Abs(distance - _gs.SingleWidthValue) < _gs.SingleWidthCutIn)
-                distance = distance >= 0 ? _gs.SingleWidthValue : -_gs.SingleWidthValue;
+                && Math.Abs(distance - CvtRead(_gs.SingleWidthValue)) < _gs.SingleWidthCutIn)
+                distance = distance >= 0 ? CvtRead(_gs.SingleWidthValue) : -CvtRead(_gs.SingleWidthValue);
 
             if (round) distance = RoundDistance(distance, linkType: linkType);
 
@@ -3285,13 +3285,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int minimum = EffectiveMinimumDistance() * stretch;
 
             if (_gs.SingleWidthCutIn > 0
-                && Math.Abs(value - _gs.SingleWidthValue * stretch) < _gs.SingleWidthCutIn * stretch)
+                && Math.Abs(value - CvtRead(_gs.SingleWidthValue) * stretch) < _gs.SingleWidthCutIn * stretch)
             {
                 if (_dumpActive)
                     Console.Error.WriteLine($"      SINGLE WIDTH snap cvt[{cvt}] {value / 64f:0.0000}px"
                         + $" -> {_gs.SingleWidthValue * stretch / 64f:0.0000}px"
                         + $" (cut-in {_gs.SingleWidthCutIn / 64f:0.0000})");
-                value = value >= 0 ? _gs.SingleWidthValue * stretch : -_gs.SingleWidthValue * stretch;
+                value = value >= 0 ? CvtRead(_gs.SingleWidthValue) * stretch : -CvtRead(_gs.SingleWidthValue) * stretch;
             }
 
             if (p >= z.PointCount) { if (setRp0) _gs.Rp0 = p; _gs.Rp1 = _gs.Rp0; _gs.Rp2 = p; return; }
@@ -4520,7 +4520,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         + $"{(fires ? $"FIRES {amount / 64f:0.0000}px" : "no")}"
                         + $" cvt now {((uint)index < _scaledCvt.Length ? _scaledCvt[index] / 64f : 0):0.0000}px");
                 if (!fires) continue;
-                if ((uint)index < _scaledCvt.Length) _scaledCvt[index] += amount;
+                if ((uint)index < _scaledCvt.Length) _scaledCvt[index] += CvtWrite(amount);
             }
         }
 
@@ -4534,7 +4534,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private static readonly int s_programPpem =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_PROGRAM_PPEM"), out int pp) ? pp : 0;
-        private int ProgramPpem => s_programPpem > 0 ? s_programPpem : _ppem;
+        private int ProgramPpem => s_programPpem > 0 ? s_programPpem : StretchedPpem(_ppem);
 
         private bool DeltaApplies(int spec, int rangeOffset, out int amount)
         {

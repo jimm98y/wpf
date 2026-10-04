@@ -375,6 +375,20 @@ namespace System.Drawing
 			return e.DrawString (s, family, style, font.SizeInPoints, brush, rect, flags, typographic, align, lineAlign, hotkey);
 		}
 
+		/// <summary>DrawDriverString on a bitmap: GDI+'s DriverStringImager, drawn by the engine
+		/// (GpGraphics.DrawDriverString). False where the engine does not draw it.</summary>
+		internal bool EngineDrawDriverString (ushort [] glyphs, Font font, Brush brush, PointF [] positions, int options, Drawing2D.Matrix matrix)
+		{
+			if (gp == null || image_target == null || !s_gdiPlusText || font == null || glyphs == null || positions == null)
+				return false;
+			string family = font.FontFamily?.Name;
+			if (string.IsNullOrEmpty (family)) return false;
+			int style = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0) | (font.Underline ? 4 : 0) | (font.Strikeout ? 8 : 0);
+			GpGraphics e = Engine ();
+			if (e == null || !e.CanFill (brush)) return false;
+			return e.DrawDriverString (glyphs, family, style, font.SizeInPoints, brush, positions, options, matrix);
+		}
+
 		/// <summary>Set on the WinForms controls' shared measuring Graphics (Hwnd.GraphicsContext):
 		/// MeasureString and MeasureCharacterRanges there keep the port's own measurement.</summary>
 		internal bool port_measure;

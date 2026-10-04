@@ -59,16 +59,76 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (font == null) return false;
             int hint = ResolvedTextHint ();
             if (s_trace) Console.Error.WriteLine ($"GPTEXT DrawString '{s}' {family} {sizePt}pt m=[{m.M11} {m.M12} {m.M21} {m.M22} {m.Dx} {m.Dy}] hint={hint} flags={formatFlags:x}");
-            // FastTextImager::Initialize: a positive axis scale only. Translation-only here; a
-            // turned or sheared transform goes the full imager's way.
-            if (m.M12 != 0f || m.M21 != 0f || m.M11 != 1f || m.M22 != 1f)
+            // FastTextImager::Initialize: a positive axis scale only (m11 > 0, m12 = m21 = 0,
+            // m22 != 0; m22 > 0 modelled). A turned or sheared transform goes the full imager's way.
+            bool axisScale = m.M12 == 0f && m.M21 == 0f && m.M11 > 0f && m.M22 > 0f;
+            bool identity = axisScale && m.M11 == 1f && m.M22 == 1f;
+            GdipText.Run run = null;
+            if (axisScale && !identity)
+                run = GdipText.Layout (font, family, sizePt, s, layout.X, layout.Y, layout.Width, layout.Height,
+                                       formatFlags, typographic, align, lineAlign, hotkey, hint,
+                                       DpiY, biLevel: true, sx: m.M11, sy: m.M22);
+            if (!identity) {
+                if (run != null) { DrawRun (font, run, brush, run.HasClip); return true; }
                 return DrawTransformed (s, font, family, style, sizePt, brush, layout, formatFlags, typographic, align, lineAlign, hotkey, hint);
-            GdipText.Run run = GdipText.Layout (font, family, sizePt, s, layout.X, layout.Y, layout.Width, layout.Height,
-                                                formatFlags, typographic, align, lineAlign, hotkey, hint,
-                                                DpiY, biLevel: true);
+            }
+            run = GdipText.Layout (font, family, sizePt, s, layout.X, layout.Y, layout.Width, layout.Height,
+                                   formatFlags, typographic, align, lineAlign, hotkey, hint,
+                                   DpiY, biLevel: true);
             if (run == null)
                 return DrawLines (s, font, family, style, sizePt, brush, layout, formatFlags, typographic, align, lineAlign, hotkey, hint);
             DrawRun (font, run, brush, run.HasClip);
+            return true;
+        }
+
+        /// <summary>GpGraphics::DrawDriverString @1800ea638 -> DriverStringImager (ctor @1800e9a00,
+        /// Draw @1800ea508, DrawGlyphRange @1800ea708): a font with an underline or a strikeout is
+        /// refused (status 2); each origin is the caller's world point through the world-to-device
+        /// transform alone (GetDriverStringGlyphOrigins @1800eab20, without RealizedAdvance); the
+        /// realization's matrix is world-to-device * em / upem * the record's matrix, of which only
+        /// the 2x2 part reaches the face (FD_XFORM), so a translation in it moves nothing; and the
+        /// glyphs go to DrawPlacedGlyphs at those device origins, x snapped to a sixth by
+        /// GetGlyphPos, y as it falls. Modelled for ClearType under an axis scale, without the
+        /// vertical and realized-advance options; false otherwise.</summary>
+        public bool DrawDriverString (ushort[] glyphs, string family, int style, float sizePt, Brush brush,
+                                      PointF[] positions, int options, Matrix matrix)
+        {
+            if (brush == null || !CanFill (brush) || (options & ~1) != 0) return false;
+            if ((style & 12) != 0) return true;   // InvalidParameter: GDI+ draws nothing
+            if (glyphs.Length == 0 || positions.Length < glyphs.Length) return false;
+            GpMatrix m = WorldToDevice;
+            if (m.M12 != 0f || m.M21 != 0f || !(m.M11 > 0f) || !(m.M22 > 0f)) return false;
+            float sx = m.M11, sy = m.M22;
+            if (matrix != null) {
+                float[] e = matrix.Elements;
+                if (e [1] != 0f || e [2] != 0f || !(e [0] > 0f) || !(e [3] > 0f)) return false;
+                sx *= e [0]; sy *= e [3];
+            }
+            TrueTypeFont font = GdipText.Face (family, style & 3);
+            if (font == null || font.SynthesizesBold) return false;
+            if (ResolvedTextHint () != GdipText.HintClearTypeGridFit) return false;
+            float em = sizePt * (DpiY / 72f);
+            if (!(em > 0f)) return false;
+            if (sx == sy && font.EmbeddedBitmapCount ((int) MathF.Floor (em * sx + 0.5f)) > 100) return false;
+            if (string.Equals (family, "Marlett", StringComparison.OrdinalIgnoreCase)) return false;
+            var run = new GdipText.Run { Em = em, Mode = 5, Hint = 5, FixedFilter = font.GdiContrastPalette,
+                                         Sx = sx, Sy = sy, Contrast = _ctx.TextContrast };
+            var gids = new System.Collections.Generic.List<ushort> ();
+            var xs = new System.Collections.Generic.List<float> ();
+            var ys = new System.Collections.Generic.List<float> ();
+            for (int i = 0; i < glyphs.Length; i++) {
+                int gid = (options & 1) != 0 ? font.GlyphIndex ((char) glyphs [i]) : glyphs [i];
+                if (gid == 0xffff) continue;
+                PointF d = m.Transform (positions [i]);
+                gids.Add ((ushort) gid); xs.Add (d.X); ys.Add (d.Y);
+            }
+            run.Glyphs = gids.ToArray ();
+            if (run.Glyphs.Length == 0) return true;
+            var bits = new NaturalClearType.GlyphBits [run.Glyphs.Length];
+            for (int i = 0; i < bits.Length; i++) bits [i] = run.GlyphBits (font, i);
+            GdipText.Levels lv = GdipText.Compose (bits, xs.ToArray (), ys.ToArray (), 0f, run.FixedFilter);
+            if (lv.Width == 0 || lv.Height == 0) return true;
+            OutputText (lv, 5, brush, run.Contrast);
             return true;
         }
 
@@ -79,15 +139,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GpMatrix m = WorldToDevice;
             run.Contrast = _ctx.TextContrast;
             if (run.Glyphs.Length == 0) return;
-            float[] xs = GdipText.GlyphXs (run, run.OriginX + m.Dx);
-            float y = run.OriginY + m.Dy;
+            // GetDeviceBaselineOrigin: the world origin through the transform (an axis scale and
+            // a translation), then FastDrawGlyphsGridFit rounds the device x.
+            float[] xs = GdipText.GlyphXs (run, run.Sx == 1f ? run.OriginX + m.Dx : m.M11 * run.OriginX + m.Dx);
+            float y = run.Sy == 1f ? run.OriginY + m.Dy : m.M22 * run.OriginY + m.Dy;
             if (s_trace) Console.Error.WriteLine ($"GPTEXT mode={run.Mode} y={y} xs={string.Join (",", xs)} g={string.Join (",", run.Glyphs)}");
 
             GdipText.Levels lv;
             switch (run.Mode) {
             case 5: {
                 var bits = new NaturalClearType.GlyphBits [run.Glyphs.Length];
-                for (int i = 0; i < bits.Length; i++) bits [i] = GdipText.Glyph (font, run.Glyphs [i], run.Em);
+                for (int i = 0; i < bits.Length; i++) bits [i] = run.GlyphBits (font, i);
                 lv = GdipText.Compose (bits, xs, y, run.FixedFilter);
                 break;
             }

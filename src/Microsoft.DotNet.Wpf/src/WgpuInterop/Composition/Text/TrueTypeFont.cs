@@ -2344,7 +2344,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// DirectWrite's mode word, in 26.6; false where the glyph has no outline or program.</summary>
         internal bool TryGetDWriteFittedSpan64(int glyphId, float pixelsPerEm, int flags, out int span64)
         {
-            var key = (glyphId, BitConverter.SingleToInt32Bits(pixelsPerEm), flags);
+            var key = (glyphId, BitConverter.SingleToInt32Bits(pixelsPerEm), flags,
+                       TrueTypeInterpreter.StretchPpemX << 16 | TrueTypeInterpreter.StretchPpemY);
             lock (_dwriteSpans)
                 if (_dwriteSpans.TryGetValue(key, out span64)) return span64 != int.MinValue;
             GlyphProgram? glyph = DWriteFit(glyphId, pixelsPerEm, flags, out _);
@@ -2357,7 +2358,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return span64 != int.MinValue;
         }
 
-        private readonly Dictionary<(int, int, int), int> _dwriteSpans = new();
+        private readonly Dictionary<(int, int, int, int), int> _dwriteSpans = new();
 
         /// <summary>The glyph fitted the way DirectWrite fits it for WPF: one run of the face's own
         /// program under DirectWrite's rendering-mode word (<see cref="TrueTypeInterpreter.DWriteFlags"/>,
