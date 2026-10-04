@@ -47,7 +47,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
     internal sealed partial class GpGraphics
     {
         const float RealEpsilon = 1.1920929e-07f;
-        internal static readonly bool Dbg = Environment.GetEnvironmentVariable ("GP_IMGDBG") == "1";
 
         static int Floor (float f) => (int) MathF.Floor (f);
         static int Ceil (float f) => (int) MathF.Ceiling (f);
@@ -252,9 +251,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
             try {
                 if (!((m.Complexity & ~1) == 0 && NearInteger (m.Dx, 0.015625f) && NearInteger (m.Dy, 0.015625f))) {
                     RotateFlipType rf = AnalyzeRotateFlip (m);
-                    if (rf != 0 && RotateFlipPorted) {
+                    if (rf != 0) {
+                        float iw = bmp.Width, ih = bmp.Height;
                         bmp = RotatedCopy (bmp, rf);
-                        RotateFlipSetup (rf, bmp, half, ref m, ref src, ref pts);
+                        RotateFlipSetup (rf, iw, ih, half, ref m, ref src, ref pts);
                     }
                 }
                 int interp = (int) _ctx.Interpolation;
@@ -277,8 +277,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
         }
 
-        const bool RotateFlipPorted = false;
-
         static GdipFrame RotatedCopy (GdipFrame f, RotateFlipType rf)
         {
             GdipFrame c = GdipPixels.Convert (f, new Rectangle (0, 0, f.Width, f.Height), PixelFormat.Format32bppPArgb, false);
@@ -286,33 +284,35 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         /// <summary>The rotate/flip block of DrvDrawImage: the source rect moved onto the rotated copy,
-        /// and the device matrix left a translate (world-to-device made that translation).</summary>
-        void RotateFlipSetup (RotateFlipType rf, GdipFrame rotated, bool half, ref GpMatrix m, ref RectangleF src, ref PointF[] pts)
+        /// and world-to-device made the translation that is left (the source's own W x H are the
+        /// unrotated image's).</summary>
+        void RotateFlipSetup (RotateFlipType rf, float W, float H, bool half, ref GpMatrix m, ref RectangleF src, ref PointF[] pts)
         {
-            // The rotated bitmap's size: for quarter turns width and height swap.
-            float bw = rotated.Width, bh = rotated.Height;  // after rotation
+            float dyHalf = m.Dy + 0.5f;
             float x = src.X, y = src.Y, w = src.Width, h = src.Height;
-            float dx = m.Dx, dy = m.Dy + 0.5f;
+            float dx = m.Dx, dy = m.Dy;
             if (half) {
                 x += 0.5f; y += 0.5f;
                 dx = (m.M11 * -0.5f - m.M21 * 0.5f) + m.Dx + 0.5f;
-                dy = (m.M22 * -0.5f - m.M12 * 0.5f) + dy;
-            } else dy = m.Dy;
-            // The image height/width before rotation (the binary reads them from the image info).
-            float iw = (int) rf % 2 == 1 ? bh : bw, ih = (int) rf % 2 == 1 ? bw : bh;
-            float nx = x, ny = y, nw = w, nh = h;
-            switch ((int) rf) {
-            case 1: nw = h; nh = w; dx = -ih + 0f + dx; dy = -ih * 0f + 0f + dy; nx = (ih - (y + y + h)) + y; ny = x + 0f; break;
-            case 2: dx = -iw * 0f + -ih + dx; dy = -ih * 0f + -iw + dy; nx = (iw - (x * 2f + w)) + x; ny = (ih - (y * 2f + h)) + y; break;
-            case 3: nw = h; nh = w; dx = -iw * 0f + 0f + dx; dy = -iw + 0f + dy; nx = y; ny = (iw - (x + x + w)) + x; break;
-            case 4: dx = -iw + 0f + dx; dy = -iw * 0f + 0f + dy; nx = (iw - (x * 2f + w)) + x; ny = y + 0f; break;
-            case 5: nx = y; ny = x; nw = h; nh = w; break;
-            case 6: dx = -ih * 0f + 0f + dx; dy = -ih + 0f + dy; nx = x + 0f; ny = (ih - (y * 2f + h)) + y; break;
-            case 7: dx = -iw * 0f + -ih + dx; dy = -ih * 0f + -iw + dy; nw = h; nh = w; nx = (ih - (y + y + h)) + y; ny = (iw - (x + x + w)) + x; break;
+                dy = (m.M22 * -0.5f - m.M12 * 0.5f) + dyHalf;
             }
+            var t = new GpMatrix { M11 = 1, M22 = 1, Dx = dx, Dy = dy };
+            int cx = t.ComputeComplexity ();
+            float nx = x, ny = y, nw = w, nh = h;
+            bool or1 = true;
+            switch ((int) rf) {
+            case 1: nw = h; nh = w; dx = (-H + 0f) + dx; dy = (-H * 0f + 0f) + dy; nx = (H - (y + y + h)) + y; ny = x + 0f; break;
+            case 2: dx = (-H * 0f + -W) + dx; dy = (-W * 0f + -H) + dy; nx = (W - (x * 2f + w)) + x; ny = (H - (y * 2f + h)) + y; break;
+            case 3: dx = (-W * 0f + 0f) + dx; dy = (-W + 0f) + dy; nw = h; nh = w; nx = 0f + y; ny = (W - (x + x + w)) + x; break;
+            case 4: dx = (-W + 0f) + dx; dy = (-W * 0f + 0f) + dy; nx = (W - (x * 2f + w)) + x; ny = y + 0f; break;
+            case 5: nx = y; ny = x; nw = h; nh = w; or1 = false; break;
+            case 6: dx = (-H * 0f + 0f) + dx; dy = (-H + 0f) + dy; nx = x + 0f; ny = (H - (y * 2f + h)) + y; break;
+            case 7: dx = (-W * 0f + -H) + dx; dy = (-H * 0f + -W) + dy; nw = h; nh = w; nx = (H - (y + y + h)) + y; ny = (W - (x + x + w)) + x; break;
+            default: or1 = false; break;
+            }
+            if (or1) cx |= 1;
             src = new RectangleF (nx, ny, nw, nh);
-            m = new GpMatrix (1, 0, 0, 1, dx, dy);
-            if (rf != (RotateFlipType) 5) m.Complexity |= 1;
+            m = new GpMatrix { M11 = 1, M22 = 1, Dx = dx, Dy = dy, Complexity = cx };
             WorldToDevice = m;
             pts = new PointF [] { new PointF (nx, ny), new PointF (nw + nx, ny), new PointF (nx, nh + ny) };
         }
@@ -505,7 +505,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
             m.Transform (ref c0x, ref c0y);
             m.Transform (ref c2x, ref c2y);
             var dstRect = new RectangleF (c0x, c0y, c2x - c0x, c2y - c0y);
-            if (Dbg) Console.Error.WriteLine ($"DrvImg m={m} src=({srcRect.X:R},{srcRect.Y:R},{srcRect.Width:R},{srcRect.Height:R}) pts=({pts[0].X:R},{pts[0].Y:R}) ({pts[1].X:R},{pts[1].Y:R}) ({pts[2].X:R},{pts[2].Y:R}) band={src.Width}x{src.Height} bounds={drawBounds}");
             GpClip clip = Clip;
             GpScan scan = NewScan ();
             GpSpan span = CreateImageSpan (src, scan, m, ia, (int) _ctx.Interpolation, srcRect, dstRect, pts);
