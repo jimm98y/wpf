@@ -67,8 +67,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (w == null) return null;
                 if (!closed) result.AddPath (w, false);
                 else {
-                    DpRegion ra = GpRegionRaster.FromPath (w.PointArray (), w.TypeArray (), FillMode.Winding, GpMatrix.CreateIdentity ());
-                    DpRegion rb = GpRegionRaster.FromPath (sub.PointArray (), sub.TypeArray (), sub.FillMode, m);
+                    // Both paths are marked as curved (+0x18) for DpRegion::Set, so GetFlattenedPath
+                    // re-enumerates them even when they are lines: every point lands on 1/256 pixel.
+                    GpPath fw = w.Clone (); fw.HasBezier = true; fw.Flatten (null, 0.25f);
+                    GpPath fs = sub.Clone (); fs.HasBezier = true; fs.Flatten (m, 0.25f);
+                    DpRegion ra = GpRegionRaster.FromPath (fw.PointArray (), fw.TypeArray (), FillMode.Winding, GpMatrix.CreateIdentity ());
+                    DpRegion rb = GpRegionRaster.FromPath (fs.PointArray (), fs.TypeArray (), sub.FillMode, GpMatrix.CreateIdentity ());
                     DpRegion r = DpRegion.Combine (ra, rb, DpRegion.Op.And);
                     GpPath rp = GpRegionToPath.Convert (r);
                     if (rp != null && rp.Count > 0) result.AddPath (GpRegionToPath.ToWinding (rp), false);
