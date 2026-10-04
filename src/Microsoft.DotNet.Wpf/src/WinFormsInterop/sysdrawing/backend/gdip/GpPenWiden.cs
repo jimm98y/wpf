@@ -7,10 +7,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
 {
     internal static partial class GpPen
     {
+        /// <summary>GpPath::Widen @18008ab68 (GraphicsPath.Widen): the widened path in the space
+        /// <paramref name="matrix"/> maps to, winding; null when GDI+ fails it. <paramref name="solid"/>
+        /// drops the dashes first, as GpPath::IsOutlineVisible @180089ce0 does.</summary>
         public static partial GpPath Widen (GpPath path, Pen pen, GpMatrix matrix, float flatness, bool solid)
-            => throw new NotImplementedException ("GpPathWidener");
+        {
+            DpPen dp = DpPen.From (pen);
+            if (solid) { dp.DashStyle = 0; dp.DashArray = null; }
+            GpPath r = GetWidenedPath (path, dp, matrix, flatness, 96f);
+            if (r != null) r.FillMode = FillMode.Winding;
+            return r;
+        }
+
+        /// <summary>GdipGetPathWorldBounds with a pen: GpPath::GetBounds @18001c020, the control
+        /// box grown by the pen's reach (not the widened outline).</summary>
         public static partial RectangleF WidenedBounds (GpPath path, Pen pen, GpMatrix? matrix)
-            => throw new NotImplementedException ("GpPath::GetBounds with a pen");
+            => GpStroke.Bounds (path, matrix, DpPen.From (pen), 96f);
 
         /// <summary>GpPath::GetWidenedPath @180089680: the outline of the stroke, in the space
         /// <paramref name="m"/> maps to (device space for drawing). An Inset pen widens each closed
@@ -54,7 +66,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return wide;
         }
 
-        public static GpPath CreateDashedPath (GpPath path, DpPen pen, GpMatrix? m, float dpiX, float dpiY, float scale, bool flag) => null;
     }
 
     internal static partial class GpPathWarp

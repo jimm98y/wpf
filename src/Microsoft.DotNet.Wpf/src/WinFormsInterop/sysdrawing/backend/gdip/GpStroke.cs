@@ -284,7 +284,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
 
             if (opaqueAliased && simple && !path.HasBezier) {
-                StrokeOnePixel (path, w2d, pen, clip, draw);
+                StrokeOnePixel (path, w2d, pen, clip, draw, true);
                 return true;
             }
 
@@ -299,7 +299,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     if (!DeviceRect (flat, w2d, ref draw)) return true;
                     GpPath dashed = GpPen.CreateDashedPath (flat, pen, null, dpi, dpi, 1f, false);
                     if (dashed == null) return true;
-                    StrokeOnePixel (dashed, w2d, pen, clip, draw);
+                    StrokeOnePixel (dashed, w2d, pen, clip, draw, false);
                     return true;
                 }
                 fill = GpPen.GetWidenedPath (path, pen, w2d, 0.25f, dpi);
@@ -329,7 +329,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         // ---- the one-pixel aliased DDA ----------------------------------------------------------
 
-        void StrokeOnePixel (GpPath path, in GpMatrix w2d, DpPen pen, GpClip clip, Rectangle draw)
+        /// <summary>DrawSolidStrokeOnePixel through FixedPointPathEnumerate; <paramref name="lastPixel"/> is
+        /// the callback's flag (StrokePath sets it, SolidStrokePathOnePixel does not, and then only a
+        /// closed figure's segments keep their last pixel).</summary>
+        void StrokeOnePixel (GpPath path, in GpMatrix w2d, DpPen pen, GpClip clip, Rectangle draw, bool lastPixel)
         {
             uint color = (uint) ((SolidBrush) pen.Brush).Color.ToArgb ();
             GpScan scan = NewScan ();
@@ -351,7 +354,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 for (int i = 0; i + 1 < n; i++) {
                     var a = new PointF (buf [i * 2] * 0.0625f, buf [i * 2 + 1] * 0.0625f);
                     var b = new PointF (buf [i * 2 + 2] * 0.0625f, buf [i * 2 + 3] * 0.0625f);
-                    OnePixelLine.Draw (sink, clipRect, a, b, true);
+                    OnePixelLine.Draw (sink, clipRect, a, b, lastPixel || term == 2);
                 }
             });
             scan.End ();
