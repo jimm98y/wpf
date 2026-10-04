@@ -219,7 +219,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _winAscent = U16(os2 + 74);
                 _winDescent = U16(os2 + 76);
                 _xAvgCharWidth = (short) U16(os2 + 2);
+                if (os2 + 72 <= _data.Length)
+                {
+                    TypoAscender = (short) U16(os2 + 68);
+                    TypoDescender = (short) U16(os2 + 70);
+                }
             }
+            if (tables.TryGetValue("post", out int postUl) && postUl + 12 <= _data.Length)
+            {
+                UnderlinePosition = (short) U16(postUl + 8);
+                UnderlineThickness = (short) U16(postUl + 10);
+            }
+            HasVerticalMetrics = tables.ContainsKey("vmtx") || tables.ContainsKey("VORG");
             _vdmx = tables.TryGetValue("VDMX", out int vdmx) ? vdmx : -1;
             _isFixedPitch = tables.TryGetValue("post", out int postTable) && postTable + 16 <= _data.Length
                             && U32(postTable + 12) != 0;
@@ -627,6 +638,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>usWinAscent / usWinDescent: GDI+'s cell ascent and descent.</summary>
         internal int WinAscent => _winAscent;
+
+        /// <summary>OS/2 sTypoAscender / sTypoDescender, post underlinePosition / underlineThickness
+        /// (font units), and whether the face carries vertical metrics (vmtx or VORG) -- without
+        /// them DirectWrite's design metrics give every glyph the advance height
+        /// sTypoAscender - sTypoDescender and the vertical origin sTypoAscender.</summary>
+        internal int TypoAscender { get; private set; }
+        internal int TypoDescender { get; private set; }
+        internal int UnderlinePosition { get; private set; }
+        internal int UnderlineThickness { get; private set; }
+        internal bool HasVerticalMetrics { get; private set; }
         internal int WinDescent => _winDescent;
 
         /// <summary>The design advance (hmtx), in font units.</summary>

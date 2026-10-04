@@ -618,10 +618,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // needing moves of at most 12/64, with no instruction in the
                                 // program touching them.</para>
                                 if (s_alignrpTouchedOnly && !BiLevelPass && ClearTypeInfo
-                                    && (IsHorizontalProjection
-                                        ? _iupXDone && (z.Tags[p] & TagTouchX) == 0
+                                    && (CtSideProjection
+                                        ? CtSideIupDone && (z.Tags[p] & CtSideTag) == 0
                                         : s_alignrpBothAxes
-                                          && _iupYDone && (z.Tags[p] & TagTouchY) == 0)
+                                          && OtherSideIupDone && (z.Tags[p] & OtherSideTag) == 0)
                                     && !PostIupExempt("ALIGNRP", p)) continue;
                                 LinkX(_gs.Zp1, p, _gs.Zp0, _gs.Rp0, canProportion: true);
                                 MovePoint(z, p, -MeasureCurrent(_gs.Zp1, p, _gs.Zp0, _gs.Rp0));
@@ -788,11 +788,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // the move apply, not a condition on skipping at all.
                                 // WPF_CT_SHPIX_IUPY=0 restores the two-clause version.
                                 bool shpixApply =
-                                    _gs.ProjX == 0 && _gs.ProjY == 0x4000
+                                    PureOtherSideProjection
                                     && (_inComposite
                                         || ((uint) sp < (uint) z.PointCount
-                                            && (z.Tags[sp] & TagTouchY) != 0
-                                            && !(s_shpixAfterIupY && _iupYDone)));
+                                            && (z.Tags[sp] & OtherSideTag) != 0
+                                            && !(s_shpixAfterIupY && OtherSideIupDone)));
                                 // IN THE PRE-PROGRAM TOO. itrp_SHP_Common never asks which
                                 // program is running, and GDI's ClearType prep runs with the
                                 // ClearType bits set: Palatino Linotype Bold Italic's prep calls
@@ -1074,12 +1074,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // apart -- pt8 near 131 and pt13 near 150. Whatever GDI does here, it
                             // is neither "skip the block" nor "run the block as written".</para>
                             if (s_scfsXToo && !BiLevelPass && ClearTypeInfo
-                                && IsHorizontalProjection
-                                && (z.Tags[p] & TagTouchX) == 0
+                                && CtSideProjection
+                                && (z.Tags[p] & CtSideTag) == 0
                                 && !PostIupExempt("SCFS", p, value)) break;
                             if (s_scfsTouchedOnly && !BiLevelPass && ClearTypeInfo
-                                && !IsHorizontalProjection
-                                && (z.Tags[p] & TagTouchY) == 0
+                                && !CtSideProjection
+                                && (z.Tags[p] & OtherSideTag) == 0
                                 && !PostIupExempt("SCFS", p, value)) break;
                             MovePoint(z, p, value - Project(z.CurX[p], z.CurY[p]));
 
@@ -4339,11 +4339,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // was hinted for ClearType and wants none of the backward-compatibility filtering:
                 // Constantia Bold Italic '@' at 12ppem DELTAPs an untouched point after IUP[y] and
                 // GDI moves it. WPF_CT_DELTA_NATIVE=0 filters in native mode too.
-                if (!s_deltaOnUntouchedY && !BiLevelPass && ClearTypeInfo && !IsHorizontalProjection
+                if (!s_deltaOnUntouchedY && !BiLevelPass && ClearTypeInfo && !CtSideProjection
                     && !(s_deltaNativeFree && NativeClearTypeMode)
                     && !(s_deltaCompositeApplies && _inComposite)
                     && (uint) p < (uint) z.PointCount
-                    && ((z.Tags[p] & TagTouchY) == 0 || (s_deltaAfterIupY && _iupYDone)))
+                    && ((z.Tags[p] & OtherSideTag) == 0 || (s_deltaAfterIupY && OtherSideIupDone)))
                     continue;
                 if (SkipDeltaInClearTypeDirection(z, p, compositeExempt: false)
                     && (!s_yTrace || Skipped("DELTA", p, amount)))
@@ -4477,18 +4477,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (s_deltasFreeInPrep && _inPreProgram) return false;
                 if (compositeExempt && _inComposite) return false;
                 bool axis = s_deltaReMode == 3
-                            ? !(_gs.FreeX == 0 && _gs.FreeY == 0x4000)
-                            : !(_gs.ProjX == 0 && _gs.ProjY == 0x4000);
+                            ? !PureOtherSideFreedom
+                            : !PureOtherSideProjection;
                 if (axis) return true;
                 // "-- or a composite (+0x171)": on the y projection the composite byte applies the
                 // delta before the touch and IUP clauses are asked. See s_deltaCompositeApplies.
                 if (s_deltaCompositeApplies && _inComposite) return false;
                 if (s_deltaReMode == 2) return false;          // axis test only
                 bool untouched = (uint) point >= (uint) z.PointCount
-                                 || (z.Tags[point] & TagTouchY) == 0;
+                                 || (z.Tags[point] & OtherSideTag) == 0;
                 if (s_deltaReMode == 4) return untouched;      // touched-y only
-                if (s_deltaReMode == 5) return _iupYDone;      // post-IUP[y] only
-                return _iupYDone || untouched;
+                if (s_deltaReMode == 5) return OtherSideIupDone;      // post-IUP[y] only
+                return OtherSideIupDone || untouched;
             }
             if (!DeltaInClearTypeDirection || NativeClearTypeMode || s_keepAllDeltas || BiLevelPass) return false;
             if (compositeExempt && _inComposite) return false;
@@ -4504,7 +4504,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // adjust the position of horizontal strokes ... hence they are kept"). WPF_CT_DELTA=inline
             // skips only what comes after IUP.
             if (s_keepInlineDeltas && !_iupDone) return false;
-            return !s_keepTouchedDeltas || (z.Tags[point] & TagTouchY) == 0;
+            return !s_keepTouchedDeltas || (z.Tags[point] & OtherSideTag) == 0;
         }
 
         private void ApplyControlValueDeltas(int rangeOffset)

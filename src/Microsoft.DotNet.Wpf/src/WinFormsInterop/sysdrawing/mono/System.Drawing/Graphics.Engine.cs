@@ -351,6 +351,20 @@ namespace System.Drawing
 		/// (GpText). False where the engine does not draw this string.</summary>
 		bool EngineDrawString (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
 		{
+			// A vertical format goes to GDI+'s full imager (GpGraphics.DrawStringVertical).
+			if (gp != null && image_target != null && s_gdiPlusText && format != null
+			    && (format.FormatFlags & StringFormatFlags.DirectionVertical) != 0) {
+				string vfamily = font.FontFamily?.Name;
+				GpGraphics ve = string.IsNullOrEmpty (vfamily) ? null : Engine ();
+				if (ve != null && ve.CanFill (brush)) {
+					int vstyle = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0) | (font.Underline ? 4 : 0) | (font.Strikeout ? 8 : 0);
+					float[] vtabs = format.GetTabStops (out float vfirst);
+					if (ve.DrawStringVertical (s, vfamily, vstyle, font.SizeInPoints, brush, rect, (int) format.FormatFlags,
+					                           format.IsTypographic, (int) format.Alignment, (int) format.LineAlignment,
+					                           (int) format.HotkeyPrefix, (int) format.Trimming, vfirst, vtabs))
+						return true;
+				}
+			}
 			if (gp == null || image_target == null || !s_gdiPlusText || font.Underline || font.Strikeout)
 				return false;
 			string family = font.FontFamily?.Name;

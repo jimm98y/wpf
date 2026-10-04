@@ -65,6 +65,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// nothing else.</summary>
         internal const int NaturalScalerWord = 1;
 
+        /// <summary>The same word for a glyph turned a quarter (m00 == 0): fs__NewTransformation
+        /// @180070bc0 flips bit 2, so the scaler oversamples the glyph's y (the device x).</summary>
+        internal const int SidewaysScalerWord = NaturalScalerWord ^ 4;
+
         /// <summary>The word for GDI+'s 4x4 antialiased glyph bitmaps: 0x81, ClearType with bit 7
         /// ("ClearType grey") -- 1,728 of 1,728 test glyphs exact against DirectWrite's own (with the
         /// face's dropout control), where the natural word 1 gets 96 of 168. (The bi-level raster
@@ -685,6 +689,57 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeInterpreter.StretchPpemX = sx;
                 TrueTypeInterpreter.StretchPpemY = sy;
             }
+        }
+
+        /// <summary>A glyph laid sideways in vertical text (FullTextImager::GetFontTransform's quarter
+        /// turn): the realization matrix maps the glyph's x onto device y and its y onto device -x,
+        /// so the scaler (scl_InitializeScaling) sizes the glyph's x by the device y scale and its y
+        /// by the device x scale, fits it there, and turns the fit afterwards (scl_PostTransformGlyph,
+        /// the matrix over its own stretch).</summary>
+        internal static NaturalClearType.GlyphBits GlyphSideways(TrueTypeFont font, int gid, int ppemAlong, int ppemAcross)
+        {
+            int sx = TrueTypeInterpreter.StretchPpemX, sy = TrueTypeInterpreter.StretchPpemY;
+            TrueTypeInterpreter.StretchPpemX = ppemAlong == ppemAcross ? 0 : ppemAlong;
+            TrueTypeInterpreter.StretchPpemY = ppemAlong == ppemAcross ? 0 : ppemAcross;
+            try
+            {
+                // fs__NewTransformation toggles word bit 2 for m00 == 0: ClearType on the glyph's y.
+                return NaturalClearType.RasterizeQuarterTurn(font, gid, Math.Max(ppemAlong, ppemAcross), SidewaysScalerWord);
+            }
+            finally
+            {
+                TrueTypeInterpreter.StretchPpemX = sx;
+                TrueTypeInterpreter.StretchPpemY = sy;
+            }
+        }
+
+        /// <summary>GetGdiCompatibleGlyphMetrics with isSideways (what GDI+'s
+        /// GetGlyphStringVerticalOriginOffsets asks the realization for): the glyph measured as if
+        /// laid sideways under the world-to-device axis scale (m11, m22) -- its advance is the
+        /// natural fit's span with the glyph's x sized by the device y scale, back in design units
+        /// through em * m22, and its vertical origin (sTypoAscender, for a face with no vertical
+        /// metrics) rounded to the pixels of the device x scale and back through em * m11.
+        /// Times New Roman's .notdef at em 20 under (1.1014, 1.4904): 1580 and 1395 (design 1593
+        /// and 1420); under (1.4, 1.4904) 1580 and 1390.</summary>
+        internal static void SidewaysMetrics(TrueTypeFont font, int gid, float em, float m11, float m22,
+                                             out int advDu, out int voyDu)
+        {
+            int upem = font.UnitsPerEmForHinting;
+            int along = AxisPpem(em * m22), across = AxisPpem(em * m11);
+            int sxs = TrueTypeInterpreter.StretchPpemX, sys = TrueTypeInterpreter.StretchPpemY;
+            TrueTypeInterpreter.StretchPpemX = along == across ? 0 : along;
+            TrueTypeInterpreter.StretchPpemY = along == across ? 0 : across;
+            try
+            {
+                bool hasOutline = font.TryGetDesignXExtent(gid, out _, out _);
+                if (!font.TryGetDWriteFittedSpan64(gid, Math.Max(along, across), SidewaysScalerWord, out int span64))
+                    span64 = (int)MathF.Round(font.DesignAdvance(gid) * 64f * along / upem, MidpointRounding.AwayFromZero);
+                int px = (span64 + (hasOutline ? 32 : 34)) >> 6;
+                advDu = (int)Math.Floor(px * (double)upem / (em * m22) + 0.5);
+            }
+            finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
+            int voyPx = (int)Math.Floor(font.TypoAscender * (double)across / upem + 0.5);
+            voyDu = (int)Math.Floor(voyPx * (double)upem / (em * m11) + 0.5);
         }
 
         /// <summary>A device em (the world em through one axis of the world-to-device matrix) as
