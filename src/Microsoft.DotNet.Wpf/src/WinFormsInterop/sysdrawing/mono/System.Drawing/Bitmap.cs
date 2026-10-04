@@ -300,6 +300,8 @@ namespace System.Drawing
 				throw new OutOfMemoryException ();
 			// CopyOnWriteBitmap::Clone (0x1801cc578): the rectangle is copied in the bitmap's own
 			// format first, and only that copy is converted (ConvertFormat) when the format differs.
+			// A clone of all of it in its own format keeps the bytes the source was read from (@18007dd98).
+			bool whole = rect.X == 0 && rect.Y == 0 && rect.Width == f.Width && rect.Height == f.Height && format == f.Format;
 			GdipFrame part = f;
 			if (format != f.Format && (rect.X * f.BitsPerPixel) % 8 != 0) {
 				part = GdipPixels.Convert (f, rect, f.Format, conversionPalette: false);
@@ -309,7 +311,8 @@ namespace System.Drawing
 			// GDI+ keeps the source's alpha flag on a clone, whatever the clone's format -- and an
 			// indexed clone has nothing else: one of an opaque bitmap does not claim alpha.
 			int newFlags = (format & PixelFormat.Indexed) != 0 ? 0 : GdipImageData.NewFlags (format);
-			return new Bitmap (new GdipImageData (copy) { Flags = newFlags | (managed.Flags & (int) ImageFlags.HasAlpha) });
+			return new Bitmap (new GdipImageData (copy) { Flags = newFlags | (managed.Flags & (int) ImageFlags.HasAlpha),
+				SourceBytes = whole ? managed.SourceBytes : null });
 		}
 
 		public Bitmap Clone (RectangleF rect, PixelFormat format)

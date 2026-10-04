@@ -119,9 +119,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
         }
 
-        /// <summary>The encoded bytes an image was read from: GDI+ records those for a bitmap it has
-        /// not touched since reading it. The managed image does not keep them, so a bitmap goes as
-        /// a PNG, which is what GDI+ writes for any bitmap without them.</summary>
-        public static byte[] SourceBytes(Image im) => null;
+        /// <summary>The encoded bytes an image was read from (GdipImageData.SourceBytes): GDI+
+        /// records those, else a PNG of the bitmap.</summary>
+        public static byte[] SourceBytes(Image im) => im.managed?.SourceBytes;
     }
 }

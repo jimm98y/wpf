@@ -196,7 +196,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         Matrix m = (flags & 2) != 0 ? r.Matrix() : null;
                         Image im = ReadImage(r);
                         if (im == null) { r.Ok = false; return null; }
-                        var t = new TextureBrush(im, ValidWrap(wrap));
+                        var t = im is Bitmap tile ? new TextureBrush(tile, ValidWrap(wrap), adopt: true) : new TextureBrush(im, ValidWrap(wrap));
                         if (m != null) t.Transform = m;
                         return t;
                     }
