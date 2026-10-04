@@ -1278,6 +1278,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void ArcShape(RectangleF rc, float sx, float sy, float ex, float ey, int kind)
         {
+            if (Gdi) { GdiArcShape(rc, (int)sx, (int)sy, (int)ex, (int)ey, kind == 0 ? 0 : kind == 1 ? 2 : kind == 2 ? 3 : 1); return; }
             Box(rc, out float l, out float t, out float rr, out float b);
             if (rr - l <= 0 || b - t <= 0) return;
             float cx = (l + rr) / 2, cy = (t + b) / 2;

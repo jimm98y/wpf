@@ -230,7 +230,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int i0 = 0;
             if (fromCurrent)
             {
-                Fix(m, _dc.Pos.X, _dc.Pos.Y, out int cx, out int cy);
+                CurrentFix(m, out int cx, out int cy);
                 if (path.Empty || path.Figures[path.Figures.Count - 1].Closed || _gMoved) path.MoveTo(cx, cy);
             }
             else
@@ -261,9 +261,64 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         bool _gMoved;                 // a MoveTo since the path's last point
 
+        // An ArcTo leaves the current position in device units (ptfxCurrent, the logical one
+        // invalidated): kept here while the logical position is the one it was set with.
+        PointF? _gPosAt;
+        int _gPosFx, _gPosFy;
+
+        void CurrentFix(in GdiXform m, out int fx, out int fy)
+        {
+            if (_gPosAt.HasValue && _gPosAt.Value == _dc.Pos) { fx = _gPosFx; fy = _gPosFy; return; }
+            Fix(m, _dc.Pos.X, _dc.Pos.Y, out fx, out fy);
+        }
+
+        void SetCurrentFix(int fx, int fy)
+        {
+            GdiXform m = TargetWtoD();
+            if (m.Inverse(out GdiXform inv))
+            {
+                inv.Point2(fx, fy, out int lx, out int ly);
+                _dc.Pos = new PointF(lx, ly);
+            }
+            _gPosAt = _dc.Pos; _gPosFx = fx; _gPosFy = fy;
+        }
+
+        /// <summary>Arc (0), ArcTo (1), Chord (2), Pie (3) as NtGdiArcInternal @1401a2660 draws
+        /// them: the EBOX (a PS_INSIDEFRAME pen wider than the box draws nothing), the arc's path
+        /// (GdiArc), stroked, or for a chord or pie filled and stroked.</summary>
+        void GdiArcShape(RectangleF rc, int xs, int ys, int xe, int ye, int kind)
+        {
+            GdiPen pen = DrawPen();
+            int style = pen == null ? 5 : pen.Style & 0xf;
+            int gw = pen != null && pen.Geometric ? pen.Width : 0;
+            GdiXform m = TargetWtoD();
+            GdiBox e = GdiBox.Make((int)rc.Left, (int)rc.Top, (int)rc.Right, (int)rc.Bottom, m, !_wmfCanvas, true, style, gw, _dc.ArcDirection == 2);
+            if (e.FillInsideFrame || e.Empty) return;
+            GdiPath p;
+            if (kind == 1)
+            {
+                p = _inPath ? (_gPath ??= new GdiPath()) : new GdiPath();
+                CurrentFix(m, out int cx, out int cy);
+                if (p.Empty || p.Figures[p.Figures.Count - 1].Closed || _gMoved || !_inPath) p.MoveTo(cx, cy);
+                _gMoved = false;
+            }
+            else p = new GdiPath();
+            GdiArc.Build(p, e, kind, xs, ys, xe, ye);
+            if (kind == 1)
+            {
+                SetCurrentFix(p.CurrentX, p.CurrentY);
+                if (_inPath) return;
+                GdiStroke(p);
+                return;
+            }
+            if (kind == 0) { if (_inPath) { _gPath ??= new GdiPath(); _gPath.Append(p); } else GdiStroke(p); return; }
+            GdiFillAndStroke(p, true, true);
+        }
+
         void GdiMoveTo()
         {
             _gMoved = true;
+            _gPosAt = null;
             if (_inPath && _gPath != null)
             {
                 GdiXform m = TargetWtoD();

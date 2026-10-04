@@ -164,6 +164,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             p.CloseFigure();
         }
 
+        /// <summary>EBOX::ptlXform @1401a2258: a point of the unit circle (cos, sin) on the box:
+        /// the centre plus the half sides scaled, each rounded half away from zero.</summary>
+        public void Xform(float c, float s, out int x, out int y)
+        {
+            x = Mx + GdiXform.FToL((float)Hx * c + (float)Vx * s);
+            y = My + GdiXform.FToL((float)Hy * c + (float)Vy * s);
+        }
+
         /// <summary>GrepRectangle's path (A, B, C, D, closed).</summary>
         public void Rectangle(GdiPath p)
         {
@@ -172,6 +180,244 @@ namespace System.Drawing.WebGpuBackend.Gdip
             p.LineTo(Cx, Cy);
             p.LineTo(Dx, Dy);
             p.CloseFigure();
+        }
+    }
+
+    /// <summary>
+    /// GDI's arcs (win32kfull NtGdiArcInternal @1401a2660): the start and end radials as angles
+    /// (vArctan @1401a2338, over the box's centre and half sides from efHalfDiff, in the logical
+    /// rectangle EBOX ordered), their points on the unit circle (vCosSin @1401a24f8 from the 33
+    /// entry gaefSin table, or the Taylor series of vCosSinPrecise @1402efc20 when the sweep is
+    /// under three degrees), and the arc as one Bezier per quadrant crossed (bPartialArc
+    /// @1401a1778): a partial quadrant from the two tangents' crossing scaled by 4/3 cos / (1 +
+    /// cos) of the half angle (bPartialQuadrantArc @1401a1a30, efCos from the same table), a whole
+    /// one as bEllipse draws it.
+    /// </summary>
+    internal static class GdiArc
+    {
+        // win32kbase's tables: atan(i / 32) in degrees, sin(i * 90 / 32 degrees).
+        static readonly float[] Arctan = Floats(
+            0x00000000, 0x3fe51bca, 0x4064e2aa, 0x40ab62eb, 0x40e40022, 0x410e172e, 0x4129ea1c, 0x41456ce7,
+            0x41609474, 0x417b5695, 0x418ad50b, 0x4197c365, 0x41a472c8, 0x41b0e026, 0x41bd08f7, 0x41c8eb2f,
+            0x41d4853a, 0x41dfd5f7, 0x41eadcae, 0x41f59908, 0x42000583, 0x4205197c, 0x420a08ba, 0x420ed3a7,
+            0x42137ac6, 0x4217feb4, 0x421c601d, 0x42209fbe, 0x4224be63, 0x4228bcdf, 0x422c9c0c, 0x42305ccb,
+            0x42340000, 0x00000000);   // a ratio of exactly one reads the word after the table
+        static readonly float[] Sine = Floats(
+            0x00000000, 0x3d48fb30, 0x3dc8bd36, 0x3e164083, 0x3e47c5c2, 0x3e78cfcc, 0x3e94a031, 0x3eac7cd4,
+            0x3ec3ef15, 0x3edae880, 0x3ef15aea, 0x3f039c3d, 0x3f0e39da, 0x3f187fc0, 0x3f226799, 0x3f2beb4a,
+            0x3f3504f3, 0x3f3daef9, 0x3f45e403, 0x3f4d9f02, 0x3f54db31, 0x3f5b941a, 0x3f61c598, 0x3f676bd8,
+            0x3f6c835e, 0x3f710908, 0x3f74fa0b, 0x3f7853f8, 0x3f7b14be, 0x3f7d3aac, 0x3f7ec46d, 0x3f7fb10f,
+            0x3f800000);
+        static readonly float[] AxisCoord = { 0f, 1f, 0f, -1f };
+        static readonly float[] AxisAngle = { 0f, 90f, 180f, 270f };
+        static readonly byte[] Quadrants = { 0, 1, 3, 2, 0, 1, 3, 2 };
+        const float SineFactor = 0.35555556f;          // FP_SINE_FACTOR 0x3eb60b61 (32 / 90)
+        const float Pi = 3.1415925f;                   // FP_PI 0x40490fda
+        const float Epsilon = 1.52587890625e-05f;      // FP_EPSILON 0x37800000
+        const float FourThirds = 1.3333334f;           // FP_4DIV3 0x3faaaaab
+
+        static float[] Floats(params uint[] bits)
+        {
+            var r = new float[bits.Length];
+            for (int i = 0; i < r.Length; i++) r[i] = BitConverter.Int32BitsToSingle((int)bits[i]);
+            return r;
+        }
+
+        /// <summary>eFraction: the fractional part (of a non-negative value).</summary>
+        static float Fraction(float x)
+        {
+            int e = (BitConverter.SingleToInt32Bits(x) >> 23) & 0xff;
+            if (e < 0x7f) return x;
+            if (e >= 0x96) return 0f;
+            int m = (BitConverter.SingleToInt32Bits(x) & 0x7fffff) | 0x800000;
+            return x - (float)(m >> (0x96 - e));
+        }
+
+        /// <summary>The inline float to integer: toward zero, 0 past 2^31.</summary>
+        static int Trunc(float v)
+        {
+            int e = (BitConverter.SingleToInt32Bits(v) >> 23) & 0xff;
+            if (e > 0x9e) return 0;
+            return (int)v;
+        }
+
+        /// <summary>vArctan: the angle of (x, y) in degrees, 0 .. 360, and its quadrant.</summary>
+        public static void Atan(float x, float y, out float angle, out int quadrant)
+        {
+            int q = 0;
+            if (x < 0) { x = -x; q |= 1; }
+            if (y < 0) { y = -y; q |= 2; }
+            if (y > x) { (x, y) = (y, x); q |= 4; }
+            if (x == 0f) { angle = 0f; quadrant = 0; return; }
+            float r = (32f * y) / x;
+            int i = Trunc(r);
+            float t0 = Arctan[i];
+            float f = Fraction(r);
+            float a = f * (Arctan[i + 1] - t0) + t0;
+            switch (q)
+            {
+                case 4: a = 90f - a; break;
+                case 3: a = a + 180f; break;
+                case 2: a = 360f - a; break;
+                case 6: a = 270f + a; break;
+                case 1: a = 180f - a; break;
+                case 5: a = a + 90f; break;
+                case 7: a = 270f - a; break;
+            }
+            angle = a;
+            quadrant = Quadrants[q];
+        }
+
+        static float Lerp(int i, float f, bool mirrored)
+        {
+            if (!mirrored) { float s0 = Sine[i]; return (Sine[i + 1] - s0) * f + s0; }
+            float s1 = Sine[32 - i];
+            return -((s1 - Sine[31 - i]) * f) + s1;
+        }
+
+        /// <summary>vCosSin: from the sine table, linearly between its entries.</summary>
+        public static void CosSin(float angle, out float cos, out float sin)
+        {
+            bool neg = angle < 0;
+            if (neg) angle = -angle;
+            float v = SineFactor * angle;
+            int n = Trunc(v);
+            float f = Fraction(v);
+            int q = n >> 5, i = n & 31;
+            float s = Lerp(i, f, (q & 1) != 0);
+            if ((q & 2) != 0 ? !neg : neg) s = -s;
+            sin = s;
+            int q1 = q + 1;
+            float c = Lerp(i, f, (q1 & 1) != 0);
+            if ((q1 & 2) != 0) c = -c;
+            cos = c;
+        }
+
+        /// <summary>efSin (win32kbase @1400730b0), the same table.</summary>
+        static float Sin(float x)
+        {
+            bool neg = x < 0;
+            if (neg) x = -x;
+            float v = SineFactor * x;
+            int n = Trunc(v);
+            float f = Fraction(v);
+            int q = n >> 5, i = n & 31;
+            float s = Lerp(i, f, (q & 1) != 0);
+            if ((q & 2) != 0 ? !neg : neg) s = -s;
+            return s;
+        }
+
+        static float Cos(float x) => Sin(90f + x);
+
+        /// <summary>vCosSinPrecise: the angle reduced to the first quadrant in radians, then the
+        /// Taylor series to the twelfth power.</summary>
+        public static void CosSinPrecise(float angle, out float cos, out float sin)
+        {
+            bool neg = angle < 0, flipSin = false, flipCos = false;
+            if (neg) angle = -angle;
+            float a = Fraction(angle / 360f) * 360f;
+            if (180f - a < 0) { flipSin = true; a = 360f - a; }
+            if (90f - a < 0) { flipCos = true; a = 180f - a; }
+            float x = (Pi * a) / 180f;
+            float s = x, c = 1f, term = x, fact = 2f, k = 2f;
+            for (int n = 2; n < 13; n++)
+            {
+                term = term * x;
+                float d = term / fact;
+                if ((n & 2) != 0) d = -d;
+                if ((n & 1) != 0) s = d + s; else c = d + c;
+                k = 1f + k;
+                fact = k * fact;
+            }
+            if (neg != flipSin) s = -s;
+            if (flipCos) c = -c;
+            cos = c; sin = s;
+        }
+
+        /// <summary>bPartialQuadrantArc: one Bezier from (c0, s0) at a0 to (c3, s3) at a3, both in a
+        /// quadrant; <paramref name="type"/> 1 starts a figure there, 2 draws a line to it.</summary>
+        static void Quadrant(int type, GdiPath p, GdiBox e, float c0, float s0, float a0, float c3, float s3, float a3)
+        {
+            float c1 = c0, s1 = s0, c2 = c3, s2 = s3;
+            float cross = c0 * s3 - c3 * s0;
+            if (cross < 0) cross = -cross;
+            if (cross > Epsilon)
+            {
+                float tx = (s3 - s0) / cross, ty = (c0 - c3) / cross;
+                float h = Cos((a3 - a0) * 0.5f);
+                if (h < 0) h = -h;
+                float k = (FourThirds * h) / (1f + h);
+                float kx = k * tx, ky = k * ty, rest = 1f - k;
+                c1 = rest * c0 + kx; s1 = rest * s0 + ky;
+                c2 = rest * c3 + kx; s2 = rest * s3 + ky;
+            }
+            if (type != 0)
+            {
+                e.Xform(c0, s0, out int x0, out int y0);
+                if (type == 1) p.MoveTo(x0, y0); else p.LineTo(x0, y0);
+            }
+            e.Xform(c1, s1, out int x1, out int y1);
+            e.Xform(c2, s2, out int x2, out int y2);
+            e.Xform(c3, s3, out int x3, out int y3);
+            p.BezierTo(x1, y1, x2, y2, x3, y3);
+        }
+
+        const long K = 0x729d7775;
+        static int MulHi(int v) => (int)((v * K) >> 32);
+
+        /// <summary>bPartialArc: the start quadrant's part, every whole quadrant between, the end
+        /// quadrant's part (or, when both lie in one quadrant and the arc does not wrap, one part).</summary>
+        static void Partial(int type, GdiPath p, GdiBox e, float c0, float s0, int q0, float a0, float c3, float s3, int q3, float a3, bool wrap)
+        {
+            if (!wrap) { Quadrant(type, p, e, c0, s0, a0, c3, s3, a3); return; }
+            int q = (q0 + 1) & 3;
+            Quadrant(type, p, e, c0, s0, a0, AxisCoord[(q + 1) & 3], AxisCoord[q], AxisAngle[q]);
+            int kHx = MulHi(e.Hx), kHy = MulHi(e.Hy), kVx = MulHi(e.Vx), kVy = MulHi(e.Vy);
+            while (q != q3)
+            {
+                switch (q)
+                {
+                    case 0: p.BezierTo(e.Ax - kVx, e.Ay - kVy, e.Ax - kHx, e.Ay - kHy, e.Ax - e.Hx, e.Ay - e.Hy); break;
+                    case 1: p.BezierTo(e.Bx + kHx, e.By + kHy, e.Bx - kVx, e.By - kVy, e.Bx - e.Vx, e.By - e.Vy); break;
+                    case 2: p.BezierTo(e.Cx + kVx, e.Cy + kVy, e.Cx + kHx, e.Cy + kHy, e.Cx + e.Hx, e.Cy + e.Hy); break;
+                    default: p.BezierTo(e.Dx - kHx, e.Dy - kHy, e.Dx + kVx, e.Dy + kVy, e.Dx + e.Vx, e.Dy + e.Vy); break;
+                }
+                q = (q + 1) & 3;
+            }
+            Quadrant(0, p, e, AxisCoord[(q3 + 1) & 3], AxisCoord[q3], AxisAngle[q3], c3, s3, a3);
+        }
+
+        /// <summary>NtGdiArcInternal's path: <paramref name="kind"/> 0 Arc, 1 ArcTo (a line from the
+        /// current point first), 2 Chord (closed), 3 Pie (to the centre, closed).</summary>
+        public static void Build(GdiPath p, GdiBox e, int kind, int xs, int ys, int xe, int ye)
+        {
+            int l = e.L, t = e.T, r = e.R, b = e.B;
+            float cy = GdiBox.HalfDiff(t, -b), cx = GdiBox.HalfDiff(l, -r);
+            float a0 = 0f, a1 = 0f;
+            int q0 = 0, q1 = 0;
+            if (l != r && t != b)
+            {
+                float hw = GdiBox.HalfDiff(r, l), hh = GdiBox.HalfDiff(t, b);
+                Atan(((float)xs - cx) / hw, ((float)ys - cy) / hh, out a0, out q0);
+                Atan(((float)xe - cx) / hw, ((float)ye - cy) / hh, out a1, out q1);
+            }
+            float d = a1 - a0;
+            if (d < 0) d = -d;
+            float c0, s0, c1, s1;
+            if (d - 3f < 0 && d != 0f)
+            {
+                CosSinPrecise(a0, out c0, out s0);
+                CosSinPrecise(a1, out c1, out s1);
+            }
+            else
+            {
+                CosSin(a0, out c0, out s0);
+                CosSin(a1, out c1, out s1);
+            }
+            bool wrap = q0 != q1 || a1 <= a0;
+            Partial(kind == 1 ? 2 : 1, p, e, c0, s0, q0, a0, c1, s1, q1, a1, wrap);
+            if (kind == 2) p.CloseFigure();
+            else if (kind == 3) { p.LineTo(e.Mx, e.My); p.CloseFigure(); }
         }
     }
 }
