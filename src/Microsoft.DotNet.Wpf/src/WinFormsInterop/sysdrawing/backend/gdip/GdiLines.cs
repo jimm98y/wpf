@@ -74,7 +74,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>The pixels of the cosmetic line from (ax, ay) to (bx, by) (28.4), its last
         /// pixel excluded, with whether each is lit by the style (always, without one).</summary>
-        public static void Line(int ax, int ay, int bx, int by, Style style, List<(int X, int Y)> on)
+        public static void Line(int ax, int ay, int bx, int by, Style style, List<(int X, int Y)> on) => Line(ax, ay, bx, by, style, on, null);
+
+        /// <summary>The same, every pixel in drawing order with whether it falls in a gap (what an
+        /// OPAQUE background mode paints with the background colour).</summary>
+        public static void Line(int ax, int ay, int bx, int by, Style style, List<(int X, int Y, bool Gap)> all) => Line(ax, ay, bx, by, style, null, all);
+
+        static void Line(int ax, int ay, int bx, int by, Style style, List<(int X, int Y)> on, List<(int X, int Y, bool Gap)> all)
         {
             uint M0 = (uint)ax, dM = (uint)bx, N0 = (uint)ay, dN = (uint)by;
             int fl = 0;
@@ -261,7 +267,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int yStep = (fl & 8) != 0 ? -1 : 1;
             bool vertical = (fl & 3) == 1, diagonal = (fl & 2) != 0, dflip = (fl & 5) != 0;
             int px = X, py = Y;
-            void Lit(int x, int y) { if (!gap) on.Add((x, y)); }
+            void Lit(int x, int y) { if (all != null) all.Add((x, y, gap)); else if (!gap) on.Add((x, y)); }
             void Advance(int by)
             {
                 if (arr == null) return;

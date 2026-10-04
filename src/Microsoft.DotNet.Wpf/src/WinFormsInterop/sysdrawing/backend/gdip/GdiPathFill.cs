@@ -37,6 +37,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public readonly List<int> X = new List<int>(), Y = new List<int>();
             public readonly List<bool> Bezier = new List<bool>();
             public bool Closed;
+            public bool ResetStyle = true;   // PD_RESETSTYLE: a cosmetic style starts over here
             public int Count => X.Count;
             public bool HasBeziers { get { foreach (bool b in Bezier) if (b) return true; return false; } }
         }
@@ -118,7 +119,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             var buf = new int[2 * 64];
             foreach (Figure f in Figures)
             {
-                var g = new Figure { Closed = f.Closed };
+                var g = new Figure { Closed = f.Closed, ResetStyle = f.ResetStyle };
                 g.X.Add(f.X[0]); g.Y.Add(f.Y[0]); g.Bezier.Add(false);
                 for (int i = 1; i < f.Count; i++)
                 {

@@ -256,6 +256,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     Fix(m, pts[i].X, pts[i].Y, out int x, out int y);
                     path.LineTo(x, y);
                 }
+            // A figure drawn from the current point, outside a path bracket, continues the DC's
+            // style position (the path GreLineTo / PolylineTo builds starts without PD_RESETSTYLE);
+            // any other starts it over.
+            if (fromCurrent && !_inPath && path.Figures.Count == 1) path.Figures[0].ResetStyle = false;
             if (close) path.CloseFigure();
         }
 
@@ -304,6 +308,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             else p = new GdiPath();
             GdiArc.Build(p, e, kind, xs, ys, xe, ye);
+            if (kind == 1 && !_inPath) p.Figures[0].ResetStyle = false;
             if (kind == 1)
             {
                 SetCurrentFix(p.CurrentX, p.CurrentY);
@@ -332,6 +337,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (p.Empty || p.Figures[p.Figures.Count - 1].Closed || _gMoved || !_inPath) p.MoveTo(fx, fy);
             _gMoved = false;
             GdiArc.Angle(p, e, start, sweep);
+            if (!_inPath) p.Figures[0].ResetStyle = false;
             SetCurrentFix(p.CurrentX, p.CurrentY);
             if (!_inPath) GdiStroke(p);
         }
@@ -339,6 +345,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void GdiMoveTo()
         {
             _gMoved = true;
+            _dc.StyleState = 0;   // MoveToEx: DIRTY_STYLESTATE
             _gPosAt = null;
             if (_inPath && _gPath != null)
             {
@@ -501,6 +508,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void GdiStroke(GdiPath p, GdiPen pen, int join)
         {
             if (pen == null || pen.Null || Nop) return;
+            // DC::vRealizeLineAttrs, run when a draw finds another pen selected than the last
+            // one drawn with, starts the style position over.
+            if (!ReferenceEquals(_dc.StylePen, _dc.Pen)) { _dc.StyleState = 0; _dc.StylePen = _dc.Pen; }
             GdiXform m = TargetWtoD();
             if (!GeometricLineAttrs(pen, out GdiLineAttrs la))
             {
@@ -847,14 +857,24 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void GdiCosmetic(GdiPath p, uint color)
         {
             p = p.Flattened();
-            var lit = new List<(int X, int Y)>();
-            GdiLines.Style style = CosmeticStyle(DrawPen());
+            var lit = new List<(int X, int Y, bool Gap)>();
+            GdiPen pen = DrawPen();
+            GdiLines.Style style = CosmeticStyle(pen, _dc.StyleState);
+            int fresh = CosmeticStyle(pen, 0)?.Next ?? 0;
             foreach (GdiPath.Figure f in p.Figures)
             {
+                if (style != null && f.ResetStyle) style.Next = fresh;
                 for (int i = 1; i < f.Count; i++) GdiLines.Line(f.X[i - 1], f.Y[i - 1], f.X[i], f.Y[i], style, lit);
                 if (f.Closed && f.Count > 1) GdiLines.Line(f.X[f.Count - 1], f.Y[f.Count - 1], f.X[0], f.Y[0], style, lit);
             }
+            // bStrokeCosmetic @140171db8 writes back where its lines ended (clipped or not: each
+            // figure starting over, the oracle agrees).
+            if (style != null) _dc.StyleState = style.State;
             if (lit.Count == 0) return;
+            // A style's gaps take the background colour in OPAQUE mode (the mix's background
+            // half), and are left alone in TRANSPARENT.
+            bool opaque = _dc.BkMode == 2;
+            uint back = Rgb(_dc.BkColor);
             int code = _dc.Rop2;
             if (code != 13) _ropUsed = true;
             GdiRgn clip = GdiClip();
@@ -866,10 +886,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     byte* base0 = (byte*)bd.Scan0;
                     foreach (var q in lit)
                     {
+                        if (q.Gap && !opaque) continue;
                         if ((uint)q.X >= (uint)_cw || (uint)q.Y >= (uint)_ch) continue;
                         if (clip != null && !In(clip.Row(q.Y), q.X)) continue;
                         uint* px = (uint*)(base0 + q.Y * bd.Stride) + q.X;
-                        *px = code == 13 ? color : Rop2(code, color, *px);
+                        uint c = q.Gap ? back : color;
+                        *px = code == 13 ? c : Rop2(code, c, *px);
                     }
                 }
             }
@@ -894,16 +916,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
         static readonly int[][] GeometricStyles = { null, new[] { 3, 1 }, new[] { 1, 1 }, new[] { 3, 1, 1, 1 }, new[] { 3, 1, 1, 1, 1, 1 } };
 
         /// <summary>The cosmetic pen's style (null when solid).</summary>
-        GdiLines.Style CosmeticStyle(GdiPen pen)
+        GdiLines.Style CosmeticStyle(GdiPen pen, int state)
         {
             int st = pen.Style & 0xf;
-            if (st >= 1 && st <= 4) return GdiLines.Style.From(CosmeticStyles[st], false, 0);
-            if (st == 8) return GdiLines.Style.Alternate(0);
+            if (st >= 1 && st <= 4) return GdiLines.Style.From(CosmeticStyles[st], false, state);
+            if (st == 8) return GdiLines.Style.Alternate(state);
             if (st == 7 && pen.Dashes != null && pen.Dashes.Length > 0)
             {
                 var e = new int[pen.Dashes.Length];
                 for (int i = 0; i < e.Length; i++) e[i] = (int)pen.Dashes[i];
-                return GdiLines.Style.From(e, false, 0);
+                return GdiLines.Style.From(e, false, state);
             }
             return null;
         }

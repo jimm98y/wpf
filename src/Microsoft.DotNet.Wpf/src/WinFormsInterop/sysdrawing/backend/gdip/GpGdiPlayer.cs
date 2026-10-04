@@ -104,6 +104,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public GdiXform GWorld = GdiXform.Identity, VWorld = GdiXform.Identity;
             public bool GWorldIdentity = true, VWorldIdentity = true;
             public GdiRgn GClip, GMeta;
+            public int StyleState;       // the cosmetic style position LineTo continues from
+            public GdiPen StylePen;      // the pen last realized (drawn with)
             public Dc Clone()
             {
                 var d = (Dc)MemberwiseClone();
@@ -138,14 +140,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
             _path?.Dispose();
         }
 
-        static GdiPen StockPen(int i)
+        // One object per stock pen, as GDI has one handle: reselecting it is the same pen.
+        readonly GdiPen[] _stockPens = new GdiPen[3];
+
+        GdiPen StockPen(int i)
         {
-            switch (i)
+            int k = i == 6 ? 0 : i == 8 ? 2 : 1;
+            return _stockPens[k] ??= k switch
             {
-                case 6: return new GdiPen { Style = 0, Width = 0, Color = Color.White };
-                case 8: return new GdiPen { Style = 5 };
-                default: return new GdiPen { Style = 0, Width = 0, Color = Color.Black };
-            }
+                0 => new GdiPen { Style = 0, Width = 0, Color = Color.White },
+                2 => new GdiPen { Style = 5 },
+                _ => new GdiPen { Style = 0, Width = 0, Color = Color.Black },
+            };
         }
 
         static GdiBrush StockBrush(int i)
