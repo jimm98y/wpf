@@ -99,7 +99,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         return;
                     }
                 case 0x02FA:
-                    PutWmf(new GdiPen { Style = (ushort)P(0), Width = P(1), Color = ColorRef(ColorRef16(b, o + 6)) });
+                    PutWmf(new GdiPen { Style = (ushort)P(0), Width = P(1), Color = ColorRef(ColorRef16(b, o + 6)), Old = true });
                     return;
                 case 0x02FC:
                     {
