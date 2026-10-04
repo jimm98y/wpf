@@ -79,6 +79,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return Buffer;
         }
 
+        /// <summary>Grows the buffer to <paramref name="n"/>, keeping what it holds (it may be pending).</summary>
+        public void Reserve (int n)
+        {
+            if (Buffer.Length < n) Array.Resize (ref Buffer, Math.Max (n, Buffer.Length * 2));
+        }
+
         public void Flush ()
         {
             if (!_pending || _n <= 0) { _pending = false; return; }

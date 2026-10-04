@@ -394,8 +394,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GpClip clip = Clip;
             if (clip.IsEmpty) return true;
             GpScan scan = NewScan ();
-            GpSpan span = CreateSpan (brush, scan, Rectangle.Empty);
-            if (span == null) return false;
+            GpSpan span = CreateSpan (brush, scan, RectsDrawBounds (list));
+            if (span == null) return true;
             ISpanSink sink = clip.Wrap (span);
             GpMatrix m = WorldToDevice;
             foreach (RectangleF r in list) {
@@ -421,13 +421,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             RectangleF b = DeviceBounds (pts);
             if (!(MathF.Abs (b.Width) >= 1.1920929e-07f) || !(MathF.Abs (b.Height) >= 1.1920929e-07f)) return true;
             if (!(b.X >= -1073741824f && b.X <= 1073741824f && b.Y >= -1073741824f && b.Y <= 1073741824f)) return true;
-            int bx = (int) b.X, by = (int) b.Y;
-            int bw = (int) (b.X + b.Width) - bx + 1, bh = (int) (b.Y + b.Height) - by + 1;
+            // RenderFillPath: floor of the origin, ceiling of the far edge, plus one.
+            int bx = (int) MathF.Floor (b.X), by = (int) MathF.Floor (b.Y);
+            int bw = (int) MathF.Ceiling (b.X + b.Width) - bx + 1, bh = (int) MathF.Ceiling (b.Y + b.Height) - by + 1;
             var draw = new Rectangle (bx, by, bw, bh);
             if (!clip.IsVisible (draw)) return true;
             GpScan scan = NewScan ();
             GpSpan span = CreateSpan (brush, scan, draw);
-            if (span == null) return false;
+            if (span == null) return true;
             GpRaster.FillPath (pts, types, pts.Length, WorldToDevice, fill == FillMode.Winding, GpRaster.AntialiasMode (_ctx.Smoothing), span, clip, draw);
             scan.End ();
             return true;
@@ -443,11 +444,40 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (d.IsEmpty) return true;
             GpScan scan = NewScan ();
             GpSpan span = CreateSpan (brush, scan, d.Bounds);
-            if (span == null) return false;
-            foreach (Rectangle r in d.Rects ())
-                for (int y = r.Top; y < r.Bottom; y++) span.OutputSpan (y, r.Left, r.Right);
+            if (span == null) return true;
+            // DpRegion::Fill @1800dbc28: band by band, each row's spans left to right.
+            foreach (DpRegion.Band b in d.Bands)
+                for (int y = b.Top; y < b.Bottom; y++)
+                    for (int i = 0; i + 1 < b.X.Length; i += 2) span.OutputSpan (y, b.X [i], b.X [i + 1]);
             scan.End ();
             return true;
+        }
+
+        /// <summary>GpGraphics::FillRects' device bounds of the rectangles (their union transformed,
+        /// two corners for a translate/scale) through BoundsFToRect @180035210.</summary>
+        Rectangle? RectsDrawBounds (List<RectangleF> list)
+        {
+            RectangleF u0 = list [0];
+            float l = u0.X, t = u0.Y, r = u0.Width + l, b = u0.Height + t;
+            for (int i = 1; i < list.Count; i++) {
+                RectangleF q = list [i];
+                if (!(l <= q.X)) l = q.X;
+                if (r < q.Width + q.X) r = q.Width + q.X;
+                if (!(t <= q.Y)) t = q.Y;
+                if (!(q.Height + q.Y <= b)) b = q.Height + q.Y;
+            }
+            GpMatrix m = WorldToDevice;
+            if (m.Complexity != 0) {
+                RectangleF tb = GpPathGradientSpans.TransformBounds (m, l, t, r, b);
+                l = tb.X; t = tb.Y; r = tb.Right; b = tb.Bottom;
+            }
+            float w = r - l, h = b - t;
+            if (w <= 0.0005960464477539062f) w = 0f;
+            if (h <= 0.0005960464477539062f) h = 0f;
+            const float Lim = 1073741824f;
+            if (!(l >= -Lim && l <= Lim && t >= -Lim && t <= Lim && w >= 0f && w <= Lim && h >= 0f && h <= Lim)) return null;
+            int x = (int) MathF.Floor (l), y = (int) MathF.Floor (t);
+            return new Rectangle (x, y, (int) MathF.Ceiling (l + w) - x + 1, (int) MathF.Ceiling (t + h) - y + 1);
         }
 
         RectangleF DeviceBounds (PointF[] pts)
@@ -462,7 +492,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         // ---- brushes ---------------------------------------------------------------------------------
 
-        GpSpan CreateSpan (Brush brush, GpScan scan, Rectangle draw)
+        GpSpan CreateSpan (Brush brush, GpScan scan, Rectangle? draw)
         {
             switch (brush) {
             case SolidBrush sb:

@@ -78,7 +78,9 @@ namespace System.Drawing.Drawing2D {
 		internal int[] SurroundArgb => _surround;
 		internal bool OneSurround => _oneSurround;
 		internal int CenterArgb => _centerArgb;
-		internal GpMatrix Xform => _xf;
+		internal GpMatrix Xform { get => _xf; set => _xf = value; }
+		/// <summary>The wrap mode without the public setter's check (CreateOutputSpan swaps it).</summary>
+		internal WrapMode WrapInternal { get => _wrap; set => _wrap = value; }
 		internal int BlendCount => _count;
 		internal float BlendFactor0 => _factor0;
 		internal float[] StoredFactors => _factors;
@@ -86,6 +88,56 @@ namespace System.Drawing.Drawing2D {
 		internal bool PresetSet => _preset;
 		internal int[] StoredPresetArgb => _presetArgb;
 		internal PointF FocusScalesInternal => new PointF (_focusX, _focusY);
+		// +0x1b0: the count of the flattened points when Flatten last flattened a curved path (the
+		// points at +0x90 are then already in device space)
+		int _flatCount;
+		internal bool PointsFlattened => _flatCount != 0;
+
+		/// <summary>GpPathGradient::GetPoint @18015a260.</summary>
+		internal bool GetPoint (int i, out PointF p)
+		{
+			if (i < 0 || i >= _n) { p = default; return false; }
+			p = _points [i];
+			return true;
+		}
+
+		/// <summary>GpPathGradient::GetSurroundColor @1801a3240: false (and <paramref name="argb"/>
+		/// untouched) for an index out of range.</summary>
+		internal bool GetSurroundColor (int i, ref int argb)
+		{
+			if (i < 0 || i >= _n) return false;
+			argb = _oneSurround ? _surround [0] : _surround [i];
+			return true;
+		}
+
+		/// <summary>GpPathGradient::Flatten @18000b5f8, which the gradient spans call with their
+		/// brush-to-device matrix: a path without curves lends its points (still in world space); a
+		/// curved one is flattened at 0.25 through the matrix and the brush keeps the device-space
+		/// points, its point count changing for good, the surround colours grown with the last one
+		/// (white when there was a single colour).</summary>
+		internal void Flatten (in GpMatrix m)
+		{
+			if (_path == null) return;
+			if (!_path.HasBezier) {
+				_n = _path.Count;
+				_points = _path.PointArray ();
+				return;
+			}
+			int old = _n;
+			GpPath flat = _path.Clone ();
+			flat.Flatten (m, 0.25f);
+			int n = flat.Count;
+			_flatCount = n;
+			_n = n;
+			_points = flat.PointArray ();
+			if (old < n && _surround != null) {
+				int fill = old < 2 ? unchecked ((int) 0xffffffff) : _surround [old - 1];
+				int[] grown = new int [n];
+				Array.Copy (_surround, grown, Math.Min (_surround.Length, n));
+				for (int i = old; i < n; i++) grown [i] = fill;
+				_surround = grown;
+			}
+		}
 
 		PathGradientBrush ()
 		{
@@ -477,6 +529,7 @@ namespace System.Drawing.Drawing2D {
 			c._factors = (float []) _factors?.Clone ();
 			c._positions = (float []) _positions?.Clone ();
 			c._presetArgb = (int []) _presetArgb?.Clone ();
+			c._flatCount = 0;
 			return c;
 		}
 	}
