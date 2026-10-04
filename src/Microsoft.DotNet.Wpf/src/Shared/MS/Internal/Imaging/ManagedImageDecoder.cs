@@ -64,7 +64,7 @@ namespace System.Windows.Media.Imaging
 
         internal static byte[] DecodePng(byte[] data, out int width, out int height, out double dpiX, out double dpiY,
             out ManagedPixelLayout narrowFormat, out uint[] narrowPalette, out int narrowStride, out PngInfo info,
-            bool allowNarrow = true, bool roundGray16 = false)
+            bool allowNarrow = true, byte[] gray16 = null, bool narrowInterlaced = false)
         {
             int pos = 8;
             width = 0; height = 0; dpiX = 96; dpiY = 96;
@@ -178,7 +178,9 @@ namespace System.Windows.Media.Imaging
             narrowStride = 0;
             // allowNarrow is false where the caller composites the result itself and needs BGRA --
             // an ICO entry, whose PNG is merged with the icon's own mask.
-            bool narrow = allowNarrow && interlace == 0 && bitDepth <= 8 &&
+            // narrowInterlaced (System.Drawing, whose GDI+ hands an interlaced palette image out in
+            // its indexed format too) packs an Adam7 image's passes into the narrow rows as well.
+            bool narrow = allowNarrow && (interlace == 0 || narrowInterlaced) && bitDepth <= 8 &&
                 (colorType == 3 || (colorType == 0 && trns == null));
 
             if (narrow)
@@ -207,8 +209,45 @@ namespace System.Windows.Media.Imaging
                 narrowStride = (width * bitDepth + 7) / 8;
                 var packedPixels = new byte[checked(narrowStride * height)];
                 int packedPos = 0;
-                DecodePass(rawBytes, ref packedPos, null, width, height, width, 0, 0, 1, 1,
-                    bitDepth, colorType, channels, palette, trns, packedPixels, narrowStride);
+                if (interlace == 0)
+                {
+                    DecodePass(rawBytes, ref packedPos, null, width, height, width, 0, 0, 1, 1,
+                        bitDepth, colorType, channels, palette, trns, packedPixels, narrowStride);
+                    return packedPixels;
+                }
+
+                // Adam7: each pass unfiltered into its own packed rows, its samples then placed at
+                // their pixels.
+                ReadOnlySpan<int> ix0 = [0, 4, 0, 2, 0, 1, 0];
+                ReadOnlySpan<int> iy0 = [0, 0, 4, 0, 2, 0, 1];
+                ReadOnlySpan<int> idx = [8, 8, 4, 4, 2, 2, 1];
+                ReadOnlySpan<int> idy = [8, 8, 8, 4, 4, 2, 2];
+                int mask = (1 << bitDepth) - 1;
+                for (int p = 0; p < 7; p++)
+                {
+                    int pw = (width - ix0[p] + idx[p] - 1) / idx[p];
+                    int ph = (height - iy0[p] + idy[p] - 1) / idy[p];
+                    if (pw <= 0 || ph <= 0)
+                    {
+                        continue;
+                    }
+                    int passStride = (pw * bitDepth + 7) / 8;
+                    var pass = new byte[checked(passStride * ph)];
+                    DecodePass(rawBytes, ref packedPos, null, pw, ph, pw, 0, 0, 1, 1,
+                        bitDepth, colorType, channels, palette, trns, pass, passStride);
+                    for (int j = 0; j < ph; j++)
+                    {
+                        int outRow = (iy0[p] + j * idy[p]) * narrowStride;
+                        for (int i = 0; i < pw; i++)
+                        {
+                            int sb = i * bitDepth;
+                            int v = (pass[j * passStride + (sb >> 3)] >> (8 - bitDepth - (sb & 7))) & mask;
+                            int ob = (ix0[p] + i * idx[p]) * bitDepth;
+                            int shift = 8 - bitDepth - (ob & 7);
+                            packedPixels[outRow + (ob >> 3)] = (byte)((packedPixels[outRow + (ob >> 3)] & ~(mask << shift)) | (v << shift));
+                        }
+                    }
+                }
                 return packedPixels;
             }
 
@@ -217,7 +256,7 @@ namespace System.Windows.Media.Imaging
             if (interlace == 0)
             {
                 DecodePass(rawBytes, ref rawPos, bgra, width, height, width, 0, 0, 1, 1,
-                    bitDepth, colorType, channels, palette, trns, roundGray16: roundGray16);
+                    bitDepth, colorType, channels, palette, trns, gray16: gray16);
             }
             else
             {
@@ -235,7 +274,7 @@ namespace System.Windows.Media.Imaging
                         continue;
                     }
                     DecodePass(rawBytes, ref rawPos, bgra, pw, ph, width, x0[p], y0[p], dx[p], dy[p],
-                        bitDepth, colorType, channels, palette, trns, roundGray16: roundGray16);
+                        bitDepth, colorType, channels, palette, trns, gray16: gray16);
                 }
             }
             return bgra;
@@ -248,7 +287,7 @@ namespace System.Windows.Media.Imaging
         private static void DecodePass(byte[] raw, ref int rawPos, byte[] bgra,
             int passWidth, int passHeight, int outWidth, int outX0, int outY0, int outDx, int outDy,
             int bitDepth, int colorType, int channels, byte[] palette, byte[] trns,
-            byte[] packed = null, int packedStride = 0, bool roundGray16 = false)
+            byte[] packed = null, int packedStride = 0, byte[] gray16 = null)
         {
             int bitsPerPixel = channels * bitDepth;
             int rowBytes = (passWidth * bitsPerPixel + 7) / 8;
@@ -309,14 +348,14 @@ namespace System.Windows.Media.Imaging
                     // For a palette or greyscale PNG the UNFILTERED SCANLINE IS ALREADY the packed
                     // pixel row -- PNG filtering is per byte, and an Indexed4 row really is two
                     // pixels to the byte in exactly the layout wanted. So the narrow formats do
-                    // not need packing so much as they need not to be expanded. (Only reached for
-                    // non-interlaced images, where a pass row maps 1:1 onto an output row.)
+                    // not need packing so much as they need not to be expanded. (An interlaced
+                    // image's pass rows are unpacked onto the output by the caller.)
                     Array.Copy(row, 0, packed, y * packedStride, Math.Min(rowBytes, packedStride));
                 }
                 else
                 {
                     EmitRow(row, bgra, passWidth, (outY0 + y * outDy) * outWidth + outX0, outDx,
-                        bitDepth, colorType, palette, trns, roundGray16);
+                        bitDepth, colorType, palette, trns, gray16);
                 }
                 (prev, row) = (row, prev);
             }
@@ -324,10 +363,10 @@ namespace System.Windows.Media.Imaging
 
         /// <summary>Converts one unfiltered scanline to BGRA at the given output pixel index/step.</summary>
         private static void EmitRow(byte[] row, byte[] bgra, int passWidth, int outIndex, int outStep,
-            int bitDepth, int colorType, byte[] palette, byte[] trns, bool roundGray16 = false)
+            int bitDepth, int colorType, byte[] palette, byte[] trns, byte[] gray16 = null)
         {
-            // roundGray16: a 16-bit grey sample ROUNDED to eight bits (as GDI+ reads one) rather
-            // than cut to its high byte.
+            // gray16: what each 16-bit grey sample becomes in eight bits (System.Drawing passes WIC's
+            // own conversion) rather than its high byte.
             // Per-sample reader across 1/2/4/8/16-bit packing; 16-bit keeps the high byte.
             int bitPos = 0;
             int Sample()
@@ -360,7 +399,7 @@ namespace System.Windows.Media.Imaging
                         int full = bitDepth == 16 ? (row[bitPos] << 8) | row[bitPos + 1] : 0;
                         int v = Sample();
                         byte gg = (byte)(subByte ? v * 255 / grayMax : v);
-                        if (bitDepth == 16 && roundGray16) gg = (byte)((full * 255 + 32767) / 65535);
+                        if (bitDepth == 16 && gray16 != null) gg = gray16[full];
                         r = g = b = gg;
                         if (trns != null && trns.Length >= 2 && v == ((trns[0] << 8) | trns[1]) % (grayMax + 1))
                         {

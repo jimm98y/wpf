@@ -10,7 +10,8 @@
 // Every rule here was read off gdiplus.dll through System.Drawing on Windows (the oracle in the
 // scratchpad, img/oracle/Oracle.cs; its samples and answers are the unit tests' fixtures):
 //
-//   PNG   palette 1/4/8 bit -> that indexed format; RGB 8-bit -> 24bppRgb; everything else (grey,
+//   PNG   palette 1/4/8 bit -> that indexed format (interlaced too), unless it has a tRNS chunk;
+//         1-bit grey -> 1bppIndexed black and white; RGB 8-bit -> 24bppRgb; everything else (grey,
 //         16-bit, alpha, tRNS, 2-bit palette) -> 32bppArgb. Properties sRGB (0x303), gAMA (0x301),
 //         and always PixelUnit/PixelPerUnitX/Y (0x5110-2). DPI from pHYs, truncated to a float.
 //   BMP   1/4/8 -> indexed; 16 -> 32bppRgb; 24 -> 24bppRgb; 32 -> 32bppRgb unless the header has an
@@ -20,12 +21,14 @@
 //         NETSCAPE block), GlobalPalette (0x5102), IndexBackground (0x5103), IndexTransparent (0x5104).
 //   JPEG  24bppRgb (8bppIndexed grey for one component); EXIF tags, then the chrominance and
 //         luminance quantisation tables (0x5091, 0x5090) in natural order.
-//   TIFF  per page: RGB -> 24bppRgb, RGBA -> 32bppArgb, palette/grey <= 8 bits -> indexed; every
-//         IFD entry as a property.
+//   TIFF  per page: RGB -> 24bppRgb, RGBA -> 32bppArgb (associated alpha 32bppPArgb), palette ->
+//         indexed (2-bit as 4bpp), 1-bit grey -> black and white, 2/4/8-bit grey -> 8bppIndexed grey
+//         levels, 16-bit grey -> 32bppArgb; every IFD entry as a property.
 //   ICO   the entry nearest 16x16, deepest first -> 32bppArgb.
 //
 // Flags: ReadOnly, HasRealDPI when the file stated a resolution (else HasRealPixelSize), the colour
-// space, HasAlpha as each decoder reports it.
+// space of WIC's frame format, HasAlpha for an alpha format or a palette with alpha; palette flags
+// as GpWicDecoder::SetPalette sets them (PaletteFlagsOf below).
 //
 
 using System.Collections.Generic;
@@ -129,6 +132,10 @@ namespace System.Drawing
             return c;
         }
 
+        // GpWicDecoder::SetPalette (0x180044ec8) asks the palette WIC hands over: HasAlpha when
+        // IWICPalette::HasAlpha (an entry is not opaque), GrayScale when IsGrayscale (every entry
+        // grey) AND it has more than two entries, Halftone for WIC's fixed halftone types (3..9),
+        // which no palette read from a file is.
         static int PaletteFlagsOf (Color[] p)
         {
             int flags = 0;
@@ -137,21 +144,52 @@ namespace System.Drawing
                 if (c.A != 255) flags |= (int) PaletteFlags.HasAlpha;
                 if (c.R != c.G || c.G != c.B) gray = false;
             }
-            return gray && p.Length > 0 ? flags | (int) PaletteFlags.GrayScale : flags;
+            return gray && p.Length > 2 ? flags | (int) PaletteFlags.GrayScale : flags;
+        }
+
+        // What GpWicDecoder::DecodeFrame (0x1800431f0) adds to the decoder's capability flags:
+        // HasAlpha when the GDI+ format has alpha or an indexed one's palette has, and the colour
+        // space of WIC's FRAME format -- Gray for 2/4/8/16bpp grey (not black-and-white), RGB for
+        // everything else.
+        static int FrameFlags (GdipFrame f, bool wicGray)
+            => (wicGray ? FlagGray : FlagRgb)
+               | (Image.IsAlphaPixelFormat (f.Format) || (f.Palette != null && (f.PaletteFlags & (int) PaletteFlags.HasAlpha) != 0) ? FlagAlpha : 0);
+
+        // WIC's black-and-white palette (GpWicDecoder::GetPixelFormat 0x180044150 initializes it for
+        // GUID_WICPixelFormatBlackWhite).
+        static Color[] BlackWhite () => new [] { Color.FromArgb (unchecked ((int) 0xff000000)), Color.FromArgb (unchecked ((int) 0xffffffff)) };
+
+        // GUID_WICPixelFormat2/4/8bppGray become 8bppIndexed over WIC's FixedGray256 palette.
+        static Color[] Gray256 ()
+        {
+            var p = new Color [256];
+            for (int i = 0; i < 256; i++) p [i] = Color.FromArgb (255, i, i, i);
+            return p;
         }
 
         static GdipImageData DecodePng (byte[] data)
         {
             byte[] pixels = ManagedImageDecoder.DecodePng (data, out int w, out int h, out _, out _,
                 out ManagedPixelLayout narrow, out uint[] narrowPalette, out int narrowStride, out ManagedImageDecoder.PngInfo info,
-                allowNarrow: true, roundGray16: true);
+                allowNarrow: true, gray16: WicGamma.Gray16, narrowInterlaced: true);
             GdipFrame frame;
-            if (narrowStride != 0 && ManagedPixelLayouts.IsIndexed (narrow) && narrow != ManagedPixelLayout.Indexed2) {
+            // GpWicPngDecoder::GetPixelFormat (0x18010d220): a palette image is its own indexed
+            // format unless it is 2-bit or has a tRNS chunk (any tRNS, all opaque or not), which
+            // make it 32bppArgb; 1-bit grey is WIC's BlackWhite, so 1bppIndexed black and white;
+            // other grey, 16-bit and alpha formats are 32bppArgb.
+            if (narrowStride != 0 && ManagedPixelLayouts.IsIndexed (narrow) && narrow != ManagedPixelLayout.Indexed2 && !info.HasTransparency) {
                 PixelFormat pf = narrow == ManagedPixelLayout.Indexed1 ? PixelFormat.Format1bppIndexed
                                : narrow == ManagedPixelLayout.Indexed4 ? PixelFormat.Format4bppIndexed : PixelFormat.Format8bppIndexed;
                 Color[] palette = Colors (narrowPalette);
                 frame = FromPacked (pixels, narrowStride, w, h, pf, palette);
-                frame.PaletteFlags = PaletteFlagsOf (palette) & ~(int) PaletteFlags.GrayScale;
+                frame.PaletteFlags = PaletteFlagsOf (palette);
+            } else if (info.ColorType == 0 && info.BitDepth == 1 && !info.HasTransparency) {
+                byte[] bgra = narrowStride != 0 ? ManagedPixelConverter.ToBgra32 (pixels, narrowStride, w, h, narrow, narrowPalette) : pixels;
+                frame = new GdipFrame (w, h, PixelFormat.Format1bppIndexed) { Palette = BlackWhite () };
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                        if (bgra [(y * w + x) * 4] >= 128) frame.Bits [y * frame.Stride + (x >> 3)] |= (byte) (0x80 >> (x & 7));
+                frame.PaletteFlags = 0;
             } else {
                 byte[] bgra = narrowStride != 0 ? ManagedPixelConverter.ToBgra32 (pixels, narrowStride, w, h, narrow, narrowPalette) : pixels;
                 // A tRNS colour KEY makes a pixel transparent black, as GDI+ reads it.
@@ -162,9 +200,10 @@ namespace System.Drawing
             bool realDpi = info.HasPhys && info.PhysUnit == 1;
             if (realDpi) { frame.DpiX = DpiFromPpm (info.PpmX); frame.DpiY = DpiFromPpm (info.PpmY); }
             var img = new GdipImageData (frame) { RawFormat = ImageFormat.Png.Guid };
-            bool gray = info.ColorType == 0 && !info.HasTransparency;
-            bool alpha = frame.Format == PixelFormat.Format32bppArgb || (frame.Palette != null && (frame.PaletteFlags & (int) PaletteFlags.HasAlpha) != 0);
-            img.Flags = FlagReadOnly | FlagRealPixelSize | (realDpi ? FlagRealDpi : 0) | (gray ? FlagGray : FlagRgb) | (alpha ? FlagAlpha : 0);
+            // WIC's frame format for grey without tRNS is Gray2/4/8/16 (BlackWhite at one bit); with
+            // tRNS it is already BGRA.
+            bool gray = info.ColorType == 0 && !info.HasTransparency && info.BitDepth > 1;
+            img.Flags = FlagReadOnly | FlagRealPixelSize | (realDpi ? FlagRealDpi : 0) | FrameFlags (frame, gray);
             if (info.SrgbIntent >= 0) img.Properties.Add (Byte (0x303, info.SrgbIntent));
             if (info.Gamma > 0) {
                 var v = new byte [8];
@@ -188,7 +227,7 @@ namespace System.Drawing
                 PixelFormat pf = narrow == ManagedPixelLayout.Indexed1 ? PixelFormat.Format1bppIndexed
                                : narrow == ManagedPixelLayout.Indexed4 ? PixelFormat.Format4bppIndexed : PixelFormat.Format8bppIndexed;
                 frame = FromPacked (pixels, narrowStride, w, h, pf, Colors (narrowPalette));
-                frame.PaletteFlags = 0;
+                frame.PaletteFlags = PaletteFlagsOf (frame.Palette);
             } else if (narrowStride != 0) {
                 // RLE: expanded to 32bppRgb, the fourth byte zero (as GDI+ leaves it).
                 frame = FromBgra (ManagedPixelConverter.ToBgra32 (pixels, narrowStride, w, h, narrow, narrowPalette), w, h, PixelFormat.Format32bppRgb);
@@ -262,7 +301,6 @@ namespace System.Drawing
                 // GpWicDecoder::SetPalette (0x180044ec8): HasAlpha from the WIC palette, GrayScale
                 // when every entry is grey AND there are more than two of them.
                 frame.PaletteFlags = PaletteFlagsOf (palette);
-                if (palette.Length <= 2) frame.PaletteFlags &= ~(int) PaletteFlags.GrayScale;
                 img = new GdipImageData (frame);
                 img.Flags = FlagReadOnly | FlagRealPixelSize | FlagRealDpi | FlagRgb | ((frame.PaletteFlags & (int) PaletteFlags.HasAlpha) != 0 ? FlagAlpha : 0);
             } else {
@@ -343,41 +381,58 @@ namespace System.Drawing
             return -1;
         }
 
+        // GpWicTiffDecoder::GetPixelFormat (0x18010d490) and GpWicDecoder::GetPixelFormat
+        // (0x180044150) over what WIC's TIFF decoder reports: a palette page is its indexed format
+        // (2-bit as 4bppIndexed) in its own colour map; 1-bit grey is BlackWhite, so black and white
+        // with min-is-white's bits inverted; 2/4/8-bit grey is Gray2/4/8 and becomes 8bppIndexed
+        // over FixedGray256, the LEVEL (min-is-white inverted) as the index; 16-bit grey is
+        // 32bppArgb; associated alpha is 32bppPArgb as stored.
         static GdipImageData DecodeTiff (byte[] data)
         {
-            List<ManagedTiffPage> pages = ManagedTiffDecoder.Decode (data);
+            List<ManagedTiffPage> pages = ManagedTiffDecoder.Decode (data, allowTwoBit: true, keepAssociatedAlpha: true, gray16: WicGamma.Gray16);
             var frames = new GdipFrame [pages.Count];
             var props = new List<PropertyItem>[pages.Count];
+            bool gray0 = false;
             for (int i = 0; i < pages.Count; i++) {
                 ManagedTiffPage page = pages [i];
                 ManagedTiffPageInfo info = page.Info;
                 GdipFrame f;
+                bool grey = info != null && info.Palette == null && info.SamplesPerPixel == 1 && (info.Photometric == 0 || info.Photometric == 1);
+                if (i == 0) gray0 = grey && info.BitsPerSample > 1;
                 if (info != null && info.Indices != null && info.BitsPerSample <= 8) {
-                    PixelFormat pf = info.BitsPerSample == 1 ? PixelFormat.Format1bppIndexed
-                                   : info.BitsPerSample <= 4 ? PixelFormat.Format4bppIndexed : PixelFormat.Format8bppIndexed;
+                    int bps = info.BitsPerSample, max = (1 << bps) - 1;
+                    PixelFormat pf;
                     Color[] palette;
-                    int levels = 1 << info.BitsPerSample;
-                    if (info.Palette != null) palette = Colors (info.Palette);
-                    else {
-                        palette = new Color [levels];
-                        for (int k = 0; k < levels; k++) {
-                            int v = k * 255 / (levels - 1);
-                            if (info.Photometric == 0) v = 255 - v;
-                            palette [k] = Color.FromArgb (255, v, v, v);
-                        }
+                    if (info.Palette != null) {
+                        pf = bps == 1 ? PixelFormat.Format1bppIndexed : bps <= 4 ? PixelFormat.Format4bppIndexed : PixelFormat.Format8bppIndexed;
+                        palette = Colors (info.Palette);
+                    } else if (bps == 1) {
+                        pf = PixelFormat.Format1bppIndexed;
+                        palette = BlackWhite ();
+                    } else {
+                        pf = PixelFormat.Format8bppIndexed;
+                        palette = Gray256 ();
                     }
-                    f = new GdipFrame (page.Width, page.Height, pf) { Palette = palette, PaletteFlags = info.Palette != null ? 0 : (int) PaletteFlags.GrayScale };
+                    f = new GdipFrame (page.Width, page.Height, pf) { Palette = palette };
+                    f.PaletteFlags = PaletteFlagsOf (palette);
                     int bits = Image.GetPixelFormatSize (pf);
                     for (int y = 0; y < page.Height; y++)
                         for (int x = 0; x < page.Width; x++) {
                             int idx = info.Indices [y * page.Width + x];
+                            if (info.Palette == null) {
+                                if (info.Photometric == 0) idx = max - idx;
+                                if (bps > 1) idx = idx * 255 / max;
+                            }
                             int o = y * f.Stride;
                             if (bits == 8) f.Bits [o + x] = (byte) idx;
                             else if (bits == 4) f.Bits [o + (x >> 1)] |= (byte) ((idx & 15) << ((x & 1) == 0 ? 4 : 0));
                             else f.Bits [o + (x >> 3)] |= (byte) ((idx & 1) << (7 - (x & 7)));
                         }
+                } else if (info != null && info.HasAlpha && info.ExtraSample == 1) {
+                    f = new GdipFrame (page.Width, page.Height, PixelFormat.Format32bppPArgb);
+                    for (int y = 0; y < page.Height; y++) Buffer.BlockCopy (page.Bgra, y * page.Width * 4, f.Bits, y * f.Stride, page.Width * 4);
                 } else {
-                    bool alpha = info == null || info.HasAlpha;
+                    bool alpha = info == null || info.HasAlpha || (grey && info.BitsPerSample == 16);
                     f = FromBgra (page.Bgra, page.Width, page.Height, alpha ? PixelFormat.Format32bppArgb : PixelFormat.Format24bppRgb);
                 }
                 if (page.DpiX > 0 && page.DpiY > 0) { f.DpiX = TruncToFloat (page.DpiX); f.DpiY = TruncToFloat (page.DpiY); }
@@ -389,8 +444,7 @@ namespace System.Drawing
             var img = new GdipImageData (frames [0].Clone ()) { RawFormat = ImageFormat.Tiff.Guid, Frames = frames.Length > 1 ? frames : null };
             img.Properties = props [0];
             img.FrameProperties = props;
-            bool a0 = frames [0].Format == PixelFormat.Format32bppArgb;
-            img.Flags = FlagReadOnly | FlagRealPixelSize | FlagRealDpi | FlagRgb | (a0 ? FlagAlpha : 0);
+            img.Flags = FlagReadOnly | FlagRealPixelSize | FlagRealDpi | FrameFlags (frames [0], gray0);
             return img;
         }
 

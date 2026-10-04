@@ -102,6 +102,9 @@ namespace System.Windows.Media.Imaging
         internal int Compression;
         /// <summary>True when the page carries an alpha sample.</summary>
         internal bool HasAlpha;
+        /// <summary>The first ExtraSamples value (0 unspecified, 1 associated, 2 unassociated
+        /// alpha), -1 without the tag.</summary>
+        internal int ExtraSample = -1;
         /// <summary>For a palette or bilevel/greyscale page of at most 8 bits: one index (or level)
         /// per pixel, row-major, before any expansion.</summary>
         internal byte[]? Indices;
@@ -164,8 +167,12 @@ namespace System.Windows.Media.Imaging
             return false;
         }
 
-        /// <summary>Decodes every page in the IFD chain.</summary>
-        internal static List<ManagedTiffPage> Decode(byte[] data)
+        /// <summary>Decodes every page in the IFD chain. System.Drawing (GDI+'s semantics through
+        /// WIC) also reads 2-bit samples, and keeps associated alpha's colour premultiplied, as WIC
+        /// hands it over in 32bppPBGRA, and can map a 16-bit grey sample to eight bits through
+        /// <c>gray16</c> (WIC's conversion); WPF does none of these.</summary>
+        internal static List<ManagedTiffPage> Decode(byte[] data, bool allowTwoBit = false, bool keepAssociatedAlpha = false,
+                                                     byte[]? gray16 = null)
         {
             if (!IsTiff(data))
             {
@@ -183,7 +190,7 @@ namespace System.Windows.Media.Imaging
 
             while (ifdOffset > 0 && ifdOffset + 2 <= data.Length && visited.Add(ifdOffset))
             {
-                pages.Add(DecodePage(data, (int)ifdOffset, bigEndian, out long next));
+                pages.Add(DecodePage(data, (int)ifdOffset, bigEndian, out long next, allowTwoBit, keepAssociatedAlpha, gray16));
                 ifdOffset = next;
             }
 
@@ -197,7 +204,8 @@ namespace System.Windows.Media.Imaging
 
         // ---- one page --------------------------------------------------------------------
 
-        private static ManagedTiffPage DecodePage(byte[] data, int ifdOffset, bool bigEndian, out long nextIfd)
+        private static ManagedTiffPage DecodePage(byte[] data, int ifdOffset, bool bigEndian, out long nextIfd,
+                                                  bool allowTwoBit, bool keepAssociatedAlpha, byte[]? gray16)
         {
             var entries = new Dictionary<ushort, IfdEntry>();
             var order = new List<IfdEntry>();
@@ -241,7 +249,7 @@ namespace System.Windows.Media.Imaging
 
             uint[] bitsPerSample = GetArray(data, entries, TagBitsPerSample, bigEndian);
             int bits = bitsPerSample.Length > 0 ? (int)bitsPerSample[0] : 1;
-            if (bits is not (1 or 4 or 8 or 16))
+            if (bits is not (1 or 4 or 8 or 16) && !(allowTwoBit && bits == 2))
             {
                 throw new NotSupportedException($"TIFF with {bits} bits per sample is not supported.");
             }
@@ -268,7 +276,7 @@ namespace System.Windows.Media.Imaging
             uint[] extraSamples = GetArray(data, entries, TagExtraSamples, bigEndian);
             // ExtraSamples 1 is ASSOCIATED alpha, i.e. already multiplied into the colour. WPF wants
             // straight alpha, so those samples have to be divided back out below.
-            bool premultiplied = extraSamples.Length > 0 && extraSamples[0] == 1;
+            bool premultiplied = extraSamples.Length > 0 && extraSamples[0] == 1 && !keepAssociatedAlpha;
 
             uint[] palette = photometric == PhotometricPalette
                 ? GetArray(data, entries, TagColorMap, bigEndian)
@@ -315,7 +323,7 @@ namespace System.Windows.Media.Imaging
                 }
 
                 EmitBlock(raw, bgra, indices, width, blockBytesPerRow, firstRow, rowCount, firstColumn, columnCount,
-                          samplesPerPixel, bits, photometric, palette, premultiplied);
+                          samplesPerPixel, bits, photometric, palette, premultiplied, gray16);
                 return true;
             }
 
@@ -408,7 +416,7 @@ namespace System.Windows.Media.Imaging
         private static void EmitBlock(byte[] raw, byte[] bgra, byte[]? indices, int width, int bytesPerRow,
                                       int firstRow, int rowCount, int firstColumn, int columnCount,
                                       int samplesPerPixel, int bits,
-                                      int photometric, uint[] palette, bool premultiplied)
+                                      int photometric, uint[] palette, bool premultiplied, byte[]? gray16 = null)
         {
             int paletteEntries = palette.Length / 3;
             int maxValue = (1 << bits) - 1;
@@ -467,7 +475,8 @@ namespace System.Windows.Media.Imaging
 
                         case PhotometricWhiteIsZero:
                         {
-                            byte grey = Scale(maxValue - ReadSample(raw, rowStart, sampleBase, bits), maxValue);
+                            int level = maxValue - ReadSample(raw, rowStart, sampleBase, bits);
+                            byte grey = bits == 16 && gray16 != null ? gray16[level] : Scale(level, maxValue);
                             r = g = b = grey;
                             if (samplesPerPixel >= 2)
                             {
@@ -479,7 +488,8 @@ namespace System.Windows.Media.Imaging
                         case PhotometricBlackIsZero:
                         default:
                         {
-                            byte grey = Scale(ReadSample(raw, rowStart, sampleBase, bits), maxValue);
+                            int level = ReadSample(raw, rowStart, sampleBase, bits);
+                            byte grey = bits == 16 && gray16 != null ? gray16[level] : Scale(level, maxValue);
                             r = g = b = grey;
                             if (samplesPerPixel >= 2)
                             {
@@ -517,6 +527,7 @@ namespace System.Windows.Media.Imaging
                 BitsPerSample = bits,
                 Compression = compression,
                 HasAlpha = samplesPerPixel >= (photometric == PhotometricRgb ? 4 : 2) && extraSamples.Length > 0,
+                ExtraSample = extraSamples.Length > 0 ? (int)extraSamples[0] : -1,
                 Indices = indices,
             };
             if (photometric == PhotometricPalette && colorMap.Length >= 3)
@@ -634,7 +645,7 @@ namespace System.Windows.Media.Imaging
 
                 default:
                 {
-                    // 1 and 4 bits: samples are packed MSB-first within each byte.
+                    // 1, 2 and 4 bits: samples are packed MSB-first within each byte.
                     int bitOffset = index * bits;
                     int offset = rowStart + bitOffset / 8;
                     if (offset >= raw.Length) return 0;
