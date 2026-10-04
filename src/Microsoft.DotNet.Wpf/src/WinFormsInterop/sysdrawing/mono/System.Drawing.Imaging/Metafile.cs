@@ -64,23 +64,7 @@ namespace System.Drawing.Imaging {
 		IntPtr ownedHandle;
 		bool ownedIsWmf;
 
-		// Graphics.cs at HEAD still names these: a no-op now that nothing native needs keeping alive.
-		internal sealed class MetafileHolder : IDisposable
-		{
-			internal bool Disposed { get; private set; }
-			public void Dispose () { Disposed = true; }
-			internal void MetafileDisposed (IntPtr nativeImage) { }
-			internal void GraphicsDisposed () { Dispose (); }
-		}
-
-		internal MetafileHolder AddMetafileHolder () => new MetafileHolder ();
-
 		// ---- the recorder hook Graphics.FromImage(metafile) uses ------------------------------------
-
-		/// <summary>The recorder a Graphics made by FromImage draws into: non-null only while this
-		/// metafile is being recorded and no Graphics has been taken from it yet... GDI+ hands out one
-		/// Graphics per recording (a second FromImage is OutOfMemory) and none once it has ended.</summary>
-		internal GpMetafileRecorder Recorder => state == MetafileState.Recording ? recorder : null;
 
 		/// <summary>Graphics.FromImage(metafile): the recorder, once (GDI+'s
 		/// GpMetafile::GetGraphicsContext answers OutOfMemory to a second call and to a metafile
