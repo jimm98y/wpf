@@ -2,45 +2,16 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-
 namespace System.Drawing
 {
-#if FEATURE_SYSTEM_EVENTS
-    using System.Drawing.Internal;
-#endif
-
     public sealed class SolidBrush : Brush
-#if FEATURE_SYSTEM_EVENTS
-        , ISystemColorTracker
-#endif
     {
-        // GDI+ doesn't understand system colors, so we need to cache the value here.
         private Color _color = Color.Empty;
         private bool _immutable;
 
         public SolidBrush(Color color)
         {
             _color = color;
-
-            // No libgdiplus (browser/WebAssembly): keep the managed colour only; the GPU-raster recorder
-            // reads SolidBrush.Color directly and never dereferences the native brush.
-            if (GDIPlus.Initialized)
-            {
-                IntPtr nativeBrush = IntPtr.Zero;
-                int status = SafeNativeMethods.Gdip.GdipCreateSolidFill(_color.ToArgb(), out nativeBrush);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-
-                SetNativeBrushInternal(nativeBrush);
-            }
-
-#if FEATURE_SYSTEM_EVENTS
-            if (ColorUtil.IsSystemColor(_color))
-            {
-                SystemColorTracker.Add(this);
-            }
-#endif
         }
 
         internal SolidBrush(Color color, bool immutable) : this(color)
@@ -48,25 +19,7 @@ namespace System.Drawing
             _immutable = immutable;
         }
 
-        internal SolidBrush(IntPtr nativeBrush)
-        {
-            Debug.Assert(nativeBrush != IntPtr.Zero, "Initializing native brush with null.");
-            SetNativeBrushInternal(nativeBrush);
-        }
-
-        public override object Clone()
-        {
-            if (NativeBrush == IntPtr.Zero)
-            {
-                return new SolidBrush(_color);
-            }
-            IntPtr clonedBrush = IntPtr.Zero;
-            int status = SafeNativeMethods.Gdip.GdipCloneBrush(new HandleRef(this, NativeBrush), out clonedBrush);
-            SafeNativeMethods.Gdip.CheckStatus(status);
-
-            // Clones of immutable brushes are not immutable.
-            return new SolidBrush(clonedBrush);
-        }
+        public override object Clone() => new SolidBrush(_color);
 
         protected override void Dispose(bool disposing)
         {
@@ -84,64 +37,15 @@ namespace System.Drawing
 
         public Color Color
         {
-            get
-            {
-                if (_color == Color.Empty && NativeBrush != IntPtr.Zero)
-                {
-                    int colorARGB;
-                    int status = SafeNativeMethods.Gdip.GdipGetSolidFillColor(new HandleRef(this, NativeBrush), out colorARGB);
-                    SafeNativeMethods.Gdip.CheckStatus(status);
-
-                    _color = Color.FromArgb(colorARGB);
-                }
-
-                // GDI+ doesn't understand system colors, so we can't use GdipGetSolidFillColor in the general case.
-                return _color;
-            }
-
+            get => _color;
             set
             {
                 if (_immutable)
                 {
                     throw new ArgumentException(SR.Format(SR.CantChangeImmutableObjects, "Brush"));
                 }
-
-                if (_color != value)
-                {
-                    Color oldColor = _color;
-                    InternalSetColor(value);
-
-#if FEATURE_SYSTEM_EVENTS
-                    // NOTE: We never remove brushes from the active list, so if someone is
-                    // changing their brush colors a lot, this could be a problem.
-                    if (ColorUtil.IsSystemColor(value) && !ColorUtil.IsSystemColor(oldColor))
-                    {
-                        SystemColorTracker.Add(this);
-                    }
-#endif
-                }
+                _color = value;
             }
         }
-
-        // Sets the color even if the brush is considered immutable.
-        private void InternalSetColor(Color value)
-        {
-            if (NativeBrush == IntPtr.Zero) { _color = value; return; }
-            int status = SafeNativeMethods.Gdip.GdipSetSolidFillColor(new HandleRef(this, NativeBrush), value.ToArgb());
-            SafeNativeMethods.Gdip.CheckStatus(status);
-
-            _color = value;
-        }
-
-#if FEATURE_SYSTEM_EVENTS
-        void ISystemColorTracker.OnSystemColorChanged()
-        {
-            if (NativeBrush != IntPtr.Zero)
-            {
-                InternalSetColor(_color);
-            }
-        }
-#endif
     }
 }
-

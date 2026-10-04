@@ -18,10 +18,10 @@
 // distribute, sublicense, and/or sell copies of the Software, and to
 // permit persons to whom the Software is furnished to do so, subject to
 // the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -30,9 +30,13 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
+//
+// A managed GpPath (WebGpuBackend.Gdip.GpPath): GDI+'s points and type bytes, built by GDI+'s own
+// rules (figure continuation, arc points, splines, flattening) as gdiplus.dll builds them.
+//
 
 using System.ComponentModel;
-using System.Runtime.InteropServices;
+using System.Drawing.WebGpuBackend.Gdip;
 
 namespace System.Drawing.Drawing2D
 {
@@ -41,23 +45,22 @@ namespace System.Drawing.Drawing2D
 		// 1/4 is the FlatnessDefault as defined in GdiPlusEnums.h
 		private const float FlatnessDefault = 1.0f / 4.0f;
 
-		internal IntPtr nativePath = IntPtr.Zero;
+		internal GpPath gp;
 
-		GraphicsPath (IntPtr ptr)
+		internal GraphicsPath (GpPath path)
 		{
-			nativePath = ptr;
+			gp = path;
 		}
 
 		public GraphicsPath ()
 		{
-                        Status status = GDIPlus.GdipCreatePath (FillMode.Alternate, out nativePath);
-                        GDIPlus.CheckStatus (status);
+			gp = new GpPath (FillMode.Alternate);
 		}
 
 		public GraphicsPath (FillMode fillMode)
 		{
-                        Status status = GDIPlus.GdipCreatePath (fillMode, out nativePath);
-                        GDIPlus.CheckStatus (status);
+			CheckFillMode (fillMode);
+			gp = new GpPath (fillMode);
 		}
 
 		public GraphicsPath (Point[] pts, byte[] types)
@@ -76,9 +79,8 @@ namespace System.Drawing.Drawing2D
 				throw new ArgumentNullException ("pts");
 			if (pts.Length != types.Length)
 				throw new ArgumentException ("Invalid parameter passed. Number of points and types must be same.");
-
-			Status status = GDIPlus.GdipCreatePath2I (pts, types, pts.Length, fillMode, out nativePath);
-			GDIPlus.CheckStatus (status);
+			CheckFillMode (fillMode);
+			gp = new GpPath (ToF (pts), types, fillMode);
 		}
 
 		public GraphicsPath (PointF[] pts, byte[] types, FillMode fillMode)
@@ -87,285 +89,151 @@ namespace System.Drawing.Drawing2D
 				throw new ArgumentNullException ("pts");
 			if (pts.Length != types.Length)
 				throw new ArgumentException ("Invalid parameter passed. Number of points and types must be same.");
-
-			Status status = GDIPlus.GdipCreatePath2 (pts, types, pts.Length, fillMode, out nativePath);
-			GDIPlus.CheckStatus (status);
+			CheckFillMode (fillMode);
+			gp = new GpPath (pts, types, fillMode);
 		}
-	
-                public object Clone ()
-                {
-                        IntPtr clone;
 
-                        Status status = GDIPlus.GdipClonePath (nativePath, out clone);
-                        GDIPlus.CheckStatus (status);                      	
-
-                        return new GraphicsPath (clone);
-                }
-
-                public void Dispose ()
-                {
-                        Dispose (true);
-                        System.GC.SuppressFinalize (this);
-                }
-
-                ~GraphicsPath ()
-                {
-                        Dispose (false);
-                }
-                
-		void Dispose (bool disposing)
+		static void CheckFillMode (FillMode mode)
 		{
-			Status status;
-			if (nativePath != IntPtr.Zero) {
-				status = GDIPlus.GdipDeletePath (nativePath);
-				GDIPlus.CheckStatus (status);
+			if (mode < FillMode.Alternate || mode > FillMode.Winding)
+				throw new InvalidEnumArgumentException ("fillMode", (int) mode, typeof (FillMode));
+		}
 
-				nativePath = IntPtr.Zero;
-			}
+		static PointF [] ToF (Point [] p)
+		{
+			var r = new PointF [p.Length];
+			for (int i = 0; i < p.Length; i++) r [i] = new PointF (p [i].X, p [i].Y);
+			return r;
+		}
+
+		public object Clone () => new GraphicsPath (gp.Clone ());
+
+		public void Dispose ()
+		{
+			GC.SuppressFinalize (this);
+		}
+
+		static void Invalid ()
+		{
+			throw new ArgumentException ("Parameter is not valid.");
 		}
 
 		public FillMode FillMode {
-			get {
-				FillMode mode;
-				Status status = GDIPlus.GdipGetPathFillMode (nativePath, out mode);
-				GDIPlus.CheckStatus (status);
-
-				return mode;
-			}
+			get => gp.FillMode;
 			set {
-				if ((value < FillMode.Alternate) || (value > FillMode.Winding))
-					throw new InvalidEnumArgumentException ("FillMode", (int)value, typeof (FillMode));
-
-				Status status = GDIPlus.GdipSetPathFillMode (nativePath, value);
-				GDIPlus.CheckStatus (status);
+				CheckFillMode (value);
+				gp.FillMode = value;
 			}
 		}
 
 		public PathData PathData {
 			get {
-				int count;
-				Status status = GDIPlus.GdipGetPointCount (nativePath, out count);
-				GDIPlus.CheckStatus (status);
-
-				PointF [] points = new PointF [count];
-				byte [] types = new byte [count];
-
-				// status would fail if we ask points or types with a 0 count
-				// anyway that would only mean two unrequired unmanaged calls
-				if (count > 0) {
-					status = GDIPlus.GdipGetPathPoints (nativePath, points, count);
-					GDIPlus.CheckStatus (status);
-
-					status = GDIPlus.GdipGetPathTypes (nativePath, types, count);
-					GDIPlus.CheckStatus (status);
-				}
-
-				PathData pdata = new PathData ();
-				pdata.Points = points;
-				pdata.Types = types;
+				var pdata = new PathData ();
+				pdata.Points = gp.PointArray ();
+				pdata.Types = gp.TypeArray ();
 				return pdata;
 			}
 		}
 
 		public PointF [] PathPoints {
 			get {
-				int count;
-				Status status = GDIPlus.GdipGetPointCount (nativePath, out count);
-				GDIPlus.CheckStatus (status);
-				if (count == 0)
+				if (gp.Count == 0)
 					throw new ArgumentException ("PathPoints");
-
-				PointF [] points = new PointF [count];
-				status = GDIPlus.GdipGetPathPoints (nativePath, points, count); 
-				GDIPlus.CheckStatus (status);		      	
-
-				return points;
+				return gp.PointArray ();
 			}
 		}
 
 		public byte [] PathTypes {
 			get {
-				int count;
-				Status status = GDIPlus.GdipGetPointCount (nativePath, out count);
-				GDIPlus.CheckStatus (status);
-				if (count == 0)
+				if (gp.Count == 0)
 					throw new ArgumentException ("PathTypes");
-
-				byte [] types = new byte [count];
-				status = GDIPlus.GdipGetPathTypes (nativePath, types, count);
-				GDIPlus.CheckStatus (status);
-
-				return types;
+				return gp.TypeArray ();
 			}
 		}
 
-		public int PointCount {
-			get {
-				int count;
-				Status status = GDIPlus.GdipGetPointCount (nativePath, out count);
-				GDIPlus.CheckStatus (status);
+		public int PointCount => gp.Count;
 
-				return count;
-			}
+		// No GDI+ object behind a path any more.
+		internal IntPtr NativeObject => IntPtr.Zero;
+
+		//
+		// AddArc
+		//
+		public void AddArc (Rectangle rect, float startAngle, float sweepAngle) => AddArc ((float) rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
+
+		public void AddArc (RectangleF rect, float startAngle, float sweepAngle) => AddArc (rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
+
+		public void AddArc (int x, int y, int width, int height, float startAngle, float sweepAngle) => AddArc ((float) x, y, width, height, startAngle, sweepAngle);
+
+		public void AddArc (float x, float y, float width, float height, float startAngle, float sweepAngle)
+		{
+			if (!gp.AddArc (x, y, width, height, startAngle, sweepAngle)) Invalid ();
 		}
 
-		internal IntPtr NativeObject {
-			get {
-				return nativePath;
-			}
-			set {
-				nativePath = value;
-			}
-		}
+		//
+		// AddBezier
+		//
+		public void AddBezier (Point pt1, Point pt2, Point pt3, Point pt4)
+			=> gp.AddBezier (pt1.X, pt1.Y, pt2.X, pt2.Y, pt3.X, pt3.Y, pt4.X, pt4.Y);
 
-                //
-                // AddArc
-                //
-                public void AddArc (Rectangle rect, float startAngle, float sweepAngle)
-                {
-                        Status status = GDIPlus.GdipAddPathArcI (nativePath, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		public void AddBezier (PointF pt1, PointF pt2, PointF pt3, PointF pt4)
+			=> gp.AddBezier (pt1.X, pt1.Y, pt2.X, pt2.Y, pt3.X, pt3.Y, pt4.X, pt4.Y);
 
-                public void AddArc (RectangleF rect, float startAngle, float sweepAngle)
-                {
-                        Status status = GDIPlus.GdipAddPathArc (nativePath, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		public void AddBezier (int x1, int y1, int x2, int y2, int x3, int y3, int x4, int y4)
+			=> gp.AddBezier (x1, y1, x2, y2, x3, y3, x4, y4);
 
-                public void AddArc (int x, int y, int width, int height, float startAngle, float sweepAngle)
-                {
-                        Status status = GDIPlus.GdipAddPathArcI (nativePath, x, y, width, height, startAngle, sweepAngle);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		public void AddBezier (float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4)
+			=> gp.AddBezier (x1, y1, x2, y2, x3, y3, x4, y4);
 
-                public void AddArc (float x, float y, float width, float height, float startAngle, float sweepAngle)
-                {
-                        Status status = GDIPlus.GdipAddPathArc (nativePath, x, y, width, height, startAngle, sweepAngle);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                //
-                // AddBezier
-                //
-                public void AddBezier (Point pt1, Point pt2, Point pt3, Point pt4)
-                {
-                        Status status = GDIPlus.GdipAddPathBezierI (nativePath, pt1.X, pt1.Y,
-                                        pt2.X, pt2.Y, pt3.X, pt3.Y, pt4.X, pt4.Y);
-                                        
-			GDIPlus.CheckStatus (status);                      		                                      
-                }
-
-                public void AddBezier (PointF pt1, PointF pt2, PointF pt3, PointF pt4)
-                {
-                        Status status = GDIPlus.GdipAddPathBezier (nativePath, pt1.X, pt1.Y,
-                                        pt2.X, pt2.Y, pt3.X, pt3.Y, pt4.X, pt4.Y);
-                                        
-			GDIPlus.CheckStatus (status);                      	                                       
-                }
-
-                public void AddBezier (int x1, int y1, int x2, int y2, int x3, int y3, int x4, int y4)
-                {
-                        Status status = GDIPlus.GdipAddPathBezierI (nativePath, x1, y1, x2, y2, x3, y3, x4, y4);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                public void AddBezier (float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4)
-                {
-                        Status status = GDIPlus.GdipAddPathBezier (nativePath, x1, y1, x2, y2, x3, y3, x4, y4);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                //
-                // AddBeziers
-                //
-                public void AddBeziers (params Point [] points)
-                {
+		//
+		// AddBeziers
+		//
+		public void AddBeziers (params Point [] points)
+		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
-                        Status status = GDIPlus.GdipAddPathBeziersI (nativePath, points, points.Length);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+			if (!gp.AddBeziers (ToF (points), points.Length)) Invalid ();
+		}
 
-                public void AddBeziers (PointF [] points)
-                {
+		public void AddBeziers (PointF [] points)
+		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
-                        Status status = GDIPlus.GdipAddPathBeziers (nativePath, points, points.Length);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+			if (!gp.AddBeziers (points, points.Length)) Invalid ();
+		}
 
-                //
-                // AddEllipse
-                //
-                public void AddEllipse (RectangleF rect)
-                {
-                        Status status = GDIPlus.GdipAddPathEllipse (nativePath, rect.X, rect.Y, rect.Width, rect.Height);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-                
-                public void AddEllipse (float x, float y, float width, float height)
-                {
-                        Status status = GDIPlus.GdipAddPathEllipse (nativePath, x, y, width, height);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		//
+		// AddEllipse
+		//
+		public void AddEllipse (RectangleF rect) => gp.AddEllipse (rect.X, rect.Y, rect.Width, rect.Height);
 
-                public void AddEllipse (Rectangle rect)
-                {
-                        Status status = GDIPlus.GdipAddPathEllipseI (nativePath, rect.X, rect.Y, rect.Width, rect.Height);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-                
-                public void AddEllipse (int x, int y, int width, int height)
-                {
-                        Status status = GDIPlus.GdipAddPathEllipseI (nativePath, x, y, width, height);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-                
+		public void AddEllipse (float x, float y, float width, float height) => gp.AddEllipse (x, y, width, height);
 
-                //
-                // AddLine
-                //
-                public void AddLine (Point pt1, Point pt2)
-                {
-                        Status status = GDIPlus.GdipAddPathLineI (nativePath, pt1.X, pt1.Y, pt2.X, pt2.Y);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		public void AddEllipse (Rectangle rect) => gp.AddEllipse (rect.X, rect.Y, rect.Width, rect.Height);
 
-                public void AddLine (PointF pt1, PointF pt2)
-                {
-                        Status status = GDIPlus.GdipAddPathLine (nativePath, pt1.X, pt1.Y, pt2.X,
-                                        pt2.Y);
-                                        
-			GDIPlus.CheckStatus (status);                      	                                       
-                }
+		public void AddEllipse (int x, int y, int width, int height) => gp.AddEllipse (x, y, width, height);
 
-                public void AddLine (int x1, int y1, int x2, int y2)
-                {
-                        Status status = GDIPlus.GdipAddPathLineI (nativePath, x1, y1, x2, y2);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		//
+		// AddLine
+		//
+		public void AddLine (Point pt1, Point pt2) => gp.AddLine (pt1.X, pt1.Y, pt2.X, pt2.Y);
 
-                public void AddLine (float x1, float y1, float x2, float y2)
-                {
-                        Status status = GDIPlus.GdipAddPathLine (nativePath, x1, y1, x2,
-                                        y2);                
-                                        
-			GDIPlus.CheckStatus (status);                      	                                       
-                }
+		public void AddLine (PointF pt1, PointF pt2) => gp.AddLine (pt1.X, pt1.Y, pt2.X, pt2.Y);
 
-                //
-                // AddLines
-                //
+		public void AddLine (int x1, int y1, int x2, int y2) => gp.AddLine (x1, y1, x2, y2);
+
+		public void AddLine (float x1, float y1, float x2, float y2) => gp.AddLine (x1, y1, x2, y2);
+
+		//
+		// AddLines
+		//
 		public void AddLines (Point[] points)
 		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (points.Length == 0)
 				throw new ArgumentException ("points");
-
-			Status status = GDIPlus.GdipAddPathLine2I (nativePath, points, points.Length);
-			GDIPlus.CheckStatus (status);                      	
+			if (!gp.AddLines (ToF (points), points.Length)) Invalid ();
 		}
 
 		public void AddLines (PointF[] points)
@@ -374,523 +242,301 @@ namespace System.Drawing.Drawing2D
 				throw new ArgumentNullException ("points");
 			if (points.Length == 0)
 				throw new ArgumentException ("points");
-
-			Status status = GDIPlus.GdipAddPathLine2 (nativePath, points, points.Length);
-			GDIPlus.CheckStatus (status);                      	
+			if (!gp.AddLines (points, points.Length)) Invalid ();
 		}
-        
-                //
-                // AddPie
-                //
-                public void AddPie (Rectangle rect, float startAngle, float sweepAngle)
-                {
-                        Status status = GDIPlus.GdipAddPathPie (
-                                nativePath, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
-                        GDIPlus.CheckStatus (status);                      	
-                }
 
-                public void AddPie (int x, int y, int width, int height, float startAngle, float sweepAngle)
-                {
-                        Status status = GDIPlus.GdipAddPathPieI (nativePath, x, y, width, height, startAngle, sweepAngle);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		//
+		// AddPie
+		//
+		public void AddPie (Rectangle rect, float startAngle, float sweepAngle) => AddPie ((float) rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
 
-                public void AddPie (float x, float y, float width, float height, float startAngle, float sweepAngle)
-                {
-                        Status status = GDIPlus.GdipAddPathPie (nativePath, x, y, width, height, startAngle, sweepAngle);                
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		public void AddPie (int x, int y, int width, int height, float startAngle, float sweepAngle) => AddPie ((float) x, y, width, height, startAngle, sweepAngle);
 
-                //
-                // AddPolygon
-                //
-                public void AddPolygon (Point [] points)
-                {
+		public void AddPie (float x, float y, float width, float height, float startAngle, float sweepAngle)
+		{
+			if (!(width > 1.1920929e-07f) || !(height > 1.1920929e-07f)) Invalid ();
+			gp.AddPie (x, y, width, height, startAngle, sweepAngle);
+		}
+
+		//
+		// AddPolygon
+		//
+		public void AddPolygon (Point [] points)
+		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			if (!gp.AddPolygon (ToF (points), points.Length)) Invalid ();
+		}
 
-                        Status status = GDIPlus.GdipAddPathPolygonI (nativePath, points, points.Length);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                public void AddPolygon (PointF [] points)
-                {
+		public void AddPolygon (PointF [] points)
+		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			if (!gp.AddPolygon (points, points.Length)) Invalid ();
+		}
 
-                        Status status = GDIPlus.GdipAddPathPolygon (nativePath, points, points.Length);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		//
+		// AddRectangle
+		//
+		public void AddRectangle (Rectangle rect) => gp.AddRects (new [] { new RectangleF (rect.X, rect.Y, rect.Width, rect.Height) });
 
-                //
-                // AddRectangle
-                //
-                public void AddRectangle (Rectangle rect)
-                {
-                        Status status = GDIPlus.GdipAddPathRectangleI (nativePath, rect.X, rect.Y, rect.Width, rect.Height);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		public void AddRectangle (RectangleF rect) => gp.AddRects (new [] { rect });
 
-                public void AddRectangle (RectangleF rect)
-                {
-                        Status status = GDIPlus.GdipAddPathRectangle (nativePath, rect.X, rect.Y, rect.Width, rect.Height);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                //
-                // AddRectangles
-                //
-                public void AddRectangles (Rectangle [] rects)
-                {
+		//
+		// AddRectangles
+		//
+		public void AddRectangles (Rectangle [] rects)
+		{
 			if (rects == null)
 				throw new ArgumentNullException ("rects");
 			if (rects.Length == 0)
 				throw new ArgumentException ("rects");
+			var f = new RectangleF [rects.Length];
+			for (int i = 0; i < f.Length; i++) f [i] = rects [i];
+			gp.AddRects (f);
+		}
 
-                        Status status = GDIPlus.GdipAddPathRectanglesI (nativePath, rects, rects.Length);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                public void AddRectangles (RectangleF [] rects)
-                {
+		public void AddRectangles (RectangleF [] rects)
+		{
 			if (rects == null)
 				throw new ArgumentNullException ("rects");
 			if (rects.Length == 0)
 				throw new ArgumentException ("rects");
+			gp.AddRects (rects);
+		}
 
-                        Status status = GDIPlus.GdipAddPathRectangles (nativePath, rects, rects.Length);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                //
-                // AddPath
-                //
-                public void AddPath (GraphicsPath addingPath, bool connect)
-                {
+		//
+		// AddPath
+		//
+		public void AddPath (GraphicsPath addingPath, bool connect)
+		{
 			if (addingPath == null)
 				throw new ArgumentNullException ("addingPath");
+			gp.AddPath (addingPath.gp, connect);
+		}
 
-                        Status status = GDIPlus.GdipAddPathPath (nativePath, addingPath.nativePath, connect);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		public PointF GetLastPoint ()
+		{
+			if (gp.Count == 0) Invalid ();
+			return gp.Points [gp.Count - 1];
+		}
 
-                public PointF GetLastPoint ()
-                {
-                        PointF pt;
-                        Status status = GDIPlus.GdipGetPathLastPoint (nativePath, out pt);
-                        GDIPlus.CheckStatus (status);                      	
+		//
+		// AddClosedCurve
+		//
+		public void AddClosedCurve (Point [] points) => AddClosedCurve (points, 0.5f);
 
-                        return pt;
-                }
+		public void AddClosedCurve (PointF [] points) => AddClosedCurve (points, 0.5f);
 
-                //
-                // AddClosedCurve
-                //
-                public void AddClosedCurve (Point [] points)
-                {
+		public void AddClosedCurve (Point [] points, float tension)
+		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			if (!gp.AddClosedCurve (ToF (points), points.Length, tension)) Invalid ();
+		}
 
-                        Status status = GDIPlus.GdipAddPathClosedCurveI (nativePath, points, points.Length);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                public void AddClosedCurve (PointF [] points)
-                {
+		public void AddClosedCurve (PointF [] points, float tension)
+		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			if (!gp.AddClosedCurve (points, points.Length, tension)) Invalid ();
+		}
 
-                        Status status = GDIPlus.GdipAddPathClosedCurve (nativePath, points, points.Length);
-                        GDIPlus.CheckStatus (status);                      	
-                }
+		//
+		// AddCurve
+		//
+		public void AddCurve (Point [] points) => AddCurve (points, 0.5f);
 
-                public void AddClosedCurve (Point [] points, float tension)
-                {
+		public void AddCurve (PointF [] points) => AddCurve (points, 0.5f);
+
+		public void AddCurve (Point [] points, float tension)
+		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			if (!gp.AddCurve (ToF (points), points.Length, tension, 0, points.Length - 1)) Invalid ();
+		}
 
-                        Status status = GDIPlus.GdipAddPathClosedCurve2I (nativePath, points, points.Length, tension);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                public void AddClosedCurve (PointF [] points, float tension)
-                {
+		public void AddCurve (PointF [] points, float tension)
+		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			if (!gp.AddCurve (points, points.Length, tension, 0, points.Length - 1)) Invalid ();
+		}
 
-                        Status status = GDIPlus.GdipAddPathClosedCurve2 (nativePath, points, points.Length, tension);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                //
-                // AddCurve
-                //
-                public void AddCurve (Point [] points)
-                {
+		public void AddCurve (Point [] points, int offset, int numberOfSegments, float tension)
+		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			if (!gp.AddCurve (ToF (points), points.Length, tension, offset, numberOfSegments)) Invalid ();
+		}
 
-                        Status status = GDIPlus.GdipAddPathCurveI (nativePath, points, points.Length);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-                
-                public void AddCurve (PointF [] points)
-                {
+		public void AddCurve (PointF [] points, int offset, int numberOfSegments, float tension)
+		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			if (!gp.AddCurve (points, points.Length, tension, offset, numberOfSegments)) Invalid ();
+		}
 
-                        Status status = GDIPlus.GdipAddPathCurve (nativePath, points, points.Length);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-                
-                public void AddCurve (Point [] points, float tension)
-                {
-			if (points == null)
-				throw new ArgumentNullException ("points");
+		public void Reset () => gp.Reset ();
 
-                        Status status = GDIPlus.GdipAddPathCurve2I (nativePath, points, points.Length, tension);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-                
-                public void AddCurve (PointF [] points, float tension)
-                {
-			if (points == null)
-				throw new ArgumentNullException ("points");
+		public void Reverse () => gp.Reverse ();
 
-                        Status status = GDIPlus.GdipAddPathCurve2 (nativePath, points, points.Length, tension);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                public void AddCurve (Point [] points, int offset, int numberOfSegments, float tension)
-                {
-			if (points == null)
-				throw new ArgumentNullException ("points");
-
-                        Status status = GDIPlus.GdipAddPathCurve3I (nativePath, points, points.Length,
-                                        offset, numberOfSegments, tension);
-                                        
-			GDIPlus.CheckStatus (status);                      	                                       
-                }
-                
-                public void AddCurve (PointF [] points, int offset, int numberOfSegments, float tension)
-                {
-			if (points == null)
-				throw new ArgumentNullException ("points");
-
-                        Status status = GDIPlus.GdipAddPathCurve3 (nativePath, points, points.Length,
-                                        offset, numberOfSegments, tension);
-                                        
-			GDIPlus.CheckStatus (status);                      	                                       
-                }
-                        
-                public void Reset ()
-                {
-                        Status status = GDIPlus.GdipResetPath (nativePath);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                public void Reverse ()
-                {
-                        Status status = GDIPlus.GdipReversePath (nativePath);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-
-                public void Transform (Matrix matrix)
-                {
+		public void Transform (Matrix matrix)
+		{
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			gp.Transform (matrix.Gp);
+		}
 
-                        Status status = GDIPlus.GdipTransformPath (nativePath, matrix.nativeMatrix);
-                        GDIPlus.CheckStatus (status);                      	
-                }
-                
-		[MonoTODO ("The StringFormat parameter is ignored when using libgdiplus.")]
 		public void AddString (string s, FontFamily family, int style, float emSize, Point origin, StringFormat format)
-		{
-			Rectangle layout = new Rectangle ();
-			layout.X = origin.X;
-			layout.Y = origin.Y;
-			AddString (s, family, style, emSize, layout, format);
-		}
+			=> AddString (s, family, style, emSize, new RectangleF (origin.X, origin.Y, 0, 0), format);
 
-		[MonoTODO ("The StringFormat parameter is ignored when using libgdiplus.")]
 		public void AddString (string s, FontFamily family, int style, float emSize, PointF origin, StringFormat format)
-  		{
-			RectangleF layout = new RectangleF ();
-			layout.X = origin.X;
-			layout.Y = origin.Y;
-			AddString (s, family, style, emSize, layout, format);
-                }
+			=> AddString (s, family, style, emSize, new RectangleF (origin.X, origin.Y, 0, 0), format);
 
-		[MonoTODO ("The layoutRect and StringFormat parameters are ignored when using libgdiplus.")]
 		public void AddString (string s, FontFamily family, int style, float emSize, Rectangle layoutRect, StringFormat format)
+			=> AddString (s, family, style, emSize, new RectangleF (layoutRect.X, layoutRect.Y, layoutRect.Width, layoutRect.Height), format);
+
+		public void AddString (string s, FontFamily family, int style, float emSize, RectangleF layoutRect, StringFormat format)
 		{
 			if (family == null)
 				throw new ArgumentException ("family");
-
-			IntPtr sformat = (format == null) ? IntPtr.Zero : format.NativeObject;
 			// note: the NullReferenceException on s.Length is the expected (MS) exception
-			Status status = GDIPlus.GdipAddPathStringI (nativePath, s, s.Length, family.NativeFamily, style, emSize, ref layoutRect, sformat);
-			GDIPlus.CheckStatus (status);
+			if (s.Length == 0) return;
+			GpPathText.AddString (gp, s, family, style, emSize, layoutRect, format);
 		}
 
-		[MonoTODO ("The layoutRect and StringFormat parameters are ignored when using libgdiplus.")]
-  		public void AddString (string s, FontFamily family, int style, float emSize, RectangleF layoutRect, StringFormat format)
-		{
-			if (family == null)
-				throw new ArgumentException ("family");
+		public void ClearMarkers () => gp.ClearMarkers ();
 
-			IntPtr sformat = (format == null) ? IntPtr.Zero : format.NativeObject;
-			// note: the NullReferenceException on s.Length is the expected (MS) exception
-			Status status = GDIPlus.GdipAddPathString (nativePath, s, s.Length, family.NativeFamily, style, emSize, ref layoutRect, sformat);
-			GDIPlus.CheckStatus (status);
+		public void CloseAllFigures () => gp.CloseFigures ();
+
+		public void CloseFigure () => gp.CloseFigure ();
+
+		public void Flatten () => Flatten (null, FlatnessDefault);
+
+		public void Flatten (Matrix matrix) => Flatten (matrix, FlatnessDefault);
+
+		public void Flatten (Matrix matrix, float flatness) => gp.Flatten (matrix?.Gp, flatness);
+
+		public RectangleF GetBounds () => GetBounds (null, null);
+
+		public RectangleF GetBounds (Matrix matrix) => GetBounds (matrix, null);
+
+		/// <summary>GpPath::GetBounds: the control points' bounds (transformed as a rectangle's
+		/// corners), widened by what a pen adds.</summary>
+		public RectangleF GetBounds (Matrix matrix, Pen pen)
+		{
+			if (gp.Count == 0) return RectangleF.Empty;
+			if (pen != null) return GpPen.WidenedBounds (gp, pen, matrix?.Gp);
+			RectangleF b = gp.ControlBounds ();
+			float l = b.X, t = b.Y, r = b.X + b.Width, bt = b.Y + b.Height;
+			if (matrix != null && matrix.Gp.Complexity != 0) {
+				GpMatrix m = matrix.Gp;
+				if (m.IsTranslateScale) {
+					float x0 = l, y0 = t, x1 = r, y1 = bt;
+					m.Transform (ref x0, ref y0);
+					m.Transform (ref x1, ref y1);
+					l = Math.Min (x0, x1); r = Math.Max (x0, x1); t = Math.Min (y0, y1); bt = Math.Max (y0, y1);
+				} else {
+					var p = new [] { new PointF (l, t), new PointF (r, t), new PointF (r, bt), new PointF (l, bt) };
+					m.Transform (p);
+					l = r = p [0].X; t = bt = p [0].Y;
+					for (int i = 1; i < 4; i++) { l = Math.Min (l, p [i].X); r = Math.Max (r, p [i].X); t = Math.Min (t, p [i].Y); bt = Math.Max (bt, p [i].Y); }
+				}
+			}
+			float w = r - l, h = bt - t;
+			if (w <= 1.1920929e-07f) w = 0f;
+			if (h <= 1.1920929e-07f) h = 0f;
+			return new RectangleF (l, t, w, h);
 		}
 
-		public void ClearMarkers()               
-		{
-                	Status s = GDIPlus.GdipClearPathMarkers (nativePath);
+		public bool IsOutlineVisible (Point point, Pen pen) => IsOutlineVisible ((float) point.X, point.Y, pen, null);
 
-                        GDIPlus.CheckStatus (s);
-                }
-                
-		public void CloseAllFigures()
-		{
-                	Status s = GDIPlus.GdipClosePathFigures (nativePath);
+		public bool IsOutlineVisible (PointF point, Pen pen) => IsOutlineVisible (point.X, point.Y, pen, null);
 
-                        GDIPlus.CheckStatus (s);
-                }  	
-                
-		public void CloseFigure()
-		{
-                	Status s = GDIPlus.GdipClosePathFigure (nativePath);
+		public bool IsOutlineVisible (int x, int y, Pen pen) => IsOutlineVisible ((float) x, y, pen, null);
 
-                        GDIPlus.CheckStatus (s);
-                } 
+		public bool IsOutlineVisible (float x, float y, Pen pen) => IsOutlineVisible (x, y, pen, null);
 
-                public void Flatten ()
-                {
-                	Flatten (null, FlatnessDefault); 
-                }  	
-  
-		public void Flatten (Matrix matrix)
-		{
-                	Flatten (matrix, FlatnessDefault);
-                }
-		
-		public void Flatten (Matrix matrix, float flatness)
-		{
-                        IntPtr m = (matrix == null) ? IntPtr.Zero : matrix.nativeMatrix;
-                	Status status = GDIPlus.GdipFlattenPath (nativePath, m, flatness);
+		public bool IsOutlineVisible (Point pt, Pen pen, Graphics graphics) => IsOutlineVisible ((float) pt.X, pt.Y, pen, graphics);
 
-                        GDIPlus.CheckStatus (status);
-                }  		
-                
-                public RectangleF GetBounds ()
-                {
-                	return GetBounds (null, null);
-                }  		
+		public bool IsOutlineVisible (PointF pt, Pen pen, Graphics graphics) => IsOutlineVisible (pt.X, pt.Y, pen, graphics);
 
-                public RectangleF GetBounds (Matrix matrix)
-                {
-                	return GetBounds (matrix, null);
-                }
+		public bool IsOutlineVisible (int x, int y, Pen pen, Graphics graphics) => IsOutlineVisible ((float) x, y, pen, graphics);
 
-                public RectangleF GetBounds (Matrix matrix, Pen pen)
-                {
-                        RectangleF retval;
-                        IntPtr m = (matrix == null) ? IntPtr.Zero : matrix.nativeMatrix;
-                        IntPtr p = (pen == null) ? IntPtr.Zero : pen.NativePen;
-                        
-                        Status s = GDIPlus.GdipGetPathWorldBounds (nativePath, out retval, m, p);
-
-                        GDIPlus.CheckStatus (s);
-
-                        return retval;
-                }
-
-		public bool IsOutlineVisible (Point point, Pen pen)
-		{
-                        return IsOutlineVisible (point.X, point.Y, pen, null);
-                }  		
-		
-		public bool IsOutlineVisible (PointF point, Pen pen)
-		{
-                	return IsOutlineVisible (point.X, point.Y, pen, null);
-                } 
-		
-		public bool IsOutlineVisible (int x, int y, Pen pen)
-		{
-                        return IsOutlineVisible (x, y, pen, null);
-                }
-
-		public bool IsOutlineVisible (float x, float y, Pen pen)
-		{
-                	return IsOutlineVisible (x, y, pen, null);
-                }  		
-		
-		public bool IsOutlineVisible (Point pt, Pen pen, Graphics graphics)
-		{
-                	return IsOutlineVisible (pt.X, pt.Y, pen, graphics);
-                }  		
-		
-		public bool IsOutlineVisible (PointF pt, Pen pen, Graphics graphics)
-		{
-                	return IsOutlineVisible (pt.X, pt.Y, pen, graphics);
-                }  		
-				
-		public bool IsOutlineVisible (int x, int y, Pen pen, Graphics graphics)
-		{
-			if (pen == null)
-				throw new ArgumentNullException ("pen");
-
-                        bool result;
-                        IntPtr g = (graphics == null) ? IntPtr.Zero : graphics.nativeObject;
-                        
-                	Status s = GDIPlus.GdipIsOutlineVisiblePathPointI (nativePath, x, y, pen.NativePen, g, out result);
-                        GDIPlus.CheckStatus (s);
-
-                        return result;
-                }  		
-
+		/// <summary>GpPath::IsOutlineVisible: the path widened by the pen (dashes off) under the
+		/// graphics' world-to-device transform, and the point tested against that.</summary>
 		public bool IsOutlineVisible (float x, float y, Pen pen, Graphics graphics)
 		{
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
+			GpMatrix m = graphics == null ? GpMatrix.CreateIdentity () : graphics.RegionWorldToDevice ();
+			GpPath wide = GpPen.Widen (gp, pen, m, 0.25f, solid: true);
+			if (wide == null) return false;
+			m.Transform (ref x, ref y);
+			DpRegion d = GpRegion.FromPath (wide.PointArray (), wide.TypeArray (), FillMode.Winding).Device (GpMatrix.CreateIdentity ());
+			return d.Contains ((int) (x + 0.5f), (int) (y + 0.5f));
+		}
 
-                        bool result;
-                        IntPtr g = (graphics == null) ? IntPtr.Zero : graphics.nativeObject;
-                        
-                	Status s = GDIPlus.GdipIsOutlineVisiblePathPoint (nativePath, x, y, pen.NativePen, g, out result);
-                        GDIPlus.CheckStatus (s);
+		public bool IsVisible (Point point) => IsVisible ((float) point.X, point.Y, null);
 
-                        return result;
-                }  		
-                
-                public bool IsVisible (Point point)
-                {
-                	return IsVisible (point.X, point.Y, null);
-                }  		
-                
-                public bool IsVisible (PointF point)
-                {
-                	return IsVisible (point.X, point.Y, null);
-                }  		
-                
-                public bool IsVisible (int x, int y)
-                {
-                	return IsVisible (x, y, null);
-                }
+		public bool IsVisible (PointF point) => IsVisible (point.X, point.Y, null);
 
-                public bool IsVisible (float x, float y)
-                {
-                	return IsVisible (x, y, null);
-                }  		                
-                
-                public bool IsVisible (Point pt, Graphics graphics)
-                {
-                	return IsVisible (pt.X, pt.Y, graphics);
-                }  		
-                
-                public bool IsVisible (PointF pt, Graphics graphics)
-                {
-                	return IsVisible (pt.X, pt.Y, graphics);
-                }  		
-                                
-                public bool IsVisible (int x, int y, Graphics graphics)
-                {
-                        bool retval;
+		public bool IsVisible (int x, int y) => IsVisible ((float) x, y, null);
 
-                	IntPtr g = (graphics == null) ? IntPtr.Zero : graphics.nativeObject;
+		public bool IsVisible (float x, float y) => IsVisible (x, y, null);
 
-                        Status s = GDIPlus.GdipIsVisiblePathPointI (nativePath, x, y, g, out retval);
+		public bool IsVisible (Point pt, Graphics graphics) => IsVisible ((float) pt.X, pt.Y, graphics);
 
-                        GDIPlus.CheckStatus (s);
+		public bool IsVisible (PointF pt, Graphics graphics) => IsVisible (pt.X, pt.Y, graphics);
 
-                        return retval;
-                }  		
-                
-                public bool IsVisible (float x, float y, Graphics graphics)
-                {
-                        bool retval;
+		public bool IsVisible (int x, int y, Graphics graphics) => IsVisible ((float) x, y, graphics);
 
-                	IntPtr g = (graphics == null) ? IntPtr.Zero : graphics.nativeObject;
+		/// <summary>GpPath::IsVisible: the path as a region under the graphics' world-to-device
+		/// transform, tested as a region tests a point.</summary>
+		public bool IsVisible (float x, float y, Graphics graphics)
+		{
+			GpMatrix m = graphics == null ? GpMatrix.CreateIdentity () : graphics.RegionWorldToDevice ();
+			DpRegion d = GpRegion.FromPath (gp.PointArray (), gp.TypeArray (), gp.FillMode).Device (m);
+			m.Transform (ref x, ref y);
+			return d.Contains ((int) (x + 0.5f), (int) (y + 0.5f));
+		}
 
-                        Status s = GDIPlus.GdipIsVisiblePathPoint (nativePath, x, y, g, out retval);
+		public void SetMarkers () => gp.SetMarker ();
 
-                        GDIPlus.CheckStatus (s);
+		public void StartFigure () => gp.StartFigure ();
 
-                        return retval;
-                }  		
-                
-                public void SetMarkers ()
-                {
-                	Status s = GDIPlus.GdipSetPathMarker (nativePath);
+		public void Warp (PointF[] destPoints, RectangleF srcRect)
+			=> Warp (destPoints, srcRect, null, WarpMode.Perspective, FlatnessDefault);
 
-                        GDIPlus.CheckStatus (s);
-                }
-                
-                public void StartFigure()
-                {
-                	Status s = GDIPlus.GdipStartPathFigure (nativePath);
-
-                        GDIPlus.CheckStatus (s);
-                }  		
-                
-		[MonoTODO ("GdipWarpPath isn't implemented in libgdiplus")]
-                public void Warp (PointF[] destPoints, RectangleF srcRect)
-                {
-                	Warp (destPoints, srcRect, null, WarpMode.Perspective, FlatnessDefault);
-                }  		
-
-		[MonoTODO ("GdipWarpPath isn't implemented in libgdiplus")]
 		public void Warp (PointF[] destPoints, RectangleF srcRect, Matrix matrix)
-		{
-                	Warp (destPoints, srcRect, matrix, WarpMode.Perspective, FlatnessDefault);
-                }  		
+			=> Warp (destPoints, srcRect, matrix, WarpMode.Perspective, FlatnessDefault);
 
-		[MonoTODO ("GdipWarpPath isn't implemented in libgdiplus")]
 		public void Warp (PointF[] destPoints, RectangleF srcRect, Matrix matrix, WarpMode warpMode)
-		{
-                	Warp (destPoints, srcRect, matrix, warpMode, FlatnessDefault);
-                }  		
+			=> Warp (destPoints, srcRect, matrix, warpMode, FlatnessDefault);
 
-		[MonoTODO ("GdipWarpPath isn't implemented in libgdiplus")]
-		public void Warp (PointF[] destPoints, RectangleF srcRect, Matrix matrix,  WarpMode warpMode, float flatness)
+		public void Warp (PointF[] destPoints, RectangleF srcRect, Matrix matrix, WarpMode warpMode, float flatness)
 		{
 			if (destPoints == null)
 				throw new ArgumentNullException ("destPoints");
+			GpPathWarp.Warp (gp, matrix?.Gp, destPoints, srcRect, warpMode, flatness);
+		}
 
-                	IntPtr m = (matrix == null) ? IntPtr.Zero : matrix.nativeMatrix;
+		public void Widen (Pen pen) => Widen (pen, null, FlatnessDefault);
 
-                        Status s = GDIPlus.GdipWarpPath (nativePath, m, destPoints, destPoints.Length,
-                                        srcRect.X, srcRect.Y, srcRect.Width, srcRect.Height, warpMode, flatness);
+		public void Widen (Pen pen, Matrix matrix) => Widen (pen, matrix, FlatnessDefault);
 
-                        GDIPlus.CheckStatus (s);
-                }
-                
-		[MonoTODO ("GdipWidenPath isn't implemented in libgdiplus")]
-                public void Widen (Pen pen)
-		{
-                	Widen (pen, null, FlatnessDefault);
-                }  		
-                
-		[MonoTODO ("GdipWidenPath isn't implemented in libgdiplus")]
-		public void Widen (Pen pen, Matrix matrix)
-		{	
-                	Widen (pen, matrix, FlatnessDefault);
-                }  		
-                
-		[MonoTODO ("GdipWidenPath isn't implemented in libgdiplus")]
 		public void Widen (Pen pen, Matrix matrix, float flatness)
-                {
+		{
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (PointCount == 0)
 				return;
-                	IntPtr m = (matrix == null) ? IntPtr.Zero : matrix.nativeMatrix;
-
-			Status s = GDIPlus.GdipWidenPath (nativePath, pen.NativePen, m, flatness);
-			GDIPlus.CheckStatus (s);
-                } 
-        }
+			GpPath wide = GpPen.Widen (gp, pen, matrix?.Gp ?? GpMatrix.CreateIdentity (), flatness, solid: false);
+			if (wide == null) return;
+			gp.Points.Clear (); gp.Points.AddRange (wide.Points);
+			gp.Types.Clear (); gp.Types.AddRange (wide.Types);
+			gp.Revalidate ();
+		}
+	}
 }

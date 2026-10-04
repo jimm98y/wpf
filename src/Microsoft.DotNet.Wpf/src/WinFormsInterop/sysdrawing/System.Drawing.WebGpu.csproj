@@ -38,7 +38,6 @@
     <Compile Include="mono/**/*.cs" />
     <Compile Include="corefx/**/*.cs" />
     <Compile Include="build/**/*.cs" />
-    <Compile Include="GdiPlusResolver.cs" />   <!-- maps "gdiplus" -> libgdiplus at runtime -->
     <Compile Include="backend/**/*.cs" />       <!-- IGpuSceneRecorder seam + WgpuInterop backend -->
     <!-- WPF's PDF writer, shared rather than copied: the file format, font embedding (with its
          ToUnicode map) and image encoding a printed page is written with off Windows

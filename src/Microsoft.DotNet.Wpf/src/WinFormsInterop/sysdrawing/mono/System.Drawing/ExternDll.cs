@@ -32,7 +32,7 @@ namespace System.Drawing
 {
 	internal class ExternDll
 	{ 
-		public const string Gdiplus = "gdiplus";		
+
 		public const string User32 = "user32";		
 		public const string Gdi32 = "gdi32";		
 		public const string Kernel32 = "kernel32";		

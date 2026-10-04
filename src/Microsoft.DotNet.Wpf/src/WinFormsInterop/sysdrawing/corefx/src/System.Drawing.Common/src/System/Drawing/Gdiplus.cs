@@ -75,31 +75,8 @@ namespace System.Drawing
 
             static Gdip()
             {
-#if MONO
-                // Tie corefx-seam "initialized" to whether libgdiplus actually loaded (via the mono seam,
-                // which probes it in its own cctor). On the browser/WebAssembly there is no libgdiplus, so
-                // this stays zero -> the Initialized-guarded wrappers return Ok and objects created via
-                // this seam (SolidBrush/Bitmap/...) skip their native handle and keep managed state only.
-                s_initToken = GDIPlus.Initialized ? (IntPtr) 1 : IntPtr.Zero;
-#else
-                Debug.Assert(s_initToken == IntPtr.Zero, "GdiplusInitialization: Initialize should not be called more than once in the same domain!");
-                Debug.WriteLineIf(s_gdiPlusInitialization.TraceVerbose, "Initialize GDI+ [" + AppDomain.CurrentDomain.FriendlyName + "]");
-                Debug.Indent();
-
-                s_gdipModule = LoadNativeLibrary();
-                LoadSharedFunctionPointers();
-                PlatformInitialize();
-
-                StartupInput input = StartupInput.GetDefault();
-                StartupOutput output;
-
-                // GDI+ ref counts multiple calls to Startup in the same process, so calls from multiple
-                // domains are ok, just make sure to pair each w/GdiplusShutdown
-                int status = GdiplusStartup(out s_initToken, ref input, out output);
-                CheckStatus(status);
-
-                Debug.Unindent();
-#endif
+                // There is no GDI+: every object is managed (WebGpuBackend.Gdip), on every platform.
+                s_initToken = IntPtr.Zero;
                 // Sync to event for handling shutdown
                 AppDomain currentDomain = AppDomain.CurrentDomain;
                 currentDomain.ProcessExit += new EventHandler(OnProcessExit);

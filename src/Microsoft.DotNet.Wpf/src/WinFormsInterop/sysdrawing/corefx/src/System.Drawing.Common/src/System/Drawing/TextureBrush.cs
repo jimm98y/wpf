@@ -19,7 +19,7 @@ namespace System.Drawing
     {
         private Bitmap _tile;
         private WrapMode _wrapMode;
-        private float[] _transform = { 1f, 0f, 0f, 1f, 0f, 0f };
+        private System.Drawing.WebGpuBackend.Gdip.GpMatrix _m = System.Drawing.WebGpuBackend.Gdip.GpMatrix.CreateIdentity();
 
         public TextureBrush(Image bitmap) : this(bitmap, WrapMode.Tile)
         {
@@ -126,7 +126,11 @@ namespace System.Drawing
             return GdipPixels.ToRgba(f, new Rectangle(0, 0, width, height));
         }
 
-        internal float[] TransformElements => _transform;
+        internal float[] TransformElements => new float[] { _m.M11, _m.M12, _m.M21, _m.M22, _m.Dx, _m.Dy };
+
+        internal System.Drawing.WebGpuBackend.Gdip.GpMatrix Gp => _m;
+
+        internal Bitmap Tile => _tile;
 
         public override object Clone()
         {
@@ -134,7 +138,7 @@ namespace System.Drawing
             {
                 _tile = (Bitmap)_tile.Clone(),
                 _wrapMode = _wrapMode,
-                _transform = (float[])_transform.Clone(),
+                _m = _m,
             };
         }
 
@@ -142,7 +146,7 @@ namespace System.Drawing
         {
             get
             {
-                return new Matrix(_transform[0], _transform[1], _transform[2], _transform[3], _transform[4], _transform[5]);
+                return new Matrix(_m);
             }
             set
             {
@@ -150,7 +154,7 @@ namespace System.Drawing
                 {
                     throw new ArgumentNullException(nameof(value));
                 }
-                _transform = value.Elements;
+                _m = value.Gp;
             }
         }
 
@@ -177,7 +181,7 @@ namespace System.Drawing
 
         public void ResetTransform()
         {
-            _transform = new float[] { 1f, 0f, 0f, 1f, 0f, 0f };
+            _m = System.Drawing.WebGpuBackend.Gdip.GpMatrix.CreateIdentity();
         }
 
         public void MultiplyTransform(Matrix matrix) => MultiplyTransform(matrix, MatrixOrder.Prepend);
@@ -188,33 +192,23 @@ namespace System.Drawing
             {
                 throw new ArgumentNullException(nameof(matrix));
             }
-            Combine(matrix.Elements, order);
+            _m.Multiply(matrix.Gp, order == MatrixOrder.Append);
         }
 
         public void TranslateTransform(float dx, float dy) => TranslateTransform(dx, dy, MatrixOrder.Prepend);
 
         public void TranslateTransform(float dx, float dy, MatrixOrder order)
-            => Combine(new float[] { 1, 0, 0, 1, dx, dy }, order);
+            => _m.Translate(dx, dy, order == MatrixOrder.Append);
 
         public void ScaleTransform(float sx, float sy) => ScaleTransform(sx, sy, MatrixOrder.Prepend);
 
         public void ScaleTransform(float sx, float sy, MatrixOrder order)
-            => Combine(new float[] { sx, 0, 0, sy, 0, 0 }, order);
+            => _m.Scale(sx, sy, order == MatrixOrder.Append);
 
         public void RotateTransform(float angle) => RotateTransform(angle, MatrixOrder.Prepend);
 
         public void RotateTransform(float angle, MatrixOrder order)
-        {
-            double a = angle * Math.PI / 180.0;
-            float cos = (float)Math.Cos(a), sin = (float)Math.Sin(a);
-            Combine(new float[] { cos, sin, -sin, cos, 0, 0 }, order);
-        }
-
-        private void Combine(float[] m, MatrixOrder order)
-        {
-            if (order == MatrixOrder.Prepend) Matrix.Mul(m, _transform, _transform);
-            else Matrix.Mul(_transform, m, _transform);
-        }
+            => _m.Rotate(angle, order == MatrixOrder.Append);
 
         protected override void Dispose(bool disposing)
         {

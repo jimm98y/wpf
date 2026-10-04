@@ -261,6 +261,19 @@ public static class GdipLinearGradient
         }
     }
 
+    /// <summary>CalcLinearGradientXform as the brush stores it (the matrix GetLineTransform returns);
+    /// false when the rectangle is degenerate (GDI+ leaves the brush invalid).</summary>
+    internal static bool TryLineXform(float angle, bool scalable, RectangleF r, out Gdip.GpMatrix xf)
+    {
+        xf = Gdip.GpMatrix.CreateIdentity();
+        float rx = r.X, ry = r.Y, rw = r.Width, rh = r.Height;
+        float det = ((ry + rh) * (rw + rx) - ry * rx) + (rx * -rh - ry * rw);
+        if (MathF.Abs(det) < Eps) return false;
+        Mat m = CalcLinearGradientXform(angle, scalable, r);
+        xf = new Gdip.GpMatrix(m.M11, m.M12, m.M21, m.M22, m.Dx, m.Dy);
+        return true;
+    }
+
     // GpMatrix::Invert (1800348a8)
     static bool Invert(ref Mat m)
     {

@@ -17,10 +17,10 @@
 // distribute, sublicense, and/or sell copies of the Software, and to
 // permit persons to whom the Software is furnished to do so, subject to
 // the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -30,34 +30,26 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
+using System.Drawing.WebGpuBackend.Gdip;
 
 namespace System.Drawing.Drawing2D
 {
-	// MANAGED WHERE GDI+ IS NOT THERE. A matrix used to be a handle to a GDI+ object and nothing
-	// else, so with no GDI+ (the browser, WF_NO_GDIPLUS) every Matrix was a silent identity: the
-	// constructor returned early, every operation then handed GDI+ a null handle, and a recording
-	// Graphics could not be scaled, rotated or read back at all. A printed page is drawn through
-	// exactly such a Graphics, in hundredths of an inch, millimetres or points, so the arithmetic
-	// GDI+ did is done here instead: six floats in GDI+'s order (m11 m12 m21 m22 dx dy), row
-	// vectors, behind a handle ManagedMatrix resolves for the path and region code.
+	// A managed GpMatrix (WebGpuBackend.Gdip.GpMatrix): GDI+'s six floats (m11 m12 m21 m22 dx dy,
+	// row vectors) with GDI+'s arithmetic for every operation, read out of gdiplus.dll -- the
+	// operand order of each product and sum, the complexity flags, the invertibility tolerance, and
+	// the flat API's own rounding of integer points ((int)(v + 0.5), truncated).
 	public sealed class Matrix : MarshalByRefObject, IDisposable
 	{
-		internal IntPtr nativeMatrix;
-		// Non-null exactly when this matrix is managed (GDI+ absent).
-		internal float [] m;
+		internal GpMatrix Gp;
 
-		internal Matrix (IntPtr ptr)
+		internal Matrix (GpMatrix m)
 		{
-			nativeMatrix = ptr;
+			Gp = m;
 		}
 
 		public Matrix ()
 		{
-			if (!GDIPlus.Initialized) { InitManaged (1, 0, 0, 1, 0, 0); return; }
-			Status status = GDIPlus.GdipCreateMatrix (out nativeMatrix);
-			GDIPlus.CheckStatus (status);
+			Gp = GpMatrix.CreateIdentity ();
 		}
 
 		public Matrix (Rectangle rect, Point[] plgpts)
@@ -66,12 +58,7 @@ namespace System.Drawing.Drawing2D
 				throw new ArgumentNullException ("plgpts");
 			if (plgpts.Length != 3)
 				throw new ArgumentException ("plgpts");
-			if (!GDIPlus.Initialized) {
-				InitParallelogram (rect, new PointF [] { plgpts [0], plgpts [1], plgpts [2] });
-				return;
-			}
-			Status status = GDIPlus.GdipCreateMatrix3I (ref rect, plgpts, out nativeMatrix);
-			GDIPlus.CheckStatus (status);
+			Init (new RectangleF (rect.X, rect.Y, rect.Width, rect.Height), new PointF [] { plgpts [0], plgpts [1], plgpts [2] });
 		}
 
 		public Matrix (RectangleF rect, PointF[] plgpts)
@@ -80,158 +67,68 @@ namespace System.Drawing.Drawing2D
 				throw new ArgumentNullException ("plgpts");
 			if (plgpts.Length != 3)
 				throw new ArgumentException ("plgpts");
-			if (!GDIPlus.Initialized) { InitParallelogram (rect, plgpts); return; }
-			Status status = GDIPlus.GdipCreateMatrix3 (ref rect, plgpts, out nativeMatrix);
-			GDIPlus.CheckStatus (status);
+			Init (rect, plgpts);
 		}
 
 		public Matrix (float m11, float m12, float m21, float m22, float dx, float dy)
 		{
-			if (!GDIPlus.Initialized) { InitManaged (m11, m12, m21, m22, dx, dy); return; }
-			Status status = GDIPlus.GdipCreateMatrix2 (m11, m12, m21, m22, dx, dy, out nativeMatrix);
-			GDIPlus.CheckStatus (status);
+			Gp = new GpMatrix (m11, m12, m21, m22, dx, dy);
 		}
 
-		void InitManaged (float m11, float m12, float m21, float m22, float dx, float dy)
+		public Matrix (System.Numerics.Matrix3x2 matrix) : this (matrix.M11, matrix.M12, matrix.M21, matrix.M22, matrix.M31, matrix.M32)
 		{
-			m = new float [] { m11, m12, m21, m22, dx, dy };
-			nativeMatrix = ManagedMatrix.Register (m);
 		}
 
-		// The matrix that maps rect's top-left, top-right and bottom-left corners onto the three points.
-		void InitParallelogram (RectangleF rect, PointF [] p)
+		/// <summary>GpMatrix::InferAffineMatrix(points, rect) @180034750.</summary>
+		void Init (RectangleF r, PointF [] p)
 		{
-			if (rect.Width == 0 || rect.Height == 0)
-				throw new ArgumentException ("rect");
-			float m11 = (p [1].X - p [0].X) / rect.Width, m12 = (p [1].Y - p [0].Y) / rect.Width;
-			float m21 = (p [2].X - p [0].X) / rect.Height, m22 = (p [2].Y - p [0].Y) / rect.Height;
-			InitManaged (m11, m12, m21, m22,
-				p [0].X - rect.X * m11 - rect.Y * m21,
-				p [0].Y - rect.X * m12 - rect.Y * m22);
+			float x = r.X, y = r.Y, w = r.Width, h = r.Height;
+			float nh = -h;
+			float det = ((w + x) * (y + h) - y * x) + (x * nh - y * w);
+			if (!(1.1920929e-07f <= Math.Abs (det)))
+				throw new ArgumentException ("Parameter is not valid.");
+			float inv = 1f / det;
+			var m = new GpMatrix ();
+			m.M11 = (h * p [1].X + nh * p [0].X) * inv;
+			m.M12 = (h * p [1].Y + nh * p [0].Y) * inv;
+			m.M21 = (w * p [2].X + -w * p [0].X) * inv;
+			m.M22 = (w * p [2].Y + -w * p [0].Y) * inv;
+			float t = (x + w) * (y + h) - x * y;
+			float a = -x * h, b = -y * w;
+			m.Dx = (a * p [1].X + t * p [0].X + b * p [2].X) * inv;
+			m.Dy = (a * p [1].Y + t * p [0].Y + b * p [2].Y) * inv;
+			m.Complexity = m.ComputeComplexity ();
+			Gp = m;
 		}
 
-		// r = a * b, row vectors: a is applied first.
-		internal static void Mul (float [] a, float [] b, float [] r)
-		{
-			float m11 = a [0] * b [0] + a [1] * b [2];
-			float m12 = a [0] * b [1] + a [1] * b [3];
-			float m21 = a [2] * b [0] + a [3] * b [2];
-			float m22 = a [2] * b [1] + a [3] * b [3];
-			float dx = a [4] * b [0] + a [5] * b [2] + b [4];
-			float dy = a [4] * b [1] + a [5] * b [3] + b [5];
-			r [0] = m11; r [1] = m12; r [2] = m21; r [3] = m22; r [4] = dx; r [5] = dy;
+		public float[] Elements => new float [] { Gp.M11, Gp.M12, Gp.M21, Gp.M22, Gp.Dx, Gp.Dy };
+
+		public System.Numerics.Matrix3x2 MatrixElements {
+			get => new System.Numerics.Matrix3x2 (Gp.M11, Gp.M12, Gp.M21, Gp.M22, Gp.Dx, Gp.Dy);
+			set => Gp = new GpMatrix (value.M11, value.M12, value.M21, value.M22, value.M31, value.M32);
 		}
 
-		void Combine (float [] other, MatrixOrder order)
-		{
-			if (order == MatrixOrder.Prepend) Mul (other, m, m);
-			else Mul (m, other, m);
-		}
+		public bool IsIdentity => Gp.Complexity == 0;
 
-		// properties
-		public float[] Elements {
-			get {
-				if (m != null) return (float []) m.Clone ();
-				if (nativeMatrix == IntPtr.Zero) return new float [] { 1f, 0f, 0f, 1f, 0f, 0f };
-				float [] retval = new float [6];
-				IntPtr tmp = Marshal.AllocHGlobal (Marshal.SizeOf (typeof (float)) * 6);
-				try {
-					Status status = GDIPlus.GdipGetMatrixElements (nativeMatrix, tmp);
-					GDIPlus.CheckStatus (status);
-					Marshal.Copy (tmp, retval, 0, 6);
-				}
-				finally {
-					Marshal.FreeHGlobal (tmp);
-				}
-				return retval;
-			}
-		}
+		public bool IsInvertible => Gp.IsInvertible;
 
-		public bool IsIdentity {
-			get {
-				if (m != null) return m [0] == 1 && m [1] == 0 && m [2] == 0 && m [3] == 1 && m [4] == 0 && m [5] == 0;
-				if (nativeMatrix == IntPtr.Zero) return true;
-				bool retval;
-				Status status = GDIPlus.GdipIsMatrixIdentity (nativeMatrix, out retval);
-				GDIPlus.CheckStatus (status);
-				return retval;
-			}
-		}
+		public float OffsetX => Gp.Dx;
 
-		public bool IsInvertible {
-			get {
-				if (m != null) return Determinant () != 0f;
-				bool retval;
-				Status status = GDIPlus.GdipIsMatrixInvertible (nativeMatrix, out retval);
-				GDIPlus.CheckStatus (status);
-				return retval;
-			}
-		}
+		public float OffsetY => Gp.Dy;
 
-		float Determinant () => m [0] * m [3] - m [1] * m [2];
-
-		public float OffsetX {
-			get {
-				return this.Elements [4];
-			}
-		}
-
-		public float OffsetY {
-			get {
-				return this.Elements [5];
-			}
-		}
-
-		public Matrix Clone()
-		{
-			if (m != null) {
-				var c = new Matrix (IntPtr.Zero);
-				c.InitManaged (m [0], m [1], m [2], m [3], m [4], m [5]);
-				return c;
-			}
-			IntPtr retval;
-			Status status = GDIPlus.GdipCloneMatrix (nativeMatrix, out retval);
-			GDIPlus.CheckStatus (status);
-			return new Matrix (retval);
-		}
-
+		public Matrix Clone () => new Matrix (Gp);
 
 		public void Dispose ()
 		{
-			if (m != null) {
-				ManagedMatrix.Unregister (nativeMatrix);
-				nativeMatrix = IntPtr.Zero;
-			} else if (nativeMatrix != IntPtr.Zero) {
-				Status status = GDIPlus.GdipDeleteMatrix (nativeMatrix);
-				GDIPlus.CheckStatus (status);
-				nativeMatrix = IntPtr.Zero;
-			}
-
 			GC.SuppressFinalize (this);
 		}
 
 		public override bool Equals (object obj)
 		{
-			Matrix other = obj as Matrix;
-
-			if (other != null) {
-				if (m != null || other.m != null) {
-					float [] a = Elements, b = other.Elements;
-					for (int i = 0; i < 6; i++) if (a [i] != b [i]) return false;
-					return true;
-				}
-				bool retval;
-				Status status = GDIPlus.GdipIsMatrixEqual (nativeMatrix, other.nativeMatrix, out retval);
-				GDIPlus.CheckStatus (status);
-				return retval;
-
-			} else
-				return false;
-		}
-
-		~Matrix()
-		{
-			Dispose ();
+			if (!(obj is Matrix other)) return false;
+			if (ReferenceEquals (this, other)) return true;
+			return Gp.M11 == other.Gp.M11 && Gp.M12 == other.Gp.M12 && Gp.M21 == other.Gp.M21
+				&& Gp.M22 == other.Gp.M22 && Gp.Dx == other.Gp.Dx && Gp.Dy == other.Gp.Dy;
 		}
 
 		public override int GetHashCode ()
@@ -241,17 +138,8 @@ namespace System.Drawing.Drawing2D
 
 		public void Invert ()
 		{
-			if (m != null) {
-				float det = Determinant ();
-				if (det == 0f)
-					throw new ArgumentException ("The matrix is not invertible.");
-				float a = m [0], b = m [1], c = m [2], d = m [3], e = m [4], f = m [5];
-				m [0] = d / det; m [1] = -b / det; m [2] = -c / det; m [3] = a / det;
-				m [4] = (c * f - d * e) / det; m [5] = (b * e - a * f) / det;
-				return;
-			}
-			Status status = GDIPlus.GdipInvertMatrix (nativeMatrix);
-			GDIPlus.CheckStatus (status);
+			if (!Gp.Invert ())
+				throw new ArgumentException ("Parameter is not valid.");
 		}
 
 		public void Multiply (Matrix matrix)
@@ -263,17 +151,19 @@ namespace System.Drawing.Drawing2D
 		{
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
-			if (m != null) { Combine (matrix.Elements, order); return; }
-
-			Status status = GDIPlus.GdipMultiplyMatrix (nativeMatrix, matrix.nativeMatrix, order);
-			GDIPlus.CheckStatus (status);
+			CheckOrder (order);
+			Gp.Multiply (matrix.Gp, order == MatrixOrder.Append);
 		}
 
-		public void Reset()
+		static void CheckOrder (MatrixOrder order)
 		{
-			if (m != null) { m [0] = 1; m [1] = 0; m [2] = 0; m [3] = 1; m [4] = 0; m [5] = 0; return; }
-			Status status = GDIPlus.GdipSetMatrixElements (nativeMatrix, 1, 0, 0, 1, 0, 0);
-			GDIPlus.CheckStatus (status);
+			if ((uint) order > 1)
+				throw new ArgumentException ("Parameter is not valid.");
+		}
+
+		public void Reset ()
+		{
+			Gp = GpMatrix.CreateIdentity ();
 		}
 
 		public void Rotate (float angle)
@@ -283,14 +173,8 @@ namespace System.Drawing.Drawing2D
 
 		public void Rotate (float angle, MatrixOrder order)
 		{
-			if (m != null) {
-				double r = angle * Math.PI / 180.0;
-				float cos = (float) Math.Cos (r), sin = (float) Math.Sin (r);
-				Combine (new float [] { cos, sin, -sin, cos, 0, 0 }, order);
-				return;
-			}
-			Status status = GDIPlus.GdipRotateMatrix (nativeMatrix, angle, order);
-			GDIPlus.CheckStatus (status);
+			CheckOrder (order);
+			Gp.Rotate (angle, order == MatrixOrder.Append);
 		}
 
 		public void RotateAt (float angle, PointF point)
@@ -298,6 +182,8 @@ namespace System.Drawing.Drawing2D
 			RotateAt (angle, point, MatrixOrder.Prepend);
 		}
 
+		// System.Drawing's own managed RotateAt (it is not a GDI+ entry point): the elements set
+		// through GdipSetMatrixElements.
 		public void RotateAt (float angle, PointF point, MatrixOrder order)
 		{
 			if ((order < MatrixOrder.Prepend) || (order > MatrixOrder.Append))
@@ -308,33 +194,22 @@ namespace System.Drawing.Drawing2D
 			float sin = (float) Math.Sin (angle);
 			float e4 = -point.X * cos + point.Y * sin + point.X;
 			float e5 = -point.X * sin - point.Y * cos + point.Y;
-
-			if (m != null) {
-				Combine (new float [] { cos, sin, -sin, cos, e4, e5 }, order);
-				return;
-			}
-
-			float[] m0 = this.Elements;
-
-			Status status;
+			float [] m0 = Elements;
 
 			if (order == MatrixOrder.Prepend)
-				status = GDIPlus.GdipSetMatrixElements (nativeMatrix,
-								cos * m0[0] + sin * m0[2],
+				Gp = new GpMatrix (cos * m0[0] + sin * m0[2],
 								cos * m0[1] + sin * m0[3],
 								-sin * m0[0] + cos * m0[2],
 								-sin * m0[1] + cos * m0[3],
 								e4 * m0[0] + e5 * m0[2] + m0[4],
 								e4 * m0[1] + e5 * m0[3] + m0[5]);
 			else
-				status = GDIPlus.GdipSetMatrixElements (nativeMatrix,
-								m0[0] * cos + m0[1] * -sin,
+				Gp = new GpMatrix (m0[0] * cos + m0[1] * -sin,
 								m0[0] * sin + m0[1] * cos,
 								m0[2] * cos + m0[3] * -sin,
 								m0[2] * sin + m0[3] * cos,
 								m0[4] * cos + m0[5] * -sin + e4,
 								m0[4] * sin + m0[5] * cos + e5);
-			GDIPlus.CheckStatus (status);
 		}
 
 		public void Scale (float scaleX, float scaleY)
@@ -344,9 +219,8 @@ namespace System.Drawing.Drawing2D
 
 		public void Scale (float scaleX, float scaleY, MatrixOrder order)
 		{
-			if (m != null) { Combine (new float [] { scaleX, 0, 0, scaleY, 0, 0 }, order); return; }
-			Status status = GDIPlus.GdipScaleMatrix (nativeMatrix, scaleX, scaleY, order);
-			GDIPlus.CheckStatus (status);
+			CheckOrder (order);
+			Gp.Scale (scaleX, scaleY, order == MatrixOrder.Append);
 		}
 
 		public void Shear (float shearX, float shearY)
@@ -356,73 +230,43 @@ namespace System.Drawing.Drawing2D
 
 		public void Shear (float shearX, float shearY, MatrixOrder order)
 		{
-			if (m != null) { Combine (new float [] { 1, shearY, shearX, 1, 0, 0 }, order); return; }
-			Status status = GDIPlus.GdipShearMatrix (nativeMatrix, shearX, shearY, order);
-			GDIPlus.CheckStatus (status);
+			CheckOrder (order);
+			Gp.Shear (shearX, shearY, order == MatrixOrder.Append);
 		}
 
+		// GdipTransformMatrixPointsI @18006b040: through floats, then (int)(v + 0.5) truncated.
 		public void TransformPoints (Point[] pts)
 		{
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
-			if (m != null) {
-				for (int i = 0; i < pts.Length; i++) {
-					float x = pts [i].X, y = pts [i].Y;
-					pts [i] = new Point ((int) Math.Round (x * m [0] + y * m [2] + m [4]), (int) Math.Round (x * m [1] + y * m [3] + m [5]));
-				}
-				return;
+			for (int i = 0; i < pts.Length; i++) {
+				PointF p = Gp.Transform (new PointF (pts [i].X, pts [i].Y));
+				pts [i] = new Point ((int) (p.X + 0.5f), (int) (p.Y + 0.5f));
 			}
-
-			Status status = GDIPlus.GdipTransformMatrixPointsI (nativeMatrix, pts, pts.Length);
-			GDIPlus.CheckStatus (status);
 		}
 
 		public void TransformPoints (PointF[] pts)
 		{
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
-			if (m != null) {
-				for (int i = 0; i < pts.Length; i++) {
-					float x = pts [i].X, y = pts [i].Y;
-					pts [i] = new PointF (x * m [0] + y * m [2] + m [4], x * m [1] + y * m [3] + m [5]);
-				}
-				return;
-			}
-
-			Status status = GDIPlus.GdipTransformMatrixPoints (nativeMatrix, pts, pts.Length);
-			GDIPlus.CheckStatus (status);
+			Gp.Transform (pts);
 		}
 
 		public void TransformVectors (Point[] pts)
 		{
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
-			if (m != null) {
-				for (int i = 0; i < pts.Length; i++) {
-					float x = pts [i].X, y = pts [i].Y;
-					pts [i] = new Point ((int) Math.Round (x * m [0] + y * m [2]), (int) Math.Round (x * m [1] + y * m [3]));
-				}
-				return;
+			for (int i = 0; i < pts.Length; i++) {
+				PointF p = Gp.VectorTransform (new PointF (pts [i].X, pts [i].Y));
+				pts [i] = new Point ((int) (p.X + 0.5f), (int) (p.Y + 0.5f));
 			}
-
-			Status status = GDIPlus.GdipVectorTransformMatrixPointsI (nativeMatrix, pts, pts.Length);
-			GDIPlus.CheckStatus (status);
 		}
 
 		public void TransformVectors (PointF[] pts)
 		{
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
-			if (m != null) {
-				for (int i = 0; i < pts.Length; i++) {
-					float x = pts [i].X, y = pts [i].Y;
-					pts [i] = new PointF (x * m [0] + y * m [2], x * m [1] + y * m [3]);
-				}
-				return;
-			}
-
-			Status status = GDIPlus.GdipVectorTransformMatrixPoints (nativeMatrix, pts, pts.Length);
-			GDIPlus.CheckStatus (status);
+			for (int i = 0; i < pts.Length; i++) pts [i] = Gp.VectorTransform (pts [i]);
 		}
 
 		public void Translate (float offsetX, float offsetY)
@@ -432,53 +276,13 @@ namespace System.Drawing.Drawing2D
 
 		public void Translate (float offsetX, float offsetY, MatrixOrder order)
 		{
-			if (m != null) { Combine (new float [] { 1, 0, 0, 1, offsetX, offsetY }, order); return; }
-			Status status = GDIPlus.GdipTranslateMatrix (nativeMatrix, offsetX, offsetY, order);
-			GDIPlus.CheckStatus (status);
+			CheckOrder (order);
+			Gp.Translate (offsetX, offsetY, order == MatrixOrder.Append);
 		}
 
 		public void VectorTransformPoints (Point[] pts)
 		{
 			TransformVectors (pts);
-		}
-
-		internal IntPtr NativeObject
-		{
-			get{
-				return nativeMatrix;
-			}
-			set	{
-				nativeMatrix = value;
-			}
-		}
-	}
-
-	/// <summary>The elements of a managed Matrix by its handle, so code handed a matrix as an IntPtr
-	/// (the path and region wrappers in gdipFunctions) can read it without GDI+.</summary>
-	internal static class ManagedMatrix
-	{
-		private static readonly Dictionary<IntPtr, float []> s_matrices = new Dictionary<IntPtr, float []> ();
-		private static long s_next = 0x4D400000;
-
-		internal static IntPtr Register (float [] m)
-		{
-			lock (s_matrices) {
-				var h = new IntPtr (++s_next);
-				s_matrices [h] = m;
-				return h;
-			}
-		}
-
-		internal static void Unregister (IntPtr h)
-		{
-			lock (s_matrices) s_matrices.Remove (h);
-		}
-
-		/// <summary>A copy of the six elements, or null when the handle is not a managed matrix.</summary>
-		internal static float [] Elements (IntPtr h)
-		{
-			lock (s_matrices)
-				return s_matrices.TryGetValue (h, out float [] m) ? (float []) m.Clone () : null;
 		}
 	}
 }

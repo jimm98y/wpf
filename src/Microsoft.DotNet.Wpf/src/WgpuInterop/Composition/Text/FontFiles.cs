@@ -769,6 +769,48 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </summary>
         internal static IReadOnlyCollection<string> ScannedFamilyNames() => ScannedFamilies().Keys;
 
+        /// <summary>Adds a font file the APPLICATION brought (System.Drawing's PrivateFontCollection):
+        /// its faces join the families every lookup sees, so text drawn in one finds it. Returns the
+        /// family names the file declares (none when it is not a usable font).</summary>
+        public static IReadOnlyList<string> RegisterPrivateFile(string path)
+        {
+            var names = new List<string>();
+            byte[]? head;
+            try { head = ReadScanTables(path); }
+            catch (IOException) { return names; }
+            catch (UnauthorizedAccessException) { return names; }
+            if (head is null) return names;
+            Dictionary<string, string?[]> found = ScannedFamilies();
+            lock (s_resolved)
+            {
+                foreach (int sfnt in FaceOffsets(head))
+                {
+                    if (!ReadNames(head, sfnt, out string? family, out bool bold, out bool italic)) continue;
+                    int slot = (bold ? 1 : 0) | (italic ? 2 : 0);
+                    if (!found.TryGetValue(family!, out string?[]? slots))
+                        found[family!] = slots = new string?[4];
+                    slots[slot] ??= path;
+                    if (!names.Contains(family!)) names.Add(family!);
+                }
+                s_resolved.Clear();
+            }
+            return names;
+        }
+
+        /// <summary>The scanned (installed and registered) families, with the casing their fonts
+        /// declare.</summary>
+        public static IReadOnlyCollection<string> FamilyNames() => ScannedFamilies().Keys;
+
+        /// <summary>The installed family named <paramref name="family"/> (any case), as the font
+        /// spells it; null when there is none.</summary>
+        public static string? CanonicalFamily(string? family)
+        {
+            if (string.IsNullOrWhiteSpace(family)) return null;
+            foreach (string k in ScannedFamilies().Keys)
+                if (string.Equals(k, family, StringComparison.OrdinalIgnoreCase)) return k;
+            return null;
+        }
+
         /// <summary>The installed TrueType/OpenType files in the order the system loads them -- the
         /// order that decides which of two equal faces a font list shows first. On Windows that is
         /// GDI's: Marlett (a system font the registry does not list), then HKLM's and HKCU's

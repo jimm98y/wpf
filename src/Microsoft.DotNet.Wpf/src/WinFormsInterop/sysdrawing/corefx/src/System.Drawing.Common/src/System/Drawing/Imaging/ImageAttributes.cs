@@ -45,7 +45,6 @@ namespace System.Drawing.Imaging
         private string allocationSite = Graphics.GetAllocationStack();
 #endif
 
-        internal IntPtr nativeImageAttributes;
 
         /// <summary>One adjust type's adjustments. A type with none set falls back to Default's.</summary>
         private sealed class Adjustments
@@ -79,7 +78,6 @@ namespace System.Drawing.Imaging
             return _adjust[i] ??= new Adjustments();
         }
 
-        private bool Native => nativeImageAttributes != IntPtr.Zero;
 
         private static void Check(int status)
         {
@@ -87,32 +85,14 @@ namespace System.Drawing.Imaging
                 throw SafeNativeMethods.Gdip.StatusException(status);
         }
 
-        internal void SetNativeImageAttributes(IntPtr handle)
-        {
-            if (handle == IntPtr.Zero)
-                throw new ArgumentNullException("handle");
-
-            nativeImageAttributes = handle;
-        }
 
         /// <summary>
         /// Initializes a new instance of the <see cref='ImageAttributes'/> class.
         /// </summary>
         public ImageAttributes()
         {
-            if (!GDIPlus.Initialized)
-                return;
-
-            IntPtr newImageAttributes = IntPtr.Zero;
-            int status = SafeNativeMethods.Gdip.GdipCreateImageAttributes(out newImageAttributes);
-            Check(status);
-            SetNativeImageAttributes(newImageAttributes);
         }
 
-        internal ImageAttributes(IntPtr newNativeImageAttributes)
-        {
-            SetNativeImageAttributes(newNativeImageAttributes);
-        }
 
         /// <summary>
         /// Cleans up Windows resources for this <see cref='ImageAttributes'/>.
@@ -125,36 +105,6 @@ namespace System.Drawing.Imaging
 
         private void Dispose(bool disposing)
         {
-#if FINALIZATION_WATCH
-            if (!disposing && nativeImageAttributes != IntPtr.Zero)
-                Debug.WriteLine("**********************\nDisposed through finalization:\n" + allocationSite);
-#endif
-            if (nativeImageAttributes != IntPtr.Zero)
-            {
-                try
-                {
-#if DEBUG
-                    int status =
-#endif
-                    SafeNativeMethods.Gdip.GdipDisposeImageAttributes(new HandleRef(this, nativeImageAttributes));
-#if DEBUG
-                    Debug.Assert(status == SafeNativeMethods.Gdip.Ok, "GDI+ returned an error status: " + status.ToString(CultureInfo.InvariantCulture));
-#endif
-                }
-                catch (Exception ex)
-                {
-                    if (ClientUtils.IsSecurityOrCriticalException(ex))
-                    {
-                        throw;
-                    }
-
-                    Debug.Fail("Exception thrown during Dispose: " + ex.ToString());
-                }
-                finally
-                {
-                    nativeImageAttributes = IntPtr.Zero;
-                }
-            }
         }
 
         /// <summary>
@@ -170,17 +120,7 @@ namespace System.Drawing.Imaging
         /// </summary>
         public object Clone()
         {
-            ImageAttributes copy;
-            if (Native)
-            {
-                IntPtr clone = IntPtr.Zero;
-                Check(SafeNativeMethods.Gdip.GdipCloneImageAttributes(new HandleRef(this, nativeImageAttributes), out clone));
-                copy = new ImageAttributes(clone);
-            }
-            else
-            {
-                copy = new ImageAttributes();
-            }
+            var copy = new ImageAttributes();
             for (int i = 0; i < _adjust.Length; i++)
                 copy._adjust[i] = _adjust[i]?.Clone();
             copy._wrapMode = _wrapMode;
@@ -229,9 +169,6 @@ namespace System.Drawing.Imaging
             Adjustments a = For(type);
             a.Matrix = a.GrayMatrix = null;
             a.MatrixFlags = ColorMatrixFlag.Default;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesColorMatrix(
-                    new HandleRef(this, nativeImageAttributes), type, false, null, null, ColorMatrixFlag.Default));
         }
 
         /// <summary>
@@ -256,9 +193,6 @@ namespace System.Drawing.Imaging
             a.Matrix = Copy(newColorMatrix);
             a.GrayMatrix = grayMatrix == null ? null : Copy(grayMatrix);
             a.MatrixFlags = mode;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesColorMatrix(
-                    new HandleRef(this, nativeImageAttributes), type, true, newColorMatrix, grayMatrix, mode));
         }
 
         private static ColorMatrix Copy(ColorMatrix m)
@@ -280,8 +214,6 @@ namespace System.Drawing.Imaging
             Adjustments a = For(type);
             a.HasThreshold = true;
             a.Threshold = threshold;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesThreshold(new HandleRef(this, nativeImageAttributes), type, true, threshold));
         }
 
         public void ClearThreshold()
@@ -292,8 +224,6 @@ namespace System.Drawing.Imaging
         public void ClearThreshold(ColorAdjustType type)
         {
             For(type).HasThreshold = false;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesThreshold(new HandleRef(this, nativeImageAttributes), type, false, 0.0f));
         }
 
         public void SetGamma(float gamma)
@@ -306,8 +236,6 @@ namespace System.Drawing.Imaging
             Adjustments a = For(type);
             a.HasGamma = true;
             a.Gamma = gamma;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesGamma(new HandleRef(this, nativeImageAttributes), type, true, gamma));
         }
 
         public void ClearGamma()
@@ -318,8 +246,6 @@ namespace System.Drawing.Imaging
         public void ClearGamma(ColorAdjustType type)
         {
             For(type).HasGamma = false;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesGamma(new HandleRef(this, nativeImageAttributes), type, false, 0.0f));
         }
 
         public void SetNoOp()
@@ -330,8 +256,6 @@ namespace System.Drawing.Imaging
         public void SetNoOp(ColorAdjustType type)
         {
             For(type).NoOp = true;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesNoOp(new HandleRef(this, nativeImageAttributes), type, true));
         }
 
         public void ClearNoOp()
@@ -342,8 +266,6 @@ namespace System.Drawing.Imaging
         public void ClearNoOp(ColorAdjustType type)
         {
             For(type).NoOp = false;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesNoOp(new HandleRef(this, nativeImageAttributes), type, false));
         }
 
         public void SetColorKey(Color colorLow, Color colorHigh)
@@ -357,9 +279,6 @@ namespace System.Drawing.Imaging
             a.HasColorKey = true;
             a.KeyLow = colorLow;
             a.KeyHigh = colorHigh;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesColorKeys(
-                    new HandleRef(this, nativeImageAttributes), type, true, colorLow.ToArgb(), colorHigh.ToArgb()));
         }
 
         public void ClearColorKey()
@@ -370,8 +289,6 @@ namespace System.Drawing.Imaging
         public void ClearColorKey(ColorAdjustType type)
         {
             For(type).HasColorKey = false;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesColorKeys(new HandleRef(this, nativeImageAttributes), type, false, 0, 0));
         }
 
         // The output channel (CMYK separation) is a printing feature; the screen path ignores it.
@@ -383,8 +300,6 @@ namespace System.Drawing.Imaging
         public void SetOutputChannel(ColorChannelFlag flags, ColorAdjustType type)
         {
             For(type);
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesOutputChannel(new HandleRef(this, nativeImageAttributes), type, true, flags));
         }
 
         public void ClearOutputChannel()
@@ -395,9 +310,6 @@ namespace System.Drawing.Imaging
         public void ClearOutputChannel(ColorAdjustType type)
         {
             For(type);
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesOutputChannel(
-                    new HandleRef(this, nativeImageAttributes), type, false, ColorChannelFlag.ColorChannelLast));
         }
 
         public void SetOutputChannelColorProfile(String colorProfileFilename)
@@ -411,9 +323,6 @@ namespace System.Drawing.Imaging
             // Called in order to emulate exception behavior from netfx related to invalid file paths.
             Path.GetFullPath(colorProfileFilename);
             For(type);
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesOutputChannelColorProfile(
-                    new HandleRef(this, nativeImageAttributes), type, true, colorProfileFilename));
         }
 
         public void ClearOutputChannelColorProfile()
@@ -434,26 +343,6 @@ namespace System.Drawing.Imaging
         public void SetRemapTable(ColorMap[] map, ColorAdjustType type)
         {
             For(type).Remap = (ColorMap[])map.Clone();
-            if (!Native)
-                return;
-
-            int mapSize = map.Length;
-            int size = 4;
-            IntPtr memory = Marshal.AllocHGlobal(checked(mapSize * size * 2));
-            try
-            {
-                for (int index = 0; index < mapSize; index++)
-                {
-                    Marshal.StructureToPtr(map[index].OldColor.ToArgb(), (IntPtr)((long)memory + index * size * 2), false);
-                    Marshal.StructureToPtr(map[index].NewColor.ToArgb(), (IntPtr)((long)memory + index * size * 2 + size), false);
-                }
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesRemapTable(
-                    new HandleRef(this, nativeImageAttributes), type, true, mapSize, new HandleRef(null, memory)));
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(memory);
-            }
         }
 
         public void ClearRemapTable()
@@ -464,9 +353,6 @@ namespace System.Drawing.Imaging
         public void ClearRemapTable(ColorAdjustType type)
         {
             For(type).Remap = null;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesRemapTable(
-                    new HandleRef(this, nativeImageAttributes), type, false, 0, NativeMethods.NullHandleRef));
         }
 
         public void SetBrushRemapTable(ColorMap[] map)
@@ -494,40 +380,17 @@ namespace System.Drawing.Imaging
             _wrapMode = mode;
             _wrapColor = color;
             _wrapClamp = clamp;
-            if (Native)
-                Check(SafeNativeMethods.Gdip.GdipSetImageAttributesWrapMode(
-                    new HandleRef(this, nativeImageAttributes), unchecked((int)mode), color.ToArgb(), clamp));
         }
 
         public void GetAdjustedPalette(ColorPalette palette, ColorAdjustType type)
         {
-            if (!Native)
+            Color[] entries = palette.Entries;
+            for (int i = 0; i < entries.Length; i++)
             {
-                Color[] entries = palette.Entries;
-                for (int i = 0; i < entries.Length; i++)
-                {
-                    Color c = entries[i];
-                    byte[] px = { c.R, c.G, c.B, c.A };
-                    Apply(px, type);
-                    entries[i] = Color.FromArgb(px[3], px[0], px[1], px[2]);
-                }
-                return;
-            }
-
-            // does inplace adjustment
-            IntPtr memory = palette.ConvertToMemory();
-            try
-            {
-                Check(SafeNativeMethods.Gdip.GdipGetImageAttributesAdjustedPalette(
-                                    new HandleRef(this, nativeImageAttributes), new HandleRef(null, memory), type));
-                palette.ConvertFromMemory(memory);
-            }
-            finally
-            {
-                if (memory != IntPtr.Zero)
-                {
-                    Marshal.FreeHGlobal(memory);
-                }
+                Color c = entries[i];
+                byte[] px = { c.R, c.G, c.B, c.A };
+                Apply(px, type);
+                entries[i] = Color.FromArgb(px[3], px[0], px[1], px[2]);
             }
         }
 

@@ -2,61 +2,32 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System.Runtime.InteropServices;
+using System.Drawing.WebGpuBackend.Gdip;
 
 namespace System.Drawing.Drawing2D
-{    
+{
+    // A managed GpCustomLineCap (WebGpuBackend.Gdip.GpCustomLineCap): the fill and stroke paths,
+    // base cap and inset, stroke caps and join, width scale, as gdiplus.dll keeps them.
     public partial class CustomLineCap : MarshalByRefObject, ICloneable, IDisposable
     {
-#if FINALIZATION_WATCH
-        private string allocationSite = Graphics.GetAllocationStack();
-#endif
+        internal GpCustomLineCap gp;
 
-        // Handle to native line cap object
-        internal SafeCustomLineCapHandle nativeCap = null;
-
-        private bool _disposed = false;
-
-        // For subclass creation
-        internal CustomLineCap() { }
+        internal CustomLineCap(GpCustomLineCap cap) { gp = cap; }
 
         public CustomLineCap(GraphicsPath fillPath, GraphicsPath strokePath) : this(fillPath, strokePath, LineCap.Flat) { }
 
         public CustomLineCap(GraphicsPath fillPath, GraphicsPath strokePath, LineCap baseCap) : this(fillPath, strokePath, baseCap, 0) { }
 
+        // GdipCreateCustomLineCap @1800557a0: at least one path; each path validated
+        // (GpCustomLineCap::SetFillPath/SetStrokePath), which fails when it does not cross the
+        // cap's negative y axis.
         public CustomLineCap(GraphicsPath fillPath, GraphicsPath strokePath, LineCap baseCap, float baseInset)
         {
-            IntPtr nativeLineCap;
-            // GDI+ takes the cap's shape as native paths: hand it copies of the managed ones.
-            IntPtr fill = fillPath == null ? IntPtr.Zero : GDIPlus.NativePathCopy(fillPath.nativePath);
-            IntPtr stroke = strokePath == null ? IntPtr.Zero : GDIPlus.NativePathCopy(strokePath.nativePath);
-            int status;
-            try
-            {
-                status = SafeNativeMethods.Gdip.GdipCreateCustomLineCap(
-                                new HandleRef(fillPath, fill), new HandleRef(strokePath, stroke),
-                                baseCap, baseInset, out nativeLineCap);
-            }
-            finally
-            {
-                if (fill != IntPtr.Zero) GDIPlus.Native_GdipDeletePath(fill);
-                if (stroke != IntPtr.Zero) GDIPlus.Native_GdipDeletePath(stroke);
-            }
-
-            if (status != SafeNativeMethods.Gdip.Ok)
+            if (fillPath == null && strokePath == null)
+                throw new ArgumentException("Parameter is not valid.");
+            int status = GpCustomLineCap.Create(fillPath?.gp, strokePath?.gp, baseCap, baseInset, out gp);
+            if (status != 0)
                 throw SafeNativeMethods.Gdip.StatusException(status);
-
-            SetNativeLineCap(nativeLineCap);
-        }
-
-        internal CustomLineCap(IntPtr nativeLineCap) => SetNativeLineCap(nativeLineCap);
-
-        internal void SetNativeLineCap(IntPtr handle)
-        {
-            if (handle == IntPtr.Zero)
-                throw new ArgumentNullException("handle");
-
-            nativeCap = new SafeCustomLineCapHandle(handle);
         }
 
         public void Dispose()
@@ -67,134 +38,48 @@ namespace System.Drawing.Drawing2D
 
         protected virtual void Dispose(bool disposing)
         {
-            if (_disposed)
-                return;
-
-#if FINALIZATION_WATCH
-            if (!disposing && nativeCap != null)
-                Debug.WriteLine("**********************\nDisposed through finalization:\n" + allocationSite);
-#endif
-            // propagate the explicit dispose call to the child
-            if (disposing && nativeCap != null)
-            {
-                nativeCap.Dispose();
-            }
-
-            _disposed = true;
         }
 
         ~CustomLineCap() => Dispose(false);
 
-        public object Clone()
-        {
-            return CoreClone();
-        }
+        public object Clone() => CoreClone();
 
-        internal virtual object CoreClone()
-        {
-            IntPtr clonedCap;
-            int status = SafeNativeMethods.Gdip.GdipCloneCustomLineCap(new HandleRef(this, nativeCap), out clonedCap);
-
-            if (status != SafeNativeMethods.Gdip.Ok)
-                throw SafeNativeMethods.Gdip.StatusException(status);
-
-            return CreateCustomLineCapObject(clonedCap);
-        }
+        internal virtual object CoreClone() => new CustomLineCap(gp.Clone());
 
         public void SetStrokeCaps(LineCap startCap, LineCap endCap)
         {
-            int status = SafeNativeMethods.Gdip.GdipSetCustomLineCapStrokeCaps(new HandleRef(this, nativeCap), startCap, endCap);
-
-            if (status != SafeNativeMethods.Gdip.Ok)
-                throw SafeNativeMethods.Gdip.StatusException(status);
+            gp.StrokeStartCap = startCap;
+            gp.StrokeEndCap = endCap;
         }
 
         public void GetStrokeCaps(out LineCap startCap, out LineCap endCap)
         {
-            int status = SafeNativeMethods.Gdip.GdipGetCustomLineCapStrokeCaps(new HandleRef(this, nativeCap), out startCap, out endCap);
-
-            if (status != SafeNativeMethods.Gdip.Ok)
-                throw SafeNativeMethods.Gdip.StatusException(status);
+            startCap = gp.StrokeStartCap;
+            endCap = gp.StrokeEndCap;
         }
 
         public LineJoin StrokeJoin
         {
-            get
-            {
-                int status = SafeNativeMethods.Gdip.GdipGetCustomLineCapStrokeJoin(new HandleRef(this, nativeCap), out LineJoin lineJoin);
-
-                if (status != SafeNativeMethods.Gdip.Ok)
-                    throw SafeNativeMethods.Gdip.StatusException(status);
-
-                return lineJoin;
-            }
-            set
-            {
-                int status = SafeNativeMethods.Gdip.GdipSetCustomLineCapStrokeJoin(new HandleRef(this, nativeCap), value);
-
-                if (status != SafeNativeMethods.Gdip.Ok)
-                    throw SafeNativeMethods.Gdip.StatusException(status);
-            }
+            get => gp.StrokeJoin;
+            set => gp.StrokeJoin = value;
         }
 
         public LineCap BaseCap
         {
-            get
-            {
-                int status = SafeNativeMethods.Gdip.GdipGetCustomLineCapBaseCap(new HandleRef(this, nativeCap), out LineCap baseCap);
-
-                if (status != SafeNativeMethods.Gdip.Ok)
-                    throw SafeNativeMethods.Gdip.StatusException(status);
-
-                return baseCap;
-            }
-            set
-            {
-                int status = SafeNativeMethods.Gdip.GdipSetCustomLineCapBaseCap(new HandleRef(this, nativeCap), value);
-
-                if (status != SafeNativeMethods.Gdip.Ok)
-                    throw SafeNativeMethods.Gdip.StatusException(status);
-            }
+            get => gp.BaseCap;
+            set => gp.BaseCap = value;
         }
 
         public float BaseInset
         {
-            get
-            {
-                int status = SafeNativeMethods.Gdip.GdipGetCustomLineCapBaseInset(new HandleRef(this, nativeCap), out float inset);
-
-                if (status != SafeNativeMethods.Gdip.Ok)
-                    throw SafeNativeMethods.Gdip.StatusException(status);
-
-                return inset;
-            }
-            set
-            {
-                int status = SafeNativeMethods.Gdip.GdipSetCustomLineCapBaseInset(new HandleRef(this, nativeCap), value);
-
-                if (status != SafeNativeMethods.Gdip.Ok)
-                    throw SafeNativeMethods.Gdip.StatusException(status);
-            }
+            get => gp.BaseInset;
+            set => gp.BaseInset = value;
         }
 
         public float WidthScale
         {
-            get
-            {
-                int status = SafeNativeMethods.Gdip.GdipGetCustomLineCapWidthScale(new HandleRef(this, nativeCap), out float widthScale);
-
-                if (status != SafeNativeMethods.Gdip.Ok)
-                    throw SafeNativeMethods.Gdip.StatusException(status);
-
-                return widthScale;
-            }
-            set
-            {
-                int status = SafeNativeMethods.Gdip.GdipSetCustomLineCapWidthScale(new HandleRef(this, nativeCap), value);
-
-                if (status != SafeNativeMethods.Gdip.Ok)
-                    throw SafeNativeMethods.Gdip.StatusException(status);
-            }
+            get => gp.WidthScale;
+            set => gp.WidthScale = value;
         }
     }
 }

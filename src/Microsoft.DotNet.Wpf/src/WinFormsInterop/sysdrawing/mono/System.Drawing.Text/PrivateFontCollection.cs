@@ -29,22 +29,29 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using Microsoft.Wpf.Interop.WebGpu.Composition.Text;
 
 namespace System.Drawing.Text {
 
+	// Fonts the application brings: each file registered with the managed font stack (so text drawn
+	// in one of its families finds the file), its families listed here. A memory font is written to
+	// a file of its own first, since the font stack reads faces from files.
 	public sealed class PrivateFontCollection : FontCollection {
 
-		// constructors
+		static readonly HashSet<string> s_privateOnly = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
+
+		internal static bool IsPrivateOnly (string name)
+		{
+			lock (s_privateOnly) return s_privateOnly.Contains (name);
+		}
 
 		public PrivateFontCollection ()
 		{
-			Status status = GDIPlus.GdipNewPrivateFontCollection (out _nativeFontCollection);
-			GDIPlus.CheckStatus (status);
 		}
-		
-		// methods
+
 		public void AddFontFile (string filename) 
 		{
 			if (filename == null)
@@ -56,30 +63,44 @@ namespace System.Drawing.Text {
 			if (!File.Exists (fname))
 				throw new FileNotFoundException ();
 
+			Add (fname);
+		}
+
+		void Add (string path)
+		{
+			bool known (string n) => System.Drawing.WebGpuBackend.Gdip.GpFontFamily.Canonical (n) != null;
+			var before = new HashSet<string> (FontFiles.FamilyNames (), StringComparer.OrdinalIgnoreCase);
+			IReadOnlyList<string> names = FontFiles.RegisterPrivateFile (path);
 			// note: MS throw the same exception FileNotFoundException if the file exists but isn't a valid font file
-			Status status = GDIPlus.GdipPrivateAddFontFile (_nativeFontCollection, fname);
-			GDIPlus.CheckStatus (status);			
+			if (names.Count == 0)
+				throw new FileNotFoundException ();
+			foreach (string n in names) {
+				if (!before.Contains (n))
+					lock (s_privateOnly) s_privateOnly.Add (n);
+				if (!Contains (n, out _)) _families.Add (n);
+			}
+			_families.Sort (StringComparer.OrdinalIgnoreCase);
 		}
 
 		public void AddMemoryFont (IntPtr memory, int length) 
 		{
+			if (memory == IntPtr.Zero)
+				throw new ArgumentException ("Parameter is not valid.");
 			// note: MS throw FileNotFoundException if something is bad with the data (except for a null pointer)
-			Status status = GDIPlus.GdipPrivateAddMemoryFont (_nativeFontCollection, memory, length);
-			GDIPlus.CheckStatus (status);						
+			if (length <= 0)
+				throw new FileNotFoundException ();
+			var data = new byte [length];
+			Marshal.Copy (memory, data, 0, length);
+			string dir = Path.Combine (Path.GetTempPath (), "System.Drawing.MemoryFonts");
+			Directory.CreateDirectory (dir);
+			string path = Path.Combine (dir, Convert.ToHexString (System.Security.Cryptography.SHA1.HashData (data)) + ".ttf");
+			if (!File.Exists (path))
+				File.WriteAllBytes (path, data);
+			Add (path);
 		}
-		
-		// methods	
+
 		protected override void Dispose (bool disposing)
 		{
-			if (_nativeFontCollection!=IntPtr.Zero) {
-				GDIPlus.GdipDeletePrivateFontCollection (ref _nativeFontCollection);							
-
-				// This must be zeroed out, otherwise our base will also call
-				// the GDI+ delete method on unix platforms. We're keeping the
-				// base.Dispose() call in case other cleanup ever gets added there
-				_nativeFontCollection = IntPtr.Zero;
-			}
-			
 			base.Dispose (disposing);
 		}		
 	}

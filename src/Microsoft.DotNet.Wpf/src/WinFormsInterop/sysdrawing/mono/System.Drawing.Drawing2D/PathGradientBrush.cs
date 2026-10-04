@@ -16,10 +16,10 @@
 // distribute, sublicense, and/or sell copies of the Software, and to
 // permit persons to whom the Software is furnished to do so, subject to
 // the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -30,16 +30,65 @@
 //
 
 using System.ComponentModel;
-using System.Runtime.InteropServices;
+using System.Drawing.WebGpuBackend.Gdip;
 
 namespace System.Drawing.Drawing2D {
 
-	[MonoTODO ("libgdiplus/cairo doesn't support path gradients - unless it can be mapped to a radial gradient")]
+	// A managed GpPathGradient (gdiplus.dll), its state kept and answered as GDI+ does:
+	// InitializeBrush @18004e1f0 (points), DefaultBrush @1801a1ec0 + PrepareBrush @18000b7a0 (path),
+	// SetSurroundColors @180070300, GdipSet/GetPathGradientSurroundColorsWithCount @1800697e0 /
+	// @1800604f0, SetBlend @18006f460 / GetBlend @1801abc28, SetPresetBlend @180070108 /
+	// GetPresetBlend @18013e7b0, the copy ctor @18000acf0. GDI+ stores the blend and the preset
+	// blend reversed and inverted (1 - x, last first), so a value read back is 1 - (1 - x).
 	public sealed class PathGradientBrush : Brush {
 
-		internal PathGradientBrush (IntPtr native)
+		// +0x88 the path (null for a point-built brush), +0x90 the points, +0xa0 their count
+		GpPath _path;
+		PointF[] _points;
+		int _n;
+		// +0x98 surround colours, +0xa4 "they are all the first"
+		int[] _surround;
+		bool _oneSurround = true;
+		// +0xb4, +0x110
+		int _centerArgb;
+		PointF _center;
+		// +0x54
+		RectangleF _rect;
+		// +0x50
+		WrapMode _wrap;
+		// +0xa8 / +0xac
+		float _focusX, _focusY;
+		// +0x20
+		GpMatrix _xf = GpMatrix.CreateIdentity ();
+		// +0xd0 count, +0xc4 single factor, +0xe0 factors, +0xf8 positions (both stored as 1 - x, reversed)
+		int _count = 1;
+		float _factor0 = 1f;
+		float[] _factors, _positions;
+		// +0x78 preset flag, +0x70 preset colours (stored reversed)
+		bool _preset;
+		int[] _presetArgb;
+		bool _gamma;
+
+		static Exception Status (int s) => SafeNativeMethods.Gdip.StatusException (s);
+
+		// For the managed GDI+ engine.
+		internal GpPath GpPath => _path;
+		internal PointF[] GpPoints => _points;
+		internal int PointCount => _n;
+		internal int[] SurroundArgb => _surround;
+		internal bool OneSurround => _oneSurround;
+		internal int CenterArgb => _centerArgb;
+		internal GpMatrix Xform => _xf;
+		internal int BlendCount => _count;
+		internal float BlendFactor0 => _factor0;
+		internal float[] StoredFactors => _factors;
+		internal float[] StoredPositions => _positions;
+		internal bool PresetSet => _preset;
+		internal int[] StoredPresetArgb => _presetArgb;
+		internal PointF FocusScalesInternal => new PointF (_focusX, _focusY);
+
+		PathGradientBrush ()
 		{
-			SetNativeBrush (native);
 		}
 
 		public PathGradientBrush (GraphicsPath path)
@@ -47,10 +96,39 @@ namespace System.Drawing.Drawing2D {
 			if (path == null)
 				throw new ArgumentNullException ("path");
 
-			IntPtr nativeObject;
-			Status status = GDIPlus.GdipCreatePathGradientFromPath (path.nativePath, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			SetNativeBrush (nativeObject);
+			// GdipCreatePathGradientFromPath: DefaultBrush (white centre and surround, clamp), the
+			// path copied, PrepareBrush (bounds and centroid of the path's points, control points
+			// included).
+			_wrap = WrapMode.Clamp;
+			_centerArgb = unchecked ((int) 0xffffffff);
+			_path = path.gp.Clone ();
+			_n = _path.Count;
+			_points = _path.PointArray ();
+			_surround = new int [_n];
+			for (int i = 0; i < _n; i++) _surround [i] = unchecked ((int) 0xffffffff);
+			if (!Prepare (_points, _n))
+				throw Status (SafeNativeMethods.Gdip.OutOfMemory);
+		}
+
+		// The bounds and the centroid, as PrepareBrush / InitializeBrush sum and compare in float;
+		// false when the box is empty in either direction (GDI+ leaves the brush invalid).
+		bool Prepare (PointF[] p, int n)
+		{
+			if (n <= 0) return false;
+			float sx = p [0].X, sy = p [0].Y;
+			float minX = sx, maxX = sx, minY = sy, maxY = sy;
+			for (int i = 1; i < n; i++) {
+				float x = p [i].X, y = p [i].Y;
+				sx = x + sx; sy = y + sy;
+				if (x <= minX) minX = x;
+				if (maxX <= x) maxX = x;
+				if (y < minY) minY = y;
+				if (maxY <= y) maxY = y;
+			}
+			_rect = new RectangleF (minX, minY, maxX - minX, maxY - minY);
+			if (!(0f < maxX - minX) || !(0f < maxY - minY)) return false;
+			_center = new PointF (sx / (float) n, sy / (float) n);
+			return true;
 		}
 
 		public PathGradientBrush (Point [] points) : this (points, WrapMode.Clamp)
@@ -61,17 +139,17 @@ namespace System.Drawing.Drawing2D {
 		{
 		}
 
-		public PathGradientBrush (Point [] points, WrapMode wrapMode)
+		public PathGradientBrush (Point [] points, WrapMode wrapMode) : this (ToF (points), wrapMode)
+		{
+		}
+
+		static PointF[] ToF (Point[] points)
 		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
-			if ((wrapMode < WrapMode.Tile) || (wrapMode > WrapMode.Clamp))
-				throw new InvalidEnumArgumentException ("WrapMode");
-
-			IntPtr nativeObject;
-			Status status = GDIPlus.GdipCreatePathGradientI (points, points.Length, wrapMode, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			SetNativeBrush (nativeObject);
+			var f = new PointF [points.Length];
+			for (int i = 0; i < f.Length; i++) f [i] = points [i];
+			return f;
 		}
 
 		public PathGradientBrush (PointF [] points, WrapMode wrapMode)
@@ -81,36 +159,41 @@ namespace System.Drawing.Drawing2D {
 			if ((wrapMode < WrapMode.Tile) || (wrapMode > WrapMode.Clamp))
 				throw new InvalidEnumArgumentException ("WrapMode");
 
-			IntPtr nativeObject;
-			Status status = GDIPlus.GdipCreatePathGradient (points, points.Length, wrapMode, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			SetNativeBrush (nativeObject);
+			// GdipCreatePathGradient -> InitializeBrush: the centre colour is the elementary brush's
+			// default (opaque black), the surround colours white.
+			_wrap = wrapMode;
+			_centerArgb = unchecked ((int) 0xff000000);
+			_n = points.Length;
+			if (!Prepare (points, _n))
+				throw Status (SafeNativeMethods.Gdip.OutOfMemory);
+			_points = (PointF []) points.Clone ();
+			_surround = new int [_n];
+			for (int i = 0; i < _n; i++) _surround [i] = unchecked ((int) 0xffffffff);
 		}
 
 		// Properties
 
 		public Blend Blend {
 			get {
-				int count;
-				Status status = GDIPlus.GdipGetPathGradientBlendCount (NativeBrush, out count);
-				GDIPlus.CheckStatus (status);
+				// GdipGetPathGradientBlend: one entry is the factor alone; more are read back
+				// reversed and inverted.
+				int count = _count;
 				float [] factors = new float [count];
 				float [] positions = new float [count];
-				status = GDIPlus.GdipGetPathGradientBlend (NativeBrush, factors, positions, count);
-				GDIPlus.CheckStatus (status);
-
-				Blend blend = new Blend ();
-				blend.Factors = factors;
-				blend.Positions = positions;
-
-				return blend;
+				if (count == 1)
+					factors [0] = _factor0;
+				else
+					for (int i = 0; i < count; i++) {
+						if (_factors != null) factors [count - 1 - i] = 1f - _factors [i];
+						if (_positions != null) positions [count - 1 - i] = 1f - _positions [i];
+					}
+				return new Blend { Factors = factors, Positions = positions };
 			}
 			set {
 				// no null check, MS throws a NullReferenceException here
-				int count;
 				float [] factors = value.Factors;
 				float [] positions = value.Positions;
-				count = factors.Length;
+				int count = factors.Length;
 
 				if (count == 0 || positions.Length == 0)
 					throw new ArgumentException ("Invalid Blend object. It should have at least 2 elements in each of the factors and positions arrays.");
@@ -124,86 +207,78 @@ namespace System.Drawing.Drawing2D {
 				if (positions [count - 1] != 1.0F)
 					throw new ArgumentException ("Invalid Blend object. The positions array must have 1.0 as its last element.");
 
-				Status status = GDIPlus.GdipSetPathGradientBlend (NativeBrush, factors, positions, count);
-				GDIPlus.CheckStatus (status);
+				SetBlend (factors, positions, count);
 			}
+		}
+
+		void SetBlend (float[] factors, float[] positions, int count)
+		{
+			if (count == 1) {
+				_factors = _positions = null;
+				_factor0 = factors [0];
+			} else {
+				if (!(MathF.Abs (positions [0]) <= GpGradient.Eps) || !(MathF.Abs (1f - positions [count - 1]) <= GpGradient.Eps))
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				_factors = new float [count];
+				_positions = new float [count];
+				for (int i = 0; i < count; i++) {
+					_factors [count - 1 - i] = 1f - factors [i];
+					_positions [count - 1 - i] = 1f - positions [i];
+				}
+			}
+			_count = count;
+			_preset = false;
+			_presetArgb = null;
 		}
 
 		public Color CenterColor {
-			get {
-				int centerColor;
-				Status status = GDIPlus.GdipGetPathGradientCenterColor (NativeBrush, out centerColor);
-				GDIPlus.CheckStatus (status);
-				return Color.FromArgb (centerColor);
-			}
-			set {
-				Status status = GDIPlus.GdipSetPathGradientCenterColor (NativeBrush, value.ToArgb ());
-				GDIPlus.CheckStatus (status);
-			}
+			get { return Color.FromArgb (_centerArgb); }
+			set { _centerArgb = value.ToArgb (); }
 		}
 
 		public PointF CenterPoint {
-			get {
-				PointF center;
-				Status status = GDIPlus.GdipGetPathGradientCenterPoint (NativeBrush, out center);
-				GDIPlus.CheckStatus (status);
-
-				return center;
-			}
-			set {
-				PointF center = value;
-				Status status = GDIPlus.GdipSetPathGradientCenterPoint (NativeBrush, ref center);
-				GDIPlus.CheckStatus (status);
-			}
+			get { return _center; }
+			set { _center = value; }
 		}
 
 		public PointF FocusScales {
-			get {
-				float xScale;
-				float yScale;
-				Status status = GDIPlus.GdipGetPathGradientFocusScales (NativeBrush, out xScale, out yScale);
-				GDIPlus.CheckStatus (status);
+			get { return new PointF (_focusX, _focusY); }
+			set { _focusX = value.X; _focusY = value.Y; }
+		}
 
-				return new PointF (xScale, yScale);
-			}
-			set {
-				Status status = GDIPlus.GdipSetPathGradientFocusScales (NativeBrush, value.X, value.Y);
-				GDIPlus.CheckStatus (status);
-			}
+		/// <summary>Whether the gradient is drawn in linear light.</summary>
+		internal bool GammaCorrection {
+			get { return _gamma; }
+			set { _gamma = value; }
 		}
 
 		public ColorBlend InterpolationColors {
 			get {
-				int count;
-				Status status = GDIPlus.GdipGetPathGradientPresetBlendCount (NativeBrush, out count);
-				GDIPlus.CheckStatus (status);
+				int count = _preset ? _count : 0;
 				// if no failure, then the "managed" minimum is 1
 				if (count < 1)
 					count = 1;
 
 				int [] intcolors = new int [count];
 				float [] positions = new float [count];
-				// status would fail if we ask points or types with a < 2 count
-				if (count > 1) {
-					status = GDIPlus.GdipGetPathGradientPresetBlend (NativeBrush, intcolors, positions, count);
-					GDIPlus.CheckStatus (status);
+				// GetPresetBlend would fail with a count under 2
+				if (count > 1 && _presetArgb != null && _positions != null) {
+					for (int i = 0; i < count; i++) {
+						intcolors [count - 1 - i] = _presetArgb [i];
+						positions [count - 1 - i] = 1f - _positions [i];
+					}
 				}
 
-				ColorBlend interpolationColors = new ColorBlend ();
 				Color [] colors = new Color [count];
 				for (int i = 0; i < count; i++)
 					colors [i] = Color.FromArgb (intcolors [i]);
-				interpolationColors.Colors = colors;
-				interpolationColors.Positions = positions;
-
-				return interpolationColors;
+				return new ColorBlend { Colors = colors, Positions = positions };
 			}
 			set {
 				// no null check, MS throws a NullReferenceException here
-				int count;
 				Color [] colors = value.Colors;
 				float [] positions = value.Positions;
-				count = colors.Length;
+				int count = colors.Length;
 
 				if (count == 0 || positions.Length == 0)
 					throw new ArgumentException ("Invalid ColorBlend object. It should have at least 2 elements in each of the colors and positions arrays.");
@@ -217,51 +292,62 @@ namespace System.Drawing.Drawing2D {
 				if (positions [count - 1] != 1.0F)
 					throw new ArgumentException ("Invalid ColorBlend object. The positions array must have 1.0 as its last element.");
 
-				int [] blend = new int [colors.Length];
-				for (int i = 0; i < colors.Length; i++)
-					blend [i] = colors [i].ToArgb ();
-
-				Status status = GDIPlus.GdipSetPathGradientPresetBlend (NativeBrush, blend, positions, count);
-				GDIPlus.CheckStatus (status);
+				if (count < 2)
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				_presetArgb = new int [count];
+				_positions = new float [count];
+				for (int i = 0; i < count; i++) {
+					_presetArgb [count - 1 - i] = colors [i].ToArgb ();
+					_positions [count - 1 - i] = 1f - positions [i];
+				}
+				_factors = null;
+				_preset = true;
+				_count = count;
 			}
 		}
 
 		public RectangleF Rectangle {
-			get {
-				RectangleF rect;
-				Status status = GDIPlus.GdipGetPathGradientRect (NativeBrush, out rect);
-				GDIPlus.CheckStatus (status);
-
-				return rect;
-			}
+			get { return _rect; }
 		}
 
 		public Color [] SurroundColors {
 			get {
-				int count;
-				Status status = GDIPlus.GdipGetPathGradientSurroundColorCount (NativeBrush, out count);
-				GDIPlus.CheckStatus (status);
-
-				int [] intcolors = new int [count];
-				status = GDIPlus.GdipGetPathGradientSurroundColorsWithCount (NativeBrush, intcolors, ref count);
-				GDIPlus.CheckStatus (status);
-
-				Color [] colors = new Color [count];
-				for (int i = 0; i < count; i++)
-					colors [i] = Color.FromArgb (intcolors [i]);
-
+				// GdipGetPathGradientSurroundColorsWithCount: every point's colour, the count cut back
+				// to just past the last change.
+				int count = _n;
+				int used = 1;
+				int prev = 0;
+				for (int i = 0; i < count; i++) {
+					int c = _oneSurround ? _surround [0] : _surround [i];
+					if (i != 0 && c != prev) used = i + 1;
+					prev = c;
+				}
+				if (count <= 0) used = 0;
+				Color [] colors = new Color [used];
+				for (int i = 0; i < used; i++)
+					colors [i] = Color.FromArgb (_oneSurround ? _surround [0] : _surround [i]);
 				return colors;
 			}
 			set {
 				// no null check, MS throws a NullReferenceException here
 				int count = value.Length;
-				int [] colors = new int [count];
-				for (int i = 0; i < count; i++)
-					colors [i] = value [i].ToArgb ();
-
-				Status status = GDIPlus.GdipSetPathGradientSurroundColorsWithCount (NativeBrush, colors, ref count);
-				GDIPlus.CheckStatus (status);
+				// GdipSetPathGradientSurroundColorsWithCount: one to as many as there are points;
+				// the rest take the last one given.
+				if (count > _n || count <= 0)
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				var all = new int [_n];
+				for (int i = 0; i < _n; i++)
+					all [i] = value [i < count ? i : count - 1].ToArgb ();
+				SetSurroundColors (all);
 			}
+		}
+
+		void SetSurroundColors (int[] colors)
+		{
+			_surround = colors;
+			_oneSurround = true;
+			for (int i = 1; i < _n; i++)
+				if (colors [i] != colors [0]) { _oneSurround = false; break; }
 		}
 
 		/// <summary>Radial-gradient approximation (centre + radii, centre colour -> surround colour)
@@ -278,40 +364,32 @@ namespace System.Drawing.Drawing2D {
 		}
 
 		public Matrix Transform {
-			get {
-				Matrix matrix = new Matrix ();
-				Status status = GDIPlus.GdipGetPathGradientTransform (NativeBrush, matrix.nativeMatrix);
-				GDIPlus.CheckStatus (status);
-
-				return matrix;
-			}
+			get { return new Matrix (_xf); }
 			set {
 				if (value == null)
 					throw new ArgumentNullException ("Transform");
-
-				Status status = GDIPlus.GdipSetPathGradientTransform (NativeBrush, value.nativeMatrix);
-				GDIPlus.CheckStatus (status);
+				if (!value.Gp.IsInvertible)
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				_xf = value.Gp;
 			}
 		}
 
 		public WrapMode WrapMode {
-			get {
-				WrapMode wrapMode;
-				Status status = GDIPlus.GdipGetPathGradientWrapMode (NativeBrush, out wrapMode);
-				GDIPlus.CheckStatus (status);
-
-				return wrapMode;
-			}
+			get { return _wrap; }
 			set {
 				if ((value < WrapMode.Tile) || (value > WrapMode.Clamp))
 					throw new InvalidEnumArgumentException ("WrapMode");
-
-				Status status = GDIPlus.GdipSetPathGradientWrapMode (NativeBrush, value);
-				GDIPlus.CheckStatus (status);
+				_wrap = value;
 			}
 		}
 
 		// Methods
+
+		static bool Append (MatrixOrder order)
+		{
+			if ((uint) order > 1) throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+			return order == MatrixOrder.Append;
+		}
 
 		public void MultiplyTransform (Matrix matrix)
 		{
@@ -322,15 +400,14 @@ namespace System.Drawing.Drawing2D {
 		{
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
-
-			Status status = GDIPlus.GdipMultiplyPathGradientTransform (NativeBrush, matrix.nativeMatrix, order);
-			GDIPlus.CheckStatus (status);
+			if (!matrix.Gp.IsInvertible)
+				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+			_xf.Multiply (matrix.Gp, Append (order));
 		}
 
 		public void ResetTransform ()
 		{
-			Status status = GDIPlus.GdipResetPathGradientTransform (NativeBrush);
-			GDIPlus.CheckStatus (status);
+			_xf = GpMatrix.CreateIdentity ();
 		}
 
 		public void RotateTransform (float angle)
@@ -340,8 +417,7 @@ namespace System.Drawing.Drawing2D {
 
 		public void RotateTransform (float angle, MatrixOrder order)
 		{
-			Status status = GDIPlus.GdipRotatePathGradientTransform (NativeBrush, angle, order);
-			GDIPlus.CheckStatus (status);
+			_xf.Rotate (angle, Append (order));
 		}
 
 		public void ScaleTransform (float sx, float sy)
@@ -351,8 +427,7 @@ namespace System.Drawing.Drawing2D {
 
 		public void ScaleTransform (float sx, float sy, MatrixOrder order)
 		{
-			Status status = GDIPlus.GdipScalePathGradientTransform (NativeBrush, sx, sy, order);
-			GDIPlus.CheckStatus (status);
+			_xf.Scale (sx, sy, Append (order));
 		}
 
 		public void SetBlendTriangularShape (float focus)
@@ -364,9 +439,9 @@ namespace System.Drawing.Drawing2D {
 		{
 			if (focus < 0 || focus > 1 || scale < 0 || scale > 1)
 				throw new ArgumentException ("Invalid parameter passed.");
-
-			Status status = GDIPlus.GdipSetPathGradientLinearBlend (NativeBrush, focus, scale);
-			GDIPlus.CheckStatus (status);
+			if (!GpGradient.LinearBlendArray (focus, scale, out float[] f, out float[] p))
+				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+			SetBlend (f, p, f.Length);
 		}
 
 		public void SetSigmaBellShape (float focus)
@@ -378,9 +453,9 @@ namespace System.Drawing.Drawing2D {
 		{
 			if (focus < 0 || focus > 1 || scale < 0 || scale > 1)
 				throw new ArgumentException ("Invalid parameter passed.");
-
-			Status status = GDIPlus.GdipSetPathGradientSigmaBlend (NativeBrush, focus, scale);
-			GDIPlus.CheckStatus (status);
+			if (!GpGradient.SigmaBlendArray (focus, scale, out float[] f, out float[] p))
+				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+			SetBlend (f, p, f.Length);
 		}
 
 		public void TranslateTransform (float dx, float dy)
@@ -390,18 +465,19 @@ namespace System.Drawing.Drawing2D {
 
 		public void TranslateTransform (float dx, float dy, MatrixOrder order)
 		{
-			Status status = GDIPlus.GdipTranslatePathGradientTransform (NativeBrush, dx, dy, order);
-			GDIPlus.CheckStatus (status);
+			_xf.Translate (dx, dy, Append (order));
 		}
 
 		public override object Clone ()
 		{
-			IntPtr clonePtr;
-			Status status = (Status) GDIPlus.GdipCloneBrush (new HandleRef(this, NativeBrush), out clonePtr);
-			GDIPlus.CheckStatus (status);
-
-			PathGradientBrush clone = new PathGradientBrush (clonePtr);
-			return clone;
+			var c = (PathGradientBrush) MemberwiseClone ();
+			c._path = _path?.Clone ();
+			c._points = (PointF []) _points?.Clone ();
+			c._surround = (int []) _surround?.Clone ();
+			c._factors = (float []) _factors?.Clone ();
+			c._positions = (float []) _positions?.Clone ();
+			c._presetArgb = (int []) _presetArgb?.Clone ();
+			return c;
 		}
 	}
 }

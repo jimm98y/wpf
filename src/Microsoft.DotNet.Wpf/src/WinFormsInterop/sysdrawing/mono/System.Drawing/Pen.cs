@@ -17,10 +17,10 @@
 // distribute, sublicense, and/or sell copies of the Software, and to
 // permit persons to whom the Software is furnished to do so, subject to
 // the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -32,37 +32,50 @@
 
 using System.ComponentModel;
 using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
+using System.Drawing.WebGpuBackend.Gdip;
 
 namespace System.Drawing
 {
+	// A managed GpPen (gdiplus.dll), every property kept as GDI+ keeps it and checked as its flat
+	// API checks it: InitDefaultState @180150a90, SetDashStyleWithDashCap @18000bcc8, SetDashArray
+	// @180071ca0, SetDashCap @180071d60, SetCompoundArray @180071bc0, SetPenAlignment @1801a60e0,
+	// SetBrush @180071ae0 / SetColor @18000bb90 (the pen holds a COPY of the brush), the custom caps
+	// (@180069c90: a copy, the cap type 0xff), MiterLimit clamped to 1 (@18006a180), a singular
+	// transform refused (@18006a360).
 	public sealed class Pen : MarshalByRefObject, ICloneable, IDisposable
 	{
-		internal IntPtr nativeObject;
 		internal bool isModifiable = true;
-		private Color color;
-		private CustomLineCap startCap;
-		private CustomLineCap endCap;
-		// Managed backing for the no-libgdiplus (browser) path: the GPU-raster recorder reads a pen's
-		// Color/Brush/Width from these directly (no native pen object).
-		private float managedWidth = 1f;
-		private Brush managedBrush;
-		// ...and everything else a pen carries, for the same path: a printed page strokes with the
-		// pen's dashes, caps and joins, and with no GDI+ these used to read back as the defaults
-		// whatever had been set (and setting them threw).
-		private DashStyle m_dashStyle = DashStyle.Solid;
-		private float [] m_dashPattern;
-		private float m_dashOffset;
-		private DashCap m_dashCap = Drawing2D.DashCap.Flat;
-		private LineCap m_startCap = LineCap.Flat, m_endCap = LineCap.Flat;
-		private LineJoin m_lineJoin = LineJoin.Miter;
-		private float m_miterLimit = 10f;
-		private PenAlignment m_alignment = PenAlignment.Center;
 
-                internal Pen (IntPtr p)
-                {
-                        nativeObject = p;
-                }
+		// +0x20 the brush (a copy of the caller's)
+		private Brush _brush;
+		// The colour handed to the colour constructor or setter, cached as .NET caches it.
+		private Color color;
+		// DpPen +0x2c width, +0x34 start cap, +0x38 end cap, +0x3c join, +0x40 miter limit,
+		// +0x44 alignment, +0x50 transform, +0x80 dash style, +0x84 dash cap, +0x88/+0x90 dash
+		// array, +0x8c dash offset, +0x98/+0xa0 compound array, +0xa8/+0xb0 custom caps.
+		private float _width = 1f;
+		private LineCap _startCap = LineCap.Flat, _endCap = LineCap.Flat;
+		private LineJoin _lineJoin = LineJoin.Miter;
+		private float _miterLimit = 10f;
+		private PenAlignment _alignment = PenAlignment.Center;
+		private GpMatrix _xf = GpMatrix.CreateIdentity ();
+		private DashStyle _dashStyle = DashStyle.Solid;
+		private DashCap _dashCap = DashCap.Flat;
+		private float [] _dash;
+		private float _dashOffset;
+		private float [] _compound;
+		private CustomLineCap _customStart, _customEnd;
+
+		static Exception Status (int s) => SafeNativeMethods.Gdip.StatusException (s);
+		static Exception ReadOnly () => new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
+
+		// For the managed GDI+ engine and the recorders: the pen's own objects, not copies.
+		internal Brush BrushRef => _brush;
+		internal GpMatrix Xform => _xf;
+		internal float [] DashArrayRef => _dash;
+		internal float [] CompoundRef => _compound;
+		internal CustomLineCap CustomStartRef => _customStart;
+		internal CustomLineCap CustomEndRef => _customEnd;
 
 		public Pen (Brush brush) : this (brush, 1.0F)
 		{
@@ -76,429 +89,279 @@ namespace System.Drawing
 		{
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
-
-			managedWidth = width; managedBrush = brush;
-			color = (brush as SolidBrush)?.Color ?? Color.Empty;
-			if (GDIPlus.Initialized) {
-				Status status = GDIPlus.GdipCreatePen2 (brush.NativeBrush, width, GraphicsUnit.World, out nativeObject);
-				GDIPlus.CheckStatus (status);
-				color = Color.Empty;
-			}
+			_brush = (Brush) brush.Clone ();
+			_width = 0f <= width ? width : 1f;
+			color = Color.Empty;
 		}
 
 		public Pen (Color color, float width)
 		{
-			this.color = color; managedWidth = width;
-			if (GDIPlus.Initialized) {
-				Status status = GDIPlus.GdipCreatePen1 (color.ToArgb (), width, GraphicsUnit.World, out nativeObject);
-				GDIPlus.CheckStatus (status);
-			}
+			this.color = color;
+			_brush = new SolidBrush (color);
+			_width = 0f <= width ? width : 1f;
 		}
 
 		//
 		// Properties
 		//
-		[MonoLimitation ("Libgdiplus doesn't use this property for rendering")]
 		public PenAlignment Alignment {
-			get {
-				if (nativeObject == IntPtr.Zero) return m_alignment;   // recording-only
-				PenAlignment retval;
-                                Status status = GDIPlus.GdipGetPenMode (nativeObject, out retval);
-				GDIPlus.CheckStatus (status);
-                                return retval;
-                        }
-
+			get { return _alignment; }
 			set {
 				if ((value < PenAlignment.Center) || (value > PenAlignment.Right))
 					throw new InvalidEnumArgumentException ("Alignment", (int)value, typeof (PenAlignment));
-
-				if (isModifiable) {
-					if (!GDIPlus.Initialized) { m_alignment = value; return; }
-					Status status = GDIPlus.GdipSetPenMode (nativeObject, value);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
+				if (!isModifiable)
+					throw ReadOnly ();
+				// An inset pen cannot be compound.
+				if (value == PenAlignment.Inset && _compound != null && _compound.Length != 0)
+					throw Status (SafeNativeMethods.Gdip.NotImplemented);
+				_alignment = value;
 			}
 		}
 
 		public Brush Brush {
-			get {
-				if (!GDIPlus.Initialized)
-					return managedBrush ?? new SolidBrush (color);
-				IntPtr brush;
-				Status status = GDIPlus.GdipGetPenBrushFill (nativeObject, out brush);
-				GDIPlus.CheckStatus (status);
-				return new SolidBrush (brush);
-                        }
-
+			get { return (Brush) _brush.Clone (); }
 			set {
 				if (value == null)
 					throw new ArgumentNullException ("Brush");
 				if (!isModifiable)
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
-
-				if (!GDIPlus.Initialized) {
-					managedBrush = value;
-					color = (value as SolidBrush)?.Color ?? Color.Empty;
-					return;
-				}
-				Status status = GDIPlus.GdipSetPenBrushFill (nativeObject, value.NativeBrush);
-				GDIPlus.CheckStatus (status);
+					throw ReadOnly ();
+				_brush = (Brush) value.Clone ();
 				color = Color.Empty;
 			}
 		}
 
 		public Color Color {
 			get {
-				if (color.Equals (Color.Empty) && GDIPlus.Initialized) {
-					int c;
-					Status status = GDIPlus.GdipGetPenColor (nativeObject, out c);
-					GDIPlus.CheckStatus (status);
-	                                color = Color.FromArgb (c);
+				if (color.Equals (Color.Empty)) {
+					// GdipGetPenColor: only a solid pen has one.
+					if (!(_brush is SolidBrush sb))
+						throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+					color = Color.FromArgb (sb.Color.ToArgb ());
 				}
 				return color;
 			}
-
 			set {
 				if (!isModifiable)
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
-
-				color = value;
-				if (!GDIPlus.Initialized) return;
-				Status status = GDIPlus.GdipSetPenColor (nativeObject, value.ToArgb ());
-				GDIPlus.CheckStatus (status);
+					throw ReadOnly ();
+				if (value != color) {
+					color = value;
+					_brush = new SolidBrush (value);
+				}
 			}
 		}
 
 		public float [] CompoundArray {
 			get {
-				int count;
-				Status status = GDIPlus.GdipGetPenCompoundCount (nativeObject, out count);
-				GDIPlus.CheckStatus (status);
-
-				float [] compArray = new float [count];
-				status = GDIPlus.GdipGetPenCompoundArray (nativeObject, compArray, count);
-				GDIPlus.CheckStatus (status);
-
-				return compArray;
+				return _compound == null ? new float [0] : (float []) _compound.Clone ();
 			}
-
 			set {
-				if (isModifiable) {
-                                        int length = value.Length;
-                                        if (length < 2)
-                                                throw new ArgumentException ("Invalid parameter.");
-                                        foreach (float val in value)
-                                                if (val < 0 || val > 1)
-                                                        throw new ArgumentException ("Invalid parameter.");
-
-					Status status = GDIPlus.GdipSetPenCompoundArray (nativeObject, value, value.Length);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
+				if (!isModifiable)
+					throw ReadOnly ();
+				int length = value.Length;
+				if (length < 2)
+					throw new ArgumentException ("Invalid parameter.");
+				foreach (float val in value)
+					if (val < 0 || val > 1)
+						throw new ArgumentException ("Invalid parameter.");
+				// SetCompoundArray: an even count, ascending, in [0, 1]; not for an inset pen.
+				if ((length & 1) != 0)
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				if (_alignment == PenAlignment.Inset)
+					throw Status (SafeNativeMethods.Gdip.NotImplemented);
+				for (int i = 1; i < length; i++)
+					if (!(value [i - 1] <= value [i]))
+						throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				_compound = (float []) value.Clone ();
 			}
 		}
 
 		public CustomLineCap CustomEndCap {
-			get {
-				return endCap;
-			}
-
+			get { return (CustomLineCap) _customEnd?.Clone (); }
 			set {
-				if (isModifiable) {
-					Status status = GDIPlus.GdipSetPenCustomEndCap (nativeObject, value.nativeCap);
-					GDIPlus.CheckStatus (status);
-					endCap = value;
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
+				if (!isModifiable)
+					throw ReadOnly ();
+				if (value == null)
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				_customEnd = (CustomLineCap) value.Clone ();
+				_endCap = LineCap.Custom;
 			}
 		}
 
 		public CustomLineCap CustomStartCap {
-			get {
-				return startCap;
-			}
-
+			get { return (CustomLineCap) _customStart?.Clone (); }
 			set {
-				if (isModifiable) {
-					Status status = GDIPlus.GdipSetPenCustomStartCap (nativeObject, value.nativeCap);
-					GDIPlus.CheckStatus (status);
-					startCap = value;
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
+				if (!isModifiable)
+					throw ReadOnly ();
+				if (value == null)
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				_customStart = (CustomLineCap) value.Clone ();
+				_startCap = LineCap.Custom;
 			}
 		}
 
-                public DashCap DashCap {
+		// SetDashCap keeps Round and Triangle; anything else is Flat.
+		static DashCap MapDashCap (DashCap c) => c == DashCap.Round || c == DashCap.Triangle ? c : DashCap.Flat;
 
-                        get {
-				if (nativeObject == IntPtr.Zero) return m_dashCap;   // recording-only
-                                DashCap retval;
-                                Status status = GDIPlus.GdipGetPenDashCap197819 (nativeObject, out retval);
-				GDIPlus.CheckStatus (status);
-                                return retval;
-                        }
-
-                        set {
+		public DashCap DashCap {
+			get { return _dashCap; }
+			set {
 				if ((value < DashCap.Flat) || (value > DashCap.Triangle))
 					throw new InvalidEnumArgumentException ("DashCap", (int)value, typeof (DashCap));
+				if (!isModifiable)
+					throw ReadOnly ();
+				_dashCap = MapDashCap (value);
+			}
+		}
 
-				if (isModifiable) {
-					if (!GDIPlus.Initialized) { m_dashCap = value; return; }
-                                	Status status = GDIPlus.GdipSetPenDashCap197819 (nativeObject, value);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
-                        }
-                }
+		public float DashOffset {
+			get { return _dashOffset; }
+			set {
+				if (!isModifiable)
+					throw ReadOnly ();
+				_dashOffset = value;
+			}
+		}
 
-                public float DashOffset {
-
-                        get {
-				if (nativeObject == IntPtr.Zero) return m_dashOffset;   // recording-only
-                                float retval;
-                                Status status = GDIPlus.GdipGetPenDashOffset (nativeObject, out retval);
-				GDIPlus.CheckStatus (status);
-                                return retval;
-                        }
-
-                        set {
-				if (isModifiable) {
-					if (!GDIPlus.Initialized) { m_dashOffset = value; return; }
-                                	Status status = GDIPlus.GdipSetPenDashOffset (nativeObject, value);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
-                        }
-                }
-
-                public float [] DashPattern {
-                        get {
-				if (!GDIPlus.Initialized) return m_dashPattern != null ? (float []) m_dashPattern.Clone () : (DashStyle == DashStyle.Custom ? new float [] { 1f } : new float [0]);
-                                int count;
-                                Status status = GDIPlus.GdipGetPenDashCount (nativeObject, out count);
-				GDIPlus.CheckStatus (status);
-
-				float[] pattern;
-				// don't call GdipGetPenDashArray with a 0 count
-				if (count > 0) {
-					pattern = new float [count];
-	                                status = GDIPlus.GdipGetPenDashArray (nativeObject, pattern, count);
-					GDIPlus.CheckStatus (status);
-				} else if (DashStyle == DashStyle.Custom) {
-					// special case (not handled inside GDI+)
-					pattern = new float [1];
-					pattern[0] = 1.0f;
-				} else {
-					pattern = new float [0];
-				}
-                                return pattern;
-                        }
-
-                        set {
-				if (isModifiable) {
-					int length = value.Length;
-					if (length == 0)
+		public float [] DashPattern {
+			get {
+				if (_dash != null && _dash.Length > 0)
+					return (float []) _dash.Clone ();
+				// special case (not handled inside GDI+)
+				if (DashStyle == DashStyle.Custom)
+					return new float [] { 1.0f };
+				return new float [0];
+			}
+			set {
+				if (!isModifiable)
+					throw ReadOnly ();
+				int length = value.Length;
+				if (length == 0)
+					throw new ArgumentException ("Invalid parameter.");
+				foreach (float val in value)
+					if (val <= 0)
 						throw new ArgumentException ("Invalid parameter.");
-					if (!GDIPlus.Initialized) { m_dashPattern = (float []) value.Clone (); m_dashStyle = DashStyle.Custom; return; }
-					foreach (float val in value)
-						if (val <= 0)
-							throw new ArgumentException ("Invalid parameter.");
-                                	Status status = GDIPlus.GdipSetPenDashArray (nativeObject, value, value.Length);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
-                        }
-                }
+				_dash = (float []) value.Clone ();
+				_dashStyle = DashStyle.Custom;
+			}
+		}
 
 		public DashStyle DashStyle {
-			get {
-				if (nativeObject == IntPtr.Zero) return m_dashStyle;   // recording-only
-				DashStyle retval;
-                                Status status = GDIPlus.GdipGetPenDashStyle (nativeObject, out retval);
-				GDIPlus.CheckStatus (status);
-                                return retval;
-			}
-
+			get { return _dashStyle; }
 			set {
 				if ((value < DashStyle.Solid) || (value > DashStyle.Custom))
 					throw new InvalidEnumArgumentException ("DashStyle", (int)value, typeof (DashStyle));
-
-				if (isModifiable) {
-					if (!GDIPlus.Initialized) { m_dashStyle = value; if (value != DashStyle.Custom) m_dashPattern = null; return; }
-					Status status = GDIPlus.GdipSetPenDashStyle (nativeObject, value);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
+				if (!isModifiable)
+					throw ReadOnly ();
+				SetDashStyle (value);
 			}
+		}
+
+		// SetDashStyleWithDashCap: each named style is its pattern in pen widths; Custom keeps the
+		// pattern there is.
+		void SetDashStyle (DashStyle s)
+		{
+			switch (s) {
+			case DashStyle.Solid: _dash = null; break;
+			case DashStyle.Dash: _dash = new float [] { 3f, 1f }; break;
+			case DashStyle.Dot: _dash = new float [] { 1f, 1f }; break;
+			case DashStyle.DashDot: _dash = new float [] { 3f, 1f, 1f, 1f }; break;
+			case DashStyle.DashDotDot: _dash = new float [] { 3f, 1f, 1f, 1f, 1f, 1f }; break;
+			case DashStyle.Custom: break;
+			}
+			_dashStyle = s;
 		}
 
 		public LineCap StartCap {
-			get {
-				if (nativeObject == IntPtr.Zero) return m_startCap;   // recording-only
-				LineCap retval;
-				Status status = GDIPlus.GdipGetPenStartCap (nativeObject, out retval);
-				GDIPlus.CheckStatus (status);
-
-				return retval;
-			}
-
+			get { return _startCap; }
 			set {
 				if ((value < LineCap.Flat) || (value > LineCap.Custom))
 					throw new InvalidEnumArgumentException ("StartCap", (int)value, typeof (LineCap));
-
-				if (isModifiable) {
-					if (!GDIPlus.Initialized) { m_startCap = value; return; }
-					Status status = GDIPlus.GdipSetPenStartCap (nativeObject, value);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
+				if (!isModifiable)
+					throw ReadOnly ();
+				_startCap = value;
+				_customStart = null;
 			}
 		}
- 
+
 		public LineCap EndCap {
-			get {
-				if (nativeObject == IntPtr.Zero) return m_endCap;   // recording-only
-				LineCap retval;
-				Status status = GDIPlus.GdipGetPenEndCap (nativeObject, out retval);
-				GDIPlus.CheckStatus (status);
-
-				return retval;
-			}
-
+			get { return _endCap; }
 			set {
 				if ((value < LineCap.Flat) || (value > LineCap.Custom))
 					throw new InvalidEnumArgumentException ("EndCap", (int)value, typeof (LineCap));
-
-				if (isModifiable) {
-					if (!GDIPlus.Initialized) { m_endCap = value; return; }
-					Status status = GDIPlus.GdipSetPenEndCap (nativeObject, value);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
+				if (!isModifiable)
+					throw ReadOnly ();
+				_endCap = value;
+				_customEnd = null;
 			}
 		}
- 
-                public LineJoin LineJoin {
 
-                        get {
-				if (nativeObject == IntPtr.Zero) return m_lineJoin;   // recording-only
-                                LineJoin result;
-                                Status status = GDIPlus.GdipGetPenLineJoin (nativeObject, out result);
-				GDIPlus.CheckStatus (status);
-                                return result;
-                        }
-
-                        set {
+		public LineJoin LineJoin {
+			get { return _lineJoin; }
+			set {
 				if ((value < LineJoin.Miter) || (value > LineJoin.MiterClipped))
 					throw new InvalidEnumArgumentException ("LineJoin", (int)value, typeof (LineJoin));
-
-				if (isModifiable) {
-					if (!GDIPlus.Initialized) { m_lineJoin = value; return; }
-                                	Status status = GDIPlus.GdipSetPenLineJoin (nativeObject, value);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
-                       }
-                                
-                }
-
-                public float MiterLimit {
-
-                        get {
-				if (nativeObject == IntPtr.Zero) return m_miterLimit;   // recording-only
-                                float result;
-                                Status status = GDIPlus.GdipGetPenMiterLimit (nativeObject, out result);
-				GDIPlus.CheckStatus (status);
-                                return result;
-                        }
-
-                        set {
-				if (isModifiable) {
-					if (!GDIPlus.Initialized) { m_miterLimit = value; return; }
-                                	Status status = GDIPlus.GdipSetPenMiterLimit (nativeObject, value);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
-                        }
-                                
-                }
-
-                public PenType PenType {
-                        get {
-				if (nativeObject == IntPtr.Zero) return PenType.SolidColor;   // recording-only
-				PenType type;
-				Status status = GDIPlus.GdipGetPenFillType (nativeObject, out type);
-				GDIPlus.CheckStatus (status);
-
-				return type;
+				if (!isModifiable)
+					throw ReadOnly ();
+				_lineJoin = value;
 			}
-                }
+		}
 
-                public Matrix Transform {
+		public float MiterLimit {
+			get { return _miterLimit; }
+			set {
+				if (!isModifiable)
+					throw ReadOnly ();
+				_miterLimit = 1f <= value ? value : 1f;
+			}
+		}
 
-                        get {
-				if (nativeObject == IntPtr.Zero) return new Matrix ();   // recording-only
-				Matrix matrix = new Matrix ();
-				Status status = GDIPlus.GdipGetPenTransform (nativeObject, matrix.nativeMatrix);
-				GDIPlus.CheckStatus (status);
+		public PenType PenType {
+			get {
+				switch (_brush) {
+				case SolidBrush _: return PenType.SolidColor;
+				case HatchBrush _: return PenType.HatchFill;
+				case TextureBrush _: return PenType.TextureFill;
+				case PathGradientBrush _: return PenType.PathGradient;
+				case LinearGradientBrush _: return PenType.LinearGradient;
+				default: return (PenType) (-1);
+				}
+			}
+		}
 
-				return matrix;
-                        }
-
-                        set {
+		public Matrix Transform {
+			get { return new Matrix (_xf); }
+			set {
 				if (value == null)
 					throw new ArgumentNullException ("Transform");
-
-				if (isModifiable) {
-                                	Status status = GDIPlus.GdipSetPenTransform (nativeObject, value.nativeMatrix);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
-                        }
-                }
+				if (!isModifiable)
+					throw ReadOnly ();
+				if (!value.Gp.IsInvertible)
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+				_xf = value.Gp;
+			}
+		}
 
 		public float Width {
-			get {
-				if (!GDIPlus.Initialized) return managedWidth;
-				float f;
-                                Status status = GDIPlus.GdipGetPenWidth (nativeObject, out f);
-				GDIPlus.CheckStatus (status);
-                                return f;
-			}
+			get { return _width; }
 			set {
-				if (isModifiable) {
-					managedWidth = value;
-					if (!GDIPlus.Initialized) return;
-					Status status = GDIPlus.GdipSetPenWidth (nativeObject, value);
-					GDIPlus.CheckStatus (status);
-				} else
-					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
+				if (!isModifiable)
+					throw ReadOnly ();
+				_width = value;
 			}
 		}
 
-		internal IntPtr NativePen {
-			get {
-				return nativeObject;
-			}
-		}
+		internal IntPtr NativePen => IntPtr.Zero;
 
 		public object Clone ()
 		{
-			if (!GDIPlus.Initialized) {
-				var c = (Pen) MemberwiseClone ();
-				c.isModifiable = true;
-				if (m_dashPattern != null) c.m_dashPattern = (float []) m_dashPattern.Clone ();
-				return c;
-			}
-                        IntPtr ptr;
-                        Status status = GDIPlus.GdipClonePen (nativeObject, out ptr);
-			GDIPlus.CheckStatus (status);
-                        Pen p = new Pen (ptr);
-			p.startCap = startCap;
-			p.endCap = endCap;
-
-			return p;
+			var c = (Pen) MemberwiseClone ();
+			c.isModifiable = true;
+			c._brush = (Brush) _brush.Clone ();
+			c._dash = (float []) _dash?.Clone ();
+			c._compound = (float []) _compound?.Clone ();
+			c._customStart = (CustomLineCap) _customStart?.Clone ();
+			c._customEnd = (CustomLineCap) _customEnd?.Clone ();
+			return c;
 		}
 
 		public void Dispose ()
@@ -510,13 +373,7 @@ namespace System.Drawing
 		private void Dispose (bool disposing)
 		{
 			if (disposing && !isModifiable)
-				throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
-
-			if (nativeObject != IntPtr.Zero) {
-				Status status = GDIPlus.GdipDeletePen (nativeObject);
-				nativeObject = IntPtr.Zero;
-				GDIPlus.CheckStatus (status);
-			}
+				throw ReadOnly ();
 		}
 
 		~Pen ()
@@ -524,64 +381,69 @@ namespace System.Drawing
 			Dispose (false);
 		}
 
-                public void MultiplyTransform (Matrix matrix)
-                {
-                        MultiplyTransform (matrix, MatrixOrder.Prepend);
-                }
+		static bool Append (MatrixOrder order)
+		{
+			if ((uint) order > 1) throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+			return order == MatrixOrder.Append;
+		}
 
-                public void MultiplyTransform (Matrix matrix, MatrixOrder order)
-                {
-                        Status status = GDIPlus.GdipMultiplyPenTransform (nativeObject, matrix.nativeMatrix, order);
-			GDIPlus.CheckStatus (status);
-                }
+		public void MultiplyTransform (Matrix matrix)
+		{
+			MultiplyTransform (matrix, MatrixOrder.Prepend);
+		}
 
-                public void ResetTransform ()
-                {
-                        Status status = GDIPlus.GdipResetPenTransform (nativeObject);
-			GDIPlus.CheckStatus (status);
-                }
+		public void MultiplyTransform (Matrix matrix, MatrixOrder order)
+		{
+			if (matrix == null)
+				throw new ArgumentNullException ("matrix");
+			if (!matrix.Gp.IsInvertible)
+				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
+			_xf.Multiply (matrix.Gp, Append (order));
+		}
 
-                public void RotateTransform (float angle)
-                {
-                        RotateTransform (angle, MatrixOrder.Prepend);
-                }
+		public void ResetTransform ()
+		{
+			_xf = GpMatrix.CreateIdentity ();
+		}
 
-                public void RotateTransform (float angle, MatrixOrder order)
-                {
-                        Status status = GDIPlus.GdipRotatePenTransform (nativeObject, angle, order);
-			GDIPlus.CheckStatus (status);
-                }
+		public void RotateTransform (float angle)
+		{
+			RotateTransform (angle, MatrixOrder.Prepend);
+		}
 
-                public void ScaleTransform (float sx, float sy)
-                {
-                        ScaleTransform (sx, sy, MatrixOrder.Prepend);
-                }
+		public void RotateTransform (float angle, MatrixOrder order)
+		{
+			_xf.Rotate (angle, Append (order));
+		}
 
-                public void ScaleTransform (float sx, float sy, MatrixOrder order)
-                {
-                        Status status = GDIPlus.GdipScalePenTransform (nativeObject, sx, sy, order);
-			GDIPlus.CheckStatus (status);
-                }
+		public void ScaleTransform (float sx, float sy)
+		{
+			ScaleTransform (sx, sy, MatrixOrder.Prepend);
+		}
 
-                public void SetLineCap (LineCap startCap, LineCap endCap, DashCap dashCap)
-                {
-			if (isModifiable) {
-				if (!GDIPlus.Initialized) { m_startCap = startCap; m_endCap = endCap; m_dashCap = dashCap; return; }
-				Status status = GDIPlus.GdipSetPenLineCap197819 (nativeObject, startCap, endCap, dashCap);
-				GDIPlus.CheckStatus (status);
-			} else
-				throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
-                }
+		public void ScaleTransform (float sx, float sy, MatrixOrder order)
+		{
+			_xf.Scale (sx, sy, Append (order));
+		}
 
-                public void TranslateTransform (float dx, float dy)
-                {
-                        TranslateTransform (dx, dy, MatrixOrder.Prepend);
-                }
+		public void SetLineCap (LineCap startCap, LineCap endCap, DashCap dashCap)
+		{
+			if (!isModifiable)
+				throw ReadOnly ();
+			// GdipSetPenLineCap197819 sets the cap types (a custom cap object is left where it is).
+			_startCap = startCap;
+			_endCap = endCap;
+			_dashCap = MapDashCap (dashCap);
+		}
 
-                public void TranslateTransform (float dx, float dy, MatrixOrder order)
-                {
-                        Status status = GDIPlus.GdipTranslatePenTransform (nativeObject, dx, dy, order);
-			GDIPlus.CheckStatus (status);
-                }
+		public void TranslateTransform (float dx, float dy)
+		{
+			TranslateTransform (dx, dy, MatrixOrder.Prepend);
+		}
+
+		public void TranslateTransform (float dx, float dy, MatrixOrder order)
+		{
+			_xf.Translate (dx, dy, Append (order));
+		}
 	}
 }

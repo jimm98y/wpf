@@ -18,6 +18,9 @@ namespace System.Drawing.WebGpuBackend
 
         internal SceneVisual Scene => _root;
 
+        /// <summary>Whether anything has been recorded since the scene was last taken.</summary>
+        internal bool HasContent => !IsEmpty(_root);
+
         /// <summary>Hands over what has been recorded (null when nothing has) and starts a fresh scene
         /// with the same state stack -- transform, clips, snapshots -- reopened, so recording carries
         /// on exactly as before. What a bitmap's Graphics does when the bitmap's pixels are wanted.</summary>

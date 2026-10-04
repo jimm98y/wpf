@@ -39,7 +39,7 @@ namespace System.Drawing
 		float [] rec_world = { 1f, 0f, 0f, 1f, 0f, 0f };
 		GraphicsUnit rec_unit = GraphicsUnit.Display;
 		float rec_page_scale = 1f;
-		readonly List<(float [] World, GraphicsUnit Unit, float Scale)> rec_saved = new List<(float [], GraphicsUnit, float)> ();
+		readonly List<RecState> rec_saved = new List<RecState> ();
 		readonly Stack<float []> rec_snapshot_world = new Stack<float []> ();
 
 		/// <summary>This Graphics draws a printed page (see the file comment).</summary>
@@ -86,35 +86,82 @@ namespace System.Drawing
 			return (float) Math.Sqrt (Math.Abs (det));
 		}
 
+		// World, page and container: world-to-recording-units.
+		float [] RecordingMatrix ()
+		{
+			float s = PageFactor;
+			float [] w = rec_world;
+			var m = new float [] { w [0] * s, w [1] * s, w [2] * s, w [3] * s, w [4] * s, w [5] * s };
+			if (rec_in_container) MatMul (m, rec_container, m);
+			return m;
+		}
+
 		void PushRecordedTransform ()
 		{
 			if (GpuRecorder == null) return;
-			float s = PageFactor;
-			float [] w = rec_world;
-			GpuRecorder.SetWorldTransform (w [0] * s, w [1] * s, w [2] * s, w [3] * s, w [4] * s, w [5] * s);
+			float [] m = RecordingMatrix ();
+			GpuRecorder.SetWorldTransform (m [0], m [1], m [2], m [3], m [4], m [5]);
+		}
+
+		// r = a * b (a applied first), in GDI+'s operand order (GpMatrix::MultiplyMatrix).
+		static void MatMul (float [] a, float [] b, float [] r)
+		{
+			var ga = new WebGpuBackend.Gdip.GpMatrix (a [0], a [1], a [2], a [3], a [4], a [5]);
+			var gb = new WebGpuBackend.Gdip.GpMatrix (b [0], b [1], b [2], b [3], b [4], b [5]);
+			WebGpuBackend.Gdip.GpMatrix m = WebGpuBackend.Gdip.GpMatrix.Multiply (ga, gb);
+			r [0] = m.M11; r [1] = m.M12; r [2] = m.M21; r [3] = m.M22; r [4] = m.Dx; r [5] = m.Dy;
 		}
 
 		void RecordedCombine (float [] m, MatrixOrder order)
 		{
-			if (order == MatrixOrder.Prepend) Matrix.Mul (m, rec_world, rec_world);
-			else Matrix.Mul (rec_world, m, rec_world);
+			if (order == MatrixOrder.Prepend) MatMul (m, rec_world, rec_world);
+			else MatMul (rec_world, m, rec_world);
 			PushRecordedTransform ();
 		}
 
+		// Everything Save keeps besides the recorder's own clip and transform stack.
+		sealed class RecState
+		{
+			public float [] World, Container;
+			public bool InContainer;
+			public GraphicsUnit Unit;
+			public float Scale;
+			public SmoothingMode Smoothing;
+			public TextRenderingHint TextHint;
+			public int TextContrast;
+			public CompositingMode Compositing;
+			public CompositingQuality Quality;
+			public InterpolationMode Interpolation;
+			public PixelOffsetMode PixelOffset;
+			public Point Origin;
+		}
+
+		RecState CaptureState () => new RecState {
+			World = (float []) rec_world.Clone (), Container = (float []) rec_container.Clone (), InContainer = rec_in_container,
+			Unit = rec_unit, Scale = rec_page_scale, Smoothing = gpu_smoothing, TextHint = recorded_text_hint,
+			TextContrast = recorded_text_contrast, Compositing = _compositingMode, Quality = _compositingQuality,
+			Interpolation = _interpolation, PixelOffset = _pixelOffset, Origin = _renderingOrigin,
+		};
+
 		void RecordedSave (int token)
 		{
-			while (rec_saved.Count < token - 1) rec_saved.Add (((float []) rec_world.Clone (), rec_unit, rec_page_scale));
+			while (rec_saved.Count < token - 1) rec_saved.Add (CaptureState ());
 			if (rec_saved.Count >= token) rec_saved.RemoveRange (token - 1, rec_saved.Count - (token - 1));
-			rec_saved.Add (((float []) rec_world.Clone (), rec_unit, rec_page_scale));
+			rec_saved.Add (CaptureState ());
 		}
 
 		void RecordedRestore (int token)
 		{
 			int k = token - 1;
 			if (k < 0 || k >= rec_saved.Count) return;
-			(float [] w, GraphicsUnit u, float s) = rec_saved [k];
+			RecState st = rec_saved [k];
 			rec_saved.RemoveRange (k, rec_saved.Count - k);
-			rec_world = w; rec_unit = u; rec_page_scale = s;
+			rec_world = st.World; rec_container = st.Container; rec_in_container = st.InContainer;
+			rec_unit = st.Unit; rec_page_scale = st.Scale; gpu_smoothing = st.Smoothing;
+			recorded_text_hint = st.TextHint; recorded_text_contrast = st.TextContrast;
+			_compositingMode = st.Compositing; _compositingQuality = st.Quality;
+			_interpolation = st.Interpolation; _pixelOffset = st.PixelOffset; _renderingOrigin = st.Origin;
+			GpuRecorder?.SetCompositingMode (_compositingMode == CompositingMode.SourceCopy);
 		}
 
 		void RecordedBeginSnapshot () => rec_snapshot_world.Push ((float []) rec_world.Clone ());
@@ -129,11 +176,21 @@ namespace System.Drawing
 		{
 			float s = PageFactor * (print_mode ? print_dpi_x / 100f : 1f);
 			float sy = PageFactor * (print_mode ? print_dpi_y / 100f : 1f);
+			float dx = print_mode ? print_dpi_x / 100f : 1f, dy = print_mode ? print_dpi_y / 100f : 1f;
 			float [] toDevice (CoordinateSpace c)
 			{
 				var m = new float [] { 1, 0, 0, 1, 0, 0 };
 				if (c == CoordinateSpace.World) m = (float []) rec_world.Clone ();
-				if (c != CoordinateSpace.Device) Matrix.Mul (m, new float [] { s, 0, 0, sy, 0, 0 }, m);
+				if (c != CoordinateSpace.Device) {
+					if (!rec_in_container) MatMul (m, new float [] { s, 0, 0, sy, 0, 0 }, m);
+					else {
+						// world -> recording units through the container, then the device's dots
+						float pf = PageFactor;
+						MatMul (m, new float [] { pf, 0, 0, pf, 0, 0 }, m);
+						MatMul (m, rec_container, m);
+						MatMul (m, new float [] { dx, 0, 0, dy, 0, 0 }, m);
+					}
+				}
 				return m;
 			}
 			float [] a = toDevice (from), b = toDevice (to);
@@ -143,7 +200,7 @@ namespace System.Drawing
 			var inv = new float [] { b [3] / det, -b [1] / det, -b [2] / det, b [0] / det,
 				(b [2] * b [5] - b [3] * b [4]) / det, (b [1] * b [4] - b [0] * b [5]) / det };
 			var r = new float [6];
-			Matrix.Mul (a, inv, r);
+			MatMul (a, inv, r);
 			return r;
 		}
 

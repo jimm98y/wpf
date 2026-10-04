@@ -69,9 +69,8 @@ namespace System.Drawing
 		//   [GDI+ status: InvalidParameter]   at System.Drawing.Graphics.DrawString(...)
 		//
 		// Measurement stays managed either way, so text still matches what the WGSL renderer draws.
-		static bool ManagedOnlyFont {
-			get { return s_gpuRasterMode && !GDIPlus.Initialized; }
-		}
+				// Always managed: there is no GDI+ font object behind any Font.
+		static bool ManagedOnlyFont => true;
 
 		private void CreateFont (string familyName, float emSize, FontStyle style, GraphicsUnit unit, byte charSet, bool isVertical)
 		{
@@ -90,13 +89,7 @@ namespace System.Drawing
 				family = FontFamily.GenericSansSerif;
 			}
 
-			setProperties (family, emSize, style, unit, charSet, isVertical);
-			Status status = GDIPlus.GdipCreateFont (family.NativeFamily, emSize,  style, unit, out fontObject);
-			
-			if (status == Status.FontStyleNotFound)
-				throw new ArgumentException (Locale.GetText ("Style {0} isn't supported by font {1}.", style.ToString (), familyName));
-				
-			GDIPlus.CheckStatus (status);
+						setProperties (family, emSize, style, unit, charSet, isVertical);
 		}
 
        		private Font (SerializationInfo info, StreamingContext context)
@@ -129,13 +122,8 @@ namespace System.Drawing
 
 		public void Dispose ()
 		{
-			if (fontObject != IntPtr.Zero) {
-				Status status = GDIPlus.GdipDeleteFont (fontObject);
-				fontObject = IntPtr.Zero;
-				GC.SuppressFinalize (this);
-				// check the status code (throw) at the last step
-				GDIPlus.CheckStatus (status);
-			}
+						fontObject = IntPtr.Zero;
+			GC.SuppressFinalize (this);
 		}
 
 		internal void SetSystemFontName (string newSystemFontName)
@@ -246,74 +234,25 @@ namespace System.Drawing
 
 		public static Font FromHfont (IntPtr hfont)
 		{
-			IntPtr			newObject;
-			IntPtr			hdc;			
-			FontStyle		newStyle = FontStyle.Regular;
-			float			newSize;
-			LOGFONT			lf = new LOGFONT ();
-
 			// Sanity. Should we throw an exception?
-			if (hfont == IntPtr.Zero) {
-				Font result = new Font ("Arial", (float)10.0, FontStyle.Regular);
-				return(result);
-			}
-
-			if (GDIPlus.RunningOnUnix ()) {
-				// If we're on Unix we use our private gdiplus API to avoid Wine 
-				// dependencies in S.D
-				Status s = GDIPlus.GdipCreateFontFromHfont (hfont, out newObject, ref lf);
-				GDIPlus.CheckStatus (s);
-			} else {
-
-				// This needs testing
-				// GetDC, SelectObject, ReleaseDC GetTextMetric and
-				// GetFontFace are not really GDIPlus, see gdipFunctions.cs
-
-				newStyle = FontStyle.Regular;
-
-				hdc = GDIPlus.GetDC (IntPtr.Zero);
-				try {
-					return FromLogFont (lf, hdc);
-				}
-				finally {
-					GDIPlus.ReleaseDC (IntPtr.Zero, hdc);
-				}
-			}
-			
-			if (lf.lfItalic != 0) {
-				newStyle |= FontStyle.Italic;
-			}
-
-			if (lf.lfUnderline != 0) {
-				newStyle |= FontStyle.Underline;
-			}
-
-			if (lf.lfStrikeOut != 0) {
-				newStyle |= FontStyle.Strikeout;
-			}
-
-			if (lf.lfWeight > 400) {
-				newStyle |= FontStyle.Bold;
-			}
-
-			if (lf.lfHeight < 0) {
-				newSize = lf.lfHeight * -1;
-			} else {
-				newSize = lf.lfHeight;
-			}
-
-			return (new Font (newObject, lf.lfFaceName, newStyle, newSize));
+			if (hfont == IntPtr.Zero)
+				return new Font ("Arial", (float)10.0, FontStyle.Regular);
+			if (!OperatingSystem.IsWindows ())
+				throw new ArgumentException ("Only TrueType fonts are supported. This is not a TrueType font.");
+			// An HFONT is GDI's: its LOGFONT, read back with GetObject, makes the font.
+			LOGFONT lf = new LOGFONT ();
+			if (GetObject (hfont, Marshal.SizeOf (typeof (LOGFONT)), ref lf) == 0)
+				throw new ArgumentException ("Only TrueType fonts are supported. This is not a TrueType font.");
+			return FromLogFont (lf, IntPtr.Zero);
 		}
+
+		[DllImport ("gdi32.dll", CharSet = CharSet.Auto)]
+		static extern int GetObject (IntPtr h, int size, ref LOGFONT lf);
 
 		public IntPtr ToHfont ()
 		{
-			if (fontObject == IntPtr.Zero)
-				throw new ArgumentException (Locale.GetText ("Object has been disposed."));
-
-			if (GDIPlus.RunningOnUnix ())
-				return fontObject;
-
-			// win32 specific code
+			if (!OperatingSystem.IsWindows ())
+				throw new PlatformNotSupportedException ("An HFONT is a Windows GDI object.");
 			if (olf == null) {
 				olf = new LOGFONT ();
 				ToLogFont(olf);
@@ -340,11 +279,7 @@ namespace System.Drawing
 		public Font (Font prototype, FontStyle newStyle)
 		{
 			// no null checks, MS throws a NullReferenceException if original is null
-			setProperties (prototype.FontFamily, prototype.Size, newStyle, prototype.Unit, prototype.GdiCharSet, prototype.GdiVerticalFont);
-			if (ManagedOnlyFont) return;   // managed-only: no native font (libgdiplus-free)
-
-			Status status = GDIPlus.GdipCreateFont (_fontFamily.NativeFamily, Size, Style, Unit, out fontObject);
-			GDIPlus.CheckStatus (status);
+						setProperties (prototype.FontFamily, prototype.Size, newStyle, prototype.Unit, prototype.GdiCharSet, prototype.GdiVerticalFont);
 		}
 
 		public Font (FontFamily family, float emSize,  GraphicsUnit unit)
@@ -383,11 +318,7 @@ namespace System.Drawing
 			if (family == null)
 				throw new ArgumentNullException ("family");
 
-			Status status;
-			setProperties (family, emSize, style, unit, gdiCharSet,  gdiVerticalFont );
-			if (ManagedOnlyFont) return;   // managed-only: no native font (libgdiplus-free)
-			status = GDIPlus.GdipCreateFont (family.NativeFamily, emSize,  style,   unit,  out fontObject);
-			GDIPlus.CheckStatus (status);
+						setProperties (family, emSize, style, unit, gdiCharSet,  gdiVerticalFont );
 		}
 
 		public Font (string familyName, float emSize)
@@ -606,14 +537,26 @@ namespace System.Drawing
 			throw new NotImplementedException ();
 		}
 
-		[MonoTODO ("The returned font may not have all it's properties initialized correctly.")]
+		// GdipCreateFontFromLogfont: the face named, the em the LOGFONT's height asks for (a negative
+		// height IS the em, a positive one the cell, which the face's ascent and descent divide), in
+		// points at the 96-dpi screen the stack lays out on.
 		public static Font FromLogFont (object lf, IntPtr hdc)
 		{
-			IntPtr newObject;
 			LOGFONT o = (LOGFONT)lf;
-			Status status = GDIPlus.GdipCreateFontFromLogfont (hdc, ref o, out newObject);
-			GDIPlus.CheckStatus (status);
-			return new Font (newObject, "Microsoft Sans Serif", FontStyle.Regular, 10);
+			string face = string.IsNullOrEmpty (o.lfFaceName) ? "Microsoft Sans Serif" : o.lfFaceName;
+			FontStyle style = FontStyle.Regular;
+			if (o.lfWeight > 550) style |= FontStyle.Bold;
+			if (o.lfItalic != 0) style |= FontStyle.Italic;
+			if (o.lfUnderline != 0) style |= FontStyle.Underline;
+			if (o.lfStrikeOut != 0) style |= FontStyle.Strikeout;
+			float px;
+			if (o.lfHeight < 0) px = -o.lfHeight;
+			else if (o.lfHeight > 0) {
+				var m = WebGpuBackend.Gdip.GpFontFamily.Get (face, style);
+				px = m is WebGpuBackend.Gdip.GpFontFamily.Metrics fm && fm.Ascent + fm.Descent > 0
+					? o.lfHeight * (float) fm.Em / (fm.Ascent + fm.Descent) : o.lfHeight;
+			} else px = 12f;
+			return new Font (face, px * 72f / 96f, style, GraphicsUnit.Point, o.lfCharSet, face.StartsWith ("@"));
 		}
 
 		public float GetHeight ()
@@ -635,42 +578,14 @@ namespace System.Drawing
 			return s_gpuRasterMode ? 96f : actual;
 		}
 
-		public static Font FromLogFont (object lf)
-		{
-			if (GDIPlus.RunningOnUnix ())
-				return FromLogFont(lf, IntPtr.Zero);
-
-			// win32 specific code
-			IntPtr hDC = IntPtr.Zero;
-			try {
-				hDC = GDIPlus.GetDC(IntPtr.Zero);
-				return FromLogFont (lf, hDC);
-			}
-			finally {
-				GDIPlus.ReleaseDC (IntPtr.Zero, hDC);
-			}
-		}
+				public static Font FromLogFont (object lf) => FromLogFont (lf, IntPtr.Zero);
 
 		public void ToLogFont (object logFont)
 		{
-			if (GDIPlus.RunningOnUnix ()) {
-				// Unix - We don't have a window we could associate the DC with
-				// so we use an image instead
-				using (Bitmap img = new Bitmap (1, 1, Imaging.PixelFormat.Format32bppArgb)) {
-					using (Graphics g = Graphics.FromImage (img)) {
-						ToLogFont (logFont, g);
-					}
-				}
-			} else {
-				// Windows
-				IntPtr hDC = GDIPlus.GetDC (IntPtr.Zero);
-				try {
-					using (Graphics g = Graphics.FromHdc (hDC)) {
-						ToLogFont (logFont, g);
-					}
-				}
-				finally {
-					GDIPlus.ReleaseDC (IntPtr.Zero, hDC);
+						// The screen's 96-dpi metrics: a bitmap's Graphics is the same device to a LOGFONT.
+			using (Bitmap img = new Bitmap (1, 1, Imaging.PixelFormat.Format32bppArgb)) {
+				using (Graphics g = Graphics.FromImage (img)) {
+					ToLogFont (logFont, g);
 				}
 			}
 		}
@@ -692,20 +607,9 @@ namespace System.Drawing
 			Type lf = typeof (LOGFONT);
 			int size = Marshal.SizeOf (logFont);
 			if (size >= Marshal.SizeOf (lf)) {
-				Status status;
-				IntPtr copy = Marshal.AllocHGlobal (size);
-				try {
-					Marshal.StructureToPtr (logFont, copy, false);
+								Status status = Status.Ok;
+				LogFontInto (logFont, graphics);
 
-					status = GDIPlus.GdipGetLogFont (NativeObject, graphics.NativeObject, logFont);
-					if (status != Status.Ok) {
-						// reset to original values
-						Marshal.PtrToStructure (copy, logFont);
-					}
-				}
-				finally {
-					Marshal.FreeHGlobal (copy);
-				}
 
 				if (CharSetOffset == -1) {
 					// not sure why this methods returns an IntPtr since it's an offset
@@ -740,9 +644,38 @@ namespace System.Drawing
 					Marshal.FreeHGlobal (patch);
 				}
 
-				// now we can throw, if required
+								// now we can throw, if required
 				GDIPlus.CheckStatus (status);
 			}
+		}
+
+		// GpFont::GetLogFontW @180086a28: the em in device pixels rounded (v + 0.5 truncated) and
+		// negated, the escapement from the world rotation, weight 400 or 700, the style bits, the face
+		// name.
+		void LogFontInto (object logFont, Graphics graphics)
+		{
+			float px = _sizeInPoints * 96f / 72f;
+			if (_unit == GraphicsUnit.Pixel || _unit == GraphicsUnit.World) px = _size;
+			float[] e = graphics.Transform.Elements;
+			float sy = (float) Math.Sqrt (e[2] * e[2] + e[3] * e[3]);
+			if (sy > 0) px *= sy;
+			int esc = (int) (Math.Atan2 (e[1], e[0]) * 1800.0 / Math.PI);
+			esc = esc == 0 ? 0 : 3600 - esc;
+			var lf = new LOGFONT ();
+			lf.lfHeight = -(int) (px + 0.5f);
+			lf.lfEscapement = (uint) esc;
+			lf.lfOrientation = (uint) esc;
+			lf.lfWeight = (uint) (_bold ? 700 : 400);
+			lf.lfItalic = (byte) (_italic ? 1 : 0);
+			lf.lfUnderline = (byte) (_underline ? 1 : 0);
+			lf.lfStrikeOut = (byte) (_strikeout ? 1 : 0);
+			lf.lfCharSet = _gdiCharSet;
+			lf.lfFaceName = _name;
+			IntPtr mem = Marshal.AllocHGlobal (Math.Max (Marshal.SizeOf (logFont), Marshal.SizeOf (typeof (LOGFONT))));
+			try {
+				Marshal.StructureToPtr (lf, mem, false);
+				Marshal.PtrToStructure (mem, logFont);
+			} finally { Marshal.FreeHGlobal (mem); }
 		}
 
 		public float GetHeight (Graphics graphics)
@@ -752,38 +685,22 @@ namespace System.Drawing
 			// A printer's Graphics answers in its own units from the face's line spacing.
 			if (graphics.TryPrintFontHeight (this, out float printed))
 				return printed;
-			if (fontObject == IntPtr.Zero)
-				return GetHeight (MetricsDpi (graphics.DpiY));   // managed (recording-only font)
-
-			if (s_gpuRasterMode)
-				return GetHeight (96f);                          // virtual 96-DPI screen; see MetricsDpi
-
-			float size;
-			Status status = GDIPlus.GdipGetFontHeight (fontObject, graphics.NativeObject, out size);
-			GDIPlus.CheckStatus (status);
-			return size;
+						return GetHeight (MetricsDpi (graphics.DpiY));
 		}
 
 		public float GetHeight (float dpi)
 		{
 			// A managed font: GDI+'s own rule, the face's line spacing over its em, at the em in pixels
 			// (Segoe UI 9pt at 96 dpi: 2724 / 2048 * 12 = 15.96). The face's metrics come from its file.
-			if (fontObject == IntPtr.Zero) {
-				int style = (_bold ? 1 : 0) | (_italic ? 2 : 0);
-				var face = WebGpuBackend.PrintText.Face (_name, style);
-				float em = _sizeInPoints * dpi / 72f;
-				if (face != null) {
-					WebGpuBackend.FaceMetrics fm = WebGpuBackend.FaceMetrics.Of (face);
-					if (fm.UnitsPerEm > 0 && fm.LineSpacing > 0)
-						return fm.LineSpacing * em / fm.UnitsPerEm;
-				}
-				return em * 1.16f;
+						int style = (_bold ? 1 : 0) | (_italic ? 2 : 0);
+			var face = WebGpuBackend.PrintText.Face (_name, style);
+			float em = _sizeInPoints * dpi / 72f;
+			if (face != null) {
+				WebGpuBackend.FaceMetrics fm = WebGpuBackend.FaceMetrics.Of (face);
+				if (fm.UnitsPerEm > 0 && fm.LineSpacing > 0)
+					return fm.LineSpacing * em / fm.UnitsPerEm;
 			}
-
-			float size;
-			Status status = GDIPlus.GdipGetFontHeightGivenDPI (fontObject, dpi, out size);
-			GDIPlus.CheckStatus (status);
-			return size;
+			return em * 1.16f;
 		}
 
 		public override String ToString ()

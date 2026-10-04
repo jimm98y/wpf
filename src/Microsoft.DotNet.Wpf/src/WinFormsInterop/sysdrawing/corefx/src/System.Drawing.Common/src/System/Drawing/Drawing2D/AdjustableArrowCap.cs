@@ -2,82 +2,46 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System.Runtime.InteropServices;
+using System.Drawing.WebGpuBackend.Gdip;
 
 namespace System.Drawing.Drawing2D
 {
     public sealed partial class AdjustableArrowCap : CustomLineCap
     {
-        internal AdjustableArrowCap(IntPtr nativeCap) : base(nativeCap) { }
+        internal AdjustableArrowCap(GpCustomLineCap cap) : base(cap) { }
 
         public AdjustableArrowCap(float width, float height) : this(width, height, true) { }
 
+        // GdipCreateAdjustableArrowCap @180054b70 + GpAdjustableArrowCap::Update @18007c3f8.
         public AdjustableArrowCap(float width, float height, bool isFilled)
+            : base(GpCustomLineCap.CreateArrow(width, height, isFilled))
         {
-            IntPtr nativeCap;
-            int status = SafeNativeMethods.Gdip.GdipCreateAdjustableArrowCap(height, width, isFilled, out nativeCap);
-            SafeNativeMethods.Gdip.CheckStatus(status);
-            SetNativeLineCap(nativeCap);
         }
 
         public float Height
         {
-            get
-            {
-                int status = SafeNativeMethods.Gdip.GdipGetAdjustableArrowCapHeight(new HandleRef(this, nativeCap), out float height);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-                return height;
-            }
-            set
-            {
-                int status = SafeNativeMethods.Gdip.GdipSetAdjustableArrowCapHeight(new HandleRef(this, nativeCap), value);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-            }
+            get => gp.ArrowHeight;
+            set { gp.ArrowHeight = value; gp.UpdateArrow(); }
         }
 
         public float Width
         {
-            get
-            {
-                int status = SafeNativeMethods.Gdip.GdipGetAdjustableArrowCapWidth(new HandleRef(this, nativeCap), out float width);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-                return width;
-            }
-            set
-            {
-                int status = SafeNativeMethods.Gdip.GdipSetAdjustableArrowCapWidth(new HandleRef(this, nativeCap), value);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-            }
+            get => gp.ArrowWidth;
+            set { gp.ArrowWidth = value; gp.UpdateArrow(); }
         }
 
         public float MiddleInset
         {
-            get
-            {
-                int status = SafeNativeMethods.Gdip.GdipGetAdjustableArrowCapMiddleInset(new HandleRef(this, nativeCap), out float middleInset);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-                return middleInset;
-            }
-            set
-            {
-                int status = SafeNativeMethods.Gdip.GdipSetAdjustableArrowCapMiddleInset(new HandleRef(this, nativeCap), value);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-            }
+            get => gp.ArrowMiddleInset;
+            set { gp.ArrowMiddleInset = value; gp.UpdateArrow(); }
         }
 
         public bool Filled
         {
-            get
-            {
-                int status = SafeNativeMethods.Gdip.GdipGetAdjustableArrowCapFillState(new HandleRef(this, nativeCap), out bool isFilled);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-                return isFilled;
-            }
-            set
-            {
-                int status = SafeNativeMethods.Gdip.GdipSetAdjustableArrowCapFillState(new HandleRef(this, nativeCap), value);
-                SafeNativeMethods.Gdip.CheckStatus(status);
-            }
+            get => gp.ArrowFilled;
+            set { gp.ArrowFilled = value; gp.UpdateArrow(); }
         }
+
+        internal override object CoreClone() => new AdjustableArrowCap(gp.Clone());
     }
 }
