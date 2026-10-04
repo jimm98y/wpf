@@ -534,8 +534,15 @@ namespace System.Drawing
             _ => ManagedPixelLayout.Indexed8,
         };
 
-        // GDI+ writes pHYs from the resolution TRUNCATED to pixels per metre (96 dpi -> 3779).
-        static uint PngPpm (float dpi) => (uint) (dpi / 0.0254);
+        // GDI+ writes pHYs from the resolution TRUNCATED to pixels per metre (96 dpi -> 3779), in
+        // single precision: WindowsCodecs' ConvertDpiToDpm(float) @1801b8b40 is dpi / 0.0254f, NaN
+        // as 3779, at least 2^32 as 0xffffffff.
+        static uint PngPpm (float dpi)
+        {
+            float m = dpi / 0.0254f;
+            if (float.IsNaN (m)) return 0xec3;
+            return m >= 4294967296f ? 0xffffffff : (uint) m;
+        }
 
         static void WritePng (GdipFrame f, Stream stream)
         {
@@ -547,7 +554,7 @@ namespace System.Drawing
             } else {
                 raster = new ManagedRaster (f.Width, f.Height, ManagedPixelLayout.Bgra32, Bgra (f), f.Width * 4);
             }
-            ManagedPngEncoder.Write (stream, raster, PngPpm (f.DpiX), PngPpm (f.DpiY), srgb: true);
+            WebGpuBackend.GdipPngEncoder.Write (stream, raster, PngPpm (f.DpiX), PngPpm (f.DpiY));
         }
 
         static void WriteBmp (GdipFrame f, Stream stream)
