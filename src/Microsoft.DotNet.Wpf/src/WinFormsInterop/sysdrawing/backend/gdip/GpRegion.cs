@@ -183,16 +183,4 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
     }
 
-    /// <summary>A path as a region (DpRegion::Set(DpPath, GpMatrix) @1800dd228): the aliased fill
-    /// rasterized into spans.</summary>
-    internal static class GpRegionRaster
-    {
-        public static DpRegion FromPath (PointF[] pts, byte[] types, FillMode fill, in GpMatrix m)
-        {
-            var b = new DpRegion.Builder ();
-            if (pts == null || pts.Length < 2) return new DpRegion ();
-            GpRaster.FillPath (pts, types, pts.Length, m, fill == FillMode.Winding, 0, b, null, Rectangle.Empty);
-            return b.Build ();
-        }
-    }
 }
