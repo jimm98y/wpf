@@ -91,8 +91,14 @@ namespace System.Drawing
 		public Bitmap (int width, int height, PixelFormat format)
 		{
 			managedWidth = width; managedHeight = height;
-			// No libgdiplus (browser): null-native bitmap. Used only as a measurement-context backer in
-			// GPU-raster mode (Hwnd.GraphicsContext); real pixel access would need libgdiplus.
+			// No libgdiplus (browser; WF_NO_GDIPLUS): the pixels are held here instead -- see
+			// Image.managedPixels.
+			if (!GDIPlus.Initialized) {
+				if (width <= 0 || height <= 0)
+					throw new ArgumentException ("Parameter is not valid.");
+				managedPixels = new int [checked (width * height)];
+				managedFormat = format;
+			}
 			if (GDIPlus.Initialized) {
 				IntPtr bmp;
 				Status s = GDIPlus.GdipCreateBitmapFromScan0 (width, height, 0, format, IntPtr.Zero, out bmp);
@@ -111,6 +117,7 @@ namespace System.Drawing
 		
 		public Bitmap (Stream stream, bool useIcm)
 		{
+			if (!GDIPlus.Initialized) { InitManaged (stream); return; }
 			// false: stream is owned by user code
 			nativeObject = InitFromStream (stream);
 		}
@@ -119,6 +126,11 @@ namespace System.Drawing
 		{
 			if (filename == null)
 				throw new ArgumentNullException ("filename");
+			if (!GDIPlus.Initialized) {
+				using (var fs = File.OpenRead (filename))
+					InitManaged (fs);
+				return;
+			}
 
 			IntPtr imagePtr;
 			Status st;
@@ -147,6 +159,7 @@ namespace System.Drawing
 				throw new FileNotFoundException (msg);
 			}
 
+			if (!GDIPlus.Initialized) { InitManaged (s); return; }
 			nativeObject = InitFromStream (s);
 			// under Win32 stream is owned by SD/GDI+ code
 			if (GDIPlus.RunningOnWindows ())
@@ -155,6 +168,7 @@ namespace System.Drawing
 
 		public Bitmap (Image original, int width, int height)  : this(width, height, PixelFormat.Format32bppArgb)
 		{
+			if (managedPixels != null) { ScaleManaged (original, width, height); return; }
 			Graphics graphics = Graphics.FromImage(this);
 
 			graphics.DrawImage(original, 0, 0, width, height);
@@ -162,7 +176,14 @@ namespace System.Drawing
 		}
 
 		public Bitmap (int width, int height, int stride, PixelFormat format, IntPtr scan0)
-		{		
+		{
+			if (!GDIPlus.Initialized) {
+				managedWidth = width; managedHeight = height; managedFormat = format;
+				managedPixels = new int [checked (width * height)];
+				if (scan0 != IntPtr.Zero)
+					ManagedPixels.Read (scan0, stride, format, managedPixels, width, new Rectangle (0, 0, width, height));
+				return;
+			}
 			IntPtr bmp;
 				
 			Status status = GDIPlus.GdipCreateBitmapFromScan0 (width, height, stride, format, scan0, out bmp);
@@ -178,6 +199,10 @@ namespace System.Drawing
 		#endregion
 		// methods
 		public Color GetPixel (int x, int y) {
+			if (IsManagedPixels) {
+				CheckBounds (x, y);
+				return Color.FromArgb (managedPixels [y * managedWidth + x]);
+			}
 			
 			int argb;				
 			
@@ -189,6 +214,11 @@ namespace System.Drawing
 
 		public void SetPixel (int x, int y, Color color)
 		{
+			if (IsManagedPixels) {
+				CheckBounds (x, y);
+				managedPixels [y * managedWidth + x] = color.ToArgb ();
+				return;
+			}
 			Status s = GDIPlus.GdipBitmapSetPixel (nativeObject, x, y, color.ToArgb ());
 			if (s == Status.InvalidParameter) {
 				// check is done in case of an error only to avoid another
@@ -202,7 +232,8 @@ namespace System.Drawing
 		}
 
 		public Bitmap Clone (Rectangle rect, PixelFormat format)
-		{				
+		{
+			if (IsManagedPixels) return CloneManaged (rect, format);
 			IntPtr bmp;			
 			Status status = GDIPlus.GdipCloneBitmapAreaI (rect.X, rect.Y, rect.Width, rect.Height,
 				format, nativeObject, out bmp);
@@ -212,6 +243,7 @@ namespace System.Drawing
 		
 		public Bitmap Clone (RectangleF rect, PixelFormat format)
 		{
+			if (IsManagedPixels) return CloneManaged (Rectangle.Truncate (rect), format);
 			IntPtr bmp;			
 			Status status = GDIPlus.GdipCloneBitmapArea (rect.X, rect.Y, rect.Width, rect.Height,
 				format, nativeObject, out bmp);
@@ -272,6 +304,7 @@ namespace System.Drawing
 		public
 		BitmapData LockBits (Rectangle rect, ImageLockMode flags, PixelFormat format, BitmapData bitmapData)
 		{
+			if (IsManagedPixels) return LockManaged (rect, flags, format, bitmapData);
 			Status status = GDIPlus.GdipBitmapLockBits (nativeObject, ref rect, flags, format, bitmapData);
 			//NOTE: scan0 points to piece of memory allocated in the unmanaged space
 			GDIPlus.CheckStatus (status);
@@ -320,8 +353,97 @@ namespace System.Drawing
 
 		public void UnlockBits (BitmapData bitmapdata)
 		{
+			if (IsManagedPixels) { UnlockManaged (bitmapdata); return; }
 			Status status = GDIPlus.GdipBitmapUnlockBits (nativeObject, bitmapdata);
 			GDIPlus.CheckStatus (status);
 		}
-	}
+	
+		// ---- managed pixels (no GDI+): see Image.managedPixels ----------------------------------
+
+		void CheckBounds (int x, int y)
+		{
+			if (x < 0 || y < 0 || x >= managedWidth || y >= managedHeight)
+				throw new ArgumentOutOfRangeException (x < 0 || x >= managedWidth ? "x" : "y");
+		}
+
+		// PNG through the renderer's own decoder; BMP read here. Anything else needs a codec this
+		// managed path does not have, and says so.
+		void InitManaged (Stream stream)
+		{
+			if (stream == null)
+				throw new ArgumentNullException ("stream");
+			byte [] data;
+			using (var ms = new MemoryStream ()) { stream.CopyTo (ms); data = ms.ToArray (); }
+			if (!ManagedPixels.Decode (data, out int w, out int h, out int [] argb, out float dpiX, out float dpiY))
+				throw new ArgumentException ("Parameter is not valid: only PNG and BMP images can be read without GDI+.");
+			managedWidth = w; managedHeight = h; managedPixels = argb;
+			managedDpiX = dpiX; managedDpiY = dpiY;
+			managedFormat = PixelFormat.Format32bppArgb;
+		}
+
+		void ScaleManaged (Image original, int width, int height)
+		{
+			if (!(original is Bitmap ob) || !ob.IsManagedPixels) return;
+			int sw = ob.managedWidth, sh = ob.managedHeight;
+			for (int y = 0; y < height; y++)
+				for (int x = 0; x < width; x++)
+					managedPixels [y * width + x] = ob.managedPixels [Math.Min (sh - 1, y * sh / height) * sw + Math.Min (sw - 1, x * sw / width)];
+		}
+
+		internal Bitmap CloneManaged (Rectangle rect, PixelFormat format)
+		{
+			if (rect.X < 0 || rect.Y < 0 || rect.Width <= 0 || rect.Height <= 0 || rect.Right > managedWidth || rect.Bottom > managedHeight)
+				throw new OutOfMemoryException ();
+			var b = new Bitmap (rect.Width, rect.Height, format);
+			for (int y = 0; y < rect.Height; y++)
+				Array.Copy (managedPixels, (rect.Y + y) * managedWidth + rect.X, b.managedPixels, y * rect.Width, rect.Width);
+			b.managedDpiX = managedDpiX; b.managedDpiY = managedDpiY;
+			return b;
+		}
+
+		BitmapData LockManaged (Rectangle rect, ImageLockMode flags, PixelFormat format, BitmapData data)
+		{
+			if (rect.X < 0 || rect.Y < 0 || rect.Width <= 0 || rect.Height <= 0 || rect.Right > managedWidth || rect.Bottom > managedHeight)
+				throw new ArgumentException ("Parameter is not valid.");
+			int bpp = ManagedPixels.BytesPerPixel (format);
+			if (bpp == 0)
+				throw new ArgumentException ("Parameter is not valid: pixel format " + format + " is not supported without GDI+.");
+			int stride = (rect.Width * bpp + 3) & ~3;
+			IntPtr buf = Marshal.AllocHGlobal (stride * rect.Height);
+			if ((flags & ImageLockMode.ReadOnly) != 0 || flags == ImageLockMode.ReadWrite || (flags & ImageLockMode.WriteOnly) == 0)
+				ManagedPixels.Write (managedPixels, managedWidth, rect, buf, stride, format);
+			data.Width = rect.Width; data.Height = rect.Height; data.Stride = stride;
+			data.PixelFormat = format; data.Scan0 = buf;
+			data.Reserved = (int) flags;
+			lock (s_locks) s_locks [buf] = rect;
+			return data;
+		}
+
+		void UnlockManaged (BitmapData data)
+		{
+			if (data == null || data.Scan0 == IntPtr.Zero) return;
+			Rectangle rect;
+			lock (s_locks) {
+				if (!s_locks.TryGetValue (data.Scan0, out rect)) return;
+				s_locks.Remove (data.Scan0);
+			}
+			var flags = (ImageLockMode) data.Reserved;
+			if ((flags & ImageLockMode.WriteOnly) != 0)
+				ManagedPixels.Read (data.Scan0, data.Stride, data.PixelFormat, managedPixels, managedWidth, rect);
+			Marshal.FreeHGlobal (data.Scan0);
+			data.Scan0 = IntPtr.Zero;
+		}
+
+		static readonly System.Collections.Generic.Dictionary<IntPtr, Rectangle> s_locks = new System.Collections.Generic.Dictionary<IntPtr, Rectangle> ();
+
+		internal void SaveManagedPng (Stream stream)
+		{
+			var rgba = new byte [managedWidth * managedHeight * 4];
+			for (int i = 0; i < managedPixels.Length; i++) {
+				int v = managedPixels [i];
+				rgba [i * 4] = (byte) (v >> 16); rgba [i * 4 + 1] = (byte) (v >> 8); rgba [i * 4 + 2] = (byte) v; rgba [i * 4 + 3] = (byte) (v >> 24);
+			}
+			ManagedPixels.EncodePng (stream, rgba, managedWidth, managedHeight);
+		}
+}
 }

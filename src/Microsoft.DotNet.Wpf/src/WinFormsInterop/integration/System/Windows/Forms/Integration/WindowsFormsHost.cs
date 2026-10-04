@@ -364,6 +364,46 @@ namespace System.Windows.Forms.Integration
             // NSPrintPanel); on Linux WPF's PrintDialog shows the desktop portal's.
             if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
                 SWF.PrintDialog.PlatformBridge ??= new WpfPrintDialogBridge();
+            // Off Windows a printed document is a PDF handed to a print system, and in a WPF process
+            // that is WPF's: one PlatformPrint per process, set up with the hosts its backends need.
+            // Windows prints by replaying pages on the printer DC and has no use for this.
+            if (!OperatingSystem.IsWindows())
+                System.Drawing.Printing.PrintSystem.Bridge ??= new WpfPrintSystemBridge();
+        }
+
+        /// <summary>
+        /// WinForms printing through WPF's print system. Units cross here: System.Drawing measures
+        /// paper in hundredths of an inch, WPF in 96ths.
+        /// </summary>
+        private sealed class WpfPrintSystemBridge : System.Drawing.Printing.IPrintSystem
+        {
+            private const double HundredthsPerWpf = 100.0 / 96.0;
+
+            public System.Drawing.Printing.PrintSystemPrinter[] EnumeratePrinters()
+            {
+                var list = new System.Collections.Generic.List<System.Drawing.Printing.PrintSystemPrinter>();
+                // Not named by type: the backend vocabulary is visible here twice (see PlatformPrint.Submit).
+                foreach (var p in MS.Internal.Interop.PlatformPrint.EnumeratePrinters())
+                {
+                    list.Add(new System.Drawing.Printing.PrintSystemPrinter
+                    {
+                        Name = p.Name,
+                        DisplayName = p.DisplayName ?? p.Name,
+                        IsDefault = p.IsDefault,
+                        PaperWidth = (float)(p.PageWidth * HundredthsPerWpf),
+                        PaperHeight = (float)(p.PageHeight * HundredthsPerWpf),
+                        Imageable = new System.Drawing.RectangleF(
+                            (float)(p.ImageableOriginX * HundredthsPerWpf), (float)(p.ImageableOriginY * HundredthsPerWpf),
+                            (float)(p.ImageableWidth * HundredthsPerWpf), (float)(p.ImageableHeight * HundredthsPerWpf)),
+                    });
+                }
+                return list.ToArray();
+            }
+
+            public bool Submit(string jobName, System.IO.Stream pdf, System.Drawing.Printing.PrintSystemJob job)
+                => MS.Internal.Interop.PlatformPrint.Submit(jobName, pdf, job.PrinterName, job.Copies,
+                    job.FirstPage, job.LastPage, job.Landscape,
+                    job.PaperWidth / HundredthsPerWpf, job.PaperHeight / HundredthsPerWpf, job.OutputFile);
         }
 
         /// <summary>

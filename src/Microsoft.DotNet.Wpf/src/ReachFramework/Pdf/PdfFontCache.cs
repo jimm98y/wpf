@@ -4,45 +4,79 @@
 //
 // Fonts, as PDF wants them.
 //
-// A WPF GlyphRun is already expressed the way PDF's most capable text model wants it: glyph INDICES
+// A glyph run is already expressed the way PDF's most capable text model wants it: glyph INDICES
 // with advances, not characters needing an encoding decided. So the mapping is a Type0 font with
 // Identity-H encoding, which says "the two-byte codes in the content stream are glyph ids, use them
 // directly". No cmap round trip, no encoding table, and -- the reason it matters here -- no 256-glyph
 // ceiling, which is what makes Japanese, Chinese and Korean text work at all.
 //
+// Glyph ids say nothing about what text they ARE, so each font also carries a ToUnicode map built
+// from the characters the runs stood for: that is what makes the text of a page searchable, and
+// what a reader copies when someone selects it. A font no run told us the characters of gets none.
+//
+// This file knows PDF and nothing about where a font comes from. It is shared, link-compiled, by
+// WPF's printing (ReachFramework, where PdfFontCache.Wpf.cs describes a GlyphTypeface) and by
+// WinForms' (System.Drawing, which describes a face of its own scene renderer): each says what a
+// font is through a PdfFontSource and this writes it.
+//
 // The tradeoff taken deliberately: the whole font file is embedded rather than a subset. The
 // platform's subsetter (GlyphTypeface.ComputeSubset) throws off Windows, and writing one is a
 // separate piece of work. A page of Japanese therefore carries all of Noto Sans CJK, which is
-// correct and about 19 MB. The seam for fixing that is right here, in Embed.
+// correct and about 19 MB. The seam for fixing that is right here, in Write.
 //
 
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using System.Text;
-using System.Windows.Media;
 
 namespace System.Windows.Xps.Pdf
 {
+    /// <summary>What a font is, in the terms a PDF font dictionary needs.</summary>
+    internal sealed class PdfFontSource
+    {
+        /// <summary>The font file and which face of it (0 for a plain font); null file when it
+        /// cannot or may not be embedded.</summary>
+        internal Func<(byte[] Data, int FaceIndex)> ReadFile;
+
+        /// <summary>A family name for /BaseFont; sanitized on the way out.</summary>
+        internal string FamilyName;
+
+        /// <summary>Ascent, descent (negative) and cap height, as fractions of the em.</summary>
+        internal double Ascent = 0.8, Descent = -0.2, CapHeight = 0.7;
+
+        /// <summary>A glyph's advance as a fraction of the em, or null when unknown.</summary>
+        internal Func<ushort, double?> Advance;
+    }
+
     /// <summary>One embedded font, and the name the content stream refers to it by.</summary>
     internal sealed class PdfFont
     {
         internal string ResourceName;
         internal int ObjectId;
-        internal GlyphTypeface Typeface;
+        internal PdfFontSource Source;
 
         /// <summary>Glyphs actually used, so only their widths need be written out.</summary>
         internal readonly SortedSet<ushort> UsedGlyphs = new SortedSet<ushort>();
+
+        /// <summary>The characters each glyph stood for, where a run said: the ToUnicode map.</summary>
+        internal readonly Dictionary<ushort, string> Unicode = new Dictionary<ushort, string>();
+
+        /// <summary>Records that <paramref name="glyph"/> was drawn for <paramref name="text"/>.</summary>
+        internal void MapGlyph(ushort glyph, string text)
+        {
+            UsedGlyphs.Add(glyph);
+            if (!string.IsNullOrEmpty(text) && !Unicode.ContainsKey(glyph)) Unicode[glyph] = text;
+        }
     }
 
     /// <summary>
-    /// Embeds each distinct typeface once per document and hands back a stable resource name.
+    /// Embeds each distinct font once per document and hands back a stable resource name.
     /// </summary>
-    internal sealed class PdfFontCache
+    internal sealed partial class PdfFontCache
     {
         private readonly PdfWriter _writer;
-        private readonly Dictionary<GlyphTypeface, PdfFont> _fonts = new Dictionary<GlyphTypeface, PdfFont>();
+        private readonly Dictionary<object, PdfFont> _fonts = new Dictionary<object, PdfFont>();
 
         internal PdfFontCache(PdfWriter writer)
         {
@@ -51,21 +85,25 @@ namespace System.Windows.Xps.Pdf
 
         internal IEnumerable<PdfFont> Fonts => _fonts.Values;
 
-        /// <summary>The font resource for a typeface, creating it on first sight. Null if unusable.</summary>
-        internal PdfFont For(GlyphTypeface typeface)
+        /// <summary>The font resource for <paramref name="key"/>, describing it on first sight.
+        /// Null if the description is.</summary>
+        internal PdfFont For(object key, Func<PdfFontSource> describe)
         {
-            if (typeface == null) return null;
+            if (key == null) return null;
 
-            if (_fonts.TryGetValue(typeface, out PdfFont existing)) return existing;
+            if (_fonts.TryGetValue(key, out PdfFont existing)) return existing;
+
+            PdfFontSource source = describe();
+            if (source == null) return null;
 
             var font = new PdfFont
             {
                 ResourceName = "F" + _fonts.Count.ToString(CultureInfo.InvariantCulture),
                 ObjectId = _writer.AllocateObject(),
-                Typeface = typeface,
+                Source = source,
             };
 
-            _fonts[typeface] = font;
+            _fonts[key] = font;
             return font;
         }
 
@@ -80,18 +118,35 @@ namespace System.Windows.Xps.Pdf
 
         private void Write(PdfFont font)
         {
-            byte[] fontFile = ReadFontFile(font.Typeface, out SfntReader sfnt);
+            PdfFontSource source = font.Source;
+            byte[] fontFile = null;
+            SfntReader sfnt = null;
+            try
+            {
+                (byte[] data, int faceIndex) = source.ReadFile?.Invoke() ?? (null, 0);
+                if (data != null)
+                {
+                    sfnt = SfntReader.Open(data, faceIndex);
+                    fontFile = sfnt?.ExtractFace() ?? data;
+                }
+            }
+            catch (System.IO.IOException) { fontFile = null; }
+            catch (NotSupportedException) { fontFile = null; }
+            catch (UnauthorizedAccessException) { fontFile = null; }
 
-            string baseName = BaseName(font.Typeface);
+            string baseName = Sanitize(source.FamilyName);
             int descendantId = _writer.AllocateObject();
             int descriptorId = _writer.AllocateObject();
+            int toUnicodeId = font.Unicode.Count != 0 ? _writer.AllocateObject() : 0;
 
             // The composite font the content stream names. Identity-H is what makes the two-byte
             // codes in a Tj string mean glyph ids directly.
             _writer.WriteObject(font.ObjectId, string.Concat(
                 "<< /Type /Font /Subtype /Type0 /BaseFont ", PdfWriter.Name(baseName),
                 " /Encoding /Identity-H /DescendantFonts [ ",
-                descendantId.ToString(CultureInfo.InvariantCulture), " 0 R ] >>"));
+                descendantId.ToString(CultureInfo.InvariantCulture), " 0 R ]",
+                toUnicodeId != 0 ? " /ToUnicode " + toUnicodeId.ToString(CultureInfo.InvariantCulture) + " 0 R" : string.Empty,
+                " >>"));
 
             bool cff = sfnt?.IsCff ?? false;
 
@@ -114,9 +169,9 @@ namespace System.Windows.Xps.Pdf
             descriptor.Append(" /FontBBox [ ").Append(box.XMin).Append(' ').Append(box.YMin).Append(' ')
                       .Append(box.XMax).Append(' ').Append(box.YMax).Append(" ]");
             descriptor.Append(" /ItalicAngle ").Append(PdfWriter.Number(sfnt?.ItalicAngle ?? 0));
-            descriptor.Append(" /Ascent ").Append(PdfWriter.Number(font.Typeface.Baseline * 1000));
-            descriptor.Append(" /Descent ").Append(PdfWriter.Number((font.Typeface.Baseline - font.Typeface.Height) * 1000));
-            descriptor.Append(" /CapHeight ").Append(PdfWriter.Number(font.Typeface.CapsHeight * 1000));
+            descriptor.Append(" /Ascent ").Append(PdfWriter.Number(source.Ascent * 1000));
+            descriptor.Append(" /Descent ").Append(PdfWriter.Number(source.Descent * 1000));
+            descriptor.Append(" /CapHeight ").Append(PdfWriter.Number(source.CapHeight * 1000));
 
             // StemV is required and no reader of an embedded font uses it; a plausible value keeps
             // validators quiet without pretending to a precision we do not have.
@@ -143,6 +198,40 @@ namespace System.Windows.Xps.Pdf
                 descriptor.Append(" >>");
                 _writer.WriteObject(descriptorId, descriptor.ToString());
             }
+
+            if (toUnicodeId != 0)
+                _writer.WriteStreamObject(toUnicodeId, Encoding.ASCII.GetBytes(ToUnicode(font)));
+        }
+
+        /// <summary>
+        /// The ToUnicode CMap: two-byte glyph codes to UTF-16BE text. Written as bfchar entries in
+        /// blocks of at most a hundred, which is the limit the CMap format sets.
+        /// </summary>
+        private static string ToUnicode(PdfFont font)
+        {
+            var sb = new StringBuilder();
+            sb.Append("/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n");
+            sb.Append("/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n");
+            sb.Append("/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n");
+            sb.Append("1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n");
+
+            var entries = new List<KeyValuePair<ushort, string>>(font.Unicode);
+            entries.Sort((a, b) => a.Key.CompareTo(b.Key));
+            for (int start = 0; start < entries.Count; start += 100)
+            {
+                int n = Math.Min(100, entries.Count - start);
+                sb.Append(n.ToString(CultureInfo.InvariantCulture)).Append(" beginbfchar\n");
+                for (int i = start; i < start + n; i++)
+                {
+                    sb.Append('<').Append(entries[i].Key.ToString("X4", CultureInfo.InvariantCulture)).Append("> <");
+                    foreach (char c in entries[i].Value) sb.Append(((int)c).ToString("X4", CultureInfo.InvariantCulture));
+                    sb.Append(">\n");
+                }
+                sb.Append("endbfchar\n");
+            }
+
+            sb.Append("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+            return sb.ToString();
         }
 
         /// <summary>
@@ -152,14 +241,9 @@ namespace System.Windows.Xps.Pdf
         /// </summary>
         private static string Widths(PdfFont font)
         {
+            if (font.Source.Advance == null) return "[ ]";
+
             var widths = new StringBuilder("[ ");
-
-            IDictionary<ushort, double> advances = null;
-            try { advances = font.Typeface.AdvanceWidths; }
-            catch (NotSupportedException) { }
-
-            if (advances == null) return "[ ]";
-
             var run = new List<double>();
             int runStart = -1;
             int previous = -2;
@@ -173,7 +257,8 @@ namespace System.Windows.Xps.Pdf
                     run.Clear();
                 }
 
-                run.Add(advances.TryGetValue(glyph, out double advance) ? advance * 1000 : 1000);
+                double? advance = font.Source.Advance(glyph);
+                run.Add(advance.HasValue ? advance.Value * 1000 : 1000);
                 previous = glyph;
             }
 
@@ -190,73 +275,15 @@ namespace System.Windows.Xps.Pdf
             widths.Append("] ");
         }
 
-        /// <summary>
-        /// The font's bytes, reduced to a single face. Returns null when the font cannot be embedded,
-        /// either because it does not permit it or because its file cannot be read.
-        /// </summary>
-        private static byte[] ReadFontFile(GlyphTypeface typeface, out SfntReader sfnt)
-        {
-            sfnt = null;
-
-            try
-            {
-                // A font may forbid embedding outright, and honouring that is not optional.
-                FontEmbeddingRight rights = typeface.EmbeddingRights;
-                if (rights == FontEmbeddingRight.RestrictedLicense) return null;
-
-                using Stream stream = typeface.GetFontStream();
-                if (stream == null) return null;
-
-                using var buffer = new MemoryStream();
-                stream.CopyTo(buffer);
-                byte[] bytes = buffer.ToArray();
-
-                sfnt = SfntReader.Open(bytes, FaceIndex(typeface));
-                return sfnt?.ExtractFace() ?? bytes;
-            }
-            catch (IOException) { return null; }
-            catch (NotSupportedException) { return null; }
-            catch (UnauthorizedAccessException) { return null; }
-        }
-
-        /// <summary>
-        /// Which face of a collection this typeface is. WPF puts it in the font URI's fragment, so
-        /// "file:///.../NotoSansCJK-Regular.ttc#2" is the third face.
-        /// </summary>
-        private static int FaceIndex(GlyphTypeface typeface)
-        {
-            try
-            {
-                string fragment = typeface.FontUri?.Fragment;
-                if (string.IsNullOrEmpty(fragment) || fragment.Length < 2) return 0;
-
-                return int.TryParse(fragment.AsSpan(1), NumberStyles.Integer, CultureInfo.InvariantCulture,
-                                    out int index) ? index : 0;
-            }
-            catch (InvalidOperationException) { return 0; }
-        }
-
-        private static string BaseName(GlyphTypeface typeface)
-        {
-            try
-            {
-                foreach (KeyValuePair<Globalization.CultureInfo, string> name in typeface.FamilyNames)
-                {
-                    if (!string.IsNullOrEmpty(name.Value)) return Sanitize(name.Value);
-                }
-            }
-            catch (NotSupportedException) { }
-
-            return "Embedded";
-        }
-
         /// <summary>PostScript names admit no spaces, and readers are unforgiving about it.</summary>
-        private static string Sanitize(string name)
+        internal static string Sanitize(string name)
         {
+            if (string.IsNullOrEmpty(name)) return "Embedded";
             var sb = new StringBuilder(name.Length);
             foreach (char c in name)
             {
-                if (c > ' ' && c < 127 && c != '(' && c != ')' && c != '/' && c != '<' && c != '>') sb.Append(c);
+                if (c > ' ' && c < 127 && c != '(' && c != ')' && c != '/' && c != '<' && c != '>'
+                    && c != '[' && c != ']' && c != '{' && c != '}' && c != '%' && c != '#') sb.Append(c);
             }
             return sb.Length != 0 ? sb.ToString() : "Embedded";
         }

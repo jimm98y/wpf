@@ -36,33 +36,43 @@ using System;
 
 namespace System.Drawing.Printing
 {
+	/// <summary>Prints to the printer: each page recorded through the managed Graphics, then put on
+	/// the printer DC as vector GDI (Windows) or written into a PDF for the platform's print system
+	/// (everywhere else). No GDI+ is involved; see RecordedPrinting.cs.</summary>
 	public class StandardPrintController : PrintController
-	{		
+	{
+		RecordedPrintJob job;
+
 		public StandardPrintController()
 		{
 		}
-		
+
+		public override void OnStartPrint (PrintDocument document, PrintEventArgs e)
+		{
+			base.OnStartPrint (document, e);
+			job = new RecordedPrintJob (document);
+			job.Start ();
+			e.GraphicsContext = job.Context;
+		}
+
+		public override Graphics OnStartPage (PrintDocument document, PrintPageEventArgs e)
+		{
+			base.OnStartPage (document, e);
+			return job?.StartPage (e);
+		}
+
 		public override void OnEndPage (PrintDocument document, PrintPageEventArgs e)
 		{
-			SysPrn.GlobalService.EndPage (e.GraphicsContext);
+			job?.EndPage ();
+			base.OnEndPage (document, e);
 		}
-		
-		public override void OnStartPrint (PrintDocument document, PrintEventArgs e)
-		{			
-			IntPtr dc = SysPrn.GlobalService.CreateGraphicsContext (document.PrinterSettings, document.DefaultPageSettings);
-			e.GraphicsContext = new GraphicsPrinter (null, dc);
-			SysPrn.GlobalService.StartDoc (e.GraphicsContext, document.DocumentName, string.Empty);			
-		}
-		
+
 		public override void OnEndPrint (PrintDocument document, PrintEventArgs e)
-		{			
-			SysPrn.GlobalService.EndDoc (e.GraphicsContext);
-		}
-		
-		public override Graphics OnStartPage (PrintDocument document, PrintPageEventArgs e)
-		{				
-			SysPrn.GlobalService.StartPage (e.GraphicsContext);
-			return e.Graphics;
+		{
+			RecordedPrintJob ending = job;
+			job = null;
+			ending?.End (e.Cancel);
+			base.OnEndPrint (document, e);
 		}
 	}
 }

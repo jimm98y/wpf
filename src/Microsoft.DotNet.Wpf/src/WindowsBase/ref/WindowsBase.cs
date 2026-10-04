@@ -137,6 +137,7 @@ namespace MS.Internal.Interop
     {
         public static int ShowAlert(string text, string caption, string[] buttons, int alertStyle) { throw null; }
         public static string[] ShowOpenPanel(string title, string initialDirectory, bool multiselect, bool chooseDirectories) { throw null; }
+        public static bool ShowPrintPanel(ref string printer, ref int copies, ref bool allPages, ref int firstPage, ref int lastPage, ref bool landscape, bool showPageRange) { throw null; }
         public static string ShowSavePanel(string title, string initialDirectory, string defaultFileName) { throw null; }
     }
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("macos")]

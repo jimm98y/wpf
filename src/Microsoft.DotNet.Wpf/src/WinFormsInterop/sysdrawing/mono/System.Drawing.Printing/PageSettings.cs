@@ -82,24 +82,16 @@ namespace System.Drawing.Printing
 		}
 
 		//props
+		// The page, as .NET has it: the paper turned for the orientation, in hundredths of an inch.
+		// (Mono answered the area inside the margins here, which is MarginBounds' job.)
 		public Rectangle Bounds{
 			get{
 				int width = this.paperSize.Width;
 				int height = this.paperSize.Height;
-				
-				width -= this.margins.Left + this.margins.Right;
-				height -= this.margins.Top + this.margins.Bottom;
-				
-				if (this.landscape) {
-					// swap width and height
-					int tmp = width;
-					width = height;
-					height = tmp;
-				}
-				return new Rectangle (this.margins.Left, this.margins.Top, width, height);
+				return this.landscape ? new Rectangle (0, 0, height, width) : new Rectangle (0, 0, width, height);
 			}
 		}
-		
+
 		public bool Color{
 			get{
 				if (!this.printerSettings.IsValid)
@@ -177,22 +169,48 @@ namespace System.Drawing.Printing
 				printerSettings = value;
 			}
 		}		
+		// What the printer cannot mark at the paper's edges, and what it can: read from the device in
+		// this page's mode on Windows, from the print system's imageable area elsewhere. Mono never
+		// set any of the three, so every page reported a printer that could print to the very edge.
 		public float HardMarginX {
 			get {
+				EnsureDevice ();
 				return hardMarginX;
 			}
 		}
-		
+
 		public float HardMarginY {
 			get {
+				EnsureDevice ();
 				return hardMarginY;
 			}
 		}
-		
+
 		public RectangleF PrintableArea {
 			get {
+				EnsureDevice ();
 				return printableArea;
 			}
+		}
+
+		/// <summary>The margins without the printer check Margins makes: a document laid out for a
+		/// PDF needs no printer to have them.</summary>
+		internal Margins MarginsUnchecked => margins;
+
+		bool device_known;
+		(bool Landscape, int W, int H, string Printer) device_for;
+
+		void EnsureDevice ()
+		{
+			var key = (landscape, paperSize?.Width ?? 0, paperSize?.Height ?? 0, printerSettings?.PrinterName);
+			if (device_known && device_for == key)
+				return;
+			device_known = true;
+			device_for = key;
+			PrintPageGeometry.Device (this, out _, out _, out RectangleF printable);
+			hardMarginX = printable.X;
+			hardMarginY = printable.Y;
+			printableArea = printable;
 		}
 
 

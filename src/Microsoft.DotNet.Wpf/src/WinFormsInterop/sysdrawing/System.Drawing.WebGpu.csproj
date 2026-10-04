@@ -40,6 +40,20 @@
     <Compile Include="build/**/*.cs" />
     <Compile Include="GdiPlusResolver.cs" />   <!-- maps "gdiplus" -> libgdiplus at runtime -->
     <Compile Include="backend/**/*.cs" />       <!-- IGpuSceneRecorder seam + WgpuInterop backend -->
+    <!-- WPF's PDF writer, shared rather than copied: the file format, font embedding (with its
+         ToUnicode map) and image encoding a printed page is written with off Windows
+         (backend/ScenePdf.cs). The WPF-only halves (PdfFontCache.Wpf.cs, PdfImageCache.Wpf.cs,
+         PdfDevice.cs) stay in ReachFramework. -->
+    <Compile Include="../../ReachFramework/Pdf/PdfWriter.cs" Link="pdf/PdfWriter.cs" />
+    <Compile Include="../../ReachFramework/Pdf/SfntReader.cs" Link="pdf/SfntReader.cs" />
+    <Compile Include="../../ReachFramework/Pdf/PdfFontCache.cs" Link="pdf/PdfFontCache.cs" />
+    <Compile Include="../../ReachFramework/Pdf/PdfImageCache.cs" Link="pdf/PdfImageCache.cs" />
+    <!-- macOS's print system for a STANDALONE WinForms app (host/CocoaHost), shared with WPF:
+         NSPrintOperation over PDFKit. Hosted heads print through WPF's own PlatformPrint instead
+         (WindowsFormsHost installs PrintSystem.Bridge), so PlatformPrint itself is not linked:
+         there is one per process and it lives in WindowsBase. -->
+    <Compile Include="../../Shared/MS/Internal/Interop/PrintBackend.cs" Link="interop/PrintBackend.cs" />
+    <Compile Include="../../Shared/MS/Internal/Interop/CocoaPrint.cs" Link="interop/CocoaPrint.cs" />
     <!-- The two CAS permission classes (they derive from CodeAccessPermission /
          CodeAccessSecurityAttribute, which is what drags in the unresolvable CAS typerefs). Nothing
          references them; only unrelated SR string constants mention the names. PrintingPermissionLevel

@@ -115,56 +115,63 @@ namespace System.Drawing.Printing
 		}
 
 		// methods
+		// As .NET's PrintController.Print runs it: BeginPrint, the controller's start, a page per
+		// PrintPage until HasMorePages is false or a page cancels, and EndPrint and the controller's
+		// end whatever happens in between. The Graphics a page draws on is the CONTROLLER's -- a
+		// recording one (see RecordedPrinting.cs). This used to make it itself, with
+		// Graphics.FromHdc: native GDI+ on the printer DC, which is exactly what printing no longer
+		// uses on any platform.
 		public void Print(){
 			PrintEventArgs printArgs = new PrintEventArgs();
 			this.OnBeginPrint(printArgs);
 			if (printArgs.Cancel)
 				return;
 			PrintController.OnStartPrint(this, printArgs);
-			if (printArgs.Cancel)
-				return;			
-				
-			Graphics g = null;
-			
-			if (printArgs.GraphicsContext != null) {
-				g = Graphics.FromHdc (printArgs.GraphicsContext.Hdc);
-				printArgs.GraphicsContext.Graphics = g;
+			if (printArgs.Cancel) {
+				this.OnEndPrint(printArgs);
+				return;
 			}
 
-			// while there are more pages
-			PrintPageEventArgs printPageArgs;
-			do
-			{
-				QueryPageSettingsEventArgs queryPageSettingsArgs = new QueryPageSettingsEventArgs (
-						DefaultPageSettings.Clone () as PageSettings);
-				OnQueryPageSettings (queryPageSettingsArgs);
-				
-				PageSettings pageSettings = queryPageSettingsArgs.PageSettings;
-				printPageArgs = new PrintPageEventArgs(
-						g,
-						pageSettings.Bounds,
-						new Rectangle(0, 0, pageSettings.PaperSize.Width, pageSettings.PaperSize.Height),
-						pageSettings);
-							
-				// TODO: We should create a graphics context for each page since they can have diferent paper
-				// size, orientation, etc. We use a single graphic for now to keep Cairo using a single PDF file.
-				
-				printPageArgs.GraphicsContext = printArgs.GraphicsContext;
-				Graphics pg = PrintController.OnStartPage(this, printPageArgs);
+			bool cancelled = false;
+			try {
+				PrintPageEventArgs printPageArgs;
+				do {
+					QueryPageSettingsEventArgs queryPageSettingsArgs = new QueryPageSettingsEventArgs (
+							DefaultPageSettings.Clone () as PageSettings);
+					OnQueryPageSettings (queryPageSettingsArgs);
+					if (queryPageSettingsArgs.Cancel) {
+						cancelled = true;
+						break;
+					}
 
-				// assign Graphics in printPageArgs
-				printPageArgs.SetGraphics(pg);
-				
-				if (!printPageArgs.Cancel)
-					this.OnPrintPage(printPageArgs);				
-				
-				PrintController.OnEndPage(this, printPageArgs);				
-				if (printPageArgs.Cancel)
-					break;				
-			} while (printPageArgs.HasMorePages);			
-
-			this.OnEndPrint(printArgs);
-			PrintController.OnEndPrint(this, printArgs);			
+					PageSettings pageSettings = queryPageSettingsArgs.PageSettings;
+					PrintPageGeometry.Bounds (pageSettings, out Rectangle pageBounds, out Rectangle marginBounds);
+					printPageArgs = new PrintPageEventArgs (null, marginBounds, pageBounds, pageSettings);
+					printPageArgs.GraphicsContext = printArgs.GraphicsContext;
+					Graphics pg = PrintController.OnStartPage (this, printPageArgs);
+					printPageArgs.SetGraphics (pg);
+					try {
+						if (!printPageArgs.Cancel)
+							this.OnPrintPage (printPageArgs);
+					} finally {
+						PrintController.OnEndPage (this, printPageArgs);
+					}
+					if (printPageArgs.Cancel) {
+						cancelled = true;
+						break;
+					}
+				} while (printPageArgs.HasMorePages);
+			} catch {
+				cancelled = true;
+				throw;
+			} finally {
+				try {
+					this.OnEndPrint (printArgs);
+					printArgs.Cancel |= cancelled;
+				} finally {
+					PrintController.OnEndPrint (this, printArgs);
+				}
+			}
 		}
 
 		public override string ToString(){

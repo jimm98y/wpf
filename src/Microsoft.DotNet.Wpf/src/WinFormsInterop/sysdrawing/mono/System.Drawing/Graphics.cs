@@ -40,7 +40,7 @@ using System.Text;
 
 namespace System.Drawing
 {
-	public sealed class Graphics : MarshalByRefObject, IDisposable
+	public sealed partial class Graphics : MarshalByRefObject, IDisposable
 	, IDeviceContext
 	{
 		internal IntPtr nativeObject = IntPtr.Zero;
@@ -232,7 +232,7 @@ namespace System.Drawing
 		/// the shader.</summary>
 		bool TryExactLinearGradient (Brush b, float x, float y, float w, float h)
 		{
-			if (GpuRecorder == null || nativeObject != IntPtr.Zero || !(b is Drawing2D.LinearGradientBrush lg) || !lg.exact_known)
+			if (GpuRecorder == null || nativeObject != IntPtr.Zero || print_mode || !(b is Drawing2D.LinearGradientBrush lg) || !lg.exact_known)
 				return false;
 			if (x != (int) x || y != (int) y || w != (int) w || h != (int) h || w <= 0 || h <= 0 || w * h > 4 << 20)
 				return false;
@@ -300,7 +300,7 @@ namespace System.Drawing
 		/// recorder's own translation must be whole pixels.</summary>
 		internal bool TryFillGdipAntialiased (Brush brush, PointF [] beziers, float m11, float m12, float m21, float m22, float dx, float dy)
 		{
-			if (GpuRecorder == null || nativeObject != IntPtr.Zero || GpuAliased || !(brush is SolidBrush sb))
+			if (GpuRecorder == null || nativeObject != IntPtr.Zero || print_mode || GpuAliased || !(brush is SolidBrush sb))
 				return false;
 			GpuRecorder.GetTranslation (out float tx, out float ty);
 			if (tx != (int) tx || ty != (int) ty)
@@ -342,6 +342,10 @@ namespace System.Drawing
 		// to libgdiplus) when not in GPU-raster mode or the image isn't a Bitmap we can read pixels from.
 		bool RecordImage (Image image, float dx, float dy, float dw, float dh)
 		{
+			if (GpuRecorder != null && image is Printing.PrintPreviewPageImage page) {
+				GpuRecorder.DrawScene (page.Scene, 0, 0, page.Width, page.Height, dx, dy, dw, dh);
+				return true;
+			}
 			if (GpuRecorder == null || !(image is Bitmap bmp)) return false;
 			int w = bmp.Width, h = bmp.Height;
 			var data = bmp.LockBits (new Rectangle (0, 0, w, h), Imaging.ImageLockMode.ReadOnly, Imaging.PixelFormat.Format32bppArgb);
@@ -380,6 +384,15 @@ namespace System.Drawing
 		// (fall through) when not in GPU-raster mode or the image isn't a Bitmap we can read.
 		bool RecordImage (Image image, RectangleF dest, RectangleF src, GraphicsUnit unit, Imaging.ImageAttributes attrs)
 		{
+			if (GpuRecorder != null && image is Printing.PrintPreviewPageImage page) {
+				// The page's pixels are its hundredths of an inch.
+				if (unit != GraphicsUnit.Pixel) {
+					float k = UnitToPixels (unit, 100f);
+					src = new RectangleF (src.X * k, src.Y * k, src.Width * k, src.Height * k);
+				}
+				GpuRecorder.DrawScene (page.Scene, src.X, src.Y, src.Width, src.Height, dest.X, dest.Y, dest.Width, dest.Height);
+				return true;
+			}
 			if (GpuRecorder == null || !(image is Bitmap bmp)) return false;
 			if (unit != GraphicsUnit.Pixel) {
 				float ux = UnitToPixels (unit, bmp.HorizontalResolution), uy = UnitToPixels (unit, bmp.VerticalResolution);
@@ -426,7 +439,7 @@ namespace System.Drawing
 		private SmoothingMode gpu_smoothing = SmoothingMode.None;
 		private readonly List<SmoothingMode> gpu_saved_smoothing = new List<SmoothingMode> ();
 
-		private bool GpuAliased => nativeObject == IntPtr.Zero && gpu_smoothing != SmoothingMode.AntiAlias
+		private bool GpuAliased => nativeObject == IntPtr.Zero && !print_mode && gpu_smoothing != SmoothingMode.AntiAlias
 			&& gpu_smoothing != SmoothingMode.HighQuality && gpu_smoothing != (SmoothingMode) 5 && gpu_smoothing != (SmoothingMode) 6;
 
 		/// <summary>GDI+'s aliased fill at PixelOffsetMode.None: pixel (i, j) is filled when the
@@ -818,6 +831,7 @@ namespace System.Drawing
 		
 		public void DrawArc (Pen pen, float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			if (PrintStroke (pen, gp => gp.AddArc (x, y, width, height, startAngle, sweepAngle))) return;
 			Status status;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -832,6 +846,7 @@ namespace System.Drawing
    		// int sweepAngle. However, GdipDrawArcI uses also float for the startAngle and sweepAngle params
    		public void DrawArc (Pen pen, int x, int y, int width, int height, int startAngle, int sweepAngle)
 		{
+			if (PrintStroke (pen, gp => gp.AddArc (x, y, width, height, startAngle, sweepAngle))) return;
 			Status status;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1103,6 +1118,7 @@ namespace System.Drawing
 
 		public void DrawEllipse (Pen pen, int x, int y, int width, int height)
 		{
+			if (PrintStroke (pen, gp => gp.AddEllipse (x, y, width, height))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			// An ellipse outline is a full circle of arc, and the recorder has an arc primitive. It
@@ -1117,6 +1133,7 @@ namespace System.Drawing
 
 		public void DrawEllipse (Pen pen, float x, float y, float width, float height)
 		{
+			if (PrintStroke (pen, gp => gp.AddEllipse (x, y, width, height))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (RecordPen (pen)) { GpuRecorder.DrawArc (x, y, width, height, 0f, 360f, ArgbOf (pen), pen.Width); return; }
@@ -1159,6 +1176,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF point)
 		{
+			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, point.X, point.Y, ps.Width, ps.Height); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, point.X, point.Y, image.Width, image.Height)) return;
@@ -1180,6 +1198,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point point)
 		{
+			if (print_mode && image != null) { DrawImage (image, (float) point.X, (float) point.Y); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			DrawImage (image, point.X, point.Y);
@@ -1205,6 +1224,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, int x, int y)
 		{
+			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, x, y, ps.Width, ps.Height); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, x, y, image.Width, image.Height)) return;
@@ -1214,6 +1234,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, float x, float y)
 		{
+			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, x, y, ps.Width, ps.Height); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, x, y, image.Width, image.Height)) return;
@@ -1549,6 +1570,7 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, Point pt1, Point pt2)
 		{
+			if (PrintStroke (pen, gp => gp.AddLine (pt1, pt2))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (RecordPen (pen)) {
@@ -1565,6 +1587,7 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, int x1, int y1, int x2, int y2)
 		{
+			if (PrintStroke (pen, gp => gp.AddLine (x1, y1, x2, y2))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (RecordPen (pen)) {
@@ -1580,6 +1603,7 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, float x1, float y1, float x2, float y2)
 		{
+			if (PrintStroke (pen, gp => gp.AddLine (x1, y1, x2, y2))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (!float.IsNaN(x1) && !float.IsNaN(y1) &&
@@ -1598,6 +1622,7 @@ namespace System.Drawing
 
 		public void DrawLines (Pen pen, PointF [] points)
 		{
+			if (points != null && PrintStroke (pen, gp => gp.AddLines (points))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -1614,6 +1639,7 @@ namespace System.Drawing
 
 		public void DrawLines (Pen pen, Point [] points)
 		{
+			if (points != null && PrintStroke (pen, gp => gp.AddLines (points))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -1630,6 +1656,7 @@ namespace System.Drawing
 
 		public void DrawPath (Pen pen, GraphicsPath path)
 		{
+			if (path != null && PrintStroke (pen, path)) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (path == null)
@@ -1681,6 +1708,7 @@ namespace System.Drawing
    		// int sweepAngle. However, GdipDrawPieI uses also float for the startAngle and sweepAngle params
    		public void DrawPie (Pen pen, int x, int y, int width, int height, int startAngle, int sweepAngle)
 		{
+			if (GpuRecorder != null) { DrawPie (pen, (float) x, (float) y, (float) width, (float) height, (float) startAngle, (float) sweepAngle); return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			Status status = GDIPlus.GdipDrawPieI (nativeObject, pen.NativePen, x, y, width, height, startAngle, sweepAngle);
@@ -1689,6 +1717,7 @@ namespace System.Drawing
 
 		public void DrawPolygon (Pen pen, Point [] points)
 		{
+			if (points != null && PrintStroke (pen, gp => gp.AddPolygon (points))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -1707,6 +1736,7 @@ namespace System.Drawing
 
 		public void DrawPolygon (Pen pen, PointF [] points)
 		{
+			if (points != null && PrintStroke (pen, gp => gp.AddPolygon (points))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -1732,6 +1762,7 @@ namespace System.Drawing
 
 		public void DrawRectangle (Pen pen, float x, float y, float width, float height)
 		{
+			if (PrintStroke (pen, gp => gp.AddRectangle (new RectangleF (x, y, width, height)))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (RecordPen (pen)) {
@@ -1755,6 +1786,7 @@ namespace System.Drawing
 
 		public void DrawRectangle (Pen pen, int x, int y, int width, int height)
 		{
+			if (PrintStroke (pen, gp => gp.AddRectangle (new RectangleF (x, y, width, height)))) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (RecordPen (pen)) {
@@ -2184,6 +2216,7 @@ namespace System.Drawing
 
 		public void DrawString (string s, Font font, Brush brush, RectangleF layoutRectangle, StringFormat format)
 		{
+			if (print_mode && font != null && brush != null && PrintDrawString (s, font, brush, layoutRectangle, format)) return;
 			if (font == null)
 				throw new ArgumentNullException ("font");
 			if (brush == null)
@@ -2605,6 +2638,7 @@ namespace System.Drawing
 	
 		public void ExcludeClip (Rectangle rect)
 		{
+			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, true); return; }
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRectI (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, CombineMode.Exclude);
 			CheckDrawStatus (status);
@@ -2699,6 +2733,7 @@ namespace System.Drawing
 
 		public void FillEllipse (Brush brush, float x, float y, float width, float height)
 		{
+			if (PrintFill (brush, gp => gp.AddEllipse (x, y, width, height))) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			// GDI+ antialiases at PixelOffsetMode.None with each pixel's CENTRE on the integer
@@ -2718,6 +2753,7 @@ namespace System.Drawing
 
 		public void FillEllipse (Brush brush, int x, int y, int width, int height)
 		{
+			if (PrintFill (brush, gp => gp.AddEllipse (x, y, width, height))) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
@@ -2729,6 +2765,7 @@ namespace System.Drawing
 
 		public void FillPath (Brush brush, GraphicsPath path)
 		{
+			if (path != null && PrintFill (brush, path)) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (path == null)
@@ -2761,6 +2798,7 @@ namespace System.Drawing
 
 		public void FillPie (Brush brush, Rectangle rect, float startAngle, float sweepAngle)
 		{
+			if (PrintFill (brush, gp => gp.AddPie (rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle))) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			// Approximated as a full ellipse, as the other two overloads already were. Without
@@ -2776,6 +2814,7 @@ namespace System.Drawing
 
 		public void FillPie (Brush brush, int x, int y, int width, int height, int startAngle, int sweepAngle)
 		{
+			if (PrintFill (brush, gp => gp.AddPie (x, y, width, height, startAngle, sweepAngle))) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			// Approximate as a full ellipse fill (covers the common full-circle case, e.g. a radio dot).
@@ -2788,6 +2827,7 @@ namespace System.Drawing
 
 		public void FillPie (Brush brush, float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			if (PrintFill (brush, gp => gp.AddPie (x, y, width, height, startAngle, sweepAngle))) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillEllipse (x, y, width, height, ArgbOf (brush)); return; }
@@ -2799,6 +2839,7 @@ namespace System.Drawing
 
 		public void FillPolygon (Brush brush, PointF [] points)
 		{
+			if (points != null && PrintFill (brush, gp => gp.AddPolygon (points))) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2812,6 +2853,7 @@ namespace System.Drawing
 
 		public void FillPolygon (Brush brush, Point [] points)
 		{
+			if (points != null && PrintFill (brush, gp => gp.AddPolygon (points))) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2825,6 +2867,7 @@ namespace System.Drawing
 
 		public void FillPolygon (Brush brush, Point [] points, FillMode fillMode)
 		{
+			if (points != null && PrintFill (brush, gp => gp.AddPolygon (points), fillMode)) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2838,6 +2881,7 @@ namespace System.Drawing
 
 		public void FillPolygon (Brush brush, PointF [] points, FillMode fillMode)
 		{
+			if (points != null && PrintFill (brush, gp => gp.AddPolygon (points), fillMode)) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2868,6 +2912,7 @@ namespace System.Drawing
 
 		public void FillRectangle (Brush brush, int x, int y, int width, int height)
 		{
+			if (PrintFillRect (brush, x, y, width, height)) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillRect (x, y, width, height, ArgbOf (brush)); return; }
@@ -2881,6 +2926,7 @@ namespace System.Drawing
 
 		public void FillRectangle (Brush brush, float x, float y, float width, float height)
 		{
+			if (PrintFillRect (brush, x, y, width, height)) return;
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (RecordSolid (brush)) { GpuRecorder.FillRect (x, y, width, height, ArgbOf (brush)); return; }
@@ -3262,6 +3308,9 @@ namespace System.Drawing
 			if (font == null)
 				throw new ArgumentNullException ("font");
 
+			if (print_mode)
+				return PrintMeasureString (text, font, layoutRect, managedFormat, out _, out _);
+
 			if (s_gpuRasterMode) {
 				// Managed measurement (no libgdiplus), consistent with the WGSL-rendered font.
 				// A layout width means "wrap here", and the caller wants the height that wrapping
@@ -3363,6 +3412,9 @@ namespace System.Drawing
 			RectangleF boundingBox = new RectangleF ();
 			RectangleF rect = new RectangleF (0, 0, layoutArea.Width, layoutArea.Height);
 
+			if (print_mode)
+				return PrintMeasureString (text, font, rect, stringFormat, out charactersFitted, out linesFilled);
+
 			IntPtr format = (stringFormat == null) ? IntPtr.Zero : stringFormat.NativeObject;
 
 			unsafe {
@@ -3385,7 +3437,7 @@ namespace System.Drawing
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
 
-			if (nativeObject == IntPtr.Zero) return;
+			if (nativeObject == IntPtr.Zero) { RecordedCombine (matrix.Elements, order); return; }
 			Status status = GDIPlus.GdipMultiplyWorldTransform (nativeObject, matrix.nativeMatrix, order);
 			CheckDrawStatus (status);
 		}
@@ -3415,7 +3467,11 @@ namespace System.Drawing
 		
 		public void ResetClip ()
 		{
-			if (GpuRecorder != null) { GpuRecorder.ClearClip (); return; }
+			if (GpuRecorder != null) {
+				if (print_mode) GpuRecorder.ResetAllClips ();
+				else GpuRecorder.ClearClip ();
+				return;
+			}
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipResetClip (nativeObject);
 			CheckDrawStatus (status);
@@ -3423,8 +3479,12 @@ namespace System.Drawing
 
 		public void ResetTransform ()
 		{
+			if (nativeObject == IntPtr.Zero) {
+				rec_world = new float [] { 1f, 0f, 0f, 1f, 0f, 0f };
+				PushRecordedTransform ();
+				return;
+			}
 			GpuRecorder?.ResetTransform ();
-			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipResetWorldTransform (nativeObject);
 			CheckDrawStatus (status);
 		}
@@ -3441,6 +3501,7 @@ namespace System.Drawing
 					gpu_saved_smoothing.RemoveRange (k, gpu_saved_smoothing.Count - k);
 				}
 				GpuRecorder.RestoreState (gstate.nativeState);
+				RecordedRestore (gstate.nativeState);
 				return;
 			}
 			// the possible NRE thrown by gstate.nativeState match MS behaviour
@@ -3455,7 +3516,12 @@ namespace System.Drawing
 
 		public void RotateTransform (float angle, MatrixOrder order)
 		{
-			if (nativeObject == IntPtr.Zero) return;
+			if (nativeObject == IntPtr.Zero) {
+				double r = angle * Math.PI / 180.0;
+				float cos = (float) Math.Cos (r), sin = (float) Math.Sin (r);
+				RecordedCombine (new float [] { cos, sin, -sin, cos, 0, 0 }, order);
+				return;
+			}
 			Status status = GDIPlus.GdipRotateWorldTransform (nativeObject, angle, order);
 			CheckDrawStatus (status);
 		}
@@ -3467,6 +3533,7 @@ namespace System.Drawing
 				while (gpu_saved_smoothing.Count < token - 1) gpu_saved_smoothing.Add (gpu_smoothing);
 				if (gpu_saved_smoothing.Count >= token) gpu_saved_smoothing.RemoveRange (token - 1, gpu_saved_smoothing.Count - (token - 1));
 				gpu_saved_smoothing.Add (gpu_smoothing);
+				RecordedSave (token);
 				return new GraphicsState (token);
 			}
 			uint saveState;
@@ -3484,7 +3551,7 @@ namespace System.Drawing
 
 		public void ScaleTransform (float sx, float sy, MatrixOrder order)
 		{
-                        if (nativeObject == IntPtr.Zero) return;
+                        if (nativeObject == IntPtr.Zero) { RecordedCombine (new float [] { sx, 0, 0, sy, 0, 0 }, order); return; }
                         Status status = GDIPlus.GdipScaleWorldTransform (nativeObject, sx, sy, order);
 			CheckDrawStatus (status);
 		}
@@ -3528,7 +3595,11 @@ namespace System.Drawing
 		
 		public void SetClip (Rectangle rect, CombineMode combineMode)
 		{
-			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude); return; }
+			if (GpuRecorder != null) {
+				if (print_mode && combineMode == CombineMode.Replace) GpuRecorder.ResetAllClips ();
+				GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude);
+				return;
+			}
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRectI (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, combineMode);
 			CheckDrawStatus (status);
@@ -3537,7 +3608,11 @@ namespace System.Drawing
 		
 		public void SetClip (RectangleF rect, CombineMode combineMode)
 		{
-			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude); return; }
+			if (GpuRecorder != null) {
+				if (print_mode && combineMode == CombineMode.Replace) GpuRecorder.ResetAllClips ();
+				GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude);
+				return;
+			}
 			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipSetClipRect (nativeObject, rect.X, rect.Y, rect.Width, rect.Height, combineMode);
 			CheckDrawStatus (status);
@@ -3572,7 +3647,8 @@ namespace System.Drawing
 				// Graphics.Clip immediately before drawing its text, so the text was recorded
 				// underneath the control's own background and never appeared at all -- emitted at
 				// the right place, in the right colour, and painted over.
-				GpuRecorder.ClearClip ();
+				if (print_mode) GpuRecorder.ResetAllClips ();
+				else GpuRecorder.ClearClip ();
 				RectangleF bounds = RegionBounds (region);
 				if (bounds.Width > 0 && bounds.Height > 0)
 					GpuRecorder.SetClipRect (bounds.X, bounds.Y, bounds.Width, bounds.Height, false);
@@ -3588,6 +3664,7 @@ namespace System.Drawing
 		{
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			if (PrintClip (path, combineMode)) return;
 			Status status = GDIPlus.GdipSetClipPath (nativeObject, path.nativePath, combineMode);
 			CheckDrawStatus (status);
 		}
@@ -3597,6 +3674,7 @@ namespace System.Drawing
 		{
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
+			if (nativeObject == IntPtr.Zero) { RecordedTransformPoints (destSpace, srcSpace, pts); return; }
 
 			IntPtr ptrPt =  GDIPlus.FromPointToUnManagedMemory (pts);
             
@@ -3611,6 +3689,13 @@ namespace System.Drawing
 		{						
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
+			if (nativeObject == IntPtr.Zero) {
+				var f = new PointF [pts.Length];
+				for (int i = 0; i < pts.Length; i++) f [i] = pts [i];
+				RecordedTransformPoints (destSpace, srcSpace, f);
+				for (int i = 0; i < pts.Length; i++) pts [i] = Point.Round (f [i]);
+				return;
+			}
                         IntPtr ptrPt =  GDIPlus.FromPointToUnManagedMemoryI (pts);
             
                         Status status = GDIPlus.GdipTransformPointsI (nativeObject, destSpace, srcSpace, ptrPt, pts.Length);
@@ -3647,9 +3732,18 @@ namespace System.Drawing
 		/// otherwise it is point-sampled, as AlphaBlend stretches. <paramref name="windowBlend"/> blends as
 		/// AlphaBlend does onto a WINDOW's surface, where each term is truncated on its own.</summary>
 		internal void BeginSnapshot (RectangleF source, RectangleF dest, float opacity, bool stretchBlt = false, bool windowBlend = false)
-			=> GpuRecorder?.PushSnapshot (source.X, source.Y, source.Width, source.Height, dest.X, dest.Y, dest.Width, dest.Height, opacity, stretchBlt, windowBlend);
+		{
+			if (GpuRecorder == null) return;
+			RecordedBeginSnapshot ();
+			GpuRecorder.PushSnapshot (source.X, source.Y, source.Width, source.Height, dest.X, dest.Y, dest.Width, dest.Height, opacity, stretchBlt, windowBlend);
+		}
 
-		internal void EndSnapshot () => GpuRecorder?.PopSnapshot ();
+		internal void EndSnapshot ()
+		{
+			if (GpuRecorder == null) return;
+			GpuRecorder.PopSnapshot ();
+			RecordedEndSnapshot ();
+		}
 
 		internal bool CanSnapshot => GpuRecorder != null;
 
@@ -3659,8 +3753,8 @@ namespace System.Drawing
 			// the origin and resetting -- ToolStrip does exactly this per item. The recorder ignored
 			// the transform, so every item was drawn at the same place and their labels sat on top of
 			// one another.
+			if (nativeObject == IntPtr.Zero) { RecordedCombine (new float [] { 1, 0, 0, 1, dx, dy }, order); return; }
 			GpuRecorder?.PushTranslate (dx, dy);
-			if (nativeObject == IntPtr.Zero) return;
 			Status status = GDIPlus.GdipTranslateWorldTransform (nativeObject, dx, dy, order);
 			CheckDrawStatus (status);
 		}
@@ -3680,7 +3774,7 @@ namespace System.Drawing
 
 		public RectangleF ClipBounds {
 			get {
-                                if (nativeObject == IntPtr.Zero) return new RectangleF (0, 0, 1 << 20, 1 << 20);
+                                if (nativeObject == IntPtr.Zero) return print_mode ? RecordedVisibleBounds () : new RectangleF (0, 0, 1 << 20, 1 << 20);
                                 RectangleF rect = new RectangleF ();
                                 Status status = GDIPlus.GdipGetClipBounds (nativeObject, out rect);
 				CheckDrawStatus (status);
@@ -3732,7 +3826,7 @@ namespace System.Drawing
 
 		public float DpiX {
 			get {
-                                if (nativeObject == IntPtr.Zero) return 96f;   // recording-only
+                                if (nativeObject == IntPtr.Zero) return print_mode ? print_dpi_x : 96f;   // recording-only
                                 float x;
 
        				Status status = GDIPlus.GdipGetDpiX (nativeObject, out x);
@@ -3743,7 +3837,7 @@ namespace System.Drawing
 
 		public float DpiY {
 			get {
-                                if (nativeObject == IntPtr.Zero) return 96f;   // recording-only
+                                if (nativeObject == IntPtr.Zero) return print_mode ? print_dpi_y : 96f;   // recording-only
                                 float y;
 
        				Status status = GDIPlus.GdipGetDpiY (nativeObject, out y);
@@ -3791,7 +3885,7 @@ namespace System.Drawing
 
 		public float PageScale {
 			get {
-                                if (nativeObject == IntPtr.Zero) return 1f;   // recording-only
+                                if (nativeObject == IntPtr.Zero) return rec_page_scale;   // recording-only
                                 float scale;
 
         			Status status = GDIPlus.GdipGetPageScale (nativeObject, out scale);
@@ -3799,7 +3893,13 @@ namespace System.Drawing
         			return scale;
 			}
 			set {
-                                if (nativeObject == IntPtr.Zero) return;
+                                if (nativeObject == IntPtr.Zero) {
+					if (!(value > 0) || value > 1000000032)
+						throw new ArgumentException ("Parameter is not valid.");
+					rec_page_scale = value;
+					PushRecordedTransform ();
+					return;
+				}
                                 Status status = GDIPlus.GdipSetPageScale (nativeObject, value);
 				CheckDrawStatus (status);
 			}
@@ -3807,7 +3907,7 @@ namespace System.Drawing
 
 		public GraphicsUnit PageUnit {
 			get {
-                                if (nativeObject == IntPtr.Zero) return GraphicsUnit.Display;   // recording-only
+                                if (nativeObject == IntPtr.Zero) return rec_unit;   // recording-only
                                 GraphicsUnit unit;
                                 
                                 Status status = GDIPlus.GdipGetPageUnit (nativeObject, out unit);
@@ -3815,7 +3915,15 @@ namespace System.Drawing
         			return unit;
 			}
 			set {
-                                if (nativeObject == IntPtr.Zero) return;
+                                if (nativeObject == IntPtr.Zero) {
+					if (value < GraphicsUnit.World || value > GraphicsUnit.Millimeter)
+						throw new System.ComponentModel.InvalidEnumArgumentException ("value", (int) value, typeof (GraphicsUnit));
+					if (value == GraphicsUnit.World)
+						throw new ArgumentException ("Parameter is not valid.");
+					rec_unit = value;
+					PushRecordedTransform ();
+					return;
+				}
                                 Status status = GDIPlus.GdipSetPageUnit (nativeObject, value);
 				CheckDrawStatus (status);
 			}
@@ -3913,8 +4021,9 @@ namespace System.Drawing
 
 		public Matrix Transform {
 			get {
+                                if (nativeObject == IntPtr.Zero)   // recording-only: the managed world transform
+                                        return new Matrix (rec_world [0], rec_world [1], rec_world [2], rec_world [3], rec_world [4], rec_world [5]);
                                 Matrix matrix = new Matrix ();
-                                if (nativeObject == IntPtr.Zero) return matrix;   // recording-only: identity
                                 Status status = GDIPlus.GdipGetWorldTransform (nativeObject, matrix.nativeMatrix);
 				CheckDrawStatus (status);
                                 return matrix;
@@ -3923,7 +4032,11 @@ namespace System.Drawing
 				if (value == null)
 					throw new ArgumentNullException ("value");
 				
-                                if (nativeObject == IntPtr.Zero) return;
+                                if (nativeObject == IntPtr.Zero) {
+					rec_world = value.Elements;
+					PushRecordedTransform ();
+					return;
+				}
                                 Status status = GDIPlus.GdipSetWorldTransform (nativeObject, value.nativeMatrix);
 				CheckDrawStatus (status);
 			}
@@ -3931,7 +4044,7 @@ namespace System.Drawing
 
 		public RectangleF VisibleClipBounds {
 			get {
-                                if (nativeObject == IntPtr.Zero) return new RectangleF (0, 0, 1 << 20, 1 << 20);  // recording-only
+                                if (nativeObject == IntPtr.Zero) return print_mode ? RecordedVisibleBounds () : new RectangleF (0, 0, 1 << 20, 1 << 20);  // recording-only
                                 RectangleF rect;
 					
                                 Status status = GDIPlus.GdipGetVisibleClipBounds (nativeObject, out rect);

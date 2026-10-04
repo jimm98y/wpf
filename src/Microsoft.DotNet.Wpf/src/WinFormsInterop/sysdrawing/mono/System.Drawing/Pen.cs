@@ -47,6 +47,17 @@ namespace System.Drawing
 		// Color/Brush/Width from these directly (no native pen object).
 		private float managedWidth = 1f;
 		private Brush managedBrush;
+		// ...and everything else a pen carries, for the same path: a printed page strokes with the
+		// pen's dashes, caps and joins, and with no GDI+ these used to read back as the defaults
+		// whatever had been set (and setting them threw).
+		private DashStyle m_dashStyle = DashStyle.Solid;
+		private float [] m_dashPattern;
+		private float m_dashOffset;
+		private DashCap m_dashCap = Drawing2D.DashCap.Flat;
+		private LineCap m_startCap = LineCap.Flat, m_endCap = LineCap.Flat;
+		private LineJoin m_lineJoin = LineJoin.Miter;
+		private float m_miterLimit = 10f;
+		private PenAlignment m_alignment = PenAlignment.Center;
 
                 internal Pen (IntPtr p)
                 {
@@ -90,7 +101,7 @@ namespace System.Drawing
 		[MonoLimitation ("Libgdiplus doesn't use this property for rendering")]
 		public PenAlignment Alignment {
 			get {
-				if (nativeObject == IntPtr.Zero) return PenAlignment.Center;   // recording-only
+				if (nativeObject == IntPtr.Zero) return m_alignment;   // recording-only
 				PenAlignment retval;
                                 Status status = GDIPlus.GdipGetPenMode (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -102,6 +113,7 @@ namespace System.Drawing
 					throw new InvalidEnumArgumentException ("Alignment", (int)value, typeof (PenAlignment));
 
 				if (isModifiable) {
+					if (!GDIPlus.Initialized) { m_alignment = value; return; }
 					Status status = GDIPlus.GdipSetPenMode (nativeObject, value);
 					GDIPlus.CheckStatus (status);
 				} else
@@ -125,6 +137,11 @@ namespace System.Drawing
 				if (!isModifiable)
 					throw new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
 
+				if (!GDIPlus.Initialized) {
+					managedBrush = value;
+					color = (value as SolidBrush)?.Color ?? Color.Empty;
+					return;
+				}
 				Status status = GDIPlus.GdipSetPenBrushFill (nativeObject, value.NativeBrush);
 				GDIPlus.CheckStatus (status);
 				color = Color.Empty;
@@ -215,7 +232,7 @@ namespace System.Drawing
                 public DashCap DashCap {
 
                         get {
-				if (nativeObject == IntPtr.Zero) return Drawing2D.DashCap.Flat;   // recording-only
+				if (nativeObject == IntPtr.Zero) return m_dashCap;   // recording-only
                                 DashCap retval;
                                 Status status = GDIPlus.GdipGetPenDashCap197819 (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -227,6 +244,7 @@ namespace System.Drawing
 					throw new InvalidEnumArgumentException ("DashCap", (int)value, typeof (DashCap));
 
 				if (isModifiable) {
+					if (!GDIPlus.Initialized) { m_dashCap = value; return; }
                                 	Status status = GDIPlus.GdipSetPenDashCap197819 (nativeObject, value);
 					GDIPlus.CheckStatus (status);
 				} else
@@ -237,7 +255,7 @@ namespace System.Drawing
                 public float DashOffset {
 
                         get {
-				if (nativeObject == IntPtr.Zero) return 0f;   // recording-only
+				if (nativeObject == IntPtr.Zero) return m_dashOffset;   // recording-only
                                 float retval;
                                 Status status = GDIPlus.GdipGetPenDashOffset (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -246,6 +264,7 @@ namespace System.Drawing
 
                         set {
 				if (isModifiable) {
+					if (!GDIPlus.Initialized) { m_dashOffset = value; return; }
                                 	Status status = GDIPlus.GdipSetPenDashOffset (nativeObject, value);
 					GDIPlus.CheckStatus (status);
 				} else
@@ -255,6 +274,7 @@ namespace System.Drawing
 
                 public float [] DashPattern {
                         get {
+				if (!GDIPlus.Initialized) return m_dashPattern != null ? (float []) m_dashPattern.Clone () : (DashStyle == DashStyle.Custom ? new float [] { 1f } : new float [0]);
                                 int count;
                                 Status status = GDIPlus.GdipGetPenDashCount (nativeObject, out count);
 				GDIPlus.CheckStatus (status);
@@ -280,6 +300,7 @@ namespace System.Drawing
 					int length = value.Length;
 					if (length == 0)
 						throw new ArgumentException ("Invalid parameter.");
+					if (!GDIPlus.Initialized) { m_dashPattern = (float []) value.Clone (); m_dashStyle = DashStyle.Custom; return; }
 					foreach (float val in value)
 						if (val <= 0)
 							throw new ArgumentException ("Invalid parameter.");
@@ -292,7 +313,7 @@ namespace System.Drawing
 
 		public DashStyle DashStyle {
 			get {
-				if (nativeObject == IntPtr.Zero) return DashStyle.Solid;   // recording-only
+				if (nativeObject == IntPtr.Zero) return m_dashStyle;   // recording-only
 				DashStyle retval;
                                 Status status = GDIPlus.GdipGetPenDashStyle (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -304,6 +325,7 @@ namespace System.Drawing
 					throw new InvalidEnumArgumentException ("DashStyle", (int)value, typeof (DashStyle));
 
 				if (isModifiable) {
+					if (!GDIPlus.Initialized) { m_dashStyle = value; if (value != DashStyle.Custom) m_dashPattern = null; return; }
 					Status status = GDIPlus.GdipSetPenDashStyle (nativeObject, value);
 					GDIPlus.CheckStatus (status);
 				} else
@@ -313,7 +335,7 @@ namespace System.Drawing
 
 		public LineCap StartCap {
 			get {
-				if (nativeObject == IntPtr.Zero) return LineCap.Flat;   // recording-only
+				if (nativeObject == IntPtr.Zero) return m_startCap;   // recording-only
 				LineCap retval;
 				Status status = GDIPlus.GdipGetPenStartCap (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -326,6 +348,7 @@ namespace System.Drawing
 					throw new InvalidEnumArgumentException ("StartCap", (int)value, typeof (LineCap));
 
 				if (isModifiable) {
+					if (!GDIPlus.Initialized) { m_startCap = value; return; }
 					Status status = GDIPlus.GdipSetPenStartCap (nativeObject, value);
 					GDIPlus.CheckStatus (status);
 				} else
@@ -335,7 +358,7 @@ namespace System.Drawing
  
 		public LineCap EndCap {
 			get {
-				if (nativeObject == IntPtr.Zero) return LineCap.Flat;   // recording-only
+				if (nativeObject == IntPtr.Zero) return m_endCap;   // recording-only
 				LineCap retval;
 				Status status = GDIPlus.GdipGetPenEndCap (nativeObject, out retval);
 				GDIPlus.CheckStatus (status);
@@ -348,6 +371,7 @@ namespace System.Drawing
 					throw new InvalidEnumArgumentException ("EndCap", (int)value, typeof (LineCap));
 
 				if (isModifiable) {
+					if (!GDIPlus.Initialized) { m_endCap = value; return; }
 					Status status = GDIPlus.GdipSetPenEndCap (nativeObject, value);
 					GDIPlus.CheckStatus (status);
 				} else
@@ -358,7 +382,7 @@ namespace System.Drawing
                 public LineJoin LineJoin {
 
                         get {
-				if (nativeObject == IntPtr.Zero) return LineJoin.Miter;   // recording-only
+				if (nativeObject == IntPtr.Zero) return m_lineJoin;   // recording-only
                                 LineJoin result;
                                 Status status = GDIPlus.GdipGetPenLineJoin (nativeObject, out result);
 				GDIPlus.CheckStatus (status);
@@ -370,6 +394,7 @@ namespace System.Drawing
 					throw new InvalidEnumArgumentException ("LineJoin", (int)value, typeof (LineJoin));
 
 				if (isModifiable) {
+					if (!GDIPlus.Initialized) { m_lineJoin = value; return; }
                                 	Status status = GDIPlus.GdipSetPenLineJoin (nativeObject, value);
 					GDIPlus.CheckStatus (status);
 				} else
@@ -381,7 +406,7 @@ namespace System.Drawing
                 public float MiterLimit {
 
                         get {
-				if (nativeObject == IntPtr.Zero) return 10f;   // recording-only
+				if (nativeObject == IntPtr.Zero) return m_miterLimit;   // recording-only
                                 float result;
                                 Status status = GDIPlus.GdipGetPenMiterLimit (nativeObject, out result);
 				GDIPlus.CheckStatus (status);
@@ -390,6 +415,7 @@ namespace System.Drawing
 
                         set {
 				if (isModifiable) {
+					if (!GDIPlus.Initialized) { m_miterLimit = value; return; }
                                 	Status status = GDIPlus.GdipSetPenMiterLimit (nativeObject, value);
 					GDIPlus.CheckStatus (status);
 				} else
@@ -459,6 +485,12 @@ namespace System.Drawing
 
 		public object Clone ()
 		{
+			if (!GDIPlus.Initialized) {
+				var c = (Pen) MemberwiseClone ();
+				c.isModifiable = true;
+				if (m_dashPattern != null) c.m_dashPattern = (float []) m_dashPattern.Clone ();
+				return c;
+			}
                         IntPtr ptr;
                         Status status = GDIPlus.GdipClonePen (nativeObject, out ptr);
 			GDIPlus.CheckStatus (status);
@@ -534,6 +566,7 @@ namespace System.Drawing
                 public void SetLineCap (LineCap startCap, LineCap endCap, DashCap dashCap)
                 {
 			if (isModifiable) {
+				if (!GDIPlus.Initialized) { m_startCap = startCap; m_endCap = endCap; m_dashCap = dashCap; return; }
 				Status status = GDIPlus.GdipSetPenLineCap197819 (nativeObject, startCap, endCap, dashCap);
 				GDIPlus.CheckStatus (status);
 			} else

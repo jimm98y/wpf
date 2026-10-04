@@ -82,26 +82,23 @@ namespace System.Drawing.Printing
 	internal class SysPrn
 	{
 		static GlobalPrintingServices global_printing_services;
-		static bool is_unix;
 
-		static SysPrn ()
-		{
-			is_unix = GDIPlus.RunningOnUnix ();
-		}
-		
+		// Windows asks winspool; every other head asks the print system its jobs will go to
+		// (PrintSystem). Decided by the OS, not by which GDI+ is loaded: there is no GDI+ in
+		// printing any more, and libgdiplus' CUPS path is gone with it.
 		internal static PrintingServices CreatePrintingService () {
-			if (is_unix)
-				return new PrintingServicesUnix ();
-			return new PrintingServicesWin32 ();				
-		}			
+			if (OperatingSystem.IsWindows ())
+				return new PrintingServicesWin32 ();
+			return new PrintingServicesManaged ();
+		}
 
 		internal static GlobalPrintingServices GlobalService {
 			get {
 				if (global_printing_services == null) {
-					if (is_unix)
-						global_printing_services = new GlobalPrintingServicesUnix ();
-					else
+					if (OperatingSystem.IsWindows ())
 						global_printing_services = new GlobalPrintingServicesWin32 ();
+					else
+						global_printing_services = new GlobalPrintingServicesManaged ();
 				}
 
 				return global_printing_services;

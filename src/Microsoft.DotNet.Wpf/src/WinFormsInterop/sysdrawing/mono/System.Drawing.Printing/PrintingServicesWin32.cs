@@ -218,12 +218,17 @@ namespace System.Drawing.Printing
 
 			di.cbSize = Marshal.SizeOf (di);
   			di.lpszDocName = Marshal.StringToHGlobalUni (doc_name);
-  			di.lpszOutput = IntPtr.Zero;
+			// Print to file: DOCINFO.lpszOutput sends the job to a path instead of the printer's
+			// port. It is also the only way to drive a printer on the PORTPROMPT port ("Microsoft
+			// Print to PDF") without a Save As box nobody is there to answer.
+  			di.lpszOutput = string.IsNullOrEmpty (output_file) ? IntPtr.Zero : Marshal.StringToHGlobalUni (output_file);
   			di.lpszDatatype = IntPtr.Zero;
   			di.fwType = 0;
 
   			ret = Win32StartDoc (gr.Hdc, ref di);
 			Marshal.FreeHGlobal (di.lpszDocName);
+			if (di.lpszOutput != IntPtr.Zero)
+				Marshal.FreeHGlobal (di.lpszOutput);
 			return (ret > 0) ? true : false;
 		}
 
@@ -295,8 +300,73 @@ namespace System.Drawing.Printing
 		{
 			int ret = Win32EndDoc (gr.Hdc);
 			Win32DeleteDC (gr.Hdc);
-			gr.Graphics.Dispose ();
+			gr.Graphics?.Dispose ();
 			return (ret > 0) ? true : false;
+		}
+
+		internal static void AbortDoc (GraphicsPrinter gr)
+		{
+			Win32AbortDoc (gr.Hdc);
+			Win32DeleteDC (gr.Hdc);
+		}
+
+		/// <summary>Re-reads the DC's mode for a page whose settings differ from the document's
+		/// (QueryPageSettings turned it landscape, or gave it other paper). Between pages only.</summary>
+		internal static void ResetForPage (GraphicsPrinter gr, PrinterSettings settings, PageSettings page)
+		{
+			IntPtr devmode = IntPtr.Zero;
+			try {
+				devmode = DevModeInterop.GetHdevmode (settings, page);
+			} catch (InvalidPrinterException) {
+				return;
+			}
+			if (devmode == IntPtr.Zero) return;
+			try {
+				IntPtr dm = DevModeInterop.GlobalLock (devmode);
+				Win32ResetDC (gr.Hdc, dm);
+				DevModeInterop.GlobalUnlock (devmode);
+			} finally {
+				DevModeInterop.GlobalFree (devmode);
+			}
+		}
+
+		/// <summary>What GDI+ calls a page's hard margins and printable area, and its resolution:
+		/// the DC's offset and extent in hundredths of an inch, for the given (or the DC's own) mode.</summary>
+		internal static bool DescribeDevice (IntPtr dc, out float dpiX, out float dpiY, out RectangleF printable)
+		{
+			dpiX = Win32GetDeviceCaps (dc, (int) DevCapabilities.LOGPIXELSX);
+			dpiY = Win32GetDeviceCaps (dc, (int) DevCapabilities.LOGPIXELSY);
+			printable = RectangleF.Empty;
+			if (dpiX <= 0 || dpiY <= 0) return false;
+			float ox = Win32GetDeviceCaps (dc, (int) DevCapabilities.PHYSICALOFFSETX) * 100f / dpiX;
+			float oy = Win32GetDeviceCaps (dc, (int) DevCapabilities.PHYSICALOFFSETY) * 100f / dpiY;
+			float w = Win32GetDeviceCaps (dc, (int) DevCapabilities.HORZRES) * 100f / dpiX;
+			float h = Win32GetDeviceCaps (dc, (int) DevCapabilities.VERTRES) * 100f / dpiY;
+			printable = new RectangleF (ox, oy, w, h);
+			return true;
+		}
+
+		/// <summary>The same, for a page that has no DC yet: an information context in its mode.</summary>
+		internal static bool DescribePage (PrinterSettings settings, PageSettings page, out float dpiX, out float dpiY, out RectangleF printable)
+		{
+			dpiX = dpiY = 0; printable = RectangleF.Empty;
+			IntPtr devmode = IntPtr.Zero;
+			try {
+				devmode = DevModeInterop.GetHdevmode (settings, page);
+			} catch (InvalidPrinterException) {
+			}
+			IntPtr dm = devmode != IntPtr.Zero ? DevModeInterop.GlobalLock (devmode) : IntPtr.Zero;
+			IntPtr ic = IntPtr.Zero;
+			try {
+				ic = Win32CreateIC (null, settings.PrinterName, null, dm);
+				return ic != IntPtr.Zero && DescribeDevice (ic, out dpiX, out dpiY, out printable);
+			} finally {
+				if (ic != IntPtr.Zero) Win32DeleteDC (ic);
+				if (devmode != IntPtr.Zero) {
+					DevModeInterop.GlobalUnlock (devmode);
+					DevModeInterop.GlobalFree (devmode);
+				}
+			}
 		}
 
 		internal static IntPtr CreateGraphicsContext (PrinterSettings settings, PageSettings default_page_settings)
@@ -458,11 +528,11 @@ namespace System.Drawing.Printing
 		private static extern int Win32DocumentProperties (IntPtr hwnd, IntPtr hPrinter, string pDeviceName,
 			IntPtr pDevModeOutput, IntPtr pDevModeInput, int fMode);
 
-    	[DllImport("gdi32.dll", EntryPoint="CreateDC")]
+    	[DllImport("gdi32.dll", EntryPoint="CreateDCW", CharSet=CharSet.Unicode)]   // W: the DEVMODE is DocumentPropertiesW's
 		static extern IntPtr Win32CreateDC (string lpszDriver, string lpszDevice,
    			string lpszOutput, IntPtr lpInitData);
 
-    	[DllImport("gdi32.dll", EntryPoint="CreateIC")]
+    	[DllImport("gdi32.dll", EntryPoint="CreateICW", CharSet=CharSet.Unicode)]
 		static extern IntPtr Win32CreateIC (string lpszDriver, string lpszDevice,
    			string lpszOutput, IntPtr lpInitData);
 
@@ -477,6 +547,12 @@ namespace System.Drawing.Printing
 
 		[DllImport("gdi32.dll", EntryPoint="EndDoc")]
 		static extern int Win32EndDoc (IntPtr hdc);
+
+		[DllImport("gdi32.dll", EntryPoint="AbortDoc")]
+		static extern int Win32AbortDoc (IntPtr hdc);
+
+		[DllImport("gdi32.dll", EntryPoint="ResetDCW", CharSet=CharSet.Unicode)]
+		static extern IntPtr Win32ResetDC (IntPtr hdc, IntPtr devmode);
 
 		[DllImport("gdi32.dll", EntryPoint="DeleteDC")]
   		public static extern IntPtr Win32DeleteDC (IntPtr hDc);
@@ -638,6 +714,14 @@ namespace System.Drawing.Printing
 		internal enum DevCapabilities
 		{
 			TECHNOLOGY	= 2,
+			HORZRES = 8,
+			VERTRES = 10,
+			LOGPIXELSX = 88,
+			LOGPIXELSY = 90,
+			PHYSICALWIDTH = 110,
+			PHYSICALHEIGHT = 111,
+			PHYSICALOFFSETX = 112,
+			PHYSICALOFFSETY = 113,
 		}
 		
 		internal enum PrinterType

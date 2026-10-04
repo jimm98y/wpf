@@ -71,6 +71,12 @@
                       SetTargetFramework="TargetFramework=net10.0-windows" />
   </ItemGroup>
 
+  <!-- The PDF reader the printing tests next door read WPF's PDFs back with; WinForms' printed
+       PDFs are written by the same writer and read back the same way (PrintingTests). -->
+  <ItemGroup>
+    <Compile Include="../Wpf.Printing.Tests/PdfReader.cs" Link="PdfReader.cs" />
+  </ItemGroup>
+
   <!-- The comparison needs a Windows to compare against; elsewhere it is not built at all. -->
   <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
     <Compile Remove="ControlParity/**/*.cs" />

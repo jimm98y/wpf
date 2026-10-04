@@ -55,6 +55,14 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	internal IntPtr nativeObject = IntPtr.Zero;
 	// Managed dimensions for a null-native image (browser/no-libgdiplus): set by the Bitmap(w,h) ctors.
 	internal int managedWidth = -1, managedHeight = -1;
+	// ...and its PIXELS, when there is no GDI+ to hold them (the browser; WF_NO_GDIPLUS): straight
+	// (not premultiplied) ARGB, row-major. A Bitmap used to be pure dimensions there, so an
+	// application could not create an image to draw, nor read one from a file -- and a printed page
+	// with a logo on it could not be printed. Null for a GDI+ image.
+	internal int [] managedPixels;
+	internal float managedDpiX = 96f, managedDpiY = 96f;
+	internal PixelFormat managedFormat = PixelFormat.Format32bppArgb;
+	internal bool IsManagedPixels => nativeObject == IntPtr.Zero && managedPixels != null;
 	// when using MS GDI+ and IStream we must ensure the stream stays alive for all the life of the Image
 	// http://groups.google.com/group/microsoft.public.win32.programmer.gdi/browse_thread/thread/4967097db1469a27/4d36385b83532126?lnk=st&q=IStream+gdi&rnum=3&hl=en#4d36385b83532126
 	internal Stream stream;
@@ -105,6 +113,8 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	
 	public static Image FromFile(string filename, bool useEmbeddedColorManagement)
 	{
+		if (!GDIPlus.Initialized && filename != null)
+			return new Bitmap (filename);
 		IntPtr imagePtr;
 		Status st;
 
@@ -153,6 +163,8 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	[MonoLimitation ("useEmbeddedColorManagement  and validateImageData aren't supported.")]
 	public static Image FromStream (Stream stream, bool useEmbeddedColorManagement, bool validateImageData)
 	{
+		if (!GDIPlus.Initialized && stream != null)
+			return new Bitmap (stream);
 		return LoadFromStream (stream, false);
 	}
 
@@ -434,6 +446,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public void Save (string filename)
 	{
+		if (IsManagedPixels && this is Bitmap fb) { using (var fs = File.Create (filename)) fb.SaveManagedPng (fs); return; }
 		Save (filename, RawFormat);
 	}
 
@@ -469,6 +482,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public void Save (Stream stream, ImageFormat format)
 	{
+		if (IsManagedPixels && this is Bitmap sb) { sb.SaveManagedPng (stream); return; }
 		ImageCodecInfo encoder = findEncoderForFormat (format);
 
 		if (encoder == null)
@@ -605,6 +619,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	
 	public float HorizontalResolution {
 		get {
+			if (nativeObject == IntPtr.Zero) return managedDpiX;
 			float resolution;
 			
 			Status status = GDIPlus.GdipGetImageHorizontalResolution (nativeObject, out resolution);			
@@ -667,6 +682,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 		
 	public SizeF PhysicalDimension {
 		get {
+			if (nativeObject == IntPtr.Zero) return new SizeF (managedWidth * 2540f / managedDpiX, managedHeight * 2540f / managedDpiY);
 			float width,  height;
 			Status status = GDIPlus.GdipGetImageDimension (nativeObject, out width, out height);		
 			GDIPlus.CheckStatus (status);			
@@ -676,7 +692,8 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	}
 	
 	public PixelFormat PixelFormat {
-		get {			
+		get {
+			if (nativeObject == IntPtr.Zero) return managedFormat;
 			PixelFormat pixFormat;				
 			Status status = GDIPlus.GdipGetImagePixelFormat (nativeObject, out pixFormat);		
 			GDIPlus.CheckStatus (status);			
@@ -770,6 +787,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	}
 	public float VerticalResolution {
 		get {
+			if (nativeObject == IntPtr.Zero) return managedDpiY;
 			float resolution;
 			
 			Status status = GDIPlus.GdipGetImageVerticalResolution (nativeObject, out resolution);
@@ -822,6 +840,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	protected virtual void Dispose (bool disposing)
 	{
+		managedPixels = null;
 		if (GDIPlus.GdiPlusToken != 0 && nativeObject != IntPtr.Zero) {
 			Status status = GDIPlus.GdipDisposeImage (nativeObject);
 			// dispose the stream (set under Win32 only if SD owns the stream) and ...
@@ -837,6 +856,8 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	
 	public object Clone ()
 	{
+		if (IsManagedPixels && this is Bitmap mb)
+			return mb.CloneManaged (new Rectangle (0, 0, managedWidth, managedHeight), managedFormat);
 		if (GDIPlus.RunningOnWindows () && stream != null)
 			return CloneFromStream ();
 

@@ -10,18 +10,18 @@
 //
 // Colour and alpha are written as SEPARATE streams: PDF has no premultiplied RGBA image, so the
 // colour goes in the image and the alpha goes in an /SMask that the image points at. Getting this
-// wrong is the classic cause of black fringing around anti-aliased edges in a printed WPF page,
-// because Pbgra32 is premultiplied and the colour channels have to be divided back out before they
-// mean anything on their own.
+// wrong is the classic cause of black fringing around anti-aliased edges in a printed page, because
+// premultiplied pixels have to have their colour divided back out before it means anything alone.
 //
 // Fully opaque images skip the mask entirely, which is the common case and halves the bytes.
+//
+// Shared, link-compiled, by WPF's printing (PdfImageCache.Wpf.cs reads a BitmapSource) and WinForms'
+// (which hands over straight RGBA); this file sees neither.
 //
 
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
 
 namespace System.Windows.Xps.Pdf
 {
@@ -31,10 +31,10 @@ namespace System.Windows.Xps.Pdf
         internal int ObjectId;
     }
 
-    internal sealed class PdfImageCache
+    internal sealed partial class PdfImageCache
     {
         private readonly PdfWriter _writer;
-        private readonly Dictionary<BitmapSource, PdfImage> _images = new Dictionary<BitmapSource, PdfImage>();
+        private readonly Dictionary<object, PdfImage> _images = new Dictionary<object, PdfImage>();
 
         internal PdfImageCache(PdfWriter writer)
         {
@@ -42,52 +42,29 @@ namespace System.Windows.Xps.Pdf
         }
 
         /// <summary>
-        /// The image resource for a bitmap, writing it on first sight. Null when the bitmap cannot be
-        /// read, which drawing treats as nothing to draw rather than as an error.
+        /// The image resource for <paramref name="key"/>, writing it on first sight from STRAIGHT
+        /// (not premultiplied) RGBA8 pixels. Null when there is nothing to draw.
         /// </summary>
-        internal PdfImage For(BitmapSource source)
+        internal PdfImage ForRgba(object key, int width, int height, Func<byte[]> rgba)
         {
-            if (source == null) return null;
+            if (key == null || width <= 0 || height <= 0) return null;
 
-            if (_images.TryGetValue(source, out PdfImage existing)) return existing;
+            if (_images.TryGetValue(key, out PdfImage existing)) return existing;
 
-            int width = source.PixelWidth, height = source.PixelHeight;
-            if (width <= 0 || height <= 0) return null;
-
-            byte[] bgra;
-            try
-            {
-                var converted = new FormatConvertedBitmap(source, PixelFormats.Pbgra32, null, 0);
-                bgra = new byte[width * height * 4];
-                converted.CopyPixels(bgra, width * 4, 0);
-            }
-            catch (NotSupportedException) { return null; }
-            catch (InvalidOperationException) { return null; }
-            catch (ArgumentException) { return null; }
+            byte[] pixels = rgba();
+            if (pixels == null || pixels.Length < width * height * 4) return null;
 
             var rgb = new byte[width * height * 3];
             var alpha = new byte[width * height];
             bool transparent = false;
 
-            for (int i = 0, p = 0, a = 0; i < bgra.Length; i += 4, p += 3, a++)
+            for (int i = 0, p = 0, a = 0; a < width * height; i += 4, p += 3, a++)
             {
-                byte b = bgra[i], g = bgra[i + 1], r = bgra[i + 2], al = bgra[i + 3];
-
-                // Un-premultiply. Skipping this is what produces dark halos on anti-aliased edges:
-                // a half-transparent white pixel is stored as (128,128,128,128), and writing 128 as
-                // the colour makes it grey rather than white.
-                if (al != 0 && al != 255)
-                {
-                    r = (byte)Math.Min(255, r * 255 / al);
-                    g = (byte)Math.Min(255, g * 255 / al);
-                    b = (byte)Math.Min(255, b * 255 / al);
-                }
-
-                rgb[p] = r;
-                rgb[p + 1] = g;
-                rgb[p + 2] = b;
-                alpha[a] = al;
-                if (al != 255) transparent = true;
+                rgb[p] = pixels[i];
+                rgb[p + 1] = pixels[i + 1];
+                rgb[p + 2] = pixels[i + 2];
+                alpha[a] = pixels[i + 3];
+                if (pixels[i + 3] != 255) transparent = true;
             }
 
             var image = new PdfImage
@@ -106,7 +83,7 @@ namespace System.Windows.Xps.Pdf
 
             _writer.WriteStreamObject(image.ObjectId, rgb, Dictionary(width, height, "/DeviceRGB", 8, maskEntry));
 
-            _images[source] = image;
+            _images[key] = image;
             return image;
         }
 

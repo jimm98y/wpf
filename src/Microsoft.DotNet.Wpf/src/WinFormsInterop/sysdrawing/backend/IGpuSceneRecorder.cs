@@ -81,5 +81,29 @@ namespace System.Drawing
 
         int SaveState();
         void RestoreState(int state);
+
+        // ---- what a recording-only Graphics needs to be a whole GDI+ Graphics, and what a printed
+        // page needs to stay vector (see SceneRecorder) ----
+
+        /// <summary>The world transform -- GDI+'s six elements, page transform included -- of
+        /// everything recorded from here on. Replaces the one before; clips stay where they were set.</summary>
+        void SetWorldTransform(float m11, float m12, float m21, float m22, float dx, float dy);
+        /// <summary>Removes every clip (above the innermost snapshot).</summary>
+        void ResetAllClips();
+        /// <summary>Clip to a GDI+ path (points as x,y pairs, a type byte each); exclude = outside it.</summary>
+        void SetClipPath(float[] xy, byte[] types, bool nonZero, bool exclude);
+        /// <summary>Fill a GDI+ path keeping its curves; a gradient when given, else the solid colour.</summary>
+        void FillPathData(float[] xy, byte[] types, bool nonZero, int argb, GradientDesc? gradient);
+        /// <summary>A rectangle or ellipse filled with a SMOOTH gradient.</summary>
+        void FillShapeGradientSmooth(GradientShape shape, float x, float y, float w, float h, GradientDesc g);
+        /// <summary>Stroke a GDI+ path with a pen: caps 0 flat / 1 square / 2 round, joins 0 miter /
+        /// 1 bevel / 2 round, dashes in multiples of the width.</summary>
+        void StrokePathData(float[] xy, byte[] types, int argb, float width, float[] dash, float dashOffset,
+                            int cap, int join, float miterLimit);
+        /// <summary>Glyphs already chosen and placed, of a face (opaque here), each at origin + (xs, ys).</summary>
+        void DrawGlyphs(object font, float em, ushort[] glyphs, float[] xs, float[] ys, float originX, float originY,
+                        int argb, string family, int style, string chars, int[] clusters);
+        /// <summary>Another recorded scene (a previewed page), its (sx,sy,sw,sh) mapped onto (dx,dy,dw,dh).</summary>
+        void DrawScene(object scene, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh);
     }
 }

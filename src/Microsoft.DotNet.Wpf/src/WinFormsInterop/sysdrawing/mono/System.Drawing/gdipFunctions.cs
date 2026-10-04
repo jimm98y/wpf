@@ -1350,8 +1350,9 @@ namespace System.Drawing
 		internal static Status GdipTransformPath (IntPtr path, IntPtr matrix)
 		{
 			if (matrix == IntPtr.Zero) return ManagedPath.Owns (path) ? Status.Ok : Status.InvalidParameter;
-			if (!Initialized) return Status.NotImplemented;
-			float [] m = MatrixElements (matrix);
+			float [] m = Drawing2D.ManagedMatrix.Elements (matrix);
+			if (m == null && !Initialized) return Status.NotImplemented;
+			m ??= MatrixElements (matrix);
 			return m == null ? Status.InvalidParameter : ManagedPath.Transform (path, m);
 		}
 

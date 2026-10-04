@@ -586,6 +586,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// text): <see cref="X"/> is then already mirrored, and the visual's own mirror must undo it.</summary>
         public float Mirror { get; init; } = 1f;
 
+        /// <summary>The family and style (1 bold, 2 italic) the run was ASKED for, when its producer
+        /// knows them: a device that draws the run with the platform's own text (a printer DC) has to
+        /// name the font, not hand over its bytes. Null for WPF's own runs.</summary>
+        public string? SourceFamily { get; init; }
+        public int SourceStyle { get; init; }
+
+        /// <summary>The characters the glyphs stand for, and for each glyph the index of the first
+        /// character of its cluster: what makes a printed PDF's text searchable and copyable (its
+        /// ToUnicode map). Null when not known.</summary>
+        public string? Characters { get; init; }
+        public int[]? GlyphClusters { get; init; }
+
         public Text.TrueTypeFont Font { get; }
         /// <summary>The run's em size, in the run's own (local) units.</summary>
         public float EmSize { get; }

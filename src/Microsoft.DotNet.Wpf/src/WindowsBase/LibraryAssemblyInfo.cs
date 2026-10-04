@@ -30,3 +30,11 @@ using System.Runtime.CompilerServices;
 // machine that has no printers -- and the only way to assert on what a backend is HANDED, which is
 // where the interesting mistakes are.
 [assembly: InternalsVisibleTo("Wpf.Printing.Tests, PublicKey=00000000000000000400000000000000")]
+
+// WindowsFormsIntegration (src/WinFormsInterop/integration). WinForms hosted in WPF -- the Linux,
+// Android, iOS and browser heads -- prints through WPF's own print system: a PrintDocument's pages
+// become a PDF that WindowsFormsHost hands to PlatformPrint.Submit, and PrinterSettings lists the
+// printers PlatformPrint enumerates. There is ONE PlatformPrint per process and it lives here, with
+// the platform hosts its backends need (the Android activity, the UIKit window, the browser); a
+// second copy compiled into WinForms would have none of them. Same ECMA key as the tests above.
+[assembly: InternalsVisibleTo("WindowsFormsIntegration, PublicKey=00000000000000000400000000000000")]

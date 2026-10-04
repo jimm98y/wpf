@@ -312,6 +312,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\PortalDialogs.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformClipboard.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformPrint.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PrintBackend.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaPrint.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitPrint.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidPrint.cs" />

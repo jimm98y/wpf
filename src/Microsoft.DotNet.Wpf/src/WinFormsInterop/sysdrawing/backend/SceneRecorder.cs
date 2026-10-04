@@ -4,25 +4,76 @@
 // them in ONE render pass on ONE device (no per-control readback / re-upload). Glyph rasterization
 // happens at present time in the renderer that owns the font, so DrawText just records a GlyphRunDraw.
 
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Microsoft.Wpf.Interop.WebGpu.Composition;
+using SceneBrush = Microsoft.Wpf.Interop.WebGpu.Composition.Brush;
 
 namespace System.Drawing.WebGpuBackend
 {
     internal sealed class SceneRecorder : IGpuSceneRecorder
     {
         private readonly SceneVisual _root = new SceneVisual();
-        // Clip stack: primitives go into the top container (nested so render order = insertion order).
-        // SetClip pushes; a clip restore (ResetClip / assigning Graphics.Clip) pops one level.
-        private readonly List<SceneVisual> _stack;
 
         internal SceneVisual Scene => _root;
 
-        public SceneRecorder() { _stack = new List<SceneVisual> { _root }; }
+        public SceneRecorder() { }
 
+        // ---- the state stack ---------------------------------------------------------------------
+        //
+        // What a GDI+ Graphics holds as STATE -- a world transform, a clip set in the device space
+        // of the moment it was set, a snapshot being drawn -- the scene can only hold as NESTING:
+        // a container visual per piece of state, primitives inside the innermost one. The two do not
+        // map one to one. A clip outlives a later change of transform (GDI+ keeps it where it was
+        // put), and a transform can be reset while a clip set under it is still in force, which in
+        // a tree means pulling a container out from the middle of the stack.
+        //
+        // So the stack is described rather than built: a list of Specs, each one immutable, in the
+        // order bottom to top -- [snapshots and what sits below them...] clip, clip, ..., world.
+        // Every change computes the list it wants and Rebuild makes the containers match: the
+        // longest prefix that is already right stays (it is the SAME spec objects), everything
+        // above it is closed, and the rest is opened afresh as new sibling containers. Content drawn
+        // so far stays where it was drawn, in the order it was drawn, and what comes next goes into
+        // the new containers -- which is exactly the semantics of changing a Graphics' state.
+        //
+        // A clip carries the transform that was in force when it was set (its frame), and is built
+        // as a container with that transform and the clip, and inside it one with the inverse, so
+        // the clip lands where it was set while what is drawn inside it is placed only by the world
+        // container above. For a plain translation both are Offsets, as they always were.
 
-        private SceneVisual Target => _stack[_stack.Count - 1];
+        private enum Kind { Clip, World, Snapshot }
+
+        private sealed class Spec
+        {
+            public Kind Kind;
+            public Matrix3x2 Frame = Matrix3x2.Identity;   // world, or a clip's frame, relative to the snapshot below
+            public Rect? ClipRect;
+            public PathGeometry ClipGeometry;
+            public SceneSnapshot Snapshot;
+            public float Opacity = 1f;
+            public Matrix3x2 BaseWorld = Matrix3x2.Identity;   // a snapshot: the absolute world when it was pushed
+        }
+
+        private readonly struct Level
+        {
+            public readonly Spec Spec;
+            public readonly SceneVisual Outer, Inner;
+            public Level(Spec spec, SceneVisual outer, SceneVisual inner) { Spec = spec; Outer = outer; Inner = inner; }
+        }
+
+        private readonly List<Level> _levels = new();
+
+        // The absolute world transform (GDI+'s, already including the page transform).
+        private Matrix3x2 _world = Matrix3x2.Identity;
+
+        private SceneVisual Target => _levels.Count == 0 ? _root : _levels[_levels.Count - 1].Inner;
+
+        // Containers opened only to keep drawing ORDER: a visual draws its own content before its
+        // children, so a primitive recorded after a clip was popped, appended to the parent's
+        // content, drew UNDER everything drawn inside the clip. It goes into a trailing plain
+        // container instead, which draws after the children before it.
+        private readonly HashSet<SceneVisual> _continuations = new(ReferenceEqualityComparer.Instance);
 
         // Graphics.CompositingMode, applied to every primitive recorded from here on.
         private bool _sourceCopy;
@@ -34,105 +85,261 @@ namespace System.Drawing.WebGpuBackend
         private void Add(DrawingPrimitive p)
         {
             p.SourceCopy = _sourceCopy;
-            Target.Content.Add(p);
+            SceneVisual t = Target;
+            if (t.Children.Count > 0)
+            {
+                SceneVisual last = t.Children[t.Children.Count - 1];
+                if (!_continuations.Contains(last))
+                {
+                    last = new SceneVisual();
+                    t.Children.Add(last);
+                    _continuations.Add(last);
+                }
+                last.Content.Add(p);
+                return;
+            }
+            t.Content.Add(p);
+        }
+
+        private List<Spec> Specs()
+        {
+            var specs = new List<Spec>(_levels.Count);
+            foreach (Level l in _levels) specs.Add(l.Spec);
+            return specs;
+        }
+
+        // Index of the first spec above the topmost snapshot: below it nothing is ever rebuilt.
+        private static int Floor(List<Spec> specs)
+        {
+            for (int i = specs.Count - 1; i >= 0; i--)
+                if (specs[i].Kind == Kind.Snapshot) return i + 1;
+            return 0;
+        }
+
+        private Matrix3x2 BaseWorld(List<Spec> specs)
+        {
+            for (int i = specs.Count - 1; i >= 0; i--)
+                if (specs[i].Kind == Kind.Snapshot) return specs[i].BaseWorld;
+            return Matrix3x2.Identity;
+        }
+
+        private void Rebuild(List<Spec> desired)
+        {
+            int common = 0;
+            while (common < _levels.Count && common < desired.Count && ReferenceEquals(_levels[common].Spec, desired[common]))
+                common++;
+            while (_levels.Count > common) _levels.RemoveAt(_levels.Count - 1);
+            for (int i = common; i < desired.Count; i++) Open(desired[i]);
+        }
+
+        private void Open(Spec s)
+        {
+            SceneVisual parent = Target;
+            SceneVisual outer, inner;
+            switch (s.Kind)
+            {
+                case Kind.Snapshot:
+                    outer = inner = new SceneVisual { Snapshot = s.Snapshot, Opacity = s.Opacity };
+                    break;
+                case Kind.World:
+                    outer = inner = Placed(new SceneVisual(), s.Frame);
+                    break;
+                default:
+                    outer = Placed(new SceneVisual { Clip = s.ClipRect, ClipGeometry = s.ClipGeometry }, s.Frame);
+                    inner = outer;
+                    if (!s.Frame.IsIdentity && Matrix3x2.Invert(s.Frame, out Matrix3x2 inv))
+                    {
+                        inner = Placed(new SceneVisual(), inv);
+                        outer.Children.Add(inner);
+                    }
+                    break;
+            }
+            parent.Children.Add(outer);
+            _levels.Add(new Level(s, outer, inner));
+        }
+
+        // A translation as an Offset, which is what every container here used to be: anything else
+        // as the visual's transform.
+        private static SceneVisual Placed(SceneVisual v, Matrix3x2 m)
+        {
+            if (m.M11 == 1f && m.M12 == 0f && m.M21 == 0f && m.M22 == 1f) v.Offset = new Vector2(m.M31, m.M32);
+            else v.Transform = m;
+            return v;
+        }
+
+        private static Matrix3x2 Relative(Matrix3x2 absolute, Matrix3x2 baseWorld)
+            => baseWorld.IsIdentity ? absolute
+             : Matrix3x2.Invert(baseWorld, out Matrix3x2 inv) ? absolute * inv : absolute;
+
+        // The desired list with the world on top.
+        private List<Spec> WithWorld(List<Spec> specs)
+        {
+            int floor = Floor(specs);
+            for (int i = specs.Count - 1; i >= floor; i--)
+                if (specs[i].Kind == Kind.World) specs.RemoveAt(i);
+            Matrix3x2 rel = Relative(_world, BaseWorld(specs));
+            if (!rel.IsIdentity) specs.Add(new Spec { Kind = Kind.World, Frame = rel });
+            return specs;
+        }
+
+        /// <summary>The world transform (GDI+'s six elements, page transform included) of
+        /// everything recorded from here on.</summary>
+        public void SetWorldTransform(float m11, float m12, float m21, float m22, float dx, float dy)
+        {
+            var w = new Matrix3x2(m11, m12, m21, m22, dx, dy);
+            if (w == _world) return;
+            _world = w;
+            Rebuild(WithWorld(Specs()));
+        }
+
+        private void PushClip(Rect? rect, PathGeometry geometry)
+        {
+            List<Spec> specs = Specs();
+            var clip = new Spec
+            {
+                Kind = Kind.Clip, ClipRect = rect, ClipGeometry = geometry,
+                Frame = Relative(_world, BaseWorld(specs)),
+            };
+            // Below the world container, so a later transform does not carry the clip with it.
+            int at = specs.Count;
+            if (at > Floor(specs) && specs[at - 1].Kind == Kind.World) at--;
+            specs.Insert(at, clip);
+            Rebuild(specs);
         }
 
         public void SetClipRect(float x, float y, float w, float h, bool exclude)
         {
-            var container = new SceneVisual();
             if (exclude)
             {
                 // "everything except this rect": a huge outer rect + the excluded rect, even-odd ->
                 // fills the ring. Used to gap the GroupBox border around its title.
                 const float Big = 1 << 20;
-                container.ClipGeometry = new PathGeometry(FillRule.EvenOdd, new List<PathFigure>
+                PushClip(null, new PathGeometry(FillRule.EvenOdd, new List<PathFigure>
                 {
                     RectFigure(-Big, -Big, Big * 2, Big * 2),
                     RectFigure(x, y, w, h),
-                });
+                }));
             }
             else
             {
-                container.Clip = new Rect(x, y, w, h);   // intersect (fast scissor)
+                PushClip(new Rect(x, y, w, h), null);   // intersect (fast scissor)
             }
-            Target.Children.Add(container);
-            _stack.Add(container);
         }
 
-        public void ClearClip() { if (_stack.Count > 1) _stack.RemoveAt(_stack.Count - 1); }
+        /// <summary>Clip to a path's region (GDI+'s points and type bytes); with
+        /// <paramref name="exclude"/>, to everything outside it.</summary>
+        public void SetClipPath(float[] xy, byte[] types, bool nonZero, bool exclude)
+        {
+            PathGeometry geo = PathData(xy, types, nonZero, closeAll: true);
+            if (geo == null) { PushClip(new Rect(0, 0, 0, 0), null); return; }
+            if (exclude)
+            {
+                const float Big = 1 << 20;
+                var figures = new List<PathFigure> { RectFigure(-Big, -Big, Big * 2, Big * 2) };
+                figures.AddRange(geo.Figures);
+                geo = new PathGeometry(FillRule.EvenOdd, figures);
+            }
+            PushClip(null, geo);
+        }
 
-        // Transform containers are counted separately from clips so ResetTransform unwinds exactly
-        // the ones it pushed. WinForms draws composite controls by translating to a part's bounds,
-        // drawing it at the origin and resetting -- ToolStrip does this per item -- so without it
-        // every part landed on top of the first.
-        private int _translateDepth;
+        /// <summary>Removes the clip set last (the counterpart of one SetClip*).</summary>
+        public void ClearClip()
+        {
+            List<Spec> specs = Specs();
+            for (int i = specs.Count - 1; i >= Floor(specs); i--)
+            {
+                if (specs[i].Kind != Kind.Clip) continue;
+                specs.RemoveAt(i);
+                Rebuild(specs);
+                return;
+            }
+        }
 
+        /// <summary>Removes every clip (above the innermost snapshot): Graphics.ResetClip on a
+        /// surface that has no clip of its own beneath what the caller set.</summary>
+        public void ResetAllClips()
+        {
+            List<Spec> specs = Specs();
+            int floor = Floor(specs);
+            bool any = false;
+            for (int i = specs.Count - 1; i >= floor; i--)
+                if (specs[i].Kind == Kind.Clip) { specs.RemoveAt(i); any = true; }
+            if (any) Rebuild(specs);
+        }
+
+        // Kept for callers that think in translations: the world transform moved by (dx, dy) in
+        // its own space, which is what GDI+'s prepended TranslateTransform does.
         public void PushTranslate(float dx, float dy)
         {
-            var container = new SceneVisual { Offset = new Vector2(dx, dy) };
-            Target.Children.Add(container);
-            _stack.Add(container);
-            _translateDepth++;
+            Matrix3x2 w = Matrix3x2.CreateTranslation(dx, dy) * _world;
+            SetWorldTransform(w.M11, w.M12, w.M21, w.M22, w.M31, w.M32);
         }
 
-        private int _snapshotDepth;
+        public void ResetTransform() => SetWorldTransform(1, 0, 0, 1, 0, 0);
 
         public void PushSnapshot(float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh, float opacity, bool gdiStretch, bool windowBlend)
         {
-            var container = new SceneVisual
+            List<Spec> specs = Specs();
+            specs.Add(new Spec
             {
+                Kind = Kind.Snapshot,
                 Snapshot = new SceneSnapshot { Source = new Rect(sx, sy, sw, sh), Dest = new Rect(dx, dy, dw, dh), GdiStretch = gdiStretch, WindowBlend = windowBlend },
                 Opacity = Math.Clamp(opacity, 0f, 1f),
-            };
-            Target.Children.Add(container);
-            _stack.Add(container);
-            _snapshotDepth++;
+                BaseWorld = _world,
+            });
+            Rebuild(specs);
         }
 
         public void PopSnapshot()
         {
-            // Unwind to (and including) the innermost snapshot container.
-            if (_snapshotDepth == 0) return;
-            while (_stack.Count > 1)
-            {
-                SceneVisual top = _stack[_stack.Count - 1];
-                _stack.RemoveAt(_stack.Count - 1);
-                if (top.Snapshot != null) break;
-            }
-            _snapshotDepth--;
+            // Unwind to (and including) the innermost snapshot container, and the world goes back
+            // to the one it was pushed under.
+            List<Spec> specs = Specs();
+            int floor = Floor(specs);
+            if (floor == 0) return;
+            _world = specs[floor - 1].BaseWorld;
+            specs.RemoveRange(floor - 1, specs.Count - (floor - 1));
+            Rebuild(specs);
         }
-
-        public void ResetTransform()
-        {
-            while (_translateDepth > 0 && _stack.Count > 1)
-            {
-                _stack.RemoveAt(_stack.Count - 1);
-                _translateDepth--;
-            }
-        }
-
-        private readonly List<(int Depth, int Translates, bool SourceCopy)> _saved = new();
 
         public void GetTranslation(out float x, out float y)
         {
-            x = 0; y = 0;
-            foreach (SceneVisual v in _stack) { x += v.Offset.X; y += v.Offset.Y; }
+            // The absolute translation: the world's, inside every snapshot below it.
+            Matrix3x2 m = Matrix3x2.Identity;
+            for (int i = _levels.Count - 1; i >= 0; i--)
+            {
+                Level l = _levels[i];
+                Matrix3x2 level = ReferenceEquals(l.Inner, l.Outer)
+                    ? l.Outer.LocalToParent
+                    : l.Inner.LocalToParent * l.Outer.LocalToParent;
+                m *= level;
+            }
+            x = m.M31; y = m.M32;
         }
+
+        private readonly List<(List<Spec> Specs, Matrix3x2 World, bool SourceCopy)> _saved = new();
 
         public int SaveState()
         {
-            _saved.Add((_stack.Count, _translateDepth, _sourceCopy));
+            _saved.Add((Specs(), _world, _sourceCopy));
             return _saved.Count;
         }
 
         public void RestoreState(int state)
         {
             if (state < 1 || state > _saved.Count) return;
-            (int depth, int translates, bool sourceCopy) = _saved[state - 1];
+            (List<Spec> specs, Matrix3x2 world, bool sourceCopy) = _saved[state - 1];
             _saved.RemoveRange(state - 1, _saved.Count - (state - 1));
-            if (depth >= 1)
-                while (_stack.Count > depth) _stack.RemoveAt(_stack.Count - 1);
-            _translateDepth = translates;
+            // A snapshot that has since been popped is not re-opened: it was a picture, and the
+            // picture is finished. Restore as far as the current snapshots agree.
+            List<Spec> current = Specs();
+            int floorNow = Floor(current);
+            for (int i = 0; i < floorNow; i++)
+                if (i >= specs.Count || !ReferenceEquals(specs[i], current[i])) return;
+            for (int i = floorNow; i < specs.Count; i++)
+                if (specs[i].Kind == Kind.Snapshot) { specs = specs.GetRange(0, i); break; }
+            _world = world;
+            Rebuild(specs);
             _sourceCopy = sourceCopy;
         }
 
@@ -384,6 +591,144 @@ namespace System.Drawing.WebGpuBackend
             var fallback = new GlyphRunDraw(text, new Vector2(run.OriginX, run.OriginY), run.Em, Rgba(argb),
                                             simulations, fontFamily);
             Add(new GdiPlusTextDraw(run, fontFamily, simulations & 3, argb, fallback));
+        }
+
+        // ---- a GDI+ path as it stands: what a printed page needs ---------------------------------
+        //
+        // The screen verbs above flatten curves and collapse lines to pixel rectangles, both right
+        // for a window drawn at one resolution and both wrong for a page that is going to a 600 dpi
+        // printer or into a PDF any reader can zoom. These keep the path GDI+ was given -- its
+        // Beziers as Beziers, a stroke as a stroke with its pen -- so the page is vector all the way.
+
+        // GDI+ path point types.
+        private const byte PtStart = 0, PtLine = 1, PtBezier = 3, PtTypeMask = 7, PtClose = 0x80;
+
+        /// <summary>A GDI+ path (points as x,y pairs and a type byte each) as scene geometry.
+        /// <paramref name="closeAll"/> closes every figure, as a fill and a clip do.</summary>
+        internal static PathGeometry PathData(float[] xy, byte[] types, bool nonZero, bool closeAll)
+        {
+            if (xy == null || types == null) return null;
+            int n = Math.Min(types.Length, xy.Length / 2);
+            var figures = new List<PathFigure>();
+            PathFigure fig = null;
+            for (int i = 0; i < n; i++)
+            {
+                var p = new Vector2(xy[i * 2], xy[i * 2 + 1]);
+                int t = types[i] & PtTypeMask;
+                if (t == PtStart || fig == null)
+                {
+                    fig = new PathFigure(p) { Closed = closeAll };
+                    figures.Add(fig);
+                }
+                else if (t == PtBezier && i + 2 < n)
+                {
+                    var c2 = new Vector2(xy[(i + 1) * 2], xy[(i + 1) * 2 + 1]);
+                    var e = new Vector2(xy[(i + 2) * 2], xy[(i + 2) * 2 + 1]);
+                    fig.Segments.Add(new CubicBezierSegment(p, c2, e));
+                    i += 2;
+                }
+                else
+                {
+                    fig.Segments.Add(new LineSegment(p));
+                }
+                if ((types[i] & PtClose) != 0) { fig.Closed = true; fig = null; }
+            }
+            figures.RemoveAll(f => f.Segments.Count == 0);
+            return figures.Count == 0 ? null : new PathGeometry(nonZero ? FillRule.NonZero : FillRule.EvenOdd, figures);
+        }
+
+        private static SceneBrush GradientBrush(GradientDesc g)
+        {
+            var stops = new GradientStop[g.Offsets.Length];
+            for (int i = 0; i < stops.Length; i++) stops[i] = new GradientStop(g.Offsets[i], Rgba(g.Argb[i]));
+            return g.Radial
+                ? new RadialGradientBrush(new Vector2(g.Sx, g.Sy), g.Ex, g.Ey, stops)
+                : new LinearGradientBrush(new Vector2(g.Sx, g.Sy), new Vector2(g.Ex, g.Ey), stops, GradientSpreadMethod.Pad, bands: 0);
+        }
+
+        /// <summary>Fills a GDI+ path keeping its curves, with a solid colour or, when
+        /// <paramref name="gradient"/> is set, that gradient (smooth: a page is not a screen).</summary>
+        public void FillPathData(float[] xy, byte[] types, bool nonZero, int argb, GradientDesc? gradient)
+        {
+            PathGeometry geo = PathData(xy, types, nonZero, closeAll: true);
+            if (geo == null) return;
+            Add(gradient is GradientDesc g ? new GeometryFill(geo, GradientBrush(g)) : new GeometryFill(geo, Rgba(argb)));
+        }
+
+        /// <summary>A gradient fill of a rectangle or ellipse, smooth rather than in GDI+'s sixteen
+        /// screen bands.</summary>
+        public void FillShapeGradientSmooth(GradientShape shape, float x, float y, float w, float h, GradientDesc g)
+        {
+            Geometry geo = shape == GradientShape.Ellipse
+                ? new EllipseGeometry(new Vector2(x + w / 2f, y + h / 2f), w / 2f, h / 2f)
+                : new RectangleGeometry(new Rect(x, y, w, h));
+            Add(new GeometryFill(geo, GradientBrush(g)));
+        }
+
+        /// <summary>Strokes a GDI+ path with a pen: its width, caps (0 flat, 1 square, 2 round),
+        /// join (0 miter, 1 bevel, 2 round) and dash pattern in multiples of the width.</summary>
+        public void StrokePathData(float[] xy, byte[] types, int argb, float width, float[] dash, float dashOffset,
+                                   int cap, int join, float miterLimit)
+        {
+            PathGeometry geo = PathData(xy, types, nonZero: true, closeAll: false);
+            if (geo == null) return;
+            double[] dashes = null;
+            if (dash != null && dash.Length > 0)
+            {
+                dashes = new double[dash.Length];
+                for (int i = 0; i < dash.Length; i++) dashes[i] = dash[i];
+            }
+            LineCap lc = cap == 2 ? LineCap.Round : cap == 1 ? LineCap.Square : LineCap.Butt;
+            LineJoin lj = join == 2 ? LineJoin.Round : join == 1 ? LineJoin.Bevel : LineJoin.Miter;
+            Add(new GeometryStroke(geo, Rgba(argb),
+                new StrokeStyle(width, lc, lj, miterLimit > 0 ? miterLimit : 10.0, dashes, dashOffset)));
+        }
+
+        /// <summary>Glyphs already chosen and placed (a printed DrawString): ids of
+        /// <paramref name="font"/> (a TrueTypeFont), each at origin + (xs[i], ys[i]), em in local units.
+        /// Recorded as a run so a printer or a PDF gets TEXT -- the glyph ids, the font, the
+        /// characters -- with the outlines alongside for everything that only draws shapes.</summary>
+        public void DrawGlyphs(object font, float em, ushort[] glyphs, float[] xs, float[] ys, float originX, float originY,
+                               int argb, string family, int style, string chars, int[] clusters)
+        {
+            if (font is not Microsoft.Wpf.Interop.WebGpu.Composition.Text.TrueTypeFont face || glyphs == null || glyphs.Length == 0)
+                return;
+            RgbaColor color = Rgba(argb);
+            var fallback = new List<DrawingPrimitive>();
+            var fills = new List<Microsoft.Wpf.Interop.WebGpu.Composition.Text.GlyphFill>();
+            float scale = em / face.PixelsPerEm;
+            for (int i = 0; i < glyphs.Length; i++)
+            {
+                fills.Clear();
+                float gx = originX + xs[i], gy = originY + ys[i];
+                Microsoft.Wpf.Interop.WebGpu.Composition.Text.GlyphRunPainter.Paint(face, face, glyphs[i], scale, gx, gy, fills);
+                foreach (var gf in fills)
+                {
+                    var geo = new PathGeometry(FillRule.NonZero, gf.Figures);
+                    fallback.Add(gf.IsColorLayer
+                        ? new GeometryFill(geo, gf.Brush ?? new SolidColorBrush(gf.Color ?? color))
+                        : new GeometryFill(geo, new SolidColorBrush(color), isGlyph: true, baselineAnchor: new Vector2(gx, gy)));
+                }
+            }
+            Add(new WpfTextRunDraw(face, em, glyphs, xs, ys, new Vector2(originX, originY), color, fallback)
+            {
+                SourceFamily = family, SourceStyle = style, Characters = chars, GlyphClusters = clusters,
+            });
+        }
+
+        public void DrawScene(object scene, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh)
+        {
+            if (scene is not SceneVisual page || sw <= 0 || sh <= 0) return;
+            // Drawn in content order (a NestedVisualDraw), clipped to the source rectangle in the
+            // page's own units, and mapped onto the destination.
+            var frame = new SceneVisual
+            {
+                Transform = Matrix3x2.CreateTranslation(-sx, -sy) * Matrix3x2.CreateScale(dw / sw, dh / sh)
+                          * Matrix3x2.CreateTranslation(dx, dy),
+                Clip = new Rect(sx, sy, sw, sh),
+            };
+            frame.Children.Add(page);
+            Add(new NestedVisualDraw(frame));
         }
 
         // A colour as WinForms states it. WHICH SPACE depends on the one the compositor blends in,

@@ -36,58 +36,74 @@ using System.Drawing.Imaging;
 
 namespace System.Drawing.Printing
 {
+	/// <summary>Records each page for a preview. The pages are kept as their recorded scenes
+	/// (PrintPreviewPageImage) -- what the printer would have been given -- rather than drawn into
+	/// bitmaps through GDI+, and the preview control draws them as nested scenes.</summary>
 	public class PreviewPrintController : PrintController
 	{
 		bool useantialias;
 		ArrayList pageInfoList;
+		Graphics current;
+		Size currentSize;
 
 		public PreviewPrintController()
 		{
 			pageInfoList = new ArrayList ();
 		}
-		public override bool IsPreview { 
+
+		public override bool IsPreview {
 			get { return true; }
 		}
 
-		[MonoTODO]
-		public override void OnEndPage(PrintDocument document, PrintPageEventArgs e)
-		{
-		}
-
-		[MonoTODO]
 		public override void OnStartPrint(PrintDocument document, PrintEventArgs e)
 		{
 			if (!document.PrinterSettings.IsValid)
 				throw new InvalidPrinterException(document.PrinterSettings);
-		
-			/* maybe we should reuse the images, and clear them? */
+
 			foreach (PreviewPageInfo pi in pageInfoList)
 				pi.Image.Dispose ();
 
 			pageInfoList.Clear ();
+			base.OnStartPrint (document, e);
 		}
 
-		[MonoTODO]
-		public override void OnEndPrint(PrintDocument document, PrintEventArgs e)
-		{
-		}
-
-		[MonoTODO]
 		public override Graphics OnStartPage(PrintDocument document, PrintPageEventArgs e)
 		{
-			Image image = new Bitmap (e.PageSettings.PaperSize.Width, e.PageSettings.PaperSize.Height);
-
-			PreviewPageInfo info = new PreviewPageInfo (image, new Size (e.PageSettings.PaperSize.Width,
-										     e.PageSettings.PaperSize.Height));
-			
-			pageInfoList.Add (info);
-
-			Graphics g = Graphics.FromImage (info.Image);
-			g.FillRectangle (new SolidBrush (Color.White), new Rectangle (new Point (0,0), new Size (image.Width, image.Height)));
-
-			return g;
+			base.OnStartPage (document, e);
+			// As .NET previews a page: the whole paper, origin at its top left, a hundredth of an
+			// inch per unit -- and, for OriginAtMargins, the origin moved by the margins less the
+			// printer's hard margins, exactly as the printed page moves it.
+			Size size = e.PageBounds.Size;
+			PrintPageGeometry.Device (e.PageSettings, out float dpiX, out float dpiY, out RectangleF printable);
+			current = Graphics.NewPrintRecording (dpiX, dpiY, new RectangleF (0, 0, size.Width, size.Height));
+			currentSize = size;
+			// Paper is white, and a preview shows paper.
+			using (var white = new SolidBrush (Color.White))
+				current.FillRectangle (white, 0, 0, size.Width, size.Height);
+			if (document.OriginAtMargins) {
+				current.TranslateTransform (-printable.X, -printable.Y);
+				current.TranslateTransform (document.DefaultPageSettings.MarginsUnchecked.Left, document.DefaultPageSettings.MarginsUnchecked.Top);
+			}
+			return current;
 		}
-		
+
+		public override void OnEndPage(PrintDocument document, PrintPageEventArgs e)
+		{
+			if (current != null) {
+				object scene = WebGpuBackend.GpuRaster.EndScene (current);
+				current.Dispose ();
+				current = null;
+				pageInfoList.Add (new PreviewPageInfo (new PrintPreviewPageImage (scene, currentSize), currentSize));
+			}
+			base.OnEndPage (document, e);
+		}
+
+		public override void OnEndPrint(PrintDocument document, PrintEventArgs e)
+		{
+			if (current != null) OnEndPage (document, null);
+			base.OnEndPrint (document, e);
+		}
+
 		public virtual bool UseAntiAlias {
 			get{ return useantialias; }
 			set{ useantialias = value; }

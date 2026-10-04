@@ -463,11 +463,12 @@ namespace System.Windows.Xps.Pdf
 
             double emSize = glyphRun.FontRenderingEmSize;
             double pen = 0;
+            string[] text = GlyphText(glyphRun);
 
             for (int i = 0; i < indices.Count; i++)
             {
                 ushort glyph = indices[i];
-                font.UsedGlyphs.Add(glyph);
+                font.MapGlyph(glyph, text?[i]);
 
                 double dx = 0, dy = 0;
                 if (offsets != null && i < offsets.Count)
@@ -488,6 +489,39 @@ namespace System.Windows.Xps.Pdf
             }
 
             _ = emSize;
+        }
+
+        /// <summary>
+        /// The characters each glyph of a run stands for, from its cluster map: what the font's
+        /// ToUnicode map is built from, so the printed text can be searched and copied. A cluster's
+        /// characters go to its first glyph; the rest of a cluster's glyphs carry none.
+        /// </summary>
+        private static string[] GlyphText(GlyphRun run)
+        {
+            IList<char> chars = run.Characters;
+            int glyphs = run.GlyphIndices.Count;
+            if (chars == null || chars.Count == 0) return null;
+            var text = new string[glyphs];
+            IList<ushort> map = run.ClusterMap;
+            if (map == null || map.Count != chars.Count)
+            {
+                if (chars.Count != glyphs) return null;
+                for (int i = 0; i < glyphs; i++) text[i] = chars[i].ToString();
+                return text;
+            }
+            for (int c = 0; c < chars.Count;)
+            {
+                int g = map[c], end = c + 1;
+                while (end < chars.Count && map[end] == g) end++;
+                if (g < glyphs)
+                {
+                    var sb = new StringBuilder();
+                    for (int k = c; k < end; k++) sb.Append(chars[k]);
+                    text[g] = sb.ToString();
+                }
+                c = end;
+            }
+            return text;
         }
 
         /// <summary>

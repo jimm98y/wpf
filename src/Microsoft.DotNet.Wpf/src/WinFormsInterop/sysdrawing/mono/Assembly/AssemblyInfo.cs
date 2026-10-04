@@ -55,6 +55,13 @@ using System.Runtime.InteropServices;
 // assembly rather than public: it is an implementation detail of the pair, not of System.Drawing.
 [assembly: InternalsVisibleTo ("System.Windows.Forms")]
 
+// WinForms hosted in WPF prints through WPF's print system: WindowsFormsHost installs
+// System.Drawing.Printing.PrintSystem.Bridge, which hands the recorded document to PlatformPrint.
+[assembly: InternalsVisibleTo ("WindowsFormsIntegration")]
+
+// The interop-seam tests drive the PDF printing path (PdfPrintController) directly.
+[assembly: InternalsVisibleTo ("Wpf.WinFormsInterop.Tests")]
+
 [assembly: ComVisible (false)]
 [assembly: ComCompatibleVersion (1, 0, 3300, 0)]
 #if !NO_CAS

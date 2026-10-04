@@ -133,7 +133,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static Run? Layout(TrueTypeFont font, string family, float sizePt, string text,
                                     float x, float y, float rw, float rh,
                                     int formatFlags, bool typographic, int align, int lineAlign,
-                                    bool hotkeyPrefix, int hint)
+                                    bool hotkeyPrefix, int hint, float dpi = 96f)
         {
             if (string.IsNullOrEmpty(text) || font is null) return null;
             if (hint == HintSystemDefault) hint = HintClearTypeGridFit;   // a ClearType desktop
@@ -150,7 +150,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // sheared face are not the upright fit sheared (Tahoma, Microsoft Sans Serif italic).
             if (font.SynthesizesOblique && hint != HintClearTypeGridFit) return null;
 
-            float em = sizePt * (96f / 72f);
+            // The device's resolution: 96 for a window, the printer's for a printed page, where GDI+
+            // runs the same imager at the device's em (and the caller's rectangle is in its pixels).
+            float em = sizePt * (dpi / 72f);
             if (!(em > 0f) || em > 1000f) return null;
             int ppemRound = Floor(em + 0.5f);
             // Realize: under ClearType a face DirectWrite draws from its embedded bitmaps at this size,

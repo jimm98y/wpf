@@ -132,6 +132,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         public int PixelsPerEm => BaseEmPixels;
 
+        /// <summary>The font file this face was read from, whole (a collection's other faces
+        /// included), and where in it this face's sfnt header sits. What a document that EMBEDS the
+        /// font -- a printed page's PDF -- needs, rather than the outlines this class serves.</summary>
+        internal byte[] FontData => _data;
+        internal int SfntOffset => _sfntBase;
+
         public int GlyphCount => _numGlyphs;
 
         // The slant a SYNTHESIZED italic gets, for a face that ships no italic of its own -- Tahoma

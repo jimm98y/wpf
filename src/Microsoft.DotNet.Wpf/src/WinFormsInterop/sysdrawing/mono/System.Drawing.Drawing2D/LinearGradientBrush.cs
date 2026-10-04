@@ -65,10 +65,50 @@ namespace System.Drawing.Drawing2D {
 				offsets = cb.Positions;
 				argb = new int[cb.Colors.Length];
 				for (int i = 0; i < argb.Length; i++) argb[i] = cb.Colors[i].ToArgb ();
+			} else if (BlendForStops () is Blend bl && bl.Factors != null && bl.Factors.Length > 1) {
+				// A Blend is a stop list in disguise: at each position, the factor of the way from
+				// the first colour to the second.
+				offsets = (float []) bl.Positions.Clone ();
+				argb = new int [bl.Factors.Length];
+				for (int i = 0; i < argb.Length; i++) argb [i] = Lerp (gradient_color1, gradient_color2, bl.Factors [i]).ToArgb ();
 			} else {
 				offsets = new[] { 0f, 1f };
 				argb = new[] { gradient_color1.ToArgb (), gradient_color2.ToArgb () };
 			}
+		}
+
+		// MANAGED STATE, for when there is no GDI+ (the browser; WF_NO_GDIPLUS): the constructors
+		// above used to create the native brush unconditionally, so a gradient could not even be
+		// constructed there, and every property below asked GDI+ for what only it held.
+		Blend m_blend;
+		ColorBlend m_interpolation;
+		WrapMode m_wrap = WrapMode.Tile;
+		bool m_gamma;
+		Matrix m_transform;
+
+		static RectangleF PointsRect (PointF a, PointF b)
+		{
+			float x = Math.Min (a.X, b.X), y = Math.Min (a.Y, b.Y);
+			float w = Math.Abs (a.X - b.X), h = Math.Abs (a.Y - b.Y);
+			// GDI+ gives a horizontal or vertical brush a square rectangle.
+			if (w == 0) w = h;
+			if (h == 0) h = w;
+			return new RectangleF (x, y, w, h);
+		}
+
+		Matrix ManagedTransform => m_transform ??= new Matrix ();
+
+		Blend BlendForStops ()
+		{
+			if (!GDIPlus.Initialized) return m_blend;
+			try { return Blend; } catch (Exception) { return null; }
+		}
+
+		static Color Lerp (Color a, Color b, float t)
+		{
+			t = Math.Clamp (t, 0f, 1f);
+			return Color.FromArgb ((int) Math.Round (a.A + (b.A - a.A) * t), (int) Math.Round (a.R + (b.R - a.R) * t),
+				(int) Math.Round (a.G + (b.G - a.G) * t), (int) Math.Round (a.B + (b.B - a.B) * t));
 		}
 
 		static void PointsFromMode (RectangleF r, LinearGradientMode m, out PointF s, out PointF e)
@@ -102,25 +142,31 @@ namespace System.Drawing.Drawing2D {
 
 		public LinearGradientBrush (Point point1, Point point2, Color color1, Color color2)
 		{
-			IntPtr nativeObject;
-			Status status = GDIPlus.GdipCreateLineBrushI (ref point1, ref point2, color1.ToArgb (), color2.ToArgb (), WrapMode.Tile, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			SetNativeBrush (nativeObject);
-
-			status = GDIPlus.GdipGetLineRect (nativeObject, out rectangle);
-			GDIPlus.CheckStatus (status);
+			if (GDIPlus.Initialized) {
+				IntPtr nativeObject;
+				Status status = GDIPlus.GdipCreateLineBrushI (ref point1, ref point2, color1.ToArgb (), color2.ToArgb (), WrapMode.Tile, out nativeObject);
+				GDIPlus.CheckStatus (status);
+				SetNativeBrush (nativeObject);
+				status = GDIPlus.GdipGetLineRect (nativeObject, out rectangle);
+				GDIPlus.CheckStatus (status);
+			} else {
+				rectangle = PointsRect (point1, point2);
+			}
 			gradient_start = point1; gradient_end = point2; gradient_color1 = color1; gradient_color2 = color2;
 		}
 
 		public LinearGradientBrush (PointF point1, PointF point2, Color color1, Color color2)
 		{
-			IntPtr nativeObject;
-			Status status = GDIPlus.GdipCreateLineBrush (ref point1, ref point2, color1.ToArgb (), color2.ToArgb (), WrapMode.Tile, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			SetNativeBrush (nativeObject);
-
-			status = GDIPlus.GdipGetLineRect (nativeObject, out rectangle);
-			GDIPlus.CheckStatus (status);
+			if (GDIPlus.Initialized) {
+				IntPtr nativeObject;
+				Status status = GDIPlus.GdipCreateLineBrush (ref point1, ref point2, color1.ToArgb (), color2.ToArgb (), WrapMode.Tile, out nativeObject);
+				GDIPlus.CheckStatus (status);
+				SetNativeBrush (nativeObject);
+				status = GDIPlus.GdipGetLineRect (nativeObject, out rectangle);
+				GDIPlus.CheckStatus (status);
+			} else {
+				rectangle = PointsRect (point1, point2);
+			}
 			gradient_start = point1; gradient_end = point2; gradient_color1 = color1; gradient_color2 = color2;
 		}
 
@@ -134,10 +180,12 @@ namespace System.Drawing.Drawing2D {
 				throw new ArgumentException( string.Format ("Rectangle '{0}' cannot have a width or height equal to 0.", rect.ToString ()));
 			}
 
-			IntPtr nativeObject;
-			Status status = GDIPlus.GdipCreateLineBrushFromRectI (ref rect, color1.ToArgb (), color2.ToArgb (), linearGradientMode, WrapMode.Tile, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			SetNativeBrush (nativeObject);
+			if (GDIPlus.Initialized) {
+				IntPtr nativeObject;
+				Status status = GDIPlus.GdipCreateLineBrushFromRectI (ref rect, color1.ToArgb (), color2.ToArgb (), linearGradientMode, WrapMode.Tile, out nativeObject);
+				GDIPlus.CheckStatus (status);
+				SetNativeBrush (nativeObject);
+			}
 
 			rectangle = (RectangleF) rect;
 			PointsFromMode (rectangle, linearGradientMode, out gradient_start, out gradient_end);
@@ -162,10 +210,12 @@ namespace System.Drawing.Drawing2D {
 				throw new ArgumentException (string.Format ("Rectangle '{0}' cannot have a width or height equal to 0.", rect.ToString ()));
 			}
 
-			IntPtr nativeObject;
-			Status status = GDIPlus.GdipCreateLineBrushFromRect (ref rect, color1.ToArgb (), color2.ToArgb (), linearGradientMode, WrapMode.Tile, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			SetNativeBrush (nativeObject);
+			if (GDIPlus.Initialized) {
+				IntPtr nativeObject;
+				Status status = GDIPlus.GdipCreateLineBrushFromRect (ref rect, color1.ToArgb (), color2.ToArgb (), linearGradientMode, WrapMode.Tile, out nativeObject);
+				GDIPlus.CheckStatus (status);
+				SetNativeBrush (nativeObject);
+			}
 
 			rectangle = rect;
 			PointsFromMode (rectangle, linearGradientMode, out gradient_start, out gradient_end);
@@ -186,10 +236,12 @@ namespace System.Drawing.Drawing2D {
 				throw new ArgumentException (string.Format ("Rectangle '{0}' cannot have a width or height equal to 0.", rect.ToString ()));
 			}
 
-			IntPtr nativeObject;
-			Status status = GDIPlus.GdipCreateLineBrushFromRectWithAngleI (ref rect, color1.ToArgb (), color2.ToArgb (), angle, isAngleScaleable, WrapMode.Tile, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			SetNativeBrush (nativeObject);
+			if (GDIPlus.Initialized) {
+				IntPtr nativeObject;
+				Status status = GDIPlus.GdipCreateLineBrushFromRectWithAngleI (ref rect, color1.ToArgb (), color2.ToArgb (), angle, isAngleScaleable, WrapMode.Tile, out nativeObject);
+				GDIPlus.CheckStatus (status);
+				SetNativeBrush (nativeObject);
+			}
 
 			rectangle = (RectangleF) rect;
 			PointsFromAngle (rectangle, angle, out gradient_start, out gradient_end);
@@ -203,10 +255,12 @@ namespace System.Drawing.Drawing2D {
 				throw new ArgumentException (string.Format ("Rectangle '{0}' cannot have a width or height equal to 0.", rect.ToString ()));
 			}
 
-			IntPtr nativeObject;
-			Status status = GDIPlus.GdipCreateLineBrushFromRectWithAngle (ref rect, color1.ToArgb (), color2.ToArgb (), angle, isAngleScaleable, WrapMode.Tile, out nativeObject);
-			GDIPlus.CheckStatus (status);
-			SetNativeBrush (nativeObject);
+			if (GDIPlus.Initialized) {
+				IntPtr nativeObject;
+				Status status = GDIPlus.GdipCreateLineBrushFromRectWithAngle (ref rect, color1.ToArgb (), color2.ToArgb (), angle, isAngleScaleable, WrapMode.Tile, out nativeObject);
+				GDIPlus.CheckStatus (status);
+				SetNativeBrush (nativeObject);
+			}
 
 			rectangle = rect;
 			PointsFromAngle (rectangle, angle, out gradient_start, out gradient_end);
@@ -218,6 +272,7 @@ namespace System.Drawing.Drawing2D {
 
 		public Blend Blend {
 			get {
+				if (!GDIPlus.Initialized && !_interpolationColorsWasSet) return m_blend ?? new Blend { Factors = new float [] { 1f }, Positions = new float [] { 0f } };
 				// Interpolation colors and blends don't work together very well. Getting the Blend when InterpolationColors
 				// is set set puts the Brush into an unusable state afterwards.
 				// Bail out here to avoid that.
@@ -259,6 +314,7 @@ namespace System.Drawing.Drawing2D {
 				if (positions [count - 1] != 1.0F)
 					throw new ArgumentException ("Invalid Blend object. The positions array must have 1.0 as its last element.");
 
+				if (!GDIPlus.Initialized) { m_blend = new Blend { Factors = (float []) factors.Clone (), Positions = (float []) positions.Clone () }; _interpolationColorsWasSet = false; return; }
 				Status status = GDIPlus.GdipSetLineBlend (NativeBrush, factors, positions, count);
 				GDIPlus.CheckStatus (status);
 			}
@@ -267,12 +323,14 @@ namespace System.Drawing.Drawing2D {
 		[MonoTODO ("The GammaCorrection value is ignored when using libgdiplus.")]
 		public bool GammaCorrection {
 			get {
+				if (!GDIPlus.Initialized) return m_gamma;
 				bool gammaCorrection;
 				Status status = GDIPlus.GdipGetLineGammaCorrection (NativeBrush, out gammaCorrection);
 				GDIPlus.CheckStatus (status);
 				return gammaCorrection;
 			}
 			set {
+				if (!GDIPlus.Initialized) { m_gamma = value; return; }
 				Status status = GDIPlus.GdipSetLineGammaCorrection (NativeBrush, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -284,6 +342,7 @@ namespace System.Drawing.Drawing2D {
 				{
 					throw new ArgumentException("Property must be set to a valid ColorBlend object to use interpolation colors.");
 				}
+				if (!GDIPlus.Initialized) return new ColorBlend { Colors = (Color []) m_interpolation.Colors.Clone (), Positions = (float []) m_interpolation.Positions.Clone () };
 
 				int count;
 				Status status = GDIPlus.GdipGetLinePresetBlendCount (NativeBrush, out count);
@@ -322,6 +381,11 @@ namespace System.Drawing.Drawing2D {
 				if (positions [count - 1] != 1.0F)
 					throw new ArgumentException ("Invalid ColorBlend object. The positions array must have 1.0 as its last element.");
 
+				if (!GDIPlus.Initialized) {
+					m_interpolation = new ColorBlend { Colors = (Color []) colors.Clone (), Positions = (float []) positions.Clone () };
+					_interpolationColorsWasSet = true;
+					return;
+				}
 				int [] blend = new int [colors.Length];
 				for (int i = 0; i < colors.Length; i++)
 					blend [i] = colors [i].ToArgb ();
@@ -335,6 +399,7 @@ namespace System.Drawing.Drawing2D {
 
 		public Color [] LinearColors {
 			get {
+				if (!GDIPlus.Initialized) return new Color [] { gradient_color1, gradient_color2 };
 				int [] colors = new int [2];
 				Status status = GDIPlus.GdipGetLineColors (NativeBrush, colors);
 				GDIPlus.CheckStatus (status);
@@ -345,6 +410,7 @@ namespace System.Drawing.Drawing2D {
 				return linearColors;
 			}
 			set {
+				if (!GDIPlus.Initialized) { gradient_color1 = value [0]; gradient_color2 = value [1]; return; }
 				// no null check, MS throws a NullReferenceException here
 				Status status = GDIPlus.GdipSetLineColors (NativeBrush, value [0].ToArgb (), value [1].ToArgb ());
 				GDIPlus.CheckStatus (status);
@@ -359,6 +425,7 @@ namespace System.Drawing.Drawing2D {
 
 		public Matrix Transform {
 			get {
+				if (!GDIPlus.Initialized) return ManagedTransform.Clone ();
 				Matrix matrix = new Matrix ();
 				Status status = GDIPlus.GdipGetLineTransform (NativeBrush, matrix.nativeMatrix);
 				GDIPlus.CheckStatus (status);
@@ -370,13 +437,15 @@ namespace System.Drawing.Drawing2D {
 					throw new ArgumentNullException ("Transform");
 
 				user_transformed = true;
-				Status status = GDIPlus.GdipSetLineTransform (NativeBrush, value.nativeMatrix);
+
+				if (!GDIPlus.Initialized) { m_transform = value.Clone (); return; }				Status status = GDIPlus.GdipSetLineTransform (NativeBrush, value.nativeMatrix);
 				GDIPlus.CheckStatus (status);
 			}
 		}
 
 		public WrapMode WrapMode {
 			get {
+				if (!GDIPlus.Initialized) return m_wrap;
 				WrapMode wrapMode;
 				Status status = GDIPlus.GdipGetLineWrapMode (NativeBrush, out wrapMode);
 				GDIPlus.CheckStatus (status);
@@ -388,6 +457,7 @@ namespace System.Drawing.Drawing2D {
 				if ((value < WrapMode.Tile) || (value > WrapMode.Clamp))
 					throw new InvalidEnumArgumentException ("WrapMode");
 
+				if (!GDIPlus.Initialized) { m_wrap = value; return; }
 				Status status = GDIPlus.GdipSetLineWrapMode (NativeBrush, value);
 				GDIPlus.CheckStatus (status);
 			}
@@ -406,6 +476,7 @@ namespace System.Drawing.Drawing2D {
 				throw new ArgumentNullException ("matrix");
 
 			user_transformed = true;
+			if (!GDIPlus.Initialized) { ManagedTransform.Multiply (matrix, order); return; }
 			Status status = GDIPlus.GdipMultiplyLineTransform (NativeBrush, matrix.nativeMatrix, order);
 			GDIPlus.CheckStatus (status);
 		}
@@ -413,6 +484,7 @@ namespace System.Drawing.Drawing2D {
 		public void ResetTransform ()
 		{
 			user_transformed = false;
+			if (!GDIPlus.Initialized) { ManagedTransform.Reset (); return; }
 			Status status = GDIPlus.GdipResetLineTransform (NativeBrush);
 			GDIPlus.CheckStatus (status);
 		}
@@ -425,6 +497,7 @@ namespace System.Drawing.Drawing2D {
 		public void RotateTransform (float angle, MatrixOrder order)
 		{
 			user_transformed = true;
+			if (!GDIPlus.Initialized) { ManagedTransform.Rotate (angle, order); return; }
 			Status status = GDIPlus.GdipRotateLineTransform (NativeBrush, angle, order);
 			GDIPlus.CheckStatus (status);
 		}
@@ -437,6 +510,7 @@ namespace System.Drawing.Drawing2D {
 		public void ScaleTransform (float sx, float sy, MatrixOrder order)
 		{
 			user_transformed = true;
+			if (!GDIPlus.Initialized) { ManagedTransform.Scale (sx, sy, order); return; }
 			Status status = GDIPlus.GdipScaleLineTransform (NativeBrush, sx, sy, order);
 			GDIPlus.CheckStatus (status);
 		}
@@ -451,6 +525,13 @@ namespace System.Drawing.Drawing2D {
 			if (focus < 0 || focus > 1 || scale < 0 || scale > 1)
 				throw new ArgumentException ("Invalid parameter passed.");
 
+			if (!GDIPlus.Initialized) {
+				m_blend = focus <= 0f ? new Blend { Factors = new [] { scale, 0f }, Positions = new [] { 0f, 1f } }
+					: focus >= 1f ? new Blend { Factors = new [] { 0f, scale }, Positions = new [] { 0f, 1f } }
+					: new Blend { Factors = new [] { 0f, scale, 0f }, Positions = new [] { 0f, focus, 1f } };
+				_interpolationColorsWasSet = false;
+				return;
+			}
 			Status status = GDIPlus.GdipSetLineLinearBlend (NativeBrush, focus, scale);
 			GDIPlus.CheckStatus (status);
 
@@ -467,6 +548,18 @@ namespace System.Drawing.Drawing2D {
 			if (focus < 0 || focus > 1 || scale < 0 || scale > 1)
 				throw new ArgumentException ("Invalid parameter passed.");
 
+			if (!GDIPlus.Initialized) {
+				// A bell either side of the focus, sampled into a Blend.
+				var f = new System.Collections.Generic.List<float> (); var pos = new System.Collections.Generic.List<float> ();
+				for (int k = 0; k <= 32; k++) {
+					float t = k / 32f;
+					float d = t < focus ? (focus <= 0 ? 0 : (focus - t) / focus) : (focus >= 1 ? 0 : (t - focus) / (1 - focus));
+					pos.Add (t); f.Add (scale * (float) Math.Exp (-4.5 * d * d));
+				}
+				m_blend = new Blend { Factors = f.ToArray (), Positions = pos.ToArray () };
+				_interpolationColorsWasSet = false;
+				return;
+			}
 			Status status = GDIPlus.GdipSetLineSigmaBlend (NativeBrush, focus, scale);
 			GDIPlus.CheckStatus (status);
 			
@@ -481,12 +574,18 @@ namespace System.Drawing.Drawing2D {
 		public void TranslateTransform (float dx, float dy, MatrixOrder order)
 		{
 			user_transformed = true;
+			if (!GDIPlus.Initialized) { ManagedTransform.Translate (dx, dy, order); return; }
 			Status status = GDIPlus.GdipTranslateLineTransform (NativeBrush, dx, dy, order);
 			GDIPlus.CheckStatus (status);
 		}
 
 		public override object Clone ()
 		{
+			if (!GDIPlus.Initialized) {
+				var c = (LinearGradientBrush) MemberwiseClone ();
+				c.m_transform = m_transform?.Clone ();
+				return c;
+			}
 			IntPtr clonePtr;
 			Status status = (Status) GDIPlus.GdipCloneBrush (new HandleRef (this, NativeBrush), out clonePtr);
 			GDIPlus.CheckStatus (status);

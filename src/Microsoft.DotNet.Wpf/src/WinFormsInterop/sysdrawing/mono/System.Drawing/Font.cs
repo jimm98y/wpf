@@ -749,6 +749,9 @@ namespace System.Drawing
 		{
 			if (graphics == null)
 				throw new ArgumentNullException ("graphics");
+			// A printer's Graphics answers in its own units from the face's line spacing.
+			if (graphics.TryPrintFontHeight (this, out float printed))
+				return printed;
 			if (fontObject == IntPtr.Zero)
 				return GetHeight (MetricsDpi (graphics.DpiY));   // managed (recording-only font)
 
