@@ -20,7 +20,7 @@ namespace System.Drawing.WebGpuBackend
             int w = f.Width, h = f.Height;
             int nw = swap ? h : w, nh = swap ? w : h;
             var dst = new GdipFrame (nw, nh, f.Format) { DpiX = swap ? f.DpiY : f.DpiX, DpiY = swap ? f.DpiX : f.DpiY };
-            if (f.Palette != null) { dst.Palette = (Color[]) f.Palette.Clone (); dst.PaletteFlags = f.PaletteFlags; }
+            if (f.Palette != null) { dst.Palette = (Color[]) f.Palette.Clone (); dst.PaletteFlags = f.PaletteFlags; dst.PaletteIsDefault = f.PaletteIsDefault; }
             int bpp = f.BitsPerPixel;
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++) {
