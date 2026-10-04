@@ -218,7 +218,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public static int RasterizerCeiling (float v)
         {
             float f = v * 16f + 0.5f;
-            return ((int) f + 15) >> 4;
+            return ((int) MathF.Floor (f) + 15) >> 4;
         }
 
         /// <summary>GpMatrix::Transform(PointF*, POINT*, int) @180034b60. This matrix already carries
@@ -238,11 +238,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 vx = (M21 * p.Y + M11 * p.X + Dx) * 16f + 0.5f;
                 vy = (M22 * p.Y + M12 * p.X + Dy) * 16f + 0.5f;
             }
-            fx = ((int) vx + 15) >> 4;
-            fy = ((int) vy + 15) >> 4;
+            fx = ((int) MathF.Floor (vx) + 15) >> 4;
+            fy = ((int) MathF.Floor (vy) + 15) >> 4;
         }
 
-        public override string ToString () => $"[{M11} {M12} {M21} {M22} {Dx} {Dy}] c{Complexity}";
+        public override string ToString () => $"[{M11:R} {M12:R} {M21:R} {M22:R} {Dx:R} {Dy:R}] c{Complexity}";
     }
 
     /// <summary>The C runtime's single-precision trigonometry, which GDI+ calls (sinf/cosf from the

@@ -67,7 +67,7 @@ namespace System.Drawing.Imaging
 
         // Indexed by ColorAdjustType (Default..Text); null = never set for that type.
         private Adjustments[] _adjust = new Adjustments[(int)ColorAdjustType.Count];
-        private WrapMode _wrapMode = WrapMode.Tile;
+        private WrapMode _wrapMode = WrapMode.Clamp;   // GpImageAttributes' default (wrap 4, colour 0)
         private Color _wrapColor;
         private bool _wrapClamp;
 
@@ -392,6 +392,17 @@ namespace System.Drawing.Imaging
                 Apply(px, type);
                 entries[i] = Color.FromArgb(px[3], px[0], px[1], px[2]);
             }
+        }
+
+        /// <summary>The state the managed GDI+ engine draws with (GpImageAttributes: +0x24 wrap mode,
+        /// +0x28 clamp colour as ARGB, +0x2c clamp flag, +0x18 the GpRecolor).</summary>
+        internal System.Drawing.WebGpuBackend.Gdip.GpImageAttr ToEngine()
+        {
+            var a = new System.Drawing.WebGpuBackend.Gdip.GpImageAttr();
+            a.Dp.Wrap = (int)_wrapMode;
+            a.Dp.Clamp = (uint)_wrapColor.ToArgb();
+            a.Dp.SrcRectClamp = _wrapClamp ? 1 : 0;
+            return a;
         }
 
         /// <summary>The wrap mode an image is drawn with, for the GPU path.</summary>

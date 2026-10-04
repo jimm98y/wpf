@@ -149,6 +149,90 @@ namespace System.Drawing
 			return true;
 		}
 
+		// ---- images: each overload as GDI+'s flat API hands it on ----------------------------------
+
+		/// <summary>The managed pixels of <paramref name="image"/> when the engine can draw it (a
+		/// managed Bitmap), else null and the caller's own path runs (a Metafile, say).</summary>
+		static GdipFrame EngineFrame (Image image)
+		{
+			if (!(image is Bitmap b) || b.managed == null) return null;
+			GdipFrame f = b.Data.Frame;
+			return GpGraphics.CanDrawImage (f) ? f : null;
+		}
+
+		static GpImageAttr EngineAttr (ImageAttributes ia) => ia?.ToEngine ();
+
+		static void CheckImageUnit (GraphicsUnit unit)
+		{
+			if ((uint) (unit - GraphicsUnit.Pixel) > 4u) throw new ArgumentException ("Parameter is not valid.");
+		}
+
+		/// <summary>GdipDrawImage / GdipDrawImageI: at (x, y), the image's physical size.</summary>
+		bool EngineDrawImage (Image image, float x, float y)
+		{
+			if (gp == null || image == null) return false;
+			GpGraphics e = Engine ();
+			GdipFrame f = e == null ? null : EngineFrame (image);
+			if (f == null) return false;
+			e.GetImageDestPageSize (f, f.Width, f.Height, GraphicsUnit.Pixel, out float w, out float h);
+			return e.DrawImage (f, new RectangleF (x, y, w, h), new RectangleF (0, 0, f.Width, f.Height), GraphicsUnit.Pixel, null);
+		}
+
+		/// <summary>GdipDrawImageRect(I).</summary>
+		bool EngineDrawImage (Image image, RectangleF dst)
+		{
+			if (gp == null || image == null) return false;
+			GpGraphics e = Engine ();
+			GdipFrame f = e == null ? null : EngineFrame (image);
+			if (f == null) return false;
+			return e.DrawImage (f, dst, new RectangleF (0, 0, f.Width, f.Height), GraphicsUnit.Pixel, null);
+		}
+
+		/// <summary>GdipDrawImageRectRect(I).</summary>
+		bool EngineDrawImage (Image image, RectangleF dst, RectangleF src, GraphicsUnit unit, ImageAttributes ia)
+		{
+			if (gp == null || image == null) return false;
+			GpGraphics e = Engine ();
+			GdipFrame f = e == null ? null : EngineFrame (image);
+			if (f == null) return false;
+			CheckImageUnit (unit);
+			return e.DrawImage (f, dst, src, unit, EngineAttr (ia));
+		}
+
+		/// <summary>GdipDrawImagePointRect(I): at (x, y), the source rectangle's size in its unit.</summary>
+		bool EngineDrawImage (Image image, float x, float y, RectangleF src, GraphicsUnit unit)
+		{
+			if (gp == null || image == null) return false;
+			GpGraphics e = Engine ();
+			GdipFrame f = e == null ? null : EngineFrame (image);
+			if (f == null) return false;
+			CheckImageUnit (unit);
+			e.GetImageDestPageSize (f, src.Width, src.Height, unit, out float w, out float h);
+			return e.DrawImage (f, new RectangleF (x, y, w, h), src, unit, null);
+		}
+
+		/// <summary>GdipDrawImagePoints(I) (src null: the image's bounds, Pixel) and GdipDrawImagePointsRect(I).</summary>
+		bool EngineDrawImage (Image image, PointF [] pts, RectangleF? src, GraphicsUnit unit, ImageAttributes ia)
+		{
+			if (gp == null || image == null || pts == null) return false;
+			GpGraphics e = Engine ();
+			GdipFrame f = e == null ? null : EngineFrame (image);
+			if (f == null) return false;
+			if (pts.Length == 0) throw new ArgumentException ("Parameter is not valid.");
+			CheckImageUnit (unit);
+			if (pts.Length == 4) throw new NotImplementedException ();
+			if (pts.Length != 3) throw new ArgumentException ("Parameter is not valid.");
+			return e.DrawImage (f, (PointF []) pts.Clone (), src ?? new RectangleF (0, 0, f.Width, f.Height), unit, EngineAttr (ia));
+		}
+
+		static PointF [] EnginePoints (Point [] p)
+		{
+			if (p == null) return null;
+			var r = new PointF [p.Length];
+			for (int i = 0; i < p.Length; i++) r [i] = new PointF (p [i].X, p [i].Y);
+			return r;
+		}
+
 		// ---- state the engine keeps itself --------------------------------------------------------
 
 		void EngineClipRect (RectangleF r, CombineMode mode) => EngineState ()?.CombineClip (r, mode);

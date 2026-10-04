@@ -19,7 +19,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
         uint[] _buf;
         protected GpSpan (GpScan scan) { Scan = scan; }
         public uint[] Buffer => _buf;
-        public void OutputSpan (int y, int left, int right)
+        protected void SetBuffer (uint[] b) => _buf = b;
+        public virtual void OutputSpan (int y, int left, int right)
         {
             int n = right - left;
             if (n <= 0) return;

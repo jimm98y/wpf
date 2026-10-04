@@ -1272,6 +1272,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, RectangleF rect)
 		{
+			if (EngineDrawImage (image, rect)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, rect.X, rect.Y, rect.Width, rect.Height)) return;
@@ -1281,6 +1282,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF point)
 		{
+			if (EngineDrawImage (image, point.X, point.Y)) return;
 			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, point.X, point.Y, ps.Width, ps.Height); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1291,6 +1293,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints)
 		{
+			if (EngineDrawImage (image, EnginePoints (destPoints), null, GraphicsUnit.Pixel, null)) return;
 			if (RecordImagePoints (image, ToF (destPoints), null, GraphicsUnit.Pixel, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1303,6 +1306,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point point)
 		{
+			if (EngineDrawImage (image, point.X, point.Y)) return;
 			if (print_mode && image != null) { DrawImage (image, (float) point.X, (float) point.Y); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1311,6 +1315,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle rect)
 		{
+			if (EngineDrawImage (image, rect)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			DrawImage (image, rect.X, rect.Y, rect.Width, rect.Height);
@@ -1318,6 +1323,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF [] destPoints)
 		{
+			if (EngineDrawImage (image, destPoints, null, GraphicsUnit.Pixel, null)) return;
 			if (RecordImagePoints (image, destPoints, null, GraphicsUnit.Pixel, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1329,6 +1335,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, int x, int y)
 		{
+			if (EngineDrawImage (image, x, y)) return;
 			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, x, y, ps.Width, ps.Height); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1339,6 +1346,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, float x, float y)
 		{
+			if (EngineDrawImage (image, x, y)) return;
 			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, x, y, ps.Width, ps.Height); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1349,6 +1357,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, Rectangle srcRect, GraphicsUnit srcUnit)
 		{
+			if (EngineDrawImage (image, destRect, srcRect, srcUnit, null)) return;
 			if (RecordImage (image, destRect, srcRect, srcUnit, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1358,6 +1367,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, RectangleF destRect, RectangleF srcRect, GraphicsUnit srcUnit)
 		{
+			if (EngineDrawImage (image, destRect, srcRect, srcUnit, null)) return;
 			if (RecordImage (image, destRect, srcRect, srcUnit, null)) return;			
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1367,6 +1377,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit)
 		{
+			if (EngineDrawImage (image, EnginePoints (destPoints), srcRect, srcUnit, null)) return;
 			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1379,6 +1390,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit)
 		{
+			if (EngineDrawImage (image, destPoints, srcRect, srcUnit, null)) return;
 			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1392,6 +1404,7 @@ namespace System.Drawing
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, 
                                 ImageAttributes imageAttr)
 		{
+			if (EngineDrawImage (image, EnginePoints (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1403,6 +1416,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, float x, float y, float width, float height)
 		{
+			if (EngineDrawImage (image, new RectangleF (x, y, width, height))) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, x, y, width, height)) return;
@@ -1413,6 +1427,7 @@ namespace System.Drawing
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, 
                                 ImageAttributes imageAttr)
 		{
+			if (EngineDrawImage (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1424,6 +1439,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, int x, int y, Rectangle srcRect, GraphicsUnit srcUnit)
 		{
+			if (EngineDrawImage (image, x, y, srcRect, srcUnit)) return;
 			if (RecordImage (image, new RectangleF (x, y, srcRect.Width, srcRect.Height), srcRect, srcUnit, null)) return;			
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1433,6 +1449,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, int x, int y, int width, int height)
 		{
+			if (EngineDrawImage (image, new RectangleF (x, y, width, height))) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (RecordImage (image, x, y, width, height)) return;
@@ -1442,6 +1459,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, float x, float y, RectangleF srcRect, GraphicsUnit srcUnit)
 		{
+			if (EngineDrawImage (image, x, y, srcRect, srcUnit)) return;
 			if (RecordImage (image, new RectangleF (x, y, srcRect.Width, srcRect.Height), srcRect, srcUnit, null)) return;			
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1451,6 +1469,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
 		{
+			if (EngineDrawImage (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1462,6 +1481,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
 		{
+			if (EngineDrawImage (image, EnginePoints (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1474,6 +1494,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback, int callbackData)
 		{
+			if (EngineDrawImage (image, EnginePoints (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1486,6 +1507,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit)
 		{
+			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, null)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1495,6 +1517,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback, int callbackData)
 		{
+			if (EngineDrawImage (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			/*GDIP*/;
 			
@@ -1502,6 +1525,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit)
 		{
+			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, null)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, null)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1511,6 +1535,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs)
 		{
+			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1520,6 +1545,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttr)
 		{
+			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttr)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttr)) return;			
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1529,6 +1555,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
 		{
+			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttr)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttr)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1538,6 +1565,7 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback)
 		{
+			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1547,6 +1575,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback, IntPtr callbackData)
 		{
+			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1556,6 +1585,7 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback, IntPtr callbackData)
 		{
+			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1577,6 +1607,7 @@ namespace System.Drawing
 		{
 			if (image == null)
 				throw new ArgumentNullException ("image");
+			if (EngineDrawImage (image, x, y)) return;
 			DrawImage (image, x, y, image.Width, image.Height);
 		}
 
@@ -1584,6 +1615,7 @@ namespace System.Drawing
 		{
 			if (image == null)
 				throw new ArgumentNullException ("image");
+			if (EngineDrawImage (image, x, y)) return;
 
 			// avoid creating an empty, or negative w/h, bitmap...
 			if ((width <= 0) || (height <= 0))
@@ -1604,6 +1636,7 @@ namespace System.Drawing
 
 			int width = (image.Width > rect.Width) ? rect.Width : image.Width;
 			int height = (image.Height > rect.Height) ? rect.Height : image.Height;
+			if (EngineDrawImage (image, rect, new RectangleF (0, 0, width, height), GraphicsUnit.Pixel, null)) return;
 
 			DrawImageUnscaled (image, rect.X, rect.Y, width, height);			
 		}
