@@ -279,13 +279,106 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void GdiFillAndStroke(GdiPath p, bool fill, bool stroke)
         {
             if (_inPath) { _gPath ??= new GdiPath(); _gPath.Append(p); return; }
-            if (fill)
+            if (fill && _dc.Brush != null && _dc.Brush.Style != 1)
             {
-                GdiPath f = p;
-                foreach (GdiPath.Figure fig in f.Figures) fig.Closed = true;
+                // EPATHOBJ_bSimpleStrokeAndFill @140168450: the fill flattens the path in place, so
+                // the pen then widens the flattened figures (their joins, not the curves').
+                var f = new GdiPath();
+                foreach (GdiPath.Figure fig in p.Figures)
+                {
+                    var c = new GdiPath.Figure { Closed = true };
+                    c.X.AddRange(fig.X); c.Y.AddRange(fig.Y); c.Bezier.AddRange(fig.Bezier);
+                    f.Figures.Add(c);
+                }
                 GdiFillPath(f, _dc.PolyFill == 2);
+                p = p.Flattened();
             }
             if (stroke) GdiStroke(p);
+        }
+
+        /// <summary>Rectangle (0), Ellipse (1), RoundRect (2) as NtGdiRectangle/NtGdiEllipse/
+        /// NtGdiRoundRect build them: the EBOX, its path, then the fill and the outline; a
+        /// PS_INSIDEFRAME pen wider than the box fills the shape with the pen instead.</summary>
+        void GdiShape(RectangleF rc, int kind, int cx, int cy)
+        {
+            if (kind == 2 && (cx == 0 || cy == 0)) kind = 0;   // NtGdiRoundRect @140217b30: a Rectangle
+            GdiPen pen = DrawPen();
+            int style = pen == null ? 5 : pen.Style & 0xf;
+            int gw = pen != null && pen.Geometric ? pen.Width : 0;
+            GdiXform m = TargetWtoD();
+            int l = (int)rc.Left, t = (int)rc.Top, r = (int)rc.Right, b = (int)rc.Bottom;
+            if (kind == 0 && !_inPath && style != 5 && gw == 0 && (m.Accel & GdiXform.Scale) != 0)
+            {
+                GdiRectangleCosmetic(m, l, t, r, b);
+                return;
+            }
+            GdiBox e = GdiBox.Make(l, t, r, b, m, !_wmfCanvas, kind != 0, style, gw, _dc.ArcDirection == 2);
+            if (e.Empty) return;
+            var p = new GdiPath();
+            switch (kind)
+            {
+                case 0: e.Rectangle(p); break;
+                case 1: e.Ellipse(p); break;
+                default: e.RoundRect(p, cx, cy); break;
+            }
+            if (e.FillInsideFrame && !_inPath)
+            {
+                if (Nop) return;
+                uint color = Rgb(pen.Color);
+                GdiPaint(GdiFill.Spans(p, _dc.PolyFill == 2, new[] { 0, 0, _cw, _ch }), (x, y) => color);
+                return;
+            }
+            if (kind == 0 && pen != null && pen.OldGeometric && !_inPath)
+            {
+                // GrepRectangle: an old pen strokes the box with mitred corners.
+                GdiFillAndStroke(p, true, false);
+                GdiStroke(p, pen, 2);
+                return;
+            }
+            GdiFillAndStroke(p, true, true);
+        }
+
+        /// <summary>GrepRectangle @1402158e0 for a cosmetic pen under a scale-only transform: the
+        /// corners in whole pixels (GM_ADVANCED rounds up; GM_COMPATIBLE to nearest, the far edges
+        /// one in), the interior blitted inside the frame, the frame a cosmetic rectangle on the
+        /// pixel grid (RECTANGLEPATHOBJ::vInit @140169a68).</summary>
+        void GdiRectangleCosmetic(in GdiXform m, int l, int t, int r, int b)
+        {
+            m.Point(l, t, out int x0, out int y0);
+            m.Point(r, b, out int x1, out int y1);
+            if (!_wmfCanvas)
+            {
+                x0 = (x0 + 15) >> 4; y0 = (y0 + 15) >> 4; x1 = (x1 + 15) >> 4; y1 = (y1 + 15) >> 4;
+                if (x1 < x0) (x0, x1) = (x1, x0);
+                if (y1 < y0) (y0, y1) = (y1, y0);
+            }
+            else
+            {
+                x0 = ((x0 >> 3) + 1) >> 1; y0 = ((y0 >> 3) + 1) >> 1; x1 = ((x1 >> 3) + 1) >> 1; y1 = ((y1 >> 3) + 1) >> 1;
+                if (x1 < x0) (x0, x1) = (x1, x0);
+                if (y1 < y0) (y0, y1) = (y1, y0);
+                x1--; y1--;
+                if (x1 < x0 || y1 < y0) return;
+            }
+            var p = new GdiPath();
+            int ya = y0, yb = y1;
+            if (_dc.ArcDirection == 2) (ya, yb) = (yb, ya);   // DCPATH_CLOCKWISE
+            p.MoveTo(x1 << 4, ya << 4);
+            p.LineTo(x0 << 4, ya << 4);
+            p.LineTo(x0 << 4, yb << 4);
+            p.LineTo(x1 << 4, yb << 4);
+            p.CloseFigure();
+            if (_dc.Brush != null && _dc.Brush.Style != 1 && x0 + 1 < x1 && y0 + 1 < y1 && !Nop)
+            {
+                Func<int, int, uint> pattern = PatternOf();
+                if (pattern != null)
+                {
+                    var spans = new List<GdiSpan>();
+                    for (int y = y0 + 1; y < y1; y++) spans.Add(new GdiSpan(y, x0 + 1, x1));
+                    GdiPaint(spans, pattern);
+                }
+            }
+            GdiStroke(p);
         }
 
         void GdiFillPath(GdiPath p, bool winding)
@@ -296,9 +389,41 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GdiPaint(GdiFill.Spans(p, winding, new[] { 0, 0, _cw, _ch }), pattern);
         }
 
-        void GdiStroke(GdiPath p)
+        /// <summary>The DC's pen as a draw sees it. A CreatePen pen is realized against the current
+        /// transform (DC::vRealizeLineAttrs @14007a158): cosmetic when it is zero wide, under two
+        /// units at an identity transform, or nominal (DC::bOldPenNominal @140079c30: its width as
+        /// a device vector under 1.5 pixels in x; in GM_ADVANCED both axes' vectors, each under
+        /// 1.5 pixels on either axis and in length); otherwise geometric with no style, round caps
+        /// and joins.</summary>
+        GdiPen DrawPen()
         {
             GdiPen pen = _dc.Pen;
+            if (pen == null || !pen.Old || pen.Null || pen.Geometric) return pen;
+            GdiXform m = TargetWtoD();
+            int w = pen.Width;
+            bool cosmetic;
+            if (w == 0 || ((m.Accel & 0x43) == 0x43 && w < 2)) cosmetic = true;
+            else if (_wmfCanvas || _dc.GWorldIdentity)
+            {
+                // no WORLD_TRANSFORM_SET: the x axis alone
+                m.Vector(w, 0, out int vx, out _);
+                cosmetic = Math.Abs(vx) < 0x18;
+            }
+            else
+            {
+                m.Vector(w, 0, out int ax, out int ay);
+                m.Vector(0, w, out int bx, out int by);
+                cosmetic = Math.Max(Math.Abs(ax), Math.Abs(ay)) < 0x18 && Math.Max(Math.Abs(bx), Math.Abs(by)) < 0x18
+                    && ax * ax + ay * ay < 0x240 && bx * bx + by * by < 0x240;
+            }
+            if (cosmetic) return pen;
+            return new GdiPen { Style = 0x10000 | ((pen.Style & 0xf) == 6 ? 6 : 0), Width = w, Color = pen.Color, BrushStyle = pen.BrushStyle, PatternBrush = pen.PatternBrush, OldGeometric = true };
+        }
+
+        void GdiStroke(GdiPath p) => GdiStroke(p, DrawPen(), -1);
+
+        void GdiStroke(GdiPath p, GdiPen pen, int join)
+        {
             if (pen == null || pen.Null || Nop) return;
             GdiXform m = TargetWtoD();
             if (!GeometricLineAttrs(pen, out GdiLineAttrs la))
@@ -306,6 +431,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 GdiCosmetic(p, Rgb(pen.Color));
                 return;
             }
+            if (join >= 0) la.Join = join;
             GdiPath wide = GdiWiden.Widen(p, m, la);
             if (wide == null) return;
             uint color = Rgb(pen.Color);
@@ -331,6 +457,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 case 0x1000: la.Join = 1; break;
                 default: la.Join = 2; break;
             }
+            la.Style = GeometricStyle(pen, la.EndCap);
             return true;
         }
 
@@ -645,7 +772,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             p = p.Flattened();
             var lit = new List<(int X, int Y)>();
-            GdiLines.Style style = CosmeticStyle(_dc.Pen);
+            GdiLines.Style style = CosmeticStyle(DrawPen());
             foreach (GdiPath.Figure f in p.Figures)
             {
                 for (int i = 1; i < f.Count; i++) GdiLines.Line(f.X[i - 1], f.Y[i - 1], f.X[i], f.Y[i], style, lit);
@@ -684,7 +811,50 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return false;
         }
 
+        // GreExtCreatePen @1402336b8: the cosmetic styles (style units; bStrokeCosmetic scales them by
+        // denStyleStep) and the geometric ones (pen widths, a dash one shorter and a gap one longer
+        // under round or square caps).
+        static readonly int[][] CosmeticStyles = { null, new[] { 6, 2 }, new[] { 1, 1, 1, 1, 1, 1, 1, 1 }, new[] { 3, 2, 1, 2 }, new[] { 3, 1, 1, 1, 1, 1 } };
+        static readonly int[][] GeometricStyles = { null, new[] { 3, 1 }, new[] { 1, 1 }, new[] { 3, 1, 1, 1 }, new[] { 3, 1, 1, 1, 1, 1 } };
+
         /// <summary>The cosmetic pen's style (null when solid).</summary>
-        GdiLines.Style CosmeticStyle(GdiPen pen) => null;
+        GdiLines.Style CosmeticStyle(GdiPen pen)
+        {
+            int st = pen.Style & 0xf;
+            if (st >= 1 && st <= 4) return GdiLines.Style.From(CosmeticStyles[st], false, 0);
+            if (st == 8) return GdiLines.Style.Alternate(0);
+            if (st == 7 && pen.Dashes != null && pen.Dashes.Length > 0)
+            {
+                var e = new int[pen.Dashes.Length];
+                for (int i = 0; i < e.Length; i++) e[i] = (int)pen.Dashes[i];
+                return GdiLines.Style.From(e, false, 0);
+            }
+            return null;
+        }
+
+        /// <summary>A geometric pen's style in world units (null when solid).</summary>
+        static float[] GeometricStyle(GdiPen pen, int endCap)
+        {
+            int st = pen.Style & 0xf;
+            if (st >= 1 && st <= 4)
+            {
+                int[] t = GeometricStyles[st];
+                var r = new float[t.Length];
+                for (int i = 0; i < t.Length; i++)
+                {
+                    int v = t[i];
+                    if (endCap != 2) v += (i & 1) != 0 ? 1 : -1;
+                    r[i] = (float)(v * Math.Abs(pen.Width));
+                }
+                return r;
+            }
+            if (st == 7 && pen.Dashes != null && pen.Dashes.Length > 0)
+            {
+                var r = new float[pen.Dashes.Length];
+                for (int i = 0; i < r.Length; i++) r[i] = (float)(int)pen.Dashes[i];
+                return r;
+            }
+            return null;
+        }
     }
 }

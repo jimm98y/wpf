@@ -50,6 +50,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public int BrushStyle;
             public Brush PatternBrush;
             public float[] Dashes;
+            public bool Old;             // CreatePen's (LOGPEN): realized per draw (DC::vRealizeLineAttrs)
+            public bool OldGeometric;    // a CreatePen pen realized geometric (Rectangle strokes it mitred)
             public bool Null => (Style & 0xf) == 5;
             public bool Geometric => (Style & 0x10000) != 0;
             public override void Dispose() => PatternBrush?.Dispose();
@@ -736,7 +738,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (GdipCosmetic(wx)) { style = style is >= 0 and <= 4 or 8 ? style : 0; wx = 1; }
                 else style = (style is >= 0 and <= 4 or 6 ? style : 0) | 0x10000;
             }
-            Put(idx, new GdiPen { Style = style, Width = wx, Color = ColorRef(color) });
+            Put(idx, new GdiPen { Style = style, Width = wx, Color = ColorRef(color), Old = !(Gdi && !_wmfCanvas) });
         }
 
         void ExtCreatePen(GpReader r, byte[] b, int o)
@@ -832,6 +834,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (gp == null) return;
                 if (fill) gp.CloseAll();
                 if (fill) GdiFillPath(gp, _dc.PolyFill == 2);
+                // A fill flattens the path in place before the pen widens it
+                // (EPATHOBJ_bSimpleStrokeAndFill @140168450).
+                if (fill && _dc.Brush != null && _dc.Brush.Style != 1) gp = gp.Flattened();
                 if (stroke) GdiStroke(gp);
                 return;
             }
@@ -848,7 +853,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             if (Gdi)
             {
-                if (_gPath == null || _dc.Pen == null || !GeometricLineAttrs(_dc.Pen, out GdiLineAttrs la)) return;
+                if (_gPath == null || _dc.Pen == null || !GeometricLineAttrs(DrawPen(), out GdiLineAttrs la)) return;
                 GdiPath w = GdiWiden.Widen(_gPath, TargetWtoD(), la);
                 if (w != null) _gPath = w;
                 return;
@@ -1204,6 +1209,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void ShapeRectangle(RectangleF rc)
         {
+            if (Gdi)
+            {
+                // EmfEnumState::Rectangle @1800b5360: GDI+ plays an EMF's rectangle, onto anything
+                // but a metafile, as the Polygon through its four corners; a WMF's goes to GDI.
+                if (_wmfCanvas) GdiShape(rc, 0, 0, 0);
+                else GdiPolyPoints(new[] { new PointF(rc.Left, rc.Top), new PointF(rc.Right, rc.Top), new PointF(rc.Right, rc.Bottom), new PointF(rc.Left, rc.Bottom) }, 1);
+                return;
+            }
             Box(rc, out float l, out float t, out float r, out float b);
             using (var p = new GraphicsPath(PolyFill))
             {
@@ -1214,6 +1227,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void ShapeEllipse(RectangleF rc)
         {
+            if (Gdi) { GdiShape(rc, 1, 0, 0); return; }
             Box(rc, out float l, out float t, out float r, out float b);
             using (var p = new GraphicsPath(PolyFill))
             {
@@ -1225,6 +1239,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         void ShapeRoundRect(RectangleF rc, int cx, int cy)
         {
+            if (Gdi) { GdiShape(rc, 2, cx, cy); return; }
             Box(rc, out float l, out float t, out float r, out float b);
             float w = Math.Min(Math.Abs(cx), r - l), h = Math.Min(Math.Abs(cy), b - t);
             using (var p = new GraphicsPath(PolyFill))

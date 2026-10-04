@@ -141,6 +141,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             LineData _in, _out;
             // STYLER
             readonly bool _styled;
+            bool _inLine;                 // fl & 4: a line's style lengths are being walked
+            readonly float[] _style;      // the style entries, world units
+            int _sIdx;
+            float _remaining, _styleLen, _done, _lineLen;
+            V _lineStart;
             // WIDENER
             int _fl;                      // 8 dash finished, 0x10 draw vectors (round join and round or square cap)
             readonly int _join, _endCap;
@@ -160,6 +165,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (NextFigure()) { _this = ReadPoint(); _startFigure = _this; _lineState = 1; }
                 else _lineState = 4;
                 _styled = la.Style != null && la.Style.Length > 0;
+                _style = la.Style;
                 _endCap = la.EndCap;
                 _join = la.Join;
                 if (_join == 0 && _endCap < 2) _fl |= 0x10;
@@ -178,7 +184,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
                 _pen = PolygonizePen(xform, lWidth);
                 if (_pen == null) { _bad = true; return; }
-                if (_styled) { _bad = true; return; }    // styled geometric pens: not yet
                 Widen();
             }
 
@@ -333,13 +338,107 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
             }
 
+            // ---- STYLER ------------------------------------------------------------------
+
+            /// <summary>The point the given world length into the current line (STYLER's
+            /// normalised line vector, rounded).</summary>
+            V AtDone(LineData ld)
+            {
+                if (_lineLen == 0f) return _lineStart;
+                if ((ld.Fl & 0x10) == 0)
+                {
+                    float k = 1f / _lineLen;
+                    ld.NormX = k * (float)ld.Line.X;
+                    ld.NormY = k * (float)ld.Line.Y;
+                    ld.Fl |= 0x10;
+                }
+                return new V(_lineStart.X + RoundF(ld.NormX * _done), _lineStart.Y + RoundF(ld.NormY * _done));
+            }
+
+            float NextStyle()
+            {
+                float v = _style[_sIdx];
+                if (++_sIdx >= _style.Length) _sIdx = 0;
+                return v;
+            }
+
+            void BeginLine()
+            {
+                _done = 0f;
+                float len = WorldLength(_out.Line);
+                _lineStart = _pt0;
+                _remaining = len;
+                _lineLen = len;
+                _inLine = true;
+            }
+
+            /// <summary>STYLER::vNextStyleEvent @1401ce7e8: the LINER's events cut into dashes
+            /// (WE_STOPDASH 5, WE_STARTDASH 6).</summary>
+            void NextStyleEvent()
+            {
+                if (!_styled) { NextEvent(); return; }
+                if (_inLine)
+                {
+                    if (_we == 5)
+                    {
+                        while (true)
+                        {
+                            if (_styleLen < _remaining) break;
+                            _styleLen -= _remaining;
+                            NextEvent();
+                            if (_we != 3 && _we != 4)
+                            {
+                                if (_we == 1) NextEvent();
+                                _inLine = false;
+                                _we = 8;
+                                return;
+                            }
+                            _done = 0f;
+                            float len = WorldLength(_out.Line);
+                            _lineLen = len;
+                            _remaining = len;
+                            _lineStart = _pt0;
+                        }
+                        _remaining -= _styleLen;
+                        _done += _styleLen;
+                        _pt0 = AtDone(_out);
+                        _styleLen = NextStyle();
+                        _we = 6;
+                        return;
+                    }
+                    if (_styleLen <= _remaining)
+                    {
+                        _remaining -= _styleLen;
+                        _done += _styleLen;
+                        _pt0 = AtDone(_out);
+                        _in = _out;
+                        _styleLen = NextStyle();
+                        _we = 5;
+                        return;
+                    }
+                    _styleLen -= _remaining;
+                }
+                NextEvent();
+                if (_we == 0)
+                {
+                    _sIdx = 0;
+                    _styleLen = NextStyle();
+                }
+                else if (_we != 3 && _we != 4)
+                {
+                    _inLine = false;
+                    return;
+                }
+                BeginLine();
+            }
+
             // ---- WIDENER ------------------------------------------------------------------
 
             void Widen()
             {
                 while (true)
                 {
-                    NextEvent();
+                    NextStyleEvent();
                     switch (_we)
                     {
                         case 0:

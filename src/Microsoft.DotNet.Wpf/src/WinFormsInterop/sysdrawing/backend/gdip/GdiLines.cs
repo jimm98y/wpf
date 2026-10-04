@@ -38,11 +38,38 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// segment to the next.</summary>
         internal sealed class Style
         {
-            public int[] Array;          // the entries times denStyleStep
-            public int Total;            // their sum
+            public int[] Array, Reversed;  // the entries times denStyleStep, and backwards
+            public int Total;              // their sum
             public int StepX = 1, StepY = 1, Den = 3;
-            public bool StartGap;
-            public int Next;             // the style position, in style units times Den
+            public bool StartGap;          // LA_STARTGAP
+            public int Next;               // spNext: the style position, carried line to line
+            internal int StepOfLine;
+
+            /// <summary>bStrokeCosmetic's style state from a LINEATTRS style array (style units)
+            /// and its elStyleState.</summary>
+            public static Style From(int[] entries, bool startGap, int styleState, int stepX = 1, int stepY = 1, int den = 3)
+            {
+                int n = Math.Min(entries.Length, 16);
+                var st = new Style { StepX = stepX, StepY = stepY, Den = den, StartGap = startGap, Array = new int[n], Reversed = new int[n] };
+                for (int i = 0; i < n; i++)
+                {
+                    st.Array[i] = entries[i] * den;
+                    st.Reversed[n - 1 - i] = entries[i] * den;
+                    st.Total += entries[i] * den;
+                }
+                int next = (styleState >> 16) * den + (styleState & 0xffff);
+                if (next < 0) next = 0;
+                if (2 * st.Total <= next) next %= 2 * st.Total;
+                st.Next = next;
+                return st;
+            }
+
+            /// <summary>LA_ALTERNATE: every other pixel.</summary>
+            public static Style Alternate(int styleState)
+                => new Style { Array = new[] { 1 }, Reversed = new[] { 1 }, Total = 1, Den = 1, Next = (styleState >> 16) & 1 };
+
+            /// <summary>The style state written back to the LINEATTRS.</summary>
+            public int State => ((Next / Den) << 16) | ((Next % Den) & 0xffff);
         }
 
         /// <summary>The pixels of the cosmetic line from (ax, ay) to (bx, by) (28.4), its last
@@ -145,6 +172,57 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
             }
             if (x1 < x0) return;
+            // Styling (bLines' FL_STYLED block): the style position at the first pixel drawn, the
+            // per-step advances along the axis that styles the line, the on/off mask.
+            int[] arr = null;
+            int sIdx = 0, sRem = 0, dMaj = 0, dMin = 0, dDiag = 0;
+            bool gap = false;
+            if (style != null)
+            {
+                bool d = (fl & 5) != 0;
+                int majStep = d ? style.StepY : style.StepX, minStep = d ? style.StepX : style.StepY;
+                bool byMinor = majStep != minStep && (ulong)(uint)majStep * major < (ulong)(uint)minStep * minor;
+                int count, offset;
+                if (byMinor)
+                {
+                    ulong v = (ulong)(gamma + (long)x1 * minor);
+                    int q = (int)(v / major);
+                    dMaj = 0; dMin = minStep; dDiag = minStep;
+                    count = q - y0;
+                    offset = (fl & 0x20) == 0 ? 0 : q - y0 + 1;
+                    style.StepOfLine = minStep;
+                }
+                else
+                {
+                    dMaj = majStep; dMin = 0; dDiag = majStep;
+                    count = x1 - x0;
+                    offset = (fl & 0x20) == 0 ? 0 : x1 - x0 + 1;
+                    style.StepOfLine = majStep;
+                }
+                int step = style.StepOfLine;
+                uint total2 = (uint)(2 * style.Total);
+                uint start = (uint)(style.Next + step * offset);
+                uint end = (uint)(style.Next + (count + 1) * step);
+                if (total2 <= start) start %= total2;
+                if (total2 <= end) end %= total2;
+                style.Next = (int)end;
+                arr = (fl & 0x20) == 0 ? style.Array : style.Reversed;
+                gap = (fl & 0x20) == 0 ? style.StartGap : !style.StartGap;
+                int pos = (int)start;
+                if ((fl & 0x20) != 0)
+                {
+                    pos = -pos;
+                    if (pos < 0) pos += (int)total2;
+                }
+                if (style.Total <= pos)
+                {
+                    pos -= style.Total;
+                    if ((arr.Length & 1) != 0) gap = !gap;
+                }
+                while (arr[sIdx] <= pos) { pos -= arr[sIdx]; sIdx++; }
+                sRem = arr[sIdx] - pos;
+                if ((sIdx & 1) != 0) gap = !gap;
+            }
             // The first pixel, back in device space.
             int X = x0 + x, Y = y0 + y;
             if ((fl & 5) != 0) { X = y0 + y; Y = x0 + x; }
@@ -183,26 +261,41 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int yStep = (fl & 8) != 0 ? -1 : 1;
             bool vertical = (fl & 3) == 1, diagonal = (fl & 2) != 0, dflip = (fl & 5) != 0;
             int px = X, py = Y;
+            void Lit(int x, int y) { if (!gap) on.Add((x, y)); }
+            void Advance(int by)
+            {
+                if (arr == null) return;
+                sRem -= by;
+                if (sRem < 1)
+                {
+                    if (++sIdx >= arr.Length) sIdx = 0;
+                    gap = !gap;
+                    sRem += arr[sIdx];
+                }
+            }
             foreach (int len in runs)
             {
                 if (diagonal)
                 {
                     for (int i = 0; i < len; i++)
                     {
-                        if (i > 0) { px++; py += yStep; }
-                        on.Add((px, py));
+                        if (i > 0) { Advance(dDiag); px++; py += yStep; }
+                        Lit(px, py);
                     }
+                    Advance(dMaj);
                     if (!dflip) px++; else py += yStep;
                 }
                 else if (vertical)
                 {
-                    for (int i = 0; i < len; i++) { on.Add((px, py)); py += yStep; }
+                    for (int i = 0; i < len; i++) { Lit(px, py); py += yStep; Advance(dMaj); }
                     px++;
+                    Advance(dMin);
                 }
                 else
                 {
-                    for (int i = 0; i < len; i++) { on.Add((px, py)); px++; }
+                    for (int i = 0; i < len; i++) { Lit(px, py); px++; Advance(dMaj); }
                     py += yStep;
+                    Advance(dMin);
                 }
             }
         }
