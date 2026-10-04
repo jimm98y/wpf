@@ -1311,6 +1311,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int cx = r.I32(), cy = r.I32();
             int radius = r.I32();
             float start = r.F(), sweep = r.F();
+            if (Gdi) { GdiAngleArc(cx, cy, radius, start, sweep); return; }
             var p = new GraphicsPath();
             float d = radius * 2;
             p.AddLine(_dc.Pos, ArcPoint(cx - radius, cy - radius, d, d, -start));

@@ -125,6 +125,27 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return e;
         }
 
+        /// <summary>EBOX::EBOX(EXFORMOBJR&amp;, RECTL&amp;) @1401a0ea8, AngleArc's: the three corners
+        /// as they are, through the transform (rounded to pixels in GM_COMPATIBLE).</summary>
+        public static GdiBox MakeExact(int l, int t, int r, int b, in GdiXform m, bool advanced)
+        {
+            var e = new GdiBox { L = l, T = t, R = r, B = b };
+            m.Point(r, t, out e.Ax, out e.Ay);
+            m.Point(l, t, out e.Bx, out e.By);
+            m.Point(l, b, out e.Cx, out e.Cy);
+            if (!advanced)
+            {
+                e.Ax = (e.Ax + 8) & ~15; e.Ay = (e.Ay + 8) & ~15; e.Bx = (e.Bx + 8) & ~15;
+                e.By = (e.By + 8) & ~15; e.Cx = (e.Cx + 8) & ~15; e.Cy = (e.Cy + 8) & ~15;
+            }
+            int abx = e.Ax - e.Bx, aby = e.Ay - e.By, bcx = e.Bx - e.Cx, bcy = e.By - e.Cy;
+            e.Dx = e.Cx + abx; e.Dy = e.Cy + aby;
+            e.Hx = (abx + 1) >> 1; e.Hy = (aby + 1) >> 1;
+            e.Vx = (bcx + 1) >> 1; e.Vy = (bcy + 1) >> 1;
+            e.Mx = e.Cx + e.Hx + e.Vx; e.My = e.Cy + e.Hy + e.Vy;
+            return e;
+        }
+
         /// <summary>bEllipse @1401a1578.</summary>
         public void Ellipse(GdiPath p)
         {
@@ -211,10 +232,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
         static readonly float[] AxisCoord = { 0f, 1f, 0f, -1f };
         static readonly float[] AxisAngle = { 0f, 90f, 180f, 270f };
         static readonly byte[] Quadrants = { 0, 1, 3, 2, 0, 1, 3, 2 };
-        const float SineFactor = 0.35555556f;          // FP_SINE_FACTOR 0x3eb60b61 (32 / 90)
-        const float Pi = 3.1415925f;                   // FP_PI 0x40490fda
-        const float Epsilon = 1.52587890625e-05f;      // FP_EPSILON 0x37800000
-        const float FourThirds = 1.3333334f;           // FP_4DIV3 0x3faaaaab
+        static readonly float SineFactor = BitConverter.Int32BitsToSingle(0x3eb60b61);   // FP_SINE_FACTOR, 32 / 90
+        static readonly float Pi = BitConverter.Int32BitsToSingle(0x40490fda);           // FP_PI
+        static readonly float Epsilon = BitConverter.Int32BitsToSingle(0x37800000);      // FP_EPSILON, 2^-16
+        static readonly float FourThirds = BitConverter.Int32BitsToSingle(0x3faaaaab);   // FP_4DIV3
+        static readonly float OneNinetieth = BitConverter.Int32BitsToSingle(0x3c360b61); // FP_1DIV90
 
         static float[] Floats(params uint[] bits)
         {
@@ -418,6 +440,57 @@ namespace System.Drawing.WebGpuBackend.Gdip
             Partial(kind == 1 ? 2 : 1, p, e, c0, s0, q0, a0, c1, s1, q1, a1, wrap);
             if (kind == 2) p.CloseFigure();
             else if (kind == 3) { p.LineTo(e.Mx, e.My); p.CloseFigure(); }
+        }
+
+        /// <summary>lGetQuadrant @140216118: a unit-circle point's quadrant.</summary>
+        static int QuadrantOf(float c, float s)
+        {
+            if (s < 0) return c >= 0 ? 3 : 2;
+            if (c > 0) return 0;
+            return s == 0 ? 2 : 1;
+        }
+
+        /// <summary>GrepAngleArc @140214718 after its box: a line from the current point to the
+        /// start, then the sweep as whole turns (each the start-to-end part and the end-to-start
+        /// rest, at most eight) and the remainder, every part bPartialArc's with the count of
+        /// quarter turns (mod 4) for its wrap.</summary>
+        public static void Angle(GdiPath p, GdiBox e, float start, float sweep)
+        {
+            int n = Trunc(sweep * OneNinetieth);
+            int turns = Math.Min(n >> 2, 8);
+            float end = start + sweep;
+            float d = end - start;
+            float c0, s0, c1, s1;
+            if (d - 3f < 0 && d != 0f)
+            {
+                CosSinPrecise(start, out c0, out s0);
+                CosSinPrecise(end, out c1, out s1);
+            }
+            else
+            {
+                CosSin(start, out c0, out s0);
+                CosSin(end, out c1, out s1);
+            }
+            int q0 = QuadrantOf(c0, s0);
+            if (start > 3600f || start < -3600f) Atan(c0, s0, out start, out q0);
+            int q1 = QuadrantOf(c1, s1);
+            int quarters = n;
+            if (end > 3600f || end < -3600f)
+            {
+                Atan(c1, s1, out end, out q1);
+                quarters = (q1 - q0) & 3;
+                if (quarters == 0 && start > end) quarters = 3;
+            }
+            int wrap = quarters & 3;
+            q0 &= 3; q1 &= 3;
+            int type = 2;
+            for (int i = 0; i < turns; i++)
+            {
+                Partial(type, p, e, c0, s0, q0, start, c1, s1, q1, end, wrap != 0);
+                Partial(0, p, e, c1, s1, q1, end, c0, s0, q0, start, 3 - wrap != 0);
+                type = 0;
+            }
+            Partial(type, p, e, c0, s0, q0, start, c1, s1, q1, end, wrap != 0);
         }
     }
 }

@@ -315,6 +315,27 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GdiFillAndStroke(p, true, true);
         }
 
+        /// <summary>AngleArc as GrepAngleArc @140214718 draws it: the circle's box (ordered, its
+        /// top and bottom exchanged and the angles negated for a negative sweep) through
+        /// EBOX(EXFORMOBJR, RECTL), a line from the current point, the sweep; stroked.</summary>
+        void GdiAngleArc(int x, int y, int radius, float start, float sweep)
+        {
+            if (radius < 0) return;
+            long l = (long)x - radius, t = (long)y - radius, r = (long)x + radius, b = (long)y + radius;
+            if (l < int.MinValue || t < int.MinValue || r > int.MaxValue || b > int.MaxValue) return;
+            int il = (int)l, it = (int)t, ir = (int)r, ib = (int)b;
+            if (sweep < 0) { start = -start; sweep = -sweep; (it, ib) = (ib, it); }
+            GdiXform m = TargetWtoD();
+            GdiBox e = GdiBox.MakeExact(il, it, ir, ib, m, !_wmfCanvas);
+            GdiPath p = _inPath ? (_gPath ??= new GdiPath()) : new GdiPath();
+            CurrentFix(m, out int fx, out int fy);
+            if (p.Empty || p.Figures[p.Figures.Count - 1].Closed || _gMoved || !_inPath) p.MoveTo(fx, fy);
+            _gMoved = false;
+            GdiArc.Angle(p, e, start, sweep);
+            SetCurrentFix(p.CurrentX, p.CurrentY);
+            if (!_inPath) GdiStroke(p);
+        }
+
         void GdiMoveTo()
         {
             _gMoved = true;
