@@ -105,11 +105,28 @@ namespace Wpf.WinFormsInterop.Tests
                 new float[] { 0, 0, 0, 0.5f, 0 },
                 new float[] { 0, 0, 0, 0, 1 },
             }));
+            // The matrix applies when the image is drawn (GpRecolorObject::ColorAdjust on the bitmap).
+            using var src = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
+            src.SetPixel(0, 0, Color.FromArgb(255, 200, 100, 50));
+            using var dst = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(dst))
+            {
+                g.CompositingMode = CompositingMode.SourceCopy;
+                g.DrawImage(src, new Rectangle(0, 0, 1, 1), 0, 0, 1, 1, GraphicsUnit.Pixel, attrs);
+            }
+            Color c = dst.GetPixel(0, 0);
+            Assert.Equal(0, c.R);
+            Assert.InRange(c.G, 99, 101);
+            Assert.InRange(c.B, 49, 51);
+            Assert.Equal(128, c.A);
+
+            // GetAdjustedPalette adjusts GDI+'s native copy only: System.Drawing never reads it back,
+            // so the caller's palette is unchanged (as on native GDI+).
             var palette = new Bitmap(1, 1, PixelFormat.Format8bppIndexed).Palette;
             palette.Entries[0] = Color.FromArgb(255, 200, 100, 50);
             attrs.GetAdjustedPalette(palette, ColorAdjustType.Bitmap);
-            Color c = palette.Entries[0];
-            Assert.Equal((0, 100, 50, 128), (c.R, c.G, c.B, c.A));
+            Color p0 = palette.Entries[0];
+            Assert.Equal((200, 100, 50, 255), (p0.R, p0.G, p0.B, p0.A));
         }
 
         [Fact]

@@ -82,13 +82,16 @@ namespace System.Drawing
 
         private void Init(Image image, WrapMode wrapMode, RectangleF? dstRect, ImageAttributes imageAttr)
         {
-            _wrapMode = wrapMode;
+            // GpTexture::GpTexture(image, rect, ia) takes the wrap mode of the ImageAttributes.
+            _wrapMode = imageAttr != null ? imageAttr.WrapModeForDrawing : wrapMode;
             var whole = new Rectangle(0, 0, image.Width, image.Height);
             Rectangle r = whole;
             if (dstRect is RectangleF d)
             {
-                r = Rectangle.Intersect(whole, Rectangle.Truncate(d));
-                if (r.Width <= 0 || r.Height <= 0)
+                // InitializeBrushBitmap: floor(v + 0.5) of each of x, y, width, height.
+                r = new Rectangle((int)MathF.Floor(d.X + 0.5f), (int)MathF.Floor(d.Y + 0.5f),
+                                  (int)MathF.Floor(d.Width + 0.5f), (int)MathF.Floor(d.Height + 0.5f));
+                if (r.Width <= 0 || r.Height <= 0 || !whole.Contains(r))
                 {
                     throw new OutOfMemoryException();
                 }
@@ -98,24 +101,26 @@ namespace System.Drawing
                 _tile = new Bitmap(Math.Max(1, r.Width), Math.Max(1, r.Height));
                 return;
             }
-            _tile = bmp.Clone(r, PixelFormat.Format32bppArgb);
-            if (imageAttr != null)
+            var recolor = imageAttr?.Recolor;
+            if (recolor != null && recolor.HasRecoloring((ColorAdjustType)6))
             {
+                // GpBitmap::Recolor: a clone in ARGB, ColorAdjust'ed as a Bitmap.
+                _tile = bmp.Clone(r, PixelFormat.Format32bppArgb);
+                recolor.Flush();
                 GdipFrame f = _tile.Data.Frame;
-                byte[] rgba = GdipPixels.ToRgba(f, new Rectangle(0, 0, f.Width, f.Height));
-                imageAttr.Apply(rgba, ColorAdjustType.Brush);
                 var row = new uint[f.Width];
                 for (int y = 0; y < f.Height; y++)
                 {
-                    for (int x = 0; x < f.Width; x++)
-                    {
-                        int o = (y * f.Width + x) * 4;
-                        row[x] = (uint)rgba[o + 3] << 24 | (uint)rgba[o] << 16 | (uint)rgba[o + 1] << 8 | rgba[o + 2];
-                    }
+                    GdipPixels.ReadArgb(f, 0, y, f.Width, row, 0);
+                    recolor.ColorAdjust(row, 0, f.Width, ColorAdjustType.Bitmap);
                     GdipPixels.WriteArgb(f, 0, y, f.Width, row, 0);
                 }
+                return;
             }
+            _tile = bmp.Clone(r, PixelFormat.Format32bppPArgb);
         }
+
+        internal GdipFrame TileFrame => _tile?.Data.Frame;
 
         /// <summary>The tile as straight RGBA, and the brush transform (m11 m12 m21 m22 dx dy).</summary>
         internal byte[] TileRgba(out int width, out int height)

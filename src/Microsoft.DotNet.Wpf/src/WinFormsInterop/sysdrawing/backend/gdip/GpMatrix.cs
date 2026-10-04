@@ -242,7 +242,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             fy = ((int) MathF.Floor (vy) + 15) >> 4;
         }
 
-        public override string ToString () => $"[{M11} {M12} {M21} {M22} {Dx} {Dy}] c{Complexity}";
+        public override string ToString () => $"[{M11:R} {M12:R} {M21:R} {M22:R} {Dx:R} {Dy:R}] c{Complexity}";
     }
 
     /// <summary>The C runtime's single-precision trigonometry, which GDI+ calls (sinf/cosf from the

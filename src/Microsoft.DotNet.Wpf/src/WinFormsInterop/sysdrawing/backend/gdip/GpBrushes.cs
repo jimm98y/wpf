@@ -11,7 +11,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 {
     internal sealed partial class GpGraphics
     {
-        bool CanFillBrush (Brush brush) => brush is HatchBrush || brush is LinearGradientBrush || brush is PathGradientBrush;
+        bool CanFillBrush (Brush brush) => brush is HatchBrush || brush is LinearGradientBrush || brush is PathGradientBrush || brush is TextureBrush;
 
         GpSpan CreateBrushSpan (Brush brush, GpScan scan, Rectangle? draw)
         {
@@ -22,6 +22,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 return new LineGradientSpan (scan, lg, WorldToDevice);
             case PathGradientBrush pg:
                 return CreatePathGradientSpan (pg, scan, draw);
+            case TextureBrush tb:
+                return CreateTextureSpan (tb, scan);
             }
             return null;
         }

@@ -123,6 +123,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         uint c = s [i];
                         // 32RGB too: the premultiplied colour as it is, alpha byte and all (the oracle
                         // reads it back raw: a Clear to 80FF8040 leaves 80804020).
+                        // 32RGB is blended as ARGB with no conversion back (BuildPipeline 0x22009): the alpha is stored.
                         Put32 (bits, row + (x + i) * 4, c);
                     }
                 } else {
