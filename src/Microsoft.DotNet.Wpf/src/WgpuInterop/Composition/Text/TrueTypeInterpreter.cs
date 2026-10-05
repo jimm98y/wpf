@@ -541,7 +541,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// stretched size's own answer (StretchPpemX != StretchPpemY).</summary>
         [ThreadStatic] internal static int GdiStretchInfo;
 
-        internal static int GdiKey => GdiWord | (GdiRotated ? 0x10000 : 0) | GdiTurn << 17 | GdiStretchInfo << 26;
+        /// <summary>The size a turned GDI glyph's gasp is read at: the font context's own ppem
+        /// (+0x7c, the em of the glyph's y row, vSetClearTypeState @14001d1d8 and bIsGaspFlagSet), where
+        /// a general rotation fits at its rows' largest components; 0 to read it at the fitted size.</summary>
+        [ThreadStatic] internal static int GdiGaspPpem;
+
+        internal static int GdiKey => (GdiWord & 0x3f) | (GdiRotated ? 0x40 : 0) | (GdiTurn & 0x1ff) << 7 | (GdiStretchInfo & 3) << 16 | (GdiGaspPpem & 0xfff) << 18;
 
         internal static int PackGdiTurn(int ax, int ay, int dx, int dy)
             => ax == 1 && ay == 0 && dx == 0 && dy == 1 ? 0

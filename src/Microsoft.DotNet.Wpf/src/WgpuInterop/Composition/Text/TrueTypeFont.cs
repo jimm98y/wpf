@@ -1602,10 +1602,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// telling a ClearType rasterizer not to run its program. A version 0 table cannot say
         /// so, and GDI fits those faces (Arial Bold, Arial Italic, Times Bold) at every size.
         /// See <see cref="CompatibleAdvance"/>.</summary>
+        /// <summary>The size the 'gasp' is read at: the GDI font context's own ppem when a turned
+        /// glyph is fitted at other sizes (TrueTypeInterpreter.GdiGaspPpem), else the size itself.</summary>
+        private static int GaspPpemFor(float pixelsPerEm)
+            => TrueTypeInterpreter.GdiGaspPpem > 0 ? TrueTypeInterpreter.GdiGaspPpem : (int) MathF.Round(pixelsPerEm);
+
         private bool GaspDeclinesClearTypeGridFit(float pixelsPerEm)
         {
             if (_gasp < 0 || U16(_gasp) == 0) return false;
-            int ppem = (int) MathF.Round(pixelsPerEm);
+            int ppem = GaspPpemFor(pixelsPerEm);
             int ranges = U16(_gasp + 2);
             int at = _gasp + 4;
             for (int i = 0; i < ranges; i++, at += 4)
@@ -1670,8 +1675,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // fields are clear for Times Bold, Times Italic and Arial Italic and GDI smooths them
             // symmetrically at every size, as the line below already says.
             if (want == GaspSymmetricSmoothing && U16(_gasp) == 0)
-                return s_v0SymFrom <= 0 || (int) MathF.Round(pixelsPerEm) >= s_v0SymFrom;
-            int ppem = (int) MathF.Round(pixelsPerEm);
+                return s_v0SymFrom <= 0 || GaspPpemFor(pixelsPerEm) >= s_v0SymFrom;
+            int ppem = GaspPpemFor(pixelsPerEm);
             int ranges = U16(_gasp + 2);
             int at = _gasp + 4;
             for (int i = 0; i < ranges; i++, at += 4)
@@ -1778,7 +1783,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>fs__NewTransformation's 0x1000: the scaler's matrix is not a uniform upright scale.</summary>
         private static bool GdiNonIdentity
-            => TrueTypeInterpreter.DWriteFlags == 0 && (TrueTypeInterpreter.GdiTurn != 0 || TrueTypeInterpreter.GdiStretchInfo == 1);
+            => TrueTypeInterpreter.DWriteFlags == 0 && (TrueTypeInterpreter.GdiTurn != 0 || TrueTypeInterpreter.GdiRotated || TrueTypeInterpreter.GdiStretchInfo == 1);
 
         public bool WantsDropoutControl(float pixelsPerEm, out int scanType)
         {
@@ -1928,7 +1933,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // that; GRIDFIT below is what the bi-level rasterizer would read.
             if (U16(_gasp) == 0) return true;
 
-            int ppem = (int) MathF.Round(pixelsPerEm);
+            int ppem = GaspPpemFor(pixelsPerEm);
             int ranges = U16(_gasp + 2);
             int at = _gasp + 4;
             for (int i = 0; i < ranges; i++, at += 4)
