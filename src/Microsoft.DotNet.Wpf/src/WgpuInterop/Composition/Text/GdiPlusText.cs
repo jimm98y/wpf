@@ -138,6 +138,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static int Floor(float v) => (int)MathF.Floor(v);
         private static long CDiv(long a, long b) => a / b;   // C division, toward zero
 
+        /// <summary>After a <see cref="Layout"/> that returned null: whether that was GDI+'s own
+        /// refusal (FastTextImager::Initialize / DrawString answering status 6, the string goes to
+        /// FullTextImager) rather than a fast-imager string this port does not model.</summary>
+        [ThreadStatic] internal static bool LastFull;
+
         /// <summary>FastTextImager's decision and layout. Null where GDI+ would take its full imager
         /// (or where this port does not model the realization asked for): the caller then draws the
         /// string as it did before. An empty Run (no glyphs) is a string GDI+ draws nothing for.
@@ -149,15 +154,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                     float x, float y, float rw, float rh,
                                     int formatFlags, bool typographic, int align, int lineAlign,
                                     bool hotkeyPrefix, int hint, float dpi = 96f, bool biLevel = false,
-                                    float sx = 1f, float sy = 1f)
+                                    float sx = 1f, float sy = 1f, float wrapWidth = float.NaN)
         {
+            LastFull = false;
             if (string.IsNullOrEmpty(text) || font is null) return null;
             // FastTextImager::Initialize@1800393c0 takes a positive axis scale: m11 > 0, m22 != 0
             // (only m22 > 0 is modelled). The layout stays in world units (the rectangle, the em,
             // the margins, the line box) and every DEVICE quantity -- scale16, the hinted
             // advances, the margin room +0x90, the side bearings, the device ascent -- is the
             // world one through m11 or m22; the caller takes the world origin to the device.
-            if (!(sx > 0f) || !(sy > 0f)) return null;
+            if (!(sx > 0f) || sy == 0f) { LastFull = true; return null; }
+            if (!(sy > 0f)) return null;
             bool scaled = sx != 1f || sy != 1f;
             if (hint == HintSystemDefault) hint = HintClearTypeGridFit;   // a ClearType desktop
             // The realizations: ClearType (5), the 4x4 antialiased ones (3 grid-fitted, 4 not), and
@@ -166,8 +173,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (!biLevel && (hint == HintSingleBitPerPixelGridFit || hint == HintSingleBitPerPixel)) return null;
             // Format flags & 0x40000003: right to left, vertical. MeasureTrailingSpaces changes the
             // trailing-space handling, which is not modelled.
-            if ((formatFlags & (FlagRightToLeft | FlagVertical | 0x40000000 | FlagMeasureTrailingSpaces)) != 0)
-                return null;
+            if ((formatFlags & (FlagRightToLeft | FlagVertical | 0x40000000)) != 0)
+                { LastFull = (formatFlags & (FlagRightToLeft | FlagVertical | 0x40000000)) != 0; return null; }
             // A simulated bold is DirectWrite's simulated face, whose advances it widens itself.
             if (font.SynthesizesBold) return null;
             // A simulated oblique is modelled for ClearType and bi-level only (below): DirectWrite's
@@ -202,7 +209,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // character (tab, CR, LF), the complex scripts, and a hot-key prefix.
             foreach (char c in text)
             {
-                if (c < 0x20 || (c >= 0x590 && c < 0x1E00) || char.IsSurrogate(c)) return null;
+                if (c < 0x20 || (c >= 0x590 && c < 0x1E00) || char.IsSurrogate(c)) { LastFull = true; return null; }
                 if (hotkeyPrefix && c == '&') return null;
             }
 
@@ -212,7 +219,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 gids[i] = font.GlyphIndex(text[i]);
                 // A character the face lacks would be linked to another face; not modelled.
-                if (gids[i] <= 0) return null;
+                if (gids[i] <= 0) { LastFull = true; return null; }
             }
 
             int upem = font.UnitsPerEmForHinting;
@@ -238,9 +245,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             long sumNom = 0;
             foreach (int a in nom) sumNom += a;
             float totalNom = (float)sumNom * em / upem;
-            if (rw > 0f && rw < totalNom + lm + rm)
-                return null;   // it would wrap
-            while (n > 0 && gids[n - 1] == space)
+            float ww = float.IsNaN(wrapWidth) ? rw : wrapWidth;   // +0xd0: 0 for NoWrap without trimming
+            if (ww > 0f && ww < totalNom + lm + rm)
+                { LastFull = true; return null; }   // it would wrap
+            while ((formatFlags & FlagMeasureTrailingSpaces) == 0 && n > 0 && gids[n - 1] == space)
             {
                 totalNom -= nom[n - 1] * em / upem;
                 n--;
@@ -293,7 +301,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     rmin = Math.Min(rmin, cum + (int)(rsb[i] * scale * 16f));
                     cum += (int)(adv[i] * scale * 16f);
                 }
-                if ((float)(-lmin) > lm * sx * 16f || (float)(-rmin) > rm * sx * 16f) return null;
+                if ((float)(-lmin) > lm * sx * 16f || (float)(-rmin) > rm * sx * 16f) { LastFull = true; return null; }
             }
 
             if (nominal)

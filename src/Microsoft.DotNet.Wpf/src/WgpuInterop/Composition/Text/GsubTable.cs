@@ -242,17 +242,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// letter takes is the shaper's decision and not the font's. Everything else -- the
         /// mandatory ligatures, the contextual alternates -- is a rule about a SEQUENCE, and has to
         /// be walked across the run like this.</para></summary>
-        public bool ApplyFeature(string script, string feature, List<int> glyphs)
+        public bool ApplyFeature(string script, string feature, List<int> glyphs, List<int>? clusters = null)
         {
             bool changed = false;
             foreach (int lookup in Lookups(script, feature))
                 for (int at = 0; at < glyphs.Count; at++)
-                    if (ApplyLookup(lookup, glyphs, at, depth: 0))
+                    if (ApplyLookup(lookup, glyphs, at, depth: 0, clusters))
                         changed = true;
             return changed;
         }
 
-        private bool ApplyLookup(int lookupIndex, List<int> glyphs, int at, int depth)
+        /// <summary>Applies several features together, as a shaper does: the union of their
+        /// lookups in lookup-list order, each walked across the whole run before the next.</summary>
+        public bool ApplyFeatures(string script, IReadOnlyList<string> features, List<int> glyphs, List<int>? clusters = null)
+        {
+            var lookups = new SortedSet<int>();
+            foreach (string f in features)
+                foreach (int l in Lookups(script, f)) lookups.Add(l);
+            bool changed = false;
+            foreach (int lookup in lookups)
+                for (int at = 0; at < glyphs.Count; at++)
+                    if (ApplyLookup(lookup, glyphs, at, depth: 0, clusters))
+                        changed = true;
+            return changed;
+        }
+
+        private bool ApplyLookup(int lookupIndex, List<int> glyphs, int at, int depth, List<int>? clusters = null)
         {
             if (depth > 4 || at >= glyphs.Count) return false;   // a font may not recurse forever
             foreach ((int type, int sub) in SubTables(lookupIndex))
@@ -273,12 +288,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         {
                             glyphs[at] = lig;
                             glyphs.RemoveRange(at + 1, consumed - 1);
+                            clusters?.RemoveRange(at + 1, consumed - 1);
                             return true;
                         }
                         break;
                     }
                     case 6:
-                        if (ApplyChained(sub, glyphs, at, depth)) return true;
+                        if (ApplyChained(sub, glyphs, at, depth, clusters)) return true;
                         break;
                 }
             }
@@ -292,7 +308,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// that handles only the plain ligature type finds the feature present, applies nothing,
         /// and leaves the pair unjoined. Formats 1 and 3 are here; format 2 needs class
         /// definitions and is read the same way once ClassOf is answered.</para></summary>
-        private bool ApplyChained(int sub, List<int> glyphs, int at, int depth)
+        private bool ApplyChained(int sub, List<int> glyphs, int at, int depth, List<int>? clusters = null)
         {
             int format = U16(sub);
             if (format == 3)
@@ -307,7 +323,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int records = U16(p); p += 2;
 
                 if (!Matches(glyphs, at, back, mid, look)) return false;
-                return ApplyRecords(glyphs, at, p, records, depth);
+                return ApplyRecords(glyphs, at, p, records, depth, clusters);
             }
             if (format == 1)
             {
@@ -333,7 +349,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         ok = at + input + i < glyphs.Count && glyphs[at + input + i] == U16(p);
                     if (!ok) continue;
                     int records = U16(p); p += 2;
-                    if (ApplyRecords(glyphs, at, p, records, depth)) return true;
+                    if (ApplyRecords(glyphs, at, p, records, depth, clusters)) return true;
                 }
             }
             return false;
@@ -356,14 +372,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Runs the nested lookups a matched context asks for, at the positions it names.
         /// </summary>
-        private bool ApplyRecords(List<int> glyphs, int at, int p, int records, int depth)
+        private bool ApplyRecords(List<int> glyphs, int at, int p, int records, int depth, List<int>? clusters = null)
         {
             bool applied = false;
             for (int i = 0; i < records; i++)
             {
                 int sequenceIndex = U16(p + i * 4);
                 int lookupIndex = U16(p + i * 4 + 2);
-                if (ApplyLookup(lookupIndex, glyphs, at + sequenceIndex, depth + 1)) applied = true;
+                if (ApplyLookup(lookupIndex, glyphs, at + sequenceIndex, depth + 1, clusters)) applied = true;
             }
             return applied;
         }

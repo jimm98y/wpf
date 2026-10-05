@@ -117,6 +117,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly ColorTable? _color;    // COLR/CPAL color glyphs (emoji), null if absent
         private readonly BitmapGlyphTable? _bitmaps;   // CBDT/CBLC colour bitmap glyphs, null if absent
         private readonly Dictionary<(int, int), float> _kerning = new(); // base pixels
+        private readonly Dictionary<(int, int), int> _kernUnits = new(); // the same pairs, design units
 
         // Synthetic style (DirectWrite font simulations): when WPF requests a weight/
         // style the family has no real face for, DWrite returns the regular outlines
@@ -219,6 +220,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _winAscent = U16(os2 + 74);
                 _winDescent = U16(os2 + 76);
                 _xAvgCharWidth = (short) U16(os2 + 2);
+                StrikeoutSize = (short) U16(os2 + 26);
+                StrikeoutPosition = (short) U16(os2 + 28);
                 if (os2 + 72 <= _data.Length)
                 {
                     TypoAscender = (short) U16(os2 + 68);
@@ -507,6 +510,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         public int GlyphIndex(char c) => _cmap.Map(c);
 
+        /// <summary>The cmap's glyph for a code point (above the BMP too).</summary>
+        internal int GlyphIndexOf(int codepoint) => _cmap.Map(codepoint);
+
+        /// <summary>The legacy 'kern' table's adjustment for a pair, in design units.</summary>
+        internal bool TryGetKernUnits(int leftGlyph, int rightGlyph, out int units)
+            => _kernUnits.TryGetValue((leftGlyph, rightGlyph), out units);
+
         public float Advance(int glyphId) => AdvanceWidth(glyphId) * _scale;
 
         /// <summary>The space the design leaves to the RIGHT of the ink, in pixels: the advance
@@ -647,6 +657,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal int TypoDescender { get; private set; }
         internal int UnderlinePosition { get; private set; }
         internal int UnderlineThickness { get; private set; }
+        /// <summary>OS/2 yStrikeoutPosition / yStrikeoutSize.</summary>
+        internal int StrikeoutPosition { get; private set; }
+        internal int StrikeoutSize { get; private set; }
         internal bool HasVerticalMetrics { get; private set; }
         internal int WinDescent => _winDescent;
 
@@ -5610,6 +5623,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         int right = U16(pair + 2);
                         int value = (short)U16(pair + 4);
                         _kerning[(left, right)] = value * _scale;
+                        _kernUnits[(left, right)] = value;
                         pair += 6;
                     }
                 }

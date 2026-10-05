@@ -47,11 +47,178 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return h == 0 ? GdipText.HintClearTypeGridFit : h;
         }
 
-        /// <summary>GpGraphics::DrawString. False where this engine does not draw the string (GDI+'s
-        /// full imager, a transform the fast imager refuses, a brush it cannot fill with): the
-        /// caller draws it its old way.</summary>
+        /// <summary>GpGraphics::DrawString @180010f00's em: the font's size in world units
+        /// (GetScaleForAlternatePageUnit: World and Pixel as they are, the physical units through
+        /// the device's dpi and the page multiplier).</summary>
+        public float EmWorld (float size, GraphicsUnit unit)
+        {
+            GetPageMultipliers (out float mx, out _);
+            switch (unit) {
+            case GraphicsUnit.Point: return size * (DpiY / 72f / mx);
+            case GraphicsUnit.Inch: return size * (DpiY / mx);
+            case GraphicsUnit.Document: return size * (DpiY / 300f / mx);
+            case GraphicsUnit.Millimeter: return size * (DpiY / 25.4f / mx);
+            default: return size;
+            }
+        }
+
+        /// <summary>GpGraphics::DrawString: the fast imager where GDI+ would take it (and the port
+        /// models it), FullTextImager where GDI+ hands the string to it. False where this engine
+        /// does not draw the string: the caller draws it its old way.</summary>
+        public bool DrawString (string s, Font f, Brush brush, RectangleF layout, StringFormat format)
+        {
+            if (string.IsNullOrEmpty (s) || brush == null || !CanFill (brush)) return false;
+            string family = f.FontFamily?.Name;
+            if (string.IsNullOrEmpty (family)) return false;
+            int style = (int) f.Style;
+            GpTextFormat fmt = GpTextFormat.From (format);
+            float emWorld = EmWorld (f.Size, f.Unit);
+            if (!(emWorld > 0f)) return false;
+            TrueTypeFont face = GdipText.Face (family, style & 3);
+            if (face == null) return false;
+            if (!TakesFullImager (s, face, fmt)) {
+                int flags = fmt?.Flags ?? 0;
+                bool typographic = fmt != null && fmt.LeadMargin == 0f;
+                bool hotkey = fmt != null && fmt.Hotkey != 0;
+                GdipText.LastFull = false;
+                if ((style & 12) == 0
+                    && DrawString (s, family, style & 3, f.SizeInPoints, brush, layout, flags, typographic,
+                                   fmt?.Align ?? 0, fmt?.LineAlign ?? 0, hotkey, fmt?.Trimming ?? 1))
+                    return true;
+                if (!GdipText.LastFull) return false;
+            }
+            return DrawStringFull (s, family, style, emWorld, brush, layout, fmt);
+        }
+
+        /// <summary>FastTextImager::Initialize's refusals the port decides here, from GDI+'s own
+        /// tables (the width, black-box and transform refusals are GdiPlusText.Layout's).</summary>
+        bool TakesFullImager (string s, TrueTypeFont face, GpTextFormat fmt)
+        {
+            GpMatrix m = WorldToDevice;
+            if (!(m.M11 > 0f) || m.M12 != 0f || m.M21 != 0f || m.M22 == 0f) return true;
+            if (fmt != null && ((fmt.Flags & 0x40000003) != 0 || fmt.Tabs.Length > 0)) return true;
+            int all = 0;
+            foreach (char c in s) all |= GpTextTables.Flags (c);
+            if ((all & 0x80) != 0) return true;
+            if (fmt != null && fmt.Hotkey != 0) {
+                // RemoveHotkeys: one marker is the fast imager's, a second sends the string on.
+                int first = s.IndexOf ('&');
+                if (first >= 0 && first + 1 < s.Length && s.IndexOf ('&', first + 2) >= 0) return true;
+            }
+            if (fmt == null || (fmt.Flags & GpTextFormat.NoFontFallback) == 0)
+                foreach (char c in s)
+                    if (face.GlyphIndex (c) == 0 && (fmt == null || fmt.Hotkey == 0 || c != '&')) return true;
+            return false;
+        }
+
+        /// <summary>GDI+'s FullTextImager into this surface.</summary>
+        public bool DrawStringFull (string s, string family, int style, float emWorld, Brush brush, RectangleF layout, GpTextFormat fmt)
+        {
+            if (layout.Width < 0f || layout.Height < 0f) return true;
+            var fti = new GpFullTextImager (s, layout.Width, layout.Height, family, style, emWorld, fmt);
+            if (!fti.Valid) return false;
+            fti.Draw (new ScreenTarget (this, brush), layout.Location);
+            return true;
+        }
+
+        /// <summary>The full imager's target on a surface: GpGraphics::DrawPlacedGlyphs into the
+        /// pixels (the realization the surface's hint makes), DrawLines with an aliased pen, the
+        /// layout rectangle into the clip.</summary>
+        sealed class ScreenTarget : IGpTextTarget
+        {
+            readonly GpGraphics _g; readonly Brush _brush;
+            public ScreenTarget (GpGraphics g, Brush brush) { _g = g; _brush = brush; }
+
+            public GpMatrix? WorldToDevice => _g.WorldToDevice;
+
+            public int RealizationMode (TrueTypeFont face, string family, float emDevice, bool square)
+            {
+                int hint = _g.ResolvedTextHint ();
+                int ppem = (int) MathF.Floor (emDevice + 0.5f);
+                if (hint == GdipText.HintClearTypeGridFit
+                    && ((square && face.EmbeddedBitmapCount (ppem) > 100) || string.Equals (family, "Marlett", StringComparison.OrdinalIgnoreCase)))
+                    return 1;
+                if (hint == GdipText.HintAntiAliasGridFit && !face.GaspDoGray (ppem)) return 1;
+                return hint;
+            }
+
+            public void DrawPlacedGlyphs (GpFullTextImager.Run run, int mode, ushort[] glyphs, PointF[] o, string chars, ushort[] map, int flags)
+            {
+                GpTextTrace.ReportPlaced (mode, run.Em, glyphs, o);
+                if (glyphs.Length == 0) return;
+                GpMatrix m = _g.WorldToDevice;
+                float sx = MathF.Sqrt (m.M11 * m.M11 + m.M12 * m.M12), sy = MathF.Sqrt (m.M21 * m.M21 + m.M22 * m.M22);
+                var xs = new float [o.Length]; var ys = new float [o.Length];
+                for (int i = 0; i < o.Length; i++) { xs [i] = o [i].X; ys [i] = o [i].Y; }
+                TrueTypeFont face = run.Face;
+                float em = run.Em;
+                bool sideways = (run.ItemFlags & 0x20) != 0 && (run.ItemFlags & 0x8) == 0;
+                bool upright = (run.ItemFlags & 0x28) == 0x28;
+                GdipText.Levels lv;
+                if (upright && mode == 5) {
+                    // An upright glyph in vertical text: GetGlyphStringVerticalOriginOffsets @180024800,
+                    // ((cell ascent - advance + cell descent) / 2 - cell descent, vertical origin y)
+                    // through the realization, the glyph unturned.
+                    int upem = face.UnitsPerEmForHinting;
+                    float kx = em / upem * m.M11, ky = em / upem * m.M22;
+                    var ub = new NaturalClearType.GlyphBits [glyphs.Length];
+                    for (int i = 0; i < glyphs.Length; i++) {
+                        GdipText.SidewaysMetrics (face, glyphs [i], em, m.M11, m.M22, out int advW, out int voy);
+                        float ox = (face.WinAscent - advW + face.WinDescent) * 0.5f - face.WinDescent;
+                        xs [i] += ox * kx; ys [i] += voy * ky;
+                        ub [i] = GdipText.Glyph (face, glyphs [i], GdipText.AxisPpem (em * m.M11), GdipText.AxisPpem (em * m.M22));
+                    }
+                    lv = GdipText.Compose (ub, xs, ys, 0f, face.GdiContrastPalette);
+                } else if (mode == 5) {
+                    var bits = new NaturalClearType.GlyphBits [glyphs.Length];
+                    int ppA = GdipText.AxisPpem (em * sy), ppX = GdipText.AxisPpem (em * sx);
+                    for (int i = 0; i < bits.Length; i++)
+                        bits [i] = sideways ? GdipText.GlyphSideways (face, glyphs [i], ppA, ppX)
+                                 : sx == sy ? GdipText.Glyph (face, glyphs [i], em * sx)
+                                 : GdipText.Glyph (face, glyphs [i], ppX, GdipText.AxisPpem (em * sy));
+                    lv = GdipText.Compose (bits, xs, ys, 0f, face.GdiContrastPalette);
+                } else if (mode == 3 || mode == 4) {
+                    lv = GdipText.ComposeGrey (face, glyphs, em * sx, xs, ys [0]);
+                } else {
+                    lv = GdipText.ComposeMono (face, glyphs, em * sx, xs, ys [0], gridFit: mode == 1);
+                }
+                if (lv.Width == 0 || lv.Height == 0) return;
+                _g.OutputText (lv, mode == 5 ? 5 : mode, _brush, _g._ctx.TextContrast);
+            }
+
+            public void DrawLine (float devicePenWidth, PointF a, PointF b)
+            {
+                GpTextTrace.ReportLine (devicePenWidth, a, b);
+                var path = new GpPath (new[] { a, b }, new byte[] { 0, 1 }, FillMode.Alternate);
+                var dp = new DpPen { Width = devicePenWidth, Unit = 2, Brush = _brush };
+                SmoothingMode sm = _g._ctx.Smoothing;
+                // SetTextLinesAntialiasMode: aliased lines unless the text is antialiased.
+                int hint = _g.ResolvedTextHint ();
+                _g._ctx.Smoothing = hint == GdipText.HintAntiAlias ? SmoothingMode.AntiAlias : SmoothingMode.None;
+                try { _g.RenderDrawPath (GpStroke.Bounds (path, _g.WorldToDevice, dp, _g.DpiX), path, dp); }
+                finally { _g._ctx.Smoothing = sm; }
+            }
+
+            public object PushClip (RectangleF layout)
+            {
+                var saved = new Box { Clip = _g._ctx.AppClip?.Clone () };
+                _g.CombineClip (layout, CombineMode.Intersect);
+                return saved;
+            }
+
+            public void PopClip (object saved)
+            {
+                _g._ctx.AppClip = ((Box) saved).Clip;
+                _g.UpdateVisibleClip ();
+            }
+
+            sealed class Box { public GpRegion Clip; }
+        }
+
+        /// <summary>The fast imager's DrawString. False where it does not draw the string (see
+        /// <see cref="GdipText.LastFull"/> for whether GDI+ would hand it to the full imager).</summary>
         public bool DrawString (string s, string family, int style, float sizePt, Brush brush, RectangleF layout,
-                                int formatFlags, bool typographic, int align, int lineAlign, bool hotkey)
+                                int formatFlags, bool typographic, int align, int lineAlign, bool hotkey, int trimming = 1)
         {
             if (string.IsNullOrEmpty (s) || brush == null || !CanFill (brush)) return false;
             GpMatrix m = WorldToDevice;
@@ -59,6 +226,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (font == null) return false;
             int hint = ResolvedTextHint ();
             if (s_trace) Console.Error.WriteLine ($"GPTEXT DrawString '{s}' {family} {sizePt}pt m=[{m.M11} {m.M12} {m.M21} {m.M22} {m.Dx} {m.Dy}] hint={hint} flags={formatFlags:x}");
+            // FastTextImager::Initialize +0xd0: the width a string must fit, none for NoWrap without trimming.
+            float ww = (formatFlags & 0x1000) != 0 && trimming == 0 ? 0f : layout.Width;
             // FastTextImager::Initialize: a positive axis scale only (m11 > 0, m12 = m21 = 0,
             // m22 != 0; m22 > 0 modelled). A turned or sheared transform goes the full imager's way.
             bool axisScale = m.M12 == 0f && m.M21 == 0f && m.M11 > 0f && m.M22 > 0f;
@@ -67,14 +236,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (axisScale && !identity)
                 run = GdipText.Layout (font, family, sizePt, s, layout.X, layout.Y, layout.Width, layout.Height,
                                        formatFlags, typographic, align, lineAlign, hotkey, hint,
-                                       DpiY, biLevel: true, sx: m.M11, sy: m.M22);
+                                       DpiY, biLevel: true, sx: m.M11, sy: m.M22, wrapWidth: ww);
             if (!identity) {
                 if (run != null) { DrawRun (font, run, brush, run.HasClip); return true; }
+                if (GdipText.LastFull || !axisScale) { GdipText.LastFull = true; return false; }
                 return DrawTransformed (s, font, family, style, sizePt, brush, layout, formatFlags, typographic, align, lineAlign, hotkey, hint);
             }
             run = GdipText.Layout (font, family, sizePt, s, layout.X, layout.Y, layout.Width, layout.Height,
                                    formatFlags, typographic, align, lineAlign, hotkey, hint,
-                                   DpiY, biLevel: true);
+                                   DpiY, biLevel: true, wrapWidth: ww);
+            if (run == null && GdipText.LastFull) return false;
             if (run == null)
                 return DrawLines (s, font, family, style, sizePt, brush, layout, formatFlags, typographic, align, lineAlign, hotkey, hint);
             DrawRun (font, run, brush, run.HasClip);
@@ -352,6 +523,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             float[] xs = GdipText.GlyphXs (run, run.Sx == 1f ? run.OriginX + m.Dx : m.M11 * run.OriginX + m.Dx);
             float y = run.Sy == 1f ? run.OriginY + m.Dy : m.M22 * run.OriginY + m.Dy;
             if (s_trace) Console.Error.WriteLine ($"GPTEXT mode={run.Mode} y={y} xs={string.Join (",", xs)} g={string.Join (",", run.Glyphs)}");
+            if (GpTextTrace.Placed != null) {
+                var ys = new float [xs.Length];
+                for (int i = 0; i < ys.Length; i++) ys [i] = y;
+                GpTextTrace.ReportPlaced (run.Mode, run.Em, run.Glyphs, xs, ys);
+            }
 
             GdipText.Levels lv;
             switch (run.Mode) {
