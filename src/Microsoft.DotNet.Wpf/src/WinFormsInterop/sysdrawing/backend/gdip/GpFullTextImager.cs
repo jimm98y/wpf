@@ -57,6 +57,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void AddGlyphs (GpFullTextImager.Run run, ushort[] glyphs, ushort[] glyphProps, PointF[] origins) { }
         /// <summary>GdipLscbkDrawUnderline with no device: the line as a rectangle (GpPath::AddRects).</summary>
         void AddRect (RectangleF r) { }
+        /// <summary>FullTextImager::DrawGlyphs' SwitchToPath: the target's realization of the face
+        /// under its transform is drawn as outlines, not glyph bitmaps.</summary>
+        bool DrawsAsPath (TrueTypeFont face, float em, int mode) => false;
+        /// <summary>That path: the glyphs' outlines at their world origins, filled (GpGraphics::FillPath).</summary>
+        void FillGlyphOutlines (GpFullTextImager.Run run, ushort[] glyphs, PointF[] worldOrigins) { }
     }
 
     internal sealed partial class GpFullTextImager

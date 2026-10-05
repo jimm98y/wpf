@@ -210,7 +210,20 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GpMatrix w2d = w2dN.Value;
             float sx = MathF.Sqrt (w2d.M11 * w2d.M11 + w2d.M12 * w2d.M12);
             float sy = MathF.Sqrt (w2d.M21 * w2d.M21 + w2d.M22 * w2d.M22);
-            int mode = target.RealizationMode (run.Face, run.Family, run.Em * sx, sx == sy);
+            // A turn that is not a quarter is never grid-fitted (GpFaceRealization +0xbc / +0xc0),
+            // so it is never drawn from the face's embedded strikes either.
+            float tl = MathF.Max (sx, sy) / 65536f;
+            bool turned = !(MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl) && !(MathF.Abs (w2d.M11) <= tl && MathF.Abs (w2d.M22) <= tl);
+            int mode = target.RealizationMode (run.Face, run.Family, run.Em * sx, sx == sy && !turned);
+            if (turned && !vertical && !run.Rtl && target.DrawsAsPath (run.Face, run.Em, mode)) {
+                // SwitchToPath: no GlyphImager -- a design realization's ideal advances from the
+                // cell (GetGlyphStringIdealAdvanceVector), each glyph's path added there, filled.
+                var gp = new GpGlyphImager ();
+                gp.Path = true;
+                gp.Initialize (this, run, seg, GpMatrix.CreateIdentity (), 2, 0, 0, false, false);
+                target.FillGlyphOutlines (run, gp.Glyphs, gp.Origins (cell, false));
+                return;
+            }
             var gi = new GpGlyphImager ();
             gi.Initialize (this, run, seg, w2d, mode, lead, trail, atStart, atEnd);
             PointF snapped = gi.CellOrigin (cell);

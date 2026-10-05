@@ -547,7 +547,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                                                float m11, float m12, float m21, float m22)
         {
             List<PathFigure> turned = GdiPlusText.TransformedOutline(font, glyphId, em, m11, m12, m21, m22, 0f, 0f);
-            return turned.Count == 0 ? s_empty : Scan(turned, 1, 0);
+            if (turned.Count == 0) return s_empty;
+            // The scaler's ppem: scl_InitializeScaling's param_20, the larger entry of the
+            // matrix's second row (em-scaled 16.16), rounded.
+            long r = (long)Math.Floor(Math.Max(Math.Abs(m21), Math.Abs(m22)) * em * 65536.0 + 0.5);
+            int ppem = (int)((r + 0x8000) >> 16);
+            return Scan(turned, 1, font.DWriteTurnedDropout(ppem, GdiPlusText.NaturalScalerWord));
         }
 
         private static GlyphBits Scan(List<PathFigure> figures, int nSub, int dropout)

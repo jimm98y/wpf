@@ -656,6 +656,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal int WinAscent => _winAscent;
         internal int HeadYMin => _headYMin;
         internal int HeadYMax => _headYMax;
+        internal int HeadXMin => _headXMin;
+        internal int HeadXMax => _headXMax;
 
         /// <summary>OS/2 sTypoAscender / sTypoDescender, post underlinePosition / underlineThickness
         /// (font units), and whether the face carries vertical metrics (vmtx or VORG) -- without
@@ -2370,6 +2372,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>One run of the face's program under DirectWrite's mode word -- the fit behind
         /// <see cref="TryGetDWriteFittedOutline"/> -- or null when there is none.</summary>
+
+        /// <summary>The scan mode (SCANTYPE + 1, or 0 for none) DirectWrite's scaler gives a glyph it
+        /// does not fit under a turned matrix: the prep's SCANCTRL and SCANTYPE at the scaler's
+        /// ppem, where fsg_DoScanControl also honours bit 9 (a rotated matrix, fs__NewTransformation's
+        /// 0x400) and bit 10 (any matrix but a uniform scale, 0x1000) -- both true of a turn.</summary>
+        internal int DWriteTurnedDropout(int ppem, int flags)
+        {
+            TrueTypeInterpreter? interpreter = Interpreter();
+            if (interpreter is null || ppem < 1) return 0;
+            int savedFlags = TrueTypeInterpreter.DWriteFlags;
+            bool savedBi = TrueTypeInterpreter.BiLevelPass, savedSub = SubpixelFitting;
+            try
+            {
+                TrueTypeInterpreter.DWriteFlags = flags;
+                TrueTypeInterpreter.BiLevelPass = false;
+                SubpixelFitting = true;
+                if (!interpreter.PrepareForSize(ppem)) return 0;
+                int ctrl = interpreter.PrepScanControl, type = interpreter.PrepScanType;
+                bool on = ((ctrl & 0x100) != 0 && ((ctrl & 0xFF) == 0xFF || ppem <= (ctrl & 0xFF)))
+                          || (ctrl & 0x200) != 0 || (ctrl & 0x400) != 0;
+                int scan = on ? type : 2;
+                return (scan & 2) != 0 ? 0 : scan + 1;
+            }
+            finally
+            {
+                TrueTypeInterpreter.DWriteFlags = savedFlags;
+                TrueTypeInterpreter.BiLevelPass = savedBi;
+                SubpixelFitting = savedSub;
+            }
+        }
 
         private GlyphProgram? DWriteFit(int glyphId, float pixelsPerEm, int flags, out int dropout)
         {
