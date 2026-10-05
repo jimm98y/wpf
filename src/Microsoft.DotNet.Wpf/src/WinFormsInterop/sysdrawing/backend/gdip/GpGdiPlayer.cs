@@ -549,8 +549,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 case 20: _dc.Rop2 = r.I32(); return;
                 case 21: _dc.StretchMode = r.I32(); return;
                 case 22: _dc.TextAlign = r.I32(); return;
-                case 24: _dc.TextColor = ColorRef(r.I32()); return;
-                case 25: _dc.BkColor = ColorRef(r.I32()); return;
+                case 24: _dc.TextColor = RecordColor(r.I32(), ColorAdjustType.Text); return;
+                case 25: _dc.BkColor = RecordColor(r.I32(), ColorAdjustType.Brush); return;
                 case 26: { int x = r.I32(), y = r.I32(); OffsetClip(x, y); return; }
                 case 27: { int x = r.I32(), y = r.I32(); MoveTo(x, y); return; }
                 case 28: SetMetaRgn(); return;
@@ -706,6 +706,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if ((index & 0x80000000) != 0)
             {
                 int s = (int)(index & 0x7fffffff);
+                if (SelectRecoloredStock(s)) return;
                 if (s <= 5) { _dc.Brush = StockBrush(s); return; }
                 if (s == 18) { _dc.Brush = StockBrush(0); return; }
                 if (s >= 6 && s <= 8) { _dc.Pen = StockPen(s); return; }
@@ -744,7 +745,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (GdipCosmetic(wx)) { style = style is >= 0 and <= 4 or 8 ? style : 0; wx = 1; }
                 else style = (style is >= 0 and <= 4 or 6 ? style : 0) | 0x10000;
             }
-            Put(idx, new GdiPen { Style = style, Width = wx, Color = ColorRef(color), Old = !(Gdi && !_wmfCanvas) });
+            Color pc = style != 5 ? RecordColor(color, ColorAdjustType.Pen) : ColorRef(color);
+            Put(idx, new GdiPen { Style = style, Width = wx, Color = pc, Old = !(Gdi && !_wmfCanvas) });
         }
 
         void ExtCreatePen(GpReader r, byte[] b, int o)
@@ -767,9 +769,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (style == 6) style = 0;
                 width = 1;
             }
-            var pen = new GdiPen { Style = style, Width = width, Color = ColorRef(color), BrushStyle = brushStyle, Dashes = dashes };
+            Color ec = brushStyle == 0 || brushStyle == 2 ? RecordColor(color, ColorAdjustType.Pen) : ColorRef(color);
+            var pen = new GdiPen { Style = style, Width = width, Color = ec, BrushStyle = brushStyle, Dashes = dashes };
             if (brushStyle == 1) pen.Style = (style & ~0xf) | 5;
-            if (brushStyle == 2) pen.PatternBrush = new HatchBrush(HatchStyle.Cross, ColorRef(color), Color.Transparent);
+            if (brushStyle == 2) pen.PatternBrush = new HatchBrush(HatchStyle.Cross, ec, Color.Transparent);
             if ((brushStyle == 3 || brushStyle == 5) && cbBmi > 0)
             {
                 Bitmap bm = Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits);
@@ -782,15 +785,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             uint idx = r.U32();
             int style = r.I32(), color = r.I32(), hatch = r.I32();
-            Put(idx, new GdiBrush { Style = style == 2 ? 2 : style == 1 ? 1 : 0, Color = ColorRef(color), Hatch = hatch });
+            Color bc = style != 1 ? RecordColor(color, ColorAdjustType.Brush) : ColorRef(color);
+            Put(idx, new GdiBrush { Style = style == 2 ? 2 : style == 1 ? 1 : 0, Color = bc, Hatch = hatch });
         }
 
         void CreateDibBrush(GpReader r, byte[] b, int o, bool mono)
         {
             uint idx = r.U32();
-            r.I32();
+            int usage = r.I32();
             int offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
-            Bitmap bm = Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits);
+            // EmfEnumState::CreateDibPatternBrushPt @1800b41b8 rewrites the pattern (as a SRCCOPY);
+            // a monochrome brush (EMR_CREATEMONOBRUSH) plays as it is.
+            if (mono || !ModifiedDib(b, o - 8, offBmi, cbBmi, offBits, cbBits, usage, 0x00cc0020, false, out Bitmap bm, out _, out _))
+                bm = Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits);
             bool oneBit = cbBmi >= 16 && o - 8 + offBmi + 15 < b.Length && Le.U16(b, o - 8 + offBmi + 14) == 1;
             Put(idx, new GdiBrush { Style = 3, Pattern = bm, Mono = mono, OneBit = oneBit });
         }
@@ -1735,10 +1742,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
             r.Rect();
             int xd = r.I32(), yd = r.I32(), cx = r.I32(), cy = r.I32(), rop = r.I32();
             int xs = r.I32(), ys = r.I32();
-            r.Matrix6(); r.I32(); r.I32();
-            int offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
-            Bitmap bm = cbBmi > 0 ? Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits) : null;
-            _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
+            r.Matrix6(); r.I32();
+            int usage = r.I32(), offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
+            Bitmap bm;
+            if (cbBmi > 0 && ModifiedDib(b, o - 8, offBmi, cbBmi, offBits, cbBits, usage, rop, true, out bm, out bool drop, out _srcBpp))
+            {
+                if (drop) return;
+            }
+            else
+            {
+                bm = cbBmi > 0 ? Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits) : null;
+                _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
+            }
             _dibBlit = bm != null;      // EmfEnumState::BitBlt @1800b3d00 plays a bitmap through MfEnumState::OutputDIB
             try { Blit(bm, xd, yd, cx, cy, new RectangleF(xs, ys, cx, cy), rop); } finally { _dibBlit = false; }
             bm?.Dispose();
@@ -1749,11 +1764,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
             r.Rect();
             int xd = r.I32(), yd = r.I32(), cx = r.I32(), cy = r.I32(), rop = r.I32();
             int xs = r.I32(), ys = r.I32();
-            r.Matrix6(); r.I32(); r.I32();
-            int offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
+            r.Matrix6(); r.I32();
+            int usage = r.I32(), offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
             int cxs = r.I32(), cys = r.I32();
-            Bitmap bm = cbBmi > 0 ? Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits) : null;
-            _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
+            Bitmap bm;
+            if (cbBmi > 0 && ModifiedDib(b, o - 8, offBmi, cbBmi, offBits, cbBits, usage, rop, true, out bm, out bool drop, out _srcBpp))
+            {
+                if (drop) return;
+            }
+            else
+            {
+                bm = cbBmi > 0 ? Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits) : null;
+                _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
+            }
             _dibBlit = bm != null;      // EmfEnumState::StretchBlt @1800b57f0 likewise
             try { Blit(bm, xd, yd, cx, cy, new RectangleF(xs, ys, cxs, cys), rop); } finally { _dibBlit = false; }
             bm?.Dispose();
@@ -1769,10 +1792,20 @@ namespace System.Drawing.WebGpuBackend.Gdip
             r.Rect();
             int xd = r.I32(), yd = r.I32(), xs = r.I32(), ys = r.I32(), cxs = r.I32(), cys = r.I32();
             int offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
-            r.I32();
+            int usage = r.I32();
             int rop = r.I32(), cxd = r.I32(), cyd = r.I32();
-            Bitmap bm = Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits);
-            _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
+            Bitmap bm;
+            // EmfEnumState::StretchDIBits @1800b5b78: a DIB the ROP reads is rewritten for a recolouring playback.
+            if ((((rop ^ rop << 2) & unchecked((int)0xcccc0000)) != 0) && cbBits != 0
+                && ModifiedDib(b, o - 8, offBmi, cbBmi, offBits, cbBits, usage, rop, true, out bm, out bool drop, out _srcBpp))
+            {
+                if (drop) return;
+            }
+            else
+            {
+                bm = Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits);
+                _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
+            }
             _dibBlit = true;
             try
             {

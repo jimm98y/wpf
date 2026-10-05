@@ -315,6 +315,21 @@ namespace System.Drawing.Drawing2D {
 			}
 		}
 
+		/// <summary>GpRectGradient::ColorAdjust @18006d500: the end colours, and the preset colours
+		/// when there are two or more, through the recolor object.</summary>
+		internal void ColorAdjust (System.Drawing.WebGpuBackend.Gdip.GpRecolorObject o)
+		{
+			var c = new uint [] { (uint) _c1.ToArgb (), (uint) _c2.ToArgb () };
+			o.ColorAdjust (c, 0, 2);
+			_c1 = Color.FromArgb ((int) c [0]); _c2 = Color.FromArgb ((int) c [1]);
+			if (_preset && _count > 1 && _presetArgb != null) {
+				var p = new uint [_count];
+				for (int i = 0; i < _count; i++) p [i] = (uint) _presetArgb [i];
+				o.ColorAdjust (p, 0, _count);
+				for (int i = 0; i < _count; i++) _presetArgb [i] = (int) p [i];
+			}
+		}
+
 		public Color [] LinearColors {
 			get { return new Color [] { Color.FromArgb (_c1.ToArgb ()), Color.FromArgb (_c2.ToArgb ()) }; }
 			set {

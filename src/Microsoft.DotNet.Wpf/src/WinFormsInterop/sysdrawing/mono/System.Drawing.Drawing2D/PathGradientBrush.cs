@@ -283,6 +283,29 @@ namespace System.Drawing.Drawing2D {
 			_presetArgb = null;
 		}
 
+		/// <summary>GpPathGradient::ColorAdjust @18006d350: the surround colours (one when they are
+		/// all one), the centre colour and the preset colours when there are two or more.</summary>
+		internal void ColorAdjust (System.Drawing.WebGpuBackend.Gdip.GpRecolorObject o)
+		{
+			if (_surround != null && _n > 0) {
+				int n = _oneSurround ? 1 : _n;
+				var s = new uint [n];
+				for (int i = 0; i < n; i++) s [i] = (uint) _surround [i];
+				o.ColorAdjust (s, 0, n);
+				if (_oneSurround) for (int i = 0; i < _surround.Length; i++) _surround [i] = (int) s [0];
+				else for (int i = 0; i < n; i++) _surround [i] = (int) s [i];
+			}
+			var c = new uint [] { (uint) _centerArgb };
+			o.ColorAdjust (c, 0, 1);
+			_centerArgb = (int) c [0];
+			if (_preset && _count > 1 && _presetArgb != null) {
+				var p = new uint [_count];
+				for (int i = 0; i < _count; i++) p [i] = (uint) _presetArgb [i];
+				o.ColorAdjust (p, 0, _count);
+				for (int i = 0; i < _count; i++) _presetArgb [i] = (int) p [i];
+			}
+		}
+
 		public Color CenterColor {
 			get { return Color.FromArgb (_centerArgb); }
 			set { _centerArgb = value.ToArgb (); }

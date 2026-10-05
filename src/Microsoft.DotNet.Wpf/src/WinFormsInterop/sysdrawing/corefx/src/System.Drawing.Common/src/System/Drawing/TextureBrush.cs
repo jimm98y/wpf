@@ -143,7 +143,11 @@ namespace System.Drawing
 
         internal System.Drawing.WebGpuBackend.Gdip.GpMatrix Gp => _m;
 
-        internal Bitmap Tile => _tile;
+        internal Bitmap Tile
+        {
+            get => _tile;
+            set => _tile = value;   // GpTexture::ColorAdjust recolours the image in place
+        }
 
         public override object Clone()
         {
@@ -191,7 +195,6 @@ namespace System.Drawing
                 return (Image)_tile.Clone();
             }
         }
-
         public void ResetTransform()
         {
             _m = System.Drawing.WebGpuBackend.Gdip.GpMatrix.CreateIdentity();
