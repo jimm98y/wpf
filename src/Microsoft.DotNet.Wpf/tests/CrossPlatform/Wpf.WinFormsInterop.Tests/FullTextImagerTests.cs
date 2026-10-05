@@ -230,5 +230,33 @@ namespace Wpf.WinFormsInterop.Tests
             }
             Assert.True(failed == 0, $"{failed} of {n} jobs differ from GDI+'s:\n{bad}");
         }
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern int GetACP();
+
+        /// <summary>The face a LOGFONT realizes to is GDI's mapper's (GpFontMapper), for the '@'
+        /// vertical faces GDI+'s down-level text asks for above all: Fixtures/Text/font_mapper.gdi.txt
+        /// is what win32k answered (the realized face's IFIMETRICS family, the charset) for vertical
+        /// and random requests on the machine the fixture was recorded on.</summary>
+        [Fact]
+        public void Font_mapper_matches_Gdi()
+        {
+            // The answers are the recording machine's: its fonts, link table and ANSI code page.
+            if (!OperatingSystem.IsWindows() || GetACP() != 1250) return;
+            var bad = new StringBuilder();
+            int failed = 0, n = 0;
+            foreach (string line in File.ReadAllLines(Path.Combine(Dir, "font_mapper.gdi.txt"), Encoding.UTF8))
+            {
+                if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
+                n++;
+                string req = line.Substring(0, line.IndexOf(" => ", StringComparison.Ordinal));
+                string[] p = req.Split('|');
+                GpFontMapper.Match m = GpFontMapper.Map(p[0], (byte)I(p[1]), (byte)I(p[2]), I(p[3]), p[4] != "0");
+                string ours = req + " => " + (m == null ? "?" : m.Face.Family + " cs=" + m.Charset);
+                if (ours == line) continue;
+                failed++;
+                if (failed <= 10) bad.Append("  gdi  ").AppendLine(line).Append("  ours ").AppendLine(ours);
+            }
+            Assert.True(failed == 0, $"{failed} of {n} requests map differently from GDI's:\n{bad}");
+        }
     }
 }

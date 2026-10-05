@@ -208,7 +208,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 Height = Le.I16(b, o), Width = Le.I16(b, o + 2), Escapement = Le.I16(b, o + 4), Orientation = Le.I16(b, o + 6),
                 Weight = Le.I16(b, o + 8), Italic = b[o + 10] != 0, Underline = b[o + 11] != 0, StrikeOut = b[o + 12] != 0,
-                CharSet = b[o + 13], Quality = b[o + 16],
+                CharSet = b[o + 13], Quality = b[o + 16], PitchAndFamily = b[o + 17],
             };
             int end = o + 18;
             var sb = new StringBuilder();

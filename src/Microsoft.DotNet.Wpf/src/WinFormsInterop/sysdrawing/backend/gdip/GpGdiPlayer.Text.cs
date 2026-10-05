@@ -48,7 +48,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             GdiFont lf = _dc.Font;
             if (lf == null) return false;
-            GpGdiFont font = GpGdiFont.Get(lf.Face, lf.Height, lf.Escapement, lf.Weight, lf.Italic, lf.Underline, lf.StrikeOut, lf.Quality);
+            GpGdiFont font = GpGdiFont.Get(lf.Face, lf.Height, lf.Escapement, lf.Weight, lf.Italic, lf.Underline, lf.StrikeOut, lf.Quality, lf.CharSet, lf.PitchAndFamily);
             if (font == null) return false;
             GpMat m = LogicalToTarget;
             if (m.M12 != 0f || m.M21 != 0f) return false;

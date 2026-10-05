@@ -1,0 +1,1369 @@
+# GDI's font mapper (CreateFontW + GetOutlineTextMetricsW family, GetTextCharset) on Windows 11 arm64,
+# ANSI code page 1250, OEM 852: name|charset|pitchfamily|weight|italic|height => family cs=charset
+@Times New Roman|0|0|400|0|-16 => @Malgun Gothic cs=0
+@Times New Roman|1|0|400|0|-16 => @Malgun Gothic cs=238
+@Times New Roman|238|0|400|0|-16 => @Malgun Gothic cs=238
+@Times New Roman|204|0|400|0|-16 => @Malgun Gothic cs=204
+@Times New Roman|161|0|400|0|-16 => @Malgun Gothic cs=161
+@Times New Roman|162|0|400|0|-16 => @Malgun Gothic cs=162
+@Times New Roman|177|0|400|0|-16 => @Malgun Gothic cs=177
+@Times New Roman|178|0|400|0|-16 => @Malgun Gothic cs=178
+@Times New Roman|186|0|400|0|-16 => @Malgun Gothic cs=186
+@Times New Roman|163|0|400|0|-16 => @Malgun Gothic cs=163
+@Times New Roman|222|0|400|0|-16 => @MS UI Gothic cs=222
+@Times New Roman|128|0|400|0|-16 => @MS PGothic cs=128
+@Times New Roman|129|0|400|0|-16 => @Malgun Gothic cs=129
+@Times New Roman|134|0|400|0|-16 => @SimSun cs=134
+@Times New Roman|136|0|400|0|-16 => @Malgun Gothic cs=136
+@Times New Roman|2|0|400|0|-16 => @Malgun Gothic cs=0
+@Times New Roman|255|0|400|0|-16 => @MS UI Gothic cs=255
+@Arial|0|0|400|0|-16 => @Malgun Gothic cs=0
+@Arial|1|0|400|0|-16 => @Malgun Gothic cs=238
+@Arial|238|0|400|0|-16 => @Malgun Gothic cs=238
+@Arial|204|0|400|0|-16 => @Malgun Gothic cs=204
+@Arial|161|0|400|0|-16 => @Malgun Gothic cs=161
+@Arial|162|0|400|0|-16 => @Malgun Gothic cs=162
+@Arial|177|0|400|0|-16 => @Malgun Gothic cs=177
+@Arial|178|0|400|0|-16 => @Malgun Gothic cs=178
+@Arial|186|0|400|0|-16 => @Malgun Gothic cs=186
+@Arial|163|0|400|0|-16 => @Malgun Gothic cs=163
+@Arial|222|0|400|0|-16 => @MS UI Gothic cs=222
+@Arial|128|0|400|0|-16 => @MS PGothic cs=128
+@Arial|129|0|400|0|-16 => @Malgun Gothic cs=129
+@Arial|134|0|400|0|-16 => @SimSun cs=134
+@Arial|136|0|400|0|-16 => @Malgun Gothic cs=136
+@Arial|2|0|400|0|-16 => @Malgun Gothic cs=0
+@Arial|255|0|400|0|-16 => @MS UI Gothic cs=255
+@Courier New|0|0|400|0|-16 => @Malgun Gothic cs=0
+@Courier New|1|0|400|0|-16 => @Malgun Gothic cs=238
+@Courier New|238|0|400|0|-16 => @Malgun Gothic cs=238
+@Courier New|204|0|400|0|-16 => @Malgun Gothic cs=204
+@Courier New|161|0|400|0|-16 => @Malgun Gothic cs=161
+@Courier New|162|0|400|0|-16 => @Malgun Gothic cs=162
+@Courier New|177|0|400|0|-16 => @Malgun Gothic cs=177
+@Courier New|178|0|400|0|-16 => @Malgun Gothic cs=178
+@Courier New|186|0|400|0|-16 => @Malgun Gothic cs=186
+@Courier New|163|0|400|0|-16 => @Malgun Gothic cs=163
+@Courier New|222|0|400|0|-16 => @MS UI Gothic cs=222
+@Courier New|128|0|400|0|-16 => @MS PGothic cs=128
+@Courier New|129|0|400|0|-16 => @Malgun Gothic cs=129
+@Courier New|134|0|400|0|-16 => @SimSun cs=134
+@Courier New|136|0|400|0|-16 => @Malgun Gothic cs=136
+@Courier New|2|0|400|0|-16 => @Malgun Gothic cs=0
+@Courier New|255|0|400|0|-16 => @MS UI Gothic cs=255
+@Segoe UI|0|0|400|0|-16 => @Malgun Gothic cs=0
+@Segoe UI|1|0|400|0|-16 => @Malgun Gothic cs=238
+@Segoe UI|238|0|400|0|-16 => @Malgun Gothic cs=238
+@Segoe UI|204|0|400|0|-16 => @Malgun Gothic cs=204
+@Segoe UI|161|0|400|0|-16 => @Malgun Gothic cs=161
+@Segoe UI|162|0|400|0|-16 => @Malgun Gothic cs=162
+@Segoe UI|177|0|400|0|-16 => @Malgun Gothic cs=177
+@Segoe UI|178|0|400|0|-16 => @Malgun Gothic cs=178
+@Segoe UI|186|0|400|0|-16 => @Malgun Gothic cs=186
+@Segoe UI|163|0|400|0|-16 => @Malgun Gothic cs=163
+@Segoe UI|222|0|400|0|-16 => @MS UI Gothic cs=222
+@Segoe UI|128|0|400|0|-16 => @MS PGothic cs=128
+@Segoe UI|129|0|400|0|-16 => @Malgun Gothic cs=129
+@Segoe UI|134|0|400|0|-16 => @SimSun cs=134
+@Segoe UI|136|0|400|0|-16 => @Malgun Gothic cs=136
+@Segoe UI|2|0|400|0|-16 => @Malgun Gothic cs=0
+@Segoe UI|255|0|400|0|-16 => @MS UI Gothic cs=255
+@Nonexistent|0|0|400|0|-16 => @Malgun Gothic cs=0
+@Nonexistent|1|0|400|0|-16 => @Malgun Gothic cs=238
+@Nonexistent|238|0|400|0|-16 => @Malgun Gothic cs=238
+@Nonexistent|204|0|400|0|-16 => @Malgun Gothic cs=204
+@Nonexistent|161|0|400|0|-16 => @Malgun Gothic cs=161
+@Nonexistent|162|0|400|0|-16 => @Malgun Gothic cs=162
+@Nonexistent|177|0|400|0|-16 => @Malgun Gothic cs=177
+@Nonexistent|178|0|400|0|-16 => @Malgun Gothic cs=178
+@Nonexistent|186|0|400|0|-16 => @Malgun Gothic cs=186
+@Nonexistent|163|0|400|0|-16 => @Malgun Gothic cs=163
+@Nonexistent|222|0|400|0|-16 => @MS UI Gothic cs=222
+@Nonexistent|128|0|400|0|-16 => @MS PGothic cs=128
+@Nonexistent|129|0|400|0|-16 => @Malgun Gothic cs=129
+@Nonexistent|134|0|400|0|-16 => @SimSun cs=134
+@Nonexistent|136|0|400|0|-16 => @Malgun Gothic cs=136
+@Nonexistent|2|0|400|0|-16 => @Malgun Gothic cs=0
+@Nonexistent|255|0|400|0|-16 => @MS UI Gothic cs=255
+@Wingdings|0|0|400|0|-16 => @Malgun Gothic cs=0
+@Wingdings|1|0|400|0|-16 => @Malgun Gothic cs=238
+@Wingdings|238|0|400|0|-16 => @Malgun Gothic cs=238
+@Wingdings|204|0|400|0|-16 => @Malgun Gothic cs=204
+@Wingdings|161|0|400|0|-16 => @Malgun Gothic cs=161
+@Wingdings|162|0|400|0|-16 => @Malgun Gothic cs=162
+@Wingdings|177|0|400|0|-16 => @Malgun Gothic cs=177
+@Wingdings|178|0|400|0|-16 => @Malgun Gothic cs=178
+@Wingdings|186|0|400|0|-16 => @Malgun Gothic cs=186
+@Wingdings|163|0|400|0|-16 => @Malgun Gothic cs=163
+@Wingdings|222|0|400|0|-16 => @MS UI Gothic cs=222
+@Wingdings|128|0|400|0|-16 => @MS PGothic cs=128
+@Wingdings|129|0|400|0|-16 => @Malgun Gothic cs=129
+@Wingdings|134|0|400|0|-16 => @SimSun cs=134
+@Wingdings|136|0|400|0|-16 => @Malgun Gothic cs=136
+@Wingdings|2|0|400|0|-16 => @Malgun Gothic cs=0
+@Wingdings|255|0|400|0|-16 => @MS UI Gothic cs=255
+@Times New Roman|238|1|400|0|-16 => @MS Gothic cs=238
+@Times New Roman|0|1|400|0|-16 => @MS Gothic cs=0
+@Times New Roman|204|1|400|0|-16 => @MS Gothic cs=204
+@Times New Roman|238|2|400|0|-16 => @Malgun Gothic cs=238
+@Times New Roman|0|2|400|0|-16 => @Malgun Gothic cs=0
+@Times New Roman|204|2|400|0|-16 => @Malgun Gothic cs=204
+@Times New Roman|238|17|400|0|-16 => @MS Gothic cs=238
+@Times New Roman|0|17|400|0|-16 => @MS Gothic cs=0
+@Times New Roman|204|17|400|0|-16 => @MS Gothic cs=204
+@Times New Roman|238|18|400|0|-16 => @MingLiU-ExtB cs=238
+@Times New Roman|0|18|400|0|-16 => @MingLiU-ExtB cs=0
+@Times New Roman|204|18|400|0|-16 => @MingLiU-ExtB cs=204
+@Times New Roman|238|33|400|0|-16 => @MS Gothic cs=238
+@Times New Roman|0|33|400|0|-16 => @MS Gothic cs=0
+@Times New Roman|204|33|400|0|-16 => @MS Gothic cs=204
+@Times New Roman|238|34|400|0|-16 => @Malgun Gothic cs=238
+@Times New Roman|0|34|400|0|-16 => @Malgun Gothic cs=0
+@Times New Roman|204|34|400|0|-16 => @Malgun Gothic cs=204
+@Times New Roman|238|49|400|0|-16 => @MS Gothic cs=238
+@Times New Roman|0|49|400|0|-16 => @MS Gothic cs=0
+@Times New Roman|204|49|400|0|-16 => @MS Gothic cs=204
+@Times New Roman|238|50|400|0|-16 => @MS Gothic cs=238
+@Times New Roman|0|50|400|0|-16 => @MS Gothic cs=0
+@Times New Roman|204|50|400|0|-16 => @MS Gothic cs=204
+@Times New Roman|238|65|400|0|-16 => @MS Gothic cs=238
+@Times New Roman|0|65|400|0|-16 => @MS Gothic cs=0
+@Times New Roman|204|65|400|0|-16 => @MS Gothic cs=204
+@Times New Roman|238|81|400|0|-16 => @MS Gothic cs=238
+@Times New Roman|0|81|400|0|-16 => @MS Gothic cs=0
+@Times New Roman|204|81|400|0|-16 => @MS Gothic cs=204
+@Times New Roman|238|0|100|0|-16 => @Microsoft JhengHei UI Light cs=238
+@Times New Roman|238|0|100|1|-16 => @Microsoft JhengHei UI Light cs=238
+@Times New Roman|238|0|700|0|-16 => @Malgun Gothic cs=238
+@Times New Roman|238|0|700|1|-16 => @Malgun Gothic cs=238
+@Times New Roman|238|0|900|0|-16 => @Malgun Gothic cs=238
+@Times New Roman|238|0|900|1|-16 => @Malgun Gothic cs=238
+Arial Black|255|82|100|0|-16 => Arial Black cs=255
+Symbol|128|34|500|0|-16 => Symbol cs=2
+Segoe Print|0|32|0|0|-16 => Segoe Print cs=0
+Script|128|0|700|0|-16 => MS PGothic cs=128
+Times New Roman|129|34|700|0|-16 => Gadugi cs=129
+Microsoft JhengHei UI|136|48|700|1|-16 => Microsoft JhengHei UI cs=136
+@Malgun Gothic Semilight|238|1|500|0|-16 => @Malgun Gothic Semilight cs=238
+Meiryo|238|49|300|0|-16 => Courier New cs=238
+Leelawadee|222|0|900|0|-16 => Leelawadee cs=222
+Small Fonts|178|64|400|0|-16 => Ebrima cs=178
+Yu Gothic UI|0|1|0|0|-16 => Yu Gothic UI cs=0
+@Yu Gothic|178|34|400|1|-16 => @Malgun Gothic cs=178
+Segoe UI Symbol|161|66|300|0|-16 => Segoe Script cs=161
+SimSun|255|48|500|1|-16 => Courier New cs=255
+Lucida Console|129|2|900|0|-16 => Segoe UI Semibold cs=129
+MS Shell Dlg 2|1|0|300|0|-16 => Tahoma cs=238
+Wingdings|161|1|700|1|-16 => Consolas cs=161
+Segoe Print|2|49|700|0|-16 => Marlett cs=2
+Arial Bold|2|16|100|1|-16 => Symbol cs=2
+Verdana|1|64|0|0|-16 => Verdana cs=238
+MS Shell Dlg 2|129|1|700|0|-16 => Tahoma cs=129
+Leelawadee|204|16|100|0|-16 => Leelawadee cs=204
+Sitka Text|163|0|400|0|-16 => Sitka Text cs=163
+Small Fonts|134|18|400|0|-16 => MingLiU-ExtB cs=134
+Sitka Text|162|0|700|1|-16 => Sitka Text cs=162
+@MS UI Gothic|136|34|600|1|-16 => @MS UI Gothic cs=136
+Courier|134|32|0|0|-16 => SimSun cs=134
+Times|222|48|400|0|-16 => SimSun-ExtB cs=222
+Nirmala UI|1|82|100|1|-16 => Nirmala UI cs=238
+System|136|66|100|0|-16 => Segoe UI Variable Small Light cs=136
+Yu Gothic UI|177|0|400|0|-16 => Yu Gothic UI cs=177
+@Arial|178|80|100|1|-16 => @SimSun cs=178
+Nonexistent|1|49|0|1|-16 => Courier New cs=238
+MingLiU|163|34|0|1|-16 => Arial cs=163
+Tms Rmn|204|66|400|1|-16 => Segoe Script cs=204
+Lucida Console|1|16|100|1|-16 => Lucida Console cs=238
+@Malgun Gothic Semilight|163|32|700|1|-16 => @Malgun Gothic Semilight cs=163
+Arial Black|2|80|600|0|-16 => Wingdings cs=2
+MS Shell Dlg 2|1|64|700|0|-16 => Tahoma cs=238
+Calibri|1|32|700|1|-16 => Calibri cs=238
+Roman|129|32|400|0|-16 => Gadugi cs=129
+MingLiU|177|0|900|0|-16 => Arial cs=177
+Yu Gothic UI|1|1|0|0|-16 => Yu Gothic UI cs=238
+Microsoft YaHei|177|16|900|0|-16 => Microsoft YaHei cs=177
+Meiryo|163|18|700|1|-16 => Times New Roman cs=163
+Segoe UI Light|238|0|600|1|-16 => Segoe UI Light cs=238
+Times New Roman Bold|162|66|300|0|-16 => Segoe Script cs=162
+Times New Roman CYR|1|18|400|0|-16 => Times New Roman cs=238
+@Arial|162|18|400|0|-16 => @MingLiU-ExtB cs=162
+Small Fonts|163|64|900|0|-16 => Ink Free cs=163
+Georgia|161|32|700|0|-16 => Georgia cs=161
+@Nonexistent|1|82|400|1|-16 => @SimSun cs=238
+Georgia|161|80|900|1|-16 => Georgia cs=161
+Tms Rmn|2|1|300|0|-16 => Symbol cs=2
+Nonexistent|1|2|300|0|-16 => Arial cs=238
+Gadugi|1|64|400|1|-16 => Gadugi cs=238
+Courier|177|0|900|0|-16 => Arial cs=177
+Tahoma|134|18|300|0|-16 => Tahoma cs=134
+Arial Narrow|178|2|400|0|-16 => Arial cs=178
+Segoe UI Symbol|136|32|400|0|-16 => Gadugi cs=136
+Terminal|204|1|400|0|-16 => Consolas cs=204
+Gulim|255|66|600|1|-16 => Monotype Corsiva cs=255
+Helv|255|0|900|0|-16 => Arial cs=255
+Wingdings|136|80|300|1|-16 => Segoe UI Variable Small Light cs=136
+Symbol|161|16|400|0|-16 => Symbol cs=2
+Cambria|161|34|300|0|-16 => Cambria cs=161
+Yu Gothic UI|136|34|0|0|-16 => Yu Gothic UI cs=136
+@Arial|136|34|400|0|-16 => @Malgun Gothic cs=136
+Georgia|1|49|300|0|-16 => Georgia cs=238
+MS Shell Dlg|0|64|0|0|-16 => Microsoft Sans Serif cs=0
+Arial Black|222|34|400|1|-16 => Segoe UI cs=222
+Symbol|238|16|300|0|-16 => Symbol cs=2
+@Malgun Gothic Semilight|2|0|400|1|-16 => @Malgun Gothic Semilight cs=0
+Courier New|204|80|400|0|-16 => Courier New cs=204
+Meiryo|177|66|400|0|-16 => Ebrima cs=177
+Sitka Text|162|16|900|0|-16 => Sitka Text cs=162
+Nirmala UI|204|16|600|1|-16 => Nirmala UI cs=204
+@Microsoft YaHei UI|1|2|0|0|-16 => @Microsoft YaHei UI cs=238
+@Nonexistent|134|18|300|1|-16 => @MingLiU-ExtB cs=134
+Courier New CE|238|48|600|1|-16 => Courier New cs=238
+Arial CE|163|16|300|0|-16 => Times New Roman cs=163
+@MingLiU|186|0|300|0|-16 => @Malgun Gothic Semilight cs=186
+Webdings|2|16|600|1|-16 => Webdings cs=2
+Nirmala UI|0|2|700|1|-16 => Nirmala UI cs=0
+@MS UI Gothic|222|1|500|0|-16 => @MS UI Gothic cs=222
+Segoe UI Light|128|34|0|0|-16 => Segoe UI Light cs=128
+@Arial|162|80|400|0|-16 => @SimSun cs=162
+Batang|128|49|700|0|-16 => MS Gothic cs=128
+Meiryo|2|82|400|0|-16 => Wingdings cs=2
+Webdings|177|2|400|0|-16 => Arial cs=177
+System|162|16|400|1|-16 => Times New Roman cs=162
+MS Shell Dlg|163|49|100|0|-16 => Microsoft Sans Serif cs=163
+Fixedsys|162|82|400|1|-16 => Gabriola cs=162
+Gadugi|1|66|700|0|-16 => Gadugi cs=238
+SimSun|238|0|700|0|-16 => SimSun cs=238
+MS Gothic|238|0|700|1|-16 => MS Gothic cs=238
+Wingdings|255|0|700|1|-16 => Arial cs=255
+Fixedsys|186|16|700|1|-16 => Times New Roman cs=186
+@MS UI Gothic|1|0|400|0|-16 => @MS UI Gothic cs=238
+@MS UI Gothic|222|82|600|1|-16 => @MS UI Gothic cs=222
+Arial Bold|177|82|500|0|-16 => Segoe UI Variable Small Light cs=177
+Times New Roman CYR|162|2|700|0|-16 => Arial cs=162
+Nonexistent|163|18|700|0|-16 => Times New Roman cs=163
+Marlett|238|48|400|0|-16 => Courier New cs=238
+Arial Greek|162|18|100|0|-16 => Times New Roman cs=162
+ＭＳ ゴシック|136|82|600|0|-16 => MS Gothic cs=136
+Courier New CE|1|48|300|0|-16 => Courier New cs=238
+Terminal|162|48|100|0|-16 => Courier New cs=162
+SimSun|1|1|400|0|-16 => SimSun cs=238
+@MingLiU|177|1|400|0|-16 => @SimSun-ExtB cs=177
+@Yu Gothic|136|0|300|0|-16 => @Malgun Gothic Semilight cs=136
+MingLiU|178|64|100|0|-16 => Ebrima cs=178
+Bahnschrift|129|0|600|1|-16 => Segoe UI Semibold cs=129
+MingLiU|162|0|700|1|-16 => Arial cs=162
+MS Shell Dlg|1|82|400|0|-16 => Microsoft Sans Serif cs=238
+@SimSun|162|48|700|1|-16 => @SimSun cs=162
+Segoe UI Symbol|162|80|700|0|-16 => Gabriola cs=162
+Gadugi|162|18|100|0|-16 => Gadugi cs=162
+Tms Rmn|162|0|300|0|-16 => Times New Roman cs=162
+Cambria|162|2|400|0|-16 => Cambria cs=162
+Arial CE|1|0|700|1|-16 => Arial cs=238
+ＭＳ ゴシック|255|66|600|0|-16 => MS Gothic cs=255
+Microsoft YaHei|128|49|700|0|-16 => Microsoft YaHei cs=128
+Helv|163|82|400|0|-16 => Ebrima cs=163
+@SimSun|129|18|600|0|-16 => @SimSun cs=129
+Microsoft JhengHei UI|222|34|400|0|-16 => Leelawadee UI cs=222
+Microsoft Sans Serif|2|48|0|0|-16 => Wingdings cs=2
+Segoe UI|178|18|900|1|-16 => Segoe UI cs=178
+@Malgun Gothic Semilight|255|0|700|0|-16 => @Malgun Gothic Semilight cs=255
+Microsoft YaHei|162|32|400|1|-16 => Microsoft YaHei cs=162
+Symbol|177|0|600|0|-16 => Symbol cs=2
+ＭＳ ゴシック|177|34|500|1|-16 => Arial cs=177
+Gadugi|222|0|400|0|-16 => Leelawadee UI cs=222
+Calibri|186|48|300|0|-16 => Calibri cs=186
+Times New Roman|177|32|600|0|-16 => Times New Roman cs=177
+Webdings|255|18|400|0|-16 => Times New Roman cs=255
+Arial Narrow|186|0|700|0|-16 => Arial Narrow cs=186
+@Arial|162|16|600|1|-16 => @MingLiU-ExtB cs=162
+Segoe Print|177|82|700|0|-16 => Ebrima cs=177
+Impact|2|0|700|1|-16 => Wingdings cs=2
+Malgun Gothic|255|34|300|0|-16 => Arial cs=255
+Arial Black|162|49|900|0|-16 => Arial Black cs=162
+Arial Bold|129|16|300|0|-16 => MingLiU-ExtB cs=129
+@MS UI Gothic|129|1|100|0|-16 => @MS UI Gothic cs=129
+@MingLiU|1|0|300|1|-16 => @Malgun Gothic Semilight cs=238
+Segoe UI Light|134|66|900|0|-16 => Segoe UI Light cs=134
+Nonexistent|204|0|700|0|-16 => Arial cs=204
+MingLiU|1|66|900|1|-16 => Segoe Script cs=238
+MS Shell Dlg 2|0|2|700|0|-16 => Tahoma cs=0
+Meiryo|186|32|400|1|-16 => Arial cs=186
+System|162|49|700|1|-16 => Courier New cs=162
+|186|0|700|0|-16 => Arial cs=186
+MS Shell Dlg 2|1|34|700|0|-16 => Tahoma cs=238
+@MingLiU|178|2|700|0|-16 => @Malgun Gothic cs=178
+Times New Roman Bold|1|80|0|0|-16 => Gabriola cs=238
+Arial|204|2|400|1|-16 => Arial cs=204
+Marlett|177|49|500|1|-16 => Courier New cs=177
+System|129|49|400|0|-16 => MS Gothic cs=129
+Arial Black|1|18|500|0|-16 => Arial Black cs=238
+Gadugi|255|66|300|1|-16 => Monotype Corsiva cs=255
+Arial Bold|134|82|300|0|-16 => SimSun cs=134
+Calibri|128|0|600|0|-16 => MS PGothic cs=128
+Segoe UI|222|32|700|0|-16 => Segoe UI cs=222
+SimSun|1|16|600|1|-16 => SimSun cs=238
+Consolas|204|0|700|0|-16 => Consolas cs=204
+Cambria|2|0|0|0|-16 => Wingdings cs=2
+Times New Roman Bold|129|18|0|1|-16 => MingLiU-ExtB cs=129
+Georgia|222|34|700|0|-16 => Leelawadee UI cs=222
+Script|2|80|700|0|-16 => Wingdings cs=2
+Ebrima|204|34|900|0|-16 => Ebrima cs=204
+Arial Greek|2|49|300|0|-16 => Wingdings cs=2
+Roman|0|34|400|0|-16 => Arial cs=0
+Georgia|186|82|900|0|-16 => Georgia cs=186
+Impact|204|2|400|1|-16 => Impact cs=204
+Microsoft JhengHei UI|177|34|500|0|-16 => Microsoft JhengHei UI cs=177
+Times New Roman Bold|255|2|600|0|-16 => Arial cs=255
+MS Gothic|204|0|400|0|-16 => MS Gothic cs=204
+Wingdings|177|0|300|0|-16 => Arial cs=177
+System|186|34|900|0|-16 => Arial cs=186
+Wingdings|162|80|400|0|-16 => Gabriola cs=162
+Malgun Gothic|238|16|500|0|-16 => Malgun Gothic cs=238
+Helv|162|16|500|0|-16 => Times New Roman cs=162
+Consolas|163|49|700|1|-16 => Consolas cs=163
+MS Shell Dlg|238|0|0|0|-16 => Microsoft Sans Serif cs=238
+Sitka Text|2|1|500|0|-16 => Marlett cs=2
+Small Fonts|204|80|400|0|-16 => Gabriola cs=204
+Courier New CE|2|48|700|0|-16 => Marlett cs=2
+Helv|255|82|900|0|-16 => Segoe Print cs=255
+MS Shell Dlg|161|0|900|0|-16 => Microsoft Sans Serif cs=161
+Bahnschrift|134|0|400|0|-16 => SimSun cs=134
+Wingdings|1|2|500|0|-16 => Wingdings cs=2
+Cambria|128|34|700|0|-16 => MS PGothic cs=128
+Times New Roman|255|2|100|0|-16 => Times New Roman cs=255
+Microsoft YaHei|1|18|900|0|-16 => Microsoft YaHei cs=238
+Segoe UI Light|178|48|400|0|-16 => Segoe UI Light cs=178
+Malgun Gothic|1|2|0|1|-16 => Malgun Gothic cs=238
+Consolas|134|18|400|0|-16 => MingLiU-ExtB cs=134
+System|134|0|500|0|-16 => SimSun cs=134
+Arial Bold|1|48|600|1|-16 => Courier New cs=238
+Times New Roman CYR|163|66|400|1|-16 => Ink Free cs=163
+@Arial|0|16|0|0|-16 => @MingLiU-ExtB cs=0
+MingLiU|136|48|400|0|-16 => MS Gothic cs=136
+Lucida Console|163|66|400|0|-16 => Ink Free cs=163
+Marlett|178|18|700|0|-16 => Times New Roman cs=178
+Tms Rmn|177|0|700|0|-16 => Times New Roman cs=177
+@Malgun Gothic Semilight|162|1|400|0|-16 => @Malgun Gothic Semilight cs=162
+Segoe UI Symbol|222|80|700|0|-16 => Segoe UI Variable Small cs=222
+Times New Roman CYR|2|80|0|0|-16 => Wingdings cs=2
+Bahnschrift|163|34|500|1|-16 => Bahnschrift cs=163
+Bahnschrift|222|0|0|0|-16 => Leelawadee UI cs=222
+Courier New|186|0|300|1|-16 => Courier New cs=186
+@Nonexistent|1|18|400|0|-16 => @MingLiU-ExtB cs=238
+Meiryo|134|34|600|0|-16 => SimSun cs=134
+Microsoft Sans Serif|1|2|100|0|-16 => Microsoft Sans Serif cs=238
+Meiryo|136|34|400|0|-16 => Gadugi cs=136
+MingLiU|1|0|900|1|-16 => Arial cs=238
+Modern|222|49|0|0|-16 => SimSun-ExtB cs=222
+Comic Sans MS|129|0|400|0|-16 => Ebrima cs=129
+Fixedsys|255|66|400|1|-16 => Monotype Corsiva cs=255
+Calibri|136|18|0|0|-16 => MingLiU-ExtB cs=136
+Arial Narrow|204|18|400|0|-16 => Arial Narrow cs=204
+Verdana|136|32|700|0|-16 => Gadugi cs=136
+Marlett|1|0|300|1|-16 => Marlett cs=2
+Small Fonts|163|49|500|1|-16 => Courier New cs=163
+Gadugi|177|0|900|0|-16 => Gadugi cs=177
+@Yu Gothic|186|64|300|0|-16 => @Yu Gothic cs=186
+Microsoft Sans Serif|129|0|400|1|-16 => Microsoft Sans Serif cs=129
+Tms Rmn|204|1|400|0|-16 => Consolas cs=204
+Microsoft Sans Serif|129|0|700|0|-16 => Microsoft Sans Serif cs=129
+Consolas|178|34|400|1|-16 => Arial cs=178
+SimSun|1|2|400|1|-16 => SimSun cs=238
+SimSun|178|0|600|0|-16 => SimSun cs=178
+@Meiryo|1|82|900|0|-16 => @SimSun cs=238
+Segoe UI|1|66|500|0|-16 => Segoe UI cs=238
+Nirmala UI|1|82|500|0|-16 => Nirmala UI cs=238
+Segoe UI Symbol|178|64|400|0|-16 => Ebrima cs=178
+Verdana|136|16|0|0|-16 => MingLiU-ExtB cs=136
+Script|178|64|400|0|-16 => Ebrima cs=178
+Helv|204|0|0|0|-16 => Arial cs=204
+Times|129|80|500|0|-16 => Segoe UI Variable Small Light cs=129
+@Microsoft YaHei UI|204|16|100|0|-16 => @Microsoft YaHei UI cs=204
+MS Shell Dlg 2|128|82|700|0|-16 => Tahoma cs=128
+@MingLiU|178|0|900|1|-16 => @Malgun Gothic cs=178
+@SimSun|134|18|600|0|-16 => @SimSun cs=134
+Bahnschrift|222|34|900|0|-16 => Leelawadee UI cs=222
+@Meiryo|178|0|400|0|-16 => @Malgun Gothic cs=178
+MS Shell Dlg 2|238|0|900|0|-16 => Tahoma cs=238
+Calibri|162|1|400|0|-16 => Calibri cs=162
+Nirmala UI|186|66|700|1|-16 => Nirmala UI cs=186
+@SimSun|129|66|600|0|-16 => @SimSun cs=129
+Microsoft YaHei|129|66|400|0|-16 => Microsoft YaHei cs=129
+Sitka Text|204|0|400|0|-16 => Sitka Text cs=204
+Roman|178|16|700|0|-16 => Times New Roman cs=178
+Calibri|222|34|600|1|-16 => Segoe UI cs=222
+Courier New CE|134|0|300|0|-16 => SimSun cs=134
+Sitka Text|178|82|0|1|-16 => Ebrima cs=178
+Arial CE|128|32|700|1|-16 => MS PGothic cs=128
+Tahoma|0|2|300|0|-16 => Tahoma cs=0
+Segoe Print|178|0|0|0|-16 => Arial cs=178
+Calibri|136|66|400|0|-16 => Ebrima cs=136
+Nonexistent|222|82|500|0|-16 => Segoe UI Variable Small cs=222
+Segoe UI|255|49|0|0|-16 => Segoe UI cs=255
+Wingdings|255|49|400|1|-16 => Courier New cs=255
+Arial|128|2|300|1|-16 => MS PGothic cs=128
+MingLiU|177|0|400|1|-16 => Arial cs=177
+Tms Rmn|177|80|900|0|-16 => Ebrima cs=177
+Times|1|80|300|1|-16 => Times New Roman cs=238
+Verdana|163|1|900|0|-16 => Verdana cs=163
+Microsoft YaHei|162|34|100|0|-16 => Microsoft YaHei cs=162
+Calibri|129|0|900|0|-16 => Segoe UI Semibold cs=129
+Webdings|134|18|400|1|-16 => MingLiU-ExtB cs=134
+Arial Black|161|0|400|1|-16 => Arial Black cs=161
+Ebrima|204|16|300|0|-16 => Ebrima cs=204
+Gadugi|238|82|400|1|-16 => Gadugi cs=238
+Times New Roman Bold|2|82|700|1|-16 => Wingdings cs=2
+Symbol|178|82|400|0|-16 => Symbol cs=2
+Terminal|134|0|900|0|-16 => SimSun cs=134
+Wingdings|134|49|400|0|-16 => NSimSun cs=134
+Arial CE|134|0|400|0|-16 => SimSun cs=134
+Arial Black|177|18|700|0|-16 => Times New Roman cs=177
+|163|2|400|1|-16 => Arial cs=163
+Courier New CE|178|66|600|1|-16 => Ebrima cs=178
+MingLiU|1|49|300|0|-16 => Courier New cs=238
+Courier New CE|1|0|400|1|-16 => Arial cs=238
+Microsoft JhengHei UI|177|49|400|1|-16 => Microsoft JhengHei UI cs=177
+Fixedsys|204|34|300|0|-16 => Arial cs=204
+Tahoma|134|49|0|1|-16 => Tahoma cs=134
+Script|186|82|0|0|-16 => Gabriola cs=186
+Wingdings|162|0|600|1|-16 => Arial cs=162
+Nonexistent|255|16|500|0|-16 => Times New Roman cs=255
+Microsoft Sans Serif|129|66|700|0|-16 => Microsoft Sans Serif cs=129
+Helvetica|186|64|400|1|-16 => Arial cs=186
+Courier New CE|186|34|100|0|-16 => Arial cs=186
+Wingdings|1|0|900|0|-16 => Wingdings cs=2
+Segoe UI|255|34|900|0|-16 => Segoe UI cs=255
+Arial|162|16|0|0|-16 => Arial cs=162
+@MS UI Gothic|255|18|100|1|-16 => @MS UI Gothic cs=255
+Segoe Print|238|32|400|0|-16 => Segoe Print cs=238
+Times New Roman CYR|1|64|700|0|-16 => Segoe Script cs=238
+Courier|163|18|600|0|-16 => Times New Roman cs=163
+@Arial|0|82|0|0|-16 => @SimSun cs=0
+Verdana|204|80|400|0|-16 => Verdana cs=204
+@Nonexistent|238|80|600|1|-16 => @SimSun cs=238
+Times|136|0|500|1|-16 => Segoe UI Light cs=136
+Small Fonts|162|2|0|0|-16 => Arial cs=162
+@Malgun Gothic Semilight|1|1|100|0|-16 => @Malgun Gothic Semilight cs=238
+MS Shell Dlg 2|1|0|400|0|-16 => Tahoma cs=238
+Meiryo|163|66|100|0|-16 => Ink Free cs=163
+Sitka Text|134|0|400|0|-16 => SimSun cs=134
+Segoe UI Symbol|222|16|100|0|-16 => MingLiU-ExtB cs=222
+Segoe UI Symbol|1|80|300|1|-16 => Segoe UI Symbol cs=0
+Impact|129|32|300|0|-16 => Malgun Gothic Semilight cs=129
+Microsoft JhengHei UI|204|48|500|0|-16 => Microsoft JhengHei UI cs=204
+Arial Greek|2|48|400|0|-16 => Wingdings cs=2
+MingLiU|1|80|900|0|-16 => Magneto cs=0
+Times New Roman CYR|255|0|0|1|-16 => Arial cs=255
+@Malgun Gothic Semilight|177|49|300|1|-16 => @Malgun Gothic Semilight cs=177
+Ebrima|177|64|400|0|-16 => Ebrima cs=177
+@Meiryo|0|34|700|1|-16 => @Malgun Gothic cs=0
+Cambria|162|80|500|1|-16 => Cambria cs=162
+Yu Gothic UI|134|16|500|0|-16 => Yu Gothic UI cs=134
+Fixedsys|178|80|400|0|-16 => Ebrima cs=178
+Tahoma|163|1|700|0|-16 => Tahoma cs=163
+Malgun Gothic|163|16|0|1|-16 => Malgun Gothic cs=163
+Gulim|177|34|400|0|-16 => Arial cs=177
+Times New Roman Bold|186|0|0|0|-16 => Arial cs=186
+@Meiryo|136|66|400|0|-16 => @SimSun cs=136
+Arial CE|1|0|400|0|-16 => Arial cs=238
+Segoe UI Light|1|48|600|0|-16 => Segoe UI Light cs=238
+@MS Gothic|178|32|400|0|-16 => @Malgun Gothic cs=178
+MS Shell Dlg|134|34|900|1|-16 => Microsoft Sans Serif cs=134
+Times|186|2|400|0|-16 => Times New Roman cs=186
+Tahoma|238|64|0|0|-16 => Tahoma cs=238
+Microsoft YaHei|2|0|400|0|-16 => Wingdings cs=2
+Cambria|134|49|900|0|-16 => NSimSun cs=134
+MS Sans Serif|178|16|400|0|-16 => Times New Roman cs=178
+ＭＳ ゴシック|255|82|0|1|-16 => MS Gothic cs=255
+@MS UI Gothic|177|49|400|0|-16 => @MS UI Gothic cs=177
+@MS Gothic|1|80|600|0|-16 => @MS Gothic cs=238
+Microsoft Sans Serif|136|16|600|0|-16 => Microsoft Sans Serif cs=136
+Arial Narrow|178|0|700|0|-16 => Arial cs=178
+Script|129|34|400|0|-16 => Gadugi cs=129
+@Microsoft YaHei UI|222|66|700|1|-16 => @SimSun cs=222
+Marlett|222|64|400|0|-16 => Segoe UI Variable Small cs=222
+Batang|1|82|400|0|-16 => Gabriola cs=238
+Leelawadee|1|80|500|0|-16 => Leelawadee cs=238
+Microsoft Sans Serif|134|0|300|0|-16 => Microsoft Sans Serif cs=134
+Tms Rmn|129|18|400|0|-16 => MingLiU-ExtB cs=129
+Wingdings|177|64|700|1|-16 => Ebrima cs=177
+Batang|0|82|400|0|-16 => Arial cs=0
+Tms Rmn|134|2|400|1|-16 => SimSun cs=134
+Georgia|0|1|900|0|-16 => Georgia cs=0
+Helvetica|222|16|300|0|-16 => MingLiU-ExtB cs=222
+Helv|163|32|400|1|-16 => Arial cs=163
+MS Shell Dlg 2|1|0|600|0|-16 => Tahoma cs=238
+Nirmala UI|178|1|500|0|-16 => Nirmala UI cs=178
+Microsoft JhengHei UI|128|49|500|0|-16 => Microsoft JhengHei UI cs=128
+@Arial|204|49|700|1|-16 => @MS Gothic cs=204
+Segoe UI Light|134|0|700|0|-16 => Segoe UI Light cs=134
+Wingdings|163|16|700|1|-16 => Times New Roman cs=163
+Arial Black|177|34|900|0|-16 => Arial cs=177
+Modern|0|16|700|0|-16 => Times New Roman cs=0
+Consolas|1|1|100|0|-16 => Consolas cs=238
+Meiryo|177|64|500|1|-16 => Segoe UI Variable Small Light cs=177
+Segoe UI Light|255|1|700|1|-16 => Segoe UI Light cs=255
+Courier New|204|48|600|0|-16 => Courier New cs=204
+Ebrima|1|66|400|0|-16 => Ebrima cs=238
+Times New Roman Bold|222|2|900|0|-16 => Leelawadee UI cs=222
+@Yu Gothic|2|0|900|0|-16 => @Yu Gothic cs=238
+@Nonexistent|128|34|400|0|-16 => @MS PGothic cs=128
+Webdings|1|80|700|0|-16 => Webdings cs=2
+Microsoft Sans Serif|186|2|700|0|-16 => Microsoft Sans Serif cs=186
+Tahoma|1|82|900|0|-16 => Tahoma cs=238
+Segoe UI Light|204|49|900|1|-16 => Segoe UI Light cs=204
+Times|177|48|300|0|-16 => Times New Roman cs=177
+Bahnschrift|204|16|600|0|-16 => Bahnschrift cs=204
+Arial CE|222|49|600|0|-16 => SimSun-ExtB cs=222
+Times New Roman Bold|2|0|500|0|-16 => Wingdings cs=2
+Verdana|128|2|900|0|-16 => MS PGothic cs=128
+@MS Gothic|1|32|700|1|-16 => @MS Gothic cs=238
+@Malgun Gothic Semilight|177|49|400|1|-16 => @Malgun Gothic Semilight cs=177
+System|186|1|100|0|-16 => Cascadia Code ExtraLight cs=186
+Microsoft YaHei|1|32|400|0|-16 => Microsoft YaHei cs=238
+Times|177|48|600|0|-16 => Times New Roman cs=177
+Courier New|1|32|500|0|-16 => Courier New cs=238
+@Microsoft YaHei UI|162|2|0|0|-16 => @Microsoft YaHei UI cs=162
+MingLiU|162|0|400|0|-16 => Arial cs=162
+@SimSun|162|1|900|1|-16 => @SimSun cs=162
+Segoe UI Light|1|32|400|0|-16 => Segoe UI Light cs=238
+Sitka Text|161|66|0|0|-16 => Sitka Text cs=161
+MS Serif|222|66|400|0|-16 => Segoe UI Variable Small cs=222
+@Malgun Gothic Semilight|0|18|900|0|-16 => @Malgun Gothic Semilight cs=0
+Gadugi|128|16|900|0|-16 => Gadugi cs=128
+MS Gothic|128|1|400|0|-16 => MS Gothic cs=128
+Terminal|177|0|700|1|-16 => Arial cs=177
+Nirmala UI|134|80|100|0|-16 => Nirmala UI cs=134
+Calibri|2|80|400|0|-16 => Wingdings cs=2
+Segoe Print|222|80|400|0|-16 => Segoe UI Variable Small cs=222
+Tahoma|163|64|900|1|-16 => Tahoma cs=163
+@Arial|129|2|700|0|-16 => @Malgun Gothic cs=129
+Symbol|238|0|400|0|-16 => Symbol cs=2
+Arial Greek|136|48|700|0|-16 => MS Gothic cs=136
+@MS UI Gothic|255|16|100|1|-16 => @MS UI Gothic cs=255
+Modern|238|34|100|1|-16 => Arial cs=238
+@Yu Gothic|129|1|900|0|-16 => @MS Gothic cs=129
+Tahoma|128|0|900|1|-16 => Tahoma cs=128
+@Yu Gothic|161|18|700|0|-16 => @Yu Gothic cs=161
+Tms Rmn|162|0|600|0|-16 => Times New Roman cs=162
+Helvetica|1|49|400|0|-16 => Arial cs=238
+Batang|129|80|900|1|-16 => Ebrima cs=129
+MS Shell Dlg 2|222|49|700|1|-16 => Tahoma cs=222
+Bahnschrift|1|82|400|0|-16 => Bahnschrift cs=238
+MS Serif|128|18|0|1|-16 => MingLiU-ExtB cs=128
+Nonexistent|177|0|600|0|-16 => Arial cs=177
+Roman|238|49|600|0|-16 => Courier New cs=238
+Gulim|255|18|400|1|-16 => Times New Roman cs=255
+Marlett|162|0|900|0|-16 => Arial cs=162
+Helv|2|2|700|0|-16 => Wingdings cs=2
+Times New Roman|134|0|900|0|-16 => SimSun cs=134
+Nonexistent|178|49|0|1|-16 => Courier New cs=178
+Helvetica|1|16|400|0|-16 => Arial cs=238
+Verdana|204|2|100|0|-16 => Verdana cs=204
+Impact|186|18|400|0|-16 => Impact cs=186
+System|136|82|400|0|-16 => Ebrima cs=136
+Helvetica|1|66|100|0|-16 => Arial cs=238
+Helvetica|1|0|600|0|-16 => Arial cs=238
+Segoe UI Light|238|49|500|0|-16 => Segoe UI Light cs=238
+@MS Gothic|186|0|0|1|-16 => @MS Gothic cs=186
+Microsoft YaHei|2|18|900|0|-16 => Symbol cs=2
+Cambria|161|34|100|1|-16 => Cambria cs=161
+Segoe UI Symbol|128|0|700|0|-16 => MS PGothic cs=128
+Terminal|161|34|300|1|-16 => Arial cs=161
+|222|82|400|1|-16 => Segoe UI Variable Small cs=222
+@MS UI Gothic|178|32|600|0|-16 => @MS UI Gothic cs=178
+Comic Sans MS|177|80|0|1|-16 => Ebrima cs=177
+Helv|178|64|700|0|-16 => Ebrima cs=178
+Bahnschrift|186|0|100|0|-16 => Bahnschrift cs=186
+Segoe Print|186|16|300|1|-16 => Segoe Print cs=186
+Nonexistent|129|1|500|0|-16 => MS Gothic cs=129
+Sitka Text|1|2|100|0|-16 => Sitka Text cs=238
+@MingLiU|2|64|500|0|-16 => @SimSun cs=0
+Malgun Gothic|204|0|400|1|-16 => Malgun Gothic cs=204
+Arial|238|0|400|0|-16 => Arial cs=238
+Batang|2|34|900|0|-16 => Wingdings cs=2
+@MS Gothic|1|18|300|1|-16 => @MS Gothic cs=238
+MS Serif|255|18|300|0|-16 => Times New Roman cs=255
+@Malgun Gothic Semilight|0|64|400|0|-16 => @Malgun Gothic Semilight cs=0
+Batang|129|48|300|0|-16 => MS Gothic cs=129
+Georgia|163|16|400|0|-16 => Times New Roman cs=163
+Batang|177|49|700|0|-16 => Courier New cs=177
+Tahoma|2|82|400|0|-16 => Wingdings cs=2
+MS Gothic|129|82|400|0|-16 => MS Gothic cs=129
+MS Serif|162|82|700|1|-16 => Gabriola cs=162
+@MS UI Gothic|136|66|500|0|-16 => @MS UI Gothic cs=136
+MS Sans Serif|136|0|400|0|-16 => Ebrima cs=136
+Microsoft Sans Serif|255|16|300|1|-16 => Microsoft Sans Serif cs=255
+Calibri|128|34|400|1|-16 => MS PGothic cs=128
+Arial Narrow|204|48|0|0|-16 => Arial Narrow cs=204
+SimSun|186|0|0|0|-16 => SimSun cs=186
+|129|16|700|0|-16 => MingLiU-ExtB cs=129
+Arial Black|255|66|100|0|-16 => Arial Black cs=255
+MS Gothic|238|64|900|0|-16 => MS Gothic cs=238
+MS Sans Serif|178|80|300|1|-16 => Ebrima cs=178
+Segoe UI|1|32|900|0|-16 => Segoe UI cs=238
+Malgun Gothic|0|48|700|0|-16 => Malgun Gothic cs=0
+Segoe UI Symbol|0|82|0|0|-16 => Segoe UI Symbol cs=0
+@Microsoft YaHei UI|177|2|900|0|-16 => @Microsoft YaHei UI cs=177
+Segoe Print|2|0|600|0|-16 => Wingdings cs=2
+Meiryo|161|34|0|0|-16 => Arial cs=161
+Segoe UI|161|64|100|0|-16 => Segoe UI cs=161
+@Nonexistent|1|32|700|0|-16 => @Malgun Gothic cs=238
+Nonexistent|1|66|500|1|-16 => Segoe Script cs=238
+Calibri|204|66|300|0|-16 => Calibri cs=204
+@MS UI Gothic|1|0|700|1|-16 => @MS UI Gothic cs=238
+Arial Black|222|64|900|1|-16 => Segoe UI Variable Small cs=222
+MS Shell Dlg 2|178|82|900|0|-16 => Tahoma cs=178
+Modern|128|0|100|1|-16 => MS PGothic cs=128
+@MS Gothic|186|66|0|0|-16 => @MS Gothic cs=186
+Times New Roman Bold|161|2|500|0|-16 => Arial cs=161
+Yu Gothic UI|129|1|700|0|-16 => Yu Gothic UI cs=129
+Nonexistent|134|1|900|1|-16 => NSimSun cs=134
+SimSun|162|64|400|0|-16 => SimSun cs=162
+MS Sans Serif|177|66|400|0|-16 => Ebrima cs=177
+Courier New CE|162|1|600|0|-16 => Cascadia Code SemiBold cs=162
+Ebrima|204|66|900|0|-16 => Ebrima cs=204
+MS Gothic|238|2|500|0|-16 => MS Gothic cs=238
+Marlett|136|64|700|0|-16 => Ebrima cs=136
+Script|162|2|600|1|-16 => Arial cs=162
+Batang|163|1|100|1|-16 => Cascadia Code ExtraLight cs=163
+Leelawadee|129|1|500|1|-16 => Leelawadee cs=129
+@MS UI Gothic|129|66|300|0|-16 => @MS UI Gothic cs=129
+Arial|0|49|400|1|-16 => Arial cs=0
+SimSun|129|64|400|1|-16 => SimSun cs=129
+MingLiU|204|16|500|1|-16 => Times New Roman cs=204
+Courier New CE|177|34|700|1|-16 => Arial cs=177
+Segoe UI Symbol|222|64|400|0|-16 => Segoe UI Variable Small cs=222
+@MingLiU|1|0|400|1|-16 => @Malgun Gothic cs=238
+Nirmala UI|1|0|600|1|-16 => Nirmala UI cs=238
+Times New Roman CYR|129|64|700|1|-16 => Ebrima cs=129
+Microsoft JhengHei UI|2|2|0|0|-16 => Wingdings cs=2
+MS Shell Dlg 2|177|48|400|0|-16 => Tahoma cs=177
+@Yu Gothic|178|1|400|1|-16 => @SimSun-ExtB cs=178
+Helvetica|222|1|0|0|-16 => SimSun-ExtB cs=222
+Arial Black|161|18|300|1|-16 => Arial Black cs=161
+Batang|163|0|700|1|-16 => Arial cs=163
+Sitka Text|1|49|400|1|-16 => Sitka Text cs=238
+Courier|136|32|900|0|-16 => Segoe UI Semibold cs=136
+Arial CE|128|32|500|1|-16 => MS PGothic cs=128
+Consolas|2|0|300|0|-16 => Wingdings cs=2
+Courier New CE|2|66|700|1|-16 => Wingdings cs=2
+Script|177|18|500|0|-16 => Times New Roman cs=177
+@Arial|1|16|700|0|-16 => @MingLiU-ExtB cs=238
+Fixedsys|2|66|700|0|-16 => Wingdings cs=2
+Microsoft YaHei|163|16|100|0|-16 => Microsoft YaHei cs=163
+Arial Narrow|255|80|600|1|-16 => Arial Narrow cs=255
+Symbol|222|66|300|0|-16 => Symbol cs=2
+MS Serif|186|48|700|1|-16 => Courier New cs=186
+Comic Sans MS|222|0|700|0|-16 => Leelawadee UI cs=222
+MS Shell Dlg 2|1|34|600|1|-16 => Tahoma cs=238
+@Yu Gothic|222|1|400|0|-16 => @SimSun-ExtB cs=222
+@SimSun|238|64|600|1|-16 => @SimSun cs=238
+MingLiU|186|0|500|0|-16 => Arial cs=186
+Fixedsys|2|2|300|0|-16 => Wingdings cs=2
+Cambria|1|18|600|0|-16 => Cambria cs=238
+Georgia|162|18|400|0|-16 => Georgia cs=162
+Times New Roman Bold|1|32|0|0|-16 => Arial cs=238
+@MS UI Gothic|178|80|400|1|-16 => @MS UI Gothic cs=178
+Segoe UI Symbol|161|34|400|0|-16 => Arial cs=161
+Microsoft YaHei|222|48|300|0|-16 => SimSun-ExtB cs=222
+Yu Gothic UI|204|34|500|1|-16 => Yu Gothic UI cs=204
+Arial Black|177|16|0|0|-16 => Times New Roman cs=177
+Times New Roman|1|48|400|0|-16 => Times New Roman cs=238
+Tahoma|186|0|400|0|-16 => Tahoma cs=186
+@Microsoft YaHei UI|2|48|700|0|-16 => @MS Gothic cs=238
+Arial Bold|1|82|700|1|-16 => Magneto cs=0
+@Microsoft YaHei UI|1|66|600|0|-16 => @Microsoft YaHei UI cs=238
+Microsoft JhengHei UI|204|82|500|0|-16 => Microsoft JhengHei UI cs=204
+Gadugi|161|64|0|1|-16 => Gadugi cs=161
+Times New Roman|204|0|600|0|-16 => Times New Roman cs=204
+System|129|48|600|0|-16 => MS Gothic cs=129
+@Malgun Gothic Semilight|161|32|600|0|-16 => @Malgun Gothic Semilight cs=161
+Segoe UI|238|1|400|0|-16 => Segoe UI cs=238
+Arial|162|64|400|0|-16 => Arial cs=162
+Verdana|1|2|100|0|-16 => Verdana cs=238
+Cambria|186|80|400|0|-16 => Cambria cs=186
+Courier New CE|134|16|400|1|-16 => MingLiU-ExtB cs=134
+Impact|222|1|500|0|-16 => SimSun-ExtB cs=222
+Microsoft JhengHei UI|1|34|0|0|-16 => Microsoft JhengHei UI cs=238
+Cambria|0|0|700|0|-16 => Cambria cs=0
+Microsoft JhengHei UI|136|16|900|0|-16 => Microsoft JhengHei UI cs=136
+Ebrima|222|1|700|0|-16 => SimSun-ExtB cs=222
+Helvetica|0|1|600|1|-16 => Arial cs=0
+Gulim|134|32|500|1|-16 => SimSun cs=134
+Helvetica|2|80|500|0|-16 => Wingdings cs=2
+Nirmala UI|1|2|900|1|-16 => Nirmala UI cs=238
+SimSun|177|16|400|0|-16 => SimSun cs=177
+MS Shell Dlg 2|136|66|400|0|-16 => Tahoma cs=136
+Bahnschrift|162|82|400|0|-16 => Bahnschrift cs=162
+MS Shell Dlg|204|34|700|0|-16 => Microsoft Sans Serif cs=204
+MS Gothic|178|80|100|0|-16 => Ebrima cs=178
+System|186|0|100|0|-16 => Arial cs=186
+Terminal|128|49|400|0|-16 => MS Gothic cs=128
+MS Gothic|177|66|400|0|-16 => Ebrima cs=177
+Microsoft Sans Serif|161|18|0|0|-16 => Microsoft Sans Serif cs=161
+@MingLiU|163|18|500|0|-16 => @MingLiU-ExtB cs=163
+Wingdings|1|18|700|0|-16 => Wingdings cs=2
+Arial Bold|163|2|300|1|-16 => Arial cs=163
+Courier New CE|1|49|900|0|-16 => Courier New cs=238
+Sitka Text|129|0|700|1|-16 => Segoe UI cs=129
+MS Shell Dlg|162|0|500|1|-16 => Microsoft Sans Serif cs=162
+Microsoft JhengHei UI|238|82|900|0|-16 => Microsoft JhengHei UI cs=238
+Nirmala UI|134|32|700|0|-16 => Nirmala UI cs=134
+Gulim|177|0|900|0|-16 => Arial cs=177
+@Meiryo|222|49|100|0|-16 => @SimSun-ExtB cs=222
+Arial Greek|1|32|400|0|-16 => Arial cs=238
+Helv|161|82|700|0|-16 => Gabriola cs=161
+Segoe UI Light|204|1|700|1|-16 => Segoe UI Light cs=204
+Arial Narrow|186|0|100|1|-16 => Arial Narrow cs=186
+ＭＳ ゴシック|0|0|0|1|-16 => MS Gothic cs=0
+Helvetica|1|0|700|1|-16 => Arial cs=238
+MingLiU|2|18|400|1|-16 => Symbol cs=2
+Microsoft YaHei|128|1|100|0|-16 => Microsoft YaHei cs=128
+Times New Roman Bold|1|2|900|1|-16 => Arial cs=238
+Calibri|1|80|700|0|-16 => Calibri cs=238
+ＭＳ ゴシック|136|80|400|1|-16 => MS Gothic cs=136
+@Arial|204|32|700|1|-16 => @Malgun Gothic cs=204
+Segoe UI Symbol|129|18|700|1|-16 => MingLiU-ExtB cs=129
+Times|255|80|300|0|-16 => Times New Roman cs=255
+MS Gothic|163|0|0|0|-16 => Arial cs=163
+Tms Rmn|177|0|400|0|-16 => Times New Roman cs=177
+SimSun|1|0|0|1|-16 => SimSun cs=238
+Courier|161|32|100|0|-16 => Arial cs=161
+Lucida Console|136|0|400|0|-16 => Ebrima cs=136
+System|163|32|0|1|-16 => Arial cs=163
+Times New Roman CYR|222|16|300|0|-16 => MingLiU-ExtB cs=222
+Symbol|129|18|300|0|-16 => Symbol cs=2
+Consolas|255|82|400|1|-16 => Consolas cs=255
+Georgia|128|2|500|0|-16 => MS PGothic cs=128
+Microsoft JhengHei UI|0|49|500|1|-16 => Microsoft JhengHei UI cs=0
+Courier New|163|34|400|0|-16 => Courier New cs=163
+MS Serif|255|2|100|0|-16 => Arial cs=255
+Segoe UI Light|204|16|400|0|-16 => Segoe UI Light cs=204
+Sitka Text|161|16|600|0|-16 => Sitka Text cs=161
+Lucida Console|1|48|400|0|-16 => Lucida Console cs=238
+Times New Roman CYR|2|34|400|1|-16 => Wingdings cs=2
+Marlett|136|49|100|1|-16 => MS Gothic cs=136
+Arial Narrow|129|80|500|1|-16 => Segoe UI Variable Small Light cs=129
+Segoe UI|136|18|400|0|-16 => Segoe UI cs=136
+Ebrima|204|34|0|0|-16 => Ebrima cs=204
+Gulim|163|48|900|0|-16 => Courier New cs=163
+Calibri|178|48|300|0|-16 => Calibri cs=178
+System|163|16|600|1|-16 => Times New Roman cs=163
+Arial Greek|222|2|700|0|-16 => Leelawadee UI cs=222
+Batang|162|66|400|0|-16 => Segoe Script cs=162
+@Nonexistent|255|0|500|0|-16 => @Malgun Gothic Semilight cs=255
+Arial CE|129|0|900|1|-16 => Segoe UI Semibold cs=129
+@MingLiU|255|80|0|0|-16 => @MS UI Gothic cs=255
+@MingLiU|222|0|100|0|-16 => @MS UI Gothic cs=222
+|177|32|100|0|-16 => Arial cs=177
+Impact|238|0|100|1|-16 => Impact cs=238
+Segoe UI|1|1|100|0|-16 => Segoe UI cs=238
+Microsoft YaHei|128|80|0|0|-16 => Microsoft YaHei cs=128
+MS Gothic|255|80|0|0|-16 => MS Gothic cs=255
+Script|186|66|400|0|-16 => Segoe Script cs=186
+Times New Roman CYR|204|34|700|0|-16 => Times New Roman cs=204
+MingLiU|128|18|100|0|-16 => MingLiU-ExtB cs=128
+Terminal|134|66|400|0|-16 => SimSun cs=134
+Malgun Gothic|1|32|400|0|-16 => Malgun Gothic cs=238
+Leelawadee|177|0|400|0|-16 => Leelawadee cs=177
+MS Gothic|134|0|700|0|-16 => MS Gothic cs=134
+Arial Greek|134|66|0|0|-16 => SimSun cs=134
+Arial Greek|128|2|600|0|-16 => MS PGothic cs=128
+Courier New CE|186|80|600|0|-16 => Gabriola cs=186
+Leelawadee|129|16|500|0|-16 => Leelawadee cs=129
+Bahnschrift|134|0|500|0|-16 => SimSun cs=134
+Courier New|186|64|700|0|-16 => Courier New cs=186
+Microsoft Sans Serif|128|16|500|0|-16 => Microsoft Sans Serif cs=128
+Batang|255|2|400|0|-16 => Arial cs=255
+Tahoma|134|0|700|0|-16 => Tahoma cs=134
+Symbol|204|32|700|0|-16 => Symbol cs=2
+Courier|134|49|300|0|-16 => NSimSun cs=134
+Courier New|1|80|400|0|-16 => Courier New cs=238
+@MS Gothic|255|34|400|0|-16 => @MS Gothic cs=255
+MS Shell Dlg|177|0|400|0|-16 => Microsoft Sans Serif cs=177
+Georgia|134|82|400|1|-16 => SimSun cs=134
+Yu Gothic UI|255|64|400|0|-16 => Mistral cs=255
+MS Serif|134|82|500|1|-16 => SimSun cs=134
+Times New Roman|163|0|700|0|-16 => Times New Roman cs=163
+Yu Gothic UI|134|0|400|0|-16 => Yu Gothic UI cs=134
+Nirmala UI|255|34|300|0|-16 => Arial cs=255
+Segoe UI|222|0|400|0|-16 => Segoe UI cs=222
+Gadugi|204|82|400|0|-16 => Gadugi cs=204
+@Nonexistent|177|49|500|0|-16 => @SimSun-ExtB cs=177
+Calibri|161|0|0|0|-16 => Calibri cs=161
+Arial Narrow|178|16|900|0|-16 => Times New Roman cs=178
+Arial Black|129|49|700|0|-16 => MS Gothic cs=129
+Microsoft JhengHei UI|161|66|400|0|-16 => Microsoft JhengHei UI cs=161
+Roman|162|0|600|0|-16 => Arial cs=162
+Malgun Gothic|161|0|700|0|-16 => Malgun Gothic cs=161
+Yu Gothic UI|222|82|700|1|-16 => Segoe UI Variable Small cs=222
+Courier|128|16|400|0|-16 => MingLiU-ExtB cs=128
+Times|161|34|300|0|-16 => Times New Roman cs=161
+@MingLiU|1|16|700|1|-16 => @MingLiU-ExtB cs=238
+Tahoma|238|34|300|1|-16 => Tahoma cs=238
+MS Sans Serif|129|32|700|0|-16 => Gadugi cs=129
+Meiryo|162|0|600|0|-16 => Arial cs=162
+Comic Sans MS|136|80|600|0|-16 => Segoe UI Variable Text Semibold cs=136
+Sitka Text|177|48|700|0|-16 => Courier New cs=177
+Impact|161|18|600|0|-16 => Impact cs=161
+Sitka Text|1|0|300|0|-16 => Sitka Text cs=238
+Nonexistent|162|64|300|0|-16 => Segoe Script cs=162
+MS Gothic|163|16|400|1|-16 => Times New Roman cs=163
+Georgia|177|48|700|0|-16 => Courier New cs=177
+Webdings|204|34|400|0|-16 => Arial cs=204
+Microsoft YaHei|2|66|400|1|-16 => Wingdings cs=2
+MS Sans Serif|178|0|900|1|-16 => Arial cs=178
+Microsoft Sans Serif|1|80|700|1|-16 => Microsoft Sans Serif cs=238
+Helv|134|48|100|0|-16 => NSimSun cs=134
+Courier|178|66|500|1|-16 => Ebrima cs=178
+SimSun|178|48|700|0|-16 => SimSun cs=178
+Segoe Print|129|0|700|0|-16 => Ebrima cs=129
+@SimSun|186|0|900|0|-16 => @SimSun cs=186
+Webdings|2|80|300|1|-16 => Webdings cs=2
+MingLiU|1|66|400|0|-16 => Segoe Script cs=238
+@MS Gothic|128|2|700|1|-16 => @MS Gothic cs=128
+Terminal|0|0|700|1|-16 => Arial cs=0
+Helvetica|222|66|500|0|-16 => Segoe UI Variable Small cs=222
+Arial CE|238|16|700|0|-16 => Arial cs=238
+Lucida Console|238|80|900|0|-16 => Lucida Console cs=238
+Georgia|1|64|0|1|-16 => Georgia cs=238
+Batang|134|48|600|1|-16 => NSimSun cs=134
+@Nonexistent|255|66|100|1|-16 => @Microsoft JhengHei UI Light cs=255
+@Yu Gothic|1|48|700|0|-16 => @Yu Gothic cs=238
+Arial Narrow|204|34|600|0|-16 => Arial Narrow cs=204
+Microsoft JhengHei UI|1|48|300|1|-16 => Microsoft JhengHei UI cs=238
+Fixedsys|222|82|900|0|-16 => Segoe UI Variable Small cs=222
+Webdings|161|2|700|1|-16 => Arial cs=161
+Leelawadee|238|0|300|1|-16 => Leelawadee cs=238
+Tahoma|134|66|0|0|-16 => Tahoma cs=134
+Bahnschrift|1|0|700|0|-16 => Bahnschrift cs=238
+Times New Roman|162|80|0|0|-16 => Times New Roman cs=162
+Arial Greek|134|66|700|0|-16 => SimSun cs=134
+@Malgun Gothic Semilight|222|2|300|0|-16 => @MS UI Gothic cs=222
+Helvetica|238|34|400|1|-16 => Arial cs=238
+Times New Roman CYR|178|48|400|0|-16 => Courier New cs=178
+@MS Gothic|129|49|300|0|-16 => @MS Gothic cs=129
+Nonexistent|1|0|0|0|-16 => Arial cs=238
+Tahoma|0|16|0|1|-16 => Tahoma cs=0
+Microsoft JhengHei UI|238|2|700|0|-16 => Microsoft JhengHei UI cs=238
+Malgun Gothic|238|48|400|0|-16 => Malgun Gothic cs=238
+Bahnschrift|177|16|100|0|-16 => Times New Roman cs=177
+Times New Roman CYR|1|48|700|1|-16 => Courier New cs=238
+@Microsoft YaHei UI|129|34|300|0|-16 => @Microsoft YaHei UI cs=129
+Bahnschrift|128|0|900|0|-16 => MS PGothic cs=128
+Meiryo|222|0|0|1|-16 => Segoe UI cs=222
+Segoe UI Light|163|32|700|1|-16 => Segoe UI Light cs=163
+Leelawadee|0|34|400|0|-16 => Leelawadee cs=0
+|136|0|700|0|-16 => Ebrima cs=136
+Segoe UI Light|178|64|400|1|-16 => Segoe UI Light cs=178
+Segoe UI Light|129|82|700|0|-16 => Segoe UI Light cs=129
+Tms Rmn|129|16|100|0|-16 => MingLiU-ExtB cs=129
+@MingLiU|186|0|900|0|-16 => @Malgun Gothic cs=186
+Helv|161|2|400|0|-16 => Arial cs=161
+@MingLiU|162|0|400|0|-16 => @Malgun Gothic cs=162
+SimSun|1|0|500|1|-16 => SimSun cs=238
+Segoe UI|1|0|100|1|-16 => Segoe UI cs=238
+Marlett|134|82|700|0|-16 => SimSun cs=134
+Marlett|134|48|700|1|-16 => NSimSun cs=134
+Gulim|178|16|900|0|-16 => Times New Roman cs=178
+MingLiU|204|2|400|1|-16 => Arial cs=204
+Terminal|128|16|300|1|-16 => MingLiU-ExtB cs=128
+Sitka Text|128|49|700|0|-16 => MS Gothic cs=128
+Arial Greek|1|0|600|0|-16 => Arial cs=238
+@MS Gothic|222|64|400|0|-16 => @SimSun cs=222
+Arial CE|163|18|600|1|-16 => Times New Roman cs=163
+MS Shell Dlg 2|177|82|300|0|-16 => Tahoma cs=177
+Batang|128|18|700|0|-16 => MingLiU-ExtB cs=128
+@MingLiU|136|66|400|1|-16 => @SimSun cs=136
+Modern|222|64|900|0|-16 => Segoe UI Variable Small cs=222
+@MS Gothic|204|16|0|0|-16 => @MS Gothic cs=204
+|222|0|500|0|-16 => Leelawadee UI cs=222
+Modern|204|66|400|1|-16 => Segoe Script cs=204
+MS Gothic|162|0|300|0|-16 => MS Gothic cs=162
+Gulim|2|34|700|0|-16 => Wingdings cs=2
+Calibri|255|66|400|1|-16 => Monotype Corsiva cs=255
+Segoe UI Light|2|1|900|0|-16 => Marlett cs=2
+Segoe UI Symbol|1|16|900|1|-16 => Segoe UI Symbol cs=0
+Gadugi|134|2|900|0|-16 => Gadugi cs=134
+@Meiryo|129|2|700|1|-16 => @Malgun Gothic cs=129
+@Yu Gothic|136|18|400|0|-16 => @MingLiU-ExtB cs=136
+Verdana|1|49|100|0|-16 => Verdana cs=238
+Roman|222|49|500|0|-16 => SimSun-ExtB cs=222
+Leelawadee|1|48|600|1|-16 => Leelawadee cs=238
+Batang|136|82|700|0|-16 => Ebrima cs=136
+Arial Black|0|0|400|1|-16 => Arial Black cs=0
+Symbol|1|49|300|0|-16 => Symbol cs=2
+MS Shell Dlg|134|0|400|0|-16 => Microsoft Sans Serif cs=134
+Nirmala UI|0|32|100|1|-16 => Nirmala UI cs=0
+@SimSun|162|0|700|0|-16 => @SimSun cs=162
+Arial|238|66|400|0|-16 => Arial cs=238
+Webdings|163|0|400|0|-16 => Arial cs=163
+Small Fonts|163|0|700|0|-16 => Arial cs=163
+Times|2|34|100|1|-16 => Wingdings cs=2
+Impact|128|32|100|0|-16 => MS PGothic cs=128
+Roman|134|0|400|0|-16 => SimSun cs=134
+Leelawadee|1|49|700|0|-16 => Leelawadee cs=238
+Helvetica|1|2|0|0|-16 => Arial cs=238
+Meiryo|2|16|400|0|-16 => Symbol cs=2
+Sitka Text|128|2|500|0|-16 => MS PGothic cs=128
+Arial|1|0|900|0|-16 => Arial cs=238
+Malgun Gothic|204|0|100|0|-16 => Malgun Gothic cs=204
+@Meiryo|204|0|500|0|-16 => @Yu Gothic Medium cs=204
+Segoe Print|204|80|300|0|-16 => Segoe Print cs=204
+Tms Rmn|136|16|600|0|-16 => MingLiU-ExtB cs=136
+@SimSun|134|32|400|1|-16 => @SimSun cs=134
+Arial Black|163|0|500|0|-16 => Arial cs=163
+Segoe Print|129|49|400|0|-16 => MS Gothic cs=129
+Segoe UI|136|18|300|0|-16 => Segoe UI cs=136
+@Malgun Gothic Semilight|2|49|400|0|-16 => @MS Gothic cs=238
+Courier New|161|0|400|0|-16 => Courier New cs=161
+Arial Black|178|0|700|0|-16 => Arial cs=178
+Times|1|49|900|0|-16 => Times New Roman cs=238
+Nirmala UI|162|64|400|0|-16 => Nirmala UI cs=162
+@MS Gothic|163|0|400|1|-16 => @Malgun Gothic cs=163
+Arial Black|177|49|500|1|-16 => Courier New cs=177
+Times|204|49|600|0|-16 => Times New Roman cs=204
+Yu Gothic UI|162|0|600|1|-16 => Yu Gothic UI cs=162
+Courier New|128|18|400|0|-16 => MingLiU-ExtB cs=128
+Microsoft JhengHei UI|255|0|400|0|-16 => Arial cs=255
+Nonexistent|1|64|0|0|-16 => Segoe Script cs=238
+Arial CE|134|0|300|0|-16 => SimSun cs=134
+Gadugi|136|16|0|0|-16 => Gadugi cs=136
+Times New Roman Bold|128|2|100|0|-16 => MS PGothic cs=128
+Microsoft YaHei|186|64|400|1|-16 => Microsoft YaHei cs=186
+Helvetica|0|1|0|0|-16 => Arial cs=0
+@SimSun|161|1|900|1|-16 => @SimSun cs=161
+Courier|161|0|400|1|-16 => Arial cs=161
+@Yu Gothic|222|82|400|1|-16 => @SimSun cs=222
+Leelawadee|222|1|600|0|-16 => Leelawadee cs=222
+Small Fonts|178|34|100|0|-16 => Arial cs=178
+Times|162|0|700|1|-16 => Times New Roman cs=162
+Roman|204|1|300|1|-16 => Cascadia Code Light cs=204
+|163|0|400|1|-16 => Arial cs=163
+MS Shell Dlg 2|1|16|400|0|-16 => Tahoma cs=238
+Tahoma|163|2|400|1|-16 => Tahoma cs=163
+@MingLiU|134|82|900|0|-16 => @SimSun cs=134
+Arial Black|134|34|400|1|-16 => SimSun cs=134
+Segoe UI Symbol|163|49|100|1|-16 => Courier New cs=163
+@Malgun Gothic Semilight|1|32|600|0|-16 => @Malgun Gothic Semilight cs=238
+Segoe UI|255|0|600|1|-16 => Segoe UI cs=255
+@MingLiU|178|0|300|0|-16 => @Malgun Gothic Semilight cs=178
+Times New Roman CYR|161|16|700|1|-16 => Times New Roman cs=161
+Wingdings|255|16|0|0|-16 => Times New Roman cs=255
+Small Fonts|128|66|400|1|-16 => MS PGothic cs=128
+@Nonexistent|162|18|400|0|-16 => @MingLiU-ExtB cs=162
+Calibri|186|0|300|0|-16 => Calibri cs=186
+Courier New CE|1|34|400|0|-16 => Arial cs=238
+Arial Narrow|186|82|700|1|-16 => Arial Narrow cs=186
+Gadugi|1|16|400|0|-16 => Gadugi cs=238
+@MingLiU|136|0|400|0|-16 => @Malgun Gothic cs=136
+Times|129|1|0|1|-16 => MS Gothic cs=129
+Helvetica|178|2|100|1|-16 => Arial cs=178
+MingLiU|163|0|500|0|-16 => Arial cs=163
+MS Shell Dlg|186|34|700|0|-16 => Microsoft Sans Serif cs=186
+@Yu Gothic|222|0|400|0|-16 => @MS UI Gothic cs=222
+Ebrima|1|0|300|1|-16 => Ebrima cs=238
+Marlett|1|49|700|1|-16 => Marlett cs=2
+Times New Roman Bold|222|0|600|0|-16 => Leelawadee UI cs=222
+Tms Rmn|177|34|700|0|-16 => Arial cs=177
+Gadugi|222|1|400|0|-16 => SimSun-ExtB cs=222
+@MS UI Gothic|204|64|700|0|-16 => @MS UI Gothic cs=204
+Meiryo|162|64|0|0|-16 => Segoe Script cs=162
+Verdana|162|80|700|1|-16 => Verdana cs=162
+Meiryo|134|0|400|0|-16 => SimSun cs=134
+Roman|177|66|0|0|-16 => Ebrima cs=177
+Roman|128|16|400|1|-16 => MingLiU-ExtB cs=128
+Segoe UI Symbol|222|49|700|0|-16 => SimSun-ExtB cs=222
+Bahnschrift|0|1|400|0|-16 => Bahnschrift cs=0
+Arial Greek|204|64|0|0|-16 => Segoe Script cs=204
+Arial Greek|134|0|500|0|-16 => SimSun cs=134
+Helvetica|238|1|400|1|-16 => Arial cs=238
+@MingLiU|186|2|100|1|-16 => @Microsoft JhengHei UI Light cs=186
+Yu Gothic UI|2|48|900|0|-16 => Marlett cs=2
+Times|1|64|400|0|-16 => Times New Roman cs=238
+ＭＳ ゴシック|163|18|400|0|-16 => Times New Roman cs=163
+Malgun Gothic|255|34|400|0|-16 => Arial cs=255
+Gulim|1|34|400|0|-16 => Arial cs=238
+Modern|238|2|400|0|-16 => Arial cs=238
+MS Shell Dlg|136|32|400|1|-16 => Microsoft Sans Serif cs=136
+Symbol|128|32|100|0|-16 => Symbol cs=2
+MingLiU|136|80|600|0|-16 => Segoe UI Variable Text Semibold cs=136
+Microsoft Sans Serif|178|0|400|0|-16 => Microsoft Sans Serif cs=178
+Gulim|128|16|400|0|-16 => MingLiU-ExtB cs=128
+Sitka Text|162|0|300|0|-16 => Sitka Text cs=162
+Lucida Console|178|1|300|0|-16 => Cascadia Code Light cs=178
+Consolas|161|0|400|1|-16 => Consolas cs=161
+Consolas|128|64|700|0|-16 => MS PGothic cs=128
+Terminal|128|0|700|1|-16 => MS PGothic cs=128
+MingLiU|238|32|400|0|-16 => Arial cs=238
+Times New Roman CYR|177|48|0|0|-16 => Courier New cs=177
+Meiryo|1|48|300|1|-16 => Courier New cs=238
+Marlett|238|34|300|1|-16 => Arial cs=238
+ＭＳ ゴシック|1|48|100|0|-16 => MS Gothic cs=238
+Malgun Gothic|136|34|0|0|-16 => Malgun Gothic cs=136
+Microsoft Sans Serif|134|2|100|1|-16 => Microsoft Sans Serif cs=134
+@SimSun|134|0|400|0|-16 => @SimSun cs=134
+Gulim|204|34|400|0|-16 => Arial cs=204
+Sitka Text|163|49|100|0|-16 => Sitka Text cs=163
+Leelawadee|2|34|700|1|-16 => Wingdings cs=2
+MingLiU|186|0|900|1|-16 => Arial cs=186
+Cambria|0|0|400|1|-16 => Cambria cs=0
+Cambria|129|16|0|0|-16 => MingLiU-ExtB cs=129
+Cambria|161|18|100|1|-16 => Cambria cs=161
+Impact|129|48|0|1|-16 => MS Gothic cs=129
+@SimSun|1|0|900|0|-16 => @SimSun cs=238
+Segoe Print|128|82|400|0|-16 => MS PGothic cs=128
+Times New Roman CYR|222|49|400|0|-16 => SimSun-ExtB cs=222
+Microsoft Sans Serif|1|64|400|0|-16 => Microsoft Sans Serif cs=238
+Verdana|1|49|0|1|-16 => Verdana cs=238
+Malgun Gothic|177|64|700|0|-16 => Malgun Gothic cs=177
+Malgun Gothic|161|80|700|0|-16 => Malgun Gothic cs=161
+Courier New|161|32|700|0|-16 => Courier New cs=161
+Small Fonts|134|16|100|0|-16 => MingLiU-ExtB cs=134
+@Meiryo|0|0|400|1|-16 => @Malgun Gothic cs=0
+Georgia|186|0|900|0|-16 => Georgia cs=186
+Georgia|222|18|400|0|-16 => MingLiU-ExtB cs=222
+Arial Greek|161|2|100|0|-16 => Arial cs=161
+Modern|0|0|400|0|-16 => Arial cs=0
+Times New Roman Bold|136|80|500|1|-16 => Segoe UI Variable Small Light cs=136
+Microsoft YaHei|186|32|600|1|-16 => Microsoft YaHei cs=186
+Courier New CE|1|66|700|0|-16 => Segoe Script cs=238
+Segoe UI Light|129|0|400|0|-16 => Segoe UI Light cs=129
+Arial Greek|129|16|600|0|-16 => MingLiU-ExtB cs=129
+Microsoft YaHei|1|0|600|0|-16 => Microsoft YaHei cs=238
+Courier|178|1|300|0|-16 => Cascadia Code Light cs=178
+Impact|134|16|400|1|-16 => MingLiU-ExtB cs=134
+Nonexistent|1|82|0|0|-16 => Gabriola cs=238
+Verdana|0|82|600|0|-16 => Verdana cs=0
+MS Sans Serif|255|32|500|0|-16 => Arial cs=255
+Marlett|1|16|400|1|-16 => Marlett cs=2
+Times New Roman CYR|1|64|400|0|-16 => Segoe Script cs=238
+Arial Narrow|177|0|400|1|-16 => Arial cs=177
+@Nonexistent|128|0|700|0|-16 => @MS PGothic cs=128
+Segoe UI Symbol|162|0|400|1|-16 => Arial cs=162
+Nirmala UI|238|0|600|0|-16 => Nirmala UI cs=238
+Georgia|1|0|400|0|-16 => Georgia cs=238
+Helv|178|48|600|0|-16 => Courier New cs=178
+Nonexistent|177|16|400|0|-16 => Times New Roman cs=177
+Microsoft YaHei|1|49|600|0|-16 => Microsoft YaHei cs=238
+Modern|162|18|900|0|-16 => Times New Roman cs=162
+@Meiryo|1|80|500|1|-16 => @SimSun cs=238
+Arial Narrow|161|18|700|0|-16 => Arial Narrow cs=161
+@Arial|204|16|400|0|-16 => @MingLiU-ExtB cs=204
+Microsoft JhengHei UI|178|16|500|0|-16 => Microsoft JhengHei UI cs=178
+@Yu Gothic|238|18|400|0|-16 => @Yu Gothic cs=238
+Arial CE|129|1|600|0|-16 => MS Gothic cs=129
+Malgun Gothic|238|18|700|0|-16 => Malgun Gothic cs=238
+Georgia|136|16|600|0|-16 => MingLiU-ExtB cs=136
+Tahoma|128|32|300|0|-16 => Tahoma cs=128
+Script|238|0|400|0|-16 => Arial cs=238
+Yu Gothic UI|163|2|600|0|-16 => Yu Gothic UI cs=163
+|134|2|400|1|-16 => SimSun cs=134
+Times New Roman Bold|161|48|300|1|-16 => Courier New cs=161
+Malgun Gothic|129|2|700|0|-16 => Malgun Gothic cs=129
+Gulim|129|2|500|0|-16 => Malgun Gothic Semilight cs=129
+Courier New|1|2|400|1|-16 => Courier New cs=238
+Microsoft Sans Serif|1|16|700|0|-16 => Microsoft Sans Serif cs=238
+Tahoma|186|80|400|1|-16 => Tahoma cs=186
+Times New Roman|134|16|400|0|-16 => MingLiU-ExtB cs=134
+Segoe UI Light|238|48|600|0|-16 => Segoe UI Light cs=238
+@Microsoft YaHei UI|128|64|900|0|-16 => @Microsoft YaHei UI cs=128
+Microsoft JhengHei UI|134|49|100|0|-16 => Microsoft JhengHei UI cs=134
+Symbol|238|0|400|1|-16 => Symbol cs=2
+Roman|186|32|400|0|-16 => Arial cs=186
+Arial Black|186|1|400|0|-16 => Arial Black cs=186
+Comic Sans MS|136|2|100|0|-16 => Microsoft JhengHei Light cs=136
+Wingdings|186|80|900|0|-16 => Gabriola cs=186
+Ebrima|128|0|400|1|-16 => Ebrima cs=128
+SimSun|186|0|100|1|-16 => SimSun cs=186
+Helv|136|49|0|0|-16 => MS Gothic cs=136
+Bahnschrift|186|2|600|0|-16 => Bahnschrift cs=186
+Helvetica|178|66|400|0|-16 => Arial cs=178
+Malgun Gothic|255|32|700|0|-16 => Arial cs=255
+Segoe UI Symbol|238|49|300|1|-16 => Courier New cs=238
+Verdana|186|64|300|0|-16 => Verdana cs=186
+Batang|186|0|400|1|-16 => Arial cs=186
+Ebrima|177|0|400|0|-16 => Ebrima cs=177
+Fixedsys|186|34|700|1|-16 => Arial cs=186
+@Nonexistent|136|0|900|1|-16 => @Malgun Gothic cs=136
+ＭＳ ゴシック|255|2|700|0|-16 => MS Gothic cs=255
+Yu Gothic UI|129|1|600|1|-16 => Yu Gothic UI cs=129
+Times New Roman CYR|161|2|400|1|-16 => Arial cs=161
+|1|34|300|0|-16 => Arial cs=238
+Bahnschrift|163|34|700|0|-16 => Bahnschrift cs=163
+Helvetica|128|0|400|0|-16 => MS PGothic cs=128
+Arial Black|238|16|700|0|-16 => Arial Black cs=238
+@MS UI Gothic|255|82|100|1|-16 => @MS UI Gothic cs=255
+Leelawadee|1|0|400|0|-16 => Leelawadee cs=238
+Gulim|178|64|400|0|-16 => Ebrima cs=178
+Helvetica|2|66|400|1|-16 => Wingdings cs=2
+MS Shell Dlg 2|222|2|700|1|-16 => Tahoma cs=222
+Gulim|178|80|700|1|-16 => Ebrima cs=178
+Arial Black|186|48|700|1|-16 => Arial Black cs=186
+Courier New CE|161|34|600|0|-16 => Arial cs=161
+Fixedsys|178|80|300|1|-16 => Ebrima cs=178
+@Microsoft YaHei UI|162|48|0|1|-16 => @Microsoft YaHei UI cs=162
+@Nonexistent|163|32|400|0|-16 => @Malgun Gothic cs=163
+Bahnschrift|134|1|400|0|-16 => NSimSun cs=134
+@Meiryo|177|49|400|1|-16 => @SimSun-ExtB cs=177
+Times New Roman CYR|128|48|700|0|-16 => MS Gothic cs=128
+Wingdings|162|0|700|0|-16 => Arial cs=162
+Arial Greek|162|82|400|0|-16 => Gabriola cs=162
+Arial|163|1|500|1|-16 => Arial cs=163
+Times|238|2|700|1|-16 => Times New Roman cs=238
+System|2|0|600|0|-16 => Wingdings cs=2
+Small Fonts|128|18|500|1|-16 => MingLiU-ExtB cs=128
+Fixedsys|162|0|0|0|-16 => Arial cs=162
+Microsoft YaHei|129|80|100|1|-16 => Microsoft YaHei cs=129
+Consolas|1|1|400|0|-16 => Consolas cs=238
+Malgun Gothic|255|0|400|0|-16 => Arial cs=255
+System|186|34|600|0|-16 => Arial cs=186
+Arial Black|178|32|300|0|-16 => Arial cs=178
+Microsoft Sans Serif|238|0|700|1|-16 => Microsoft Sans Serif cs=238
+Bahnschrift|134|32|500|1|-16 => SimSun cs=134
+Times|161|0|600|0|-16 => Times New Roman cs=161
+Times New Roman CYR|129|16|900|1|-16 => MingLiU-ExtB cs=129
+Batang|238|80|400|0|-16 => Gabriola cs=238
+Nirmala UI|162|49|400|1|-16 => Nirmala UI cs=162
+Arial|222|18|100|1|-16 => MingLiU-ExtB cs=222
+Gadugi|1|64|100|0|-16 => Gadugi cs=238
+MS Sans Serif|178|48|300|1|-16 => Courier New cs=178
+@MS Gothic|129|66|400|1|-16 => @MS Gothic cs=129
+Arial|129|16|500|0|-16 => MingLiU-ExtB cs=129
+Segoe UI Symbol|238|0|600|0|-16 => Arial cs=238
+@Nonexistent|2|0|100|0|-16 => @Microsoft JhengHei Light cs=0
+Sitka Text|162|0|500|0|-16 => Sitka Text cs=162
+Fixedsys|162|16|300|0|-16 => Times New Roman cs=162
+@Yu Gothic|161|66|700|0|-16 => @Yu Gothic cs=161
+Wingdings|129|49|500|0|-16 => MS Gothic cs=129
+Comic Sans MS|134|2|500|0|-16 => SimSun cs=134
+@Microsoft YaHei UI|162|16|500|1|-16 => @Microsoft YaHei UI cs=162
+Lucida Console|238|34|300|1|-16 => Lucida Console cs=238
+Webdings|178|64|400|1|-16 => Ebrima cs=178
+@Yu Gothic|0|48|600|0|-16 => @Yu Gothic cs=0
+@Arial|161|2|100|0|-16 => @Microsoft JhengHei Light cs=161
+Microsoft JhengHei UI|0|48|700|0|-16 => Microsoft JhengHei UI cs=0
+Arial Narrow|2|1|400|0|-16 => Symbol cs=2
+Arial Bold|238|49|700|0|-16 => Courier New cs=238
+Segoe UI Symbol|163|18|900|0|-16 => Times New Roman cs=163
+ＭＳ ゴシック|134|48|300|1|-16 => MS Gothic cs=134
+@SimSun|255|32|300|0|-16 => @Malgun Gothic Semilight cs=255
+Times New Roman|2|1|700|0|-16 => Marlett cs=2
+Times|177|34|400|0|-16 => Times New Roman cs=177
+Arial Black|0|0|100|0|-16 => Arial Black cs=0
+Arial|128|49|400|1|-16 => MS Gothic cs=128
+Modern|238|18|400|0|-16 => Times New Roman cs=238
+Microsoft JhengHei UI|255|64|100|0|-16 => Mistral cs=255
+Calibri|222|2|0|0|-16 => Leelawadee UI cs=222
+MS Serif|134|64|300|0|-16 => SimSun cs=134
+MS Shell Dlg 2|129|80|300|0|-16 => Tahoma cs=129
+Times|255|34|500|0|-16 => Times New Roman cs=255
+Webdings|134|32|700|0|-16 => SimSun cs=134
+Times|204|0|900|0|-16 => Times New Roman cs=204
+@SimSun|1|48|400|0|-16 => @SimSun cs=238
+Microsoft YaHei|1|0|400|0|-16 => Microsoft YaHei cs=238
+Symbol|1|16|400|0|-16 => Symbol cs=2
+Sitka Text|1|48|900|0|-16 => Sitka Text cs=238
+Times|204|0|400|1|-16 => Times New Roman cs=204
+Meiryo|163|18|400|0|-16 => Times New Roman cs=163
+@Arial|129|48|600|1|-16 => @MS Gothic cs=129
+Microsoft JhengHei UI|238|2|900|1|-16 => Microsoft JhengHei UI cs=238
+MS Sans Serif|129|66|400|0|-16 => Ebrima cs=129
+Lucida Console|178|0|400|0|-16 => Arial cs=178
+SimSun|2|0|900|1|-16 => Wingdings cs=2
+Bahnschrift|163|82|600|0|-16 => Bahnschrift cs=163
+Terminal|161|49|400|1|-16 => Courier New cs=161
+Courier New CE|178|0|500|1|-16 => Arial cs=178
+Arial Bold|238|32|400|0|-16 => Arial cs=238
+Segoe UI|136|82|500|1|-16 => Segoe UI cs=136
+Helv|134|1|900|0|-16 => NSimSun cs=134
+MS Shell Dlg|222|0|700|0|-16 => Microsoft Sans Serif cs=222
+Script|238|0|500|1|-16 => Arial cs=238
+Cambria|1|34|900|0|-16 => Cambria cs=238
+@Malgun Gothic Semilight|128|0|500|0|-16 => @Malgun Gothic Semilight cs=128
+Lucida Console|255|2|600|1|-16 => Lucida Console cs=255
+@Yu Gothic|1|34|500|0|-16 => @Yu Gothic cs=238
+Malgun Gothic|1|34|600|0|-16 => Malgun Gothic cs=238
+@Nonexistent|128|16|600|0|-16 => @MingLiU-ExtB cs=128
+Bahnschrift|186|18|400|0|-16 => Bahnschrift cs=186
+@Malgun Gothic Semilight|2|0|900|0|-16 => @Malgun Gothic Semilight cs=0
+Arial CE|2|0|700|0|-16 => Wingdings cs=2
+Courier New|222|2|100|1|-16 => Leelawadee UI Semilight cs=222
+Segoe UI|129|16|400|0|-16 => Segoe UI cs=129
+ＭＳ ゴシック|204|80|100|0|-16 => MS Gothic cs=204
+Arial Narrow|238|2|100|0|-16 => Arial Narrow cs=238
+Times New Roman Bold|204|1|300|0|-16 => Cascadia Code Light cs=204
+Tahoma|136|34|0|1|-16 => Tahoma cs=136
+Marlett|222|80|700|1|-16 => Segoe UI Variable Small cs=222
+Times|1|64|100|1|-16 => Times New Roman cs=238
+MS Shell Dlg 2|1|32|900|0|-16 => Tahoma cs=238
+Tahoma|2|16|400|1|-16 => Symbol cs=2
+@Arial|255|48|600|0|-16 => @MS Gothic cs=255
+Microsoft Sans Serif|161|32|100|0|-16 => Microsoft Sans Serif cs=161
+Ebrima|255|48|300|0|-16 => Courier New cs=255
+SimSun|255|49|600|1|-16 => Courier New cs=255
+Helvetica|186|80|700|1|-16 => Arial cs=186
+Microsoft JhengHei UI|0|34|0|0|-16 => Microsoft JhengHei UI cs=0
+Malgun Gothic|163|16|600|1|-16 => Malgun Gothic cs=163
+Impact|134|1|400|1|-16 => NSimSun cs=134
+Arial Bold|255|48|100|0|-16 => Courier New cs=255
+Leelawadee|128|64|700|1|-16 => Leelawadee cs=128
+@Malgun Gothic Semilight|186|64|600|0|-16 => @Malgun Gothic Semilight cs=186
+Arial Greek|177|0|400|0|-16 => Arial cs=177
+Calibri|186|1|700|0|-16 => Calibri cs=186
+Comic Sans MS|1|82|100|1|-16 => Comic Sans MS cs=238
+Wingdings|238|16|700|0|-16 => Times New Roman cs=238
+Wingdings|2|80|300|0|-16 => Wingdings cs=2
+Gulim|1|0|700|1|-16 => Arial cs=238
+@MS UI Gothic|0|64|500|0|-16 => @MS UI Gothic cs=0
+Helvetica|129|1|700|0|-16 => MS Gothic cs=129
+Comic Sans MS|128|49|400|0|-16 => MS Gothic cs=128
+MS Shell Dlg|238|1|300|1|-16 => Microsoft Sans Serif cs=238
+MS Serif|178|34|600|0|-16 => Arial cs=178
+Batang|162|66|300|0|-16 => Segoe Script cs=162
+Comic Sans MS|134|82|0|1|-16 => SimSun cs=134
+Segoe Print|1|32|900|1|-16 => Segoe Print cs=238
+Comic Sans MS|129|0|100|0|-16 => Microsoft JhengHei UI Light cs=129
+@Malgun Gothic Semilight|129|34|0|0|-16 => @Malgun Gothic Semilight cs=129
+Arial|1|80|600|0|-16 => Arial cs=238
+Arial Black|128|18|0|0|-16 => MingLiU-ExtB cs=128
+MS Serif|134|0|100|1|-16 => SimSun cs=134
+@MS UI Gothic|178|2|600|1|-16 => @MS UI Gothic cs=178
+@Meiryo|1|18|600|0|-16 => @MingLiU-ExtB cs=238
+Tahoma|222|0|400|1|-16 => Tahoma cs=222
+Ebrima|0|32|0|0|-16 => Ebrima cs=0
+Tms Rmn|177|48|700|1|-16 => Courier New cs=177
+@Microsoft YaHei UI|134|64|900|0|-16 => @Microsoft YaHei UI cs=134
+Small Fonts|255|49|400|0|-16 => Courier New cs=255
+Arial Narrow|178|0|400|0|-16 => Arial cs=178
+Small Fonts|2|0|400|0|-16 => Wingdings cs=2
+Segoe UI Symbol|177|16|900|0|-16 => Times New Roman cs=177
+|1|16|700|0|-16 => Times New Roman cs=238
+Ebrima|2|80|0|0|-16 => Wingdings cs=2
+Marlett|163|49|400|0|-16 => Courier New cs=163
+Lucida Console|255|32|600|0|-16 => Lucida Console cs=255
+Segoe Print|204|16|700|0|-16 => Segoe Print cs=204
+MS Sans Serif|178|80|700|1|-16 => Ebrima cs=178
+Segoe Print|186|18|600|1|-16 => Segoe Print cs=186
+@Microsoft YaHei UI|222|32|900|1|-16 => @MS UI Gothic cs=222
+Comic Sans MS|238|48|500|0|-16 => Comic Sans MS cs=238
+@MS Gothic|1|0|0|0|-16 => @MS Gothic cs=238
+Arial Greek|1|2|300|1|-16 => Arial cs=238
+System|128|18|500|1|-16 => MingLiU-ExtB cs=128
+@MS Gothic|177|80|400|0|-16 => @SimSun cs=177
+Microsoft Sans Serif|1|49|700|0|-16 => Microsoft Sans Serif cs=238
+Wingdings|204|48|400|0|-16 => Courier New cs=204
+Arial Greek|136|18|600|1|-16 => MingLiU-ExtB cs=136
+MingLiU|186|48|600|0|-16 => Courier New cs=186
+Ebrima|186|18|100|1|-16 => Ebrima cs=186
+Microsoft YaHei|222|0|700|1|-16 => Segoe UI cs=222
+Leelawadee|163|0|0|0|-16 => Leelawadee cs=163
+MS Shell Dlg|136|1|700|0|-16 => Microsoft Sans Serif cs=136
+Marlett|1|48|300|1|-16 => Marlett cs=2
+Helv|161|16|500|0|-16 => Times New Roman cs=161
+Courier New|177|64|300|0|-16 => Courier New cs=177
+Symbol|162|82|500|0|-16 => Symbol cs=2
+MS Shell Dlg 2|0|48|400|1|-16 => Tahoma cs=0
+MS Shell Dlg|2|48|400|0|-16 => Microsoft Sans Serif cs=238
+Times|186|34|700|0|-16 => Times New Roman cs=186
+Arial CE|255|80|0|1|-16 => Segoe Print cs=255
+Segoe UI Light|163|0|300|1|-16 => Segoe UI Light cs=163
+Yu Gothic UI|1|0|900|1|-16 => Yu Gothic UI cs=238
+Segoe Print|2|18|0|1|-16 => Symbol cs=2
+Helvetica|136|18|300|1|-16 => MingLiU-ExtB cs=136
+Lucida Console|162|18|700|1|-16 => Lucida Console cs=162
+Sitka Text|2|64|400|1|-16 => Wingdings cs=2
+Arial Bold|177|16|900|0|-16 => Times New Roman cs=177
+Lucida Console|129|49|0|0|-16 => MS Gothic cs=129
+Times New Roman|255|2|400|0|-16 => Times New Roman cs=255
+Nirmala UI|177|0|500|1|-16 => Nirmala UI cs=177
+Gulim|161|48|400|0|-16 => Courier New cs=161
+@Yu Gothic|134|64|500|0|-16 => @SimSun cs=134
+@Yu Gothic|186|0|900|1|-16 => @Yu Gothic cs=186
+Georgia|204|80|500|0|-16 => Georgia cs=204
+Segoe UI Symbol|177|49|700|0|-16 => Courier New cs=177
+Modern|186|82|400|0|-16 => Gabriola cs=186
+Times New Roman|178|0|400|0|-16 => Times New Roman cs=178
+SimSun|163|1|400|0|-16 => SimSun cs=163
+Times New Roman Bold|1|34|400|0|-16 => Arial cs=238
+Helv|177|16|0|0|-16 => Times New Roman cs=177
+Marlett|177|18|0|0|-16 => Times New Roman cs=177
+Segoe UI Light|0|32|600|0|-16 => Segoe UI Light cs=0
+Malgun Gothic|161|0|100|1|-16 => Malgun Gothic cs=161
+Cambria|161|48|400|0|-16 => Cambria cs=161
+Nonexistent|255|0|600|1|-16 => Arial cs=255
+Times|163|16|600|0|-16 => Times New Roman cs=163
+Gulim|128|80|700|0|-16 => MS PGothic cs=128
+@Yu Gothic|1|66|400|0|-16 => @Yu Gothic cs=238
+Bahnschrift|129|32|100|0|-16 => Microsoft JhengHei UI Light cs=129
+Tms Rmn|2|1|0|0|-16 => Symbol cs=2
+Leelawadee|178|80|400|0|-16 => Leelawadee cs=178
+Segoe UI Symbol|136|34|500|0|-16 => Malgun Gothic Semilight cs=136
+Gulim|238|32|900|0|-16 => Arial cs=238
+Yu Gothic UI|136|1|300|1|-16 => Yu Gothic UI cs=136
+Arial Bold|162|16|600|0|-16 => Times New Roman cs=162
+Times New Roman|186|64|600|1|-16 => Times New Roman cs=186
+Comic Sans MS|186|80|700|1|-16 => Comic Sans MS cs=186
+@Meiryo|222|0|700|1|-16 => @MS UI Gothic cs=222
+Sitka Text|134|2|900|1|-16 => SimSun cs=134
+Consolas|161|1|900|0|-16 => Consolas cs=161
+SimSun|177|0|700|1|-16 => SimSun cs=177
+@Malgun Gothic Semilight|163|32|400|1|-16 => @Malgun Gothic Semilight cs=163
+Sitka Text|128|32|600|0|-16 => MS PGothic cs=128
+Microsoft Sans Serif|134|0|0|0|-16 => Microsoft Sans Serif cs=134
+Courier New|1|82|400|0|-16 => Courier New cs=238
+Marlett|178|16|500|1|-16 => Times New Roman cs=178
+@Nonexistent|222|16|400|1|-16 => @MingLiU-ExtB cs=222
+Times New Roman Bold|129|2|400|0|-16 => Ebrima cs=129
+@MS UI Gothic|1|1|500|0|-16 => @MS UI Gothic cs=238
+Marlett|1|0|900|1|-16 => Marlett cs=2
+Comic Sans MS|1|16|700|1|-16 => Comic Sans MS cs=238
+@Nonexistent|204|49|900|0|-16 => @MS Gothic cs=204
+MS Gothic|204|0|500|1|-16 => MS Gothic cs=204
+Modern|128|80|400|1|-16 => MS PGothic cs=128
+Arial Black|129|18|600|1|-16 => MingLiU-ExtB cs=129
+Times New Roman Bold|128|80|100|1|-16 => MS PGothic cs=128
+Verdana|161|0|400|1|-16 => Verdana cs=161
+Yu Gothic UI|161|48|700|0|-16 => Yu Gothic UI cs=161
+@MS UI Gothic|136|0|500|0|-16 => @MS UI Gothic cs=136
+Segoe UI|136|48|500|0|-16 => Segoe UI cs=136
+Calibri|162|0|700|0|-16 => Calibri cs=162
+Arial Bold|128|0|400|0|-16 => MS PGothic cs=128
+Small Fonts|204|18|400|0|-16 => Times New Roman cs=204
+Leelawadee|204|34|700|0|-16 => Leelawadee cs=204
+Georgia|161|82|500|0|-16 => Georgia cs=161
+Times New Roman CYR|177|16|500|1|-16 => Times New Roman cs=177
+@SimSun|163|80|300|0|-16 => @SimSun cs=163
+Segoe UI Light|163|1|400|0|-16 => Segoe UI Light cs=163
+@Malgun Gothic Semilight|129|1|600|0|-16 => @Malgun Gothic Semilight cs=129
+Comic Sans MS|161|18|700|0|-16 => Comic Sans MS cs=161
+System|255|80|100|1|-16 => Segoe UI Variable Small Light cs=255
+Gulim|238|49|100|0|-16 => Courier New cs=238
+Segoe UI Symbol|222|82|100|0|-16 => Segoe UI Variable Small cs=222
+Consolas|0|66|400|0|-16 => Consolas cs=0
+Verdana|1|80|400|0|-16 => Verdana cs=238
+MS Serif|129|80|100|1|-16 => Segoe UI Variable Small Light cs=129
+Arial Narrow|1|1|600|1|-16 => Arial Narrow cs=238
+SimSun|161|66|300|0|-16 => SimSun cs=161
+Script|134|1|900|0|-16 => NSimSun cs=134
+@Yu Gothic|163|2|900|0|-16 => @Malgun Gothic cs=163
+Lucida Console|238|48|900|1|-16 => Lucida Console cs=238
+Times New Roman|204|18|400|1|-16 => Times New Roman cs=204
+ＭＳ ゴシック|1|34|900|1|-16 => MS Gothic cs=238
+Comic Sans MS|129|1|0|1|-16 => MS Gothic cs=129
+@MS UI Gothic|128|18|400|0|-16 => @MS UI Gothic cs=128
+Marlett|177|48|700|0|-16 => Courier New cs=177
+Modern|2|34|900|0|-16 => Wingdings cs=2
+Cambria|1|1|700|1|-16 => Cambria cs=238
+Verdana|2|2|400|0|-16 => Wingdings cs=2
+Nonexistent|1|82|400|1|-16 => Gabriola cs=238
+Sitka Text|1|82|400|1|-16 => Sitka Text cs=238
+Tahoma|161|2|700|0|-16 => Tahoma cs=161
+Batang|222|32|0|0|-16 => Leelawadee UI cs=222
+Consolas|1|82|700|0|-16 => Consolas cs=238
+Microsoft JhengHei UI|238|18|400|1|-16 => Microsoft JhengHei UI cs=238
+Segoe UI|255|2|600|0|-16 => Segoe UI cs=255
+Sitka Text|129|18|300|1|-16 => MingLiU-ExtB cs=129
+Terminal|163|1|400|1|-16 => Consolas cs=163
+MS Shell Dlg 2|2|82|400|1|-16 => Wingdings cs=2
