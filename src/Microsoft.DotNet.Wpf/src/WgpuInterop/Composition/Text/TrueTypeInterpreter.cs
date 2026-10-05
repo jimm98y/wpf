@@ -535,6 +535,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// glyph's x axis (Ax, Ay) and its DOWN axis (Dx, Dy) point on the screen; 0 upright.</summary>
         [ThreadStatic] internal static int GdiTurn;
 
+        /// <summary>GETINFO's STRETCHED answer for a GDI glyph, from the matrix bSetXform hands the scaler
+        /// (scl_InitializeScaling compares its rows' lengths BEFORE each axis is rounded to a whole
+        /// pixel, so two axes that round to the same ppem can still be stretched): 1 yes, 2 no, 0 the
+        /// stretched size's own answer (StretchPpemX != StretchPpemY).</summary>
+        [ThreadStatic] internal static int GdiStretchInfo;
+
+        internal static int GdiKey => GdiWord | (GdiRotated ? 0x10000 : 0) | GdiTurn << 17 | GdiStretchInfo << 26;
+
         internal static int PackGdiTurn(int ax, int ay, int dx, int dy)
             => ax == 1 && ay == 0 && dx == 0 && dy == 1 ? 0
              : 0x100 | (ax + 1) | (ay + 1) << 2 | (dx + 1) << 4 | (dy + 1) << 6;
@@ -2143,7 +2151,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool clearType = ClearTypeInfo;
             if (_prepRun && Math.Abs(_prepPpem - pixelsPerEm) < 0.001f && _prepClearType == clearType
                 && _prepBiLevel == BiLevelPass && _prepDWriteFlags == DWriteFlags
-                && _prepSymOverride == SymmetricAnswerOverride && _prepDWriteMove == DWriteMovePoint && _prepGdiWord == (GdiWord | (GdiRotated ? 0x10000 : 0) | GdiTurn << 17)
+                && _prepSymOverride == SymmetricAnswerOverride && _prepDWriteMove == DWriteMovePoint && _prepGdiWord == GdiKey
                 && _prepStretchX == (stretched ? sx : 0) && _prepStretchY == (stretched ? sy : 0))
                 return !_faulted;
 
@@ -2156,7 +2164,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _prepDWriteFlags = DWriteFlags;
             _prepSymOverride = SymmetricAnswerOverride;
             _prepDWriteMove = DWriteMovePoint;
-            _prepGdiWord = GdiWord | (GdiRotated ? 0x10000 : 0) | GdiTurn << 17;
+            _prepGdiWord = GdiKey;
             _roundFnSp = false;          // the pre-program starts on the whole-pixel functions
             _prepRun = true;
             _faulted = false;

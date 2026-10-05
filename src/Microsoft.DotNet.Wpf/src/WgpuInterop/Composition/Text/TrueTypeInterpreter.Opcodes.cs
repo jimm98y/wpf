@@ -1262,7 +1262,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // 4 with them whenever globals[0x1be] is clear -- which bSetXform
                             // leaves it. WPF_GETINFO_STRETCH=0 answers neither.
                             if (s_stretchInfo && (selector & 2) != 0 && GdiRotated) result |= 0x100;
-                            if (s_stretchInfo && (selector & 4) != 0 && _stretched) result |= 0x200;
+                            if (s_stretchInfo && (selector & 4) != 0 && (GdiStretchInfo == 0 ? _stretched : GdiStretchInfo == 1)) result |= 0x200;
                             if (ClearTypeInfo)
                             {
                                 // WHAT GDI ANSWERS WHEN IT IS ACTUALLY DRAWING CLEARTYPE, which is

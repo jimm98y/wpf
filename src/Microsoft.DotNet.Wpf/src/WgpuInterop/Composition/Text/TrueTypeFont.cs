@@ -1146,9 +1146,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>Internal so a probe can ask the PRODUCT rather than reimplement it: the
         /// advance test used to duplicate this arithmetic and then disagreed with the product
         /// after it was fixed, reporting a difference that had already been repaired.</summary>
+        private static bool GdiStretched
+            => TrueTypeInterpreter.DWriteFlags == 0 && TrueTypeInterpreter.StretchPpemX > 0 && TrueTypeInterpreter.StretchPpemY > 0
+               && TrueTypeInterpreter.StretchPpemX != TrueTypeInterpreter.StretchPpemY;
+
         internal float CompatibleAdvance(int gid, float pixelsPerEm, int ppemI)
         {
-            if (TryGetHdmxAdvance(gid, ppemI, out float hd)) return hd;
+            // 'hdmx' ONLY FOR A PLAIN UPRIGHT SCALE. bComputeMaxGlyph@14001b198 (fontdrvhost) looks
+            // the table up (vFindHdmxTable) only when the matrix is diagonal with equal, positive
+            // x and y; a turned or stretched glyph is measured.
+            if (TrueTypeInterpreter.GdiTurn == 0 && !GdiStretched && TryGetHdmxAdvance(gid, ppemI, out float hd)) return hd;
             // THEN THE FACE THAT SAYS ITS PROGRAM NEVER MOVES THE ADVANCE (head.flags bit 4 clear):
             // the design advance rounded once, and the program is not asked -- its phantom points
             // round differently (Consolas at 10ppem: 5.498 -> 5 here, 6 by the phantoms, 50 pixels
@@ -1236,18 +1243,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         // Hinting a glyph to ask how wide it is costs as much as hinting it to draw it, and a run of
         // text asks for the same handful of glyphs over and over.
-        private readonly Dictionary<(int Glyph, int Size), float> _hintedAdvances = new();
+        private readonly Dictionary<(int Glyph, long Size), float> _hintedAdvances = new();
 
         /// <summary>The size half of the advance and span caches' keys. A STRETCHED size
         /// (TrueTypeInterpreter.StretchPpemX/Y, the EMF player's anisotropic and turned GDI text)
         /// measures another advance from the same nominal ppem, so it has a key of its own; keyed
         /// by the ppem alone, whichever of an upright and a stretched run asked first answered the
         /// other's phase.</summary>
-        private static int SpanSizeKey(float pixelsPerEm)
+        private static long SpanSizeKey(float pixelsPerEm)
         {
             int sx = TrueTypeInterpreter.StretchPpemX, sy = TrueTypeInterpreter.StretchPpemY;
-            if (sx > 0 && sy > 0 && sx != sy) return -1 - ((sx << 12) | (sy & 0xfff));
-            return (int)MathF.Round(pixelsPerEm * 16f);
+            long size = sx > 0 && sy > 0 && sx != sy ? -1 - ((sx << 12) | (sy & 0xfff)) : (int)MathF.Round(pixelsPerEm * 16f);
+            return size & 0xffffffffL | (long)TrueTypeInterpreter.GdiKey << 32;
         }
 
         /// <summary>The same measurement UNROUNDED, in sixty-fourths. The advance GDI lays a glyph
@@ -1256,7 +1263,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <code>uVar43 = curX[last + 2] - curX[last + 1]</code> -- and divides by what the client
         /// answers for the same advance in font units. So the numerator keeps its sixty-fourths.
         /// </summary>
-        private readonly Dictionary<(int Glyph, int Size), int> _hintedSpans = new();
+        private readonly Dictionary<(int Glyph, long Size), int> _hintedSpans = new();
 
         /// <summary>The distance the face's own program leaves between the two horizontal phantom
         /// points -- the advance the glyph is actually drawn with. False when there is no program to
@@ -1299,7 +1306,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return span64 > 0;
         }
 
-        private readonly System.Collections.Generic.Dictionary<(int, int), int> _ctSpans = new();
+        private readonly System.Collections.Generic.Dictionary<(int, long), int> _ctSpans = new();
         [ThreadStatic] private static bool s_measuringCtSpan;
         /// <summary>WPF_CT_SPAN_PASS=ct takes the numerator from TryGetClearTypeSpan64. REFUTED as a
         /// general rule, emphatically: holdout 58 -> 46,606,822 with 355 ratchets failing (the same
@@ -1309,7 +1316,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_spanFromCtPass =
             Environment.GetEnvironmentVariable("WPF_CT_SPAN_PASS") == "ct";
 
-        private readonly System.Collections.Generic.Dictionary<(int, int), bool> _hintedSpanTouched = new();
+        private readonly System.Collections.Generic.Dictionary<(int, long), bool> _hintedSpanTouched = new();
 
         /// <summary>Whether the bi-level measuring pass moved the advance phantom in x.</summary>
         internal bool HintedSpanTouched(int glyphId, float pixelsPerEm)
@@ -1421,7 +1428,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                       // A stretched GDI fit (the EMF player's, StretchPpemX/Y) is another fit.
                       + (TrueTypeInterpreter.StretchPpemX << 20 | TrueTypeInterpreter.StretchPpemY << 10) * 64,
                       // ...and so is a turned one (GdiWord: no compatible widths, ClearType along y).
-                      TrueTypeInterpreter.GdiWord | (TrueTypeInterpreter.GdiRotated ? 0x10000 : 0) | TrueTypeInterpreter.GdiTurn << 17);
+                      TrueTypeInterpreter.GdiKey);
             int callNo = 0;
             bool probe = s_outlineProbe && glyphId == s_probeGid;
             if (probe)
@@ -1691,13 +1698,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// it runs -- overwrites the result. Returns the renderer's DropoutForRun value (scan type
         /// + 1, or 0 for none), or -1 when nothing was recorded.</summary>
         internal int GlyphDropout(int gid, float pixelsPerEm)
-            => s_perGlyphScan && _glyphScan.TryGetValue((gid, (int) MathF.Round(pixelsPerEm * 16f)), out int t)
+            => s_perGlyphScan && _glyphScan.TryGetValue((gid, SpanSizeKey(pixelsPerEm)), out int t)
                ? ((t & 2) != 0 ? 0 : t + 1) : -1;
 
         private static readonly bool s_perGlyphScan =
             Environment.GetEnvironmentVariable("WPF_CT_SCAN_PERGLYPH") != "0";
 
-        private readonly Dictionary<(int, int), int> _glyphScan = new();
+        private readonly Dictionary<(int, long), int> _glyphScan = new();
         [ThreadStatic] private static int[]? s_scanAcc;
 
         private void RecordScanType(TrueTypeInterpreter interpreter, GlyphProgram glyph, int gid,
@@ -1744,7 +1751,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     if (mine < 0)
                         mine = DoScanControl(interpreter.PrepScanControl, (int) MathF.Round(pixelsPerEm))
                                ? interpreter.PrepScanType : 2;
-                    _glyphScan[(gid, (int) MathF.Round(pixelsPerEm * 16f))] = mine;
+                    _glyphScan[(gid, SpanSizeKey(pixelsPerEm))] = mine;
                 }
             }
         }
@@ -1760,7 +1767,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>fsg_DoScanControl@14002e5d0.</summary>
         private static bool DoScanControl(int ctrl, int ppem)
-            => ((ctrl & 0x100) != 0 && ((ctrl & 0xFF) == 0xFF || ppem <= (ctrl & 0xFF)));
+            => ((ctrl & 0x100) != 0 && ((ctrl & 0xFF) == 0xFF || ppem <= (ctrl & 0xFF)))
+               // fsg_DoScanControl@14002e5d0 is handed the transform's flags beside the ppem: bit 9
+               // asks for dropout control under a general rotation (0x400) and bit 10 under any
+               // matrix that is not a plain uniform scale (0x1000) -- a turned or stretched GDI glyph.
+               || ((ctrl & 0x200) != 0 && TrueTypeInterpreter.GdiRotated)
+               || ((ctrl & 0x400) != 0 && GdiNonIdentity);
+
+        /// <summary>fs__NewTransformation's 0x1000: the scaler's matrix is not a uniform upright scale.</summary>
+        private static bool GdiNonIdentity
+            => TrueTypeInterpreter.DWriteFlags == 0 && (TrueTypeInterpreter.GdiTurn != 0 || TrueTypeInterpreter.GdiStretchInfo == 1);
 
         public bool WantsDropoutControl(float pixelsPerEm, out int scanType)
         {
@@ -1776,6 +1792,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int ppem = (int) MathF.Round(pixelsPerEm);
             bool on = (ctrl & 0x100) != 0 && (threshold == 0xFF || ppem <= threshold);
             if ((ctrl & 0x800) != 0 && threshold != 0xFF && ppem > threshold) on = false;
+            if (((ctrl & 0x200) != 0 && TrueTypeInterpreter.GdiRotated) || ((ctrl & 0x400) != 0 && GdiNonIdentity)) on = true;
             // SCANTYPE 2 and 3 mean no dropout control at all; 0/1 simple, 4/5 smart.
             if (s_dropoutTrace)
                 Console.Error.WriteLine($"DROPOUT upem={_unitsPerEm} ppem={ppem} SCANCTRL=0x{ctrl:X} SCANTYPE={scanType} on={on}");

@@ -61,7 +61,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             // at its own whole ppem.
             float em = font.Ppem;
             GdiXform wtod = TargetWtoD();
-            (int rx, int ry) = RealizedPpems(font, lf, wtod.M11, wtod.M22, q == 0 && wtod.M22 > 0);
+            (int rx, int ry, bool rStretch) = RealizedPpems(font, lf, wtod.M11, wtod.M22, q == 0 && wtod.M22 > 0, q % 2 == 1);
             // bGetNtoD_Win31 turns the font AFTER the world-to-device scale (notional to world, times
             // world to device, times the escapement), so a turned glyph is still sized x by the
             // device x scale and y by the device y scale.
@@ -73,6 +73,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
             bool updateCp = (align & 1) != 0;
             PointF refp = ToTarget(updateCp ? _dc.Pos : logical);
             long fx = (long)Math.Floor(refp.X * 16.0 + 0.5), fy = (long)Math.Floor(refp.Y * 16.0 + 0.5);
+            // The reference point through the DC's own 28.4 world-to-device transform (bCvtPts),
+            // as GDI's ExtTextOut takes it, where the record's point is whole.
+            PointF rl = updateCp ? _dc.Pos : logical;
+            if (rl.X == MathF.Floor(rl.X) && rl.Y == MathF.Floor(rl.Y))
+            {
+                Fix(wtod, rl.X, rl.Y, out int rfx, out int rfy);
+                fx = rfx; fy = rfy;
+            }
+            if (Environment.GetEnvironmentVariable("ROT_DBG") == "1")
+                Console.Error.WriteLine($"ROTREF logical={logical.X},{logical.Y} target={refp.X:R},{refp.Y:R} fx={fx} fy={fy} m={m.M11},{m.M22}");
             // Unit vectors along the baseline and down (device).
             int ax = q == 0 ? 1 : q == 2 ? -1 : 0, ay = q == 1 ? -1 : q == 3 ? 1 : 0;
             int dnx = q == 1 ? 1 : q == 3 ? -1 : 0, dny = q == 0 ? 1 : q == 2 ? -1 : 0;
@@ -173,7 +183,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             ys[i] += sd * dny + sa * ay;
                         }
                     }
-                    CtLevels lv = GdiClearTypeRun(font.Face, gids, xs, ys, ppemAlong, ppemAcross, q, (ax, ay, dnx, dny), upright);
+                    CtLevels lv = GdiClearTypeRun(font.Face, gids, xs, ys, ppemAlong, ppemAcross, q, (ax, ay, dnx, dny), upright, rStretch);
                     (byte[] A, byte[] B) = CtGamma();
                     uint inkRgb = Rgb(_dc.TextColor);
                     int ir = (int)(inkRgb >> 16) & 255, ig = (int)(inkRgb >> 8) & 255, ib = (int)inkRgb & 255;
@@ -232,7 +242,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <item>scl_InitializeScaling @140040540: the axis scale is that times the ppem, rounded to a
         /// whole pixel (the face's integer-ppem flag).</item>
         /// </list></summary>
-        (int X, int Y) RealizedPpems(GpGdiFont font, GdiFont lf, float m11, float m22, bool scaleOnly)
+        (int X, int Y, bool Stretched) RealizedPpems(GpGdiFont font, GdiFont lf, float m11, float m22, bool scaleOnly, bool turned = false)
         {
             TrueTypeFont face = font.Face;
             int upem = face.UnitsPerEmForHinting;
@@ -250,8 +260,33 @@ namespace System.Drawing.WebGpuBackend.Gdip
             float dx = MathF.Abs(wx * m11) * 0.0625f, dy = MathF.Abs(h * m22) * 0.0625f;
             static int Fx(float v) => (int)Math.Floor(v * 65536.0 + 0.5);
             int m11fx = Fx(dx), m22fx = Fx(dy);
+            if (turned)
+            {
+                // A quarter turn is not a plain scale (bNewXform @14001c018 leaves flag bit 0 clear),
+                // and ttfd sizes it another way:
+                //   bComputeMaxGlyph @14001b198  the point size (16.16) is iHipot of the glyph's y
+                //                                row, each component m upem 72 / dpi rounded;
+                //   bSetXform @14001c2c8         the matrix is divided by that size: every entry
+                //                                FixMul'd by upem 72 2^32 / (dpi pt) (CompDiv);
+                //   scl_InitializeScaling        mth_FoldPointSizeResolution multiplies it back by
+                //     @140040540                 (dpi pt + 36) / 72 (FixMul), and each axis is the
+                //                                larger entry of its row, rounded to a whole pixel.
+                const int dpi = 96;
+                long RoundDiv(long a, long d) => (a + (a < 0 ? -d / 2 : d / 2)) / d;
+                long ptY = RoundDiv((long)m22fx * upem * 72, dpi);     // the y row (m10, 0): |m10|
+                int pt16 = (int)Math.Abs(ptY);
+                if (pt16 < 1) return (0, 0, false);
+                long num = ((long)upem << 16) * (72L << 16), den = (long)dpi * pt16;
+                int k = (int)((num + den / 2) / den);
+                long f = ((long)dpi * pt16 + 36) / 72;
+                int Axis(int e) => (int)((Math.Abs((long)TrueTypeInterpreter.DwFixMul(TrueTypeInterpreter.DwFixMul(e, k), (int)f)) + 0x8000) >> 16);
+                int r0 = TrueTypeInterpreter.DwFixMul(m11fx, k), r1 = TrueTypeInterpreter.DwFixMul(m22fx, k);
+                // STRETCHED (GETINFO selector 4) when the rows of that matrix differ in length.
+                return (Axis(m11fx), Axis(m22fx), TrueTypeInterpreter.DwFixMul(r0, r0) != TrueTypeInterpreter.DwFixMul(r1, r1));
+            }
             int ppemY = (int)(((long)m22fx * upem + 0x8000) >> 16);
-            if (ppemY < 1) return (0, 0);
+            if (ppemY < 1) return (0, 0, false);
+            int m22eff = m22fx;
             // vQuantizeXform @14001ea70, for a face with a 'VDMX': y becomes exactly the ppem over
             // the em, and x follows it in proportion -- or becomes y, when the difference moves
             // the face's average character width (IFIMETRICS.fwdAveCharWidth) by less than half a
@@ -259,13 +294,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (scaleOnly && face.HasVdmx && lf.Height <= 0)
             {
                 int m22q = (int)((((long)ppemY << 16) + upem / 2) / upem);
+                m22eff = m22q;
                 if (m11fx == m22fx || ((long)(m11fx - m22q) * face.XAvgCharWidth + 0x8000) >> 16 == 0) m11fx = m22q;
                 else m11fx = (int)(((long)m11fx * m22q + m22fx / 2) / m22fx);
             }
             long ratio = (((long)upem << 16) * 96 + ppemY * 96 / 2) / (ppemY * 96L);
             int m00 = (int)((ratio * m11fx + 0x8000) >> 16);
             int ppemX = (int)((((long)m00 * ppemY) + 0x8000) >> 16);
-            return (ppemX, ppemY);
+            // STRETCHED (GETINFO selector 4): bSetXform hands the scaler the identity when +0x50 equals
+            // +0x60, else x is m00 over y's size, and the rows then differ in length.
+            bool stretchedInfo = m11fx != m22eff && TrueTypeInterpreter.DwFixMul(m00, m00) != 0x10000;
+            return (ppemX, ppemY, stretchedInfo);
         }
 
         /// <summary>A run of GDI ClearType text, as channel LEVELS (0..6, three a pixel) over a box of
@@ -290,7 +329,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// 6x1 / 6x5 filter, the dropout, the bold smear, the line-box clip and the level sums of
         /// win32k's run (PathRasterizer.RasterizeSubpixel with the per-run configuration
         /// WgpuSceneRenderer.EmitStringRun gives a string run).</summary>
-        static CtLevels GdiClearTypeRun(TrueTypeFont face, int[] gids, int[] xs, int[] ys, int ppemX, int ppemY, int quarter, (int Ax, int Ay, int Dx, int Dy) axes, bool[] upright = null)
+        static CtLevels GdiClearTypeRun(TrueTypeFont face, int[] gids, int[] xs, int[] ys, int ppemX, int ppemY, int quarter, (int Ax, int Ay, int Dx, int Dy) axes, bool[] upright = null, bool stretchInfo = false)
         {
             int n = gids.Length;
             bool savedSub = TrueTypeFont.SubpixelFitting, savedCt = TrueTypeFont.ClearTypeRendering;
@@ -298,6 +337,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
             bool stretched = ppemX != ppemY;
             TrueTypeInterpreter.StretchPpemX = stretched ? ppemX : 0;
             TrueTypeInterpreter.StretchPpemY = stretched ? ppemY : 0;
+            int savedStretchInfo = TrueTypeInterpreter.GdiStretchInfo;
+            int savedWord = TrueTypeInterpreter.GdiWord, savedTurn = TrueTypeInterpreter.GdiTurn;
+            TrueTypeInterpreter.GdiStretchInfo = stretchInfo ? 1 : 2;
+            // A turned run is fitted, and its pre-program run, under the word and the device
+            // mapping fs__NewTransformation and fs__Contour see (TurnedWord, GdiTurn).
+            int runWord = quarter % 2 == 1 ? TurnedWord(face, ppemY) : 0;
+            int runTurn = quarter != 0 ? TrueTypeInterpreter.PackGdiTurn(axes.Ax, axes.Ay, axes.Dx, axes.Dy) : 0;
+            TrueTypeInterpreter.GdiWord = runWord;
+            TrueTypeInterpreter.GdiTurn = runTurn;
             if (!savedSub) TrueTypeFont.SubpixelFitting = true;
             if (!savedCt) TrueTypeFont.ClearTypeRendering = true;
             try
@@ -320,6 +368,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     if (rowClip != null) rowClip[ordinal] = (ys[i] - clipAsc, ys[i] + clipDesc);
                     if (colClip != null) colClip[ordinal] = (xs[i] + colL, xs[i] + colR);
                     System.Collections.Generic.List<PathFigure> outline;
+                    int? fitDropout = null;     // the glyph's own scan record, asked under the word it was fitted with
                     if (quarter == 0)
                     {
                         if (!face.TryGetHintedOutline(gids[i], ppem, out outline) || outline.Count == 0) continue;
@@ -332,12 +381,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         // sized by what was the glyph's y and the other way about.
                         TrueTypeInterpreter.StretchPpemX = stretched ? ppemY : 0;
                         TrueTypeInterpreter.StretchPpemY = stretched ? ppemX : 0;
+                        TrueTypeInterpreter.GdiWord = 0;
+                        TrueTypeInterpreter.GdiTurn = 0;
                         bool got;
-                        try { got = face.TryGetHintedOutline(gids[i], ppemX, out outline); }
+                        try { got = face.TryGetHintedOutline(gids[i], ppemX, out outline); fitDropout = face.GlyphDropout(gids[i], ppemX); }
                         finally
                         {
                             TrueTypeInterpreter.StretchPpemX = stretched ? ppemX : 0;
                             TrueTypeInterpreter.StretchPpemY = stretched ? ppemY : 0;
+                            TrueTypeInterpreter.GdiWord = runWord;
+                            TrueTypeInterpreter.GdiTurn = runTurn;
                         }
                         if (!got || outline.Count == 0) continue;
                         outline = Turned(outline, (-axes.Dx, -axes.Dy, axes.Ax, axes.Ay));
@@ -349,22 +402,37 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         // back by scl_PostTransformGlyph turned onto the device, where it is scanned
                         // and filtered like any other glyph. A half turn keeps GDI's word; a quarter
                         // turn does not (TurnedWord).
-                        bool got;
-                        int savedWord = TrueTypeInterpreter.GdiWord, savedTurn = TrueTypeInterpreter.GdiTurn;
-                        if (quarter % 2 == 1) TrueTypeInterpreter.GdiWord = TurnedWord(face, ppem);
-                        TrueTypeInterpreter.GdiTurn = TrueTypeInterpreter.PackGdiTurn(axes.Ax, axes.Ay, axes.Dx, axes.Dy);
-                        try { got = face.TryGetHintedOutline(gids[i], ppem, out outline); }
-                        finally { TrueTypeInterpreter.GdiWord = savedWord; TrueTypeInterpreter.GdiTurn = savedTurn; }
-                        if (!got || outline.Count == 0) continue;
+                        if (!face.TryGetHintedOutline(gids[i], ppem, out outline) || outline.Count == 0) continue;
                         outline = Turned(outline, axes);
                     }
                     if (Environment.GetEnvironmentVariable("ROT_DBG") == "1")
                     {
                         var sb = new System.Text.StringBuilder();
                         foreach (PathFigure f in outline) { sb.Append($" [{f.Start.X:0.###},{f.Start.Y:0.###}"); foreach (PathSegment sg in f.Segments) if (sg is LineSegment l) sb.Append($" {l.Point.X:0.###},{l.Point.Y:0.###}"); else if (sg is QuadraticBezierSegment qb) sb.Append($" q{qb.Control.X:0.###},{qb.Control.Y:0.###} {qb.Point.X:0.###},{qb.Point.Y:0.###}"); sb.Append(']'); }
-                        Console.Error.WriteLine($"ROT q={quarter} gid={gids[i]} ppem={ppemX}x{ppemY} at {xs[i]},{ys[i]} sub={TrueTypeFont.SubpixelFitting} ct={TrueTypeFont.ClearTypeRendering}{sb}");
+                        Console.Error.WriteLine($"ROT q={quarter} gid={gids[i]} ppem={ppemX}x{ppemY} at {xs[i]},{ys[i]} sub={TrueTypeFont.SubpixelFitting} ct={TrueTypeFont.ClearTypeRendering} gd={face.GlyphDropout(gids[i], ppem)} wd={face.WantsDropoutControl(ppem, out int stt)}/{stt} sym={face.WantsSymmetricSmoothing(ppem)}{sb}");
                     }
-                    if (face.GlyphDropout(gids[i], ppem) is int gd && gd >= 0) (dropouts ??= new()).Add(ordinal, gd);
+                    if ((fitDropout ?? face.GlyphDropout(gids[i], ppem)) is int gd && gd >= 0) (dropouts ??= new()).Add(ordinal, gd);
+                    string rt = Environment.GetEnvironmentVariable("ROT_TRUNC");
+                    if (rt == "all" || (rt == "1" && quarter != 0))
+                    {
+                        bool symY = Environment.GetEnvironmentVariable("ROT_TRUNCY") == "1" && face.WantsSymmetricSmoothing(ppem);
+                        System.Numerics.Vector2 N(System.Numerics.Vector2 p)
+                            => new System.Numerics.Vector2(p.X < 0 ? p.X + 1f / 64 : p.X, symY && p.Y > 0 ? p.Y - 1f / 64 : p.Y);
+                        var nf = new System.Collections.Generic.List<PathFigure>();
+                        foreach (PathFigure f in outline)
+                        {
+                            var c = new PathFigure(N(f.Start)) { Closed = f.Closed };
+                            foreach (PathSegment sg in f.Segments)
+                                switch (sg)
+                                {
+                                    case LineSegment l: c.Segments.Add(new LineSegment(N(l.Point))); break;
+                                    case QuadraticBezierSegment qq: c.Segments.Add(new QuadraticBezierSegment(N(qq.Control), N(qq.Point))); break;
+                                    case CubicBezierSegment b: c.Segments.Add(new CubicBezierSegment(N(b.Control1), N(b.Control2), N(b.Point))); break;
+                                }
+                            nf.Add(c);
+                        }
+                        outline = nf;
+                    }
                     foreach (PathFigure f in outline)
                     {
                         figs.Add(Translated(f, xs[i], ys[i]));
@@ -400,7 +468,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             finally
             {
-                TrueTypeInterpreter.StretchPpemX = ssx; TrueTypeInterpreter.StretchPpemY = ssy;
+                TrueTypeInterpreter.StretchPpemX = ssx; TrueTypeInterpreter.StretchPpemY = ssy; TrueTypeInterpreter.GdiStretchInfo = savedStretchInfo;
+                TrueTypeInterpreter.GdiWord = savedWord; TrueTypeInterpreter.GdiTurn = savedTurn;
                 if (!savedSub) TrueTypeFont.SubpixelFitting = false;
                 if (!savedCt) TrueTypeFont.ClearTypeRendering = false;
             }
