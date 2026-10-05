@@ -360,6 +360,7 @@ namespace System.Windows.Forms.Integration
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
             XplatUIWebGpu.FileDialogBridge ??= new WpfFileDialogBridge();
             XplatUIWebGpu.MessageBoxBridge ??= new WpfMessageBoxBridge();
+            WpfColorDialogBridge.Install();
             // Linux only: Windows and macOS have WinForms' own native print dialogs (PrintDlg,
             // NSPrintPanel); on Linux WPF's PrintDialog shows the desktop portal's.
             if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
@@ -736,6 +737,7 @@ namespace System.Windows.Forms.Integration
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
             XplatUIWebGpu.FileDialogBridge ??= new WpfFileDialogBridge();
             XplatUIWebGpu.MessageBoxBridge ??= new WpfMessageBoxBridge();
+            WpfColorDialogBridge.Install();
             StartTopLevelPump();
 
             // An application that hosts WinForms through its OWN HwndHost subclass never
@@ -809,6 +811,7 @@ namespace System.Windows.Forms.Integration
             XplatUIWebGpu.ClipboardBridge ??= new WpfClipboardBridge();
             XplatUIWebGpu.FileDialogBridge ??= new WpfFileDialogBridge();
             XplatUIWebGpu.MessageBoxBridge ??= new WpfMessageBoxBridge();
+            WpfColorDialogBridge.Install();
 
             _container.CreateControl();
             _container.Show();          // registers the window tree with the driver and paints it

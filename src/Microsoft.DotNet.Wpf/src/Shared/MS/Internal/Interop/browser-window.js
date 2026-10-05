@@ -840,6 +840,55 @@ export function clipboardHasPng() {
 export function showAlert(message) { window.alert(message); }
 export function showConfirm(message) { return window.confirm(message); }
 
+// ---- colour picker ----------------------------------------------------------------------------
+//
+// The browser's own colour chooser is an <input type=color>: the page cannot show it except by
+// "clicking" such an element (showPicker() where it exists), and the answer arrives later on its
+// change event -- so this returns a Promise, as WinForms' ColorDialog.ShowDialogAsync expects.
+// Resolves to "#rrggbb", or to "" when the picker closed without a choice. A fresh element each
+// time, placed mid-viewport and invisible, because the browser opens its picker next to it.
+//
+// No event says "closed without a choice" everywhere: "cancel" is fired by some browsers only, and
+// a picker that is dismissed on an unchanged value fires nothing at all. So the window getting the
+// focus back with no change by then is read as the dismissal -- after a pause, because a browser
+// may return the focus before it delivers the change. (The element's own blur is no signal: it
+// fires as the picker OPENS, when the window hands the focus to it.)
+export function pickColorAsync(initialHex) {
+    return new Promise((resolve) => {
+        try {
+            const input = document.createElement("input");
+            input.type = "color";
+            input.value = /^#[0-9a-fA-F]{6}$/.test(initialHex) ? initialHex.toLowerCase() : "#000000";
+            input.style.cssText = "position:fixed;left:50%;top:50%;width:1px;height:1px;opacity:0;border:0;padding:0;";
+
+            let settled = false;
+            let changed = false;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                input.remove();
+                resolve(value);
+            };
+            const dismissedLater = () => setTimeout(() => { if (!changed) finish(""); }, 500);
+
+            input.addEventListener("change", () => { changed = true; finish(input.value); });
+            input.addEventListener("cancel", () => finish(""));
+            window.addEventListener("focus", dismissedLater, { once: true });
+
+            document.body.appendChild(input);
+            input.focus();
+            if (typeof input.showPicker === "function") {
+                try { input.showPicker(); } catch (e) { input.click(); }
+            } else {
+                input.click();
+            }
+        } catch (e) {
+            console.warn("WPF colour picker could not open:", e);
+            resolve("");
+        }
+    });
+}
+
 // ---- file dialogs -----------------------------------------------------------------------------
 //
 // A browser has no file SYSTEM to show a path from, so "open a file" and "save a file" mean

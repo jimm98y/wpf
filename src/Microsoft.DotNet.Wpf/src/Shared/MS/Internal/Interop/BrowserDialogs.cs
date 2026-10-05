@@ -173,6 +173,25 @@ namespace MS.Internal.Interop
 
         internal static bool Confirm(string message) => Js.Confirm(message ?? string.Empty);
 
+        /// <summary>
+        ///  The browser's own colour picker: an &lt;input type=color&gt; opened on
+        ///  <paramref name="initialHex"/> ("#rrggbb"). Completes with the colour chosen as "#rrggbb",
+        ///  an empty string when the picker was dismissed without a choice, or null when there is no
+        ///  picker to open.
+        /// </summary>
+        internal static async Task<string> PickColorAsync(string initialHex)
+        {
+            if (!IsAvailable) return null;
+            try
+            {
+                return await Js.PickColor(initialHex ?? "#000000").ConfigureAwait(true);
+            }
+            catch (JSException)
+            {
+                return null;
+            }
+        }
+
         /// <summary>The browser-window.js exports, bound the same way BrowserWindow binds its own.</summary>
         private static partial class Js
         {
@@ -192,6 +211,9 @@ namespace MS.Internal.Interop
 
             [JSImport("showConfirm", Module)]
             internal static partial bool Confirm(string message);
+
+            [JSImport("pickColorAsync", Module)]
+            internal static partial Task<string> PickColor(string initialHex);
         }
     }
 }
