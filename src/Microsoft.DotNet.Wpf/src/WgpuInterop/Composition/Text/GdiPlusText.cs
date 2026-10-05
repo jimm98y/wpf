@@ -469,10 +469,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// and DirectWrite answers 607, eight pixels. The side bearings are the 6x1 bitmap's: its ink
         /// in sixths of a pixel from the origin and from the advance.</summary>
         internal static void NaturalMetrics(TrueTypeFont font, int gid, float em, out int advDu, out int lsbDu, out int rsbDu)
+            => NaturalMetrics(font, gid, em, false, out advDu, out lsbDu, out rsbDu);
+
+        /// <summary>The device advance's whole pixels: TrueTypeRasterizer::Implementation::GetMetrics
+        /// @18006af80 rounds the scaler's device advance vector (+0x48, 16.16) in x, (v + 0x8000) &amp;
+        /// ~0xffff, when the inverse transform is diagonal, and only then multiplies it back by the
+        /// inverse's m11 (+0x1f8). Under a transform that mirrors x the span is negative there, so a
+        /// half rounds the other way: Arial 's' at 21 ppem spans exactly 10.5 pixels and is 11
+        /// upright, 10 mirrored.</summary>
+        static int NaturalPx(int span64, bool hasOutline, bool mirrored)
+        {
+            int bias = hasOutline ? 32 : 34;
+            return mirrored ? -((-span64 + bias) >> 6) : (span64 + bias) >> 6;
+        }
+
+        /// <summary><see cref="NaturalMetrics(TrueTypeFont, int, float, out int, out int, out int)"/>
+        /// under a transform that mirrors x (<paramref name="mirrored"/>: m11 &lt; 0, axis-aligned).</summary>
+        internal static void NaturalMetrics(TrueTypeFont font, int gid, float em, bool mirrored, out int advDu, out int lsbDu, out int rsbDu)
         {
             int ppem = Floor(em + 0.5f);
             if (ppem < 1) ppem = 1;
-            var key = (gid, ppem);
+            var key = (gid, ppem | (mirrored ? 1 << 20 : 0));
             var cache = s_metrics.GetValue(font, _ => new Dictionary<(int, int), (int, int, int)>());
             lock (cache)
                 if (cache.TryGetValue(key, out var hit)) { (advDu, lsbDu, rsbDu) = hit; return; }
@@ -485,7 +502,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // A glyph with no outline (the space) rounds up from 30/64, not 32/64: measured over
             // eight faces at 6..24pt, 29/64 stays down (Microsoft Sans Serif at 13ppem, 3.453 -> 3)
             // and 30/64 goes up (Segoe UI at 9ppem, 2.465 -> 3; Verdana Bold at 16, 5.469 -> 6).
-            int px = (span64 + (hasOutline ? 32 : 34)) >> 6;
+            int px = NaturalPx(span64, hasOutline, mirrored);
             advDu = (int)Math.Floor(px * (double)upem / ppem + 0.5);
             if (!OutlineXExtent(font, gid, ppem, out float x0, out float x1)) { lsbDu = 0; rsbDu = advDu; }
             else
@@ -513,10 +530,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// the square 18 ppem gives 1479.</summary>
         internal static void NaturalMetrics(TrueTypeFont font, int gid, float em, float sx, float sy,
                                             out int advDu, out int lsbDu, out int rsbDu)
+            => NaturalMetrics(font, gid, em, sx, sy, false, out advDu, out lsbDu, out rsbDu);
+
+        internal static void NaturalMetrics(TrueTypeFont font, int gid, float em, float sx, float sy, bool mirrored,
+                                            out int advDu, out int lsbDu, out int rsbDu)
         {
             float ex = em * sx, ey = em * sy;
             int ppx = AxisPpem(ex), ppy = AxisPpem(ey);
-            if (sx == sy || ppx == ppy) { NaturalMetrics(font, gid, ex, out advDu, out lsbDu, out rsbDu); return; }
+            if (sx == sy || ppx == ppy) { NaturalMetrics(font, gid, ex, mirrored, out advDu, out lsbDu, out rsbDu); return; }
             int upem = font.UnitsPerEmForHinting;
             int design = font.DesignAdvance(gid);
             bool hasOutline = font.TryGetDesignXExtent(gid, out _, out _);
@@ -527,7 +548,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int ppem = Math.Max(ppx, ppy);
                 if (!font.TryGetDWriteFittedSpan64(gid, ppem, NaturalScalerWord, out int span64))
                     span64 = (int)MathF.Round(design * 64f * ppx / upem, MidpointRounding.AwayFromZero);
-                int px = (span64 + (hasOutline ? 32 : 34)) >> 6;
+                int px = NaturalPx(span64, hasOutline, mirrored);
                 advDu = (int)Math.Floor(px * (double)upem / ex + 0.5);
                 if (!OutlineXExtent(font, gid, ppem, out float x0, out float x1)) { lsbDu = 0; rsbDu = advDu; }
                 else

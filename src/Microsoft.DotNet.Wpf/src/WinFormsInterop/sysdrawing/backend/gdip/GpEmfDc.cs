@@ -847,9 +847,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int asc = font.Ascent * 16, dsc = -font.Descent * 16;       // ESTROBJ +0x64 / +0x6c
             int align = (int)_s.TextAlign;
             // The notional-to-device rotation: along the baseline (m11, m12), up (m21, m22).
-            double th = font.Escapement * Math.PI / 1800.0;
-            float m11 = (float)Math.Cos(th), m12 = (float)-Math.Sin(th);
-            float m21 = (float)-Math.Sin(th), m22 = (float)-Math.Cos(th);
+            // win32k's own sine (GdiTrig: bGetNtoD_Win31's efSin / efCos).
+            float esin = GdiTrig.Sin(GdiTrig.Degrees(font.Escapement)), ecos = GdiTrig.Cos(GdiTrig.Degrees(font.Escapement));
+            float m11 = ecos, m12 = -esin;
+            float m21 = -esin, m22 = -ecos;
             if (font.Escapement % 900 == 0)
             {
                 int q = ((font.Escapement / 900) % 4 + 4) % 4;

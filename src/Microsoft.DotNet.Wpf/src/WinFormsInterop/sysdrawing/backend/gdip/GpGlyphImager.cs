@@ -90,6 +90,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             float tl = MathF.Max (MathF.Abs (w2d.M11) + MathF.Abs (w2d.M12), MathF.Abs (w2d.M21) + MathF.Abs (w2d.M22)) * tol;
             bool quarterTurn = MathF.Abs (w2d.M11) <= tl && MathF.Abs (w2d.M22) <= tl, quarter = quarterTurn && !sideways;
             bool turned = !s_rotFit && !(MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl) && !quarterTurn;
+            MirrorX = mode == 5 && MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl && w2d.M11 < 0f;
             if ((Flags & 0x20000000) == 0 && Script != GpTextTables.ScriptControl
                 && (special || (!Face.IsFixedPitch && (gridFit || leadMargin < 0 || trailMargin < 0)))) {
                 Device = new int [Count]; DevOffU = new int [Count]; DevOffV = new int [Count];
@@ -115,7 +116,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             // is the sideways fit's span (GetGdiCompatibleGlyphMetrics isSideways).
                             GdipText.SidewaysMetrics (Face, Glyphs [i], Em, Sy, Sx, out int advDu, out _);
                             px = MathF.Floor (advDu * (Em * Sx / upem) + 0.5f);
-                        } else px = GpTextShaper.DeviceAdvancePx (Face, Glyphs [i], Em, Sx, Sy, turned ? 2 : mode);
+                        } else px = GpTextShaper.DeviceAdvancePx (Face, Glyphs [i], Em, Sx, Sy, turned ? 2 : mode) + MirrorPx (Glyphs [i], true);
                         if (i + 1 < Count) {
                             int ku = GpTextShaper.Kern (Face, Script, Glyphs [i], Glyphs [i + 1]);
                             if (ku != 0) px += uniform && !turned ? DesignToPP (upem, ppem, ku) : ku * (Em * Sx / upem);
@@ -129,6 +130,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         int[] Adv => Fitted ? Device : Nominal;
+
+        /// <summary>A ClearType realization under an axis-aligned transform that mirrors x: the
+        /// natural advances DirectWrite gives it (GdiPlusText.NaturalMetrics' mirrored rounding).</summary>
+        public bool MirrorX;
+
+        /// <summary>What mirroring changes a glyph's natural advance by, in device pixels: whole
+        /// pixels (<paramref name="rounded"/>, GetGdiCompatibleGlyphPlacements) or the realization's own.</summary>
+        float MirrorPx (int gid, bool rounded)
+        {
+            if (!MirrorX) return 0f;
+            GdipText.NaturalMetrics (Face, gid, Em, Sx, Sy, false, out int up, out _, out _);
+            GdipText.NaturalMetrics (Face, gid, Em, Sx, Sy, true, out int mi, out _, out _);
+            if (up == mi) return 0f;
+            float k = Em * Sx / Face.UnitsPerEmForHinting;
+            return rounded ? MathF.Floor (mi * k + 0.5f) - MathF.Floor (up * k + 0.5f) : (mi - up) * k;
+        }
 
         /// <summary>dwrite's TransformToScaleFactor @1800902d0: a transform that is a uniform scale
         /// (or a quarter turn of one), within 2^-16, and its scale.</summary>
@@ -347,7 +364,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             left = lim;
             for (int i = from; i < from + count; i++) {
                 if (cum >= lim) break;
-                GdipText.NaturalMetrics (Face, Glyphs [i], Em, Sx, Sx, out int adv, out int lsb, out _);
+                GdipText.NaturalMetrics (Face, Glyphs [i], Em, Sx, Sx, MirrorX, out int adv, out int lsb, out _);
                 left = Math.Min (left, cum + (int) (lsb * scale * 16f));
                 cum += (int) (adv * scale * 16f);
             }
@@ -355,7 +372,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             right = lim;
             for (int i = from + count - 1; i >= from; i--) {
                 if (cum >= lim) break;
-                GdipText.NaturalMetrics (Face, Glyphs [i], Em, Sx, Sx, out int adv, out _, out int rsb);
+                GdipText.NaturalMetrics (Face, Glyphs [i], Em, Sx, Sx, MirrorX, out int adv, out _, out int rsb);
                 right = Math.Min (right, cum + (int) (rsb * scale * 16f));
                 cum += (int) (adv * scale * 16f);
             }
@@ -410,7 +427,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 for (int i = 0; i < Count; i++) {
                     int ideal = Path
                         ? (int) MathF.Floor (GpTextShaper.DesignAdvance (Face, Glyphs [i]) * (Em * R / upem) + 0.5f)
-                        : (int) MathF.Floor (GpTextShaper.RealizationAdvancePx (Face, Glyphs [i], Em, Sx, Sy, Mode) * F78 + 0.5f);
+                        : (int) MathF.Floor ((GpTextShaper.RealizationAdvancePx (Face, Glyphs [i], Em, Sx, Sy, Mode) + MirrorPx (Glyphs [i], false)) * F78 + 0.5f);
                     if (!vertical) o [i].X -= ideal / R;
                     else o [i].Y -= ideal / R;
                 }

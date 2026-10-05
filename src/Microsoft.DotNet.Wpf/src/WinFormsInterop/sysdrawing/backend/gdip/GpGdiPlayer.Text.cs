@@ -293,8 +293,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (_fontExScale != 1f) wx = wx / _fontExScale;
             }
             float sxs = MathF.Abs(wx * m11) * 0.0625f, sys = MathF.Abs(h * m22) * 0.0625f;
-            double th = esc * Math.PI / 1800.0;
-            float c = (float)Math.Cos(th), s = (float)Math.Sin(th);
+            float c = GdiTrig.Cos(GdiTrig.Degrees(esc)), s = GdiTrig.Sin(GdiTrig.Degrees(esc));
             static int Fx(float v) => v < 0f ? -(int)Math.Floor(-v * 65536.0 + 0.5) : (int)Math.Floor(v * 65536.0 + 0.5);
             // y-up device: glyph x -> (c, s) sx, glyph y -> (-s, c) sy.
             int m00 = Fx(sxs * c), m01 = Fx(sxs * s), m10 = Fx(-sys * s), mm11 = Fx(sys * c);
@@ -717,5 +716,49 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
             return c;
         }
+    }
+
+    /// <summary>win32k's sine and cosine of an escapement, which are not the libm ones:
+    /// bGetNtoD_Win31 @1401e7458 (win32kfull) turns the notional-to-device scales by
+    /// efCos / efSin (win32kbase) of the escapement's float tenths over 10f, and those
+    /// interpolate a 33-entry quarter table.</summary>
+    internal static class GdiTrig
+    {
+        // gaefSin @140291100 (win32kbase): sin(i pi / 64), i = 0..32, as stored.
+        static readonly uint[] s_table =
+        {
+            0x00000000, 0x3d48fb30, 0x3dc8bd36, 0x3e164083, 0x3e47c5c2, 0x3e78cfcc, 0x3e94a031, 0x3eac7cd4,
+            0x3ec3ef15, 0x3edae880, 0x3ef15aea, 0x3f039c3d, 0x3f0e39da, 0x3f187fc0, 0x3f226799, 0x3f2beb4a,
+            0x3f3504f3, 0x3f3daef9, 0x3f45e403, 0x3f4d9f02, 0x3f54db31, 0x3f5b941a, 0x3f61c598, 0x3f676bd8,
+            0x3f6c835e, 0x3f710908, 0x3f74fa0b, 0x3f7853f8, 0x3f7b14be, 0x3f7d3aac, 0x3f7ec46d, 0x3f7fb10f,
+            0x3f800000,
+        };
+
+        static float T(int i) => BitConverter.UInt32BitsToSingle(s_table[i]);
+
+        /// <summary>efSin @1400730b0: |degrees| times FP_SINE_FACTOR (32/90, 0x3eb60b61) splits
+        /// into a whole step (truncated) and its fraction (eFraction @14018a170); bit 5 of the
+        /// step mirrors the quarter, bit 6 (xor the argument's sign) negates; the two table
+        /// entries are interpolated by the fraction, each operation rounded to float.</summary>
+        internal static float Sin(float degrees)
+        {
+            bool neg = degrees < 0f;
+            if (neg) degrees = -degrees;
+            float x = BitConverter.UInt32BitsToSingle(0x3eb60b61) * degrees;
+            int step = x < 2147483648f ? (int)x : 0;
+            float frac = x < 1f ? x : x >= 8388608f ? 0f : x - (int)x;
+            if ((step >> 5 & 2) != 0) neg = !neg;
+            int i = step & 0x1f;
+            float r;
+            if ((step >> 5 & 1) == 0) { float a = T(i); r = (T(i + 1) - a) * frac + a; }
+            else { float a = T(32 - i); r = -((a - T(31 - i)) * frac) + a; }
+            return neg ? -r : r;
+        }
+
+        /// <summary>efCos @1400730a0: efSin(90f + degrees).</summary>
+        internal static float Cos(float degrees) => Sin(90f + degrees);
+
+        /// <summary>The escapement (tenths of a degree) as bGetNtoD_Win31 hands it to them.</summary>
+        internal static float Degrees(int escapement) => escapement / 10f;
     }
 }
