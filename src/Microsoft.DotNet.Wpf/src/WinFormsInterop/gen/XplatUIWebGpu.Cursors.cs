@@ -78,7 +78,7 @@ namespace System.Windows.Forms {
 
 		/// <summary>A cursor's pixels as ARGB, read out of its bitmaps (GDI+'s FromHicon refuses a
 		/// cursor). A colour cursor is its colour bitmap, with its alpha if it has one and the AND
-		/// mask's transparency if not. A monochrome cursor is its mask, AND over XOR, twice as tall:
+		/// mask's transparency if not (its inverting pixels drawn black). A monochrome cursor is its mask, AND over XOR, twice as tall:
 		/// AND 0 is the XOR colour, AND 1 with XOR 0 is see-through, and AND 1 with XOR 1 -- the
 		/// inverted outline DrawIconEx draws -- is drawn black.</summary>
 		private static Bitmap CursorToBitmap (IntPtr handle)
@@ -107,7 +107,11 @@ namespace System.Windows.Forms {
 						int argb;
 						if (!mono) {
 							int c = color [y * w + x];
-							argb = hasAlpha ? c : (and ? 0 : c | unchecked ((int) 0xff000000));
+							// Without alpha, AND 1 over a non-zero colour XORs it onto the screen (the
+							// inverting I-beam is all such pixels): drawn black, as a monochrome cursor's are.
+							argb = hasAlpha ? c
+								: !and ? c | unchecked ((int) 0xff000000)
+								: (c & 0xffffff) != 0 ? unchecked ((int) 0xff000000) : 0;
 						} else {
 							bool xor = (mask [(y + h) * w + x] & 0xffffff) != 0;
 							argb = !and ? (xor ? unchecked ((int) 0xffffffff) : unchecked ((int) 0xff000000))
