@@ -533,10 +533,9 @@ namespace Wpf.WinFormsInterop.Tests
 
 
         // EmfOnly playback is GDI drawing into GDI+'s DIB, and GDI's vectors, regions, clips, blit
-        // rectangles, stretched images and text are ported: every scenario but these is pixel for
-        // pixel. Not yet: the text scenario's turned Times New Roman 'A', whose quarter-turned fit
-        // differs (GpGdiPlayer.Text.cs). It keeps the 2% tolerance it was added under.
-        static readonly HashSet<string> EmfOnlyInexact = new HashSet<string> { "text" };
+        // rectangles, stretched images and text are ported: every scenario is pixel for pixel,
+        // the text scenario's quarter-turned Times New Roman 'A' included (fitted under the word
+        // fs__NewTransformation leaves a turned matrix: no compatible widths, ClearType along y).
 
         [Theory]
         [MemberData(nameof(PlaybackScenarios))]
@@ -554,7 +553,7 @@ namespace Wpf.WinFormsInterop.Tests
                     Directory.CreateDirectory(Path.Combine(outDir, kind));
                     ours.Save(Path.Combine(outDir, kind, scenario + ".png"), ImageFormat.Png);
                 }
-                if (t == EmfType.EmfOnly && !EmfOnlyInexact.Contains(scenario))
+                if (t == EmfType.EmfOnly)
                 {
                     Differ(ours, theirs, 0, out int exact);
                     Assert.True(exact == 0, $"{kind}: {exact} pixels differ from GDI+'s");

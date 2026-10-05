@@ -344,14 +344,25 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     }
                     else
                     {
-                        // A turned font. fs__NewTransformation @1400254d0 toggles the ClearType word's
-                        // bit 2 (ClearType on the glyph's y) for m00 == 0 only when the word lacks
-                        // bit 5, and bSetXform @14001c2c8 hands GDI's ClearType text 0x23: so the
-                        // glyph is fitted as ever, at its own two ppems, and scl_PostTransformGlyph
-                        // gives the fit back turned onto the device, where it is scanned and filtered
-                        // like any other glyph.
-                        if (!face.TryGetHintedOutline(gids[i], ppem, out outline) || outline.Count == 0) continue;
+                        // A turned font, fitted at its own two ppems (scl_InitializeScaling: each
+                        // axis the larger component of its row of the matrix, rounded) and given
+                        // back by scl_PostTransformGlyph turned onto the device, where it is scanned
+                        // and filtered like any other glyph. A half turn keeps GDI's word; a quarter
+                        // turn does not (TurnedWord).
+                        bool got;
+                        int savedWord = TrueTypeInterpreter.GdiWord, savedTurn = TrueTypeInterpreter.GdiTurn;
+                        if (quarter % 2 == 1) TrueTypeInterpreter.GdiWord = TurnedWord(face, ppem);
+                        TrueTypeInterpreter.GdiTurn = TrueTypeInterpreter.PackGdiTurn(axes.Ax, axes.Ay, axes.Dx, axes.Dy);
+                        try { got = face.TryGetHintedOutline(gids[i], ppem, out outline); }
+                        finally { TrueTypeInterpreter.GdiWord = savedWord; TrueTypeInterpreter.GdiTurn = savedTurn; }
+                        if (!got || outline.Count == 0) continue;
                         outline = Turned(outline, axes);
+                    }
+                    if (Environment.GetEnvironmentVariable("ROT_DBG") == "1")
+                    {
+                        var sb = new System.Text.StringBuilder();
+                        foreach (PathFigure f in outline) { sb.Append($" [{f.Start.X:0.###},{f.Start.Y:0.###}"); foreach (PathSegment sg in f.Segments) if (sg is LineSegment l) sb.Append($" {l.Point.X:0.###},{l.Point.Y:0.###}"); else if (sg is QuadraticBezierSegment qb) sb.Append($" q{qb.Control.X:0.###},{qb.Control.Y:0.###} {qb.Point.X:0.###},{qb.Point.Y:0.###}"); sb.Append(']'); }
+                        Console.Error.WriteLine($"ROT q={quarter} gid={gids[i]} ppem={ppemX}x{ppemY} at {xs[i]},{ys[i]} sub={TrueTypeFont.SubpixelFitting} ct={TrueTypeFont.ClearTypeRendering}{sb}");
                     }
                     if (face.GlyphDropout(gids[i], ppem) is int gd && gd >= 0) (dropouts ??= new()).Add(ordinal, gd);
                     foreach (PathFigure f in outline)
@@ -394,6 +405,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (!savedCt) TrueTypeFont.ClearTypeRendering = false;
             }
         }
+
+        /// <summary>The scaler word a quarter-turned glyph is fitted under. bSetXform @14001c2c8
+        /// hands GDI's ClearType text 0x03 (ClearType, compatible widths), or 0x23 when the face's
+        /// gasp asks for symmetric smoothing at the size; fs__NewTransformation @1400254d0 keeps
+        /// bit 1 only while the matrix's m01 is 0 and, for a word without bit 5, toggles bit 2 when
+        /// m00 is 0. A quarter turn has m00 = 0 and m01 &#8800; 0: no compatible widths (no bi-level
+        /// pass, no phase), and without symmetric smoothing the glyph's y -- the device's x -- is
+        /// the ClearType axis.</summary>
+        static int TurnedWord(TrueTypeFont face, float ppem) => face.WantsSymmetricSmoothing(ppem) ? 0x21 : 0x05;
 
         /// <summary>IsFullWidthCharacter @14001d5f0 asks a per-glyph bit set made when the face is
         /// loaded; not modelled from the binary: here a glyph whose advance is the em or which has

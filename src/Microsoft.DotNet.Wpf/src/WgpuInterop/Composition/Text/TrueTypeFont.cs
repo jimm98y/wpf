@@ -639,7 +639,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // Fitted outlines, by glyph and by size. A run of text asks for the same handful of glyphs at
         // one size over and over, and fitting is the expensive part of drawing them; the size is held
         // to a sixteenth of a pixel so that a smooth zoom does not fill this with near-duplicates.
-        private readonly Dictionary<(int Glyph, int Size), List<PathFigure>> _hintedCache = new();
+        private readonly Dictionary<(int Glyph, int Size, int Word), List<PathFigure>> _hintedCache = new();
         private const int HintedCacheLimit = 4096;
 
         /// <summary>The design grid this face's outlines are drawn on, for a caller that wants to
@@ -1238,6 +1238,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // text asks for the same handful of glyphs over and over.
         private readonly Dictionary<(int Glyph, int Size), float> _hintedAdvances = new();
 
+        /// <summary>The size half of the advance and span caches' keys. A STRETCHED size
+        /// (TrueTypeInterpreter.StretchPpemX/Y, the EMF player's anisotropic and turned GDI text)
+        /// measures another advance from the same nominal ppem, so it has a key of its own; keyed
+        /// by the ppem alone, whichever of an upright and a stretched run asked first answered the
+        /// other's phase.</summary>
+        private static int SpanSizeKey(float pixelsPerEm)
+        {
+            int sx = TrueTypeInterpreter.StretchPpemX, sy = TrueTypeInterpreter.StretchPpemY;
+            if (sx > 0 && sy > 0 && sx != sy) return -1 - ((sx << 12) | (sy & 0xfff));
+            return (int)MathF.Round(pixelsPerEm * 16f);
+        }
+
         /// <summary>The same measurement UNROUNDED, in sixty-fourths. The advance GDI lays a glyph
         /// out at is a whole number of pixels, but the PHASE SCALE is not built from that number:
         /// fs__Contour reads the bi-level pass's phantom points directly --
@@ -1261,7 +1273,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// 1016 over a linear 1017) where the bi-level span gave 1024/1017.</summary>
         internal bool TryGetClearTypeSpan64(int glyphId, float pixelsPerEm, out int span64)
         {
-            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            var key = (glyphId, SpanSizeKey(pixelsPerEm));
             if (_ctSpans.TryGetValue(key, out span64)) return span64 > 0;
             span64 = 0;
             TrueTypeInterpreter? interpreter = Interpreter();
@@ -1302,7 +1314,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>Whether the bi-level measuring pass moved the advance phantom in x.</summary>
         internal bool HintedSpanTouched(int glyphId, float pixelsPerEm)
         {
-            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            var key = (glyphId, SpanSizeKey(pixelsPerEm));
             if (!_hintedSpanTouched.TryGetValue(key, out bool t))
             {
                 TryGetHintedAdvance(glyphId, pixelsPerEm, out float _);
@@ -1313,7 +1325,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         internal bool TryGetHintedSpan64(int glyphId, float pixelsPerEm, out int span64)
         {
-            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            var key = (glyphId, SpanSizeKey(pixelsPerEm));
             if (!_hintedSpans.TryGetValue(key, out span64))
             {
                 TryGetHintedAdvance(glyphId, pixelsPerEm, out float _);
@@ -1335,7 +1347,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // by what the program did. A glyph is DRAWN by its gasp and SPACED by its program.
 
             // NOT keyed by the hinting mode, because it is not measured in one: see below.
-            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            var key = (glyphId, SpanSizeKey(pixelsPerEm));
             if (_hintedAdvances.TryGetValue(key, out advance)) return advance > 0f;
 
             advance = 0f;
@@ -1407,7 +1419,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                        + (TrueTypeInterpreter.SymmetricAnswerOverride is bool so ? (so ? 1 : 2) : 0))
                       * 2 + (TrueTypeInterpreter.DWriteMovePoint ? 1 : 0)
                       // A stretched GDI fit (the EMF player's, StretchPpemX/Y) is another fit.
-                      + (TrueTypeInterpreter.StretchPpemX << 20 | TrueTypeInterpreter.StretchPpemY << 10) * 64);
+                      + (TrueTypeInterpreter.StretchPpemX << 20 | TrueTypeInterpreter.StretchPpemY << 10) * 64,
+                      // ...and so is a turned one (GdiWord: no compatible widths, ClearType along y).
+                      TrueTypeInterpreter.GdiWord | (TrueTypeInterpreter.GdiRotated ? 0x10000 : 0) | TrueTypeInterpreter.GdiTurn << 17);
             int callNo = 0;
             bool probe = s_outlineProbe && glyphId == s_probeGid;
             if (probe)
@@ -3197,7 +3211,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             GlyphProgram? glyph;
             if ((short)U16(_glyfOffset + (int)start) >= 0) glyph = ReadGlyphProgram(gid);
             else if (s_componentFactorFromRoot && depth == 0 && !s_measuringCtSpan
-                     && !TrueTypeInterpreter.BiLevelPass)
+                     && !TrueTypeInterpreter.BiLevelPass && !TrueTypeInterpreter.GdiNoCompatibleWidths)
             {
                 // ONE FACTOR FOR THE WHOLE TREE, THE ROOT'S. fs__Contour runs pass one over every
                 // element of the glyph tree, leaves globals[0x1ac] holding the ROOT's advance and
@@ -3357,10 +3371,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int savedCompat = TrueTypeInterpreter.CompatibleAdvance64;
             int savedSpan = TrueTypeInterpreter.BiLevelSpan64;
             bool savedUntouched = TrueTypeInterpreter.BiLevelPhantomUntouched;
-            if (s_measuringCtSpan)
+            if (s_measuringCtSpan || TrueTypeInterpreter.GdiNoCompatibleWidths)
             {
                 // GDI's pass one: the ClearType program with the compatible-width factor at ONE --
                 // no pre-scale, no phase -- whose phantom span becomes the factor's numerator.
+                // And a word with no compatible widths (a turned GDI glyph, TrueTypeInterpreter.
+                // GdiWord): fs__Contour runs it once, with no bi-level pass and no phase.
                 TrueTypeInterpreter.CompatibleAdvance64 = 0;
                 TrueTypeInterpreter.BiLevelSpan64 = 0;
             }
@@ -5112,6 +5128,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     scaled.Add((pts, contour.OnCurve));
                 }
             }
+            // A STRETCHED size (TrueTypeInterpreter.StretchPpemX/Y): the scaler's matrix scales x
+            // by its own axis, so the unfitted outline is x * ppemX / upem where the size is y's.
+            int stx = TrueTypeInterpreter.StretchPpemX, sty = TrueTypeInterpreter.StretchPpemY;
+            if (stx > 0 && sty > 0 && stx != sty && MathF.Abs(pixelsPerEm - sty) < 0.001f)
+                foreach ((Vector2[] pts, _) in scaled)
+                    for (int i = 0; i < pts.Length; i++)
+                        pts[i] = new Vector2((float) ((double) pts[i].X * stx / sty), pts[i].Y);
 
             // The simulations are in pixels at THIS size, which is what the base-pixel builder
             // does too once its own scale is taken out. Not GDI's simulated bold, though: that

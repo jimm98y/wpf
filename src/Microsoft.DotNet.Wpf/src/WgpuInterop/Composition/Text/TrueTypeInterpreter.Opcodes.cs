@@ -1254,6 +1254,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                             // what shipped; WPF_CT_GREY=always answers it on every pass.
                             if (!s_greyNever && (s_greyAlways || !ClearTypeInfo) && (selector & 32) != 0)
                                 result |= 1 << 12;
+                            // ROTATED and STRETCHED, from the matrix the scaler was handed:
+                            // scl_InitializeScaling@140040540 sets globals[0x169] bit 1 when the
+                            // rows' lengths differ (a stretched size) and bit 0 when the matrix
+                            // turns by anything but a quarter (a pure quarter turn, m00 = m11 = 0,
+                            // is NOT rotated), and itrp_GETINFO@140037a20 answers selectors 2 and
+                            // 4 with them whenever globals[0x1be] is clear -- which bSetXform
+                            // leaves it. WPF_GETINFO_STRETCH=0 answers neither.
+                            if (s_stretchInfo && (selector & 2) != 0 && GdiRotated) result |= 0x100;
+                            if (s_stretchInfo && (selector & 4) != 0 && _stretched) result |= 0x200;
                             if (ClearTypeInfo)
                             {
                                 // WHAT GDI ANSWERS WHEN IT IS ACTUALLY DRAWING CLEARTYPE, which is
@@ -1267,14 +1276,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                 // sweep: bSetXform can only ever build four flag words, so a GDI
                                 // ClearType draw can only present storage[2] as 2, 6, 130 or 134,
                                 // and each is a different program. Trying them is enumeration.
-                                if (s_compatWidthInfo && (selector & 128) != 0) result |= 1 << 14;
+                                if (s_compatWidthInfo && (GdiWord == 0 || (GdiWord & 2) != 0) && (selector & 128) != 0) result |= 1 << 14;
                                 // NOT horizontal stripes. MEASURED off GDI with the GETINFO
                                 // oracle (WhatGdiAnswersGetInfo): GDI leaves this bit CLEAR while
                                 // drawing ClearType. It reads like it ought to be set -- the
                                 // stripes are what ClearType is -- but the bit means the stripes
                                 // run HORIZONTALLY, i.e. a display rotated a quarter turn, and
                                 // this one is not.
-                                if (s_stripeInfo && (selector & 256) != 0) result |= 1 << 15;
+                                if ((s_stripeInfo || (GdiWord & 4) != 0) && (selector & 256) != 0) result |= 1 << 15;
                                 // Bit 18, ClearType SYMMETRIC RENDERING, "can impact the rendering
                                 // of horizontal features" -- FreeType answers yes whenever it hints
                                 // for an antialiased target. Answering it changes nothing measurable
@@ -2358,6 +2367,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if ((selector & 4096) != 0 && (flags & 128) != 0) result |= 0x80000;
             return result;
         }
+
+        private static readonly bool s_stretchInfo = Environment.GetEnvironmentVariable("WPF_GETINFO_STRETCH") != "0";
 
         private static readonly bool s_compatWidthInfo =
             Environment.GetEnvironmentVariable("WPF_CT_COMPATINFO") != "0";
