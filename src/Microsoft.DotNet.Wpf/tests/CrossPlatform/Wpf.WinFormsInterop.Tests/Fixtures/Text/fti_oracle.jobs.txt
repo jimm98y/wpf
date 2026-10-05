@@ -564,3 +564,73 @@ D|def|Tahoma|10|3|0|5|32|0|0|-|-|-|-|2,2,300,100|-|-|a\tb\rc\nd\u0001e\u001ff\u0
 D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a\tb\rc\nd\u0001e\u001ff\u007fg
 M|def|Segoe UI|10|3|0|5|32|0|0|-|-|-|-|2,2,300,100|-|-|a​b‌c‍d‎e‏f﻿g
 M|def|Segoe UI|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a​b‌c‍d‎e‏f﻿g
+D|typo|Lucida Console|9|3|1|4|4096|2|0|-|-|-|-|2,2,0,100|-|-|ijl WAVE Hello
+D|typo|Lucida Console|8|3|1|5|2048|0|0|-|-|-|-|2,2,300,100|-|-|Mmm Mmm
+D|def|Segoe UI Light|20|3|1|4|2048|0|0|-|-|-|-|2,2,300,100|-|-|lazy fifty 1234 fox brown Mmm
+D|typo|Lucida Console|8|3|3|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|The The fox quick jumps
+D|typo|Lucida Sans Unicode|12|3|1|5|0|2|0|-|-|-|-|2,2,300,100|-|-|brown lazy .,; The fox
+D|typo|Microsoft Sans Serif|7|3|3|5|4096|2|0|-|-|-|-|2,2,0,100|-|-| 1234 lazy ijl .,;
+M|def|Lucida Console|12|3|1|3|0|0|0|-|-|-|-|2,2,80,100|-|-| brown fifty fox
+D|def|Microsoft Sans Serif|8|3|1|1|4096|0|0|-|-|-|-|2,2,0,100|-|-|AVATAR
+D|def|Segoe UI Light|12|3|3|4|0|0|0|-|-|-|-|2,2,0,100|-|-|.,; lazy
+D|typo|Microsoft Sans Serif|8|3|1|1|2048|1|0|-|-|-|-|2,2,0,100|-|-|.,; AVATAR dog 
+M|typo|Microsoft Sans Serif|20|3|3|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|1234 lazy Mmm The quick WAVE
+D|def|Lucida Console|12|3|1|2|0|1|0|-|-|-|-|2,2,0,100|-|-|WAVE lazy fox
+D|def|Microsoft Sans Serif|12|3|1|5|4|0|0|-|-|-|-|2,2,80,100|-|-|fifty .,;
+M|def|Microsoft Sans Serif|12|3|1|4|4|2|0|-|-|-|-|2,2,0,100|-|-| ijl fox 
+D|def|Lucida Console|10|3|1|5|2048|0|0|-|-|-|-|2,2,0,100|-|-|1234 1234 fox ijl dog
+D|def|Lucida Sans Unicode|10|3|1|5|0|2|0|-|-|-|-|2,2,80,100|-|-|1234 fifty
+D|typo|Microsoft Sans Serif|20|3|1|5|2048|2|0|-|-|-|-|2,2,0,100|-|-|.,; fox lazy fifty lazy brown
+D|typo|Lucida Console|12|3|1|5|4096|1|0|-|-|-|-|2,2,300,100|-|-|.,; dog fifty 
+D|def|Segoe UI Light|10|3|1|2|4|1|0|-|-|-|-|2,2,0,100|-|-|jumps
+D|typo|Segoe UI Light|14|3|1|1|2048|0|0|-|-|-|-|2,2,80,100|-|-|.,; 
+D|typo|Segoe UI Light|9|3|0|5|0|1|0|-|-|-|-|2,2,80,100|-|-|1234 The 1234 .,; WAVE Mmm
+M|def|Lucida Console|9|3|0|3|2048|0|0|-|-|-|-|2,2,0,100|-|-|quick dog AVATAR WAVE
+D|def|Lucida Sans Unicode|14|3|0|3|4|1|0|-|-|-|-|2,2,300,100|-|-|Mmm AVATAR .,; AVATAR
+D|typo|Gabriola|7|3|0|2|2048|0|0|-|-|-|-|2,2,300,100|-|-|ijl Hello dog
+D|typo|Lucida Console|8|3|0|5|2048|1|0|-|-|-|-|2,2,300,100|-|-|fifty 1234
+D|def|Segoe UI Light|12|3|0|4|0|1|0|-|-|-|-|2,2,0,100|-|-|.,; Hello quick jumps Mmm 1234 
+D|def|Lucida Console|12|3|0|5|2048|2|0|-|-|-|-|2,2,80,100|-|-|dog .,; fox .,; Mmm
+M|typo|Microsoft Sans Serif|9|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|ijl jumps lazy Hello
+D|typo|Segoe UI Light|7|3|0|4|0|1|0|-|-|-|-|2,2,300,100|-|-|ijl
+D|def|Microsoft Sans Serif|12|3|0|2|0|2|0|-|-|-|-|2,2,0,100|-|-|lazy
+M|def|Lucida Console|8|3|0|4|2048|0|0|-|-|-|-|2,2,0,100|-|-|fox
+D|def|Lucida Console|8|3|0|2|4096|1|0|-|-|-|-|2,2,300,100|-|-|1234 WAVE 1234
+M|def|Segoe UI Light|8|3|0|4|0|1|0|-|-|-|-|2,2,80,100|-|-|lazy .,;
+D|typo|Lucida Sans Unicode|12|3|0|2|4096|1|0|-|-|-|-|2,2,0,100|-|-|jumps fifty dog ijl Mmm 
+D|typo|Segoe UI Light|12|3|0|3|4096|2|0|-|-|-|-|2,2,80,100|-|-|WAVE lazy .,; lazy AVATAR quick
+D|typo|Microsoft Sans Serif|14|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-| quick .,; over .,;
+D|def|Segoe UI Light|8|3|0|1|4096|0|0|-|-|-|-|2,2,80,100|-|-| quick dog lazy fifty brown 
+D|typo|Microsoft Sans Serif|12|3|0|2|0|0|0|-|-|-|-|2,2,300,100|-|-|Mmm 
+D|def|Lucida Console|12|3|0|4|0|1|0|-|-|-|-|2,2,80,100|-|-|lazy 
+D|def|Microsoft Sans Serif|8|3|0|4|2048|1|0|-|-|-|-|2,2,0,100|-|-|brown
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|?
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-| a
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|abcdefghijklmnop
+D|def|Microsoft Sans Serif|10|3|1|5|4|0|0|-|-|-|-|2,2,300,100|-|-|abcdefghijklmnop
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ii
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|WW
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|lll
+D|def|Microsoft Sans Serif|10|3|1|1|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|1|3|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|2|5|4|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-| é
+D|def|Microsoft Sans Serif|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-|é
+D|def|Microsoft Sans Serif|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-|e
+D|def|Segoe UI Light|20|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|0|1|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|1|1|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|1|4|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Segoe UI Light|20|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|1|4|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM

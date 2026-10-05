@@ -85,6 +85,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public int Order;                // PFE +0x50
             public string Path = "";
             public int Index;
+            public string DWriteFamily = ""; // the family DirectWrite files the face under (see WwsFamily)
+            public int DWriteWeight;         // its DWRITE_FONT_WEIGHT
             internal Face[] Links;
 
             public bool Italic => (FsSelection & 1) != 0;
@@ -500,9 +502,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 Face f = MakeFace (os2, post, name, hd, cmap);
                 if (f == null) continue;
                 f.Path = path; f.Index = idx;
+                string dwFamily = WwsFamily (id => NameById (name, id, 0x409), out int nameWeight);
                 List<Face> faces = fvar != null ? Instances (f, name, fvar, stat) : null;
-                if (faces == null || faces.Count == 0) faces = new List<Face> { f };
+                bool instances = faces != null && faces.Count > 0;
+                if (!instances) faces = new List<Face> { f };
                 foreach (Face g in faces) {
+                    g.DWriteFamily = dwFamily;
+                    g.DWriteWeight = !instances && nameWeight != 0 && g.Weight == 400 ? nameWeight : g.Weight;
                     g.Order = ++order;
                     into.Add (g);
                     if (IsAnyCharsetDbcs (g)) {
@@ -592,6 +598,94 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             return list;
         }
+
+        // ---- DirectWrite's family model ---------------------------------------------------------------
+
+        /// <summary>Whether DirectWrite itself simulates the bold GDI+ draws a face with -- the
+        /// IDWriteFont in the GpFontFamily's bold slot is a simulated one -- rather than GDI+'s
+        /// realization doing it alone.
+        /// <para>GpFontFamily::IsFileLoaded (@18001a038) walks the DirectWrite family's
+        /// GetMatchingFonts(400, 5, 0) list (GpFontFamilyList::AddFont @180022de8) and keeps every
+        /// font whose WIN32_FAMILY_NAMES string is the GDI+ family, in the slot
+        /// GpFontFace::GetFaceStyle (@180085d10: bold above weight 500) gives it, the fewer
+        /// simulations winning (SetFaceAndFile @1800861e0). DirectWrite lists a simulated bold of a
+        /// face only in a family with no face heavier than 500: Microsoft Sans Serif, Lucida
+        /// Console, Gabriola have one, Segoe UI Light (family Segoe UI) and Franklin Gothic Medium
+        /// (family Franklin Gothic, with Demi and Heavy) do not. With no bold font GetFace falls
+        /// back to the regular one and FastTextImager / the full imager embolden the realization
+        /// (flag 0x2000): the GDI-compatible advances still gain a pixel, the design advances --
+        /// GetDesignGlyphMetrics of an unsimulated face -- do not.</para></summary>
+        internal static bool DWriteSimulatesBold (TrueTypeFont font)
+        {
+            if (font == null || !font.SynthesizesBold) return false;
+            lock (s_dwSim) {
+                if (s_dwSim.TryGetValue (font, out bool hit)) return hit;
+            }
+            byte[] d = font.FontData;
+            int sfnt = font.SfntOffset;
+            string family = WwsFamily (id => FontFiles.NameById (d, sfnt, id), out _);
+            bool sim = true;
+            Init ();
+            lock (s_lock) {
+                if (s_dwMaxWeight == null) {
+                    var max = new Dictionary<string, int> (StringComparer.OrdinalIgnoreCase);
+                    foreach (Face f in s_faces) {
+                        if (f.Vertical || f.DWriteFamily.Length == 0) continue;
+                        max [f.DWriteFamily] = Math.Max (max.TryGetValue (f.DWriteFamily, out int w) ? w : 0, f.DWriteWeight);
+                    }
+                    s_dwMaxWeight = max;
+                }
+                if (family != null && s_dwMaxWeight.TryGetValue (family, out int heaviest)) sim = heaviest <= 500;
+            }
+            lock (s_dwSim) s_dwSim.AddOrUpdate (font, sim);
+            return sim;
+        }
+
+        static readonly DwSimTable s_dwSim = new ();
+        static Dictionary<string, int> s_dwMaxWeight;
+
+        sealed class DwSimTable
+        {
+            readonly System.Runtime.CompilerServices.ConditionalWeakTable<TrueTypeFont, StrongBox> t = new ();
+            sealed class StrongBox { public bool V; }
+            public bool TryGetValue (TrueTypeFont f, out bool v) { bool ok = t.TryGetValue (f, out StrongBox b); v = ok && b.V; return ok; }
+            public void AddOrUpdate (TrueTypeFont f, bool v) => t.AddOrUpdate (f, new StrongBox { V = v });
+        }
+
+        /// <summary>The family DirectWrite files a face under (its weight-width-slope family): name
+        /// 21, else the typographic family (16), else the legacy family (1) with the weight and
+        /// width words DirectWrite parses off its end ("Franklin Gothic Demi Cond" is Franklin
+        /// Gothic). <paramref name="nameWeight"/> is the weight such a word names, 0 for none.</summary>
+        static string WwsFamily (Func<int, string> name, out int nameWeight)
+        {
+            nameWeight = 0;
+            string wws = name (21);
+            if (!string.IsNullOrEmpty (wws)) return wws;
+            string typo = name (16);
+            if (!string.IsNullOrEmpty (typo)) return typo;
+            string legacy = name (1);
+            if (string.IsNullOrEmpty (legacy)) return null;
+            string[] words = legacy.Split (' ', StringSplitOptions.RemoveEmptyEntries);
+            int n = words.Length;
+            while (n > 1) {
+                string w = words [n - 1];
+                if (s_nameWeights.TryGetValue (w, out int weight)) { if (nameWeight == 0) nameWeight = weight; n--; }
+                else if (s_nameWidths.Contains (w)) n--;
+                else break;
+            }
+            return string.Join (" ", words, 0, n);
+        }
+
+        static readonly Dictionary<string, int> s_nameWeights = new (StringComparer.OrdinalIgnoreCase) {
+            ["Thin"] = 100, ["Hairline"] = 100, ["ExtraLight"] = 200, ["UltraLight"] = 200, ["Light"] = 300,
+            ["SemiLight"] = 350, ["Book"] = 400, ["Regular"] = 400, ["Normal"] = 400, ["Medium"] = 500,
+            ["Demi"] = 600, ["DemiBold"] = 600, ["SemiBold"] = 600, ["Bold"] = 700, ["ExtraBold"] = 800,
+            ["UltraBold"] = 800, ["Black"] = 900, ["Heavy"] = 900, ["ExtraBlack"] = 950, ["UltraBlack"] = 950,
+        };
+        static readonly HashSet<string> s_nameWidths = new (StringComparer.OrdinalIgnoreCase) {
+            "Cond", "Cn", "Condensed", "Narrow", "Compressed", "SemiCondensed", "ExtraCondensed",
+            "UltraCondensed", "Extended", "Expanded", "Wide", "SemiExpanded", "ExtraExpanded",
+        };
 
         /// <summary>A platform-3 name in the language, else US English, else any English, else the first.</summary>
         static string NameById (byte[] d, int id, int lang)

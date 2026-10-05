@@ -69,9 +69,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int hAsc = S16 (data, hhea + 4), hDesc = S16 (data, hhea + 6), hGap = S16 (data, hhea + 8);
             int winAsc = hAsc, winDesc = -hDesc;
             if (Table (data, sfnt, "OS/2", out int os2)) {
+                // USE_TYPO_METRICS (fsSelection bit 7): DirectWrite's metrics are the typographic
+                // ones, line gap included (Gabriola, Bahnschrift: a cell of exactly one em).
+                if ((U16 (data, os2 + 62) & 0x80) != 0) {
+                    int tAsc = S16 (data, os2 + 68), tDesc = -S16 (data, os2 + 70), tGap = S16 (data, os2 + 72);
+                    return new Metrics (em, tAsc, tDesc, tAsc + tDesc + Math.Max (0, tGap));
+                }
                 winAsc = U16 (data, os2 + 74);
                 winDesc = U16 (data, os2 + 76);
             }
+            // GpFontFamily::GetDesignLineSpacing (@180085c80) is DWRITE_FONT_METRICS ascent +
+            // descent + lineGap, the gap DirectWrite's GDI-compatible one.
             int ls = Math.Max (winAsc + winDesc, hAsc - hDesc + hGap);
             return new Metrics (em, winAsc, winDesc, ls);
         }

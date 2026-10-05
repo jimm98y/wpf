@@ -226,6 +226,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 {
                     TypoAscender = (short) U16(os2 + 68);
                     TypoDescender = (short) U16(os2 + 70);
+                    UseTypoMetrics = (U16(os2 + 62) & 0x80) != 0;
                 }
             }
             if (tables.TryGetValue("post", out int postUl) && postUl + 12 <= _data.Length)
@@ -661,6 +662,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// sTypoAscender - sTypoDescender and the vertical origin sTypoAscender.</summary>
         internal int TypoAscender { get; private set; }
         internal int TypoDescender { get; private set; }
+        /// <summary>OS/2 fsSelection USE_TYPO_METRICS: DirectWrite's (and so GDI+'s) ascent and
+        /// descent are sTypoAscender / -sTypoDescender, not the win metrics.</summary>
+        internal bool UseTypoMetrics { get; private set; }
         internal int UnderlinePosition { get; private set; }
         internal int UnderlineThickness { get; private set; }
         /// <summary>OS/2 yStrikeoutPosition / yStrikeoutSize.</summary>

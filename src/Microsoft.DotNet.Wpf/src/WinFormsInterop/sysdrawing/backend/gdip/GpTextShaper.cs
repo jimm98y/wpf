@@ -162,11 +162,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>The design advance DirectWrite gives GDI+ (IDWriteFontFace::GetDesignGlyphMetrics):
         /// a face with a bold simulation widens every glyph that has an outline by round(upem / 50)
-        /// (blanks keep theirs; measured on 256-, 1000- and 2048-unit faces).</summary>
+        /// (blanks keep theirs; measured on 256-, 1000- and 2048-unit faces) -- when DirectWrite
+        /// simulates it (GpFontMapper.DWriteSimulatesBold); a bold GDI+ emboldens in the
+        /// realization alone keeps the design advances.</summary>
         public static int DesignAdvance (TrueTypeFont face, int gid)
         {
             int a = face.DesignAdvance (gid);
-            if (face.SynthesizesBold && HasContours (face, gid))
+            if (face.SynthesizesBold && HasContours (face, gid) && GpFontMapper.DWriteSimulatesBold (face))
                 a += (int) MathF.Floor (face.UnitsPerEmForHinting / 50f + 0.5f);
             return a;
         }
