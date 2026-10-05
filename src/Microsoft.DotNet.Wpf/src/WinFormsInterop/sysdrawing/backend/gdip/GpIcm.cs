@@ -24,8 +24,13 @@
 //        (CreateLinearAlut16 @180040d60)
 //   DoMatrixForCube16 @18000c308  ELUT, matrix and ALUT over every node
 //   XYZ2Lab_forCube16 @18002f550  into Lab, through a cube-root table (@18006bba0)
-//   ExtractAll_MFT_LutsFromLut16 @1800110b0, CalcNDim_Data8To8_Lut16 @18002be60 ->
-//        Calc324Dim_Data8To8_Lut16 @180030798   the output profile's B2A0 lut16 over every node
+//   ExtractAll_MFT_LutsFromLut16 @1800110b0 / ExtractAll_MFT_LutsFromLut8 @180011218,
+//        CalcNDim_Data8To8_Lut16 @18002be60 -> Calc324Dim_Data8To8_Lut16 @180030798   the output
+//        profile's B2A0 lut16 or lut8 over every node (16- or 8-bit CLUT, any grid, a power of two
+//        or not), with a linear ALUT: the profile's own ALUT becomes the combi's output ALUT
+//
+// Checked against mscms over all 16.7M colours for RSWOP.icm and for profiles made from it with
+// grids of 9, 16, 17 and 32 points, lut8 and lut16, linear and curved tables: no difference.
 //   FillDescaledInputLut @18002f800 the input ELUT scaled onto the cube's grid
 //   LHCalc3to4_Di8_Do8_Lut16_G32 @18001c250   per pixel: tetrahedral interpolation of the cube
 //        (11-bit weights), then the output ALUT
@@ -278,8 +283,52 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// it is (16 bits), ALUTs of 1024 x 16 bits per output.</summary>
         sealed class Lut16
         {
-            public int In, Out, Grid;
+            public int In, Out, Grid, XlutBits = 16;
             public ushort[] Elut, Xlut, Alut, DescaledElut;
+        }
+
+        /// <summary>The output profile's lut16 or lut8 (ExtractAll_MFT_LutsFromLut16 @1800110b0,
+        /// ExtractAll_MFT_LutsFromLut8 @180011218).</summary>
+        static Lut16 ReadLut (Profile p, uint sig)
+        {
+            (int o, int n) = p.Tag (sig);
+            if (o >= 0 && n >= 48 && U32 (p.D, o) == SigMft1) return ReadLut8 (p, o, n);
+            return ReadLut16 (p, sig);
+        }
+
+        /// <summary>A 'mft1': ELUTs of 256 x 16 bits (Fill_ushort_ELUTs_from_lut8Tag @180047058), the
+        /// 8-bit CLUT as it is (ExtractXlutFromLut8 @180012ab0), ALUTs of 1024 x 16 bits
+        /// (Fill_ushort_ALUTs_from_lut8Tag @180061ec0).</summary>
+        static Lut16 ReadLut8 (Profile p, int o, int n)
+        {
+            byte[] d = p.D;
+            var l = new Lut16 { In = d [o + 8], Out = d [o + 9], Grid = d [o + 10], XlutBits = 8 };
+            if (l.In == 0 || l.Out == 0 || l.In > 8 || l.Out > 8 || l.Grid < 2) throw new NotSupportedException ();
+            long clut = l.Out;
+            for (int i = 0; i < l.In; i++) clut *= l.Grid;
+            int eo = o + 48, xo = eo + l.In * 256, ao = xo + (int) clut;
+            if (ao + (long) l.Out * 256 > o + (long) n) throw new InvalidDataException ();
+            l.Elut = new ushort [l.In * 256 + 1];
+            int x = (0x1000 << 16) - 0x1000;
+            x = (int) ((long) x * unchecked ((int) 0x80808081) >> 32) + x;
+            int step = (x >> 7) - (x >> 31);
+            for (int c = 0; c < l.In; c++)
+                for (int i = 0; i < 256; i++) l.Elut [c * 256 + i] = (ushort) (d [eo + c * 256 + i] * step + 0x800 >> 12);
+            l.Xlut = new ushort [clut];
+            for (int i = 0; i < clut; i++) l.Xlut [i] = d [xo + i];
+            l.Alut = new ushort [l.Out * 0x400 + 1];
+            for (int c = 0; c < l.Out; c++) {
+                int t0 = ao + c * 256;
+                for (int i = 0; i < 0x3ff; i++) {
+                    int idx = i * 0x3fd >> 12, f = i * 0x3fd & 0xfff;
+                    int v0 = d [t0 + idx];
+                    int v = v0 * 0x101;
+                    if (f != 0) v += (short) ((d [t0 + idx + 1] * 0x101 - v0 * 0x101) * f + 0x800 >> 12);
+                    l.Alut [c * 0x400 + i] = (ushort) v;
+                }
+                l.Alut [c * 0x400 + 0x3ff] = (ushort) (d [t0 + 0xff] * 0x101);
+            }
+            return l;
         }
 
         static Lut16 ReadLut16 (Profile p, uint sig)
@@ -370,16 +419,23 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return r;
         }
 
-        /// <summary>Calc324Dim_Data8To8_Lut16 @180030798, a grid of points that is not a power of
-        /// two, 16-bit CLUT, 16-bit ALUT, 16-bit in and out: three 16-bit channels per node of
-        /// <paramref name="src"/> into four of <paramref name="dst"/>.</summary>
+        /// <summary>Calc324Dim_Data8To8_Lut16 @180030798, 16-bit ALUT, 16-bit in and out: three
+        /// 16-bit channels per node of <paramref name="src"/> into four of <paramref name="dst"/>,
+        /// through a CLUT of 16 or 8 bits, on a grid that is a power of two (index and fraction cut
+        /// out of the descaled value) or not (the value times the grid).</summary>
         static void Calc324 (ushort[] src, int nodes, ushort[] dst, Lut16 l, ushort[] delut, int elutBits)
         {
-            int g = l.Grid;
-            const int xlutBits = 16, alutBits = 16;
-            int sum = xlutBits + elutBits - 10;
+            int g = l.Grid, xlutBits = l.XlutBits;
+            const int alutBits = 16;
+            int gb = 0;
+            while (gb + 1 < 0x20 && g >> (gb + 1) != 0) gb++;
+            bool pow2 = 1 << gb == g;
+            int fb = pow2 ? elutBits - gb : elutBits;
+            if (fb < 0) throw new NotSupportedException ();
+            int sum = xlutBits + fb - 10;
             int ab = sum < 0x11 ? sum : 0x10, post = sum > 0x10 ? sum - 0x10 : 0;
-            uint fmask = (uint) (1 << elutBits) - 1;
+            uint fmask = (uint) (1 << fb) - 1;
+            uint imask = (uint) (g - 1) << fb;       // pow2: the index bits; a value at or past them is the last node
             int one = 1 << ab;
             int ash = ab - (16 - alutBits);
             var stride = new int [3];
@@ -387,15 +443,25 @@ namespace System.Drawing.WebGpuBackend.Gdip
             uint top = (uint) (g + 0xffff) & 0xffff;
             var fr = new int [3];
             var ix = new uint [3];
+            var last = new bool [3];
             var acc = new uint [4];
             ushort[] x = l.Xlut, a = l.Alut;
             for (int nd = 0, p = 0, q = 0; nd < nodes; nd++, p += 3, q += 4) {
                 for (int c = 0; c < 3; c++) {
                     uint v = (uint) src [p + c] - (uint) (src [p + c] >> 8);
                     uint i = v >> 8, f = v & 0xff;
-                    uint t = ((uint) delut [c * 256 + i] * (0x100 - f) + (uint) delut [c * 256 + i + 1] * f >> 8) * (uint) g;
-                    fr [c] = (int) (fmask & t);
-                    ix [c] = (ushort) (t >> elutBits);
+                    uint e = (uint) delut [c * 256 + i] * (0x100 - f) + (uint) delut [c * 256 + i + 1] * f;
+                    if (pow2) {
+                        uint val = (ushort) (e >> 8);
+                        fr [c] = (int) (fmask & (e >> 8));
+                        ix [c] = (imask & (e >> 8)) >> fb;
+                        last [c] = !(val < imask);
+                    } else {
+                        uint t = (e >> 8) * (uint) g;
+                        fr [c] = (int) (fmask & t);
+                        ix [c] = (ushort) (t >> fb);
+                        last [c] = !(ix [c] < top);
+                    }
                 }
                 int bse = stride [0] * (int) ix [0] + stride [1] * (int) ix [1] + stride [2] * (int) ix [2];
                 int imax = fr [0] < fr [1] ? 1 : 0, imid = fr [1] <= fr [0] ? 1 : 0, imin = 2;
@@ -403,19 +469,25 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     imin = imid; imid = 2;
                     if (fr [imax] < fr [2]) { imid = imax; imax = 2; }
                 }
-                uint w0 = (uint) ((1 << elutBits) - fr [imax]), w1 = (uint) (fr [imax] - fr [imid]), w2 = (uint) (fr [imid] - fr [imin]), w3 = (uint) fr [imin];
+                uint w0 = (uint) ((1 << fb) - fr [imax]), w1 = (uint) (fr [imax] - fr [imid]), w2 = (uint) (fr [imid] - fr [imin]), w3 = (uint) fr [imin];
                 int off = 0;
-                if (ix [imax] < top) off = stride [imax];
+                if (!last [imax]) off = stride [imax];
                 int n1 = bse + off;
-                if (ix [imid] < top) off += stride [imid];
+                if (!last [imid]) off += stride [imid];
                 int n2 = bse + off;
-                if (ix [imin] < top) off += stride [imin];
+                if (!last [imin]) off += stride [imin];
                 int n3 = bse + off;
                 for (int k = 0; k < 4; k++)
                     acc [k] = x [bse + k] * w0 + x [n1 + k] * w1 + x [n2 + k] * w2 + x [n3 + k] * w3;
                 for (int k = 0; k < 4; k++) {
-                    uint u = (acc [k] >> xlutBits) + acc [k];
-                    u = u - (u >> 10) >> post;
+                    uint u;
+                    if (xlutBits < 16) {
+                        u = (acc [k] >> ((xlutBits & 0xf) << 1)) + (acc [k] >> xlutBits) + acc [k];
+                        u -= u >> 10;
+                    } else {
+                        u = (acc [k] >> xlutBits) + acc [k];
+                        u = u - (u >> 10) >> post;
+                    }
                     uint f = (uint) (one - 1) & u;
                     int i = (int) (u >> ab) + k * 0x400;
                     dst [q + k] = (ushort) ((uint) a [i] * (uint) (one - (int) f) + (uint) a [i + 1] * f >> ash);
@@ -450,13 +522,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
             double[] mtx = TrcMatrix (ps);
             var lin = new ushort [4 * 0x400 + 1];
             for (int c = 0; c < 4; c++) LinearAlut16 (lin, c * 0x400);
-            Lut16 l = ReadLut16 (pd, 0x42324130);
+            Lut16 l = ReadLut (pd, 0x42324130);
             if (l.In != 3 || l.Out != 4) throw new NotSupportedException ();
             ushort[] cube = MakeCube3 (GridBits);
             DoMatrixForCube16 (cube, Nodes, elut, 256, true, 16, lin, 0x400, true, 16, mtx);
             Xyz2Lab (cube, Nodes);
             var grid = new ushort [Nodes * 4 + 0x1100];
-            var calc = new Lut16 { In = l.In, Out = l.Out, Grid = l.Grid, Xlut = l.Xlut, Alut = lin };
+            var calc = new Lut16 { In = l.In, Out = l.Out, Grid = l.Grid, XlutBits = l.XlutBits, Xlut = l.Xlut, Alut = lin };
             Calc324 (cube, Nodes, grid, calc, Descale (l.Elut, 3 * 256, 16, l.Grid), 16);
             var ein = new ushort [3 * 256];
             for (int c = 0; c < 3; c++) LinearElut16 (ein, c * 256, 256);
@@ -559,7 +631,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 r.Cube1 = (ushort[]) cube.Clone ();
                 Xyz2Lab (cube, 0x8000);
                 r.Cube2 = (ushort[]) cube.Clone ();
-                Lut16 l = ReadLut16 (new Profile (dst), 0x42324130);
+                Lut16 l = ReadLut (new Profile (dst), 0x42324130);
                 r.SElut = l.Elut; r.SAlut = l.Alut; r.SXlut = l.Xlut;
                 r.SDelut = Descale (l.Elut, 3 * 256, 16, l.Grid);
                 r.Grid = new ushort [0x8000 * 4];
