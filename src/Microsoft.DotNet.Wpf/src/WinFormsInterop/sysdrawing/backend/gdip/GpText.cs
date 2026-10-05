@@ -107,6 +107,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int all = 0;
             foreach (char c in s) all |= GpTextTables.Flags (c);
             if ((all & 0x80) != 0) return true;
+            // Digits the format substitutes (GetDigitSubstitutionsScript) are the full imager's.
+            if ((all & 0x100) != 0 && fmt != null && GpTextTables.DigitSubstitutionsScript (fmt.DigitMethod, fmt.DigitLanguage) != 0) return true;
             if (fmt != null && fmt.Hotkey != 0) {
                 // RemoveHotkeys: one marker is the fast imager's, a second sends the string on.
                 int first = s.IndexOf ('&');

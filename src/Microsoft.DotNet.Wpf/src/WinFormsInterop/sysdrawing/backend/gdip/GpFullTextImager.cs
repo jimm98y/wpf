@@ -158,22 +158,116 @@ namespace System.Drawing.WebGpuBackend.Gdip
         readonly List<Run> _runs = new List<Run> ();
         bool _runsBuilt;
 
+        /// <summary>A GpTextItem: a span of the string with its script, flags (byte 1) and bidi level.</summary>
+        struct Item
+        {
+            public int Start, Len, Script, Flags, Level;
+            public Item (int start, int len, int script, int flags, int level) { Start = start; Len = len; Script = script; Flags = flags; Level = level; }
+        }
+
         void BuildRuns ()
         {
             if (_runsBuilt) return;
             _runsBuilt = true;
             byte[] levels = BidiLevels ();
+            var items = new List<Item> ();
             foreach ((int start, int len, int script, int flags, int level) in Itemize ()) {
-                if (levels == null) { CreateTextRuns (start, len, script, flags, level); continue; }
+                if (levels == null) { items.Add (new Item (start, len, script, flags, level)); continue; }
                 // BidirectionalAnalysis: an item is cut where its characters' levels change.
                 for (int s = start; s < start + len;) {
                     int e = s + 1;
                     while (e < start + len && levels [e] == levels [s]) e++;
-                    CreateTextRuns (s, e - s, script, flags, levels [s]);
+                    items.Add (new Item (s, e - s, script, flags, levels [s]));
                     s = e;
                 }
             }
+            // BuildRunsUpToAndIncluding: MirroredNumericAndVerticalAnalysis for a bidi string, a
+            // vertical format, or digits the format substitutes.
+            int digitScript = Format != null ? GpTextTables.DigitSubstitutionsScript (Format.DigitMethod, Format.DigitLanguage) : 0;
+            bool digits = false;
+            for (int i = 0; i < _n && !digits; i++) digits = (GpTextTables.Flags (Text [i]) & 0x100) != 0;
+            if (levels != null || (digits && digitScript != 0) || IsVertical)
+                SecondaryItemization (items, digitScript);
+            foreach (Item it in items) CreateTextRuns (it.Start, it.Len, it.Script, it.Flags, it.Level);
             _runs.Add (new Run { Kind = 1, Cp = _n, Len = 2, Str = _n, Face = Face, Family = Family, Style = Style, Em = Em, Level = ParagraphLevel });
+        }
+
+        /// <summary>SecondaryItemization @1800f2388: a state machine over the characters' secondary
+        /// classes (masked 0xc, 0xf when the format substitutes digits, | 0x30 for a vertical format)
+        /// that gives a run of digits (with its separators, sign and currency) the digit script,
+        /// a run of mirrored brackets in a right-to-left item script 0x41, and a vertical line's
+        /// CJK runs the upright flag (8; 0x10 in a right-to-left item).</summary>
+        void SecondaryItemization (List<Item> items, int digitScript)
+        {
+            int mask = digitScript == 0 ? 0xc : 0xf;
+            if (IsVertical) mask |= 0x30;
+            int state = 0, mark = -1, start = 0;
+            int strongClass = 0x14, strongChar = 0;
+            for (int i = 0; i <= _n;) {
+                bool pair = false;
+                int col = 0;
+                if (i < _n) {
+                    int cp = Text [i];
+                    if (char.IsHighSurrogate ((char) cp) && i + 1 < _n && char.IsLowSurrogate (Text [i + 1])) {
+                        cp = char.ConvertToUtf32 ((char) cp, Text [i + 1]);
+                        pair = true;
+                    }
+                    col = GpTextTables.SecondaryColumn (cp, mask);
+                    if (digitScript == 0x40) {
+                        // The contextual Arabic digits remember the last strong character.
+                        int dc = GpTextTables.DirClass (cp);
+                        if ((dc & ~5) == 0 && dc != 5) { strongClass = dc; strongChar = cp; }
+                    }
+                }
+                int act = GpTextTables.SecondaryAct (col, state);
+                state = GpTextTables.SecondaryNextState (col, state);
+                int end = -1, script = 0, flags = 0;
+                switch (act) {
+                case 1: mark = i; break;
+                case 2: start = i; break;
+                case 3: start = mark; break;
+                case 4: end = i; script = digitScript; break;
+                case 5: end = mark; script = digitScript; break;
+                case 6: end = i; script = 0x41; break;
+                case 7: end = i; flags = 0x10; break;
+                case 8: end = i; flags = 0x8; break;
+                }
+                if (end > 0) {
+                    if (start < end) SetSpan (items, start, end, script, flags, strongClass, strongChar);
+                    if (start < end) start = end;
+                }
+                i += pair ? 2 : 1;
+            }
+        }
+
+        /// <summary>SpanVector&lt;GpTextItem&gt;::SetSpan over [from, to): each item there takes the
+        /// script (unless 0) and the flags. A mirrored-bracket script and the 0x10 flag hold only in
+        /// a right-to-left item; the contextual digit script 0x40 is Arabic-Indic (0x2d) after no
+        /// strong character in a right-to-left paragraph, in an Arabic item or after an RLM, and
+        /// otherwise leaves the script (the item is still cut).</summary>
+        void SetSpan (List<Item> items, int from, int to, int script, int flags, int strongClass, int strongChar)
+        {
+            for (int k = 0; k < items.Count; k++) {
+                Item it = items [k];
+                int a = Math.Max (from, it.Start), b = Math.Min (to, it.Start + it.Len);
+                if (a >= b) continue;
+                int s = script, f = flags;
+                if ((it.Level & 1) == 0) { f &= ~0x10; if (s == 0x41) s = 0; }
+                if (s == 0 && f == 0) continue;
+                var piece = it;
+                if (s == 0x40) {
+                    if ((strongClass == 0x14 && ParagraphLevel == 1) || it.Script == 7 || strongChar == 0x200f) piece.Script = 0x2d;
+                } else if (s != 0) piece.Script = s;
+                piece.Flags |= f;
+                piece.Start = a; piece.Len = b - a;
+                // Split the item around the piece.
+                items.RemoveAt (k);
+                int ins = k;
+                if (it.Start < a) { var head = it; head.Len = a - it.Start; items.Insert (ins++, head); }
+                items.Insert (ins++, piece);
+                if (b < it.Start + it.Len) { var tail = it; tail.Start = b; tail.Len = it.Start + it.Len - b; items.Insert (ins++, tail); }
+                k = ins - 1;
+            }
         }
 
         /// <summary>BuildRunsUpToAndIncluding: the bidi analysis (UnicodeBidiAnalyze, GpBidi) when the
