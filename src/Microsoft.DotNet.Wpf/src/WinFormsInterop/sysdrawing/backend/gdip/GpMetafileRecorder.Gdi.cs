@@ -16,68 +16,25 @@ namespace System.Drawing.WebGpuBackend.Gdip
     {
         bool Gdi => _type != EmfType.EmfPlusOnly;
 
-        // GpGraphics::DrawString: the string's measured bounds (MeasureString), through world to device.
+        // GpGraphics::DrawString: the string's measured bounds (GpGraphics::MeasureString, which on a
+        // metafile is always FullTextImager's), through world to device.
         RectangleF? StringBounds(string s, Font font, RectangleF layout, StringFormat format)
         {
             RectangleF box;
-            using (var probe = GpRegionProbe.Graphics())
+            if (!GpGraphics.MeasureStringFor(s, font, EmWorld(font), layout, format, GpMatrix.CreateIdentity(), true, out box, out _, out _))
             {
-                probe.PageUnit = _state.PageUnit == GraphicsUnit.World ? GraphicsUnit.Display : _state.PageUnit;
-                probe.PageScale = _state.PageScale;
-                SizeF size;
-                bool vertical = format != null && (format.FormatFlags & StringFormatFlags.DirectionVertical) != 0;
-                if (!vertical && TryMeasure(s, font, layout, format, out SizeF measured)) size = measured;
-                else size = probe.MeasureString(s, font, new SizeF(layout.Width, layout.Height), format);
-                float x = layout.X, y = layout.Y;
-                StringAlignment a = format?.Alignment ?? StringAlignment.Near;
-                StringAlignment la = format?.LineAlignment ?? StringAlignment.Near;
-                if (format != null && (format.FormatFlags & StringFormatFlags.DirectionVertical) != 0)
+                using (var probe = GpRegionProbe.Graphics())
                 {
-                    // A vertical line runs down: the alignment is along y, the line alignment along
-                    // x, and the measured box is the line's across by its length, within the
-                    // rectangle.
-                    StringAlignment sw = a; a = la; la = sw;
-                    float across = size.Height, along = size.Width;
-                    if (layout.Width > 0f && across > layout.Width) across = layout.Width;
-                    if (layout.Height > 0f && along > layout.Height) along = layout.Height;
-                    size = new SizeF(across, along);
+                    probe.PageUnit = _state.PageUnit == GraphicsUnit.World ? GraphicsUnit.Display : _state.PageUnit;
+                    probe.PageScale = _state.PageScale;
+                    SizeF size = probe.MeasureString(s, font, new SizeF(layout.Width, layout.Height), format);
+                    box = new RectangleF(layout.X, layout.Y, size.Width, size.Height);
                 }
-                if (layout.Width > 0f)
-                {
-                    if (a == StringAlignment.Center) x += (layout.Width - size.Width) / 2f;
-                    else if (a == StringAlignment.Far) x += layout.Width - size.Width;
-                }
-                if (layout.Height > 0f)
-                {
-                    if (la == StringAlignment.Center) y += (layout.Height - size.Height) / 2f;
-                    else if (la == StringAlignment.Far) y += layout.Height - size.Height;
-                }
-                box = new RectangleF(x, y, size.Width, size.Height);
             }
             float l = box.X, t = box.Y, r = box.Right, b = box.Bottom;
             GpMat m = WorldToDevice;
             m.TransformBounds(ref l, ref t, ref r, ref b);
             return new RectangleF(l, t, r - l, b - t);
-        }
-
-        /// <summary>FullTextImager::Measure in world units (GpTextLayout, the em in world units).</summary>
-        bool TryMeasure(string s, Font font, RectangleF layout, StringFormat format, out SizeF size)
-        {
-            size = SizeF.Empty;
-            string family = font.FontFamily.Name;
-            var face = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Face(family, (int)font.Style & 3);
-            GpFontFamily.Metrics? mm = GpFontFamily.Get(family, (FontStyle)((int)font.Style & 3));
-            if (face == null || mm == null) return false;
-            int flags = format != null ? (int)format.FormatFlags : 0;
-            bool typographic = format != null && format.IsTypographic;
-            bool hotkey = format != null && format.HotkeyPrefix != System.Drawing.Text.HotkeyPrefix.None;
-            float em = EmWorld(font);
-            GpTextLayout L = GpTextLayout.Build(face, mm.Value, s, em, layout.Width, flags, typographic, hotkey);
-            size = L.Measure(layout.Height, flags, out _, out _);
-            // What spills out of the rectangle is not measured.
-            if (layout.Width > 0f && size.Width > layout.Width) size.Width = layout.Width;
-            if (layout.Height > 0f && size.Height > layout.Height) size.Height = layout.Height;
-            return true;
         }
 
         /// <summary>RecordEmfPlusDrawDriverString @1800eb628 -> DriverStringImager::MeasureString

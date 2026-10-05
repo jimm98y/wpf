@@ -117,6 +117,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private readonly ColorTable? _color;    // COLR/CPAL color glyphs (emoji), null if absent
         private readonly BitmapGlyphTable? _bitmaps;   // CBDT/CBLC colour bitmap glyphs, null if absent
         private readonly Dictionary<(int, int), float> _kerning = new(); // base pixels
+        private readonly Dictionary<(int, int), int> _kernUnits = new(); // the same pairs, design units
 
         // Synthetic style (DirectWrite font simulations): when WPF requests a weight/
         // style the family has no real face for, DWrite returns the regular outlines
@@ -219,6 +220,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _winAscent = U16(os2 + 74);
                 _winDescent = U16(os2 + 76);
                 _xAvgCharWidth = (short) U16(os2 + 2);
+                StrikeoutSize = (short) U16(os2 + 26);
+                StrikeoutPosition = (short) U16(os2 + 28);
                 if (os2 + 72 <= _data.Length)
                 {
                     TypoAscender = (short) U16(os2 + 68);
@@ -513,6 +516,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         public int GlyphIndex(char c) => _cmap.Map(c);
 
+        /// <summary>The cmap's glyph for a code point (above the BMP too).</summary>
+        internal int GlyphIndexOf(int codepoint) => _cmap.Map(codepoint);
+
+        /// <summary>The legacy 'kern' table's adjustment for a pair, in design units.</summary>
+        internal bool TryGetKernUnits(int leftGlyph, int rightGlyph, out int units)
+            => _kernUnits.TryGetValue((leftGlyph, rightGlyph), out units);
+
         public float Advance(int glyphId) => AdvanceWidth(glyphId) * _scale;
 
         /// <summary>The space the design leaves to the RIGHT of the ink, in pixels: the advance
@@ -653,6 +663,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal int TypoDescender { get; private set; }
         internal int UnderlinePosition { get; private set; }
         internal int UnderlineThickness { get; private set; }
+        /// <summary>OS/2 yStrikeoutPosition / yStrikeoutSize.</summary>
+        internal int StrikeoutPosition { get; private set; }
+        internal int StrikeoutSize { get; private set; }
         internal bool HasVerticalMetrics { get; private set; }
         internal int WinDescent => _winDescent;
 
@@ -2367,6 +2380,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             return glyph;
+        }
+
+        /// <summary>The glyph's points fitted under DirectWrite's mode word at a size, per contour, in
+        /// pixels, y up, before any simulated shear; null where the face has no program for it. A
+        /// simulated bold is the scaler's (fsg_Embold, <see cref="GdiEmbolden"/>) on the fitted points.</summary>
+        internal List<(Vector2[] Points, bool[] OnCurve)>? DWriteFittedContours(int glyphId, float pixelsPerEm, int flags)
+        {
+            GlyphProgram? glyph = DWriteFit(glyphId, pixelsPerEm, flags, out _);
+            if (glyph is null) return null;
+            if (_emboldenStrength > 0f) GdiEmbolden(glyph, pixelsPerEm, true, outline: true);
+            var list = new List<(Vector2[] Points, bool[] OnCurve)>(glyph.EndPoints.Length);
+            int first = 0;
+            foreach (int last in glyph.EndPoints)
+            {
+                int n = last - first + 1;
+                var pts = new Vector2[Math.Max(0, n)];
+                var on = new bool[Math.Max(0, n)];
+                for (int k = 0; k < n; k++)
+                {
+                    pts[k] = new Vector2(glyph.X[first + k] / 64f, glyph.Y[first + k] / 64f);
+                    on[k] = glyph.OnCurve[first + k];
+                }
+                list.Add((pts, on));
+                first = last + 1;
+            }
+            return list;
         }
 
         /// <summary>The distance the program leaves between the horizontal phantom points under
@@ -5269,7 +5308,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// the point is shifted by the left and bottom amounts. So a left-facing stem edge stays
         /// put and a right-facing one moves a pixel right: the glyph gains a pixel of weight on
         /// the right, and pp2 moves a pixel with it.</para></summary>
-        private void GdiEmbolden(GlyphProgram glyph, float pixelsPerEm, bool fitted)
+        private void GdiEmbolden(GlyphProgram glyph, float pixelsPerEm, bool fitted, bool outline = false)
         {
             int ppem = (int) MathF.Round(pixelsPerEm);
             int ax = (20 * ppem - 10) / 1000 + 1, ay = (20 * ppem - 10) / 1000;
@@ -5294,7 +5333,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // fsg_Embold as its "skip" argument in both passes, and the weight is added to the
             // bitmap instead -- PathRasterizer.EmboldenLampRows. Only pp2 moves, above.
             // WPF_EMB_OUTLINE=1 runs the point pass as well (what the harness does with +0x8c clear).
-            if (!s_embOutline) return;
+            if (!s_embOutline && !outline) return;
             int first = 0;
             foreach (int last in glyph.EndPoints)
             {
@@ -5618,6 +5657,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         int right = U16(pair + 2);
                         int value = (short)U16(pair + 4);
                         _kerning[(left, right)] = value * _scale;
+                        _kernUnits[(left, right)] = value;
                         pair += 6;
                     }
                 }

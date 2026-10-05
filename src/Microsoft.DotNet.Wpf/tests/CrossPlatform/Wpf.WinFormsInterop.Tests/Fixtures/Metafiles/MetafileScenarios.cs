@@ -419,6 +419,24 @@ namespace MetafileOracle
                 g.ResetClip();
                 g.DrawString("Clip to box", f, R(70, 60, 30, 10), null, Brushes.Black);
             };
+            d["text_rotate"] = g =>
+            {
+                // Down-level text under a turned world transform: GDI+'s full imager, its glyph runs
+                // handed to the driver through the turned matrix.
+                var f = new Font("Arial", 9f, FontStyle.Regular, GraphicsUnit.Point);
+                g.TranslateWorldTransform(8f, 4f, MatrixOrder.Prepend);
+                g.RotateWorldTransform(30f, MatrixOrder.Prepend);
+                g.DrawString("Turned 30", f, R(0, 0, 0, 0), null, Brushes.Black);
+                g.ResetWorldTransform();
+                g.TranslateWorldTransform(110f, 6f, MatrixOrder.Prepend);
+                g.RotateWorldTransform(90f, MatrixOrder.Prepend);
+                g.DrawString("Quarter turn", new Font("Times New Roman", 10f, FontStyle.Underline, GraphicsUnit.Point), R(0, 0, 0, 0), null, Brushes.Navy);
+                g.ResetWorldTransform();
+                g.TranslateWorldTransform(20f, 70f, MatrixOrder.Prepend);
+                g.RotateWorldTransform(-15f, MatrixOrder.Prepend);
+                g.DrawString("wrap these turned words", new Font("Segoe UI", 8f, FontStyle.Regular, GraphicsUnit.Point), R(0, 0, 60, 30), null, Brushes.DarkGreen);
+                g.ResetWorldTransform();
+            };
             return d;
         }
     }

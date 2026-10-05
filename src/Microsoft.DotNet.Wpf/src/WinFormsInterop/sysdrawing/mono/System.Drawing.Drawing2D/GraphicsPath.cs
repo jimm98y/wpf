@@ -137,8 +137,9 @@ namespace System.Drawing.Drawing2D
 
 		public PointF [] PathPoints {
 			get {
+				// .NET answers an empty path with an empty array.
 				if (gp.Count == 0)
-					throw new ArgumentException ("PathPoints");
+					return Array.Empty<PointF> ();
 				return gp.PointArray ();
 			}
 		}
@@ -146,7 +147,7 @@ namespace System.Drawing.Drawing2D
 		public byte [] PathTypes {
 			get {
 				if (gp.Count == 0)
-					throw new ArgumentException ("PathTypes");
+					return Array.Empty<byte> ();
 				return gp.TypeArray ();
 			}
 		}

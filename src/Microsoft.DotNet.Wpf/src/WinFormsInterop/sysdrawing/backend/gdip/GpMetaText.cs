@@ -108,6 +108,37 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return new Rectangle(l, t, r - l, b - t);
         }
 
+        /// <summary>The device box of glyphs realized under a turned matrix: each outline's points
+        /// (design units, y down, through em / upem and the matrix's linear part) at its origin,
+        /// the union put out to whole pixels.</summary>
+        static readonly int s_turnPad = int.TryParse(Environment.GetEnvironmentVariable("WF_TURN_PAD"), out int tp) ? tp : 1;
+
+        static Rectangle TurnedUnion(TrueTypeFont face, ushort[] glyphs, PointF[] o, float k, GpMat m)
+        {
+            float l = float.MaxValue, t = float.MaxValue, r = float.MinValue, b = float.MinValue;
+            for (int i = 0; i < glyphs.Length; i++)
+            {
+                if (glyphs[i] == 0xffff) continue;
+                float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+                foreach ((System.Numerics.Vector2[] pts, bool[] _) in face.DesignContours(glyphs[i]))
+                    foreach (System.Numerics.Vector2 p in pts)
+                    {
+                        x0 = Math.Min(x0, p.X); x1 = Math.Max(x1, p.X); y0 = Math.Min(y0, p.Y); y1 = Math.Max(y1, p.Y);
+                    }
+                if (!(x0 <= x1)) continue;
+                // The glyph's box, its four corners through the matrix.
+                foreach ((float px, float py) in new[] { (x0, y0), (x1, y0), (x0, y1), (x1, y1) })
+                {
+                    float x = px * k, y = -py * k;
+                    float dx = x * m.M11 + y * m.M21 + o[i].X, dy = x * m.M12 + y * m.M22 + o[i].Y;
+                    l = Math.Min(l, dx); r = Math.Max(r, dx); t = Math.Min(t, dy); b = Math.Max(b, dy);
+                }
+            }
+            if (!(l < r) || !(t < b)) return Rectangle.Empty;
+            int il = (int)MathF.Floor(l) - s_turnPad, it = (int)MathF.Floor(t) - s_turnPad, ir = (int)MathF.Ceiling(r) + s_turnPad, ib = (int)MathF.Ceiling(b) + s_turnPad;
+            return new Rectangle(il, it, ir - il, ib - it);
+        }
+
         static int FloorDiv(int a, int b) => a >= 0 ? a / b : -((-a + b - 1) / b);
 
         // ---- DrawDriverString -----------------------------------------------------------------------
@@ -168,28 +199,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         // ---- DrawString: FullTextImager ---------------------------------------------------------------
 
+        /// <summary>GpGraphics::DrawString on a metafile, down-level: always FullTextImager (the
+        /// same GpFullTextImager the surfaces draw with), its glyph runs handed to the metafile
+        /// driver.</summary>
         void GdiDrawString(string s, Font font, RectangleF layout, StringFormat format, Brush brush)
         {
             if (!Gdi || string.IsNullOrEmpty(s)) return;
-            string family = font.FontFamily.Name;
-            int style = (int)font.Style;
-            TrueTypeFont face = GdipText.Face(family, style & 3);
-            GpFontFamily.Metrics? mm = GpFontFamily.Get(family, (FontStyle)(style & 3));
-            if (face == null || mm == null) return;
-            GpMat m = WorldToDevice;
-            if (m.M12 != 0f || m.M21 != 0f || !(m.M11 > 0f) || !(m.M22 > 0f)) return;   // axis scales only
-            int formatFlags = format != null ? (int)format.FormatFlags : 0;
-            bool typographic = format != null && format.IsTypographic;
             float em = EmWorld(font);
             if (!(em > 0f)) return;
             if (layout.Width < 0f || layout.Height < 0f) return;
-            if ((formatFlags & 2) != 0)
-            {
-                VerticalString(s, font, face, mm.Value, em, layout, format, formatFlags, typographic, brush);
-                return;
-            }
-            if ((formatFlags & 1) != 0) return;     // right to left: not modelled
-            HorizontalString(s, face, mm.Value, family, style, em, layout, format, formatFlags, typographic, brush);
+            var fti = new GpFullTextImager(s, layout.Width, layout.Height, font.FontFamily.Name, (int)font.Style, em,
+                                           GpTextFormat.From(format));
+            if (!fti.Valid) return;
+            fti.Draw(new MetaTarget(this, brush), layout.Location);
         }
 
         /// <summary>FullTextImager::Draw: the layout rectangle into the clip, unless NoClip, for the
@@ -213,590 +235,87 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (saved != null) _state.Clip = saved.Clip;
         }
 
-        void HorizontalString(string s, TrueTypeFont face, GpFontFamily.Metrics fm, string family, int style, float em,
-                              RectangleF layout, StringFormat format, int formatFlags, bool typographic, Brush brush)
+        /// <summary>The full imager's target on a metafile: DrawPlacedGlyphs through DriverMeta's
+        /// DrawGlyphs (the realization the system's ClearType makes; a sideways glyph of vertical
+        /// text under GetFontTransform's quarter turn, an upright one unturned), the decoration
+        /// lines through the driver's StrokePath with an aliased pen.</summary>
+        sealed class MetaTarget : IGpTextTarget
         {
-            bool hotkey = format != null && format.HotkeyPrefix != System.Drawing.Text.HotkeyPrefix.None;
-            GpTextLayout L = GpTextLayout.Build(face, fm, s, em, layout.Width, formatFlags, typographic, hotkey);
-            GpMat m = WorldToDevice;
-            float sx = m.M11, sy = m.M22;
-            int upem = face.UnitsPerEmForHinting;
-            float res = IdealEm / em;
-            int Du(int du) => upem == IdealEm ? du : (int)Math.Round(du * (double)IdealEm / upem);
-            int Rnd(float v) => (int)MathF.Floor(v + 0.5f);
-            int mode = RealizationMode(face, family, em * sx, sx == sy);
-            float lmF = typographic ? 0f : 1f / 6f;
-            if (format != null && !typographic) lmF = 1f / 6f;
-            int lm = Rnd(lmF * em * res), rmg = lm;
-            int W = Rnd(layout.Width * res);
-            int align = format != null ? (int)format.Alignment : 0;
-            int lineAlign = format != null ? (int)format.LineAlignment : 0;
-            int lineH = Du(fm.LineSpacing);
-            int ascent = Du(fm.Ascent);
-            // The lines that show: with LineLimit only those wholly inside the rectangle's height.
-            int H = Rnd(layout.Height * res);
-            int count = L.Lines.Count;
-            if (layout.Height > 0f)
+            readonly GpMetafileRecorder _r; readonly Brush _brush;
+            public MetaTarget(GpMetafileRecorder r, Brush brush) { _r = r; _brush = brush; }
+
+            public GpMatrix? WorldToDevice => _r.DeviceMatrix;
+
+            public int RealizationMode(TrueTypeFont face, string family, float emDevice, bool square)
+                => _r.RealizationMode(face, family, emDevice, square);
+
+            public void DrawPlacedGlyphs(GpFullTextImager.Run run, int mode, ushort[] glyphs, PointF[] o, string chars, ushort[] map, int flags)
             {
-                bool lineLimit = (formatFlags & 0x2000) != 0;
-                int fit = 0;
-                for (int k = 0; k < count; k++)
-                {
-                    int top = k * lineH, bottom = (k + 1) * lineH;
-                    if (lineLimit ? bottom <= H : top < H) fit = k + 1;
-                }
-                if (lineLimit) count = fit;
-                else count = Math.Max(1, fit);
-            }
-            if (count == 0) return;
-            int total = count * lineH + (typographic ? 0 : IdealEm / 8);
-            int vTop = 0;
-            if (layout.Height > 0f)
-            {
-                if (lineAlign == 1) vTop = (H - total) / 2;
-                else if (lineAlign == 2) vTop = H - total;
-            }
-            else if (lineAlign == 1) vTop = -total / 2;
-            else if (lineAlign == 2) vTop = -total;
-            int space = face.GlyphIndex(' ');
-            int spaceNom = Rnd(em * face.DesignAdvance(space) * res / upem);
-            float f78 = res / sx;        // ideal units per device pixel
-            SavedClip saved = PushLayoutClip(layout, formatFlags);
-            try
-            {
-                for (int li = 0; li < count; li++)
-                {
-                    GpTextLayout.Line line = L.Lines[li];
-                    int n = line.Glyphs.Count;
-                    if (n == 0) continue;
-                    var nom = new int[n];
-                    for (int k = 0; k < n; k++) nom[k] = (k + 1 < n ? line.X[k + 1] : line.WidthWithSpaces) - line.X[k];
-                    var dev = new int[n];
-                    var gl = new ushort[n];
-                    for (int k = 0; k < n; k++)
+                GpTextTrace.ReportPlaced(mode, run.Em, glyphs, o);
+                if (glyphs.Length == 0) return;
+                GpMat m = _r.WorldToDevice;
+                TrueTypeFont face = run.Face;
+                float em = run.Em;
+                int upem = face.UnitsPerEmForHinting;
+                float k0 = em / upem;
+                bool vertical = (run.ItemFlags & 0x20) != 0;
+                bool sideways = vertical && (run.ItemFlags & 0x8) == 0;
+                // GetFontTransform's quarter turn of the realization (cos 90 as a float).
+                const float c90 = -4.371139e-08f;
+                Func<int, NaturalClearType.GlyphBits> bitsOf = null;
+                Rectangle? turnedDraw = null;
+                int last;
+                if (sideways) {
+                    int ppAlong = GdipText.AxisPpem(em * m.M22), ppAcross = GdipText.AxisPpem(em * m.M11);
+                    bitsOf = i => GdipText.GlyphSideways(face, glyphs[i], ppAlong, ppAcross);
+                    GdipText.SidewaysMetrics(face, glyphs[glyphs.Length - 1], em, m.M11, m.M22, out int advDu, out _);
+                    last = (int)MathF.Floor(advDu * (em * m.M22 / upem) + 0.5f);
+                } else {
+                    if (vertical) bitsOf = i => GdipText.Glyph(face, glyphs[i], GdipText.AxisPpem(em * m.M11), GdipText.AxisPpem(em * m.M22));
+                    float sx = MathF.Sqrt(m.M11 * m.M11 + m.M12 * m.M12), sy = MathF.Sqrt(m.M21 * m.M21 + m.M22 * m.M22);
+                    float tl = MathF.Max(sx, sy) / 65536f;
+                    bool axis = MathF.Abs(m.M12) <= tl && MathF.Abs(m.M21) <= tl;
+                    bool quarter = MathF.Abs(m.M11) <= tl && MathF.Abs(m.M22) <= tl;
+                    int lastMode = axis || quarter ? mode : 2;
+                    last = (int)MathF.Floor(GpTextShaper.DeviceAdvancePx(face, glyphs[glyphs.Length - 1], em, sx, sy, lastMode) + 0.5f);
+                    if (!axis && !vertical)
                     {
-                        gl[k] = (ushort)line.Glyphs[k];
-                        float px = DeviceAdvancePx(face, gl[k], em, sx, sy, mode);
-                        dev[k] = Rnd(px / sx * res);
-                    }
-                    int lineLen = line.Width;
-                    int share = 0;
-                    if (align != 0)
-                    {
-                        int used = lm + lineLen + rmg;
-                        share = W < 1 ? -used : W - used;
-                        if (align == 1) share /= 2;
-                    }
-                    int u0 = share + lm;
-                    int m70 = lm, m74 = rmg;
-                    int shift = AdjustGlyphAdvances(face, gl, nom, dev, space, spaceNom, formatFlags, align, true, true,
-                                                    ref m70, ref m74, em, res, f78, sx);
-                    int v = vTop + ascent + li * lineH;
-                    // GetDisplayCellOrigin.
-                    float cx = layout.X + u0 / res + shift / res;
-                    float cy = layout.Y + v / res;
-                    cx = MathF.Floor(cx * m.M11 + 0.5f) / m.M11;
-                    cy = MathF.Floor(cy * m.M22 + 0.5f) / m.M22;
-                    var org = new PointF[n];
-                    float x = cx;
-                    for (int k = 0; k < n; k++)
-                    {
-                        org[k] = new PointF(m.M11 * x + m.M21 * cy + m.Dx, m.M12 * x + m.M22 * cy + m.Dy);
-                        x = dev[k] / res + x;
-                    }
-                    var chars = new System.Text.StringBuilder();
-                    var map = new ushort[n];
-                    for (int k = 0; k < n; k++) { chars.Append(s[line.Chars[k]]); map[k] = (ushort)k; }
-                    Rectangle draw = GlyphUnion(face, gl, org, em * sx);
-                    if (draw.Width > 0 && draw.Height > 0 && !TotallyClipped(draw))
-                    {
-                        var gd = new GlyphDraw
+                        // A turned realization: a clockwise quarter turn is the sideways glyph;
+                        // any other turn bounded by its outline through the matrix.
+                        if (quarter && m.M12 > 0f && m.M21 < 0f)
                         {
-                            Draw = draw, Glyphs = gl, Origins = org, Brush = brush, Text = chars.ToString(), Map = map,
-                            LastAdvance = (int)MathF.Floor(DeviceAdvancePx(face, gl[n - 1], em, sx, sy, mode) + 0.5f),
-                            Family = family, EmUnits = upem, Style = style & 3,
-                            M11 = m.M11 * em / upem, M22 = m.M22 * em / upem,
-                        };
-                        lock (GpMetaDriverState.Lock)
-                            DriverDrawGlyphs(gd);
-                    }
-                    if ((style & 12) != 0)
-                    {
-                        int len = line.WidthWithSpaces;
-                        // On the display baseline (BuiltLine::SetDisplayBaseline: the snapped cell's).
-                        float y0 = cy;
-                        if ((style & 4) != 0)
-                            DecorationLine(face, brush, em, true, layout.X + u0 / res, y0, len / res, res, horizontal: true);
-                        if ((style & 8) != 0)
-                            DecorationLine(face, brush, em, false, layout.X + u0 / res, y0, len / res, res, horizontal: true);
-                    }
-                }
-            }
-            finally { PopLayoutClip(saved); }
-        }
-
-        /// <summary>GdipLscbkDrawUnderline (and the strikeout): a line along the run, off the
-        /// baseline by the face's post.underlinePosition (OS/2 strikeout position) in ideal units,
-        /// with an aliased pen of the device width.</summary>
-        void DecorationLine(TrueTypeFont face, Brush brush, float em, bool underline, float x, float y, float len, float res, bool horizontal)
-        {
-            int upem = face.UnitsPerEmForHinting;
-            int Rnd(float v) => (int)MathF.Floor(v + 0.5f);
-            int pos = underline ? -face.UnderlinePosition : face.UnderlinePosition;   // strikeout: not modelled exactly
-            int off = Rnd(pos * (em / upem) * res);
-            float w = Rnd(face.UnderlineThickness * (em / upem) * res) / res;
-            GpMatrix dm = DeviceMatrix;
-            float devW = MathF.Max(1f, MathF.Floor(MathF.Abs(w * dm.M11) + 0.5f));
-            PointF[] pts = horizontal
-                ? new[] { new PointF(x, y + off / res), new PointF(x + len, y + off / res) }
-                : new[] { new PointF(x - off / res, y), new PointF(x - off / res, y + len) };
-            var path = new GpPath(pts, new byte[] { 0, 1 }, FillMode.Alternate);
-            var dp = new DpPen { Width = devW, Unit = 2, Brush = brush };
-            Rectangle? draw;
-            if (!GpStroke.BoundsToRect(GpStroke.Bounds(path, dm, dp, ContextDpiX), out Rectangle dr)) return;
-            draw = dr;
-            if (TotallyClipped(draw.Value)) return;
-            lock (GpMetaDriverState.Lock)
-                DriverStrokePath(draw.Value, path, dp, true);
-        }
-
-        /// <summary>GlyphImager::AdjustGlyphAdvances over a whole run at a line's both ends: the
-        /// device advances (ideal units) moved towards the nominal ones; returns the cell origin's
-        /// shift (+0x220). What the alignment leaves at the run's end (TrailingAdjustCollector
-        /// @180247d90) goes onto the last glyph before the trailing spaces.</summary>
-        static int AdjustGlyphAdvances(TrueTypeFont face, ushort[] gl, int[] nom, int[] dev, int space, int spaceNom,
-                                       int formatFlags, int align, bool lead, bool trail, ref int m70, ref int m74,
-                                       float em, float res, float f78, float sx)
-        {
-            int n = gl.Length;
-            int shift = 0;
-            int ls = 0;
-            while (ls < n && gl[ls] == space && dev[ls] != 0) { dev[ls] = spaceNom; ls++; }
-            int ts = 0, k2 = n, done = ls;
-            while (done < n && gl[--k2] == space && dev[k2] != 0) { done++; dev[k2] = spaceNom; ts++; }
-            int mid = n - ts - ls;
-            int bc = 0;                         // the trailing adjustment (local_bc)
-            int last = ls + mid - 1;            // the collector's glyph
-            void Collect() { if (last >= 0 && last < n) dev[last] += bc; }
-            if (mid < 2)
-            {
-                if (mid == 1) dev[ls] = nom[ls];
-                return shift;
-            }
-            if (ls != 0) m70 += spaceNom * ls;
-            int spDev = 0, spCount = 0, spNom = 0, nsDev = 0, nsNom = 0, nsCount = 0;
-            for (int k = ls; k < ls + mid; k++)
-            {
-                if (gl[k] == space && dev[k] != 0) { spDev += dev[k]; spCount++; spNom += nom[k]; }
-                else { nsDev += dev[k]; nsNom += nom[k]; nsCount++; }
-            }
-            int delta = spNom - spDev - nsDev + nsNom;
-            bool rtlFlag = (formatFlags & 1) != 0 && (formatFlags & 2) == 0;
-            int al = align;
-            if (rtlFlag) al = al == 0 ? 2 : al == 2 ? 0 : al;
-            static int Rnd(float v) => (int)MathF.Floor(v + 0.5f);
-            bool skipZero = false;
-            if ((formatFlags & 4) == 0 && (lead || trail))
-            {
-                SideBearings(face, gl, ls, mid, em, sx, out int lsb16, out int rsb16);
-                if (lead)
-                {
-                    int v = Rnd(f78 * lsb16 * 0.0625f);
-                    if (v < 0)
-                    {
-                        v += m70; m70 = v;
-                        if (v < 0) { m70 = 0; delta += v; shift -= v; }
-                    }
-                    else if (v > 0 && delta < 0 && al != 0) { delta += v; shift -= v; }
-                }
-                if (trail)
-                {
-                    int v = Rnd(f78 * rsb16 * 0.0625f);
-                    if (v < 0)
-                    {
-                        v += m74; m74 = v;
-                        if (v < 0) { delta += v; m74 = 0; }
-                    }
-                    else if (v >= 1 && delta < 0)
-                    {
-                        if (al != 2) delta += v;
-                        else skipZero = true;
-                    }
-                }
-            }
-            if (!skipZero && delta == 0) { Collect(); return shift; }
-
-            if (nsCount + spCount < 2)
-            {
-                shift += delta / 2;
-                bc = delta - delta / 2;
-                Collect();
-                return shift;
-            }
-            int emIdeal = Rnd(em * res);
-            int taken = 0;
-            if (al == 0)
-            {
-                if (trail)
-                {
-                    if (delta < -m74) { delta += m74; taken = -m74; bc = taken; }
-                    else
-                    {
-                        bc = delta;
-                        if (delta < emIdeal) { Collect(); return shift; }
-                        delta -= emIdeal; taken = emIdeal; bc = emIdeal;
-                    }
-                }
-            }
-            else if (al == 1)
-            {
-                if (lead && trail)
-                {
-                    int mn = Math.Min(m70, m74);
-                    if (-2 * mn <= delta)
-                    {
-                        shift += delta / 2;
-                        bc = delta - delta / 2;
-                        Collect();
-                        return shift;
-                    }
-                    delta += -2 * mn;
-                    shift += mn;
-                    taken = mn; bc = mn;
-                }
-            }
-            else if (al == 2 && lead)
-            {
-                if (delta < -m70) { delta += m70; shift += -m70; }
-                else
-                {
-                    if (delta < emIdeal) { shift += delta; Collect(); return shift; }
-                    delta -= emIdeal; shift += emIdeal;
-                }
-            }
-            int minSp = Rnd(em * res / 6f);
-            bool spreadOverSpaces = false;
-            bool splitHalf = false;     // the Latin-script path (542c): the rest split about the run
-            if (spCount >= 1)
-            {
-                if (!(spNom < delta))
-                {
-                    int lim = Math.Max(spNom / 2, spCount * minSp);
-                    if (!(delta < lim - spNom)) spreadOverSpaces = true;
-                }
-                if (!spreadOverSpaces && delta >= 1) splitHalf = true;
-            }
-            else if (delta > 0) splitHalf = true;
-            if (splitHalf)
-            {
-                shift += delta / 2;
-                bc = taken - delta / 2 + delta;
-                Collect();
-                return shift;
-            }
-            if (spreadOverSpaces)
-            {
-                int per = spCount != 0 ? (spDev + spCount / 2 + delta) / spCount : 0;
-                for (int k = ls; k < ls + mid; k++)
-                    if (gl[k] == space && dev[k] != 0) dev[k] = per;
-                Collect();
-                return shift;
-            }
-            // Over the gaps between letters.
-            int spW = minSp;
-            if (spCount == 0) spW = 0;
-            else
-            {
-                if (delta >= 0) spW = (2 * spNom) / spCount;
-                delta = spDev - spCount * spW + delta;
-            }
-            int runs = 0;
-            for (int j = 0; j < mid;)
-            {
-                if (gl[ls + j] == space && dev[ls + j] != 0)
-                {
-                    do { j++; } while (j < mid && gl[ls + j] == space && dev[ls + j] != 0);
-                    runs++;
-                }
-                else
-                {
-                    while (j < mid && !(gl[ls + j] == space && dev[ls + j] != 0)) j++;
-                }
-            }
-            int gaps = nsCount - runs - 1;
-            int px = Rnd(f78);
-            int per2, extra;
-            if (gaps < 1)
-            {
-                if (spCount == 0) { Collect(); return shift; }
-                spW += (delta + spCount / 2) / spCount;
-                per2 = 0; extra = 0;
-            }
-            else if (px < 1)
-            {
-                per2 = delta / gaps; extra = 0;
-            }
-            else
-            {
-                int perPx = delta / px;
-                int q = perPx / gaps;
-                extra = (-(px * q * gaps) - px / 2 + delta) / px;
-                if (extra < 0) { per2 = Rnd((q - 1) * f78); extra += gaps; }
-                else per2 = Rnd(q * f78);
-            }
-            bool prevSpace = gl[ls] == space && dev[ls] != 0;
-            for (int j = 1; j <= mid; j++)
-            {
-                int i = ls + j;
-                if (prevSpace)
-                {
-                    dev[i - 1] = spW;
-                    if (j < mid) prevSpace = gl[i] == space && dev[i] != 0;
-                }
-                else if (j < mid)
-                {
-                    if (!(gl[i] == space && dev[i] != 0))
-                    {
-                        int add = extra >= 1 ? px : 0;
-                        extra--;
-                        dev[i - 1] += add + per2;
-                    }
-                    prevSpace = gl[i] == space && dev[i] != 0;
-                }
-            }
-            Collect();
-            return shift;
-        }
-
-        /// <summary>GpFaceRealization::GetGlyphStringSidebearings: the run's least left and right
-        /// side bearings in 1/16 pixel, over the glyphs within the line height of each end.</summary>
-        static void SideBearings(TrueTypeFont face, ushort[] gl, int from, int count, float em, float sx, out int left, out int right)
-        {
-            int upem = face.UnitsPerEmForHinting;
-            float scale = em * sx / upem;
-            GdipText.DeviceAscentDescent(face, em / upem * sx, out int asc, out int desc);
-            int lim = (asc + desc) * 32;
-            int cum = 0;
-            left = lim;
-            for (int i = from; i < from + count; i++)
-            {
-                if (cum >= lim) break;
-                GdipText.NaturalMetrics(face, gl[i], em, sx, sx, out int adv, out int lsb, out _);
-                left = Math.Min(left, cum + (int)(lsb * scale * 16f));
-                cum += (int)(adv * scale * 16f);
-            }
-            cum = 0;
-            right = lim;
-            for (int i = from + count - 1; i >= from; i--)
-            {
-                if (cum >= lim) break;
-                GdipText.NaturalMetrics(face, gl[i], em, sx, sx, out int adv, out _, out int rsb);
-                right = Math.Min(right, cum + (int)(rsb * scale * 16f));
-                cum += (int)(adv * scale * 16f);
-            }
-        }
-
-        // ---- vertical (one line) --------------------------------------------------------------------
-
-        /// <summary>FullTextImager for one vertical line, as GpGraphics.DrawStringVertical models it
-        /// (BuiltLine, the tab stops, EllipsisWord trimming, the cell origins), handed to the metafile
-        /// driver run by run: each sideways glyph its own run under GetFontTransform's quarter turn,
-        /// the ellipsis upright (DrawPlacedGlyphs does not move a vertical glyph by its origin offsets
-        /// on the metafile driver), and each run's underline after it.</summary>
-        void VerticalString(string s, Font font, TrueTypeFont face, GpFontFamily.Metrics fm, float em, RectangleF layout,
-                            StringFormat format, int formatFlags, bool typographic, Brush brush)
-        {
-            if ((formatFlags & 0x1000) == 0 || (formatFlags & 1) != 0) return;
-            int style = (int)font.Style;
-            string family = font.FontFamily.Name;
-            int hotkey = format != null ? (int)format.HotkeyPrefix : 0;
-            foreach (char c in s)
-                if ((c < 0x20 && c != '\t') || c >= 0x590 || (hotkey != 0 && c == '&')) return;
-            int trimming = format != null ? (int)format.Trimming : 1;
-            float firstTab = 0f;
-            float[] tabs = format?.GetTabStops(out firstTab);
-            GpMat m = WorldToDevice;
-            int upem = face.UnitsPerEmForHinting;
-            const int Ideal = GpTextLayout.Ideal;
-            float r = Ideal / em;
-            static int Rnd(float v) => (int)MathF.Floor(v + 0.5f);
-            int Du(int du) => upem == Ideal ? du : (int)Math.Round(du * (double)Ideal / upem);
-            int lm = typographic ? 0 : Rnd(em * r / 6f), tm = lm;
-            int extent = Rnd(layout.Height * r);
-            int room = extent < 1 ? 0x1000000 : Math.Max(0, extent - lm - tm);
-            var stops = new List<int>();
-            int increment;
-            if (tabs != null && tabs.Length > 0)
-            {
-                float cum = firstTab;
-                foreach (float t in tabs) { cum += t; stops.Add(Rnd(r * cum)); }
-                increment = Rnd(tabs[tabs.Length - 1] * r);
-            }
-            else increment = Rnd(r * firstTab);
-            int NextStop(int pen)
-            {
-                foreach (int st in stops) if (st > pen) return st;
-                if (increment <= 0) return pen;
-                int last = stops.Count > 0 ? stops[stops.Count - 1] : 0;
-                while (last <= pen) last += increment;
-                return last;
-            }
-            int n = s.Length;
-            var gids = new int[n];
-            var penAt = new int[n + 1];
-            int pen = 0;
-            for (int i = 0; i < n; i++)
-            {
-                penAt[i] = pen;
-                char c = s[i];
-                if (c == '\t') { gids[i] = -1; pen = NextStop(pen); continue; }
-                int g = face.GlyphIndex(c);
-                if (g <= 0) return;
-                gids[i] = g;
-                int a = face.DesignAdvance(g);
-                if (!typographic) a = Rnd(a * 1.03f);
-                pen += Du(a);
-            }
-            penAt[n] = pen;
-            int End(int count)
-            {
-                int k = count;
-                while (k > 0 && (s[k - 1] == ' ' || s[k - 1] == '\t')) k--;
-                return penAt[k];
-            }
-            int keep = n;
-            bool ellipsis = false;
-            if (End(n) > room)
-            {
-                if (trimming == 1)
-                {
-                    keep = 0;
-                    while (keep < n && penAt[keep + 1] <= room) keep++;
-                }
-                else if (trimming == 4)
-                {
-                    int ellW = Du(face.TypoAscender - face.TypoDescender);
-                    int room2 = room - ellW;
-                    keep = 0;
-                    int k = 0;
-                    while (k < n)
-                    {
-                        int w0 = k;
-                        while (k < n && s[k] != ' ' && s[k] != '\t') k++;
-                        int wordEnd = k;
-                        while (k < n && (s[k] == ' ' || s[k] == '\t')) k++;
-                        if (penAt[wordEnd] > room2 && w0 > 0) break;
-                        if (penAt[wordEnd] > room2) return;
-                        keep = k;
-                    }
-                    ellipsis = true;
-                }
-            }
-            int contentEnd = ellipsis ? penAt[keep] : End(keep);
-            int ellAdv = ellipsis ? Du(face.TypoAscender - face.TypoDescender) : 0;
-            int L = contentEnd + ellAdv;
-            int alignV = format != null ? (int)format.Alignment : 0;
-            int lineAlign = format != null ? (int)format.LineAlignment : 0;
-            int u0 = lm;
-            if (extent >= 1)
-            {
-                if (alignV == 1) u0 += (extent - (L + lm + tm)) / 2;
-                else if (alignV == 2) u0 += extent - (L + lm + tm);
-            }
-            int lineH = Du(fm.LineSpacing * upem / fm.Em) + (typographic ? 0 : Ideal / 8);
-            int across = Rnd(layout.Width * r), vTop = 0;
-            if (layout.Width > 0f)
-            {
-                if (lineAlign == 1) vTop = (across - lineH) / 2;
-                else if (lineAlign == 2) vTop = across - lineH;
-            }
-            int v = vTop + Du(face.WinDescent) + (typographic ? 0 : Ideal / 8);
-            PointF Cell(int vv, int uu)
-            {
-                float x = layout.X + vv / r, y = layout.Y + uu / r;
-                x = MathF.Floor(x * m.M11 + 0.5f) / m.M11;
-                y = MathF.Floor(y * m.M22 + 0.5f) / m.M22;
-                return new PointF(m.M11 * x + m.M21 * y + m.Dx, m.M12 * x + m.M22 * y + m.Dy);
-            }
-            float k0 = em / upem;
-            // GetFontTransform's quarter turn of the realization (cos 90 as a float).
-            const float c90 = -4.371139e-08f;
-            int ppAlong = GdipText.AxisPpem(em * m.M22), ppAcross = GdipText.AxisPpem(em * m.M11);
-            SavedClip saved = PushLayoutClip(layout, formatFlags);
-            try
-            {
-                int i = 0;
-                while (i < keep)
-                {
-                    // A run: a glyph, or a tab.
-                    int j = i + 1;
-                    if (gids[i] >= 0 && s[i] != ' ')
-                    {
-                        PointF d = Cell(v, u0 + penAt[i]);
-                        var gl = new[] { (ushort)gids[i] };
-                        var org = new[] { d };
-                        var bits = GdipText.GlyphSideways(face, gids[i], ppAlong, ppAcross);
-                        Rectangle draw = GlyphUnion(face, gl, org, em * m.M11, _ => bits);
-                        if (draw.Width > 0 && draw.Height > 0 && !TotallyClipped(draw))
-                        {
-                            GdipText.SidewaysMetrics(face, gids[i], em, m.M11, m.M22, out int advDu, out _);
-                            var gd = new GlyphDraw
-                            {
-                                Draw = draw, Glyphs = gl, Origins = org, Brush = brush, Text = s.Substring(i, 1), Map = new ushort[] { 0 },
-                                LastAdvance = (int)MathF.Floor(advDu * (em * m.M22 / upem) + 0.5f),
-                                Family = family, EmUnits = upem, Style = style & 3,
-                                M11 = c90 * m.M11 * k0, M12 = m.M22 * k0, M21 = -m.M11 * k0, M22 = c90 * m.M22 * k0,
-                            };
-                            lock (GpMetaDriverState.Lock)
-                                DriverDrawGlyphs(gd);
+                            int pa = GdipText.AxisPpem(em * sx), pc = GdipText.AxisPpem(em * sy);
+                            bitsOf = i => GdipText.GlyphSideways(face, glyphs[i], pa, pc);
                         }
-                    }
-                    if ((style & 4) != 0)
-                        VerticalUnderline(face, brush, em, r, layout, v, u0 + penAt[i], penAt[j] - penAt[i]);
-                    i = j;
-                }
-                if (ellipsis)
-                {
-                    PointF d = Cell(v, u0 + contentEnd);
-                    var gl = new ushort[] { 0 };
-                    var org = new[] { d };
-                    var bits = GdipText.Glyph(face, 0, GdipText.AxisPpem(em * m.M11), GdipText.AxisPpem(em * m.M22));
-                    Rectangle draw = GlyphUnion(face, gl, org, em * m.M11, _ => bits);
-                    if (draw.Width > 0 && draw.Height > 0 && !TotallyClipped(draw))
-                    {
-                        var gd = new GlyphDraw
-                        {
-                            Draw = draw, Glyphs = gl, Origins = org, Brush = brush, Text = "…", Map = new ushort[] { 0 },
-                            LastAdvance = (int)MathF.Floor(DeviceAdvancePx(face, 0, em, m.M11, m.M22, 5) + 0.5f),
-                            Sideways = true,
-                            Family = family, EmUnits = upem, Style = style & 3,
-                            M11 = m.M11 * k0, M22 = m.M22 * k0,
-                        };
-                        lock (GpMetaDriverState.Lock)
-                            DriverDrawGlyphs(gd);
+                        else turnedDraw = TurnedUnion(face, glyphs, o, k0, m);
                     }
                 }
+                Rectangle draw = turnedDraw ?? GlyphUnion(face, glyphs, o, em * m.M11, bitsOf);
+                if (draw.Width <= 0 || draw.Height <= 0 || _r.TotallyClipped(draw)) return;
+                var gd = new GlyphDraw {
+                    Draw = draw, Glyphs = glyphs, Origins = o, Brush = _brush, Text = chars, Map = map,
+                    LastAdvance = last, Family = run.Family, EmUnits = upem, Style = run.Style & 3,
+                };
+                if (sideways) { gd.M11 = c90 * m.M11 * k0; gd.M12 = m.M22 * k0; gd.M21 = -m.M11 * k0; gd.M22 = c90 * m.M22 * k0; }
+                else { gd.M11 = m.M11 * k0; gd.M12 = m.M12 * k0; gd.M21 = m.M21 * k0; gd.M22 = m.M22 * k0; gd.Sideways = vertical; }
+                lock (GpMetaDriverState.Lock)
+                    _r.DriverDrawGlyphs(gd);
             }
-            finally { PopLayoutClip(saved); }
-        }
 
-        void VerticalUnderline(TrueTypeFont face, Brush brush, float em, float r, RectangleF layout, int v, int u, int len)
-        {
-            if (len <= 0) return;
-            int upem = face.UnitsPerEmForHinting;
-            static int Rnd(float x) => (int)MathF.Floor(x + 0.5f);
-            int ulOff = Rnd(-face.UnderlinePosition * (em / upem) * r);
-            float ulW = Rnd(face.UnderlineThickness * (em / upem) * r) / r;
-            GpMatrix dm = DeviceMatrix;
-            float devW = MathF.Max(1f, MathF.Floor(MathF.Abs(ulW * dm.M11) + 0.5f));
-            float x = layout.X + (v - ulOff) / r;
-            var pts = new[] { new PointF(x, layout.Y + u / r), new PointF(x, layout.Y + (u + len) / r) };
-            var path = new GpPath(pts, new byte[] { 0, 1 }, FillMode.Alternate);
-            var dp = new DpPen { Width = devW, Unit = 2, Brush = brush };
-            if (!GpStroke.BoundsToRect(GpStroke.Bounds(path, dm, dp, ContextDpiX), out Rectangle dr)) return;
-            if (TotallyClipped(dr)) return;
-            lock (GpMetaDriverState.Lock)
-                DriverStrokePath(dr, path, dp, true);
+            public void DrawLine(float devicePenWidth, PointF a, PointF b)
+            {
+                GpTextTrace.ReportLine(devicePenWidth, a, b);
+                var path = new GpPath(new[] { a, b }, new byte[] { 0, 1 }, FillMode.Alternate);
+                var dp = new DpPen { Width = devicePenWidth, Unit = 2, Brush = _brush };
+                if (!GpStroke.BoundsToRect(GpStroke.Bounds(path, _r.DeviceMatrix, dp, _r.ContextDpiX), out Rectangle dr)) return;
+                if (_r.TotallyClipped(dr)) return;
+                lock (GpMetaDriverState.Lock)
+                    _r.DriverStrokePath(dr, path, dp, true);
+            }
+
+            public object PushClip(RectangleF layout) => _r.PushLayoutClip(layout, 0);
+
+            public void PopClip(object saved) => _r.PopLayoutClip((SavedClip)saved);
         }
     }
 }
