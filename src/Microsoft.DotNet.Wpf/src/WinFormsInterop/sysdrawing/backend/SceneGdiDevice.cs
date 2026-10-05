@@ -385,20 +385,104 @@ namespace System.Drawing.WebGpuBackend
 
             private void Blit(byte[] bgra, int w, int h, float x, float y, float dw, float dh)
             {
-                // The destination as the device sees it; a rotation is reduced to its bounds, since
-                // StretchDIBits draws upright rectangles only.
                 Vector2 a = Vector2.Transform(new Vector2(x, y), _m), b = Vector2.Transform(new Vector2(x + dw, y + dh), _m);
-                int left = (int)MathF.Round(MathF.Min(a.X, b.X)), top = (int)MathF.Round(MathF.Min(a.Y, b.Y));
-                int width = (int)MathF.Round(MathF.Abs(b.X - a.X)), height = (int)MathF.Round(MathF.Abs(b.Y - a.Y));
+                // (A transform composed back to upright leaves float dust off the diagonal.)
+                float dust = 1e-5f * (MathF.Abs(_m.M11) + MathF.Abs(_m.M22));
+                if (MathF.Abs(_m.M12) > dust || MathF.Abs(_m.M21) > dust || b.X < a.X || b.Y < a.Y)
+                {
+                    // StretchDIBits draws upright, unflipped rectangles only: anything else is
+                    // resampled into one first, as DriverPrint::DrawImage does -- a DIB of
+                    // round(dpi / 100) device pixels a pixel over the device bounds, the
+                    // parallelogram itself kept by the clip the caller set.
+                    Turned(bgra, w, h, x, y, dw, dh);
+                    return;
+                }
+                int left = (int)MathF.Round(a.X), top = (int)MathF.Round(a.Y);
+                int width = (int)MathF.Round(b.X) - left, height = (int)MathF.Round(b.Y) - top;
                 if (width <= 0 || height <= 0) return;
+                Stretch(bgra, w, h, left, top, width, height);
+            }
+
+            private void Turned(byte[] bgra, int w, int h, float x, float y, float dw, float dh)
+            {
+                if (dw == 0 || dh == 0) return;
+                // Local -> device for the image's unit square, and back.
+                Matrix3x2 unit = Matrix3x2.CreateScale(dw, dh) * Matrix3x2.CreateTranslation(x, y) * _m;
+                if (!Matrix3x2.Invert(unit, out Matrix3x2 inv)) return;
+                float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+                foreach (Vector2 c in new[] { Vector2.Zero, Vector2.UnitX, Vector2.UnitY, Vector2.One })
+                {
+                    Vector2 d = Vector2.Transform(c, unit);
+                    x0 = MathF.Min(x0, d.X); y0 = MathF.Min(y0, d.Y); x1 = MathF.Max(x1, d.X); y1 = MathF.Max(y1, d.Y);
+                }
+                int s = Math.Max(1, (int)(_dev._dpiX / 100f + 0.5f));
+                int gx = (int)MathF.Floor(x0 / s), gy = (int)MathF.Floor(y0 / s);
+                int gw = (int)MathF.Ceiling(x1 / s) - gx, gh = (int)MathF.Ceiling(y1 / s) - gy;
+                if (gw <= 0 || gh <= 0 || (long)gw * gh > 64L << 20) return;
+                var dib = new byte[gw * gh * 4];
+                for (int j = 0; j < gh; j++)
+                    for (int i = 0; i < gw; i++)
+                    {
+                        // The DIB pixel's centre in the image, bilinear with the edges clamped.
+                        Vector2 u = Vector2.Transform(new Vector2((gx + i + 0.5f) * s, (gy + j + 0.5f) * s), inv);
+                        float fx = Math.Clamp(u.X * w - 0.5f, 0, w - 1), fy = Math.Clamp(u.Y * h - 0.5f, 0, h - 1);
+                        int ix = Math.Min((int)fx, w - 1), iy = Math.Min((int)fy, h - 1);
+                        int jx = Math.Min(ix + 1, w - 1), jy = Math.Min(iy + 1, h - 1);
+                        float ax = fx - ix, ay = fy - iy;
+                        int o = (j * gw + i) * 4;
+                        for (int k = 0; k < 4; k++)
+                        {
+                            float top = bgra[(iy * w + ix) * 4 + k] * (1 - ax) + bgra[(iy * w + jx) * 4 + k] * ax;
+                            float bot = bgra[(jy * w + ix) * 4 + k] * (1 - ax) + bgra[(jy * w + jx) * 4 + k] * ax;
+                            dib[o + k] = (byte)Math.Clamp((int)MathF.Round(top * (1 - ay) + bot * ay), 0, 255);
+                        }
+                    }
+                Stretch(dib, gw, gh, gx * s, gy * s, gw * s, gh * s);
+            }
+
+            private void Stretch(byte[] bgra, int w, int h, int left, int top, int width, int height)
+            {
                 var bmi = new Native.BITMAPINFOHEADER
                 {
                     biSize = Marshal.SizeOf<Native.BITMAPINFOHEADER>(), biWidth = w, biHeight = -h,
                     biPlanes = 1, biBitCount = 32, biCompression = 0,
                 };
-                Native.SetStretchBltMode(Dc, Native.HALFTONE);
+                // What ConvertBitmapToGdi::StretchBlt sets before every blit (hooked: mode 3).
+                Native.SetStretchBltMode(Dc, Native.COLORONCOLOR);
                 Native.SetBrushOrgEx(Dc, 0, 0, IntPtr.Zero);
+                Dump(bgra, w, h, left, top, width, height);
                 Native.StretchDIBits(Dc, left, top, width, height, 0, 0, w, h, bgra, ref bmi, 0, Native.SRCCOPY);
+            }
+
+            // WF_PRINT_DUMP=dir: every bitmap put on the printer, as a PPM and a line of log --
+            // what a hook on gdiplus.dll's StretchDIBits shows of stock, to compare pixel for pixel.
+            private static readonly string s_dump = Environment.GetEnvironmentVariable("WF_PRINT_DUMP");
+            private static int s_dumped;
+
+            private static void Dump(byte[] bgra, int w, int h, int x, int y, int dw, int dh)
+            {
+                if (string.IsNullOrEmpty(s_dump)) return;
+                try
+                {
+                    System.IO.Directory.CreateDirectory(s_dump);
+                    int n = s_dumped++;
+                    System.IO.File.AppendAllText(System.IO.Path.Combine(s_dump, "log.txt"),
+                        $"{n:D4} StretchDIBits dst=({x},{y},{dw},{dh}) bmi={w}x{h}\n");
+                    using var f = System.IO.File.Create(System.IO.Path.Combine(s_dump, $"{n:D4}.ppm"));
+                    byte[] head = System.Text.Encoding.ASCII.GetBytes($"P6\n{w} {h}\n255\n");
+                    f.Write(head, 0, head.Length);
+                    var row = new byte[w * 3];
+                    for (int j = 0; j < h; j++)
+                    {
+                        for (int i = 0; i < w; i++)
+                        {
+                            int s = (j * w + i) * 4;
+                            row[i * 3] = bgra[s + 2]; row[i * 3 + 1] = bgra[s + 1]; row[i * 3 + 2] = bgra[s];
+                        }
+                        f.Write(row, 0, row.Length);
+                    }
+                }
+                catch (Exception) { }
             }
 
             public void Stroke(PagePath path, SceneBrush brush, StrokeStyle style)
@@ -529,7 +613,7 @@ namespace System.Drawing.WebGpuBackend
             internal const int LOGPIXELSX = 88, LOGPIXELSY = 90, HORZRES = 8, VERTRES = 10;
             internal const int PHYSICALWIDTH = 110, PHYSICALHEIGHT = 111, PHYSICALOFFSETX = 112, PHYSICALOFFSETY = 113;
             internal const int ALTERNATE = 1, WINDING = 2, RGN_AND = 1, TRANSPARENT = 1, GM_ADVANCED = 2;
-            internal const int HALFTONE = 4, SRCCOPY = 0x00CC0020, NULL_PEN = 8;
+            internal const int HALFTONE = 4, COLORONCOLOR = 3, SRCCOPY = 0x00CC0020, NULL_PEN = 8;
             internal const uint ETO_GLYPH_INDEX = 0x0010, TA_BASELINE = 24;
             internal const uint FR_PRIVATE = 0x10;
             internal const uint PS_GEOMETRIC = 0x00010000, PS_USERSTYLE = 7;

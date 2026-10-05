@@ -378,6 +378,7 @@ namespace System.Drawing
 			if (GpuRecorder == null || !(image is Bitmap bmp) || bmp.managed == null) return false;
 			int w = bmp.Width, h = bmp.Height;
 			if (RecordBitmapScenes (bmp, 0, 0, w, h, dx, dy, dw, dh)) return true;
+			if (print_mode && PrintImageBands (bmp, new RectangleF (0, 0, w, h), new RectangleF (dx, dy, dw, dh), null)) return true;
 			GdipFrame frame = bmp.Data.Frame;
 			byte[] px = GdipPixels.ToRgba (frame, new Rectangle (0, 0, w, h));
 			if (image_target != null) px = IntoBitmap (px);
@@ -490,6 +491,7 @@ namespace System.Drawing
 			// Clamping the source to the bitmap shrinks the destination in proportion.
 			float kx = dest.Width / src.Width, ky = dest.Height / src.Height;
 			var d = new RectangleF (dest.X + (x0 - src.X) * kx, dest.Y + (y0 - src.Y) * ky, w * kx, h * ky);
+			if (print_mode && PrintImageBands (bmp, new RectangleF (x0, y0, w, h), d, attrs)) return true;
 			byte[] rgba = GdipPixels.ToRgba (frame, new Rectangle (x0, y0, w, h));
 			attrs?.Apply (rgba, Imaging.ColorAdjustType.Bitmap);
 			if (image_target != null) rgba = IntoBitmap (rgba);

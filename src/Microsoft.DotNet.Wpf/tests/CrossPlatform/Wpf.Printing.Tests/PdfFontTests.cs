@@ -79,6 +79,106 @@ namespace Wpf.Printing.Tests
         }
 
         [Fact]
+        public void TheEmbeddedFontIsASubsetOfTheGlyphsDrawn()
+        {
+            // Arial whole is a megabyte. The subset keeps glyph ids (the content stream names them),
+            // so it is the face truncated after the highest glyph drawn, every unused glyph empty,
+            // and named with the six-letter tag PDF gives a subset.
+            PdfDocument pdf = RenderText("Hello é", "Arial");
+            PdfDictionary font = FirstFont(pdf);
+            Assert.Matches(@"^[A-Z]{6}\+Arial", (string)font["BaseFont"]);
+
+            byte[] file = EmbeddedFontFile(pdf);
+            Assert.NotNull(file);
+            Assert.True(file.Length < 150_000, $"the embedded font is {file.Length} bytes: not a subset");
+            Assert.True(Sfnt.Tables(file).ContainsKey("glyf"));
+            Assert.False(Sfnt.Tables(file).ContainsKey("GSUB"), "layout tables travel with a subset no reader lays out");
+
+            // A composite glyph comes with its components: Arial's é is e and the acute accent.
+            string arialPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "arial.ttf");
+            if (!File.Exists(arialPath)) return;
+            byte[] whole = File.ReadAllBytes(arialPath);
+            int count = Sfnt.GlyphCount(file);
+            int outlined = 0;
+            for (int g = 1; g < count; g++)
+            {
+                int length = Sfnt.GlyphLength(file, g);
+                if (length == 0) continue;
+                outlined++;
+                // The glyph's own bytes, four-byte aligned.
+                Assert.InRange(length, Sfnt.GlyphLength(whole, g), Sfnt.GlyphLength(whole, g) + 3);
+            }
+            // H e l o, space (no outline), é and the two glyphs it is built from.
+            Assert.InRange(outlined, 6, 8);
+        }
+
+        [Fact]
+        public void ACjkSubsetIsSmall()
+        {
+            // Noto Sans CJK (16 MB of CFF) where it resolves: the charstrings not drawn and the
+            // subroutines they alone call are emptied, ids kept; a system CJK face (TrueType) is cut
+            // like any other. A few characters come to well under a megabyte and a half either way.
+            PdfDocument pdf = RenderText("こんにちは", "Noto Sans CJK JP");
+            byte[] file = EmbeddedFontFile(pdf);
+            if (file == null) return;   // no CJK font on this machine
+            Assert.True(file.Length < 1_500_000, $"the embedded CJK font is {file.Length} bytes");
+        }
+
+        [Fact]
+        public void TheBundledCffFontSubsetsAndReadsBack()
+        {
+            // The CFF path on the font this fork ships (a .ttc of CFF faces): face 2 cut to four
+            // glyphs. The result is one sfnt with a CFF table, a fraction of the face, and itself
+            // a font the subsetter can read again -- every INDEX and DICT offset it rewrote holds.
+            string ttc = null;
+            for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null && ttc == null; dir = dir.Parent)
+            {
+                string candidate = Path.Combine(dir.FullName, "sdk", "WpfWebGpu.Fonts", "fonts", "NotoSansCJK-Regular.ttc");
+                if (File.Exists(candidate)) ttc = candidate;
+            }
+            Assert.SkipWhen(ttc == null, "the bundled CJK font is not in this checkout");
+            SfntReader face = SfntReader.Open(File.ReadAllBytes(ttc), 2);
+            Assert.True(face.IsCff);
+            int whole = face.ExtractFace().Length;
+            byte[] subset = face.Subset(new ushort[] { 34, 1000, 20000, 40000 });
+            Assert.NotNull(subset);
+            Assert.True(subset.Length < whole / 10, $"{subset.Length} of {whole} bytes");
+            Assert.True(Sfnt.Tables(subset).ContainsKey("CFF "));
+            SfntReader again = SfntReader.Open(subset, 0);
+            Assert.True(again.IsCff);
+            Assert.NotNull(again.Subset(new ushort[] { 34, 1000 }));
+        }
+
+        /// <summary>Just enough sfnt to check a subset.</summary>
+        private static class Sfnt
+        {
+            private static int U16(byte[] d, int at) => (d[at] << 8) | d[at + 1];
+            private static int U32(byte[] d, int at) => (d[at] << 24) | (d[at + 1] << 16) | (d[at + 2] << 8) | d[at + 3];
+
+            internal static Dictionary<string, (int Offset, int Length)> Tables(byte[] d)
+            {
+                var t = new Dictionary<string, (int, int)>();
+                for (int i = 0, n = U16(d, 4); i < n; i++)
+                {
+                    int e = 12 + i * 16;
+                    t[System.Text.Encoding.ASCII.GetString(d, e, 4)] = (U32(d, e + 8), U32(d, e + 12));
+                }
+                return t;
+            }
+
+            internal static int GlyphCount(byte[] d) => U16(d, Tables(d)["maxp"].Offset + 4);
+
+            internal static int GlyphLength(byte[] d, int glyph)
+            {
+                var t = Tables(d);
+                bool longLoca = U16(d, t["head"].Offset + 50) != 0;
+                int loca = t["loca"].Offset;
+                int Start(int g) => longLoca ? U32(d, loca + g * 4) : U16(d, loca + g * 2) * 2;
+                return Start(glyph + 1) - Start(glyph);
+            }
+        }
+
+        [Fact]
         public void TheEmbeddedFontIsASingleFaceNotACollection()
         {
             // The regression this file exists for. A .ttc begins 't','t','c','f' and holds several

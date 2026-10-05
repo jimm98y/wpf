@@ -45,6 +45,7 @@
          PdfDevice.cs) stay in ReachFramework. -->
     <Compile Include="../../ReachFramework/Pdf/PdfWriter.cs" Link="pdf/PdfWriter.cs" />
     <Compile Include="../../ReachFramework/Pdf/SfntReader.cs" Link="pdf/SfntReader.cs" />
+    <Compile Include="../../ReachFramework/Pdf/SfntSubsetter.cs" Link="pdf/SfntSubsetter.cs" />
     <Compile Include="../../ReachFramework/Pdf/PdfFontCache.cs" Link="pdf/PdfFontCache.cs" />
     <Compile Include="../../ReachFramework/Pdf/PdfImageCache.cs" Link="pdf/PdfImageCache.cs" />
     <!-- WPF's managed image codecs, shared rather than copied: every Image/Bitmap/Icon is read and

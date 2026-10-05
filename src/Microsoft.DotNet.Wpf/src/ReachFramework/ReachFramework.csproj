@@ -234,6 +234,7 @@
     <Compile Include="Packaging\XpsPartBase.cs" />
     <Compile Include="Pdf\PdfWriter.cs" />
     <Compile Include="Pdf\SfntReader.cs" />
+    <Compile Include="Pdf\SfntSubsetter.cs" />
     <Compile Include="Pdf\PdfFontCache.cs" />
     <Compile Include="Pdf\PdfFontCache.Wpf.cs" />
     <Compile Include="Pdf\PdfImageCache.cs" />
