@@ -627,6 +627,34 @@ namespace Wpf.WinFormsInterop.Tests
             { "metafile/dual/fills/bitmap-invert", "b84b31a994dc1820" },
             { "metafile/dual/fills/brush-noop-default-invert", "b84b31a994dc1820" },
             { "metafile/dual/fills/wrap", "b84b31a994dc1820" },
+            { "metafile/gdi-emf/none", "ff39d759e2f9659a" },
+            { "metafile/gdi-wmf/none", "cafe41d5762a02af" },
+            { "metafile/gdi-emf/default-sepia", "170aa91bdcb515b6" },
+            { "metafile/gdi-wmf/default-sepia", "5a8d52e8a68da080" },
+            { "metafile/gdi-emf/default-gamma", "e3d6427d9638238c" },
+            { "metafile/gdi-wmf/default-gamma", "970bf72fea07e714" },
+            { "metafile/gdi-emf/default-channel", "49d17b09b1018890" },
+            { "metafile/gdi-wmf/default-channel", "ec6a79c36f5fff9b" },
+            { "metafile/gdi-emf/brush-invert", "76f7152820aedd21" },
+            { "metafile/gdi-wmf/brush-invert", "7efc0181212f12dd" },
+            { "metafile/gdi-emf/brush-altgrays", "1124e2bcf8524587" },
+            { "metafile/gdi-wmf/brush-altgrays", "a9f13f9e3259ad1f" },
+            { "metafile/gdi-emf/brush-remap", "a44cc6c456f73a92" },
+            { "metafile/gdi-wmf/brush-remap", "cafe41d5762a02af" },
+            { "metafile/gdi-emf/brush-threshold", "e9b52a8680c7cfe6" },
+            { "metafile/gdi-wmf/brush-threshold", "2f2d31c9a2da321f" },
+            { "metafile/gdi-emf/pen-invert", "21f4c22a8badf562" },
+            { "metafile/gdi-wmf/pen-invert", "033ca5eb6c16b0b3" },
+            { "metafile/gdi-emf/pen-key", "e9b52a8680c7cfe6" },
+            { "metafile/gdi-wmf/pen-key", "cafe41d5762a02af" },
+            { "metafile/gdi-emf/text-invert", "e9b52a8680c7cfe6" },
+            { "metafile/gdi-wmf/text-invert", "cafe41d5762a02af" },
+            { "metafile/gdi-emf/bitmap-invert", "e67fc58157bb88e7" },
+            { "metafile/gdi-wmf/bitmap-invert", "cafe41d5762a02af" },
+            { "metafile/gdi-emf/brush-noop-default-invert", "cd47d574ffd61031" },
+            { "metafile/gdi-wmf/brush-noop-default-invert", "033ca5eb6c16b0b3" },
+            { "metafile/gdi-emf/wrap", "ff39d759e2f9659a" },
+            { "metafile/gdi-wmf/wrap", "cafe41d5762a02af" },
         };
 
         // Not yet: GDI's ClearType text in a recoloured EMF (GpGdiPlayer.Text.cs) is a level off
@@ -636,7 +664,6 @@ namespace Wpf.WinFormsInterop.Tests
         {
             "metafile/emfonly/text_lines/default-sepia",
             "metafile/plus/fills/brush-invert",
-            "profile/srgb-channel",     // an RGB (matrix/TRC) separation profile: GpIcm builds lut16 outputs only
         };
 
         // The output channel separates through the colour directory's rswop.icm (and the profile

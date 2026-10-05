@@ -537,15 +537,215 @@ namespace Wpf.WinFormsInterop.Tests
             foreach (string file in new [] { "plus/fillrect_int", "plus/fills", "plus/gradients", "plus/pens", "plus/images", "plus/text_lines", "emfonly/fills", "emfonly/strokes", "emfonly/images", "emfonly/text_lines", "dual/fills" })
                 foreach (KeyValuePair<string, Action<ImageAttributes>> a in mfAdj) {
                     string fl = file; Action<ImageAttributes> set = a.Value;
-                    Add (l, "metafile/" + file + "/" + a.Key, () => With (set, ia => Draw (120, 90, 1, g => {
-                        using (var mf = new Metafile (Path.Combine (MetafileDir, fl + ".emf"))) {
-                            GraphicsUnit u = GraphicsUnit.Pixel;
-                            RectangleF b = mf.GetBounds (ref u);
-                            g.DrawImage (mf, new [] { new PointF (5, 5), new PointF (115, 5), new PointF (5, 85) }, b, GraphicsUnit.Pixel, ia);
-                        }
-                    })));
+                    Add (l, "metafile/" + file + "/" + a.Key, () => With (set, ia => PlayMetafile (() => new Metafile (Path.Combine (MetafileDir, fl + ".emf")), ia)));
                 }
+            // GDI records written here, for every colour and DIB the down-level recolour rewrites.
+            foreach (KeyValuePair<string, Action<ImageAttributes>> a in mfAdj) {
+                Action<ImageAttributes> set = a.Value;
+                Add (l, "metafile/gdi-emf/" + a.Key, () => With (set, ia => PlayMetafile (() => new Metafile (new MemoryStream (GdiEmf ())), ia)));
+                Add (l, "metafile/gdi-wmf/" + a.Key, () => With (set, ia => PlayMetafile (() => new Metafile (new MemoryStream (GdiWmf ())), ia)));
+            }
             return l;
+        }
+
+        static byte[] PlayMetafile (Func<Metafile> open, ImageAttributes ia)
+        {
+            return Draw (120, 90, 1, g => {
+                using (Metafile mf = open ()) {
+                    GraphicsUnit u = GraphicsUnit.Pixel;
+                    RectangleF b = mf.GetBounds (ref u);
+                    g.DrawImage (mf, new [] { new PointF (5, 5), new PointF (115, 5), new PointF (5, 85) }, b, GraphicsUnit.Pixel, ia);
+                }
+            });
+        }
+
+        // ---- metafiles of GDI records, written by hand ---------------------------------------------
+
+        sealed class Rec
+        {
+            readonly MemoryStream _m = new MemoryStream ();
+            public void I32 (int v) { _m.WriteByte ((byte) v); _m.WriteByte ((byte) (v >> 8)); _m.WriteByte ((byte) (v >> 16)); _m.WriteByte ((byte) (v >> 24)); }
+            public void I16 (int v) { _m.WriteByte ((byte) v); _m.WriteByte ((byte) (v >> 8)); }
+            public void Bytes (byte[] b) { _m.Write (b, 0, b.Length); }
+            public int Length => (int) _m.Length;
+            public byte[] ToArray () => _m.ToArray ();
+        }
+
+        /// <summary>A DIB (BITMAPINFOHEADER, colour table or masks, bits) of the given depth, its
+        /// pixels a pattern, its palette (if any) colourful or black-and-white.</summary>
+        static byte[] Dib (int w, int h, int bpp, int comp, bool blackWhite, out int cbInfo)
+        {
+            int pal = bpp <= 8 ? 1 << bpp : comp == 3 ? 3 : 0;
+            var r = new Rec ();
+            r.I32 (40); r.I32 (w); r.I32 (h); r.I16 (1); r.I16 (bpp); r.I32 (comp); r.I32 (0); r.I32 (0); r.I32 (0); r.I32 (0); r.I32 (0);
+            for (int i = 0; i < pal; i++) {
+                if (comp == 3) r.I32 (bpp == 16 ? (i == 0 ? 0xf800 : i == 1 ? 0x7e0 : 0x1f) : (i == 0 ? 0xff0000 : i == 1 ? 0xff00 : 0xff));
+                else if (blackWhite) r.I32 (i == 0 ? 0 : 0xffffff);
+                else r.I32 (((i * 70) & 255) << 16 | ((255 - i * 50) & 255) << 8 | ((i * 30 + 10) & 255));
+            }
+            cbInfo = r.Length;
+            int stride = (w * bpp + 31) / 32 * 4;
+            var bits = new byte [stride * h];
+            for (int i = 0; i < bits.Length; i++) bits [i] = (byte) (i * 37 + 11 + i / stride * 5);
+            r.Bytes (bits);
+            return r.ToArray ();
+        }
+
+        static byte[] Emr (int type, Action<Rec> body)
+        {
+            var b = new Rec ();
+            body (b);
+            byte[] p = b.ToArray ();
+            var r = new Rec ();
+            r.I32 (type); r.I32 (8 + p.Length); r.Bytes (p);
+            return r.ToArray ();
+        }
+
+        static void Rect (Rec r, int l, int t, int rr, int bb) { r.I32 (l); r.I32 (t); r.I32 (rr); r.I32 (bb); }
+
+        static byte[] s_gdiEmf, s_gdiWmf;
+
+        /// <summary>An EMF of GDI records: text and background colours, pens (CreatePen and
+        /// ExtCreatePen), solid, hatched and null brushes, stock objects, StretchDIBits of every
+        /// depth (black-and-white and colour monochrome, a 16bpp DIB small enough and one too big to
+        /// rewrite, masks), BitBlt of a DIB, and a DIB pattern brush.</summary>
+        static byte[] GdiEmf ()
+        {
+            if (s_gdiEmf != null) return s_gdiEmf;
+            var recs = new List<byte[]> ();
+            recs.Add (Emr (17, r => r.I32 (1)));                                   // SETMAPMODE MM_TEXT
+            recs.Add (Emr (18, r => r.I32 (2)));                                   // SETBKMODE OPAQUE
+            recs.Add (Emr (25, r => r.I32 (0x3060c0)));                           // SETBKCOLOR
+            recs.Add (Emr (24, r => r.I32 (0x10a030)));                           // SETTEXTCOLOR
+            recs.Add (Emr (38, r => { r.I32 (1); r.I32 (0); r.I32 (3); r.I32 (0); r.I32 (0x2080f0); }));      // CREATEPEN solid 3
+            recs.Add (Emr (39, r => { r.I32 (2); r.I32 (0); r.I32 (0x40c060); r.I32 (0); }));                 // CREATEBRUSHINDIRECT solid
+            recs.Add (Emr (37, r => r.I32 (1)));
+            recs.Add (Emr (37, r => r.I32 (2)));
+            recs.Add (Emr (43, r => Rect (r, 2, 2, 30, 20)));                     // RECTANGLE
+            recs.Add (Emr (39, r => { r.I32 (3); r.I32 (2); r.I32 (0x0000c0); r.I32 (3); }));                 // hatched (cross)
+            recs.Add (Emr (37, r => r.I32 (3)));
+            recs.Add (Emr (42, r => Rect (r, 32, 2, 60, 20)));                    // ELLIPSE
+            recs.Add (Emr (37, r => r.I32 (unchecked ((int) 0x80000002))));       // GRAY_BRUSH
+            recs.Add (Emr (37, r => r.I32 (unchecked ((int) 0x80000006))));       // WHITE_PEN
+            recs.Add (Emr (43, r => Rect (r, 62, 2, 90, 20)));
+            recs.Add (Emr (37, r => r.I32 (unchecked ((int) 0x80000004))));       // BLACK_BRUSH
+            recs.Add (Emr (37, r => r.I32 (unchecked ((int) 0x80000007))));       // BLACK_PEN
+            recs.Add (Emr (42, r => Rect (r, 92, 2, 118, 20)));
+            recs.Add (Emr (95, r => {                                             // EXTCREATEPEN geometric solid 4
+                r.I32 (4); r.I32 (52); r.I32 (0); r.I32 (52); r.I32 (0);
+                r.I32 (0x10000 | 0x200); r.I32 (4); r.I32 (0); r.I32 (0xc08020); r.I32 (0); r.I32 (0);
+            }));
+            recs.Add (Emr (39, r => { r.I32 (5); r.I32 (1); r.I32 (0); r.I32 (0); }));                        // BS_NULL
+            recs.Add (Emr (37, r => r.I32 (4)));
+            recs.Add (Emr (37, r => r.I32 (5)));
+            recs.Add (Emr (43, r => Rect (r, 4, 24, 28, 40)));
+            // StretchDIBits of every depth.
+            int x = 2;
+            foreach (var (w, h, bpp, comp, bw, rop) in new [] {
+                (8, 6, 1, 0, true, 0xcc0020), (8, 6, 1, 0, true, 0x8800c6), (8, 6, 1, 0, false, 0x8800c6), (7, 5, 4, 0, false, 0xcc0020),
+                (6, 5, 8, 0, false, 0xcc0020), (4, 2, 16, 0, false, 0xcc0020), (9, 7, 16, 0, false, 0xcc0020), (5, 4, 16, 3, false, 0xcc0020),
+                (6, 5, 24, 0, false, 0xcc0020), (6, 5, 32, 0, false, 0xcc0020), (5, 4, 32, 3, false, 0xee0086) }) {
+                byte[] dib = Dib (w, h, bpp, comp, bw, out int cbInfo);
+                int xd = x, ww = w, hh = h, rp = rop;
+                recs.Add (Emr (81, r => {
+                    Rect (r, xd, 44, xd + 9, 58);
+                    r.I32 (xd); r.I32 (44); r.I32 (0); r.I32 (0); r.I32 (ww); r.I32 (hh);
+                    r.I32 (80); r.I32 (cbInfo); r.I32 (80 + cbInfo); r.I32 (dib.Length - cbInfo); r.I32 (0); r.I32 (rp); r.I32 (9); r.I32 (14);
+                    r.Bytes (dib);
+                }));
+                x += 10;
+            }
+            // BitBlt of a DIB.
+            {
+                byte[] dib = Dib (10, 8, 8, 0, false, out int cbInfo);
+                recs.Add (Emr (76, r => {
+                    Rect (r, 2, 62, 12, 70);
+                    r.I32 (2); r.I32 (62); r.I32 (10); r.I32 (8); r.I32 (0xcc0020); r.I32 (0); r.I32 (0);
+                    r.I32 (0x3f800000); r.I32 (0); r.I32 (0); r.I32 (0x3f800000); r.I32 (0); r.I32 (0);
+                    r.I32 (0); r.I32 (0); r.I32 (100); r.I32 (cbInfo); r.I32 (100 + cbInfo); r.I32 (dib.Length - cbInfo);
+                    r.Bytes (dib);
+                }));
+            }
+            // A DIB pattern brush.
+            {
+                byte[] dib = Dib (8, 8, 4, 0, false, out int cbInfo);
+                recs.Add (Emr (94, r => { r.I32 (6); r.I32 (0); r.I32 (32); r.I32 (cbInfo); r.I32 (32 + cbInfo); r.I32 (dib.Length - cbInfo); r.Bytes (dib); }));
+                recs.Add (Emr (37, r => r.I32 (6)));
+                recs.Add (Emr (43, r => Rect (r, 16, 62, 60, 80)));
+            }
+            recs.Add (Emr (14, r => { r.I32 (0); r.I32 (16); r.I32 (20); }));    // EOF
+            int bytes = 108;
+            foreach (byte[] b in recs) bytes += b.Length;
+            var h0 = new Rec ();
+            h0.I32 (1); h0.I32 (108);
+            Rect (h0, 0, 0, 119, 89);                                              // bounds
+            Rect (h0, 0, 0, 3175, 2381);                                           // frame, .01mm at 96 dpi
+            h0.I32 (0x464d4520); h0.I32 (0x10000); h0.I32 (bytes); h0.I32 (recs.Count + 1); h0.I16 (8); h0.I16 (0);
+            h0.I32 (0); h0.I32 (0); h0.I32 (0);
+            h0.I32 (1920); h0.I32 (1080); h0.I32 (508); h0.I32 (286);
+            h0.I32 (0); h0.I32 (0); h0.I32 (0); h0.I32 (508000); h0.I32 (285750);
+            var all = new Rec ();
+            all.Bytes (h0.ToArray ());
+            foreach (byte[] b in recs) all.Bytes (b);
+            return s_gdiEmf = all.ToArray ();
+        }
+
+        static byte[] Wmr (int fn, Action<Rec> body)
+        {
+            var b = new Rec ();
+            body (b);
+            byte[] p = b.ToArray ();
+            var r = new Rec ();
+            r.I32 ((6 + p.Length + 1) / 2); r.I16 (fn); r.Bytes (p);
+            if ((p.Length & 1) != 0) r.Bytes (new byte [1]);
+            return r.ToArray ();
+        }
+
+        /// <summary>A placeable WMF of the same kinds of records (no stock objects in a WMF):
+        /// background and text colours, solid, null and cosmetic pens, solid and null brushes.</summary>
+        static byte[] GdiWmf ()
+        {
+            if (s_gdiWmf != null) return s_gdiWmf;
+            var recs = new List<byte[]> ();
+            recs.Add (Wmr (0x020B, r => { r.I16 (0); r.I16 (0); }));                 // SETWINDOWORG
+            recs.Add (Wmr (0x020C, r => { r.I16 (90); r.I16 (120); }));              // SETWINDOWEXT
+            recs.Add (Wmr (0x0102, r => r.I16 (2)));                                 // SETBKMODE OPAQUE
+            recs.Add (Wmr (0x0201, r => r.I32 (0x3060c0)));                          // SETBKCOLOR
+            recs.Add (Wmr (0x0209, r => r.I32 (0x10a030)));                          // SETTEXTCOLOR
+            recs.Add (Wmr (0x02FA, r => { r.I16 (0); r.I16 (3); r.I16 (0); r.I32 (0x2080f0); }));      // pen 0
+            recs.Add (Wmr (0x02FC, r => { r.I16 (0); r.I32 (0x40c060); r.I16 (0); }));                 // brush 1 solid
+            recs.Add (Wmr (0x012D, r => r.I16 (0)));
+            recs.Add (Wmr (0x012D, r => r.I16 (1)));
+            recs.Add (Wmr (0x041B, r => { r.I16 (20); r.I16 (30); r.I16 (2); r.I16 (2); }));          // RECTANGLE b r t l
+            recs.Add (Wmr (0x02FA, r => { r.I16 (5); r.I16 (1); r.I16 (0); r.I32 (0x123456); }));      // pen 2 PS_NULL
+            recs.Add (Wmr (0x02FC, r => { r.I16 (0); r.I32 (0xc08020); r.I16 (0); }));                 // brush 3 solid
+            recs.Add (Wmr (0x012D, r => r.I16 (2)));
+            recs.Add (Wmr (0x012D, r => r.I16 (3)));
+            recs.Add (Wmr (0x0418, r => { r.I16 (20); r.I16 (60); r.I16 (2); r.I16 (32); }));         // ELLIPSE
+            recs.Add (Wmr (0x02FA, r => { r.I16 (0); r.I16 (1); r.I16 (0); r.I32 (0x0000ff); }));      // pen 4 cosmetic red
+            recs.Add (Wmr (0x02FC, r => { r.I16 (1); r.I32 (0x00ff00); r.I16 (0); }));                 // brush 5 BS_NULL
+            recs.Add (Wmr (0x012D, r => r.I16 (4)));
+            recs.Add (Wmr (0x012D, r => r.I16 (5)));
+            recs.Add (Wmr (0x041B, r => { r.I16 (50); r.I16 (100); r.I16 (26); r.I16 (8); }));
+            recs.Add (Wmr (0x02FC, r => { r.I16 (0); r.I32 (0x808080); r.I16 (0); }));                 // brush 6 grey
+            recs.Add (Wmr (0x012D, r => r.I16 (6)));
+            recs.Add (Wmr (0x041B, r => { r.I16 (86); r.I16 (60); r.I16 (56); r.I16 (14); }));
+            // (A WMF's DIBs and hatches are left out: the port's WMF stretch and hatch phase are not
+            // yet GDI's, recoloured or not.)
+            recs.Add (Wmr (0x0000, r => { }));                                         // EOF
+            int words = 9, maxRec = 0;
+            foreach (byte[] b in recs) { words += b.Length / 2; maxRec = Math.Max (maxRec, b.Length / 2); }
+            var all = new Rec ();
+            // placeable header: key, handle, bbox, inch, reserved, checksum
+            var ph = new Rec ();
+            ph.I32 (unchecked ((int) 0x9AC6CDD7)); ph.I16 (0); ph.I16 (0); ph.I16 (0); ph.I16 (120); ph.I16 (90); ph.I16 (96); ph.I32 (0);
+            byte[] p = ph.ToArray ();
+            int sum = 0;
+            for (int i = 0; i < 20; i += 2) sum ^= p [i] | p [i + 1] << 8;
+            all.Bytes (p); all.I16 (sum);
+            all.I16 (1); all.I16 (9); all.I16 (0x300); all.I32 (words); all.I16 (8); all.I32 (maxRec); all.I16 (0);
+            foreach (byte[] b in recs) all.Bytes (b);
+            return s_gdiWmf = all.ToArray ();
         }
 
         static ColorMap Map (uint from, uint to)

@@ -440,6 +440,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             var ps = new Profile (source);
             var pd = new Profile (destination);
+            // A destination that is not CMYK makes a transform mscms then refuses to translate into
+            // BM_KYMCQUADS: TranslateBitmapBits fails and GDI+ (which ignores that) separates the
+            // pixels as they were -- the quad's bytes are B, G, R and alpha.
+            if (pd.ColorSpace != 0x434d594b) return new GpIcm (null, null, null, 0);
             if (ps.ColorSpace != 0x52474220 || ps.Pcs != 0x58595a20) throw new NotSupportedException ();
             if (pd.Pcs != 0x4c616220) throw new NotSupportedException ();
             ushort[] elut = TrcElut (ps);
@@ -460,9 +464,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         /// <summary>LHCalc3to4_Di8_Do8_Lut16_G32 @18001c250 for one pixel: the xRGB quad's R, G, B
-        /// in, the KYMC quad out (byte 0 = C, 1 = M, 2 = Y, 3 = K).</summary>
+        /// in, the KYMC quad out (byte 0 = C, 1 = M, 2 = Y, 3 = K); for a destination that is not
+        /// CMYK the pixel as it was (the translation fails).</summary>
         public uint Translate (uint xrgb)
         {
+            if (_in == null) return xrgb;
             uint e0 = _in [xrgb >> 16 & 0xff], e1 = _in [0x100 + (xrgb >> 8 & 0xff)], e2 = _in [0x200 + (xrgb & 0xff)];
             uint f0 = e0 & 0x7ff, f1 = e1 & 0x7ff, f2 = e2 & 0x7ff;
             int node = (int) ((e0 >> 11 << 10) + (e1 >> 11 << 5) + (e2 >> 11)) * 4;

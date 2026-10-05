@@ -15,7 +15,8 @@
 //   EmfEnumState::CreateBrushIndirect @1800b40c0  as Brush unless BS_NULL
 //   EmfEnumState::SelectObject @1800b55f8    a stock brush or pen of RecolorStockObjectList
 //        (@1802ac340: the five solid brushes and the two pens) is replaced, once per playback, by
-//        one of the recoloured colour
+//        one of the recoloured colour -- the pen made from a LOGBRUSH read as a LOGPEN, so black
+//        and as wide as the colour's value
 //   EmfEnumState::CreateModifiedDib @1800b4390 -> MfEnumState::ModifyDib @1800b7b90   the DIB of
 //        a blit or a DIB pattern brush, as Bitmap: a palette's entries (a palette-index one made
 //        RGB), or the pixels of a 16, 24 or 32bpp DIB (BI_RGB or BI_BITFIELDS) into a 24bpp one
@@ -122,7 +123,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     if (s_recolorStock[i].Brush)
                         o = new GdiBrush { Style = 0, Color = ColorRef(ModifyColor(s_recolorStock[i].Color, ColorAdjustType.Brush)) };
                     else
-                        o = new GdiPen { Style = 0, Width = 0, Color = ColorRef(ModifyColor(s_recolorStock[i].Color, ColorAdjustType.Pen)), Old = true };
+                    {
+                        // The pen is made by CreatePenIndirect over the LOGBRUSH GDI+ filled in for the
+                        // brushes: lopnStyle 0, lopnWidth.x the recoloured COLORREF, lopnColor 0 -- a
+                        // black pen as wide as the colour's value (a white pen covers everything).
+                        int c = ModifyColor(s_recolorStock[i].Color, ColorAdjustType.Pen);
+                        o = new GdiPen { Style = 0, Width = c, Color = Color.Black, Old = true };
+                    }
                     _recolorStock[i] = o;
                 }
                 if (o is GdiBrush br) _dc.Brush = br;
@@ -143,6 +150,53 @@ namespace System.Drawing.WebGpuBackend.Gdip
             bm = null; drop = false; bpp = 0;
             if (Rc == null || cbBmi < 40 || offBmi <= 0 || rec + offBmi + cbBmi > b.Length) return false;
             int h0 = rec + offBmi;
+            // A black-and-white monochrome DIB keeps its colours unless the blit copies it.
+            if (rop != 0x00cc0020 && IsBlackWhite(b, h0, false)) return false;
+            if (!ModifyDib(b, h0, rec + offBits, usage, ColorAdjustType.Bitmap, out byte[] info, out byte[] bits, out bpp)) return false;
+            // MfEnumState::OutputDIB: the DIB must fit in the record's data.
+            if (blit && info.Length + bits.LongLength > Le.I32(b, rec + 4) - 8) { drop = true; return true; }
+            bm = DibFromInfo(info, 0, info.Length, bits, 0, bits.Length);
+            return true;
+        }
+
+        /// <summary>A WMF record's packed DIB (at <paramref name="dib"/>, the record's parameters
+        /// <paramref name="paramBytes"/> long) as WmfEnumState rewrites it: DIBBITBLT, DIBSTRETCHBLT
+        /// and STRETCHDIB as Bitmap (a 1bpp black-and-white DIB left alone), a BS_DIBPATTERN brush
+        /// (DibCreatePatternBrush @1800b6c68) as Brush.</summary>
+        bool ModifiedPackedDib(byte[] b, int dib, int paramBytes, int usage, bool brush, out Bitmap bm, out bool drop)
+        {
+            bm = null; drop = false;
+            if (Rc == null || dib + 40 > b.Length) return false;
+            if (!brush && IsBlackWhite(b, dib, true)) return false;
+            int biSize = Le.I32(b, dib);
+            if (biSize < 40 || dib + biSize > b.Length) return false;
+            int bitCount = Le.U16(b, dib + 14), comp = Le.I32(b, dib + 16), clrUsed = Le.I32(b, dib + 32);
+            int numPal = bitCount <= 8 ? (clrUsed != 0 ? clrUsed : 1 << bitCount) : comp == 3 ? 3 : 0;
+            int bitsAt = dib + biSize + numPal * (usage == 1 && bitCount <= 8 ? 2 : 4);
+            if (!ModifyDib(b, dib, bitsAt, usage, brush ? ColorAdjustType.Brush : ColorAdjustType.Bitmap, out byte[] info, out byte[] bits, out _)) return false;
+            if (!brush && info.Length + bits.LongLength > paramBytes) { drop = true; return true; }
+            bm = DibFromInfo(info, 0, info.Length, bits, 0, bits.Length);
+            return true;
+        }
+
+        /// <summary>A 1bpp-palette DIB whose palette is black then white (as the record's RGBQUADs);
+        /// the WMF form also asks for one bit and one plane.</summary>
+        static bool IsBlackWhite(byte[] b, int h0, bool wmf)
+        {
+            if (h0 + 40 > b.Length) return false;
+            int biSize = Le.I32(b, h0), bitCount = Le.U16(b, h0 + 14), clrUsed = Le.I32(b, h0 + 32);
+            int numPal = bitCount <= 8 ? (clrUsed != 0 ? clrUsed : 1 << bitCount) : 0;
+            if (wmf ? bitCount != 1 || Le.U16(b, h0 + 12) != 1 : numPal != 2) return false;
+            int pal0 = h0 + biSize;
+            return pal0 + 8 <= b.Length && Le.I32(b, pal0) == 0 && Le.I32(b, pal0 + 4) == 0xffffff;
+        }
+
+        /// <summary>GetModifiedDibSize @1801f1750 + MfEnumState::ModifyDib @1800b7b90: the header
+        /// at <paramref name="h0"/>, the bits at <paramref name="bitsAt"/>; false when GDI+ leaves
+        /// the DIB as it is.</summary>
+        bool ModifyDib(byte[] b, int h0, int bitsAt, int usage, ColorAdjustType type, out byte[] info, out byte[] bits, out int bpp)
+        {
+            info = null; bits = null; bpp = 0;
             int biSize = Le.I32(b, h0);
             if (biSize < 40 || h0 + biSize > b.Length) return false;
             int width = Le.I32(b, h0 + 4), height = Le.I32(b, h0 + 8);
@@ -155,12 +209,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int stride = (int)((((long)width * bitCount + 31) >> 5) << 2);
             long bitsSize = comp == 0 || comp == 3 ? (long)stride * absH : Le.I32(b, h0 + 20);
             if (bitsSize <= 0) return false;
-            int palBytes = usage == 1 ? 2 : 4;
             int pal0 = h0 + biSize;
-            // A black-and-white monochrome DIB keeps its colours unless the blit copies it.
-            if (numPal == 2 && rop != 0x00cc0020 && pal0 + 8 <= b.Length && Le.I32(b, pal0) == 0 && Le.I32(b, pal0 + 4) == 0xffffff)
-                return false;
-            // GetModifiedDibSize @1801f1750.
+            int rec = 0, offBits = bitsAt;
             if (usage == 1 && (bitCount > 8 || comp == 3)) usage = 0;
             if (bitCount <= 8)
             {
@@ -168,7 +218,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             else if (comp != 0 && comp != 3) return false;
             if (rec + offBits + bitsSize > b.Length && bitCount <= 8) return false;
-            byte[] info, bits;
             if (bitCount <= 8)
             {
                 info = new byte[biSize + numPal * 4];
@@ -178,11 +227,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 {
                     int c;
                     if (usage == 1 && comp != 3)
-                        c = ModifyColor(Le.U16(b, pal0 + i * 2) | 0x1000000, ColorAdjustType.Bitmap);
+                        c = ModifyColor(Le.U16(b, pal0 + i * 2) | 0x1000000, type);
                     else
                     {
                         int q = pal0 + i * 4;
-                        c = ModifyColor(b[q + 2] | b[q + 1] << 8 | b[q] << 16, ColorAdjustType.Bitmap);
+                        c = ModifyColor(b[q + 2] | b[q + 1] << 8 | b[q] << 16, type);
                     }
                     info[biSize + i * 4] = (byte)(c >> 16);
                     info[biSize + i * 4 + 1] = (byte)(c >> 8);
@@ -223,15 +272,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             int p = sp + x * 4;
                             c = b[p + ir] | b[p + ig] << 8 | b[p + ib] << 16;
                         }
-                        c = ModifyColor(c, ColorAdjustType.Bitmap);
+                        c = ModifyColor(c, type);
                         bits[dp] = (byte)(c >> 16); bits[dp + 1] = (byte)(c >> 8); bits[dp + 2] = (byte)c;
                     }
                 }
                 bpp = 24;
             }
-            // MfEnumState::OutputDIB: the DIB must fit in the record's data.
-            if (blit && info.Length + bits.LongLength > Le.I32(b, rec + 4) - 8) { drop = true; return true; }
-            bm = DibFromInfo(info, 0, info.Length, bits, 0, bits.Length);
             return true;
         }
 
