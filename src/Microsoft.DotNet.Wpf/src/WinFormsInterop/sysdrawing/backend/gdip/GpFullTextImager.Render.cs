@@ -101,8 +101,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     while (j < n && lv [j] >= level) j++;
                     int u0 = int.MaxValue, u1 = int.MinValue;
                     for (int k = i; k < j; k++) { u0 = Math.Min (u0, u [k]); u1 = Math.Max (u1, u [k] + segs [k].Width); }
-                    // The spaces hanging past the line's end stay outside the mirrored span.
-                    if (u1 > line.Ls.UrLim && u0 < line.Ls.UrLim) u1 = line.Ls.UrLim;
+                    // The spaces hanging past the line's end stay outside the mirrored span -- of a
+                    // reversal that opens the line; one after a run of the line's own direction
+                    // mirrors them with it (measured on the right-to-left batteries).
+                    if (i == 0 && u1 > line.Ls.UrLim && u0 < line.Ls.UrLim) u1 = line.Ls.UrLim;
                     for (int k = i; k < j; k++) u [k] = u0 + u1 - u [k] - segs [k].Width;
                     i = j;
                 }
@@ -123,8 +125,41 @@ namespace System.Drawing.WebGpuBackend.Gdip
             py = (int) MathF.Floor (R * seg.Run.BaseOffset + y0 + 0.5f);
         }
 
+        int _snapDv;   // the last DrawGlyphs' baseline snap, ideal units
+
+        /// <summary>Per segment, the advance of the white space the line ends in (Line Services
+        /// does not underline the trailing spaces): from the last text segment back, the spaces at
+        /// its end, a segment of nothing but spaces wholly, up to the first that has more.</summary>
+        int[] TrailingSpaceWidths (Line line)
+        {
+            var segs = line.Ls.Segs;
+            var hang = new int [segs.Count];
+            for (int i = segs.Count - 1; i >= 0; i--) {
+                GpLineServices.Seg seg = segs [i];
+                if (seg.Kind == 2 || seg.Kind == 3) continue;
+                if (seg.Kind != 0 || seg.GCount == 0) break;
+                Run run = seg.Run;
+                if (run.EllipsisText != null) break;
+                int strFrom = run.Str + (seg.Cp - run.Cp), nChars = seg.CpLim - seg.Cp;
+                int c = nChars;
+                while (c > 0 && Text [strFrom + c - 1] == ' ') c--;
+                if (c == nChars) break;
+                // The spaces' glyphs (one each), wherever the direction puts them.
+                int w = 0, last = -1;
+                for (int k = c; k < nChars; k++) {
+                    int g = run.Shape.ClusterMap [seg.Cp - run.Cp + k] - seg.G0;
+                    if (g != last && g >= 0 && g < seg.Adv.Length) w += seg.Adv [g];
+                    last = g;
+                }
+                hang [i] = c == 0 ? seg.Width : w;
+                if (c > 0) break;
+            }
+            return hang;
+        }
+
         void RenderLine (IGpTextTarget target, PointF origin, Line line, int top)
         {
+            _snapDv = 0;
             int v;
             if (IsVertical && !IsRightToLeft)
                 v = line.Descent + (Format == null || Format.LeadMargin != 0f ? 256 : 0);
@@ -135,6 +170,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             // always interrupts), each from its run's start over its dnodes' advances.
             var uls = new List<(Run Run, int Ur, int Dup, int Lead, int Trail)> ();
             int[] dur = DisplayUr (line);
+            int[] hang = TrailingSpaceWidths (line);
             for (int i = 0; i < line.Ls.Segs.Count; i++) {
                 GpLineServices.Seg seg = line.Ls.Segs [i];
                 int la = 0, ta = 0;
@@ -144,13 +180,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     DrawRunGlyphs (target, origin, line, seg, px, py, out la, out ta);
                 } else if (seg.Kind != 1) continue;
                 if (seg.Run.Underline == 0) continue;
+                // The white space the line ends in is not underlined.
+                int width = seg.Width - hang [i];
+                if (width <= 0 && hang [i] > 0) continue;
                 if (uls.Count > 0 && uls [^1].Run == seg.Run)
-                    uls [^1] = (seg.Run, Math.Min (uls [^1].Ur, dur [i]), uls [^1].Dup + seg.Width, uls [^1].Lead, ta);
-                else uls.Add ((seg.Run, dur [i], seg.Width, la, ta));
+                    uls [^1] = (seg.Run, Math.Min (uls [^1].Ur, dur [i]), uls [^1].Dup + width, uls [^1].Lead, ta);
+                else uls.Add ((seg.Run, dur [i], width, la, ta));
             }
             foreach (var u in uls) {
-                    if ((u.Run.Underline & 1) != 0) DrawUnderline (target, origin, line, u.Run, x0, y0, u.Ur, u.Dup, u.Lead, u.Trail, true);
-                    if ((u.Run.Underline & 2) != 0) DrawUnderline (target, origin, line, u.Run, x0, y0, u.Ur, u.Dup, u.Lead, u.Trail, false);
+                    // Line Services draws a run's strikethrough before its underline.
+                    if ((u.Run.Underline & 2) != 0) DrawUnderline (target, origin, line, u.Run, x0, y0 + _snapDv, u.Ur, u.Dup, u.Lead, u.Trail, false);
+                    if ((u.Run.Underline & 1) != 0) DrawUnderline (target, origin, line, u.Run, x0, y0 + _snapDv, u.Ur, u.Dup, u.Lead, u.Trail, true);
             }
             // RenderLine: an ellipsis-trimmed line's ellipsis after it (LogicalToXY at +0x58).
             if (line.EllipsisAt >= 0 && line.Trimmed >= 3 && line.Trimmed <= 5 && Ellipsis != null) {
@@ -214,6 +254,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             var gi = new GpGlyphImager ();
             gi.Initialize (this, run, seg, w2d, mode, lead, trail, atStart, atEnd);
             PointF snapped = gi.CellOrigin (cell);
+            // GdipLscbkDrawUnderline (@1800f8940) moves the line by the GlyphImager's (+0x270)
+            // baseline snap (+0x70) -- the last dnode drawn's.
+            if (!vertical) _snapDv = (int) MathF.Round ((snapped.Y - cell.Y) * R);
             PointF[] origins = gi.Origins (snapped, vertical);
             // The characters (for a target that records them) and each character's glyph.
             int strFrom = run.Str + (seg.Cp - run.Cp), nChars = seg.CpLim - seg.Cp;
@@ -225,6 +268,49 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (gi.Fitted) {
                 leadAdj = atStart ? gi.Shift : 0;
                 trailAdj = atEnd ? gi.TrailOut : 0;
+            }
+            if (_hotkeys.Count > 0 && run.EllipsisText == null)
+                DrawHotkeyUnderline (target, run, snapped, strFrom, nChars, map, gi.Glyphs.Length, gi.FinalAdvances,
+                                     gi.Fitted && atEnd ? gi.TrailOut : 0);
+        }
+
+        /// <summary>FullTextImager::DrawHotkeyUnderline (@1800f0480), from DrawGlyphs after the
+        /// dnode's glyphs when the format shows hot keys: for each marker whose key character is in
+        /// the dnode, a line under that character's glyphs (its cluster) -- from the cell origin
+        /// along the advances before them, as long as theirs (the dnode's trailing adjustment added
+        /// for the last cluster) -- post.underlinePosition below the baseline, a
+        /// GetDevicePenWidth(underlineThickness) pen.</summary>
+        void DrawHotkeyUnderline (IGpTextTarget target, Run run, PointF p, int strFrom, int nChars, ushort[] map,
+                                  int glyphCount, int[] adv, int trail)
+        {
+            float k = run.Em / Metrics.Upem;
+            float off = Metrics.UlPos * k, th = (ushort) Metrics.UlThick * k;
+            GpMatrix? w2d = target.WorldToDevice;
+            float w = w2d == null ? th : PenWidth (w2d.Value, th);
+            foreach (int marker in _hotkeys) {
+                int c = marker + 1 - strFrom;
+                if (c < 0 || c >= nChars) continue;
+                int g0 = map [c], g1 = glyphCount;
+                for (int j = c + 1; j < nChars; j++)
+                    if (map [j] != g0) { g1 = map [j]; break; }
+                int before = 0, len = 0;
+                for (int j = 0; j < g0 && j < adv.Length; j++) before += adv [j];
+                for (int j = g0; j < g1 && j < adv.Length; j++) len += adv [j];
+                if (g1 == glyphCount) len += trail;
+                PointF a, b;
+                if (!IsVertical) {
+                    float y = p.Y - off;
+                    if (!run.Rtl) { a = new PointF (p.X + before / R, y); b = new PointF (p.X + (before + len) / R, y); }
+                    else { a = new PointF (p.X - (before + len) / R, y); b = new PointF (p.X - before / R, y); }
+                } else {
+                    float x = p.X + off;
+                    if (!run.Rtl) { a = new PointF (x, p.Y + before / R); b = new PointF (x, p.Y + (before + len) / R); }
+                    else { a = new PointF (x, p.Y - (before + len) / R); b = new PointF (x, p.Y - before / R); }
+                }
+                if (w2d == null) {
+                    if (!IsVertical) target.AddRect (new RectangleF (a.X, a.Y - th * 0.5f, b.X - a.X, th));
+                    else target.AddRect (new RectangleF (a.X - th * 0.5f, a.Y, th, b.Y - a.Y));
+                } else target.DrawLine (w, a, b);
             }
         }
 

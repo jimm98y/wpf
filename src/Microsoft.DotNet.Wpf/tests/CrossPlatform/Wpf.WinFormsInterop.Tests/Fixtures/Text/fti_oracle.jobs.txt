@@ -430,3 +430,351 @@ D|null|Consolas|9|3|2|0|0|0|0|4|-|-|-|2,2,130,0|1.299038105676658,0.749999999999
 D|def|Times New Roman|9|3|1|0|0|0|2|3|-|-|-|2,5.25,1000,150|0.7071067811865476,0.7071067811865475,-0.7071067811865475,0.7071067811865476,150,60|-|superlongwordwithoutanybreaks 'single' a/b\na/b  #tag over WAVE  the
 D|typo|Segoe UI|16|3|3|0|0|2|1|0|-|-|-|10,2,200,0|0.5000000000000001,0.8660254037844386,-0.8660254037844386,0.5000000000000001,100,60|-|l\nok  brown 
 D|def|Trebuchet MS|12|3|1|0|0|1|2|3|-|-|-|10,2,80,0|-1.5,1.8369701987210297e-16,-1.8369701987210297e-16,-1.5,100,60|-|fly  ipsum sed x-ray\ndolore
+D|def|Microsoft Sans Serif|10|3|1|0|0|0|0|-|-|-|-|3.5,0,40,100|-|-|ab cd ef gh
+D|def|Microsoft Sans Serif|10|3|1|0|0|1|0|-|-|-|-|3.5,0,40,100|-|-|ab cd ef gh
+D|def|Microsoft Sans Serif|10|3|1|0|0|2|0|-|-|-|-|3.5,0,40,100|-|-|ab cd ef gh
+D|def|Microsoft Sans Serif|10|3|1|0|0|0|0|-|-|-|-|3.5,0,60,100|-|-|ab cd ef gh ij kl
+D|def|Microsoft Sans Serif|10|3|1|0|0|1|0|-|-|-|-|3.5,0,60,100|-|-|ab cd ef gh ij kl
+D|def|Microsoft Sans Serif|10|3|1|0|0|0|0|-|-|-|-|3.5,0,40,100|-|-|e} fox 1 a/b
+D|def|Microsoft Sans Serif|10|3|1|0|0|1|0|-|-|-|-|3.5,0,40,100|-|-|e} fox 1 a/b
+D|def|Microsoft Sans Serif|10|3|0|0|0|1|0|-|-|-|-|3.5,0,40,100|-|-|e} fox 1 a/b
+D|def|Tahoma|10|3|1|0|0|1|0|-|-|-|-|3.5,0,40,100|-|-|e} fox 1 a/b
+D|null|Verdana|8|3|0|3|0|0|0|0|-|-|-|0,0,60,40|-|-|dolore $100\naliqua\nx-ray\nsed ut tempor amet e-mail incididunt {brace}
+D|null|Verdana|8|3|0|5|0|0|0|0|-|-|-|0,0,60,40|-|-|dolore $100\naliqua\nx-ray\nsed ut tempor amet e-mail incididunt {brace}
+D|def|Microsoft Sans Serif|10|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Microsoft Sans Serif|10|3|2|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Microsoft Sans Serif|10|3|3|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Tahoma|10|3|2|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Tahoma|10|3|3|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Arial|10|3|3|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Microsoft Sans Serif|10|3|2|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;2|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;3|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;1|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;0|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1054;2|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1054;3|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|1|5|1|0|0|-|-|-|1025;3|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1065;3|0,0,300,100|-|-|abc 12 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1081;3|0,0,300,100|-|-|abc 12 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1081;2|0,0,300,100|-|-|abc 12 x
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|1025;3|0,0,300,100|-|-|abc 12 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;3|0,0,300,100|-|-|ال 12 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;3|0,0,300,100|-|-|12
+M|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;3|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1037;3|0,0,300,100|-|-|abc 12 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|2052;3|0,0,300,100|-|-|abc 12 x
+R|def|Segoe UI|12|3|0|5|4097|2|0|-|-|-|1;0|2,2,60,100|-|5:12;10:5;3:12|\u05e9\u05dc\u05d5\u05dd \u00a3 9 99\u00a0% 1/2
+R|def|Arial|10|3|0|5|0|0|0|-|-|-|1024;2|2,2,0,100|-|2:1;0:2;1:1|\u00a3 9
+R|def|Segoe UI|10|3|0|5|0|2|0|-|-|-|2052;2|2,2,0,100|-|4:3;19:7;1:23|50% 12,345.67 abc 1/2 12%3
+D|def|Segoe UI|8|3|0|5|1|2|0|-|-|-|1;3|2,2,300,100|-|-|12%3 [a]
+D|def|Tahoma|12|3|0|5|4096|0|0|-|-|-|1037;3|2,2,0,100|-|-|abc 12 $100 50%
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|1081;3|2,2,60,100|-|-|1 000 \u05e9\u05dc\u05d5\u05dd abc
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1026;3|2,2,100,100|-|-|3:30
+D|def|Arial|8|3|0|5|0|2|0|-|-|-|1026;0|2,2,100,100|-|-|-3
+R|def|Segoe UI|12|3|0|5|4097|1|0|-|-|-|1033;3|2,2,60,100|-|18:4|99\u00a0% $100 \u00a3 9 ok 1 000
+D|def|Times New Roman|10|3|0|5|0|0|0|-|-|-|0;1|2,2,300,100|-|-|[a]
+R|def|Microsoft Sans Serif|10|3|0|5|0|1|0|-|-|-|1081;1|2,2,0,100|-|8:2|dog 12 1/2
+D|def|Arial|10|3|0|5|2|0|0|-|-|-|1081;2|2,2,100,100|-|-|1/2
+D|def|Arial|10|3|0|5|2|1|0|-|-|-|2048;0|2,2,0,100|-|-|dog
+D|def|Verdana|12|3|0|5|4097|0|0|-|-|-|2048;1|2,2,300,100|-|-|ok #7 2x $100
+R|def|Microsoft Sans Serif|10|3|0|5|4096|1|0|-|-|-|2052;3|2,2,60,100|-|23:3;0:25;26:1|1 000 2x (42) $100 0123456789
+R|def|Tahoma|8|3|0|5|0|1|0|-|-|-|2052;2|2,2,300,100|-|14:1;8:6;11:3|+4.5 +4.5 ok abc
+R|def|Segoe UI|12|3|0|5|0|0|0|-|-|-|1081;3|2,2,300,100|-|0:2|[a]
+D|def|Tahoma|12|3|0|5|1|1|0|-|-|-|1081;3|2,2,60,100|-|-|\u00a3 9
+R|def|Segoe UI|10|3|0|5|0|0|0|-|-|-|1056;3|2,2,0,100|-|10:1|12,345.67 fox
+R|def|Tahoma|8|3|0|5|4096|0|0|-|-|-|1033;2|2,2,60,100|-|9:1;8:1|+4.5 ok 12%3
+D|typo|Microsoft Sans Serif|7|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|7|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|8|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|8|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|9|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|9|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|10|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|10|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|11|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|12|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|12|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|16|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|16|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|7|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|8|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|9|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|9|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|10|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|14|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|14|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|7|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|8|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|8|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|9|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|11|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|11|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|16|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|7|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|9|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|9|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|10|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|11|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|11|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|12|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|14|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|14|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|16|3|1|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|16|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|16|3|1|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|16|3|1|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aあb
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aกขb
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aԱԲb
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aकखb
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a一丁b
+D|def|Times New Roman|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a一b
+D|def|Verdana|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a☃b❤c
+D|def|Arial|10|3|0|5|1024|0|0|-|-|-|-|2,2,300,100|-|-|aあb
+D|def|Segoe UI|10|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aあいb
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|xაბy
+D|def|Calibri|11|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|xሀሁy
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|\u007f
+M|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aあb
+D|def|Courier New|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aあb가c
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|אב اب
+D|def|Times New Roman|10|3|0|4|4096|0|0|-|-|-|-|2,2,60,100|-|-|\u2605\u2116\u2192 \u25a0
+R|def|Microsoft Sans Serif|16|3|0|3|1024|2|0|-|-|-|-|2,2,0,100|-|2:3|\u0531\u0d15\u2192\u0151\u2603
+D|def|Calibri|8|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-| \ue000\u1780\u1f600 \u13a0
+D|def|Tahoma|16|3|3|5|1024|0|0|-|-|-|-|2,2,60,100|-|-|\u0c15\u221e
+R|def|Arial|8|3|0|5|4|2|0|-|-|-|-|2,2,60,100|-|0:4| \u2603 \u0b95
+D|def|Tahoma|8|3|3|5|0|2|0|-|-|-|-|2,2,300,100|-|-|\u0151\uac00\uac01
+D|def|Consolas|16|3|1|5|0|1|0|-|-|-|-|2,2,60,100|-|-|\u2122
+R|def|Verdana|8|3|0|4|4|0|0|-|-|-|-|2,2,300,100|-|2:4| \u20ac \u10d0\u10d1\uac00\uac01
+D|def|Arial|12|3|0|5|0|2|0|-|-|-|-|2,2,300,100|-|-|\u0915\u0916\u03b1\u03b2\u2192
+D|def|Segoe UI|10|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|\u2764\ue000
+D|def|Tahoma|12|3|0|5|0|2|0|-|-|-|-|2,2,60,100|-|-| \ue000
+D|def|Trebuchet MS|8|3|3|5|1024|1|0|-|-|-|-|2,2,300,100|-|-|\u03b1\u03b2 \u1f600 \u2116 \ue000\u0915\u0916
+D|def|Consolas|12|3|0|1|0|2|0|-|-|-|-|2,2,0,100|-|-|fox\u4e00\u4e01
+D|def|Trebuchet MS|8|3|2|3|0|2|0|-|-|-|-|2,2,60,100|-|-| \u2764\u4e00\u4e01\uac00\uac01
+D|def|Microsoft Sans Serif|8|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-| \u2665\u03b1\u03b2
+D|def|Courier New|16|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-|\u0430\u0431\u2603\uac00\uac01\u0531
+M|def|Courier New|16|3|0|5|0|0|0|-|-|-|-|2,2,60,100|-|-| \u20ac
+M|def|Segoe UI|8|3|0|3|4096|2|0|-|-|-|-|2,2,60,100|-|-| \u0f40\u0f40\u1f600\u10d0\u10d1
+D|def|Georgia|8|3|0|5|0|1|0|-|-|-|-|2,2,0,100|-|-|\u0e01\u0e02\u0915\u0916\uac00\uac01\ue000
+M|def|Consolas|12|3|0|5|0|1|0|-|-|-|-|2,2,300,100|-|-|\u0c15 \u4e00\u4e01\u1780 \u0151 \u0531
+D|def|Tahoma|10|3|0|5|32|0|0|-|-|-|-|2,2,300,100|-|-|a\tb\rc\nd\u0001e\u001ff\u007fg
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a\tb\rc\nd\u0001e\u001ff\u007fg
+M|def|Segoe UI|10|3|0|5|32|0|0|-|-|-|-|2,2,300,100|-|-|a​b‌c‍d‎e‏f﻿g
+M|def|Segoe UI|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a​b‌c‍d‎e‏f﻿g
+D|typo|Lucida Console|9|3|1|4|4096|2|0|-|-|-|-|2,2,0,100|-|-|ijl WAVE Hello
+D|typo|Lucida Console|8|3|1|5|2048|0|0|-|-|-|-|2,2,300,100|-|-|Mmm Mmm
+D|def|Segoe UI Light|20|3|1|4|2048|0|0|-|-|-|-|2,2,300,100|-|-|lazy fifty 1234 fox brown Mmm
+D|typo|Lucida Console|8|3|3|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|The The fox quick jumps
+D|typo|Lucida Sans Unicode|12|3|1|5|0|2|0|-|-|-|-|2,2,300,100|-|-|brown lazy .,; The fox
+D|typo|Microsoft Sans Serif|7|3|3|5|4096|2|0|-|-|-|-|2,2,0,100|-|-| 1234 lazy ijl .,;
+M|def|Lucida Console|12|3|1|3|0|0|0|-|-|-|-|2,2,80,100|-|-| brown fifty fox
+D|def|Microsoft Sans Serif|8|3|1|1|4096|0|0|-|-|-|-|2,2,0,100|-|-|AVATAR
+D|def|Segoe UI Light|12|3|3|4|0|0|0|-|-|-|-|2,2,0,100|-|-|.,; lazy
+D|typo|Microsoft Sans Serif|8|3|1|1|2048|1|0|-|-|-|-|2,2,0,100|-|-|.,; AVATAR dog 
+M|typo|Microsoft Sans Serif|20|3|3|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|1234 lazy Mmm The quick WAVE
+D|def|Lucida Console|12|3|1|2|0|1|0|-|-|-|-|2,2,0,100|-|-|WAVE lazy fox
+D|def|Microsoft Sans Serif|12|3|1|5|4|0|0|-|-|-|-|2,2,80,100|-|-|fifty .,;
+M|def|Microsoft Sans Serif|12|3|1|4|4|2|0|-|-|-|-|2,2,0,100|-|-| ijl fox 
+D|def|Lucida Console|10|3|1|5|2048|0|0|-|-|-|-|2,2,0,100|-|-|1234 1234 fox ijl dog
+D|def|Lucida Sans Unicode|10|3|1|5|0|2|0|-|-|-|-|2,2,80,100|-|-|1234 fifty
+D|typo|Microsoft Sans Serif|20|3|1|5|2048|2|0|-|-|-|-|2,2,0,100|-|-|.,; fox lazy fifty lazy brown
+D|typo|Lucida Console|12|3|1|5|4096|1|0|-|-|-|-|2,2,300,100|-|-|.,; dog fifty 
+D|def|Segoe UI Light|10|3|1|2|4|1|0|-|-|-|-|2,2,0,100|-|-|jumps
+D|typo|Segoe UI Light|14|3|1|1|2048|0|0|-|-|-|-|2,2,80,100|-|-|.,; 
+D|typo|Segoe UI Light|9|3|0|5|0|1|0|-|-|-|-|2,2,80,100|-|-|1234 The 1234 .,; WAVE Mmm
+M|def|Lucida Console|9|3|0|3|2048|0|0|-|-|-|-|2,2,0,100|-|-|quick dog AVATAR WAVE
+D|def|Lucida Sans Unicode|14|3|0|3|4|1|0|-|-|-|-|2,2,300,100|-|-|Mmm AVATAR .,; AVATAR
+D|typo|Gabriola|7|3|0|2|2048|0|0|-|-|-|-|2,2,300,100|-|-|ijl Hello dog
+D|typo|Lucida Console|8|3|0|5|2048|1|0|-|-|-|-|2,2,300,100|-|-|fifty 1234
+D|def|Segoe UI Light|12|3|0|4|0|1|0|-|-|-|-|2,2,0,100|-|-|.,; Hello quick jumps Mmm 1234 
+D|def|Lucida Console|12|3|0|5|2048|2|0|-|-|-|-|2,2,80,100|-|-|dog .,; fox .,; Mmm
+M|typo|Microsoft Sans Serif|9|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|ijl jumps lazy Hello
+D|typo|Segoe UI Light|7|3|0|4|0|1|0|-|-|-|-|2,2,300,100|-|-|ijl
+D|def|Microsoft Sans Serif|12|3|0|2|0|2|0|-|-|-|-|2,2,0,100|-|-|lazy
+M|def|Lucida Console|8|3|0|4|2048|0|0|-|-|-|-|2,2,0,100|-|-|fox
+D|def|Lucida Console|8|3|0|2|4096|1|0|-|-|-|-|2,2,300,100|-|-|1234 WAVE 1234
+M|def|Segoe UI Light|8|3|0|4|0|1|0|-|-|-|-|2,2,80,100|-|-|lazy .,;
+D|typo|Lucida Sans Unicode|12|3|0|2|4096|1|0|-|-|-|-|2,2,0,100|-|-|jumps fifty dog ijl Mmm 
+D|typo|Segoe UI Light|12|3|0|3|4096|2|0|-|-|-|-|2,2,80,100|-|-|WAVE lazy .,; lazy AVATAR quick
+D|typo|Microsoft Sans Serif|14|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-| quick .,; over .,;
+D|def|Segoe UI Light|8|3|0|1|4096|0|0|-|-|-|-|2,2,80,100|-|-| quick dog lazy fifty brown 
+D|typo|Microsoft Sans Serif|12|3|0|2|0|0|0|-|-|-|-|2,2,300,100|-|-|Mmm 
+D|def|Lucida Console|12|3|0|4|0|1|0|-|-|-|-|2,2,80,100|-|-|lazy 
+D|def|Microsoft Sans Serif|8|3|0|4|2048|1|0|-|-|-|-|2,2,0,100|-|-|brown
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|?
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-| a
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|abcdefghijklmnop
+D|def|Microsoft Sans Serif|10|3|1|5|4|0|0|-|-|-|-|2,2,300,100|-|-|abcdefghijklmnop
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ii
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|WW
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|lll
+D|def|Microsoft Sans Serif|10|3|1|1|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|1|3|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|2|5|4|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-| é
+D|def|Microsoft Sans Serif|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-|é
+D|def|Microsoft Sans Serif|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-|e
+D|def|Segoe UI Light|20|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|0|1|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|1|1|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|1|4|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Segoe UI Light|20|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|1|4|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+M|def|Tahoma|9|3|0|5|4096|1|0|1|1|-|-|2,2,300,100|-|-|&File
+M|typo|Verdana|8|3|1|5|4|2|0|1|1|-|-|2,2,300,100|-|-|Op&en
+D|def|Courier New|10|3|0|5|4096|1|0|1|1|-|-|2,2,300,100|-|-|&W
+D|typo|Segoe UI|10|3|0|5|0|1|0|1|1|-|-|2,2,300,100|-|-|Old Win&dow
+D|def|Tahoma|8|3|0|5|0|0|0|1|2|-|-|2,2,0,100|-|-|&W
+M|def|Segoe UI|8|3|2|5|0|1|0|1|1|-|-|2,2,300,100|-|-|Old Tools&
+D|typo|Segoe UI|8|3|0|1|4|0|0|1|2|-|-|2,2,300,100|-|-|&&Co
+D|typo|Segoe UI|9|3|0|5|0|2|0|1|1|-|-|2,2,0,100|-|-|Ab&out
+D|def|Arial|12|3|1|5|0|1|0|1|1|-|-|2,2,0,100|-|-|E&xit
+M|def|Times New Roman|10|3|1|5|0|2|0|1|2|-|-|2,2,300,100|-|-|E&xit
+D|def|Times New Roman|10|3|0|5|0|2|0|1|2|-|-|2,2,0,100|-|-|Old Save &As
+D|def|Verdana|12|3|4|5|0|1|0|1|1|-|-|2,2,0,100|-|-|Old Ab&out
+D|def|Segoe UI|10|3|0|3|0|1|0|1|2|-|-|2,2,300,100|-|-|Old Ab&out
+M|typo|Segoe UI|12|3|0|0|4|1|0|1|2|-|-|2,2,300,100|-|-|&iiii
+D|def|Times New Roman|10|3|0|5|4|0|0|1|1|-|-|2,2,300,100|-|-|Save &As
+D|typo|Microsoft Sans Serif|9|3|0|5|0|0|0|1|1|-|-|2,2,300,100|-|-|Tools&
+D|def|Verdana|9|3|0|5|0|0|0|1|1|-|-|2,2,0,100|-|-|&&Co
+D|def|Arial|10|3|1|1|4|0|0|1|2|-|-|2,2,300,100|-|-|&Help
+D|def|Microsoft Sans Serif|12|3|0|1|4096|1|0|1|1|-|-|2,2,0,100|-|-|Tools&
+D|typo|Arial|12|3|0|0|4096|0|0|1|2|-|-|2,2,0,100|-|-|Pa&ste
+D|typo|Lucida Sans Unicode|20|3|8|4|4|0|0|-|-|-|-|2,2,80,100|-|-|1234 fifty quick Mmm brown lazy
+D|def|Microsoft Sans Serif|8|3|4|4|0|0|0|-|-|-|-|2,2,300,100|-|-| 1234 WAVE Hello Mmm jumps
+M|typo|Segoe UI Light|9|3|8|1|4096|1|0|-|-|-|-|2,2,300,100|-|-|1234 jumps quick Mmm
+D|typo|Segoe UI Light|9|3|12|5|0|1|0|-|-|-|-|2,2,80,100|-|-|1234 The 1234 .,; WAVE Mmm
+D|def|Lucida Sans Unicode|9|3|12|1|0|0|0|-|-|-|-|2,2,300,100|-|-|fox jumps fifty Hello jumps over
+M|def|Lucida Sans Unicode|12|3|12|2|4|1|0|-|-|-|-|2,2,80,100|-|-|brown
+D|typo|Lucida Console|7|3|4|5|0|0|0|-|-|-|-|2,2,0,100|-|-|1234 .,; .,; jumps 1234 fifty
+D|typo|Lucida Sans Unicode|9|3|4|2|4096|2|0|-|-|-|-|2,2,0,100|-|-| fox over 1234 Mmm
+D|typo|Segoe UI Light|7|3|4|4|0|1|0|-|-|-|-|2,2,300,100|-|-|ijl
+D|def|Microsoft Sans Serif|9|3|4|5|4|0|0|-|-|-|-|2,2,80,100|-|-|Mmm WAVE lazy 
+M|typo|Lucida Console|7|3|4|3|4|1|0|-|-|-|-|2,2,80,100|-|-| ijl fifty lazy .,; over
+M|def|Lucida Sans Unicode|12|3|4|3|4096|2|0|-|-|-|-|2,2,0,100|-|-| 1234 1234 jumps WAVE dog dog
+D|typo|Microsoft Sans Serif|8|3|4|5|0|2|0|-|-|-|-|2,2,300,100|-|-|jumps
+D|def|Microsoft Sans Serif|14|3|4|5|4096|0|0|-|-|-|-|2,2,300,100|-|-|Mmm 
+D|typo|Lucida Sans Unicode|10|3|8|5|2048|0|0|-|-|-|-|2,2,0,100|-|-|brown
+D|def|Microsoft Sans Serif|14|3|4|1|4096|1|0|-|-|-|-|2,2,80,100|-|-| Mmm dog
+D|typo|Lucida Console|8|3|8|5|4|0|0|-|-|-|-|2,2,300,100|-|-|fox fifty .,; lazy fox
+M|def|Segoe UI Light|12|3|4|5|4096|2|0|-|-|-|-|2,2,80,100|-|-|WAVE The fox lazy
+D|typo|Lucida Sans Unicode|7|3|8|1|4|1|0|-|-|-|-|2,2,300,100|-|-|dog 1234
+D|typo|Lucida Console|14|3|4|2|4096|2|0|-|-|-|-|2,2,300,100|-|-| AVATAR fox
+D|typo|Lucida Sans Unicode|10|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|20|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|21|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|22|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|25|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|27|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|7|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|20|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|23|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|27|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|32|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|36|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|40|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|9|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|10|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|18|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|23|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|24|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|27|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|28|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Microsoft Sans Serif|9|3|0|4|2048|1|0|-|-|-|-|2,2,0,100|-|-| The 1234 Mmm 
+D|def|Lucida Sans Unicode|9|3|0|1|0|0|0|-|-|-|-|2,2,300,100|-|-|fox jumps fifty Hello jumps over
+D|def|Lucida Sans Unicode|10|3|0|5|2048|1|0|-|-|-|-|2,2,300,100|-|-|brown ijl 
+D|typo|Lucida Console|8|3|0|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|The The fox quick jumps
+D|def|Microsoft Sans Serif|9|3|0|5|0|2|0|-|-|-|-|2,2,0,100|-|-|fox jumps lazy Hello
+D|def|Gabriola|14|3|0|2|2048|2|0|-|-|-|-|2,2,0,100|-|-|Mmm fifty Mmm
+M|def|Segoe UI Light|9|3|0|3|0|2|0|-|-|-|-|2,2,80,100|-|-|Hello fifty over ijl
+D|typo|Lucida Sans Unicode|9|3|0|3|0|1|0|-|-|-|-|2,2,0,100|-|-|lazy
+M|def|Gabriola|9|3|0|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|.,; AVATAR jumps .,;
+D|def|Lucida Console|8|3|0|5|4096|2|0|-|-|-|-|2,2,300,100|-|-| ijl The AVATAR quick lazy
+D|def|Gabriola|10|3|0|2|4096|0|0|-|-|-|-|2,2,80,100|-|-|The ijl quick fox lazy Mmm
+D|def|Microsoft Sans Serif|14|3|0|1|4096|0|0|-|-|-|-|2,2,0,100|-|-|The ijl
+D|def|Lucida Console|14|3|0|1|2048|0|0|-|-|-|-|2,2,300,100|-|-|Mmm quick AVATAR 1234
+D|def|Lucida Sans Unicode|10|3|0|5|4096|1|0|-|-|-|-|2,2,300,100|-|-|Mmm dog brown jumps
+D|def|Gabriola|14|3|0|4|4096|0|0|-|-|-|-|2,2,0,100|-|-|AVATAR Mmm 
+D|typo|Lucida Sans Unicode|12|3|0|1|4|0|0|-|-|-|-|2,2,80,100|-|-|1234 ijl
+D|def|Gabriola|8|3|0|4|2048|1|0|-|-|-|-|2,2,80,100|-|-|fox Hello dog lazy lazy fox
+D|typo|Lucida Console|10|3|0|1|0|0|0|-|-|-|-|2,2,80,100|-|-|WAVE Hello The quick
+D|def|Segoe UI Light|10|3|0|2|4|1|0|-|-|-|-|2,2,0,100|-|-|jumps
+D|typo|Segoe UI Light|14|3|0|1|2048|0|0|-|-|-|-|2,2,80,100|-|-|.,; 
+D|typo|Georgia|20|3|3|0|2048|1|0|1|-|-|-|2,0,80,150|-|-|why?
+D|null|Trebuchet MS|11|3|0|0|0|0|0|0|-|-|-|0,2,100,20|-|-|ipsum office semi; 1  consectetur WAVE these fluffy 1
+D|def|Segoe UI|20|3|2|0|1|2|1|1|-|-|-|2,2,80,100|-|-|magna\nlabore\nMississippi superlongwordwithoutanybreaks\na/b
+D|typo|Segoe UI|8|3|2|0|12289|2|1|2|-|-|-|0,2,100,0|-|-|lines  Lorem 0 To words comma,  eiusmod
+D|typo|Calibri|10|3|1|0|16385|0|2|2|-|-|-|3.5,5.25,0,1000|-|-|dolor  consectetur 0 brown [bracket] the 12345678901234\noffice AVATAR quick colon:
+D|null|Arial|10|3|0|0|0|0|0|4|-|-|-|10,2,1000,20|-|-| consectetur  colon: AVATAR aliqua\n@home
+D|null|Calibri|11|3|0|0|0|0|0|4|-|-|-|2,2,40,1000|-|-|colon: dolore\nsuperlongwordwithoutanybreaks  50% Mississippi\nAVATAR magna yes! 1\ndolor\nover
+D|typo|Verdana|20|3|1|0|0|1|0|0|-|-|-|2,2,60,1000|-|-|a/b et  1 i {brace}\nok 
+D|typo|Microsoft Sans Serif|20|3|2|0|0|2|2|4|-|-|-|0,2,80,0|-|-|{brace} {brace}\noffice  words To Mississippi
+D|null|Arial|8|3|2|0|0|0|0|0|-|-|-|2,0,100,150|-|-|adipiscing [bracket]  do semi;\nWAVE quick  magna lazy
+D|def|Calibri|8.25|3|0|0|1|1|2|0|-|-|-|10,5.25,260,0|-|-|adipiscing\nsed dolor
+D|null|Calibri|8|3|0|0|0|0|0|0|-|-|-|10,2,40,0|-|-|dog
+D|def|Calibri|14|3|2|0|1|2|0|4|-|-|-|3.5,0,40,60|-|-|fox 0 end. office  sed\nconsectetur  superlongwordwithoutanybreaks\nwrap adipiscing
+D|null|Georgia|11|3|2|0|0|0|0|1|-|-|-|0,2,260,100|-|-|e-mail  $100 e-mail [bracket] over  adipiscing do
+D|def|Times New Roman|14|3|0|0|12288|2|0|0|-|-|-|10,2,130,0|-|-| et  x-ray  over\nend.
+D|null|Microsoft Sans Serif|9|3|2|0|0|0|0|-|-|-|-|3.5,5.25,130,100|-|-| aliqua Lorem sed wrap  do
+D|def|Georgia|7|3|0|0|1|0|1|-|-|-|-|10,2,60,100|-|-|12345678901234  1 amet  fly amet  quick comma, sit  fox To
+D|def|Segoe UI|8.25|3|0|0|1|0|2|-|-|-|-|0,0,200,20|-|-|Mississippi sit  l  x-ray  colon: office  et  sed  eiusmod  eiusmod comma, 
+D|def|Microsoft Sans Serif|11|3|0|0|1|1|2|-|-|-|-|0,5.25,160,0|-|-|brown dolore @home  ok  fluffy end.  #tag  brown  {brace} consectetur (paren) 
+D|def|Microsoft Sans Serif|7|3|0|0|1|2|2|-|-|-|-|3.5,5.25,80,20|-|-|sed  incididunt  lines do 1 yes! AVATAR x-ray labore colon: semi; i
+D|null|Courier New|9|3|0|0|0|0|0|-|-|-|-|3.5,5.25,80,0|-|-| incididunt  ipsum why? Mississippi over WAVE jumps
+D|def|Arial|20|3|0|0|0|2|1|-|-|-|-|2,2,260,0|-|-|@home the [bracket] "quoted" sit #tag fox aliqua 'single' incididunt
+D|def|Verdana|16|3|1|0|0|0|2|-|-|-|-|10,5.25,160,60|-|-|superlongwordwithoutanybreaks "quoted" labore  {brace} e-mail  WAVE superlongwordwithoutanybreaks e-mail office over
+D|null|Tahoma|12|3|1|0|0|0|0|-|-|-|-|3.5,5.25,1000,20|-|-|[bracket] [bracket]
+D|def|Courier New|10|3|0|0|0|2|0|-|-|-|-|0,0,1000,1000|-|-|x-ray do  @home yes! these  fox  ut AVATAR elit 12345678901234
+D|def|Consolas|16|3|3|0|0|2|1|-|-|-|-|10,2,100,0|-|-|sed 
+D|def|Consolas|10|3|1|0|0|0|0|-|-|-|-|10,2,1000,150|-|-|yes!  superlongwordwithoutanybreaks "quoted" semi; do a/b  adipiscing 50% jumps
+D|def|Times New Roman|8|3|0|0|1|1|0|-|-|-|-|0,0,130,40|-|-|office  colon: ipsum  comma,
+D|def|Trebuchet MS|11|3|1|0|0|2|1|-|-|-|-|0,2,1000,0|-|-|fly the 'single' [bracket]  i over l
+D|def|Georgia|10|3|1|0|1|0|2|-|-|-|-|3.5,5.25,160,0|-|-|jumps  #tag tempor  office  brown  adipiscing {brace} lines  #tag [bracket]
+M|def|Verdana|12|3|0|1|4|1|0|-|-|-|-|2,2,300,100|-|-|Hello\u202c word\u200dfix\u200bab\u200c
+M|typo|Calibri|10|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|wordx\u200bfix\u202a
+M|typo|Arial|12|3|1|5|0|1|0|-|-|-|-|2,2,0,100|-|-|x\ufeff word\u00ad fix\u2060
+M|typo|Verdana|10|3|2|3|32|2|0|-|-|-|-|2,2,0,100|-|-|Helloword
+M|typo|Calibri|8|3|2|5|0|2|0|-|-|-|-|2,2,0,100|-|-|word\ufe0f 
+D|typo|Consolas|8|3|1|1|4096|2|0|-|-|-|-|2,2,0,100|-|-|x\ufe0f
+M|typo|Consolas|8|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|xHello word\u200b
+D|def|Verdana|10|3|2|1|4096|1|0|-|-|-|-|2,2,60,100|-|-|fix\ufeffWAVE\ufeffWAVE\u00ad 
+D|def|Courier New|8|3|2|1|4|2|0|-|-|-|-|2,2,0,100|-|-|ab\u200bxx 
+D|typo|Times New Roman|12|3|0|3|4096|1|0|-|-|-|-|2,2,300,100|-|-|Hello
+M|def|Courier New|12|3|0|1|0|0|0|-|-|-|-|2,2,60,100|-|-|WAVE\u2060
+M|typo|Verdana|10|3|1|1|4|1|0|-|-|-|-|2,2,0,100|-|-|word\u00adHelloword\u2060
+D|def|Courier New|10|3|0|5|32|1|0|-|-|-|-|2,2,300,100|-|-|x\ufe0f 
+D|typo|Calibri|10|3|2|1|4096|2|0|-|-|-|-|2,2,300,100|-|-|word\ufe0f
+D|typo|Consolas|10|3|1|5|32|2|0|-|-|-|-|2,2,300,100|-|-|xHello\ufe0fab\u034f
+D|typo|Arial|12|3|2|5|0|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u200bwordx\u00ad
+D|def|Tahoma|12|3|0|5|4096|1|0|-|-|-|-|2,2,0,100|-|-|abHello\u200d word\u202a
+D|def|Calibri|10|3|1|3|4096|0|0|-|-|-|-|2,2,0,100|-|-|fix\u202cfix word\u200bWAVE\ufe0f 
+M|typo|Verdana|12|3|2|5|32|1|0|-|-|-|-|2,2,0,100|-|-|fix\u200d ab\u200c WAVE\u200c word\u00ad
+M|def|Consolas|10|3|0|5|32|2|0|-|-|-|-|2,2,300,100|-|-|word\ufeffHello
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a b
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a\rb
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a​b
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a\u0001b
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a b
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+D|def|Consolas|10|3|0|0|0|2|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab\r\ncd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab  \ncd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|abcd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab \ncd
+M|def|Consolas|10|3|0|0|0x800|0|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+M|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+M|def|Consolas|10|3|0|0|0x800|0|0|-|-|-|-|2,2,200,90|-|-|abcd

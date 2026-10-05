@@ -72,7 +72,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             public int Height, Width, Escapement, Orientation, Weight;
             public bool Italic, Underline, StrikeOut;
-            public int CharSet, Quality;
+            public int CharSet, Quality, PitchAndFamily;
             public string Face = "";
         }
 
@@ -817,7 +817,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             uint idx = r.U32();
             var f = new GdiFont { Height = r.I32(), Width = r.I32(), Escapement = r.I32(), Orientation = r.I32(), Weight = r.I32() };
             f.Italic = r.U8() != 0; f.Underline = r.U8() != 0; f.StrikeOut = r.U8() != 0; f.CharSet = r.U8();
-            r.U8(); r.U8(); f.Quality = r.U8(); r.U8();
+            r.U8(); r.U8(); f.Quality = r.U8(); f.PitchAndFamily = r.U8();
             var sb = new StringBuilder();
             for (int i = 0; i < 32; i++) { char c = (char)r.I16(); if (c == 0) break; sb.Append(c); }
             f.Face = sb.ToString();

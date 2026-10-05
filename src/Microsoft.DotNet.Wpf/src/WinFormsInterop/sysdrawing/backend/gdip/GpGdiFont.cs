@@ -13,10 +13,11 @@
 //   advances               TrueTypeFont.TryGetDeviceAdvance (hdmx, else the fitted phantoms)
 //   GLYPHDATA fxA / fxAB   the columns the bi-level glyph lights (an EMF DC's realization), in 28.4
 //
-// A vertical face ('@' + name) GDI only makes for a face with a far-east charset; for any other
-// GDI's mapper picks another vertical face. Which one is the mapper's penalty walk, not modelled:
-// the first of the far-east faces this list names that is installed (on Windows 11 the mapper
-// chose "@Malgun Gothic" for "@Times New Roman" at EASTEUROPE_CHARSET).
+// Which face a LOGFONT realizes to is GDI's mapper (GpFontMapper): a vertical face ('@' + name),
+// which only a face with a far-east charset has, or a name no installed family has, goes through
+// it (for "@Times New Roman" at EASTEUROPE_CHARSET it picks "@Malgun Gothic": no FontMapper
+// default for the charset, so every vertical face is scored and Malgun, linked to Segoe UI for
+// the charset, is loaded first).
 //
 // The charset GDI+ puts in its LOGFONT (GpFontFace::GetCharset @1800865c0) is the first one
 // EnumFontFamiliesExW reports for the face at DEFAULT_CHARSET (EnumFontFamExProcW @1801d4930 keeps
@@ -44,8 +45,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         static readonly Dictionary<string, GpGdiFont> s_cache = new Dictionary<string, GpGdiFont>();
 
-        static readonly string[] s_verticalFallback = { "Malgun Gothic", "MS Gothic", "Yu Gothic", "SimSun", "MingLiU", "Gulim" };
-
         /// <summary>The font a LOGFONTW (92 bytes, or the head of an ENUMLOGFONTEXDVW) realizes to, or
         /// null when no face resolves.</summary>
         public static GpGdiFont FromLogFont(byte[] lf, int o = 0)
@@ -53,7 +52,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (lf == null || lf.Length < o + 28) return null;
             int height = Le.I32(lf, o), esc = Le.I32(lf, o + 8), weight = Le.I32(lf, o + 16);
             bool italic = lf[o + 20] != 0, ul = lf[o + 21] != 0, so = lf[o + 22] != 0;
-            int quality = lf[o + 26];
+            int charset = lf[o + 23], quality = lf[o + 26], pitchFamily = lf[o + 27];
             var sb = new System.Text.StringBuilder();
             for (int i = 0; i < 32 && o + 28 + i * 2 + 1 < lf.Length; i++)
             {
@@ -61,34 +60,38 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (c == 0) break;
                 sb.Append(c);
             }
-            return Get(sb.ToString(), height, esc, weight, italic, ul, so, quality);
+            return Get(sb.ToString(), height, esc, weight, italic, ul, so, quality, charset, pitchFamily);
         }
 
-        public static GpGdiFont Get(string name, int height, int esc, int weight, bool italic, bool ul, bool so, int quality)
+        public static GpGdiFont Get(string name, int height, int esc, int weight, bool italic, bool ul, bool so, int quality,
+                                    int charset = 1, int pitchFamily = 0)
         {
-            string key = name + "|" + height + "|" + esc + "|" + weight + "|" + italic + ul + so + "|" + quality;
+            string key = name + "|" + height + "|" + esc + "|" + weight + "|" + italic + ul + so + "|" + quality + "|" + charset + "|" + pitchFamily;
             lock (s_cache)
             {
                 if (s_cache.TryGetValue(key, out GpGdiFont f)) return f;
-                f = Make(name, height, esc, weight, italic, ul, so, quality);
+                f = Make(name, height, esc, weight, italic, ul, so, quality, charset, pitchFamily);
                 s_cache[key] = f;
                 return f;
             }
         }
 
-        static GpGdiFont Make(string name, int height, int esc, int weight, bool italic, bool ul, bool so, int quality)
+        static GpGdiFont Make(string name, int height, int esc, int weight, bool italic, bool ul, bool so, int quality,
+                              int charset, int pitchFamily)
         {
             bool vertical = name.StartsWith("@", StringComparison.Ordinal);
             string face = vertical ? name.Substring(1) : name;
             bool bold = weight > 550;
             int sim = (bold ? 1 : 0) | (italic ? 2 : 0);
-            TrueTypeFont t = Resolve(face, sim);
-            if (vertical && (t == null || !HasFarEastCharset(t)))
+            // GDI's mapper decides the family (the style is the realization's, below).
+            TrueTypeFont t = null;
+            GpFontMapper.Match m = GpFontMapper.Map(name, (byte)charset, (byte)pitchFamily, weight, italic);
+            if (m != null)
             {
-                t = null;
-                foreach (string fb in s_verticalFallback)
-                    if ((t = Resolve(fb, sim)) != null) { face = fb; break; }
+                face = m.Face.BaseFamily;
+                t = Resolve(face, sim);
             }
+            if (t == null && !vertical) t = Resolve(face = name, sim);
             if (t == null) return null;
             int upem = t.UnitsPerEmForHinting;
             int ppem;
@@ -192,12 +195,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
             foreach ((uint bit, byte cs) in s_fsCharsets)
                 if ((bit != sig || (sig & 0x10060) != 0) && (bit & cp1) != 0) return cs;
             return 0;
-        }
-
-        static bool HasFarEastCharset(TrueTypeFont t)
-        {
-            ReadOs2(t, out int version, out uint cp1, out _);
-            return version > 0 && (cp1 & 0x3e0000) != 0;
         }
 
         static void ReadOs2(TrueTypeFont t, out int version, out uint cp1, out bool symbolCmap)

@@ -158,22 +158,116 @@ namespace System.Drawing.WebGpuBackend.Gdip
         readonly List<Run> _runs = new List<Run> ();
         bool _runsBuilt;
 
+        /// <summary>A GpTextItem: a span of the string with its script, flags (byte 1) and bidi level.</summary>
+        struct Item
+        {
+            public int Start, Len, Script, Flags, Level;
+            public Item (int start, int len, int script, int flags, int level) { Start = start; Len = len; Script = script; Flags = flags; Level = level; }
+        }
+
         void BuildRuns ()
         {
             if (_runsBuilt) return;
             _runsBuilt = true;
             byte[] levels = BidiLevels ();
+            var items = new List<Item> ();
             foreach ((int start, int len, int script, int flags, int level) in Itemize ()) {
-                if (levels == null) { CreateTextRuns (start, len, script, flags, level); continue; }
+                if (levels == null) { items.Add (new Item (start, len, script, flags, level)); continue; }
                 // BidirectionalAnalysis: an item is cut where its characters' levels change.
                 for (int s = start; s < start + len;) {
                     int e = s + 1;
                     while (e < start + len && levels [e] == levels [s]) e++;
-                    CreateTextRuns (s, e - s, script, flags, levels [s]);
+                    items.Add (new Item (s, e - s, script, flags, levels [s]));
                     s = e;
                 }
             }
+            // BuildRunsUpToAndIncluding: MirroredNumericAndVerticalAnalysis for a bidi string, a
+            // vertical format, or digits the format substitutes.
+            int digitScript = Format != null ? GpTextTables.DigitSubstitutionsScript (Format.DigitMethod, Format.DigitLanguage) : 0;
+            bool digits = false;
+            for (int i = 0; i < _n && !digits; i++) digits = (GpTextTables.Flags (Text [i]) & 0x100) != 0;
+            if (levels != null || (digits && digitScript != 0) || IsVertical)
+                SecondaryItemization (items, digitScript);
+            foreach (Item it in items) CreateTextRuns (it.Start, it.Len, it.Script, it.Flags, it.Level);
             _runs.Add (new Run { Kind = 1, Cp = _n, Len = 2, Str = _n, Face = Face, Family = Family, Style = Style, Em = Em, Level = ParagraphLevel });
+        }
+
+        /// <summary>SecondaryItemization @1800f2388: a state machine over the characters' secondary
+        /// classes (masked 0xc, 0xf when the format substitutes digits, | 0x30 for a vertical format)
+        /// that gives a run of digits (with its separators, sign and currency) the digit script,
+        /// a run of mirrored brackets in a right-to-left item script 0x41, and a vertical line's
+        /// CJK runs the upright flag (8; 0x10 in a right-to-left item).</summary>
+        void SecondaryItemization (List<Item> items, int digitScript)
+        {
+            int mask = digitScript == 0 ? 0xc : 0xf;
+            if (IsVertical) mask |= 0x30;
+            int state = 0, mark = -1, start = 0;
+            int strongClass = 0x14, strongChar = 0;
+            for (int i = 0; i <= _n;) {
+                bool pair = false;
+                int col = 0;
+                if (i < _n) {
+                    int cp = Text [i];
+                    if (char.IsHighSurrogate ((char) cp) && i + 1 < _n && char.IsLowSurrogate (Text [i + 1])) {
+                        cp = char.ConvertToUtf32 ((char) cp, Text [i + 1]);
+                        pair = true;
+                    }
+                    col = GpTextTables.SecondaryColumn (cp, mask);
+                    if (digitScript == 0x40) {
+                        // The contextual Arabic digits remember the last strong character.
+                        int dc = GpTextTables.DirClass (cp);
+                        if ((dc & ~5) == 0 && dc != 5) { strongClass = dc; strongChar = cp; }
+                    }
+                }
+                int act = GpTextTables.SecondaryAct (col, state);
+                state = GpTextTables.SecondaryNextState (col, state);
+                int end = -1, script = 0, flags = 0;
+                switch (act) {
+                case 1: mark = i; break;
+                case 2: start = i; break;
+                case 3: start = mark; break;
+                case 4: end = i; script = digitScript; break;
+                case 5: end = mark; script = digitScript; break;
+                case 6: end = i; script = 0x41; break;
+                case 7: end = i; flags = 0x10; break;
+                case 8: end = i; flags = 0x8; break;
+                }
+                if (end > 0) {
+                    if (start < end) SetSpan (items, start, end, script, flags, strongClass, strongChar);
+                    if (start < end) start = end;
+                }
+                i += pair ? 2 : 1;
+            }
+        }
+
+        /// <summary>SpanVector&lt;GpTextItem&gt;::SetSpan over [from, to): each item there takes the
+        /// script (unless 0) and the flags. A mirrored-bracket script and the 0x10 flag hold only in
+        /// a right-to-left item; the contextual digit script 0x40 is Arabic-Indic (0x2d) after no
+        /// strong character in a right-to-left paragraph, in an Arabic item or after an RLM, and
+        /// otherwise leaves the script (the item is still cut).</summary>
+        void SetSpan (List<Item> items, int from, int to, int script, int flags, int strongClass, int strongChar)
+        {
+            for (int k = 0; k < items.Count; k++) {
+                Item it = items [k];
+                int a = Math.Max (from, it.Start), b = Math.Min (to, it.Start + it.Len);
+                if (a >= b) continue;
+                int s = script, f = flags;
+                if ((it.Level & 1) == 0) { f &= ~0x10; if (s == 0x41) s = 0; }
+                if (s == 0 && f == 0) continue;
+                var piece = it;
+                if (s == 0x40) {
+                    if ((strongClass == 0x14 && ParagraphLevel == 1) || it.Script == 7 || strongChar == 0x200f) piece.Script = 0x2d;
+                } else if (s != 0) piece.Script = s;
+                piece.Flags |= f;
+                piece.Start = a; piece.Len = b - a;
+                // Split the item around the piece.
+                items.RemoveAt (k);
+                int ins = k;
+                if (it.Start < a) { var head = it; head.Len = a - it.Start; items.Insert (ins++, head); }
+                items.Insert (ins++, piece);
+                if (b < it.Start + it.Len) { var tail = it; tail.Start = b; tail.Len = it.Start + it.Len - b; items.Insert (ins++, tail); }
+                k = ins - 1;
+            }
         }
 
         /// <summary>BuildRunsUpToAndIncluding: the bidi analysis (UnicodeBidiAnalyze, GpBidi) when the
@@ -199,28 +293,74 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// is an item of its own kind.</summary>
         IEnumerable<(int, int, int, int, int)> Itemize ()
         {
+            // ItemizationFiniteStateMachine @18003ce90. The item is GDI+'s 32-bit GpTextItem head:
+            // byte 0 the script, bits 8.. the flags (0x100 state 3, 0x200 a joiner, 0x400 state 2,
+            // 0x80000 an item that continues a ZWJ).
             int level = ParagraphLevel;
-            int itemStart = 0, script = GpTextTables.ScriptLatin, flags = 0;
-            bool haveScript = false;
-            for (int i = 0; i < _n; i++) {
-                int ch = Text [i];
-                int s = GpTextTables.Script (ch), st = GpTextTables.StateClass (ch);
-                if (s == GpTextTables.ScriptControl && st == 5 || (script == GpTextTables.ScriptControl && haveScript)) {
-                    // Control characters (tab, CR, LF, the format controls) are items by themselves.
-                    if (i > itemStart) yield return (itemStart, i - itemStart, script, flags, level);
-                    itemStart = i;
-                    script = s; flags = 0; haveScript = true;
-                    if (s == GpTextTables.ScriptControl && st == 5) continue;
-                }
-                if (st == 0 && s != script) {
-                    if (i > itemStart && haveScript) { yield return (itemStart, i - itemStart, script, flags, level); itemStart = i; flags = 0; }
-                    script = s;
-                    haveScript = true;
-                } else if (!haveScript && st == 0) { script = s; haveScript = true; }
-                if (st == 3) flags |= 0x100;
-                if (st == 2) flags |= 0x400;
+            var result = new List<(int, int, int, int, int)> ();
+            int item = GpTextTables.ScriptLatin;
+            int start = 0, i = 0, complexAt = -1;
+            int Cp (int k)
+            {
+                int c = Text [k];
+                if (char.IsHighSurrogate ((char) c) && k + 1 < _n && char.IsLowSurrogate (Text [k + 1])) return char.ConvertToUtf32 ((char) c, Text [k + 1]);
+                if (char.IsLowSurrogate ((char) c) && k > 0 && char.IsHighSurrogate (Text [k - 1])) return char.ConvertToUtf32 (Text [k - 1], (char) c);
+                return c;
             }
-            if (_n > itemStart) yield return (itemStart, _n - itemStart, script, flags, level);
+            void Emit (int s, int e) { if (e > s) result.Add ((s, e - s, (sbyte) (item & 0xff), item & ~0xff, level)); }
+            // The simple pass: scripts change only at state-0 characters; a complex character
+            // (state 3 or more) hands the rest to the full pass.
+            for (; i < _n; i++) {
+                uint attr = GpTextTables.Attributes (Cp (i));
+                int st = (int) ((attr >> 8) & 0xff), sc = (int) (attr & 0xff);
+                if (st == 0) {
+                    if ((item & 0xff) != sc) {
+                        if (i > 0) { Emit (start, i); start = i; }
+                        item = (item & ~0xffff) | sc;
+                    }
+                } else if (st == 2) item |= 0x400;
+                else if (st != 1) { complexAt = i; break; }
+            }
+            if (complexAt >= 0) {
+                int split = 0, joiner = -1, zwj = -1, neutral = -1;
+                if (complexAt >= 1 && ((GpTextTables.Attributes (Cp (complexAt - 1)) >> 8) & 0xff) == 1) neutral = complexAt - 1;
+                for (i = complexAt; i < _n; i++) {
+                    int cp = Cp (i);
+                    uint attr = GpTextTables.Attributes (cp);
+                    int st = (int) ((attr >> 8) & 0xff), sc = (sbyte) (attr & 0xff);
+                    int cur = (sbyte) (item & 0xff);
+                    if (cur == GpTextTables.ScriptControl && sc != GpTextTables.ScriptControl) split = i;
+                    else switch (st) {
+                    case 0: if (cur != sc) split = i; break;
+                    case 1: neutral = i; break;
+                    case 2: item |= 0x400; break;
+                    case 3: item |= 0x100; break;
+                    case 4:
+                        if (sc != cur && !(cur == 8 && sc == 7)) {
+                            if (joiner != i - 1 || neutral != i - 2) { split = i; break; }
+                            split = neutral;
+                            if (neutral <= start) item = (item & ~0xff) | (sc & 0xff);
+                        }
+                        break;
+                    case 5: if (cur != GpTextTables.ScriptControl) split = i; break;
+                    case 6:
+                        item |= 0x200;
+                        joiner = i;
+                        if (cp == 0x200d) zwj = i;
+                        break;
+                    default: if (cur == GpTextTables.ScriptControl) split = i; break;
+                    }
+                    if (start < split) {
+                        Emit (start, split);
+                        int next = (item & ~0xff) | (sc & 0xff);
+                        item = (next & ~0xff00) | 0x80000;
+                        if (zwj != split - 1) item = next & ~0x8ff00;
+                        start = split;
+                    }
+                }
+            }
+            Emit (start, _n);
+            return result;
         }
 
         /// <summary>CreateTextRuns: one run per item, shaped by GetGlyphs; a control item's
@@ -235,23 +375,85 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 Underline = (Style & 4) != 0 ? 1 : 0,
             };
             if ((Style & 8) != 0) run.Underline |= 2;
+            bool hotkey = (Format?.Hotkey ?? 0) != 0;
             if (script == GpTextTables.ScriptControl) {
+                // A control item: each character's cmap glyph, or the blank glyph (with a zero-width
+                // space's properties) for a glyph the face lacks, for the zero-width and directional
+                // marks U+200B..U+200F and U+FEFF unless the format says DisplayFormatControl, and for
+                // a hot-key marker.
                 var sh = new GpTextShaper.Shaped {
                     Glyphs = new ushort [len], ClusterMap = new ushort [len], GlyphProps = new ushort [len], TextProps = new ushort [len],
                 };
                 int blank = Face.GlyphIndex (' ');
+                bool show = (FormatFlags & GpTextFormat.DisplayFormatControl) != 0;
                 for (int k = 0; k < len; k++) {
+                    int ch = Text [start + k];
+                    int g = Face.GlyphIndexOf (ch);
                     sh.ClusterMap [k] = (ushort) k;
-                    sh.Glyphs [k] = (ushort) blank;
-                    sh.GlyphProps [k] = 0;
+                    sh.GlyphProps [k] = GpTextShaper.PropClusterStart;
+                    if ((!show && ((uint) (ch - 0x200b) < 5 || ch == 0xfeff)) || g == 0 || (ch == 0xffff && hotkey)) {
+                        g = blank;
+                        sh.GlyphProps [k] = GpTextShaper.PropClusterStart | GpTextShaper.PropZeroWidth;
+                    }
+                    sh.Glyphs [k] = (ushort) g;
                 }
                 run.Shape = sh;
-            } else if ((Format?.Hotkey ?? 0) != 0)
-                run.Shape = GpTextShaper.GetGlyphsWithHotKeys (Face, Text, start, len, script, (level & 1) != 0);
-            else
-                run.Shape = GpTextShaper.GetGlyphs (Face, Text, start, len, script, (level & 1) != 0);
-            _runs.Add (run);
+                _runs.Add (run);
+                return;
+            }
+            // CreateTextRuns @18003aaf8: the item shaped with its face; from the first glyph the face
+            // lacks, the run is cut and the characters it lacks go to GpFamilyFallback (unless
+            // NoFontFallback, or the face is a symbol face).
+            bool fallback = (FormatFlags & GpTextFormat.NoFontFallback) == 0 && !GpFontFallback.IsSymbolFace (Face);
+            int pos = start, rem = len;
+            while (rem > 0) {
+                GpTextShaper.Shaped sh = Shape (Face, pos, rem, script, level, hotkey);
+                int missing = -1;
+                if (fallback)
+                    for (int g = 0; g < sh.Glyphs.Length; g++) if (sh.Glyphs [g] == 0) { missing = g; break; }
+                if (missing < 0) {
+                    _runs.Add (Piece (run, pos, rem, sh));
+                    return;
+                }
+                // The first character of the missing glyph's cluster, and the missing ones after it.
+                int c0 = 0;
+                while (c0 < rem && sh.ClusterMap [c0] < missing) c0++;
+                int c1 = c0;
+                while (c1 < rem && sh.Glyphs [sh.ClusterMap [c1]] == 0) c1++;
+                if (c0 == rem || sh.ClusterMap [c0] > missing) {
+                    c0--;
+                    while (c0 > 0 && sh.ClusterMap [c0 - 1] == sh.ClusterMap [c0]) c0--;
+                    missing = sh.ClusterMap [Math.Max (0, c0)];
+                }
+                if (c0 > 0) {
+                    var head = new GpTextShaper.Shaped {
+                        Glyphs = sh.Glyphs [..missing], GlyphProps = sh.GlyphProps [..missing], ClusterMap = sh.ClusterMap [..c0], TextProps = sh.TextProps [..c0],
+                    };
+                    _runs.Add (Piece (run, pos, c0, head));
+                    pos += c0; rem -= c0;
+                }
+                int count = Math.Max (1, c1 - Math.Max (0, c0));
+                int n = GpFontFallback.For (Family).GetUniformFallbackFace (Text, pos, Math.Min (count, rem), Style & 3, script, out string fam, out int faceStyle);
+                n = Math.Max (1, Math.Min (n, rem));
+                TrueTypeFont face = fam == null ? Face : GdiPlusText.Face (fam, faceStyle == (Style & 3) ? Style & 3 : faceStyle) ?? Face;
+                var piece = Piece (run, pos, n, Shape (face, pos, n, script, level, hotkey));
+                if (!ReferenceEquals (face, Face)) {
+                    piece.Face = face; piece.Family = fam;
+                    piece.Em = GpFontFallback.FallbackEm (Face, Em, face);
+                }
+                _runs.Add (piece);
+                pos += n; rem -= n;
+            }
         }
+
+        GpTextShaper.Shaped Shape (TrueTypeFont face, int start, int len, int script, int level, bool hotkey)
+            => hotkey ? GpTextShaper.GetGlyphsWithHotKeys (face, Text, start, len, script, (level & 1) != 0)
+                      : GpTextShaper.GetGlyphs (face, Text, start, len, script, (level & 1) != 0);
+
+        static Run Piece (Run item, int start, int len, GpTextShaper.Shaped shape) => new Run {
+            Kind = 0, Cp = start, Len = len, Str = start, Script = item.Script, ItemFlags = item.ItemFlags, Level = item.Level,
+            Face = item.Face, Family = item.Family, Style = item.Style, Em = item.Em, Underline = item.Underline, Shape = shape,
+        };
 
         /// <summary>The run holding cp (GdipLscbkFetchRun): a fetch from inside a run splits it
         /// at the cluster there, the earlier part keeping its glyphs up to it.</summary>
@@ -338,7 +540,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             float[] a = GpTextShaper.GetGlyphAdvances (run.Face, run.Shape.Glyphs, g0, count, run.Script, upem * k);
             for (int i = 0; i < count; i++) {
-                adv [i] = (int) MathF.Floor (a [i] * tr + 0.5f);
+                adv [i] = (run.Shape.GlyphProps [g0 + i] & GpTextShaper.PropZeroWidth) != 0 ? 0 : (int) MathF.Floor (a [i] * tr + 0.5f);
                 offU [i] = offV [i] = 0;
             }
         }
@@ -560,9 +762,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 Glyphs = glyphs, GlyphProps = new ushort [glyphs.Length], ClusterMap = new ushort [glyphs.Length], TextProps = new ushort [glyphs.Length],
             };
             for (int i = 0; i < glyphs.Length; i++) { sh.GlyphProps [i] = GpTextShaper.PropClusterStart; sh.ClusterMap [i] = (ushort) i; }
+            // The ellipsis item takes the paragraph's direction: in a right-to-left format its cell
+            // origin is its right end (snapped there, the glyph one advance left of it).
             Ellipsis = new Run {
                 Kind = 0, Cp = 0, Len = glyphs.Length, Str = -1, Script = GpTextTables.ScriptLatin,
-                ItemFlags = iflags, Level = 0, Face = Face, Family = Family, Style = Style, Em = Em, Shape = sh,
+                ItemFlags = iflags, Level = IsRightToLeft && !IsVertical ? 1 : 0, Face = Face, Family = Family, Style = Style, Em = Em, Shape = sh,
                 EllipsisText = chars,
             };
             return _ellipsisWidth;

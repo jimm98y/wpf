@@ -89,6 +89,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             /// <see cref="LeadOffset"/>; the nominal layout leaves it where it falls.</summary>
             public bool RoundOrigin;
             public float LeadOffset;
+            /// <summary>The leading blanks the grid-fitted layout leaves out of <see cref="Glyphs"/>, and the
+            /// last glyph's advance (FastDrawGlyphs* underline a hot key by its glyph's advance).</summary>
+            public int Lead;
+            public float LastAdvance;
             /// <summary>Glyph i + 1 sits Advances[i] right of glyph i (float sums, as GDI+ makes them).</summary>
             public float[] Advances = Array.Empty<float>();
             /// <summary>The baseline, not rounded.</summary>
@@ -143,6 +147,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// FullTextImager) rather than a fast-imager string this port does not model.</summary>
         [ThreadStatic] internal static bool LastFull;
 
+        /// <summary>Whether a simulated bold widens the DESIGN advances (a DirectWrite simulated
+        /// face) or only the realization's (GDI+ emboldening an unsimulated one); the GDI+ port
+        /// sets it from its model of DirectWrite's families. Unset, every simulation widens.</summary>
+        internal static Func<TrueTypeFont, bool>? DesignBoldWidens;
+
         /// <summary>FastTextImager's decision and layout. Null where GDI+ would take its full imager
         /// (or where this port does not model the realization asked for): the caller then draws the
         /// string as it did before. An empty Run (no glyphs) is a string GDI+ draws nothing for.
@@ -175,8 +184,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // trailing-space handling, which is not modelled.
             if ((formatFlags & (FlagRightToLeft | FlagVertical | 0x40000000)) != 0)
                 { LastFull = (formatFlags & (FlagRightToLeft | FlagVertical | 0x40000000)) != 0; return null; }
-            // A simulated bold is DirectWrite's simulated face, whose advances it widens itself.
-            if (font.SynthesizesBold) return null;
+            // A simulated bold is DirectWrite's simulated face, whose advances it widens itself:
+            // the design advance of every outlined glyph by round(upem / 50), the GDI-compatible
+            // natural ones by a device pixel (blanks included; the classic ones carry GDI's own).
+            bool simBold = font.SynthesizesBold;
+            bool designBold = simBold && (DesignBoldWidens?.Invoke(font) ?? true);
             // A simulated oblique is modelled for ClearType and bi-level only (below): DirectWrite's
             // 4x4 glyphs of a sheared face are not the upright fit sheared (Tahoma, Microsoft Sans
             // Serif italic).
@@ -233,6 +245,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int i = 0; i < n; i++)
             {
                 int a = font.DesignAdvance(gids[i]);
+                if (designBold && font.DesignContours(gids[i]).Count > 0) a += Floor(upem / 50f + 0.5f);
                 nom[i] = tracking != 1f ? Floor(a * tracking + 0.5f) : a;
             }
             int space = font.GlyphIndex(' ');
@@ -255,7 +268,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
             if (n == 0) return new Run { Em = em, Mode = mode, Hint = hint };
 
-            float cellH = (float)(font.WinAscent + font.WinDescent) * em / upem;
+            float cellH = (float)(CellAscent(font) + CellDescent(font)) * em / upem;
             if (lm != 0f) cellH = em * 0.125f + cellH;
             // QuantizeTransform widens to VDMX only when the realization flags & 0x340000 are clear:
             // not for AntiAlias (0x118000) or SingleBitPerPixel (0x48000).
@@ -279,7 +292,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 else if (advType == 2) NaturalMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
                 else if (advType == 1) ClassicMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
                 else DesignMetrics(font, gids[i], out adv[i], out lsb[i], out rsb[i]);
+                if (designBold && advType == 0 && font.DesignContours(gids[i]).Count > 0) adv[i] += Floor(upem / 50f + 0.5f);
             }
+            // The simulation's extra device pixel of a GDI natural advance, in 1/16 px.
+            int bold16 = simBold && advType == 2 ? 16 : 0;
 
             // The black-box test (GetGlyphStringSidebearings): an overhang past a margin needs the
             // full imager.
@@ -292,14 +308,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 {
                     if (cum >= lim) break;
                     lmin = Math.Min(lmin, cum + (int)(lsb[i] * scale * 16f));
-                    cum += (int)(adv[i] * scale * 16f);
+                    cum += (int)(adv[i] * scale * 16f) + bold16;
                 }
                 cum = 0; rmin = lim;
                 for (int i = n - 1; i >= 0; i--)
                 {
                     if (cum >= lim) break;
                     rmin = Math.Min(rmin, cum + (int)(rsb[i] * scale * 16f));
-                    cum += (int)(adv[i] * scale * 16f);
+                    cum += (int)(adv[i] * scale * 16f) + bold16;
                 }
                 if ((float)(-lmin) > lm * sx * 16f || (float)(-rmin) > rm * sx * 16f) { LastFull = true; return null; }
             }
@@ -315,12 +331,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 for (int i = 0; i < n - 1; i++)
                     run.Advances[i] = (float)unchecked((int)((long)nom[i] * scale16)) * 1.52587890625e-05f;
                 run.OriginX = nx; run.OriginY = ny; run.RoundOrigin = false;
+                run.LastAdvance = (float)unchecked((int)((long)nom[n - 1] * scale16)) * 1.52587890625e-05f;
                 Clip(run, x, y, align, lineAlign, rw, rh, totalNom, lm, rm, cellH, (formatFlags & FlagNoClip) != 0);
                 return run;
             }
 
             var hint16 = new int[n];
-            for (int i = 0; i < n; i++) hint16[i] = Floor(adv[i] * scale + 0.5f) * 16;
+            for (int i = 0; i < n; i++) hint16[i] = Floor(adv[i] * scale + 0.5f) * 16 + bold16;
 
             // The trailing margin available to absorb hinting growth (+0x90).
             float lmx = lm * sx, rmx = rm * sx;    // the margins on the device (* +0xd4)
@@ -444,6 +461,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int j = 0; j < nmid - 1; j++) run.Advances[j] = outAdv[j];
             run.OriginX = ox; run.OriginY = oy; run.RoundOrigin = true;
             run.LeadOffset = (float)(leadOff * 0.0625);
+            run.Lead = lead;
+            run.LastAdvance = nmid > 0 ? outAdv[nmid - 1] : 0f;
             Clip(run, x, y, align, lineAlign, rw, rh, totalNom, lm, rm, cellH, (formatFlags & FlagNoClip) != 0);
             return run;
         }
@@ -598,6 +617,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>bGetDEVICEMETRICS + QuantizeTransform: the win ascent and descent scaled
         /// (FixMul, half away from zero), widened to the VDMX entry for this ppem.</summary>
+        /// <summary>The cell ascent and descent GDI+ reads through DirectWrite (DWRITE_FONT_METRICS):
+        /// usWinAscent / usWinDescent, or the typographic ones for a face with USE_TYPO_METRICS.</summary>
+        internal static int CellAscent(TrueTypeFont font) => font.UseTypoMetrics ? font.TypoAscender : font.WinAscent;
+        internal static int CellDescent(TrueTypeFont font) => font.UseTypoMetrics ? -font.TypoDescender : font.WinDescent;
+
         internal static void DeviceAscentDescent(TrueTypeFont font, float scale, out int asc, out int desc, bool vdmx = true)
         {
             long s16 = (long)Math.Round(scale * 65536.0);
@@ -607,8 +631,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 long r = (Math.Abs(p) + 0x8000) >> 16;
                 return (int)(p >= 0 ? r : -r);
             }
-            asc = -FixMul(s16, -font.WinAscent);
-            desc = FixMul(s16, font.WinDescent);
+            asc = -FixMul(s16, -CellAscent(font));
+            desc = FixMul(s16, CellDescent(font));
             int ppem = FixMul(s16, font.UnitsPerEmForHinting);
             if (vdmx && font.TryGetGdiPlusVdmx(ppem, out int yMax, out int yMin))
             {

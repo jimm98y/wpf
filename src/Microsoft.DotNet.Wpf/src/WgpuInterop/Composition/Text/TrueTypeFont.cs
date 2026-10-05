@@ -226,6 +226,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 {
                     TypoAscender = (short) U16(os2 + 68);
                     TypoDescender = (short) U16(os2 + 70);
+                    UseTypoMetrics = (U16(os2 + 62) & 0x80) != 0;
                 }
             }
             if (tables.TryGetValue("post", out int postUl) && postUl + 12 <= _data.Length)
@@ -661,6 +662,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// sTypoAscender - sTypoDescender and the vertical origin sTypoAscender.</summary>
         internal int TypoAscender { get; private set; }
         internal int TypoDescender { get; private set; }
+        /// <summary>OS/2 fsSelection USE_TYPO_METRICS: DirectWrite's (and so GDI+'s) ascent and
+        /// descent are sTypoAscender / -sTypoDescender, not the win metrics.</summary>
+        internal bool UseTypoMetrics { get; private set; }
         internal int UnderlinePosition { get; private set; }
         internal int UnderlineThickness { get; private set; }
         /// <summary>OS/2 yStrikeoutPosition / yStrikeoutSize.</summary>
@@ -1870,7 +1874,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// true for a face with no 'gasp'.</summary>
         internal bool GaspDoGray(int ppem)
         {
-            if (_gasp < 0) return true;
+            // No 'gasp': the rasterizer's default table, grey to 8ppem and from 18 (measured through
+            // GDI+'s AntiAliasGridFit on Lucida Sans Unicode and Lucida Console, 5..48 pixels); a
+            // simulated bold of such a face is grey at every size.
+            if (_gasp < 0) return SynthesizesBold || ppem <= 8 || ppem >= 18;
             int ranges = U16(_gasp + 2);
             int at = _gasp + 4;
             for (int i = 0; i < ranges; i++, at += 4)
