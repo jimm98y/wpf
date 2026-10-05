@@ -762,9 +762,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 Glyphs = glyphs, GlyphProps = new ushort [glyphs.Length], ClusterMap = new ushort [glyphs.Length], TextProps = new ushort [glyphs.Length],
             };
             for (int i = 0; i < glyphs.Length; i++) { sh.GlyphProps [i] = GpTextShaper.PropClusterStart; sh.ClusterMap [i] = (ushort) i; }
+            // The ellipsis item takes the paragraph's direction: in a right-to-left format its cell
+            // origin is its right end (snapped there, the glyph one advance left of it).
             Ellipsis = new Run {
                 Kind = 0, Cp = 0, Len = glyphs.Length, Str = -1, Script = GpTextTables.ScriptLatin,
-                ItemFlags = iflags, Level = 0, Face = Face, Family = Family, Style = Style, Em = Em, Shape = sh,
+                ItemFlags = iflags, Level = IsRightToLeft && !IsVertical ? 1 : 0, Face = Face, Family = Family, Style = Style, Em = Em, Shape = sh,
                 EllipsisText = chars,
             };
             return _ellipsisWidth;

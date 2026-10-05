@@ -101,8 +101,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     while (j < n && lv [j] >= level) j++;
                     int u0 = int.MaxValue, u1 = int.MinValue;
                     for (int k = i; k < j; k++) { u0 = Math.Min (u0, u [k]); u1 = Math.Max (u1, u [k] + segs [k].Width); }
-                    // The spaces hanging past the line's end stay outside the mirrored span.
-                    if (u1 > line.Ls.UrLim && u0 < line.Ls.UrLim) u1 = line.Ls.UrLim;
+                    // The spaces hanging past the line's end stay outside the mirrored span -- of a
+                    // reversal that opens the line; one after a run of the line's own direction
+                    // mirrors them with it (measured on the right-to-left batteries).
+                    if (i == 0 && u1 > line.Ls.UrLim && u0 < line.Ls.UrLim) u1 = line.Ls.UrLim;
                     for (int k = i; k < j; k++) u [k] = u0 + u1 - u [k] - segs [k].Width;
                     i = j;
                 }
