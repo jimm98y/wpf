@@ -8,11 +8,12 @@
 // "Add to Custom Colors" (COLOR_ADD) it reads the red/green/blue boxes, takes that as the colour and
 // posts IDOK -- so the add button is the dialog's OK.
 //
-// The port's ColorDialog is a managed dialog, with no template and no hook procedure, so none of
-// that reshaping can be applied: this opens it fully open on the same starting colour, and the
-// colour the user accepts with OK comes back exactly as .NET's does. GAP: the dialog's layout is
-// the port's ColorDialog's, not the VB6 template's, and OK rather than "Add to Custom Colors"
-// accepts.
+// The port's ColorDialog is the platform's own (ChooseColor on Windows, through
+// Win32ColorDialogBridge) or Windows'-layout managed one, with no template and no hook procedure
+// of the caller's, so none of that reshaping can be applied: this opens it fully open on the same
+// starting colour, and the colour the user accepts with OK comes back exactly as .NET's does. GAP:
+// the dialog is the standard one, not the VB6 template's, and OK rather than "Add to Custom
+// Colors" accepts.
 
 using System.Windows.Forms;
 

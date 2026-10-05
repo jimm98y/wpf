@@ -3,7 +3,8 @@
 
 //
 // In-process AppKit dialogs for macOS: NSAlert (MessageBox), NSOpenPanel and
-// NSSavePanel (Microsoft.Win32 file dialogs). Uses the same Objective-C runtime
+// NSSavePanel (Microsoft.Win32 file dialogs), NSPrintPanel and NSColorPanel (WinForms'
+// PrintDialog and ColorDialog). Uses the same Objective-C runtime
 // P/Invoke approach as CocoaWindow -- no child processes, no WinForms.
 //
 // Link-compiled into WindowsBase (public, for every WPF assembly) and into WinForms (internal, for
@@ -162,6 +163,56 @@ namespace MS.Internal.Interop
             return true;
         }
 
+        /// <summary>
+        /// Runs the shared NSColorPanel -- macOS's colour chooser -- modally, starting from the given
+        /// sRGB colour, until the user closes it, and hands back the colour it then shows. The panel
+        /// has no OK or Cancel: on macOS a colour is chosen by picking it and closing the panel, so
+        /// the caller reads an unchanged colour as a cancellation. NSColorPanel is a floating panel
+        /// that no -runModal call drives, so the modal session is run by hand (runModalSession:
+        /// until the panel is no longer visible), which needs no delegate and no callback.
+        /// </summary>
+        public static void ShowColorPanel(ref byte red, ref byte green, ref byte blue, bool showAlpha)
+        {
+            EnsureApplication();
+            IntPtr panel = Send(Cls("NSColorPanel"), Sel("sharedColorPanel"));
+            if (panel == IntPtr.Zero) return;
+            SendVoidBool(panel, Sel("setShowsAlpha:"), showAlpha);
+            SendVoidBool(panel, Sel("setContinuous:"), true);
+            IntPtr start = SendColor(Cls("NSColor"), Sel("colorWithSRGBRed:green:blue:alpha:"),
+                                     red / 255.0, green / 255.0, blue / 255.0, 1.0);
+            SendVoidPtr(panel, Sel("setColor:"), start);
+
+            IntPtr app = Send(Cls("NSApplication"), Sel("sharedApplication"));
+            SendVoidPtr(panel, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+            IntPtr session = SendPtrRet(app, Sel("beginModalSessionForWindow:"), panel);
+            try
+            {
+                // NSModalResponseContinue (-1002) while the session is still running.
+                while (SendNIntPtr(app, Sel("runModalSession:"), session) == -1002)
+                {
+                    if (!SendBool(panel, Sel("isVisible"))) break;
+                    System.Threading.Thread.Sleep(10);
+                }
+            }
+            finally
+            {
+                SendVoidPtr(app, Sel("endModalSession:"), session);
+                SendVoidPtr(panel, Sel("orderOut:"), IntPtr.Zero);
+            }
+
+            IntPtr color = Send(panel, Sel("color"));
+            IntPtr srgb = color == IntPtr.Zero ? IntPtr.Zero
+                : SendPtrRet(color, Sel("colorUsingColorSpace:"), Send(Cls("NSColorSpace"), Sel("sRGBColorSpace")));
+            if (srgb == IntPtr.Zero) return;
+            SendGetRgba(srgb, Sel("getRed:green:blue:alpha:"), out double r, out double g, out double b, out double _);
+            red = ToByte(r);
+            green = ToByte(g);
+            blue = ToByte(b);
+            if (s_debug) Console.WriteLine($"COCOA-COLOR {red},{green},{blue}");
+        }
+
+        private static byte ToByte(double component) => (byte)Math.Clamp((int)Math.Round(component * 255.0), 0, 255);
+
         private static void ConfigurePanel(IntPtr panel, string title, string initialDirectory)
         {
             if (!string.IsNullOrEmpty(title))
@@ -216,5 +267,7 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern int SendInt(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBool(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nint SendNIntPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendColor(IntPtr receiver, IntPtr selector, double r, double g, double b, double a);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendGetRgba(IntPtr receiver, IntPtr selector, out double r, out double g, out double b, out double a);
     }
 }

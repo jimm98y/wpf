@@ -156,6 +156,11 @@ namespace System.Windows.Forms {
 			return IntPtr.Zero;
 		}
 
+		/// <summary>For a platform dialog's Help button: OnHelpRequest, which is protected.</summary>
+		internal void RaiseHelpRequest () {
+			OnHelpRequest (EventArgs.Empty);
+		}
+
 		protected virtual void OnHelpRequest(EventArgs e) {
 			EventHandler eh = (EventHandler)(Events [HelpRequestEvent]);
 			if (eh != null)

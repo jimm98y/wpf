@@ -238,7 +238,7 @@ namespace System.Windows.Forms
 			settings.PrintRange = (PrintRange) (flags & PrintRangeMask);
 		}
 
-		private static void MoveToScreenCenter (IntPtr hWnd)
+		internal static void MoveToScreenCenter (IntPtr hWnd)
 		{
 			GetWindowRect (hWnd, out RECT r);
 			GetCursorPos (out POINT p);
