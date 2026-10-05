@@ -159,13 +159,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // once at the raster type's overscale, and placed at round-half-away of its sample position.
 
 
+        /// <summary>The post-transform (16.16, glyph y-up to device y-up) DirectWrite's scaler puts an
+        /// UNFITTED glyph through under a 2x2 transform (world y down) at an em; see
+        /// <see cref="TransformedOutline"/>.</summary>
+        internal static bool UnfittedTurnedPoints(TrueTypeFont font, float em, float m11, float m12, float m21, float m22,
+                                                  out int p00, out int p01, out int p10, out int p11)
+        {
+            int upem = font.UnitsPerEmForHinting;
+            static int Fx(float v) => (int)(((long)(v * 65536.0 * 65536.0) + 0x8000) >> 16);
+            int a00 = Fx(m11 * em), a01 = Fx(-m12 * em), a10 = Fx(-m21 * em), a11 = Fx(m22 * em);
+            int d = upem << 16;
+            static int Div(int a, int d) => (int)(((long)a * 0x10000 + ((a < 0) != (d < 0) ? -(d / 2) : d / 2)) / d);
+            p00 = Div(a00, d); p01 = Div(a01, d); p10 = Div(a10, d); p11 = Div(a11, d);
+            return upem > 0 && (a00 | a01) != 0 && (a10 | a11) != 0;
+        }
+
+        /// <summary>One design point (font units, y up) through <see cref="UnfittedTurnedPoints"/>'
+        /// matrix: its units times 64, each product FixMul-rounded, on the device (pixels, y down).</summary>
+        internal static (float X, float Y) UnfittedTurnedPoint(System.Numerics.Vector2 pt, int p00, int p01, int p10, int p11)
+        {
+            static int Mul(int a, int b) { long p = (long)a * b; return (int)((p + (p >> 63) + 0x8000) >> 16); }
+            int x = (int)Math.Round(pt.X) * 64, y = (int)Math.Round(pt.Y) * 64;
+            int X = Mul(x, p00) + Mul(y, p10), Y = Mul(x, p01) + Mul(y, p11);
+            return (X / 64f, -Y / 64f);
+        }
+
         /// <summary>The design outline scaled to <paramref name="em"/> and put through the 2x2
-        /// matrix (world y down), on the scaler's 26.6 grid, moved by (dx, dy) device pixels.</summary>
+        /// matrix (world y down), in the scaler's own arithmetic, moved by (dx, dy) device pixels.
+        /// <list type="bullet">
+        /// <item>MakeRasterizerTransform @18008fe48 (dwrite): the matrix times the em, each entry to
+        /// 16.16 (round half up), in the scaler's y-up frame: (m11, -m12; -m21, m22) em;</item>
+        /// <item>TrueTypeRasterizer::Implementation::NewTransform @18006c460 hands it over with
+        /// +0xce set (no point size folded in) and, for a glyph that is not grid-fitted, +0xd6
+        /// (~flags &amp; 1): scl_InitializeScaling's param_19, under which the outline is scaled
+        /// by nothing -- its font units times 64 -- and scl_PostTransformGlyph divides the
+        /// matrix by upem (+0x184/+0x188) where a fitted glyph is scaled at its rows' stretch;</item>
+        /// <item>mth_IntelMul @140026b40: each row over that divisor (DWRITE_FixDiv), every
+        /// product rounded on its own.</item>
+        /// </list></summary>
         internal static List<PathFigure> TransformedOutline(TrueTypeFont font, int gid, float em,
                                                             float m11, float m12, float m21, float m22, float dx, float dy)
         {
             var figures = new List<PathFigure>();
-            double k = em / (double)font.UnitsPerEmForHinting;
+            if (!UnfittedTurnedPoints(font, em, m11, m12, m21, m22, out int p00, out int p01, out int p10, out int p11))
+                return figures;
             foreach ((System.Numerics.Vector2[] pts, bool[] on) in font.DesignContours(gid))
             {
                 int n = pts.Length;
@@ -173,9 +210,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 var p = new System.Numerics.Vector2[n];
                 for (int i = 0; i < n; i++)
                 {
-                    double x = pts[i].X * k, y = -pts[i].Y * k;
-                    double X = m11 * x + m21 * y, Y = m12 * x + m22 * y;
-                    p[i] = new System.Numerics.Vector2((float)(Math.Round(X * 64) / 64) + dx, (float)(Math.Round(Y * 64) / 64) + dy);
+                    (float X, float Y) = UnfittedTurnedPoint(pts[i], p00, p01, p10, p11);
+                    p[i] = new System.Numerics.Vector2(X + dx, Y + dy);
                 }
                 int s0 = Array.IndexOf(on, true);
                 var q = new List<(System.Numerics.Vector2 P, bool On)>(n + 1);

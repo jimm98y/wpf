@@ -176,6 +176,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         if (tl5.Width == 0 || tl5.Height == 0) return;
                         _g.OutputText (tl5, 5, _brush, _g._ctx.TextContrast);
                         return;
+                    } else if (mode == 3 || mode == 4) {
+                        // Any other turn, antialiased: GpGraphics::DrawPlacedGlyphs hands the
+                        // device transform's linear part to CreateGlyphBitmapArray, which grid-fits
+                        // only an axis-aligned or quarter-turned realization (GpFaceRealization
+                        // +0xbc / +0xc0); otherwise each glyph's outline is scaled and turned
+                        // unfitted (MakeRasterizerTransform), scanned 4x4 at its quarter-pixel
+                        // phase and combined by max, as the upright antialiased glyphs are.
+                        var gl = new System.Collections.Generic.List<ushort> (glyphs.Length);
+                        var gx = new System.Collections.Generic.List<float> (glyphs.Length);
+                        var gy = new System.Collections.Generic.List<float> (glyphs.Length);
+                        for (int i = 0; i < glyphs.Length; i++)
+                            if (glyphs [i] != 0xffff) { gl.Add (glyphs [i]); gx.Add (xs [i]); gy.Add (ys [i]); }
+                        GdipText.Levels gv = GdipText.ComposeGreyTransformed (face, gl, em, m.M11, m.M12, m.M21, m.M22, gx.ToArray (), gy.ToArray (), 0);
+                        if (gv.Width == 0 || gv.Height == 0) return;
+                        _g.OutputText (gv, 4, _brush, _g._ctx.TextContrast);
+                        return;
                     } else {
                         // Any other turn: the glyphs' outlines through the transform, antialiased.
                         FillTurned (run, glyphs, o, m);

@@ -96,8 +96,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 Fix(wtod, rl.X, rl.Y, out int rfx, out int rfy);
                 fx = rfx; fy = rfy;
             }
-            if (Environment.GetEnvironmentVariable("ROT_DBG") == "1")
-                Console.Error.WriteLine($"ROTREF logical={logical.X},{logical.Y} target={refp.X:R},{refp.Y:R} fx={fx} fy={fy} m={m.M11},{m.M22}");
             // Unit vectors along the baseline and down (device).
             int ax = q == 0 ? 1 : q == 2 ? -1 : 0, ay = q == 1 ? -1 : q == 3 ? 1 : 0;
             int dnx = q == 1 ? 1 : q == 3 ? -1 : 0, dny = q == 0 ? 1 : q == 2 ? -1 : 0;
@@ -540,34 +538,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         outline = gen != null ? GeneralTransformed(outline, gen) : Turned(outline, axes);
                         if (gen != null) (bmpShiftX, bmpShiftY) = GeneralBitmapShift(outline, face.WantsSymmetricSmoothing(ppemY) ? 5 : 1);
                     }
-                    if (Environment.GetEnvironmentVariable("ROT_DBG") == "1")
-                    {
-                        var sb = new System.Text.StringBuilder();
-                        foreach (PathFigure f in outline) { sb.Append($" [{f.Start.X:0.###},{f.Start.Y:0.###}"); foreach (PathSegment sg in f.Segments) if (sg is LineSegment l) sb.Append($" {l.Point.X:0.###},{l.Point.Y:0.###}"); else if (sg is QuadraticBezierSegment qb) sb.Append($" q{qb.Control.X:0.###},{qb.Control.Y:0.###} {qb.Point.X:0.###},{qb.Point.Y:0.###}"); sb.Append(']'); }
-                        Console.Error.WriteLine($"ROT q={quarter} gid={gids[i]} ppem={ppemX}x{ppemY} at {xs[i]},{ys[i]} sub={TrueTypeFont.SubpixelFitting} ct={TrueTypeFont.ClearTypeRendering} gd={face.GlyphDropout(gids[i], ppem)} wd={face.WantsDropoutControl(ppem, out int stt)}/{stt} sym={face.WantsSymmetricSmoothing(ppem)}{sb}");
-                    }
                     if ((fitDropout ?? face.GlyphDropout(gids[i], ppem)) is int gd && gd >= 0) (dropouts ??= new()).Add(ordinal, gd);
-                    string rt = Environment.GetEnvironmentVariable("ROT_TRUNC");
-                    if (rt == "all" || (rt == "1" && quarter != 0))
-                    {
-                        bool symY = Environment.GetEnvironmentVariable("ROT_TRUNCY") == "1" && face.WantsSymmetricSmoothing(ppem);
-                        System.Numerics.Vector2 N(System.Numerics.Vector2 p)
-                            => new System.Numerics.Vector2(p.X < 0 ? p.X + 1f / 64 : p.X, symY && p.Y > 0 ? p.Y - 1f / 64 : p.Y);
-                        var nf = new System.Collections.Generic.List<PathFigure>();
-                        foreach (PathFigure f in outline)
-                        {
-                            var c = new PathFigure(N(f.Start)) { Closed = f.Closed };
-                            foreach (PathSegment sg in f.Segments)
-                                switch (sg)
-                                {
-                                    case LineSegment l: c.Segments.Add(new LineSegment(N(l.Point))); break;
-                                    case QuadraticBezierSegment qq: c.Segments.Add(new QuadraticBezierSegment(N(qq.Control), N(qq.Point))); break;
-                                    case CubicBezierSegment b: c.Segments.Add(new CubicBezierSegment(N(b.Control1), N(b.Control2), N(b.Point))); break;
-                                }
-                            nf.Add(c);
-                        }
-                        outline = nf;
-                    }
                     foreach (PathFigure f in outline)
                     {
                         figs.Add(Translated(f, xs[i] + bmpShiftX, ys[i] + bmpShiftY));
@@ -693,17 +664,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (minX == int.MaxValue) return (0, 0);
             static int FloorDiv(int a, int b) => (int)Math.Floor(a / (double)b);
             static int CeilDiv(int a, int b) => (int)Math.Ceiling(a / (double)b);
-            // The output outline: (v s + s/2) / s, the division truncating toward zero.
-            int outX = (minX * 6 + 3) / 6, outY = (maxY * rows + rows / 2) / rows;
-            int biLeft = (outX + 0x1f) >> 6, biTop = (outY + 0x20) >> 6;
-            int ctLeft = FloorDiv((minX * 6 + 0x1f) >> 6, 6), ctTop = CeilDiv((maxY * rows + 0x20) >> 6, rows);
+            // fsc_MeasureGlyph's box in overscaled columns and rows; the bitmap starts at the pixel
+            // holding its first column and ends at the row past its last, while devLeftSideBearing
+            // is the same box divided by the overscale in 16.16, rounded half up.
+            int c = (minX * 6 + 0x1f) >> 6, r = (maxY * rows + 0x20) >> 6;
+            int ctLeft = FloorDiv(c, 6), ctTop = CeilDiv(r, rows);
+            int biLeft = (int)Math.Floor(c / 6.0 + 0.5), biTop = (int)Math.Floor(r / (double)rows + 0.5);
             return (biLeft - ctLeft, ctTop - biTop);
         }
 
         /// <summary>win32k's float-to-28.4 rounding: half away from zero.</summary>
         static long R16(double v) => v < 0 ? -(long)Math.Floor(-v + 0.5) : (long)Math.Floor(v + 0.5);
-        static readonly int s_dbgShX = int.TryParse(Environment.GetEnvironmentVariable("ROT_SHX"), out int shx) ? shx : 0;
-        static readonly int s_dbgShY = int.TryParse(Environment.GetEnvironmentVariable("ROT_SHY"), out int shy) ? shy : 0;
 
         /// <summary>A glyph fitted at <see cref="GeneralFit"/>'s sizes (y down, pixels) turned onto
         /// the device as scl_PostTransformGlyph turns it: each 26.6 point (y up) through
@@ -715,7 +686,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int x = (int)Math.Round(p.X * 64f), y = (int)Math.Round(-p.Y * 64f);
                 int nx = TrueTypeInterpreter.DwFixMul(x, g.P00) + TrueTypeInterpreter.DwFixMul(y, g.P10);
                 int ny = TrueTypeInterpreter.DwFixMul(x, g.P01) + TrueTypeInterpreter.DwFixMul(y, g.P11);
-                nx += s_dbgShX; ny += s_dbgShY;
                 return new System.Numerics.Vector2(nx / 64f, -ny / 64f);
             }
             var r = new System.Collections.Generic.List<PathFigure>(figs.Count);

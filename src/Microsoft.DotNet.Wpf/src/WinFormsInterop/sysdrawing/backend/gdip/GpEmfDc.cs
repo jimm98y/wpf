@@ -893,7 +893,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 long[] ys = { fy + uy + ay, fy + uy + by, fy + dyy + by, fy + dyy + ay };
                 long minX = Math.Min(Math.Min(xs[0], xs[1]), Math.Min(xs[2], xs[3])), maxX = Math.Max(Math.Max(xs[0], xs[1]), Math.Max(xs[2], xs[3]));
                 long minY = Math.Min(Math.Min(ys[0], ys[1]), Math.Min(ys[2], ys[3])), maxY = Math.Max(Math.Max(ys[0], ys[1]), Math.Max(ys[2], ys[3]));
-                if (Environment.GetEnvironmentVariable("ROT_DBG") == "1") Console.Error.WriteLine($"TEXTBOX s={s} fx={fx} fy={fy} A={A} B={B} asc={asc} dsc={dsc} m={m11:R},{m12:R},{m21:R},{m22:R} xs={string.Join(",", xs)} ys={string.Join(",", ys)}");
                 l = (int)(minX >> 4) - 2; t = (int)(minY >> 4) - 2;
                 r = (int)((maxX + 15) >> 4) + 2; b = (int)((maxY + 15) >> 4) + 2;
             }
