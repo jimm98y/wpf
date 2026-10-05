@@ -203,15 +203,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             var figures = new List<PathFigure>();
             if (!UnfittedTurnedPoints(font, em, m11, m12, m21, m22, out int p00, out int p01, out int p10, out int p11))
                 return figures;
-            foreach ((System.Numerics.Vector2[] pts, bool[] on) in font.DesignContours(gid))
+            List<(System.Numerics.Vector2[] Points, bool[] OnCurve)> contours = font.DesignContours(gid);
+            // The frame's points in 26.6: font units times 64. A simulated bold is fsg_Embold's on
+            // them, unfitted, at the frame's own ppem -- the upem, so about 2% of the em each way.
+            int total = 0;
+            foreach (var c0 in contours) total += c0.Points.Length;
+            var X26 = new int[total]; var Y26 = new int[total]; var ends = new int[contours.Count];
+            int at = 0;
+            for (int k = 0; k < contours.Count; k++)
+            {
+                foreach (System.Numerics.Vector2 v in contours[k].Points)
+                {
+                    X26[at] = (int)Math.Round(v.X) * 64; Y26[at] = (int)Math.Round(v.Y) * 64; at++;
+                }
+                ends[k] = at - 1;
+            }
+            if (font.SynthesizesBold) TrueTypeFont.GdiEmboldenUnfitted(X26, Y26, ends, font.UnitsPerEmForHinting);
+            static int Mul(int a, int b) { long pr = (long)a * b; return (int)((pr + (pr >> 63) + 0x8000) >> 16); }
+            int baseAt = 0;
+            foreach ((System.Numerics.Vector2[] pts, bool[] on) in contours)
             {
                 int n = pts.Length;
+                int b0 = baseAt; baseAt += n;
                 if (n < 2) continue;
                 var p = new System.Numerics.Vector2[n];
                 for (int i = 0; i < n; i++)
                 {
-                    (float X, float Y) = UnfittedTurnedPoint(pts[i], p00, p01, p10, p11);
-                    p[i] = new System.Numerics.Vector2(X + dx, Y + dy);
+                    int x = X26[b0 + i], y = Y26[b0 + i];
+                    int Xd = Mul(x, p00) + Mul(y, p10), Yd = Mul(x, p01) + Mul(y, p11);
+                    p[i] = new System.Numerics.Vector2(Xd / 64f + dx, -Yd / 64f + dy);
                 }
                 int s0 = Array.IndexOf(on, true);
                 var q = new List<(System.Numerics.Vector2 P, bool On)>(n + 1);

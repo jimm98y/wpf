@@ -5440,6 +5440,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
         }
 
+        /// <summary>fsg_Embold over UNFITTED points in the scaler's frame at <paramref name="ppem"/>
+        /// (26.6, y up): the amounts (20 ppem - 10) / 1000 + 1 and (20 ppem - 10) / 1000 pixels split
+        /// in halves, as <see cref="GdiEmbolden"/> does for a glyph that is not fitted.</summary>
+        internal static void GdiEmboldenUnfitted(int[] X, int[] Y, int[] endPoints, int ppem)
+        {
+            int ax = (20 * ppem - 10) / 1000 + 1, ay = (20 * ppem - 10) / 1000;
+            int p8 = ax * 32, p9 = ax * 32, p10 = ay * 32, p11 = ay * 32;
+            int first = 0;
+            foreach (int last in endPoints)
+            {
+                GdiEmboldContour(X, Y, first, last, p8, p9, p10, p11);
+                first = last + 1;
+            }
+        }
+
         private static void GdiEmboldContour(int[] X, int[] Y, int start, int end,
                                              int p8, int p9, int p10, int p11)
         {
