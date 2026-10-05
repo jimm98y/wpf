@@ -83,6 +83,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public void AddRect (RectangleF r) => _path.AddRects (new[] { r });
         }
 
+        /// <summary>A glyph's outline (the path realization's, at em / upem, y down) into a path at
+        /// its world origin.</summary>
+        internal static void AddGlyphOutline (GpPath path, TrueTypeFont font, int gid, float em, float ox, float oy)
+        {
+            float k = em / font.UnitsPerEmForHinting;
+            AddGlyph (path, font, gid, new Matrix2 (k, 0f, 0f, k), ox, oy, font.SynthesizesOblique);
+        }
+
         readonly struct Matrix2
         {
             public readonly float M11, M12, M21, M22;

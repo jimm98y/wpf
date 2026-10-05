@@ -108,6 +108,37 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return new Rectangle(l, t, r - l, b - t);
         }
 
+        /// <summary>The device box of glyphs realized under a turned matrix: each outline's points
+        /// (design units, y down, through em / upem and the matrix's linear part) at its origin,
+        /// the union put out to whole pixels.</summary>
+        static readonly int s_turnPad = int.TryParse(Environment.GetEnvironmentVariable("WF_TURN_PAD"), out int tp) ? tp : 1;
+
+        static Rectangle TurnedUnion(TrueTypeFont face, ushort[] glyphs, PointF[] o, float k, GpMat m)
+        {
+            float l = float.MaxValue, t = float.MaxValue, r = float.MinValue, b = float.MinValue;
+            for (int i = 0; i < glyphs.Length; i++)
+            {
+                if (glyphs[i] == 0xffff) continue;
+                float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+                foreach ((System.Numerics.Vector2[] pts, bool[] _) in face.DesignContours(glyphs[i]))
+                    foreach (System.Numerics.Vector2 p in pts)
+                    {
+                        x0 = Math.Min(x0, p.X); x1 = Math.Max(x1, p.X); y0 = Math.Min(y0, p.Y); y1 = Math.Max(y1, p.Y);
+                    }
+                if (!(x0 <= x1)) continue;
+                // The glyph's box, its four corners through the matrix.
+                foreach ((float px, float py) in new[] { (x0, y0), (x1, y0), (x0, y1), (x1, y1) })
+                {
+                    float x = px * k, y = -py * k;
+                    float dx = x * m.M11 + y * m.M21 + o[i].X, dy = x * m.M12 + y * m.M22 + o[i].Y;
+                    l = Math.Min(l, dx); r = Math.Max(r, dx); t = Math.Min(t, dy); b = Math.Max(b, dy);
+                }
+            }
+            if (!(l < r) || !(t < b)) return Rectangle.Empty;
+            int il = (int)MathF.Floor(l) - s_turnPad, it = (int)MathF.Floor(t) - s_turnPad, ir = (int)MathF.Ceiling(r) + s_turnPad, ib = (int)MathF.Ceiling(b) + s_turnPad;
+            return new Rectangle(il, it, ir - il, ib - it);
+        }
+
         static int FloorDiv(int a, int b) => a >= 0 ? a / b : -((-a + b - 1) / b);
 
         // ---- DrawDriverString -----------------------------------------------------------------------
@@ -232,6 +263,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 // GetFontTransform's quarter turn of the realization (cos 90 as a float).
                 const float c90 = -4.371139e-08f;
                 Func<int, NaturalClearType.GlyphBits> bitsOf = null;
+                Rectangle? turnedDraw = null;
                 int last;
                 if (sideways) {
                     int ppAlong = GdipText.AxisPpem(em * m.M22), ppAcross = GdipText.AxisPpem(em * m.M11);
@@ -240,9 +272,25 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     last = (int)MathF.Floor(advDu * (em * m.M22 / upem) + 0.5f);
                 } else {
                     if (vertical) bitsOf = i => GdipText.Glyph(face, glyphs[i], GdipText.AxisPpem(em * m.M11), GdipText.AxisPpem(em * m.M22));
-                    last = (int)MathF.Floor(GpTextShaper.DeviceAdvancePx(face, glyphs[glyphs.Length - 1], em, m.M11, m.M22, mode) + 0.5f);
+                    float sx = MathF.Sqrt(m.M11 * m.M11 + m.M12 * m.M12), sy = MathF.Sqrt(m.M21 * m.M21 + m.M22 * m.M22);
+                    float tl = MathF.Max(sx, sy) / 65536f;
+                    bool axis = MathF.Abs(m.M12) <= tl && MathF.Abs(m.M21) <= tl;
+                    bool quarter = MathF.Abs(m.M11) <= tl && MathF.Abs(m.M22) <= tl;
+                    int lastMode = axis || quarter ? mode : 2;
+                    last = (int)MathF.Floor(GpTextShaper.DeviceAdvancePx(face, glyphs[glyphs.Length - 1], em, sx, sy, lastMode) + 0.5f);
+                    if (!axis && !vertical)
+                    {
+                        // A turned realization: a clockwise quarter turn is the sideways glyph;
+                        // any other turn bounded by its outline through the matrix.
+                        if (quarter && m.M12 > 0f && m.M21 < 0f)
+                        {
+                            int pa = GdipText.AxisPpem(em * sx), pc = GdipText.AxisPpem(em * sy);
+                            bitsOf = i => GdipText.GlyphSideways(face, glyphs[i], pa, pc);
+                        }
+                        else turnedDraw = TurnedUnion(face, glyphs, o, k0, m);
+                    }
                 }
-                Rectangle draw = GlyphUnion(face, glyphs, o, em * m.M11, bitsOf);
+                Rectangle draw = turnedDraw ?? GlyphUnion(face, glyphs, o, em * m.M11, bitsOf);
                 if (draw.Width <= 0 || draw.Height <= 0 || _r.TotallyClipped(draw)) return;
                 var gd = new GlyphDraw {
                     Draw = draw, Glyphs = glyphs, Origins = o, Brush = _brush, Text = chars, Map = map,

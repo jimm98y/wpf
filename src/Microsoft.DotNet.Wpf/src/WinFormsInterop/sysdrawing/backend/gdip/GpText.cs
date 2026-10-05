@@ -158,6 +158,30 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 float em = run.Em;
                 bool sideways = (run.ItemFlags & 0x20) != 0 && (run.ItemFlags & 0x8) == 0;
                 bool upright = (run.ItemFlags & 0x28) == 0x28;
+                float tl = MathF.Max (sx, sy) / 65536f;
+                bool axis = MathF.Abs (m.M12) <= tl && MathF.Abs (m.M21) <= tl;
+                bool quarter = MathF.Abs (m.M11) <= tl && MathF.Abs (m.M22) <= tl;
+                if (!axis && (run.ItemFlags & 0x20) == 0) {
+                    // A clockwise quarter turn of the world realizes the glyphs sideways, as a
+                    // vertical line's are.
+                    if (quarter && m.M12 > 0f && m.M21 < 0f) sideways = true;
+                    else if (mode == 5) {
+                        // Any other turn under ClearType: the unfitted outline through the turn,
+                        // scanned 6x1 and filtered as an upright glyph is.
+                        var tb = new NaturalClearType.GlyphBits [glyphs.Length];
+                        float s = sx;
+                        for (int i = 0; i < tb.Length; i++)
+                            tb [i] = NaturalClearType.RasterizeTransformed (face, glyphs [i], em * s, m.M11 / s, m.M12 / s, m.M21 / s, m.M22 / s);
+                        GdipText.Levels tl5 = GdipText.Compose (tb, xs, ys, 0f, face.GdiContrastPalette);
+                        if (tl5.Width == 0 || tl5.Height == 0) return;
+                        _g.OutputText (tl5, 5, _brush, _g._ctx.TextContrast);
+                        return;
+                    } else {
+                        // Any other turn: the glyphs' outlines through the transform, antialiased.
+                        FillTurned (run, glyphs, o, m);
+                        return;
+                    }
+                }
                 GdipText.Levels lv;
                 if (upright && mode == 5) {
                     // An upright glyph in vertical text: GetGlyphStringVerticalOriginOffsets @180024800,
@@ -188,6 +212,24 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
                 if (lv.Width == 0 || lv.Height == 0) return;
                 _g.OutputText (lv, mode == 5 ? 5 : mode, _brush, _g._ctx.TextContrast);
+            }
+
+            /// <summary>Glyphs under a turned transform: their outlines at the world origins, filled
+            /// through the transform with antialiasing.</summary>
+            void FillTurned (GpFullTextImager.Run run, ushort[] glyphs, PointF[] deviceOrigins, GpMatrix m)
+            {
+                GpMatrix inv = m;
+                if (!inv.Invert ()) return;
+                var world = (PointF[]) deviceOrigins.Clone ();
+                inv.Transform (world);
+                var path = new GpPath (FillMode.Winding);
+                for (int i = 0; i < glyphs.Length; i++)
+                    if (glyphs [i] != 0xffff) GpPathText.AddGlyphOutline (path, run.Face, glyphs [i], run.Em, world [i].X, world [i].Y);
+                if (path.Points.Count == 0) return;
+                SmoothingMode sm = _g._ctx.Smoothing;
+                _g._ctx.Smoothing = SmoothingMode.AntiAlias;
+                try { _g.FillPath (_brush, path.Points.ToArray (), path.Types.ToArray (), FillMode.Winding); }
+                finally { _g._ctx.Smoothing = sm; }
             }
 
             public void DrawLine (float devicePenWidth, PointF a, PointF b)

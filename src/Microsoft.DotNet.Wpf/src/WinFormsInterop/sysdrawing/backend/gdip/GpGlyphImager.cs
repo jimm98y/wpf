@@ -52,6 +52,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public int Mode;
         public GpMatrix W2D;
         public bool Path;                    // AddToPath: no realization, design advances
+        static readonly bool s_quarterSnap = Environment.GetEnvironmentVariable ("WF_FTI_QSNAP") == "1";   // measured: GDI+ does not
+        static readonly bool s_rotFit = Environment.GetEnvironmentVariable ("WF_FTI_ROTFIT") == "1";
 
         /// <summary>GlyphImager::Initialize.</summary>
         public void Initialize (GpFullTextImager fti, GpFullTextImager.Run run, GpLineServices.Seg seg, GpMatrix w2d, int mode,
@@ -82,6 +84,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
             Sy = MathF.Sqrt (w2d.M21 * w2d.M21 + w2d.M22 * w2d.M22);
             bool special = (uint) ((Script + 0xf9) & 0xff) < 4;
             bool gridFit = mode == 1 || mode == 3 || mode == 5;
+            // A turned or sheared transform: the realization is not fitted, its advances the design
+            // ones with the kerning unrounded (measured: Arial under 30 degrees).
+            const float tol = 1f / 65536f;
+            float tl = MathF.Max (MathF.Abs (w2d.M11) + MathF.Abs (w2d.M12), MathF.Abs (w2d.M21) + MathF.Abs (w2d.M22)) * tol;
+            bool quarterTurn = MathF.Abs (w2d.M11) <= tl && MathF.Abs (w2d.M22) <= tl, quarter = quarterTurn && !sideways;
+            bool turned = !s_rotFit && !(MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl) && !quarterTurn;
             if ((Flags & 0x20000000) == 0 && Script != GpTextTables.ScriptControl
                 && (special || (!Face.IsFixedPitch && (gridFit || leadMargin < 0 || trailMargin < 0)))) {
                 Device = new int [Count]; DevOffU = new int [Count]; DevOffV = new int [Count];
@@ -101,10 +109,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     bool uniform = TransformToScaleFactor (w2d, out float scale);
                     int ppem = GdipText.AxisPpem (Em * scale);
                     for (int i = 0; i < Count; i++) {
-                        float px = GpTextShaper.DeviceAdvancePx (Face, Glyphs [i], Em, Sx, Sy, mode);
+                        float px;
+                        if (quarter && mode == 5) {
+                            // A quarter-turned ClearType realization fits the glyph sideways: its advance
+                            // is the sideways fit's span (GetGdiCompatibleGlyphMetrics isSideways).
+                            GdipText.SidewaysMetrics (Face, Glyphs [i], Em, Sy, Sx, out int advDu, out _);
+                            px = MathF.Floor (advDu * (Em * Sx / upem) + 0.5f);
+                        } else px = GpTextShaper.DeviceAdvancePx (Face, Glyphs [i], Em, Sx, Sy, turned ? 2 : mode);
                         if (i + 1 < Count) {
                             int ku = GpTextShaper.Kern (Face, Script, Glyphs [i], Glyphs [i + 1]);
-                            if (ku != 0) px += uniform ? DesignToPP (upem, ppem, ku) : ku * (Em * Sx / upem);
+                            if (ku != 0) px += uniform && !turned ? DesignToPP (upem, ppem, ku) : ku * (Em * Sx / upem);
                         }
                         Device [i] = (int) MathF.Floor (px / Sx * R + 0.5f);
                     }
@@ -355,6 +369,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (Shift != 0) {
                 if ((Flags & 2) == 0) p.X += sh / R;
                 else p.Y += sh / R;
+            }
+            if (Fitted && s_quarterSnap && (W2D.Complexity & ~3) != 0) {
+                float tl = MathF.Max (Sx, Sy) / 65536f;
+                if (MathF.Abs (W2D.M11) <= tl && MathF.Abs (W2D.M22) <= tl) {
+                    // A quarter turn is put on the device grid as an axis scale is.
+                    var d = new[] { p };
+                    W2D.Transform (d);
+                    d [0] = new PointF (MathF.Floor (d [0].X + 0.5f), MathF.Floor (d [0].Y + 0.5f));
+                    GpMatrix inv = W2D;
+                    if (inv.Invert ()) { inv.Transform (d); p = d [0]; }
+                }
             }
             if (Fitted && (W2D.Complexity & ~3) == 0) {
                 float m11 = W2D.M11, m22 = W2D.M22;
