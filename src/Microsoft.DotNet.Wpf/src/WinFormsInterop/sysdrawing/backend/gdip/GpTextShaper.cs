@@ -160,6 +160,28 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return s_legacyKern && face.TryGetKernUnits (left, right, out int u) ? u : 0;
         }
 
+        /// <summary>The design advance DirectWrite gives GDI+ (IDWriteFontFace::GetDesignGlyphMetrics):
+        /// a face with a bold simulation widens every glyph that has an outline by round(upem / 50)
+        /// (blanks keep theirs; measured on 256-, 1000- and 2048-unit faces).</summary>
+        public static int DesignAdvance (TrueTypeFont face, int gid)
+        {
+            int a = face.DesignAdvance (gid);
+            if (face.SynthesizesBold && HasContours (face, gid))
+                a += (int) MathF.Floor (face.UnitsPerEmForHinting / 50f + 0.5f);
+            return a;
+        }
+
+        static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TrueTypeFont, Dictionary<int, bool>> s_contours = new ();
+
+        static bool HasContours (TrueTypeFont face, int gid)
+        {
+            Dictionary<int, bool> d = s_contours.GetOrCreateValue (face);
+            lock (d) {
+                if (!d.TryGetValue (gid, out bool has)) d [gid] = has = face.DesignContours (gid).Count > 0;
+                return has;
+            }
+        }
+
         /// <summary>GetGlyphPlacements at an em of <paramref name="em"/> (design units scaled by em / upem).</summary>
         public static float[] GetGlyphAdvances (TrueTypeFont face, ushort[] glyphs, int start, int count, int itemScript, float em)
         {
@@ -167,7 +189,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             float k = em / upem;
             var adv = new float [count];
             for (int i = 0; i < count; i++) {
-                int a = face.DesignAdvance (glyphs [start + i]);
+                int a = DesignAdvance (face, glyphs [start + i]);
                 if (i + 1 < count) a += Kern (face, itemScript, glyphs [start + i], glyphs [start + i + 1]);
                 adv [i] = a * k;
             }
@@ -181,13 +203,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int upem = face.UnitsPerEmForHinting;
             if (mode == 5) {
                 GdipText.NaturalMetrics (face, gid, em, sx, sy, out int adv, out _, out _);
-                return MathF.Floor (adv * (em * sx / upem) + 0.5f);
+                return MathF.Floor (adv * (em * sx / upem) + 0.5f) + SimBoldPx (face, gid);
             }
             if (mode == 1 || mode == 3) {
                 GdipText.ClassicMetrics (face, gid, em * sx, out int adv, out _, out _);
-                return MathF.Floor (adv * (em * sx / upem) + 0.5f);
+                return MathF.Floor (adv * (em * sx / upem) + 0.5f) + SimBoldPx (face, gid);
             }
-            return face.DesignAdvance (gid) * (em * sx / upem);
+            return DesignAdvance (face, gid) * (em * sx / upem);
         }
+
+        /// <summary>DirectWrite's GDI-compatible metrics of a bold simulation: a glyph with an
+        /// outline a device pixel wider.</summary>
+        static int SimBoldPx (TrueTypeFont face, int gid) => face.SynthesizesBold && HasContours (face, gid) ? 1 : 0;
     }
 }

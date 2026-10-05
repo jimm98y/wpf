@@ -380,7 +380,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 // Right to left: each glyph's origin is at its right; back to its left by its ideal advance.
                 int upem = Face.UnitsPerEmForHinting;
                 for (int i = 0; i < Count; i++) {
-                    int ideal = (int) MathF.Floor (Face.DesignAdvance (Glyphs [i]) * (Em * R / upem) + 0.5f);
+                    int ideal = (int) MathF.Floor (GpTextShaper.DesignAdvance (Face, Glyphs [i]) * (Em * R / upem) + 0.5f);
                     if (!vertical) o [i].X -= ideal / R;
                     else o [i].Y -= ideal / R;
                 }

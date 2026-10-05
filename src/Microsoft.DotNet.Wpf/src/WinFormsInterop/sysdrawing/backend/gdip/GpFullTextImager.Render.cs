@@ -152,6 +152,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (atEnd) trail = line.LeadMargin;
             }
             var cell = new PointF (px / R + origin.X, py / R + origin.Y);
+            if (_recording != null) {
+                RecordDisplay (target, line, seg, cell, lead, trail, atStart, atEnd);
+                return;
+            }
             if (w2dN == null) {
                 // A path: the nominal layout, no device (FullTextImager::AddToPath).
                 var gi0 = new GpGlyphImager ();

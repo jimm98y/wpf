@@ -40,7 +40,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         static readonly bool s_trace = Environment.GetEnvironmentVariable ("WF_GPTEXT_TRACE") == "1";
 
         /// <summary>The hint DrawString realizes with (CalculateTextRenderingHintInternal).</summary>
-        int ResolvedTextHint ()
+        internal int ResolvedTextHint ()
         {
             int h = (int) _ctx.TextHint;
             if (Image.GetPixelFormatSize (Frame.Format) <= 8) return GdipText.HintSingleBitPerPixelGridFit;
@@ -76,7 +76,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (!(emWorld > 0f)) return false;
             TrueTypeFont face = GdipText.Face (family, style & 3);
             if (face == null) return false;
-            if (!TakesFullImager (s, face, fmt)) {
+            if (!TakesFullImager (WorldToDevice, s, face, fmt)) {
                 int flags = fmt?.Flags ?? 0;
                 bool typographic = fmt != null && fmt.LeadMargin == 0f;
                 bool hotkey = fmt != null && fmt.Hotkey != 0;
@@ -92,9 +92,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>FastTextImager::Initialize's refusals the port decides here, from GDI+'s own
         /// tables (the width, black-box and transform refusals are GdiPlusText.Layout's).</summary>
-        bool TakesFullImager (string s, TrueTypeFont face, GpTextFormat fmt)
+        internal static bool TakesFullImager (in GpMatrix m, string s, TrueTypeFont face, GpTextFormat fmt)
         {
-            GpMatrix m = WorldToDevice;
             if (!(m.M11 > 0f) || m.M12 != 0f || m.M21 != 0f || m.M22 == 0f) return true;
             if (fmt != null && ((fmt.Flags & 0x40000003) != 0 || fmt.Tabs.Length > 0)) return true;
             int all = 0;
@@ -132,8 +131,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public GpMatrix? WorldToDevice => _g.WorldToDevice;
 
             public int RealizationMode (TrueTypeFont face, string family, float emDevice, bool square)
+                => RealizationModeFor (_g.ResolvedTextHint (), face, family, emDevice, square);
+
+            /// <summary>GpFaceRealization's render mode for a resolved hint: ClearType falls back to
+            /// bi-level for a face drawn from its embedded bitmaps at this size (and Marlett),
+            /// AntiAliasGridFit for a size the 'gasp' does not grey.</summary>
+            internal static int RealizationModeFor (int hint, TrueTypeFont face, string family, float emDevice, bool square)
             {
-                int hint = _g.ResolvedTextHint ();
                 int ppem = (int) MathF.Floor (emDevice + 0.5f);
                 if (hint == GdipText.HintClearTypeGridFit
                     && ((square && face.EmbeddedBitmapCount (ppem) > 100) || string.Equals (family, "Marlett", StringComparison.OrdinalIgnoreCase)))

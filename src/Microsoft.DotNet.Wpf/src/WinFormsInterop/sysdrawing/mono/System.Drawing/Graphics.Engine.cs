@@ -379,8 +379,26 @@ namespace System.Drawing
 		static readonly bool s_noGpMeasure = Environment.GetEnvironmentVariable ("WF_GP_MEASURE") == "0";
 		static readonly bool s_noGpRanges = Environment.GetEnvironmentVariable ("WF_GP_RANGES") == "0";
 
-		/// <summary>MeasureString as gdiplus.dll answers it (GpGraphics::MeasureString through
-		/// FullTextImager): the nominal, device-independent layout of GpTextLayout. False for the
+		/// <summary>The context GDI+ measures text in: world to device, the font's em in world
+		/// units (GetScaleForAlternatePageUnit), the resolved hint, and whether it is a metafile's.</summary>
+		void TextMeasureContext (Font font, out GpMatrix w2d, out float emWorld, out int hint, out bool metafile)
+		{
+			metafile = mf_rec != null;
+			if (gp != null) {
+				SyncEngine ();
+				w2d = gp.WorldToDevice;
+				emWorld = gp.EmWorld (font.Size, font.Unit);
+				hint = gp.ResolvedTextHint ();
+				return;
+			}
+			w2d = RegionWorldToDevice ();
+			emWorld = GpGraphics.EmWorldFor (font.Size, font.Unit, rec_unit, rec_page_scale, DpiX, DpiY);
+			hint = (int) recorded_text_hint;
+			if (hint == 0) hint = 5;
+		}
+
+		/// <summary>MeasureString as gdiplus.dll answers it (GpGraphics::MeasureString: the fast
+		/// imager's measure where it takes the string, FullTextImager's otherwise). False for the
 		/// port's own GDI stand-ins and for a font the managed stack cannot resolve.</summary>
 		bool GdiPlusMeasure (string text, Font font, RectangleF rect, StringFormat format, out SizeF size,
 				     out int chars, out int lines)
@@ -388,88 +406,25 @@ namespace System.Drawing
 			size = SizeF.Empty; chars = lines = 0;
 			if (!s_gdiPlusText || s_noGpMeasure || port_measure || gdi_text_metrics || gdi_ascent || memory_surface_text || font == null)
 				return false;
-			string family = font.FontFamily?.Name;
-			if (string.IsNullOrEmpty (family)) return false;
-			int style = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
-			var font2 = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Face (family, style);
-			GpFontFamily.Metrics? m = GpFontFamily.Get (family, (FontStyle) style);
-			if (font2 == null || m == null) return false;
-			int flags = format == null ? 0 : (int) format.FormatFlags;
-			bool typographic = format != null && format.IsTypographic;
-			bool hotkey = format != null && format.HotkeyPrefix != Text.HotkeyPrefix.None;
-			float dpi = gp != null ? gp.DpiY : 96f;
-			float em = font.SizeInPoints * (dpi / 72f);
-			GpTextLayout L = GpTextLayout.Build (font2, m.Value, text, em, rect.Width, flags, typographic, hotkey);
-			size = L.Measure (rect.Height, flags, out chars, out lines);
+			if (string.IsNullOrEmpty (text)) return true;
+			TextMeasureContext (font, out GpMatrix w2d, out float em, out _, out bool metafile);
+			if (!GpGraphics.MeasureStringFor (text, font, em, rect, format, w2d, metafile, out RectangleF box, out chars, out lines))
+				return false;
+			size = box.Size;
 			return true;
 		}
 
-		/// <summary>MeasureCharacterRanges as gdiplus.dll answers it: the lines GpTextLayout breaks,
-		/// each placed at its rounded origin (the margin in ideal units) and advanced by the hinted
-		/// advances of the realization the TextRenderingHint asks for; a range's region is its run
-		/// on each line it touches, x on whole pixels, y the line box [ceil(top), ceil(bottom)).
-		/// Checked against gdiplus.dll over four faces, three sizes, both formats.</summary>
+		/// <summary>MeasureCharacterRanges as gdiplus.dll answers it: FullTextImager::MeasureRanges
+		/// (GpFullTextImager.Ranges.cs), each range's region on the lines it touches, where the
+		/// device puts the glyphs.</summary>
 		Region[] GdiPlusCharacterRanges (string text, Font font, RectangleF rect, StringFormat format, int count)
 		{
 			if (!s_gdiPlusText || s_noGpRanges || port_measure || gdi_text_metrics || gdi_ascent || memory_surface_text) return null;
-			string family = font.FontFamily?.Name;
-			if (string.IsNullOrEmpty (family)) return null;
-			int style = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
-			var face = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Face (family, style);
-			GpFontFamily.Metrics? mm = GpFontFamily.Get (family, (FontStyle) style);
-			if (face == null || mm == null) return null;
-			GpFontFamily.Metrics m = mm.Value;
-			int flags = (int) format.FormatFlags;
-			bool typographic = format.IsTypographic;
-			bool hotkey = format.HotkeyPrefix != Text.HotkeyPrefix.None;
-			float dpi = gp != null ? gp.DpiY : 96f;
-			float em = font.SizeInPoints * (dpi / 72f);
-			GpTextLayout L = GpTextLayout.Build (face, m, text, em, rect.Width, flags, typographic, hotkey);
-			int hint = (int) recorded_text_hint;
-			if (hint == 0) hint = 5;
-			int upem = face.UnitsPerEmForHinting;
-			float scale = em / upem;
-			int Hinted (int gid)
-			{
-				int a;
-				if (hint == 5) Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.NaturalMetrics (face, gid, em, out a, out _, out _);
-				else if (hint == 1 || hint == 3) Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.ClassicMetrics (face, gid, em, out a, out _, out _);
-				else return (int) Math.Floor (face.DesignAdvance (gid) * scale + 0.5f);
-				return (int) Math.Floor (a * scale + 0.5f);
-			}
-			float lsPx = (float) (m.LineSpacing * (double) em / m.Em);
-			float margin = typographic ? 0f : (float) (GpTextLayout.IdealMargin * (double) em / GpTextLayout.Ideal);
-			CharacterRange[] ranges = format.MeasurableCharacterRanges;
-			var regions = new Region [count];
-			for (int r = 0; r < count; r++) {
-				CharacterRange cr = ranges != null && r < ranges.Length ? ranges [r] : new CharacterRange (0, 0);
-				int first = cr.First, last = cr.First + cr.Length;
-				var reg = new Region ();
-				reg.MakeEmpty ();
-				for (int li = 0; li < L.Lines.Count; li++) {
-					GpTextLayout.Line line = L.Lines [li];
-					// Hinted advances from the origin rounded to the pixel (the full imager's own
-					// spreading of the hinted-vs-nominal difference, AdjustGlyphAdvances @1800f4e18,
-					// is not modelled).
-					var xs = new int [line.Glyphs.Count + 1];
-					xs [0] = (int) Math.Floor (rect.X + margin + 0.5f);
-					for (int g = 0; g < line.Glyphs.Count; g++) xs [g + 1] = xs [g] + Hinted (line.Glyphs [g]);
-					int x0 = int.MinValue, x1 = int.MinValue;
-					for (int g = 0; g < line.Glyphs.Count; g++) {
-						int ch = line.Chars [g];
-						if (ch >= first && ch < last) {
-							if (x0 == int.MinValue) x0 = xs [g];
-							x1 = xs [g + 1];
-						}
-					}
-					if (x0 == int.MinValue) continue;
-					float top = rect.Y + li * lsPx;
-					float bottom = top + (float) ((m.Ascent + m.Descent) * (double) em / m.Em);
-					int t = (int) Math.Ceiling (top), b = (int) Math.Ceiling (bottom);
-					reg.Union (new Rectangle (x0, t, x1 - x0, b - t));
-				}
-				regions [r] = reg;
-			}
+			TextMeasureContext (font, out GpMatrix w2d, out float em, out int hint, out bool metafile);
+			GpRegion[] gr = GpGraphics.MeasureCharacterRangesFor (text, font, em, rect, format, count, w2d, hint, metafile);
+			if (gr == null) return null;
+			var regions = new Region [gr.Length];
+			for (int i = 0; i < gr.Length; i++) regions [i] = new Region (gr [i]);
 			return regions;
 		}
 

@@ -275,7 +275,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             for (int i = 0; i < count; i++) {
                 int ch = Text [run.Str + from + i];
                 int g = run.Face.GlyphIndexOf (ch);
-                w [i] = (int) MathF.Floor ((float) (run.Face.DesignAdvance (g) * k) + 0.5f);
+                w [i] = (int) MathF.Floor ((float) (GpTextShaper.DesignAdvance (run.Face, g) * k) + 0.5f);
             }
             return w;
         }
@@ -285,7 +285,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             double k = (double) (Tracking * ((run.Em / run.Face.UnitsPerEmForHinting) * R));
             int g = run.Face.GlyphIndexOf (ch);
-            return (int) MathF.Floor ((float) (run.Face.DesignAdvance (g) * k) + 0.5f);
+            return (int) MathF.Floor ((float) (GpTextShaper.DesignAdvance (run.Face, g) * k) + 0.5f);
         }
 
         /// <summary>GdipLscbkGetGlyphPositions: the glyphs' advances from GetGlyphPlacements at
@@ -325,6 +325,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public int Start;                // +0x5c: the line's first u (margin plus alignment)
             public int Origin;               // +0x54: where Line Services starts drawing it
             public int EllipsisAt = -1;      // +0x58
+            public int Consumed;             // the line's characters in the imager's line list (+0x168[i].count)
             public GpLineServices.LsLine Ls;
         }
 
@@ -357,17 +358,20 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         Line last = Lines [^1];
                         int lastPos = last.StrFirst;
                         Lines.RemoveAt (Lines.Count - 1);
-                        CharCount -= last.Chars;
+                        // The count: every line's own characters, the last one's span swapped for the rebuilt line's.
+                        CharCount -= last.Consumed;
                         if (trimming == 2) {
                             // Word trimming keeps the line as it broke unless it ended a paragraph.
                             char before = pos > 0 ? Text [pos - 1] : '\n';
                             last.Trimmed = before != '\r' && before != '\n' ? 2 : 0;
                             Lines.Add (last);
-                            CharCount += UntrimmedCount (last);
+                            last.Consumed = UntrimmedCount (last);
+                            CharCount += last.Chars;
                         } else {
                             var re = BuildLine (last.CpFirst, lastPos, trimming, true, Lines.Count > 0 ? Lines [^1] : null);
                             Lines.Add (re);
-                            CharCount += UntrimmedCount (re);
+                            re.Consumed = UntrimmedCount (re);
+                            CharCount += re.Chars;
                             Account (re);
                         }
                     }
@@ -376,8 +380,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 total += line.Height;
                 Lines.Add (line);
                 int count = UntrimmedCount (line);
+                line.Consumed = count;
                 if (count < 1) return;
-                CharCount += count;
+                CharCount += line.Chars;
                 LineCount = Lines.Count;
                 Account (line);
                 pos += count;
@@ -514,7 +519,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             for (int i = 0; i < glyphs.Length; i++) {
                 // GetDesignGlyphAdvances, sideways in a vertical format: the advance height (the
                 // typographic ascent less descent for a face with no vertical metrics).
-                int adv = (iflags & 0x20) != 0 ? Face.TypoAscender - Face.TypoDescender : Face.DesignAdvance (glyphs [i]);
+                int adv = (iflags & 0x20) != 0 ? Face.TypoAscender - Face.TypoDescender : GpTextShaper.DesignAdvance (Face, glyphs [i]);
                 EllipsisAdvances [i] = (int) MathF.Floor ((float) (adv * k) + 0.5f);
                 _ellipsisWidth += EllipsisAdvances [i];
             }
