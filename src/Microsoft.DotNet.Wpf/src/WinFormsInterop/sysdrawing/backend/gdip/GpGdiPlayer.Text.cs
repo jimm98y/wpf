@@ -205,7 +205,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             ys[i] += sd * dny + sa * ay;
                         }
                     }
-                    CtLevels lv = GdiClearTypeRun(font.Face, gids, xs, ys, ppemAlong, ppemAcross, gen != null ? -1 : q, (ax, ay, dnx, dny), upright, gen != null ? gen.Stretched : rStretch, gen);
+                    // bRealizeFont gives the contrast palette only to a font whose ascender is upright:
+                    // RFONT +0x140, fxMaxAscender times the unit ascender's x, must round to zero.
+                    bool contrastOk = gen == null ? q % 2 == 0 : Math.Round(font.Ascent * 16.0 * gen.UaX) == 0;
+                    CtLevels lv = GdiClearTypeRun(font.Face, gids, xs, ys, ppemAlong, ppemAcross, gen != null ? -1 : q, (ax, ay, dnx, dny), upright, gen != null ? gen.Stretched : rStretch, gen, contrastOk);
                     (byte[] A, byte[] B) = CtGamma();
                     uint inkRgb = Rgb(_dc.TextColor);
                     int ir = (int)(inkRgb >> 16) & 255, ig = (int)(inkRgb >> 8) & 255, ib = (int)inkRgb & 255;
@@ -453,7 +456,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// 6x1 / 6x5 filter, the dropout, the bold smear, the line-box clip and the level sums of
         /// win32k's run (PathRasterizer.RasterizeSubpixel with the per-run configuration
         /// WgpuSceneRenderer.EmitStringRun gives a string run).</summary>
-        static CtLevels GdiClearTypeRun(TrueTypeFont face, int[] gids, int[] xs, int[] ys, int ppemX, int ppemY, int quarter, (int Ax, int Ay, int Dx, int Dy) axes, bool[] upright = null, bool stretchInfo = false, GeneralFit gen = null)
+        static CtLevels GdiClearTypeRun(TrueTypeFont face, int[] gids, int[] xs, int[] ys, int ppemX, int ppemY, int quarter, (int Ax, int Ay, int Dx, int Dy) axes, bool[] upright = null, bool stretchInfo = false, GeneralFit gen = null, bool contrastOk = true)
         {
             int n = gids.Length;
             bool savedSub = TrueTypeFont.SubpixelFitting, savedCt = TrueTypeFont.ClearTypeRendering;
@@ -551,7 +554,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 PathRasterizer.SimBoldPixelsForRun = face.GdiEmboldensBitmap ? TrueTypeFont.SimBoldSmearPixels(ppemY) : 0;
                 PathRasterizer.DropoutForRun = face.WantsDropoutControl(ppem, out int scanType) ? scanType + 1 : 0;
                 PathRasterizer.SymmetricVerticalForRun = false;
-                PathRasterizer.ContrastFilterForRun = face.GdiContrastPalette;
+                PathRasterizer.ContrastFilterForRun = face.GdiContrastPalette && contrastOk;
                 PathRasterizer.FigureGlyphIdsForRun = owners.ToArray();
                 PathRasterizer.GlyphRowClipForRun = rowClip;
                 PathRasterizer.GlyphColClipForRun = colClip;
