@@ -113,9 +113,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     int ppem = GdipText.AxisPpem (Em * scale);
                     for (int i = 0; i < Count; i++) {
                         float px;
-                        if (quarter && mode == 5) {
-                            // A quarter-turned ClearType realization fits the glyph sideways: its advance
-                            // is the sideways fit's span (GetGdiCompatibleGlyphMetrics isSideways).
+                        if (quarter && (mode == 5 || mode == 1 || mode == 3)) {
+                            // A quarter-turned realization's advance is the sideways fit's span
+                            // (GetGdiCompatibleGlyphMetrics isSideways). The classic measure is the
+                            // same fit: MakeRasterizerFlagsForMeasuring @180091290 hints a matrix
+                            // with a zero entry and GDI_CLASSIC adds 0x10, NewTransform's word 3,
+                            // whose compatible widths fs__NewTransformation drops for m01 != 0 and
+                            // whose bit 2 it toggles for m00 == 0 -- the sideways natural word.
                             // A bold simulation's outline is a device pixel wider there too.
                             GdipText.SidewaysMetrics (Face, Glyphs [i], Em, Sy, Sx, out int advDu, out _);
                             px = MathF.Floor (advDu * (Em * Sx / upem) + 0.5f)

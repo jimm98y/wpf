@@ -191,6 +191,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         if (gv.Width == 0 || gv.Height == 0) return;
                         _g.OutputText (gv, 4, _brush, _g._ctx.TextContrast);
                         return;
+                    } else if (mode == 1 || mode == 2) {
+                        // Any other turn, bi-level: raster type 0 unfitted (grid fitting is asked
+                        // for only under an axis-aligned or quarter-turned transform).
+                        var gl = new System.Collections.Generic.List<ushort> (glyphs.Length);
+                        var gx = new System.Collections.Generic.List<float> (glyphs.Length);
+                        var gy = new System.Collections.Generic.List<float> (glyphs.Length);
+                        for (int i = 0; i < glyphs.Length; i++)
+                            if (glyphs [i] != 0xffff) { gl.Add (glyphs [i]); gx.Add (xs [i]); gy.Add (ys [i]); }
+                        GdipText.Levels mv = GdipText.ComposeMonoTransformed (face, gl, em, m.M11, m.M12, m.M21, m.M22, gx.ToArray (), gy.ToArray ());
+                        if (mv.Width == 0 || mv.Height == 0) return;
+                        _g.OutputText (mv, mode, _brush, _g._ctx.TextContrast);
+                        return;
                     } else {
                         // Any other turn: the glyphs' outlines through the transform, antialiased.
                         FillTurned (run, glyphs, o, m);
@@ -198,7 +210,20 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     }
                 }
                 GdipText.Levels lv;
-                if (upright && mode == 5) {
+                if (!axis && sideways && mode != 5) {
+                    // A quarter-turned world under the antialiased or bi-level hints: grid-fitted
+                    // sideways, as the ClearType glyph is (along em * sx, across em * sy).
+                    var gl = new System.Collections.Generic.List<ushort> (glyphs.Length);
+                    var gx = new System.Collections.Generic.List<float> (glyphs.Length);
+                    var gy = new System.Collections.Generic.List<float> (glyphs.Length);
+                    for (int i = 0; i < glyphs.Length; i++)
+                        if (glyphs [i] != 0xffff) { gl.Add (glyphs [i]); gx.Add (xs [i]); gy.Add (ys [i]); }
+                    // SingleBitPerPixel is never grid-fitted: its quarter turn is the unfitted scan.
+                    lv = mode == 2
+                        ? GdipText.ComposeMonoTransformed (face, gl, em, m.M11, m.M12, m.M21, m.M22, gx.ToArray (), gy.ToArray ())
+                        : GdipText.ComposeQuarter (face, gl, GdipText.AxisPpem (em * sx), GdipText.AxisPpem (em * sy),
+                                                   mode == 3 || mode == 4, gx.ToArray (), gy.ToArray ());
+                } else if (upright && mode == 5) {
                     // An upright glyph in vertical text: GetGlyphStringVerticalOriginOffsets @180024800,
                     // ((cell ascent - advance + cell descent) / 2 - cell descent, vertical origin y)
                     // through the realization, the glyph unturned.

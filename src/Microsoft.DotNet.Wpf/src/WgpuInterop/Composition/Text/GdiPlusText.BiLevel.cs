@@ -256,6 +256,61 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return figures;
         }
 
+        /// <summary>A bi-level run under a general transform (raster type 0, grid fitting off):
+        /// each glyph's unfitted outline through the matrix, scanned one sample a pixel with the
+        /// scan converter's own dropout control, placed at round-half-away of its origin, merged.</summary>
+        internal static Levels ComposeMonoTransformed(TrueTypeFont font, IReadOnlyList<ushort> gids, float em,
+                                                      float m11, float m12, float m21, float m22, float[] xs, float[] ys)
+        {
+            int n = gids.Count;
+            var place = new (GreyGlyph G, int X, int Y)[n];
+            int p0 = int.MaxValue, p1 = int.MinValue, r0 = int.MaxValue, r1 = int.MinValue;
+            for (int i = 0; i < n; i++)
+            {
+                var g = new GreyGlyph();
+                List<PathFigure> figures = TransformedOutline(font, gids[i], em, m11, m12, m21, m22, 0f, 0f);
+                if (figures.Count > 0)
+                {
+                    float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+                    foreach (PathFigure f in figures)
+                    {
+                        Take(f.Start);
+                        foreach (PathSegment sg in f.Segments)
+                            if (sg is LineSegment l) Take(l.Point);
+                            else if (sg is QuadraticBezierSegment q) { Take(q.Control); Take(q.Point); }
+                    }
+                    void Take(System.Numerics.Vector2 p)
+                    {
+                        if (p.X < x0) x0 = p.X; if (p.X > x1) x1 = p.X;
+                        if (p.Y < y0) y0 = p.Y; if (p.Y > y1) y1 = p.Y;
+                    }
+                    int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
+                    int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
+                    bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figures), ox, oy, w, h, 1, UnfittedDropout, 1);
+                    if (bits is not null)
+                    {
+                        var bytes = new byte[bits.Length];
+                        for (int k = 0; k < bits.Length; k++) if (bits[k]) bytes[k] = 1;
+                        CropInto(g, bytes, w, h, ox, oy, b => b != 0);
+                    }
+                }
+                place[i] = (g, NaturalClearType.RoundHalfAway(xs[i]) + g.Left, NaturalClearType.RoundHalfAway(ys[i]) + g.Top);
+                if (g.Width == 0) continue;
+                p0 = Math.Min(p0, place[i].X); p1 = Math.Max(p1, place[i].X + g.Width - 1);
+                r0 = Math.Min(r0, place[i].Y); r1 = Math.Max(r1, place[i].Y + g.Height - 1);
+            }
+            var lv = new Levels { Grey = true };
+            if (p0 > p1) return lv;
+            lv.Left = p0; lv.Top = r0; lv.Width = p1 - p0 + 1; lv.Height = r1 - r0 + 1;
+            lv.Index = new byte[lv.Width * lv.Height];
+            foreach ((GreyGlyph g, int gx, int gy) in place)
+                for (int r = 0; r < g.Height; r++)
+                    for (int c = 0; c < g.Width; c++)
+                        if (g.Coverage[r * g.Width + c] != 0)
+                            lv.Index[(gy + r - lv.Top) * lv.Width + gx + c - lv.Left] = 15;
+            return lv;
+        }
+
         /// <summary>An antialiased run under a general transform: each glyph's transformed outline
         /// scanned 4x4 at its quarter-pixel phase, coverage by max (Levels.Index 0..15).</summary>
         internal static Levels ComposeGreyTransformed(TrueTypeFont font, IReadOnlyList<ushort> gids, float em,

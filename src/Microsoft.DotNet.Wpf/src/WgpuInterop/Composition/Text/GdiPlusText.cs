@@ -981,6 +981,126 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return g;
         }
 
+        /// <summary>A glyph of an antialiased or bi-level realization turned a quarter clockwise
+        /// (the world's, not a vertical line's): fitted at the sideways sizes as
+        /// <see cref="GlyphSideways"/> is -- the grey word with bit 2 toggled (fs__NewTransformation
+        /// does so for a ClearType word when m00 == 0), the bi-level word as it is -- turned
+        /// (x, y) -> (-y, x) and scanned 4x4 at its quarter-pixel phase (<paramref name="grey"/>) or
+        /// once a pixel with the fit's dropout control.</summary>
+        internal static GreyGlyph QuarterGlyph(TrueTypeFont font, int gid, int ppemAlong, int ppemAcross, bool grey, int phaseX, int phaseY)
+        {
+            var g = new GreyGlyph();
+            int sxs = TrueTypeInterpreter.StretchPpemX, sys = TrueTypeInterpreter.StretchPpemY;
+            TrueTypeInterpreter.StretchPpemX = ppemAlong == ppemAcross ? 0 : ppemAlong;
+            TrueTypeInterpreter.StretchPpemY = ppemAlong == ppemAcross ? 0 : ppemAcross;
+            List<PathFigure> figures;
+            int dropout;
+            try
+            {
+                int ppem = Math.Max(ppemAlong, ppemAcross);
+                int word = grey ? GreyScalerWord ^ 4 : TrueTypeFont.DWriteBiLevelWord;
+                if (!font.TryGetDWriteFittedOutline(gid, ppem, word, out figures, out dropout))
+                {
+                    dropout = grey ? 0 : UnfittedDropout;
+                    if (!font.TryGetScaledOutline(gid, ppem, out figures)) return g;
+                }
+            }
+            finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
+            float dx = grey ? phaseX / 4f : 0f, dy = grey ? phaseY / 4f : 0f;
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            System.Numerics.Vector2 T(System.Numerics.Vector2 p)
+            {
+                var q = new System.Numerics.Vector2(-p.Y + dx, p.X + dy);
+                if (q.X < x0) x0 = q.X; if (q.X > x1) x1 = q.X;
+                if (q.Y < y0) y0 = q.Y; if (q.Y > y1) y1 = q.Y;
+                return q;
+            }
+            var turned = new List<PathFigure>(figures.Count);
+            foreach (PathFigure f in figures)
+            {
+                var nf = new PathFigure(T(f.Start)) { Closed = f.Closed };
+                foreach (PathSegment sg in f.Segments)
+                    nf.Segments.Add(sg switch
+                    {
+                        LineSegment l => new LineSegment(T(l.Point)),
+                        QuadraticBezierSegment q => new QuadraticBezierSegment(T(q.Control), T(q.Point)),
+                        CubicBezierSegment c => new CubicBezierSegment(T(c.Control1), T(c.Control2), T(c.Point)),
+                        _ => sg,
+                    });
+                turned.Add(nf);
+            }
+            if (x0 > x1) return g;
+            int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
+            int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
+            int s = grey ? 4 : 1;
+            bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, turned), ox, oy, w, h, s, dropout, s);
+            if (bits is null) return g;
+            var cov = new int[w * h];
+            int cols = w * s;
+            for (int r = 0; r < h * s; r++)
+                for (int c = 0; c < cols; c++)
+                    if (bits[r * cols + c]) cov[(r / s) * w + (c / s)]++;
+            int c0 = w, c1 = -1, r0 = h, r1 = -1;
+            for (int r = 0; r < h; r++)
+                for (int c = 0; c < w; c++)
+                    if (cov[r * w + c] > 0)
+                    {
+                        c0 = Math.Min(c0, c); c1 = Math.Max(c1, c);
+                        r0 = Math.Min(r0, r); r1 = Math.Max(r1, r);
+                    }
+            if (c1 < 0) return g;
+            g.Left = ox + c0; g.Top = oy + r0; g.Width = c1 - c0 + 1; g.Height = r1 - r0 + 1;
+            g.Coverage = new byte[g.Width * g.Height];
+            for (int r = 0; r < g.Height; r++)
+                for (int c = 0; c < g.Width; c++)
+                    g.Coverage[r * g.Width + c] = (byte)Math.Min(15, grey ? cov[(r0 + r) * w + c0 + c] : cov[(r0 + r) * w + c0 + c] * 15);
+            return g;
+        }
+
+        /// <summary>A quarter-turned antialiased (<paramref name="grey"/>) or bi-level run: each
+        /// glyph at its own origin -- grey at the quarter-pixel phase, bi-level at round-half-away --
+        /// combined by max.</summary>
+        internal static Levels ComposeQuarter(TrueTypeFont font, IReadOnlyList<ushort> gids, int ppemAlong, int ppemAcross,
+                                              bool grey, float[] xs, float[] ys)
+        {
+            int n = gids.Count;
+            var place = new (GreyGlyph G, int X, int Y)[n];
+            int p0 = int.MaxValue, p1 = int.MinValue, r0 = int.MaxValue, r1 = int.MinValue;
+            for (int i = 0; i < n; i++)
+            {
+                GreyGlyph g;
+                int ix, iy;
+                if (grey)
+                {
+                    int qx = Floor(xs[i] * 4f + 0.5f), qy = Floor(ys[i] * 4f + 0.5f);
+                    ix = FloorDiv(qx, 4); iy = FloorDiv(qy, 4);
+                    g = QuarterGlyph(font, gids[i], ppemAlong, ppemAcross, true, qx - 4 * ix, qy - 4 * iy);
+                }
+                else
+                {
+                    ix = NaturalClearType.RoundHalfAway(xs[i]); iy = NaturalClearType.RoundHalfAway(ys[i]);
+                    g = QuarterGlyph(font, gids[i], ppemAlong, ppemAcross, false, 0, 0);
+                }
+                place[i] = (g, ix + g.Left, iy + g.Top);
+                if (g.Width == 0) continue;
+                p0 = Math.Min(p0, place[i].X); p1 = Math.Max(p1, place[i].X + g.Width - 1);
+                r0 = Math.Min(r0, place[i].Y); r1 = Math.Max(r1, place[i].Y + g.Height - 1);
+            }
+            var lv = new Levels { Grey = true };
+            if (p0 > p1) return lv;
+            lv.Left = p0; lv.Top = r0; lv.Width = p1 - p0 + 1; lv.Height = r1 - r0 + 1;
+            lv.Index = new byte[lv.Width * lv.Height];
+            foreach ((GreyGlyph g, int gx, int gy) in place)
+                for (int r = 0; r < g.Height; r++)
+                    for (int c = 0; c < g.Width; c++)
+                    {
+                        byte v = g.Coverage[r * g.Width + c];
+                        int at = (gy + r - lv.Top) * lv.Width + gx + c - lv.Left;
+                        if (v > lv.Index[at]) lv.Index[at] = v;
+                    }
+            return lv;
+        }
+
         /// <summary>The antialiased run (OutputTextOptimized of DpOutputAntiAliasSolid8BPPOptimizedSpan):
         /// each glyph at its quarter-pixel phase, overlapping glyphs combined by MAX. Levels.Index
         /// holds the coverage 0..15.</summary>
