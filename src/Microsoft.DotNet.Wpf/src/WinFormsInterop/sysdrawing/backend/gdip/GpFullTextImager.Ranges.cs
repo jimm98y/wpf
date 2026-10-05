@@ -103,11 +103,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _recording = d;
                 try {
                     LogicalToXY (line, 0, 0, out int x0, out int y0);
-                    foreach (GpLineServices.Seg seg in line.Ls.Segs) {
+                    int[] dur = DisplayUr (line);
+                    for (int i = 0; i < line.Ls.Segs.Count; i++) {
+                        GpLineServices.Seg seg = line.Ls.Segs [i];
                         if (seg.Kind != 0 || seg.GCount <= 0) continue;
-                        int px, py;
-                        if (!IsVertical) { px = IsRightToLeft ? x0 - seg.Ur : x0 + seg.Ur; py = (int) MathF.Floor (R * seg.Run.BaseOffset + y0 + 0.5f); }
-                        else { px = x0; py = y0 + seg.Ur; }
+                        DnodePoint (line, seg, dur [i], x0, y0, out int px, out int py);
                         DrawRunGlyphs (target, _measureOrigin, line, seg, px, py, out _, out _);
                     }
                 } finally { _recording = null; }

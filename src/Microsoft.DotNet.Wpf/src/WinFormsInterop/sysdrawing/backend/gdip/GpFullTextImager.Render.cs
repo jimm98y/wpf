@@ -80,6 +80,49 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
         }
 
+        /// <summary>Line Services' reversal objects (CreateLevelChangeRuns): each dnode's u along the
+        /// line's flow once every run of runs nested deeper than the paragraph's level is mirrored
+        /// within its span, the deepest first.</summary>
+        int[] DisplayUr (Line line)
+        {
+            if (line.DisplayUr != null) return line.DisplayUr;
+            var segs = line.Ls.Segs;
+            int n = segs.Count, p = ParagraphLevel, max = p;
+            var u = new int [n]; var lv = new int [n];
+            for (int i = 0; i < n; i++) {
+                u [i] = segs [i].Ur;
+                lv [i] = segs [i].Kind == 2 || segs [i].Run == null ? p : segs [i].Run.Level;
+                if (lv [i] > max) max = lv [i];
+            }
+            for (int level = max; level > p; level--)
+                for (int i = 0; i < n;) {
+                    if (lv [i] < level) { i++; continue; }
+                    int j = i;
+                    while (j < n && lv [j] >= level) j++;
+                    int u0 = int.MaxValue, u1 = int.MinValue;
+                    for (int k = i; k < j; k++) { u0 = Math.Min (u0, u [k]); u1 = Math.Max (u1, u [k] + segs [k].Width); }
+                    // The spaces hanging past the line's end stay outside the mirrored span.
+                    if (u1 > line.Ls.UrLim && u0 < line.Ls.UrLim) u1 = line.Ls.UrLim;
+                    for (int k = i; k < j; k++) u [k] = u0 + u1 - u [k] - segs [k].Width;
+                    i = j;
+                }
+            line.DisplayUr = u;
+            return u;
+        }
+
+        /// <summary>The point Line Services hands a dnode's DrawGlyphs: its pen start -- its left for
+        /// a left-to-right run, its right for a right-to-left one -- and its baseline.</summary>
+        void DnodePoint (Line line, GpLineServices.Seg seg, int ur, int x0, int y0, out int px, out int py)
+        {
+            if (IsVertical) { px = x0; py = y0 + ur; return; }
+            bool opposite = seg.Run.Rtl != IsRightToLeft;
+            if (!IsRightToLeft) px = opposite ? x0 + ur + seg.Width : x0 + ur;
+            // A left-to-right subline of a right-to-left line: its u span [a, b) covers the pixels
+            // (x0 - b, x0 - a], so its left is one unit right of x0 - b.
+            else px = opposite ? x0 - ur - seg.Width + 1 : x0 - ur;
+            py = (int) MathF.Floor (R * seg.Run.BaseOffset + y0 + 0.5f);
+        }
+
         void RenderLine (IGpTextTarget target, PointF origin, Line line, int top)
         {
             int v;
@@ -91,19 +134,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
             // Underlines are drawn after the line's dnodes, one per run (GdipLscbkFInterruptUnderline
             // always interrupts), each from its run's start over its dnodes' advances.
             var uls = new List<(Run Run, int Ur, int Dup, int Lead, int Trail)> ();
-            foreach (GpLineServices.Seg seg in line.Ls.Segs) {
+            int[] dur = DisplayUr (line);
+            for (int i = 0; i < line.Ls.Segs.Count; i++) {
+                GpLineServices.Seg seg = line.Ls.Segs [i];
                 int la = 0, ta = 0;
                 if (seg.Kind == 0 && seg.GCount > 0) {
                     // The dnode's point: along the line from the start, the run's baseline offset across.
-                    int px, py;
-                    if (!IsVertical) { px = IsRightToLeft ? x0 - seg.Ur : x0 + seg.Ur; py = (int) MathF.Floor (R * seg.Run.BaseOffset + y0 + 0.5f); }
-                    else { px = x0; py = y0 + seg.Ur; }
+                    DnodePoint (line, seg, dur [i], x0, y0, out int px, out int py);
                     DrawRunGlyphs (target, origin, line, seg, px, py, out la, out ta);
                 } else if (seg.Kind != 1) continue;
                 if (seg.Run.Underline == 0) continue;
                 if (uls.Count > 0 && uls [^1].Run == seg.Run)
-                    uls [^1] = (seg.Run, uls [^1].Ur, uls [^1].Dup + seg.Width, uls [^1].Lead, ta);
-                else uls.Add ((seg.Run, seg.Ur, seg.Width, la, ta));
+                    uls [^1] = (seg.Run, Math.Min (uls [^1].Ur, dur [i]), uls [^1].Dup + seg.Width, uls [^1].Lead, ta);
+                else uls.Add ((seg.Run, dur [i], seg.Width, la, ta));
             }
             foreach (var u in uls) {
                     if ((u.Run.Underline & 1) != 0) DrawUnderline (target, origin, line, u.Run, x0, y0, u.Ur, u.Dup, u.Lead, u.Trail, true);
@@ -158,6 +201,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (w2dN == null) {
                 // A path: the nominal layout, no device (FullTextImager::AddToPath).
                 var gi0 = new GpGlyphImager ();
+                gi0.Path = true;
                 gi0.Initialize (this, run, seg, GpMatrix.CreateIdentity (), 2, 0, 0, false, false);
                 PointF[] o0 = gi0.Origins (cell, vertical);
                 target.AddGlyphs (run, gi0.Glyphs, gi0.GlyphProps, o0);

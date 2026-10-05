@@ -212,6 +212,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return DesignAdvance (face, gid) * (em * sx / upem);
         }
 
+        /// <summary>The realization's own advance in device pixels, not put on the pixel grid
+        /// (GpFaceRealization::GetGlyphStringIdealAdvanceVector's source).</summary>
+        public static float RealizationAdvancePx (TrueTypeFont face, int gid, float em, float sx, float sy, int mode)
+        {
+            int upem = face.UnitsPerEmForHinting;
+            if (mode == 5) {
+                GdipText.NaturalMetrics (face, gid, em, sx, sy, out int adv, out _, out _);
+                return adv * (em * sx / upem) + SimBoldPx (face, gid);
+            }
+            if (mode == 1 || mode == 3) {
+                GdipText.ClassicMetrics (face, gid, em * sx, out int adv, out _, out _);
+                return adv * (em * sx / upem) + SimBoldPx (face, gid);
+            }
+            return DesignAdvance (face, gid) * (em * sx / upem);
+        }
+
         /// <summary>DirectWrite's GDI-compatible metrics of a bold simulation: a glyph with an
         /// outline a device pixel wider.</summary>
         static int SimBoldPx (TrueTypeFont face, int gid) => face.SynthesizesBold && HasContours (face, gid) ? 1 : 0;

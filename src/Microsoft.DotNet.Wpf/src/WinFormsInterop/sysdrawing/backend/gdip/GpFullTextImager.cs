@@ -162,9 +162,36 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             if (_runsBuilt) return;
             _runsBuilt = true;
-            foreach ((int start, int len, int script, int flags, int level) in Itemize ())
-                CreateTextRuns (start, len, script, flags, level);
-            _runs.Add (new Run { Kind = 1, Cp = _n, Len = 2, Str = _n, Face = Face, Family = Family, Style = Style, Em = Em });
+            byte[] levels = BidiLevels ();
+            foreach ((int start, int len, int script, int flags, int level) in Itemize ()) {
+                if (levels == null) { CreateTextRuns (start, len, script, flags, level); continue; }
+                // BidirectionalAnalysis: an item is cut where its characters' levels change.
+                for (int s = start; s < start + len;) {
+                    int e = s + 1;
+                    while (e < start + len && levels [e] == levels [s]) e++;
+                    CreateTextRuns (s, e - s, script, flags, levels [s]);
+                    s = e;
+                }
+            }
+            _runs.Add (new Run { Kind = 1, Cp = _n, Len = 2, Str = _n, Face = Face, Family = Family, Style = Style, Em = Em, Level = ParagraphLevel });
+        }
+
+        /// <summary>BuildRunsUpToAndIncluding: the bidi analysis (UnicodeBidiAnalyze, GpBidi) when the
+        /// paragraph is right to left or the text holds right-to-left characters; each character's
+        /// embedding level, or null for a left-to-right paragraph of left-to-right text.</summary>
+        byte[] BidiLevels ()
+        {
+            bool any = ParagraphLevel == 1;
+            for (int i = 0; i < _n && !any; i++) {
+                int d = GpTextTables.DirClass (Text [i]);
+                any = d == 1 || d == 4 || d == 14 || d == 15;
+            }
+            if (!any || _n == 0) return null;
+            var flags = ParagraphLevel == 1 ? GpBidi.Flags.DirectionRightToLeft : 0;
+            if (!GpBidi.Analyze (Text.ToCharArray (), _n, _n, flags, null, out byte[] levels, out _)) return null;
+            for (int i = 0; i < levels.Length; i++)
+                if (levels [i] == 0xff) levels [i] = (byte) ParagraphLevel;
+            return levels;
         }
 
         /// <summary>ItemizationFiniteStateMachine: the string cut where the script changes. A
@@ -332,6 +359,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public int EllipsisAt = -1;      // +0x58
             public int Consumed;             // the line's characters in the imager's line list (+0x168[i].count)
             public GpLineServices.LsLine Ls;
+            public int[] DisplayUr;          // each dnode's u once the reversal objects are laid out
         }
 
         internal readonly List<Line> Lines = new List<Line> ();

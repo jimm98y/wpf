@@ -141,7 +141,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int u = 0;
                 for (int i = 0; i < chars.Count; i++) {
                     int nu = u + chars [i].Width;
-                    if (nu > dua && !chars [i].Space && chars [i].Kind != 2 && chars [i].Kind != 3) {
+                    // Spaces hang past the margin -- except inside a reversal object (a run nested deeper than
+                    // the paragraph), whose subline is formatted with them.
+                    bool hangs = chars [i].Space && (chars [i].Run == null || chars [i].Run.Level == fti.ParagraphLevel);
+                    if (nu > dua && !hangs && chars [i].Kind != 2 && chars [i].Kind != 3) {
                         // The truncation character: the first whose right edge passes the margin.
                         overflow = true;
                         // A tab whose stop is past the margin breaks through it: the line ends

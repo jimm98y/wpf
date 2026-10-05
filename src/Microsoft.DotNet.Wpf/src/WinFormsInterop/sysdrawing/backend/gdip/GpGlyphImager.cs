@@ -51,6 +51,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public float Sx = 1f, Sy = 1f;       // world-to-device axis scales the device advances are taken under
         public int Mode;
         public GpMatrix W2D;
+        public bool Path;                    // AddToPath: no realization, design advances
 
         /// <summary>GlyphImager::Initialize.</summary>
         public void Initialize (GpFullTextImager fti, GpFullTextImager.Run run, GpLineServices.Seg seg, GpMatrix w2d, int mode,
@@ -378,9 +379,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             if (Rtl && (ItemFlags & 0x10) == 0) {
                 // Right to left: each glyph's origin is at its right; back to its left by its ideal advance.
+                // GetGlyphStringIdealAdvanceVector: the realization's advance (the device's hinted
+                // one, in ideal units through +0x78) -- for a path, the design advance at em * r.
                 int upem = Face.UnitsPerEmForHinting;
                 for (int i = 0; i < Count; i++) {
-                    int ideal = (int) MathF.Floor (GpTextShaper.DesignAdvance (Face, Glyphs [i]) * (Em * R / upem) + 0.5f);
+                    int ideal = Path
+                        ? (int) MathF.Floor (GpTextShaper.DesignAdvance (Face, Glyphs [i]) * (Em * R / upem) + 0.5f)
+                        : (int) MathF.Floor (GpTextShaper.RealizationAdvancePx (Face, Glyphs [i], Em, Sx, Sy, Mode) * F78 + 0.5f);
                     if (!vertical) o [i].X -= ideal / R;
                     else o [i].Y -= ideal / R;
                 }
