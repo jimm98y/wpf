@@ -41,6 +41,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         int _cw, _ch;
         bool _ropUsed;                   // MfEnumState +0xd4
         int _srcBpp;                     // the bit count of the DIB the blit in hand came from
+        int _gpW, _gpH;                  // OutputDIB's own device size of a StretchDIBits destination
         InterpolationMode _interp;       // the playback's interpolation (MetafilePlayer +0x145c)
 
         bool Canvas => _canvas != null;
@@ -257,7 +258,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int index = (rop >> 16) & 0xff;
             int x0 = Round(d[0].X), x1 = Round(d[1].X), y0 = Round(d[0].Y), y1 = Round(d[2].Y);
             bool mirrorX = x1 < x0, mirrorY = y1 < y0;
-            int left = Math.Min(x0, x1), top = Math.Min(y0, y1);
+            // BLTRECORD::bOrderStupid @1402e4798 (BLTRECORD::bStretch @14017cba0): an inverted
+            // side is swapped and both its ends moved on by one, so the mirrored rectangle covers
+            // (x1, x0] rather than [x1, x0).
+            int left = mirrorX ? x1 + 1 : x0, top = mirrorY ? y1 + 1 : y0;
             int dw = Math.Abs(x1 - x0), dh = Math.Abs(y1 - y0);
             if (dw == 0 || dh == 0) return true;
             Func<int, int, uint> pat = null;
@@ -274,12 +278,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 if (bm == null) return true;
                 float fsw = Math.Abs(src.Width), fsh = Math.Abs(src.Height);
-                bool stretch = dw != (int)fsw || dh != (int)fsh;
+                int gw = _gpW, gh = _gpH;
+                bool stretch = gw != (int)fsw || gh != (int)fsh;
                 if (dib && stretch && (_srcBpp != 1 || rr == 0xcc0020) && _interp != InterpolationMode.NearestNeighbor
-                    && fsw > 1 && fsh > 1 && dw * dh < 0x800000)
+                    && fsw > 1 && fsh > 1 && gw * gh < 0x800000 && gw > 0 && gh > 0)
                 {
-                    // MfEnumState::OutputDIB: GDI+ stretches the colours first.
-                    pre = new Bitmap(dw, dh, PixelFormat.Format24bppRgb);
+                    // MfEnumState::OutputDIB: GDI+ stretches the colours first, into a 24bpp bitmap
+                    // of its own device size (SourceCopy, the playback's interpolation, TileFlipXY,
+                    // the source less one pixel each way); GDI then stretches that onto the
+                    // destination (COLORONCOLOR), which is a copy where the two sizes agree.
+                    pre = new Bitmap(gw, gh, PixelFormat.Format24bppRgb);
                     using (Graphics g = Graphics.FromImage(pre))
                     using (var ia = new ImageAttributes())
                     {
@@ -287,24 +295,21 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         g.InterpolationMode = _interp;
                         ia.SetWrapMode(WrapMode.TileFlipXY);
                         float wsgn = src.Width < 0 ? -1 : 1, hsgn = src.Height < 0 ? -1 : 1;
-                        g.DrawImage(bm, new[] { new PointF(0, 0), new PointF(dw, 0), new PointF(0, dh) },
+                        g.DrawImage(bm, new[] { new PointF(0, 0), new PointF(gw, 0), new PointF(0, gh) },
                             new RectangleF(src.X, src.Y, src.Width - wsgn, src.Height - hsgn), GraphicsUnit.Pixel, ia);
                     }
                     spx = Pixels(pre, out sw, out sh);
-                    source = (i, j) => spx[j * sw + i];
+                    source = StretchSource(spx, sw, sh, 0, 0, sw, sh, dw, dh, mirrorX, mirrorY);
                 }
                 else
                 {
                     spx = Pixels(bm, out sw, out sh);
-                    float sx = src.X, sy = src.Y, cw = src.Width, chh = src.Height;
-                    source = (i, j) =>
-                    {
-                        int u = (int)MathF.Floor(sx + (i + 0.5f) * cw / dw);
-                        int v = (int)MathF.Floor(sy + (j + 0.5f) * chh / dh);
-                        if (u < 0) u = 0; else if (u >= sw) u = sw - 1;
-                        if (v < 0) v = 0; else if (v >= sh) v = sh - 1;
-                        return spx[v * sw + u];
-                    };
+                    int sx0 = (int)src.X, sy0 = (int)src.Y, sx1 = (int)(src.X + src.Width), sy1 = (int)(src.Y + src.Height);
+                    bool mx = mirrorX, my = mirrorY;
+                    if (sx1 < sx0) { (sx0, sx1) = (sx1 + 1, sx0 + 1); mx = !mx; }   // bOrderStupid on the source
+                    if (sy1 < sy0) { (sy0, sy1) = (sy1 + 1, sy0 + 1); my = !my; }
+                    if (sx1 == sx0 || sy1 == sy0) return true;
+                    source = StretchSource(spx, sw, sh, sx0, sy0, sx1 - sx0, sy1 - sy0, dw, dh, mx, my);
                 }
             }
             bool[] clip = ClipMask();
@@ -319,12 +324,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 {
                     System.Runtime.InteropServices.Marshal.Copy(bd.Scan0 + y * bd.Stride, row, 0, _cw);
                     int j = y - top;
-                    if (mirrorY) j = dh - 1 - j;
                     for (int x = cx0; x < cx1; x++)
                     {
                         if (clip != null && !clip[y * _cw + x]) continue;
                         int i = x - left;
-                        if (mirrorX) i = dw - 1 - i;
                         uint p = pat != null ? pat(x, y) : 0;
                         uint s = source != null ? source(i, j) : 0;
                         row[x] = unchecked((int)Rop3(index, p, s, (uint)row[x]));
@@ -334,6 +337,31 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             finally { _canvas.UnlockBits(bd); pre?.Dispose(); }
             return true;
+        }
+
+        /// <summary>EngStretchBltNew @140178858's COLORONCOLOR read of the source for each pixel of
+        /// the (ordered) destination. A mirrored blit first copies the source mirrored (the
+        /// SURFMEM copy, vStrMirror32 @1401c06d0 across, a negated stride down) and then stretches
+        /// it unmirrored; the stretch is stretch::vInitStrDDA @1401bfda0's DDA, which gives source
+        /// pixel k the destination pixels from floor((k D + (S - 1) / 2) / S), so destination pixel
+        /// x reads k = floor(((x + 1) S - (S - 1) / 2 - 1) / D).</summary>
+        static Func<int, int, uint> StretchSource(uint[] px, int w, int h, int sx, int sy, int sW, int sH, int dW, int dH, bool mirrorX, bool mirrorY)
+        {
+            var us = new int[dW];
+            var vs = new int[dH];
+            for (int i = 0; i < dW; i++)
+            {
+                int k = (int)(((long)(i + 1) * sW - ((sW - 1) >> 1) - 1) / dW);
+                if (mirrorX) k = sW - 1 - k;
+                us[i] = Math.Clamp(sx + k, 0, w - 1);
+            }
+            for (int j = 0; j < dH; j++)
+            {
+                int k = (int)(((long)(j + 1) * sH - ((sH - 1) >> 1) - 1) / dH);
+                if (mirrorY) k = sH - 1 - k;
+                vs[j] = Math.Clamp(sy + k, 0, h - 1);
+            }
+            return (i, j) => px[vs[j] * w + us[i]];
         }
 
         static uint[] Pixels(Bitmap b, out int w, out int h)

@@ -1421,8 +1421,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
         // EMR_EXTTEXTOUTW / A: rclBounds, iGraphicsMode, exScale, eyScale, then the EMRTEXT.
         void ExtTextOut(GpReader r, byte[] b, int o, bool wide)
         {
-            r.Rect(); r.I32(); r.F(); r.F();
-            TextRecord(r, b, o, wide);
+            r.Rect();
+            int gm = r.I32();
+            float ex = r.F(), ey = r.F();
+            // MREXTTEXTOUT::bPlay @18006b7e0 (gdi32full): a GM_COMPATIBLE record is played under
+            // SetFontXform(exScale, eyScale), which the font's realization reads (dc+0x1c4/0x1c8).
+            (_fontExScale, _fontEyScale) = gm == 2 ? (0f, 0f) : (ex, ey);
+            try { TextRecord(r, b, o, wide); }
+            finally { _fontExScale = _fontEyScale = 0f; }
         }
 
         void TextRecord(GpReader r, byte[] b, int o, bool wide)
@@ -1508,6 +1514,26 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     m.Point(ix + icx, iy + icy, out int bx, out int by);
                     float x0 = ((ax >> 3) + 1) >> 1, y0 = ((ay >> 3) + 1) >> 1, x1 = ((bx >> 3) + 1) >> 1, y1 = ((by >> 3) + 1) >> 1;
                     d = new[] { new PointF(x0, y0), new PointF(x1, y0), new PointF(x0, y1) };
+                }
+                // MfEnumState::OutputDIB @1800b7eb0 sizes its own stretch from the destination's
+                // corners through LPtoDP -- the origin and the origin plus the destination's
+                // absolute extents -- each side GetIntDistance @1800b7530 (a float length, + 1/2,
+                // truncated).
+                _gpW = _gpH = 0;
+                if (_dibBlit)
+                {
+                    int ix = (int)xDest, iy = (int)yDest, icx = Math.Abs((int)cxDest), icy = Math.Abs((int)cyDest);
+                    m.Point(ix, iy, out int ax, out int ay);
+                    m.Point(ix + icx, iy, out int bx, out int by);
+                    m.Point(ix, iy + icy, out int cx, out int cy);
+                    static int L(int f) => (f + 8) >> 4;
+                    static int Dist(int x0, int y0, int x1, int y1)
+                    {
+                        float dx = x1 - x0, dy = y1 - y0;
+                        return (int)(MathF.Sqrt(dy * dy + dx * dx) + 0.5f);
+                    }
+                    _gpW = Dist(L(ax), L(ay), L(bx), L(by));
+                    _gpH = Dist(L(ax), L(ay), L(cx), L(cy));
                 }
                 if (RasterBlit(bm, d, src, rop, _dibBlit)) return;
             }
@@ -1704,7 +1730,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int offBmi = r.I32(), cbBmi = r.I32(), offBits = r.I32(), cbBits = r.I32();
             Bitmap bm = cbBmi > 0 ? Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits) : null;
             _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
-            Blit(bm, xd, yd, cx, cy, new RectangleF(xs, ys, cx, cy), rop);
+            _dibBlit = bm != null;      // EmfEnumState::BitBlt @1800b3d00 plays a bitmap through MfEnumState::OutputDIB
+            try { Blit(bm, xd, yd, cx, cy, new RectangleF(xs, ys, cx, cy), rop); } finally { _dibBlit = false; }
             bm?.Dispose();
         }
 
@@ -1718,7 +1745,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int cxs = r.I32(), cys = r.I32();
             Bitmap bm = cbBmi > 0 ? Dib(b, o - 8, offBmi, cbBmi, offBits, cbBits) : null;
             _srcBpp = BitCount(b, o - 8, offBmi, cbBmi);
-            Blit(bm, xd, yd, cx, cy, new RectangleF(xs, ys, cxs, cys), rop);
+            _dibBlit = bm != null;      // EmfEnumState::StretchBlt @1800b57f0 likewise
+            try { Blit(bm, xd, yd, cx, cy, new RectangleF(xs, ys, cxs, cys), rop); } finally { _dibBlit = false; }
             bm?.Dispose();
         }
 

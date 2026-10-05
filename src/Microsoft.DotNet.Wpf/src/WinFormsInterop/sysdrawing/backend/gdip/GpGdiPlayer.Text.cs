@@ -8,13 +8,12 @@
 //
 //   the font      the record's LOGFONT realized as GDI realizes it (GpGdiFont: the face, tmAscent /
 //                 tmDescent); MREXTTEXTOUT::bPlay (gdi32full @18006b7e0) plays a GM_COMPATIBLE record
-//                 under SetFontXform(exScale, eyScale), so the glyph is sized by the playback's
-//                 mapping axis by axis -- its x by the device x scale (truncated to a whole ppem),
-//                 its y by the device y scale (rounded) -- and hinted at those two ppems
+//                 under SetFontXform(exScale, eyScale), and the ppem of each axis comes out of
+//                 win32k's notional-to-device transform and ttfd's quantization (RealizedPpems)
 //   the glyphs    ClearType: the DIB is a 32bpp surface and the record's quality the default, so
-//                 GDI draws its ClearType text (the compatible-width fit, scaler word 3, scanned 6x1,
-//                 the run composed and filtered as GdiPlusText.Compose does -- the same
-//                 fsc_OverscaleToSubPixel / ulClearTypeFilter / level sums) and blends each lamp
+//                 GDI draws its ClearType text -- the same fit, scan, filter, dropout, smear,
+//                 line-box clip and level sums the WinForms text is drawn with (GdiClearTypeRun:
+//                 TrueTypeFont's GDI fit, PathRasterizer.RasterizeSubpixel) -- and blends each lamp
 //                 into the DIB's pixel with win32k's memory-DC arithmetic (vClearTypeLookupTableLoop:
 //                 out = B[A[d] + ((W[k] (A[ink] - A[d]) + 2^19) >> 20)], gamma 1.2). The paper is
 //                 the DIB's 0xAA0D0B0C, so every pixel a glyph's filter reaches turns opaque and dark
@@ -23,17 +22,21 @@
 //                 28.4, each glyph's pen the advances summed through the mapping, rounded in 28.4,
 //                 and the glyph put down at its pen's whole pixel (+8 >> 4)
 //   alignment     TA_BASELINE / TA_TOP / TA_BOTTOM across, TA_LEFT / TA_CENTER / TA_RIGHT along
-//   escapement    a quarter turn: the glyph's levels made in its own frame and laid down turned,
-//                 one level for all three lamps (what the recorded fixtures show); other angles,
-//                 and a mapping that turns, are not drawn here (the old path draws them)
+//   escapement    a quarter turn: the glyph fitted at its own two ppems, its outline turned onto
+//                 the device and scanned and filtered there like any other; a vertical ('@')
+//                 face's full-width glyphs take their 'vert' form, stand upright and are moved by
+//                 vCalcXformVertical's shift. Other angles, and a mapping that turns, are not drawn
+//                 here (the old path draws them)
 //   ink           through the DC's clip and ETO_CLIPPED; the background (OPAQUE mode or ETO_OPAQUE)
 //                 the text box in the background colour
 //
-// NOT EXACT: the ppem rounding per axis is read off the recorded pixels, not out of win32k; a
-// vertical ('@') face's glyphs are not moved onto the vertical baseline GDI centres them on.
+// NOT EXACT: a turned glyph's fit (Times New Roman 'A' at 21 x 29 in the text scenario, about
+// 100 pixels); which glyphs ttfd counts full-width (its per-glyph bit set is not modelled) and the
+// signs of the vertical shift (read off the fixture's ellipsis); a positive lfHeight's VDMX search.
 //
 
 using System.Drawing.Imaging;
+using Microsoft.Wpf.Interop.WebGpu.Composition;
 using Microsoft.Wpf.Interop.WebGpu.Composition.Text;
 
 namespace System.Drawing.WebGpuBackend.Gdip
@@ -54,12 +57,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int n = s.Length;
             if (n == 0) return true;
             float sx = Math.Abs(m.M11), sy = Math.Abs(m.M22);
-            // The em through the mapping (GM_COMPATIBLE: the record's font xform, SetFontXform), each
-            // axis of the glyph its own: x by the device x scale, truncated; y by the device y scale,
-            // rounded. A turned font is turned after.
+            // The em through the mapping: GDI's realization (RealizedPpems), each axis of the glyph
+            // at its own whole ppem.
             float em = font.Ppem;
-            int ppemAlong = (int)(em * sx);
-            int ppemAcross = GdiPlusText.AxisPpem(em * sy);
+            GdiXform wtod = TargetWtoD();
+            (int rx, int ry) = RealizedPpems(font, lf, wtod.M11, wtod.M22, q == 0 && wtod.M22 > 0);
+            // bGetNtoD_Win31 turns the font AFTER the world-to-device scale (notional to world, times
+            // world to device, times the escapement), so a turned glyph is still sized x by the
+            // device x scale and y by the device y scale.
+            int ppemAlong = rx, ppemAcross = ry;
             if (ppemAlong < 1 || ppemAcross < 1) return true;
             float along = q % 2 == 0 ? sx : sy;     // device pixels per logical unit along the baseline
             // Reference point in 28.4; alignment.
@@ -130,82 +136,61 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         for (int x = l; x < r; x++)
                             if (Visible(x, y)) px[y * _cw + x] = bk;
                 }
-                if (q == 0)
                 {
-                    // ClearType: GDI's fit (the compatible-width word) scanned 6x1, the run composed
-                    // and filtered (fsc_OverscaleToSubPixel, ulClearTypeFilter, the level sums), each
-                    // lamp blended into the DIB's pixel by win32k's memory-DC arithmetic
-                    // (vClearTypeLookupTableLoop): out = B[A[d] + ((W[k] (A[ink] - A[d]) + 2^19) >> 20)].
-                    var bits = new System.Collections.Generic.List<NaturalClearType.GlyphBits>(n);
-                    var xs = new float[n];
-                    var ys = new float[n];
+                    // ClearType: GDI's fit and scan (GdiClearTypeRun), each lamp blended into the
+                    // DIB's pixel by win32k's memory-DC arithmetic (vClearTypeLookupTableLoop):
+                    // out = B[A[d] + ((W[k] (A[ink] - A[d]) + 2^19) >> 20)].
+                    var gids = new int[n];
+                    var xs = new int[n];
+                    var ys = new int[n];
                     for (int i = 0; i < n; i++)
                     {
-                        int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
-                        bits.Add(GdiClearTypeGlyph(font.Face, gid, ppemAlong, ppemAcross));
+                        gids[i] = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
                         long gx = fx + pens[i] * ax, gy = fy + pens[i] * ay;
                         xs[i] = (int)((gx + 8) >> 4);
                         ys[i] = (int)((gy + 8) >> 4);
                     }
-                    GdiPlusText.Levels lv = GdiPlusText.Compose(bits, xs, ys, 0f, font.Face.GdiContrastPalette);
+                    bool[] upright = null;
+                    if (font.Vertical && q % 2 == 1)
+                    {
+                        TrueTypeFont face = font.Face;
+                        int upem = face.UnitsPerEmForHinting;
+                        static int Px(long v16) => (int)(((v16 >> 15) + 1) >> 1);
+                        for (int i = 0; i < n; i++)
+                        {
+                            if (!IsFullWidth(face, gids[i])) continue;
+                            (upright ??= new bool[n])[i] = true;
+                            gids[i] = VerticalForm(face, gids[i]);
+                            // vShiftBitmapInfo @14008a2f0: the bitmap moved by vCalcXformVertical's
+                            // shift, the typo descender through the glyph's y and the typo ascender
+                            // through its x.
+                            long d16 = ((long)face.TypoDescender << 16) * ppemAcross / upem;
+                            long a16 = ((long)face.TypoAscender << 16) * ppemAlong / upem;
+                            // The descender moves it against the down axis, the ascender along the
+                            // baseline (signs as the fixture's ellipsis shows them).
+                            int sd = -Px(d16), sa = Px(a16);
+                            xs[i] += sd * dnx + sa * ax;
+                            ys[i] += sd * dny + sa * ay;
+                        }
+                    }
+                    CtLevels lv = GdiClearTypeRun(font.Face, gids, xs, ys, ppemAlong, ppemAcross, q, (ax, ay, dnx, dny), upright);
                     (byte[] A, byte[] B) = CtGamma();
                     uint inkRgb = Rgb(_dc.TextColor);
                     int ir = (int)(inkRgb >> 16) & 255, ig = (int)(inkRgb >> 8) & 255, ib = (int)inkRgb & 255;
+                    if (lv != null)
                     for (int r = 0; r < lv.Height; r++)
                         for (int c = 0; c < lv.Width; c++)
                         {
-                            int idx = lv.Index[r * lv.Width + c];
-                            if (idx == 0) continue;
+                            int p = (r * lv.Width + c) * 3;
+                            int kr = lv.Lvl[p], kg = lv.Lvl[p + 1], kb = lv.Lvl[p + 2];
+                            if (kr == 0 && kg == 0 && kb == 0) continue;
                             int x = lv.Left + c, y = lv.Top + r;
                             if (!Visible(x, y)) continue;
-                            (int kr, int kg, int kb) = GdiPlusText.LevelsOf(idx);
-                            if (kr == 0 && kg == 0 && kb == 0) continue;
                             uint d = (uint)px[y * _cw + x];
                             int dr = (int)(d >> 16) & 255, dg = (int)(d >> 8) & 255, db = (int)d & 255;
                             int Lamp(int k, int fg, int bg) => k >= 6 ? fg : B[Math.Clamp(A[bg] + ((s_lampWeight[k] * (A[fg] - A[bg]) + 0x80000) >> 20), 0, 255)];
                             px[y * _cw + x] = unchecked((int)(0xff000000u | (uint)Lamp(kr, ir, dr) << 16 | (uint)Lamp(kg, ig, dg) << 8 | (uint)Lamp(kb, ib, db)));
                         }
-                }
-                else
-                {
-                    // A quarter turn: the glyph's ClearType levels made in its own frame, laid down
-                    // turned, one level for all three lamps (the filter ran along the glyph's x,
-                    // which is no longer the device's lamp axis).
-                    (byte[] A, byte[] B) = CtGamma();
-                    uint inkRgb = Rgb(_dc.TextColor);
-                    int ir = (int)(inkRgb >> 16) & 255, ig = (int)(inkRgb >> 8) & 255, ib = (int)inkRgb & 255;
-                    int Lamp(int k, int fg, int bg) => k >= 6 ? fg : B[Math.Clamp(A[bg] + ((s_lampWeight[k] * (A[fg] - A[bg]) + 0x80000) >> 20), 0, 255)];
-                    for (int i = 0; i < n; i++)
-                    {
-                        int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
-                        var gb = GdiClearTypeGlyph(font.Face, gid, ppemAlong, ppemAcross);
-                        if (gb.IsEmpty) continue;
-                        GdiPlusText.Levels lv = GdiPlusText.Compose(new[] { gb }, new[] { 0f }, null, 0f, font.Face.GdiContrastPalette);
-                        long gx = fx + pens[i] * ax, gy = fy + pens[i] * ay;
-                        int ox = (int)((gx + 8) >> 4), oy = (int)((gy + 8) >> 4);
-                        for (int r = 0; r < lv.Height; r++)
-                            for (int c = 0; c < lv.Width; c++)
-                            {
-                                int idx = lv.Index[r * lv.Width + c];
-                                if (idx == 0) continue;
-                                (int kr, int kg, int kb) = GdiPlusText.LevelsOf(idx);
-                                int k = (kr + kg + kb + 1) / 3;
-                                if (k == 0) continue;
-                                // Glyph pixel (u along, v down) to the device.
-                                int u = lv.Left + c, v = lv.Top + r;
-                                int x, y;
-                                switch (q)
-                                {
-                                    case 1: x = ox + v * dnx; y = oy + u * ay - 1; break;
-                                    case 2: x = ox + u * ax - 1; y = oy + v * dny - 1; break;
-                                    default: x = ox + v * dnx - 1; y = oy + u * ay; break;
-                                }
-                                if (!Visible(x, y)) continue;
-                                uint d = (uint)px[y * _cw + x];
-                                int dr = (int)(d >> 16) & 255, dg = (int)(d >> 8) & 255, db = (int)d & 255;
-                                px[y * _cw + x] = unchecked((int)(0xff000000u | (uint)Lamp(k, ir, dr) << 16 | (uint)Lamp(k, ig, dg) << 8 | (uint)Lamp(k, ib, db)));
-                            }
-                    }
                 }
                 System.Runtime.InteropServices.Marshal.Copy(px, 0, bd.Scan0, px.Length);
             }
@@ -232,15 +217,236 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return (s_ctGamma = (a, b)).Value;
         }
 
-        /// <summary>GDI's ClearType glyph: the compatible-width fit (scaler word 3) at the whole ppem of
-        /// each axis, scanned at six samples a pixel.</summary>
-        static NaturalClearType.GlyphBits GdiClearTypeGlyph(TrueTypeFont face, int gid, int ppemX, int ppemY)
+        float _fontExScale, _fontEyScale;    // the record's SetFontXform, 0 for none (GM_ADVANCED)
+
+        /// <summary>The whole ppem of each axis GDI realizes a scale-only font at.
+        /// <list type="bullet">
+        /// <item>bGetNtoW_Win31 @1401e7910 (win32kfull): notional to world, y = the height over the em
+        /// (lfHeight &lt; 0) or over usWinAscent + usWinDescent (lfHeight &gt; 0); x = |y eyScale| /
+        /// exScale under the font xform SetFontXform put on the DC (dc+0x1c4, dc+0x1c8);</item>
+        /// <item>bGetNtoD_Win31 @1401e7458: times the world-to-device matrix, times 1/16;</item>
+        /// <item>bNewXform @14001c018 (fontdrvhost, ttfd): each coefficient to 16.16, rounded;</item>
+        /// <item>bComputeMaxGlyph @14001b198: y's ppem the 16.16 times the em, FixMul-rounded;</item>
+        /// <item>bSetXform @14001c2c8: the scaler gets the point size of that ppem and a matrix whose
+        /// x is m11 upem / ppem (16.16, rounded twice);</item>
+        /// <item>scl_InitializeScaling @140040540: the axis scale is that times the ppem, rounded to a
+        /// whole pixel (the face's integer-ppem flag).</item>
+        /// </list></summary>
+        (int X, int Y) RealizedPpems(GpGdiFont font, GdiFont lf, float m11, float m22, bool scaleOnly)
         {
-            int sx = TrueTypeInterpreter.StretchPpemX, sy = TrueTypeInterpreter.StretchPpemY;
-            TrueTypeInterpreter.StretchPpemX = ppemX == ppemY ? 0 : ppemX;
-            TrueTypeInterpreter.StretchPpemY = ppemX == ppemY ? 0 : ppemY;
-            try { return NaturalClearType.Rasterize(face, gid, Math.Max(ppemX, ppemY), 1, gridFit: true, scalerFlags: 3, forceGridFit: true); }
-            finally { TrueTypeInterpreter.StretchPpemX = sx; TrueTypeInterpreter.StretchPpemY = sy; }
+            TrueTypeFont face = font.Face;
+            int upem = face.UnitsPerEmForHinting;
+            float h;
+            if (lf.Height < 0) h = (float)-lf.Height / upem;
+            else if (lf.Height > 0) h = (float)lf.Height / (face.WinAscent + face.WinDescent);
+            else h = (float)font.Ppem / upem;
+            float wx = h;
+            float ex = _fontExScale, ey = _fontEyScale;
+            if (ex != 0f && ey != 0f)
+            {
+                wx = MathF.Abs(h * ey);
+                if (ex != 1f) wx = wx / ex;
+            }
+            float dx = MathF.Abs(wx * m11) * 0.0625f, dy = MathF.Abs(h * m22) * 0.0625f;
+            static int Fx(float v) => (int)Math.Floor(v * 65536.0 + 0.5);
+            int m11fx = Fx(dx), m22fx = Fx(dy);
+            int ppemY = (int)(((long)m22fx * upem + 0x8000) >> 16);
+            if (ppemY < 1) return (0, 0);
+            // vQuantizeXform @14001ea70, for a face with a 'VDMX': y becomes exactly the ppem over
+            // the em, and x follows it in proportion -- or becomes y, when the difference moves
+            // the face's average character width (IFIMETRICS.fwdAveCharWidth) by less than half a
+            // pixel, so a nearly square transform is made square.
+            if (scaleOnly && face.HasVdmx && lf.Height <= 0)
+            {
+                int m22q = (int)((((long)ppemY << 16) + upem / 2) / upem);
+                if (m11fx == m22fx || ((long)(m11fx - m22q) * face.XAvgCharWidth + 0x8000) >> 16 == 0) m11fx = m22q;
+                else m11fx = (int)(((long)m11fx * m22q + m22fx / 2) / m22fx);
+            }
+            long ratio = (((long)upem << 16) * 96 + ppemY * 96 / 2) / (ppemY * 96L);
+            int m00 = (int)((ratio * m11fx + 0x8000) >> 16);
+            int ppemX = (int)((((long)m00 * ppemY) + 0x8000) >> 16);
+            return (ppemX, ppemY);
+        }
+
+        /// <summary>A run of GDI ClearType text, as channel LEVELS (0..6, three a pixel) over a box of
+        /// device pixels.</summary>
+        sealed class CtLevels
+        {
+            public int Left, Top, Width, Height;
+            public byte[] Lvl;          // 3 per pixel, red green blue
+        }
+
+        static readonly byte[] s_rampToLevel = BuildRampToLevel();
+        static byte[] BuildRampToLevel()
+        {
+            var t = new byte[256];
+            for (int v = 0; v < 256; v++) t[v] = (byte)((v * 6 + 127) / 255);
+            return t;
+        }
+
+        /// <summary>GDI's ClearType text for glyphs put down at whole device pixels: the face's GDI
+        /// fit (TrueTypeFont.TryGetHintedOutline in ClearType mode -- the fontdrvhost interpreter
+        /// the WinForms text is drawn with) at the realized ppem of each axis, and the scan, the
+        /// 6x1 / 6x5 filter, the dropout, the bold smear, the line-box clip and the level sums of
+        /// win32k's run (PathRasterizer.RasterizeSubpixel with the per-run configuration
+        /// WgpuSceneRenderer.EmitStringRun gives a string run).</summary>
+        static CtLevels GdiClearTypeRun(TrueTypeFont face, int[] gids, int[] xs, int[] ys, int ppemX, int ppemY, int quarter, (int Ax, int Ay, int Dx, int Dy) axes, bool[] upright = null)
+        {
+            int n = gids.Length;
+            bool savedSub = TrueTypeFont.SubpixelFitting, savedCt = TrueTypeFont.ClearTypeRendering;
+            int ssx = TrueTypeInterpreter.StretchPpemX, ssy = TrueTypeInterpreter.StretchPpemY;
+            bool stretched = ppemX != ppemY;
+            TrueTypeInterpreter.StretchPpemX = stretched ? ppemX : 0;
+            TrueTypeInterpreter.StretchPpemY = stretched ? ppemY : 0;
+            if (!savedSub) TrueTypeFont.SubpixelFitting = true;
+            if (!savedCt) TrueTypeFont.ClearTypeRendering = true;
+            try
+            {
+                float ppem = ppemY;
+                var figs = new System.Collections.Generic.List<PathFigure>();
+                var owners = new System.Collections.Generic.List<int>();
+                System.Collections.Generic.Dictionary<int, (int Top, int Bottom)> rowClip = null;
+                System.Collections.Generic.Dictionary<int, (int Left, int Right)> colClip = null;
+                System.Collections.Generic.Dictionary<int, int> dropouts = null;
+                int clipAsc = 0, clipDesc = 0;
+                if (quarter == 0 && face.TryGetGdiLineMetrics(ppemY, out clipAsc, out clipDesc))
+                    rowClip = new System.Collections.Generic.Dictionary<int, (int, int)>();
+                int colL = 0, colR = 0;
+                if (quarter == 0 && face.GdiEmboldensBitmap && face.TryGetGdiColumnLimits(ppem, out colL, out colR))
+                    colClip = new System.Collections.Generic.Dictionary<int, (int, int)>();
+                for (int i = 0; i < n; i++)
+                {
+                    int ordinal = i + 1;
+                    if (rowClip != null) rowClip[ordinal] = (ys[i] - clipAsc, ys[i] + clipDesc);
+                    if (colClip != null) colClip[ordinal] = (xs[i] + colL, xs[i] + colR);
+                    System.Collections.Generic.List<PathFigure> outline;
+                    if (quarter == 0)
+                    {
+                        if (!face.TryGetHintedOutline(gids[i], ppem, out outline) || outline.Count == 0) continue;
+                    }
+                    else if (upright != null && upright[i])
+                    {
+                        // A full-width glyph of a vertical ('@') face: ttfd fits it under the
+                        // vertical transform (vCalcXformVertical @14008a240), the font's turned
+                        // one turned a quarter back, so it stands upright on the device -- its x
+                        // sized by what was the glyph's y and the other way about.
+                        TrueTypeInterpreter.StretchPpemX = stretched ? ppemY : 0;
+                        TrueTypeInterpreter.StretchPpemY = stretched ? ppemX : 0;
+                        bool got;
+                        try { got = face.TryGetHintedOutline(gids[i], ppemX, out outline); }
+                        finally
+                        {
+                            TrueTypeInterpreter.StretchPpemX = stretched ? ppemX : 0;
+                            TrueTypeInterpreter.StretchPpemY = stretched ? ppemY : 0;
+                        }
+                        if (!got || outline.Count == 0) continue;
+                        outline = Turned(outline, (-axes.Dx, -axes.Dy, axes.Ax, axes.Ay));
+                    }
+                    else
+                    {
+                        // A turned font. fs__NewTransformation @1400254d0 toggles the ClearType word's
+                        // bit 2 (ClearType on the glyph's y) for m00 == 0 only when the word lacks
+                        // bit 5, and bSetXform @14001c2c8 hands GDI's ClearType text 0x23: so the
+                        // glyph is fitted as ever, at its own two ppems, and scl_PostTransformGlyph
+                        // gives the fit back turned onto the device, where it is scanned and filtered
+                        // like any other glyph.
+                        if (!face.TryGetHintedOutline(gids[i], ppem, out outline) || outline.Count == 0) continue;
+                        outline = Turned(outline, axes);
+                    }
+                    if (face.GlyphDropout(gids[i], ppem) is int gd && gd >= 0) (dropouts ??= new()).Add(ordinal, gd);
+                    foreach (PathFigure f in outline)
+                    {
+                        figs.Add(Translated(f, xs[i], ys[i]));
+                        owners.Add(ordinal);
+                    }
+                }
+                if (figs.Count == 0) return null;
+                bool sym = face.WantsSymmetricSmoothing(ppem);
+                PathRasterizer.SubpixelRowsForRun = sym ? 5 : 0;
+                PathRasterizer.PpemForRun = ppemY;
+                PathRasterizer.SimBoldPixelsForRun = face.GdiEmboldensBitmap ? TrueTypeFont.SimBoldSmearPixels(ppemY) : 0;
+                PathRasterizer.DropoutForRun = face.WantsDropoutControl(ppem, out int scanType) ? scanType + 1 : 0;
+                PathRasterizer.SymmetricVerticalForRun = false;
+                PathRasterizer.ContrastFilterForRun = face.GdiContrastPalette;
+                PathRasterizer.FigureGlyphIdsForRun = owners.ToArray();
+                PathRasterizer.GlyphRowClipForRun = rowClip;
+                PathRasterizer.GlyphColClipForRun = colClip;
+                PathRasterizer.GlyphDropoutForRun = dropouts;
+                PathRasterizer.SubpixelMask sm;
+                try { sm = PathRasterizer.RasterizeSubpixel(new PathGeometry(FillRule.NonZero, figs), CurveFlattener.GlyphTolerance); }
+                finally
+                {
+                    PathRasterizer.SubpixelRowsForRun = 0; PathRasterizer.DropoutForRun = 0; PathRasterizer.SimBoldPixelsForRun = 0;
+                    PathRasterizer.PpemForRun = 0; PathRasterizer.ContrastFilterForRun = false;
+                    PathRasterizer.FigureGlyphIdsForRun = null; PathRasterizer.GlyphRowClipForRun = null;
+                    PathRasterizer.GlyphColClipForRun = null; PathRasterizer.GlyphDropoutForRun = null;
+                }
+                if (sm.IsEmpty) return null;
+                var r = new CtLevels { Left = (int)sm.OriginX, Top = (int)sm.OriginY, Width = sm.Width, Height = sm.Height, Lvl = new byte[sm.Width * sm.Height * 3] };
+                for (int p = 0; p < sm.Width * sm.Height; p++)
+                    for (int c = 0; c < 3; c++) r.Lvl[p * 3 + c] = s_rampToLevel[sm.Rgba[p * 4 + c]];
+                return r;
+            }
+            finally
+            {
+                TrueTypeInterpreter.StretchPpemX = ssx; TrueTypeInterpreter.StretchPpemY = ssy;
+                if (!savedSub) TrueTypeFont.SubpixelFitting = false;
+                if (!savedCt) TrueTypeFont.ClearTypeRendering = false;
+            }
+        }
+
+        /// <summary>IsFullWidthCharacter @14001d5f0 asks a per-glyph bit set made when the face is
+        /// loaded; not modelled from the binary: here a glyph whose advance is the em or which has
+        /// a 'vert' form.</summary>
+        static bool IsFullWidth(TrueTypeFont face, int gid)
+            => gid > 0 && (face.DesignAdvance(gid) >= face.UnitsPerEmForHinting || VerticalForm(face, gid) != gid);
+
+        /// <summary>bCheckVerticalTable @14008a0f8 -> SearchGsubTable: the face's 'vert' form.</summary>
+        static int VerticalForm(TrueTypeFont face, int gid)
+        {
+            GsubTable gsub = face.Gsub;
+            if (gsub == null) return gid;
+            foreach (string script in gsub.Scripts())
+            {
+                int v = gsub.Substitute(script, "vert", gid);
+                if (v != gid) return v;
+            }
+            return gid;
+        }
+
+        /// <summary>A glyph outline (x along the baseline, y down) laid on the device: x along the
+        /// device unit vector (Ax, Ay), y along (Dx, Dy).</summary>
+        static System.Collections.Generic.List<PathFigure> Turned(System.Collections.Generic.List<PathFigure> figs, (int Ax, int Ay, int Dx, int Dy) a)
+        {
+            System.Numerics.Vector2 T(System.Numerics.Vector2 p) => new System.Numerics.Vector2(p.X * a.Ax + p.Y * a.Dx, p.X * a.Ay + p.Y * a.Dy);
+            var r = new System.Collections.Generic.List<PathFigure>(figs.Count);
+            foreach (PathFigure f in figs)
+            {
+                var c = new PathFigure(T(f.Start)) { Closed = f.Closed };
+                foreach (PathSegment s in f.Segments)
+                    switch (s)
+                    {
+                        case LineSegment l: c.Segments.Add(new LineSegment(T(l.Point))); break;
+                        case QuadraticBezierSegment qq: c.Segments.Add(new QuadraticBezierSegment(T(qq.Control), T(qq.Point))); break;
+                        case CubicBezierSegment b: c.Segments.Add(new CubicBezierSegment(T(b.Control1), T(b.Control2), T(b.Point))); break;
+                    }
+                r.Add(c);
+            }
+            return r;
+        }
+
+        static PathFigure Translated(PathFigure f, float dx, float dy)
+        {
+            System.Numerics.Vector2 T(System.Numerics.Vector2 p) => new System.Numerics.Vector2(p.X + dx, p.Y + dy);
+            var c = new PathFigure(T(f.Start)) { Closed = f.Closed };
+            foreach (PathSegment s in f.Segments)
+                switch (s)
+                {
+                    case LineSegment l: c.Segments.Add(new LineSegment(T(l.Point))); break;
+                    case QuadraticBezierSegment q: c.Segments.Add(new QuadraticBezierSegment(T(q.Control), T(q.Point))); break;
+                    case CubicBezierSegment b: c.Segments.Add(new CubicBezierSegment(T(b.Control1), T(b.Control2), T(b.Point))); break;
+                }
+            return c;
         }
     }
 }

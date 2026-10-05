@@ -441,6 +441,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         private readonly short _xAvgCharWidth;
 
+        /// <summary>OS/2's xAvgCharWidth in design units (IFIMETRICS.fwdAveCharWidth).</summary>
+        internal int XAvgCharWidth => _xAvgCharWidth;
+
+        /// <summary>Whether the face ships a 'VDMX' table (ttfd's vQuantizeXform runs only then).</summary>
+        internal bool HasVdmx => _vdmx >= 0;
+
         /// <summary>TEXTMETRIC's tmAveCharWidth at a pixel size: OS/2's xAvgCharWidth scaled and
         /// rounded. comctl32 sizes a list view's List columns by it (sixteen of them).</summary>
         internal bool TryGetAverageCharWidth(int ppem, out int width)
@@ -1386,7 +1392,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             var key = (glyphId, (((int)MathF.Round(pixelsPerEm * 16f) * 4 + (SubpixelFitting ? 1 : 0)
                        + (s_cacheByBiLevel && TrueTypeInterpreter.BiLevelPass ? 2 : 0)) * 3
                        + (TrueTypeInterpreter.SymmetricAnswerOverride is bool so ? (so ? 1 : 2) : 0))
-                      * 2 + (TrueTypeInterpreter.DWriteMovePoint ? 1 : 0));
+                      * 2 + (TrueTypeInterpreter.DWriteMovePoint ? 1 : 0)
+                      // A stretched GDI fit (the EMF player's, StretchPpemX/Y) is another fit.
+                      + (TrueTypeInterpreter.StretchPpemX << 20 | TrueTypeInterpreter.StretchPpemY << 10) * 64);
             int callNo = 0;
             bool probe = s_outlineProbe && glyphId == s_probeGid;
             if (probe)
