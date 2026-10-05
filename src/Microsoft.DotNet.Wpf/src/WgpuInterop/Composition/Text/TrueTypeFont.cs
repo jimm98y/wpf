@@ -239,6 +239,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _isFixedPitch = tables.TryGetValue("post", out int postTable) && postTable + 16 <= _data.Length
                             && U32(postTable + 12) != 0;
             GdiContrastPalette = ComputeGdiContrastPalette(tables);
+            DWriteThinFamily = ComputeDWriteThinFamily(tables);
 
             // Outlines are OPTIONAL, because a colour BITMAP font has none.
             //
@@ -432,6 +433,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (!FontFiles.ReadNames(_data, _sfntBase, out string? family, out _, out _)) return false;
             foreach (string f in s_contrastFamilies)
                 if (string.Equals(f, family, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>GDI+'s ClearType filter table for the face: ulClearTypeFilter @1800a3568
+        /// (gdiplus) takes the second table (@1802ac5f0) whenever the realization's family name is
+        /// one of the six (compared ignoring case) -- no weight, pitch or transform test, so Courier
+        /// New Bold takes it too, unlike GDI's <see cref="GdiContrastPalette"/>.</summary>
+        internal bool GdiPlusFixedFilter => _gdiPlusFixedFilter ??= ComputeGdiPlusFixedFilter();
+
+        private bool? _gdiPlusFixedFilter;
+
+        private bool ComputeGdiPlusFixedFilter()
+        {
+            if (!FontFiles.ReadNames(_data, _sfntBase, out string? family, out _, out _)) return false;
+            foreach (string f in s_contrastFamilies)
+                if (string.Equals(f, family, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>DirectWrite's thin faces: OpenTypeFontFaceBuilder::ReadFontFace @18003359c sets
+        /// the face's flag 4 (+0x70, read back at +0x60) when IsThinFontFamily @18002fb58 finds the
+        /// canonical family in its sorted list (@18036b880: the same six names as win32k's, compared
+        /// exactly); GlyphBitmapRasterizationState then thickens such a face's oversampled glyph
+        /// bitmaps if its weight is 500 or less (see <see cref="GdiPlusText"/>'s ThinEmbolden).</summary>
+        internal bool DWriteThinFamily { get; }
+
+        private bool ComputeDWriteThinFamily(Dictionary<string, int> tables)
+        {
+            if (!tables.TryGetValue("OS/2", out int os2) || os2 + 6 > _data.Length) return false;
+            if (U16(os2 + 4) > 500) return false;                          // usWeightClass
+            if (!FontFiles.ReadNames(_data, _sfntBase, out string? family, out _, out _)) return false;
+            foreach (string f in s_contrastFamilies)
+                if (string.Equals(f, family, StringComparison.Ordinal)) return true;
             return false;
         }
 
@@ -640,7 +674,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // Fitted outlines, by glyph and by size. A run of text asks for the same handful of glyphs at
         // one size over and over, and fitting is the expensive part of drawing them; the size is held
         // to a sixteenth of a pixel so that a smooth zoom does not fill this with near-duplicates.
-        private readonly Dictionary<(int Glyph, int Size), List<PathFigure>> _hintedCache = new();
+        private readonly Dictionary<(int Glyph, int Size, int Word), List<PathFigure>> _hintedCache = new();
         private const int HintedCacheLimit = 4096;
 
         /// <summary>The design grid this face's outlines are drawn on, for a caller that wants to
@@ -655,6 +689,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>usWinAscent / usWinDescent: GDI+'s cell ascent and descent.</summary>
         internal int WinAscent => _winAscent;
+        internal int HeadYMin => _headYMin;
+        internal int HeadYMax => _headYMax;
+        internal int HeadXMin => _headXMin;
+        internal int HeadXMax => _headXMax;
 
         /// <summary>OS/2 sTypoAscender / sTypoDescender, post underlinePosition / underlineThickness
         /// (font units), and whether the face carries vertical metrics (vmtx or VORG) -- without
@@ -1150,9 +1188,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>Internal so a probe can ask the PRODUCT rather than reimplement it: the
         /// advance test used to duplicate this arithmetic and then disagreed with the product
         /// after it was fixed, reporting a difference that had already been repaired.</summary>
+        private static bool GdiStretched
+            => TrueTypeInterpreter.DWriteFlags == 0 && TrueTypeInterpreter.StretchPpemX > 0 && TrueTypeInterpreter.StretchPpemY > 0
+               && TrueTypeInterpreter.StretchPpemX != TrueTypeInterpreter.StretchPpemY;
+
         internal float CompatibleAdvance(int gid, float pixelsPerEm, int ppemI)
         {
-            if (TryGetHdmxAdvance(gid, ppemI, out float hd)) return hd;
+            // 'hdmx' ONLY FOR A PLAIN UPRIGHT SCALE. bComputeMaxGlyph@14001b198 (fontdrvhost) looks
+            // the table up (vFindHdmxTable) only when the matrix is diagonal with equal, positive
+            // x and y; a turned or stretched glyph is measured.
+            if (TrueTypeInterpreter.GdiTurn == 0 && !GdiStretched && TryGetHdmxAdvance(gid, ppemI, out float hd)) return hd;
             // THEN THE FACE THAT SAYS ITS PROGRAM NEVER MOVES THE ADVANCE (head.flags bit 4 clear):
             // the design advance rounded once, and the program is not asked -- its phantom points
             // round differently (Consolas at 10ppem: 5.498 -> 5 here, 6 by the phantoms, 50 pixels
@@ -1240,7 +1285,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         // Hinting a glyph to ask how wide it is costs as much as hinting it to draw it, and a run of
         // text asks for the same handful of glyphs over and over.
-        private readonly Dictionary<(int Glyph, int Size), float> _hintedAdvances = new();
+        private readonly Dictionary<(int Glyph, long Size), float> _hintedAdvances = new();
+
+        /// <summary>The size half of the advance and span caches' keys. A STRETCHED size
+        /// (TrueTypeInterpreter.StretchPpemX/Y, the EMF player's anisotropic and turned GDI text)
+        /// measures another advance from the same nominal ppem, so it has a key of its own; keyed
+        /// by the ppem alone, whichever of an upright and a stretched run asked first answered the
+        /// other's phase.</summary>
+        private static long SpanSizeKey(float pixelsPerEm)
+        {
+            int sx = TrueTypeInterpreter.StretchPpemX, sy = TrueTypeInterpreter.StretchPpemY;
+            long size = sx > 0 && sy > 0 && sx != sy ? -1 - ((sx << 12) | (sy & 0xfff)) : (int)MathF.Round(pixelsPerEm * 16f);
+            return size & 0xffffffffL | (long)TrueTypeInterpreter.GdiKey << 32;
+        }
 
         /// <summary>The same measurement UNROUNDED, in sixty-fourths. The advance GDI lays a glyph
         /// out at is a whole number of pixels, but the PHASE SCALE is not built from that number:
@@ -1248,7 +1305,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <code>uVar43 = curX[last + 2] - curX[last + 1]</code> -- and divides by what the client
         /// answers for the same advance in font units. So the numerator keeps its sixty-fourths.
         /// </summary>
-        private readonly Dictionary<(int Glyph, int Size), int> _hintedSpans = new();
+        private readonly Dictionary<(int Glyph, long Size), int> _hintedSpans = new();
 
         /// <summary>The distance the face's own program leaves between the two horizontal phantom
         /// points -- the advance the glyph is actually drawn with. False when there is no program to
@@ -1265,7 +1322,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// 1016 over a linear 1017) where the bi-level span gave 1024/1017.</summary>
         internal bool TryGetClearTypeSpan64(int glyphId, float pixelsPerEm, out int span64)
         {
-            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            var key = (glyphId, SpanSizeKey(pixelsPerEm));
             if (_ctSpans.TryGetValue(key, out span64)) return span64 > 0;
             span64 = 0;
             TrueTypeInterpreter? interpreter = Interpreter();
@@ -1291,7 +1348,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return span64 > 0;
         }
 
-        private readonly System.Collections.Generic.Dictionary<(int, int), int> _ctSpans = new();
+        private readonly System.Collections.Generic.Dictionary<(int, long), int> _ctSpans = new();
         [ThreadStatic] private static bool s_measuringCtSpan;
         /// <summary>WPF_CT_SPAN_PASS=ct takes the numerator from TryGetClearTypeSpan64. REFUTED as a
         /// general rule, emphatically: holdout 58 -> 46,606,822 with 355 ratchets failing (the same
@@ -1301,12 +1358,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly bool s_spanFromCtPass =
             Environment.GetEnvironmentVariable("WPF_CT_SPAN_PASS") == "ct";
 
-        private readonly System.Collections.Generic.Dictionary<(int, int), bool> _hintedSpanTouched = new();
+        private readonly System.Collections.Generic.Dictionary<(int, long), bool> _hintedSpanTouched = new();
 
         /// <summary>Whether the bi-level measuring pass moved the advance phantom in x.</summary>
         internal bool HintedSpanTouched(int glyphId, float pixelsPerEm)
         {
-            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            var key = (glyphId, SpanSizeKey(pixelsPerEm));
             if (!_hintedSpanTouched.TryGetValue(key, out bool t))
             {
                 TryGetHintedAdvance(glyphId, pixelsPerEm, out float _);
@@ -1317,7 +1374,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         internal bool TryGetHintedSpan64(int glyphId, float pixelsPerEm, out int span64)
         {
-            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            var key = (glyphId, SpanSizeKey(pixelsPerEm));
             if (!_hintedSpans.TryGetValue(key, out span64))
             {
                 TryGetHintedAdvance(glyphId, pixelsPerEm, out float _);
@@ -1339,7 +1396,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // by what the program did. A glyph is DRAWN by its gasp and SPACED by its program.
 
             // NOT keyed by the hinting mode, because it is not measured in one: see below.
-            var key = (glyphId, (int)MathF.Round(pixelsPerEm * 16f));
+            var key = (glyphId, SpanSizeKey(pixelsPerEm));
             if (_hintedAdvances.TryGetValue(key, out advance)) return advance > 0f;
 
             advance = 0f;
@@ -1411,7 +1468,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                        + (TrueTypeInterpreter.SymmetricAnswerOverride is bool so ? (so ? 1 : 2) : 0))
                       * 2 + (TrueTypeInterpreter.DWriteMovePoint ? 1 : 0)
                       // A stretched GDI fit (the EMF player's, StretchPpemX/Y) is another fit.
-                      + (TrueTypeInterpreter.StretchPpemX << 20 | TrueTypeInterpreter.StretchPpemY << 10) * 64);
+                      + (TrueTypeInterpreter.StretchPpemX << 20 | TrueTypeInterpreter.StretchPpemY << 10) * 64,
+                      // ...and so is a turned one (GdiWord: no compatible widths, ClearType along y).
+                      TrueTypeInterpreter.GdiKey);
             int callNo = 0;
             bool probe = s_outlineProbe && glyphId == s_probeGid;
             if (probe)
@@ -1583,10 +1642,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// telling a ClearType rasterizer not to run its program. A version 0 table cannot say
         /// so, and GDI fits those faces (Arial Bold, Arial Italic, Times Bold) at every size.
         /// See <see cref="CompatibleAdvance"/>.</summary>
+        /// <summary>The size the 'gasp' is read at: the GDI font context's own ppem when a turned
+        /// glyph is fitted at other sizes (TrueTypeInterpreter.GdiGaspPpem), else the size itself.</summary>
+        private static int GaspPpemFor(float pixelsPerEm)
+            => TrueTypeInterpreter.GdiGaspPpem > 0 ? TrueTypeInterpreter.GdiGaspPpem : (int) MathF.Round(pixelsPerEm);
+
         private bool GaspDeclinesClearTypeGridFit(float pixelsPerEm)
         {
             if (_gasp < 0 || U16(_gasp) == 0) return false;
-            int ppem = (int) MathF.Round(pixelsPerEm);
+            int ppem = GaspPpemFor(pixelsPerEm);
             int ranges = U16(_gasp + 2);
             int at = _gasp + 4;
             for (int i = 0; i < ranges; i++, at += 4)
@@ -1651,8 +1715,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // fields are clear for Times Bold, Times Italic and Arial Italic and GDI smooths them
             // symmetrically at every size, as the line below already says.
             if (want == GaspSymmetricSmoothing && U16(_gasp) == 0)
-                return s_v0SymFrom <= 0 || (int) MathF.Round(pixelsPerEm) >= s_v0SymFrom;
-            int ppem = (int) MathF.Round(pixelsPerEm);
+                return s_v0SymFrom <= 0 || GaspPpemFor(pixelsPerEm) >= s_v0SymFrom;
+            int ppem = GaspPpemFor(pixelsPerEm);
             int ranges = U16(_gasp + 2);
             int at = _gasp + 4;
             for (int i = 0; i < ranges; i++, at += 4)
@@ -1681,13 +1745,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// it runs -- overwrites the result. Returns the renderer's DropoutForRun value (scan type
         /// + 1, or 0 for none), or -1 when nothing was recorded.</summary>
         internal int GlyphDropout(int gid, float pixelsPerEm)
-            => s_perGlyphScan && _glyphScan.TryGetValue((gid, (int) MathF.Round(pixelsPerEm * 16f)), out int t)
+            => s_perGlyphScan && _glyphScan.TryGetValue((gid, SpanSizeKey(pixelsPerEm)), out int t)
                ? ((t & 2) != 0 ? 0 : t + 1) : -1;
 
         private static readonly bool s_perGlyphScan =
             Environment.GetEnvironmentVariable("WPF_CT_SCAN_PERGLYPH") != "0";
 
-        private readonly Dictionary<(int, int), int> _glyphScan = new();
+        private readonly Dictionary<(int, long), int> _glyphScan = new();
         [ThreadStatic] private static int[]? s_scanAcc;
 
         private void RecordScanType(TrueTypeInterpreter interpreter, GlyphProgram glyph, int gid,
@@ -1734,7 +1798,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     if (mine < 0)
                         mine = DoScanControl(interpreter.PrepScanControl, (int) MathF.Round(pixelsPerEm))
                                ? interpreter.PrepScanType : 2;
-                    _glyphScan[(gid, (int) MathF.Round(pixelsPerEm * 16f))] = mine;
+                    _glyphScan[(gid, SpanSizeKey(pixelsPerEm))] = mine;
                 }
             }
         }
@@ -1750,7 +1814,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>fsg_DoScanControl@14002e5d0.</summary>
         private static bool DoScanControl(int ctrl, int ppem)
-            => ((ctrl & 0x100) != 0 && ((ctrl & 0xFF) == 0xFF || ppem <= (ctrl & 0xFF)));
+            => ((ctrl & 0x100) != 0 && ((ctrl & 0xFF) == 0xFF || ppem <= (ctrl & 0xFF)))
+               // fsg_DoScanControl@14002e5d0 is handed the transform's flags beside the ppem: bit 9
+               // asks for dropout control under a general rotation (0x400) and bit 10 under any
+               // matrix that is not a plain uniform scale (0x1000) -- a turned or stretched GDI glyph.
+               || ((ctrl & 0x200) != 0 && TrueTypeInterpreter.GdiRotated)
+               || ((ctrl & 0x400) != 0 && GdiNonIdentity);
+
+        /// <summary>fs__NewTransformation's 0x1000: the scaler's matrix is not a uniform upright scale.</summary>
+        private static bool GdiNonIdentity
+            => TrueTypeInterpreter.DWriteFlags == 0 && (TrueTypeInterpreter.GdiTurn != 0 || TrueTypeInterpreter.GdiRotated || TrueTypeInterpreter.GdiStretchInfo == 1);
 
         public bool WantsDropoutControl(float pixelsPerEm, out int scanType)
         {
@@ -1766,6 +1839,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int ppem = (int) MathF.Round(pixelsPerEm);
             bool on = (ctrl & 0x100) != 0 && (threshold == 0xFF || ppem <= threshold);
             if ((ctrl & 0x800) != 0 && threshold != 0xFF && ppem > threshold) on = false;
+            if (((ctrl & 0x200) != 0 && TrueTypeInterpreter.GdiRotated) || ((ctrl & 0x400) != 0 && GdiNonIdentity)) on = true;
             // SCANTYPE 2 and 3 mean no dropout control at all; 0/1 simple, 4/5 smart.
             if (s_dropoutTrace)
                 Console.Error.WriteLine($"DROPOUT upem={_unitsPerEm} ppem={ppem} SCANCTRL=0x{ctrl:X} SCANTYPE={scanType} on={on}");
@@ -1902,7 +1976,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // that; GRIDFIT below is what the bi-level rasterizer would read.
             if (U16(_gasp) == 0) return true;
 
-            int ppem = (int) MathF.Round(pixelsPerEm);
+            int ppem = GaspPpemFor(pixelsPerEm);
             int ranges = U16(_gasp + 2);
             int at = _gasp + 4;
             for (int i = 0; i < ranges; i++, at += 4)
@@ -2339,6 +2413,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>One run of the face's program under DirectWrite's mode word -- the fit behind
         /// <see cref="TryGetDWriteFittedOutline"/> -- or null when there is none.</summary>
+
+        /// <summary>The scan mode (SCANTYPE + 1, or 0 for none) DirectWrite's scaler gives a glyph it
+        /// does not fit under a turned matrix: the prep's SCANCTRL and SCANTYPE at the scaler's
+        /// ppem, where fsg_DoScanControl also honours bit 9 (a rotated matrix, fs__NewTransformation's
+        /// 0x400) and bit 10 (any matrix but a uniform scale, 0x1000) -- both true of a turn.</summary>
+        internal int DWriteTurnedDropout(int ppem, int flags)
+        {
+            TrueTypeInterpreter? interpreter = Interpreter();
+            if (interpreter is null || ppem < 1) return 0;
+            int savedFlags = TrueTypeInterpreter.DWriteFlags;
+            bool savedBi = TrueTypeInterpreter.BiLevelPass, savedSub = SubpixelFitting;
+            try
+            {
+                TrueTypeInterpreter.DWriteFlags = flags;
+                TrueTypeInterpreter.BiLevelPass = false;
+                SubpixelFitting = true;
+                if (!interpreter.PrepareForSize(ppem)) return 0;
+                int ctrl = interpreter.PrepScanControl, type = interpreter.PrepScanType;
+                bool on = ((ctrl & 0x100) != 0 && ((ctrl & 0xFF) == 0xFF || ppem <= (ctrl & 0xFF)))
+                          || (ctrl & 0x200) != 0 || (ctrl & 0x400) != 0;
+                int scan = on ? type : 2;
+                return (scan & 2) != 0 ? 0 : scan + 1;
+            }
+            finally
+            {
+                TrueTypeInterpreter.DWriteFlags = savedFlags;
+                TrueTypeInterpreter.BiLevelPass = savedBi;
+                SubpixelFitting = savedSub;
+            }
+        }
 
         private GlyphProgram? DWriteFit(int glyphId, float pixelsPerEm, int flags, out int dropout)
         {
@@ -3204,7 +3308,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             GlyphProgram? glyph;
             if ((short)U16(_glyfOffset + (int)start) >= 0) glyph = ReadGlyphProgram(gid);
             else if (s_componentFactorFromRoot && depth == 0 && !s_measuringCtSpan
-                     && !TrueTypeInterpreter.BiLevelPass)
+                     && !TrueTypeInterpreter.BiLevelPass && !TrueTypeInterpreter.GdiNoCompatibleWidths)
             {
                 // ONE FACTOR FOR THE WHOLE TREE, THE ROOT'S. fs__Contour runs pass one over every
                 // element of the glyph tree, leaves globals[0x1ac] holding the ROOT's advance and
@@ -3364,10 +3468,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int savedCompat = TrueTypeInterpreter.CompatibleAdvance64;
             int savedSpan = TrueTypeInterpreter.BiLevelSpan64;
             bool savedUntouched = TrueTypeInterpreter.BiLevelPhantomUntouched;
-            if (s_measuringCtSpan)
+            if (s_measuringCtSpan || TrueTypeInterpreter.GdiNoCompatibleWidths)
             {
                 // GDI's pass one: the ClearType program with the compatible-width factor at ONE --
                 // no pre-scale, no phase -- whose phantom span becomes the factor's numerator.
+                // And a word with no compatible widths (a turned GDI glyph, TrueTypeInterpreter.
+                // GdiWord): fs__Contour runs it once, with no bi-level pass and no phase.
                 TrueTypeInterpreter.CompatibleAdvance64 = 0;
                 TrueTypeInterpreter.BiLevelSpan64 = 0;
             }
@@ -4797,6 +4903,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal ushort RawAdvanceWidth(int gid)
             => _advanceWidths.Length == 0 ? (ushort)0 : _advanceWidths[gid < _numHMetrics ? gid : _numHMetrics - 1];
 
+        /// <summary>A glyph's NOTIONAL metrics as ttfd's vGetNotionalGlyphMetrics@140086558 reads
+        /// them: the left side bearing (hmtx), the ink's right edge measured from the same origin
+        /// (lsb + xMax - xMin, the glyf header), and the glyf header's yMin / yMax, in font units.
+        /// False for a glyph with no outline.</summary>
+        internal bool TryGetNotionalMetrics(int gid, out int lsb, out int right, out int yMin, out int yMax)
+        {
+            lsb = right = yMin = yMax = 0;
+            if (gid < 0 || gid >= _numGlyphs || _glyfOffset < 0 || _loca.Length == 0 || _hmtxOffset < 0) return false;
+            uint start = _loca[gid], end = _loca[gid + 1];
+            if (end <= start) return false;
+            int g = _glyfOffset + (int)start;
+            int xMin = (short)U16(g + 2), xMax = (short)U16(g + 6);
+            yMin = (short)U16(g + 4); yMax = (short)U16(g + 8);
+            lsb = gid < _numHMetrics ? (short)U16(_hmtxOffset + gid * 4 + 2)
+                : (short)U16(_hmtxOffset + _numHMetrics * 4 + (gid - _numHMetrics) * 2);
+            right = lsb - xMin + xMax;
+            return true;
+        }
+
         /// <summary>
         ///  Moves a glyph's points to the selected instance, and records what that did to its advance.
         /// </summary>
@@ -5119,6 +5244,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     scaled.Add((pts, contour.OnCurve));
                 }
             }
+            // A STRETCHED size (TrueTypeInterpreter.StretchPpemX/Y): the scaler's matrix scales x
+            // by its own axis, so the unfitted outline is x * ppemX / upem where the size is y's.
+            int stx = TrueTypeInterpreter.StretchPpemX, sty = TrueTypeInterpreter.StretchPpemY;
+            if (stx > 0 && sty > 0 && stx != sty && MathF.Abs(pixelsPerEm - sty) < 0.001f)
+                foreach ((Vector2[] pts, _) in scaled)
+                    for (int i = 0; i < pts.Length; i++)
+                        pts[i] = new Vector2((float) ((double) pts[i].X * stx / sty), pts[i].Y);
 
             // The simulations are in pixels at THIS size, which is what the base-pixel builder
             // does too once its own scale is taken out. Not GDI's simulated bold, though: that
@@ -5343,6 +5475,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (!s_embOutline && !outline) return;
             int first = 0;
             foreach (int last in glyph.EndPoints)
+            {
+                GdiEmboldContour(X, Y, first, last, p8, p9, p10, p11);
+                first = last + 1;
+            }
+        }
+
+        /// <summary>fsg_Embold over UNFITTED points in the scaler's frame at <paramref name="ppem"/>
+        /// (26.6, y up): the amounts (20 ppem - 10) / 1000 + 1 and (20 ppem - 10) / 1000 pixels split
+        /// in halves, as <see cref="GdiEmbolden"/> does for a glyph that is not fitted.</summary>
+        internal static void GdiEmboldenUnfitted(int[] X, int[] Y, int[] endPoints, int ppem)
+        {
+            int ax = (20 * ppem - 10) / 1000 + 1, ay = (20 * ppem - 10) / 1000;
+            int p8 = ax * 32, p9 = ax * 32, p10 = ay * 32, p11 = ay * 32;
+            int first = 0;
+            foreach (int last in endPoints)
             {
                 GdiEmboldContour(X, Y, first, last, p8, p9, p10, p11);
                 first = last + 1;

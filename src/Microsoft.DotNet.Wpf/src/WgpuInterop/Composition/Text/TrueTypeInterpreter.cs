@@ -473,6 +473,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private bool _prepBiLevel;
         private int _prepDWriteFlags;
         private bool _prepDWriteMove;
+        private int _prepGdiWord;
         private bool? _prepSymOverride;
 
         /// <summary>Run this hint with the BI-LEVEL rules -- physical grid, full cut-in, full minimum
@@ -515,8 +516,51 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// is GDI's, but the arithmetic is dwrite.dll's copy (see FreedomStepY).</summary>
         [ThreadStatic] internal static bool DWriteMovePoint;
 
-        /// <summary>Running DirectWrite's natural modes, whose word has no compatible widths.</summary>
-        internal static bool DWriteNatural => DWriteFlags != 0 && (DWriteFlags & 2) == 0;
+        /// <summary>GDI's word as fs__NewTransformation@1400254d0 (fontdrvhost) leaves it for a
+        /// transform that is not a plain scale, or 0 for the upright word (0x03 / 0x23, see
+        /// <see cref="DWriteFlags"/>). bSetXform@14001c2c8 hands the scaler 0x03, or 0x23 when the
+        /// face's gasp asks for symmetric smoothing; fs__NewTransformation then keeps bit 1
+        /// (compatible widths) only while the matrix's m01 is 0, and toggles bit 2 (ClearType along
+        /// the glyph's y) for a ClearType word without bit 5 when m00 is 0. A glyph turned a quarter
+        /// is therefore fitted with no compatible widths -- no bi-level measuring pass, no phase --
+        /// and, unless the face smooths symmetrically, with its y the oversampled axis, because its
+        /// y is the device's x. The arithmetic stays fontdrvhost's (this is not DWriteFlags).</summary>
+        [ThreadStatic] internal static int GdiWord;
+
+        /// <summary>The GDI transform turns by an angle that is not a quarter: GETINFO selector 2.</summary>
+        [ThreadStatic] internal static bool GdiRotated;
+
+        /// <summary>A GDI glyph laid on the device by a quarter-turn mapping (and possibly a mirror),
+        /// whose re-anchor on pp1 is made in device space: <see cref="PackGdiTurn"/> of where the
+        /// glyph's x axis (Ax, Ay) and its DOWN axis (Dx, Dy) point on the screen; 0 upright.</summary>
+        [ThreadStatic] internal static int GdiTurn;
+
+        /// <summary>GETINFO's STRETCHED answer for a GDI glyph, from the matrix bSetXform hands the scaler
+        /// (scl_InitializeScaling compares its rows' lengths BEFORE each axis is rounded to a whole
+        /// pixel, so two axes that round to the same ppem can still be stretched): 1 yes, 2 no, 0 the
+        /// stretched size's own answer (StretchPpemX != StretchPpemY).</summary>
+        [ThreadStatic] internal static int GdiStretchInfo;
+
+        /// <summary>The size a turned GDI glyph's gasp is read at: the font context's own ppem
+        /// (+0x7c, the em of the glyph's y row, vSetClearTypeState @14001d1d8 and bIsGaspFlagSet), where
+        /// a general rotation fits at its rows' largest components; 0 to read it at the fitted size.</summary>
+        [ThreadStatic] internal static int GdiGaspPpem;
+
+        internal static int GdiKey => (GdiWord & 0x3f) | (GdiRotated ? 0x40 : 0) | (GdiTurn & 0x1ff) << 7 | (GdiStretchInfo & 3) << 16 | (GdiGaspPpem & 0xfff) << 18;
+
+        internal static int PackGdiTurn(int ax, int ay, int dx, int dy)
+            => ax == 1 && ay == 0 && dx == 0 && dy == 1 ? 0
+             : 0x100 | (ax + 1) | (ay + 1) << 2 | (dx + 1) << 4 | (dy + 1) << 6;
+
+        private static (int Ax, int Ay, int Dx, int Dy) GdiTurnAxes(int packed)
+            => ((packed & 3) - 1, (packed >> 2 & 3) - 1, (packed >> 4 & 3) - 1, (packed >> 6 & 3) - 1);
+
+        /// <summary>Running a word with no compatible widths: DirectWrite's natural modes, or GDI's
+        /// word under a transform whose m01 is not 0 (<see cref="GdiWord"/>).</summary>
+        internal static bool DWriteNatural => DWriteFlags != 0 ? (DWriteFlags & 2) == 0 : GdiNoCompatibleWidths;
+
+        /// <summary>GDI's turned word without compatible widths (<see cref="GdiWord"/>).</summary>
+        internal static bool GdiNoCompatibleWidths => DWriteFlags == 0 && GdiWord != 0 && (GdiWord & 2) == 0;
 
         /// <summary>ClearType oversampling the glyph's Y axis: bit 2 of the mode word, which
         /// fs__NewTransformation@180070bc0 (dwrite) toggles for a ClearType word without bit 5 when
@@ -526,7 +570,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// @180089560: word bit 0 and bit 2), a projection is off the ClearType axis only when it is
         /// pure +X, the delta engine keeps a move only along pure +X freedom (itrp_DeltaEngine
         /// @180080b78), and x -- no longer oversampled -- rounds to whole pixels.</summary>
-        internal static bool ClearTypeAxisY => DWriteFlags != 0 && (DWriteFlags & 5) == 5;
+        internal static bool ClearTypeAxisY => ((DWriteFlags != 0 ? DWriteFlags : GdiWord) & 5) == 5;
 
         /// <summary>The x grid is the sixteenth one: ClearType fitting with x the oversampled axis.</summary>
         private static bool SubpixelXHere => SubpixelFittingHere && !ClearTypeAxisY;
@@ -828,7 +872,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     int pp1 = _realPoints;
                     int dx = -_glyphZone.CurX[pp1];
                     int dy = s_pp1Origin == 3 ? 0 : -_glyphZone.CurY[pp1];
-                    if (s_pp1Origin != 2)
+                    if (s_pp1Origin != 2 && GdiTurn != 0 && DWriteFlags == 0 && !BiLevelPass && TrueTypeFont.SubpixelFitting)
+                    {
+                        // A TURNED GDI GLYPH is re-anchored on the DEVICE: fs__Contour applies
+                        // scl_PostTransformGlyph@1400955f0 first (globals flag 0x2000, a matrix that
+                        // is not a plain scale) and then rounds the device x of the shift to the
+                        // sixteenth (ClearType) and leaves its device y alone -- whatever the
+                        // ClearType axis. GdiTurn packs the glyph's axes on the screen (see
+                        // GdiTurnAxes); the scaler's device is y-up: X = Ax gx - Dx gy,
+                        // Y = Dy gy - Ay gx.
+                        (int ax, int ay, int ddx, int ddy) = GdiTurnAxes(GdiTurn);
+                        int px = _glyphZone.CurX[pp1], py = _glyphZone.CurY[pp1];
+                        int devX = ax * px - ddx * py, devY = ddy * py - ay * px;
+                        int sX = (-devX + 2) & ~3, sY = -devY;
+                        int det = ax * ddy - ddx * ay;
+                        dx = (ddy * sX + ddx * sY) * det;
+                        dy = (ay * sX + ax * sY) * det;
+                    }
+                    else if (s_pp1Origin != 2)
                         dx = BiLevelPass || !TrueTypeFont.SubpixelFitting || ClearTypeAxisY ? (dx + 32) & ~63
                            : s_pp1Sample ? RoundToSample(dx)
                            : (dx + 2) & ~3;
@@ -2095,7 +2156,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool clearType = ClearTypeInfo;
             if (_prepRun && Math.Abs(_prepPpem - pixelsPerEm) < 0.001f && _prepClearType == clearType
                 && _prepBiLevel == BiLevelPass && _prepDWriteFlags == DWriteFlags
-                && _prepSymOverride == SymmetricAnswerOverride && _prepDWriteMove == DWriteMovePoint
+                && _prepSymOverride == SymmetricAnswerOverride && _prepDWriteMove == DWriteMovePoint && _prepGdiWord == GdiKey
                 && _prepStretchX == (stretched ? sx : 0) && _prepStretchY == (stretched ? sy : 0))
                 return !_faulted;
 
@@ -2108,6 +2169,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _prepDWriteFlags = DWriteFlags;
             _prepSymOverride = SymmetricAnswerOverride;
             _prepDWriteMove = DWriteMovePoint;
+            _prepGdiWord = GdiKey;
             _roundFnSp = false;          // the pre-program starts on the whole-pixel functions
             _prepRun = true;
             _faulted = false;

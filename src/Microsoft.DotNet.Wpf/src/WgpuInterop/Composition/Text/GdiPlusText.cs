@@ -278,7 +278,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // FastDrawGlyphsNominal for a fixed-pitch face and for the hints that do not fit
             // (IsGridFittedTextRealizationMethod: 1, 3 and 5 fit).
             bool nominal = font.IsFixedPitch || hint == HintAntiAlias || hint == HintSingleBitPerPixel;
-            var run = new Run { Em = em, Mode = mode, Hint = hint, FixedFilter = font.GdiContrastPalette, Sx = sx, Sy = sy };
+            var run = new Run { Em = em, Mode = mode, Hint = hint, FixedFilter = font.GdiPlusFixedFilter, Sx = sx, Sy = sy };
             // The advance type: 2 GDI natural (ClearType), 1 GDI classic (the other grid-fitted
             // realizations, the bi-level one a ClearType face falls back to included), 0 design.
             int advType = mode == 5 ? 2 : hint == HintAntiAlias || hint == HintSingleBitPerPixel ? 0 : 1;
@@ -488,10 +488,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// and DirectWrite answers 607, eight pixels. The side bearings are the 6x1 bitmap's: its ink
         /// in sixths of a pixel from the origin and from the advance.</summary>
         internal static void NaturalMetrics(TrueTypeFont font, int gid, float em, out int advDu, out int lsbDu, out int rsbDu)
+            => NaturalMetrics(font, gid, em, false, out advDu, out lsbDu, out rsbDu);
+
+        /// <summary>The device advance's whole pixels: TrueTypeRasterizer::Implementation::GetMetrics
+        /// @18006af80 rounds the scaler's device advance vector (+0x48, 16.16) in x, (v + 0x8000) &amp;
+        /// ~0xffff, when the inverse transform is diagonal, and only then multiplies it back by the
+        /// inverse's m11 (+0x1f8). Under a transform that mirrors x the span is negative there, so a
+        /// half rounds the other way: Arial 's' at 21 ppem spans exactly 10.5 pixels and is 11
+        /// upright, 10 mirrored.</summary>
+        static int NaturalPx(int span64, bool hasOutline, bool mirrored)
+        {
+            int bias = hasOutline ? 32 : 34;
+            return mirrored ? -((-span64 + bias) >> 6) : (span64 + bias) >> 6;
+        }
+
+        /// <summary><see cref="NaturalMetrics(TrueTypeFont, int, float, out int, out int, out int)"/>
+        /// under a transform that mirrors x (<paramref name="mirrored"/>: m11 &lt; 0, axis-aligned).</summary>
+        internal static void NaturalMetrics(TrueTypeFont font, int gid, float em, bool mirrored, out int advDu, out int lsbDu, out int rsbDu)
         {
             int ppem = Floor(em + 0.5f);
             if (ppem < 1) ppem = 1;
-            var key = (gid, ppem);
+            var key = (gid, ppem | (mirrored ? 1 << 20 : 0));
             var cache = s_metrics.GetValue(font, _ => new Dictionary<(int, int), (int, int, int)>());
             lock (cache)
                 if (cache.TryGetValue(key, out var hit)) { (advDu, lsbDu, rsbDu) = hit; return; }
@@ -504,7 +521,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // A glyph with no outline (the space) rounds up from 30/64, not 32/64: measured over
             // eight faces at 6..24pt, 29/64 stays down (Microsoft Sans Serif at 13ppem, 3.453 -> 3)
             // and 30/64 goes up (Segoe UI at 9ppem, 2.465 -> 3; Verdana Bold at 16, 5.469 -> 6).
-            int px = (span64 + (hasOutline ? 32 : 34)) >> 6;
+            int px = NaturalPx(span64, hasOutline, mirrored);
             advDu = (int)Math.Floor(px * (double)upem / ppem + 0.5);
             if (!OutlineXExtent(font, gid, ppem, out float x0, out float x1)) { lsbDu = 0; rsbDu = advDu; }
             else
@@ -532,10 +549,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// the square 18 ppem gives 1479.</summary>
         internal static void NaturalMetrics(TrueTypeFont font, int gid, float em, float sx, float sy,
                                             out int advDu, out int lsbDu, out int rsbDu)
+            => NaturalMetrics(font, gid, em, sx, sy, false, out advDu, out lsbDu, out rsbDu);
+
+        internal static void NaturalMetrics(TrueTypeFont font, int gid, float em, float sx, float sy, bool mirrored,
+                                            out int advDu, out int lsbDu, out int rsbDu)
         {
             float ex = em * sx, ey = em * sy;
             int ppx = AxisPpem(ex), ppy = AxisPpem(ey);
-            if (sx == sy || ppx == ppy) { NaturalMetrics(font, gid, ex, out advDu, out lsbDu, out rsbDu); return; }
+            if (sx == sy || ppx == ppy) { NaturalMetrics(font, gid, ex, mirrored, out advDu, out lsbDu, out rsbDu); return; }
             int upem = font.UnitsPerEmForHinting;
             int design = font.DesignAdvance(gid);
             bool hasOutline = font.TryGetDesignXExtent(gid, out _, out _);
@@ -546,7 +567,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int ppem = Math.Max(ppx, ppy);
                 if (!font.TryGetDWriteFittedSpan64(gid, ppem, NaturalScalerWord, out int span64))
                     span64 = (int)MathF.Round(design * 64f * ppx / upem, MidpointRounding.AwayFromZero);
-                int px = (span64 + (hasOutline ? 32 : 34)) >> 6;
+                int px = NaturalPx(span64, hasOutline, mirrored);
                 advDu = (int)Math.Floor(px * (double)upem / ex + 0.5);
                 if (!OutlineXExtent(font, gid, ppem, out float x0, out float x1)) { lsbDu = 0; rsbDu = advDu; }
                 else
@@ -697,7 +718,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// Consolas at 9ppem, which its gasp leaves unfitted, is fitted here (and measured fitted,
         /// see NaturalMetrics) -- 735 of 735 test strings exact with that, 703 without.</para></summary>
         internal static NaturalClearType.GlyphBits Glyph(TrueTypeFont font, int gid, float em)
-            => NaturalClearType.Rasterize(font, gid, em, 1, gridFit: true, scalerFlags: NaturalScalerWord, forceGridFit: true);
+            => ThinEmbolden(font, NaturalClearType.Rasterize(font, gid, em, 1, gridFit: true, scalerFlags: NaturalScalerWord, forceGridFit: true));
 
         /// <summary>The same glyph under a device transform that scales x and y apart (GDI+ text
         /// played into a stretched device): DrawPlacedGlyphs hands CreateGlyphBitmapArray the world
@@ -713,8 +734,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.StretchPpemY = ppemY;
             try
             {
-                return NaturalClearType.Rasterize(font, gid, Math.Max(ppemX, ppemY), 1, gridFit: true,
-                                                  scalerFlags: NaturalScalerWord, forceGridFit: true);
+                return ThinEmbolden(font, NaturalClearType.Rasterize(font, gid, Math.Max(ppemX, ppemY), 1, gridFit: true,
+                                                  scalerFlags: NaturalScalerWord, forceGridFit: true));
             }
             finally
             {
@@ -736,7 +757,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             try
             {
                 // fs__NewTransformation toggles word bit 2 for m00 == 0: ClearType on the glyph's y.
-                return NaturalClearType.RasterizeQuarterTurn(font, gid, Math.Max(ppemAlong, ppemAcross), SidewaysScalerWord);
+                return ThinEmbolden(font, NaturalClearType.RasterizeQuarterTurn(font, gid, Math.Max(ppemAlong, ppemAcross), SidewaysScalerWord));
             }
             finally
             {
@@ -763,15 +784,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.StretchPpemY = along == across ? 0 : across;
             try
             {
-                bool hasOutline = font.TryGetDesignXExtent(gid, out _, out _);
                 if (!font.TryGetDWriteFittedSpan64(gid, Math.Max(along, across), SidewaysScalerWord, out int span64))
                     span64 = (int)MathF.Round(font.DesignAdvance(gid) * 64f * along / upem, MidpointRounding.AwayFromZero);
-                int px = (span64 + (hasOutline ? 32 : 34)) >> 6;
+                // Sideways a glyph with no outline rounds as any other (DirectWrite: Verdana Bold's
+                // space at 16 under (0, 1, -1, 0) is 640 units, 5 px; upright natural it is 768).
+                int px = (span64 + 32) >> 6;
                 advDu = (int)Math.Floor(px * (double)upem / (em * m22) + 0.5);
             }
             finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
             int voyPx = (int)Math.Floor(font.TypoAscender * (double)across / upem + 0.5);
             voyDu = (int)Math.Floor(voyPx * (double)upem / (em * m11) + 0.5);
+        }
+
+        /// <summary>The side bearings GetGdiCompatibleGlyphMetrics gives a glyph under a quarter
+        /// turn (what GpFaceRealization::GetGlyphStringSidebearings @180024530 asks for under the
+        /// realization's own transform): the sideways fit's box along the glyph's x, which is the
+        /// device's y and is sampled once a pixel, each edge to the nearer pixel boundary as the
+        /// 6x1 box is to the nearer sixth.</summary>
+        internal static void SidewaysBearings(TrueTypeFont font, int gid, float em, float m11, float m22,
+                                              out int lsbDu, out int rsbDu)
+        {
+            int upem = font.UnitsPerEmForHinting;
+            SidewaysMetrics(font, gid, em, m11, m22, out int advDu, out _);
+            int along = AxisPpem(em * m22), across = AxisPpem(em * m11);
+            int sxs = TrueTypeInterpreter.StretchPpemX, sys = TrueTypeInterpreter.StretchPpemY;
+            TrueTypeInterpreter.StretchPpemX = along == across ? 0 : along;
+            TrueTypeInterpreter.StretchPpemY = along == across ? 0 : across;
+            try
+            {
+                if (!OutlineXExtent(font, gid, Math.Max(along, across), out float x0, out float x1, SidewaysScalerWord))
+                { lsbDu = 0; rsbDu = advDu; return; }
+                double k = upem / (double)(em * m22);
+                int left = (int)MathF.Ceiling(x0 - 0.5f), right = (int)MathF.Floor(x1 + 0.5f);
+                int px = (int)Math.Floor(advDu / k + 0.5);
+                lsbDu = (int)Math.Floor(left * k + 0.5);
+                rsbDu = (int)Math.Floor((px - right) * k + 0.5);
+            }
+            finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
         }
 
         /// <summary>A device em (the world em through one axis of the world-to-device matrix) as
@@ -923,6 +972,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
                     bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, moved), ox, oy, w, h, 4,
                                                                 dropout, 4);
+                    if (bits is not null) ThinDilate(font, bits, w * 4, h * 4);
                     if (bits is not null)
                     {
                         var cov = new int[w * h];
@@ -955,6 +1005,173 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 cache[key] = g;
             }
             return g;
+        }
+
+        /// <summary>Whether DirectWrite thickens this face's oversampled bitmaps:
+        /// GlyphBitmapRasterizationState's constructor @1800609c0 sets its thin flag (+8) for a face
+        /// with the thin bit, an x overscale of at least 2, a weight of 500 or less and rendering
+        /// flags with neither the bold simulation (2) nor embedded bitmaps (0x40).</summary>
+        internal static bool Thickens(TrueTypeFont font) => font.DWriteThinFamily && !font.SynthesizesBold;
+
+        /// <summary>CachedBitmapWriter::Pack @18005f8b8 with the thin flag: every run of ink in a row
+        /// of the oversampled bitmap is one sample longer (runs it then reaches merge), and the
+        /// bitmap one sample wider -- each sample is set where it or the one to its left was.</summary>
+        internal static NaturalClearType.GlyphBits ThinEmbolden(TrueTypeFont font, NaturalClearType.GlyphBits g)
+        {
+            if (!Thickens(font) || g.IsEmpty) return g;
+            int w = g.Width + 1;
+            var bits = new bool[w * g.Height];
+            for (int r = 0; r < g.Height; r++)
+                for (int c = 0; c < w; c++)
+                    bits[r * w + c] = (c < g.Width && g.Bits[r * g.Width + c]) || (c > 0 && g.Bits[r * g.Width + c - 1]);
+            return new NaturalClearType.GlyphBits { Left = g.Left, Top = g.Top, Width = w, Height = g.Height, Bits = bits };
+        }
+
+        /// <summary>The same on a scanned sample grid (<paramref name="cols"/> samples a row), in place,
+        /// for a face that thickens. The grid must have a free column at its right.</summary>
+        internal static void ThinDilate(TrueTypeFont font, bool[] bits, int cols, int rows)
+        {
+            if (!Thickens(font)) return;
+            for (int r = 0; r < rows; r++)
+                for (int c = cols - 1; c > 0; c--)
+                    if (bits[r * cols + c - 1]) bits[r * cols + c] = true;
+        }
+
+        /// <summary>A glyph of an antialiased or bi-level realization turned a quarter clockwise
+        /// (the world's, not a vertical line's): fitted at the sideways sizes as
+        /// <see cref="GlyphSideways"/> is -- the grey word with bit 2 toggled (fs__NewTransformation
+        /// does so for a ClearType word when m00 == 0), the bi-level word as it is -- turned
+        /// (x, y) -> (-y, x) and scanned 4x4 at its quarter-pixel phase (<paramref name="grey"/>) or
+        /// once a pixel with the fit's dropout control.</summary>
+        internal static GreyGlyph QuarterGlyph(TrueTypeFont font, int gid, int ppemAlong, int ppemAcross, bool grey, int phaseX, int phaseY)
+        {
+            var g = new GreyGlyph();
+            if (!grey && ppemAlong == ppemAcross && font.TryGetStrikeGlyph(gid, ppemAlong, out BitmapGlyph bmp))
+            {
+                // The size's embedded strike, turned with the glyph: source pixel (c, r), its box at
+                // (bearingX + c, r - bearingY) y down, lands on device column bearingY - r - 1, row
+                // bearingX + c.
+                int bw = bmp.PixelWidth, bh = bmp.PixelHeight;
+                var rot = new byte[bw * bh];
+                for (int r = 0; r < bh; r++)
+                    for (int c = 0; c < bw; c++)
+                        rot[c * bh + (bh - 1 - r)] = bmp.Png[r * bw + c];
+                CropInto(g, rot, bh, bw, bmp.BearingY - bh, bmp.BearingX, b => b != 0);
+                return g;
+            }
+            int sxs = TrueTypeInterpreter.StretchPpemX, sys = TrueTypeInterpreter.StretchPpemY;
+            TrueTypeInterpreter.StretchPpemX = ppemAlong == ppemAcross ? 0 : ppemAlong;
+            TrueTypeInterpreter.StretchPpemY = ppemAlong == ppemAcross ? 0 : ppemAcross;
+            List<PathFigure> figures;
+            int dropout;
+            try
+            {
+                int ppem = Math.Max(ppemAlong, ppemAcross);
+                int word = grey ? GreyScalerWord ^ 4 : TrueTypeFont.DWriteBiLevelWord;
+                // A simulated bold under a turn is fsg_Embold on the fitted points (the bitmap smear
+                // is only ever asked for under an unrotated transform).
+                if (!font.TryGetDWriteFittedOutline(gid, ppem, word, out figures, out dropout,
+                                                    font.SynthesizesBold ? (x, y, ends) => NaturalClearType.EmboldenOutline(x, y, ends, ppem) : null))
+                {
+                    dropout = grey ? 0 : UnfittedDropout;
+                    if (!font.TryGetScaledOutline(gid, ppem, out figures)) return g;
+                }
+            }
+            finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
+            float dx = grey ? phaseX / 4f : 0f, dy = grey ? phaseY / 4f : 0f;
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            System.Numerics.Vector2 T(System.Numerics.Vector2 p)
+            {
+                var q = new System.Numerics.Vector2(-p.Y + dx, p.X + dy);
+                if (q.X < x0) x0 = q.X; if (q.X > x1) x1 = q.X;
+                if (q.Y < y0) y0 = q.Y; if (q.Y > y1) y1 = q.Y;
+                return q;
+            }
+            var turned = new List<PathFigure>(figures.Count);
+            foreach (PathFigure f in figures)
+            {
+                var nf = new PathFigure(T(f.Start)) { Closed = f.Closed };
+                foreach (PathSegment sg in f.Segments)
+                    nf.Segments.Add(sg switch
+                    {
+                        LineSegment l => new LineSegment(T(l.Point)),
+                        QuadraticBezierSegment q => new QuadraticBezierSegment(T(q.Control), T(q.Point)),
+                        CubicBezierSegment c => new CubicBezierSegment(T(c.Control1), T(c.Control2), T(c.Point)),
+                        _ => sg,
+                    });
+                turned.Add(nf);
+            }
+            if (x0 > x1) return g;
+            int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
+            int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
+            int s = grey ? 4 : 1;
+            bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, turned), ox, oy, w, h, s, dropout, s);
+            if (bits is null) return g;
+            if (grey) ThinDilate(font, bits, w * s, h * s);
+            var cov = new int[w * h];
+            int cols = w * s;
+            for (int r = 0; r < h * s; r++)
+                for (int c = 0; c < cols; c++)
+                    if (bits[r * cols + c]) cov[(r / s) * w + (c / s)]++;
+            int c0 = w, c1 = -1, r0 = h, r1 = -1;
+            for (int r = 0; r < h; r++)
+                for (int c = 0; c < w; c++)
+                    if (cov[r * w + c] > 0)
+                    {
+                        c0 = Math.Min(c0, c); c1 = Math.Max(c1, c);
+                        r0 = Math.Min(r0, r); r1 = Math.Max(r1, r);
+                    }
+            if (c1 < 0) return g;
+            g.Left = ox + c0; g.Top = oy + r0; g.Width = c1 - c0 + 1; g.Height = r1 - r0 + 1;
+            g.Coverage = new byte[g.Width * g.Height];
+            for (int r = 0; r < g.Height; r++)
+                for (int c = 0; c < g.Width; c++)
+                    g.Coverage[r * g.Width + c] = (byte)Math.Min(15, grey ? cov[(r0 + r) * w + c0 + c] : cov[(r0 + r) * w + c0 + c] * 15);
+            return g;
+        }
+
+        /// <summary>A quarter-turned antialiased (<paramref name="grey"/>) or bi-level run: each
+        /// glyph at its own origin -- grey at the quarter-pixel phase, bi-level at round-half-away --
+        /// combined by max.</summary>
+        internal static Levels ComposeQuarter(TrueTypeFont font, IReadOnlyList<ushort> gids, int ppemAlong, int ppemAcross,
+                                              bool grey, float[] xs, float[] ys)
+        {
+            int n = gids.Count;
+            var place = new (GreyGlyph G, int X, int Y)[n];
+            int p0 = int.MaxValue, p1 = int.MinValue, r0 = int.MaxValue, r1 = int.MinValue;
+            for (int i = 0; i < n; i++)
+            {
+                GreyGlyph g;
+                int ix, iy;
+                if (grey)
+                {
+                    int qx = Floor(xs[i] * 4f + 0.5f), qy = Floor(ys[i] * 4f + 0.5f);
+                    ix = FloorDiv(qx, 4); iy = FloorDiv(qy, 4);
+                    g = QuarterGlyph(font, gids[i], ppemAlong, ppemAcross, true, qx - 4 * ix, qy - 4 * iy);
+                }
+                else
+                {
+                    ix = NaturalClearType.RoundHalfAway(xs[i]); iy = NaturalClearType.RoundHalfAway(ys[i]);
+                    g = QuarterGlyph(font, gids[i], ppemAlong, ppemAcross, false, 0, 0);
+                }
+                place[i] = (g, ix + g.Left, iy + g.Top);
+                if (g.Width == 0) continue;
+                p0 = Math.Min(p0, place[i].X); p1 = Math.Max(p1, place[i].X + g.Width - 1);
+                r0 = Math.Min(r0, place[i].Y); r1 = Math.Max(r1, place[i].Y + g.Height - 1);
+            }
+            var lv = new Levels { Grey = true };
+            if (p0 > p1) return lv;
+            lv.Left = p0; lv.Top = r0; lv.Width = p1 - p0 + 1; lv.Height = r1 - r0 + 1;
+            lv.Index = new byte[lv.Width * lv.Height];
+            foreach ((GreyGlyph g, int gx, int gy) in place)
+                for (int r = 0; r < g.Height; r++)
+                    for (int c = 0; c < g.Width; c++)
+                    {
+                        byte v = g.Coverage[r * g.Width + c];
+                        int at = (gy + r - lv.Top) * lv.Width + gx + c - lv.Left;
+                        if (v > lv.Index[at]) lv.Index[at] = v;
+                    }
+            return lv;
         }
 
         /// <summary>The antialiased run (OutputTextOptimized of DpOutputAntiAliasSolid8BPPOptimizedSpan):

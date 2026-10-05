@@ -738,10 +738,37 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             int n = s.Length;
             GpGdiFont font = _s.Font is FontObject fo ? GpGdiFont.FromLogFont(fo.LogFont) : null;
+            int[] fxPens = null;        // a turned realization's own pens (28.4) when the caller gave no dx
             if (dx == null && n > 0)
             {
                 dx = new int[n];
-                for (int i = 0; i < n; i++) dx[i] = font != null ? font.CharAdvance(s[i]) : 0;
+                if (font != null && font.Escapement % 1800 != 0)
+                {
+                    // A turned realization's advances are not hinted: vFillGLYPHDATA @140012568
+                    // (fontdrvhost) gives a quarter turn the notional advance times the base
+                    // vector's length rounded to the whole pixel ((x >> 3) + 1 >> 1), any other
+                    // angle that product rounded to 28.4 only -- and GetTextExtentExPoint's
+                    // extents are then the running sum's pixels.
+                    Microsoft.Wpf.Interop.WebGpu.Composition.Text.TrueTypeFont face = font.Face;
+                    float len = 16f * font.Ppem / face.UnitsPerEmForHinting;
+                    bool quarter = font.Escapement % 900 == 0;
+                    long sum = 0; int prev = 0;
+                    fxPens = new int[n + 1];
+                    for (int i = 0; i < n; i++)
+                    {
+                        int gid = (options & 0x10) != 0 ? s[i] : face.GlyphIndex(s[i]);
+                        float v = face.RawAdvanceWidth(gid) * len;
+                        int fxd = v < 0f ? -(int)Math.Floor(-v + 0.5) : (int)Math.Floor(v + 0.5);
+                        if (quarter) fxd = ((fxd >> 3) + 1 >> 1) * 16;
+                        sum += fxd;
+                        fxPens[i + 1] = (int)sum;
+                        int cum = (int)((sum + 8) >> 4);
+                        dx[i] = cum - prev;
+                        prev = cum;
+                    }
+                }
+                else
+                    for (int i = 0; i < n; i++) dx[i] = font != null ? font.CharAdvance(s[i]) : 0;
             }
             int graphicsMode = _s.GraphicsMode;
             float exScale = 0f, eyScale = 0f;
@@ -756,7 +783,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int offDx = offString + strBytes;
             var b = new byte[68 + strBytes + n * 4];
             int[] box = EmptyBox;
-            if (font != null && n > 0 && TextBox(font, x, y, options, s, dx, out int bl, out int bt, out int br, out int bb))
+            if (font != null && n > 0 && TextBox(font, x, y, options, s, dx, fxPens, out int bl, out int bt, out int br, out int bb))
                 box = Clip(bl, bt, br - 1, bb - 1, true);
             Box(b, 0, box);
             Le.W32(b, 16, graphicsMode);
@@ -783,28 +810,47 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// reference point (the bold simulation a pixel wider); a quarter turn the box turned, a
         /// pixel longer along the baseline; any other angle the turned box's corners in 28.4,
         /// floored and ceiled and grown by two pixels.</summary>
-        bool TextBox(GpGdiFont font, int x, int y, int options, string s, int[] dx, out int l, out int t, out int r, out int b)
+        bool TextBox(GpGdiFont font, int x, int y, int options, string s, int[] dx, int[] fxPens, out int l, out int t, out int r, out int b)
         {
             l = t = r = b = 0;
             ToDevice(x, y, out long fx, out long fy);
             int n = s.Length;
             bool glyphIndex = (options & 0x10) != 0;
             int A = 0, B = 0, pen = 0;
+            // At an angle that is not a quarter turn, ttfd's vFillGLYPHDATA @140012568 does not
+            // measure the glyph's bitmap: fxA and fxAB are its NOTIONAL left side bearing and ink
+            // right (vGetNotionalGlyphMetrics) times the base vector's length, rounded to 28.4 and
+            // then floored / ceiled to the pixel.
+            bool notional = font.Escapement % 900 != 0;
+            float len = 16f * font.Ppem / font.Face.UnitsPerEmForHinting;
+            static int R(float v) => v < 0f ? -(int)Math.Floor(-v + 0.5) : (int)Math.Floor(v + 0.5);
             for (int i = 0; i < n; i++)
             {
                 int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
                 (int ia, int iab) = font.Ink(gid);
+                if (notional)
+                {
+                    if (font.Face.TryGetNotionalMetrics(gid, out int lsb, out int right, out _, out _))
+                    {
+                        ia = R(lsb * len) & ~15;
+                        iab = (R(right * len) + 15) & ~15;
+                    }
+                    else ia = iab = 0;
+                }
                 A = Math.Min(A, pen + ia);
                 B = Math.Max(B, pen + iab);
-                pen += dx[i] * 16;
+                // With no dx from the caller, GDI places the glyphs by their realized advances
+                // (vCharPos_G2: the 28.4 fxD summed), not by the whole pixels it records.
+                pen = fxPens != null ? fxPens[i + 1] : pen + dx[i] * 16;
             }
             B = Math.Max(B, pen);
             int asc = font.Ascent * 16, dsc = -font.Descent * 16;       // ESTROBJ +0x64 / +0x6c
             int align = (int)_s.TextAlign;
             // The notional-to-device rotation: along the baseline (m11, m12), up (m21, m22).
-            double th = font.Escapement * Math.PI / 1800.0;
-            float m11 = (float)Math.Cos(th), m12 = (float)-Math.Sin(th);
-            float m21 = (float)-Math.Sin(th), m22 = (float)-Math.Cos(th);
+            // win32k's own sine (GdiTrig: bGetNtoD_Win31's efSin / efCos).
+            float esin = GdiTrig.Sin(GdiTrig.Degrees(font.Escapement)), ecos = GdiTrig.Cos(GdiTrig.Degrees(font.Escapement));
+            float m11 = ecos, m12 = -esin;
+            float m21 = -esin, m22 = -ecos;
             if (font.Escapement % 900 == 0)
             {
                 int q = ((font.Escapement / 900) % 4 + 4) % 4;
@@ -842,7 +888,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             else
             {
-                static int R(float v) => v < 0f ? -(int)Math.Floor(-v + 0.5) : (int)Math.Floor(v + 0.5);
                 int ax = R(A * m11), ay = R(A * m12), bx = R(B * m11), by = R(B * m12);
                 int ux = R(asc * m21), uy = R(asc * m22), dxx = R(m21 * dsc), dyy = R(dsc * m22);
                 long[] xs = { fx + ux + ax, fx + ux + bx, fx + dxx + bx, fx + dxx + ax };

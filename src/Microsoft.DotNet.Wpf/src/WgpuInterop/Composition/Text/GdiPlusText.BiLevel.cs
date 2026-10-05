@@ -159,23 +159,79 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         // once at the raster type's overscale, and placed at round-half-away of its sample position.
 
 
+        /// <summary>The post-transform (16.16, glyph y-up to device y-up) DirectWrite's scaler puts an
+        /// UNFITTED glyph through under a 2x2 transform (world y down) at an em; see
+        /// <see cref="TransformedOutline"/>.</summary>
+        internal static bool UnfittedTurnedPoints(TrueTypeFont font, float em, float m11, float m12, float m21, float m22,
+                                                  out int p00, out int p01, out int p10, out int p11)
+        {
+            int upem = font.UnitsPerEmForHinting;
+            static int Fx(float v) => (int)(((long)(v * 65536.0 * 65536.0) + 0x8000) >> 16);
+            int a00 = Fx(m11 * em), a01 = Fx(-m12 * em), a10 = Fx(-m21 * em), a11 = Fx(m22 * em);
+            int d = upem << 16;
+            static int Div(int a, int d) => (int)(((long)a * 0x10000 + ((a < 0) != (d < 0) ? -(d / 2) : d / 2)) / d);
+            p00 = Div(a00, d); p01 = Div(a01, d); p10 = Div(a10, d); p11 = Div(a11, d);
+            return upem > 0 && (a00 | a01) != 0 && (a10 | a11) != 0;
+        }
+
+        /// <summary>One design point (font units, y up) through <see cref="UnfittedTurnedPoints"/>'
+        /// matrix: its units times 64, each product FixMul-rounded, on the device (pixels, y down).</summary>
+        internal static (float X, float Y) UnfittedTurnedPoint(System.Numerics.Vector2 pt, int p00, int p01, int p10, int p11)
+        {
+            static int Mul(int a, int b) { long p = (long)a * b; return (int)((p + (p >> 63) + 0x8000) >> 16); }
+            int x = (int)Math.Round(pt.X) * 64, y = (int)Math.Round(pt.Y) * 64;
+            int X = Mul(x, p00) + Mul(y, p10), Y = Mul(x, p01) + Mul(y, p11);
+            return (X / 64f, -Y / 64f);
+        }
+
         /// <summary>The design outline scaled to <paramref name="em"/> and put through the 2x2
-        /// matrix (world y down), on the scaler's 26.6 grid, moved by (dx, dy) device pixels.</summary>
+        /// matrix (world y down), in the scaler's own arithmetic, moved by (dx, dy) device pixels.
+        /// <list type="bullet">
+        /// <item>MakeRasterizerTransform @18008fe48 (dwrite): the matrix times the em, each entry to
+        /// 16.16 (round half up), in the scaler's y-up frame: (m11, -m12; -m21, m22) em;</item>
+        /// <item>TrueTypeRasterizer::Implementation::NewTransform @18006c460 hands it over with
+        /// +0xce set (no point size folded in) and, for a glyph that is not grid-fitted, +0xd6
+        /// (~flags &amp; 1): scl_InitializeScaling's param_19, under which the outline is scaled
+        /// by nothing -- its font units times 64 -- and scl_PostTransformGlyph divides the
+        /// matrix by upem (+0x184/+0x188) where a fitted glyph is scaled at its rows' stretch;</item>
+        /// <item>mth_IntelMul @140026b40: each row over that divisor (DWRITE_FixDiv), every
+        /// product rounded on its own.</item>
+        /// </list></summary>
         internal static List<PathFigure> TransformedOutline(TrueTypeFont font, int gid, float em,
                                                             float m11, float m12, float m21, float m22, float dx, float dy)
         {
             var figures = new List<PathFigure>();
-            double k = em / (double)font.UnitsPerEmForHinting;
-            foreach ((System.Numerics.Vector2[] pts, bool[] on) in font.DesignContours(gid))
+            if (!UnfittedTurnedPoints(font, em, m11, m12, m21, m22, out int p00, out int p01, out int p10, out int p11))
+                return figures;
+            List<(System.Numerics.Vector2[] Points, bool[] OnCurve)> contours = font.DesignContours(gid);
+            // The frame's points in 26.6: font units times 64. A simulated bold is fsg_Embold's on
+            // them, unfitted, at the frame's own ppem -- the upem, so about 2% of the em each way.
+            int total = 0;
+            foreach (var c0 in contours) total += c0.Points.Length;
+            var X26 = new int[total]; var Y26 = new int[total]; var ends = new int[contours.Count];
+            int at = 0;
+            for (int k = 0; k < contours.Count; k++)
+            {
+                foreach (System.Numerics.Vector2 v in contours[k].Points)
+                {
+                    X26[at] = (int)Math.Round(v.X) * 64; Y26[at] = (int)Math.Round(v.Y) * 64; at++;
+                }
+                ends[k] = at - 1;
+            }
+            if (font.SynthesizesBold) TrueTypeFont.GdiEmboldenUnfitted(X26, Y26, ends, font.UnitsPerEmForHinting);
+            static int Mul(int a, int b) { long pr = (long)a * b; return (int)((pr + (pr >> 63) + 0x8000) >> 16); }
+            int baseAt = 0;
+            foreach ((System.Numerics.Vector2[] pts, bool[] on) in contours)
             {
                 int n = pts.Length;
+                int b0 = baseAt; baseAt += n;
                 if (n < 2) continue;
                 var p = new System.Numerics.Vector2[n];
                 for (int i = 0; i < n; i++)
                 {
-                    double x = pts[i].X * k, y = -pts[i].Y * k;
-                    double X = m11 * x + m21 * y, Y = m12 * x + m22 * y;
-                    p[i] = new System.Numerics.Vector2((float)(Math.Round(X * 64) / 64) + dx, (float)(Math.Round(Y * 64) / 64) + dy);
+                    int x = X26[b0 + i], y = Y26[b0 + i];
+                    int Xd = Mul(x, p00) + Mul(y, p10), Yd = Mul(x, p01) + Mul(y, p11);
+                    p[i] = new System.Numerics.Vector2(Xd / 64f + dx, -Yd / 64f + dy);
                 }
                 int s0 = Array.IndexOf(on, true);
                 var q = new List<(System.Numerics.Vector2 P, bool On)>(n + 1);
@@ -198,6 +254,61 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 figures.Add(f);
             }
             return figures;
+        }
+
+        /// <summary>A bi-level run under a general transform (raster type 0, grid fitting off):
+        /// each glyph's unfitted outline through the matrix, scanned one sample a pixel with the
+        /// scan converter's own dropout control, placed at round-half-away of its origin, merged.</summary>
+        internal static Levels ComposeMonoTransformed(TrueTypeFont font, IReadOnlyList<ushort> gids, float em,
+                                                      float m11, float m12, float m21, float m22, float[] xs, float[] ys)
+        {
+            int n = gids.Count;
+            var place = new (GreyGlyph G, int X, int Y)[n];
+            int p0 = int.MaxValue, p1 = int.MinValue, r0 = int.MaxValue, r1 = int.MinValue;
+            for (int i = 0; i < n; i++)
+            {
+                var g = new GreyGlyph();
+                List<PathFigure> figures = TransformedOutline(font, gids[i], em, m11, m12, m21, m22, 0f, 0f);
+                if (figures.Count > 0)
+                {
+                    float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+                    foreach (PathFigure f in figures)
+                    {
+                        Take(f.Start);
+                        foreach (PathSegment sg in f.Segments)
+                            if (sg is LineSegment l) Take(l.Point);
+                            else if (sg is QuadraticBezierSegment q) { Take(q.Control); Take(q.Point); }
+                    }
+                    void Take(System.Numerics.Vector2 p)
+                    {
+                        if (p.X < x0) x0 = p.X; if (p.X > x1) x1 = p.X;
+                        if (p.Y < y0) y0 = p.Y; if (p.Y > y1) y1 = p.Y;
+                    }
+                    int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
+                    int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
+                    bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figures), ox, oy, w, h, 1, UnfittedDropout, 1);
+                    if (bits is not null)
+                    {
+                        var bytes = new byte[bits.Length];
+                        for (int k = 0; k < bits.Length; k++) if (bits[k]) bytes[k] = 1;
+                        CropInto(g, bytes, w, h, ox, oy, b => b != 0);
+                    }
+                }
+                place[i] = (g, NaturalClearType.RoundHalfAway(xs[i]) + g.Left, NaturalClearType.RoundHalfAway(ys[i]) + g.Top);
+                if (g.Width == 0) continue;
+                p0 = Math.Min(p0, place[i].X); p1 = Math.Max(p1, place[i].X + g.Width - 1);
+                r0 = Math.Min(r0, place[i].Y); r1 = Math.Max(r1, place[i].Y + g.Height - 1);
+            }
+            var lv = new Levels { Grey = true };
+            if (p0 > p1) return lv;
+            lv.Left = p0; lv.Top = r0; lv.Width = p1 - p0 + 1; lv.Height = r1 - r0 + 1;
+            lv.Index = new byte[lv.Width * lv.Height];
+            foreach ((GreyGlyph g, int gx, int gy) in place)
+                for (int r = 0; r < g.Height; r++)
+                    for (int c = 0; c < g.Width; c++)
+                        if (g.Coverage[r * g.Width + c] != 0)
+                            lv.Index[(gy + r - lv.Top) * lv.Width + gx + c - lv.Left] = 15;
+            return lv;
         }
 
         /// <summary>An antialiased run under a general transform: each glyph's transformed outline
@@ -227,6 +338,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
                 bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figs), ox, oy, w, h, 4, dropout, 4);
                 if (bits is null) continue;
+                ThinDilate(font, bits, w * 4, h * 4);
                 var c = new int[w * h];
                 for (int r = 0; r < h * 4; r++)
                     for (int col = 0; col < w * 4; col++)

@@ -200,12 +200,39 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         // Any other turn under ClearType: the unfitted outline through the turn,
                         // scanned 6x1 and filtered as an upright glyph is.
                         var tb = new NaturalClearType.GlyphBits [glyphs.Length];
-                        float s = sx;
                         for (int i = 0; i < tb.Length; i++)
-                            tb [i] = NaturalClearType.RasterizeTransformed (face, glyphs [i], em * s, m.M11 / s, m.M12 / s, m.M21 / s, m.M22 / s);
-                        GdipText.Levels tl5 = GdipText.Compose (tb, xs, ys, 0f, face.GdiContrastPalette);
+                            tb [i] = GdipText.ThinEmbolden (face, NaturalClearType.RasterizeTransformedUnfitted (face, glyphs [i], em, m.M11, m.M12, m.M21, m.M22));
+                        GdipText.Levels tl5 = GdipText.Compose (tb, xs, ys, 0f, face.GdiPlusFixedFilter);
                         if (tl5.Width == 0 || tl5.Height == 0) return;
                         _g.OutputText (tl5, 5, _brush, _g._ctx.TextContrast);
+                        return;
+                    } else if (mode == 3 || mode == 4) {
+                        // Any other turn, antialiased: GpGraphics::DrawPlacedGlyphs hands the
+                        // device transform's linear part to CreateGlyphBitmapArray, which grid-fits
+                        // only an axis-aligned or quarter-turned realization (GpFaceRealization
+                        // +0xbc / +0xc0); otherwise each glyph's outline is scaled and turned
+                        // unfitted (MakeRasterizerTransform), scanned 4x4 at its quarter-pixel
+                        // phase and combined by max, as the upright antialiased glyphs are.
+                        var gl = new System.Collections.Generic.List<ushort> (glyphs.Length);
+                        var gx = new System.Collections.Generic.List<float> (glyphs.Length);
+                        var gy = new System.Collections.Generic.List<float> (glyphs.Length);
+                        for (int i = 0; i < glyphs.Length; i++)
+                            if (glyphs [i] != 0xffff) { gl.Add (glyphs [i]); gx.Add (xs [i]); gy.Add (ys [i]); }
+                        GdipText.Levels gv = GdipText.ComposeGreyTransformed (face, gl, em, m.M11, m.M12, m.M21, m.M22, gx.ToArray (), gy.ToArray (), 0);
+                        if (gv.Width == 0 || gv.Height == 0) return;
+                        _g.OutputText (gv, 4, _brush, _g._ctx.TextContrast);
+                        return;
+                    } else if (mode == 1 || mode == 2) {
+                        // Any other turn, bi-level: raster type 0 unfitted (grid fitting is asked
+                        // for only under an axis-aligned or quarter-turned transform).
+                        var gl = new System.Collections.Generic.List<ushort> (glyphs.Length);
+                        var gx = new System.Collections.Generic.List<float> (glyphs.Length);
+                        var gy = new System.Collections.Generic.List<float> (glyphs.Length);
+                        for (int i = 0; i < glyphs.Length; i++)
+                            if (glyphs [i] != 0xffff) { gl.Add (glyphs [i]); gx.Add (xs [i]); gy.Add (ys [i]); }
+                        GdipText.Levels mv = GdipText.ComposeMonoTransformed (face, gl, em, m.M11, m.M12, m.M21, m.M22, gx.ToArray (), gy.ToArray ());
+                        if (mv.Width == 0 || mv.Height == 0) return;
+                        _g.OutputText (mv, mode, _brush, _g._ctx.TextContrast);
                         return;
                     } else {
                         // Any other turn: the glyphs' outlines through the transform, antialiased.
@@ -214,7 +241,20 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     }
                 }
                 GdipText.Levels lv;
-                if (upright && mode == 5) {
+                if (!axis && sideways && mode != 5) {
+                    // A quarter-turned world under the antialiased or bi-level hints: grid-fitted
+                    // sideways, as the ClearType glyph is (along em * sx, across em * sy).
+                    var gl = new System.Collections.Generic.List<ushort> (glyphs.Length);
+                    var gx = new System.Collections.Generic.List<float> (glyphs.Length);
+                    var gy = new System.Collections.Generic.List<float> (glyphs.Length);
+                    for (int i = 0; i < glyphs.Length; i++)
+                        if (glyphs [i] != 0xffff) { gl.Add (glyphs [i]); gx.Add (xs [i]); gy.Add (ys [i]); }
+                    // SingleBitPerPixel is never grid-fitted: its quarter turn is the unfitted scan.
+                    lv = mode == 2
+                        ? GdipText.ComposeMonoTransformed (face, gl, em, m.M11, m.M12, m.M21, m.M22, gx.ToArray (), gy.ToArray ())
+                        : GdipText.ComposeQuarter (face, gl, GdipText.AxisPpem (em * sx), GdipText.AxisPpem (em * sy),
+                                                   mode == 3 || mode == 4, gx.ToArray (), gy.ToArray ());
+                } else if (upright && mode == 5) {
                     // An upright glyph in vertical text: GetGlyphStringVerticalOriginOffsets @180024800,
                     // ((cell ascent - advance + cell descent) / 2 - cell descent, vertical origin y)
                     // through the realization, the glyph unturned.
@@ -227,15 +267,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         xs [i] += ox * kx; ys [i] += voy * ky;
                         ub [i] = GdipText.Glyph (face, glyphs [i], GdipText.AxisPpem (em * m.M11), GdipText.AxisPpem (em * m.M22));
                     }
-                    lv = GdipText.Compose (ub, xs, ys, 0f, face.GdiContrastPalette);
+                    lv = GdipText.Compose (ub, xs, ys, 0f, face.GdiPlusFixedFilter);
                 } else if (mode == 5) {
                     var bits = new NaturalClearType.GlyphBits [glyphs.Length];
                     int ppA = GdipText.AxisPpem (em * sy), ppX = GdipText.AxisPpem (em * sx);
+                    // Sideways: a vertical line's glyph advances down the device, sized by the
+                    // second row; a quarter-turned world's glyph advances along the first row
+                    // (its x), its y across along the second.
+                    int along = axis ? ppA : ppX, across = axis ? ppX : ppA;
                     for (int i = 0; i < bits.Length; i++)
-                        bits [i] = sideways ? GdipText.GlyphSideways (face, glyphs [i], ppA, ppX)
+                        bits [i] = sideways ? GdipText.GlyphSideways (face, glyphs [i], along, across)
                                  : sx == sy ? GdipText.Glyph (face, glyphs [i], em * sx)
                                  : GdipText.Glyph (face, glyphs [i], ppX, GdipText.AxisPpem (em * sy));
-                    lv = GdipText.Compose (bits, xs, ys, 0f, face.GdiContrastPalette);
+                    lv = GdipText.Compose (bits, xs, ys, 0f, face.GdiPlusFixedFilter);
                 } else if (mode == 3 || mode == 4) {
                     lv = GdipText.ComposeGrey (face, glyphs, em * sx, xs, ys [0]);
                 } else {
@@ -243,6 +287,45 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
                 if (lv.Width == 0 || lv.Height == 0) return;
                 _g.OutputText (lv, mode == 5 ? 5 : mode, _brush, _g._ctx.TextContrast);
+            }
+
+            /// <summary>GpFaceRealization::Realize's SwitchToPath @1801ed568 for a realization under a
+            /// turned transform: bGetDEVICEMETRICS @1800a2c08 takes the face's glyph box (y widened by
+            /// upem / 64 each way) through the notional-to-device matrix in 28.4 and rounds it out to
+            /// pixels; DrawGlyphs' flags for the mode (0x418000 ClearType, 0x18000 / 0x118000 the
+            /// antialiased modes, 0x48000 / 0x8000 bi-level) then switch to outlines when the box
+            /// is taller than 100 pixels (bit 22), or wider or taller than 200 (bit 16) or 800.</summary>
+            public bool DrawsAsPath (TrueTypeFont face, float em, int mode) => SwitchToPath (face, em, _g.WorldToDevice, mode);
+
+            /// <summary>The switched realization's glyphs: their outlines at the world origins,
+            /// filled through the transform with the graphics' own smoothing (GpGraphics::FillPath).</summary>
+            public void FillGlyphOutlines (GpFullTextImager.Run run, ushort[] glyphs, PointF[] worldOrigins)
+            {
+                var path = new GpPath (FillMode.Winding);
+                for (int i = 0; i < glyphs.Length; i++)
+                    if (glyphs [i] != 0xffff) GpPathText.AddGlyphOutline (path, run.Face, glyphs [i], run.Em, worldOrigins [i].X, worldOrigins [i].Y);
+                if (path.Points.Count == 0) return;
+                _g.FillPath (_brush, path.Points.ToArray (), path.Types.ToArray (), FillMode.Winding);
+            }
+
+            static bool SwitchToPath (TrueTypeFont face, float em, GpMatrix m, int mode)
+            {
+                int upem = face.UnitsPerEmForHinting;
+                if (upem <= 0) return false;
+                float k = em / upem;
+                float y0 = -face.HeadYMax - (upem >> 6), y1 = -face.HeadYMin + (upem >> 6);
+                float x0 = face.HeadXMin, x1 = face.HeadXMax;
+                long minX = long.MaxValue, maxX = long.MinValue, minY = long.MaxValue, maxY = long.MinValue;
+                static long Fix (float v) => v < 0f ? -(long)MathF.Floor (-v * 16f + 0.5f) : (long)MathF.Floor (v * 16f + 0.5f);
+                foreach ((float x, float y) in new[] { (x0, y0), (x1, y0), (x0, y1), (x1, y1) }) {
+                    long dx = Fix ((x * m.M11 + y * m.M21) * k), dy = Fix ((x * m.M12 + y * m.M22) * k);
+                    minX = Math.Min (minX, dx); maxX = Math.Max (maxX, dx);
+                    minY = Math.Min (minY, dy); maxY = Math.Max (maxY, dy);
+                }
+                long w = ((maxX + 15) >> 4) - (minX >> 4), h = ((maxY + 15) >> 4) - (minY >> 4);
+                if (mode == 5) return h > 100;
+                int lim = mode == 3 || mode == 4 ? 200 : 800;
+                return w > lim || h > lim;
             }
 
             /// <summary>Glyphs under a turned transform: their outlines at the world origins, filled
@@ -510,7 +593,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     return m.Transform (new PointF (x, y));
                 }
                 int ppAlong = GdipText.AxisPpem (em * m.M22), ppAcross = GdipText.AxisPpem (em * m.M11);
-                bool fixedFilter = font.GdiContrastPalette;
+                bool fixedFilter = font.GdiPlusFixedFilter;
                 for (int i = 0; i < keep; i++) {
                     if (gids [i] < 0 || s [i] == ' ') continue;
                     PointF d = Cell (v, u0 + penAt [i]);
@@ -580,7 +663,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (!(em > 0f)) return false;
             if (sx == sy && font.EmbeddedBitmapCount ((int) MathF.Floor (em * sx + 0.5f)) > 100) return false;
             if (string.Equals (family, "Marlett", StringComparison.OrdinalIgnoreCase)) return false;
-            var run = new GdipText.Run { Em = em, Mode = 5, Hint = 5, FixedFilter = font.GdiContrastPalette,
+            var run = new GdipText.Run { Em = em, Mode = 5, Hint = 5, FixedFilter = font.GdiPlusFixedFilter,
                                          Sx = sx, Sy = sy, Contrast = _ctx.TextContrast };
             var gids = new System.Collections.Generic.List<ushort> ();
             var xs = new System.Collections.Generic.List<float> ();
