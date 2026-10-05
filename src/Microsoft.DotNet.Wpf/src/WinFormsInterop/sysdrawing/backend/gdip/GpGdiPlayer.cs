@@ -1037,7 +1037,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
             r.Rect();
             int cb = r.I32();
             uint ib = r.U32();
-            int w = r.I32(); r.I32();
+            int w = r.I32(), h = r.I32();
+            if (Gdi)
+            {
+                GdiBrush saved = _dc.Brush;
+                if (ib < _objects.Length && _objects[ib] is GdiBrush gb) _dc.Brush = gb;
+                else if ((ib & 0x80000000) != 0) _dc.Brush = StockBrush((int)(ib & 0xff));
+                GdiFrameRgn(r, cb, w, h);
+                _dc.Brush = saved;
+                return;
+            }
             Region rg = RgnData(r, cb);
             if (rg == null) return;
             Prepare();

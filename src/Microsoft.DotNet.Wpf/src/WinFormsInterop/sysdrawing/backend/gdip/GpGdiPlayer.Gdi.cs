@@ -453,7 +453,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             p.CloseFigure();
             if (_dc.Brush != null && _dc.Brush.Style != 1 && x0 + 1 < x1 && y0 + 1 < y1 && !Nop)
             {
-                Func<int, int, uint> pattern = PatternOf();
+                Func<int, int, uint> pattern = PatternOf(true);
                 if (pattern != null)
                 {
                     var spans = new List<GdiSpan>();
@@ -467,7 +467,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void GdiFillPath(GdiPath p, bool winding)
         {
             if (Nop || _dc.Brush == null || _dc.Brush.Style == 1) return;
-            Func<int, int, uint> pattern = PatternOf();
+            Func<int, int, uint> pattern = PatternOf(true);
             if (pattern == null) return;
             GdiPaint(GdiFill.Spans(p, winding, new[] { 0, 0, _cw, _ch }), pattern);
         }
@@ -604,7 +604,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             for (int x = x0; x < x1; x++)
             {
-                uint p = pattern(x, y) & 0xffffff;
+                uint p = pattern(x, y);
+                if (p == NoPaint) continue;
+                p &= 0xffffff;
                 row[x] = code == 13 ? (row[x] & 0xff000000) | p : (row[x] & 0xff000000) | (Rop2(code, p, row[x]) & 0xffffff);
             }
         }
@@ -763,10 +765,58 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (rects.Count == 0 || Nop) return;
             GdiXform m = TargetWtoD();
             GdiRgn rg = RectsThrough(rects, m, _wmfCanvas);
-            Func<int, int, uint> pattern = PatternOf();
+            Func<int, int, uint> pattern = PatternOf(true);
             if (pattern == null) return;
             var spans = new List<GdiSpan>();
             foreach (var q in rg.Rects())
+                for (int y = q.T; y < q.B; y++) spans.Add(new GdiSpan(y, q.L, q.R));
+            spans.Sort((a, b) => a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X0.CompareTo(b.X0));
+            GdiPaint(spans, pattern);
+        }
+
+        /// <summary>GreFrameRgn @14018ee80 (win32kfull): the region's outline (RGNOBJ::bCreate ->
+        /// RGNOBJ::bOutline, through the world-to-device transform) widened by a geometric pen
+        /// (pathwide::vWidenSetupForFrameRgn @1401cf1d0: LA_GEOMETRIC, JOIN_MITER at the DC's
+        /// miter limit, ENDCAP_ROUND, width 2 max(w, h), the transform's axis of the smaller side
+        /// scaled by min / max), filled WINDING, cut down to the region (the region itself under an
+        /// identity transform, else its outline filled ALTERNATE) and painted with the brush.</summary>
+        void GdiFrameRgn(GpReader r, int cb, int w, int h)
+        {
+            w = Math.Abs(w); h = Math.Abs(h);
+            List<(int L, int T, int R, int B)> rects = RgnRects(r, cb);
+            if (rects.Count == 0 || w < 1 || h < 1 || Nop) return;
+            GdiRgn logical = GdiRgn.FromRects(rects);
+            if (logical.Empty) return;
+            GdiXform m = TargetWtoD();
+            var outline = new GdiPath();
+            foreach (List<(int X, int Y)> fig in logical.Outline())
+            {
+                if (fig.Count < 2) continue;
+                Fix(m, fig[0].X, fig[0].Y, out int x0, out int y0);
+                outline.MoveTo(x0, y0);
+                for (int i = 1; i < fig.Count; i++)
+                {
+                    Fix(m, fig[i].X, fig[i].Y, out int x, out int y);
+                    outline.LineTo(x, y);
+                }
+                outline.CloseFigure();
+            }
+            int big = Math.Max(w, h), small = Math.Min(w, h);
+            float ratio = (float)(small << 1) / (float)(big << 1);
+            GdiXform pen = m;
+            if (w * 2 < h * 2) { pen.M11 *= ratio; pen.M12 *= ratio; }
+            else { pen.M21 *= ratio; pen.M22 *= ratio; }
+            if (ratio != 1f) pen.Accel &= ~GdiXform.Unity;
+            var la = new GdiLineAttrs { Join = 2, EndCap = 0, Width = (float)(big << 1), MiterLimit = _dc.MiterLimit };
+            GdiPath wide = GdiWiden.Widen(outline, pen, la);
+            if (wide == null) return;
+            GdiRgn frame = GdiRgn.FromSpans(GdiFill.Spans(wide, true));
+            GdiRgn inside = (m.Accel & 0x43) == 0x43 ? logical : GdiRgn.FromSpans(GdiFill.Spans(outline, false));
+            frame = GdiRgn.Combine(frame, inside, 1);
+            Func<int, int, uint> pattern = PatternOf(true);
+            if (pattern == null) return;
+            var spans = new List<GdiSpan>();
+            foreach (var q in frame.Rects())
                 for (int y = q.T; y < q.B; y++) spans.Add(new GdiSpan(y, q.L, q.R));
             spans.Sort((a, b) => a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X0.CompareTo(b.X0));
             GdiPaint(spans, pattern);

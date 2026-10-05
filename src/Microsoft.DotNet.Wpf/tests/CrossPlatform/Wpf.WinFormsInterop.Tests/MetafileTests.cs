@@ -370,7 +370,7 @@ namespace Wpf.WinFormsInterop.Tests
             return b;
         }
 
-        public static TheoryData<string> SampleFiles() => new TheoryData<string> { "gdi.emf", "gdi_noframe.emf", "placeable.wmf", "placeable1440.wmf", "placeable0.wmf" };
+        public static TheoryData<string> SampleFiles() => new TheoryData<string> { "gdi.emf", "gdi_noframe.emf", "placeable.wmf", "placeable1440.wmf", "placeable0.wmf", "framergn.emf" };
 
         /// <summary>GDI-only metafiles drawn as GDI+ draws them (GDI aliased; text within a tolerance).</summary>
         [Theory]
@@ -382,6 +382,15 @@ namespace Wpf.WinFormsInterop.Tests
             using var theirs = (Bitmap)Image.FromFile(Path.Combine(Dir, "samples", "play", Path.GetFileNameWithoutExtension(name) + ".png"));
             string outDir = Environment.GetEnvironmentVariable("MF_PLAYOUT");
             if (!string.IsNullOrEmpty(outDir)) ours.Save(Path.Combine(outDir, "s_" + Path.GetFileNameWithoutExtension(name) + ".png"), ImageFormat.Png);
+            // framergn.emf (GDI's FrameRgn: regions with a hole, an ellipse, a round rectangle
+            // under a hatch, two rectangles touching at a corner under R2_XORPEN; strokes 1x1 to
+            // 4x1) has no text, and is GDI's pixel for pixel.
+            if (name == "framergn.emf")
+            {
+                Differ(ours, theirs, 0, out int exact);
+                Assert.True(exact == 0, $"{exact} pixels differ from GDI+'s");
+                return;
+            }
             // The shapes, lines and fills are GDI's exactly; what differs is the text.
             double f = Differ(ours, theirs, 64, out int n);
             Assert.True(f < 0.02, $"{n} pixels ({f:P1}) differ from GDI+'s");

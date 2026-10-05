@@ -183,6 +183,88 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return false;
         }
 
+        /// <summary>RGNOBJ::bOutline @140055b28 (win32kbase): the region's boundary as closed
+        /// rectilinear figures, a vertex at every corner only. Left walls run down, bottoms right,
+        /// right walls up and tops left (bOutline's walk starts at a left wall's top and goes down
+        /// it); where two figures touch at a corner the walk keeps to the wall it is on.</summary>
+        public List<List<(int X, int Y)>> Outline()
+        {
+            // Directed unit-free edges keyed by their start point.
+            var next = new Dictionary<(int, int), List<(int X, int Y, int Dir)>>();
+            void Add(int x0, int y0, int x1, int y1, int dir)
+            {
+                if (!next.TryGetValue((x0, y0), out var l)) next[(x0, y0)] = l = new List<(int, int, int)>();
+                l.Add((x1, y1, dir));
+            }
+            // dir: 0 down, 1 right, 2 up, 3 left
+            foreach (Band b in _bands)
+                for (int i = 0; i < b.X.Length; i += 2)
+                {
+                    Add(b.X[i], b.Y0, b.X[i], b.Y1, 0);
+                    Add(b.X[i + 1], b.Y1, b.X[i + 1], b.Y0, 2);
+                }
+            // Horizontal edges where the coverage above and below a band boundary differ.
+            var ys = new SortedSet<int>();
+            foreach (Band b in _bands) { ys.Add(b.Y0); ys.Add(b.Y1); }
+            int[] At(int y, bool above)
+            {
+                foreach (Band b in _bands)
+                    if (above ? (b.Y0 < y && y <= b.Y1) : (b.Y0 <= y && y < b.Y1)) return b.X;
+                return Array.Empty<int>();
+            }
+            foreach (int y in ys)
+            {
+                int[] up = At(y, true), dn = At(y, false);
+                var xs = new SortedSet<int>(up); foreach (int x in dn) xs.Add(x);
+                int prev = 0; bool havePrev = false; int state = 0;   // 1 = bottom edge, 2 = top edge
+                foreach (int x in xs)
+                {
+                    if (havePrev && state != 0)
+                    {
+                        if (state == 1) Add(prev, y, x, y, 1);
+                        else Add(x, y, prev, y, 3);
+                    }
+                    bool a = Inside(up, x), d = Inside(dn, x);
+                    state = a && !d ? 1 : d && !a ? 2 : 0;
+                    prev = x; havePrev = true;
+                }
+            }
+            var figs = new List<List<(int X, int Y)>>();
+            while (true)
+            {
+                // Start at the top-most, left-most unvisited left wall.
+                (int, int)? start = null;
+                foreach (var kv in next)
+                    foreach (var e in kv.Value)
+                        if (e.Dir == 0 && (start == null || kv.Key.Item2 < start.Value.Item2
+                                           || (kv.Key.Item2 == start.Value.Item2 && kv.Key.Item1 < start.Value.Item1)))
+                            start = kv.Key;
+                if (start == null) break;
+                var fig = new List<(int X, int Y)>();
+                (int x, int y) p = start.Value;
+                int dir = -1;
+                while (next.TryGetValue(p, out var outs) && outs.Count > 0)
+                {
+                    int k = 0;
+                    for (int j = 0; j < outs.Count; j++) if (outs[j].Dir == dir) { k = j; break; }
+                    var e = outs[k];
+                    outs.RemoveAt(k);
+                    if (outs.Count == 0) next.Remove(p);
+                    if (e.Dir != dir) fig.Add(p);
+                    dir = e.Dir;
+                    p = (e.X, e.Y);
+                }
+                figs.Add(fig);
+            }
+            return figs;
+
+            static bool Inside(int[] walls, int x)
+            {
+                for (int i = 0; i < walls.Length; i += 2) if (walls[i] <= x && x < walls[i + 1]) return true;
+                return false;
+            }
+        }
+
         /// <summary>The rectangles, band by band.</summary>
         public IEnumerable<(int L, int T, int R, int B)> Rects()
         {

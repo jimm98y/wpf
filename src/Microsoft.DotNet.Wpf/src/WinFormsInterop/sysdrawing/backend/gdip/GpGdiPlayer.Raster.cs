@@ -203,11 +203,20 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>The current brush as GDI realizes it: a colour, or a pattern tiled from the brush
         /// origin in device pixels; null for a hollow brush.</summary>
-        Func<int, int, uint> PatternOf()
+        Func<int, int, uint> PatternOf(bool transparentBk = false)
         {
             GdiBrush b = _dc.Brush;
             if (b == null || b.Style == 1) return null;
             if (b.Style == 0) { uint c = Rgb(b.Color); return (x, y) => c; }
+            if (b.Style == 2 && b.Hatch >= 0 && b.Hatch < 6)
+            {
+                // win32k's hatch bitmaps (PatBlt of each HS_ style), the hatch colour on its ones,
+                // the background colour on its zeros -- or nothing there in TRANSPARENT mode.
+                byte[] bits = s_gdiHatch[b.Hatch];
+                uint fg = Rgb(b.Color), bg = transparentBk && _dc.BkMode == 1 ? NoPaint : Rgb(_dc.BkColor);
+                int hx = (int)MathF.Round(_base.Dx) + _dc.BrushOrg.X, hy = (int)MathF.Round(_base.Dy) + _dc.BrushOrg.Y;
+                return (x, y) => (bits[(((y - hy) % 8) + 8) % 8] & (0x80 >> ((((x - hx) % 8) + 8) % 8))) != 0 ? fg : bg;
+            }
             Bitmap pat;
             bool own = false;
             if (b.Style == 2)
@@ -229,6 +238,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int ox = (int)MathF.Round(_base.Dx) + _dc.BrushOrg.X, oy = (int)MathF.Round(_base.Dy) + _dc.BrushOrg.Y;
             return (x, y) => px[(((y - oy) % h + h) % h) * w + ((x - ox) % w + w) % w];
         }
+
+        /// <summary>A pattern pixel that is not painted (a hatch's background in TRANSPARENT mode).</summary>
+        const uint NoPaint = 0xffffffff;
+
+        static readonly byte[][] s_gdiHatch =
+        {
+            new byte[] { 0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, 0x00 },   // HS_HORIZONTAL
+            new byte[] { 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08 },   // HS_VERTICAL
+            new byte[] { 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01 },   // HS_FDIAGONAL
+            new byte[] { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 },   // HS_BDIAGONAL
+            new byte[] { 0x08, 0x08, 0x08, 0xff, 0x08, 0x08, 0x08, 0x08 },   // HS_CROSS
+            new byte[] { 0x81, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x81 },   // HS_DIAGCROSS
+        };
 
         static HatchStyle HatchOf(int hatch)
         {
