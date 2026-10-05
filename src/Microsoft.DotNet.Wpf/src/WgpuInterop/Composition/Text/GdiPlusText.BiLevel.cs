@@ -338,6 +338,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
                 bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figs), ox, oy, w, h, 4, dropout, 4);
                 if (bits is null) continue;
+                ThinDilate(font, bits, w * 4, h * 4);
                 var c = new int[w * h];
                 for (int r = 0; r < h * 4; r++)
                     for (int col = 0; col < w * 4; col++)

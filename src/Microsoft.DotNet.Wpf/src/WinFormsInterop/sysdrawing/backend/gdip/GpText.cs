@@ -170,8 +170,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         // scanned 6x1 and filtered as an upright glyph is.
                         var tb = new NaturalClearType.GlyphBits [glyphs.Length];
                         for (int i = 0; i < tb.Length; i++)
-                            tb [i] = NaturalClearType.RasterizeTransformedUnfitted (face, glyphs [i], em, m.M11, m.M12, m.M21, m.M22);
-                        GdipText.Levels tl5 = GdipText.Compose (tb, xs, ys, 0f, face.GdiContrastPalette);
+                            tb [i] = GdipText.ThinEmbolden (face, NaturalClearType.RasterizeTransformedUnfitted (face, glyphs [i], em, m.M11, m.M12, m.M21, m.M22));
+                        GdipText.Levels tl5 = GdipText.Compose (tb, xs, ys, 0f, face.GdiPlusFixedFilter);
                         if (tl5.Width == 0 || tl5.Height == 0) return;
                         _g.OutputText (tl5, 5, _brush, _g._ctx.TextContrast);
                         return;
@@ -236,7 +236,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         xs [i] += ox * kx; ys [i] += voy * ky;
                         ub [i] = GdipText.Glyph (face, glyphs [i], GdipText.AxisPpem (em * m.M11), GdipText.AxisPpem (em * m.M22));
                     }
-                    lv = GdipText.Compose (ub, xs, ys, 0f, face.GdiContrastPalette);
+                    lv = GdipText.Compose (ub, xs, ys, 0f, face.GdiPlusFixedFilter);
                 } else if (mode == 5) {
                     var bits = new NaturalClearType.GlyphBits [glyphs.Length];
                     int ppA = GdipText.AxisPpem (em * sy), ppX = GdipText.AxisPpem (em * sx);
@@ -248,7 +248,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         bits [i] = sideways ? GdipText.GlyphSideways (face, glyphs [i], along, across)
                                  : sx == sy ? GdipText.Glyph (face, glyphs [i], em * sx)
                                  : GdipText.Glyph (face, glyphs [i], ppX, GdipText.AxisPpem (em * sy));
-                    lv = GdipText.Compose (bits, xs, ys, 0f, face.GdiContrastPalette);
+                    lv = GdipText.Compose (bits, xs, ys, 0f, face.GdiPlusFixedFilter);
                 } else if (mode == 3 || mode == 4) {
                     lv = GdipText.ComposeGrey (face, glyphs, em * sx, xs, ys [0]);
                 } else {
@@ -549,7 +549,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     return m.Transform (new PointF (x, y));
                 }
                 int ppAlong = GdipText.AxisPpem (em * m.M22), ppAcross = GdipText.AxisPpem (em * m.M11);
-                bool fixedFilter = font.GdiContrastPalette;
+                bool fixedFilter = font.GdiPlusFixedFilter;
                 for (int i = 0; i < keep; i++) {
                     if (gids [i] < 0 || s [i] == ' ') continue;
                     PointF d = Cell (v, u0 + penAt [i]);
@@ -619,7 +619,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (!(em > 0f)) return false;
             if (sx == sy && font.EmbeddedBitmapCount ((int) MathF.Floor (em * sx + 0.5f)) > 100) return false;
             if (string.Equals (family, "Marlett", StringComparison.OrdinalIgnoreCase)) return false;
-            var run = new GdipText.Run { Em = em, Mode = 5, Hint = 5, FixedFilter = font.GdiContrastPalette,
+            var run = new GdipText.Run { Em = em, Mode = 5, Hint = 5, FixedFilter = font.GdiPlusFixedFilter,
                                          Sx = sx, Sy = sy, Contrast = _ctx.TextContrast };
             var gids = new System.Collections.Generic.List<ushort> ();
             var xs = new System.Collections.Generic.List<float> ();

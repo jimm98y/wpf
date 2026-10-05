@@ -238,6 +238,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _isFixedPitch = tables.TryGetValue("post", out int postTable) && postTable + 16 <= _data.Length
                             && U32(postTable + 12) != 0;
             GdiContrastPalette = ComputeGdiContrastPalette(tables);
+            DWriteThinFamily = ComputeDWriteThinFamily(tables);
 
             // Outlines are OPTIONAL, because a colour BITMAP font has none.
             //
@@ -431,6 +432,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (!FontFiles.ReadNames(_data, _sfntBase, out string? family, out _, out _)) return false;
             foreach (string f in s_contrastFamilies)
                 if (string.Equals(f, family, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>GDI+'s ClearType filter table for the face: ulClearTypeFilter @1800a3568
+        /// (gdiplus) takes the second table (@1802ac5f0) whenever the realization's family name is
+        /// one of the six (compared ignoring case) -- no weight, pitch or transform test, so Courier
+        /// New Bold takes it too, unlike GDI's <see cref="GdiContrastPalette"/>.</summary>
+        internal bool GdiPlusFixedFilter => _gdiPlusFixedFilter ??= ComputeGdiPlusFixedFilter();
+
+        private bool? _gdiPlusFixedFilter;
+
+        private bool ComputeGdiPlusFixedFilter()
+        {
+            if (!FontFiles.ReadNames(_data, _sfntBase, out string? family, out _, out _)) return false;
+            foreach (string f in s_contrastFamilies)
+                if (string.Equals(f, family, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        /// <summary>DirectWrite's thin faces: OpenTypeFontFaceBuilder::ReadFontFace @18003359c sets
+        /// the face's flag 4 (+0x70, read back at +0x60) when IsThinFontFamily @18002fb58 finds the
+        /// canonical family in its sorted list (@18036b880: the same six names as win32k's, compared
+        /// exactly); GlyphBitmapRasterizationState then thickens such a face's oversampled glyph
+        /// bitmaps if its weight is 500 or less (see <see cref="GdiPlusText"/>'s ThinEmbolden).</summary>
+        internal bool DWriteThinFamily { get; }
+
+        private bool ComputeDWriteThinFamily(Dictionary<string, int> tables)
+        {
+            if (!tables.TryGetValue("OS/2", out int os2) || os2 + 6 > _data.Length) return false;
+            if (U16(os2 + 4) > 500) return false;                          // usWeightClass
+            if (!FontFiles.ReadNames(_data, _sfntBase, out string? family, out _, out _)) return false;
+            foreach (string f in s_contrastFamilies)
+                if (string.Equals(f, family, StringComparison.Ordinal)) return true;
             return false;
         }
 

@@ -265,7 +265,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // FastDrawGlyphsNominal for a fixed-pitch face and for the hints that do not fit
             // (IsGridFittedTextRealizationMethod: 1, 3 and 5 fit).
             bool nominal = font.IsFixedPitch || hint == HintAntiAlias || hint == HintSingleBitPerPixel;
-            var run = new Run { Em = em, Mode = mode, Hint = hint, FixedFilter = font.GdiContrastPalette, Sx = sx, Sy = sy };
+            var run = new Run { Em = em, Mode = mode, Hint = hint, FixedFilter = font.GdiPlusFixedFilter, Sx = sx, Sy = sy };
             // The advance type: 2 GDI natural (ClearType), 1 GDI classic (the other grid-fitted
             // realizations, the bi-level one a ClearType face falls back to included), 0 design.
             int advType = mode == 5 ? 2 : hint == HintAntiAlias || hint == HintSingleBitPerPixel ? 0 : 1;
@@ -694,7 +694,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// Consolas at 9ppem, which its gasp leaves unfitted, is fitted here (and measured fitted,
         /// see NaturalMetrics) -- 735 of 735 test strings exact with that, 703 without.</para></summary>
         internal static NaturalClearType.GlyphBits Glyph(TrueTypeFont font, int gid, float em)
-            => NaturalClearType.Rasterize(font, gid, em, 1, gridFit: true, scalerFlags: NaturalScalerWord, forceGridFit: true);
+            => ThinEmbolden(font, NaturalClearType.Rasterize(font, gid, em, 1, gridFit: true, scalerFlags: NaturalScalerWord, forceGridFit: true));
 
         /// <summary>The same glyph under a device transform that scales x and y apart (GDI+ text
         /// played into a stretched device): DrawPlacedGlyphs hands CreateGlyphBitmapArray the world
@@ -710,8 +710,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.StretchPpemY = ppemY;
             try
             {
-                return NaturalClearType.Rasterize(font, gid, Math.Max(ppemX, ppemY), 1, gridFit: true,
-                                                  scalerFlags: NaturalScalerWord, forceGridFit: true);
+                return ThinEmbolden(font, NaturalClearType.Rasterize(font, gid, Math.Max(ppemX, ppemY), 1, gridFit: true,
+                                                  scalerFlags: NaturalScalerWord, forceGridFit: true));
             }
             finally
             {
@@ -733,7 +733,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             try
             {
                 // fs__NewTransformation toggles word bit 2 for m00 == 0: ClearType on the glyph's y.
-                return NaturalClearType.RasterizeQuarterTurn(font, gid, Math.Max(ppemAlong, ppemAcross), SidewaysScalerWord);
+                return ThinEmbolden(font, NaturalClearType.RasterizeQuarterTurn(font, gid, Math.Max(ppemAlong, ppemAcross), SidewaysScalerWord));
             }
             finally
             {
@@ -948,6 +948,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
                     bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, moved), ox, oy, w, h, 4,
                                                                 dropout, 4);
+                    if (bits is not null) ThinDilate(font, bits, w * 4, h * 4);
                     if (bits is not null)
                     {
                         var cov = new int[w * h];
@@ -980,6 +981,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 cache[key] = g;
             }
             return g;
+        }
+
+        /// <summary>Whether DirectWrite thickens this face's oversampled bitmaps:
+        /// GlyphBitmapRasterizationState's constructor @1800609c0 sets its thin flag (+8) for a face
+        /// with the thin bit, an x overscale of at least 2, a weight of 500 or less and rendering
+        /// flags with neither the bold simulation (2) nor embedded bitmaps (0x40).</summary>
+        internal static bool Thickens(TrueTypeFont font) => font.DWriteThinFamily && !font.SynthesizesBold;
+
+        /// <summary>CachedBitmapWriter::Pack @18005f8b8 with the thin flag: every run of ink in a row
+        /// of the oversampled bitmap is one sample longer (runs it then reaches merge), and the
+        /// bitmap one sample wider -- each sample is set where it or the one to its left was.</summary>
+        internal static NaturalClearType.GlyphBits ThinEmbolden(TrueTypeFont font, NaturalClearType.GlyphBits g)
+        {
+            if (!Thickens(font) || g.IsEmpty) return g;
+            int w = g.Width + 1;
+            var bits = new bool[w * g.Height];
+            for (int r = 0; r < g.Height; r++)
+                for (int c = 0; c < w; c++)
+                    bits[r * w + c] = (c < g.Width && g.Bits[r * g.Width + c]) || (c > 0 && g.Bits[r * g.Width + c - 1]);
+            return new NaturalClearType.GlyphBits { Left = g.Left, Top = g.Top, Width = w, Height = g.Height, Bits = bits };
+        }
+
+        /// <summary>The same on a scanned sample grid (<paramref name="cols"/> samples a row), in place,
+        /// for a face that thickens. The grid must have a free column at its right.</summary>
+        internal static void ThinDilate(TrueTypeFont font, bool[] bits, int cols, int rows)
+        {
+            if (!Thickens(font)) return;
+            for (int r = 0; r < rows; r++)
+                for (int c = cols - 1; c > 0; c--)
+                    if (bits[r * cols + c - 1]) bits[r * cols + c] = true;
         }
 
         /// <summary>A glyph of an antialiased or bi-level realization turned a quarter clockwise
@@ -1052,6 +1083,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int s = grey ? 4 : 1;
             bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, turned), ox, oy, w, h, s, dropout, s);
             if (bits is null) return g;
+            if (grey) ThinDilate(font, bits, w * s, h * s);
             var cov = new int[w * h];
             int cols = w * s;
             for (int r = 0; r < h * s; r++)
