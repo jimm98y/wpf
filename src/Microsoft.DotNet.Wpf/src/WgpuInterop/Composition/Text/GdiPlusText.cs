@@ -354,8 +354,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             else if (delta > 0) absorbed = Math.Min(delta, ((long)upem * scale16) >> 16);
             long rem = delta - absorbed;
             float off94 = 0f;
-            if (absorbed != 0 && align == 1) off94 = (float)absorbed / 2f;
-            else if (absorbed != 0 && align == 2) off94 = (float)absorbed;
+            if (absorbed != 0 && align == 1) off94 = (float)absorbed / (sx + sx);   // FastAdjustGlyphPositionsProportional: device px back to world
+            else if (absorbed != 0 && align == 2) off94 = (float)absorbed / sx;
 
             var outAdv = new List<long>(nmid);
             if (rem == 0 || nmid < 2)
