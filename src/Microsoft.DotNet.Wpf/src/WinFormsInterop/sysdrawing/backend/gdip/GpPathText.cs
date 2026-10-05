@@ -2,11 +2,15 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// GpPath::AddString @18001b460: a FullTextImager over the string (GpTextLayout), rendered into the
-// path (FullTextImager::AddToPath @1800efa40) glyph by glyph:
+// GpPath::AddString @18001b460: the full imager over the string (GpFullTextImager, the same one
+// the surfaces and metafiles draw with), rendered into the path (FullTextImager::AddToPath
+// @1800efa40: Render with no device; DrawGlyphs' path branch at Line Services' own advances, a
+// marker before each cluster and after each run; GdipLscbkDrawUnderline's AddRects):
 //
-//   GpFaceRealization::GetGlyphPath @1800a1878   IDWriteFontFace::GetGlyphRunOutline at an em of
-//       unitsPerEm -- the design outline -- through a GeometryAdapterSink (BeginFigure @1801ebc20,
+//   GpFaceRealization::GetGlyphPath @1800a1878   the glyph's outline at an em of unitsPerEm FITTED
+//       by the scaler (mode word 0x40, no ClearType: Georgia's and Verdana Italic's programs move
+//       points by fractions of a unit even there; a simulated bold is fsg_Embold's on the fitted
+//       points), then scaled -- the same outline at every size -- through a GeometryAdapterSink (BeginFigure @1801ebc20,
 //       AddLines @180023900, AddBeziers @180023800, EndFigure @1800239f0: a closed figure is
 //       CloseFigure'd); DirectWrite's StreamGlyphOutlines @18008fb78 raises each quadratic to a cubic
 //       with c1 = c * 0.6666666 (0x3f2aaaaa) + p0 / 3, c2 = c * 0.6666666 + p1 / 3
@@ -28,56 +32,69 @@ namespace System.Drawing.WebGpuBackend.Gdip
     {
         static readonly float TwoThirds = BitConverter.Int32BitsToSingle (0x3f2aaaaa);
         static readonly float OneThird = 1f / 3f;
+        /// <summary>The scaler's mode word GetGlyphPath's realization fits with: 0x40, no ClearType
+        /// (WF_PATH_FIT=0 takes the design outline instead).</summary>
+        static readonly int s_fitFlags = int.TryParse (Environment.GetEnvironmentVariable ("WF_PATH_FIT"), System.Globalization.NumberStyles.HexNumber, null, out int f) ? f : 0x40;
 
         public static partial void AddString (GpPath path, string s, FontFamily family, int style, float emSize, RectangleF layout, StringFormat format)
         {
             if (string.IsNullOrEmpty (s) || !(emSize > 0f)) return;
             string name = family.Name;
-            TrueTypeFont font = GdipText.Face (name, style & 3);
-            GpFontFamily.Metrics? mm = GpFontFamily.Get (name, (FontStyle) (style & 3));
-            if (font == null || mm == null) return;
-            GpFontFamily.Metrics m = mm.Value;
-            int flags = format == null ? 0 : (int) format.FormatFlags;
-            bool typographic = format != null && format.IsTypographic;
-            bool hotkey = format != null && format.HotkeyPrefix != Text.HotkeyPrefix.None;
-            int align = format == null ? 0 : (int) format.Alignment;
-            int lineAlign = format == null ? 0 : (int) format.LineAlignment;
-            GpTextLayout L = GpTextLayout.Build (font, m, s, emSize, layout.Width, flags, typographic, hotkey);
-
-            double em = emSize;
-            int margin = typographic ? 0 : GpTextLayout.IdealMargin;
-            // Vertical alignment, in ideal units against the lines' spacing.
-            int yIdealTop = 0;
-            if (lineAlign != 0 && layout.Height > 0f) {
-                double rh = layout.Height * GpTextLayout.Ideal / em;
-                double th = L.Lines.Count * (double) m.LineSpacing * GpTextLayout.Ideal / m.Em + (typographic ? 0 : GpTextLayout.Ideal / 8);
-                yIdealTop = (int) Math.Floor (lineAlign == 1 ? (rh - th) / 2 : rh - th);
-            }
-            float k = (float) (em / m.Em);
-            bool oblique = font.SynthesizesOblique;
-            for (int li = 0; li < L.Lines.Count; li++) {
-                GpTextLayout.Line line = L.Lines [li];
-                int xIdeal = margin;
-                if (align != 0 && layout.Width > 0f) {
-                    double rw = layout.Width * GpTextLayout.Ideal / em;
-                    double tw = line.Width + 2 * margin;
-                    xIdeal += (int) Math.Floor (align == 1 ? (rw - tw) / 2 : rw - tw);
-                }
-                int baseIdeal = (int) Math.Round ((m.Ascent + li * (double) m.LineSpacing) * GpTextLayout.Ideal / m.Em) + yIdealTop;
-                float oy = layout.Y + (float) (baseIdeal * em / GpTextLayout.Ideal);
-                for (int g = 0; g < line.Glyphs.Count; g++) {
-                    float ox = layout.X + (float) ((xIdeal + line.X [g]) * em / GpTextLayout.Ideal);
-                    if (AddGlyph (path, font, line.Glyphs [g], k, ox, oy, oblique))
-                        path.Types [path.Types.Count - 1] |= GpPath.Marker;
-                }
-            }
+            if (GdipText.Face (name, style & 3) == null) return;
+            GpTextFormat fmt = GpTextFormat.From (format);
+            // A negative extent along the lines is an empty imager.
+            float along = fmt != null && fmt.IsVertical ? layout.Height : layout.Width;
+            if (!(along >= 0f)) return;
+            var fti = new GpFullTextImager (s, layout.Width, layout.Height, name, style, emSize, fmt);
+            if (!fti.Valid) return;
+            fti.Draw (new PathTarget (path), layout.Location);
             path.SubpathActive = false;
         }
 
-        /// <summary>One glyph's outline into the path; false when it has none.</summary>
-        static bool AddGlyph (GpPath path, TrueTypeFont font, int gid, float k, float ox, float oy, bool oblique)
+        /// <summary>FullTextImager::AddToPath's target: DrawGlyphs' path branch (each glyph's outline
+        /// through GetFontTransform -- em / upem, a quarter turn for a sideways glyph -- at its
+        /// origin; a marker before each cluster and after the run) and the underlines as rectangles.</summary>
+        sealed class PathTarget : IGpTextTarget
         {
-            List<(Vector2[] Points, bool[] OnCurve)> contours = font.DesignContours (gid);
+            readonly GpPath _path;
+            public PathTarget (GpPath path) { _path = path; }
+            public GpMatrix? WorldToDevice => null;
+            public int RealizationMode (TrueTypeFont face, string family, float emDevice, bool square) => 0;
+            public void DrawPlacedGlyphs (GpFullTextImager.Run run, int mode, ushort[] glyphs, PointF[] o, string chars, ushort[] map, int flags) { }
+            public void DrawLine (float w, PointF a, PointF b) { }
+            public object PushClip (RectangleF layout) => null;
+            public void PopClip (object saved) { }
+
+            public void AddGlyphs (GpFullTextImager.Run run, ushort[] glyphs, ushort[] props, PointF[] o)
+            {
+                TrueTypeFont font = run.Face;
+                float k = run.Em / font.UnitsPerEmForHinting;
+                bool sideways = (run.ItemFlags & 0x20) != 0 && (run.ItemFlags & 0x8) == 0;
+                // GetFontTransform's quarter turn (cos 90 as a float).
+                const float c90 = -4.371139e-08f;
+                Matrix2 m = sideways ? new Matrix2 (c90 * k, k, -k, c90 * k) : new Matrix2 (k, 0f, 0f, k);
+                for (int i = 0; i < glyphs.Length; i++) {
+                    if ((props [i] & GpTextShaper.PropClusterStart) != 0) _path.SetMarker ();
+                    AddGlyph (_path, font, glyphs [i], m, o [i].X, o [i].Y, font.SynthesizesOblique);
+                }
+                _path.SetMarker ();
+            }
+
+            public void AddRect (RectangleF r) => _path.AddRects (new[] { r });
+        }
+
+        readonly struct Matrix2
+        {
+            public readonly float M11, M12, M21, M22;
+            public Matrix2 (float m11, float m12, float m21, float m22) { M11 = m11; M12 = m12; M21 = m21; M22 = m22; }
+        }
+
+        /// <summary>One glyph's outline into the path; false when it has none.</summary>
+        static bool AddGlyph (GpPath path, TrueTypeFont font, int gid, in Matrix2 k, float ox, float oy, bool oblique)
+        {
+            List<(Vector2[] Points, bool[] OnCurve)> contours = null;
+            if (s_fitFlags != 0) contours = font.DWriteFittedContours (gid, font.UnitsPerEmForHinting, s_fitFlags);
+            contours ??= font.DesignContours (gid);
             bool any = false;
             foreach ((Vector2[] raw, bool[] on) in contours) {
                 int n = raw.Length;
@@ -90,8 +107,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     if (oblique) x += (float) (Math.Round (y * 64.0 * 0.33984375, MidpointRounding.AwayFromZero) / 64.0);
                     p [i] = new Vector2 (x, -y);
                 }
-                // Start on an on-curve point (an all-off contour starts at the first midpoint).
-                int s0 = Array.IndexOf (on, true);
+                // The figure starts at the contour's first point; when that is off the curve, at
+                // its last point if that is on it (Segoe UI Bold Italic 'e'), else at the first
+                // on-curve point (an all-off contour at the first midpoint).
+                int s0 = on [0] ? 0 : on [n - 1] ? n - 1 : Array.IndexOf (on, true);
                 var pts = new List<Vector2> (n + 1); var onc = new List<bool> (n + 1);
                 if (s0 < 0) {
                     pts.Add ((p [0] + p [1]) * 0.5f); onc.Add (true);
@@ -132,9 +151,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return any;
         }
 
-        static void AddPoint (GpPath path, Vector2 v, byte type, float k, float ox, float oy)
+        static void AddPoint (GpPath path, Vector2 v, byte type, in Matrix2 k, float ox, float oy)
         {
-            float x = v.X * k, y = v.Y * k;
+            float x, y;
+            if (k.M12 == 0f && k.M21 == 0f) { x = v.X * k.M11; y = v.Y * k.M22; }
+            else { x = v.X * k.M11 + v.Y * k.M21; y = v.X * k.M12 + v.Y * k.M22; }
             path.Points.Add (new PointF (x + ox, y + oy));
             path.Types.Add (type);
         }

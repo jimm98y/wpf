@@ -105,11 +105,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     uls [^1] = (seg.Run, uls [^1].Ur, uls [^1].Dup + seg.Width, uls [^1].Lead, ta);
                 else uls.Add ((seg.Run, seg.Ur, seg.Width, la, ta));
             }
-            if (target.WorldToDevice != null)
-                foreach (var u in uls) {
+            foreach (var u in uls) {
                     if ((u.Run.Underline & 1) != 0) DrawUnderline (target, origin, line, u.Run, x0, y0, u.Ur, u.Dup, u.Lead, u.Trail, true);
                     if ((u.Run.Underline & 2) != 0) DrawUnderline (target, origin, line, u.Run, x0, y0, u.Ur, u.Dup, u.Lead, u.Trail, false);
-                }
+            }
             // RenderLine: an ellipsis-trimmed line's ellipsis after it (LogicalToXY at +0x58).
             if (line.EllipsisAt >= 0 && line.Trimmed >= 3 && line.Trimmed <= 5 && Ellipsis != null) {
                 LogicalToXY (line, line.EllipsisAt, v, out int ex, out int ey);
@@ -161,7 +160,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 var gi0 = new GpGlyphImager ();
                 gi0.Initialize (this, run, seg, GpMatrix.CreateIdentity (), 2, 0, 0, false, false);
                 PointF[] o0 = gi0.Origins (cell, vertical);
-                target.DrawPlacedGlyphs (run, 0, gi0.Glyphs, o0, null, null, 0);
+                target.AddGlyphs (run, gi0.Glyphs, gi0.GlyphProps, o0);
                 return;
             }
             GpMatrix w2d = w2dN.Value;
@@ -209,10 +208,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 v = x0 - off;
             }
             float th = thick / R;
-            float w = PenWidth (target.WorldToDevice.Value, th);
             PointF a, b;
             if (!IsVertical) { a = new PointF (u / R + origin.X, v / R + origin.Y); b = new PointF (a.X + len / R, a.Y); }
             else { a = new PointF (v / R + origin.X, u / R + origin.Y); b = new PointF (a.X, a.Y + len / R); }
+            if (target.WorldToDevice == null) {
+                // A path: the line as a rectangle th high, centred on it.
+                if (!IsVertical) target.AddRect (new RectangleF (a.X, a.Y - th * 0.5f, len / R, th));
+                else target.AddRect (new RectangleF (a.X - th * 0.5f, a.Y, th, len / R));
+                return;
+            }
+            float w = PenWidth (target.WorldToDevice.Value, th);
             target.DrawLine (w, a, b);
         }
 

@@ -52,6 +52,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <summary>The layout rectangle into the clip for the time the imager draws (FullTextImager::Draw).</summary>
         object PushClip (RectangleF layout);
         void PopClip (object saved);
+        /// <summary>FullTextImager::DrawGlyphs with no device (AddToPath): the run's glyph outlines
+        /// at their world origins, a marker before each cluster and after the run.</summary>
+        void AddGlyphs (GpFullTextImager.Run run, ushort[] glyphs, ushort[] glyphProps, PointF[] origins) { }
+        /// <summary>GdipLscbkDrawUnderline with no device: the line as a rectangle (GpPath::AddRects).</summary>
+        void AddRect (RectangleF r) { }
     }
 
     internal sealed partial class GpFullTextImager

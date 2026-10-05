@@ -2374,6 +2374,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return glyph;
         }
 
+        /// <summary>The glyph's points fitted under DirectWrite's mode word at a size, per contour, in
+        /// pixels, y up, before any simulated shear; null where the face has no program for it. A
+        /// simulated bold is the scaler's (fsg_Embold, <see cref="GdiEmbolden"/>) on the fitted points.</summary>
+        internal List<(Vector2[] Points, bool[] OnCurve)>? DWriteFittedContours(int glyphId, float pixelsPerEm, int flags)
+        {
+            GlyphProgram? glyph = DWriteFit(glyphId, pixelsPerEm, flags, out _);
+            if (glyph is null) return null;
+            if (_emboldenStrength > 0f) GdiEmbolden(glyph, pixelsPerEm, true, outline: true);
+            var list = new List<(Vector2[] Points, bool[] OnCurve)>(glyph.EndPoints.Length);
+            int first = 0;
+            foreach (int last in glyph.EndPoints)
+            {
+                int n = last - first + 1;
+                var pts = new Vector2[Math.Max(0, n)];
+                var on = new bool[Math.Max(0, n)];
+                for (int k = 0; k < n; k++)
+                {
+                    pts[k] = new Vector2(glyph.X[first + k] / 64f, glyph.Y[first + k] / 64f);
+                    on[k] = glyph.OnCurve[first + k];
+                }
+                list.Add((pts, on));
+                first = last + 1;
+            }
+            return list;
+        }
+
         /// <summary>The distance the program leaves between the horizontal phantom points under
         /// DirectWrite's mode word, in 26.6; false where the glyph has no outline or program.</summary>
         internal bool TryGetDWriteFittedSpan64(int glyphId, float pixelsPerEm, int flags, out int span64)
@@ -5274,7 +5300,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// the point is shifted by the left and bottom amounts. So a left-facing stem edge stays
         /// put and a right-facing one moves a pixel right: the glyph gains a pixel of weight on
         /// the right, and pp2 moves a pixel with it.</para></summary>
-        private void GdiEmbolden(GlyphProgram glyph, float pixelsPerEm, bool fitted)
+        private void GdiEmbolden(GlyphProgram glyph, float pixelsPerEm, bool fitted, bool outline = false)
         {
             int ppem = (int) MathF.Round(pixelsPerEm);
             int ax = (20 * ppem - 10) / 1000 + 1, ay = (20 * ppem - 10) / 1000;
@@ -5299,7 +5325,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // fsg_Embold as its "skip" argument in both passes, and the weight is added to the
             // bitmap instead -- PathRasterizer.EmboldenLampRows. Only pp2 moves, above.
             // WPF_EMB_OUTLINE=1 runs the point pass as well (what the harness does with +0x8c clear).
-            if (!s_embOutline) return;
+            if (!s_embOutline && !outline) return;
             int first = 0;
             foreach (int last in glyph.EndPoints)
             {
