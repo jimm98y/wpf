@@ -87,6 +87,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     && DrawString (s, family, style & 3, f.SizeInPoints, brush, layout, flags, typographic,
                                    fmt?.Align ?? 0, fmt?.LineAlign ?? 0, hotkey, fmt?.Trimming ?? 1))
                     return true;
+                // A simulated bold: FastTextImager::DrawString's black-box test
+                // (GetGlyphStringSidebearings of the emboldened realization against the margins)
+                // refuses it -- measured: every simulated-bold string of the batteries, every face,
+                // size and hint, is drawn by the full imager unless NoFitBlackBox skips the test.
+                if (!GdipText.LastFull && face.SynthesizesBold && (flags & GpTextFormat.NoFitBlackBox) == 0)
+                    GdipText.LastFull = true;
                 if (!GdipText.LastFull) return false;
             }
             return DrawStringFull (s, family, style, emWorld, brush, layout, fmt);

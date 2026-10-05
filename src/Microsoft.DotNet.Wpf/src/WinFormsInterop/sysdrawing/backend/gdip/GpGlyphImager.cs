@@ -334,6 +334,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             } finally {
                 if (lastAt >= 0 && lastAt < dev.Length) dev [lastAt] += adj;
                 if (trail) TrailOut = -adj;
+                if (s_debug) Console.Error.WriteLine ($"ADJ out adj={adj} shift={Shift} dev=[{string.Join (",", dev)}]");
             }
         }
 
@@ -367,7 +368,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// ClearType, GDI classic for the other grid-fitted realizations, design otherwise.</summary>
         void RealizationMetrics (int gid, out int adv, out int lsb, out int rsb)
         {
-            if (Mode == 1 || Mode == 3) GdipText.ClassicMetrics (Face, gid, Em * Sx, out adv, out lsb, out rsb);
+            if (Mode == 1 || Mode == 3) GpTextShaper.ClassicMetrics (Face, gid, Em * Sx, out adv, out lsb, out rsb);
             else if (Mode == 2 || Mode == 4) GdipText.DesignMetrics (Face, gid, out adv, out lsb, out rsb);
             else GdipText.NaturalMetrics (Face, gid, Em, Sx, Sx, out adv, out lsb, out rsb);
         }

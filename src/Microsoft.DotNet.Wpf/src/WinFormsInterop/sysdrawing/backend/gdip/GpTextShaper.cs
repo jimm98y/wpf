@@ -206,11 +206,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 return MathF.Floor (adv * (em * sx / upem) + 0.5f) + SimBoldPx (face, gid);
             }
             if (mode == 1 || mode == 3) {
-                GdipText.ClassicMetrics (face, gid, em * sx, out int adv, out _, out _);
-                return MathF.Floor (adv * (em * sx / upem) + 0.5f) + SimBoldPx (face, gid);
+                ClassicMetrics (face, gid, em * sx, out int adv, out _, out _);
+                return MathF.Floor (adv * (em * sx / upem) + 0.5f);
             }
             return DesignAdvance (face, gid) * (em * sx / upem);
         }
+
+        /// <summary>GetGdiCompatibleGlyphMetrics with GDI_CLASSIC: GDI's classic advance, a bold
+        /// simulation's a device pixel wider for every glyph (the fast imager's raw advances of
+        /// Microsoft Sans Serif Bold are the regular's plus one, 'i' and 'j' included).</summary>
+        public static void ClassicMetrics (TrueTypeFont face, int gid, float emDevice, out int adv, out int lsb, out int rsb)
+            => GdipText.ClassicMetrics (face, gid, emDevice, out adv, out lsb, out rsb);
 
         /// <summary>The realization's own advance in device pixels, not put on the pixel grid
         /// (GpFaceRealization::GetGlyphStringIdealAdvanceVector's source).</summary>
@@ -222,8 +228,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 return adv * (em * sx / upem) + SimBoldPx (face, gid);
             }
             if (mode == 1 || mode == 3) {
-                GdipText.ClassicMetrics (face, gid, em * sx, out int adv, out _, out _);
-                return adv * (em * sx / upem) + SimBoldPx (face, gid);
+                ClassicMetrics (face, gid, em * sx, out int adv, out _, out _);
+                return adv * (em * sx / upem);
             }
             return DesignAdvance (face, gid) * (em * sx / upem);
         }
