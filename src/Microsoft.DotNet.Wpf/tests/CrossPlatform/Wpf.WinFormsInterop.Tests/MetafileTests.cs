@@ -288,15 +288,15 @@ namespace Wpf.WinFormsInterop.Tests
         }
 
         /// <summary>Text under a turned world transform: its down-level records are GDI+'s byte for
-        /// byte (recorded on the fixture's own screen, ScreenFor), but not yet its GDI playback
-        /// (escapement glyphs) or its EMF+ playback.</summary>
+        /// byte (recorded on the fixture's own screen, ScreenFor) and its EMF+ playback within the
+        /// tolerance, but its GDI playback is not yet exact: six pixels of the 15-degree ClearType
+        /// run are a level off.</summary>
         static readonly HashSet<string> TurnedTextPending = new HashSet<string> { "text_rotate" };
 
         public static TheoryData<string> EmfPlusPlaybackScenarios()
         {
             var d = new TheoryData<string>();
-            foreach (string name in MetafileScenarios.All().Keys)
-                if (!TurnedTextPending.Contains(name)) d.Add(name);
+            foreach (string name in MetafileScenarios.All().Keys) d.Add(name);
             return d;
         }
 

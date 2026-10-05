@@ -169,9 +169,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         // Any other turn under ClearType: the unfitted outline through the turn,
                         // scanned 6x1 and filtered as an upright glyph is.
                         var tb = new NaturalClearType.GlyphBits [glyphs.Length];
-                        float s = sx;
                         for (int i = 0; i < tb.Length; i++)
-                            tb [i] = NaturalClearType.RasterizeTransformed (face, glyphs [i], em * s, m.M11 / s, m.M12 / s, m.M21 / s, m.M22 / s);
+                            tb [i] = NaturalClearType.RasterizeTransformedUnfitted (face, glyphs [i], em, m.M11, m.M12, m.M21, m.M22);
                         GdipText.Levels tl5 = GdipText.Compose (tb, xs, ys, 0f, face.GdiContrastPalette);
                         if (tl5.Width == 0 || tl5.Height == 0) return;
                         _g.OutputText (tl5, 5, _brush, _g._ctx.TextContrast);
@@ -216,8 +215,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 } else if (mode == 5) {
                     var bits = new NaturalClearType.GlyphBits [glyphs.Length];
                     int ppA = GdipText.AxisPpem (em * sy), ppX = GdipText.AxisPpem (em * sx);
+                    // Sideways: a vertical line's glyph advances down the device, sized by the
+                    // second row; a quarter-turned world's glyph advances along the first row
+                    // (its x), its y across along the second.
+                    int along = axis ? ppA : ppX, across = axis ? ppX : ppA;
                     for (int i = 0; i < bits.Length; i++)
-                        bits [i] = sideways ? GdipText.GlyphSideways (face, glyphs [i], ppA, ppX)
+                        bits [i] = sideways ? GdipText.GlyphSideways (face, glyphs [i], along, across)
                                  : sx == sy ? GdipText.Glyph (face, glyphs [i], em * sx)
                                  : GdipText.Glyph (face, glyphs [i], ppX, GdipText.AxisPpem (em * sy));
                     lv = GdipText.Compose (bits, xs, ys, 0f, face.GdiContrastPalette);

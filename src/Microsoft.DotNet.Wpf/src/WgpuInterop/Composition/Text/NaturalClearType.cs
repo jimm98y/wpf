@@ -537,30 +537,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return Scan(turned, 1, dropout);
         }
 
-        /// <summary>A glyph under a turned (or sheared) transform: the scaled outline at
-        /// <paramref name="pixelsPerEm"/>, not fitted, its points through the transform's linear
-        /// part (<paramref name="m11"/>..<paramref name="m22"/>, already divided by the scale the
-        /// em was taken at), scanned as any other.</summary>
-        internal static GlyphBits RasterizeTransformed(TrueTypeFont font, int glyphId, float pixelsPerEm,
-                                                       float m11, float m12, float m21, float m22)
+        /// <summary>A glyph under a turned transform as DirectWrite's scaler gives it unfitted: the
+        /// design outline in font units times 64 through the em-scaled matrix over upem
+        /// (GdiPlusText.UnfittedTurnedPoints: NewTransform @18006c460 sets +0xd6 for a glyph that
+        /// is not grid-fitted, scl_InitializeScaling's param_19), each product rounded on its own,
+        /// then scanned 6x1 as any other. <paramref name="em"/> and the matrix are the world em and
+        /// the world-to-device linear part.</summary>
+        internal static GlyphBits RasterizeTransformedUnfitted(TrueTypeFont font, int glyphId, float em,
+                                                               float m11, float m12, float m21, float m22)
         {
-            if (!font.TryGetScaledOutline(glyphId, pixelsPerEm, out List<PathFigure> figures)) return s_empty;
-            System.Numerics.Vector2 T(System.Numerics.Vector2 p) => new(p.X * m11 + p.Y * m21, p.X * m12 + p.Y * m22);
-            var turned = new List<PathFigure>(figures.Count);
-            foreach (PathFigure f in figures)
-            {
-                var nf = new PathFigure(T(f.Start)) { Closed = f.Closed };
-                foreach (PathSegment sg in f.Segments)
-                    nf.Segments.Add(sg switch
-                    {
-                        LineSegment l => new LineSegment(T(l.Point)),
-                        QuadraticBezierSegment q => new QuadraticBezierSegment(T(q.Control), T(q.Point)),
-                        CubicBezierSegment c => new CubicBezierSegment(T(c.Control1), T(c.Control2), T(c.Point)),
-                        _ => sg,
-                    });
-                turned.Add(nf);
-            }
-            return Scan(turned, 1, 0);
+            List<PathFigure> turned = GdiPlusText.TransformedOutline(font, glyphId, em, m11, m12, m21, m22, 0f, 0f);
+            return turned.Count == 0 ? s_empty : Scan(turned, 1, 0);
         }
 
         private static GlyphBits Scan(List<PathFigure> figures, int nSub, int dropout)
