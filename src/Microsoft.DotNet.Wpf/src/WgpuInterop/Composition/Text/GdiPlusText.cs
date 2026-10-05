@@ -89,6 +89,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             /// <see cref="LeadOffset"/>; the nominal layout leaves it where it falls.</summary>
             public bool RoundOrigin;
             public float LeadOffset;
+            /// <summary>The leading blanks the grid-fitted layout leaves out of <see cref="Glyphs"/>, and the
+            /// last glyph's advance (FastDrawGlyphs* underline a hot key by its glyph's advance).</summary>
+            public int Lead;
+            public float LastAdvance;
             /// <summary>Glyph i + 1 sits Advances[i] right of glyph i (float sums, as GDI+ makes them).</summary>
             public float[] Advances = Array.Empty<float>();
             /// <summary>The baseline, not rounded.</summary>
@@ -327,6 +331,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 for (int i = 0; i < n - 1; i++)
                     run.Advances[i] = (float)unchecked((int)((long)nom[i] * scale16)) * 1.52587890625e-05f;
                 run.OriginX = nx; run.OriginY = ny; run.RoundOrigin = false;
+                run.LastAdvance = (float)unchecked((int)((long)nom[n - 1] * scale16)) * 1.52587890625e-05f;
                 Clip(run, x, y, align, lineAlign, rw, rh, totalNom, lm, rm, cellH, (formatFlags & FlagNoClip) != 0);
                 return run;
             }
@@ -456,6 +461,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int j = 0; j < nmid - 1; j++) run.Advances[j] = outAdv[j];
             run.OriginX = ox; run.OriginY = oy; run.RoundOrigin = true;
             run.LeadOffset = (float)(leadOff * 0.0625);
+            run.Lead = lead;
+            run.LastAdvance = nmid > 0 ? outAdv[nmid - 1] : 0f;
             Clip(run, x, y, align, lineAlign, rw, rh, totalNom, lm, rm, cellH, (formatFlags & FlagNoClip) != 0);
             return run;
         }

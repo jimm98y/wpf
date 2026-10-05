@@ -634,3 +634,83 @@ D|def|Franklin Gothic Medium|20|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
 D|def|Franklin Gothic Medium|20|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
 D|def|Franklin Gothic Medium|20|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
 D|def|Franklin Gothic Medium|20|3|1|4|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+M|def|Tahoma|9|3|0|5|4096|1|0|1|1|-|-|2,2,300,100|-|-|&File
+M|typo|Verdana|8|3|1|5|4|2|0|1|1|-|-|2,2,300,100|-|-|Op&en
+D|def|Courier New|10|3|0|5|4096|1|0|1|1|-|-|2,2,300,100|-|-|&W
+D|typo|Segoe UI|10|3|0|5|0|1|0|1|1|-|-|2,2,300,100|-|-|Old Win&dow
+D|def|Tahoma|8|3|0|5|0|0|0|1|2|-|-|2,2,0,100|-|-|&W
+M|def|Segoe UI|8|3|2|5|0|1|0|1|1|-|-|2,2,300,100|-|-|Old Tools&
+D|typo|Segoe UI|8|3|0|1|4|0|0|1|2|-|-|2,2,300,100|-|-|&&Co
+D|typo|Segoe UI|9|3|0|5|0|2|0|1|1|-|-|2,2,0,100|-|-|Ab&out
+D|def|Arial|12|3|1|5|0|1|0|1|1|-|-|2,2,0,100|-|-|E&xit
+M|def|Times New Roman|10|3|1|5|0|2|0|1|2|-|-|2,2,300,100|-|-|E&xit
+D|def|Times New Roman|10|3|0|5|0|2|0|1|2|-|-|2,2,0,100|-|-|Old Save &As
+D|def|Verdana|12|3|4|5|0|1|0|1|1|-|-|2,2,0,100|-|-|Old Ab&out
+D|def|Segoe UI|10|3|0|3|0|1|0|1|2|-|-|2,2,300,100|-|-|Old Ab&out
+M|typo|Segoe UI|12|3|0|0|4|1|0|1|2|-|-|2,2,300,100|-|-|&iiii
+D|def|Times New Roman|10|3|0|5|4|0|0|1|1|-|-|2,2,300,100|-|-|Save &As
+D|typo|Microsoft Sans Serif|9|3|0|5|0|0|0|1|1|-|-|2,2,300,100|-|-|Tools&
+D|def|Verdana|9|3|0|5|0|0|0|1|1|-|-|2,2,0,100|-|-|&&Co
+D|def|Arial|10|3|1|1|4|0|0|1|2|-|-|2,2,300,100|-|-|&Help
+D|def|Microsoft Sans Serif|12|3|0|1|4096|1|0|1|1|-|-|2,2,0,100|-|-|Tools&
+D|typo|Arial|12|3|0|0|4096|0|0|1|2|-|-|2,2,0,100|-|-|Pa&ste
+D|typo|Lucida Sans Unicode|20|3|8|4|4|0|0|-|-|-|-|2,2,80,100|-|-|1234 fifty quick Mmm brown lazy
+D|def|Microsoft Sans Serif|8|3|4|4|0|0|0|-|-|-|-|2,2,300,100|-|-| 1234 WAVE Hello Mmm jumps
+M|typo|Segoe UI Light|9|3|8|1|4096|1|0|-|-|-|-|2,2,300,100|-|-|1234 jumps quick Mmm
+D|typo|Segoe UI Light|9|3|12|5|0|1|0|-|-|-|-|2,2,80,100|-|-|1234 The 1234 .,; WAVE Mmm
+D|def|Lucida Sans Unicode|9|3|12|1|0|0|0|-|-|-|-|2,2,300,100|-|-|fox jumps fifty Hello jumps over
+M|def|Lucida Sans Unicode|12|3|12|2|4|1|0|-|-|-|-|2,2,80,100|-|-|brown
+D|typo|Lucida Console|7|3|4|5|0|0|0|-|-|-|-|2,2,0,100|-|-|1234 .,; .,; jumps 1234 fifty
+D|typo|Lucida Sans Unicode|9|3|4|2|4096|2|0|-|-|-|-|2,2,0,100|-|-| fox over 1234 Mmm
+D|typo|Segoe UI Light|7|3|4|4|0|1|0|-|-|-|-|2,2,300,100|-|-|ijl
+D|def|Microsoft Sans Serif|9|3|4|5|4|0|0|-|-|-|-|2,2,80,100|-|-|Mmm WAVE lazy 
+M|typo|Lucida Console|7|3|4|3|4|1|0|-|-|-|-|2,2,80,100|-|-| ijl fifty lazy .,; over
+M|def|Lucida Sans Unicode|12|3|4|3|4096|2|0|-|-|-|-|2,2,0,100|-|-| 1234 1234 jumps WAVE dog dog
+D|typo|Microsoft Sans Serif|8|3|4|5|0|2|0|-|-|-|-|2,2,300,100|-|-|jumps
+D|def|Microsoft Sans Serif|14|3|4|5|4096|0|0|-|-|-|-|2,2,300,100|-|-|Mmm 
+D|typo|Lucida Sans Unicode|10|3|8|5|2048|0|0|-|-|-|-|2,2,0,100|-|-|brown
+D|def|Microsoft Sans Serif|14|3|4|1|4096|1|0|-|-|-|-|2,2,80,100|-|-| Mmm dog
+D|typo|Lucida Console|8|3|8|5|4|0|0|-|-|-|-|2,2,300,100|-|-|fox fifty .,; lazy fox
+M|def|Segoe UI Light|12|3|4|5|4096|2|0|-|-|-|-|2,2,80,100|-|-|WAVE The fox lazy
+D|typo|Lucida Sans Unicode|7|3|8|1|4|1|0|-|-|-|-|2,2,300,100|-|-|dog 1234
+D|typo|Lucida Console|14|3|4|2|4096|2|0|-|-|-|-|2,2,300,100|-|-| AVATAR fox
+D|typo|Lucida Sans Unicode|10|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|20|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|21|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|22|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|25|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|27|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|7|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|20|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|23|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|27|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|32|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|36|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|40|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|9|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|10|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|18|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|23|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|24|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|27|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|28|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Microsoft Sans Serif|9|3|0|4|2048|1|0|-|-|-|-|2,2,0,100|-|-| The 1234 Mmm 
+D|def|Lucida Sans Unicode|9|3|0|1|0|0|0|-|-|-|-|2,2,300,100|-|-|fox jumps fifty Hello jumps over
+D|def|Lucida Sans Unicode|10|3|0|5|2048|1|0|-|-|-|-|2,2,300,100|-|-|brown ijl 
+D|typo|Lucida Console|8|3|0|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|The The fox quick jumps
+D|def|Microsoft Sans Serif|9|3|0|5|0|2|0|-|-|-|-|2,2,0,100|-|-|fox jumps lazy Hello
+D|def|Gabriola|14|3|0|2|2048|2|0|-|-|-|-|2,2,0,100|-|-|Mmm fifty Mmm
+M|def|Segoe UI Light|9|3|0|3|0|2|0|-|-|-|-|2,2,80,100|-|-|Hello fifty over ijl
+D|typo|Lucida Sans Unicode|9|3|0|3|0|1|0|-|-|-|-|2,2,0,100|-|-|lazy
+M|def|Gabriola|9|3|0|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|.,; AVATAR jumps .,;
+D|def|Lucida Console|8|3|0|5|4096|2|0|-|-|-|-|2,2,300,100|-|-| ijl The AVATAR quick lazy
+D|def|Gabriola|10|3|0|2|4096|0|0|-|-|-|-|2,2,80,100|-|-|The ijl quick fox lazy Mmm
+D|def|Microsoft Sans Serif|14|3|0|1|4096|0|0|-|-|-|-|2,2,0,100|-|-|The ijl
+D|def|Lucida Console|14|3|0|1|2048|0|0|-|-|-|-|2,2,300,100|-|-|Mmm quick AVATAR 1234
+D|def|Lucida Sans Unicode|10|3|0|5|4096|1|0|-|-|-|-|2,2,300,100|-|-|Mmm dog brown jumps
+D|def|Gabriola|14|3|0|4|4096|0|0|-|-|-|-|2,2,0,100|-|-|AVATAR Mmm 
+D|typo|Lucida Sans Unicode|12|3|0|1|4|0|0|-|-|-|-|2,2,80,100|-|-|1234 ijl
+D|def|Gabriola|8|3|0|4|2048|1|0|-|-|-|-|2,2,80,100|-|-|fox Hello dog lazy lazy fox
+D|typo|Lucida Console|10|3|0|1|0|0|0|-|-|-|-|2,2,80,100|-|-|WAVE Hello The quick
+D|def|Segoe UI Light|10|3|0|2|4|1|0|-|-|-|-|2,2,0,100|-|-|jumps
+D|typo|Segoe UI Light|14|3|0|1|2048|0|0|-|-|-|-|2,2,80,100|-|-|.,; 

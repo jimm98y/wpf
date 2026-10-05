@@ -87,9 +87,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 bool typographic = fmt != null && fmt.LeadMargin == 0f;
                 bool hotkey = fmt != null && fmt.Hotkey != 0;
                 GdipText.LastFull = false;
-                if ((style & 12) == 0
-                    && DrawString (s, family, style & 3, f.SizeInPoints, brush, layout, flags, typographic,
-                                   fmt?.Align ?? 0, fmt?.LineAlign ?? 0, hotkey, fmt?.Trimming ?? 1))
+                if (DrawString (s, family, style & 3, f.SizeInPoints, brush, layout, flags, typographic,
+                                   fmt?.Align ?? 0, fmt?.LineAlign ?? 0, hotkey, fmt?.Trimming ?? 1,
+                                   showHotkey: fmt != null && fmt.Hotkey == 1, lines: style & 12))
                     return true;
                 if (!GdipText.LastFull) return false;
             }
@@ -295,12 +295,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <summary>The fast imager's DrawString. False where it does not draw the string (see
         /// <see cref="GdipText.LastFull"/> for whether GDI+ would hand it to the full imager).</summary>
         public bool DrawString (string s, string family, int style, float sizePt, Brush brush, RectangleF layout,
-                                int formatFlags, bool typographic, int align, int lineAlign, bool hotkey, int trimming = 1)
+                                int formatFlags, bool typographic, int align, int lineAlign, bool hotkey, int trimming = 1,
+                                bool showHotkey = false, int lines = 0)
         {
             if (string.IsNullOrEmpty (s) || brush == null || !CanFill (brush)) return false;
             GpMatrix m = WorldToDevice;
             TrueTypeFont font = GdipText.Face (family, style);
             if (font == null) return false;
+            int hotkeyAt = -1;
+            if (hotkey) {
+                // FastTextImager::RemoveHotkeys: the string loses its marker and the layout runs on
+                // what is left; a second marker is the full imager's (TakesFullImager).
+                if (!RemoveHotkeys (ref s, out hotkeyAt)) { GdipText.LastFull = true; return false; }
+                if (s.Length == 0) return true;   // nothing left: GDI+ draws nothing
+                hotkey = false;
+                if (!showHotkey) hotkeyAt = -1;
+            }
             int hint = ResolvedTextHint ();
             if (s_trace) Console.Error.WriteLine ($"GPTEXT DrawString '{s}' {family} {sizePt}pt m=[{m.M11} {m.M12} {m.M21} {m.M22} {m.Dx} {m.Dy}] hint={hint} flags={formatFlags:x}");
             // FastTextImager::Initialize +0xd0: the width a string must fit, none for NoWrap without trimming.
@@ -315,17 +325,20 @@ namespace System.Drawing.WebGpuBackend.Gdip
                                        formatFlags, typographic, align, lineAlign, hotkey, hint,
                                        DpiY, biLevel: true, sx: m.M11, sy: m.M22, wrapWidth: ww);
             if (!identity) {
-                if (run != null) { DrawRun (font, run, brush, run.HasClip); return true; }
+                if (run != null) { DrawRun (font, run, brush, run.HasClip); DrawFastStyleLines (font, run, brush, lines, hotkeyAt); return true; }
                 if (GdipText.LastFull || !axisScale) { GdipText.LastFull = true; return false; }
+                if (lines != 0) return false;   // the old path draws the style's lines
                 return DrawTransformed (s, font, family, style, sizePt, brush, layout, formatFlags, typographic, align, lineAlign, hotkey, hint);
             }
             run = GdipText.Layout (font, family, sizePt, s, layout.X, layout.Y, layout.Width, layout.Height,
                                    formatFlags, typographic, align, lineAlign, hotkey, hint,
                                    DpiY, biLevel: true, wrapWidth: ww);
             if (run == null && GdipText.LastFull) return false;
+            if (run == null && lines != 0) return false;
             if (run == null)
                 return DrawLines (s, font, family, style, sizePt, brush, layout, formatFlags, typographic, align, lineAlign, hotkey, hint);
             DrawRun (font, run, brush, run.HasClip);
+            DrawFastStyleLines (font, run, brush, lines, hotkeyAt);
             return true;
         }
 
@@ -590,6 +603,79 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>One fast-imager run into the surface: its glyphs composed for the render mode,
         /// the layout rectangle intersected into the clip when the run asks.</summary>
+        /// <summary>FastTextImager::RemoveHotkeys (@18016a238): the first '&amp;' goes; the character
+        /// after it is the hot key unless it is a second '&amp;' (kept, as a literal); a marker that
+        /// ends the string just goes. False for a further marker past the first pair: the full
+        /// imager's (status 6).</summary>
+        internal static bool RemoveHotkeys (ref string s, out int hotkeyAt)
+        {
+            hotkeyAt = -1;
+            int i = s.IndexOf ('&');
+            if (i < 0) return true;
+            if (i == s.Length - 1) { s = s.Substring (0, i); return true; }
+            if (s [i + 1] != '&') hotkeyAt = i;
+            if (s.IndexOf ('&', i + 2) >= 0) return false;
+            s = s.Remove (i, 1);
+            return true;
+        }
+
+        /// <summary>FastDrawGlyphsGridFit (@180038d58) / FastDrawGlyphsNominal (@1800ebaa0) after
+        /// the glyphs: an Underline / Strikeout style's lines over the sum of every advance from the
+        /// first glyph, then -- unless the style underlines already -- a shown hot key's underline
+        /// under its glyph's adjusted advance (a grid-fitted layout counts the key past the leading
+        /// blanks it leaves out; one on such a blank or on a trailing one is not drawn). Each goes
+        /// through FastTextImager::DrawFontStyleLine (@1800eb9d8: the device span taken back to the
+        /// world) to GpGraphics::DrawFontStyleLine (@180076e48): post.underlinePosition below the
+        /// baseline or OS/2.yStrikeoutPosition above it, a GetDevicePenWidth(thickness) pen.</summary>
+        void DrawFastStyleLines (TrueTypeFont font, GdipText.Run run, Brush brush, int lines, int hotkeyAt)
+        {
+            int n = run.Glyphs.Length;
+            if (n == 0) return;
+            GpMatrix m = WorldToDevice;
+            GpMatrix inv = m;
+            if (!inv.Invert ()) return;
+            float[] xs = GdipText.GlyphXs (run, run.Sx == 1f ? run.OriginX + m.Dx : m.M11 * run.OriginX + m.Dx);
+            float y = run.Sy == 1f ? run.OriginY + m.Dy : m.M22 * run.OriginY + m.Dy;
+            float Adv (int i) => i < run.Advances.Length ? run.Advances [i] : run.LastAdvance;
+            float k2 = run.Em / font.UnitsPerEmForHinting;
+            void Line (int at, float width, bool underline)
+            {
+                var p = new[] { new PointF (xs [at], y), new PointF (xs [at] + width, y) };
+                inv.Transform (p);
+                float off = (underline ? font.UnderlinePosition : font.StrikeoutPosition) * k2;
+                float w = GpFullTextImager.PenWidth (m, (ushort) (underline ? font.UnderlineThickness : font.StrikeoutSize) * k2);
+                var a = new PointF (p [0].X, p [0].Y - off);
+                var b = new PointF (p [0].X + (p [1].X - p [0].X), p [0].Y - off);
+                GpTextTrace.ReportLine (w, a, b);
+                var path = new GpPath (new[] { a, b }, new byte[] { 0, 1 }, FillMode.Alternate);
+                var dp = new DpPen { Width = w, Unit = 2, Brush = brush };
+                SmoothingMode sm = _ctx.Smoothing;
+                // SetTextLinesAntialiasMode: aliased lines unless the text is antialiased.
+                _ctx.Smoothing = ResolvedTextHint () == GdipText.HintAntiAlias ? SmoothingMode.AntiAlias : SmoothingMode.None;
+                try { RenderDrawPath (GpStroke.Bounds (path, WorldToDevice, dp, DpiX), path, dp); }
+                finally { _ctx.Smoothing = sm; }
+            }
+            int key = hotkeyAt < 0 || (lines & 4) != 0 ? -1 : run.RoundOrigin ? hotkeyAt - run.Lead : hotkeyAt;
+            if (key >= n) key = -1;
+            if ((lines & 12) == 0 && key < 0) return;
+            GpRegion saved = null;
+            if (run.HasClip) {
+                saved = _ctx.AppClip?.Clone ();
+                CombineClip (new RectangleF (run.ClipX, run.ClipY, run.ClipW, run.ClipH), CombineMode.Intersect);
+            }
+            try {
+                if ((lines & 12) != 0) {
+                    float total = 0f;
+                    for (int i = 0; i < n; i++) total = Adv (i) + total;
+                    if ((lines & 4) != 0) Line (0, total, true);
+                    if ((lines & 8) != 0) Line (0, total, false);
+                }
+                if (key >= 0) Line (key, Adv (key), true);
+            } finally {
+                if (run.HasClip) { _ctx.AppClip = saved; UpdateVisibleClip (); }
+            }
+        }
+
         void DrawRun (TrueTypeFont font, GdipText.Run run, Brush brush, bool clipToLayout)
         {
             GpMatrix m = WorldToDevice;
