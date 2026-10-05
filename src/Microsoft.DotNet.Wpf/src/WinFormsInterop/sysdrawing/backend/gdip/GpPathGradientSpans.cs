@@ -430,7 +430,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             PointF focus = pb.FocusScalesInternal;
             float fx = focus.X, fy = focus.Y;
             bool hasFocus = fx != 0f || fy != 0f;
-            int total = hasFocus ? count * 2 : count;
+            int main = hasFocus ? count * 2 : count;
+            // +0x1b8 above 1: a third quad per edge, the edge out to inflate x its distance from the
+            // centre, constant 1 (the surround colour), after the others.
+            float inflate = pb.Inflate;
+            int total = inflate > 1f ? main + count : main;
             _bt = new GpBilinearTransform [total];
             for (int i = 0; i < total; i++) _bt [i] = new GpBilinearTransform ();
             bool flattened = pb.PointsFlattened;
@@ -442,6 +446,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 p0 = new PointF (GpPathGradientSpans.Sixteenth (p0.X), GpPathGradientSpans.Sixteenth (p0.Y));
                 p1 = new PointF (GpPathGradientSpans.Sixteenth (p1.X), GpPathGradientSpans.Sixteenth (p1.Y));
                 PointF f0 = cp, f1 = cp;
+                if (inflate > 1f)
+                    _bt [i + main].Set (new PointF ((p0.X - cx) * inflate + cx, (p0.Y - cy) * inflate + cy), p0,
+                                        new PointF ((p1.X - cx) * inflate + cx, (p1.Y - cy) * inflate + cy), p1, 1f);
                 if (hasFocus) {
                     f0 = new PointF ((p0.X - cx) * fx + cx, (p0.Y - cy) * fy + cy);
                     f1 = new PointF ((p1.X - cx) * fx + cx, (p1.Y - cy) * fy + cy);

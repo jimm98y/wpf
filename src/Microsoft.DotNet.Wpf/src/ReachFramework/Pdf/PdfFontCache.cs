@@ -19,10 +19,9 @@
 // WinForms' (System.Drawing, which describes a face of its own scene renderer): each says what a
 // font is through a PdfFontSource and this writes it.
 //
-// The tradeoff taken deliberately: the whole font file is embedded rather than a subset. The
-// platform's subsetter (GlyphTypeface.ComputeSubset) throws off Windows, and writing one is a
-// separate piece of work. A page of Japanese therefore carries all of Noto Sans CJK, which is
-// correct and about 19 MB. The seam for fixing that is right here, in Write.
+// Each face is embedded as a SUBSET of the glyphs the document drew (SfntSubsetter.cs: glyph ids
+// kept, so nothing written here changes with it), named with the six-letter tag PDF gives a subset.
+// A face the subsetter does not understand is embedded whole.
 //
 
 using System;
@@ -121,13 +120,16 @@ namespace System.Windows.Xps.Pdf
             PdfFontSource source = font.Source;
             byte[] fontFile = null;
             SfntReader sfnt = null;
+            bool subset = false;
             try
             {
                 (byte[] data, int faceIndex) = source.ReadFile?.Invoke() ?? (null, 0);
                 if (data != null)
                 {
                     sfnt = SfntReader.Open(data, faceIndex);
-                    fontFile = sfnt?.ExtractFace() ?? data;
+                    fontFile = sfnt?.Subset(font.UsedGlyphs);
+                    subset = fontFile != null;
+                    fontFile ??= sfnt?.ExtractFace() ?? data;
                 }
             }
             catch (System.IO.IOException) { fontFile = null; }
@@ -135,6 +137,7 @@ namespace System.Windows.Xps.Pdf
             catch (UnauthorizedAccessException) { fontFile = null; }
 
             string baseName = Sanitize(source.FamilyName);
+            if (subset) baseName = SubsetTag(font) + "+" + baseName;
             int descendantId = _writer.AllocateObject();
             int descriptorId = _writer.AllocateObject();
             int toUnicodeId = font.Unicode.Count != 0 ? _writer.AllocateObject() : 0;
@@ -273,6 +276,19 @@ namespace System.Windows.Xps.Pdf
             widths.Append(start.ToString(CultureInfo.InvariantCulture)).Append(" [ ");
             foreach (double w in run) widths.Append(PdfWriter.Number(w)).Append(' ');
             widths.Append("] ");
+        }
+
+        /// <summary>The six capital letters PDF prefixes a subset's name with (ISO 32000 9.6.4): a
+        /// hash of the glyphs it holds and of which font it is, so two different subsets of one face
+        /// in one document cannot be mistaken for each other.</summary>
+        private static string SubsetTag(PdfFont font)
+        {
+            uint h = 2166136261;
+            foreach (char c in font.ResourceName) h = (h ^ c) * 16777619;
+            foreach (ushort g in font.UsedGlyphs) h = (h ^ g) * 16777619;
+            var tag = new char[6];
+            for (int i = 0; i < 6; i++) { tag[i] = (char)('A' + h % 26); h /= 26; if (h == 0) h = 0x9E3779B9; }
+            return new string(tag);
         }
 
         /// <summary>PostScript names admit no spaces, and readers are unforgiving about it.</summary>

@@ -14,9 +14,7 @@
 // -- so the face has to be rebuilt as a standalone font. That is what ExtractFace does, and without
 // it every Japanese PDF this port produces would embed a font no reader could parse.
 //
-// Deliberately not here: subsetting. Rewriting 'glyf' and 'loca' for a reduced glyph set is a
-// separate piece of work, and the platform's own subsetter (GlyphTypeface.ComputeSubset) throws off
-// Windows anyway. Whole fonts are embedded for now, which is correct and large.
+// Subsetting -- the face cut down to the glyphs a document used -- is SfntSubsetter.cs.
 //
 
 using System;
@@ -25,7 +23,7 @@ using System.Collections.Generic;
 namespace System.Windows.Xps.Pdf
 {
     /// <summary>Reads an sfnt (TrueType/OpenType) file well enough to describe and re-emit one face.</summary>
-    internal sealed class SfntReader
+    internal sealed partial class SfntReader
     {
         private readonly byte[] _data;
         private readonly int _origin;                       // where this face's table directory starts

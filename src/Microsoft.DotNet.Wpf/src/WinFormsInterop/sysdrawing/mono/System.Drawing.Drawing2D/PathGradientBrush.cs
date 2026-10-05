@@ -88,6 +88,10 @@ namespace System.Drawing.Drawing2D {
 		internal bool PresetSet => _preset;
 		internal int[] StoredPresetArgb => _presetArgb;
 		internal PointF FocusScalesInternal => new PointF (_focusX, _focusY);
+		/// <summary>+0x1b8: above 1, the surround colour carried on past every edge to this multiple
+		/// of the edge's distance from the centre (DriverPrint::PrivateFillRect sets 1.05 on the clone
+		/// it rasterizes for a printer, so the bitmap has no gap at the shape's rim); 0 otherwise.</summary>
+		internal float Inflate;
 		// +0x1b0: the count of the flattened points when Flatten last flattened a curved path (the
 		// points at +0x90 are then already in device space)
 		int _flatCount;

@@ -138,7 +138,10 @@ namespace Wpf.WinFormsInterop.Tests
             var cid = (PdfDictionary)pdf.Resolve(((List<object>)pdf.Resolve(type0["DescendantFonts"]))[0]);
             var descriptor = (PdfDictionary)pdf.Resolve(cid["FontDescriptor"]);
             byte[] file = pdf.StreamData(descriptor["FontFile2"]);
-            Assert.True(file != null && file.Length > 10000, "the face is not embedded");
+            Assert.True(file != null && file.Length > 1000, "the face is not embedded");
+            // A subset of the glyphs drawn, named as one: Arial whole is a megabyte.
+            Assert.True(file.Length < 200_000, $"the embedded face is {file.Length} bytes: not a subset");
+            Assert.Matches(@"^[A-Z]{6}\+Arial", (string)type0["BaseFont"]);
 
             string cmap = pdf.StreamText(type0["ToUnicode"]);
             Assert.Contains("beginbfchar", cmap, StringComparison.Ordinal);
@@ -191,6 +194,126 @@ namespace Wpf.WinFormsInterop.Tests
             int q = 0, Q = 0;
             foreach (string line in content.Split('\n')) { if (line == "q") q++; else if (line == "Q") Q++; }
             Assert.Equal(q, Q);
+        }
+
+        // The page's image XObjects: name -> (width, height, RGB bytes).
+        private static Dictionary<string, (int W, int H, byte[] Rgb)> Images(PdfDocument pdf)
+        {
+            var images = new Dictionary<string, (int, int, byte[])>();
+            var resources = (PdfDictionary)pdf.Resolve(pdf.Pages()[0]["Resources"]);
+            if (!resources.ContainsKey("XObject")) return images;
+            foreach (KeyValuePair<string, object> x in (PdfDictionary)pdf.Resolve(resources["XObject"]))
+            {
+                var dict = ((PdfStream)pdf.Resolve(x.Value)).Dictionary;
+                images[x.Key] = (Convert.ToInt32(dict["Width"], CultureInfo.InvariantCulture),
+                                 Convert.ToInt32(dict["Height"], CultureInfo.InvariantCulture), pdf.StreamData(x.Value));
+            }
+            return images;
+        }
+
+        // What these measure was measured on Microsoft Print to PDF at 600 dpi; the PDF writer takes
+        // the printer's resolution, so the exact numbers hold only there.
+        private static PdfDocument PrintAt600(Action<Graphics> draw)
+        {
+            float dpi = 0;
+            PdfDocument pdf = PrintToPdf(e => { dpi = e.Graphics.DpiX; draw(e.Graphics); });
+            Assert.SkipUnless(dpi == 600, $"the printer's resolution is {dpi} dpi, not the 600 the reference was measured at");
+            return pdf;
+        }
+
+        [Fact]
+        public void CentredWrappedLinesStartWhereGdiPlusPutsThem()
+        {
+            // GDI+'s FullTextImager lays a wrapped string out: a centred line's trailing space hangs
+            // past its end instead of being centred with it. The line starts are stock .NET's,
+            // printed to Microsoft Print to PDF (47.52, 63.72 and 79.32 points); they used to sit
+            // 5 points to the left.
+            string content = Content(PrintAt600(g =>
+            {
+                using var arial = new Font("Arial", 18);
+                using var fmt = new StringFormat { Alignment = StringAlignment.Center };
+                g.DrawString("A paragraph long enough to wrap across several lines inside its layout rectangle, centred.",
+                             arial, Brushes.Black, new RectangleF(50, 40, 400, 200), fmt);
+            }));
+            var starts = new List<(double X, double Y)>();
+            foreach (string[] op in Operators(content, "Tj"))
+            {
+                if (op.Length != 9 || op[6] != "Tm") continue;
+                double x = double.Parse(op[4], CultureInfo.InvariantCulture), y = double.Parse(op[5], CultureInfo.InvariantCulture);
+                if (starts.Count == 0 || Math.Abs(starts[^1].Y - y) > 1) starts.Add((x, y));
+            }
+            Assert.Equal(3, starts.Count);
+            Assert.InRange(starts[0].X, 66.0 - 0.2, 66.0 + 0.2);
+            Assert.InRange(starts[1].X, 88.5 - 0.2, 88.5 + 0.2);
+            Assert.InRange(starts[2].X, 110.17 - 0.2, 110.17 + 0.2);
+        }
+
+        [Fact]
+        public void AHatchPrintsAsGdiPlusBandsItOnAHundredDpiGrid()
+        {
+            // DriverPrint rasterizes a hatch: the fill's bounds on a grid of dpi / 100 device pixels,
+            // one pattern bit per cell, a DIB of whole bands, clipped to the shape -- bit-exact with
+            // what gdiplus.dll hands StretchDIBits for this rectangle (152 x 122, from 294,294).
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var hb = new HatchBrush(HatchStyle.Cross, Color.DarkRed, Color.LightYellow);
+                g.FillRectangle(hb, 50, 50, 150, 120);
+            });
+            var image = Assert.Single(Images(pdf)).Value;
+            Assert.Equal(152, image.W);
+            Assert.Equal(122, image.H);
+            Assert.DoesNotContain("/Pattern", Content(pdf), StringComparison.Ordinal);
+            // Cross: a line every eight cells, the pattern on the device origin. DIB column 0 is
+            // device cell 49, so column 7 (cell 56) is a line and column 4 is not.
+            (byte R, byte G, byte B) Px(int x, int y) => (image.Rgb[(y * image.W + x) * 3], image.Rgb[(y * image.W + x) * 3 + 1], image.Rgb[(y * image.W + x) * 3 + 2]);
+            Assert.Equal((Color.DarkRed.R, Color.DarkRed.G, Color.DarkRed.B), Px(7, 3));
+            Assert.Equal((Color.LightYellow.R, Color.LightYellow.G, Color.LightYellow.B), Px(4, 3));
+        }
+
+        [Fact]
+        public void APathGradientPrintsAsGdiPlusBitmap()
+        {
+            // PrivateFillRect: the device bounds (1801 x 1201) into a bitmap of (w - 256) / 5 + 256
+            // a side, the surround colour carried 5% past the rim, transparent black beyond it --
+            // which a printer prints black. The centre is the centre colour.
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var path = new GraphicsPath();
+                path.AddEllipse(30, 280, 340, 240);
+                using var pgb = new PathGradientBrush(path) { CenterColor = Color.White, SurroundColors = new[] { Color.Navy } };
+                g.FillRectangle(pgb, 0, 250, 400, 300);
+            });
+            var image = Assert.Single(Images(pdf)).Value;
+            Assert.Equal(GdiPlusSide(2404), image.W);
+            Assert.Equal(GdiPlusSide(1804), image.H);
+            int c = (image.H / 2 * image.W + image.W / 2) * 3;
+            Assert.True(image.Rgb[c] > 225 && image.Rgb[c + 1] > 225 && image.Rgb[c + 2] > 225,
+                        $"the centre is {image.Rgb[c]},{image.Rgb[c + 1]},{image.Rgb[c + 2]}, not the centre colour ({image.Rgb.Length} bytes for {image.W}x{image.H})");
+            Assert.Equal(new byte[] { 0, 0, 0 }, image.Rgb[0..3]);
+        }
+
+        private static int GdiPlusSide(int w) => Math.Min(Math.Min((w - 256) / 5 + 256, w), 1024);
+
+        [Fact]
+        public void ATurnedImagePrintsAsGdiPlusDrawsIt()
+        {
+            // A 30-degree turn: drawn into a DIB of 100 dpi (a small image's cap), the parallelogram's
+            // bounds -- 159 x 148 cells, as gdiplus.dll's StretchDIBits had it -- clipped to the image.
+            using var bitmap = new Bitmap(64, 48);
+            for (int y = 0; y < 48; y++)
+                for (int x = 0; x < 64; x++)
+                    bitmap.SetPixel(x, y, (x / 16 + y / 16) % 2 == 0 ? Color.FromArgb(200, 40, 40) : Color.FromArgb(40, 90, 200));
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                g.TranslateTransform(350, 100);
+                g.RotateTransform(30);
+                g.DrawImage(bitmap, 0, 0, 128, 96);
+            });
+            var image = Assert.Single(Images(pdf)).Value;
+            Assert.Equal(159, image.W);
+            Assert.Equal(148, image.H);
+            string content = Content(pdf);
+            Assert.Contains("W n", content, StringComparison.Ordinal);
         }
 
         [Fact]
