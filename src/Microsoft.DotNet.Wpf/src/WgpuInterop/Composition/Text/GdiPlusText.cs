@@ -760,10 +760,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.StretchPpemY = along == across ? 0 : across;
             try
             {
-                bool hasOutline = font.TryGetDesignXExtent(gid, out _, out _);
                 if (!font.TryGetDWriteFittedSpan64(gid, Math.Max(along, across), SidewaysScalerWord, out int span64))
                     span64 = (int)MathF.Round(font.DesignAdvance(gid) * 64f * along / upem, MidpointRounding.AwayFromZero);
-                int px = (span64 + (hasOutline ? 32 : 34)) >> 6;
+                // Sideways a glyph with no outline rounds as any other (DirectWrite: Verdana Bold's
+                // space at 16 under (0, 1, -1, 0) is 640 units, 5 px; upright natural it is 768).
+                int px = (span64 + 32) >> 6;
                 advDu = (int)Math.Floor(px * (double)upem / (em * m22) + 0.5);
             }
             finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
@@ -990,6 +991,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static GreyGlyph QuarterGlyph(TrueTypeFont font, int gid, int ppemAlong, int ppemAcross, bool grey, int phaseX, int phaseY)
         {
             var g = new GreyGlyph();
+            if (!grey && ppemAlong == ppemAcross && font.TryGetStrikeGlyph(gid, ppemAlong, out BitmapGlyph bmp))
+            {
+                // The size's embedded strike, turned with the glyph: source pixel (c, r), its box at
+                // (bearingX + c, r - bearingY) y down, lands on device column bearingY - r - 1, row
+                // bearingX + c.
+                int bw = bmp.PixelWidth, bh = bmp.PixelHeight;
+                var rot = new byte[bw * bh];
+                for (int r = 0; r < bh; r++)
+                    for (int c = 0; c < bw; c++)
+                        rot[c * bh + (bh - 1 - r)] = bmp.Png[r * bw + c];
+                CropInto(g, rot, bh, bw, bmp.BearingY - bh, bmp.BearingX, b => b != 0);
+                return g;
+            }
             int sxs = TrueTypeInterpreter.StretchPpemX, sys = TrueTypeInterpreter.StretchPpemY;
             TrueTypeInterpreter.StretchPpemX = ppemAlong == ppemAcross ? 0 : ppemAlong;
             TrueTypeInterpreter.StretchPpemY = ppemAlong == ppemAcross ? 0 : ppemAcross;
@@ -999,7 +1013,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 int ppem = Math.Max(ppemAlong, ppemAcross);
                 int word = grey ? GreyScalerWord ^ 4 : TrueTypeFont.DWriteBiLevelWord;
-                if (!font.TryGetDWriteFittedOutline(gid, ppem, word, out figures, out dropout))
+                // A simulated bold under a turn is fsg_Embold on the fitted points (the bitmap smear
+                // is only ever asked for under an unrotated transform).
+                if (!font.TryGetDWriteFittedOutline(gid, ppem, word, out figures, out dropout,
+                                                    font.SynthesizesBold ? (x, y, ends) => NaturalClearType.EmboldenOutline(x, y, ends, ppem) : null))
                 {
                     dropout = grey ? 0 : UnfittedDropout;
                     if (!font.TryGetScaledOutline(gid, ppem, out figures)) return g;
