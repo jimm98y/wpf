@@ -86,6 +86,9 @@
          Metafile is held to (MetafileTests). -->
     <Compile Remove="Fixtures/Metafiles/oracle/**" />
     <None Include="Fixtures/Metafiles/**/*.emf;Fixtures/Metafiles/**/*.wmf;Fixtures/Metafiles/**/*.txt;Fixtures/Metafiles/**/*.png" CopyToOutputDirectory="PreserveNewest" />
+    <!-- What native GDI+ hands DrawPlacedGlyphs / DrawLines, measures and adds to a path for a
+         battery of strings and formats (FullTextImagerTests). -->
+    <None Include="Fixtures/Text/*.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The comparison needs a Windows to compare against; elsewhere it is not built at all. -->
