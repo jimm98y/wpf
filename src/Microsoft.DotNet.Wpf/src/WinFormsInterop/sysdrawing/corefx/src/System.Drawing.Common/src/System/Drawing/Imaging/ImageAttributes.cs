@@ -86,8 +86,9 @@ namespace System.Drawing.Imaging
         /// <summary>GpRecolor::SetColorMatrices @180084110 / GpRecolorObject::SetColorMatrices @180084178.</summary>
         public void SetColorMatrices(ColorMatrix newColorMatrix, ColorMatrix grayMatrix, ColorMatrixFlag mode, ColorAdjustType type)
         {
+            // System.Drawing (net10) checks the colour matrix itself before GDI+ sees anything.
+            if (newColorMatrix == null) throw new ArgumentNullException(nameof(newColorMatrix));
             CheckType(type);
-            if (newColorMatrix == null && grayMatrix == null) Invalid();
             int flags = (int)mode;
             if (grayMatrix == null || flags != 2)
             {
@@ -218,25 +219,50 @@ namespace System.Drawing.Imaging
 
         public void SetOutputChannelColorProfile(String colorProfileFilename) => SetOutputChannelColorProfile(colorProfileFilename, ColorAdjustType.Default);
 
+        /// <summary>GdipSetImageAttributesOutputChannelColorProfile @1800687c0 -> GpImageAttributes::
+        /// SetOutputChannelProfile @18008f138: the type's object made, then SetupCmykSeparation
+        /// (GpRecolorObject @1800fd028) frees its transform and builds sRGB -> the profile (a bare
+        /// name is looked up in the colour directory, as mscms does); the 0x100 flag only on
+        /// success. A profile that does not open or is not one is status 3, which System.Drawing
+        /// reports as an ExternalException; no ICM at all (no standard sRGB profile) is status 2.</summary>
         public void SetOutputChannelColorProfile(String colorProfileFilename, ColorAdjustType type)
         {
             // Called in order to emulate exception behavior from netfx related to invalid file paths.
             Path.GetFullPath(colorProfileFilename);
             CheckType(type);
-            _recolor.Set(type);
+            int status = _recolor.Set(type).SetupCmykSeparation(colorProfileFilename);
+            if (status == 2) Invalid();
+            if (status != 0)
+                throw new ExternalException("An object could not be created, possibly due to a lack of memory, but most likely due to invalid input.", unchecked((int)0x8000FFFF));
         }
 
         public void ClearOutputChannelColorProfile() => ClearOutputChannel(ColorAdjustType.Default);
 
         public void ClearOutputChannelColorProfile(ColorAdjustType type) => ClearOutputChannel(type);
 
-        public void SetRemapTable(ColorMap[] map) => SetRemapTable(map, ColorAdjustType.Default);
+        public void SetRemapTable(params ColorMap[] map) => SetRemapTable(map, ColorAdjustType.Default);
 
-        /// <summary>GpRecolorObject::SetRemapTable @18008f270: exact ARGB pairs, the first match wins.</summary>
+        public void SetRemapTable(params ReadOnlySpan<ColorMap> map) => SetRemapTable(ColorAdjustType.Default, map);
+
+        public void SetRemapTable(params ReadOnlySpan<(Color OldColor, Color NewColor)> map) => SetRemapTable(ColorAdjustType.Default, map);
+
         public void SetRemapTable(ColorMap[] map, ColorAdjustType type)
         {
-            CheckType(type);
             if (map == null) throw new ArgumentNullException(nameof(map));
+            SetRemapTable(type, map.AsSpan());
+        }
+
+        public void SetRemapTable(ColorAdjustType type, params ReadOnlySpan<ColorMap> map)
+        {
+            var pairs = new (Color, Color)[map.Length];
+            for (int i = 0; i < map.Length; i++) pairs[i] = (map[i].OldColor, map[i].NewColor);
+            SetRemapTable(type, (ReadOnlySpan<(Color, Color)>)pairs);
+        }
+
+        /// <summary>GpRecolorObject::SetRemapTable @18008f270: exact ARGB pairs, the first match wins.</summary>
+        public void SetRemapTable(ColorAdjustType type, params ReadOnlySpan<(Color OldColor, Color NewColor)> map)
+        {
+            CheckType(type);
             if (map.Length == 0) Invalid();
             GpRecolorObject o = _recolor.Set(type);
             o.Remap = new uint[map.Length * 2];
@@ -257,7 +283,11 @@ namespace System.Drawing.Imaging
             if (o != null) o.Flags &= ~0x20u;
         }
 
-        public void SetBrushRemapTable(ColorMap[] map) => SetRemapTable(map, ColorAdjustType.Brush);
+        public void SetBrushRemapTable(params ColorMap[] map) => SetRemapTable(map, ColorAdjustType.Brush);
+
+        public void SetBrushRemapTable(params ReadOnlySpan<ColorMap> map) => SetRemapTable(ColorAdjustType.Brush, map);
+
+        public void SetBrushRemapTable(params ReadOnlySpan<(Color OldColor, Color NewColor)> map) => SetRemapTable(ColorAdjustType.Brush, map);
 
         public void ClearBrushRemapTable() => ClearRemapTable(ColorAdjustType.Brush);
 
@@ -277,7 +307,9 @@ namespace System.Drawing.Imaging
         /// comes back as it went in. Only the argument checks show.</summary>
         public void GetAdjustedPalette(ColorPalette palette, ColorAdjustType type)
         {
-            if (palette == null || palette.Entries.Length == 0 || (uint)(type - 1) >= 4u)
+            // System.Drawing converts the palette before it calls GDI+: a null one is a NullReferenceException.
+            int count = palette.Entries.Length;
+            if (count == 0 || (uint)(type - 1) >= 4u)
                 Invalid();
         }
 
