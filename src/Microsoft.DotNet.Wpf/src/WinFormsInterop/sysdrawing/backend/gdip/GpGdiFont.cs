@@ -107,10 +107,30 @@ namespace System.Drawing.WebGpuBackend.Gdip
             };
             if (esc % 3600 != 0)
             {
-                // A turned font is not sized from VDMX: the win ascent and descent scaled and
-                // rounded, a pixel more each (TEXTMETRIC of a quarter-turned realization).
-                g.Ascent = (int)Math.Floor(t.WinAscent * (double)ppem / upem + 0.5) + 1;
-                g.Descent = (int)Math.Floor(t.WinDescent * (double)ppem / upem + 0.5) + 1;
+                // A turned font is not sized from VDMX. ttfd's bComputeMaxGlyph @14001b198 takes
+                // a matrix that is not a plain scale through its rotated branch: the ascender and
+                // descender are the face's extents -- usWinAscent / usWinDescent for a quarter
+                // turn (flag bit 1, m00 = m11 = 0), the head box's yMax / -yMin at any other angle
+                // -- each grown by upem/64, times the length of the ascender vector (16 ppem /
+                // upem), rounded to 28.4 and taken up to the whole pixel; lQueryDEVICEMETRICS
+                // @140011940 hands them to win32k as fxMaxAscender / fxMaxDescender, and
+                // TEXTMETRIC's tmAscent / tmDescent are those (RFONT +0x158).
+                bool quarter = esc % 900 == 0;
+                int up = quarter ? t.WinAscent : t.HeadYMax, down = quarter ? t.WinDescent : -t.HeadYMin;
+                float len = 16f * ppem / upem;
+                int margin = upem >> 6;
+                static int Round16(float v) => v < 0f ? -(int)Math.Floor(-v + 0.5) : (int)Math.Floor(v + 0.5);
+                g.Ascent = (Round16((up + margin) * len) + 15) >> 4;
+                g.Descent = (Round16((down + margin) * len) + 15) >> 4;
+                if (esc % 1800 == 0)
+                {
+                    // A half turn is diagonal (flag bit 0) and takes the scale-only branch, but with
+                    // m11 negative it is not quantized: the win ascent and descent FixMul'd by the
+                    // 16.16 scale, whole pixels.
+                    int sc = (int)Math.Floor((double)ppem / upem * 65536.0 + 0.5);
+                    g.Ascent = (int)(((long)t.WinAscent * sc + 0x8000) >> 16);
+                    g.Descent = (int)(((long)t.WinDescent * sc + 0x8000) >> 16);
+                }
             }
             else if (!t.TryGetGdiLineMetrics(ppem, out g.Ascent, out g.Descent))
             {

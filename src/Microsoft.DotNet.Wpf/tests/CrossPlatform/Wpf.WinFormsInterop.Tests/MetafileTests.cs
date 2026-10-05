@@ -287,11 +287,9 @@ namespace Wpf.WinFormsInterop.Tests
             return (double)count / (a.Width * a.Height);
         }
 
-        /// <summary>Text under a turned world transform: its down-level record structure is GDI+'s
-        /// (Down_level_record_structure_is_GdiPlus covers it), but not yet its bytes (GDI's
-        /// ExtTextOut bounds and ex/eyScale of an escapement font), its GDI playback (the player
-        /// draws escapement glyphs unturned) or, within 2%, its EMF+ playback (the quarter turn's
-        /// sideways ClearType fit is a pixel off along the line once the playback scales it).</summary>
+        /// <summary>Text under a turned world transform: its down-level records are GDI+'s byte for
+        /// byte (recorded on the fixture's own screen, ScreenFor), but not yet its GDI playback
+        /// (escapement glyphs) or its EMF+ playback.</summary>
         static readonly HashSet<string> TurnedTextPending = new HashSet<string> { "text_rotate" };
 
         public static TheoryData<string> EmfPlusPlaybackScenarios()
@@ -410,6 +408,21 @@ namespace Wpf.WinFormsInterop.Tests
             LogPixelsX = 96, LogPixelsY = 96, IsDisplay = true, DesktopDpiX = 96, DesktopDpiY = 96,
         };
 
+        /// <summary>The screen a scenario's fixture was recorded on: its EMF header's szlDevice and
+        /// szlMillimeters (the oracle hands GDI+ the screen DC, and text_rotate was recorded on a
+        /// 3420 x 1884 px / 320 x 170 mm screen where the rest were recorded on OracleScreen).</summary>
+        internal static GpRefDevice ScreenFor(string scenario)
+        {
+            string f = Path.Combine(Dir, "emfonly", scenario + ".emf");
+            if (!File.Exists(f)) return OracleScreen;
+            byte[] h = File.ReadAllBytes(f);
+            if (h.Length < 88) return OracleScreen;
+            GpRefDevice d = OracleScreen;
+            d.HorzRes = BitConverter.ToInt32(h, 72); d.VertRes = BitConverter.ToInt32(h, 76);
+            d.HorzSize = BitConverter.ToInt32(h, 80); d.VertSize = BitConverter.ToInt32(h, 84);
+            return d;
+        }
+
         /// <summary>A scenario recorded down-level on the oracle's screen by a fresh driver.</summary>
         internal static byte[] RecordDownLevel(string scenario, EmfType type)
         {
@@ -417,7 +430,7 @@ namespace Wpf.WinFormsInterop.Tests
             {
                 GpMetaDriverState.Reset();
                 var ms = new MemoryStream();
-                GpMetafileRecorder r = GpMetafileRecorder.Create(null, OracleScreen, type, null, MetafileFrameUnit.GdiCompatible, null, ms, null);
+                GpMetafileRecorder r = GpMetafileRecorder.Create(null, ScreenFor(scenario), type, null, MetafileFrameUnit.GdiCompatible, null, ms, null);
                 MetafileScenarios.All()[scenario](new RecorderRec(r));
                 r.End();
                 byte[] emf = ms.ToArray();
@@ -481,7 +494,7 @@ namespace Wpf.WinFormsInterop.Tests
         {
             var d = new TheoryData<string>();
             foreach (string name in MetafileScenarios.All().Keys)
-                if (!TurnedTextPending.Contains(name)) d.Add(name);
+                d.Add(name);
             return d;
         }
 

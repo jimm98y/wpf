@@ -654,6 +654,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>usWinAscent / usWinDescent: GDI+'s cell ascent and descent.</summary>
         internal int WinAscent => _winAscent;
+        internal int HeadYMin => _headYMin;
+        internal int HeadYMax => _headYMax;
 
         /// <summary>OS/2 sTypoAscender / sTypoDescender, post underlinePosition / underlineThickness
         /// (font units), and whether the face carries vertical metrics (vmtx or VORG) -- without
@@ -4822,6 +4824,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         internal ushort RawAdvanceWidth(int gid)
             => _advanceWidths.Length == 0 ? (ushort)0 : _advanceWidths[gid < _numHMetrics ? gid : _numHMetrics - 1];
+
+        /// <summary>A glyph's NOTIONAL metrics as ttfd's vGetNotionalGlyphMetrics@140086558 reads
+        /// them: the left side bearing (hmtx), the ink's right edge measured from the same origin
+        /// (lsb + xMax - xMin, the glyf header), and the glyf header's yMin / yMax, in font units.
+        /// False for a glyph with no outline.</summary>
+        internal bool TryGetNotionalMetrics(int gid, out int lsb, out int right, out int yMin, out int yMax)
+        {
+            lsb = right = yMin = yMax = 0;
+            if (gid < 0 || gid >= _numGlyphs || _glyfOffset < 0 || _loca.Length == 0 || _hmtxOffset < 0) return false;
+            uint start = _loca[gid], end = _loca[gid + 1];
+            if (end <= start) return false;
+            int g = _glyfOffset + (int)start;
+            int xMin = (short)U16(g + 2), xMax = (short)U16(g + 6);
+            yMin = (short)U16(g + 4); yMax = (short)U16(g + 8);
+            lsb = gid < _numHMetrics ? (short)U16(_hmtxOffset + gid * 4 + 2)
+                : (short)U16(_hmtxOffset + _numHMetrics * 4 + (gid - _numHMetrics) * 2);
+            right = lsb - xMin + xMax;
+            return true;
+        }
 
         /// <summary>
         ///  Moves a glyph's points to the selected instance, and records what that did to its advance.

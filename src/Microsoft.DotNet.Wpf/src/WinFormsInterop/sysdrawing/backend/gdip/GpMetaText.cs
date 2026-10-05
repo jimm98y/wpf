@@ -278,6 +278,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     bool quarter = MathF.Abs(m.M11) <= tl && MathF.Abs(m.M22) <= tl;
                     int lastMode = axis || quarter ? mode : 2;
                     last = (int)MathF.Floor(GpTextShaper.DeviceAdvancePx(face, glyphs[glyphs.Length - 1], em, sx, sy, lastMode) + 0.5f);
+                    if (Environment.GetEnvironmentVariable("ROT_DBG") == "1")
+                        Console.Error.WriteLine($"LASTADV gid={glyphs[glyphs.Length - 1]} em={em} sx={sx} sy={sy} mode={mode} lastMode={lastMode} design={GpTextShaper.DeviceAdvancePx(face, glyphs[glyphs.Length - 1], em, sx, sy, 2)} m={m.M11},{m.M12},{m.M21},{m.M22} -> {last}");
                     if (!axis && !vertical)
                     {
                         // A turned realization: a clockwise quarter turn is the sideways glyph;
