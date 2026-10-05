@@ -368,6 +368,10 @@ namespace Wpf.WinFormsInterop.Tests
             Add (l, "remap/null", () => R (ia => ia.SetRemapTable ((ColorMap[]) null)));
             Add (l, "remap/cleared", () => R (ia => { ia.SetRemapTable (new [] { Map (0xff000000, 0xffff0000) }); ia.ClearRemapTable (); }));
             Add (l, "remap/brush-only", () => R (ia => ia.SetBrushRemapTable (new [] { Map (0xff000000, 0xffff0000) })));
+            Add (l, "remap/span", () => R (ia => ia.SetRemapTable (ColorAdjustType.Bitmap, new ReadOnlySpan<ColorMap> (new [] { Map (0xff0ac81e, 0xff00ff00), Map (0xff808080, 0x80ff0000) }))));
+            Add (l, "remap/tuple-span", () => R (ia => ia.SetRemapTable ((Color.FromArgb (unchecked ((int) 0xff0ac81e)), Color.Blue), (Color.FromArgb (unchecked ((int) 0xffffffff)), Color.FromArgb (0x10, 1, 2, 3)))));
+            Add (l, "remap/tuple-span-empty", () => R (ia => ia.SetRemapTable (ReadOnlySpan<(Color, Color)>.Empty)));
+            Add (l, "remap/brush-tuple-span", () => R (ia => { ia.SetBrushRemapTable ((Color.Black, Color.Red)); ia.SetGamma (1.5f, ColorAdjustType.Brush); }));
 
             // the output channel
             foreach (ColorChannelFlag ch in new [] { ColorChannelFlag.ColorChannelC, ColorChannelFlag.ColorChannelM, ColorChannelFlag.ColorChannelY, ColorChannelFlag.ColorChannelK }) {
