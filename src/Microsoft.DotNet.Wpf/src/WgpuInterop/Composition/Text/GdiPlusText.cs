@@ -771,6 +771,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             voyDu = (int)Math.Floor(voyPx * (double)upem / (em * m11) + 0.5);
         }
 
+        /// <summary>The side bearings GetGdiCompatibleGlyphMetrics gives a glyph under a quarter
+        /// turn (what GpFaceRealization::GetGlyphStringSidebearings @180024530 asks for under the
+        /// realization's own transform): the sideways fit's box along the glyph's x, which is the
+        /// device's y and is sampled once a pixel, each edge to the nearer pixel boundary as the
+        /// 6x1 box is to the nearer sixth.</summary>
+        internal static void SidewaysBearings(TrueTypeFont font, int gid, float em, float m11, float m22,
+                                              out int lsbDu, out int rsbDu)
+        {
+            int upem = font.UnitsPerEmForHinting;
+            SidewaysMetrics(font, gid, em, m11, m22, out int advDu, out _);
+            int along = AxisPpem(em * m22), across = AxisPpem(em * m11);
+            int sxs = TrueTypeInterpreter.StretchPpemX, sys = TrueTypeInterpreter.StretchPpemY;
+            TrueTypeInterpreter.StretchPpemX = along == across ? 0 : along;
+            TrueTypeInterpreter.StretchPpemY = along == across ? 0 : across;
+            try
+            {
+                if (!OutlineXExtent(font, gid, Math.Max(along, across), out float x0, out float x1, SidewaysScalerWord))
+                { lsbDu = 0; rsbDu = advDu; return; }
+                double k = upem / (double)(em * m22);
+                int left = (int)MathF.Ceiling(x0 - 0.5f), right = (int)MathF.Floor(x1 + 0.5f);
+                int px = (int)Math.Floor(advDu / k + 0.5);
+                lsbDu = (int)Math.Floor(left * k + 0.5);
+                rsbDu = (int)Math.Floor((px - right) * k + 0.5);
+            }
+            finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
+        }
+
         /// <summary>A device em (the world em through one axis of the world-to-device matrix) as
         /// the scaler sizes it: MakeRasterizerTransform's 16.16, rounded to a whole pixel (head
         /// flags bit 3, set on every face this is used with).</summary>

@@ -90,7 +90,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             float tl = MathF.Max (MathF.Abs (w2d.M11) + MathF.Abs (w2d.M12), MathF.Abs (w2d.M21) + MathF.Abs (w2d.M22)) * tol;
             bool quarterTurn = MathF.Abs (w2d.M11) <= tl && MathF.Abs (w2d.M22) <= tl, quarter = quarterTurn && !sideways;
             bool turned = !s_rotFit && !(MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl) && !quarterTurn;
-            MirrorX = mode == 5 && MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl && w2d.M11 < 0f;
+            QuarterCT = quarter && mode == 5;
+            Turned = turned;
+            MirrorX = mode == 5 &&MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl && w2d.M11 < 0f;
             if ((Flags & 0x20000000) == 0 && Script != GpTextTables.ScriptControl
                 && (special || (!Face.IsFixedPitch && (gridFit || leadMargin < 0 || trailMargin < 0)))) {
                 Device = new int [Count]; DevOffU = new int [Count]; DevOffV = new int [Count];
@@ -114,8 +116,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         if (quarter && mode == 5) {
                             // A quarter-turned ClearType realization fits the glyph sideways: its advance
                             // is the sideways fit's span (GetGdiCompatibleGlyphMetrics isSideways).
+                            // A bold simulation's outline is a device pixel wider there too.
                             GdipText.SidewaysMetrics (Face, Glyphs [i], Em, Sy, Sx, out int advDu, out _);
-                            px = MathF.Floor (advDu * (Em * Sx / upem) + 0.5f);
+                            px = MathF.Floor (advDu * (Em * Sx / upem) + 0.5f)
+                                 + (Face.SynthesizesBold && Face.DesignContours (Glyphs [i]).Count > 0 ? 1 : 0);
                         } else px = GpTextShaper.DeviceAdvancePx (Face, Glyphs [i], Em, Sx, Sy, turned ? 2 : mode) + MirrorPx (Glyphs [i], true);
                         if (i + 1 < Count) {
                             int ku = GpTextShaper.Kern (Face, Script, Glyphs [i], Glyphs [i + 1]);
@@ -364,7 +368,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             left = lim;
             for (int i = from; i < from + count; i++) {
                 if (cum >= lim) break;
-                GdipText.NaturalMetrics (Face, Glyphs [i], Em, Sx, Sx, MirrorX, out int adv, out int lsb, out _);
+                Bearings (Glyphs [i], out int adv, out int lsb, out _);
                 left = Math.Min (left, cum + (int) (lsb * scale * 16f));
                 cum += (int) (adv * scale * 16f);
             }
@@ -372,11 +376,39 @@ namespace System.Drawing.WebGpuBackend.Gdip
             right = lim;
             for (int i = from + count - 1; i >= from; i--) {
                 if (cum >= lim) break;
-                GdipText.NaturalMetrics (Face, Glyphs [i], Em, Sx, Sx, MirrorX, out int adv, out _, out int rsb);
+                Bearings (Glyphs [i], out int adv, out _, out int rsb);
                 right = Math.Min (right, cum + (int) (rsb * scale * 16f));
                 cum += (int) (adv * scale * 16f);
             }
         }
+
+        /// <summary>The metrics GetGlyphStringSidebearings reads: under the realization's own
+        /// transform, so a quarter-turned ClearType one is measured sideways.</summary>
+        void Bearings (int gid, out int adv, out int lsb, out int rsb)
+        {
+            if (Turned) {
+                // A turned transform is not a measuring one: FontFace::GetGlyphMetrics @18002d488
+                // answers with GetDesignGlyphMetrics -- with the face's simulations: a bold one
+                // widens the advance and the box by round(upem / 50), an oblique one shears the
+                // glyf box's corners (Microsoft Sans Serif 'o': lsb 72 -> 63, rsb 72 -> -296).
+                adv = GpTextShaper.DesignAdvance (Face, gid);
+                if (!Face.TryGetDesignXExtent (gid, out int xMin, out int xMax)
+                    || !Face.TryGetNotionalMetrics (gid, out _, out _, out int yMin, out int yMax)) { lsb = 0; rsb = adv; return; }
+                float s = Face.ObliqueShearApplied;
+                float x0 = xMin + MathF.Min (s * yMin, s * yMax), x1 = xMax + MathF.Max (s * yMin, s * yMax) + (adv - Face.DesignAdvance (gid));
+                lsb = (int) MathF.Floor (x0 + 0.5f);
+                rsb = adv - (int) MathF.Floor (x1 + 0.5f);
+            } else if (QuarterCT) {
+                GdipText.SidewaysMetrics (Face, gid, Em, Sy, Sx, out adv, out _);
+                GdipText.SidewaysBearings (Face, gid, Em, Sy, Sx, out lsb, out rsb);
+            } else GdipText.NaturalMetrics (Face, gid, Em, Sx, Sx, MirrorX, out adv, out lsb, out rsb);
+        }
+
+        /// <summary>A transform that is neither axis-aligned nor a quarter turn.</summary>
+        public bool Turned;
+
+        /// <summary>A ClearType realization under a quarter turn (its glyphs fitted sideways).</summary>
+        public bool QuarterCT;
 
         /// <summary>GetDisplayCellOrigin.</summary>
         public PointF CellOrigin (PointF world)
