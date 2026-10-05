@@ -37,7 +37,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <summary>A display dnode: a run's glyphs, a tab, or the paragraph end.</summary>
         internal sealed class Seg
         {
-            public int Kind;                 // 0 text, 1 tab, 2 end of paragraph, 3 deleted (CR)
+            public int Kind;                 // 0 text, 1 tab, 2 end of paragraph, 3 deleted (CR), 5 hidden (LSTXTCFG)
             public Run Run;
             public int Cp, CpLim;
             public int Ur, Width;
@@ -68,6 +68,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         static bool IsSpace (int ch) => ch == ' ';
+
+        internal static bool IsHidden (int ch) => ch == 0xfeff || ch == 0xad;
 
         public static LsLine CreateLine (GpFullTextImager fti, int cpFirst, int dua, bool charBreaks)
         {
@@ -120,6 +122,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             ch.Width = fti.CharWidths (run, '¶');
                         }
                     }
+                    else if (IsHidden (c)) {
+                        // LSTXTCFG (@1802b3330) names these to Line Services: the no-break
+                        // (U+FEFF) and the optional hyphen are formatted as nothing -- no width,
+                        // no glyph displayed, their own dnode (the joiners draw a blank).
+                        ch.Kind = 5;
+                        ch.Width = 0;
+                    }
                     ch.Space = IsSpace (c);
                     ch.Brk = BreakClass (fti, c, charBreaks);
                     if (ch.Kind == 1) {
@@ -163,7 +172,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             Seg seg = null;
             for (int i = 0; i < end; i++) {
                 Ch ch = chars [i];
-                int kind = ch.Kind == 1 ? 1 : ch.Kind == 2 ? 2 : ch.Kind == 3 ? 3 : 0;
+                int kind = ch.Kind == 1 ? 1 : ch.Kind == 2 ? 2 : ch.Kind == 3 ? 3 : ch.Kind == 5 ? 5 : 0;
                 if (seg == null || seg.Kind != 0 || kind != 0 || seg.Run != ch.Run) {
                     seg = new Seg { Kind = kind, Run = ch.Run, Cp = ch.Cp, CpLim = ch.Cp, Ur = pos, G0 = ch.Glyph };
                     line.Segs.Add (seg);

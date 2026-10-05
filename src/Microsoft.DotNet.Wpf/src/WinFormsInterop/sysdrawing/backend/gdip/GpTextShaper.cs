@@ -100,6 +100,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     k++;
                     continue;
                 }
+                // A variation selector belongs to the character before it (DirectWrite's cmap
+                // lookup takes the pair): no glyph of its own.
+                if (ch >= 0xfe00 && ch <= 0xfe0f && glyphs.Count > 0) { charToCluster [k] = glyphs.Count - 1; continue; }
                 if (rtl) ch = Mirror (ch);
                 charToCluster [k] = glyphs.Count;
                 clusters.Add (k);
@@ -117,9 +120,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 GlyphProps = new ushort [glyphs.Count],
                 TextProps = new ushort [len],
             };
+            int blank = -1;
             for (int i = 0; i < glyphs.Count; i++) {
                 s.Glyphs [i] = (ushort) glyphs [i];
                 s.GlyphProps [i] = PropClusterStart;
+                // DirectWrite's shaping draws a default-ignorable character (U+200B..200F,
+                // U+FEFF, the bidi controls) as the face's blank glyph with
+                // no advance (Consolas has a glyph for U+200B; GDI+ shows the space, zero wide).
+                int c0 = clusters [i];
+                if (c0 < len && IsDefaultIgnorable (text [start + c0])) {
+                    if (blank < 0) blank = face.GlyphIndex (' ');
+                    s.Glyphs [i] = (ushort) blank;
+                    s.GlyphProps [i] = PropClusterStart | PropZeroWidth;
+                }
             }
             // Each character to the first glyph of the cluster that consumed it.
             int g = 0;
@@ -136,6 +149,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// maps characters through the cmap alone).</summary>
         static readonly string[] DefaultFeatures = { "ccmp", "locl", "rlig", "rclt", "calt", "liga", "clig" };
         static readonly string[] DefaultFeaturesRtl = { "ccmp", "locl", "rtla", "rtlm", "rlig", "rclt", "calt", "liga", "clig" };
+
+        /// <summary>The default-ignorable characters DirectWrite shapes invisible.</summary>
+        internal static bool IsDefaultIgnorable (int c)
+            => c == 0x034f || (c >= 0x180b && c <= 0x180f) || (c >= 0x200b && c <= 0x200f)
+            || (c >= 0x202a && c <= 0x202e) || (c >= 0x2060 && c <= 0x206f)
+            || c == 0xfeff;
 
         /// <summary>The bidi mirrored form of a character in a right-to-left run.</summary>
         static int Mirror (int ch) => ch switch {

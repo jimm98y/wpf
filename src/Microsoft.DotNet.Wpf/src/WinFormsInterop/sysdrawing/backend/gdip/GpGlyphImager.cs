@@ -117,6 +117,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             GdipText.SidewaysMetrics (Face, Glyphs [i], Em, Sy, Sx, out int advDu, out _);
                             px = MathF.Floor (advDu * (Em * Sx / upem) + 0.5f);
                         } else px = GpTextShaper.DeviceAdvancePx (Face, Glyphs [i], Em, Sx, Sy, turned ? 2 : mode);
+                        if ((GlyphProps [i] & GpTextShaper.PropZeroWidth) != 0 && run.Script != GpTextTables.ScriptControl) px = 0f;
                         if (i + 1 < Count) {
                             int ku = GpTextShaper.Kern (Face, Script, Glyphs [i], Glyphs [i + 1]);
                             if (ku != 0) px += uniform && !turned ? DesignToPP (upem, ppem, ku) : ku * (Em * Sx / upem);

@@ -540,7 +540,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             float[] a = GpTextShaper.GetGlyphAdvances (run.Face, run.Shape.Glyphs, g0, count, run.Script, upem * k);
             for (int i = 0; i < count; i++) {
-                adv [i] = (int) MathF.Floor (a [i] * tr + 0.5f);
+                adv [i] = (run.Shape.GlyphProps [g0 + i] & GpTextShaper.PropZeroWidth) != 0 ? 0 : (int) MathF.Floor (a [i] * tr + 0.5f);
                 offU [i] = offV [i] = 0;
             }
         }

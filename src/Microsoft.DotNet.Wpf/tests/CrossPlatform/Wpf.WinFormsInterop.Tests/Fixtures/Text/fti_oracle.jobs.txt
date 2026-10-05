@@ -744,3 +744,37 @@ D|def|Consolas|10|3|1|0|0|0|0|-|-|-|-|10,2,1000,150|-|-|yes!  superlongwordwitho
 D|def|Times New Roman|8|3|0|0|1|1|0|-|-|-|-|0,0,130,40|-|-|office  colon: ipsum  comma,
 D|def|Trebuchet MS|11|3|1|0|0|2|1|-|-|-|-|0,2,1000,0|-|-|fly the 'single' [bracket]  i over l
 D|def|Georgia|10|3|1|0|1|0|2|-|-|-|-|3.5,5.25,160,0|-|-|jumps  #tag tempor  office  brown  adipiscing {brace} lines  #tag [bracket]
+M|def|Verdana|12|3|0|1|4|1|0|-|-|-|-|2,2,300,100|-|-|Hello\u202c word\u200dfix\u200bab\u200c
+M|typo|Calibri|10|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|wordx\u200bfix\u202a
+M|typo|Arial|12|3|1|5|0|1|0|-|-|-|-|2,2,0,100|-|-|x\ufeff word\u00ad fix\u2060
+M|typo|Verdana|10|3|2|3|32|2|0|-|-|-|-|2,2,0,100|-|-|Helloword
+M|typo|Calibri|8|3|2|5|0|2|0|-|-|-|-|2,2,0,100|-|-|word\ufe0f 
+D|typo|Consolas|8|3|1|1|4096|2|0|-|-|-|-|2,2,0,100|-|-|x\ufe0f
+M|typo|Consolas|8|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|xHello word\u200b
+D|def|Verdana|10|3|2|1|4096|1|0|-|-|-|-|2,2,60,100|-|-|fix\ufeffWAVE\ufeffWAVE\u00ad 
+D|def|Courier New|8|3|2|1|4|2|0|-|-|-|-|2,2,0,100|-|-|ab\u200bxx 
+D|typo|Times New Roman|12|3|0|3|4096|1|0|-|-|-|-|2,2,300,100|-|-|Hello
+M|def|Courier New|12|3|0|1|0|0|0|-|-|-|-|2,2,60,100|-|-|WAVE\u2060
+M|typo|Verdana|10|3|1|1|4|1|0|-|-|-|-|2,2,0,100|-|-|word\u00adHelloword\u2060
+D|def|Courier New|10|3|0|5|32|1|0|-|-|-|-|2,2,300,100|-|-|x\ufe0f 
+D|typo|Calibri|10|3|2|1|4096|2|0|-|-|-|-|2,2,300,100|-|-|word\ufe0f
+D|typo|Consolas|10|3|1|5|32|2|0|-|-|-|-|2,2,300,100|-|-|xHello\ufe0fab\u034f
+D|typo|Arial|12|3|2|5|0|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u200bwordx\u00ad
+D|def|Tahoma|12|3|0|5|4096|1|0|-|-|-|-|2,2,0,100|-|-|abHello\u200d word\u202a
+D|def|Calibri|10|3|1|3|4096|0|0|-|-|-|-|2,2,0,100|-|-|fix\u202cfix word\u200bWAVE\ufe0f 
+M|typo|Verdana|12|3|2|5|32|1|0|-|-|-|-|2,2,0,100|-|-|fix\u200d ab\u200c WAVE\u200c word\u00ad
+M|def|Consolas|10|3|0|5|32|2|0|-|-|-|-|2,2,300,100|-|-|word\ufeffHello
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a b
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a\rb
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a​b
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a\u0001b
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a b
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+D|def|Consolas|10|3|0|0|0|2|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab\r\ncd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab  \ncd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|abcd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab \ncd
+M|def|Consolas|10|3|0|0|0x800|0|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+M|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+M|def|Consolas|10|3|0|0|0x800|0|0|-|-|-|-|2,2,200,90|-|-|abcd
