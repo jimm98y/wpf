@@ -16,11 +16,15 @@
 //                                      DIB drawn as PARGB onto the destination grown by a device
 //                                      pixel each side from (-1, -1, w + 2, h + 2), nearest
 //                                      neighbour taken as bilinear (EnumEmf)
-//   MfEnumState::OutputDIB @1800b7eb0  a colour DIB stretched by StretchDIBits is first stretched by
-//                                      GDI+ (SourceCopy, the playback's interpolation, TileFlipXY,
-//                                      from the source less one pixel each way) into a 24bpp bitmap
-//                                      of the device size, then put down 1:1 with the raster
-//                                      operation (COLORONCOLOR); a 1bpp one is stretched by GDI
+//   MfEnumState::OutputDIB @1800b7eb0  a colour DIB of a BitBlt / StretchBlt / StretchDIBits record
+//                                      is first stretched by GDI+ (SourceCopy, the playback's
+//                                      interpolation, TileFlipXY, from the source less one pixel
+//                                      each way) into a 24bpp bitmap of its own device size (LPtoDP
+//                                      of the origin and the origin plus the absolute extents,
+//                                      GetIntDistance); GDI then stretches that onto the destination
+//                                      as BLTRECORD::bOrderStupid orders it (an inverted side moved
+//                                      on by one), COLORONCOLOR: the source mirrored first, then
+//                                      stretch::vInitStrDDA's DDA. A 1bpp one is stretched by GDI
 //
 // The raster operations here are GDI's: each ROP3 / ROP2 a truth table over the pattern, source and
 // destination bits.

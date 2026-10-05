@@ -906,19 +906,48 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// out, figures closed by a segment back to their start.</summary>
         void GdiCosmetic(GdiPath p, uint color)
         {
+            GdiPath raw = p;
             p = p.Flattened();
             var lit = new List<(int X, int Y, bool Gap)>();
             GdiPen pen = DrawPen();
             GdiLines.Style style = CosmeticStyle(pen, _dc.StyleState);
             int fresh = CosmeticStyle(pen, 0)?.Next ?? 0;
+            // EPATHOBJ_bStrokeAndOrFill @140168820 measures the path's box (its control points
+            // included: (left >> 4, top >> 4) to ((right + 15 >> 4) + 1, (bottom + 15 >> 4) + 1))
+            // against the surface and the clip. Nothing of it inside: no line is drawn and the style
+            // position is carried by EPATHOBJ_vUpdateCosmeticStyleState @1401cf4d0, over the path
+            // as it stands -- not yet flattened, a curve's control polygon counted as its lines, the
+            // figures joined end to start and none closed, each line by its DDA_CLIPLINE
+            // (DDA_CLIPLINE::bInit @1401e6ef8) pixel count, which is bLines' own.
+            if (style != null && raw.Bounds(out int bl, out int bt, out int br, out int bb))
+            {
+                int l = bl >> 4, t = bt >> 4, r = ((br + 15) >> 4) + 1, b = ((bb + 15) >> 4) + 1;
+                GdiRgn c = GdiClip() ?? GdiRgn.FromRect(0, 0, _cw, _ch);
+                c = GdiRgn.Combine(c, GdiRgn.FromRect(0, 0, _cw, _ch), 1);
+                if (GdiRgn.Combine(c, GdiRgn.FromRect(l, t, r, b), 1).Empty)
+                {
+                    if (raw.Figures.Count > 0 && raw.Figures[0].ResetStyle) style.Next = fresh;
+                    int px0 = 0, py0 = 0;
+                    bool have = false;
+                    var none = new List<(int X, int Y)>();
+                    foreach (GdiPath.Figure f in raw.Figures)
+                        for (int i = 0; i < f.Count; i++)
+                        {
+                            if (have) { GdiLines.Line(px0, py0, f.X[i], f.Y[i], style, none); none.Clear(); }
+                            px0 = f.X[i]; py0 = f.Y[i]; have = true;
+                        }
+                    _dc.StyleState = style.State;
+                    return;
+                }
+            }
             foreach (GdiPath.Figure f in p.Figures)
             {
                 if (style != null && f.ResetStyle) style.Next = fresh;
                 for (int i = 1; i < f.Count; i++) GdiLines.Line(f.X[i - 1], f.Y[i - 1], f.X[i], f.Y[i], style, lit);
                 if (f.Closed && f.Count > 1) GdiLines.Line(f.X[f.Count - 1], f.Y[f.Count - 1], f.X[0], f.Y[0], style, lit);
             }
-            // bStrokeCosmetic @140171db8 writes back where its lines ended (clipped or not: each
-            // figure starting over, the oracle agrees).
+            // bStrokeCosmetic writes back where its lines ended (clipped or not: each figure
+            // starting over, the oracle agrees).
             if (style != null) _dc.StyleState = style.State;
             if (lit.Count == 0) return;
             // A style's gaps take the background colour in OPAQUE mode (the mix's background
