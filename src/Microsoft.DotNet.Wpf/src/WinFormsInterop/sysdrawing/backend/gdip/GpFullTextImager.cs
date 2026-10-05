@@ -293,28 +293,74 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// is an item of its own kind.</summary>
         IEnumerable<(int, int, int, int, int)> Itemize ()
         {
+            // ItemizationFiniteStateMachine @18003ce90. The item is GDI+'s 32-bit GpTextItem head:
+            // byte 0 the script, bits 8.. the flags (0x100 state 3, 0x200 a joiner, 0x400 state 2,
+            // 0x80000 an item that continues a ZWJ).
             int level = ParagraphLevel;
-            int itemStart = 0, script = GpTextTables.ScriptLatin, flags = 0;
-            bool haveScript = false;
-            for (int i = 0; i < _n; i++) {
-                int ch = Text [i];
-                int s = GpTextTables.Script (ch), st = GpTextTables.StateClass (ch);
-                if (s == GpTextTables.ScriptControl && st == 5 || (script == GpTextTables.ScriptControl && haveScript)) {
-                    // Control characters (tab, CR, LF, the format controls) are items by themselves.
-                    if (i > itemStart) yield return (itemStart, i - itemStart, script, flags, level);
-                    itemStart = i;
-                    script = s; flags = 0; haveScript = true;
-                    if (s == GpTextTables.ScriptControl && st == 5) continue;
-                }
-                if (st == 0 && s != script) {
-                    if (i > itemStart && haveScript) { yield return (itemStart, i - itemStart, script, flags, level); itemStart = i; flags = 0; }
-                    script = s;
-                    haveScript = true;
-                } else if (!haveScript && st == 0) { script = s; haveScript = true; }
-                if (st == 3) flags |= 0x100;
-                if (st == 2) flags |= 0x400;
+            var result = new List<(int, int, int, int, int)> ();
+            int item = GpTextTables.ScriptLatin;
+            int start = 0, i = 0, complexAt = -1;
+            int Cp (int k)
+            {
+                int c = Text [k];
+                if (char.IsHighSurrogate ((char) c) && k + 1 < _n && char.IsLowSurrogate (Text [k + 1])) return char.ConvertToUtf32 ((char) c, Text [k + 1]);
+                if (char.IsLowSurrogate ((char) c) && k > 0 && char.IsHighSurrogate (Text [k - 1])) return char.ConvertToUtf32 (Text [k - 1], (char) c);
+                return c;
             }
-            if (_n > itemStart) yield return (itemStart, _n - itemStart, script, flags, level);
+            void Emit (int s, int e) { if (e > s) result.Add ((s, e - s, (sbyte) (item & 0xff), item & ~0xff, level)); }
+            // The simple pass: scripts change only at state-0 characters; a complex character
+            // (state 3 or more) hands the rest to the full pass.
+            for (; i < _n; i++) {
+                uint attr = GpTextTables.Attributes (Cp (i));
+                int st = (int) ((attr >> 8) & 0xff), sc = (int) (attr & 0xff);
+                if (st == 0) {
+                    if ((item & 0xff) != sc) {
+                        if (i > 0) { Emit (start, i); start = i; }
+                        item = (item & ~0xffff) | sc;
+                    }
+                } else if (st == 2) item |= 0x400;
+                else if (st != 1) { complexAt = i; break; }
+            }
+            if (complexAt >= 0) {
+                int split = 0, joiner = -1, zwj = -1, neutral = -1;
+                if (complexAt >= 1 && ((GpTextTables.Attributes (Cp (complexAt - 1)) >> 8) & 0xff) == 1) neutral = complexAt - 1;
+                for (i = complexAt; i < _n; i++) {
+                    int cp = Cp (i);
+                    uint attr = GpTextTables.Attributes (cp);
+                    int st = (int) ((attr >> 8) & 0xff), sc = (sbyte) (attr & 0xff);
+                    int cur = (sbyte) (item & 0xff);
+                    if (cur == GpTextTables.ScriptControl && sc != GpTextTables.ScriptControl) split = i;
+                    else switch (st) {
+                    case 0: if (cur != sc) split = i; break;
+                    case 1: neutral = i; break;
+                    case 2: item |= 0x400; break;
+                    case 3: item |= 0x100; break;
+                    case 4:
+                        if (sc != cur && !(cur == 8 && sc == 7)) {
+                            if (joiner != i - 1 || neutral != i - 2) { split = i; break; }
+                            split = neutral;
+                            if (neutral <= start) item = (item & ~0xff) | (sc & 0xff);
+                        }
+                        break;
+                    case 5: if (cur != GpTextTables.ScriptControl) split = i; break;
+                    case 6:
+                        item |= 0x200;
+                        joiner = i;
+                        if (cp == 0x200d) zwj = i;
+                        break;
+                    default: if (cur == GpTextTables.ScriptControl) split = i; break;
+                    }
+                    if (start < split) {
+                        Emit (start, split);
+                        int next = (item & ~0xff) | (sc & 0xff);
+                        item = (next & ~0xff00) | 0x80000;
+                        if (zwj != split - 1) item = next & ~0x8ff00;
+                        start = split;
+                    }
+                }
+            }
+            Emit (start, _n);
+            return result;
         }
 
         /// <summary>CreateTextRuns: one run per item, shaped by GetGlyphs; a control item's
@@ -329,23 +375,85 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 Underline = (Style & 4) != 0 ? 1 : 0,
             };
             if ((Style & 8) != 0) run.Underline |= 2;
+            bool hotkey = (Format?.Hotkey ?? 0) != 0;
             if (script == GpTextTables.ScriptControl) {
+                // A control item: each character's cmap glyph, or the blank glyph (with a zero-width
+                // space's properties) for a glyph the face lacks, for the zero-width and directional
+                // marks U+200B..U+200F and U+FEFF unless the format says DisplayFormatControl, and for
+                // a hot-key marker.
                 var sh = new GpTextShaper.Shaped {
                     Glyphs = new ushort [len], ClusterMap = new ushort [len], GlyphProps = new ushort [len], TextProps = new ushort [len],
                 };
                 int blank = Face.GlyphIndex (' ');
+                bool show = (FormatFlags & GpTextFormat.DisplayFormatControl) != 0;
                 for (int k = 0; k < len; k++) {
+                    int ch = Text [start + k];
+                    int g = Face.GlyphIndexOf (ch);
                     sh.ClusterMap [k] = (ushort) k;
-                    sh.Glyphs [k] = (ushort) blank;
-                    sh.GlyphProps [k] = 0;
+                    sh.GlyphProps [k] = GpTextShaper.PropClusterStart;
+                    if ((!show && ((uint) (ch - 0x200b) < 5 || ch == 0xfeff)) || g == 0 || (ch == 0xffff && hotkey)) {
+                        g = blank;
+                        sh.GlyphProps [k] = GpTextShaper.PropClusterStart | GpTextShaper.PropZeroWidth;
+                    }
+                    sh.Glyphs [k] = (ushort) g;
                 }
                 run.Shape = sh;
-            } else if ((Format?.Hotkey ?? 0) != 0)
-                run.Shape = GpTextShaper.GetGlyphsWithHotKeys (Face, Text, start, len, script, (level & 1) != 0);
-            else
-                run.Shape = GpTextShaper.GetGlyphs (Face, Text, start, len, script, (level & 1) != 0);
-            _runs.Add (run);
+                _runs.Add (run);
+                return;
+            }
+            // CreateTextRuns @18003aaf8: the item shaped with its face; from the first glyph the face
+            // lacks, the run is cut and the characters it lacks go to GpFamilyFallback (unless
+            // NoFontFallback, or the face is a symbol face).
+            bool fallback = (FormatFlags & GpTextFormat.NoFontFallback) == 0 && !GpFontFallback.IsSymbolFace (Face);
+            int pos = start, rem = len;
+            while (rem > 0) {
+                GpTextShaper.Shaped sh = Shape (Face, pos, rem, script, level, hotkey);
+                int missing = -1;
+                if (fallback)
+                    for (int g = 0; g < sh.Glyphs.Length; g++) if (sh.Glyphs [g] == 0) { missing = g; break; }
+                if (missing < 0) {
+                    _runs.Add (Piece (run, pos, rem, sh));
+                    return;
+                }
+                // The first character of the missing glyph's cluster, and the missing ones after it.
+                int c0 = 0;
+                while (c0 < rem && sh.ClusterMap [c0] < missing) c0++;
+                int c1 = c0;
+                while (c1 < rem && sh.Glyphs [sh.ClusterMap [c1]] == 0) c1++;
+                if (c0 == rem || sh.ClusterMap [c0] > missing) {
+                    c0--;
+                    while (c0 > 0 && sh.ClusterMap [c0 - 1] == sh.ClusterMap [c0]) c0--;
+                    missing = sh.ClusterMap [Math.Max (0, c0)];
+                }
+                if (c0 > 0) {
+                    var head = new GpTextShaper.Shaped {
+                        Glyphs = sh.Glyphs [..missing], GlyphProps = sh.GlyphProps [..missing], ClusterMap = sh.ClusterMap [..c0], TextProps = sh.TextProps [..c0],
+                    };
+                    _runs.Add (Piece (run, pos, c0, head));
+                    pos += c0; rem -= c0;
+                }
+                int count = Math.Max (1, c1 - Math.Max (0, c0));
+                int n = GpFontFallback.For (Family).GetUniformFallbackFace (Text, pos, Math.Min (count, rem), Style & 3, script, out string fam, out int faceStyle);
+                n = Math.Max (1, Math.Min (n, rem));
+                TrueTypeFont face = fam == null ? Face : GdiPlusText.Face (fam, faceStyle == (Style & 3) ? Style & 3 : faceStyle) ?? Face;
+                var piece = Piece (run, pos, n, Shape (face, pos, n, script, level, hotkey));
+                if (!ReferenceEquals (face, Face)) {
+                    piece.Face = face; piece.Family = fam;
+                    piece.Em = GpFontFallback.FallbackEm (Face, Em, face);
+                }
+                _runs.Add (piece);
+                pos += n; rem -= n;
+            }
         }
+
+        GpTextShaper.Shaped Shape (TrueTypeFont face, int start, int len, int script, int level, bool hotkey)
+            => hotkey ? GpTextShaper.GetGlyphsWithHotKeys (face, Text, start, len, script, (level & 1) != 0)
+                      : GpTextShaper.GetGlyphs (face, Text, start, len, script, (level & 1) != 0);
+
+        static Run Piece (Run item, int start, int len, GpTextShaper.Shaped shape) => new Run {
+            Kind = 0, Cp = start, Len = len, Str = start, Script = item.Script, ItemFlags = item.ItemFlags, Level = item.Level,
+            Face = item.Face, Family = item.Family, Style = item.Style, Em = item.Em, Underline = item.Underline, Shape = shape,
+        };
 
         /// <summary>The run holding cp (GdipLscbkFetchRun): a fetch from inside a run splits it
         /// at the cluster there, the earlier part keeping its glyphs up to it.</summary>

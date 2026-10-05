@@ -220,8 +220,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <summary>GdipLscbkGetRunTextMetrics.</summary>
         static void RunMetrics (GpFullTextImager fti, Run run, out int asc, out int desc, out int height)
         {
+            // The formatting's family, style and em at the run (not a fallback run's face or em).
             var m = fti.Metrics;
-            float k = run.Em / m.Upem * fti.R;
+            float k = fti.Em / m.Upem * fti.R;
             asc = (int) MathF.Floor (m.Ascent * k + 0.5f);
             desc = (int) MathF.Floor (m.Descent * k + 0.5f);
             height = (int) MathF.Floor ((ushort) (m.Gap + m.Descent + m.Ascent) * k + 0.5f);
