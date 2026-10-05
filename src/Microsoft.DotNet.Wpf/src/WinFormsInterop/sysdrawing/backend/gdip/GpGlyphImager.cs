@@ -54,6 +54,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public bool Path;                    // AddToPath: no realization, design advances
         static readonly bool s_quarterSnap = Environment.GetEnvironmentVariable ("WF_FTI_QSNAP") == "1";   // measured: GDI+ does not
         static readonly bool s_rotFit = Environment.GetEnvironmentVariable ("WF_FTI_ROTFIT") == "1";
+        static readonly bool s_debug = Environment.GetEnvironmentVariable ("WF_FTI_DEBUG") == "1";
 
         /// <summary>GlyphImager::Initialize.</summary>
         public void Initialize (GpFullTextImager fti, GpFullTextImager.Run run, GpLineServices.Seg seg, GpMatrix w2d, int mode,
@@ -164,6 +165,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             int n = to - from;
             int[] dev = Device, nom = Nominal;
+            if (s_debug) Console.Error.WriteLine ($"ADJ lead={lead} trail={trail} m70={M70} m74={M74} al={Align} g=[{string.Join (",", Glyphs)}] nom=[{string.Join (",", nom)}] dev=[{string.Join (",", dev)}]");
             int blank = Face.GlyphIndex (' ');
             int upem = Face.UnitsPerEmForHinting;
             int spaceNom = (int) MathF.Floor (Em * (float) Face.DesignAdvance (blank) * R / upem + 0.5f);
@@ -347,7 +349,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             left = lim;
             for (int i = from; i < from + count; i++) {
                 if (cum >= lim) break;
-                GdipText.NaturalMetrics (Face, Glyphs [i], Em, Sx, Sx, out int adv, out int lsb, out _);
+                RealizationMetrics (Glyphs [i], out int adv, out int lsb, out _);
                 left = Math.Min (left, cum + (int) (lsb * scale * 16f));
                 cum += (int) (adv * scale * 16f);
             }
@@ -355,10 +357,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
             right = lim;
             for (int i = from + count - 1; i >= from; i--) {
                 if (cum >= lim) break;
-                GdipText.NaturalMetrics (Face, Glyphs [i], Em, Sx, Sx, out int adv, out _, out int rsb);
+                RealizationMetrics (Glyphs [i], out int adv, out _, out int rsb);
                 right = Math.Min (right, cum + (int) (rsb * scale * 16f));
                 cum += (int) (adv * scale * 16f);
             }
+        }
+
+        /// <summary>The realization's advance and side bearings (design units): GDI natural for
+        /// ClearType, GDI classic for the other grid-fitted realizations, design otherwise.</summary>
+        void RealizationMetrics (int gid, out int adv, out int lsb, out int rsb)
+        {
+            if (Mode == 1 || Mode == 3) GdipText.ClassicMetrics (Face, gid, Em * Sx, out adv, out lsb, out rsb);
+            else if (Mode == 2 || Mode == 4) GdipText.DesignMetrics (Face, gid, out adv, out lsb, out rsb);
+            else GdipText.NaturalMetrics (Face, gid, Em, Sx, Sx, out adv, out lsb, out rsb);
         }
 
         /// <summary>GetDisplayCellOrigin.</summary>

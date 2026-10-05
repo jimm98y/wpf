@@ -76,7 +76,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (!(emWorld > 0f)) return false;
             TrueTypeFont face = GdipText.Face (family, style & 3);
             if (face == null) return false;
-            if (!TakesFullImager (WorldToDevice, s, face, fmt)) {
+            // FastTextImager::Initialize's refusals: the string's characters and format, then
+            // whether it wraps (before any realization the port models or not).
+            if (!TakesFullImager (WorldToDevice, s, face, fmt) && !FastImagerWraps (s, face, f.SizeInPoints * (DpiY / 72f), layout, fmt)) {
                 int flags = fmt?.Flags ?? 0;
                 bool typographic = fmt != null && fmt.LeadMargin == 0f;
                 bool hotkey = fmt != null && fmt.Hotkey != 0;
@@ -108,6 +110,29 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 foreach (char c in s)
                     if (face.GlyphIndex (c) == 0 && (fmt == null || fmt.Hotkey == 0 || c != '&')) return true;
             return false;
+        }
+
+        /// <summary>FastTextImager::Initialize's wrap refusal: the nominal width of every glyph
+        /// (DirectWrite's design advance -- a bold simulation's widened -- tracked by 1.03 and
+        /// rounded unless typographic) and both margins past the layout width.</summary>
+        static bool FastImagerWraps (string s, TrueTypeFont face, float em, RectangleF layout, GpTextFormat fmt)
+        {
+            int flags = fmt?.Flags ?? 0;
+            int trimming = fmt?.Trimming ?? 1;
+            float ww = (flags & GpTextFormat.NoWrap) != 0 && trimming == 0 ? 0f : layout.Width;
+            if (!(ww > 0f)) return false;
+            bool typographic = fmt != null && fmt.LeadMargin == 0f;
+            bool hotkey = fmt != null && fmt.Hotkey != 0;
+            long sum = 0;
+            for (int i = 0; i < s.Length; i++) {
+                char c = s [i];
+                // RemoveHotkeys: a marker '&' is not measured ("&&" measures one).
+                if (hotkey && c == '&') { if (i + 1 < s.Length && s [i + 1] == '&') i++; else continue; }
+                int a = GpTextShaper.DesignAdvance (face, face.GlyphIndex (c));
+                sum += typographic ? a : (int) MathF.Floor (a * 1.03f + 0.5f);
+            }
+            float m = typographic ? 0f : em * (1f / 6f);
+            return ww < (float) sum * em / face.UnitsPerEmForHinting + m + m;
         }
 
         /// <summary>GDI+'s FullTextImager into this surface.</summary>

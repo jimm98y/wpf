@@ -228,8 +228,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return DesignAdvance (face, gid) * (em * sx / upem);
         }
 
-        /// <summary>DirectWrite's GDI-compatible metrics of a bold simulation: a glyph with an
-        /// outline a device pixel wider.</summary>
-        static int SimBoldPx (TrueTypeFont face, int gid) => face.SynthesizesBold && HasContours (face, gid) ? 1 : 0;
+        /// <summary>DirectWrite's GDI-compatible metrics of a bold simulation: every glyph a device
+        /// pixel wider, the blanks too (a space of Microsoft Sans Serif Bold at 13.3 px is 4 px
+        /// where the regular's is 3; the design advances widen the outlined glyphs only).</summary>
+        static int SimBoldPx (TrueTypeFont face, int gid) => face.SynthesizesBold ? 1 : 0;
     }
 }
