@@ -35,6 +35,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public uint[] Remap;                         // old, new pairs
         public float Threshold, Gamma;
         public int Channel;
+        /// <summary>The GpICMHolder (+0x608): the separation transform, shared by clones.</summary>
+        public GpIcm Icm;
         int _type;
         bool _lutOn;
         byte[] _lut = new byte [0x600];
@@ -81,6 +83,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
             }
             ComputeLuts ();
+            // An output channel with no profile of its own separates through rswop.icm.
+            if ((Flags & 0x40) != 0 && (Flags & 0x100) == 0) SetupCmykSeparation ("rswop.icm");
+        }
+
+        /// <summary>SetupCmykSeparation @1800fd028: the holder freed, then made for sRGB ->
+        /// <paramref name="profile"/>; on success the 0x100 flag. GDI+'s status.</summary>
+        public int SetupCmykSeparation (string profile)
+        {
+            Icm = null;
+            GpIcm t = GpIcm.Setup (profile, out int status);
+            if (status == 0) { Icm = t; Flags |= 0x100; }
+            return status;
         }
 
         static byte Clamp255 (int v) => (byte) (v < 0x100 ? (v < 0 ? 0 : v) : 0xff);
@@ -219,7 +233,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     uint p = px [i];
                     px [i] = (p & 0xff000000u) | (uint) _lut [0x500 + (p >> 16 & 0xff)] << 16 | (uint) _lut [0x500 + (p >> 8 & 0xff)] << 8 | _lut [0x500 + (p & 0xff)];
                 }
-            if ((Flags & 0x40) != 0) CmykByMapping (px, o, n);
+            if ((Flags & 0x40) != 0) {
+                if (Icm == null) CmykByMapping (px, o, n);
+                else CmykByIcm (px, o, n);
+            }
+        }
+
+        /// <summary>DoCmykSeparationByICM @1800fc9f0: each pixel through the transform (xRGB in,
+        /// KYMC out), the channel's byte inverted into R, G and B, the alpha kept.</summary>
+        void CmykByIcm (uint[] px, int o, int n)
+        {
+            int sh = 8 * Channel;
+            for (int i = o; i < o + n; i++) {
+                uint p = px [i];
+                uint v = ~(Icm.Translate (p) >> sh) & 0xff;
+                px [i] = (p & 0xff000000u) | v << 16 | v << 8 | v;
+            }
         }
 
         void CmykByMapping (uint[] px, int o, int n)

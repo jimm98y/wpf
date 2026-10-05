@@ -44,8 +44,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 case 0x0106: _dc.PolyFill = P(0); return;
                 case 0x0107: _dc.StretchMode = P(0); return;
                 case 0x012E: _dc.TextAlign = (ushort)P(0); return;
-                case 0x0201: _dc.BkColor = ColorRef(ColorRef16(b, o)); return;
-                case 0x0209: _dc.TextColor = ColorRef(ColorRef16(b, o)); return;
+                // WmfEnumState::ProcessRecord @1800b8960 recolours these as Brush and Text.
+                case 0x0201: _dc.BkColor = RecordColor(ColorRef16(b, o), ColorAdjustType.Brush); return;
+                case 0x0209: _dc.TextColor = RecordColor(ColorRef16(b, o), ColorAdjustType.Text); return;
                 case 0x020B: _dc.WinOrg = new Point(P(1), P(0)); return;
                 case 0x020C: SetWindowExtWmf(P(1), P(0)); return;
                 case 0x020D: _dc.VpOrg = new Point(P(1), P(0)); return;
@@ -99,12 +100,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         return;
                     }
                 case 0x02FA:
-                    PutWmf(new GdiPen { Style = (ushort)P(0), Width = P(1), Color = ColorRef(ColorRef16(b, o + 6)), Old = true });
-                    return;
+                    {
+                        // CREATEPENINDIRECT: a solid, dashed, dotted or inside-frame pen recoloured as Pen.
+                        int style = (ushort)P(0);
+                        Color pc = style < 5 || style == 6 ? RecordColor(ColorRef16(b, o + 6), ColorAdjustType.Pen) : ColorRef(ColorRef16(b, o + 6));
+                        PutWmf(new GdiPen { Style = style, Width = P(1), Color = pc, Old = true });
+                        return;
+                    }
                 case 0x02FC:
                     {
+                        // WmfEnumState::CreateBrushIndirect @1800b6508: a solid or hatched brush as Brush.
                         int style = (ushort)P(0);
-                        PutWmf(new GdiBrush { Style = style == 2 ? 2 : style == 1 ? 1 : 0, Color = ColorRef(ColorRef16(b, o + 2)), Hatch = P(3) });
+                        Color bc = style == 0 || style == 2 ? RecordColor(ColorRef16(b, o + 2), ColorAdjustType.Brush) : ColorRef(ColorRef16(b, o + 2));
+                        PutWmf(new GdiBrush { Style = style == 2 ? 2 : style == 1 ? 1 : 0, Color = bc, Hatch = P(3) });
                         return;
                     }
                 case 0x02FB: CreateFontWmf(b, o, n); return;
@@ -112,8 +120,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 case 0x06FF: PutWmf(new GdiRegion()); return;
                 case 0x0142:
                     {
-                        // DIBCREATEPATTERNBRUSH: style, usage, then a packed DIB.
-                        Bitmap bm = PackedDib(b, o + 4, n - 4);
+                        // DIBCREATEPATTERNBRUSH: style, usage, then a packed DIB. Recolouring
+                        // (WmfEnumState::DibCreatePatternBrush @1800b6c68), a BS_PATTERN brush is solid
+                        // black unless it is a black-and-white bitmap, a BS_DIBPATTERN one recoloured as Brush.
+                        int style = (ushort)P(0), usage = (ushort)P(1);
+                        if (Rc != null && style == 3 && !(usage == 0 && IsBlackWhite(b, o + 4, true)))
+                        {
+                            PutWmf(new GdiBrush { Style = 0, Color = Color.Black });
+                            return;
+                        }
+                        if (style == 3 || !ModifiedPackedDib(b, o + 4, n, usage, true, out Bitmap bm, out _))
+                            bm = PackedDib(b, o + 4, n - 4);
                         PutWmf(new GdiBrush { Style = 3, Pattern = bm });
                         return;
                     }
@@ -136,7 +153,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         // STRETCHDIB: rop(2 words), usage, srcH, srcW, ySrc, xSrc, destH, destW, yDst, xDst, DIB.
                         int rop = Le.I32(b, o);
                         int hs = P(3), ws = P(4), ys = P(5), xs = P(6), hd = P(7), wd = P(8), yd = P(9), xd = P(10);
-                        Bitmap bm = PackedDib(b, o + 22, n - 22);
+                        if (!ModifiedPackedDib(b, o + 22, n, (ushort)P(2), false, out Bitmap bm, out bool drop))
+                            bm = PackedDib(b, o + 22, n - 22);
+                        else if (drop) return;
                         if (bm == null) return;
                         Blit(bm, xd, yd, wd, hd, new RectangleF(xs, bm.Height - ys - hs, ws, hs), rop);
                         bm.Dispose();
@@ -260,7 +279,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (stretch)
             {
                 int hs = P(2), ws = P(3), ys = P(4), xs = P(5), hd = P(6), wd = P(7), yd = P(8), xd = P(9);
-                Bitmap bm = PackedDib(b, o + 20, n - 20);
+                if (!ModifiedPackedDib(b, o + 20, n, 0, false, out Bitmap bm, out bool drop))
+                    bm = PackedDib(b, o + 20, n - 20);
+                else if (drop) return;
                 if (bm == null) return;
                 Blit(bm, xd, yd, wd, hd, new RectangleF(xs, ys, ws, hs), rop);
                 bm.Dispose();
@@ -268,7 +289,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             else
             {
                 int ys = P(2), xs = P(3), hd = P(4), wd = P(5), yd = P(6), xd = P(7);
-                Bitmap bm = PackedDib(b, o + 16, n - 16);
+                if (!ModifiedPackedDib(b, o + 16, n, 0, false, out Bitmap bm, out bool drop))
+                    bm = PackedDib(b, o + 16, n - 16);
+                else if (drop) return;
                 if (bm == null) return;
                 Blit(bm, xd, yd, wd, hd, new RectangleF(xs, ys, wd, hd), rop);
                 bm.Dispose();

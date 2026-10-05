@@ -70,7 +70,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             _t = s.Target;
             _c = new Ctx { DpiX = dpiX, DpiY = dpiY, Display = display };
             PageMultipliers(_c);
+            // MetafilePlayer::PrepareToPlay: the ImageAttributes' GpRecolor, adjust type Default.
+            GpRecolor rc = s.Attributes?.Recolor;
+            _rc = rc != null && rc.HasRecoloring((ColorAdjustType)6) ? rc : null;
+            _rc?.Flush();
         }
+
+        readonly GpRecolor _rc;
+        const ColorAdjustType PlayerAdjust = ColorAdjustType.Default;
 
         public void Dispose()
         {
@@ -184,7 +191,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         Brush Brush(int flags, int value)
         {
-            if ((flags & 0x8000) != 0) return new SolidBrush(Color.FromArgb(value));
+            // MetafilePlayer::GetBrush: a colour in the record is a solid fill, recoloured as one.
+            if ((flags & 0x8000) != 0)
+                return new SolidBrush(_rc == null ? Color.FromArgb(value) : GpMetaRecolor.Adjust(_rc, ColorAdjustType.Brush, Color.FromArgb(value)));
             return Obj<Brush>(value & 0xff);
         }
 
@@ -254,6 +263,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             var type = (EmfPlusObjectType)((flags >> 8) & 0x7f);
             if (id >= 64) return;
             object obj = GpEmfPlusReader.Read(type, b, o, n);
+            if (_rc != null && obj != null) obj = GpMetaRecolor.Object(_rc, obj, PlayerAdjust);
             if (_objects[id] is IDisposable old && !ReferenceEquals(old, obj)) old.Dispose();
             _objects[id] = obj;
         }
@@ -464,8 +474,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         ImageAttributes ImageAttributesFor(int id)
         {
-            ImageAttributes a = Obj<ImageAttributes>(id);
-            return a ?? _s.Attributes;
+            // The record's own; the player's ImageAttributes recoloured the image when it was made.
+            return Obj<ImageAttributes>(id);
         }
 
         // A font's size in other units than World is in the metafile's units: as a World font of the

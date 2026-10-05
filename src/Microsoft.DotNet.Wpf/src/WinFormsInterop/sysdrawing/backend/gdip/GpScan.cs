@@ -137,21 +137,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     }
                 }
                 break;
-            case PixelFormat.Format32bppArgb:
+            case PixelFormat.Format32bppArgb: {
+                if (_divide.Length < n) _divide = new uint [Math.Max (n, _divide.Length * 2)];
+                uint[] t = _divide;
                 for (int i = 0; i < n; i++) {
-                    int o = row + (x + i) * 4;
                     uint c = s [i];
-                    if (_sourceCopy) {
-                        Put32 (bits, o, GdipPixels.UnpremultiplyArgb (c));
-                        continue;
-                    }
-                    uint d = GdipPixels.PremultiplyArgb (Get32 (bits, o));
+                    if (_sourceCopy) { t [i] = c; continue; }
+                    uint d = GdipPixels.PremultiplyArgb (Get32 (bits, row + (x + i) * 4));
                     uint a = c >> 24;
                     if (a == 255) d = c;
                     else if (a != 0) d = Over (c, d);
-                    Put32 (bits, o, GdipPixels.UnpremultiplyArgb (d));
+                    t [i] = d;
                 }
+                AlphaDivideFast (t, n);
+                for (int i = 0; i < n; i++) Put32 (bits, row + (x + i) * 4, t [i]);
                 break;
+            }
             case PixelFormat.Format24bppRgb:
                 for (int i = 0; i < n; i++) {
                     int o = row + (x + i) * 3;
@@ -385,6 +386,37 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         /// <summary>Blend_sRGB_sRGB: premultiplied source over premultiplied destination.</summary>
+        uint[] _divide = new uint [256];
+
+        /// <summary>ScanOperation::AlphaDivide_sRGB_Fast @1800c7a10, the ARGB pipeline's last step
+        /// (the one BuildPipeline picks): eight pixels at a time, an eight whose alphas are all 0 or
+        /// all 255 is stored as it is, any other eight is divided pixel by pixel through
+        /// UnpremultiplyTable -- an alpha-0 pixel there loses its colour (entry 0 is 0), where the
+        /// scalar tail, like AlphaDivide_sRGB_Original, keeps every alpha-0 and alpha-255 pixel.
+        /// The colour of an alpha-0 pixel survives a blend only when the brush is not premultiplied
+        /// (a translucent clamp colour, say).</summary>
+        internal static void AlphaDivideFast (uint[] p, int n)
+        {
+            int i = 0;
+            for (; i + 8 <= n; i += 8) {
+                bool all0 = true, all255 = true;
+                for (int k = 0; k < 8; k++) {
+                    uint a = p [i + k] >> 24;
+                    if (a != 0) all0 = false;
+                    if (a != 255) all255 = false;
+                }
+                if (all0 || all255) continue;
+                for (int k = 0; k < 8; k++) {
+                    uint c = p [i + k];
+                    int a = (int) (c >> 24);
+                    if (a == 0) { p [i + k] = 0; continue; }
+                    p [i + k] = (uint) (a << 24 | GdipPixels.Unpremultiply ((int) (c >> 16) & 0xff, a) << 16
+                        | GdipPixels.Unpremultiply ((int) (c >> 8) & 0xff, a) << 8 | GdipPixels.Unpremultiply ((int) c & 0xff, a));
+                }
+            }
+            for (; i < n; i++) p [i] = GdipPixels.UnpremultiplyArgb (p [i]);
+        }
+
         public static uint Over (uint s, uint d)
         {
             uint ia = 255 - (s >> 24);
