@@ -239,6 +239,51 @@ namespace WgpuInterop.Tests.Rendering
             h.Frame(root, expectPartial: true, "text recoloured");
         }
 
+        /// <summary>The gallery's fps badge: a translucent rounded panel with a text run, pinned
+        /// top-right as the LAST child (top of the z-order), over content that animates beneath it,
+        /// its text changing on its own clock. Damage under it must redraw it on top, and its text
+        /// changing must damage its real device rectangle.</summary>
+        [Fact]
+        public void AnOverlayOverAnimatedContentIsExact()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var root = new SceneVisual();
+            var scroller = new SceneVisual { Clip = new Rect(0, 0, W, H) };
+            var content = new SceneVisual();
+            content.Children.Add(Tiles());
+            scroller.Children.Add(content);
+            var card = new SceneVisual { Offset = new Vector2(200, 4) };
+            card.Content.Add(Box(0, 0, 90, 40, 30, 160, 90));
+            content.Children.Add(card);
+            root.Children.Add(scroller);
+            // Right/top aligned with a margin, as layout would place it.
+            var badge = new SceneVisual { Offset = new Vector2(W - 14 - 70, 12) };
+            badge.Content.Add(new GeometryFill(new RoundedRectangleGeometry(new Rect(0, 0, 70, 24), 8, 8),
+                RgbaColor.FromBytes(0x11, 0x18, 0x27, 0xB8)));
+            var badgeText = new SceneVisual { Offset = new Vector2(10, 4) };
+            badgeText.Content.Add(new GlyphRunDraw("66 fps", new Vector2(0, 13), 13f, RgbaColor.FromBytes(255, 255, 255, 255)));
+            badge.Children.Add(badgeText);
+            root.Children.Add(badge);
+
+            h.Frame(root, expectPartial: false, "first frame");
+            for (int i = 1; i <= 6; i++)
+            {
+                // Something animating straight through the badge's rectangle, beneath it.
+                card.Offset = new Vector2(200 + i * 4.5f, 4 + i * 2);
+                h.Frame(root, expectPartial: true, $"under the badge {i}");
+                if (i % 2 == 0)
+                {
+                    badgeText.Content[0] = new GlyphRunDraw($"{60 + i * 7} fps", new Vector2(0, 13), 13f, RgbaColor.FromBytes(255, 255, 255, 255));
+                    h.Frame(root, expectPartial: true, $"badge text {i}");
+                }
+            }
+            // The text changing with nothing else moving.
+            badgeText.Content[0] = new GlyphRunDraw("128 fps", new Vector2(0, 13), 13f, RgbaColor.FromBytes(255, 255, 255, 255));
+            h.Frame(root, expectPartial: true, "badge text alone");
+            Assert.True(h.Target.LastPixels > 0 && h.Target.LastPixels < W * H / 4, $"badge damage {h.Target.LastPixels} px");
+        }
+
         [Fact]
         public void ATransparentTargetIsExact()
         {

@@ -147,6 +147,9 @@ internal static class Program
         int renderTicks = 0;
         bool renderingSeen = false;
         var fpsClock = System.Diagnostics.Stopwatch.StartNew();
+        double autoScroll = double.TryParse(Environment.GetEnvironmentVariable("WPF_GALLERY_AUTOSCROLL"),
+            System.Globalization.CultureInfo.InvariantCulture, out double asp) ? asp : 0;
+        var scrollClock = System.Diagnostics.Stopwatch.StartNew();
         CompositionTarget.Rendering += (s, e) =>
         {
             if (!renderingSeen)
@@ -156,6 +159,17 @@ internal static class Program
             }
             if (parkScroll >= 0 && scroll.ScrollableHeight > 0)
                 scroll.ScrollToVerticalOffset(parkScroll * scroll.ScrollableHeight);
+            // WPF_GALLERY_AUTOSCROLL=<px per second>: a programmatic smooth scroll, down and back up,
+            // driven by elapsed time so the offset per frame shows whether frames are evenly paced.
+            // Each tick logs "SCROLL <ms> <offset>" -- the measure of scroll smoothness.
+            if (autoScroll > 0 && scroll.ScrollableHeight > 0)
+            {
+                double ms = scrollClock.Elapsed.TotalMilliseconds;
+                double span = scroll.ScrollableHeight, travel = autoScroll * ms / 1000.0 % (2 * span);
+                double off = travel <= span ? travel : 2 * span - travel;
+                scroll.ScrollToVerticalOffset(off);
+                Console.WriteLine($"SCROLL {ms:0.0} {off:0.0}");
+            }
             renderTicks++;
             double elapsed = fpsClock.Elapsed.TotalSeconds;
             if (elapsed >= 0.5)

@@ -134,15 +134,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             switch (p)
             {
                 case GeometryFill f:
-                    if (BrushIsLive(f.Brush)) return false;
                     AccGeometry(f.Geometry, world, 0f, ref minX, ref minY, ref maxX, ref maxY);
                     return true;
                 case GeometryStroke s:
-                    if (BrushIsLive(s.Brush)) return false;
                     AccGeometry(s.Geometry, world, StrokePad(s.Style, world), ref minX, ref minY, ref maxX, ref maxY);
                     return true;
                 case GeometryDrawing d:
-                    if (BrushIsLive(d.Fill) || BrushIsLive(d.Stroke)) return false;
                     AccGeometry(d.Geometry, world, d.Stroke is null ? 0f : StrokePad(d.StrokeStyle, world),
                         ref minX, ref minY, ref maxX, ref maxY);
                     return true;
@@ -191,7 +188,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         /// <summary>A brush whose pixels are rendered live from another visual every frame: what it
         /// paints can change with nothing in this tree changing.</summary>
-        private static bool BrushIsLive(Brush? b) => b is ImageBrush { SourceVisual: not null };
+        private static ImageBrush? LiveBrush(Brush? b) => b is ImageBrush { SourceVisual: not null } ib ? ib : null;
+
+        /// <summary>The live (GPU-rendered each frame) brush a primitive paints with, if any. What it
+        /// paints is bounded by the primitive's geometry, but can change with the primitive unchanged:
+        /// the tracker diffs the brush's source visual separately.</summary>
+        private static ImageBrush? LiveBrushOf(DrawingPrimitive p) => p switch
+        {
+            GeometryFill f => LiveBrush(f.Brush),
+            GeometryStroke s => LiveBrush(s.Brush),
+            GeometryDrawing d => LiveBrush(d.Fill) ?? LiveBrush(d.Stroke),
+            _ => null,
+        };
 
         private static float StrokePad(StrokeStyle st, Matrix3x2 world)
         {
@@ -326,13 +334,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 public bool Volatile;     // own content can change without the tree changing
             }
 
-            private const byte KindText = 1, KindUnknown = 2;
+            private const byte KindText = 1, KindUnknown = 2, KindLive = 4, KindAlways = 8;
+
+            // Live brush sources (ImageBrush.SourceVisual), each diffed by a tracker of its own; a
+            // source that changed damages every primitive painting with it.
+            private readonly Dictionary<SceneVisual, DamageTracker> _sources = new(ReferenceEqualityComparer.Instance);
+            private readonly HashSet<SceneVisual> _sourcesSeen = new(ReferenceEqualityComparer.Instance);
+            private readonly Dictionary<SceneVisual, bool> _sourceChanged = new(ReferenceEqualityComparer.Instance);
+            private readonly List<Scissor> _scratch = new();
+
+            private bool SourceChanged(ImageBrush b)
+            {
+                SceneVisual src = b.SourceVisual!;
+                if (_sourceChanged.TryGetValue(src, out bool known)) return known;
+                _sourcesSeen.Add(src);
+                if (!_sources.TryGetValue(src, out DamageTracker? t)) _sources[src] = t = new DamageTracker();
+                bool changed = t.Compute(src, Math.Max(1, b.SourceTexW), Math.Max(1, b.SourceTexH), _scratch) || _scratch.Count > 0;
+                _sourceChanged[src] = changed;
+                return changed;
+            }
+
+            private void CheckLive(Rec r, bool addDamage)
+            {
+                for (int i = 0; i < r.ContentCount; i++)
+                {
+                    if ((r.Kinds[i] & KindLive) != 0 && LiveBrushOf(r.Content[i]) is { } b && SourceChanged(b) && addDamage)
+                        _raw.Add(r.Boxes[i]);
+                    // A 3D viewport's cameras, models and materials are not in the 2D tree at all:
+                    // what it shows is redrawn on every frame, but only where it is.
+                    else if ((r.Kinds[i] & KindAlways) != 0 && addDamage)
+                        _raw.Add(r.Boxes[i]);
+                }
+            }
 
             private Rec? _root;
             private int _w, _h;
             private readonly List<Scissor> _raw = new();
             private readonly List<Scissor> _texts = new();
             private bool _forceFull;
+
+            /// <summary>Why the last Compute asked for a full frame (diagnostics).</summary>
+            public string FullReason { get; private set; } = "";
 
             /// <summary>The stamp of the most recent <see cref="Compute"/>; visuals it measured carry it.</summary>
             public int Stamp { get; private set; }
@@ -349,18 +391,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (Stamp == 0) Stamp = Interlocked.Increment(ref s_damageStamp);
                 _raw.Clear();
                 _texts.Clear();
+                _sourcesSeen.Clear();
+                _sourceChanged.Clear();
                 _forceFull = false;
                 rects.Clear();
                 Rec? old = (width == _w && height == _h) ? _root : null;
                 _w = width; _h = height;
                 _root = Visit(old, root, Matrix3x2.Identity, new Scissor(0, 0, width, height), fresh: false, inSnapshot: false);
-                if (old == null || _forceFull) return true;
+                if (_sources.Count > _sourcesSeen.Count)
+                {
+                    var gone = new List<SceneVisual>();
+                    foreach (SceneVisual s in _sources.Keys) if (!_sourcesSeen.Contains(s)) gone.Add(s);
+                    foreach (SceneVisual s in gone) _sources.Remove(s);
+                }
+                if (old == null) { FullReason = "first frame"; return true; }
+                if (_forceFull) { FullReason = "volatile content (3D / live brush / unknown primitive)"; return true; }
                 // So many separate changes that sorting them out would cost more than drawing them.
-                if (_raw.Count > MaxRawRects || !SpreadToText()) return true;
+                if (_raw.Count > MaxRawRects || !SpreadToText()) { FullReason = $"{_raw.Count} changes"; return true; }
                 Normalize(_raw, rects, width, height);
                 long area = 0;
                 foreach (Scissor r in rects) area += (long)r.W * r.H;
                 // Most of the target changed: one full frame is no more work and needs no scissors.
+                FullReason = $"{area * 100 / Math.Max(1L, (long)width * height)}% of the target changed";
                 return area * 10 > (long)width * height * 7;
             }
 
@@ -416,6 +468,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     Capture(rec, v);
                     MeasureOwn(rec, v, world, clip, 0, v.Content.Count);
                     AddTexts(rec, inSnapshot);
+                    CheckLive(rec, addDamage: false);   // keeps the sources' trackers current
                     int n = v.Children.Count;
                     rec.Kids = n == 0 ? Array.Empty<Rec?>() : new Rec?[n];
                     rec.KidCount = n;
@@ -439,6 +492,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (contentPatchable) PatchContent(old, v, world, clip);
                 if (old.Volatile) _forceFull = true;
                 AddTexts(old, inSnapshot);
+                CheckLive(old, addDamage: true);
                 int nk = v.Children.Count;
                 if (old.Kids.Length < nk) Array.Resize(ref old.Kids, nk);
                 for (int i = 0; i < nk; i++)
@@ -529,11 +583,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 {
                     DrawingPrimitive p = c[i];
                     float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
-                    bool known = p is not Viewport3DDraw && PrimitiveBox(p, world, ref minX, ref minY, ref maxX, ref maxY);
-                    rec.Boxes[i] = minX <= maxX ? Intersect(clip, ToScissor(minX, minY, maxX, maxY, ContentMargin)) : new Scissor(0, 0, 0, 0);
                     byte kind = 0;
+                    bool known;
+                    if (p is Viewport3DDraw v3)
+                    {
+                        // An empty viewport means "the whole target"; otherwise the scene projects into it.
+                        known = v3.Viewport.Width > 0 && v3.Viewport.Height > 0;
+                        if (known) AccRect(v3.Viewport.X, v3.Viewport.Y, v3.Viewport.Width, v3.Viewport.Height, world, 0f,
+                                           ref minX, ref minY, ref maxX, ref maxY);
+                        kind |= KindAlways;
+                    }
+                    else known = PrimitiveBox(p, world, ref minX, ref minY, ref maxX, ref maxY);
+                    rec.Boxes[i] = minX <= maxX ? Intersect(clip, ToScissor(minX, minY, maxX, maxY, ContentMargin)) : new Scissor(0, 0, 0, 0);
                     if (!known) { kind |= KindUnknown; rec.Boxes[i] = clip; }
                     if (p is GlyphRunDraw or WpfTextRunDraw or GdiPlusTextDraw) kind |= KindText;
+                    if (LiveBrushOf(p) != null) kind |= KindLive;
                     rec.Kinds[i] = kind;
                 }
                 Scissor own = new Scissor(0, 0, 0, 0);
@@ -544,7 +608,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if ((rec.Kinds[i] & KindUnknown) != 0) vol = true;
                 }
                 rec.Own = own;
-                // A 3D viewport, a live content brush, anything whose extent or change is not visible
+                // A 3D viewport, anything whose extent or change is not visible
                 // from here: redraw the whole target whenever it is in the tree.
                 rec.Volatile = vol;
                 if (vol) _forceFull = true;
@@ -1014,6 +1078,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     _bg = background; _transparent = transparentTarget;
                     _valid = false;
                 }
+                bool _valid0 = _valid;
                 if (!_valid) _tracker.Reset();
 
                 bool full = _tracker.Compute(root, width, height, _rects);
@@ -1025,7 +1090,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (full) LastPixels = (long)width * height;
                 else foreach (Scissor r in _rects) LastPixels += (long)r.W * r.H;
                 if (s_trace)
-                    Log($"[damage]{_name} frame {_frames}: {(full ? "FULL" : $"{_rects.Count} rects {LastPixels} px")} {Describe(damage)}");
+                    Log($"[damage]{_name} frame {_frames}: {(full ? "FULL (" + (_valid0 ? _tracker.FullReason : "target (re)created / background changed") + ")" : $"{_rects.Count} rects {LastPixels} px")} {Describe(damage)}");
 
 #if !WGPU_BROWSER
                 if (Verify)
