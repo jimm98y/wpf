@@ -854,6 +854,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int hs = P(3), ws = P(4), ys = P(5), xs = P(6), hd = P(7), wd = P(8), yd = P(9), xd = P(10);
             if (!UsesSource(rop)) { _dibBlit = false; Blit(null, xd, yd, wd, hd, RectangleF.Empty, rop); return; }
             if (!MeasureDib(b, o + 22, n - 22, usage, out WmfDib d)) return;
+            if ((Rc != null || (d.Usage == 1 && d.Bpp <= 8)) && d.Bpp == 1 && Le.U16(b, d.H + 12) == 1 && d.NumPal == 2
+                && Le.I32(b, d.H + d.BiSize) == 0 && Le.I32(b, d.H + d.BiSize + 4) == 0xffffff)
+            {
+                // A black-and-white DIB the playback would rewrite is played by gdi32 as it is
+                // (StretchDIBits under the DC's own stretch mode, no GDI+ stretch first).
+                Bitmap bw = BitmapOf(b, d);
+                if (bw == null) return;
+                _srcBpp = 1;
+                _dibBlit = false;
+                try { Blit(bw, xd, yd, wd, hd, new RectangleF(xs, bw.Height - ys - hs, ws, hs), rop); }
+                finally { bw.Dispose(); }
+                return;
+            }
             OutputDibWmf(b, d, xd, yd, wd, hd, xs, ys, ws, hs, rop);
         }
 

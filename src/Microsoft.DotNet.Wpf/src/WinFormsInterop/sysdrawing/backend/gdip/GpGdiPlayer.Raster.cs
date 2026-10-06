@@ -339,7 +339,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     if (sx1 < sx0) { (sx0, sx1) = (sx1 + 1, sx0 + 1); mx = !mx; }   // bOrderStupid on the source
                     if (sy1 < sy0) { (sy0, sy1) = (sy1 + 1, sy0 + 1); my = !my; }
                     if (sx1 == sx0 || sy1 == sy0) return true;
-                    source = StretchSource(spx, sw, sh, sx0, sy0, sx1 - sx0, sy1 - sy0, dw, dh, mx, my);
+                    // BLTRECORD::bStretch @14017cba0: a stretch through the BLTRECORD (a bitmap's, or a
+                    // DIB's under a ROP other than SRCCOPY) that is not HALFTONE, in GM_COMPATIBLE,
+                    // not mirrored, by at most one pixel each way is BLTRECORD::bBitBlt @14017c910:
+                    // copied, a missing last column / row dropped, an extra one the last again.
+                    bool viaBltRecord = _wmfCanvas && _dc.StretchMode != 4 && (!dib || rr != 0xcc0020);
+                    if (viaBltRecord && !mx && !my && Math.Abs(dw - (sx1 - sx0)) <= 1 && Math.Abs(dh - (sy1 - sy0)) <= 1)
+                    {
+                        int bx = sx0, by = sy0, bw = sx1 - sx0, bh = sy1 - sy0;
+                        uint[] q = spx; int qw = sw, qh = sh;
+                        source = (i, j) => q[Math.Clamp(by + Math.Min(j, bh - 1), 0, qh - 1) * qw + Math.Clamp(bx + Math.Min(i, bw - 1), 0, qw - 1)];
+                    }
+                    else source = StretchSource(spx, sw, sh, sx0, sy0, sx1 - sx0, sy1 - sy0, dw, dh, mx, my, _dc.StretchMode);
                 }
             }
             bool[] clip = ClipMask();
@@ -375,8 +386,32 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// it unmirrored; the stretch is stretch::vInitStrDDA @1401bfda0's DDA, which gives source
         /// pixel k the destination pixels from floor((k D + (S - 1) / 2) / S), so destination pixel
         /// x reads k = floor(((x + 1) S - (S - 1) / 2 - 1) / D).</summary>
-        static Func<int, int, uint> StretchSource(uint[] px, int w, int h, int sx, int sy, int sW, int sH, int dW, int dH, bool mirrorX, bool mirrorY)
+        static Func<int, int, uint> StretchSource(uint[] px, int w, int h, int sx, int sy, int sW, int sH, int dW, int dH, bool mirrorX, bool mirrorY, int mode = 3)
         {
+            // BLACKONWHITE / WHITEONBLACK shrinking (stretch::pxrlStrRead01AND @1401be970,
+            // pxrlStrRead24AND @1401bf6b0, ...OR): the source pixels the DDA skips are ANDed (ORed)
+            // into the destination pixel the next one writes.
+            if ((mode == 1 || mode == 2) && (dW < sW || dH < sH))
+            {
+                var c0 = new int[dW]; var c1 = new int[dW]; var r0 = new int[dH]; var r1 = new int[dH];
+                int Kx(int i) => i < 0 ? -1 : (int)(((long)(i + 1) * sW - ((sW - 1) >> 1) - 1) / dW);
+                int Ky(int j) => j < 0 ? -1 : (int)(((long)(j + 1) * sH - ((sH - 1) >> 1) - 1) / dH);
+                for (int i = 0; i < dW; i++) { c1[i] = Kx(i); c0[i] = dW < sW ? Kx(i - 1) + 1 : c1[i]; if (c0[i] > c1[i]) c0[i] = c1[i]; }
+                for (int j = 0; j < dH; j++) { r1[j] = Ky(j); r0[j] = dH < sH ? Ky(j - 1) + 1 : r1[j]; if (r0[j] > r1[j]) r0[j] = r1[j]; }
+                bool and = mode == 1;
+                return (i, j) =>
+                {
+                    uint v = and ? 0xffffffu : 0;
+                    for (int ky = r0[j]; ky <= r1[j]; ky++)
+                        for (int kx = c0[i]; kx <= c1[i]; kx++)
+                        {
+                            int ux = mirrorX ? sW - 1 - kx : kx, uy = mirrorY ? sH - 1 - ky : ky;
+                            uint p = px[Math.Clamp(sy + uy, 0, h - 1) * w + Math.Clamp(sx + ux, 0, w - 1)];
+                            v = and ? v & p : v | p;
+                        }
+                    return v;
+                };
+            }
             var us = new int[dW];
             var vs = new int[dH];
             for (int i = 0; i < dW; i++)
