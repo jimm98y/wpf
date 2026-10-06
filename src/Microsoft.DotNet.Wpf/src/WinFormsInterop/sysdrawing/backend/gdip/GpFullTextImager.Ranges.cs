@@ -226,7 +226,41 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (count == 0) return;
             int cp = LsCp (line.StrFirst + count);
             int u = CpPosition (line, d, cp);
-            UpdateTrailRegion (line, region, v, 0, u, CombineMode.Xor);
+            int si = -1;
+            var segs = line.Ls.Segs;
+            for (int i = 0; i < segs.Count; i++) if (cp >= segs [i].Cp && cp < segs [i].CpLim) { si = i; break; }
+            int p = ParagraphLevel;
+            int Lv (int i) => segs [i].Kind == 2 || segs [i].Run == null ? p : segs [i].Run.Level;
+            if (si < 0 || Lv (si) <= p) {
+                UpdateTrailRegion (line, region, v, 0, u, CombineMode.Xor);
+                return;
+            }
+            // LsQueryLineCpPpoint gives one lsqsubinfo per subline down to the cp's (the reversal
+            // objects nested around it); GetInsertionTrailRegion XORs a trail for each
+            // (TranslateSubline @1800f4608): from that subline's start -- a reversed subline
+            // starts at its object's dup - 1 (ReverseQueryPointPcp) -- to the next object's start,
+            // the last one to the cp's own point.
+            int[] dur = DisplayUr (line);
+            int level = Lv (si);
+            // the cp's offset along its dnode's own direction (RecordDisplayPlacements signs it by
+            // the run's direction against the paragraph's)
+            int o = Math.Abs (u - segs [si].Ur);
+            int cur = 0;                // the current subline's start, main-line u
+            bool reversed = false;      // its direction against the main line's
+            for (int j = p + 1; j <= level; j++) {
+                int a = si, b = si;
+                while (a > 0 && Lv (a - 1) >= j) a--;
+                while (b + 1 < segs.Count && Lv (b + 1) >= j) b++;
+                int lo = int.MaxValue, hi = int.MinValue;
+                for (int k = a; k <= b; k++) { lo = Math.Min (lo, dur [k]); hi = Math.Max (hi, dur [k] + segs [k].Width); }
+                int entry = reversed ? hi : lo;     // the parent's pen where the object begins
+                UpdateTrailRegion (line, region, v, Math.Min (cur, entry), Math.Abs (entry - cur), CombineMode.Xor);
+                reversed = !reversed;
+                cur = reversed ? hi - 1 : lo;
+            }
+            int segStart = reversed ? dur [si] + segs [si].Width : dur [si];
+            int point = reversed ? segStart - o : segStart + o;
+            UpdateTrailRegion (line, region, v, Math.Min (cur, point), Math.Abs (point - cur), CombineMode.Xor);
         }
 
         /// <summary>LsQueryLineCpPpoint + TranslateSubline (main subline, left to right): the cp's
