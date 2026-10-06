@@ -249,8 +249,36 @@ namespace System.Drawing.WebGpuBackend
                     // XOR the colour, AND the mask, XOR the colour: the colour where the mask is
                     // set, the paper as it was elsewhere.
                     StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, r.SrcX, 0, r.SrcW, r.Height, SRCINVERT);
-                    StretchBits(r.Mask, r.MaskWidth, r.MaskHeight, 1, new[] { 0x00FFFFFF, 0 }, left, top, width, height, r.MaskSrcX, 0, width, r.MaskHeight, SRCAND);
+                    StretchBits(r.Mask, r.MaskWidth, r.MaskHeight, 1, new[] { 0x00FFFFFF, 0 }, left, top, width, height, r.MaskSrcX, 0,
+                                r.MaskSrcW > 0 ? r.MaskSrcW : width, r.MaskHeight, SRCAND);
                     StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, r.SrcX, 0, r.SrcW, r.Height, SRCINVERT);
+                    return;
+                }
+                if (r.Kind == PrintRaster.KindXorPath)
+                {
+                    // XOR the bitmap, black the shape in (R2_MASKPEN: what is there AND black), XOR
+                    // the bitmap again: the bitmap inside the shape, the paper outside it.
+                    StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, 0, 0, r.Width, r.Height, SRCINVERT);
+                    var shape = new PagePath { EvenOdd = !r.ClipNonZero };
+                    int n = Math.Min(r.ClipTypes.Length, r.ClipXY.Length / 2);
+                    for (int i = 0; i < n; i++)
+                    {
+                        var p = new Vector2(r.ClipXY[i * 2], r.ClipXY[i * 2 + 1]);
+                        int pt = r.ClipTypes[i] & 7;
+                        if (pt == 0) shape.MoveTo(p);
+                        else if (pt == 3 && i + 2 < n)
+                        {
+                            shape.CubicTo(p, new Vector2(r.ClipXY[i * 2 + 2], r.ClipXY[i * 2 + 3]), new Vector2(r.ClipXY[i * 2 + 4], r.ClipXY[i * 2 + 5]));
+                            i += 2;
+                        }
+                        else shape.LineTo(p);
+                        if ((r.ClipTypes[i] & 0x80) != 0) shape.Close();
+                    }
+                    int rop2 = Native.SetROP2(Dc, Native.R2_MASKPEN);
+                    // The recording's units are the identity under _m here (BeginDeviceDraw).
+                    FillSolid(shape, 0);
+                    Native.SetROP2(Dc, rop2);
+                    StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, 0, 0, r.Width, r.Height, SRCINVERT);
                     return;
                 }
                 // Runs: each row's pixels with alpha 5 or more, a StretchDIBits a run.
@@ -701,6 +729,8 @@ namespace System.Drawing.WebGpuBackend
             [StructLayout(LayoutKind.Sequential)]
             internal struct BITMAPINFO1 { public BITMAPINFOHEADER Header; public int Color0, Color1; }
             [DllImport("gdi32.dll")] internal static extern int StretchDIBits(IntPtr dc, int x, int y, int w, int h, int sx, int sy, int sw, int sh, byte[] bits, ref BITMAPINFO1 bmi, uint usage, int rop);
+            internal const int R2_MASKPEN = 9;
+            [DllImport("gdi32.dll")] internal static extern int SetROP2(IntPtr dc, int rop2);
             [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
             internal struct LOGFONT
             {

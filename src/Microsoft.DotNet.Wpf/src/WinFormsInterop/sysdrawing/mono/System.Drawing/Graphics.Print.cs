@@ -412,7 +412,7 @@ namespace System.Drawing
 			try { pts = path.PathPoints; types = path.PathTypes; } catch (Exception) { return false; }
 			if (pts.Length == 0) return true;
 			float [] dev = PrintDeviceMatrix ();
-			if (brush is LinearGradientBrush lgb && !LinearGradientIsBitmap (lgb, dev)) return false;
+			if (brush is LinearGradientBrush lgb && !LinearGradientIsRaster (lgb, dev)) return false;
 			float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
 			foreach (PointF p in pts) {
 				PointF d = Apply (dev, p.X, p.Y);
@@ -434,7 +434,7 @@ namespace System.Drawing
 			Brush brush = pen.BrushRef;
 			if (s_noPrintRaster || brush == null || !IsRasterBrush (brush)) return false;
 			float [] dev = PrintDeviceMatrix ();
-			if (brush is LinearGradientBrush lgb && !LinearGradientIsBitmap (lgb, dev)) return false;
+			if (brush is LinearGradientBrush lgb && !LinearGradientIsRaster (lgb, dev)) return false;
 			var w2d = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
 			var dp = WebGpuBackend.Gdip.DpPen.From (pen);
 			WebGpuBackend.Gdip.GpPath widened;
@@ -451,14 +451,7 @@ namespace System.Drawing
 			RectangleF b = WebGpuBackend.Gdip.GpStroke.Bounds (widened, WebGpuBackend.Gdip.GpMatrix.CreateIdentity (), dpDev, print_dpi_x);
 			if (!WebGpuBackend.Gdip.GpStroke.BoundsToRect (b, out Rectangle r)) return true;
 			var identity = new [] { 1f, 0f, 0f, 1f, 0f, 0f };
-			Brush onDevice = brush;
-			bool owned = false;
-			using (var m = new Matrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]))
-				switch (brush) {
-				case TextureBrush tb: { var c = (TextureBrush) tb.Clone (); c.MultiplyTransform (m, MatrixOrder.Append); onDevice = c; owned = true; break; }
-				case PathGradientBrush pg: { var c = (PathGradientBrush) pg.Clone (); c.MultiplyTransform (m, MatrixOrder.Append); onDevice = c; owned = true; break; }
-				case LinearGradientBrush lg: { var c = (LinearGradientBrush) lg.Clone (); c.MultiplyTransform (m, MatrixOrder.Append); onDevice = c; owned = true; break; }
-				}
+			Brush onDevice = BrushOnDevice (brush, dev, out bool owned);
 			try {
 				return PrintBrushRaster (onDevice, wp, wt, FillMode.Winding, identity, r.X, r.Y, r.Width, r.Height);
 			} finally {
@@ -489,6 +482,10 @@ namespace System.Drawing
 		{
 			bool nonZero = fillMode == FillMode.Winding;
 			if (bw <= 0 || bh <= 0) return true;
+			if (brush is LinearGradientBrush ls && !LinearGradientIsBitmap (ls, dev)) {
+				if (!LinearGradientIsStraight (ls, dev, out bool horizontal) || !LinearGradientIsRaster (ls, dev)) return false;
+				return PrintStraightGradient (ls, horizontal, pts, types, nonZero, dev, bx, by, bw, bh);
+			}
 			if (brush is LinearGradientBrush lg && LinearGradientIsOpaque (lg)) {
 				// A rectangle-gradient bitmap: at most 256 on a side, over the fill's device bounds.
 				int LW = Math.Max (1, Math.Min (bw, 256)), LH = Math.Max (1, Math.Min (bh, 256));
@@ -575,7 +572,10 @@ namespace System.Drawing
 				} else if (kind == WebGpuBackend.PrintRaster.KindRuns) {
 					EmitRuns (fill, gw, gh, rows, gx, gy, s, t, pts, types, dev, nonZero);
 				} else {
-					EmitMasked (brush, fill, gw, gh, rows, gx, gy, s, t, counter, pts, types, fillMode, dev);
+					EmitMasked (fill, gw, gh, rows, gx, gy, s, t, counter, (int bx_, int by_, int w_, int h_) => {
+						byte [] a = BandAlpha (brush, pts, types, fillMode, dev, bx_, by_, w_, h_, s, t, out int x0_, out int y0_, out int x1_, out int y1_);
+						return (a, x0_, y0_, x1_, y1_);
+					});
 				}
 				return true;
 			} finally {
@@ -632,21 +632,23 @@ namespace System.Drawing
 			254, 127, 223, 95, 247, 119, 215, 87, 253, 125, 221, 93, 245, 117, 213, 85,
 		};
 
+		/// <summary>One band's shape at the device's resolution: the alpha it leaves per pixel, and
+		/// the box of the pixels given spans (band-relative; maxX exclusive and 0 when none).</summary>
+		delegate (byte [] Alpha, int MinX, int MinY, int MaxX, int MaxY) BandAlphaFn (int bandX, int bandY, int w, int h);
+
 		/// <summary>The translucent branch (mode 0x43): per band, the colour DIB (FillRects with the
 		/// brush, unpremultiplied, rows past the fill black) and a 1bpp mask the shape is filled into
 		/// at the device's resolution -- a pixel set where HT_16x16[(y + n) % 16][x % 16] is under the
 		/// alpha there, n the DIB count -- put down XOR / AND / XOR (DriverNonPS::OutputBufferDIB)
 		/// over the band's covered part (EpScanDIB::GetActualBounds) unless the mask is empty.</summary>
-		void EmitMasked (Brush brush, byte [] cells, int gw, int gh, int rows, int gx, int gy, int s, int t, int counter,
-			PointF [] pts, byte [] types, FillMode fillMode, float [] dev)
+		void EmitMasked (byte [] cells, int gw, int gh, int rows, int gx, int gy, int s, int t, int counter, BandAlphaFn bandAlpha)
 		{
 			int bandW = gw * s, bandH = rows * t, stride = WebGpuBackend.PrintRaster.MaskStride (bandW);
 			int st = BeginDeviceDraw (null, null, false, null);
 			try {
 				for (int top = 0; top < gh; top += rows) {
 					int bandX = gx * s, bandY = (gy + top) * t;
-					byte [] alpha = BandAlpha (brush, pts, types, fillMode, dev, bandX, bandY, bandW, bandH, s, t,
-						out int minX, out int minY, out int maxX, out int maxY);
+					(byte [] alpha, int minX, int minY, int maxX, int maxY) = bandAlpha (bandX, bandY, bandW, bandH);
 					if (alpha == null || maxX <= 0) continue;
 					var mask = new byte [stride * bandH];
 					bool any = false;
@@ -866,6 +868,125 @@ namespace System.Drawing
 			// Horizontal or vertical: GDI's gradient fill. Any other angle: the bitmap (measured: a
 			// 30 degree brush, scalable or not, prints as 256 x 256).
 			return Math.Abs (m21) > tol && Math.Abs (m22) > tol;
+		}
+
+		// A straight gradient: its colour runs across the device (horizontal) or down it.
+		static bool LinearGradientIsStraight (LinearGradientBrush lg, float [] dev, out bool horizontal)
+		{
+			WebGpuBackend.Gdip.GpMatrix x = lg.Xform;
+			float m11 = x.M11 * dev [0] + x.M12 * dev [2], m12 = x.M11 * dev [1] + x.M12 * dev [3];
+			float m21 = x.M21 * dev [0] + x.M22 * dev [2], m22 = x.M21 * dev [1] + x.M22 * dev [3];
+			float tol = 1e-4f * Math.Max (Math.Max (Math.Abs (m11), Math.Abs (m12)), Math.Max (Math.Abs (m21), Math.Abs (m22)));
+			horizontal = Math.Abs (m21) <= tol;
+			return horizontal || Math.Abs (m22) <= tol;
+		}
+
+		// What of a linear gradient this file rasterizes as DriverPrint does: every angle but a
+		// straight translucent one whose alpha hardly varies (GpLineGradient::IsNearConstant), which
+		// GDI+ puts down through a halftone GDI brush.
+		static bool LinearGradientIsRaster (LinearGradientBrush lg, float [] dev)
+		{
+			if (LinearGradientIsBitmap (lg, dev) || LinearGradientIsOpaque (lg)) return true;
+			int lo = 255, hi = 0;
+			try {
+				Color [] cs = lg.InterpolationColorsWereSet ? lg.InterpolationColors.Colors : lg.LinearColors;
+				foreach (Color c in cs) { lo = Math.Min (lo, c.A); hi = Math.Max (hi, c.A); }
+			} catch (Exception) { return false; }
+			return hi - lo >= 16;
+		}
+
+		/// <summary>PrivateFillRect's straight linear gradient (DriverPrint::PrivateFillGradient
+		/// @1800cf370): a bitmap one pixel tall across the fill's device bounds (one wide down them),
+		/// stretched over the bounds. Opaque: in a rectangle's clip SRCCOPY, any other shape
+		/// SRCINVERT / the path filled black under R2_MASKPEN / SRCINVERT. Translucent (OpaqueFill
+		/// Bitmap finds alpha under 0xfd): in the shape's clip, the bitmap's alpha halftoned at 300 dpi
+		/// (ConvertBitmapDataAlphaChannelTo1BPP @1800d8d68: set where HT_16x16 is under it) between
+		/// two SRCINVERTs.</summary>
+		bool PrintStraightGradient (LinearGradientBrush lg, bool horizontal, PointF [] pts, byte [] types, bool nonZero, float [] dev,
+			int bx, int by, int bw, int bh)
+		{
+			int W = horizontal ? bw : 1, H = horizontal ? 1 : bh;
+			float [] toBitmap = Then (dev, new [] { W / (float) bw, 0f, 0f, H / (float) bh, -bx * W / (float) bw, -by * H / (float) bh });
+			byte [] px = FillWithBrush (lg, W, H, toBitmap, Point.Empty);
+			if (px == null) return false;
+			bool opaque = LinearGradientIsOpaque (lg);
+			float kx = 100f / print_dpi_x, ky = 100f / print_dpi_y;
+			var color = new byte [W * H * 4];
+			bool solid = true;
+			for (int i = 0; i < W * H; i++) {
+				color [i * 4] = px [i * 4 + 2]; color [i * 4 + 1] = px [i * 4 + 1]; color [i * 4 + 2] = px [i * 4]; color [i * 4 + 3] = 255;
+				if (px [i * 4 + 3] < 0xfd) solid = false;
+			}
+			if (opaque) {
+				if (IsDeviceRect (pts, dev)) {
+					Opaque (px);
+					EmitDeviceImage (px, W, H, new RectangleF (bx, by, bw, bh), pts, types, dev, nonZero);
+					return true;
+				}
+				var xor = new WebGpuBackend.PrintRaster {
+					Kind = WebGpuBackend.PrintRaster.KindXorPath, Color = color, Width = W, Height = H, SrcW = W, S = 1, T = 1,
+					DevX = bx, DevY = by, DevW = bw, DevH = bh, ClipNonZero = nonZero, ClipTypes = types,
+				};
+				xor.ClipXY = new float [pts.Length * 2];
+				for (int i = 0; i < pts.Length; i++) {
+					PointF d = Apply (dev, pts [i].X, pts [i].Y);
+					xor.ClipXY [i * 2] = d.X * kx; xor.ClipXY [i * 2 + 1] = d.Y * ky;
+				}
+				WebGpuBackend.PrintRaster.Attach (px, xor);
+				Opaque (px);
+				// (Clipped to the shape for whoever draws the picture; on the paper the XOR does it.)
+				int st0 = BeginDeviceDraw (pts, types, nonZero, dev);
+				GpuRecorder.DrawImage (px, W, H, bx * kx, by * ky, bw * kx, bh * ky);
+				EndDeviceDraw (st0);
+				return true;
+			}
+			int st = BeginDeviceDraw (pts, types, nonZero, dev);
+			try {
+				if (solid) {
+					// Every pixel nearly opaque after all: OpaqueFillBitmap puts it down as it is.
+					Opaque (px);
+					GpuRecorder.DrawImage (px, W, H, bx * kx, by * ky, bw * kx, bh * ky);
+					return true;
+				}
+				int mw = print_dpi_x > 300f ? (int) (bw * 300L / (int) print_dpi_x) : bw;
+				int mh = print_dpi_y > 300f ? (int) (bh * 300L / (int) print_dpi_y) : bh;
+				if (mw <= 0 || mh <= 0) return true;
+				int stride = WebGpuBackend.PrintRaster.MaskStride (mw);
+				var mask = new byte [stride * mh];
+				for (int y = 0; y < mh; y++) {
+					int sy = (int) ((uint) (H * y) / (uint) mh);
+					for (int x = 0; x < mw; x++) {
+						int sx = (int) ((uint) (W * x) / (uint) mw);
+						if (px [(sy * W + sx) * 4 + 3] > s_ht16 [(x & 15) | (y & 15) << 4]) mask [y * stride + (x >> 3)] |= (byte) (0x80 >> (x & 7));
+					}
+				}
+				var raster = new WebGpuBackend.PrintRaster {
+					Kind = WebGpuBackend.PrintRaster.KindMasked, Color = color, Width = W, Height = H, SrcX = 0, SrcW = W,
+					Mask = mask, MaskWidth = mw, MaskHeight = mh, MaskSrcX = 0, MaskSrcW = mw, S = 1, T = 1,
+					DevX = bx, DevY = by, DevW = bw, DevH = bh,
+				};
+				// The preview: the colour at the bitmap's own alpha.
+				WebGpuBackend.PrintRaster.Attach (px, raster);
+				GpuRecorder.DrawImage (px, W, H, bx * kx, by * ky, bw * kx, bh * ky);
+				return true;
+			} finally {
+				EndDeviceDraw (st);
+			}
+		}
+
+		// DpPath::IsRectangular of four points on the device: an upright rectangle.
+		static bool IsDeviceRect (PointF [] pts, float [] dev)
+		{
+			int n = pts.Length;
+			if (n == 5 && pts [4] == pts [0]) n = 4;
+			if (n != 4) return false;
+			var d = new PointF [4];
+			for (int i = 0; i < 4; i++) d [i] = Apply (dev, pts [i].X, pts [i].Y);
+			for (int i = 0; i < 4; i++) {
+				PointF a = d [i], b = d [(i + 1) % 4];
+				if (Math.Abs (a.X - b.X) > 1e-3f && Math.Abs (a.Y - b.Y) > 1e-3f) return false;
+			}
+			return true;
 		}
 
 		static bool LinearGradientIsOpaque (LinearGradientBrush lg)
@@ -1178,18 +1299,21 @@ namespace System.Drawing
 		/// growth spread so the line keeps its nominal width -- and the glyphs recorded where it puts
 		/// them. False where GDI+ would take its full imager (wrapping, tabs, line breaks, complex
 		/// scripts); those are laid out by PrintText.</summary>
-		bool TryPrintGdiPlusText (string s, Font font, int argb, RectangleF rect, StringFormat format)
+		// The fast imager's layout of a single-line string on the printer, in device pixels; null
+		// where GDI+ would take its full imager.
+		Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Run PrintFastLayout (string s, Font font, RectangleF rect, StringFormat format,
+			out Microsoft.Wpf.Interop.WebGpu.Composition.Text.TrueTypeFont face, out string family, out int style,
+			out float sx, out float tx, out float ty, int hint = PrintHint)
 		{
-			if (font.Underline || font.Strikeout || !UprightTransform (out float sx, out float sy, out float tx, out float ty))
-				return false;
-			string family = font.FontFamily?.Name;
-			int style = StyleOf (font);
-			var face = WebGpuBackend.PrintText.Face (family, style);
-			if (face == null) return false;
+			face = null; family = font.FontFamily?.Name; style = StyleOf (font); sx = tx = ty = 0f;
+			if (font.Underline || font.Strikeout || !UprightTransform (out sx, out float sy, out tx, out ty))
+				return null;
+			face = WebGpuBackend.PrintText.Face (family, style);
+			if (face == null) return null;
 			int flags = 0, align = 0, lineAlign = 0;
 			bool typographic = false, hotkey = false;
 			if (format != null) {
-				if (format.TabStopCount > 0) return false;
+				if (format.TabStopCount > 0) return null;
 				flags = (int) format.FormatFlags;
 				typographic = format.IsTypographic;
 				if (typographic) flags |= 0x6004;
@@ -1200,11 +1324,18 @@ namespace System.Drawing
 			float dx = print_dpi_x / 100f;
 			float dev = sx * dx;   // device pixels per world unit
 			float emDevice = FontEmWorld (font) * dev;
-			var run = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Layout (face, family, emDevice * 72f / print_dpi_x, s,
+			return Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Layout (face, family, emDevice * 72f / print_dpi_x, s,
 				(rect.X * sx + tx) * dx, (rect.Y * sy + ty) * dx, rect.Width * dev, rect.Height * dev,
-				flags, typographic, align, lineAlign, hotkey, PrintHint, print_dpi_x);
+				flags, typographic, align, lineAlign, hotkey, hint, print_dpi_x);
+		}
+
+		bool TryPrintGdiPlusText (string s, Font font, int argb, RectangleF rect, StringFormat format)
+		{
+			var run = PrintFastLayout (s, font, rect, format, out var face, out string family, out int style, out float sx, out float tx, out float ty);
 			if (run == null) return false;
 			if (run.Glyphs.Length == 0) return true;
+			float dx = print_dpi_x / 100f;
+			float dev = sx * dx;   // device pixels per world unit
 			float [] xs = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.GlyphXs (run, run.OriginX);
 			// Back from device pixels to world units.
 			float World (float d, float t) => (d / dx - t) / sx;
@@ -1220,6 +1351,181 @@ namespace System.Drawing
 			GpuRecorder.DrawGlyphs (face, run.Em / dev, run.Glyphs, rel, new float [rel.Length], ox, oy, argb, family, style, chars, null);
 			if (clip) GpuRecorder.ClearClip ();
 			return true;
+		}
+
+		/// <summary>A string in a brush GDI cannot draw, as GDI+ prints it. The printer's realization
+		/// is bi-level, and SwitchToPath @1801ed568 makes it a PATH realization once the face's box
+		/// is more than 800 device pixels wide or tall: then the glyph outlines are one path, filled
+		/// with the brush as any shape is (PrivateFillRect). Below that DriverPrint::BrushText
+		/// @1800cc210 bands the glyphs' bounds on the driver's default grid (3 x 3 device pixels at
+		/// 600 dpi, set by GpGraphics::GetFromGdiPrinterDC), the brush FillRects'd into the colour
+		/// DIB, and the glyphs' bits -- each set one at the brush's alpha -- halftoned into the mask
+		/// (mode 0x43, whatever the brush's opacity).</summary>
+		bool TryPrintBrushText (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
+		{
+			if (s_noPrintRaster) return false;
+			float [] w2d = PrintDeviceMatrix ();
+			if (brush is LinearGradientBrush lgb && !LinearGradientIsRaster (lgb, w2d)) return false;
+			var run = PrintFastLayout (s, font, rect, format, out var face, out _, out _, out _, out _, out _);
+			if (run == null) return false;
+			if (run.Glyphs.Length == 0) return true;
+			float [] xs = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.GlyphXs (run, run.OriginX);
+			float em = run.Em;
+			var identity = new [] { 1f, 0f, 0f, 1f, 0f, 0f };
+			Brush onDevice = BrushOnDevice (brush, w2d, out bool owned);
+			try {
+				if (face.TryGetGdiColumnLimits (em, out int left, out int right) && right - left > 800) {
+					// A path realization lays the string out from its own (unfitted) advances.
+					// (measured: the nominal layout, its tracking, and the legacy kern pairs -- Arial Bold
+					// "Textured" at 400 ppem is 30 pixels narrower than "Hatched"'s spacing makes it, T-e -152).
+					var prun = PrintFastLayout (s, font, rect, format, out _, out _, out _, out _, out _, out _, 4);
+					if (prun != null && prun.Glyphs.Length == run.Glyphs.Length) {
+						run = prun;
+						xs = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.GlyphXs (run, run.OriginX);
+						KernNominal (face, run.Glyphs, xs, em);
+					}
+					// The glyph outlines, placed, as one device-space path.
+					var pts = new List<PointF> (); var types = new List<byte> ();
+					for (int i = 0; i < run.Glyphs.Length; i++) {
+						if (!face.TryGetScaledOutline (run.Glyphs [i], em, out var figures)) continue;
+						// Each glyph at its origin's whole pixel across (measured: "Gradient" at 400 ppem
+						// ends a pixel short of the fractional origins' outline), its baseline as laid out.
+						AddFigures (figures, (float) Math.Floor (xs [i]), run.OriginY, pts, types);
+					}
+					if (pts.Count == 0) return true;
+					float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+					foreach (PointF p in pts) { x0 = Math.Min (x0, p.X); y0 = Math.Min (y0, p.Y); x1 = Math.Max (x1, p.X); y1 = Math.Max (y1, p.Y); }
+					if (!WebGpuBackend.Gdip.GpStroke.BoundsToRect (RectangleF.FromLTRB (x0, y0, x1, y1), out Rectangle r)) return true;
+					return PrintBrushRaster (onDevice, pts.ToArray (), types.ToArray (), FillMode.Winding, identity, r.X, r.Y, r.Width, r.Height);
+				}
+				var lv = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.ComposeMono (face, run.Glyphs, em, xs, run.OriginY, true);
+				if (lv.Width <= 0 || lv.Height <= 0) return true;
+				int bx = lv.Left, by = lv.Top, bw = lv.Width, bh = lv.Height;
+				if (run.HasClip) {
+					int cx0 = (int) Math.Floor (run.ClipX), cy0 = (int) Math.Floor (run.ClipY);
+					int cx1 = (int) Math.Ceiling (run.ClipX + run.ClipW), cy1 = (int) Math.Ceiling (run.ClipY + run.ClipH);
+					int nx0 = Math.Max (bx, cx0), ny0 = Math.Max (by, cy0), nx1 = Math.Min (bx + bw, cx1), ny1 = Math.Min (by + bh, cy1);
+					if (nx1 <= nx0 || ny1 <= ny0) return true;
+					bx = nx0; by = ny0; bw = nx1 - nx0; bh = ny1 - ny0;
+				}
+				if (!VisibleDeviceRect (ref bx, ref by, ref bw, ref bh)) return true;
+				int sx = DefaultBandScale (print_dpi_x), sy = DefaultBandScale (print_dpi_y);
+				int gx = bx / sx, gy = by / sy;
+				int gw = 1 + (bx - gx * sx + bw) / sx, gh = 1 + (by - gy * sy + bh) / sy;
+				if ((long) gw * gh > 64L << 20) return false;
+				int rows = BandRows (gw, gh);
+				byte [] cells = brush is HatchBrush ? FillWithBrush (brush, gw, gh, null, new Point (-gx, -gy))
+					: FillWithBrush (onDevice, gw, gh, new [] { 1f / sx, 0f, 0f, 1f / sy, -gx, -gy }, Point.Empty);
+				if (cells == null) return false;
+				int counter = ++s_bufferDibs;
+				bool opaque = BrushIsOpaque (brush);
+				EmitMasked (cells, gw, gh, rows, gx, gy, sx, sy, counter, (int bandX, int bandY, int W, int H) => {
+					// The glyphs' bits in the band, at the brush's alpha.
+					byte [] brushAlpha = null;
+					if (!opaque) {
+						var band = new [] { new PointF (bandX, bandY), new PointF (bandX + W, bandY), new PointF (bandX + W, bandY + H), new PointF (bandX, bandY + H) };
+						brushAlpha = ShapeAlpha (onDevice, band, new byte [] { 0, 1, 1, 0x81 }, FillMode.Alternate,
+							new [] { 1f, 0f, 0f, 1f, -bandX, -bandY }, W, H, new Point (-bandX, -bandY));
+						if (brushAlpha == null) return (null, 0, 0, 0, 0);
+					}
+					var a = new byte [W * H];
+					int minX = int.MaxValue, minY = int.MaxValue, maxX = 0, maxY = 0;
+					for (int y = 0; y < H; y++) {
+						int ly = bandY + y - lv.Top;
+						if (ly < 0 || ly >= lv.Height || bandY + y < by || bandY + y >= by + bh) continue;
+						for (int x = 0; x < W; x++) {
+							int lx = bandX + x - lv.Left;
+							if (lx < 0 || lx >= lv.Width || bandX + x < bx || bandX + x >= bx + bw) continue;
+							if (lv.Index [ly * lv.Width + lx] == 0) continue;
+							a [y * W + x] = opaque ? (byte) 255 : brushAlpha [y * W + x];
+							if (x < minX) minX = x;
+							if (x + 1 > maxX) maxX = x + 1;
+							if (y < minY) minY = y;
+							if (y > maxY) maxY = y;
+						}
+					}
+					return (a, minX, minY, maxX, maxY);
+				});
+				return true;
+			} finally {
+				if (owned) onDevice.Dispose ();
+			}
+		}
+
+		// The legacy 'kern' pairs on a nominal layout's glyph origins, at the layout's own spacing
+		// (its advances over the design's: the format's tracking).
+		static void KernNominal (Microsoft.Wpf.Interop.WebGpu.Composition.Text.TrueTypeFont face, ushort [] glyphs, float [] xs, float em)
+		{
+			int n = glyphs.Length;
+			if (n < 2) return;
+			float design = 0f;
+			for (int i = 0; i + 1 < n; i++) design += face.DesignAdvance (glyphs [i]);
+			if (!(design > 0f)) return;
+			float unit = (xs [n - 1] - xs [0]) / design;
+			float shift = 0f;
+			for (int i = 1; i < n; i++) {
+				if (face.TryGetKernUnits (glyphs [i - 1], glyphs [i], out int k)) shift += k * unit;
+				xs [i] += shift;
+			}
+		}
+
+		// The driver's band grid when nothing sets it (GpGraphics::GetFromGdiPrinterDC @180079788):
+		// one device pixel up to 100 dpi, three below 1200, dpi / 200 from there.
+		static int DefaultBandScale (float dpi)
+			=> dpi <= 100f ? 1 : dpi < 1200f ? 3 : Math.Max (1, (int) (dpi / 200f + 0.5f));
+
+		static bool BrushIsOpaque (Brush brush)
+		{
+			switch (brush) {
+			case HatchBrush hb: return hb.ForegroundColor.A == 255 && hb.BackgroundColor.A == 255;
+			case TextureBrush tb: return TransparencyHint (tb) == 3;
+			case PathGradientBrush pg: return PathGradientIsOpaque (pg);
+			case LinearGradientBrush lg: return LinearGradientIsOpaque (lg);
+			case SolidBrush sb: return sb.Color.A == 255;
+			default: return false;
+			}
+		}
+
+		// The brush with the world-to-device transform taken on, for a shape given in device pixels
+		// (what DriverPrint::StrokePath does to a pen's brush). A hatch is the device's already.
+		static Brush BrushOnDevice (Brush brush, float [] dev, out bool owned)
+		{
+			owned = false;
+			using (var m = new Matrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]))
+				switch (brush) {
+				case TextureBrush tb: { var c = (TextureBrush) tb.Clone (); c.MultiplyTransform (m, MatrixOrder.Append); owned = true; return c; }
+				case PathGradientBrush pg: { var c = (PathGradientBrush) pg.Clone (); c.MultiplyTransform (m, MatrixOrder.Append); owned = true; return c; }
+				case LinearGradientBrush lg: { var c = (LinearGradientBrush) lg.Clone (); c.MultiplyTransform (m, MatrixOrder.Append); owned = true; return c; }
+				}
+			return brush;
+		}
+
+		// A glyph's figures (device pixels, y down, from its origin) as GDI+ path points at (ox, oy).
+		static void AddFigures (List<Microsoft.Wpf.Interop.WebGpu.Composition.PathFigure> figures, float ox, float oy, List<PointF> pts, List<byte> types)
+		{
+			foreach (var f in figures) {
+				if (f.Segments.Count == 0) continue;
+				int start = pts.Count;
+				var cur = f.Start;
+				pts.Add (new PointF (cur.X + ox, cur.Y + oy)); types.Add (0);
+				foreach (var sg in f.Segments) {
+					switch (sg) {
+					case Microsoft.Wpf.Interop.WebGpu.Composition.LineSegment l:
+						pts.Add (new PointF (l.Point.X + ox, l.Point.Y + oy)); types.Add (1); cur = l.Point; break;
+					case Microsoft.Wpf.Interop.WebGpu.Composition.QuadraticBezierSegment q: {
+						var c1 = cur + (q.Control - cur) * (2f / 3f);
+						var c2 = q.Point + (q.Control - q.Point) * (2f / 3f);
+						pts.Add (new PointF (c1.X + ox, c1.Y + oy)); pts.Add (new PointF (c2.X + ox, c2.Y + oy)); pts.Add (new PointF (q.Point.X + ox, q.Point.Y + oy));
+						types.Add (3); types.Add (3); types.Add (3); cur = q.Point; break;
+					}
+					case Microsoft.Wpf.Interop.WebGpu.Composition.CubicBezierSegment c:
+						pts.Add (new PointF (c.Control1.X + ox, c.Control1.Y + oy)); pts.Add (new PointF (c.Control2.X + ox, c.Control2.Y + oy)); pts.Add (new PointF (c.Point.X + ox, c.Point.Y + oy));
+						types.Add (3); types.Add (3); types.Add (3); cur = c.Point; break;
+					}
+				}
+				if (pts.Count - start < 2) { pts.RemoveRange (start, pts.Count - start); types.RemoveRange (start, types.Count - start); continue; }
+				types [types.Count - 1] |= 0x80;
+			}
 		}
 
 		static readonly bool s_noPrintFullText = Environment.GetEnvironmentVariable ("WF_PRINT_FTI") == "0";
@@ -1314,6 +1620,7 @@ namespace System.Drawing
 		{
 			if (!print_mode || GpuRecorder == null) return false;
 			if (string.IsNullOrEmpty (s)) return true;
+			if (!(brush is SolidBrush) && IsRasterBrush (brush) && TryPrintBrushText (s, font, brush, rect, format)) return true;
 			int argbFast = ArgbOf (brush);
 			if (brush is Drawing2D.LinearGradientBrush lgf) { lgf.GetGpuGradient (out _, out _, out Color c1f, out _); argbFast = c1f.ToArgb (); }
 			if (TryPrintGdiPlusText (s, font, argbFast, rect, format)) return true;

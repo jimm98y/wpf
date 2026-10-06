@@ -16,6 +16,8 @@
 //           SRCINVERT again: paper where the mask is clear, the colour where it is set.
 //   Runs    a texture whose bitmap is only opaque or clear: each row of the DIB put down as the runs
 //           of its pixels with alpha 5 or more, one StretchDIBits a run, inside the shape's clip.
+//   XorPath an opaque straight gradient in a shape that is not a rectangle: the bitmap SRCINVERT,
+//           the shape filled black with R2_MASKPEN, the bitmap SRCINVERT again.
 //
 // The preview gets an ordinary image: the colour with each cell's share of mask, or the runs' cells
 // opaque and the rest clear.
@@ -27,7 +29,7 @@ namespace System.Drawing.WebGpuBackend
 {
     internal sealed class PrintRaster
     {
-        internal const int KindMasked = 1, KindRuns = 2;
+        internal const int KindMasked = 1, KindRuns = 2, KindXorPath = 3;
 
         public int Kind;
         /// <summary>The colour DIB as GDI+ hands it over: Width x Height cells, top-down, BGRA (alpha
@@ -40,6 +42,13 @@ namespace System.Drawing.WebGpuBackend
         /// ((MaskWidth + 31) / 32) * 4 bytes, MSB first; set = draw.</summary>
         public byte[] Mask;
         public int MaskWidth, MaskHeight, MaskSrcX;
+        /// <summary>Masked: the mask's source width, when it is not the device rectangle's (a
+        /// straight gradient's alpha is halftoned at 300 dpi and stretched).</summary>
+        public int MaskSrcW;
+        /// <summary>XorPath: the shape, in the recording's units (x,y pairs, GDI+ point types).</summary>
+        public float[] ClipXY;
+        public byte[] ClipTypes;
+        public bool ClipNonZero;
         /// <summary>Device pixels per DIB pixel.</summary>
         public int S, T;
         /// <summary>The device rectangle the raster covers (for Runs, the band).</summary>

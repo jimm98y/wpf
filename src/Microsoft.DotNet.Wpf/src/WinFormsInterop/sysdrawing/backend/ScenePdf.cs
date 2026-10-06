@@ -222,9 +222,48 @@ namespace System.Drawing.WebGpuBackend
             {
                 int cw, ch, mw, mh;
                 byte[] rgb, bits;
+                if (r.Kind == PrintRaster.KindXorPath)
+                {
+                    // What the XOR leaves: the bitmap inside the shape.
+                    rgb = new byte[r.Width * r.Height * 3];
+                    for (int i = 0; i < r.Width * r.Height; i++)
+                    {
+                        rgb[i * 3] = r.Color[i * 4 + 2]; rgb[i * 3 + 1] = r.Color[i * 4 + 1]; rgb[i * 3 + 2] = r.Color[i * 4];
+                    }
+                    var shape = new PagePath { EvenOdd = !r.ClipNonZero };
+                    int n = Math.Min(r.ClipTypes.Length, r.ClipXY.Length / 2);
+                    for (int i = 0; i < n; i++)
+                    {
+                        var p = new Vector2(r.ClipXY[i * 2], r.ClipXY[i * 2 + 1]);
+                        int t = r.ClipTypes[i] & 7;
+                        if (t == 0) shape.MoveTo(p);
+                        else if (t == 3 && i + 2 < n)
+                        {
+                            shape.CubicTo(p, new Vector2(r.ClipXY[i * 2 + 2], r.ClipXY[i * 2 + 3]), new Vector2(r.ClipXY[i * 2 + 4], r.ClipXY[i * 2 + 5]));
+                            i += 2;
+                        }
+                        else shape.LineTo(p);
+                        if ((r.ClipTypes[i] & 0x80) != 0) shape.Close();
+                    }
+                    var plain = new PdfImage
+                    {
+                        ResourceName = "Ir" + (_doc._rasters++).ToString(CultureInfo.InvariantCulture),
+                        ObjectId = _doc._writer.AllocateObject(),
+                    };
+                    _doc._writer.WriteStreamObject(plain.ObjectId, rgb, string.Concat(
+                        "/Type /XObject /Subtype /Image /Width ", r.Width.ToString(CultureInfo.InvariantCulture),
+                        " /Height ", r.Height.ToString(CultureInfo.InvariantCulture), " /ColorSpace /DeviceRGB /BitsPerComponent 8"));
+                    _images.Add(plain);
+                    (float px0, float py0, float px1, float py1) = path.Bounds();
+                    _c.Append("q\n");
+                    ClipPath(shape);
+                    _c.Append(N(px1 - px0)).Append(" 0 0 ").Append(N(-(py1 - py0))).Append(' ')
+                      .Append(N(px0)).Append(' ').Append(N(py1)).Append(" cm /").Append(plain.ResourceName).Append(" Do\nQ\n");
+                    return;
+                }
                 if (r.Kind == PrintRaster.KindMasked)
                 {
-                    cw = r.SrcW; ch = r.Height; mw = r.DevW; mh = r.MaskHeight;
+                    cw = r.SrcW; ch = r.Height; mw = r.MaskSrcW > 0 ? r.MaskSrcW : r.DevW; mh = r.MaskHeight;
                     rgb = new byte[cw * ch * 3];
                     for (int j = 0; j < ch; j++)
                         for (int i = 0; i < cw; i++)
