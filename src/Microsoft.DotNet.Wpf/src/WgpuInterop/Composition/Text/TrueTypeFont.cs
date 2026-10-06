@@ -5670,7 +5670,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int i = 0; i < n; i++) if (on[i]) { firstOn = i; break; }
 
             Vector2 startPoint = firstOn >= 0 ? pts[firstOn] : Mid(pts[0], pts[n - 1]);
-            var figure = new PathFigure(startPoint) { Closed = true };
+            var figure = new PathFigure(startPoint) { Closed = true, ImpliedStart = firstOn < 0 };
 
             int startIndex = firstOn >= 0 ? firstOn : 0;
             bool havePendingControl = false;
@@ -5695,13 +5695,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 else
                 {
                     Vector2 mid = Mid(control, p);     // implied on-curve point
-                    figure.Segments.Add(new QuadraticBezierSegment(control, mid));
+                    figure.Segments.Add(new QuadraticBezierSegment(control, mid) { ImpliedEnd = true });
                     control = p;
                 }
             }
 
             // Close back to the start.
-            if (havePendingControl) figure.Segments.Add(new QuadraticBezierSegment(control, startPoint));
+            if (havePendingControl) figure.Segments.Add(new QuadraticBezierSegment(control, startPoint) { ImpliedEnd = firstOn < 0 });
             return figure;
         }
 
