@@ -50,6 +50,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         bool Canvas => _canvas != null;
 
+        // The DIB of the blit in hand as GDI gets it (header + colours, bits), for HALFTONE.
+        byte[] _htInfo, _htBits;
+        int _htBitsAt;
+
         /// <summary>CreateDibSection32Bpp + Init32BppDibToTransparent: the DIB for the destination
         /// whose device corners are <paramref name="p"/>; false when it has no area.</summary>
         bool StartCanvas(PointF[] p)
@@ -374,6 +378,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         int bx = sx0, by = sy0, bw = sx1 - sx0, bh = sy1 - sy0;
                         uint[] q = spx; int qw = sw, qh = sh;
                         source = (i, j) => q[Math.Clamp(by + Math.Min(j, bh - 1), 0, qh - 1) * qw + Math.Clamp(bx + Math.Min(i, bw - 1), 0, qw - 1)];
+                    }
+                    else if (_htInfo != null && _dc.StretchMode == 4
+                        && GdiHalftone.Stretch(_htInfo, 0, _htBits, _htBitsAt, (int)src.X, sh - (int)src.Y - (int)src.Height, (int)src.Width, (int)src.Height,
+                            mirrorX ? -dw : dw, mirrorY ? -dh : dh) is uint[] ht)
+                    {
+                        // HALFTONE (MfEnumState::OutputDIB's mode for a SRCCOPY GDI+ did not stretch
+                        // first): win32k's AA halftone engine (GdiHalftone.cs), from the DIB's own bits.
+                        int hw = dw;
+                        source = (i, j) => ht[j * hw + i];
                     }
                     else source = StretchSource(spx, sw, sh, sx0, sy0, sx1 - sx0, sy1 - sy0, dw, dh, mx, my, _dc.StretchMode);
                 }

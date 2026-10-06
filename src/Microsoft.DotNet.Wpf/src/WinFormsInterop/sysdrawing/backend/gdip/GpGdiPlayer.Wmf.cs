@@ -855,7 +855,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>The DIB as a Bitmap, its header and colour table (or masks) as GDI reads them, its
         /// bits where GDI+ points: DIB_PAL_COLORS indices through the DC's palette.</summary>
-        Bitmap BitmapOf(byte[] b, in WmfDib d)
+        Bitmap BitmapOf(byte[] b, in WmfDib d) => BitmapOf(b, d, out _);
+
+        Bitmap BitmapOf(byte[] b, in WmfDib d, out byte[] infoOut)
         {
             int ncol = 0;
             if (d.Bpp <= 8) ncol = d.ClrUsed != 0 ? Math.Min(d.ClrUsed, 1 << d.Bpp) : 1 << d.Bpp;
@@ -879,6 +881,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     if (at + 4 <= b.Length) Buffer.BlockCopy(b, at, info, q, 4);
                 }
             }
+            infoOut = info;
             return DibFromInfo(info, 0, info.Length, b, d.BitsAt, d.BitsSize);
         }
 
@@ -990,6 +993,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     // record the DIB came from (+0xa8); a rewritten DIB too big for it is not drawn
                     if ((long)Le.I32(info, 0) + bits.Length > paramBytes) return;
                     bm = DibFromInfo(info, 0, info.Length, bits, 0, bits.Length);
+                    _htInfo = info; _htBits = bits; _htBitsAt = 0;
                     modified = true;
                 }
             }
@@ -998,7 +1002,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 // OutputDIB with no bits: GetDibBits again; a biSizeImage smaller than the bits is not drawn
                 int sizeImage = Le.I32(b, d.H + 20);
                 if (sizeImage != 0 && sizeImage < d.BitsSize) return;
-                bm = BitmapOf(b, d);
+                bm = BitmapOf(b, d, out _htInfo);
+                _htBits = b; _htBitsAt = d.BitsAt;
             }
             if (bm == null) return;
             _srcBpp = d.Bpp;
@@ -1018,7 +1023,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _dc.StretchMode = rop == 0x00CC0020 ? 4 : 3;
                 Blit(bm, xd, yd, wd, hd, new RectangleF(xs, h - ys - hs, ws, hs), rop);
             }
-            finally { _dibBlit = false; bm.Dispose(); }
+            finally { _dibBlit = false; bm.Dispose(); _htInfo = null; _htBits = null; }
         }
 
         /// <summary>META_SETDIBTODEV (played by gdi32, never rewritten): usage, scan count, start scan,
