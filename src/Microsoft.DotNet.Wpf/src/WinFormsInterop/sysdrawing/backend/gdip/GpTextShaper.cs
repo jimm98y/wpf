@@ -112,7 +112,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (gsub != null) {
                 string tag = ScriptTag (itemScript);
                 if (!gsub.HasScript (tag)) tag = gsub.HasScript ("DFLT") ? "DFLT" : tag;
-                gsub.ApplyFeatures (tag, rtl ? DefaultFeaturesRtl : DefaultFeatures, glyphs, clusters);
+                if (itemScript == 7) {
+                    // The Arabic engine (TextShaping ArabicEngineGetGlyphs): the mandatory
+                    // features, then each letter's positional form from its Unicode joining type
+                    // and its neighbours' in the item, then the rest.
+                    gsub.ApplyFeatures (tag, ArabicPre, glyphs, clusters);
+                    string[] form = ArabicForms (text, start, len);
+                    for (int i = 0; i < glyphs.Count; i++) {
+                        int c = clusters [i];
+                        if (c >= 0 && c < len && form [c] != null) glyphs [i] = gsub.Substitute (tag, form [c], glyphs [i]);
+                    }
+                    gsub.ApplyFeatures (tag, ArabicPost, glyphs, clusters);
+                } else
+                    gsub.ApplyFeatures (tag, rtl ? DefaultFeaturesRtl : DefaultFeatures, glyphs, clusters);
             }
             var s = new Shaped {
                 Glyphs = new ushort [glyphs.Count],
@@ -159,6 +171,55 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// maps characters through the cmap alone).</summary>
         static readonly string[] DefaultFeatures = { "ccmp", "locl", "rlig", "rclt", "calt", "liga", "clig" };
         static readonly string[] DefaultFeaturesRtl = { "ccmp", "locl", "rtla", "rtlm", "rlig", "rclt", "calt", "liga", "clig" };
+        static readonly string[] ArabicPre = { "ccmp", "locl" };
+        static readonly string[] ArabicPost = { "rlig", "calt", "liga", "clig", "mset" };
+
+        /// <summary>Unicode joining types (ArabicShaping.txt) for the Arabic blocks: 'R' right,
+        /// 'D' dual, 'C' join-causing, 'T' transparent, 'U' non-joining.</summary>
+        static char JoiningType (int c)
+        {
+            if (c == 0x0640 || c == 0x200d) return 'C';
+            if (c == 0x200c) return 'U';
+            var cat = Globalization.CharUnicodeInfo.GetUnicodeCategory (c);
+            if (cat == Globalization.UnicodeCategory.NonSpacingMark || cat == Globalization.UnicodeCategory.EnclosingMark
+                || cat == Globalization.UnicodeCategory.Format) return 'T';
+            bool In (int lo, int hi) => c >= lo && c <= hi;
+            if (c == 0x0622 || c == 0x0623 || c == 0x0624 || c == 0x0625 || c == 0x0627 || c == 0x0629 || In (0x062f, 0x0632)
+                || c == 0x0648 || In (0x0671, 0x0673) || In (0x0675, 0x0677) || In (0x0688, 0x0699) || c == 0x06c0
+                || In (0x06c3, 0x06cb) || c == 0x06cd || c == 0x06cf || c == 0x06d2 || c == 0x06d3 || c == 0x06d5
+                || c == 0x06ee || c == 0x06ef || In (0x0759, 0x075b) || c == 0x076b || c == 0x076c || c == 0x0771
+                || c == 0x0773 || c == 0x0774 || c == 0x0778 || c == 0x0779 || In (0x08aa, 0x08ac) || c == 0x08ae
+                || c == 0x08b1 || c == 0x08b2)
+                return 'R';
+            if (c == 0x0620 || c == 0x0626 || c == 0x0628 || In (0x062a, 0x062e) || In (0x0633, 0x063f) || In (0x0641, 0x0647)
+                || c == 0x0649 || c == 0x064a || c == 0x066e || c == 0x066f || In (0x0678, 0x0687) || In (0x069a, 0x06bf)
+                || c == 0x06c1 || c == 0x06c2 || c == 0x06cc || c == 0x06ce || c == 0x06d0 || c == 0x06d1
+                || In (0x06fa, 0x06fc) || c == 0x06ff || In (0x0750, 0x0758) || In (0x075c, 0x076a) || In (0x076d, 0x0770)
+                || c == 0x0772 || In (0x0775, 0x0777) || In (0x077a, 0x077f) || In (0x08a0, 0x08a9) || c == 0x08af
+                || c == 0x08b0 || In (0x08b3, 0x08b4))
+                return 'D';
+            return 'U';
+        }
+
+        /// <summary>Each character's positional-form feature ("isol", "fina", "medi", "init"; null
+        /// for one that takes none) within text[start, start + len).</summary>
+        static string[] ArabicForms (string text, int start, int len)
+        {
+            var type = new char [len];
+            for (int k = 0; k < len; k++) type [k] = JoiningType (text [start + k]);
+            var form = new string [len];
+            for (int k = 0; k < len; k++) {
+                char t = type [k];
+                if (t == 'T' || t == 'U' || t == 'C') continue;
+                int p = k - 1, n = k + 1;
+                while (p >= 0 && type [p] == 'T') p--;
+                while (n < len && type [n] == 'T') n++;
+                bool prev = p >= 0 && (type [p] == 'D' || type [p] == 'C');
+                bool next = t == 'D' && n < len && (type [n] == 'D' || type [n] == 'R' || type [n] == 'C');
+                form [k] = prev ? (next ? "medi" : "fina") : (next ? "init" : "isol");
+            }
+            return form;
+        }
 
         /// <summary>TextShaping's ShapingLibraryInternal::IsZeroWidthControlCharacter @180010200 (the
         /// generic engine's GenericEngineSimpleGetGlyphs and the Arabic engine draw these as the
