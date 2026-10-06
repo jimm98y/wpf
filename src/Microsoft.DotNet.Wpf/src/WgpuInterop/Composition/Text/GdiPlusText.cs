@@ -189,9 +189,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // natural ones by a device pixel (blanks included; the classic ones carry GDI's own).
             bool simBold = font.SynthesizesBold;
             bool designBold = simBold && (DesignBoldWidens?.Invoke(font) ?? true);
-            // A simulated oblique is modelled for ClearType and bi-level only (below): DirectWrite's
-            // 4x4 glyphs of a sheared face are not the upright fit sheared (Tahoma, Microsoft Sans
-            // Serif italic).
 
             // The device's resolution: 96 for a window, the printer's for a printed page, where GDI+
             // runs the same imager at the device's em (and the caller's rectangle is in its pixels).
@@ -215,7 +212,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (mode <= 2 && !biLevel) return null;
             // Under a scale only the ClearType realization is modelled (the stretched 6x1 fit).
             if (scaled && mode != 5) return null;
-            if (font.SynthesizesOblique && (mode == 3 || mode == 4)) return null;
 
             // CharacterAttributes bit 0x80 sends the string to the full imager: every control
             // character (tab, CR, LF), the complex scripts, and a hot-key prefix.
@@ -292,7 +288,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 else if (advType == 2) NaturalMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
                 else if (advType == 1) ClassicMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
                 else DesignMetrics(font, gids[i], out adv[i], out lsb[i], out rsb[i]);
-                if (designBold && advType == 0 && font.DesignContours(gids[i]).Count > 0) adv[i] += Floor(upem / 50f + 0.5f);
+                if (advType == 0) SimulateDesignMetrics(font, gids[i], designBold ? Floor(upem / 50f + 0.5f) : 0,
+                                                        ref adv[i], ref lsb[i], ref rsb[i]);
             }
             // The simulation's extra device pixel of a GDI natural advance, in 1/16 px.
             int bold16 = simBold && advType == 2 ? 16 : 0;
@@ -588,6 +585,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             else { lsbDu = 0; rsbDu = advDu; }
         }
 
+        /// <summary>FontFace::GetDesignGlyphMetrics @1800f69d0 on a simulated face: for a glyph with
+        /// an outline, AdjustGlyphMetricsForBoldSimulation @180247ce8 widens the advance (and the
+        /// advance height and vertical origin, so the box's top) by <paramref name="bold"/>, the side
+        /// bearings untouched; then AdjustGlyphMetricsForObliqueSimulation @180247d90 slants the box
+        /// by 0x5700 / 65536: the left bearing gains (yMin * k) >> 16, the right loses (yMax * k) >> 16.</summary>
+        internal static void SimulateDesignMetrics(TrueTypeFont font, int gid, int bold, ref int adv, ref int lsb, ref int rsb)
+        {
+            if (!font.TryGetDesignYExtent(gid, out int yMin, out int yMax) || font.DesignContours(gid).Count == 0) return;
+            adv += bold;
+            if (!font.SynthesizesOblique) return;
+            const int k = 0x5700;
+            lsb += (yMin * k) >> 16;
+            rsb -= ((yMax + bold) * k) >> 16;
+        }
+
         /// <summary>The same with useGdiNatural off (GDI_CLASSIC), for the grid-fitted hints other than
         /// ClearType: GDI's own compatible advance at the whole ppem (hdmx, or the bi-level program),
         /// back in design units; the side bearings from the bi-level fit's box in whole pixels.</summary>
@@ -601,8 +613,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (!NaturalClearType.TryGetGdiClassicOutline(font, gid, ppem, out List<PathFigure> figures, out _)
                 || !XExtent(figures, out float x0, out float x1)) { lsbDu = 0; rsbDu = advDu; return; }
             int left = (int)MathF.Ceiling(x0 * 6f - 0.5f), right = (int)MathF.Floor(x1 * 6f + 0.5f);
+            BoldBox(font, ppem, ref left, ref right);
             lsbDu = (int)Math.Floor(left * (double)upem / (6.0 * ppem) + 0.5);
             rsbDu = (int)Math.Floor((6 * px - right) * (double)upem / (6.0 * ppem) + 0.5);
+        }
+
+        /// <summary>A simulated bold's black box, in sixths of a pixel, for the GDI-classic metrics.
+        /// TrueTypeRasterizer::Implementation::GetMetrics @18006af80 takes the box from the glyph's
+        /// bitmap (GetBitmap, then GetDesignBounds @18006ad18 over its set bits), and
+        /// MakeRasterizerFlagsForMeasuring @180091290 passes the bold simulation on (flag 2), so the
+        /// box is the emboldened glyph's. RasterizeInternal @18006c988 asks the scan for the bitmap
+        /// bold (fs input +0x8c = 1) for a one-sample-a-pixel bitmap at 1..50ppem, a pixel to the
+        /// right; past that fsg_Embold's right half, (amount - amount / 2) pixels of
+        /// (20 ppem - 10) / 1000 + 1. (Its left half is not seen in the measured box at 52 and 53ppem:
+        /// Sylfaen, Lucida Console; not modelled.)</summary>
+        static void BoldBox(TrueTypeFont font, int ppem, ref int left, ref int right)
+        {
+            if (!font.SynthesizesBold) return;
+            int amount = ppem <= 50 ? 1 : (20 * ppem - 10) / 1000 + 1;
+            right += (amount - (amount >> 1)) * 6;
         }
 
         /// <summary>The x extent of the outline the 6x1 bitmap is scanned from, in pixels.</summary>
@@ -938,73 +967,84 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (cache.TryGetValue(key, out GreyGlyph? hit)) return hit;
             var g = new GreyGlyph();
             int dropout = 0;
-            if (font.TryGetDWriteFittedOutline(gid, em, GreyScalerWord, out List<PathFigure> figures, out dropout)
+            // A simulated bold is fsg_Embold on the fitted points: RasterizeInternal @18006c988 gives
+            // the scan's bitmap bold (fs input +0x8c) only to an x overscale of 1, 6 or 8 under one
+            // row a pixel, so never to a 4x4 raster.
+            int boldPpem = Floor(em + 0.5f);
+            if (font.TryGetDWriteFittedOutline(gid, em, GreyScalerWord, out List<PathFigure> figures, out dropout,
+                                               font.SynthesizesBold ? (x, y, ends) => NaturalClearType.EmboldenOutline(x, y, ends, boldPpem) : null)
                 || font.TryGetScaledOutline(gid, em, out figures))
-            {
-                float dx = phaseX / 4f, dy = phaseY / 4f;
-                var moved = new List<PathFigure>(figures.Count);
-                float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
-                System.Numerics.Vector2 M(System.Numerics.Vector2 p)
-                {
-                    var q = new System.Numerics.Vector2(p.X + dx, p.Y + dy);
-                    if (q.X < x0) x0 = q.X;
-                    if (q.X > x1) x1 = q.X;
-                    if (q.Y < y0) y0 = q.Y;
-                    if (q.Y > y1) y1 = q.Y;
-                    return q;
-                }
-                foreach (PathFigure f in figures)
-                {
-                    var nf = new PathFigure(M(f.Start)) { Closed = f.Closed };
-                    foreach (PathSegment sg in f.Segments)
-                        nf.Segments.Add(sg switch
-                        {
-                            LineSegment l => new LineSegment(M(l.Point)),
-                            QuadraticBezierSegment q => new QuadraticBezierSegment(M(q.Control), M(q.Point)),
-                            CubicBezierSegment c => new CubicBezierSegment(M(c.Control1), M(c.Control2), M(c.Point)),
-                            _ => sg,
-                        });
-                    moved.Add(nf);
-                }
-                if (x0 <= x1)
-                {
-                    int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
-                    int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
-                    bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, moved), ox, oy, w, h, 4,
-                                                                dropout, 4);
-                    if (bits is not null) ThinDilate(font, bits, w * 4, h * 4);
-                    if (bits is not null)
-                    {
-                        var cov = new int[w * h];
-                        int cols = w * 4;
-                        for (int r = 0; r < h * 4; r++)
-                            for (int c = 0; c < cols; c++)
-                                if (bits[r * cols + c]) cov[(r >> 2) * w + (c >> 2)]++;
-                        int c0 = w, c1 = -1, r0 = h, r1 = -1;
-                        for (int r = 0; r < h; r++)
-                            for (int c = 0; c < w; c++)
-                                if (cov[r * w + c] > 0)
-                                {
-                                    c0 = Math.Min(c0, c); c1 = Math.Max(c1, c);
-                                    r0 = Math.Min(r0, r); r1 = Math.Max(r1, r);
-                                }
-                        if (c1 >= 0)
-                        {
-                            g.Left = ox + c0; g.Top = oy + r0; g.Width = c1 - c0 + 1; g.Height = r1 - r0 + 1;
-                            g.Coverage = new byte[g.Width * g.Height];
-                            for (int r = 0; r < g.Height; r++)
-                                for (int c = 0; c < g.Width; c++)
-                                    g.Coverage[r * g.Width + c] = (byte)Math.Min(15, cov[(r0 + r) * w + c0 + c]);
-                        }
-                    }
-                }
-            }
+                FillGrey(g, font, figures, dropout, phaseX, phaseY);
             lock (cache)
             {
                 if (cache.Count > 8192) cache.Clear();
                 cache[key] = g;
             }
             return g;
+        }
+
+
+        /// <summary>A grey glyph's coverage from its device outline (y down, at the origin), placed at
+        /// the quarter-pixel phase and scanned 4x4.</summary>
+        private static void FillGrey(GreyGlyph g, TrueTypeFont font, List<PathFigure> figures, int dropout, int phaseX, int phaseY)
+        {
+            float dx = phaseX / 4f, dy = phaseY / 4f;
+            var moved = new List<PathFigure>(figures.Count);
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            System.Numerics.Vector2 M(System.Numerics.Vector2 p)
+            {
+                var q = new System.Numerics.Vector2(p.X + dx, p.Y + dy);
+                if (q.X < x0) x0 = q.X;
+                if (q.X > x1) x1 = q.X;
+                if (q.Y < y0) y0 = q.Y;
+                if (q.Y > y1) y1 = q.Y;
+                return q;
+            }
+            foreach (PathFigure f in figures)
+            {
+                var nf = new PathFigure(M(f.Start)) { Closed = f.Closed };
+                foreach (PathSegment sg in f.Segments)
+                    nf.Segments.Add(sg switch
+                    {
+                        LineSegment l => new LineSegment(M(l.Point)),
+                        QuadraticBezierSegment q => new QuadraticBezierSegment(M(q.Control), M(q.Point)),
+                        CubicBezierSegment c => new CubicBezierSegment(M(c.Control1), M(c.Control2), M(c.Point)),
+                        _ => sg,
+                    });
+                moved.Add(nf);
+            }
+            if (x0 <= x1)
+            {
+                int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
+                int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
+                bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, moved), ox, oy, w, h, 4,
+                                                            dropout, 4);
+                if (bits is not null) ThinDilate(font, bits, w * 4, h * 4);
+                if (bits is not null)
+                {
+                    var cov = new int[w * h];
+                    int cols = w * 4;
+                    for (int r = 0; r < h * 4; r++)
+                        for (int c = 0; c < cols; c++)
+                            if (bits[r * cols + c]) cov[(r >> 2) * w + (c >> 2)]++;
+                    int c0 = w, c1 = -1, r0 = h, r1 = -1;
+                    for (int r = 0; r < h; r++)
+                        for (int c = 0; c < w; c++)
+                            if (cov[r * w + c] > 0)
+                            {
+                                c0 = Math.Min(c0, c); c1 = Math.Max(c1, c);
+                                r0 = Math.Min(r0, r); r1 = Math.Max(r1, r);
+                            }
+                    if (c1 >= 0)
+                    {
+                        g.Left = ox + c0; g.Top = oy + r0; g.Width = c1 - c0 + 1; g.Height = r1 - r0 + 1;
+                        g.Coverage = new byte[g.Width * g.Height];
+                        for (int r = 0; r < g.Height; r++)
+                            for (int c = 0; c < g.Width; c++)
+                                g.Coverage[r * g.Width + c] = (byte)Math.Min(15, cov[(r0 + r) * w + c0 + c]);
+                    }
+                }
+            }
         }
 
         /// <summary>Whether DirectWrite thickens this face's oversampled bitmaps:
@@ -1064,14 +1104,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.StretchPpemY = ppemAlong == ppemAcross ? 0 : ppemAcross;
             List<PathFigure> figures;
             int dropout;
+            bool qbBitmap = false;
             try
             {
                 int ppem = Math.Max(ppemAlong, ppemAcross);
                 int word = grey ? GreyScalerWord ^ 4 : TrueTypeFont.DWriteBiLevelWord;
                 // A simulated bold under a turn is fsg_Embold on the fitted points (the bitmap smear
                 // is only ever asked for under an unrotated transform).
+                qbBitmap = !grey && font.SynthesizesBold && ppem >= 1 && ppem <= 50;
                 if (!font.TryGetDWriteFittedOutline(gid, ppem, word, out figures, out dropout,
-                                                    font.SynthesizesBold ? (x, y, ends) => NaturalClearType.EmboldenOutline(x, y, ends, ppem) : null))
+                                                    font.SynthesizesBold && !qbBitmap ? (x, y, ends) => NaturalClearType.EmboldenOutline(x, y, ends, ppem) : null))
                 {
                     dropout = grey ? 0 : UnfittedDropout;
                     if (!font.TryGetScaledOutline(gid, ppem, out figures)) return g;
@@ -1108,6 +1150,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, turned), ox, oy, w, h, s, dropout, s);
             if (bits is null) return g;
             if (grey) ThinDilate(font, bits, w * s, h * s);
+            if (qbBitmap)
+            {
+                // A bi-level simulated bold at 1..50ppem under a quarter turn (axis-aligned, so
+                // RasterizeInternal @18006c988 still asks for the bitmap bold): sbit_Embolden
+                // @180120940 on the device bitmap, its one-pixel amount along the glyph's x -- the
+                // device's y after the turn (mth_90degRotationFactorForEmboldening swaps the amounts).
+                var nb = (bool[])bits.Clone();
+                for (int r = 0; r + 1 < h; r++)
+                    for (int c = 0; c < w; c++)
+                        if (bits[r * w + c]) nb[(r + 1) * w + c] = true;
+                bits = nb;
+            }
             var cov = new int[w * h];
             int cols = w * s;
             for (int r = 0; r < h * s; r++)

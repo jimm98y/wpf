@@ -65,12 +65,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
             List<PathFigure> figures;
             int dropout;
-            if (!gridFit || !font.TryGetDWriteFittedOutline(gid, ppem, TrueTypeFont.DWriteBiLevelWord, out figures, out dropout))
+            // A simulated bold: RasterizeInternal @18006c988 has the scan embolden a bitmap of one
+            // sample a pixel at 1..50ppem (fs input +0x8c = 1: fs_ContourScan -> sbit_Embolden
+            // @180120940 with scl_InitializeScaling's amounts, (20 ppem - 10) / 1000 + 1 pixels right
+            // and (20 ppem - 10) / 1000 down -- one and none); past that fsg_Embold on the fitted points.
+            bool bitmapBold = font.SynthesizesBold && ppem >= 1 && ppem <= 50;
+            if (!gridFit || !font.TryGetDWriteFittedOutline(gid, ppem, TrueTypeFont.DWriteBiLevelWord, out figures, out dropout,
+                                                         font.SynthesizesBold && !bitmapBold ? (x, y, ends) => NaturalClearType.EmboldenOutline(x, y, ends, ppem) : null))
             {
-                // Unfitted: no program has run, so nothing set SCANCTRL; the scan converter's own
-                // default control is what fills the thin features.
-                dropout = UnfittedDropout;
-                if (!font.TryGetScaledOutline(gid, em, out figures)) return g;
+                // Unfitted: MakeRasterizerTransform @18008fe48 rounds a square transform to its whole
+                // ppem whether or not the glyph is fitted, so the outline is the design one at the
+                // ppem in the scaler's arithmetic (font units x64 through the post-transform). No
+                // glyph program runs, so the scan control is the prep's at that ppem (fsg_DoScanControl;
+                // neither its turned nor its stretched condition holds).
+                dropout = font.DWriteUnfittedDropout(ppem, TrueTypeFont.DWriteBiLevelWord, turned: false);
+                // A simulated oblique is the scaler's slant, in the same transform.
+                figures = TransformedOutline(font, gid, ppem, 1f, 0f, -font.ObliqueShearApplied, 1f, 0f, 0f, outlineBold: !bitmapBold);
+                if (figures.Count == 0) return g;
             }
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
             foreach (PathFigure f in figures)
@@ -94,9 +105,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
             bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figures), ox, oy, w, h, 1, dropout, 1);
             if (bits is null) return g;
-            var bytes = new byte[bits.Length];
-            for (int i = 0; i < bits.Length; i++) if (bits[i]) bytes[i] = 1;
-            CropInto(g, bytes, w, h, ox, oy, b => b != 0);
+            int smear = bitmapBold ? (20 * ppem - 10) / 1000 + 1 : 0;
+            int wb = w + smear;
+            var bytes = new byte[wb * h];
+            for (int r = 0; r < h; r++)
+                for (int c = 0; c < w; c++)
+                    if (bits[r * w + c])
+                        for (int k = 0; k <= smear; k++) bytes[r * wb + c + k] = 1;
+            CropInto(g, bytes, wb, h, ox, oy, b => b != 0);
             return g;
         }
 
@@ -150,6 +166,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return lv;
         }
 
+        /// <summary>The scan mode an unfitted glyph under a turned matrix gets: the prep's, where
+        /// fsg_DoScanControl compares the SCANCTRL threshold with scl_InitializeScaling's param_20
+        /// (the larger entry of the matrix's em-scaled second row, 16.16, rounded) and honours its
+        /// rotated and stretched conditions, but the pre-program itself runs at the interpreter's
+        /// size, the em along the turned unit vector. Courier New at 7pt under 30 degrees: param_20
+        /// is 8, the prep runs at 9 and sets another SCANTYPE there.</summary>
+        internal static int TurnedDropout(TrueTypeFont font, float em, float m21, float m22, int word)
+        {
+            long r = (long)Math.Floor(Math.Max(Math.Abs(m21), Math.Abs(m22)) * em * 65536.0 + 0.5);
+            int ppem = (int)((r + 0x8000) >> 16);
+            int prepPpem = (int)MathF.Floor(em * MathF.Sqrt(m21 * m21 + m22 * m22) + 0.5f);
+            return font.DWriteUnfittedDropout(ppem, word, turned: true, prepPpem);
+        }
+
         // ---- glyphs under a transform the fast imager refuses (FullTextImager's path) ----------
         //
         // GpGraphics::DrawPlacedGlyphs passes the device transform's linear part to
@@ -198,7 +228,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// product rounded on its own.</item>
         /// </list></summary>
         internal static List<PathFigure> TransformedOutline(TrueTypeFont font, int gid, float em,
-                                                            float m11, float m12, float m21, float m22, float dx, float dy)
+                                                            float m11, float m12, float m21, float m22, float dx, float dy,
+                                                            bool outlineBold = true)
         {
             var figures = new List<PathFigure>();
             if (!UnfittedTurnedPoints(font, em, m11, m12, m21, m22, out int p00, out int p01, out int p10, out int p11))
@@ -218,7 +249,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 }
                 ends[k] = at - 1;
             }
-            if (font.SynthesizesBold) TrueTypeFont.GdiEmboldenUnfitted(X26, Y26, ends, font.UnitsPerEmForHinting);
+            if (font.SynthesizesBold && outlineBold) TrueTypeFont.GdiEmboldenUnfitted(X26, Y26, ends, font.UnitsPerEmForHinting);
             static int Mul(int a, int b) { long pr = (long)a * b; return (int)((pr + (pr >> 63) + 0x8000) >> 16); }
             int baseAt = 0;
             foreach ((System.Numerics.Vector2[] pts, bool[] on) in contours)
@@ -286,7 +317,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     }
                     int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
                     int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
-                    bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figures), ox, oy, w, h, 1, UnfittedDropout, 1);
+                    bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figures), ox, oy, w, h, 1,
+                                                                TurnedDropout(font, em, m21, m22, TrueTypeFont.DWriteBiLevelWord), 1);
                     if (bits is not null)
                     {
                         var bytes = new byte[bits.Length];
@@ -317,6 +349,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                                       float m11, float m12, float m21, float m22,
                                                       float[] xs, float[] ys, int dropout)
         {
+            // The scan control is the prep's, as for every unfitted turned glyph (TurnedDropout).
+            int prep = TurnedDropout(font, em, m21, m22, GreyScalerWord);
+            dropout = prep;
             int n = gids.Count;
             var cov = new Dictionary<(int, int), int>();
             for (int i = 0; i < n; i++)

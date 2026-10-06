@@ -239,7 +239,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _isFixedPitch = tables.TryGetValue("post", out int postTable) && postTable + 16 <= _data.Length
                             && U32(postTable + 12) != 0;
             GdiContrastPalette = ComputeGdiContrastPalette(tables);
-            DWriteThinFamily = ComputeDWriteThinFamily(tables);
+            DWriteThinFace = ComputeDWriteThinFace();
+            DWriteThinFamily = DWriteThinFace && ComputeDWriteThinFamily(tables);
 
             // Outlines are OPTIONAL, because a colour BITMAP font has none.
             //
@@ -458,6 +459,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// exactly); GlyphBitmapRasterizationState then thickens such a face's oversampled glyph
         /// bitmaps if its weight is 500 or less (see <see cref="GdiPlusText"/>'s ThinEmbolden).</summary>
         internal bool DWriteThinFamily { get; }
+
+        /// <summary>The face's thin bit alone, whatever its weight (IsThinFontFamily's answer):
+        /// what DWriteGlyphRunAnalysis::GetAlphaBlendParams reads for its contrast boost.</summary>
+        internal bool DWriteThinFace { get; }
+
+        private bool ComputeDWriteThinFace()
+        {
+            if (!FontFiles.ReadNames(_data, _sfntBase, out string? family, out _, out _)) return false;
+            foreach (string f in s_contrastFamilies)
+                if (string.Equals(f, family, StringComparison.Ordinal)) return true;
+            return false;
+        }
 
         private bool ComputeDWriteThinFamily(Dictionary<string, int> tables)
         {
@@ -724,6 +737,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (end <= start) return false;
             int p = _glyfOffset + (int)start;
             xMin = (short)U16(p + 2); xMax = (short)U16(p + 6);
+            return true;
+        }
+
+        /// <summary>The glyph's design ink box in y (glyf header), in font units, y up.</summary>
+        internal bool TryGetDesignYExtent(int glyphId, out int yMin, out int yMax)
+        {
+            yMin = yMax = 0;
+            if (_glyfOffset < 0 || glyphId < 0 || glyphId >= _numGlyphs || _loca.Length == 0) return false;
+            uint start = _loca[glyphId], end = _loca[glyphId + 1];
+            if (end <= start) return false;
+            int p = _glyfOffset + (int)start;
+            yMin = (short)U16(p + 4); yMax = (short)U16(p + 8);
             return true;
         }
 
@@ -2418,8 +2443,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// does not fit under a turned matrix: the prep's SCANCTRL and SCANTYPE at the scaler's
         /// ppem, where fsg_DoScanControl also honours bit 9 (a rotated matrix, fs__NewTransformation's
         /// 0x400) and bit 10 (any matrix but a uniform scale, 0x1000) -- both true of a turn.</summary>
-        internal int DWriteTurnedDropout(int ppem, int flags)
+        internal int DWriteTurnedDropout(int ppem, int flags) => DWriteUnfittedDropout(ppem, flags, turned: true);
+
+        /// <summary>The same for a glyph not fitted under an unturned uniform scale: the prep's
+        /// SCANCTRL and SCANTYPE, with neither condition bit true.</summary>
+        internal int DWriteUnfittedDropout(int ppem, int flags, bool turned, int prepPpem = 0)
         {
+            if (prepPpem <= 0) prepPpem = ppem;
             TrueTypeInterpreter? interpreter = Interpreter();
             if (interpreter is null || ppem < 1) return 0;
             int savedFlags = TrueTypeInterpreter.DWriteFlags;
@@ -2429,10 +2459,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeInterpreter.DWriteFlags = flags;
                 TrueTypeInterpreter.BiLevelPass = false;
                 SubpixelFitting = true;
-                if (!interpreter.PrepareForSize(ppem)) return 0;
+                if (!interpreter.PrepareForSize(prepPpem)) return 0;
                 int ctrl = interpreter.PrepScanControl, type = interpreter.PrepScanType;
                 bool on = ((ctrl & 0x100) != 0 && ((ctrl & 0xFF) == 0xFF || ppem <= (ctrl & 0xFF)))
-                          || (ctrl & 0x200) != 0 || (ctrl & 0x400) != 0;
+                          || (turned && ((ctrl & 0x200) != 0 || (ctrl & 0x400) != 0));
                 int scan = on ? type : 2;
                 return (scan & 2) != 0 ? 0 : scan + 1;
             }

@@ -228,11 +228,16 @@ namespace System.Drawing.WebGpuBackend
                 string path = FontFiles.Find(family, bold, italic);
                 if (path != null)
                 {
-                    bool styledFile = FontFiles.HasStyledFile(family, bold, italic);
                     try
                     {
-                        made = new TrueTypeFont(System.IO.File.ReadAllBytes(path),
-                                                bold && !styledFile, italic && !styledFile);
+                        // The family's own face in a collection (a .ttc read from byte zero is its
+                        // 'ttcf' header, and the load fell back to the default face: Cambria drew as
+                        // Arial), and what is left to simulate per axis from the file's declared
+                        // style (one "styled file" answer drew Tahoma Bold Italic upright bold).
+                        byte[] bytes = System.IO.File.ReadAllBytes(path);
+                        int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
+                        FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+                        made = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
                     }
                     catch (Exception)
                     {
