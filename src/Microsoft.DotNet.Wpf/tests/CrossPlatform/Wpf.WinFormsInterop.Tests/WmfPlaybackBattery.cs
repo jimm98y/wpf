@@ -640,6 +640,34 @@ namespace Wpf.WinFormsInterop.Tests
             return m.Build ();
         }
 
+        /// <summary>Records GDI+ drops or GDI ignores here, and SAVEDC / RESTOREDC beyond what was
+        /// saved: none of them may change what the rest draws.</summary>
+        static byte[] Misc ()
+        {
+            var m = new Wmf ();
+            Background (m);
+            int pen = m.Obj (), br = m.Obj (), br2 = m.Obj ();
+            m.Pen (0, 2, 0x2040c0).Brush (0, 0x60c0f0, 0).Brush (2, 0x804000, 5).Sel (pen).Sel (br);
+            m.P (0x0105, 1);                                       // SETRELABS (not played)
+            m.R (0x0231, r => r.D (1));                            // SETMAPPERFLAGS
+            m.P (0x0149, 0);                                       // SETLAYOUT
+            m.R (0x0626, r => r.W (0x0f).W (4).D (0x12345678));    // ESCAPE (MFCOMMENT)
+            m.R (0x0035);                                          // REALIZEPALETTE (not played)
+            m.P (0x0127, -1);                                      // RESTOREDC with nothing saved: dropped
+            m.Rect (4, 4, 40, 30);
+            m.P (0x001E);                                          // SAVEDC
+            m.Sel (br2).P (0x0416, 80, 110, 34, 50);
+            m.Ellipse (44, 4, 116, 86);
+            m.P (0x0127, -4);                                      // RESTOREDC past the one saved: -1
+            m.Rect (4, 34, 40, 60);
+            m.P (0x001E).Sel (br2).P (0x001E).P (0x0416, 88, 40, 64, 4);
+            m.P (0x0127, 1);                                       // absolute: made -1
+            m.Ellipse (4, 62, 40, 88);
+            m.P (0x0127, -1);
+            m.Rect (20, 70, 60, 86);
+            return m.Build ();
+        }
+
         // ---- EMF records -------------------------------------------------------------------------
 
         static byte[] Emr (int type, Action<Rec> body)
@@ -727,21 +755,26 @@ namespace Wpf.WinFormsInterop.Tests
             ("text-invert", ia => ia.SetColorMatrix (Invert (), ColorMatrixFlag.Default, ColorAdjustType.Text), 0),
             ("bitmap-invert", ia => ia.SetColorMatrix (Invert (), ColorMatrixFlag.Default, ColorAdjustType.Bitmap), 0),
             ("gamma-up", ia => ia.SetGamma (0.6f), 1),
+            ("nearest-up", null, 3),
+            ("transparent", null, 4),
         };
 
         static byte[] Play (byte[] file, Action<ImageAttributes> set, int place)
         {
             int w = 132, h = 100;
-            if (place == 1) { w = 170; h = 116; }
+            if (place == 1 || place == 3) { w = 170; h = 116; }
             s_lastWidth = w;
             using (var b = new Bitmap (w, h, PixelFormat.Format32bppArgb)) {
                 b.SetResolution (96, 96);
                 using (Graphics g = Graphics.FromImage (b)) {
-                    g.Clear (Color.FromArgb (255, 250, 246, 236));
+                    // place 3: nearest-neighbour interpolation (GDI+ then leaves the DIBs' stretching to
+                    // GDI); place 4: onto a transparent bitmap
+                    g.Clear (place == 4 ? Color.Transparent : Color.FromArgb (255, 250, 246, 236));
+                    if (place == 3) g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
                     using (var mf = new Metafile (new MemoryStream (file))) {
                         ImageAttributes ia = null;
                         if (set != null) { ia = new ImageAttributes (); set (ia); }
-                        Rectangle dst = place == 0 ? new Rectangle (5, 4, 120, 90) : place == 1 ? new Rectangle (3, 5, 163, 109) : new Rectangle (6, 7, 83, 61);
+                        Rectangle dst = place == 0 || place == 4 ? new Rectangle (5, 4, 120, 90) : place == 1 || place == 3 ? new Rectangle (3, 5, 163, 109) : new Rectangle (6, 7, 83, 61);
                         GraphicsUnit u = GraphicsUnit.Pixel;
                         RectangleF src = mf.GetBounds (ref u);
                         if (ia == null) g.DrawImage (mf, dst);
@@ -781,6 +814,7 @@ namespace Wpf.WinFormsInterop.Tests
             for (int i = 0; i < 3; i++) { int k = i; S ("regions/" + new [] { "draw", "clip", "select" } [i], () => Regions (k)); }
             for (int i = 0; i < 3; i++) { int k = i; S ("palette/" + new [] { "unselected", "selected", "changed" } [i], () => Palettes (k)); }
             S ("pixels", Pixels);
+            S ("misc", Misc);
             string[] map = { "window", "ext-only", "viewport", "viewport-twice", "offset-scale-window", "isotropic", "mm-text", "offset-scale-viewport" };
             for (int i = 0; i < map.Length; i++) { int k = i; S ("mapping/" + map [i], () => Mapping (k)); }
             // placeable headers: a box away from the origin, other resolutions, a flipped box

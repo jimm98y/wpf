@@ -307,7 +307,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 case 0x04: _dc.Rop2 = P(0); return;
                 case 0x06: _dc.PolyFill = P(0); return;
                 case 0x07: _dc.StretchMode = P(0); return;
+                case 0x08: _charExtra = P(0); return;
                 case 0x09: _dc.TextColor = GdiColor(ColorRef16(b, o)); return;
+                // SETTEXTJUSTIFICATION: played, but in GDI+'s playback the text it should spread
+                // comes out unspread (the WMF battery's 'a b c'); not modelled.
+                case 0x0a: return;
                 case 0x0b: GdiSetWindowOrg(P(1), P(0)); return;
                 case 0x0c: SetWindowExtWmf(P(1), P(0)); return;
                 case 0x0d: GdiSetViewportOrg(P(1), P(0)); return;
@@ -336,7 +340,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         if (8 + len > n + 6) return;
                         string s = Encoding.Latin1.GetString(b, o + 2, Math.Min(len, n - 2));
                         int w = 1 + (len + 1) / 2;
-                        DrawText(s, new PointF(P(w + 1), P(w)), 0, null, null);
+                        DrawText(s, new PointF(P(w + 1), P(w)), 0, null, SpacedAdvances(s));
                         return;
                     }
                 case 0x22:
@@ -631,7 +635,26 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 dx = new int[count];
                 for (int i = 0; i < count; i++) dx[i] = Le.I16(b, p + i * 2);
             }
-            DrawText(s, new PointF(x, y), options, rect, dx);
+            DrawText(s, new PointF(x, y), options, rect, dx ?? SpacedAdvances(s));
+        }
+
+        int _charExtra;
+
+        /// <summary>SetTextCharacterExtra on a string drawn without advances: each character's own
+        /// advance plus the extra; null when none is set.</summary>
+        int[] SpacedAdvances(string s)
+        {
+            if (_charExtra == 0) return null;
+            GdiFont lf = _dc.Font;
+            if (lf == null) return null;
+            GpGdiFont font = GpGdiFont.Get(lf.Face, lf.Height, lf.Escapement, lf.Weight, lf.Italic, lf.Underline, lf.StrikeOut, lf.Quality, lf.CharSet, lf.PitchAndFamily);
+            if (font == null) return null;
+            var dx = new int[s.Length];
+            for (int i = 0; i < s.Length; i++)
+            {
+                dx[i] = font.CharAdvance(s[i]) + _charExtra;
+            }
+            return dx;
         }
 
         // ---- pixels, flood fills, PatBlt -----------------------------------------------------------
