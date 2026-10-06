@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
     The WPF/WinForms interop seam: what happens where a hosted WinForms control meets WPF.
@@ -89,6 +89,9 @@
     <!-- What native GDI+ hands DrawPlacedGlyphs / DrawLines, measures and adds to a path for a
          battery of strings and formats (FullTextImagerTests). -->
     <None Include="Fixtures/Text/*.txt" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Output profiles crafted for icm32's other output paths (XYZ PCS, v4 lut16 / lutBtoA /
+         lutAtoB, refused ones); GpIcmTests holds GpIcm to mscms' KYMC for them. -->
+    <None Include="Fixtures/Icm/*.icm" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The comparison needs a Windows to compare against; elsewhere it is not built at all. -->

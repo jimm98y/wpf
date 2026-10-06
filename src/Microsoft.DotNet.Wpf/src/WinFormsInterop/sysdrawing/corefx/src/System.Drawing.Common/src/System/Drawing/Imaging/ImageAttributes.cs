@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
@@ -224,7 +224,7 @@ namespace System.Drawing.Imaging
         /// (GpRecolorObject @1800fd028) frees its transform and builds sRGB -> the profile (a bare
         /// name is looked up in the colour directory, as mscms does); the 0x100 flag only on
         /// success. A profile that does not open or is not one is status 3, which System.Drawing
-        /// reports as an ExternalException; no ICM at all (no standard sRGB profile) is status 2.</summary>
+        /// reports as an ExternalException; a profile the CMM refuses is status 7 (Win32Error); no ICM at all (no standard sRGB profile) is status 2.</summary>
         public void SetOutputChannelColorProfile(String colorProfileFilename, ColorAdjustType type)
         {
             // Called in order to emulate exception behavior from netfx related to invalid file paths.
@@ -232,6 +232,9 @@ namespace System.Drawing.Imaging
             CheckType(type);
             int status = _recolor.Set(type).SetupCmykSeparation(colorProfileFilename);
             if (status == 2) Invalid();
+            // Win32Error: a profile icm32 refuses (GpICMHolder::Init's E_FAIL).
+            if (status == 7)
+                throw new ExternalException("A generic error occurred in GDI+.", unchecked((int)0x80004005));
             if (status != 0)
                 throw new ExternalException("An object could not be created, possibly due to a lack of memory, but most likely due to invalid input.", unchecked((int)0x8000FFFF));
         }
