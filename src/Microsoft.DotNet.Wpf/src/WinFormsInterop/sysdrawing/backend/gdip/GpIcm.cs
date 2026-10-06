@@ -795,8 +795,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return e;
         }
 
-        // ---- a v4 lutBtoA ('mBA ', ExtractAll_MFT_LutsFromLutBToA @1800116c8) ---------------------------
+        // ---- a v4 lutBtoA or lutAtoB (ExtractAll_MFT_LutsFromLutBToA @1800116c8,
+        //      ExtractAll_MFT_LutsFromLutAToB @180011358) -------------------------------------------------
 
+        /// <summary>A v4 lut as CalcNDim_Data8To8_Lut16 takes it: an input ELUT of 256 x 16 bits per
+        /// input, the optional matrix and M curves between it and the CLUT, the CLUT, and an ALUT of
+        /// 1024 x 16 bits per output.</summary>
         sealed class BtoA
         {
             public int In, Out, ClutBits;
@@ -805,34 +809,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public byte[] Grid;              // per input dimension
         }
 
-        /// <summary>The tag as icm32 extracts it: B curves as ELUTs of 256 x 16 bits, the matrix with
-        /// its offsets (s15Fixed16 / 65536, @1800123b8) and the M curves (256 x 16) only together and
-        /// only for three inputs, the CLUT (ExtractAtoBStyleClut @180011dc8: a grid per dimension, 8 or
-        /// 16 bits as stored), the A curves as ALUTs of 1024 x 16 bits or, without them, linear ones
-        /// (ExtractACurvesFromLutBToA @1800108d8). Without a CLUT the inputs must equal the
-        /// outputs.</summary>
-        static BtoA ReadBtoA (byte[] d, int o, int size)
+        /// <summary>ExtractAtoBStyleClut @180011dc8: a grid per input dimension (the ones past the
+        /// inputs zero), 1 or 2 bytes a value, kept as stored.</summary>
+        static void ReadClut (byte[] d, int o, int size, int oc, BtoA l)
         {
-            if (size < 32) throw new Refused ();
-            var l = new BtoA { In = d [o + 8], Out = d [o + 9] };
-            if (l.In == 0 || l.Out == 0 || l.In > 8 || l.Out > 8) throw new Refused ();
-            int ob = (int) U32 (d, o + 12), om = (int) U32 (d, o + 16), omc = (int) U32 (d, o + 20), oc = (int) U32 (d, o + 24), oa = (int) U32 (d, o + 28);
-            if (ob == 0) throw new Refused ();
-            l.Elut = NestedCurves (d, o, size, l.In, ob, 8, 16);
-            if (om != 0) {
-                if (omc == 0 || l.In != 3) throw new Refused ();
-                if (om >= size || size - om < 0x30) throw new Refused ();
-                l.Matrix = new double [12];
-                for (int i = 0; i < 12; i++) l.Matrix [i] = (double) S32 (d, o + om + 4 * i) * 1.52587890625E-5;
-            }
-            if (omc != 0) {
-                if (om == 0) throw new Refused ();
-                l.MCurves = NestedCurves (d, o, size, l.In, omc, 8, 16);
-            }
-            if (oc == 0) {
-                if (l.In != l.Out) throw new Refused ();
-                throw new NotSupportedException ();      // a CLUT-less lutBtoA cannot make CMYK of Lab
-            }
             if (oc >= size || size - oc < 0x14) throw new Refused ();
             l.Grid = new byte [l.In];
             for (int i = 0; i < 16; i++) {
@@ -854,10 +834,57 @@ namespace System.Drawing.WebGpuBackend.Gdip
             l.Clut = new ushort [total * (uint) l.Out];
             int co = o + oc + 0x14;
             for (int i = 0; i < l.Clut.Length; i++) l.Clut [i] = prec == 2 ? U16 (d, co + 2 * i) : d [co + i];
-            if (oa == 0) {
-                l.Alut = new ushort [l.Out * 0x400 + 1];
-                for (int c = 0; c < l.Out; c++) LinearAlut16 (l.Alut, c * 0x400);
-            } else l.Alut = NestedCurves (d, o, size, l.Out, oa, 10, 16);
+        }
+
+        /// <summary>A lutBtoA ('mBA ') as icm32 extracts it: its B curves the input ELUT, the matrix
+        /// with its offsets (s15Fixed16 / 65536, @1800123b8) and the M curves (256 x 16) only together
+        /// and only for three inputs, the CLUT, and its A curves the ALUT
+        /// (ExtractACurvesFromLutBToA @1800108d8). A CLUT needs A curves (@1800119b8); without a CLUT
+        /// the inputs must equal the outputs, which four channels of CMYK out of three never do.</summary>
+        static BtoA ReadBtoA (byte[] d, int o, int size)
+        {
+            if (size < 32) throw new Refused ();
+            var l = new BtoA { In = d [o + 8], Out = d [o + 9] };
+            if (l.In == 0 || l.Out == 0 || l.In > 8 || l.Out > 8) throw new Refused ();
+            int ob = (int) U32 (d, o + 12), om = (int) U32 (d, o + 16), omc = (int) U32 (d, o + 20), oc = (int) U32 (d, o + 24), oa = (int) U32 (d, o + 28);
+            if (ob == 0) throw new Refused ();
+            l.Elut = NestedCurves (d, o, size, l.In, ob, 8, 16);
+            if (om != 0) {
+                if (omc == 0 || l.In != 3) throw new Refused ();
+                if (om >= size || size - om < 0x30) throw new Refused ();
+                l.Matrix = new double [12];
+                for (int i = 0; i < 12; i++) l.Matrix [i] = (double) S32 (d, o + om + 4 * i) * 1.52587890625E-5;
+            }
+            if (omc != 0) {
+                if (om == 0) throw new Refused ();
+                l.MCurves = NestedCurves (d, o, size, l.In, omc, 8, 16);
+            }
+            if (oc == 0) throw new Refused ();
+            if (oa == 0) throw new Refused ();
+            ReadClut (d, o, size, oc, l);
+            l.Alut = NestedCurves (d, o, size, l.Out, oa, 10, 16);
+            return l;
+        }
+
+        /// <summary>A lutAtoB ('mAB ') in the B2A0 tag, which ExtractAll_MFT_Luts reads by its type
+        /// all the same: a CLUT (with the A curves it needs) and the B curves are required;
+        /// its A curves become the input ELUT (ExtractACurvesFromLutAToB @1800107b8, 256 x 16), its B
+        /// curves the ALUT (1024 x 16). Its matrix, which goes after the CLUT, needs three outputs and
+        /// M curves need the matrix, so a CMYK one has neither.</summary>
+        static BtoA ReadAtoB (byte[] d, int o, int size)
+        {
+            if (size < 32) throw new Refused ();
+            var l = new BtoA { In = d [o + 8], Out = d [o + 9] };
+            if (l.In == 0 || l.Out == 0 || l.In > 8 || l.Out > 8) throw new Refused ();
+            int ob = (int) U32 (d, o + 12), om = (int) U32 (d, o + 16), omc = (int) U32 (d, o + 20), oc = (int) U32 (d, o + 24), oa = (int) U32 (d, o + 28);
+            if (oc == 0) throw new Refused ();
+            if (oa == 0) throw new Refused ();
+            ReadClut (d, o, size, oc, l);
+            if (ob == 0) throw new Refused ();
+            l.Alut = NestedCurves (d, o, size, l.Out, ob, 10, 16);
+            if (om != 0 && (omc == 0 || l.Out != 3)) throw new Refused ();
+            if (om != 0 || omc != 0) throw new Refused ();
+            l.Elut = NestedCurves (d, o, size, l.In, oa, 8, 16);
             return l;
         }
 
@@ -1061,8 +1088,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 l = ReadLut (pd, 0x42324130);
                 if (l.In != 3) throw new Refused ();
                 if (l.Out != 4) throw new NotSupportedException ();
-            } else if (type == 0x6d424120 && v4) {
-                m = ReadBtoA (pd.D, bo, bn);
+            } else if ((type == 0x6d424120 || type == 0x6d414220) && v4) {
+                m = type == 0x6d424120 ? ReadBtoA (pd.D, bo, bn) : ReadAtoB (pd.D, bo, bn);
                 if (m.In != 3) throw new Refused ();
                 if (m.Out != 4) throw new NotSupportedException ();
             } else throw new Refused ();
