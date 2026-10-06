@@ -102,7 +102,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 _wmfStarted = true;
                 // CreateTrueTypeFont @1800b4638: the DC's font (SYSTEM_FONT) with OUT_TT_ONLY_PRECIS.
-                _dc.Font = new GdiFont { Height = 16, Width = 7, Weight = 700, Face = "System", PitchAndFamily = 0x22 };
+                // SYSTEM_FONT's LOGFONT: 16 x 7, bold, PROOF_QUALITY, VARIABLE_PITCH | FF_SWISS, the
+                // charset of the system's ANSI code page.
+                _dc.Font = new GdiFont { Height = 16, Width = 7, Weight = 700, Face = "System", PitchAndFamily = 0x22, Quality = 2, CharSet = AnsiCharSet() };
             }
             switch (fn)
             {
@@ -217,6 +219,27 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 case 0x0F43:
                     if (n >= 4) StretchDibWmf(b, o, n);
                     return;
+            }
+        }
+
+        static int AnsiCharSet()
+        {
+            switch (Globalization.CultureInfo.CurrentCulture.TextInfo.ANSICodePage)
+            {
+                case 1250: return 238;
+                case 1251: return 204;
+                case 1253: return 161;
+                case 1254: return 162;
+                case 1255: return 177;
+                case 1256: return 178;
+                case 1257: return 186;
+                case 1258: return 163;
+                case 874: return 222;
+                case 932: return 128;
+                case 936: return 134;
+                case 949: return 129;
+                case 950: return 136;
+                default: return 0;
             }
         }
 
