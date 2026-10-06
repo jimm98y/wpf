@@ -257,6 +257,7 @@ namespace System.Drawing
 			PointF [] pts; byte [] types;
 			try { pts = path.PathPoints; types = path.PathTypes; } catch (Exception) { return true; }
 			if (pts.Length < 2) return true;
+			if (PrintRasterStroke (pen, pts, types, path.FillMode)) return true;
 			int cap = pen.StartCap == LineCap.Square || pen.StartCap == LineCap.SquareAnchor ? 1
 				: pen.StartCap == LineCap.Round || pen.StartCap == LineCap.RoundAnchor ? 2 : 0;
 			int join = pen.LineJoin == LineJoin.Bevel ? 1 : pen.LineJoin == LineJoin.Round ? 2 : 0;
@@ -315,10 +316,10 @@ namespace System.Drawing
 			if (brush == null) throw new ArgumentNullException ("brush");
 			if (w <= 0 || h <= 0) return true;
 			if (brush is SolidBrush) { GpuRecorder.FillRect (x, y, w, h, ArgbOf (brush)); return true; }
-			if (brush is HatchBrush || brush is PathGradientBrush || brush is LinearGradientBrush)
+			if (IsRasterBrush (brush))
 				using (var rp = new GraphicsPath ()) {
 					rp.AddRectangle (new RectangleF (x, y, w, h));
-					if (PrintRasterFill (brush, rp, true)) return true;
+					if (PrintRasterFill (brush, rp, UprightDevice ())) return true;
 				}
 			if (TryGradient (brush, out GradientDesc gd)) { GpuRecorder.FillShapeGradientSmooth (GradientShape.Rect, x, y, w, h, gd); return true; }
 			return PrintFill (brush, gp => gp.AddRectangle (new RectangleF (x, y, w, h)));
@@ -406,7 +407,7 @@ namespace System.Drawing
 
 		bool PrintRasterFill (Brush brush, GraphicsPath path, bool rectFill)
 		{
-			if (s_noPrintRaster || !(brush is HatchBrush || brush is PathGradientBrush || brush is LinearGradientBrush)) return false;
+			if (s_noPrintRaster || !IsRasterBrush (brush)) return false;
 			PointF [] pts; byte [] types;
 			try { pts = path.PathPoints; types = path.PathTypes; } catch (Exception) { return false; }
 			if (pts.Length == 0) return true;
@@ -418,20 +419,87 @@ namespace System.Drawing
 				x0 = Math.Min (x0, d.X); y0 = Math.Min (y0, d.Y); x1 = Math.Max (x1, d.X); y1 = Math.Max (y1, d.Y);
 			}
 			if (!(x1 >= x0) || !(y1 >= y0)) return true;
-			bool nonZero = path.FillMode == FillMode.Winding;
-			if (brush is LinearGradientBrush lg) {
+			DeviceBounds (x0, y0, x1, y1, rectFill, out int bx, out int by, out int bw, out int bh);
+			return PrintBrushRaster (brush, pts, types, path.FillMode, dev, bx, by, bw, bh);
+		}
+
+		/// <summary>DriverPrint::StrokePath @1800d21b0 for a pen whose brush GDI cannot draw: the
+		/// stroke widened in device space (GpPath::GetWidenedPath), the brush's and the pen's
+		/// transforms taken on to the device, the world transform made the identity, and the
+		/// outline FILLED with the brush -- PrivateFillRect, over the outline's bounds grown once
+		/// more by the pen's reach (GpPath::GetBounds with the pen, which is how a 0.12 inch hatched
+		/// line comes to band from the page's corner).</summary>
+		bool PrintRasterStroke (Pen pen, PointF [] pts, byte [] types, FillMode fillMode)
+		{
+			Brush brush = pen.BrushRef;
+			if (s_noPrintRaster || brush == null || !IsRasterBrush (brush)) return false;
+			float [] dev = PrintDeviceMatrix ();
+			if (brush is LinearGradientBrush lgb && !LinearGradientIsBitmap (lgb, dev)) return false;
+			var w2d = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
+			var dp = WebGpuBackend.Gdip.DpPen.From (pen);
+			WebGpuBackend.Gdip.GpPath widened;
+			try {
+				var gp = new WebGpuBackend.Gdip.GpPath (pts, types, fillMode);
+				widened = WebGpuBackend.Gdip.GpPen.GetWidenedPath (gp, dp, w2d, 0.25f, print_dpi_x);
+			} catch (Exception) { return false; }
+			if (widened == null || widened.Count == 0) return true;
+			PointF [] wp = widened.PointArray ();
+			byte [] wt = widened.TypeArray ();
+			// The pen's transform on to the device for the bounds, the world now the identity.
+			WebGpuBackend.Gdip.DpPen dpDev = dp.Clone ();
+			dpDev.Xform = WebGpuBackend.Gdip.GpMatrix.Multiply (dp.Xform, w2d);
+			RectangleF b = WebGpuBackend.Gdip.GpStroke.Bounds (widened, WebGpuBackend.Gdip.GpMatrix.CreateIdentity (), dpDev, print_dpi_x);
+			if (!WebGpuBackend.Gdip.GpStroke.BoundsToRect (b, out Rectangle r)) return true;
+			var identity = new [] { 1f, 0f, 0f, 1f, 0f, 0f };
+			Brush onDevice = brush;
+			bool owned = false;
+			using (var m = new Matrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]))
+				switch (brush) {
+				case TextureBrush tb: { var c = (TextureBrush) tb.Clone (); c.MultiplyTransform (m, MatrixOrder.Append); onDevice = c; owned = true; break; }
+				case PathGradientBrush pg: { var c = (PathGradientBrush) pg.Clone (); c.MultiplyTransform (m, MatrixOrder.Append); onDevice = c; owned = true; break; }
+				case LinearGradientBrush lg: { var c = (LinearGradientBrush) lg.Clone (); c.MultiplyTransform (m, MatrixOrder.Append); onDevice = c; owned = true; break; }
+				}
+			try {
+				return PrintBrushRaster (onDevice, wp, wt, FillMode.Winding, identity, r.X, r.Y, r.Width, r.Height);
+			} finally {
+				if (owned) onDevice.Dispose ();
+			}
+		}
+
+		// A rectangle stays a rectangle on the device (GDI+ fills it as rectangles, with their
+		// bounds); turned or sheared it is filled as the path it has become.
+		bool UprightDevice ()
+		{
+			float [] m = PrintDeviceMatrix ();
+			return m [1] == 0f && m [2] == 0f;
+		}
+
+		static bool IsRasterBrush (Brush brush)
+			=> brush is HatchBrush || brush is PathGradientBrush || brush is LinearGradientBrush || brush is TextureBrush;
+
+		// The EpScanDIBs GDI+'s printer driver has made in this process: EpScanDIB::CreateBufferDIB
+		// counts every one (DAT_1802e82c8, never reset), and the count shifts the dither's rows.
+		static int s_bufferDibs;
+
+		/// <summary>DriverPrint::PrivateFillRect @1800cf510 past the GDI-brush attempt: a shape
+		/// (<paramref name="pts"/> under <paramref name="dev"/>, which takes them to device pixels)
+		/// filled with a brush GDI cannot draw, its device bounds (bx, by, bw, bh) as the driver is
+		/// handed them.</summary>
+		bool PrintBrushRaster (Brush brush, PointF [] pts, byte [] types, FillMode fillMode, float [] dev, int bx, int by, int bw, int bh)
+		{
+			bool nonZero = fillMode == FillMode.Winding;
+			if (bw <= 0 || bh <= 0) return true;
+			if (brush is LinearGradientBrush lg && LinearGradientIsOpaque (lg)) {
 				// A rectangle-gradient bitmap: at most 256 on a side, over the fill's device bounds.
-				DeviceBounds (x0, y0, x1, y1, rectFill, out int lx, out int ly, out int lw, out int lh);
-				int LW = Math.Max (1, Math.Min (lw, 256)), LH = Math.Max (1, Math.Min (lh, 256));
-				float [] toLinear = Then (dev, new [] { LW / (float) lw, 0f, 0f, LH / (float) lh, -lx * LW / (float) lw, -ly * LH / (float) lh });
+				int LW = Math.Max (1, Math.Min (bw, 256)), LH = Math.Max (1, Math.Min (bh, 256));
+				float [] toLinear = Then (dev, new [] { LW / (float) bw, 0f, 0f, LH / (float) bh, -bx * LW / (float) bw, -by * LH / (float) bh });
 				byte [] lpx = FillWithBrush (brush, LW, LH, toLinear, Point.Empty);
 				if (lpx == null) return false;
-				if (LinearGradientIsOpaque (lg)) Opaque (lpx);
-				EmitDeviceImage (lpx, LW, LH, new RectangleF (lx, ly, lw, lh), path, nonZero);
+				Opaque (lpx);
+				EmitDeviceImage (lpx, LW, LH, new RectangleF (bx, by, bw, bh), pts, types, dev, nonZero);
 				return true;
 			}
-			if (brush is PathGradientBrush pg) {
-				DeviceBounds (x0, y0, x1, y1, rectFill, out int bx, out int by, out int bw, out int bh);
+			if (brush is PathGradientBrush pg && PathGradientIsOpaque (pg)) {
 				bool rect = PathGradientIsRectangular (pg);
 				int W = GradientBitmapSide (bw, rect), H = GradientBitmapSide (bh, rect);
 				// World -> bitmap: world -> device, then the device bounds onto the bitmap.
@@ -443,28 +511,313 @@ namespace System.Drawing
 					rgba = FillWithBrush (inflated, W, H, toBitmap, Point.Empty);
 				}
 				if (rgba == null) return false;
-				if (PathGradientIsOpaque (pg)) Opaque (rgba);
-				EmitDeviceImage (rgba, W, H, new RectangleF (bx, by, bw, bh), path, nonZero);
+				Opaque (rgba);
+				EmitDeviceImage (rgba, W, H, new RectangleF (bx, by, bw, bh), pts, types, dev, nonZero);
 				return true;
 			}
-			// Banded: the visible bounds on a grid of s.
-			int s = Math.Max (1, (int) (print_dpi_x / 100f)), t = Math.Max (1, (int) (print_dpi_y / 100f));
-			DeviceBounds (x0, y0, x1, y1, rectFill, out int vx, out int vy, out int vw, out int vh);
-			int gx = FloorDiv (vx, s), gy = FloorDiv (vy, t);
-			int gw = 1 + (vx - gx * s + vw) / s, gh = 1 + (vy - gy * t + vh) / t;
-			if (gw <= 0 || gh <= 0 || (long) gw * gh > 64L << 20) return false;
-			int rows = BandRows (gw, gh);
-			// The pattern from the device origin: DIB pixel (i, j) is cell (gx + i, gy + j). The last
-			// band's rows past the fill are left as the DIB was made: black.
-			byte [] fill = FillWithBrush (brush, gw, gh, null, new Point (-gx, -gy));
-			if (fill == null) return false;
-			if (brush is HatchBrush hb && hb.ForegroundColor.A == 255 && hb.BackgroundColor.A == 255) Opaque (fill);
-			int banded = (gh + rows - 1) / rows * rows;
-			var px = new byte [gw * banded * 4];
-			Buffer.BlockCopy (fill, 0, px, 0, fill.Length);
-			for (int i = fill.Length + 3; i < px.Length; i += 4) px [i] = 255;
-			EmitBands (px, gw, banded, rows, gx, gy, s, t, path, nonZero);
+
+			// Banded (the rest of PrivateFillRect): the bounds as the clip leaves them, on a grid of
+			// s x t device pixels a DIB pixel.
+			if (!VisibleDeviceRect (ref bx, ref by, ref bw, ref bh)) return true;
+			int s, t, kind;
+			bool hatch = false;
+			Brush cellBrush = brush;
+			PathGradientBrush cellClone = null;
+			switch (brush) {
+			case HatchBrush hb:
+				// A pattern bit a DIB pixel, the DIB at 100 dpi.
+				s = Math.Max (1, (int) (print_dpi_x / 100f)); t = Math.Max (1, (int) (print_dpi_y / 100f));
+				kind = hb.ForegroundColor.A == 255 && hb.BackgroundColor.A == 255 ? 0 : WebGpuBackend.PrintRaster.KindMasked;
+				hatch = true;
+				break;
+			case TextureBrush tb:
+				// A texel a DIB pixel: the device length of the brush's unit vectors, rounded.
+				float [] m = tb.TransformElements;
+				float [] bd = Then (m, dev);
+				s = Math.Max (1, (int) (Hypot (bd [0], bd [1]) + 0.5f));
+				t = Math.Max (1, (int) (Hypot (bd [2], bd [3]) + 0.5f));
+				int hint = TransparencyHint (tb);
+				kind = hint == 3 ? 0 : hint == 2 ? WebGpuBackend.PrintRaster.KindRuns : WebGpuBackend.PrintRaster.KindMasked;
+				break;
+			default:
+				// A translucent gradient: 256 DIB pixels or so across its bounds (s = ceil(w / 256)).
+				s = Math.Max (1, (int) Math.Ceiling (bw * 0.00390625f));
+				t = Math.Max (1, (int) Math.Ceiling (bh * 0.00390625f));
+				kind = WebGpuBackend.PrintRaster.KindMasked;
+				if (brush is PathGradientBrush pgb) {
+					// The colour from a clone carried 5% past the rim; the mask from the brush itself.
+					cellClone = (PathGradientBrush) pgb.Clone ();
+					cellClone.Inflate = 1.05f;
+					cellBrush = cellClone;
+				}
+				break;
+			}
+			try {
+				int gx = bx / s, gy = by / t;
+				int gw = 1 + (bx - gx * s + bw) / s, gh = 1 + (by - gy * t + bh) / t;
+				if (gw <= 0 || gh <= 0 || (long) gw * gh > 64L << 20) return false;
+				int rows = BandRows (gw, gh);
+				// DIB pixel (i, j) is cell (gx + i, gy + j): a hatch from the device origin, anything
+				// else through world -> device -> cells.
+				float [] toCells = Then (dev, new [] { 1f / s, 0f, 0f, 1f / t, -gx, -gy });
+				byte [] fill = hatch ? FillWithBrush (cellBrush, gw, gh, null, new Point (-gx, -gy))
+					: FillWithBrush (cellBrush, gw, gh, toCells, Point.Empty);
+				if (fill == null) return false;
+				int counter = ++s_bufferDibs;
+				int banded = (gh + rows - 1) / rows * rows;
+				if (kind == 0) {
+					// The last band's rows past the fill are left as the DIB was made: black.
+					Opaque (fill);
+					var px = new byte [gw * banded * 4];
+					Buffer.BlockCopy (fill, 0, px, 0, fill.Length);
+					for (int i = fill.Length + 3; i < px.Length; i += 4) px [i] = 255;
+					EmitBands (px, gw, banded, rows, gx, gy, s, t, pts, types, dev, nonZero);
+				} else if (kind == WebGpuBackend.PrintRaster.KindRuns) {
+					EmitRuns (fill, gw, gh, rows, gx, gy, s, t, pts, types, dev, nonZero);
+				} else {
+					EmitMasked (brush, fill, gw, gh, rows, gx, gy, s, t, counter, pts, types, fillMode, dev);
+				}
+				return true;
+			} finally {
+				cellClone?.Dispose ();
+			}
+		}
+
+		// GpRegion::GetRectVisibility against the page: what the fill can reach of the printable
+		// area, in device pixels.
+		bool VisibleDeviceRect (ref int x, ref int y, ref int w, ref int h)
+		{
+			int px0 = (int) Math.Floor (print_visible.X * print_dpi_x / 100f + 0.5f), py0 = (int) Math.Floor (print_visible.Y * print_dpi_y / 100f + 0.5f);
+			int px1 = (int) Math.Floor (print_visible.Right * print_dpi_x / 100f + 0.5f), py1 = (int) Math.Floor (print_visible.Bottom * print_dpi_y / 100f + 0.5f);
+			int x0 = Math.Max (x, px0), y0 = Math.Max (y, py0), x1 = Math.Min (x + w, px1), y1 = Math.Min (y + h, py1);
+			if (x1 <= x0 || y1 <= y0) return false;
+			x = x0; y = y0; w = x1 - x0; h = y1 - y0;
 			return true;
+		}
+
+		// GpBitmap::GetTransparencyHint of a texture's bitmap: 3 every pixel opaque, 2 every pixel
+		// opaque or clear, 1 otherwise.
+		static int TransparencyHint (TextureBrush tb)
+		{
+			byte [] px;
+			try { px = tb.TileRgba (out _, out _); } catch (Exception) { return 1; }
+			if (px == null) return 1;
+			bool simple = true;
+			for (int i = 3; i < px.Length; i += 4) {
+				if (px [i] == 255) continue;
+				if (px [i] != 0) return 1;
+				simple = false;
+			}
+			return simple ? 3 : 2;
+		}
+
+		// The 16 x 16 ordered dither EpScanDIB::NextBufferFuncAlpha @1800c1b10 thresholds alpha
+		// with (HT_16x16).
+		static readonly byte [] s_ht16 = {
+			0, 128, 32, 160, 8, 136, 40, 168, 2, 130, 34, 162, 10, 138, 42, 170,
+			192, 64, 224, 96, 200, 72, 232, 104, 194, 66, 226, 98, 202, 74, 234, 106,
+			48, 176, 16, 144, 56, 184, 24, 152, 50, 178, 18, 146, 58, 186, 26, 154,
+			240, 112, 208, 80, 248, 120, 216, 88, 242, 114, 210, 82, 250, 122, 218, 90,
+			12, 140, 44, 172, 4, 132, 36, 164, 14, 142, 46, 174, 6, 134, 38, 166,
+			204, 76, 236, 108, 196, 68, 228, 100, 206, 78, 238, 110, 198, 70, 230, 102,
+			60, 188, 28, 156, 52, 180, 20, 148, 62, 190, 30, 158, 54, 182, 22, 150,
+			252, 124, 220, 92, 244, 116, 212, 84, 254, 126, 222, 94, 246, 118, 214, 86,
+			3, 131, 35, 163, 11, 139, 43, 171, 1, 129, 33, 161, 9, 137, 41, 169,
+			195, 67, 227, 99, 203, 75, 235, 107, 193, 65, 225, 97, 201, 73, 233, 105,
+			51, 179, 19, 147, 59, 187, 27, 155, 49, 177, 17, 145, 57, 185, 25, 153,
+			243, 115, 211, 83, 251, 123, 219, 91, 241, 113, 209, 81, 249, 121, 217, 89,
+			15, 143, 47, 175, 7, 135, 39, 167, 13, 141, 45, 173, 5, 133, 37, 165,
+			207, 79, 239, 111, 199, 71, 231, 103, 205, 77, 237, 109, 197, 69, 229, 101,
+			63, 191, 31, 159, 55, 183, 23, 151, 61, 189, 29, 157, 53, 181, 21, 149,
+			254, 127, 223, 95, 247, 119, 215, 87, 253, 125, 221, 93, 245, 117, 213, 85,
+		};
+
+		/// <summary>The translucent branch (mode 0x43): per band, the colour DIB (FillRects with the
+		/// brush, unpremultiplied, rows past the fill black) and a 1bpp mask the shape is filled into
+		/// at the device's resolution -- a pixel set where HT_16x16[(y + n) % 16][x % 16] is under the
+		/// alpha there, n the DIB count -- put down XOR / AND / XOR (DriverNonPS::OutputBufferDIB)
+		/// over the band's covered part (EpScanDIB::GetActualBounds) unless the mask is empty.</summary>
+		void EmitMasked (Brush brush, byte [] cells, int gw, int gh, int rows, int gx, int gy, int s, int t, int counter,
+			PointF [] pts, byte [] types, FillMode fillMode, float [] dev)
+		{
+			int bandW = gw * s, bandH = rows * t, stride = WebGpuBackend.PrintRaster.MaskStride (bandW);
+			int st = BeginDeviceDraw (null, null, false, null);
+			try {
+				for (int top = 0; top < gh; top += rows) {
+					int bandX = gx * s, bandY = (gy + top) * t;
+					byte [] alpha = BandAlpha (brush, pts, types, fillMode, dev, bandX, bandY, bandW, bandH, s, t,
+						out int minX, out int minY, out int maxX, out int maxY);
+					if (alpha == null || maxX <= 0) continue;
+					var mask = new byte [stride * bandH];
+					bool any = false;
+					for (int y = 0; y < bandH; y++) {
+						int dy = bandY + y, ht = ((dy + counter) & 15) * 16, row = y * stride;
+						for (int x = 0; x < bandW; x++) {
+							byte a = alpha [y * bandW + x];
+							if (a != 0 && s_ht16 [ht + ((bandX + x) & 15)] < a) { mask [row + (x >> 3)] |= (byte) (0x80 >> (x & 7)); any = true; }
+						}
+					}
+					if (!any) continue;
+					// EpScanDIB::GetActualBounds: the covered box, out to whole DIB pixels.
+					int rx = minX / s * s, ry = minY / t * t;
+					int w = (maxX - minX) - rx + minX, h = (maxY - minY + 1) - ry + minY;
+					if (w % s > 0) w = w - w % s + s;
+					if (h % t > 0) h = h - h % t + t;
+					int cy = ry / t, ch = h / t;
+					var raster = new WebGpuBackend.PrintRaster {
+						Kind = WebGpuBackend.PrintRaster.KindMasked, Width = gw, Height = ch, SrcX = rx / s, SrcW = w / s,
+						MaskWidth = bandW, MaskHeight = h, MaskSrcX = rx, S = s, T = t,
+						DevX = bandX + rx, DevY = bandY + ry, DevW = w, DevH = h,
+					};
+					raster.Color = new byte [gw * ch * 4];
+					for (int j = 0; j < ch; j++) {
+						int src = top + cy + j;
+						if (src >= gh) break;
+						for (int i = 0; i < gw; i++) {
+							int o = (src * gw + i) * 4, d = (j * gw + i) * 4;
+							raster.Color [d] = cells [o + 2]; raster.Color [d + 1] = cells [o + 1]; raster.Color [d + 2] = cells [o]; raster.Color [d + 3] = 255;
+						}
+					}
+					raster.Mask = new byte [stride * h];
+					Buffer.BlockCopy (mask, ry * stride, raster.Mask, 0, raster.Mask.Length);
+					// The preview: each cell's colour at its share of set mask pixels.
+					int pw = raster.SrcW;
+					var preview = new byte [pw * ch * 4];
+					for (int j = 0; j < ch; j++)
+						for (int i = 0; i < pw; i++) {
+							int n = 0;
+							for (int yy = j * t; yy < (j + 1) * t; yy++)
+								for (int xx = (raster.SrcX + i) * s - rx; xx < (raster.SrcX + i + 1) * s - rx; xx++)
+									if (raster.MaskBit (xx + rx, yy)) n++;
+							int o = (j * gw + raster.SrcX + i) * 4, d = (j * pw + i) * 4;
+							preview [d] = raster.Color [o + 2]; preview [d + 1] = raster.Color [o + 1]; preview [d + 2] = raster.Color [o];
+							preview [d + 3] = (byte) (n * 255 / (s * t));
+						}
+					WebGpuBackend.PrintRaster.Attach (preview, raster);
+					float kx = 100f / print_dpi_x, ky = 100f / print_dpi_y;
+					GpuRecorder.DrawImage (preview, pw, ch, raster.DevX * kx, raster.DevY * ky, raster.DevW * kx, raster.DevH * ky);
+				}
+			} finally {
+				EndDeviceDraw (st);
+			}
+		}
+
+		/// <summary>The texture branch for a bitmap only opaque or clear (mode 5): per band, the DIB's
+		/// rows cut into runs of pixels with alpha 5 or more, inside the shape's clip.</summary>
+		void EmitRuns (byte [] cells, int gw, int gh, int rows, int gx, int gy, int s, int t,
+			PointF [] pts, byte [] types, float [] dev, bool nonZero)
+		{
+			int st = BeginDeviceDraw (pts, types, nonZero, dev);
+			float kx = 100f / print_dpi_x, ky = 100f / print_dpi_y;
+			try {
+				for (int top = 0; top < gh; top += rows) {
+					var preview = new byte [gw * rows * 4];
+					var raster = new WebGpuBackend.PrintRaster {
+						Kind = WebGpuBackend.PrintRaster.KindRuns, Width = gw, Height = rows, S = s, T = t,
+						DevX = gx * s, DevY = (gy + top) * t, DevW = gw * s, DevH = rows * t, Color = new byte [gw * rows * 4],
+					};
+					for (int j = 0; j < rows && top + j < gh; j++)
+						for (int i = 0; i < gw; i++) {
+							int o = ((top + j) * gw + i) * 4, d = (j * gw + i) * 4;
+							raster.Color [d] = cells [o + 2]; raster.Color [d + 1] = cells [o + 1]; raster.Color [d + 2] = cells [o]; raster.Color [d + 3] = cells [o + 3];
+							preview [d] = cells [o]; preview [d + 1] = cells [o + 1]; preview [d + 2] = cells [o + 2];
+							preview [d + 3] = cells [o + 3] >= 5 ? (byte) 255 : (byte) 0;
+						}
+					WebGpuBackend.PrintRaster.Attach (preview, raster);
+					GpuRecorder.DrawImage (preview, gw, rows, raster.DevX * kx, raster.DevY * ky, raster.DevW * kx, raster.DevH * ky);
+				}
+			} finally {
+				EndDeviceDraw (st);
+			}
+		}
+
+		/// <summary>The shape filled with the brush over one band at the device's resolution
+		/// (DpDriver::FillPath into the scan DIB's render mode 1): per pixel the alpha left there,
+		/// and the box of every pixel the rasterizer gave a span (minX, minY inclusive, maxX
+		/// exclusive, maxY inclusive; maxX 0 when none), band-relative.</summary>
+		byte [] BandAlpha (Brush brush, PointF [] pts, byte [] types, FillMode fillMode, float [] dev, int bandX, int bandY, int W, int H,
+			int s, int t, out int minX, out int minY, out int maxX, out int maxY)
+		{
+			minX = minY = int.MaxValue; maxX = maxY = 0;
+			float [] toBand = Then (dev, new [] { 1f, 0f, 0f, 1f, -bandX, -bandY });
+			byte [] cover;
+			using (var black = new SolidBrush (Color.Black)) cover = ShapeAlpha (black, pts, types, fillMode, toBand, W, H, Point.Empty);
+			if (cover == null) return null;
+			bool hit = false;
+			for (int y = 0; y < H; y++)
+				for (int x = 0; x < W; x++)
+					if (cover [y * W + x] != 0) {
+						hit = true;
+						if (x < minX) minX = x;
+						if (x + 1 > maxX) maxX = x + 1;
+						if (y < minY) minY = y;
+						if (y > maxY) maxY = y;
+					}
+			if (!hit) { maxX = 0; return cover; }
+			if (brush is HatchBrush hb) {
+				// DpOutputStretchedHatchSpan @1800c0520: the pattern stretched s times from the
+				// rendering origin, each bit the fore, back or mixed colour. A shape covers what it
+				// covers whatever its colour, so each colour's alpha is the shape at that alpha.
+				HatchAlphas (hb, out int fa, out int ba, out int ma);
+				byte [] f = fa == 255 ? cover : SolidAlpha (fa, pts, types, fillMode, toBand, W, H);
+				byte [] b = ba == 255 ? cover : SolidAlpha (ba, pts, types, fillMode, toBand, W, H);
+				byte [] mid = ma == 255 ? cover : SolidAlpha (ma, pts, types, fillMode, toBand, W, H);
+				if (f == null || b == null || mid == null) return null;
+				var alpha = new byte [W * H];
+				int style = (int) hb.HatchStyle;
+				int ox = _renderingOrigin.X, oy = _renderingOrigin.Y;
+				for (int y = 0; y < H; y++) {
+					int py = bandY + y - oy;
+					int row = ((py % (8 * s)) / s & 7) << 3;
+					for (int x = 0; x < W; x++) {
+						int i = y * W + x;
+						if (cover [i] == 0) continue;
+						int px = bandX + x - ox;
+						byte p = (uint) style < 0x35 ? WebGpuBackend.Gdip.GpTables.Hatch [style * 64 + (row | ((px % (8 * s)) / s & 7))] : (byte) 0;
+						alpha [i] = p == 0xff ? f [i] : p == 0 ? b [i] : mid [i];
+					}
+				}
+				return alpha;
+			}
+			return ShapeAlpha (brush, pts, types, fillMode, toBand, W, H, Point.Empty);
+		}
+
+		byte [] SolidAlpha (int a, PointF [] pts, byte [] types, FillMode fillMode, float [] toBand, int W, int H)
+		{
+			if (a == 0) return new byte [W * H];
+			using (var sb = new SolidBrush (Color.FromArgb (a, 0, 0, 0))) return ShapeAlpha (sb, pts, types, fillMode, toBand, W, H, Point.Empty);
+		}
+
+		// The hatch span's three colours' alphas (DpOutputHatchSpan::DpOutputHatchSpan @1800bffb8):
+		// the diagonal styles' fore moved 0.9142135 of the way back towards the back colour.
+		static void HatchAlphas (HatchBrush hb, out int fore, out int back, out int mid)
+		{
+			int fa = hb.ForegroundColor.A, ba = hb.BackgroundColor.A;
+			int style = (int) hb.HatchStyle;
+			mid = (ba * 3 + fa) >> 2;
+			if ((style == 2 || style == 3 || style == 5) && (fa != 0xff || ba != 0xff))
+				fa = (int) (uint) ((float) (fa - ba) * 0.9142135381698608f + (float) ba) & 0xff;
+			fore = fa; back = ba;
+		}
+
+		// A W x H transparent bitmap with the shape filled into it through toBand: its alpha.
+		byte [] ShapeAlpha (Brush brush, PointF [] pts, byte [] types, FillMode fillMode, float [] toBand, int W, int H, Point origin)
+		{
+			using (var bmp = new Bitmap (W, H, Imaging.PixelFormat.Format32bppArgb))
+			using (Graphics g = FromImage (bmp)) {
+				if (g.gp == null) return null;
+				g.SmoothingMode = gpu_smoothing;
+				g.InterpolationMode = _interpolation == InterpolationMode.Invalid ? InterpolationMode.Bilinear : _interpolation;
+				g.PixelOffsetMode = _pixelOffset;
+				g.RenderingOrigin = origin;
+				g.Transform = new Matrix (toBand [0], toBand [1], toBand [2], toBand [3], toBand [4], toBand [5]);
+				using (var gp = new GraphicsPath (pts, types, fillMode)) g.FillPath (brush, gp);
+				g.Flush ();
+				byte [] rgba = GdipPixels.ToRgba (bmp.Data.Frame, new Rectangle (0, 0, W, H));
+				var a = new byte [W * H];
+				for (int i = 0; i < a.Length; i++) a [i] = rgba [i * 4 + 3];
+				return a;
+			}
 		}
 
 		// The fill's device bounds as DriverPrint is handed them: a path's corners out to whole
@@ -564,10 +917,11 @@ namespace System.Drawing
 			}
 		}
 
-		// The bitmap over a device rectangle, inside the shape (a world path).
-		void EmitDeviceImage (byte [] rgba, int w, int h, RectangleF device, GraphicsPath clip, bool nonZero)
+		// The bitmap over a device rectangle, inside the shape (pts under dev, which takes them to
+		// device pixels).
+		void EmitDeviceImage (byte [] rgba, int w, int h, RectangleF device, PointF [] pts, byte [] types, float [] dev, bool nonZero)
 		{
-			int st = BeginDeviceDraw (clip, nonZero);
+			int st = BeginDeviceDraw (pts, types, nonZero, dev);
 			float kx = 100f / print_dpi_x, ky = 100f / print_dpi_y;
 			GpuRecorder.DrawImage (rgba, w, h, device.X * kx, device.Y * ky, device.Width * kx, device.Height * ky);
 			EndDeviceDraw (st);
@@ -583,9 +937,9 @@ namespace System.Drawing
 
 		// A DIB at (gx, gy) on a grid of s x t device pixels, put down band by band inside the shape;
 		// h is a whole number of bands.
-		void EmitBands (byte [] rgba, int w, int h, int rows, int gx, int gy, int s, int t, GraphicsPath clip, bool nonZero)
+		void EmitBands (byte [] rgba, int w, int h, int rows, int gx, int gy, int s, int t, PointF [] pts, byte [] types, float [] dev, bool nonZero)
 		{
-			int st = BeginDeviceDraw (clip, nonZero);
+			int st = BeginDeviceDraw (pts, types, nonZero, dev);
 			float kx = 100f / print_dpi_x, ky = 100f / print_dpi_y;
 			for (int top = 0; top < h; top += rows) {
 				int n = Math.Min (rows, h - top);
@@ -596,15 +950,22 @@ namespace System.Drawing
 			EndDeviceDraw (st);
 		}
 
-		// The clip set in world units, then the transform taken to the recording's own units (the
-		// page's hundredths of an inch), where a device rectangle is device pixels times 100 / dpi.
-		int BeginDeviceDraw (GraphicsPath clip, bool nonZero)
+		// The recording's own units are the page's hundredths of an inch, where a device rectangle
+		// is device pixels times 100 / dpi. A clip given as points under dev (world or device to device pixels): taken to device
+		// pixels and set in the recording's own units once the transform is the identity.
+		int BeginDeviceDraw (PointF [] pts, byte [] types, bool nonZero, float [] dev)
 		{
 			int st = GpuRecorder.SaveState ();
-			if (clip != null) {
-				try { GpuRecorder.SetClipPath (ToXY (clip.PathPoints), clip.PathTypes, nonZero, false); } catch (Exception) { }
-			}
 			GpuRecorder.SetWorldTransform (1f, 0f, 0f, 1f, 0f, 0f);
+			if (pts != null && types != null && dev != null) {
+				float kx = 100f / print_dpi_x, ky = 100f / print_dpi_y;
+				var xy = new float [pts.Length * 2];
+				for (int i = 0; i < pts.Length; i++) {
+					PointF d = Apply (dev, pts [i].X, pts [i].Y);
+					xy [i * 2] = d.X * kx; xy [i * 2 + 1] = d.Y * ky;
+				}
+				GpuRecorder.SetClipPath (xy, types, nonZero, false);
+			}
 			return st;
 		}
 
@@ -643,27 +1004,95 @@ namespace System.Drawing
 			if ((long) gw * gh > 64L << 20) return false;
 			int rows = BandRows (gw, gh);
 			gh = (gh + rows - 1) / rows * rows;
-			byte [] px;
+			byte [] px, cover = null;
+			// A mirror lands one DIB pixel further along the mirrored axis than the engine puts
+			// it (measured: a 64 px image flipped at 12 device px per pixel, every column one on).
+			float fx = !turned && p1.X < p0.X ? 1f : 0f, fy = !turned && p2.Y < p0.Y ? 1f : 0f;
+			var at = new [] { new PointF (q0.X - gx + fx, q0.Y - gy + fy), new PointF (q1.X - gx + fx, q1.Y - gy + fy), new PointF (q2.X - gx + fx, q2.Y - gy + fy) };
 			using (var dib = new Bitmap (gw, gh, Imaging.PixelFormat.Format32bppArgb))
 			using (Graphics g = FromImage (dib)) {
 				if (g.gp == null) return false;
 				g.InterpolationMode = _interpolation == InterpolationMode.Invalid ? InterpolationMode.Bilinear : _interpolation;
 				g.PixelOffsetMode = _pixelOffset;
-				// A mirror lands one DIB pixel further along the mirrored axis than the engine puts
-				// it (measured: a 64 px image flipped at 12 device px per pixel, every column one on).
-				float fx = !turned && p1.X < p0.X ? 1f : 0f, fy = !turned && p2.Y < p0.Y ? 1f : 0f;
-				var at = new [] { new PointF (q0.X - gx + fx, q0.Y - gy + fy), new PointF (q1.X - gx + fx, q1.Y - gy + fy), new PointF (q2.X - gx + fx, q2.Y - gy + fy) };
-				g.DrawImage (bmp, at, src, GraphicsUnit.Pixel, attrs);
+				if (attrs == null && OpaquePixels (bmp, src)) {
+					// On the printer an opaque image has no faded rim: its edge pixels keep their colour.
+					using (var edge = new Imaging.ImageAttributes ()) {
+						edge.SetWrapMode (WrapMode.TileFlipXY);
+						g.DrawImage (bmp, at, src, GraphicsUnit.Pixel, edge);
+					}
+				} else g.DrawImage (bmp, at, src, GraphicsUnit.Pixel, attrs);
 				g.Flush ();
 				px = GdipPixels.ToRgba (dib.Data.Frame, new Rectangle (0, 0, gw, gh));
 			}
-			if (attrs == null && OpaquePixels (bmp, src)) ExtendRows (px, gw, gh);
-			using (var clip = new GraphicsPath ()) {
-				clip.AddPolygon (new [] { new PointF (dest.X, dest.Y), new PointF (dest.Right, dest.Y),
-					new PointF (dest.Right, dest.Bottom), new PointF (dest.X, dest.Bottom) });
-				EmitBands (px, gw, gh, rows, gx, gy, s, t, clip, false);
+			bool opaque = attrs == null && OpaquePixels (bmp, src);
+			if (opaque) {
+				// The pixels the image's parallelogram gives spans: the same shape filled.
+				var quad = new [] { at [0], at [1], new PointF (at [1].X + at [2].X - at [0].X, at [1].Y + at [2].Y - at [0].Y), at [2] };
+				using (var black = new SolidBrush (Color.Black))
+					cover = ShapeAlpha (black, quad, new byte [] { 0, 1, 1, 0x81 }, FillMode.Alternate, new [] { 1f, 0f, 0f, 1f, 0f, 0f }, gw, gh, Point.Empty);
 			}
+			if (cover != null) Bleed (px, cover, gw, gh, rows);
+			else if (opaque) ExtendRows (px, gw, gh);
+			++s_bufferDibs;
+			EmitBands (px, gw, gh, rows, gx, gy, s, t,
+				new [] { new PointF (dest.X, dest.Y), new PointF (dest.Right, dest.Y), new PointF (dest.Right, dest.Bottom), new PointF (dest.X, dest.Bottom) },
+				new byte [] { 0, 1, 1, 0x81 }, dev, false);
 			return true;
+		}
+
+		/// <summary>EpScanDIB::NextBufferFunc24bppBleed @1800c1620, the scan an opaque image's DIB is
+		/// drawn through (mode 0x81), band by band: each span's pixels written unpremultiplied, one
+		/// under alpha 10 as the neighbour before it (or, that clear too, the one after) halfway to
+		/// white, white if both are clear; the row from where the last span left it up to a span in
+		/// that span's first pixel, and on to the band's edge after a row's last span in its last
+		/// pixel; the rows above a band's first span in its first pixel, the rows below its last in
+		/// that span's last. Rows with no span stay as the DIB was cleared: black.</summary>
+		static void Bleed (byte [] px, byte [] cover, int w, int h, int rows)
+		{
+			var src = (byte []) px.Clone ();
+			for (int i = 0; i < px.Length; i++) px [i] = 0;
+			for (int i = 3; i < px.Length; i += 4) px [i] = 255;
+			void Put (int x, int y, int at) { int d = (y * w + x) * 4; px [d] = src [at]; px [d + 1] = src [at + 1]; px [d + 2] = src [at + 2]; }
+			for (int top = 0; top < h; top += rows) {
+				int bottom = Math.Min (h, top + rows);
+				var spans = new List<(int Y, int X, int N)> ();
+				for (int y = top; y < bottom; y++)
+					for (int x = 0; x < w; x++) {
+						if (cover [y * w + x] == 0) continue;
+						int x0 = x;
+						while (x < w && cover [y * w + x] != 0) x++;
+						spans.Add ((y, x0, x - x0));
+					}
+				int lastRow = -1, nextX = 0;
+				for (int k = 0; k < spans.Count; k++) {
+					(int y, int x0, int n) = spans [k];
+					bool sameRow = k + 1 < spans.Count && spans [k + 1].Y == y;
+					int first = (y * w + x0) * 4;
+					if (lastRow == -1)
+						for (int yy = top; yy < y; yy++)
+							for (int xx = 0; xx < w; xx++) Put (xx, yy, first);
+					for (int xx = nextX; xx < x0; xx++) Put (xx, y, first);
+					int prev = first;
+					for (int i = 0; i < n; i++) {
+						int cur = (y * w + x0 + i) * 4, d = cur;
+						if (src [cur + 3] < 10) {
+							int cand = prev;
+							if (src [prev + 3] < 10 && i < n - 1) cand = cur + 4;
+							if (src [cand + 3] < 10) { px [d] = px [d + 1] = px [d + 2] = 255; }
+							else { px [d] = (byte) ((src [cand] + 255) >> 1); px [d + 1] = (byte) ((src [cand + 1] + 255) >> 1); px [d + 2] = (byte) ((src [cand + 2] + 255) >> 1); }
+						} else Put (x0 + i, y, cur);
+						prev = cur;
+					}
+					int last = (y * w + x0 + n - 1) * 4;
+					if (!sameRow)
+						for (int xx = x0 + n; xx < w; xx++) Put (xx, y, last);
+					if (k == spans.Count - 1)
+						for (int yy = y + 1; yy < top + rows && yy < h; yy++)
+							for (int xx = 0; xx < w; xx++) Put (xx, yy, last);
+					nextX = sameRow ? x0 + n : 0;
+					lastRow = y;
+				}
+			}
 		}
 
 		// What the band holds where the image is not: stock's DIB has no rim -- every pixel the
