@@ -365,6 +365,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public ushort FirstWeight;      // +0x0e
             public int Count, Extra;        // +0x10, +0x14
             public ushort[] W;              // +0x28, shrink weights (0-terminated)
+            public ulong[] E;               // +0x28, expand: four 13-bit weights per output, oldest first, the
+                                            // first carrying 0x8000 (take the next source pixel) / 0xc000
+            public ushort Flags;            // +0x08: 1 one more source pixel before, 2, 4 no sharpening
+            public int Taps;                // +0x18
         }
 
         static AAInfo BuildBltAAInfo(int srcL, int srcR, int srcW, int dstL, int dstR, int clipL, int clipR)
@@ -380,6 +384,323 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             if (first == -1) return null;
             return new AAInfo { SrcFirst = first, SrcLast = last, DstFirst = fd, DstLast = ld, CIn = last - first + 1, COut = ld - fd + 1 };
+        }
+
+        // ---------------------------------------------------------------------------------------------
+        // The halftone engine's FD6 fixed point (1.0 == 1000000): DivFD6 @140143968 (rounded through
+        // U64DivU32RoundUp @1401441c8), MulFD6 @140143fc0, FD6DivL @140143a30, Log @140143b68 (log10),
+        // AntiLog @1401434a0 (10^x), FractionToMantissa @140143a90, MantissaToFraction @140143d08 and
+        // RaisePower @1401440b8. Only BuildExpandAAInfo's spline weights use them.
+        // ---------------------------------------------------------------------------------------------
+        static class Fd6
+        {
+            static int[] Ints(string b64) { byte[] b = Convert.FromBase64String(b64); var r = new int[b.Length / 4]; Buffer.BlockCopy(b, 0, r, 0, b.Length); return r; }
+            static uint[] UInts(string b64) { byte[] b = Convert.FromBase64String(b64); var r = new uint[b.Length / 4]; Buffer.BlockCopy(b, 0, r, 0, b.Length); return r; }
+
+            // MantissaTable @1403458c0 (log10(1 + i/100) in FD6), MantissaCorrectData @140344980 (the packed
+            // slopes of its piecewise-linear interpolation), MantSearchTable @1403457f0.
+            static readonly int[] s_mantissa = Ints(
+                "AAAAAOEQAACYIQAAJTIAAIlCAADFUgAA2mIAAMhyAACQggAAMpIAALGhAAALsQAAQsAAAFbPAABJ3gAAGu0AAMr7AABaCgEAyhgBABsnAQBNNQ" +
+                "EAYUMBAFhRAQAxXwEA7mwBAI56AQATiAEAfJUBAMqiAQD+rwEAF70BABfKAQD+1gEAzOMBAIHwAQAe/QEAowkCABEWAgBnIgIApy4CANA6AgDj" +
+                "RgIA4FICAMheAgCaagIAWHYCAAGCAgCVjQIAFpkCAIKkAgDbrwIAIbsCAFTGAgBz0QIAgdwCAHznAgBl8gIAPP0CAAEIAwC1EgMAWB0DAOonAw" +
+                "BrMgMA3DwDADxHAwCMUQMAzFsDAPxlAwAdcAMAL3oDADGEAwAkjgMACJgDAN6hAwClqwMAXrUDAAm/AwClyAMANNIDALXbAwAp5QMAj+4DAOf3" +
+                "AwAzAQQAcgoEAKQTBADJHAQA4iUEAO4uBADuNwQA4kAEAMlJBAClUgQAdVsEADpkBADzbAQAoHUEAEJ+BADZhgQAZY8EAOaXBABcoAQAx6gEAC" +
+                "ixBAB+uQQAysEEAAvKBABC0gQAb9oEAJLiBACr6gQAuvIEAMD6BAC8AgUArgoFAJYSBQB2GgUATCIFABgqBQDcMQUAlzkFAEhBBQDxSAUAkVAF" +
+                "AChYBQC3XwUAPGcFALpuBQAvdgUAm30FAACFBQBcjAUAsJMFAPyaBQBAogUAfKkFALCwBQDctwUAAb8FAB7GBQAzzQUAQdQFAEfbBQBG4gUAPu" +
+                "kFAC7wBQAX9wUA+f0FANQEBgCnCwYAdBIGADoZBgD5HwYAsSYGAGItBgAMNAYAsDoGAE1BBgDkRwYAdE4GAP1UBgCBWwYA/WEGAHRoBgDkbgYA" +
+                "TnUGALJ7BgAPggYAZ4gGALiOBgAElQYASZsGAImhBgDDpwYA960GACW0BgBNugYAcMAGAI3GBgCkzAYAttIGAMLYBgDJ3gYAyuQGAMbqBgC98A" +
+                "YArvYGAJr8BgCAAgcAYggHAD4OBwAVFAcA5xkHALQfBwB7JQcAPisHAPwwBwC0NgcAaDwHABdCBwDBRwcAZk0HAAdTBwCjWAcAOl4HAMxjBwBZ" +
+                "aQcA4m4HAGd0BwDmeQcAYn8HANiEBwBLigcAuI8HACKVBwCHmgcA558HAEOlBwCbqgcA768HAD61BwCJugcA0L8HABPFBwBRygcAi88HAMLUBw" +
+                "D02QcAIt8HAEzkBwBy6QcAlO4HALLzBwDM+AcA4v0HAPUCCAADCAgADg0IABUSCAAYFwgAFxwIABIhCAAKJggA/ioIAO4vCADbNAgAxDkIAKk+" +
+                "CACLQwgAaUgIAERNCAAbUggA71YIAL9bCACLYAgAVGUIABpqCADcbggAm3MIAFZ4CAAPfQgAw4EIAHWGCAAjiwgAzY8IAHWUCAAZmQgAup0IAF" +
+                "iiCADypggAiqsIAB6wCACvtAgAPbkIAMi9CABPwggA1MYIAFXLCADUzwgAT9QIAMjYCAA93QgAr+EIAB/mCACL6ggA9e4IAFvzCAC/9wgAIPwI" +
+                "AH4ACQDZBAkAMQkJAIYNCQDZEQkAKBYJAHUaCQC/HgkAByMJAEsnCQCNKwkAzC8JAAg0CQBCOAkAeTwJAK1ACQDfRAkADkkJADpNCQBkUQkAi1" +
+                "UJALBZCQDSXQkA8WEJAA5mCQAoagkAQG4JAFVyCQBodgkAeHoJAIZ+CQCRggkAmoYJAKCKCQCkjgkAppIJAKWWCQCimgkAnJ4JAJSiCQCJpgkA" +
+                "fKoJAG2uCQBcsgkASLYJADK6CQAZvgkA/sEJAOHFCQDCyQkAoc0JAH3RCQBX1QkALtkJAATdCQDX4AkAqOQJAHfoCQBE7AkADvAJANbzCQCd9w" +
+                "kAYfsJACL/CQDiAgoAoAYKAFsKCgAVDgoAzBEKAIEVCgA1GQoA5hwKAJUgCgBCJAoA7ScKAJYrCgA9LwoA4jIKAIU2CgAmOgoAxT0KAGJBCgD9" +
+                "RAoAlkgKAC1MCgDCTwoAVlMKAOdWCgB2WgoABF4KAJBhCgAZZQoAoWgKACdsCgCrbwoALXMKAK52CgAsegoAqX0KACSBCgCdhAoAFIgKAImLCg" +
+                "D9jgoAb5IKAN+VCgBNmQoAupwKACSgCgCNowoA9aYKAFqqCgC+rQoAILEKAIC0CgDftwoAO7sKAJe+CgDwwQoASMUKAJ7ICgDyywoARc8KAJbS" +
+                "CgDl1QoAM9kKAH/cCgDK3woAE+MKAFrmCgCf6QoA4+wKACbwCgBn8woApvYKAOP5CgAf/QoAWgALAJMDCwDKBgsAAAoLADQNCwBnEAsAmBMLAM" +
+                "cWCwD1GQsAIh0LAE0gCwB2IwsAniYLAMUpCwDqLAsADTALAC8zCwBQNgsAbzkLAI08CwCpPwsAw0ILAN1FCwD0SAsAC0wLACBPCwAzUgsARVUL" +
+                "AFZYCwBlWwsAc14LAH9hCwCKZAsAlGcLAJxqCwCjbQsAqHALAKxzCwCvdgsAsHkLALB8CwCvfwsArIILAKiFCwCjiAsAnIsLAJSOCwCLkQsAgJ" +
+                "QLAHSXCwBmmgsAWJ0LAEigCwA3owsAJKYLABCpCwD7qwsA5a4LAM2xCwC0tAsAmrcLAH66CwBhvQsAQ8ALACTDCwADxgsA4sgLAL/LCwCazgsA" +
+                "ddELAE7UCwAm1wsA/dkLANPcCwCn3wsAeuILAEzlCwAd6AsA7eoLALvtCwCJ8AsAVfMLACD2CwDp+AsAsvsLAHn+CwA/AQwABAQMAMgGDACLCQ" +
+                "wATQwMAA0PDADMEQwAixQMAEgXDAAEGgwAvhwMAHgfDAAxIgwA6CQMAJ4nDABUKgwACC0MALsvDABtMgwAHTUMAM03DAB8OgwAKT0MANY/DACB" +
+                "QgwAK0UMANVHDAB9SgwAJE0MAMpPDABvUgwAE1UMALZXDABYWgwA+VwMAJhfDAA3YgwA1WQMAHFnDAANagwAqGwMAEFvDADacQwAcXQMAAh3DA" +
+                "CdeQwAMnwMAMV+DABYgQwA6YMMAHqGDAAKiQwAmIsMACaODACykAwAPpMMAMiVDABSmAwA25oMAGOdDADpnwwAb6IMAPSkDAB4pwwA+6kMAH2s" +
+                "DAD+rgwAfrEMAP2zDAB7tgwA+LgMAHW7DADwvQwAa8AMAOTCDABdxQwA1McMAEvKDADBzAwANs8MAKrRDAAd1AwAj9YMAAHZDABx2wwA4d0MAE" +
+                "/gDAC94gwAKuUMAJbnDAAB6gwAa+wMANXuDAA98QwApfMMAAv2DABx+AwA1voMADr9DACe/wwAAAINAGIEDQDCBg0AIgkNAIELDQDfDQ0APBAN" +
+                "AJkSDQD0FA0ATxcNAKkZDQACHA0AWx4NALIgDQAJIw0AXiUNALMnDQAIKg0AWywNAK0uDQD/MA0AUDMNAKA1DQDvNw0APjoNAIs8DQDYPg0AJE" +
+                "ENAHBDDQC6RQ0ABEgNAE1KDQCVTA0A3E4NACNRDQBpUw0ArlUNAPJXDQA1Wg0AeFwNALpeDQD7YA0AO2MNAHtlDQC6Zw0A+GkNADVsDQBybg0A" +
+                "rnANAOlyDQAjdQ0AXXcNAJV5DQDNew0ABX4NADuADQBxgg0ApoQNANuGDQAOiQ0AQYsNAHONDQCljw0A1pENAAaUDQA1lg0AZJgNAJGaDQC/nA" +
+                "0A654NABehDQBCow0AbKUNAJanDQC/qQ0A56sNAA6uDQA1sA0AW7INAIC0DQCltg0AybgNAO26DQAPvQ0AMb8NAFLBDQBzww0Ak8UNALLHDQDR" +
+                "yQ0A7ssNAAzODQAo0A0ARNINAF/UDQB61g0Ak9gNAK3aDQDF3A0A3d4NAPTgDQAL4w0AIOUNADbnDQBK6Q0AXusNAHHtDQCE7w0AlvENAKfzDQ" +
+                "C49Q0AyPcNANf5DQDm+w0A9P0NAAIADgAOAg4AGwQOACYGDgAxCA4AOwoOAEUMDgBODg4AVhAOAF4SDgBlFA4AbBYOAHIYDgB3Gg4AfBwOAIAe" +
+                "DgCEIA4AhiIOAIkkDgCKJg4AiygOAIwqDgCMLA4Aiy4OAIowDgCIMg4AhTQOAII2DgB+OA4AejoOAHU8DgBvPg4AaUAOAGJCDgBbRA4AU0YOAE" +
+                "tIDgBCSg4AOEwOAC5ODgAjUA4AGFIOAAxUDgD/VQ4A8lcOAORZDgDWWw4Ax10OALhfDgCoYQ4AmGMOAIdlDgB1Zw4AY2kOAFBrDgA9bQ4AKW8O" +
+                "ABRxDgD/cg4A6nQOANR2DgC9eA4ApnoOAI58DgB2fg4AXYAOAEOCDgAqhA4AD4YOAPSHDgDYiQ4AvIsOAKCNDgCDjw4AZZEOAEeTDgAolQ4ACJ" +
+                "cOAOmYDgDImg4Ap5wOAIaeDgBkoA4AQaIOAB6kDgD7pQ4A16cOALKpDgCNqw4AZ60OAEGvDgAbsQ4A9LIOAMy0DgCktg4Ae7gOAFK6DgAovA4A" +
+                "/r0OANO/DgCowQ4AfMMOAFDFDgAjxw4A9sgOAMjKDgCazA4Aa84OADzQDgAM0g4A3NMOAKvVDgB61w4ASNkOABbbDgDj3A4AsN4OAHzgDgBI4g" +
+                "4AE+QOAN7lDgCo5w4AcukOADzrDgAF7Q4Aze4OAJXwDgBc8g4AI/QOAOr1DgCw9w4AdvkOADv7DgD//A4Aw/4OAIcADwBKAg8ADQQPAM8FDwCR" +
+                "Bw8AUgkPABMLDwDUDA8AlA4PAFMQDwASEg8A0RMPAI8VDwBNFw8AChkPAMcaDwCDHA8APx4PAPofDwC1IQ8AbyMPAColDwDjJg8AnCgPAFUqDw" +
+                "ANLA8AxS0PAHwvDwAzMQ8A6jIPAKA0DwBVNg8ACjgPAL85DwBzOw8AJz0PANs+DwCNQA8A");
+            static readonly uint[] s_mantCorrect = UInts(
+                "rkmbJqpJmhamOZMVoUujm545kgaaOVoWlkeaVZLHkxqOOdtaizmSRodHk1qEN5IVgDnTWX0pk1V6J1ISdrebJnM3k1ZwN5JVbSdTRmonkhVnJ4" +
+                "sVZDdSRmEnkklet5IZW7eSJlklUhFWJZJFUyeSVlElSgVONYoVSzeaWUknikVHFUoBRCVSVUIlSQU/tVIWPaWKBTsjSgQ5FUkANiVSVTQlShUy" +
+                "JUkFMCVJAS0nklkrp5IZKbWKGSclklUmFUEAIyVSViEnUlYgFQkBHiNJBBwjSQEaJUlFGJVKFRalUUYVEwkBEyNJBBEVSkUPpYoVDiNBAQwVUR" +
+                "QKpUpGCRNJBAcVSkUFpVIZBBVJBQIlilUBFUlB/5SKFf4iCQX8JFFV+xRJEfkkSlb4FElF9xIJAfUiUUX0FAkR8qRRGfGUSRXwEglB7iKKVe0U" +
+                "SkXsEkkR6xIIAemiURXookkR5xIJEeYSCAHlAgEA4yJJReIUSRHhEkkE4BJBBN8CQQDdolEV3BSJUdsUSUXaIklE2RJJQdgSCRHXEkEB1hIJBN" +
+                "USCAHUEggB0wJBANGkUSXQpFEl0BIIAM8SCADNJFFZzRIIAcwCCRDLEEEEygIJAckSCUHIEkFExxIJEcYUCUXFokkUxBJRUcOUURXDAggAwgJB" +
+                "AMGSCAHAEEkEv5RBBb6SSRW9IklVvRJAALwCQQS7EkFBupJJEbmiSRW5EAgAuAJBBLcSQRG2lEkUthAAALUCQQC0EkFBsxJJRbIUUVWyEggEsR" +
+                "JIRLASClWwAggArwIJQa4SCUWtlIlFrQJBEKySSBGsAAAAqxAIEKoSSESpokkVqQIBAaiSCRGnklFRpxABAaaSSRSlklEVpRIIQaSSSRSkEEAA" +
+                "o5JIBKISSVWiAkEQoRIJRaECCACgAgkRn5RJRZ8CQUCekglFngABAZ0CSUSdEAAAnAJBRJsSSVWbAkEQmhJJUZoCAQGZEglFmQIBAJiSCRGYEA" +
+                "AAlxJIRJYSSlWWEkFElZJRUZUCCUGUklFRlIJBBJMSSVWTEghBkwAAAJIQQQSRFElVkRIIEZCiSRWQEggRkAIAAI+CCRGPAAgAjpAJEY4QAACN" +
+                "EglFjQIBEIwSQUWMAkFAixJJVIuSCASKEklVipJIBIoACACJEAlFiRBAAIgSSVSIAgFBh5JJRYcCCUGHEAAAhpJIFIYAAQGFEklRhZIIBIUAAA" +
+                "CEggkRhBAAAYOSCRWDAgERgpJRUYISSESCAggAgZJJRYEQQRCBAgAAgJJIFIAQQEB/kklFfwIJEX8CCAB+kkkUfgJBBH4CAAB9EkFRfQIIAXyU" +
+                "SRV8EkhEfAIBBHuSSRV7kggRewABEHoSCVV6EggRegJAAHkSSVR5AglBeRAAAHiSSVF4EAgReBAABHeCSUV3EAgRdwJAAHaSCRV2AkFEdhAAAX" +
+                "USCVV1kggRdQABBHSSSUV0ggkRdJBAAHOSSRVzkkERcxAIBHMCAAByEkhRcoJBBHIACABxEklUcZIIEXEQAAFxAAAAcAIJRXACAUFwAAgAb5JI" +
+                "RW+QCBFvAAEQbpJJRW6SSERuEEAQbhAAAG0SCVVtggkRbQABBG0AAABskkgUbAJBEGwCQABrkklFaxJIRGsCQRBrAAEAahJJVGoSSERqAggEah" +
+                "AAAGmSQUVpEEFEaQIIEGiSiUVokkkUaAJBQWgCCARoAAAAZ5IJFWcCQURnAggEZhJRVWYSSVRmkggRZhBAEGYAQABlgklFZYIJEWUQQBBlAgAA" +
+                "ZJJJFWSSSBRkEAhBZAABEGOSSRVjEkFFYxIIEWMCCARjAAgAYpBJUWKQQRRiEEAQYgIABGGSSVFhkkgUYYJBBGGQAAFhAAAAYBIJVWCSSERggE" +
+                "EEYAAIAF+USVFfkglFXwJBRF8CAUFfAAgAXhJJVV6SCUVekEgEXhBAQF4ACABdkklRXZJIFF0CQURdEEBAXQAIAFySSVFcgkkUXJBBBFwQQEBc" +
+                "AAgAW5JJRVsSQVFbkggRWwBBQFsAAQBbAAAAWpJIUVoQSERaAgFBWhAABFoAAABZEglVWZJIFFkQCBFZAggQWQAIAFiSSVRYgkkUWAJBEVgCQR" +
+                "BYEAAEWAAAAFeSQRVXkkgUVxAIEVcCCARXAgBAVpIJVVaSQUVWkEERVhAIRFaQAAFWAAAAVgAAAFWQCRVVgkERVZAIBFUAAQRVAAEAVJJJUVQS" +
+                "SFFUEghFVAIBEVQCQEBUAAAQU5JIVVMCSVFTEkhEU4JBBFOAAQFTAAAEUpJJRVISCVVSkkgUUpAIEVIAAUFSAAFAUgAAAFGSCVVRkAlFURBIRF" +
+                "ECARFRAkBAUQAAAVCSSRVQEglVUJJIFFCQCBFQEEAQUAIAAVAQAABPkklUT5JIUU+QSBRPEAgRT4IIBE8AQABPEAAATpJBVU6QSRROAglRToJB" +
+                "BE4QQEBOAAEQTgAAAE2SSRVNkkFFTZBBEU2CQQRNEEAQTQJAAE0CAABMEklVTBJJVEySQRFMAkFETAIBEUwCQEBMAAgATAAAAEuSCVVLkAkVS4" +
+                "JBEUsQCBFLAgFBSwABEEsAABBKkkFVSpJBFUqSSBRKgkEUSpBABEoQQEBKgAEASgAAAEmSSRVJEglVSZJIFEkCQURJgkEESYABAUkACABJAgAA" +
+                "SJJJRUgSCVVIEkFRSIIJEUgQCEFIAggESAJAAEgCAABIAAAARxJBVUeSQUVHkEEUR5AIEUcAQRBHAkBARwAIAEcAAABGEklVRhJJVEaSQRFGgk" +
+                "ERRhAIQUYCCARGgkAARgAAEEYAAABFAklVRZIJFUWCCUVFEAhFRRAIEUWCCARFgAgARQAAEEUAAABEEElVRJIJFUSCSUREEEhERIJBEEQAQRBE" +
+                "EAABRAIAEEQAAABDkklUQ5JBFUOSSBRDggkRQ4JBBEOQCARDgAEBQwBAAEMQAABDAAAAQhJIVUKSCRVCgglFQhBIREKCQRBCEEAQQgJAQEIACA" +
+                "BCEAAAQRJJVUGSSVFBEkhRQZJBFEGCQURBEEBEQZAIBEEAAQRBEAAQQQAAAEEAAABAkklUQIJJUUAQQVFAEghRQIJBBECQCARAgAEBQAAIQEAA" +
+                "ABBAAAAAP5IJVT+SSBU/EkhRP5JIFD8QSEQ/ggERPwABQT8QQEA/AAgAPwIAAD8AAAA+kklRPpJBFT4SSFQ+EghFPpIIET4QCEE+gggEPgABBD" +
+                "4CAAE+AAEAPgAAAD2SSVE9EglVPZJBRT0QQVE9gkERPRAIET0CARE9AggQPRAAAT0CAEA9AAAAPQAAADyQSRU8kkEVPJJIFDwCCVE8AkFEPIJB" +
+                "BDwQQAQ8AggEPBAAATwAAQA8AAgAO5JIVTuSCVU7EElUOxJBUTuSSEQ7kAgROxAIETsCAUE7EEBAOwABBDsAAQA7AAEAOhJJVToSSVU6EglVOp" +
+                "JBRToQQVE6ggkROpAIEToQCEQ6EEAQOgJAQDqACAA6AABAOgAAADmSSUU5kklROZJIRTmCSRQ5AglFOZIIETmQCBE5EAhEORBAEDkQQEA5gAgA" +
+                "OQAAEDkAAAA5AAAAOBBJVTgSCVU4kkFFOBBBUTgSCEU4AkFEOIJBEDgQQBA4AggEOAIAATgCAAQ4AAAEOAAAADeSCVU3kglVNxBJVDeSQUU3kE" +
+                "ERN4JBETeQCBE3EAhEN5AIBDeAAQQ3AAhANwBAADcAAQA3AAAANhJJVTaSSUU2kkEVNpJIUTaQQRE2AglRNgJBRDaCQQQ2kAgENgABQTaQAAE2" +
+                "AEAANoIAADYAAAA2AAAANZJJVDWSCVU1EElUNZJBUTWQQRQ1gkERNRBIRDWCCBE1AEEQNYIIBDUACBA1EAAENQAIADUAAQA1AAAANJJJUTSSSV" +
+                "Q0gklRNAJJVDSSSBQ0gkERNIJBRDQQCEQ0gkEQNAABQTQQQEA0EAAENAIABDQAQAA0AAAANAAAADMSSVUzkklFM5JIRTMCSVQzkkgUMwIJUTOC" +
+                "QRQzEAgRM4JBEDMAQRAzAggEMwJAQDMACEAzAAABMwAAQDMAAAAykkhVMpJJVDKSSBUykkhFMpAJRTIQQVEyEghRMgJBRDICQUQyAghBMoIIBD" +
+                "KAAQEyAAEQMhAAEDIAQAAyAAABMgAAADGSSVExkklFMRIJVTGSCRUxEkhRMZJIFDECCVExgkEUMZAIETGAQQQxkEAEMQABQTGAAQExAEBAMQBA" +
+                "ADEQAAAxAAgAMQAAADCSSFUwkglVMIJJRTCSSFEwkAlFMAIJRTCSSEQwEAhRMAJBRDAQCBEwAgERMIIIBDCAAQQwAEBAMIAIADAAABAwAAAAMB" +
+                "AAAC+SQVUvkkkVL5JJVC+CSUUvAklULxJBUS+SSBQvkEEULxBIRC8CQUQvAggRLwIBES+CCAQvgAEELwBAQC+ACAAvAAAELwAABC8AAAAvAAAA" +
+                "LpJBVS6SCVUugklFLpJIUS6QCRUugglFLpBBFC6CQRQukAgRLpAIES6AQQQukEAELgABQS6AAQEuAAhALoAIAC4AAAQuAAAELgAAAC4AAAAtkk" +
+                "lULZJJUS0SQVUtkgkVLZJIUS2QQVEtkEgULYJBES0QQUQtAkFELYJBBC0QCEQtkEAQLYAIBC0ACBAtEAABLQIABC0ACAAtAAEALQAAAC0AAAAs" +
+                "EklVLJJJFSySSVQsgklRLAJJVCwSSFEskkgULJBBESyCQRQskAgRLJAIESyAQQQskEAELAABQSwQQEAsEAABLIJAACwAAAEsAAgALAAIACwAAA" +
+                "AsAAAAK5JJRSuSSUUrkglVK5BJUSsQSVQrEkhRK5JIFCsCCUUrEghRK4JBRCsQCBErAkFE");
+            static readonly ushort[] s_mantSearch = { 0, 2, 4, 7, 9, 12, 14, 17, 20, 23, 25, 28, 31, 34, 38, 41, 44, 47, 51, 54, 58, 62, 65, 69, 73, 77, 81, 86, 90, 94, 99, 104, 108, 113, 118, 123, 129, 134, 139, 145, 151, 157, 163, 169, 175, 181, 188, 195, 201, 209, 216, 223, 231, 238, 246, 254, 263, 271, 280, 289, 298, 307, 316, 326, 336, 346, 357, 367, 378, 389, 401, 412, 424, 437, 449, 462, 475, 488, 502, 516, 530, 545, 560, 576, 591, 607, 624, 641, 658, 676, 694, 712, 731, 751, 770, 791, 812, 833, 854, 877, 899, 0 };
+            static readonly int[] s_pow10 = { 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000 };
+            static readonly int[] s_fracBase = { 0, 100000, 200000, 300000, 400000, 500000, 600000, 700000, 800000, 900000, 0 };   // @140345794
+
+            public static int FD6DivL(int a, int b)
+            {
+                bool neg = false;
+                if (b <= 0) { b = -b; neg = true; if (b == 0) return a; }
+                if (a <= 0) { a = -a; if (a == 0) return 0; neg = !neg; }
+                int q = (int)(((uint)a + ((uint)b >> 1)) / (uint)b);
+                return neg ? -q : q;
+            }
+
+            public static int DivFD6(int a, int b)
+            {
+                bool neg = false;
+                if (b <= 0) { b = -b; neg = true; if (b == 0) return (int)(0x80000000u + (uint)(a >> 31)); }
+                if (b == 1000000) return neg ? -a : a;
+                if (a <= 0) { a = -a; if (a == 0) return 0; neg = !neg; }
+                if (a == b) return neg ? -1000000 : 1000000;
+                ulong n = (ulong)(uint)a * 1000000UL + ((uint)b >> 1);
+                int q = (int)(uint)(n / (uint)b);
+                return neg ? -q : q;
+            }
+
+            public static int MulFD6(int a, int b)
+            {
+                bool neg = false;
+                if (a <= 0) { a = -a; if (a == 0) return 0; neg = true; }
+                if (b <= 0) { b = -b; if (b == 0) return 0; neg = !neg; }
+                int r;
+                if (a == 1000000) r = b;
+                else if (b == 1000000) r = a;
+                else r = (int)(uint)(((ulong)(uint)a * (uint)b + 500000UL) / 1000000UL);
+                return neg ? -r : r;
+            }
+
+            static int FractionToMantissa(int frac, uint cd)
+            {
+                int w9 = frac / 100000, w13 = frac - w9 * 100000;
+                int w12 = (int)(cd & 0x1ff);
+                int w14 = (int)((cd >> 9) & 7) + w12;
+                int w11 = w9 - 1, w8 = w14, w10 = 0;
+                if (w9 != 0)
+                {
+                    w8 = (int)((cd >> 12) & 7) + w12; w10 = w14;
+                    int w9b = w11 - 1;
+                    if (w11 != 0)
+                    {
+                        w10 = w8 + (w14 & 0xffff);
+                        w8 = (int)((cd >> 16) & 7) + w12;
+                        w11 = w9b - 1;
+                        if (w9b != 0)
+                        {
+                            uint b = cd >> 19;
+                            w10 += w8 & 0xffff;
+                            w8 = (int)(b & 7) + w12;
+                            if ((cd & 0x8000) != 0) b |= 0x2000;
+                            uint bb = (b >> 1) & 0xffff;
+                            while (w11 != 0)
+                            {
+                                w8 += w10;
+                                bb = (bb >> 2) & 0xffff;
+                                w10 = w8 & 0xffff;
+                                w8 = (int)(bb & 3) + w12;
+                                w11--;
+                            }
+                        }
+                    }
+                }
+                uint n = 25000u + ((uint)(w8 * w13) >> 1);
+                uint t = (uint)(((ulong)n * 0x4f8b588fUL) >> 32);       // the binary's /50000 (floor magic)
+                return w10 + (int)((t + ((n - t) >> 1)) >> 15);
+            }
+
+            static int MantissaToFraction(int diff, uint cd)
+            {
+                int w13 = (int)(cd & 0x1ff);
+                int s = (int)((cd >> 9) & 7) + w13;
+                int w10 = 1, w11 = s;
+                int w8 = (short)(diff - (short)s);
+                if (w8 > 0)
+                {
+                    s = w13 + (int)((cd >> 12) & 7);
+                    w10 = 2; w11 = s; w8 = (short)(w8 - (short)s);
+                    if (w8 > 0)
+                    {
+                        s = (int)((cd >> 16) & 7) + w13;
+                        w10 = 3; w11 = s; w8 = (short)(w8 - (short)s);
+                        if (w8 > 0)
+                        {
+                            uint b = cd >> 19;
+                            s = (int)(b & 7) + w13;
+                            w10 = 4; w11 = s;
+                            if ((cd & 0x8000) != 0) b |= 0x2000;
+                            uint bb = (b >> 1) & 0xffff;
+                            while (true)
+                            {
+                                w8 = (short)(w8 - (short)s);
+                                if (w8 <= 0) break;
+                                bb = (bb >> 2) & 0xffff;
+                                s = (int)(bb & 3) + w13;
+                                w10 = (short)(w10 + 1);
+                                w11 = s;
+                            }
+                        }
+                    }
+                }
+                uint r = 0;
+                if (w8 != 0)
+                {
+                    uint num = (uint)((w8 + w11) * 100000) + ((uint)w11 >> 1);
+                    w10 = (short)(w10 - 1);
+                    r = num / (uint)w11;
+                }
+                if (w10 != 0) r += (uint)s_fracBase[w10];
+                return (int)r;
+            }
+
+            public static int Log(int x)
+            {
+                int w15;
+                if (x < 10000)
+                {
+                    if (x < 100)
+                    {
+                        if (x >= 10) { w15 = -5000000; x *= 10000000; }
+                        else if (x > 0) { w15 = -6000000; x *= 100000000; }
+                        else return -6000000;
+                    }
+                    else if (x < 1000) { w15 = -4000000; x *= 1000000; }
+                    else { w15 = -3000000; x *= 100000; }
+                }
+                else if (x >= 1000000)
+                {
+                    if (x < 10000000) { w15 = 0; x *= 100; }
+                    else if (x < 100000000) { w15 = 1000000; x *= 10; }
+                    else if (x < 1000000000) w15 = 2000000;
+                    else if (x < 0x7ffffffa) { x = FD6DivL(x, 10); w15 = 3000000; }
+                    else return 3331930;
+                }
+                else if (x < 100000) { w15 = -2000000; x *= 10000; }
+                else { w15 = -1000000; x *= 1000; }
+                int i = x / 1000000, rem = x - i * 1000000;
+                int r = s_mantissa[i - 100];
+                if (rem != 0) r += FractionToMantissa(rem, s_mantCorrect[i - 100]);
+                return r + w15;
+            }
+
+            public static int AntiLog(int x)
+            {
+                int w15;
+                if (x < 0)
+                {
+                    if (x <= -6000000) return 1;
+                    w15 = (x - 999999) / 1000000;
+                    x -= w15 * 1000000;
+                }
+                else if (x < 1000000) w15 = 0;
+                else
+                {
+                    if (x >= 3331930) return 0x7fffffff;
+                    w15 = (x + 999999) / 1000000;
+                    x = w15 * 1000000 - x;
+                }
+                int r;
+                if (x == 0) r = 1000000;
+                else
+                {
+                    int idx = x / 10000;
+                    if (idx < 0 || idx > 99) return 0x7fffffff;
+                    int lo = s_mantSearch[idx], hi = s_mantSearch[idx + 1] + 1, mid, f;
+                    while (true)
+                    {
+                        mid = (lo + hi) >> 1;
+                        if (mid == lo) { f = MantissaToFraction(x - s_mantissa[lo], s_mantCorrect[lo]); break; }
+                        int m = s_mantissa[mid];
+                        if (x < m) hi = mid;
+                        else if (x == m) { f = 0; break; }
+                        else lo = mid;
+                    }
+                    r = (mid + 100) * 1000000 + f;
+                    w15 -= 2;
+                }
+                if (w15 < 0) return FD6DivL(r, s_pow10[-w15]);
+                if (w15 > 0) return s_pow10[w15] * r;
+                return r;
+            }
+
+            public static int RaisePower(int x, int p, int flags)
+            {
+                if ((flags & 2) == 0)
+                {
+                    if (p == 1000000) return x;
+                    int q = p / 1000000;
+                    if (p - q * 1000000 == 0) { p = q; flags |= 2; }
+                }
+                else if (p == 1) return x;
+                bool neg = false, negOdd = false;
+                if (x <= 0) { x = -x; neg = true; negOdd = true; if (x == 0) return 0; }
+                if (p == 0) return neg ? -1000000 : 1000000;
+                int l = x == 10000000 ? 1000000 : Log(x);
+                int v;
+                if ((flags & 2) != 0)
+                {
+                    neg = (p & 1) != 0 && negOdd;
+                    v = (flags & 1) == 0 ? l * p : FD6DivL(l, p);
+                }
+                else v = (flags & 1) == 0 ? MulFD6(l, p) : DivFD6(l, p);
+                v = AntiLog(v);
+                return neg ? -v : v;
+            }
         }
 
         // ---------------------------------------------------------------------------------------------
@@ -437,8 +758,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     switch (_cyMode)
                     {
                         case 1: BltDIB_CY(); break;
-                        case 2: if (_cxMode == 2) return null; ShrinkDIB_CY(); break;
+                        case 2: ShrinkDIB_CY(); break;
                         case 3: ShrinkDIB_CY_SrkCX(); break;
+                        case 5: if ((_flags & AAHF_FAST_EXP) == 0) return null; FastExpAA_CY(); break;
                         default: return null;
                     }
                 }
@@ -522,28 +844,220 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int cs = srcR - srcL, cd = dstR - dstL;
                 AAInfo a;
                 if (cs == cd) a = BuildBltAAInfo(srcL, srcR, srcW, dstL, dstR, clipL, clipR);
-                else if (cs < cd) { a = BuildExpandAAInfo(srcL, srcR, srcW, dstL, dstR, clipL, clipR); if (a == null && (_flags & AAHF_NO_AA) == 0) throw new NotSupportedException(); }
+                else if (cs < cd) a = BuildExpandAAInfo(srcL, srcR, srcW, dstL, dstR, clipL, clipR);
                 else a = BuildShrinkAAInfo(srcL, srcR, srcW, dstL, dstR, clipL, clipR);
                 if (a == null) return null;
                 srcL = a.SrcFirst; srcR = a.SrcLast; clipL = a.DstFirst; clipR = a.DstLast;
                 return a;
             }
 
+            // BuildExpandAAInfo @1401469a0: a kernel of 2 * ceil(cOut / cIn) - 1 taps one source pixel (cOut / cIn
+            // destination pixels) apart, the centre 1.0 and the others f^1.414 below 0.5, f^(1/1.414) above, f the
+            // distance from the far end; its taps are summed per source pixel for each destination pixel into
+            // four 13-bit weights (remainders carried from the newest to the oldest).
             AAInfo BuildExpandAAInfo(int srcL, int srcR, int srcW, int dstL, int dstR, int clipL, int clipR)
             {
                 int cOut = dstR - dstL, cIn = srcR - srcL;
-                if (cIn < 1 || clipR <= clipL || cOut <= cIn) return null;
-                int lo = Math.Max(srcL, 0), hi = Math.Min(srcR, srcW);
+                if (cIn <= 0) return null;
+                int srcMin = Math.Max(srcL, 0), srcMax = srcR > srcW ? srcW : srcR;
+                if (!(clipL < clipR) || cIn >= cOut) return null;
                 var a = new AAInfo();
                 if ((_flags & 0x4a80) != 0)
                 {
-                    a.Rep = BuildRepData(cIn, cOut, lo, hi, clipL, clipR, srcL, dstL);
+                    a.Rep = BuildRepData(cIn, cOut, srcMin, srcMax, clipL, clipR, srcL, dstL);
                     if (a.Rep == null) return null;
                 }
-                if ((_flags & 0x4200) == 0) return null;   // weights: not yet
-                a.SrcFirst = a.Rep.SrcMin; a.SrcLast = a.Rep.SrcMax - 1; a.DstFirst = a.Rep.DstMin; a.DstLast = a.Rep.DstMax - 1;
-                a.CIn = a.SrcLast - a.SrcFirst + 1; a.COut = a.DstLast - a.DstFirst + 1;
+                if ((_flags & 0x4200) != 0)
+                {
+                    a.SrcFirst = a.Rep.SrcMin; a.SrcLast = a.Rep.SrcMax - 1; a.DstFirst = a.Rep.DstMin; a.DstLast = a.Rep.DstMax - 1;
+                    if ((_flags & AAHF_FAST_EXP) != 0) { a.SrcFirst -= a.Rep.LeadBack; a.SrcLast += a.Rep.Ahead; }
+                    a.CIn = a.SrcLast - a.SrcFirst + 1; a.COut = a.DstLast - a.DstFirst + 1;
+                    return a;
+                }
+                int m = (int)(((uint)cIn + (uint)cOut - 1) / (uint)cIn) * 2 - 1;
+                var w = new int[m];
+                var cum = new long[m];
+                long sum = 1000000;
+                w[m >> 1] = 1000000;
+                for (int e = cOut - cIn, l = m >> 1, r = m >> 1; e > 0;)
+                {
+                    if (--l < 0) break;
+                    int f = Fd6.DivFD6(e, cOut);
+                    if (f < 500000) f = Fd6.RaisePower(f, 1414214, 0);
+                    else if (f > 500000) f = Fd6.RaisePower(f, 1414214, 1);
+                    e -= cIn;
+                    w[++r] = f;
+                    sum += 2L * f;
+                    w[l] = f;
+                }
+                long acc = 0;
+                for (int i = 0; i < m; i++) { acc += (uint)w[i]; cum[i] = acc; }
+
+                long div = cIn * sum;
+                var ent = new System.Collections.Generic.List<ulong>();
+                uint pos = (uint)((m >> 1) * cIn + cOut);
+                int d = dstL, s = srcL, w9 = (m >> 1) - cOut, left = cOut, first = -1, firstDst = 0, lastSrc = 0, lastDst = 0;
+                int extra = 0, n3 = 0, n4 = 0;
+                do
+                {
+                    uint w13 = pos;
+                    pos = pos > (uint)cIn ? pos - (uint)cIn : pos - (uint)cIn + (uint)cOut;
+                    left--; w9++;
+                    int taps = m, flag = 0, wi = 0;
+                    long x1 = 0, x0 = 0, x24 = 0, x6 = 0;
+                    bool normal = false;
+                    while (taps != 0)
+                    {
+                        int before = taps;
+                        long wt = w[wi++];
+                        taps--;
+                        if (w13 >= (uint)cIn)
+                        {
+                            uint q = w13 / (uint)cIn;
+                            int idx = m - taps - 1;
+                            int k = q > (uint)before ? before : (int)q;
+                            long prev = idx == 0 ? 0 : cum[idx - 1];
+                            w13 -= (uint)(k * cIn);
+                            x6 += (cum[idx + k - 1] - prev) * cIn;
+                            taps = taps - k + 1;
+                            wi += k - 1;
+                        }
+                        else if (w9 >= 0 && (uint)taps < (uint)w9)
+                        {
+                            x6 += wt * cIn;
+                            w13 -= (uint)cIn;
+                        }
+                        else
+                        {
+                            if (w13 != 0) x6 += w13 * wt;
+                            x1 = x0; x0 = x24; x24 = x6;
+                            x6 = (long)(uint)(cIn - (int)w13) * wt;
+                            w13 = w13 - (uint)cIn + (uint)cOut;
+                            if (taps == 0) normal = true;
+                        }
+                    }
+                    if (normal)
+                    {
+                        int t = s + 1;
+                        if (t >= srcMin && t < srcMax)
+                        {
+                            extra++;
+                            t = s + 2;
+                            flag = t >= srcMin && t < srcMax ? 0x8000 : 0xc000;
+                        }
+                        s = t - 1;
+                    }
+                    if (s >= srcMin && s < srcMax && d >= clipL && d < clipR)
+                    {
+                        long x13 = x6 << 13, q3 = x13 / div, rem = x13 - q3 * div;
+                        long x14 = rem + (x24 << 13), q2 = x14 / div;
+                        rem = x14 - q2 * div;
+                        ulong h0 = (ulong)(ushort)flag, h1 = 0;
+                        if (x0 != 0)
+                        {
+                            n3++;
+                            x14 = rem + (x0 << 13);
+                            long q1 = x14 / div;
+                            rem = x14 - q1 * div;
+                            h1 = (ushort)q1;
+                            if (x1 != 0) { n4++; h0 = (ushort)(((rem + (x1 << 13)) / div) | (long)flag); }
+                        }
+                        ent.Add(h0 | h1 << 16 | (ulong)(ushort)q2 << 32 | (ulong)(ushort)q3 << 48);
+                        if (first == -1) { first = s; firstDst = d; }
+                        lastSrc = s; lastDst = d;
+                    }
+                    else if (first != -1) break;
+                    d++;
+                } while (left != 0);
+                if (first == -1) return null;
+                int srcFirst = first, srcLast = lastSrc + 1 >= srcMin && lastSrc + 1 < srcMax ? lastSrc + 1 : lastSrc;
+                a.E = ent.ToArray(); a.Count = ent.Count; a.Extra = extra; a.Taps = n3 == 0 ? 2 : n4 != 0 ? 4 : 3;
+                if (Environment.GetEnvironmentVariable("HT_DBG") != null) { Console.WriteLine($"expand cIn {cIn} cOut {cOut} m {m} w [{string.Join(",", w)}] first {first} pre? "); for (int q = 0; q < Math.Min(6, ent.Count); q++) Console.WriteLine($"  e{q}: {ent[q] & 0xffff:x4} {(ent[q] >> 16) & 0xffff:x4} {(ent[q] >> 32) & 0xffff:x4} {ent[q] >> 48:x4}"); } // TRACE
+                ulong e0 = a.E[0];
+                int lim, x = first;     // w10: first, or first + 1 once tested below
+                if ((e0 & 0x8000) == 0)
+                {
+                    lim = 4;
+                    x = first + 1;
+                    if (!(x >= srcMin && x < srcMax)) a.Flags |= 2;
+                }
+                else lim = 3;
+                int kk = 0;
+                while (kk < lim && ((e0 >> (16 * kk)) & 0x3fff) == 0) kk++;
+                x--;
+                if (kk < lim)
+                {
+                    for (int c = lim - kk; c != 0; c--, x--)
+                    {
+                        if (x >= srcMin && x < srcMax) { srcFirst = x; a.PreRead += 1; }
+                        else a.PreRead += 0x10;
+                    }
+                }
+                if (a.PreRead != 0 && x >= srcMin && x < srcMax) { srcFirst = x; a.Flags |= 1; }
+                a.SrcFirst = srcFirst; a.SrcLast = srcLast; a.DstFirst = firstDst; a.DstLast = lastDst;
+                if (Environment.GetEnvironmentVariable("HT_DBG") != null) Console.WriteLine($"  srcFirst {srcFirst} srcLast {srcLast} pre {a.PreRead:x} flags {a.Flags} dst {firstDst}..{lastDst}"); // TRACE
+                a.CIn = srcLast - srcFirst + 1; a.COut = lastDst - firstDst + 1;
                 return a;
+            }
+
+            // ExpandDIB_CX @14014b8b0: a window of the last four sharpened source pixels ((6c - left - right) / 4,
+            // clamped; the scan's ends replicated) under the entry's four weights.
+            static void ExpandDIB_CX(AAInfo a, byte[] src, byte[] dst)
+            {
+                int n = a.CIn;
+                for (int k = 0; k < 3; k++) { src[3 * (n + k)] = src[3 * (n + k - 1)]; src[3 * (n + k) + 1] = src[3 * (n + k - 1) + 1]; src[3 * (n + k) + 2] = src[3 * (n + k - 1) + 2]; }
+                var w = new byte[24];   // S0..S3, R0, R1, R2, T
+                int f1 = a.Flags & 1, si = f1 + 1;
+                for (int c = 0; c < 3; c++) { w[15 + c] = src[c]; w[18 + c] = src[3 * f1 + c]; }
+                bool sharp = (a.Flags & 4) == 0;
+                int hi = a.PreRead >> 4, lo = a.PreRead & 0xf, w6;
+                if (lo == 0 && hi != 0)
+                {
+                    si = f1;
+                    for (int c = 0; c < 3; c++) w[18 + c] = src[c];
+                    w6 = 3; lo = 1; hi--;
+                }
+                else w6 = 4 - lo;
+                for (; lo != 0; lo--) ShiftIn(w, src, ref si, sharp);
+                int t0 = w[3 * w6], t1 = w[3 * w6 + 1], t2 = w[3 * w6 + 2];
+                for (w6--; hi != 0; hi--, w6--) { w[3 * w6] = (byte)t0; w[3 * w6 + 1] = (byte)t1; w[3 * w6 + 2] = (byte)t2; }
+                for (int j = 0; j < a.COut; j++)
+                {
+                    ulong e = a.E[j];
+                    int h0 = (int)(e & 0xffff), h1 = (int)(e >> 16) & 0xffff, h2 = (int)(e >> 32) & 0xffff, h3 = (int)(e >> 48);
+                    if ((h0 & 0x8000) != 0) { ShiftIn(w, src, ref si, sharp); h0 &= 0x3fff; }
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int v = w[9 + c] * h3;
+                        if (h2 != 0)
+                        {
+                            v += w[6 + c] * h2;
+                            if (h1 != 0)
+                            {
+                                v += w[3 + c] * h1;
+                                if (h0 != 0) v += w[c] * h0;
+                            }
+                        }
+                        dst[3 * j + c] = (byte)((v + 0x1000) >> 13);
+                    }
+                }
+            }
+
+            static byte Clamp2(int v)
+            {
+                v >>= 2;
+                if ((v & 0xff00) != 0) v = (int)~((uint)v >> 24);
+                return (byte)v;
+            }
+
+            static void ShiftIn(byte[] w, byte[] src, ref int si, bool sharp)
+            {
+                Buffer.BlockCopy(w, 3, w, 0, 15);          // S0..S2 <- S1..S3, S3 <- R0, R0 <- R1
+                w[15] = w[18]; w[16] = w[19]; w[17] = w[20];   // R1 <- R2
+                w[18] = src[3 * si]; w[19] = src[3 * si + 1]; w[20] = src[3 * si + 2];
+                si++;
+                for (int c = 0; c < 3; c++)
+                    w[9 + c] = sharp ? Clamp2(w[15 + c] * 6 - w[18 + c] - w[12 + c]) : w[15 + c];
             }
 
             // BuildShrinkAAInfo @140147400: box weights in 1/8192 (a source pixel is worth (cOut << 13) / cIn,
@@ -661,13 +1175,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
             // ---- scan input (GetFixupScan) ----
             bool _stepBack;
 
-            void GetScan(byte[] dst)
+            void GetScan(byte[] dst, int off = 0)
             {
-                if (_fix != null) { _fix.StepBackFlag |= _stepBack; _stepBack = false; _fix.Scan(dst, 0); }
+                if (_fix != null) { _fix.StepBackFlag |= _stepBack; _stepBack = false; _fix.Scan(dst, off); }
                 else
                 {
                     if (_stepBack) { _stepBack = false; _rd.StepBack(); }
-                    _rd.Read(dst, 0);
+                    _rd.Read(dst, off);
                 }
             }
 
@@ -709,6 +1223,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     for (int i = 0; i < n; i++) Copy3(src, i, bgr, i);
                 }
                 else if (_cxMode == 1) ShrinkDIB_CX(_ax, src, bgr);
+                else if (_cxMode == 2) ExpandDIB_CX(_ax, src, bgr);
                 else throw new NotSupportedException();
             }
 
@@ -905,6 +1420,116 @@ namespace System.Drawing.WebGpuBackend.Gdip
             static void AddRow(int[] r, byte[] line, int n, int t)
             {
                 for (int j = 0; j < n; j++) { r[3 * j + 3] += t * line[3 * j + 2]; r[3 * j + 4] += t * line[3 * j + 1]; r[3 * j + 5] += t * line[3 * j]; }
+            }
+
+            // SharpenInput @14014e390: (12 cur - prev - next - left - right) / 8 of each pixel of a scan (its
+            // ends replicated), into o; then o gets three replicated pixels on the left and two on the right.
+            // Lines carry 9 bytes of padding before index 0 (P0).
+            const int P0 = 9;
+
+            static byte Clamp3(int v)
+            {
+                v >>= 3;
+                if ((v & 0xff00) != 0) v = (int)~((uint)v >> 24);
+                return (byte)v;
+            }
+
+            static void SharpenInput(byte[] o, byte[] prev, byte[] cur, byte[] next, int n)
+            {
+                cur[P0 - 3] = cur[P0]; cur[P0 - 2] = cur[P0 + 1]; cur[P0 - 1] = cur[P0 + 2];
+                cur[P0 + n] = cur[P0 + n - 3]; cur[P0 + n + 1] = cur[P0 + n - 2]; cur[P0 + n + 2] = cur[P0 + n - 1];
+                for (int i = P0; i < P0 + n; i++)
+                    o[i] = Clamp3(cur[i] * 12 - prev[i] - next[i] - cur[i - 3] - cur[i + 3]);
+                for (int k = 1; k <= 3; k++) { o[P0 - 3 * k] = o[P0 - 3 * k + 3]; o[P0 - 3 * k + 1] = o[P0 - 3 * k + 4]; o[P0 - 3 * k + 2] = o[P0 - 3 * k + 5]; }
+                o[P0 + n + 3] = o[P0 + n - 3]; o[P0 + n + 4] = o[P0 + n - 2]; o[P0 + n + 5] = o[P0 + n - 1];
+                o[P0 + n] = o[P0 + n + 3]; o[P0 + n + 1] = o[P0 + n + 4]; o[P0 + n + 2] = o[P0 + n + 5];
+            }
+
+            // The fixed kernels of the <= 5x enlargement, by run length n and position k in the run (k = 0 the
+            // pixel next to "prev"): Do5225 @14014b580, Do35 @14014b4a0, Do1141 @14014b2a0, Do3121 @14014b3a0,
+            // Do1319 @1402d7c68, Do6251 @14014b6b8, Do3263 @1402d7d70 and the inline n == 2 case.
+            static int FastKernel(int n, int k, int p, int c, int x)
+            {
+                switch (n)
+                {
+                    case 1: return (c * 22 + x * 5 + p * 5 + 16) >> 5;
+                    case 2: return k == 0 ? (c * 3 + p + 2) >> 2 : (c * 3 + x + 2) >> 2;
+                    case 3: return k == 0 ? (p * 3 + c * 5 + 4) >> 3 : k == 1 ? (c * 14 + x + p + 8) >> 4 : (x * 3 + c * 5 + 4) >> 3;
+                    case 4:
+                        return k == 0 ? (p * 3 + c * 5 + 4) >> 3 : k == 1 ? ((p + c * 4) * 3 + x + 8) >> 4
+                             : k == 2 ? ((x + c * 4) * 3 + p + 8) >> 4 : (x * 3 + c * 5 + 4) >> 3;
+                    case 5:
+                        return k == 0 ? (c * 19 + p * 13 + 16) >> 5 : k == 1 ? (x + p * 6 + c * 25 + 16) >> 5
+                             : k == 2 ? (x * 3 + c * 26 + p * 3 + 16) >> 5 : k == 3 ? (p + x * 6 + c * 25 + 16) >> 5
+                             : (c * 19 + x * 13 + 16) >> 5;
+                }
+                return -1;
+            }
+
+            // FastExpAA_CX @14014cd00: per source pixel its whole run of destination pixels from FastKernel; the
+            // first run is lengthened by the leading steps clipped off (written before the destination) and
+            // the last by the trailing ones (written after it).
+            static void FastExpAA_CX(AAInfo a, ushort[] runs, byte[] src, byte[] dst, int nDst)
+            {
+                int si = P0 + a.Rep.LeadBack * 3, di = 0;
+                for (int r = 0; r < runs.Length; r++)
+                {
+                    int n = Math.Min(runs[r], nDst - di);
+                    for (int k = 0; k < n; k++, di++)
+                        for (int ch = 0; ch < 3; ch++)
+                            dst[3 * di + ch] = (byte)FastKernel(n, k, src[si - 3 + ch], src[si + ch], src[si + 3 + ch]);
+                    si += 3;
+                    if (di == nDst) return;
+                }
+            }
+
+            // FastExpAA_CY @14014d2b0: both axes enlarge at most five times. Every source scan is sharpened
+            // in two dimensions (SharpenInput) against its neighbours, a run of rows comes from FastKernel down
+            // the sharpened scans and FastExpAA_CX takes it across.
+            void FastExpAA_CY()
+            {
+                AAInfo ax = _ax, ay = _ay;
+                int n3 = ax.CIn * 3, len = n3 + P0 + 9;
+                ushort[] xr = (ushort[])ax.Rep.Runs.Clone(), yr = (ushort[])ay.Rep.Runs.Clone();
+                xr[0] += ax.Rep.Lead; xr[xr.Length - 1] += ax.Rep.Trail;
+                yr[yr.Length - 1] += ay.Rep.Trail;
+                int lead = ax.Rep.Lead, nDst = ax.COut + lead + ax.Rep.Trail;
+                var big = new byte[nDst * 3 + 16];
+                var bgr = new byte[ax.COut * 3 + 16];
+                byte[] b25 = new byte[len], b20 = new byte[len], b23 = new byte[len], b21 = new byte[len], b26 = new byte[len];
+                var o = new byte[len];
+                GetScan(b21, P0);
+                if (ay.Rep.LeadBack == 0) _stepBack = true;
+                GetScan(b26, P0);
+                if (ay.Rep.LeadBack < 2) _stepBack = true;
+                int w24 = -3, rowsLeft = ay.COut, ri = 0;
+                while (true)
+                {
+                    byte[] b19 = b25; b25 = b20; b20 = b23; b23 = b21; b21 = b26; b26 = b19;
+                    GetScan(b19, P0);
+                    SharpenInput(b23, b23, b21, b19, n3);
+                    if (++w24 < 0) { if (rowsLeft == 0) return; continue; }
+                    int run = ri < yr.Length ? yr[ri] : 0;
+                    ri++;
+                    int n = w24 == 0 ? run + ay.Rep.Lead : run;
+                    if (run == 0) { if (rowsLeft == 0) return; continue; }
+                    for (int k = run; k-- > 0;)
+                    {
+                        if (rowsLeft == 0) return;
+                        int pos = n - 1 - k;
+                        for (int i = P0; i < P0 + n3; i++)
+                        {
+                            int v = FastKernel(n, pos, b25[i], b20[i], b23[i]);
+                            if (v >= 0) o[i] = (byte)v;
+                        }
+                        o[P0 - 3] = o[P0]; o[P0 - 2] = o[P0 + 1]; o[P0 - 1] = o[P0 + 2];
+                        o[P0 + n3] = o[P0 + n3 - 3]; o[P0 + n3 + 1] = o[P0 + n3 - 2]; o[P0 + n3 + 2] = o[P0 + n3 - 1];
+                        FastExpAA_CX(ax, xr, o, big, nDst);
+                        Array.Copy(big, lead * 3, bgr, 0, ax.COut * 3);
+                        Output(bgr);
+                        rowsLeft--;
+                    }
+                }
             }
 
             // ShrinkDIB_CY @14014e820: the same filter down the columns of source-width scans (three int rows:
