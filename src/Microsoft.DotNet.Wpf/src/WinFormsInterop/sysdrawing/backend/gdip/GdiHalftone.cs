@@ -17,6 +17,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 {
     internal static class GdiHalftone
     {
+        internal static string Trace; // TRACE
         // AAHEADER flags (SetupAAHeader @140148260 local_e8, ComputeAABBP @1401479b0)
         const int AAHF_FLIP_X = 0x1, AAHF_FLIP_Y = 0x2, AAHF_FIXUP = 0x40, AAHF_NO_AA = 0x200,
                   AAHF_FAST_EXP = 0x4000, AAHF_SHRINK_AREA = 0x80000;
@@ -358,6 +359,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public int CIn, COut;
             public int SrcFirst, SrcLast, DstFirst, DstLast;
             public RepData Rep;
+            public int Unit;                // shrink: (cOut << 13) / cIn, tables +0x18
+            public ushort PreSrc;           // +0x0a
+            public ushort PreRead = 0;      // +0x0c
+            public ushort FirstWeight;      // +0x0e
+            public int Count, Extra;        // +0x10, +0x14
+            public ushort[] W;              // +0x28, shrink weights (0-terminated)
         }
 
         static AAInfo BuildBltAAInfo(int srcL, int srcR, int srcW, int dstL, int dstR, int clipL, int clipR)
@@ -417,6 +424,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _rd = new Reader(_s, sl, _ax.CIn, st, _ay.CIn);
                 if ((_flags & AAHF_FIXUP) != 0) _fix = new Fixup(_rd, _ax.CIn, _ay.CIn);
                 _dstX0 = cl; _dstY0 = ct;
+                Trace = ((_flags & AAHF_NO_AA) != 0 ? "n" : "a") + ((_flags & AAHF_FIXUP) != 0 ? "f" : "") + _cyMode + "" + _cxMode + ((_flags & AAHF_FAST_EXP) != 0 ? "F" : ""); // TRACE
 
                 if ((_flags & AAHF_NO_AA) != 0)
                 {
@@ -429,6 +437,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     switch (_cyMode)
                     {
                         case 1: BltDIB_CY(); break;
+                        case 2: if (_cxMode == 2) return null; ShrinkDIB_CY(); break;
+                        case 3: ShrinkDIB_CY_SrkCX(); break;
                         default: return null;
                     }
                 }
@@ -512,7 +522,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int cs = srcR - srcL, cd = dstR - dstL;
                 AAInfo a;
                 if (cs == cd) a = BuildBltAAInfo(srcL, srcR, srcW, dstL, dstR, clipL, clipR);
-                else if (cs < cd) a = BuildExpandAAInfo(srcL, srcR, srcW, dstL, dstR, clipL, clipR);
+                else if (cs < cd) { a = BuildExpandAAInfo(srcL, srcR, srcW, dstL, dstR, clipL, clipR); if (a == null && (_flags & AAHF_NO_AA) == 0) throw new NotSupportedException(); }
                 else a = BuildShrinkAAInfo(srcL, srcR, srcW, dstL, dstR, clipL, clipR);
                 if (a == null) return null;
                 srcL = a.SrcFirst; srcR = a.SrcLast; clipL = a.DstFirst; clipR = a.DstLast;
@@ -536,29 +546,129 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 return a;
             }
 
+            // BuildShrinkAAInfo @140147400: box weights in 1/8192 (a source pixel is worth (cOut << 13) / cIn,
+            // or one more where the remainders carry, flag 0x8000), one entry per source pixel; flag 0x4000
+            // marks the pixel where a destination pixel ends, its low 14 bits that destination's share.
             AAInfo BuildShrinkAAInfo(int srcL, int srcR, int srcW, int dstL, int dstR, int clipL, int clipR)
             {
+                if (!(srcR >= srcL && dstR > dstL)) return null;
                 int cIn = srcR - srcL, cOut = dstR - dstL;
-                if (srcR < srcL || dstR <= dstL) return null;
-                if (clipR <= clipL - 1 || cIn <= cOut) return null;
-                int lo = Math.Max(srcL, 0), hi = Math.Min(srcR, srcW);
-                var a = new AAInfo();
+                int srcMin = Math.Max(srcL, 0), srcMax = srcR > srcW ? srcW : srcR;
+                if (!(clipL - 1 < clipR) || (uint)cIn <= (uint)cOut) return null;
+                long span = (long)(uint)(clipR - clipL + 2) * (uint)cIn;
+                if (span > uint.MaxValue) return null;
+                uint maxEnt = (uint)((span + cOut - 1) / (uint)cOut) + 4;
+                if (maxEnt > (uint)cIn) maxEnt = (uint)cIn;
+                int unit = (int)(((long)(uint)cOut << 13) / cIn);
+                var a = new AAInfo { Unit = unit };
                 if ((_flags & 0x4a80) != 0)
                 {
-                    a.Rep = BuildRepData(cIn, cOut, lo, hi, clipL, clipR, srcL, dstL);
+                    a.Rep = BuildRepData(cIn, cOut, srcMin, srcMax, clipL, clipR, srcL, dstL);
                     if (a.Rep == null) return null;
                 }
-                if ((_flags & AAHF_NO_AA) == 0) return null;   // weights: not yet
-                a.SrcFirst = a.Rep.SrcMin; a.SrcLast = a.Rep.SrcMax - 1; a.DstFirst = a.Rep.DstMin; a.DstLast = a.Rep.DstMax - 1;
-                a.CIn = a.SrcLast - a.SrcFirst + 1; a.COut = a.DstLast - a.DstFirst + 1;
+                if ((_flags & AAHF_NO_AA) != 0)
+                {
+                    a.SrcFirst = a.Rep.SrcMin; a.SrcLast = a.Rep.SrcMax - 1; a.DstFirst = a.Rep.DstMin; a.DstLast = a.Rep.DstMax - 1;
+                    a.CIn = a.SrcLast - a.SrcFirst + 1; a.COut = a.DstLast - a.DstFirst + 1;
+                    return a;
+                }
+                var w = new ushort[maxEnt + 1];
+                a.PreRead = 1;
+                int ptr = -1, e = cIn, acc = 0, n = cIn, d = dstL, s = srcL, count = 0;
+                long rem = 0;
+                int first = -1, firstDst = 0, lastDst = 0, lastSrc = 0;
+                while (n != 0)
+                {
+                    int eb = e, w11 = 0, flag, w6;
+                    e -= cOut; n--;
+                    if (e <= 0) { w11 = -e; flag = 0x4000; d++; e += cIn; w6 = eb; }
+                    else { w6 = cOut; flag = 0; }
+                    if (d >= clipL - 2 && d <= clipR)
+                    {
+                        long x7 = rem + ((long)w6 << 13);
+                        w6 = (int)(x7 / cIn);
+                        if (w6 > unit) flag |= 0x8000;
+                        rem = x7 % cIn;
+                        acc += w6;
+                        if ((flag & 0x4000) != 0)
+                        {
+                            long x13 = (long)w11 << 13;
+                            acc = (int)(x13 / cIn);
+                            rem = x13 % cIn;
+                            flag = acc + w6 <= unit ? flag & 0x7fff : flag | 0x8000;
+                        }
+                    }
+                    if (d < clipL - 1 || d > clipR)
+                    {
+                        if (first != -1)
+                        {
+                            if (ptr + 1 < maxEnt) ptr++;
+                            w[ptr] = (ushort)((0x2000 - acc) | 0x4000);
+                            count++;
+                            break;
+                        }
+                    }
+                    else if (s < srcMin || s >= srcMax)
+                    {
+                        if (first != -1)
+                        {
+                            if (ptr + 1 < maxEnt) ptr++;
+                            if ((flag & 0x4000) == 0) w6 = w6 - acc + 0x2000;
+                            w[ptr] = (ushort)(flag | w6 | 0x4000);
+                            count++;
+                            n = 0;
+                        }
+                    }
+                    else
+                    {
+                        int bnd = flag & 0x4000;
+                        int saved = ptr;
+                        ptr++;
+                        if (bnd != 0) count++;
+                        if (ptr >= maxEnt) ptr = saved;
+                        w[ptr] = (ushort)(flag | w6);
+                        if (first == -1)
+                        {
+                            first = s; firstDst = d;
+                            int fw;
+                            if (bnd != 0)
+                            {
+                                if (d == clipL - 1) { a.PreSrc = 1; count--; fw = acc; ptr--; }
+                                else { fw = 0x2000 - w6; firstDst = d - 1; }
+                            }
+                            else fw = acc - w6;
+                            a.FirstWeight = (ushort)fw;
+                            lastDst = firstDst;
+                        }
+                        else lastDst = d;
+                        lastSrc = s;
+                    }
+                    s++;
+                }
+                if (first == -1 || ptr + 1 == 0) return null;
+                if (lastSrc >= srcMax) lastSrc = srcMax - 1;
+                if (firstDst < clipL) { a.PreRead++; firstDst = clipL; }
+                if (lastDst >= clipR) lastDst = clipR - 1;
+                if (a.PreSrc != 0 && a.FirstWeight == 0) { a.PreSrc = 0; first++; }
+                a.Count = ptr + 1; a.Extra = count;
+                w[ptr + 1] = 0;
+                a.W = w;
+                a.SrcFirst = first; a.SrcLast = lastSrc; a.DstFirst = firstDst; a.DstLast = lastDst;
+                a.CIn = lastSrc - first + 1; a.COut = lastDst - firstDst + 1;
                 return a;
             }
 
             // ---- scan input (GetFixupScan) ----
+            bool _stepBack;
+
             void GetScan(byte[] dst)
             {
-                if (_fix != null) _fix.Scan(dst, 0);
-                else _rd.Read(dst, 0);
+                if (_fix != null) { _fix.StepBackFlag |= _stepBack; _stepBack = false; _fix.Scan(dst, 0); }
+                else
+                {
+                    if (_stepBack) { _stepBack = false; _rd.StepBack(); }
+                    _rd.Read(dst, 0);
+                }
             }
 
             void GetScanSkip()
@@ -598,7 +708,274 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     // CopyDIB_CX @14014b270
                     for (int i = 0; i < n; i++) Copy3(src, i, bgr, i);
                 }
+                else if (_cxMode == 1) ShrinkDIB_CX(_ax, src, bgr);
                 else throw new NotSupportedException();
+            }
+
+            // The sharpened box filter of both shrink passes: out = (6P - PP - N) / 4 of three consecutive
+            // destination sums, clamped as the binary does ((v & 0xff00) != 0 gives ~(v >> 24)).
+            static byte Clamp15(int v)
+            {
+                v >>= 15;
+                if ((v & 0xff00) != 0) v = (int)~((uint)v >> 24);
+                return (byte)v;
+            }
+
+            // ShrinkDIB_CX @14014e510
+            static void ShrinkDIB_CX(AAInfo a, byte[] src, byte[] dst)
+            {
+                int si = 0, accR = 0, accG = 0, accB = 0;
+                int fw = a.FirstWeight;
+                if (fw != 0) { accR = src[2] * fw; accG = src[1] * fw; accB = src[0] * fw; si += a.PreSrc * 3; }
+                int pR = 0, pG = 0, pB = 0, qR = 0, qG = 0, qB = 0;
+                ushort[] W = a.W;
+                int wi = 0, n = a.PreRead;
+                if (n != 0)
+                {
+                    do
+                    {
+                        int wt = W[wi++], t = a.Unit + (wt >> 15);
+                        int cR = src[si + 2], cG = src[si + 1], cB = src[si];
+                        if ((wt & 0x4000) == 0) { accR += t * cR; accG += t * cG; accB += t * cB; }
+                        else
+                        {
+                            n--;
+                            int w = wt & 0x3fff;
+                            qR = pR; qG = pG; qB = pB;
+                            pR = accR + cR * w; pG = accG + cG * w; pB = accB + cB * w;
+                            accR = t * cR - cR * w; accG = t * cG - cG * w; accB = t * cB - cB * w;
+                        }
+                        si += 3;
+                    } while (n != 0);
+                }
+                if (a.PreRead == 1) { qR = pR; qG = pG; qB = pB; }
+                int di = 0, wv;
+                while ((wv = W[wi]) != 0)
+                {
+                    wi++;
+                    int t = a.Unit + (wv >> 15);
+                    int cR = src[si + 2], cG = src[si + 1], cB = src[si];
+                    if ((wv & 0x4000) == 0) { accR += t * cR; accG += t * cG; accB += t * cB; }
+                    else
+                    {
+                        int w = wv & 0x3fff;
+                        int nR = accR + cR * w, nG = accG + cG * w, nB = accB + cB * w;
+                        dst[3 * di] = Clamp15(pB * 6 - qB - nB);
+                        dst[3 * di + 1] = Clamp15(pG * 6 - qG - nG);
+                        dst[3 * di + 2] = Clamp15(pR * 6 - qR - nR);
+                        di++;
+                        qR = pR; qG = pG; qB = pB; pR = nR; pG = nG; pB = nB;
+                        accR = t * cR - cR * w; accG = t * cG - cG * w; accB = t * cB - cB * w;
+                    }
+                    si += 3;
+                }
+                if (di == a.COut - 1)
+                {
+                    dst[3 * di] = Clamp15(pB * 5 - qB);
+                    dst[3 * di + 1] = Clamp15(pG * 5 - qG);
+                    dst[3 * di + 2] = Clamp15(pR * 5 - qR);
+                }
+            }
+
+            static byte Clamp16(int v)
+            {
+                v >>= 16;
+                if ((v & 0xff00) != 0) v = (int)~((uint)v >> 24);
+                return (byte)v;
+            }
+
+            // SrkYDIB_SrkCX @14014fbc0: the plain x box of a scan, in place, rounded to bytes.
+            static void SrkYDIB_SrkCX(AAInfo a, byte[] line)
+            {
+                int si = 0, o = 0, accR = 0, accG = 0, accB = 0, fw = a.FirstWeight;
+                if (fw != 0) { accR = line[2] * fw; accG = line[1] * fw; accB = line[0] * fw; si = a.PreSrc * 3; }
+                ushort[] W = a.W;
+                for (int wi = 0, wt; (wt = W[wi]) != 0; wi++)
+                {
+                    int t = a.Unit + (wt >> 15);
+                    int cR = line[si + 2], cG = line[si + 1], cB = line[si];
+                    si += 3;
+                    if ((wt & 0x4000) == 0) { accR += t * cR; accG += t * cG; accB += t * cB; }
+                    else
+                    {
+                        int w = wt & 0x3fff;
+                        line[o + 2] = (byte)((accR + cR * w + 0x1000) >> 13);
+                        line[o + 1] = (byte)((accG + cG * w + 0x1000) >> 13);
+                        line[o] = (byte)((accB + cB * w + 0x1000) >> 13);
+                        o += 3;
+                        accR = t * cR - cR * w; accG = t * cG - cG * w; accB = t * cB - cB * w;
+                    }
+                }
+            }
+
+            // ShrinkDIB_CY_SrkCX @14014eed0: both axes shrink. The x box rounds each scan to bytes first, the
+            // y box sums those, and the sharpening is two-dimensional: (12P - up - down - left - right) / 8,
+            // the left and right neighbours of the edge pixels being the pixel itself, the scan below the
+            // last one too (11P).
+            void ShrinkDIB_CY_SrkCX()
+            {
+                AAInfo ax = _ax, ay = _ay;
+                int ne = ax.Extra, cout = ax.COut, preX = ax.PreRead;
+                var line = new byte[Math.Max(ax.CIn, ne) * 3 + 16];
+                var bgr = new byte[cout * 3 + 16];
+                int len = (ne + 2) * 3;
+                int[] A = new int[len], B = new int[len], C = new int[len];
+                // index of pixel j's channel ch (0 R, 1 G, 2 B) in a row: 3 * (j + 1) + ch
+                if (ay.FirstWeight != 0)
+                {
+                    GetScan(line);
+                    SrkYDIB_SrkCX(ax, line);
+                    int fw = ay.FirstWeight;
+                    for (int j = 0; j < ne; j++) { C[3 * j + 3] = fw * line[3 * j + 2]; C[3 * j + 4] = fw * line[3 * j + 1]; C[3 * j + 5] = fw * line[3 * j]; }
+                    if (ay.PreSrc == 0) _stepBack = true;
+                }
+                int wi = 0, rows = 0;
+                ushort[] W = ay.W;
+                for (int p = ay.PreRead; p != 0;)
+                {
+                    int wt = W[wi++];
+                    GetScan(line);
+                    SrkYDIB_SrkCX(ax, line);
+                    if ((wt & 0x4000) == 0) { AddRow(C, line, ne, ay.Unit + (wt >> 15)); continue; }
+                    int ta = wt & 0x3fff, tb = ay.Unit + (wt >> 15) - ta;
+                    for (int j = 0; j < ne; j++)
+                    {
+                        int cR = line[3 * j + 2], cG = line[3 * j + 1], cB = line[3 * j];
+                        C[3 * j + 3] += ta * cR; C[3 * j + 4] += ta * cG; C[3 * j + 5] += ta * cB;
+                        A[3 * j + 3] = tb * cR; A[3 * j + 4] = tb * cG; A[3 * j + 5] = tb * cB;
+                    }
+                    int[] t0 = A; A = B; B = C; C = t0;
+                    p--;
+                }
+                if (ay.PreRead == 1) Array.Copy(B, 3, A, 3, ne * 3);
+                int wv;
+                while ((wv = W[wi]) != 0)
+                {
+                    wi++;
+                    GetScan(line);
+                    SrkYDIB_SrkCX(ax, line);
+                    if ((wv & 0x4000) == 0) { AddRow(C, line, ne, ay.Unit + (wv >> 15)); continue; }
+                    int ta = wv & 0x3fff, tb = ay.Unit + (wv >> 15) - ta;
+                    B[3 * ne + 3] = B[3 * ne]; B[3 * ne + 4] = B[3 * ne + 1]; B[3 * ne + 5] = B[3 * ne + 2];
+                    int k = 0;
+                    if (preX == 1) { B[0] = B[3]; B[1] = B[4]; B[2] = B[5]; }
+                    else
+                    {
+                        int cR = line[2], cG = line[1], cB = line[0];
+                        C[3] += ta * cR; C[4] += ta * cG; C[5] += ta * cB;
+                        A[3] = tb * cR; A[4] = tb * cG; A[5] = tb * cB;
+                        k = 1;
+                    }
+                    for (int j = 0; j < cout; j++, k++)
+                    {
+                        int cR = line[3 * k + 2], cG = line[3 * k + 1], cB = line[3 * k];
+                        int i = 3 * k + 3;
+                        C[i] += ta * cR; C[i + 1] += ta * cG; C[i + 2] += ta * cB;
+                        bgr[3 * j] = Clamp16(B[i + 2] * 12 - B[i - 1] - C[i + 2] - B[i + 5] - A[i + 2]);
+                        bgr[3 * j + 1] = Clamp16(B[i + 1] * 12 - B[i - 2] - B[i + 4] - A[i + 1] - C[i + 1]);
+                        bgr[3 * j + 2] = Clamp16(B[i] * 12 - B[i - 3] - B[i + 3] - A[i] - C[i]);
+                        A[i] = tb * cR; A[i + 1] = tb * cG; A[i + 2] = tb * cB;
+                    }
+                    if (k < ne)
+                    {
+                        int cR = line[3 * k + 2], cG = line[3 * k + 1], cB = line[3 * k];
+                        int i = 3 * k + 3;
+                        C[i] += ta * cR; C[i + 1] += ta * cG; C[i + 2] += ta * cB;
+                        A[i] = tb * cR; A[i + 1] = tb * cG; A[i + 2] = tb * cB;
+                    }
+                    int[] t1 = A; A = B; B = C; C = t1;
+                    Output(bgr);
+                    rows++;
+                }
+                if (rows < ay.COut)
+                {
+                    B[3 * ne + 3] = B[3 * ne]; B[3 * ne + 4] = B[3 * ne + 1]; B[3 * ne + 5] = B[3 * ne + 2];
+                    B[0] = B[3]; B[1] = B[4]; B[2] = B[5];
+                    for (int j = 0, k = preX - 1; j < cout; j++, k++)
+                    {
+                        int i = 3 * k + 3;
+                        bgr[3 * j] = Clamp16(B[i + 2] * 11 - B[i - 1] - A[i + 2] - B[i + 5]);
+                        bgr[3 * j + 1] = Clamp16(B[i + 1] * 11 - B[i - 2] - B[i + 4] - A[i + 1]);
+                        bgr[3 * j + 2] = Clamp16(B[i] * 11 - B[i - 3] - B[i + 3] - A[i]);
+                    }
+                    Output(bgr);
+                }
+            }
+
+            static void AddRow(int[] r, byte[] line, int n, int t)
+            {
+                for (int j = 0; j < n; j++) { r[3 * j + 3] += t * line[3 * j + 2]; r[3 * j + 4] += t * line[3 * j + 1]; r[3 * j + 5] += t * line[3 * j]; }
+            }
+
+            // ShrinkDIB_CY @14014e820: the same filter down the columns of source-width scans (three int rows:
+            // the one before, the last finished, the one accumulating), then the x pass on the result.
+            void ShrinkDIB_CY()
+            {
+                AAInfo a = _ay;
+                int cx = _ax.CIn, n3 = cx * 3;
+                var line = new byte[n3 + 16];
+                var aa = new byte[n3 + 16];
+                var bgr = new byte[_ax.COut * 3 + 16];
+                int[] r0 = new int[n3], r1 = new int[n3], r2 = new int[n3];
+                if (a.FirstWeight != 0)
+                {
+                    GetScan(line);
+                    int fw = a.FirstWeight;
+                    for (int i = 0; i < cx; i++) { r2[3 * i] = fw * line[3 * i + 2]; r2[3 * i + 1] = fw * line[3 * i + 1]; r2[3 * i + 2] = fw * line[3 * i]; }
+                    if (a.PreSrc == 0) _stepBack = true;
+                }
+                int rows = 0, pre = a.PreRead, wi = 0;
+                bool preOne = pre == 1;
+                for (int k = a.Count; k != 0; k--)
+                {
+                    GetScan(line);
+                    int wt = a.W[wi++];
+                    if ((wt & 0x4000) == 0)
+                    {
+                        int t = a.Unit + (wt >> 15);
+                        for (int i = 0; i < cx; i++) { r2[3 * i] += t * line[3 * i + 2]; r2[3 * i + 1] += t * line[3 * i + 1]; r2[3 * i + 2] += t * line[3 * i]; }
+                        continue;
+                    }
+                    int ta = wt & 0x3fff, tb = a.Unit + (wt >> 15) - ta;
+                    int was = pre--;
+                    if (was > 0)
+                    {
+                        for (int i = 0; i < cx; i++)
+                        {
+                            int cR = line[3 * i + 2], cG = line[3 * i + 1], cB = line[3 * i];
+                            r2[3 * i] += ta * cR; r2[3 * i + 1] += ta * cG; r2[3 * i + 2] += ta * cB;
+                            r0[3 * i] = tb * cR; r0[3 * i + 1] = tb * cG; r0[3 * i + 2] = tb * cB;
+                        }
+                        if (preOne) { Array.Copy(r2, r1, n3); preOne = false; }
+                    }
+                    else
+                    {
+                        for (int i = 0; i < cx; i++)
+                        {
+                            int cR = line[3 * i + 2], cG = line[3 * i + 1], cB = line[3 * i];
+                            r2[3 * i] += ta * cR; r2[3 * i + 1] += ta * cG; r2[3 * i + 2] += ta * cB;
+                            aa[3 * i] = Clamp15(r1[3 * i + 2] * 6 - r2[3 * i + 2] - r0[3 * i + 2]);
+                            aa[3 * i + 1] = Clamp15(r1[3 * i + 1] * 6 - r2[3 * i + 1] - r0[3 * i + 1]);
+                            aa[3 * i + 2] = Clamp15(r1[3 * i] * 6 - r2[3 * i] - r0[3 * i]);
+                            r0[3 * i] = tb * cR; r0[3 * i + 1] = tb * cG; r0[3 * i + 2] = tb * cB;
+                        }
+                        CX(aa, bgr);
+                        Output(bgr);
+                        rows++;
+                    }
+                    int[] tmp = r0; r0 = r1; r1 = r2; r2 = tmp;
+                }
+                if (rows < a.COut)
+                {
+                    for (int i = 0; i < cx; i++)
+                    {
+                        aa[3 * i] = Clamp15(r1[3 * i + 2] * 5 - r0[3 * i + 2]);
+                        aa[3 * i + 1] = Clamp15(r1[3 * i + 1] * 5 - r0[3 * i + 1]);
+                        aa[3 * i + 2] = Clamp15(r1[3 * i] * 5 - r0[3 * i]);
+                    }
+                    CX(aa, bgr);
+                    Output(bgr);
+                }
             }
 
             static void Copy3(byte[] s, int si, byte[] d, int di) { d[3 * di] = s[3 * si]; d[3 * di + 1] = s[3 * si + 1]; d[3 * di + 2] = s[3 * si + 2]; }
