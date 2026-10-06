@@ -626,7 +626,9 @@ namespace Wpf.WinFormsInterop.Tests
             case 2: m.WinOrg (0, 0).WinExt (120, 90).VpOrg (10, 10).VpExt (100, 70); break;
             case 3: m.WinOrg (0, 0).WinExt (120, 90).VpOrg (5, 5).VpExt (100, 70).VpOrg (20, 10).VpExt (60, 40); break;
             case 4: m.P (0x020F, 10, 20).P (0x0410, 3, 2, 3, 2); break;          // OFFSETWINDOWORG, SCALEWINDOWEXT
-            case 5: m.MapMode (7).WinExt (120, 60); break;                       // isotropic
+            // isotropic: the mode resets the extents from the device, so both are set again (the
+            // first viewport pair only defines GDI+'s viewport matrix)
+            case 5: m.MapMode (7).WinExt (120, 60).VpOrg (0, 0).VpExt (120, 90).VpOrg (0, 0).VpExt (120, 90); break;
             case 6: m.MapMode (1); break;                                        // MM_TEXT
             case 7: m.P (0x0211, 8, 12).P (0x0412, 4, 3, 5, 4); break;           // OFFSETVIEWPORTORG, SCALEVIEWPORTEXT
             }

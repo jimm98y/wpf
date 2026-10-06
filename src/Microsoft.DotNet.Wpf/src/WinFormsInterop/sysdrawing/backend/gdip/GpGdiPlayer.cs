@@ -547,6 +547,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         if (Gdi && (old != m || m == 7)) GdiSetTransform();
                         return;
                     }
+                // EmfEnumState::ProcessRecord @1800b4ed0: SETPIXELV recoloured as Pen, EXTFLOODFILL as Brush.
+                case 15: { int x = r.I32(), y = r.I32(), c = r.I32(); SetPixelGdi(x, y, Rc != null ? ModifyColor(c, ColorAdjustType.Pen) : c); return; }
+                case 53: { int x = r.I32(), y = r.I32(), c = r.I32(), mode = r.I32(); FloodFill(x, y, Rc != null ? ModifyColor(c, ColorAdjustType.Brush) : c, mode); return; }
                 case 18: _dc.BkMode = r.I32(); return;
                 case 19: _dc.PolyFill = r.I32(); return;
                 case 20: _dc.Rop2 = r.I32(); return;

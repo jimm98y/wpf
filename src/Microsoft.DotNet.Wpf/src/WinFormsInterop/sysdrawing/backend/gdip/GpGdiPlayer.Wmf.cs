@@ -303,7 +303,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 case 0x01: _dc.BkColor = GdiColor(ColorRef16(b, o)); return;
                 case 0x02: _dc.BkMode = P(0); return;
-                case 0x03: SetMapMode(P(0)); return;
+                case 0x03: GdiSetMapMode(P(0)); return;
                 case 0x04: _dc.Rop2 = P(0); return;
                 case 0x06: _dc.PolyFill = P(0); return;
                 case 0x07: _dc.StretchMode = P(0); return;
@@ -458,6 +458,33 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 return Color.FromArgb(v & 0xff, v >> 8 & 0xff, v >> 16 & 0xff);
             }
             return ColorRef(c);
+        }
+
+        /// <summary>DC::iSetMapMode @140231fb0: a new mode (or MM_ISOTROPIC again) resets the
+        /// extents from the DC's device -- the window its size in the mode's units, the viewport its
+        /// pixels with y up; MM_ANISOTROPIC keeps them. (The device is the reference display this
+        /// port assumes everywhere; Windows uses the real one.)</summary>
+        void GdiSetMapMode(int mode)
+        {
+            if (mode < 1 || mode > 8) return;
+            if (mode == _dc.MapMode && mode != 7) return;
+            GpRefDevice dev = GpRefDevice.Default;
+            long umX = dev.HorzSize * 1000L, umY = dev.VertSize * 1000L;
+            static int MulDiv(long a, long b, long c) => (int)((a * b + c / 2) / c);
+            Size win;
+            switch (mode)
+            {
+                case 1: _dc.MapMode = 1; _dc.WinExt = new Size(1, 1); _dc.VpExt = new Size(1, 1); return;
+                case 8: _dc.MapMode = 8; return;
+                case 3: win = new Size((int)((umX + 5) / 10), (int)((umY + 5) / 10)); break;
+                case 4: win = new Size((int)((umX + 0x7f) / 254), (int)((umY + 0x7f) / 254)); break;
+                case 5: win = new Size(MulDiv(umX, 10, 254), MulDiv(umY, 10, 254)); break;
+                case 6: win = new Size(MulDiv(umX, 0x90, 0x9ec), MulDiv(umY, 0x90, 0x9ec)); break;
+                default: win = new Size((int)((umX + 0x32) / 100), (int)((umY + 0x32) / 100)); break;
+            }
+            _dc.MapMode = mode;
+            _dc.WinExt = win;
+            _dc.VpExt = new Size(dev.HorzRes, -dev.VertRes);
         }
 
         void GdiSetWindowOrg(int x, int y) => _dc.WinOrg = new Point(x, y);
@@ -851,9 +878,40 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int xd, yd, wd, hd, xs, ys, ws, hs;
             if (fn == 0x0940) { ys = P(2); xs = P(3); hd = P(4); wd = P(5); yd = P(6); xd = P(7); ws = wd; hs = hd; }
             else { hs = P(2); ws = P(3); ys = P(4); xs = P(5); hd = P(6); wd = P(7); yd = P(8); xd = P(9); }
+            if (d.Bpp == 1 && Le.U16(b, d.H + 12) == 1 && d.NumPal == 2 && Le.I32(b, d.H + d.BiSize) == 0 && Le.I32(b, d.H + d.BiSize + 4) == 0xffffff)
+            {
+                // A black-and-white DIB goes to gdi32 with the recorded (never recoloured) text and
+                // background colours: CreateBitmapForDC @1800450a0 makes it a monochrome bitmap (not
+                // at all when biHeight does not fit a USHORT -- a top-down DIB), then BitBlt /
+                // StretchBlt from it, zeros in the text colour, ones in the background colour.
+                MonoBlit(b, d, xd, yd, wd, hd, xs, ys, ws, hs, rop);
+                return;
+            }
             // OutputDIB's source y counts from the bottom: biHeight - ySrc - srcH.
             int h = Math.Abs(d.Height);
             OutputDibWmf(b, d, xd, yd, wd, hd, xs, h - hs - ys, ws, hs, rop);
+        }
+
+        void MonoBlit(byte[] b, in WmfDib d, int xd, int yd, int wd, int hd, int xs, int ys, int ws, int hs, int rop)
+        {
+            if (d.Height < 0 || d.Height > 0xffff || d.W > 0xffff) return;
+            int w = d.W, h = d.Height, stride = ((w + 31) >> 5) << 2;
+            // SetDIBits from after the two palette entries
+            int bits = d.H + d.BiSize + 8;
+            if (bits + stride * h > b.Length) return;
+            Color fore = GdiColor(_rawText), back = GdiColor(_rawBk);
+            using (var bm = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            {
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        bool on = (b[bits + (h - 1 - y) * stride + (x >> 3)] & (0x80 >> (x & 7))) != 0;
+                        bm.SetPixel(x, y, on ? back : fore);
+                    }
+                _srcBpp = 1;
+                _dibBlit = false;
+                Blit(bm, xd, yd, wd, hd, new RectangleF(xs, ys, ws, hs), rop);
+            }
         }
 
         /// <summary>gdi32 META_DIBBITBLT / META_DIBSTRETCHBLT (when GDI+ hands them over).</summary>
@@ -946,6 +1004,17 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int y0 = Math.Max(ys, start), y1 = Math.Min(ys + h, start + rows);
                 if (y1 <= y0 || w <= 0) return;
                 int top = rows - (y1 - start);
+                // SetDIBitsToDevice: only the destination's origin is logical; the pixels are copied
+                // one for one (the origin through bCvtPts1 to the nearest pixel).
+                if (Gdi)
+                {
+                    GdiXform m = TargetWtoD();
+                    m.Point(xd, yd, out int fx, out int fy);
+                    int dx0 = ((fx >> 3) + 1) >> 1, dy0 = (((fy >> 3) + 1) >> 1) + (ys + h - y1);
+                    int ch = y1 - y0;
+                    RasterBlit(bm, new[] { new PointF(dx0, dy0), new PointF(dx0 + w, dy0), new PointF(dx0, dy0 + ch) }, new RectangleF(xs, top, w, ch), 0x00CC0020, false);
+                    return;
+                }
                 Blit(bm, xd, yd + (ys + h - y1), w, y1 - y0, new RectangleF(xs, top, w, y1 - y0), 0x00CC0020);
             }
             finally { bm.Dispose(); }
