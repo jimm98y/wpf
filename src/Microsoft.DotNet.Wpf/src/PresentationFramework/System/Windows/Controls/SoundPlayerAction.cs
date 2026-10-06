@@ -9,10 +9,11 @@
 *
 *
 \***************************************************************************/
+extern alias SystemWindowsExtensions;   // System.Windows.Extensions is aliased (see PresentationFramework.csproj)
 using MS.Internal;
 using System.ComponentModel;            // DefaultValueAttribute
 using System.IO;
-using System.Media;
+using SoundPlayer = SystemWindowsExtensions::System.Media.SoundPlayer;
 using System.Windows.Navigation;
 using System.Windows.Threading;
 using System.Threading.Tasks;

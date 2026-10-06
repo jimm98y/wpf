@@ -11,7 +11,6 @@ namespace MS.Win32
         public const string Comdlg32 = "comdlg32.dll";
         public const string DwmAPI = "dwmapi.dll";
         public const string Gdi32 = "gdi32.dll";
-        public const string Gdiplus = "gdiplus.dll";
         public const string Hhctrl = "hhctrl.ocx";
         public const string Imm32 = "imm32.dll";
         public const string Kernel32 = "kernel32.dll";

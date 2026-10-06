@@ -18,10 +18,31 @@ namespace System.Windows;
 /// </summary>
 public static class Clipboard
 {
+    // Off-Windows there is no OLE/system clipboard, and even constructing a DataObject throws:
+    // its shared System.Private.Windows.Ole composition eagerly builds a native OLE adapter
+    // (GlobalInterfaceTable -> CoCreateInstance -> OLE32.dll -> DllNotFoundException). So every
+    // write path (SetText/SetImage -> new DataObject()) crashed. Back the clipboard with a
+    // MacDataObject instead: it never touches OLE, and on macOS it bridges text/image to the real
+    // NSPasteboard so copy/paste interops with other apps. Every public accessor funnels through
+    // GetDataObject/SetDataObject/SetDataInternal, so routing those plus Clear/Flush/IsCurrent
+    // covers GetText/SetText/GetData/ContainsText/SetImage/GetImage/etc.
+    private static MacDataObject? s_nonWindowsClipboard;
+
+    private static MacDataObject NonWindowsClipboard => s_nonWindowsClipboard ??= new MacDataObject();
+
     /// <summary>
     ///  Clear the system clipboard.
     /// </summary>
-    public static void Clear() => ClipboardCore.Clear().ThrowOnFailure();
+    public static void Clear()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            NonWindowsClipboard.Clear();
+            return;
+        }
+
+        ClipboardCore.Clear().ThrowOnFailure();
+    }
 
     /// <summary>
     ///  Return <see langword="true"/> if Clipboard contains the audio data. Otherwise, return <see langword="false"/>.
@@ -64,7 +85,16 @@ public static class Clipboard
     /// <summary>
     ///  Permanently renders the contents of the last IDataObject that was set onto the clipboard.
     /// </summary>
-    public static void Flush() => ClipboardCore.Flush().ThrowOnFailure();
+    public static void Flush()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            // Nothing to render to a system clipboard off-Windows; the in-process store persists as-is.
+            return;
+        }
+
+        ClipboardCore.Flush().ThrowOnFailure();
+    }
 
     /// <summary>
     ///  Get audio data as Stream from Clipboard.
@@ -167,7 +197,18 @@ public static class Clipboard
     /// <summary>
     ///  Set the file drop list to Clipboard.
     /// </summary>
-    public static void SetFileDropList(StringCollection fileDropList) => ClipboardCore.SetFileDropList(fileDropList);
+    public static void SetFileDropList(StringCollection fileDropList)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            string[] files = new string[fileDropList.Count];
+            fileDropList.CopyTo(files, 0);
+            SetDataInternal(DataFormats.FileDrop, files);
+            return;
+        }
+
+        ClipboardCore.SetFileDropList(fileDropList);
+    }
 
     /// <summary>
     ///  Set the image data to Clipboard.
@@ -207,6 +248,11 @@ public static class Clipboard
     /// </summary>
     public static IDataObject? GetDataObject()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return NonWindowsClipboard;
+        }
+
         ClipboardCore.GetDataObject<DataObject, IDataObject>(out IDataObject? dataObject).ThrowOnFailure();
         return dataObject;
     }
@@ -222,6 +268,12 @@ public static class Clipboard
     public static bool IsCurrent(IDataObject data)
     {
         ArgumentNullException.ThrowIfNull(data);
+
+        if (!OperatingSystem.IsWindows())
+        {
+            return ReferenceEquals(NonWindowsClipboard, data);
+        }
+
         return ClipboardCore.IsObjectOnClipboard(data);
     }
 
@@ -251,6 +303,33 @@ public static class Clipboard
     {
         ArgumentNullException.ThrowIfNull(data);
 
+        if (!OperatingSystem.IsWindows())
+        {
+            // Never construct a DataObject off-Windows (its OLE composition throws for OLE32.dll).
+            // Copy any provided IDataObject's formats into the non-OLE, NSPasteboard-backed store;
+            // otherwise stash the raw value under its type name.
+            MacDataObject target = NonWindowsClipboard;
+            if (ReferenceEquals(data, target))
+            {
+                return;
+            }
+
+            target.Clear();
+            if (data is IDataObject source)
+            {
+                foreach (string format in source.GetFormats())
+                {
+                    target.SetData(format, source.GetData(format));
+                }
+            }
+            else
+            {
+                target.SetData(data);
+            }
+
+            return;
+        }
+
         // Wrap if we're not already a DataObject
         DataObject dataObject = data as DataObject ?? DataObject.CreateFromClipboard(data);
         ClipboardCore.SetData(dataObject, copy).ThrowOnFailure();
@@ -274,6 +353,16 @@ public static class Clipboard
     /// </summary>
     private static void SetDataInternal(string format, object data)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            // Each Set* is a full "copy" that replaces the clipboard; go straight to the
+            // non-OLE, NSPasteboard-backed store (a DataObject can't be constructed off-Windows).
+            MacDataObject target = NonWindowsClipboard;
+            target.Clear();
+            target.SetData(format, data, IsDataFormatAutoConvert(format));
+            return;
+        }
+
         DataObject dataObject = new();
         dataObject.SetData(format, data, IsDataFormatAutoConvert(format));
         SetDataObject(dataObject, copy: true);

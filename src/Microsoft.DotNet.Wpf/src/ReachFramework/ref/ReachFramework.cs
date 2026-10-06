@@ -551,6 +551,18 @@ namespace System.Printing.Interop
         void System.IDisposable.Dispose() { }
     }
 }
+namespace System.Windows.Xps.Pdf
+{
+    public sealed partial class PdfDocumentWriter : System.IDisposable
+    {
+        public PdfDocumentWriter(System.IO.Stream destination, bool leaveOpen = false) { }
+        public System.Windows.Size PageSize { get { throw null; } set { } }
+        public void Close() { }
+        public void Dispose() { }
+        public void Write(System.Windows.Media.Visual visual) { }
+        public void Write(System.Windows.Documents.DocumentPaginator paginator) { }
+    }
+}
 namespace System.Windows.Xps
 {
     public partial class XpsException : System.Exception

@@ -1,0 +1,73 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The cross-platform test suite for the WebGPU renderer and the platform heads.
+
+    Runs identically on Linux, macOS and Windows: plain net10.0 with no Windows-suffixed TFM (the
+    Arcade UnitTests projects append one, which is exactly why they cannot host these), and no
+    reference to anything Windows-only. What a given OS cannot exercise is SKIPPED with a stated
+    reason rather than silently passing. See Harness/Requirements.cs.
+
+    xunit.v3 on Microsoft.Testing.Platform, matching the rest of the repo, so `dotnet test`, the VS
+    Test Explorer and `dotnet run` all discover and run it. It stays OUTSIDE Arcade for the same
+    reason WgpuInterop itself does (the empty Directory.Build.props one level up stops the walk):
+    the renderer builds and tests standalone, without the full native+managed WPF build.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+
+    <!-- xunit.v3 runs as its own executable under Microsoft.Testing.Platform. -->
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+
+    <!--
+      xunit.v3 REQUIRES a native apphost (its targets error out without one), and that apphost
+      resolves the runtime through DOTNET_ROOT or a system install. Neither points at this repo's
+      private ./.dotnet, so a bare `./.dotnet/dotnet test` fails with "You must install .NET" on a
+      machine that is plainly running it. Where the SDK is installed normally (a developer box, VS,
+      CI images) nothing is needed. Against the repo-private SDK, set DOTNET_ROOT, which is all
+      eng/run-tests.sh and eng/run-tests.cmd do.
+    -->
+    <UseAppHost>true</UseAppHost>
+
+    <!-- These tests drive a GPU device; running them concurrently in one process is not safe. -->
+    <GenerateProgramFile>true</GenerateProgramFile>
+
+    <!-- The analyzers the samples opt out of; test code predates several of them. -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <NoWarn>$(NoWarn);CS8002;CA1416</NoWarn>
+
+    <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>
+    <WgpuNativeDir>$(MSBuildThisFileDirectory)..\..\native\$(WgpuRid)\lib\</WgpuNativeDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="3.0.0" />
+    <PackageReference Include="Microsoft.Testing.Platform" Version="1.7.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\WgpuInterop.csproj" />
+  </ItemGroup>
+
+  <!-- The native backend, next to the test binary so the loader finds it. -->
+  <ItemGroup>
+    <None Include="$(WgpuNativeDir)wgpu_native.dll"      Condition="Exists('$(WgpuNativeDir)wgpu_native.dll')"      CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WgpuNativeDir)libwgpu_native.so"    Condition="Exists('$(WgpuNativeDir)libwgpu_native.so')"    CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WgpuNativeDir)libwgpu_native.dylib" Condition="Exists('$(WgpuNativeDir)libwgpu_native.dylib')" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="WarnIfNoNativeLib" BeforeTargets="Build"
+          Condition="!Exists('$(WgpuNativeDir)wgpu_native.dll') AND !Exists('$(WgpuNativeDir)libwgpu_native.so') AND !Exists('$(WgpuNativeDir)libwgpu_native.dylib')">
+    <Warning Text="wgpu-native not found in '$(WgpuNativeDir)'. GPU tests will report as skipped. Stage it with: pwsh src/Microsoft.DotNet.Wpf/src/WgpuInterop/eng/fetch-wgpu.ps1 -Rid $(WgpuRid)" />
+  </Target>
+
+</Project>

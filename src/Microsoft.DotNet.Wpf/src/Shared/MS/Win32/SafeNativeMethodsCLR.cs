@@ -16,7 +16,8 @@ namespace MS.Win32
 
         public static IntPtr GetKeyboardLayout(int dwLayout)
         {
-            return SafeNativeMethodsPrivate.GetKeyboardLayout(dwLayout);
+            // user32-only; off-Windows there is no HKL, so report "none".
+            return System.OperatingSystem.IsWindows() ? SafeNativeMethodsPrivate.GetKeyboardLayout(dwLayout) : IntPtr.Zero;
         }
 
         public static IntPtr ActivateKeyboardLayout(HandleRef hkl, int uFlags)
@@ -27,6 +28,12 @@ namespace MS.Win32
 #if BASE_NATIVEMETHODS
         public static int GetKeyboardLayoutList(int size, [Out, MarshalAs(UnmanagedType.LPArray)] IntPtr[] hkls)
         {
+            // user32-only; off-Windows there are no HKLs to enumerate.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return 0;
+            }
+
             int result = NativeMethodsSetLastError.GetKeyboardLayoutList(size, hkls);
             if (result == 0)
             {
@@ -42,8 +49,44 @@ namespace MS.Win32
 #endif
 
 
+        // Off-Windows there is no HMONITOR; the MonitorFrom* guards below hand back this non-null
+        // sentinel so callers proceed to GetMonitorInfo (whose guard fills the real Cocoa screen rect).
+        // A monitor HANDLE off Windows is the display's index plus one, so that zero stays "no
+        // monitor" as Win32 means it. It used to be a single fixed value for every window and every
+        // rect, which is what made a second display invisible to WPF: MonitorFromWindow could not
+        // distinguish one, and GetMonitorInfo had nothing to look up.
+        private static IntPtr MonitorHandle(int index) => (IntPtr)(index + 1);
+
+        private static int MonitorIndex(IntPtr handle)
+        {
+            int index = (int)handle - 1;
+            return index < 0 ? 0 : index;
+        }
+
         internal static void GetMonitorInfo(HandleRef hmonitor, [In, Out] NativeMethods.MONITORINFOEX info)
         {
+            // user32 GetMonitorInfo is Windows-only. Off Windows this answered from the PRIMARY
+            // screen whatever handle it was given, and flagged every monitor as the primary one -- so
+            // a window on a second display was told it had the primary's bounds, work area and DPI.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                if (!MS.Internal.Interop.PlatformWindow.GetMonitorPixels(MonitorIndex(hmonitor.Handle),
+                        out int ml, out int mt, out int mr, out int mb,
+                        out int wl, out int wt, out int wr, out int wb, out bool isPrimary))
+                {
+                    // An unplugged display: answer for the primary rather than leave the struct
+                    // empty, which would centre windows on a zero-sized screen.
+                    MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(
+                        out ml, out mt, out mr, out mb, out wl, out wt, out wr, out wb);
+                    isPrimary = true;
+                }
+
+                info.rcMonitor = new NativeMethods.RECT(ml, mt, mr, mb);
+                info.rcWork = new NativeMethods.RECT(wl, wt, wr, wb);
+                info.dwFlags = isPrimary ? 1 : 0;   // MONITORINFOF_PRIMARY
+                return;
+            }
+
             if (!SafeNativeMethodsPrivate.IntGetMonitorInfo(hmonitor, info))
             {
                 throw new Win32Exception();
@@ -53,18 +96,39 @@ namespace MS.Win32
 
         public static IntPtr MonitorFromPoint(NativeMethods.POINT pt, int flags)
         {
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return MonitorHandle(
+                    MS.Internal.Interop.PlatformWindow.MonitorIndexFromPointPixels(pt.x, pt.y));
+            }
+
             return SafeNativeMethodsPrivate.MonitorFromPoint(pt, flags);
         }
 
 
         public static IntPtr MonitorFromRect(ref NativeMethods.RECT rect, int flags)
         {
+            if (!System.OperatingSystem.IsWindows())
+            {
+                // The rect's CENTRE decides, which is what Win32 does for a rect straddling two
+                // displays and matters for a window dragged half-way across the join.
+                return MonitorHandle(MS.Internal.Interop.PlatformWindow.MonitorIndexFromPointPixels(
+                    rect.left + (rect.right - rect.left) / 2,
+                    rect.top + (rect.bottom - rect.top) / 2));
+            }
+
             return SafeNativeMethodsPrivate.MonitorFromRect(ref rect, flags);
         }
 
 
         public static IntPtr MonitorFromWindow(HandleRef handle, int flags)
         {
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return MonitorHandle(
+                    MS.Internal.Interop.PlatformWindow.MonitorIndexFromWindow(handle.Handle));
+            }
+
             return SafeNativeMethodsPrivate.MonitorFromWindow(handle, flags);
         }
 
@@ -85,7 +149,9 @@ namespace MS.Win32
 
         public static IntPtr GetCursor()
         {
-            return SafeNativeMethodsPrivate.GetCursor();
+            // user32 GetCursor is Windows-only. Off-Windows report "no cursor" (IntPtr.Zero); callers such
+            // as Popup.GetMouseCursorSize already handle a null cursor by using a zero-sized cursor rect.
+            return System.OperatingSystem.IsWindows() ? SafeNativeMethodsPrivate.GetCursor() : IntPtr.Zero;
         }
 
         public static int ShowCursor(bool show)
@@ -95,6 +161,19 @@ namespace MS.Win32
 
         internal static bool AdjustWindowRectEx(ref NativeMethods.RECT lpRect, int dwStyle, bool bMenu, int dwExStyle)
         {
+            // Off-Windows there is no user32 to ask, and this is reached on a live path: HwndSource
+            // sizes a SizeToContent window (every Popup is one) through here on layout, so an
+            // unguarded P/Invoke here is a DllNotFoundException that kills the process the first time
+            // a popup lays out.
+            //
+            // The rect is grown from a client size to the outer window size by the non-client frame.
+            // These windows have none to add: popups are borderless, and a WindowStyle=None window
+            // draws its own chrome inside the client area. So the client rect IS the window rect.
+            if (!OperatingSystem.IsWindows())
+            {
+                return true;
+            }
+
             bool returnValue = SafeNativeMethodsPrivate.IntAdjustWindowRectEx(ref lpRect, dwStyle, bMenu, dwExStyle);
             if (!returnValue)
             {
@@ -106,6 +185,19 @@ namespace MS.Win32
 
         internal static void GetClientRect(HandleRef hWnd, [In, Out] ref NativeMethods.RECT rect)
         {
+            // Off-Windows the handle is a Cocoa NSView*; the content view IS the client area, so the
+            // client rect equals the content size (origin (0,0)). Reporting the same size as the window
+            // rect makes the computed non-client frame 0, so the window's content gets the full size.
+            // Win32 rects are in device pixels; report the content view's PIXEL size (points * backing
+            // scale) so it round-trips through TransformFromDevice/CurrentDpiScale back to the right DIPs.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                int w = 0, h = 0;
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.GetPixelSize(out w, out h);
+                rect = new NativeMethods.RECT(0, 0, w, h);
+                return;
+            }
+
             if (!SafeNativeMethodsPrivate.IntGetClientRect(hWnd, ref rect))
             {
                 throw new Win32Exception();
@@ -124,6 +216,34 @@ namespace MS.Win32
 
         internal static void GetWindowRect(HandleRef hWnd, [In, Out] ref NativeMethods.RECT rect)
         {
+            // Off-Windows the handle is a Cocoa NSView*; report the OUTER window (frame) rect in
+            // device pixels (= content view + non-client caption). It is larger than GetClientRect
+            // (the content view) by the title-bar caption, so WPF computes a non-zero non-client
+            // frame and Window.Width/Height behave as the outer window size like Win32 (client =
+            // Width x Height minus the caption) instead of the whole size being client.
+            //
+            // The ORIGIN used to be hardcoded to (0,0), and everything downstream followed from a
+            // window WPF believed was in the top-left corner. Window.Left and Window.Top read 0
+            // wherever the window really was; the SetWindowPos WPF issues while showing a window
+            // carried that same (0,0), which looked like a request to move the window into the
+            // corner; and SetWindowPos defended against that by ignoring moves for anything that was
+            // not a popup -- which is why setting Window.Left did nothing at all.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.IPlatformWindow window =
+                    MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+                if (window is null)
+                {
+                    rect = new NativeMethods.RECT(0, 0, 0, 0);
+                    return;
+                }
+
+                window.GetWindowScreenOriginPixels(out int x, out int y);
+                window.GetWindowPixelSize(out int w, out int h);
+                rect = new NativeMethods.RECT(x, y, x + w, y + h);
+                return;
+            }
+
             if (!SafeNativeMethodsPrivate.IntGetWindowRect(hWnd, ref rect))
             {
                 throw new Win32Exception();
@@ -132,11 +252,18 @@ namespace MS.Win32
 
         public static int GetDoubleClickTime()
         {
-            return SafeNativeMethodsPrivate.GetDoubleClickTime();
+            // user32-only; 500 ms is the Windows default double-click interval.
+            return System.OperatingSystem.IsWindows() ? SafeNativeMethodsPrivate.GetDoubleClickTime() : 500;
         }
 
         public static bool IsWindowEnabled(HandleRef hWnd)
         {
+            // Off-Windows our Cocoa windows are always enabled (no Win32 WS_DISABLED concept here).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return hWnd.Handle != IntPtr.Zero;
+            }
+
             return SafeNativeMethodsPrivate.IsWindowEnabled(hWnd);
         }
 
@@ -147,6 +274,11 @@ namespace MS.Win32
 
         internal static bool ReleaseCapture()
         {
+            // Mouse capture off-Windows is managed by the platform input provider, not a user32 HWND.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return true;
+            }
             bool returnValue = SafeNativeMethodsPrivate.IntReleaseCapture();
 
             if (!returnValue)
@@ -230,6 +362,20 @@ namespace MS.Win32
 
         public static void ScreenToClient(HandleRef hWnd, ref NativeMethods.POINT pt)
         {
+            // Off-Windows, subtract the window's client-area screen origin (the inverse of
+            // UnsafeNativeMethods.ClientToScreen) to map a screen point back into client coordinates.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                MS.Internal.Interop.IPlatformWindow cocoa = MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
+                if (cocoa != null)
+                {
+                    cocoa.GetClientScreenOriginPixels(out int ox, out int oy);
+                    pt.x -= ox;
+                    pt.y -= oy;
+                }
+                return;
+            }
+
             if (SafeNativeMethodsPrivate.IntScreenToClient(hWnd, ref pt) == 0)
             {
                 throw new Win32Exception();
@@ -238,7 +384,11 @@ namespace MS.Win32
 
         public static int GetCurrentThreadId()
         {
-            return SafeNativeMethodsPrivate.GetCurrentThreadId();
+            // kernel32 GetCurrentThreadId is Windows-only. Off-Windows the managed thread id is a
+            // stable per-thread value, which is all the callers need (identity/comparison).
+            return System.OperatingSystem.IsWindows()
+                ? SafeNativeMethodsPrivate.GetCurrentThreadId()
+                : System.Environment.CurrentManagedThreadId;
         }
 
         /// <summary>
@@ -249,6 +399,13 @@ namespace MS.Win32
         /// </returns>
         public static int? GetCurrentSessionId()
         {
+            // Windows terminal-services sessions (kernel32 ProcessIdToSessionId) do not exist
+            // off-Windows; report "no session".
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return null;
+            }
+
             int? result = null;
 
             int sessionId;
@@ -263,6 +420,15 @@ namespace MS.Win32
 
         public static IntPtr GetCapture()
         {
+            // user32-only; off-Windows report the window that holds WPF mouse capture (tracked by the
+            // input provider). WPF's capture-reestablish heuristics rely on this being non-zero while a
+            // control is captured -- e.g. ComboBox.OnLostMouseCapture only reclaims capture when
+            // GetCapture()==0, so a stale zero here makes it re-grab capture forever.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return MS.Internal.Interop.PlatformWindow.MouseCaptureHandle;
+            }
+
             return SafeNativeMethodsPrivate.GetCapture();
         }
 #if BASE_NATIVEMETHODS
@@ -298,6 +464,13 @@ namespace MS.Win32
         /// </returns>
         public static bool IsCurrentSessionConnectStateWTSActive(int? SessionId = null, bool defaultResult = true)
         {
+            // WTS session-connect state is a Windows terminal-services concept; off-Windows the
+            // session is always considered "active" (the app owns its Cocoa window).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return true;
+            }
+
             IntPtr buffer = IntPtr.Zero;
             int bytesReturned;
 

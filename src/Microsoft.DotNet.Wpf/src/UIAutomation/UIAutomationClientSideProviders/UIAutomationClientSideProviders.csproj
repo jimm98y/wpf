@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <ProjectGuid>{D242FDF9-F132-4154-BB9F-3F85C39F6F4C}</ProjectGuid>
-    <Platforms>x86;x64;arm64</Platforms>
+    <Platforms>AnyCPU;x86;x64;arm64</Platforms>
     <DefineConstants>$(DefineConstants);UIAUTOMATIONCLIENTSIDEPROVIDERS</DefineConstants>
     <NoWarn>$(NoWarn);0618</NoWarn>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -112,7 +112,9 @@
     <ProjectReference Include="..\..\System.Windows.Primitives\System.Windows.Primitives.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="Accessibility" />
+    <!-- The MSAA interop assembly, built from source in this repo rather than taken from the
+         WindowsDesktop framework or the Microsoft.Private.Winforms transport package. -->
+    <ProjectReference Include="$(WpfSourceDir)Accessibility\Accessibility.csproj" />
     <MicrosoftPrivateWinFormsReference Include="System.Private.Windows.Core" />
   </ItemGroup>
 </Project>

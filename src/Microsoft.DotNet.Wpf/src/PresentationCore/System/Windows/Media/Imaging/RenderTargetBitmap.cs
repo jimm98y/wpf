@@ -94,6 +94,17 @@ namespace System.Windows.Media.Imaging
             _dpiY = sourceBitmap._dpiY;
             _format = sourceBitmap._format;
 
+            if (UseManagedBacking)
+            {
+                _managedPixels = (byte[])sourceBitmap._managedPixels?.Clone()
+                    ?? new byte[_pixelWidth * _pixelHeight * 4];
+                _managedStride = _pixelWidth * 4;
+                _isSourceCached = true;
+                _syncObject = _managedPixels;
+                _bitmapInit.EndInit();
+                return;
+            }
+
             //
             // In order to make a deep clone we need to
             // create a new bitmap with the contents of the
@@ -189,7 +200,40 @@ namespace System.Windows.Media.Imaging
         /// </summary>
         public void Clear()
         {
+            if (UseManagedBacking)
+            {
+                if (_managedPixels != null)
+                {
+                    Array.Clear(_managedPixels);
+                }
+                RenderTargetContentsChanged();
+                return;
+            }
+
             HRESULT.Check(MILRenderTargetBitmap.Clear(_renderTargetBitmap));
+            RenderTargetContentsChanged();
+        }
+
+        /// <summary>
+        /// True when this bitmap is backed by a managed pixel buffer instead of a native MIL
+        /// render target (managed composition backend, or any non-Windows platform).
+        /// </summary>
+        private static bool UseManagedBacking =>
+            DUCE.ManagedComposition.IsEnabled || !OperatingSystem.IsWindows();
+
+        /// <summary>
+        /// Managed composition: installs the pixels rendered by the backend (premultiplied
+        /// BGRA32, top-down, PixelWidth*4 stride) as this bitmap's backing and notifies
+        /// consumers. A null result leaves the previous contents in place.
+        /// </summary>
+        internal void SetRenderedPixels(byte[] pixels)
+        {
+            if (pixels != null && pixels.Length == _pixelWidth * _pixelHeight * 4)
+            {
+                _managedPixels = pixels;
+                _managedStride = _pixelWidth * 4;
+                _syncObject = _managedPixels;
+            }
             RenderTargetContentsChanged();
         }
 
@@ -226,6 +270,19 @@ namespace System.Windows.Media.Imaging
         ///
         internal override void FinalizeCreation()
         {
+            // Managed composition (and any platform without native MIL): back the bitmap with a
+            // managed pixel buffer, like CachedBitmap.InitFromMemoryPtr. Render() fills it via a
+            // sync-channel render + GPU readback from the managed backend.
+            if (UseManagedBacking)
+            {
+                _managedPixels = new byte[_pixelWidth * _pixelHeight * 4];
+                _managedStride = _pixelWidth * 4;
+                _isSourceCached = true;
+                _syncObject = _managedPixels;
+                CreationCompleted = true;
+                return;
+            }
+
             try
             {
                 using (FactoryMaker myFactory = new FactoryMaker())

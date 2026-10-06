@@ -1,8 +1,11 @@
 <Project>
 
   <PropertyGroup>
-    <_RuntimeIdentifier Condition="'$(Platform)' == ''">win-x86</_RuntimeIdentifier>
-    <_RuntimeIdentifier Condition="'$(Platform)' != ''">win-$(Platform)</_RuntimeIdentifier>
+    <!-- AnyCPU/Win32 are not RIDs. They have to collapse onto a real one or the pre-download below
+         asks for a package like Microsoft.NETCore.App.Host.win-AnyCPU, which does not exist and fails
+         restore outright. Same mapping as WpfRuntimeIdentifier in WpfArcadeSdk/Sdk/Sdk.props. -->
+    <_RuntimeIdentifier Condition="'$(Platform)' == '' or '$(Platform)' == 'AnyCPU' or '$(Platform)' == 'Any CPU' or '$(Platform)' == 'Win32'">win-x86</_RuntimeIdentifier>
+    <_RuntimeIdentifier Condition="'$(_RuntimeIdentifier)' == ''">win-$(Platform)</_RuntimeIdentifier>
   </PropertyGroup>
 
   <!-- Pre-download vcxproj dependencies as vcxprojs in this repo don't support NuGet package download. -->

@@ -1,0 +1,95 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The real, managed System.Printing.
+
+    What it replaces is a sixteen-line class with a private constructor and no members
+    (cycle-breakers/System.Printing), which is what has been shipping as System.Printing.dll on the
+    desktop heads, and a contract-only reference assembly whose every member throws, which is what
+    ships in the browser. Both exist because the genuine System.Printing is a C++/CLI project
+    (System.Printing.vcxproj) that this port does not build and cannot build off Windows.
+
+    This is NOT that project reimplemented. Most of its 785-line contract is a property-bag model
+    over the Windows spooler that no WPF application reaches through the printing API. What is here
+    is the dozen members PrintDialog, the document viewers and ReachFramework actually call. The
+    rest stays absent on purpose: a stub that answers plausibly is how a page prints blank and
+    nobody finds out until it is on paper.
+
+    It references ReachFramework, which owns the visual-tree walk and the PDF device, and that is
+    not a cycle: ReachFramework compiles against this assembly's REFERENCE assembly, so it does not
+    need the implementation to exist first. At run time the two do point at each other, which .NET
+    permits and which is exactly the arrangement the cycle-breakers exist to make compilable.
+
+    Plain net10.0. The point of the exercise is that printing works on all six heads.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Printing</AssemblyName>
+    <RootNamespace>System.Printing</RootNamespace>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS0067;CS0169;CS0414;CS1591;CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="ILegacyDevice.cs" />
+    <Compile Include="IndexedProperties.cs" />
+    <Compile Include="LibraryAssemblyInfo.cs" />
+    <Compile Include="PrintQueue.cs" />
+    <Compile Include="SafeMemoryHandle.cs" />
+    <Compile Include="XpsDocumentWriter.cs" />
+    <Compile Include="$(WpfSharedDir)RefAssemblyAttrs.cs" />
+  </ItemGroup>
+
+  <!--
+    Build ORDER only. ReferenceOutputAssembly="false" means these contribute no references, so the
+    HintPath ones below remain the actual references, exactly as designed.
+
+    Without this the references below are resolved purely by path, so nothing guarantees those
+    assemblies exist yet. It happened to work while the C++ projects were in the solution, because
+    their dependency graph ordered this project late; with them gone it built first and every
+    reference failed to resolve (MSB3245), which surfaces as a hundred "the type Rect/Brush/Geometry
+    does not exist" errors that look like missing usings and are nothing of the sort.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="$(WpfSourceDir)PresentationCore\PresentationCore.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="$(WpfSourceDir)System.Xaml\System.Xaml.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="$(WpfSourceDir)PresentationFramework\PresentationFramework.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <ProjectReference Include="$(WpfSourceDir)ReachFramework\ReachFramework.csproj" ReferenceOutputAssembly="false" Private="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="WindowsBase">
+      <HintPath>$(ArtifactsBinDir)WindowsBase/$(Configuration)/net10.0/WindowsBase.dll</HintPath>
+    </Reference>
+    <Reference Include="PresentationCore">
+      <HintPath>$(ArtifactsBinDir)PresentationCore/$(Configuration)/net10.0/PresentationCore.dll</HintPath>
+    </Reference>
+    <!-- FixedDocument implements IUriContext and IQueryAmbient, so naming those types in an
+         override signature drags System.Xaml in even though nothing here uses XAML. -->
+    <Reference Include="System.Xaml">
+      <HintPath>$(ArtifactsBinDir)System.Xaml/$(Configuration)/net10.0/System.Xaml.dll</HintPath>
+    </Reference>
+    <Reference Include="PresentationFramework">
+      <HintPath>$(ArtifactsBinDir)PresentationFramework/$(Configuration)/net10.0/PresentationFramework.dll</HintPath>
+    </Reference>
+    <!--
+      The REAL ReachFramework, not the cycle-breaker, and this is not a build cycle: ReachFramework
+      compiles against System.Printing's REFERENCE assembly, so nothing needs this one to exist
+      first. The two real assemblies do reference each other at run time, which .NET permits and
+      which is precisely the arrangement the cycle-breakers were invented to make compilable.
+
+      Referencing the real one buys two things: PrintTicket and PrintCapabilities as working objects
+      rather than empty shapes, and the PDF pipeline directly, with no reflection and nothing for a
+      trimmer to lose.
+    -->
+    <Reference Include="ReachFramework">
+      <HintPath>$(ArtifactsBinDir)ReachFramework/$(Configuration)/net10.0/ReachFramework.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

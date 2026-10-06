@@ -1,0 +1,33 @@
+TwemojiMozilla.ttf
+==================
+
+A COLR/CPAL (colour-layer) build of the Twemoji emoji set, produced by Mozilla's
+twemoji-colr project. Vendored here as TwemojiMozilla.ttf.
+
+  Font build:  https://github.com/mozilla/twemoji-colr   (release v0.7.0)
+  Artwork:     https://github.com/twitter/twemoji
+
+Why this font is shipped
+------------------------
+The renderer draws colour glyphs from COLR/CPAL layer tables. The emoji fonts the
+platforms ship are mostly NOT that format: Noto Color Emoji on Linux and Android is
+CBDT/CBLC (colour bitmaps) and Apple Color Emoji on macOS is sbix, so emoji could not
+be drawn there at all. Shipping one COLR face makes emoji render identically on every
+platform.
+
+
+Licences
+--------
+
+Artwork (the emoji graphics), Copyright Twitter, Inc and other contributors, is
+licensed under CC-BY 4.0:
+
+    https://creativecommons.org/licenses/by/4.0/
+
+Attribution, as required by CC-BY 4.0: emoji artwork by Twitter, Inc and other
+contributors, from the Twemoji project (https://github.com/twitter/twemoji).
+
+The twemoji-colr build tooling that produces the font is Copyright Mozilla
+Foundation and is licensed under the Apache License, Version 2.0:
+
+    http://www.apache.org/licenses/LICENSE-2.0

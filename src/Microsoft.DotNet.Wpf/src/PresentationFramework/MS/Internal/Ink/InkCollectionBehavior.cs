@@ -235,8 +235,10 @@ namespace MS.Internal.Ink
 
             _strokeDrawingAttributes = this.InkCanvas.DefaultDrawingAttributes.Clone();
 
-            // Reset the dynamic renderer if it's been flagged.
-            if ( _resetDynamicRenderer )
+            // Reset the dynamic renderer if it's been flagged. Off-Windows there is no stylus-pipeline
+            // OnStylusDown to create the per-stroke render state, so reset on EVERY stroke start (Reset
+            // aborts any prior live stroke and creates fresh render state for this one).
+            if ( _resetDynamicRenderer || !OperatingSystem.IsWindows() )
             {
                 InputDevice inputDevice = EditingCoordinator.GetInputDeviceForReset();
                 if ( InkCanvas.InternalDynamicRenderer != null && inputDevice != null )
@@ -268,6 +270,14 @@ namespace MS.Internal.Ink
             }
 
             _stylusPoints.Add(stylusPoints);
+
+            // Off-Windows there is no WISP stylus pipeline to fire the DynamicRenderer's OnStylusMove, so
+            // drive its live rendering from the UI thread per collected segment (matching Windows' real-time
+            // inking, which otherwise only appears when the stroke commits on mouse-up).
+            if (!OperatingSystem.IsWindows())
+            {
+                InkCanvas.InternalDynamicRenderer?.RenderCollectedSegment(stylusPoints);
+            }
         }
 
         /// <summary>
@@ -301,6 +311,13 @@ namespace MS.Internal.Ink
             }
             finally
             {
+                // Off-Windows we rendered the live stroke ourselves (no OnStylusUp to hand it off), so clear
+                // the real-time ink now that the committed stroke (added above) renders in its place.
+                if (!OperatingSystem.IsWindows())
+                {
+                    InkCanvas.InternalDynamicRenderer?.ClearRealTimeInk();
+                }
+
                 _stylusPoints = null;
                 _strokeDrawingAttributes = null;
                 _userInitiated = false;

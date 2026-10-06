@@ -1,0 +1,113 @@
+﻿// The GPU-rasterization seam inside System.Drawing. When a Graphics has a recorder attached, its
+// core drawing verbs (the ~20 the WinForms themes actually use) append primitives to a WebGPU scene
+// instead of calling libgdiplus — so real control drawing is rasterized by WGSL. The interface lives
+// in namespace System.Drawing (so Graphics.cs sees it with no extra dependency); the implementation
+// (backend/SceneRecorder.cs) references WgpuInterop. Colors are passed as ARGB ints and text as a
+// pixel em-size so this interface stays free of GDI+ / wgpu types.
+
+namespace System.Drawing
+{
+    internal enum GradientShape { Rect, Ellipse, Polygon }
+
+    // A resolved gradient: multi-stop, linear or radial. For linear, (Sx,Sy)->(Ex,Ey) are the
+    // endpoints; for radial, (Sx,Sy) is the centre and (Ex,Ey) the radii. Offsets/Argb are parallel.
+    internal readonly struct GradientDesc
+    {
+        public readonly bool Radial;
+        public readonly float Sx, Sy, Ex, Ey;
+        public readonly float[] Offsets;
+        public readonly int[] Argb;
+        public GradientDesc(bool radial, float sx, float sy, float ex, float ey, float[] offsets, int[] argb)
+        { Radial = radial; Sx = sx; Sy = sy; Ex = ex; Ey = ey; Offsets = offsets; Argb = argb; }
+    }
+
+    internal interface IGpuSceneRecorder
+    {
+        void FillRect(float x, float y, float w, float h, int argb);
+        // Gradient fill of a shape (rect/ellipse: x,y,w,h; polygon: polyXY flattened).
+        void FillGradient(GradientShape shape, float x, float y, float w, float h, float[] polyXY, GradientDesc g);
+        void FillEllipse(float x, float y, float w, float h, int argb);
+        // Hatch fill of a shape: a small RGBA pattern tile (tileW x tileH) tiled every tileSize points.
+        void FillHatch(GradientShape shape, float x, float y, float w, float h, float[] polyXY,
+                       byte[] tileRgba, int tileW, int tileH, float tileSize);
+        /// <summary>A TextureBrush fill of a shape: the tile (tileW x tileH pixels) repeated every
+        /// (unitW, unitH) units from (originX, originY).</summary>
+        void FillTexture(GradientShape shape, float x, float y, float w, float h, float[] polyXY,
+                         byte[] tileRgba, int tileW, int tileH, float unitW, float unitH, float originX, float originY);
+        void FillPolygon(float[] xy, int argb);   // flattened x0,y0,x1,y1,…
+        /// <summary>Several closed contours (each flattened x0,y0,x1,y1,…) filled as ONE region under
+        /// the fill rule: GDI+'s Alternate is even-odd, Winding is non-zero. A path with a hole, or a
+        /// concave polygon, needs this -- a lone polygon is fanned as if convex.</summary>
+        void FillContours(float[][] contours, bool nonZero, int argb);
+        void FillContoursGradient(float[][] contours, bool nonZero, GradientDesc g);
+        /// <summary>A stroked line. <paramref name="width"/> is the pen's, in the same units
+        /// as the coordinates: a line is not always one pixel, and a theme that asks for half a
+        /// one (a check box's tick) or two used to get exactly one either way.</summary>
+        void DrawLine(float x1, float y1, float x2, float y2, int argb, float width = 1f);
+
+        /// <summary>A line stroked with a dash pattern. <paramref name="dashPattern"/> is in
+        /// GDI+ units -- multiples of the pen width -- alternating on/off.</summary>
+        void DrawDashedLine(float x1, float y1, float x2, float y2, int argb, float width, float[] dashPattern);
+        void DrawArc(float x, float y, float w, float h, float startDeg, float sweepDeg, int argb, float thickness);
+        /// <summary>simulations: 1 = bold, 2 = italic, as WPF's StyleSimulations counts them.</summary>
+        void DrawText(string text, float x, float y, float emPx, int argb, int simulations, string fontFamily);
+        // A string GDI+'s fast imager has laid out (TextMetrics.LayoutGdiPlus; opaque here), drawn
+        // through GDI+'s own ClearType pipeline. text/simulations/family describe it as a plain run too.
+        void DrawGdiPlusText(object layout, string text, int argb, int simulations, string fontFamily);
+        void DrawImage(byte[] rgba, int pw, int ph, float dx, float dy, float dw, float dh);
+        // Clip subsequent primitives to (or, if exclude, out of) a rect until ClearClip. Exclude is
+        // how ThemeWin32Classic gaps the GroupBox border around its title.
+        // Graphics.CompositingMode. SourceCopy replaces the destination (colour AND alpha)
+        // instead of alpha-blending over it -- the documented way to build an off-screen
+        // bitmap whose shapes do not blend with each other but still blend with whatever it
+        // is later drawn onto.
+        void SetCompositingMode(bool sourceCopy);
+        void SetClipRect(float x, float y, float w, float h, bool exclude);
+        void ClearClip();
+
+        // Offset subsequent primitives by (dx,dy) until ResetTransform. Graphics.TranslateTransform
+        // is how WinForms draws a composite control's parts: ToolStrip translates to each item's
+        // bounds, draws it at the origin, and resets.
+        void PushTranslate(float dx, float dy);
+
+        /// <summary>Record what follows as a picture: rendered 1:1 over the source rectangle, then
+        /// stretched (nearest) into the destination at <paramref name="opacity"/> -- StretchBlt and
+        /// AlphaBlend. Ended by <see cref="PopSnapshot"/>.</summary>
+        void PushSnapshot(float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh, float opacity, bool gdiStretch, bool windowBlend);
+        void PopSnapshot();
+        void ResetTransform();
+
+        // Graphics.Save / Restore: the transform, clip and compositing mode as they stand, and
+        // back to them. Restore also discards every state saved after the one restored.
+        /// <summary>The translation PushTranslate has built up: where the recorder's origin sits in
+        /// the window, which is what GDI+'s per-pixel arithmetic runs in.</summary>
+        void GetTranslation(out float x, out float y);
+
+        int SaveState();
+        void RestoreState(int state);
+
+        // ---- what a recording-only Graphics needs to be a whole GDI+ Graphics, and what a printed
+        // page needs to stay vector (see SceneRecorder) ----
+
+        /// <summary>The world transform -- GDI+'s six elements, page transform included -- of
+        /// everything recorded from here on. Replaces the one before; clips stay where they were set.</summary>
+        void SetWorldTransform(float m11, float m12, float m21, float m22, float dx, float dy);
+        /// <summary>Removes every clip (above the innermost snapshot).</summary>
+        void ResetAllClips();
+        /// <summary>Clip to a GDI+ path (points as x,y pairs, a type byte each); exclude = outside it.</summary>
+        void SetClipPath(float[] xy, byte[] types, bool nonZero, bool exclude);
+        /// <summary>Fill a GDI+ path keeping its curves; a gradient when given, else the solid colour.</summary>
+        void FillPathData(float[] xy, byte[] types, bool nonZero, int argb, GradientDesc? gradient);
+        /// <summary>A rectangle or ellipse filled with a SMOOTH gradient.</summary>
+        void FillShapeGradientSmooth(GradientShape shape, float x, float y, float w, float h, GradientDesc g);
+        /// <summary>Stroke a GDI+ path with a pen: caps 0 flat / 1 square / 2 round, joins 0 miter /
+        /// 1 bevel / 2 round, dashes in multiples of the width.</summary>
+        void StrokePathData(float[] xy, byte[] types, int argb, float width, float[] dash, float dashOffset,
+                            int cap, int join, float miterLimit);
+        /// <summary>Glyphs already chosen and placed, of a face (opaque here), each at origin + (xs, ys).</summary>
+        void DrawGlyphs(object font, float em, ushort[] glyphs, float[] xs, float[] ys, float originX, float originY,
+                        int argb, string family, int style, string chars, int[] clusters);
+        /// <summary>Another recorded scene (a previewed page), its (sx,sy,sw,sh) mapped onto (dx,dy,dw,dh).</summary>
+        void DrawScene(object scene, float sx, float sy, float sw, float sh, float dx, float dy, float dw, float dh);
+    }
+}

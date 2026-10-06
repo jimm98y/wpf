@@ -1,7 +1,7 @@
 ﻿<Project>
   <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
   <PropertyGroup>
-    <Platforms>x86;x64;arm64</Platforms>
+    <Platforms>AnyCPU;x86;x64;arm64</Platforms>
 
     <EnableDefaultItems>false</EnableDefaultItems>
 
@@ -21,29 +21,29 @@
     <Page Include="TenFeetInstallationError.xaml" />
     <Page Include="TenFeetInstallationProgress.xaml" />
     <Page Include="MS\Internal\Documents\FindToolBar.xaml" />
-    <Page Include="themes\MediaCenterTheme.xaml" />
-    <Page Include="themes\Aero.NormalColor.xaml">
+    <Page Include="Themes\MediaCenterTheme.xaml" />
+    <Page Include="Themes\Aero.NormalColor.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Aero2.NormalColor.xaml">
+    <Page Include="Themes\Aero2.NormalColor.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\AeroLite.NormalColor.xaml">
+    <Page Include="Themes\AeroLite.NormalColor.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Classic.xaml">
+    <Page Include="Themes\Classic.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Generic.xaml">
+    <Page Include="Themes\Generic.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Luna.Homestead.xaml">
+    <Page Include="Themes\Luna.HomeStead.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Luna.Metallic.xaml">
+    <Page Include="Themes\Luna.Metallic.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
-    <Page Include="themes\Luna.NormalColor.xaml">
+    <Page Include="Themes\Luna.NormalColor.xaml">
       <GenerateTheme>true</GenerateTheme>
     </Page>
   </ItemGroup>
@@ -169,9 +169,10 @@
     <ProjectReference Include="$(WpfSourceDir)System.Xaml\System.Xaml.csproj" />
     <ProjectReference Include="$(WpfSourceDir)PresentationFramework\PresentationFramework.csproj" />
     <ProjectReference Include="$(WpfSourceDir)WindowsBase\WindowsBase.csproj" />
-    <ProjectReference Include="$(WpfSourceDir)System.Printing\System.Printing.vcxproj">
-      <UndefineProperties>TargetFramework;TargetFrameworks</UndefineProperties>
-    </ProjectReference>
+    <!-- System.Printing is C++/CLI; compile against the managed reference assembly (contract-only)
+         on ALL platforms so this builds with the dotnet CLI on Windows too (no MSVC). The gallery does
+         not exercise printing at runtime; the existing System.Printing.dll supplies the impl if it is. -->
+    <ProjectReference Include="$(WpfSourceDir)System.Printing\ref\System.Printing-ref.csproj" />
     <ProjectReference Include="$(WpfSourceDir)ReachFramework\ReachFramework.csproj" />
     <ProjectReference Include="$(WpfSourceDir)UIAutomation\UIAutomationProvider\UIAutomationProvider.csproj" />
     <ProjectReference Include="$(WpfSourceDir)UIAutomation\UIAutomationTypes\UIAutomationTypes.csproj" />

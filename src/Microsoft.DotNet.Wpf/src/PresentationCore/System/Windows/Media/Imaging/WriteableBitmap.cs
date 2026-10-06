@@ -101,6 +101,24 @@ namespace System.Windows.Media.Imaging
                 HRESULT.Check(MS.Win32.NativeMethods.E_INVALIDARG);
             }
 
+            // Off-Windows there is no native double-buffered WIC bitmap. Back the bitmap with a
+            // pinned managed buffer instead: BackBuffer points at it, WritePixels copies into it
+            // (managed MILCopyPixelBuffer), and it marshals to the compositor as a plain bitmap
+            // source (_actLikeSimpleBitmap).
+            {
+                // Palettized formats are held in their PACKED form and resolved through the palette
+                // when something asks for colours (ManagedPixelConverter), the same as CachedBitmap.
+                _palette = palette;
+                _format = pixelFormat;
+                _pixelWidth = pixelWidth;
+                _pixelHeight = pixelHeight;
+                _dpiX = dpiX;
+                _dpiY = dpiY;
+                InitializeManagedBackBuffer();
+                EndInit();
+                return;
+            }
+
             //
             // Create and initialize a new unmanaged double buffered bitmap.
             //
@@ -166,9 +184,14 @@ namespace System.Windows.Media.Imaging
             dirtyRect.ValidateForDirtyRect(nameof(dirtyRect), _pixelWidth, _pixelHeight);
             if (dirtyRect.HasArea)
             {
-                MILSwDoubleBufferedBitmap.AddDirtyRect(
-                    _pDoubleBufferedBitmap,
-                    ref dirtyRect);
+                // The managed back buffer has no per-rect copy-forward; the whole bitmap
+                // re-marshals on the next update, so only the flag matters.
+                if (!UsesManagedBackBuffer)
+                {
+                    MILSwDoubleBufferedBitmap.AddDirtyRect(
+                        _pDoubleBufferedBitmap,
+                        ref dirtyRect);
+                }
 
                 _hasDirtyRects = true;
             }
@@ -243,6 +266,14 @@ namespace System.Windows.Media.Imaging
                 throw new InvalidOperationException(SR.Image_LockCountLimit);
             }
 
+            if (_lockCount == 0 && UsesManagedBackBuffer)
+            {
+                // The managed back buffer is always available and its address never changes;
+                // locking is just bookkeeping (no compositor copy to wait on).
+                _lockCount++;
+                return true;
+            }
+
             if (_lockCount == 0)
             {
                 // Try to acquire the back buffer by the supplied timeout, if the acquire call times out, return false.
@@ -311,6 +342,20 @@ namespace System.Windows.Media.Imaging
             _lockCount--;
             if (_lockCount == 0)
             {
+                if (UsesManagedBackBuffer)
+                {
+                    // No compositor copy-forward: the managed marshal re-reads the buffer on the
+                    // next resource update, so just schedule one and notify listeners.
+                    if (_hasDirtyRects)
+                    {
+                        _hasDirtyRects = false;
+                        _needsUpdate = true;
+                        RegisterForAsyncUpdateResource();
+                        WritePostscript();
+                    }
+                    return;
+                }
+
                 // This makes the back buffer read-only.
                 _pBackBufferLock.Dispose();
                 _pBackBufferLock = null;
@@ -572,6 +617,14 @@ namespace System.Windows.Media.Imaging
         {
             bool canFreeze = (_lockCount == 0) && base.FreezeCore(isChecking);
 
+            // The managed back buffer is already in "simple bitmap" mode; there is no native
+            // double buffer to convert or release.
+            if (canFreeze && !isChecking && UsesManagedBackBuffer)
+            {
+                _hasDirtyRects = false;
+                return canFreeze;
+            }
+
             if (canFreeze && !isChecking)
             {
                 Debug.Assert(_pBackBufferLock == null);
@@ -680,6 +733,31 @@ namespace System.Windows.Media.Imaging
         #region Private/Internal Methods
 
         /// <summary>
+        ///     Allocates the managed back buffer (off-Windows): a pinned-object-heap array that
+        ///     is both the BackBuffer target and the bitmap's managed pixel backing, so
+        ///     CopyPixels and the managed composition marshal read it directly. The bitmap then
+        ///     behaves as a plain bitmap source on the channel.
+        /// </summary>
+        private void InitializeManagedBackBuffer()
+        {
+            _backBufferStride = checked(((_pixelWidth * _format.InternalBitsPerPixel + 31) / 32) * 4);
+            _managedPixels = GC.AllocateArray<byte>(checked(_backBufferStride * _pixelHeight), pinned: true);
+            _managedStride = _backBufferStride;
+            _backBufferSize = (uint)_managedPixels.Length;
+            unsafe
+            {
+                _backBuffer = (IntPtr)System.Runtime.CompilerServices.Unsafe.AsPointer(
+                    ref MemoryMarshal.GetArrayDataReference(_managedPixels));
+            }
+            _syncObject = _managedPixels;
+            _actLikeSimpleBitmap = true;
+            _hasDirtyRects = false;
+        }
+
+        /// <summary>True when this bitmap uses the managed back buffer (no native WIC).</summary>
+        private bool UsesManagedBackBuffer => _managedPixels != null;
+
+        /// <summary>
         ///     Gets the estimated memory pressure in bytes
         /// </summary>
         private long GetEstimatedSize(int pixelWidth, int pixelHeight, PixelFormat pixelFormat)
@@ -715,6 +793,27 @@ namespace System.Windows.Media.Imaging
             }
 
             BeginInit();
+
+            // Off-Windows: copy the source into a fresh managed back buffer (the source itself
+            // is managed-backed on this platform, so CriticalCopyPixels reads it directly).
+            {
+                _palette = source.Palette;
+                _format = source.Format;
+                _pixelWidth = source.PixelWidth;
+                _pixelHeight = source.PixelHeight;
+                _dpiX = source.DpiX;
+                _dpiY = source.DpiY;
+                InitializeManagedBackBuffer();
+
+                lock (source.SyncObject)
+                {
+                    Int32Rect fullRect = new Int32Rect(0, 0, _pixelWidth, _pixelHeight);
+                    source.CriticalCopyPixels(fullRect, _backBuffer, _backBufferSize, _backBufferStride);
+                }
+
+                EndInit();
+                return;
+            }
 
             _syncObject = source.SyncObject;
             lock (_syncObject)
@@ -1019,6 +1118,14 @@ namespace System.Windows.Media.Imaging
         {
             IsSourceCached = true;
             CreationCompleted = true;
+
+            // The managed back buffer sets its cached settings directly; UpdateCachedSettings
+            // would dereference the (absent) native source.
+            if (UsesManagedBackBuffer)
+            {
+                return;
+            }
+
             UpdateCachedSettings();
         }
 

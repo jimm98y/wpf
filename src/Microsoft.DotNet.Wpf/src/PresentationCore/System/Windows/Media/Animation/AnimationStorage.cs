@@ -447,6 +447,17 @@ namespace System.Windows.Media.Animation
                                 coerceWithCurrentValue: false,
                                 OperationType.Unknown);
 
+                        // The WebGPU compositor is value-based: it renders from the resolved values packed
+                        // into each DUCE resource's command and cannot evaluate the "independent animation"
+                        // resources native milcore would tick on the render thread (Animatable.GetAnimation-
+                        // ResourceHandle returns Null for that reason, so the command carries the value). For
+                        // an animated Animatable (Transform/Brush/etc.) the per-tick value update above does
+                        // not otherwise re-marshal the target resource, so its animated property would freeze
+                        // at whatever value it had when the animation began (e.g. a dropdown's slide-in
+                        // TranslateTransform stuck at From=-90). Re-marshal the target each tick so the current
+                        // resolved value reaches the compositor and the animation actually plays.
+                        (targetDO as Animatable)?.RegisterForAsyncUpdateResource();
+
                         if (_hadValidationError)
                         {
                             if (TraceAnimation.IsEnabled)

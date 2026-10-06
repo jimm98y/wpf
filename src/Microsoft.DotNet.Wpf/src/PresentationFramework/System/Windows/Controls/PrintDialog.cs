@@ -286,6 +286,10 @@ namespace System.Windows.Controls
         Nullable<bool>
         ShowDialog()
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                return ShowDialogPortable();
+            }
 
             Win32PrintDialog dlg = new Win32PrintDialog
             {
@@ -384,12 +388,181 @@ namespace System.Windows.Controls
 
         #region Private methods
 
+        /// <summary>
+        /// The print dialog off Windows.
+        ///
+        /// Four of the five non-Windows heads show no dialog HERE at all, and that is the platform's
+        /// design rather than a gap: macOS, iOS, Android and the browser all present their print UI
+        /// at submission, with the document already in it and a live preview. Returning true means
+        /// "go ahead and render"; the user's real choice happens when the document is handed over,
+        /// and a cancellation there simply produces no paper.
+        ///
+        /// Three of those heads could not show one anyway. Dispatcher.PushFrameImpl throws on iOS,
+        /// Android and the browser, because there is no nested run loop to push.
+        ///
+        /// Linux is the exception: this port spools to CUPS directly rather than through the XDG
+        /// portal, and CUPS has no user interface, so the dialog is drawn in WPF.
+        /// </summary>
+        private
+        Nullable<bool>
+        ShowDialogPortable()
+        {
+            MS.Internal.Interop.PrinterInfo[] printers = MS.Internal.Interop.PlatformPrint.EnumeratePrinters();
+
+            if (printers.Length == 0)
+            {
+                // Nothing to print to. Reporting "cancelled" is the honest answer and is what every
+                // caller already handles; a dialog offering an empty list would not be.
+                return false;
+            }
+
+            bool linux = OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid();
+
+            if (!linux)
+            {
+                if (_printQueue == null) _printQueue = AcquireDefaultPrintQueue();
+                return true;
+            }
+
+            MS.Internal.Interop.PrinterInfo chosen = null;
+            foreach (MS.Internal.Interop.PrinterInfo printer in printers)
+            {
+                if (printer.IsDefault) { chosen = printer; break; }
+            }
+
+            int copies = 1;
+            int firstPage = _pageRange.PageFrom;
+            int lastPage = _pageRange.PageTo;
+
+            int minPage = Math.Max(1, Math.Min((int)_minPage, (int)_maxPage));
+            int maxPage = Math.Max(minPage, (int)_maxPage);
+
+            // The desktop's own print dialog where the session has the portal; ours where it has not.
+            if (!ShowPortalPrintDialog(printers, ref chosen, ref copies, ref firstPage, ref lastPage, out bool portalShown))
+            {
+                if (portalShown) return false;
+                if (!ManagedPrintDialog.Show(printers, ref chosen, ref copies, ref firstPage, ref lastPage,
+                                             minPage, maxPage, _userPageRangeEnabled))
+                {
+                    return false;
+                }
+            }
+
+            // Match the chosen printer back to a PrintQueue, so everything downstream sees the same
+            // object model it would on Windows.
+            foreach (PrintQueue queue in new LocalPrintServer().GetPrintQueues())
+            {
+                if (string.Equals(queue.Name, chosen?.Name, StringComparison.Ordinal))
+                {
+                    _printQueue = queue;
+                    break;
+                }
+            }
+
+            if (firstPage > 0 && lastPage > 0)
+            {
+                _pageRange = new PageRange(firstPage, lastPage);
+                _pageRangeSelection = PageRangeSelection.UserPages;
+            }
+
+            // The copy count travels on the print ticket, which is where Windows puts it and where
+            // the write path reads it from. Without this the dialog would collect a number and drop
+            // it, and three copies would print one.
+            PrintTicket ticket = this.PrintTicket;
+            if (ticket != null)
+            {
+                ticket.CopyCount = copies;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// org.freedesktop.portal.Print.PreparePrint: the printers, copies and pages as the desktop asks
+        /// for them. GtkPrintSettings keys; "page-ranges" is zero-based, "1-3" in the dialog being "0-2".
+        /// False with <paramref name="shown"/> true is a cancellation; with it false there was no dialog.
+        /// </summary>
+        private
+        bool
+        ShowPortalPrintDialog(
+            MS.Internal.Interop.PrinterInfo[] printers,
+            ref MS.Internal.Interop.PrinterInfo chosen,
+            ref int copies,
+            ref int firstPage,
+            ref int lastPage,
+            out bool shown)
+        {
+            shown = false;
+            if (!MS.Internal.Interop.Wayland.PortalDialogs.IsAvailable) return false;
+
+            var initial = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["n-copies"] = copies.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            };
+            if (chosen != null) initial["printer"] = chosen.Name;
+            if (_userPageRangeEnabled && firstPage > 0 && lastPage >= firstPage)
+            {
+                initial["print-pages"] = "ranges";
+                initial["page-ranges"] = (firstPage - 1) + "-" + (lastPage - 1);
+            }
+
+            System.Collections.Generic.Dictionary<string, string> answer;
+            try
+            {
+                answer = MS.Internal.Interop.Wayland.PortalDialogs.ShowPrintPanel("Print", initial, out shown);
+            }
+            catch (Exception)
+            {
+                shown = false;
+                return false;
+            }
+            if (answer == null) return false;
+
+            if (answer.TryGetValue("printer", out string name))
+            {
+                foreach (MS.Internal.Interop.PrinterInfo printer in printers)
+                {
+                    if (string.Equals(printer.Name, name, StringComparison.Ordinal)
+                        || string.Equals(printer.DisplayName, name, StringComparison.Ordinal))
+                    {
+                        chosen = printer;
+                        break;
+                    }
+                }
+            }
+            if (answer.TryGetValue("n-copies", out string n) && int.TryParse(n, out int c) && c > 0) copies = c;
+
+            answer.TryGetValue("print-pages", out string which);
+            if (string.Equals(which, "ranges", StringComparison.Ordinal) && answer.TryGetValue("page-ranges", out string ranges))
+            {
+                // The first range is the one a WPF PageRange can carry.
+                string first = ranges.Split(',')[0];
+                string[] ends = first.Split('-');
+                if (int.TryParse(ends[0], out int from))
+                {
+                    int to = ends.Length > 1 && int.TryParse(ends[1], out int t) ? t : from;
+                    firstPage = from + 1;
+                    lastPage = to + 1;
+                }
+            }
+            else
+            {
+                firstPage = lastPage = 0;
+            }
+            return true;
+        }
+
         private
         PrintQueue
         AcquireDefaultPrintQueue()
         {
             PrintQueue printQueue = null;
 
+            // This used to return null off Windows without asking, because the only System.Printing
+            // that shipped there was a contract-only reference assembly whose every member faulted.
+            // There is a real one now, and it answers from the platform's own print system, so the
+            // question is worth asking on every platform. "No default printer" is still a perfectly
+            // ordinary answer and is what a machine with none reports.
             try
             {
                 LocalPrintServer server = new LocalPrintServer();

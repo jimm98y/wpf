@@ -71,6 +71,34 @@ namespace MS.Internal
         ///     use cases like the CompactFramework (they add
         ///     custom type data for every object at design time).
         /// </devdoc>
+        // Sampled rather than measured on every insert.
+        //
+        // GC.GetTotalMemory(false) is a counter read on CoreCLR, and on Mono's SGen it WALKS THE MAJOR
+        // HEAP (major_get_used_size -> major_iterate_objects). This method runs on every Add, and WPF
+        // calls it from hot paths -- rebuilding a DataGrid's automation peers alone drives thousands
+        // of inserts per layout pass -- so on the browser head it cost 93% of the entire CPU profile:
+        // the app dropped to ~1fps with input taking seconds, and neither the interpreter nor the
+        // renderer was to blame.
+        //
+        // The value is only used as a coarse "has the heap grown a lot since last time" signal for
+        // deciding when to purge dead weak references, so a reading up to a second old serves exactly
+        // as well as a fresh one, and a stale reading costs at most one deferred scavenge.
+        private static long s_cachedTotalMemory;
+        private static int s_cachedTotalMemoryTick;
+
+        private static long GetTotalMemoryCheap()
+        {
+            int now = Environment.TickCount;
+            // Unsigned difference so this stays correct across TickCount's wrap-around.
+            if (s_cachedTotalMemory == 0 || (uint)(now - s_cachedTotalMemoryTick) >= 1000u)
+            {
+                s_cachedTotalMemory = GC.GetTotalMemory(false);
+                s_cachedTotalMemoryTick = now;
+            }
+
+            return s_cachedTotalMemory;
+        }
+
         private void ScavengeKeys()
         {
             int hashCount = Count;
@@ -86,7 +114,7 @@ namespace MS.Internal
                 return;
             }
 
-            long globalMem = GC.GetTotalMemory(false);
+            long globalMem = GetTotalMemoryCheap();
 
             if (_lastGlobalMem == 0)
             {

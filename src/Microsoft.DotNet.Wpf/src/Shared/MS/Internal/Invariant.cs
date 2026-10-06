@@ -228,6 +228,14 @@ namespace MS.Internal
 
                 enabled = false;
 
+                // The JIT-debugger override lives in the Windows registry; off-Windows there is none, and
+                // Registry.LocalMachine throws/NREs. Without this guard EVERY Invariant.Assert failure crashes
+                // here with a confusing NRE instead of surfacing the real FailFast message.
+                if (!System.OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
                 //extracting all the data under an elevation.
                 key = Registry.LocalMachine.OpenSubKey("Software\\Microsoft\\.NETFramework");
                 //

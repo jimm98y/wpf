@@ -16,7 +16,6 @@
 
 namespace MS.Win32
 {
-    using Accessibility;
     using System.Runtime.InteropServices;
     using System;
     using System.Collections;

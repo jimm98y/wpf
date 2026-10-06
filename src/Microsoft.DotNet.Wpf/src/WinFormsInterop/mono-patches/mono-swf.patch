@@ -1,0 +1,160 @@
+diff --git a/mcs/class/System.Windows.Forms/System.Windows.Forms/Control.cs b/mcs/class/System.Windows.Forms/System.Windows.Forms/Control.cs
+index 5aac2da..ce9179b 100644
+--- a/mcs/class/System.Windows.Forms/System.Windows.Forms/Control.cs
++++ b/mcs/class/System.Windows.Forms/System.Windows.Forms/Control.cs
+@@ -3602,7 +3602,7 @@ public Graphics CreateGraphics() {
+ 			if (!IsHandleCreated) {
+ 				this.CreateHandle();
+ 			}
+-			return Graphics.FromHwnd(this.window.Handle);
++			return XplatUI.GetHwndGraphics(this.window.Handle);
+ 		}
+ 
+ 		public DragDropEffects DoDragDrop(object data, DragDropEffects allowedEffects) {
+diff --git a/mcs/class/System.Windows.Forms/System.Windows.Forms/Win32DnD.cs b/mcs/class/System.Windows.Forms/System.Windows.Forms/Win32DnD.cs
+index 9ad596d..391a278 100644
+--- a/mcs/class/System.Windows.Forms/System.Windows.Forms/Win32DnD.cs
++++ b/mcs/class/System.Windows.Forms/System.Windows.Forms/Win32DnD.cs
+@@ -422,7 +422,7 @@ private static void Initialize() {
+ 
+ 				assembly = new AssemblyName();
+ 				assembly.Name = "XplatUIWin32.FuncPtrInterface";
+-				assembly_builder = AppDomain.CurrentDomain.DefineDynamicAssembly(assembly, AssemblyBuilderAccess.Run);
++				assembly_builder = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(assembly, AssemblyBuilderAccess.Run);
+ 
+ 				MethodArguments = new object[6];
+ 				GetDataMethod = CreateFuncPtrInterface(assembly_builder, "GetData", typeof(uint), 3);
+diff --git a/mcs/class/System.Windows.Forms/System.Windows.Forms/XplatUI.cs b/mcs/class/System.Windows.Forms/System.Windows.Forms/XplatUI.cs
+index d6b7fd0..1a1d42d 100644
+--- a/mcs/class/System.Windows.Forms/System.Windows.Forms/XplatUI.cs
++++ b/mcs/class/System.Windows.Forms/System.Windows.Forms/XplatUI.cs
+@@ -92,38 +92,9 @@ static XplatUI ()
+ 			// and try to register same class name we fail.
+ //			default_class_name = "SWFClass" + System.Threading.Thread.GetDomainID ().ToString ();
+ 
+-			if (RunningOnUnix) {
+-				//if (Environment.GetEnvironmentVariable ("not_supported_MONO_MWF_USE_NEW_X11_BACKEND") != null) {
+-				//        driver=XplatUIX11_new.GetInstance ();
+-				//} else
+-				var loadable = Environment.GetEnvironmentVariable ("MONO_MWF_DRIVER");
+-				if (loadable != null){
+-					var a = System.Reflection.Assembly.LoadFile (loadable);
+-					var mi = a?.GetType ("Bootstrap")?.GetMethod ("CreateInstance");
+-					if (mi != null)
+-						driver = (XplatUIDriver) mi.Invoke (null, null);
+-				} else {
+-					if (Environment.GetEnvironmentVariable ("MONO_MWF_MAC_FORCE_X11") != null) {
+-						driver = XplatUIX11.GetInstance ();
+-					} else {
+-						IntPtr buf = Marshal.AllocHGlobal (8192);
+-						// This is a hacktastic way of getting sysname from uname ()
+-						if (uname (buf) != 0) {
+-							// WTF: We cannot run uname
+-							driver=XplatUIX11.GetInstance ();
+-						} else {
+-							string os = Marshal.PtrToStringAnsi (buf);
+-							if (os == "Darwin")
+-								driver=XplatUICarbon.GetInstance ();
+-							else
+-								driver=XplatUIX11.GetInstance ();
+-						}
+-						Marshal.FreeHGlobal (buf);
+-					}
+-				}
+-			} else {
+-				driver=XplatUIWin32.GetInstance ();
+-			}
++			// LibreWPF fork: the only platform driver is the managed WebGPU-compositor driver
++			// (the native X11/Carbon/Win32 drivers are not compiled in this build).
++			driver = XplatUIWebGpu.GetInstance ();
+ 
+ 			driver.InitializeDriver ();
+ 
+@@ -1174,6 +1145,11 @@ internal static void DestroyOffscreenDrawable (object offscreen_drawable)
+ 			driver.DestroyOffscreenDrawable (offscreen_drawable);
+ 		}
+ 
++		internal static Graphics GetHwndGraphics (IntPtr handle)
++		{
++			return driver.GetHwndGraphics (handle);
++		}
++
+ 		internal static Graphics GetOffscreenGraphics (object offscreen_drawable)
+ 		{
+ 			DriverDebug ("GetOffscreenGraphics (): Called");
+diff --git a/mcs/class/System.Windows.Forms/System.Windows.Forms/XplatUIDriver.cs b/mcs/class/System.Windows.Forms/System.Windows.Forms/XplatUIDriver.cs
+index ad899c0..65bfe72 100644
+--- a/mcs/class/System.Windows.Forms/System.Windows.Forms/XplatUIDriver.cs
++++ b/mcs/class/System.Windows.Forms/System.Windows.Forms/XplatUIDriver.cs
+@@ -320,6 +320,10 @@ internal virtual DragDropEffects StartDrag(IntPtr handle, object data, DragDropE
+ 		internal abstract IntPtr GetParent(IntPtr handle, bool with_owner);
+ 
+ 		internal abstract void UpdateWindow(IntPtr handle);
++		// A drawing surface for a window handle. Default = GDI+ Graphics.FromHwnd (Windows/native);
++		// a bitmap-backed driver overrides this to draw into the window's backing bitmap (Graphics.
++		// FromHwnd uses ancient Carbon/QuickDraw on mac libgdiplus and throws).
++		internal virtual System.Drawing.Graphics GetHwndGraphics(IntPtr handle) { return System.Drawing.Graphics.FromHwnd(handle); }
+ 		internal abstract PaintEventArgs PaintEventStart (ref Message msg, IntPtr handle, bool client);
+ 		internal abstract void PaintEventEnd (ref Message msg, IntPtr handle, bool client, PaintEventArgs pevent);
+ 
+
+--- AxHost.cs (fifth edit) ------------------------------------------------------------
+# AxHost.ConnectionPointCookie delegates to a managed connection point instead of throwing.
+# Hosts sink DWebBrowserEvents2 through this type to get the URL that NewWindow never carried;
+# there is no ActiveX here, so WebBrowser.ActiveXInstance offers a managed connection point and
+# this hands the sink to it. The finalizer no longer throws either - it did unconditionally,
+# including for cookies whose constructor had already thrown, which aborts the process on GC.
+
+
+--- AxHost.cs (fifth edit) ------------------------------------------------------------
+# ConnectionPointCookie delegates to a managed connection point (web/ManagedConnectionPoint.cs)
+# instead of throwing. Hosts sink DWebBrowserEvents2 through this type to get the URL that
+# NewWindow never carried; there is no ActiveX here, so WebBrowser.ActiveXInstance offers a
+# managed connection point and this hands the sink to it. The finalizer no longer throws
+# either - it did unconditionally, including for cookies whose constructor had already
+# thrown, which aborts the process on GC.
+
+diff --git a/src/Microsoft.DotNet.Wpf/src/WinFormsInterop/swf/System.Windows.Forms/AxHost.cs b/src/Microsoft.DotNet.Wpf/src/WinFormsInterop/swf/System.Windows.Forms/AxHost.cs
+index 2a917e23e..53602977f 100644
+--- a/src/Microsoft.DotNet.Wpf/src/WinFormsInterop/swf/System.Windows.Forms/AxHost.cs
++++ b/src/Microsoft.DotNet.Wpf/src/WinFormsInterop/swf/System.Windows.Forms/AxHost.cs
+@@ -82,19 +82,36 @@ public string Value {
+ 		
+ 		#region AxHost.ConnectionPointCookie
+ 		public class ConnectionPointCookie {
++			// Connected source, when the object offered a MANAGED connection point (see
++			// ManagedConnectionPoint). There is no ActiveX on this stack, but hosts still sink
++			// dispinterfaces through this type - WebBrowser.ActiveXInstance is the case that
++			// matters - so the managed path is tried before giving up.
++			private IConnectionPointSource connected;
++			private object connectedSink;
++
+ 			public ConnectionPointCookie (object source, object sink, Type eventInterface)
+ 			{
+-				throw new NotImplementedException("COM/ActiveX support is not implemented");
++				connected = ManagedConnectionPoint.TryConnect (source, sink, eventInterface);
++				if (connected == null)
++					throw new NotImplementedException("COM/ActiveX support is not implemented");
++				connectedSink = sink;
+ 			}
+ 
+ 			public void Disconnect ()
+ 			{
+-				throw new NotImplementedException("COM/ActiveX support is not implemented");
++				if (connected != null) {
++					connected.Disconnect (connectedSink);
++					connected = null;
++					connectedSink = null;
++				}
+ 			}
+ 
+ 			~ConnectionPointCookie ()
+ 			{
+-				throw new NotImplementedException("COM/ActiveX support is not implemented");
++				// Deliberately does NOT throw. A finalizer that throws takes the process down,
++				// and this one ran for every cookie ever created - including the ones whose
++				// constructor had already thrown.
++				Disconnect ();
+ 			}
+ 		}
+ 		#endregion	// AxHost.ConnectionPointCookie

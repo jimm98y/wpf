@@ -1,0 +1,811 @@
+﻿//
+// TextRenderer.cs
+//
+// Permission is hereby granted, free of charge, to any person obtaining
+// a copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to
+// permit persons to whom the Software is furnished to do so, subject to
+// the following conditions:
+// 
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+//
+// Copyright (c) 2006 Novell, Inc.
+//
+// Authors:
+//	Jonathan Pobst (monkey@jpobst.com)
+//
+
+// This has become a monster class for all things text measuring and drawing.
+//
+// The public API is MeasureText/DrawText, which uses GDI on Win32, and
+// GDI+ on other platforms.
+//
+// There is an internal API MeasureTextInternal/DrawTextInternal, which allows
+// you to pass a flag of whether to use GDI or GDI+.  This is used mainly for
+// controls that have the UseCompatibleTextRendering flag.
+//
+// There are also thread-safe versions of MeasureString/MeasureCharacterRanges
+// for things that want to measure strings without having a Graphics object.
+
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Drawing.Text;
+
+namespace System.Windows.Forms
+{
+	public sealed class TextRenderer
+	{
+		private TextRenderer ()
+		{
+		}
+
+		#region Public Methods
+		public static void DrawText (IDeviceContext dc, string text, Font font, Point pt, Color foreColor)
+		{
+			DrawTextInternal (dc, text, font, pt, foreColor, Color.Transparent, TextFormatFlags.Default, false);
+		}
+
+		public static void DrawText (IDeviceContext dc, string text, Font font, Rectangle bounds, Color foreColor)
+		{
+			DrawTextInternal (dc, text, font, bounds, foreColor, Color.Transparent, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter, false);
+		}
+
+		public static void DrawText (IDeviceContext dc, string text, Font font, Point pt, Color foreColor, Color backColor)
+		{
+			DrawTextInternal (dc, text, font, pt, foreColor, backColor, TextFormatFlags.Default, false);
+		}
+
+		public static void DrawText (IDeviceContext dc, string text, Font font, Point pt, Color foreColor, TextFormatFlags flags)
+		{
+			DrawTextInternal (dc, text, font, pt, foreColor, Color.Transparent, flags, false);
+		}
+
+		public static void DrawText (IDeviceContext dc, string text, Font font, Rectangle bounds, Color foreColor, Color backColor)
+		{
+			DrawTextInternal (dc, text, font, bounds, foreColor, backColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter, false);
+		}
+
+		public static void DrawText (IDeviceContext dc, string text, Font font, Rectangle bounds, Color foreColor, TextFormatFlags flags)
+		{
+			DrawTextInternal (dc, text, font, bounds, foreColor, Color.Transparent, flags, false);
+		}
+
+		public static void DrawText (IDeviceContext dc, string text, Font font, Point pt, Color foreColor, Color backColor, TextFormatFlags flags)
+		{
+			DrawTextInternal (dc, text, font, pt, foreColor, backColor, flags, false);
+		}
+
+		public static void DrawText (IDeviceContext dc, string text, Font font, Rectangle bounds, Color foreColor, Color backColor, TextFormatFlags flags)
+		{
+			DrawTextInternal (dc, text, font, bounds, foreColor, backColor, flags, false);
+		}
+
+		/// <summary>.NET's colour for text drawn disabled on <paramref name="backColor"/>.</summary>
+		internal static Color DisabledTextColor (Color backColor)
+		{
+			if (SystemInformation.HighContrast)
+				return SystemColors.GrayText;
+			if (!ControlPaint.IsDarker (backColor, SystemColors.Control))
+				return SystemColors.ControlDark;
+			return ControlPaint.Dark (backColor);
+		}
+
+		public static Size MeasureText (string text, Font font)
+		{
+			return MeasureTextInternal (Hwnd.GraphicsContext, text, font, MaxSize, TextFormatFlags.Bottom, false);
+		}
+
+		public static Size MeasureText (IDeviceContext dc, string text, Font font)
+		{
+			return MeasureTextInternal (dc, text, font, MaxSize, TextFormatFlags.Bottom, false);
+		}
+
+		public static Size MeasureText (string text, Font font, Size proposedSize)
+		{
+			return MeasureTextInternal (Hwnd.GraphicsContext, text, font, proposedSize, TextFormatFlags.Bottom, false);
+		}
+
+		public static Size MeasureText (IDeviceContext dc, string text, Font font, Size proposedSize)
+		{
+			return MeasureTextInternal (dc, text, font, proposedSize, TextFormatFlags.Bottom, false);
+		}
+
+		public static Size MeasureText (string text, Font font, Size proposedSize, TextFormatFlags flags)
+		{
+			return MeasureTextInternal (Hwnd.GraphicsContext, text, font, proposedSize, flags, false);
+		}
+
+		public static Size MeasureText (IDeviceContext dc, string text, Font font, Size proposedSize, TextFormatFlags flags)
+		{
+			return MeasureTextInternal (dc, text, font, proposedSize, flags, false);
+		}
+		#endregion
+
+		#region Internal Methods That Do Stuff
+		internal static void DrawTextInternal (IDeviceContext dc, string text, Font font, Rectangle bounds, Color foreColor, Color backColor, TextFormatFlags flags, bool useDrawString)
+		{
+			if (dc == null)
+				throw new ArgumentNullException ("dc");
+
+			if (text == null || text.Length == 0)
+				return;
+
+			if (!useDrawString && TryGraphics (dc, out Graphics dg)) {
+				DrawTextGdi (dg, text, font, bounds, foreColor, backColor, flags);
+				return;
+			}
+
+			// DT_VCENTER and DT_BOTTOM only do anything to a SINGLE LINE -- that is DrawText's rule,
+			// and WinForms leans on it: a CheckBox asks for VerticalCenter | TextBoxControl and never
+			// says SingleLine. This used to be applied only on the branch that calls the real GDI,
+			// which this port never takes, so the flag never arrived and TextBoxControl went on to
+			// mean StringFormatFlags.LineLimit -- "drop any line that does not fit ENTIRELY" -- on a
+			// rectangle exactly one line high. The result was that every CheckBox and RadioButton
+			// caption in the application was silently not drawn at all.
+			if ((flags & TextFormatFlags.VerticalCenter) == TextFormatFlags.VerticalCenter
+			    || (flags & TextFormatFlags.Bottom) == TextFormatFlags.Bottom)
+				flags |= TextFormatFlags.SingleLine;
+
+			// We use MS GDI API's unless told not to, or we aren't on Windows
+			if (!useDrawString && !XplatUI.RunningOnUnix) {
+				// Calculate the text bounds (there is often padding added)
+				Rectangle new_bounds = PadRectangle (bounds, flags);
+				new_bounds.Offset ((int)(dc as Graphics).Transform.OffsetX, (int)(dc as Graphics).Transform.OffsetY);
+
+				IntPtr hdc = IntPtr.Zero;
+				bool clear_clip_region = false;
+				
+				// If we need to use the graphics clipping region, add it to our hdc
+				if ((flags & TextFormatFlags.PreserveGraphicsClipping) == TextFormatFlags.PreserveGraphicsClipping) {
+					Graphics graphics = (Graphics)dc;
+					Region clip_region = graphics.Clip;
+					
+					if (!clip_region.IsInfinite (graphics)) {
+						IntPtr hrgn = clip_region.GetHrgn (graphics);
+						hdc = dc.GetHdc ();
+						SelectClipRgn (hdc, hrgn);
+						DeleteObject (hrgn);
+						
+						clear_clip_region = true;
+					}
+				}
+				
+				if (hdc == IntPtr.Zero)
+					hdc = dc.GetHdc ();
+					
+				// Set the fore color
+				if (foreColor != Color.Empty)
+					SetTextColor (hdc, ColorTranslator.ToWin32 (foreColor));
+
+				// Set the back color
+				if (backColor != Color.Transparent && backColor != Color.Empty) {
+					SetBkMode (hdc, 2);	//1-Transparent, 2-Opaque
+					SetBkColor (hdc, ColorTranslator.ToWin32 (backColor));
+				}
+				else {
+					SetBkMode (hdc, 1);	//1-Transparent, 2-Opaque
+				}
+
+				XplatUIWin32.RECT r = XplatUIWin32.RECT.FromRectangle (new_bounds);
+
+				IntPtr prevobj;
+
+				if (font != null) {
+					prevobj = SelectObject (hdc, font.ToHfont ());
+					Win32DrawText (hdc, text, text.Length, ref r, (int)flags);
+					prevobj = SelectObject (hdc, prevobj);
+					DeleteObject (prevobj);
+				}
+				else {
+					Win32DrawText (hdc, text, text.Length, ref r, (int)flags);
+				}
+
+				if (clear_clip_region)
+					SelectClipRgn (hdc, IntPtr.Zero);
+
+				dc.ReleaseHdc ();
+			}
+			// Use Graphics.DrawString as a fallback method
+			else {
+				Graphics g;
+				IntPtr hdc = IntPtr.Zero;
+				
+				if (dc is Graphics)
+					g = (Graphics)dc;
+				else {
+					hdc = dc.GetHdc ();
+					g = Graphics.FromHdc (hdc);
+				}
+
+				StringFormat sf = FlagsToStringFormat (flags);
+
+				Rectangle new_bounds = PadDrawStringRectangle (bounds, font, flags);
+
+				g.DrawStringGdi (text, font, ThemeEngine.Current.ResPool.GetSolidBrush (foreColor), new_bounds, sf);
+
+				if (!(dc is Graphics)) {
+					g.Dispose ();
+					dc.ReleaseHdc ();
+				}
+			}
+		}
+
+		/// <summary>How tall GDI makes one line of this font -- the TEXTMETRIC height, which is
+		/// what a DT_CALCRECT measurement comes back with. Not GDI+'s line spacing, which includes
+		/// the line gap and is rounded up.
+		/// <para>The FACE answers this, from 'VDMX' where it has one: the line box is how far the
+		/// HINTED outlines reach, and hinting moves them far enough that the scaled design metrics
+		/// are the wrong answer by whole pixels. Arial and Times New Roman are each three pixels
+		/// short that way.</para></summary>
+		internal static int GdiLineHeight (Font font)
+		{
+			if (font == null)
+				return 0;
+			try {
+				FontFamily family = font.FontFamily;
+				if (family == null)
+					return 0;
+				int em = family.GetEmHeight (font.Style);
+				if (em <= 0)
+					return 0;
+				float emPx = font.SizeInPoints * 96f / 72f;
+
+				if (System.Drawing.WebGpuBackend.TextMetrics.TryGetGdiLineMetrics (
+						family.Name, font.Bold, font.Italic, emPx, out int a, out int d)
+					&& a + d > 0)
+					return a + d;
+
+				// No face to read -- scale what the family reports and truncate, which is what GDI
+				// does for a face with no usable VDMX bar the rounding it cannot know about here.
+				int ascent = (int) Math.Floor (family.GetCellAscent (font.Style) * emPx / em);
+				int descent = (int) Math.Floor (family.GetCellDescent (font.Style) * emPx / em);
+				return ascent + descent;
+			} catch (Exception) {
+				return 0;
+			}
+		}
+
+		internal static Size MeasureTextInternal (IDeviceContext dc, string text, Font font, Size proposedSize, TextFormatFlags flags, bool useMeasureString)
+		{
+			if (!useMeasureString && TryGraphics (dc ?? Hwnd.GraphicsContext, out Graphics mg))
+				return MeasureTextGdi (mg, text, font, proposedSize, flags);
+			if (!useMeasureString && !XplatUI.RunningOnUnix) {
+				// Tell DrawText to calculate size instead of draw
+				flags |= (TextFormatFlags)1024;		// DT_CALCRECT
+
+				IntPtr hdc = dc.GetHdc ();
+
+				XplatUIWin32.RECT r = XplatUIWin32.RECT.FromRectangle (new Rectangle (Point.Empty, proposedSize));
+
+				IntPtr prevobj;
+
+				if (font != null) {
+					prevobj = SelectObject (hdc, font.ToHfont ());
+					Win32DrawText (hdc, text, text.Length, ref r, (int)flags);
+					prevobj = SelectObject (hdc, prevobj);
+					DeleteObject (prevobj);
+				}
+				else {
+					Win32DrawText (hdc, text, text.Length, ref r, (int)flags);
+				}
+
+				dc.ReleaseHdc ();
+
+				// Really, I am just making something up here, which as far as I can tell, MS
+				// just makes something up as well.  This will require lots of tweaking to match MS.  :(
+				Size retval = r.ToRectangle ().Size;
+
+				if (retval.Width > 0 && (flags & TextFormatFlags.NoPadding) == 0) {
+					retval.Width += 6;
+					retval.Width += (int)retval.Height / 8;
+				}
+
+				return retval;
+			}
+			else {
+			StringFormat sf = FlagsToStringFormat (flags);
+
+				Size retval;
+
+				int left, right;
+				GlyphOverhang (font, flags, out left, out right);
+
+				int proposedWidth;
+				if (proposedSize.Width == 0)
+					proposedWidth = Int32.MaxValue;
+				else {
+					proposedWidth = proposedSize.Width - left - right;
+				}
+				if (dc is Graphics)
+					retval = (dc as Graphics).MeasureString (text, font, proposedWidth, sf).ToSize ();
+				else
+					retval = TextRenderer.MeasureString (text, font, proposedWidth, sf).ToSize ();
+
+				// MeasureString already leaves the glyph overhang either side of the run, exactly as it
+				// will be drawn, so there is nothing to add here.
+
+				// The HEIGHT, though, is GDI's and not GDI+'s. This method answers for GDI -- it is what
+				// TextRenderer means -- and GDI makes a line as tall as the font's TEXTMETRIC does: the
+				// ascent and the descent, each scaled and TRUNCATED. GDI+ reports its line spacing
+				// instead, rounded up, which for the shell font at nine point is sixteen pixels where
+				// GDI says fifteen. Every control that sizes itself to a line of text asks here, so the
+				// extra pixel came out as a combo box a pixel taller than Windows', a tree row a pixel
+				// taller, and a date picker to match.
+				int gdi = GdiLineHeight (font);
+				if (gdi > 0 && retval.Height > 0) {
+					int spacing = (int) Math.Ceiling (font.GetHeight ());
+					int lines = spacing > 0 ? Math.Max (1, (int) Math.Round (retval.Height / (double) spacing)) : 1;
+					retval.Height = lines * gdi;
+				}
+
+				// NoPadding means the run's own extent, without the space GDI leaves either side of a
+				// DrawText. MeasureString hands back the padded width -- which is what the flag's
+				// ABSENCE asks for, and what the comment above is about -- so the flag has to take it
+				// off again: the same six pixels plus an eighth of the line the GDI path adds. Honouring
+				// the flag nowhere made every tab of a TabControl seven pixels wider than Windows' own.
+				if (retval.Width > 0 && (flags & TextFormatFlags.NoPadding) == TextFormatFlags.NoPadding)
+					retval.Width -= 6 + retval.Height / 8;
+
+				return retval;
+			}
+		}
+		#endregion
+
+#region Internal Methods That Are Just Overloads
+		internal static void DrawTextInternal (IDeviceContext dc, string text, Font font, Point pt, Color foreColor, bool useDrawString)
+		{
+			DrawTextInternal (dc, text, font, pt, foreColor, Color.Transparent, TextFormatFlags.Default, useDrawString);
+		}
+
+		internal static void DrawTextInternal (IDeviceContext dc, string text, Font font, Rectangle bounds, Color foreColor, bool useDrawString)
+		{
+			DrawTextInternal (dc, text, font, bounds, foreColor, Color.Transparent, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter, useDrawString);
+		}
+
+		internal static void DrawTextInternal (IDeviceContext dc, string text, Font font, Point pt, Color foreColor, Color backColor, bool useDrawString)
+		{
+			DrawTextInternal (dc, text, font, pt, foreColor, backColor, TextFormatFlags.Default, useDrawString);
+		}
+
+		internal static void DrawTextInternal (IDeviceContext dc, string text, Font font, Point pt, Color foreColor, TextFormatFlags flags, bool useDrawString)
+		{
+			DrawTextInternal (dc, text, font, pt, foreColor, Color.Transparent, flags, useDrawString);
+		}
+
+		internal static void DrawTextInternal (IDeviceContext dc, string text, Font font, Rectangle bounds, Color foreColor, Color backColor, bool useDrawString)
+		{
+			DrawTextInternal (dc, text, font, bounds, foreColor, backColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter, useDrawString);
+		}
+
+		internal static void DrawTextInternal (IDeviceContext dc, string text, Font font, Rectangle bounds, Color foreColor, TextFormatFlags flags, bool useDrawString)
+		{
+			DrawTextInternal (dc, text, font, bounds, foreColor, Color.Transparent, flags, useDrawString);
+		}
+
+		internal static Size MeasureTextInternal (string text, Font font, bool useMeasureString)
+		{
+			return MeasureTextInternal (Hwnd.GraphicsContext, text, font, Size.Empty, TextFormatFlags.Default, useMeasureString);
+		}
+
+		internal static void DrawTextInternal (IDeviceContext dc, string text, Font font, Point pt, Color foreColor, Color backColor, TextFormatFlags flags, bool useDrawString)
+		{
+			Size sz = MeasureTextInternal (dc, text, font, flags, useDrawString);
+			DrawTextInternal (dc, text, font, new Rectangle (pt, sz), foreColor, backColor, flags, useDrawString);
+		}
+
+		internal static Size MeasureTextInternal (IDeviceContext dc, string text, Font font, TextFormatFlags flags, bool useMeasureString)
+		{
+			return MeasureTextInternal (dc, text, font, Size.Empty, flags, useMeasureString);
+		}
+
+		internal static Size MeasureTextInternal (IDeviceContext dc, string text, Font font, bool useMeasureString)
+		{
+			return MeasureTextInternal (dc, text, font, Size.Empty, TextFormatFlags.Default, useMeasureString);
+		}
+
+		internal static Size MeasureTextInternal (string text, Font font, Size proposedSize, bool useMeasureString)
+		{
+			return MeasureTextInternal (Hwnd.GraphicsContext, text, font, proposedSize, TextFormatFlags.Default, useMeasureString);
+		}
+
+		internal static Size MeasureTextInternal (IDeviceContext dc, string text, Font font, Size proposedSize, bool useMeasureString)
+		{
+			return MeasureTextInternal (dc, text, font, proposedSize, TextFormatFlags.Default, useMeasureString);
+		}
+
+		internal static Size MeasureTextInternal (string text, Font font, Size proposedSize, TextFormatFlags flags, bool useMeasureString)
+		{
+			return MeasureTextInternal (Hwnd.GraphicsContext, text, font, proposedSize, flags, useMeasureString);
+		}
+#endregion
+
+		#region Thread-Safe Static Graphics Methods
+		internal static SizeF MeasureString (string text, Font font)
+		{
+			return Hwnd.GraphicsContext.MeasureString (text, font);
+		}
+
+		internal static SizeF MeasureString (string text, Font font, int width)
+		{
+			return Hwnd.GraphicsContext.MeasureString (text, font, width);
+		}
+
+		internal static SizeF MeasureString (string text, Font font, SizeF layoutArea)
+		{
+			return Hwnd.GraphicsContext.MeasureString (text, font, layoutArea);
+		}
+
+		internal static SizeF MeasureString (string text, Font font, int width, StringFormat format)
+		{
+			return Hwnd.GraphicsContext.MeasureString (text, font, width, format);
+		}
+
+		internal static SizeF MeasureString (string text, Font font, PointF origin, StringFormat stringFormat)
+		{
+			return Hwnd.GraphicsContext.MeasureString (text, font, origin, stringFormat);
+		}
+
+		internal static SizeF MeasureString (string text, Font font, SizeF layoutArea, StringFormat stringFormat)
+		{
+			return Hwnd.GraphicsContext.MeasureString (text, font, layoutArea, stringFormat);
+		}
+
+		internal static SizeF MeasureString (string text, Font font, SizeF layoutArea, StringFormat stringFormat, out int charactersFitted, out int linesFilled)
+		{
+			return Hwnd.GraphicsContext.MeasureString (text, font, layoutArea, stringFormat, out charactersFitted, out linesFilled);
+		}
+
+		internal static Region[] MeasureCharacterRanges (string text, Font font, RectangleF layoutRect, StringFormat stringFormat)
+		{
+			return Hwnd.GraphicsContext.MeasureCharacterRanges (text, font, layoutRect, stringFormat);
+		}
+		
+		internal static SizeF GetDpi ()
+		{
+			// The WebGPU driver is a virtual 96-DPI screen and the host scales the composed frame to
+			// device pixels on the way out. Reporting the monitor's real DPI here made a form with
+			// AutoScaleMode.Dpi scale ITSELF as well, so at 200% the scaling happened twice: the
+			// About dialog laid itself out 832x998 instead of 416x499 and then needed 1664x1996
+			// device pixels, more than its window could be given, so the frame was squeezed to fit.
+			// That squeeze breaks the 1:1 mapping a click relies on -- clicking the tab strip landed
+			// on the picture above it, and no tab could ever be selected.
+			if (XplatUI.RunningWebGpuDriver)
+				return new SizeF (96f, 96f);
+
+			return new SizeF (Hwnd.GraphicsContext.DpiX, Hwnd.GraphicsContext.DpiY);
+		}
+		#endregion
+		
+#region Private Methods
+		private static StringFormat FlagsToStringFormat (TextFormatFlags flags)
+		{
+			StringFormat sf = new StringFormat ();
+
+			// Translation table: http://msdn.microsoft.com/msdnmag/issues/06/03/TextRendering/default.aspx?fig=true#fig4
+
+			// Horizontal Alignment
+			if ((flags & TextFormatFlags.HorizontalCenter) == TextFormatFlags.HorizontalCenter)
+				sf.Alignment = StringAlignment.Center;
+			else if ((flags & TextFormatFlags.Right) == TextFormatFlags.Right)
+				sf.Alignment = StringAlignment.Far;
+			else
+				sf.Alignment = StringAlignment.Near;
+
+			// Vertical Alignment
+			if ((flags & TextFormatFlags.Bottom) == TextFormatFlags.Bottom)
+				sf.LineAlignment = StringAlignment.Far;
+			else if ((flags & TextFormatFlags.VerticalCenter) == TextFormatFlags.VerticalCenter)
+				sf.LineAlignment = StringAlignment.Center;
+			else
+				sf.LineAlignment = StringAlignment.Near;
+
+			// Ellipsis
+			if ((flags & TextFormatFlags.EndEllipsis) == TextFormatFlags.EndEllipsis)
+				sf.Trimming = StringTrimming.EllipsisCharacter;
+			else if ((flags & TextFormatFlags.PathEllipsis) == TextFormatFlags.PathEllipsis)
+				sf.Trimming = StringTrimming.EllipsisPath;
+			else if ((flags & TextFormatFlags.WordEllipsis) == TextFormatFlags.WordEllipsis)
+				sf.Trimming = StringTrimming.EllipsisWord;
+			else
+				sf.Trimming = StringTrimming.Character;
+
+			// Hotkey Prefix
+			if ((flags & TextFormatFlags.NoPrefix) == TextFormatFlags.NoPrefix)
+				sf.HotkeyPrefix = HotkeyPrefix.None;
+			else if ((flags & TextFormatFlags.HidePrefix) == TextFormatFlags.HidePrefix)
+				sf.HotkeyPrefix = HotkeyPrefix.Hide;
+			else
+				sf.HotkeyPrefix = HotkeyPrefix.Show;
+
+			// Text Padding
+			if ((flags & TextFormatFlags.NoPadding) == TextFormatFlags.NoPadding)
+				sf.FormatFlags |= StringFormatFlags.FitBlackBox;
+
+			// Text Wrapping
+			if ((flags & TextFormatFlags.SingleLine) == TextFormatFlags.SingleLine)
+				sf.FormatFlags |= StringFormatFlags.NoWrap;
+			else if ((flags & TextFormatFlags.TextBoxControl) == TextFormatFlags.TextBoxControl)
+				sf.FormatFlags |= StringFormatFlags.LineLimit;
+
+			// Other Flags
+			//if ((flags & TextFormatFlags.RightToLeft) == TextFormatFlags.RightToLeft)
+			//        sf.FormatFlags |= StringFormatFlags.DirectionRightToLeft;
+			if ((flags & TextFormatFlags.NoClipping) == TextFormatFlags.NoClipping)
+				sf.FormatFlags |= StringFormatFlags.NoClip;
+
+			return sf;
+		}
+
+		private static Rectangle PadRectangle (Rectangle r, TextFormatFlags flags)
+		{
+			if ((flags & TextFormatFlags.NoPadding) == 0 && (flags & TextFormatFlags.Right) == 0 && (flags & TextFormatFlags.HorizontalCenter) == 0) {
+				r.X += 3;
+				r.Width -= 3;
+			}
+			if ((flags & TextFormatFlags.NoPadding) == 0 && (flags & TextFormatFlags.Right) == TextFormatFlags.Right) {
+				r.Width -= 4;
+			}
+			if ((flags & TextFormatFlags.LeftAndRightPadding) == TextFormatFlags.LeftAndRightPadding) {
+				r.X += 2;
+				r.Width -= 2;
+			}
+			if ((flags & TextFormatFlags.WordEllipsis) == TextFormatFlags.WordEllipsis || (flags & TextFormatFlags.EndEllipsis) == TextFormatFlags.EndEllipsis || (flags & TextFormatFlags.WordBreak) == TextFormatFlags.WordBreak) {
+				r.Width -= 4;
+			}
+			if ((flags & TextFormatFlags.VerticalCenter) == TextFormatFlags.VerticalCenter) {
+				r.Y += 1;
+			}
+
+			return r;
+		}
+
+		/// <summary>The margin DrawText leaves around a run of text, so that a glyph that
+		/// overhangs its cell -- the tail of an italic f, the curve of a C -- is not clipped by
+		/// the rectangle it was asked to fit in.
+		/// <para>Windows leaves a sixth of the font's height on the left and half as much again
+		/// on the right; the GDI branch above already does. This branch left a single pixel
+		/// whatever the font, so every left-aligned caption in the application -- a label, a
+		/// check box's text, a menu entry, a grid cell -- sat two or three pixels further left
+		/// than the same caption in Windows, while the width MeasureText reported still
+		/// included the margin. The pixel taken off the top is the other half of the same story:
+		/// DrawString lays a line out on the font's own ascent where DrawText uses the metric
+		/// height, which at nine point is a pixel further down.</para></summary>
+		private static Rectangle PadDrawStringRectangle (Rectangle r, Font font, TextFormatFlags flags)
+		{
+			int left, right;
+			GlyphOverhang (font, flags, out left, out right);
+
+			// The margin either side is NOT added here: DrawString already leaves the glyph overhang
+			// inside the rectangle it is given, exactly as it will draw it (see Graphics.Overhang), and
+			// adding it a second time put every run this way -- a grid cell's text, a tool bar
+			// caption -- three pixels right of the same run in Windows. Only the width is trimmed, so a
+			// run that fills its box still has room for the overhang on the far side.
+			if ((flags & TextFormatFlags.Right) == TextFormatFlags.Right) {
+				r.Width -= right;
+			} else if ((flags & TextFormatFlags.HorizontalCenter) == 0) {
+				r.Width -= left;
+			}
+			if ((flags & TextFormatFlags.NoPadding) == TextFormatFlags.NoPadding) {
+				r.X -= 2;
+			}
+			if ((flags & TextFormatFlags.NoPadding) == 0 && (flags & TextFormatFlags.Bottom) == TextFormatFlags.Bottom) {
+				r.Y += 1;
+			}
+			// NO LIFT. There used to be an unconditional "r.Y -= 1" here for the GDI+/DrawString
+			// path, and it was a workaround: the vertical placement is decided properly in
+			// Graphics.DrawStringGdi, which lays the baseline on the font's own ascent and centres
+			// the GLYPH box (ascent + descent, each truncated) rather than GDI+'s line spacing.
+			// Every layout that had been fitted around the lift is corrected at its own site.
+
+			return r;
+		}
+
+		private static readonly Size MaxSize = new Size (int.MaxValue, int.MaxValue);
+
+		private static bool TryGraphics (IDeviceContext dc, out Graphics g)
+		{
+			g = dc as Graphics ?? (dc as PaintEventArgs)?.Graphics;
+			return g != null;
+		}
+
+		/// <summary>The font as the DrawTextEx engine sees a DC with it selected: GDI's extents and
+		/// TEXTMETRIC, and TextOut through Graphics.</summary>
+		private sealed class GdiTextDevice : GdiDrawText.ITextDevice
+		{
+			private readonly Graphics g;
+			private readonly Font font;
+			private readonly float emPx;
+			private readonly int sims;
+			private readonly string family;
+			internal Color ForeColor, BackColor;
+			private int height = -1, ascent = -1, ave = -1;
+
+			internal GdiTextDevice (Graphics g, Font font)
+			{
+				this.g = g;
+				this.font = font;
+				emPx = font.SizeInPoints * 96f / 72f;
+				sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0)
+				     | (g != null && g.no_kerning ? System.Drawing.WebGpuBackend.TextMetrics.NoKerning : 0);
+				family = font.FontFamily?.Name;
+			}
+
+			public int Extent (string s, int start, int length)
+			{
+				if (length <= 0)
+					return 0;
+				return System.Drawing.WebGpuBackend.TextMetrics.MeasureGdiRun (s.Substring (start, length), emPx, sims, family);
+			}
+
+			public int Height {
+				get {
+					if (height < 0) {
+						height = GdiLineHeight (font);
+						if (height <= 0)
+							height = font.Height;
+					}
+					return height;
+				}
+			}
+
+			public int Ascent {
+				get {
+					if (ascent < 0) {
+						ascent = System.Drawing.WebGpuBackend.TextMetrics.TryGetGdiLineMetrics (family, font.Bold, font.Italic, emPx, out int a, out int _) && a > 0
+							? a : (int) Math.Round (Height * 0.8);
+					}
+					return ascent;
+				}
+			}
+
+			public int ExternalLeading => Math.Max (0, (int) Math.Ceiling (font.GetHeight ()) - Height);
+
+			public int AveCharWidth {
+				get {
+					if (ave < 0) {
+						if (!System.Drawing.WebGpuBackend.TextMetrics.TryGetAverageCharWidth (family, font.Bold, font.Italic, emPx, out ave) || ave <= 0)
+							ave = Math.Max (1, (int) Math.Round (emPx / 2));
+					}
+					return ave;
+				}
+			}
+
+			public int Overhang => 0;
+
+			public void TextOut (int x, int y, string s)
+			{
+				if (BackColor.A != 0) {
+					using (var b = new SolidBrush (BackColor))
+						g.FillRectangle (b, x, y, Extent (s, 0, s.Length), Height);
+				}
+				g.TextOutGdi (s, font, ForeColor, x, y);
+			}
+
+			public void FillRect (Rectangle r)
+			{
+				using (var b = new SolidBrush (ForeColor))
+					g.FillRectangle (b, r);
+			}
+		}
+
+		// .NET's TextExtensions.SplitTextFormatFlags: the top byte holds .NET's own options (padding,
+		// clipping and transform preservation); the rest are DT_ flags.
+		private static uint DtFlags (TextFormatFlags flags) => (uint) flags & 0xFFFFFF;
+
+		/// <summary>.NET's TextExtensions.DrawText: the margins, the vertical position of a multi-line
+		/// VerticalCenter or Bottom run (DrawTextEx itself places only a single line), then DrawTextEx.</summary>
+		private static void DrawTextGdi (Graphics g, string text, Font font, Rectangle bounds, Color foreColor, Color backColor, TextFormatFlags flags)
+		{
+			if (font == null || foreColor == Color.Transparent)
+				return;
+			var dev = new GdiTextDevice (g, font) { ForeColor = foreColor, BackColor = backColor };
+			GlyphOverhang (font, flags, out int left, out int right);
+			uint dt = DtFlags (flags);
+			if ((dt & (GdiDrawText.DT_BOTTOM | GdiDrawText.DT_VCENTER)) != 0 && (dt & GdiDrawText.DT_SINGLELINE) == 0 && (dt & GdiDrawText.DT_CALCRECT) == 0) {
+				Rectangle calc = bounds;
+				int h = GdiDrawText.DrawTextEx (dev, text, ref calc, dt | GdiDrawText.DT_CALCRECT, left, right, 0, null);
+				if (h <= bounds.Height) {
+					if ((dt & GdiDrawText.DT_VCENTER) != 0)
+						bounds.Y = bounds.Top + bounds.Height / 2 - h / 2;
+					else
+						bounds.Y = bounds.Bottom - h;
+				}
+			}
+			if (bounds.Width == int.MaxValue)
+				bounds.Width -= bounds.X;
+			if (bounds.Height == int.MaxValue)
+				bounds.Height -= bounds.Y;
+			Rectangle r = bounds;
+			System.Drawing.Drawing2D.GraphicsState state = null;
+			try {
+				GdiDrawText.DrawTextEx (dev, text, ref r, dt, left, right, 0, clip => {
+					state = g.Save ();
+					g.IntersectClip (clip);
+				});
+			} finally {
+				if (state != null)
+					g.Restore (state);
+			}
+		}
+
+		/// <summary>.NET's TextExtensions.MeasureText: DrawTextEx with DT_CALCRECT in a rectangle of
+		/// the proposed size, at least one pixel wider than the margins; an unbounded height drops
+		/// the vertical placement of a single line, an unbounded width drops the word breaking.</summary>
+		private static Size MeasureTextGdi (Graphics g, string text, Font font, Size proposedSize, TextFormatFlags flags)
+		{
+			if (string.IsNullOrEmpty (text) || font == null)
+				return Size.Empty;
+			var dev = new GdiTextDevice (g, font);
+			GlyphOverhang (font, flags, out int left, out int right);
+			int min = 1 + left + right;
+			if (proposedSize.Width <= min)
+				proposedSize.Width = min;
+			if (proposedSize.Height <= 0)
+				proposedSize.Height = 1;
+			uint dt = DtFlags (flags);
+			if (proposedSize.Height == int.MaxValue && (dt & GdiDrawText.DT_SINGLELINE) != 0)
+				dt &= ~(GdiDrawText.DT_BOTTOM | GdiDrawText.DT_VCENTER);
+			if (proposedSize.Width == int.MaxValue)
+				dt &= ~GdiDrawText.DT_WORDBREAK;
+			dt |= GdiDrawText.DT_CALCRECT;
+			Rectangle r = new Rectangle (0, 0, proposedSize.Width, proposedSize.Height);
+			GdiDrawText.DrawTextEx (dev, text, ref r, dt, left, right, 0, null);
+			return r.Size;
+		}
+
+		/// <summary>The left and right margins Windows leaves around text, in pixels: .NET's
+		/// TextExtensions.GetTextMargins, which DrawTextEx is handed as DRAWTEXTPARAMS. A sixth of the
+		/// font's height, doubled for LeftAndRightPadding, and half as much again on the right for an
+		/// italic -- where the HEIGHT IS THE HFONT'S tmHeight (FontCache.Data.Height), not GDI+'s
+		/// Font.Height. That is the per-face variation once measured here: 16ppem Arial and Times are
+		/// both Font.Height 19, and their tmHeights, from VDMX and the win metrics, are not.</summary>
+		private static void GlyphOverhang (Font font, TextFormatFlags flags, out int left, out int right)
+		{
+			left = right = 0;
+			if (font == null || (flags & TextFormatFlags.NoPadding) == TextFormatFlags.NoPadding)
+				return;
+
+			int tmHeight = GdiLineHeight (font);
+			float overhang = (tmHeight > 0 ? tmHeight : font.Height) / 6f;
+			bool both = (flags & TextFormatFlags.LeftAndRightPadding) == TextFormatFlags.LeftAndRightPadding;
+			left = (int) Math.Ceiling (both ? overhang * 2 : overhang);
+			right = (int) Math.Ceiling (overhang * ((both ? 2 : 1) + 0.5f));
+		}
+#endregion
+
+#region DllImports (Windows)
+		[DllImport ("user32", CharSet = CharSet.Unicode, EntryPoint = "DrawText")]
+		static extern int Win32DrawText (IntPtr hdc, string lpStr, int nCount, ref XplatUIWin32.RECT lpRect, int wFormat);
+
+		[DllImport ("gdi32")]
+		static extern int SetTextColor (IntPtr hdc, int crColor);
+
+		[DllImport ("gdi32")]
+		static extern IntPtr SelectObject (IntPtr hDC, IntPtr hObject);
+
+		[DllImport ("gdi32")]
+		static extern int SetBkColor (IntPtr hdc, int crColor);
+
+		[DllImport ("gdi32")]
+		static extern int SetBkMode (IntPtr hdc, int iBkMode);
+
+		[DllImport ("gdi32")]
+		static extern bool DeleteObject (IntPtr objectHandle);
+
+		[DllImport("gdi32")]
+		static extern bool SelectClipRgn(IntPtr hdc, IntPtr hrgn);
+#endregion
+	}
+}

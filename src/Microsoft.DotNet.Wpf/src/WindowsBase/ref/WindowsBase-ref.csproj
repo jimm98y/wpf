@@ -17,9 +17,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="Accessibility" />
-  </ItemGroup>
-  <ItemGroup>
     <PackageReference Include="System.Diagnostics.EventLog" Version="$(SystemDiagnosticsEventLogPackageVersion)" />
     <PackageReference Include="System.Windows.Extensions" Version="$(SystemWindowsExtensionsPackageVersion)" />
     <PackageReference Include="System.Security.Cryptography.Xml" Version="$(SystemSecurityCryptographyXmlPackageVersion)" />

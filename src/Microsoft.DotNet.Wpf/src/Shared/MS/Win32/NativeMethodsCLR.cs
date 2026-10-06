@@ -1716,6 +1716,20 @@ namespace MS.Win32
             public byte lfPitchAndFamily;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)]
             public string   lfFaceName;
+
+            // A reasonable default UI font, used off-Windows where SystemParametersInfo cannot
+            // supply the real system LOGFONTs (SPI_GETNONCLIENTMETRICS / SPI_GETICONMETRICS).
+            // Height is in the LOGFONT sign convention (negative => character height in pixels).
+            internal static LOGFONT CreateDefault()
+            {
+                return new LOGFONT
+                {
+                    lfHeight = -12,
+                    lfWeight = 400, // FW_NORMAL
+                    lfCharSet = 1,  // DEFAULT_CHARSET
+                    lfFaceName = "Segoe UI",
+                };
+            }
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Auto)]

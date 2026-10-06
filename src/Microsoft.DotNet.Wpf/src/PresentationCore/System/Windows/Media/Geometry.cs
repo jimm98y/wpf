@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -148,10 +148,31 @@ namespace System.Windows.Media
         }
 
 
+        // Axis-aligned bounds of an affine-transformed rect (transform the 4 corners, re-bound).
+        private static Rect TransformRectAffine(Rect r, Matrix m)
+        {
+            if (m.IsIdentity || r.IsEmpty)
+            {
+                return r;
+            }
+
+            Point p0 = m.Transform(new Point(r.Left, r.Top));
+            Point p1 = m.Transform(new Point(r.Right, r.Top));
+            Point p2 = m.Transform(new Point(r.Right, r.Bottom));
+            Point p3 = m.Transform(new Point(r.Left, r.Bottom));
+
+            double left = Math.Min(Math.Min(p0.X, p1.X), Math.Min(p2.X, p3.X));
+            double top = Math.Min(Math.Min(p0.Y, p1.Y), Math.Min(p2.Y, p3.Y));
+            double right = Math.Max(Math.Max(p0.X, p1.X), Math.Max(p2.X, p3.X));
+            double bottom = Math.Max(Math.Max(p0.Y, p1.Y), Math.Max(p2.Y, p3.Y));
+
+            return new Rect(left, top, right - left, bottom - top);
+        }
+
         internal static unsafe Rect GetBoundsHelper(
-            Pen pen, 
-            Matrix *pWorldMatrix, 
-            Point* pPoints, 
+            Pen pen,
+            Matrix *pWorldMatrix,
+            Point* pPoints,
             byte *pTypes, 
             uint pointCount,
             uint segmentCount,
@@ -160,59 +181,64 @@ namespace System.Windows.Media
             ToleranceType type,
             bool fSkipHollows)
         {
-            MIL_PEN_DATA penData;
-            double[] dashArray = null;
-
-            // If the pen contributes to the bounds, populate the CMD struct
             bool fPenContributesToBounds = Pen.ContributesToBounds(pen);
 
-            if (fPenContributesToBounds)
             {
-                pen.GetBasicPenData(&penData, out dashArray);
-            }
+                // Bounds are computed managed on EVERY platform; the native helper lives in
+                // wpfgfx_cor3.dll, which this port does not ship. This is the fast path the simple
+                // geometries take -- Line, Rectangle, Ellipse -- expressed as a point/type array
+                // rather than a serialized path. PathGeometry's equivalent is GetPathBoundsAsRB.
+                //
+                // The segments are WALKED rather than the raw points unioned. An ellipse is four
+                // Beziers, and its control points lie well outside the curve, so unioning them
+                // (which is what this did while it was an off-Windows-only fallback) reports a
+                // rounded rectangle's worth of extra space. Bounds drive layout, so that is a
+                // measurable shape being bigger than the shape drawn.
+                var acc = new PathBoundsAccumulator();
 
-            MilMatrix3x2D geometryMatrix;
-            if (pGeometryMatrix != null)
-            {
-                geometryMatrix = CompositionResourceManager.MatrixToMilMatrix3x2D(ref (*pGeometryMatrix));
-            }
-
-            Debug.Assert(pWorldMatrix != null);
-            MilMatrix3x2D worldMatrix =
-                CompositionResourceManager.MatrixToMilMatrix3x2D(ref (*pWorldMatrix));
-
-            Rect bounds;
-
-            fixed (double *pDashArray = dashArray)
-            {
-                int hr = MilCoreApi.MilUtility_PolygonBounds(
-                    &worldMatrix,
-                    (fPenContributesToBounds) ? &penData : null,
-                    (dashArray == null) ? null : pDashArray,
-                    pPoints,
-                    pTypes,
-                    pointCount,
-                    segmentCount,
-                    (pGeometryMatrix == null) ? null : &geometryMatrix,
-                    tolerance,
-                    type == ToleranceType.Relative,
-                    fSkipHollows,
-                    &bounds
-                );
-
-                if (hr == (int)MILErrors.WGXERR_BADNUMBER)
+                if (pointCount > 0)
                 {
-                    // When we encounter NaNs in the renderer, we absorb the error and draw
-                    // nothing. To be consistent, we report that the geometry has empty bounds.
-                    bounds = Rect.Empty;
+                    acc.BeginFigure(pPoints[0], true, false);
+
+                    uint pi = 1;
+                    for (uint si = 0; si < segmentCount && pi < pointCount; si++)
+                    {
+                        bool isBezier = pTypes != null &&
+                                        (pTypes[si] & (byte)MILCoreSegFlags.SegTypeMask) == (byte)MILCoreSegFlags.SegTypeBezier;
+
+                        if (isBezier)
+                        {
+                            if (pi + 2 >= pointCount) break;
+                            acc.BezierTo(pPoints[pi], pPoints[pi + 1], pPoints[pi + 2], true, false);
+                            pi += 3;
+                        }
+                        else
+                        {
+                            acc.LineTo(pPoints[pi], true, false);
+                            pi++;
+                        }
+                    }
                 }
-                else
+
+                Rect rawBounds = acc.Bounds;
+                if (rawBounds.IsEmpty)
                 {
-                    HRESULT.Check(hr);
+                    return Rect.Empty;
                 }
+
+                Matrix combined = (pGeometryMatrix != null) ? *pGeometryMatrix : Matrix.Identity;
+                if (pWorldMatrix != null) combined.Append(*pWorldMatrix);
+                Rect managedBounds = TransformRectAffine(rawBounds, combined);
+
+                if (fPenContributesToBounds)
+                {
+                    double half = pen.Thickness / 2.0;
+                    managedBounds.Inflate(half, half);
+                }
+
+                return managedBounds;
             }
 
-            return bounds;
         }
 
         internal virtual void TransformPropertyChangedHook(DependencyPropertyChangedEventArgs e)
@@ -269,45 +295,27 @@ namespace System.Windows.Media
                 return 0;
             }
 
-            PathGeometryData pathData = GetPathGeometryData();
-
-            if (pathData.IsEmpty())
+            // milcore's MilUtility_GeometryGetArea is in wpfgfx_cor3.dll, which this port ships on no
+            // platform. Flatten to polygons and sum the signed shoelace areas: |sum| is the enclosed
+            // area for a non-self-intersecting outline, and signed accumulation is what makes a hole
+            // (wound the opposite way) subtract from the shape that contains it.
+            double area = 0.0;
+            foreach (MS.Internal.Media.PolylineFigure figure in
+                     MS.Internal.Media.PathFlattener.Flatten(this, AbsoluteTolerance(this, tolerance, type)))
             {
-                return 0;
-            }
+                System.Collections.Generic.IList<Point> pts = figure.Points;
+                if (pts.Count < 3) continue;
 
-            double area;
-
-            unsafe
-            {
-                // Call the core method on the path data
-                fixed (byte* pbPathData = pathData.SerializedData)
+                double twice = 0.0;
+                for (int i = 0, j = pts.Count - 1; i < pts.Count; j = i++)
                 {
-                    Debug.Assert(pbPathData != (byte*)0);
-
-                    int hr = MilCoreApi.MilUtility_GeometryGetArea(
-                        pathData.FillRule,
-                        pbPathData,
-                        pathData.Size,
-                        &pathData.Matrix,
-                        tolerance,
-                        type == ToleranceType.Relative,
-                        &area);
-
-                    if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                    {
-                        // When we encounter NaNs in the renderer, we absorb the error and draw
-                        // nothing. To be consistent, we report that the geometry has 0 area.
-                        area = 0.0;
-                    }
-                    else
-                    {
-                        HRESULT.Check(hr);
-                    }
+                    twice += (pts[j].X * pts[i].Y) - (pts[i].X * pts[j].Y);
                 }
+
+                area += twice / 2.0;
             }
 
-            return area;
+            return Math.Abs(area);
         }
 
         /// <summary>
@@ -382,101 +390,226 @@ namespace System.Windows.Media
                 return false;
             }
 
-            PathGeometryData pathData = GetPathGeometryData();
-
-            if (pathData.IsEmpty())
-            {
-                return false;
-            }
-
-            bool contains = false;
-
-            unsafe
-            {   
-                MIL_PEN_DATA penData;
-                double[] dashArray = null;
-
-                // If we have a pen, populate the CMD struct
-                pen?.GetBasicPenData(&penData, out dashArray);
-
-                fixed (byte* pbPathData = pathData.SerializedData)
-                {
-                    Debug.Assert(pbPathData != (byte*)0);
-
-                    fixed (double * dashArrayFixed = dashArray)
-                    {
-                        int hr = MilCoreApi.MilUtility_PathGeometryHitTest(
-                                &pathData.Matrix,
-                                (pen == null) ? null : &penData,
-                                dashArrayFixed,
-                                pathData.FillRule,
-                                pbPathData,
-                                pathData.Size,
-                                tolerance,
-                                type == ToleranceType.Relative,
-                                &hitPoint,
-                                out contains);
-
-                        if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                        {
-                            // When we encounter NaNs in the renderer, we absorb the error and draw
-                            // nothing. To be consistent, we report that the geometry is never hittable.
-                            contains = false;
-                        }
-                        else
-                        {
-                            HRESULT.Check(hr);
-                        }
-                    }
-                }
-            }
-
-            return contains;
+            // Containment runs in managed code over the geometry's flattened figures, on every platform.
+            // milcore's MilUtility_PathGeometryHitTest is in wpfgfx_cor3.dll, which this port does not
+            // ship anywhere: on Windows this used to throw DllNotFoundException the first time the mouse
+            // moved over a control, on the UI thread, which presented as the whole app hanging.
+            return ManagedGeometryContains(pen, hitPoint, tolerance);
         }
 
         /// <summary>
         /// Helper method to be used by derived implementations of ContainsInternal.
         /// </summary>
-        internal unsafe bool ContainsInternal(Pen pen, Point hitPoint, double tolerance, ToleranceType type, 
+        internal unsafe bool ContainsInternal(Pen pen, Point hitPoint, double tolerance, ToleranceType type,
                                                 Point *pPoints, uint pointCount, byte *pTypes, uint typeCount)
         {
-            bool contains = false;
+            // Containment in managed code on every platform: flatten the figure, then run a
+            // point-in-polygon test (fill) or a distance-to-outline test (stroke). milcore's
+            // MilUtility_PolygonHitTest lives in wpfgfx_cor3.dll, which this port ships nowhere.
+            return ManagedPolygonContains(Transform, pen, hitPoint, tolerance, pPoints, pointCount, pTypes, typeCount);
+        }
 
-            MilMatrix3x2D matrix = CompositionResourceManager.TransformToMilMatrix3x2D(Transform);
-
-            MIL_PEN_DATA penData;
-            double[] dashArray = null;
-
-            pen?.GetBasicPenData(&penData, out dashArray);
-
-            fixed (double *dashArrayFixed = dashArray)
+        /// <summary>
+        /// Managed replacement for milcore's MilUtility_PolygonHitTest (used off-Windows). Flattens the
+        /// figure described by pPoints/pTypes (transformed by the geometry's Transform), then tests the
+        /// hit point against it: fill containment (even-odd) when there is no pen, otherwise whether the
+        /// point lies within half the pen thickness of the outline.
+        /// </summary>
+        private static unsafe bool ManagedPolygonContains(Transform transform, Pen pen, Point hitPoint,
+            double tolerance, Point* pPoints, uint pointCount, byte* pTypes, uint segCount)
+        {
+            if (pointCount == 0 || segCount == 0)
             {
-                int hr = MilCoreApi.MilUtility_PolygonHitTest(
-                        &matrix,
-                        (pen == null) ? null : &penData,
-                        dashArrayFixed,
-                        pPoints,
-                        pTypes,
-                        pointCount,
-                        typeCount,
-                        tolerance,
-                        type == ToleranceType.Relative,
-                        &hitPoint,
-                        out contains);
+                return false;
+            }
 
-                if (hr == (int)MILErrors.WGXERR_BADNUMBER)
+            Matrix m = (transform != null) ? transform.Value : Matrix.Identity;
+
+            var poly = new System.Collections.Generic.List<Point>((int)pointCount);
+            Point cur = m.Transform(pPoints[0]);
+            poly.Add(cur);
+
+            int idx = 1;
+            bool closed = (pTypes[0] & (byte)MILCoreSegFlags.SegClosed) != 0;
+
+            for (uint s = 0; s < segCount; s++)
+            {
+                byte segType = (byte)(pTypes[s] & (byte)MILCoreSegFlags.SegTypeMask);
+                if (segType == (byte)MILCoreSegFlags.SegTypeLine)
                 {
-                    // When we encounter NaNs in the renderer, we absorb the error and draw
-                    // nothing. To be consistent, we report that the geometry is never hittable.
-                    contains = false;
+                    if (idx >= pointCount) break;
+                    cur = m.Transform(pPoints[idx++]);
+                    poly.Add(cur);
                 }
-                else
+                else if (segType == (byte)MILCoreSegFlags.SegTypeBezier)
                 {
-                    HRESULT.Check(hr);
+                    if (idx + 2 >= pointCount) break;
+                    Point c1 = m.Transform(pPoints[idx++]);
+                    Point c2 = m.Transform(pPoints[idx++]);
+                    Point end = m.Transform(pPoints[idx++]);
+                    const int steps = 24;
+                    for (int i = 1; i <= steps; i++)
+                    {
+                        double t = i / (double)steps;
+                        poly.Add(FlattenBezier(cur, c1, c2, end, t));
+                    }
+                    cur = end;
                 }
             }
 
-            return contains;
+            if (pen == null)
+            {
+                return PointInPolygon(poly, hitPoint);
+            }
+
+            // Stroke containment: within half the pen thickness (plus tolerance) of any outline edge.
+            double half = pen.Thickness / 2.0 + Math.Max(tolerance, 0.0);
+            int n = poly.Count;
+            int edges = closed ? n : n - 1;
+            for (int i = 0; i < edges; i++)
+            {
+                if (DistanceToSegment(hitPoint, poly[i], poly[(i + 1) % n]) <= half)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Resolves a caller's tolerance to absolute units. A relative tolerance is a fraction of the
+        /// geometry's size, which is what lets one number mean "close enough" for both a 10-unit glyph
+        /// and a 1000-unit page; the diagonal of the bounding box is the scale milcore measures it
+        /// against. Falls back to the absolute reading when there are no bounds to be relative to.
+        /// </summary>
+        internal static double AbsoluteTolerance(Geometry geometry, double tolerance, ToleranceType type)
+        {
+            if (!(tolerance > 0.0) || double.IsNaN(tolerance))
+            {
+                tolerance = MS.Internal.Media.PathFlattener.DefaultTolerance;
+            }
+
+            if (type != ToleranceType.Relative) return tolerance;
+
+            Rect bounds = geometry.Bounds;
+            if (bounds.IsEmpty) return tolerance;
+
+            double diagonal = Math.Sqrt(bounds.Width * bounds.Width + bounds.Height * bounds.Height);
+            return diagonal > 0.0 ? tolerance * diagonal : tolerance;
+        }
+
+        private static Point FlattenBezier(Point p0, Point p1, Point p2, Point p3, double t)
+        {
+            double u = 1 - t;
+            double w0 = u * u * u, w1 = 3 * u * u * t, w2 = 3 * u * t * t, w3 = t * t * t;
+            return new Point(w0 * p0.X + w1 * p1.X + w2 * p2.X + w3 * p3.X,
+                             w0 * p0.Y + w1 * p1.Y + w2 * p2.Y + w3 * p3.Y);
+        }
+
+        // Even-odd ray-cast containment; the polygon is treated as implicitly closed.
+        private static bool PointInPolygon(System.Collections.Generic.List<Point> poly, Point pt)
+        {
+            int n = poly.Count;
+            if (n < 3) return false;
+            bool inside = false;
+            for (int i = 0, j = n - 1; i < n; j = i++)
+            {
+                Point pi = poly[i], pj = poly[j];
+                if (((pi.Y > pt.Y) != (pj.Y > pt.Y)) &&
+                    (pt.X < (pj.X - pi.X) * (pt.Y - pi.Y) / (pj.Y - pi.Y) + pi.X))
+                {
+                    inside = !inside;
+                }
+            }
+            return inside;
+        }
+
+        // Managed replacement for milcore's MilUtility_PathGeometryHitTest (used off-Windows). Converts
+        // the geometry to a PathGeometry, flattens each figure to a polyline, and tests the hit point:
+        // fill (even-odd / nonzero per FillRule) with no pen, or distance-to-outline with a pen. Falls
+        // back to bounding-box containment if the geometry can't be converted (e.g. boolean combine).
+        private bool ManagedGeometryContains(Pen pen, Point hitPoint, double tolerance)
+        {
+            PathGeometry pg = null;
+            try { pg = GetAsPathGeometry(); } catch { pg = null; }
+
+            if (pg == null || pg.Figures == null || pg.Figures.Count == 0)
+            {
+                Rect b = Bounds;
+                return !b.IsEmpty && b.Contains(hitPoint);
+            }
+
+            // Shares the one flattener rather than subdividing here. That is not only deduplication:
+            // this method used to approximate an ArcSegment by a straight line to its endpoint, so a
+            // rounded rectangle hit-tested as a rectangle and a pie slice as a triangle.
+            var figures = new System.Collections.Generic.List<(System.Collections.Generic.List<Point> Pts, bool Closed)>();
+            foreach (MS.Internal.Media.PolylineFigure flattened in
+                     MS.Internal.Media.PathFlattener.Flatten(this, tolerance))
+            {
+                if (flattened.Points.Count >= 2)
+                {
+                    figures.Add((flattened.Points, flattened.Closed));
+                }
+            }
+
+            if (pen == null)
+            {
+                // Fill: accumulate ray-crossings across all figures (each treated as closed).
+                bool parity = false;
+                int winding = 0;
+                foreach (var (pts, _) in figures)
+                {
+                    int n = pts.Count;
+                    for (int i = 0; i < n; i++)
+                    {
+                        Point a = pts[i], b = pts[(i + 1) % n];
+                        if ((a.Y > hitPoint.Y) != (b.Y > hitPoint.Y))
+                        {
+                            double xCross = (b.X - a.X) * (hitPoint.Y - a.Y) / (b.Y - a.Y) + a.X;
+                            if (hitPoint.X < xCross)
+                            {
+                                parity = !parity;
+                                winding += (b.Y > a.Y) ? 1 : -1;
+                            }
+                        }
+                    }
+                }
+                return (pg.FillRule == FillRule.Nonzero) ? (winding != 0) : parity;
+            }
+
+            // Stroke: within half the pen thickness of any (closed figures include the closing edge).
+            double half = pen.Thickness / 2.0 + Math.Max(tolerance, 0.0);
+            foreach (var (pts, closed) in figures)
+            {
+                int n = pts.Count;
+                int edges = closed ? n : n - 1;
+                for (int i = 0; i < edges; i++)
+                {
+                    if (DistanceToSegment(hitPoint, pts[i], pts[(i + 1) % n]) <= half)
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // Appends the flattened points of a single path segment (excluding its start point, already in
+        // the list) and advances 'cur' to the segment's end point. All points are in transformed space.
+        private static double DistanceToSegment(Point p, Point a, Point b)
+        {
+            double dx = b.X - a.X, dy = b.Y - a.Y;
+            double len2 = dx * dx + dy * dy;
+            if (len2 <= double.Epsilon)
+            {
+                double ex = p.X - a.X, ey = p.Y - a.Y;
+                return Math.Sqrt(ex * ex + ey * ey);
+            }
+            double u = ((p.X - a.X) * dx + (p.Y - a.Y) * dy) / len2;
+            if (u < 0) u = 0; else if (u > 1) u = 1;
+            double cx = a.X + u * dx, cy = a.Y + u * dy;
+            double ox = p.X - cx, oy = p.Y - cy;
+            return Math.Sqrt(ox * ox + oy * oy);
         }
 
         /// <summary>
@@ -587,51 +720,10 @@ namespace System.Windows.Media
                 return new PathGeometry();
             }
 
-            PathGeometryData pathData = GetPathGeometryData();
-
-            if (pathData.IsEmpty())
-            {
-                return new PathGeometry();
-            }
-
-            PathGeometry resultGeometry = null;
-
-            unsafe
-            {
-                fixed (byte *pbPathData = pathData.SerializedData)
-                {
-                    Debug.Assert(pbPathData != (byte*)0);
-
-                    FillRule fillRule = FillRule.Nonzero;
-
-                    PathGeometry.FigureList list = new PathGeometry.FigureList();
-                    
-                    int hr = UnsafeNativeMethods.MilCoreApi.MilUtility_PathGeometryFlatten(
-                        &pathData.Matrix,
-                        pathData.FillRule,
-                        pbPathData,
-                        pathData.Size,
-                        tolerance,
-                        type == ToleranceType.Relative,
-                        new PathGeometry.AddFigureToListDelegate(list.AddFigureToList),
-                        out fillRule);
-
-                    if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                    {
-                        // When we encounter NaNs in the renderer, we absorb the error and draw
-                        // nothing. To be consistent, we return an empty geometry.
-                        resultGeometry = new PathGeometry();
-                    }
-                    else
-                    {
-                        HRESULT.Check(hr);
-
-                        resultGeometry = new PathGeometry(list.Figures, fillRule, null);
-                    }
-                }
-
-                return resultGeometry;
-            }
+            // MilUtility_PathGeometryFlatten is a wpfgfx_cor3.dll entry point, and this port ships that
+            // DLL on no platform, so the managed flattener is the only implementation. It is not a
+            // lesser answer: flattening is exactly specified by an error bound, and it handles arcs.
+            return MS.Internal.Media.PathFlattener.FlattenToGeometry(this, AbsoluteTolerance(this, tolerance, type));
         }
 
         /// <summary>
@@ -666,75 +758,9 @@ namespace System.Windows.Media
                 return new PathGeometry();
             }
 
-            PathGeometryData pathData = GetPathGeometryData();
-
-            if (pathData.IsEmpty())
-            {
-                return new PathGeometry();
-            }
-
-            PathGeometry resultGeometry = null;
-
-            unsafe
-            {
-                MIL_PEN_DATA penData;
-
-                pen.GetBasicPenData(&penData, out double[] dashArray);
-
-                fixed (byte* pbPathData = pathData.SerializedData)
-                {
-                    Debug.Assert(pbPathData != (byte*)0);
-
-                    FillRule fillRule = FillRule.Nonzero;
-                    PathGeometry.FigureList list = new();
-
-                    int hr; //If we don't have dashArray, we call without it (its optional)
-                    if (dashArray is null)
-                    {
-                        hr = UnsafeNativeMethods.MilCoreApi.MilUtility_PathGeometryWiden(&penData,
-                                                                                         null,
-                                                                                         &pathData.Matrix,
-                                                                                         pathData.FillRule,
-                                                                                         pbPathData,
-                                                                                         pathData.Size,
-                                                                                         tolerance,
-                                                                                         type == ToleranceType.Relative,
-                                                                                         new PathGeometry.AddFigureToListDelegate(list.AddFigureToList),
-                                                                                         out fillRule);
-                    }
-                    else // Pin the dashArray and use it, if we have one.
-                    {
-                        fixed (double* ptrDashArray = dashArray)
-                        {
-                            hr = UnsafeNativeMethods.MilCoreApi.MilUtility_PathGeometryWiden(&penData,
-                                                                                             ptrDashArray,
-                                                                                             &pathData.Matrix,
-                                                                                             pathData.FillRule,
-                                                                                             pbPathData,
-                                                                                             pathData.Size,
-                                                                                             tolerance,
-                                                                                             type == ToleranceType.Relative,
-                                                                                             new PathGeometry.AddFigureToListDelegate(list.AddFigureToList),
-                                                                                             out fillRule);
-                        }
-                    }
-
-                    if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                    {
-                        // When we encounter NaNs in the renderer, we absorb the error and draw
-                        // nothing. To be consistent, we return an empty geometry.
-                        resultGeometry = new PathGeometry();
-                    }
-                    else
-                    {
-                        HRESULT.Check(hr);
-
-                        resultGeometry = new PathGeometry(list.Figures, fillRule, null);
-                    }
-
-                    return resultGeometry;
-                }
-            }
+            // MilUtility_PathGeometryWiden is a wpfgfx_cor3.dll entry point, which this port ships on
+            // no platform. The managed stroker is the only implementation.
+            return MS.Internal.Media.PathStroker.Widen(this, pen, AbsoluteTolerance(this, tolerance, type));
         }
 
         /// <summary>
@@ -813,50 +839,10 @@ namespace System.Windows.Media
                 return new PathGeometry();
             }
 
-            PathGeometryData pathData = GetPathGeometryData();
-
-            if (pathData.IsEmpty())
-            {
-                return new PathGeometry();
-            }
-
-            PathGeometry resultGeometry = null;
-
-            unsafe
-            {
-                fixed (byte* pbPathData = pathData.SerializedData)
-                {
-                    Invariant.Assert(pbPathData != (byte*)0);
-
-                    FillRule fillRule = FillRule.Nonzero;
-                    PathGeometry.FigureList list = new PathGeometry.FigureList();
-
-                    int hr = UnsafeNativeMethods.MilCoreApi.MilUtility_PathGeometryOutline(
-                        &pathData.Matrix,
-                        pathData.FillRule,
-                        pbPathData,
-                        pathData.Size,
-                        tolerance,
-                        type == ToleranceType.Relative,
-                        new PathGeometry.AddFigureToListDelegate(list.AddFigureToList),
-                        out fillRule);
-
-                    if (hr == (int)MILErrors.WGXERR_BADNUMBER)
-                    {
-                        // When we encounter NaNs in the renderer, we absorb the error and draw
-                        // nothing. To be consistent, we return an empty geometry.
-                        resultGeometry = new PathGeometry();
-                    }
-                    else
-                    {
-                        HRESULT.Check(hr);
-
-                        resultGeometry = new PathGeometry(list.Figures, fillRule, null);
-                    }
-                }
-            }
-
-            return resultGeometry;
+            // Outlining is a boolean of a shape with itself -- resolve the self-intersections and keep
+            // the edges that actually bound the filled region -- so it is the managed clipper run
+            // against one operand. milcore's MilUtility_PathGeometryOutline is not available anywhere.
+            return MS.Internal.Media.PathBoolean.Outline(this, AbsoluteTolerance(this, tolerance, type));
         }
 
         /// <summary>

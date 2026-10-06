@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>WPF WebGPU — wasm spike</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preload" id="webassembly" />
+  <script type="importmap"></script>
+  <script type='module' src="main#[.{fingerprint}].js"></script>
+  <style>
+    body { font-family: system-ui; background: #1e1e24; color: #ddd; }
+    canvas { border: 1px solid #555; }
+  </style>
+</head>
+
+<body>
+  <h3>WPF WebGPU backend spike</h3>
+  <div id="status">loading dotnet…</div>
+  <canvas id="wpf-canvas" width="640" height="480"></canvas>
+</body>
+
+</html>

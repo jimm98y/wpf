@@ -12,10 +12,7 @@
   "tools": {
     "dotnet": "10.0.109",
     "runtimes": {
-      "dotnet/x64": [
-        "$(MicrosoftNETCorePlatformsVersion)"
-      ],
-      "dotnet/x86": [
+      "dotnet/arm64": [
         "$(MicrosoftNETCorePlatformsVersion)"
       ]
     },

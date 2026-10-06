@@ -17,6 +17,9 @@ We use the following workflow for building and testing features and fixes.
 
 You first need to [Fork](https://guides.github.com/activities/forking) and [Clone](https://www.git-scm.com/docs/git-clone) this WPF repository. This is a one-time task.
 
+See the [build loop](build-loop.md) for the fast edit/build/test cycle, and for why mixing
+`build.cmd` with a bare `dotnet build` makes every subsequent build a full rebuild.
+
 
 ### Running DRTs locally ###
 In order to run the set of DRTs on your local machine, pass the `-test` parameter to the `build.cmd` script. At the end of the run, you should see something like this:

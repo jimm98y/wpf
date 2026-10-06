@@ -1,0 +1,251 @@
+﻿<!-- Builds the WPF-on-WebGPU fork and packs it into the WpfWebGpu.Sdk + WpfWebGpu.Fonts
+     NuGet packages under artifacts/local-feed. One implementation for macOS, Linux and
+     Windows; build-sdk.sh / build-sdk.cmd are thin wrappers that just locate dotnet.
+
+         ./eng/build-sdk.sh              (macOS/Linux)
+         eng\build-sdk.cmd               (Windows)
+
+     Why this exists instead of ./build.sh: on non-Windows, eng/Build.props restricts the
+     Arcade build to the packaging projects only (see the ProjectToBuild list there), so
+     `./build.sh` produces PresentationBuildTasks and the WindowsDesktop SDK package and
+     NOTHING ELSE. The cross-platform WPF assemblies the SDK actually ships — everything
+     under artifacts/bin/*/Release/net10.0 — have to be built by project. Miss that and the
+     pack silently reuses whatever was in artifacts/bin from a previous session, which looks
+     exactly like a successful build.
+
+     Options:
+         -p:Configuration=Debug          (default Release)
+         -p:SkipBrowser=true             skip the WebAssembly/browser flavor (needs the
+                                         wasm-tools workload)
+         -p:SkipIos=true                 skip the iOS renderer (needs the ios workload)
+         -p:SkipWinForms=true            skip the WinForms-interop flavor
+         -p:SkipPack=true                build only, do not pack or touch the NuGet cache
+
+     Heads covered: macOS, Linux, Windows, Android, iOS and the browser.
+
+     Windows, Android and iOS need no separate WPF build. Every head runs the SAME AnyCPU
+     net10.0 assemblies under artifacts/bin — that is what removing WPF's native DLLs bought.
+     What differs per head is only the renderer: WgpuInterop (desktop, and Android uses it
+     too), WgpuInterop.Ios, WgpuInterop.Browser. All three are built below.
+
+     The SDK package carries the WebGPU backend for EVERY head, not just the ones staged on
+     the machine that packed it, so the preflight below refuses to pack without them. Stage
+     them once per clone:
+
+         pwsh src/Microsoft.DotNet.Wpf/src/WgpuInterop/eng/fetch-wgpu.ps1 -All
+
+     (native/ is gitignored; a fresh clone has none of it. Pass -p:AllowPartialNative=true
+     to pack a deliberately partial SDK for local iteration.)
+
+     Deliberately NOT an Sdk-style project: with no Sdk attribute MSBuild does not import
+     Microsoft.Common.props, so the repo's Arcade Directory.Build.props stays out of this
+     file. Each project below is built by a separate `dotnet build`, exactly as if it had
+     been built by hand. -->
+<Project DefaultTargets="Build">
+
+  <PropertyGroup>
+    <RepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))</RepoRoot>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <!-- The wrappers pass the resolved muxer in; fall back to whatever is on PATH. -->
+    <DotNetTool Condition="'$(DotNetTool)' == ''">dotnet</DotNetTool>
+    <_Src>$(RepoRoot)src/Microsoft.DotNet.Wpf/src/</_Src>
+    <_Feed>$(RepoRoot)artifacts/local-feed</_Feed>
+    <_BuildArgs>-c $(Configuration) -v q --nologo</_BuildArgs>
+  </PropertyGroup>
+
+  <!-- ============================== what gets built ============================== -->
+  <ItemGroup>
+    <!-- The packaging project. Produces artifacts/packaging/.../PresentationBuildTasks.dll
+         and targets/Microsoft.WinFX.targets, both of which the SDK packs and every head
+         needs to compile XAML. -->
+    <_Proj Include="$(RepoRoot)packaging/Microsoft.NET.Sdk.WindowsDesktop/Microsoft.NET.Sdk.WindowsDesktop.ArchNeutral.csproj" />
+
+    <!-- PresentationFramework transitively drags in the rest of the core surface:
+         PresentationCore, WindowsBase, System.Xaml, ReachFramework, UIAutomation*,
+         System.Windows.Primitives, System.Windows.Input.Manipulations, the System.Printing
+         cycle-breaking projects, DirectWriteForwarderStub and WgpuInterop. -->
+    <!-- Cross-platform stand-ins for the Windows-only assemblies. BEFORE PresentationFramework,
+         not after: PresentationFramework compiles against the SystemEvents stand-in (it calls the
+         internal NotifySystemAppearanceChanged, which is how a macOS/Linux Dark-Light switch reaches
+         an app's UserPreferenceChanged handler), and that reference is Exists()-gated so a clean
+         enlistment still builds. Built in the old order the gate would simply be false on the first
+         build of a fresh clone, and the notification would go missing with nothing to say so. -->
+    <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.SystemEvents/Microsoft.Win32.SystemEvents.csproj" />
+    <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" />
+    <_Proj Include="$(RepoRoot)shims/System.Diagnostics.Process/System.Diagnostics.Process.csproj" />
+
+    <_Proj Include="$(_Src)PresentationFramework/PresentationFramework.csproj" />
+
+    <!-- The real managed System.Printing. Built AFTER PresentationFramework because it references
+         ReachFramework, which that build produces; the reverse direction goes through System.Printing's
+         reference assembly, which is what keeps this from being a cycle. Its output replaces the
+         sixteen-line cycle-breaker that used to ship as System.Printing.dll. -->
+    <_Proj Include="$(_Src)System.Printing/managed/System.Printing.Managed.csproj" />
+
+    <!-- Loaded by name at runtime rather than referenced, so they are NOT transitive.
+         Leaving them out is how you end up running yesterday's theme. -->
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Fluent/PresentationFramework.Fluent.csproj" />
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Aero2/PresentationFramework.Aero2.csproj" />
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Classic/PresentationFramework.Classic.csproj" />
+    <_Proj Include="$(_Src)PresentationUI/PresentationUI.csproj" />
+
+    <!-- The four remaining themes, plus the rest of the Windows head's payload (see _WpfWin in
+         sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj). The themes ship on EVERY head, not just Windows:
+         a theme is loaded by name at runtime, so one that is absent is a FileNotFoundException
+         rather than a graceful fallback.
+         These are built here now that the Windows head is built FROM SOURCE rather than copied out of
+         a staged runtime: with no native DLLs left in the port, Windows runs the very same AnyCPU
+         net10.0 assemblies as every other head, so there is nothing left for a separate win-arm64
+         build to contribute. None of these is transitive from PresentationFramework. -->
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Aero/PresentationFramework.Aero.csproj" />
+    <_Proj Include="$(_Src)Themes/PresentationFramework.AeroLite/PresentationFramework.AeroLite.csproj" />
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Luna/PresentationFramework.Luna.csproj" />
+    <_Proj Include="$(_Src)Themes/PresentationFramework.Royale/PresentationFramework.Royale.csproj" />
+    <_Proj Include="$(_Src)UIAutomation/UIAutomationClient/UIAutomationClient.csproj" />
+    <_Proj Include="$(_Src)UIAutomation/UIAutomationClientSideProviders/UIAutomationClientSideProviders.csproj" />
+    <_Proj Include="$(_Src)System.Windows.Controls.Ribbon/System.Windows.Controls.Ribbon.csproj" />
+    <_Proj Include="$(_Src)System.Windows.Presentation/System.Windows.Presentation.csproj" />
+    <_Proj Include="$(_Src)WindowsFormsIntegration/WindowsFormsIntegration.csproj" />
+
+    <!-- The desktop renderer. Built transitively above, but named explicitly so a failure
+         here is attributed to the renderer rather than to PresentationFramework. -->
+    <_Proj Include="$(_Src)WgpuInterop/WgpuInterop.csproj" />
+
+    <!-- The iOS renderer: same assembly name as the desktop one, built against the iOS bindings
+         (Metal/CAMetalLayer + UIKit) instead of the desktop platform layer. Needs the ios workload.
+         ANDROID needs nothing of its own here: its renderer IS the desktop WgpuInterop above, and it
+         consumes the same artifacts/bin/*/Release/net10.0 WPF assemblies as every other head. See
+         samples/wpf-gallery-android, which project-references WgpuInterop.csproj directly. -->
+    <_Proj Include="$(_Src)WgpuInterop/Ios/WgpuInterop.Ios.csproj" Condition="'$(SkipIos)' != 'true'" />
+
+    <!-- Optional flavors. -->
+    <_Proj Include="$(_Src)WgpuInterop/Browser/WgpuInterop.Browser.csproj" Condition="'$(SkipBrowser)' != 'true'" />
+    <_Proj Include="$(_Src)WinFormsInterop/System.Windows.Forms.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/System.Drawing.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <!-- ...and the assembly identity that forwards to it, which is what a library built against
+         .NET Framework actually names. -->
+    <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/facade/System.Drawing.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/facade-design/System.Drawing.Design.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <!-- ElementHost / WindowsFormsHost. This is the WebGPU flavour, built against the two projects
+         above; the Arcade build produces a same-named assembly from the Windows-only original, and
+         that one references the real System.Windows.Forms v10.0.0.0 so it cannot bind to the Mono
+         WinForms it would ship beside. The SDK packs THIS output (Exists()-guarded), so leaving the
+         project unbuilt shipped a package with no WindowsFormsHost in it and no error anywhere. -->
+    <_Proj Include="$(_Src)WinFormsInterop/integration/WindowsFormsIntegration.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+
+    <!-- The WinForms DESIGNER HOST (Mono's System.Design, vendored under WinFormsInterop/swfdesign).
+         Built after the two projects above because it compiles against them. Microsoft's
+         System.Design cannot stand in: it is welded to the private WinForms substrate
+         (System.Private.Windows.Core/.Primitives/.GdiPlus) and to System.Drawing.Common. Packed
+         Exists()-guarded like its siblings, so leaving it unbuilt would ship a package whose
+         WinForms carries 55 [Designer] attributes pointing at an assembly that is not there. -->
+    <_Proj Include="$(_Src)WinFormsInterop/System.Design.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <_Proj Include="$(_Src)WinFormsInterop/swfdesign-facade/System.Windows.Forms.Design.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+
+    <!-- The cross-platform WebView2 stand-ins, carrying the real package's strong-name identity so
+         an app that references Microsoft.Web.WebView2 binds to these instead. Sdk.targets references
+         them from lib/wpf-webview2 for every desktop head, and the SDK packs them Exists()-guarded,
+         so leaving them unbuilt shipped a package whose targets pointed at an empty folder, and
+         every consuming app failed with "the type or namespace name 'Web' does not exist in the
+         namespace 'Microsoft'", naming neither this file nor the SDK. Exactly the trap described for
+         WindowsFormsHost above, which is why they are listed here rather than left to a transitive
+         reference. -->
+    <_Proj Include="$(_Src)WebView2/Microsoft.Web.WebView2.Core/Microsoft.Web.WebView2.Core.csproj" />
+    <_Proj Include="$(_Src)WebView2/Microsoft.Web.WebView2.Wpf/Microsoft.Web.WebView2.Wpf.csproj" />
+    <_Proj Include="$(_Src)WebView2/Microsoft.Web.WebView2.WinForms/Microsoft.Web.WebView2.WinForms.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+
+    <!-- Packed last, from everything above.
+
+         TWO packages, not three. WpfWebGpuWasm.Sdk is gone: it was a separate MSBuild-SDK package id
+         whose entire content was <WpfPlatform>browser</WpfPlatform>, and the browser head is selected
+         with -p:WpfPlatform=browser on the one Sdk id now. WpfWebGpu.Fonts is the new one, and it is
+         a genuine split rather than an extra moving part: 27 MB of fonts that only the non-Windows
+         heads read, which every Windows app used to download with the SDK. -->
+    <_PackProj Include="$(RepoRoot)sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj" />
+    <_PackProj Include="$(RepoRoot)sdk/WpfWebGpu.Fonts/WpfWebGpu.Fonts.csproj" />
+  </ItemGroup>
+
+  <Target Name="Build" DependsOnTargets="Preflight;BuildProjects;Pack;Stamp;EvictCache" />
+
+  <!-- wgpu-native is a prebuilt binary drop, gitignored (see WgpuInterop/.gitignore), so a fresh
+       clone has none of it and nothing else in the build will complain: the SDK csproj packs each
+       library under a Condition="Exists(...)" and the app then fails at runtime with a
+       DllNotFoundException. Say so up front instead.
+
+       This used to check only the head matching the machine it ran on, which was right while the
+       package carried only that head. The package now carries EVERY head's backend, so what has to
+       be on disk is every RID, whatever machine is packing. -->
+  <Target Name="Preflight">
+    <ItemGroup>
+      <_WgpuExpected Include="win-x64/lib/wgpu_native.dll;win-arm64/lib/wgpu_native.dll;win-x86/lib/wgpu_native.dll;linux-x64/lib/libwgpu_native.so;linux-arm64/lib/libwgpu_native.so;osx-x64/lib/libwgpu_native.dylib;osx-arm64/lib/libwgpu_native.dylib;android-arm64/lib/libwgpu_native.so;android-x64/lib/libwgpu_native.so;ios-arm64/lib/libwgpu_native.a;ios-arm64-simulator/lib/libwgpu_native.a" />
+      <!-- ANGLE, staged into the same folders by the same script. Desktop RIDs only: Android has a
+           system GLES driver and iOS is Metal-only. -->
+      <_WgpuExpected Include="win-x64/lib/libEGL.dll;win-x64/lib/libGLESv2.dll;win-arm64/lib/libEGL.dll;win-arm64/lib/libGLESv2.dll;win-x86/lib/libEGL.dll;win-x86/lib/libGLESv2.dll;linux-x64/lib/libEGL.so;linux-x64/lib/libGLESv2.so;linux-arm64/lib/libEGL.so;linux-arm64/lib/libGLESv2.so;osx-x64/lib/libEGL.dylib;osx-x64/lib/libGLESv2.dylib;osx-arm64/lib/libEGL.dylib;osx-arm64/lib/libGLESv2.dylib" />
+      <_WgpuMissing Include="@(_WgpuExpected)" Condition="!Exists('$(_Src)WgpuInterop/native/%(Identity)')" />
+    </ItemGroup>
+    <Error Condition="'@(_WgpuMissing)' != '' and '$(AllowPartialNative)' != 'true' and '$(SkipPack)' != 'true'"
+           Text="The native GPU payload is missing: @(_WgpuMissing->'%(Identity)', ', '). The SDK package ships every head's backend, so stage them all first:%0A    pwsh $(_Src)WgpuInterop/eng/fetch-wgpu.ps1 -All%0A(or pass -p:AllowPartialNative=true to pack a deliberately partial SDK)." />
+    <Warning Condition="'@(_WgpuMissing)' != '' and '$(AllowPartialNative)' == 'true'"
+             Text="Packing a PARTIAL SDK: missing @(_WgpuMissing->'%(Identity)', ', ')." />
+    <Message Importance="high" Text="==&gt; building the WPF-on-WebGPU fork ($(Configuration))" />
+  </Target>
+
+  <!-- One `dotnet build` per project, sequentially. Sequential is deliberate: several of
+       these projects write into the same artifacts/obj cycle-breaking directories. -->
+  <Target Name="BuildProjects">
+    <Message Importance="high" Text="==&gt; %(_Proj.Filename)" />
+    <Exec Command="&quot;$(DotNetTool)&quot; build &quot;%(_Proj.Identity)&quot; $(_BuildArgs)"
+          WorkingDirectory="$(RepoRoot)" />
+  </Target>
+
+  <!-- The pack projects read straight out of artifacts/bin, so they must not inherit the
+       repo's Arcade props/targets — same flags assemble.sh/assemble.cmd use. -->
+  <Target Name="Pack" Condition="'$(SkipPack)' != 'true'">
+    <!-- Delete the previous .nupkg first. `dotnet pack` decides it is up to date by comparing the
+         package against the PROJECT, not against the hundreds of build outputs the nuspec pulls in
+         from artifacts/bin — so rebuilding one of those and repacking is silently a no-op, and the
+         feed keeps serving the previous binaries with a successful exit code. -->
+    <ItemGroup>
+      <_StalePackage Include="$(_Feed)/WpfWebGpu.Sdk.*.nupkg;$(_Feed)/WpfWebGpu.Fonts.*.nupkg;$(_Feed)/WpfWebGpuWasm.Sdk.*.nupkg" />
+    </ItemGroup>
+    <Delete Files="@(_StalePackage)" ContinueOnError="WarnAndContinue" />
+
+    <Message Importance="high" Text="==&gt; packing %(_PackProj.Filename) -&gt; artifacts/local-feed" />
+    <Exec Command="&quot;$(DotNetTool)&quot; pack &quot;%(_PackProj.Identity)&quot; -c $(Configuration) -o &quot;$(_Feed)&quot; -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:ImportDirectoryPackagesProps=false -p:WpfWebGpuAllowPartialNative=$(AllowPartialNative) --nologo -v:m"
+          WorkingDirectory="$(RepoRoot)" />
+  </Target>
+
+  <!-- The package version does not change between builds, so NuGet would happily serve the
+       previously extracted copy and the repack would have no effect whatsoever. -->
+  <!--
+    Records when the fork was last built, for the cross-platform test suites' staleness check.
+
+    They used to compare their source tree against PresentationCore.dll, on the reasoning that if any
+    .cs is newer than the built binary, the binaries are stale. That was right when PresentationCore
+    was the only assembly under test and wrong once ReachFramework joined it: MSBuild does not rewrite
+    an assembly whose inputs did not change, so editing ReachFramework and rebuilding everything left
+    PresentationCore.dll older than the edit and every suite refusing to run.
+
+    A stamp says what the check actually wants to know (when did a build last complete) rather than
+    inferring it from one artifact that may legitimately not have been touched.
+  -->
+  <Target Name="Stamp">
+    <Touch Files="$(RepoRoot)artifacts/bin/.fork-build-stamp" AlwaysCreate="true" />
+  </Target>
+
+  <Target Name="EvictCache" Condition="'$(SkipPack)' != 'true'">
+    <PropertyGroup>
+      <_NuGetHome Condition="'$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)</_NuGetHome>
+      <_NuGetHome Condition="'$(_NuGetHome)' == '' and '$(UserProfile)' != ''">$(UserProfile)/.nuget/packages</_NuGetHome>
+      <_NuGetHome Condition="'$(_NuGetHome)' == ''">$(HOME)/.nuget/packages</_NuGetHome>
+    </PropertyGroup>
+    <!-- wpfwebgpuwasm.sdk is evicted although it is no longer produced: a machine that built this
+         repo before the browser head folded into the one Sdk id still has the old package extracted,
+         and an SDK package id resolves out of that cache without ever consulting the feed. -->
+    <RemoveDir Directories="$(_NuGetHome)/wpfwebgpu.sdk;$(_NuGetHome)/wpfwebgpu.fonts;$(_NuGetHome)/wpfwebgpuwasm.sdk"
+               ContinueOnError="WarnAndContinue" />
+    <Message Importance="high" Text="==&gt; evicted the extracted SDK packages from $(_NuGetHome)" />
+    <Message Importance="high" Text="==&gt; DONE. Feed: $(_Feed)" />
+  </Target>
+
+</Project>

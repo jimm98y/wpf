@@ -92,7 +92,16 @@ namespace MS.Internal
         internal static UnsafeNativeMethods.ITfThreadMgr Load()
         {
             UnsafeNativeMethods.ITfThreadMgr threadManager;
-            
+
+            // The Text Services Framework (Cicero/TSF, msctf.dll) is Windows-only; there is no
+            // equivalent to load off-Windows. Return null (no text services) so text editing works
+            // without an input-method manager. This also avoids the STA-apartment assert below,
+            // which is meaningless on platforms without COM apartments.
+            if (!OperatingSystem.IsWindows())
+            {
+                return null;
+            }
+
             Invariant.Assert(Thread.CurrentThread.GetApartmentState() == ApartmentState.STA, "Load called on MTA thread!");
 
             if (ServicesInstalled)
@@ -130,7 +139,11 @@ namespace MS.Internal
                 {
                     if (s_servicesInstalled == InstallState.Unknown)
                     {
-                        s_servicesInstalled = TIPsWantToRun() ? InstallState.Installed : InstallState.NotInstalled;
+                        // The Text Services Framework (Cicero) and its registry configuration are
+                        // Windows-only; off-Windows no text-input processors are installed.
+                        s_servicesInstalled = (OperatingSystem.IsWindows() && TIPsWantToRun())
+                            ? InstallState.Installed
+                            : InstallState.NotInstalled;
                     }
                 }
 

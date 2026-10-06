@@ -1596,6 +1596,13 @@ namespace System.Windows.Documents
         // it interleaves work items with the win32 input queue.
         private static bool IsMouseInputPending(TextEditor This)
         {
+            // PeekMessage is a user32.dll call that doesn't exist off-Windows; it only exists here to
+            // coalesce text input behind pending mouse input. Without it, just process input immediately.
+            if (!OperatingSystem.IsWindows())
+            {
+                return false;
+            }
+
             bool mouseInputPending = false;
             IWin32Window win32Window = PresentationSource.CriticalFromVisual(This.UiScope) as IWin32Window;
             if (win32Window != null)

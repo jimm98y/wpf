@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Windows half of the control comparison: the same specimens, drawn by the real
+    System.Windows.Forms out of Microsoft.WindowsDesktop.App.
+
+    It has to be a separate program. The two System.Windows.Forms assemblies declare the same types,
+    so no process can load both, which is why the comparison is two processes and a directory of
+    pixels rather than one test that renders twice.
+
+    Windows-only by construction. The test that drives it skips itself everywhere else.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>StockRenderer</AssemblyName>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- The specimens are laid out in pixels, so the process must not be scaled under us. -->
+    <ApplicationHighDpiMode>DpiUnaware</ApplicationHighDpiMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../Specimens.cs" />
+    <Compile Include="../SpecimenRenderer.cs" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+
+</Project>

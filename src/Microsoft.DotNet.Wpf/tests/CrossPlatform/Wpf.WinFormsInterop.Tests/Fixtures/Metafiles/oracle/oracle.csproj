@@ -1,0 +1,9 @@
+<!-- The GDI+ oracle the Metafile fixtures come from: native arm64 GDI+ through System.Drawing.Common
+     (an x64 .NET Framework build runs as ARM64EC and rounds differently). Build and run it on Windows:
+       dotnet build -c Release, then oracle rec all EmfPlusOnly ..\plus and oracle playall ..\plus ..\play
+     mfp*.cs / wm.cs / gen.cs are .NET Framework probes (csc -r:System.Drawing.dll): API answers,
+     samples, and GDI's own conversion of bare WMFs (samples/conv). -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework><Nullable>disable</Nullable><RuntimeIdentifier>win-arm64</RuntimeIdentifier><SelfContained>false</SelfContained><EnableDefaultCompileItems>false</EnableDefaultCompileItems><NoWarn>CA1416;CS0618;SYSLIB0014;CS8632</NoWarn><AllowUnsafeBlocks>true</AllowUnsafeBlocks></PropertyGroup>
+  <ItemGroup><Compile Include="mfo.cs" /><Compile Include="../MetafileScenarios.cs" /><PackageReference Include="System.Drawing.Common" Version="10.0.7" /></ItemGroup>
+</Project>

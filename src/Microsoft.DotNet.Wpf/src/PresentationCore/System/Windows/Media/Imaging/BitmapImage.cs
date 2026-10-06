@@ -284,6 +284,63 @@ namespace System.Windows.Media.Imaging
             if (_baseUri != null)
                 uri = new Uri(_baseUri, UriSource);
 
+            // Decode with the port's managed codecs and adopt the pixels as this image's backing.
+            //
+            // SourceRect/DecodePixelWidth/DecodePixelHeight/Rotation are decode-time transforms that WIC
+            // applies while decoding. The managed codecs decode the whole image, so the same result is
+            // composed afterwards from the managed derived-bitmap primitives -- which already have
+            // managed implementations -- in the order WIC applies them: crop, scale, rotate. Doing it
+            // after the fact costs a full-size decode; it does not change the result.
+            {
+                BitmapSource decoded = ManagedImageDecoder.Decode(uri, StreamSource);
+
+                if (!SourceRect.IsEmpty)
+                {
+                    decoded = new CroppedBitmap(decoded, SourceRect);
+                }
+
+                if (DecodePixelWidth != 0 || DecodePixelHeight != 0)
+                {
+                    // Supplying only one dimension scales the other to match, preserving aspect ratio.
+                    double scaleX = DecodePixelWidth != 0 ? DecodePixelWidth / (double)decoded.PixelWidth : 0.0;
+                    double scaleY = DecodePixelHeight != 0 ? DecodePixelHeight / (double)decoded.PixelHeight : 0.0;
+                    if (scaleX == 0.0) scaleX = scaleY;
+                    if (scaleY == 0.0) scaleY = scaleX;
+
+                    decoded = new TransformedBitmap(decoded, new ScaleTransform(scaleX, scaleY));
+                }
+
+                if (Rotation != Rotation.Rotate0)
+                {
+                    double angle = Rotation switch
+                    {
+                        Rotation.Rotate90 => 90.0,
+                        Rotation.Rotate180 => 180.0,
+                        Rotation.Rotate270 => 270.0,
+                        _ => 0.0,
+                    };
+
+                    decoded = new TransformedBitmap(decoded, new RotateTransform(angle));
+                }
+
+                _managedPixels = decoded._managedPixels;
+                _managedStride = decoded._managedStride;
+                _format = decoded.Format;
+                // An indexed format's pixels are indices; the palette is the other half of the
+                // image. Dropping it left every palettised source with nothing to colour itself
+                // from -- the flags in SharpDevelop's UI Language page came up blank, while the
+                // Bgra32 ones beside them, which need no palette, were fine.
+                _palette = decoded.Palette;
+                _pixelWidth = decoded.PixelWidth;
+                _pixelHeight = decoded.PixelHeight;
+                _dpiX = decoded.DpiX;
+                _dpiY = decoded.DpiY;
+                _isSourceCached = true;
+                _syncObject = _managedPixels;
+                CreationCompleted = true;
+                return;
+            }
+
             if ((CreateOptions & BitmapCreateOptions.IgnoreImageCache) != 0)
             {
                 ImagingCache.RemoveFromImageCache(uri);

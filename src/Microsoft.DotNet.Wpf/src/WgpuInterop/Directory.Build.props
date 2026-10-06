@@ -1,0 +1,10 @@
+<Project>
+  <!--
+    Intentionally empty. Its presence stops MSBuild from walking further up the
+    directory tree and importing the WPF Arcade SDK Directory.Build.props. The
+    WgpuInterop binding and its smoke test are standalone, plain SDK-style
+    projects so they can be built/run in isolation (Phase 0) without the full
+    WPF native+managed build. They are folded into the Arcade build later when
+    the wpfgpu engine is wired in.
+  -->
+</Project>

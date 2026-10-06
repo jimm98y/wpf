@@ -7,6 +7,7 @@ using MS.Win32;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 
 // There are THREE definitions of HRESULT. Two in ErrorCodes, and one in wgx_render.cs.
@@ -273,6 +274,16 @@ namespace Microsoft.Win32
         /// </summary>
         protected override bool RunDialog(IntPtr hwndOwner)
         {
+            // Off-Windows there is no IFileOpenDialog/IFileSaveDialog COM. macOS shows a real
+            // in-process NSOpenPanel/NSSavePanel and Linux goes through xdg-desktop-portal; the
+            // three heads that cannot answer synchronously at all say so rather than pretending
+            // the user cancelled.
+            if (!OperatingSystem.IsWindows())
+            {
+                ThrowIfCannotBlock();
+                return RunDialogPortable();
+            }
+
             IFileDialog dialog = CreateDialog();
 
             PrepareDialog(dialog);
@@ -280,6 +291,295 @@ namespace Microsoft.Win32
             using (VistaDialogEvents events = new VistaDialogEvents(dialog, HandleItemOk))
             {
                 return dialog.Show(hwndOwner).Succeeded;
+            }
+        }
+
+        /// <summary>
+        ///  True on the heads whose run loop cannot be re-entered, so no modal call can wait here.
+        /// </summary>
+        private static bool CannotBlock =>
+            OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsAndroid();
+
+        /// <summary>
+        ///  Refuses a synchronous ShowDialog on the three heads that cannot serve one.
+        /// </summary>
+        /// <remarks>
+        ///  Until this threw, ShowDialog returned false on those heads: the picker never appeared and
+        ///  the application was told the user had cancelled. That is the worst available answer,
+        ///  because it is exactly what a real cancellation looks like -- there is nothing for a
+        ///  developer to notice, and the feature simply appears not to work. Naming ShowDialogAsync
+        ///  in the message turns a silent dead end into a one-line fix.
+        /// </remarks>
+        private static void ThrowIfCannotBlock()
+        {
+            if (!CannotBlock) return;
+
+            throw new NotSupportedException(
+                "A file dialog cannot be shown synchronously on this platform: its run loop cannot "
+                + "be re-entered, so ShowDialog() has no way to wait for the user's answer. "
+                + "Use ShowDialogAsync() instead, which works on every platform.");
+        }
+
+        /// <summary>
+        ///  The asynchronous path, which is the only one the browser, iOS and Android heads can take.
+        /// </summary>
+        public override async Task<bool?> ShowDialogAsync()
+        {
+            if (!CannotBlock)
+            {
+                return await base.ShowDialogAsync().ConfigureAwait(true);
+            }
+
+            CheckPermissionsToShowDialog();
+            return await RunDialogPortableAsync().ConfigureAwait(true);
+        }
+
+        /// <inheritdoc/>
+        public override Task<bool?> ShowDialogAsync(Window owner)
+        {
+            // The owner only positions the dialog, and none of the three asynchronous heads shows a
+            // dialog this process positions: the browser draws its own picker, and iOS and Android
+            // present theirs over the whole screen. So the owner is accepted and ignored rather than
+            // being a reason to refuse the call.
+            if (!CannotBlock)
+            {
+                return base.ShowDialogAsync(owner);
+            }
+
+            ArgumentNullException.ThrowIfNull(owner);
+            return ShowDialogAsync();
+        }
+
+        /// <summary>
+        ///  Shows the platform's own asynchronous picker and records what the user chose.
+        /// </summary>
+        private async Task<bool?> RunDialogPortableAsync()
+        {
+            if (OperatingSystem.IsBrowser())
+            {
+                return await RunBrowserDialogAsync().ConfigureAwait(true);
+            }
+
+            if (OperatingSystem.IsIOS())
+            {
+                return await RunIosDialogAsync().ConfigureAwait(true);
+            }
+
+            if (OperatingSystem.IsAndroid())
+            {
+                return await RunAndroidDialogAsync().ConfigureAwait(true);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        ///  iOS: UIDocumentPickerViewController, presented rather than run modally.
+        /// </summary>
+        /// <remarks>
+        ///  A save reserves a path in the app's temporary directory and returns immediately; the
+        ///  export picker is shown afterwards by SaveFileDialog once the file exists, because iOS
+        ///  cannot offer a destination before there is something to put in it. See UIKitDialogs.
+        /// </remarks>
+        private async Task<bool?> RunIosDialogAsync()
+        {
+            if (this is SaveFileDialog)
+            {
+                string suggested = MutableItemNames is { Length: > 0 }
+                    ? System.IO.Path.GetFileName(MutableItemNames[0])
+                    : null;
+
+                string reserved = MS.Internal.Interop.UIKitDialogs.ReserveSavePath(suggested);
+                if (string.IsNullOrEmpty(reserved)) return false;
+
+                MutableItemNames = new[] { reserved };
+                return true;
+            }
+
+            string[] chosen = await MS.Internal.Interop.UIKitDialogs
+                .ShowOpenPanelAsync(FilterToContentTypes(), GetOption(FOS.ALLOWMULTISELECT), GetOption(FOS.PICKFOLDERS))
+                .ConfigureAwait(true);
+
+            if (chosen is null || chosen.Length == 0) return false;
+
+            MutableItemNames = chosen;
+            return true;
+        }
+
+        /// <summary>
+        ///  Android: the Storage Access Framework, whose answer arrives on the activity rather than
+        ///  from a call. See AndroidDialogs.
+        /// </summary>
+        private async Task<bool?> RunAndroidDialogAsync()
+        {
+            if (this is SaveFileDialog)
+            {
+                string suggested = MutableItemNames is { Length: > 0 }
+                    ? System.IO.Path.GetFileName(MutableItemNames[0])
+                    : null;
+
+                string reserved = MS.Internal.Interop.AndroidDialogs.ReserveSavePath(suggested);
+                if (string.IsNullOrEmpty(reserved)) return false;
+
+                MutableItemNames = new[] { reserved };
+                return true;
+            }
+
+            string[] chosen = await MS.Internal.Interop.AndroidDialogs
+                .ShowOpenPanelAsync(FilterToMimeTypes(), GetOption(FOS.ALLOWMULTISELECT), GetOption(FOS.PICKFOLDERS))
+                .ConfigureAwait(true);
+
+            if (chosen is null || chosen.Length == 0) return false;
+
+            MutableItemNames = chosen;
+            return true;
+        }
+
+        /// <summary>
+        ///  The extensions from this dialog's filter, as Uniform Type Identifiers for iOS.
+        /// </summary>
+        /// <remarks>
+        ///  UTType.typeWithFilenameExtension does the mapping on the platform side; passing the bare
+        ///  extensions is enough and avoids maintaining an extension-to-UTI table here. Null means
+        ///  "any file", which is what an absent or wildcard filter should mean.
+        /// </remarks>
+        private string[] FilterToContentTypes()
+        {
+            string accept = MS.Internal.Interop.BrowserDialogs.FilterToAccept((this as FileDialog)?.Filter);
+            if (string.IsNullOrEmpty(accept)) return null;
+
+            string[] extensions = accept.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            var identifiers = new System.Collections.Generic.List<string>(extensions.Length);
+
+            foreach (string extension in extensions)
+            {
+                string bare = extension.TrimStart('.');
+                if (bare.Length > 0) identifiers.Add(bare);
+            }
+
+            return identifiers.Count == 0 ? null : identifiers.ToArray();
+        }
+
+        /// <summary>
+        ///  The extensions from this dialog's filter, as MIME types for Android's SAF.
+        /// </summary>
+        /// <remarks>
+        ///  As with iOS, the mapping is left to the platform: MimeTypeMap.getMimeTypeFromExtension
+        ///  already knows the table, and duplicating it here would be a second thing to keep right.
+        /// </remarks>
+        private string[] FilterToMimeTypes() => FilterToContentTypes();
+
+        /// <summary>
+        ///  The browser: an &lt;input type=file&gt; for opening, a reserved virtual path for saving.
+        /// </summary>
+        /// <remarks>
+        ///  Both directions hand back a path inside the wasm virtual file system, so application code
+        ///  that reads or writes <c>FileName</c> works unchanged. What differs from a desktop head is
+        ///  that a saved file does not become visible to the user until the head offers it as a
+        ///  download, which SaveFileDialog does through BrowserDialogs.OfferDownload. See the file
+        ///  dialog section of browser-window.js for why it cannot work any other way.
+        /// </remarks>
+        private async Task<bool?> RunBrowserDialogAsync()
+        {
+            if (this is SaveFileDialog)
+            {
+                string suggested = MutableItemNames is { Length: > 0 }
+                    ? System.IO.Path.GetFileName(MutableItemNames[0])
+                    : null;
+
+                string reserved = MS.Internal.Interop.BrowserDialogs.ReserveSavePath(suggested);
+                if (string.IsNullOrEmpty(reserved))
+                {
+                    return false;
+                }
+
+                MutableItemNames = new[] { reserved };
+                return true;
+            }
+
+            // Filter belongs to FileDialog; OpenFolderDialog is a CommonItemDialog that has none.
+            string accept = MS.Internal.Interop.BrowserDialogs.FilterToAccept((this as FileDialog)?.Filter);
+            string[] chosen = await MS.Internal.Interop.BrowserDialogs
+                .ShowOpenPanelAsync(accept, GetOption(FOS.ALLOWMULTISELECT), GetOption(FOS.PICKFOLDERS))
+                .ConfigureAwait(true);
+
+            if (chosen is null || chosen.Length == 0)
+            {
+                return false;
+            }
+
+            MutableItemNames = chosen;
+            return true;
+        }
+
+        private bool RunDialogPortable()
+        {
+            string title = string.IsNullOrEmpty(Title) ? null : Title;
+            string dir = string.IsNullOrEmpty(InitialDirectory) ? null : InitialDirectory;
+
+            // Linux: xdg-desktop-portal's FileChooser. The dialog is drawn by the DESKTOP, not by
+            // us, so it matches the user's file manager, bookmarks and recent files -- and it is the
+            // only route that works inside a Flatpak sandbox.
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+            {
+                try
+                {
+                    if (this is SaveFileDialog)
+                    {
+                        string suggestedName = MutableItemNames is { Length: > 0 }
+                            ? System.IO.Path.GetFileName(MutableItemNames[0]) : null;
+                        string saved = MS.Internal.Interop.Wayland.PortalDialogs.ShowSavePanel(title, dir, suggestedName);
+                        if (saved == null) return false;
+                        MutableItemNames = new[] { saved };
+                        return true;
+                    }
+
+                    string[] chosen = MS.Internal.Interop.Wayland.PortalDialogs.ShowOpenPanel(
+                        title, dir, GetOption(FOS.ALLOWMULTISELECT), GetOption(FOS.PICKFOLDERS));
+                    if (chosen == null || chosen.Length == 0) return false;
+                    MutableItemNames = chosen;
+                    return true;
+                }
+                catch
+                {
+                    return false;   // no portal / no session bus
+                }
+            }
+
+            if (!OperatingSystem.IsMacOS())
+            {
+                return false;   // no native file dialog on this platform
+            }
+
+            try
+            {
+                // A SaveFileDialog maps to NSSavePanel; everything else is an NSOpenPanel
+                // (folder picker when FOS_PICKFOLDERS is set).
+                if (this is SaveFileDialog)
+                {
+                    string suggested = MutableItemNames is { Length: > 0 } ? System.IO.Path.GetFileName(MutableItemNames[0]) : null;
+                    string chosen = MS.Internal.Interop.CocoaDialogs.ShowSavePanel(title, dir, suggested);
+                    if (chosen == null)
+                    {
+                        return false;
+                    }
+                    MutableItemNames = new[] { chosen };
+                    return true;
+                }
+
+                bool folders = GetOption(FOS.PICKFOLDERS);
+                bool multi = GetOption(FOS.ALLOWMULTISELECT);
+                string[] paths = MS.Internal.Interop.CocoaDialogs.ShowOpenPanel(title, dir, multi, folders);
+                if (paths == null || paths.Length == 0)
+                {
+                    return false;
+                }
+                MutableItemNames = paths;
+                return true;
+            }
+            catch
+            {
+                return false;   // AppKit unavailable -> treat as cancelled
             }
         }
 

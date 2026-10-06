@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Merged in only when built with -p:WpfDevToolsEnv=true, alongside devtools.env.
+
+     Binding a socket on Android requires the INTERNET permission, even for a listener on
+     loopback that nothing off the device can reach. Without it the inspector starts and then
+     reports "could not listen on 127.0.0.1:9222: SocketException: Permission denied", which is
+     the whole of the symptom. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

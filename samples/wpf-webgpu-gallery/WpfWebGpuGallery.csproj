@@ -1,0 +1,109 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The desktop head of the WPF-on-WebGPU gallery. It deliberately does NOT use
+       Microsoft.WindowsDesktop.App: this fork's WPF assemblies are referenced from artifacts/bin and
+       run on the stock Microsoft.NETCore.App, which is the whole point of the port (the same shape
+       WpfWebGpu.Sdk gives an app, and the same shape every other head here uses).
+
+       It also has to be that way for the WinForms card to work. The gallery hosts a Mono
+       System.Windows.Forms control tree via WindowsFormsHost; Microsoft.WindowsDesktop.App ships its
+       OWN System.Windows.Forms, and a framework assembly always wins over an app-local one, so with
+       that framework referenced the real WinForms loaded instead of Mono's, the SDK dropped the Mono
+       copy from the output as a "conflict", and the card died at runtime with
+       MissingMethodException: Control.set_BackColor(System.Drawing.Color), the two WinForms
+       disagreeing about which System.Drawing.Color is meant. Mono's must be the only WinForms. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>WpfWebGpuGallery</AssemblyName>
+    <SelfContained>false</SelfContained>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Sample app: don't fail the build on code-quality analyzer suggestions (CA18xx/CA13xx). -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <_Wpf>..\..\artifacts\bin</_Wpf>
+    <_Src>..\..\src\Microsoft.DotNet.Wpf\src</_Src>
+  </PropertyGroup>
+
+  <!-- This fork's WPF, built from source into artifacts/ (run build.cmd first). -->
+  <ItemGroup>
+    <Reference Include="PresentationFramework"><HintPath>$(_Wpf)\PresentationFramework\Release\net10.0\PresentationFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationCore"><HintPath>$(_Wpf)\PresentationCore\Release\net10.0\PresentationCore.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="WindowsBase"><HintPath>$(_Wpf)\WindowsBase\Release\net10.0\WindowsBase.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Xaml"><HintPath>$(_Wpf)\System.Xaml\Release\net10.0\System.Xaml.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="ReachFramework"><HintPath>$(_Wpf)\ReachFramework\Release\net10.0\ReachFramework.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Input.Manipulations"><HintPath>$(_Wpf)\System.Windows.Input.Manipulations\Release\net10.0\System.Windows.Input.Manipulations.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationTypes"><HintPath>$(_Wpf)\UIAutomationTypes\Release\net10.0\UIAutomationTypes.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationProvider"><HintPath>$(_Wpf)\UIAutomationProvider\Release\net10.0\UIAutomationProvider.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Primitives"><HintPath>$(_Wpf)\System.Windows.Primitives\Release\net10.0\System.Windows.Primitives.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="DirectWriteForwarder"><HintPath>$(_Wpf)\DirectWriteForwarderStub\Release\net10.0\DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Aero2"><HintPath>$(_Wpf)\PresentationFramework.Aero2\Release\net10.0\PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Classic"><HintPath>$(_Wpf)\PresentationFramework.Classic\Release\net10.0\PresentationFramework.Classic.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationUI"><HintPath>$(_Wpf)\PresentationUI\Release\net10.0\PresentationUI.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Printing"><HintPath>$(_Wpf)\System.Printing.Managed\Release\net10.0\System.Printing.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <!-- From-source WebGPU interop + our Mono System.Windows.Forms (the shared WinFormsHost card
+       composites a WinForms control tree into the same WebGPU frame). The WgpuInterop ref is a
+       COMPILE dependency (WinFormsHost uses EmbeddedContent), not deployment-only. -->
+  <ItemGroup>
+    <Reference Include="Microsoft.Wpf.Interop.WebGpu"><HintPath>$(_Src)\WgpuInterop\bin\Release\net10.0\Microsoft.Wpf.Interop.WebGpu.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Windows.Forms"><HintPath>$(_Src)\WinFormsInterop\bin\Release\net10.0\System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Mono.System.Drawing"><HintPath>$(_Src)\WinFormsInterop\sysdrawing\bin\Release\net10.0\Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Accessibility"><HintPath>$(_Src)\WinFormsInterop\bin\Release\net10.0\Accessibility.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+  </ItemGroup>
+
+  <!-- Our vendored Mono.System.Drawing is the sole System.Drawing.* provider (avoid CS0433 vs the
+       framework System.Drawing.Common WPF drags in). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- wgpu-native next to the app so PresentationCore's reflection loader resolves it, per RID. -->
+  <ItemGroup>
+    <None Include="$(_Src)\WgpuInterop\native\win-arm64\lib\wgpu_native.dll" Link="wgpu_native.dll"
+          CopyToOutputDirectory="PreserveNewest" Visible="false"
+          Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'" />
+    <None Include="$(_Src)\WgpuInterop\native\win-x64\lib\wgpu_native.dll" Link="wgpu_native.dll"
+          CopyToOutputDirectory="PreserveNewest" Visible="false"
+          Condition="$([MSBuild]::IsOSPlatform('Windows')) And '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'" />
+    <None Include="$(_Src)\WgpuInterop\native\osx-arm64\lib\libwgpu_native.dylib" Link="libwgpu_native.dylib"
+          CopyToOutputDirectory="PreserveNewest" Visible="false"
+          Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+  </ItemGroup>
+
+  <!-- App-local fonts, as the SDK deploys for any desktop app on this stack. -->
+  <ItemGroup>
+    <None Include="..\..\sdk\WpfWebGpu.Fonts\fonts\Symbols.ttf" Link="fonts\Symbols.ttf"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="..\..\sdk\WpfWebGpu.Fonts\fonts\TwemojiMozilla.ttf" Link="fonts\TwemojiMozilla.ttf"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="..\..\sdk\WpfWebGpu.Fonts\fonts\NotoSansCJK-Regular.ttc" Link="fonts\NotoSansCJK-Regular.ttc"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="..\..\sdk\WpfWebGpu.Fonts\fonts\CascadiaCode-Regular.ttf" Link="fonts\CascadiaCode-Regular.ttf"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+</Project>

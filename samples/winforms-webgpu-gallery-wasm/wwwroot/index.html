@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>WinForms on WebGPU — browser</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preload" id="webassembly" />
+  <script type="importmap"></script>
+  <script type='module' src="main#[.{fingerprint}].js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #ECECE4; }
+    #wf-status {
+      position: fixed; top: 8px; right: 8px; z-index: 10000;
+      font: 12px system-ui; color: #667; background: rgba(255,255,255,.8);
+      padding: 2px 8px; border-radius: 4px; pointer-events: none;
+    }
+    #wpf-host { padding: 16px; }
+  </style>
+</head>
+
+<body>
+  <div id="wf-status">loading dotnet…</div>
+  <div id="wpf-host"></div>
+</body>
+
+</html>

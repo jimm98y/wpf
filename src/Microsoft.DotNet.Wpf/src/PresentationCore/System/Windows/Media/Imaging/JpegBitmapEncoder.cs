@@ -336,6 +336,18 @@ namespace System.Windows.Media.Imaging
             throw new NotImplementedException();
         }
 
+        /// <summary>
+        /// Managed encode for platforms without native WIC. Baseline 4:2:0 JPEG at
+        /// <see cref="QualityLevel"/>; see ManagedJpegEncoder.
+        /// </summary>
+        internal override bool TryManagedEncode(System.IO.Stream stream)
+        {
+            BitmapFrame frame = Frames[0];
+            BitmapSource source = (frame as BitmapFrameEncode)?._source ?? (BitmapSource)frame;
+            ManagedJpegEncoder.Save(source, stream, _qualityLevel);
+            return true;
+        }
+
         #endregion
 
         #region Data Members

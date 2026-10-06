@@ -1,0 +1,83 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Chrome DevTools Protocol inspector. Loaded reflectively by
+    PresentationCore's DevToolsBootstrap when WPF_DEVTOOLS is set, exactly the
+    way DUCE.ManagedComposition loads the WebGPU renderer, so nothing in the
+    framework references this assembly at compile time and an app that does not
+    ship it simply has no inspector.
+
+    PUBLIC API ONLY. This builds against the fork's own PresentationFramework /
+    PresentationCore / WindowsBase, so anything internal would need an
+    InternalsVisibleTo in assemblies that Arcade builds, and a reference cycle
+    is exactly what the reflective load exists to avoid.
+  -->
+
+  <!-- The fork's build outputs. Same layout the SDK packs from (see
+       sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj), so a plain `dotnet build` here
+       works on any head once the Arcade build has run. -->
+  <PropertyGroup>
+    <WpfRepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)../../../..'))</WpfRepoRoot>
+    <WpfBin>$(WpfRepoRoot)artifacts/bin/</WpfBin>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <AssemblyName>Microsoft.Wpf.DevTools</AssemblyName>
+    <RootNamespace>Microsoft.Wpf.DevTools</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <!-- Required by the JS interop generator (SYSLIB1074); only BrowserTransport uses it. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- BrowserTransport is [SupportedOSPlatform("browser")] and only ever constructed on that
+         head, but this assembly is one AnyCPU build shared by all of them. Same treatment the
+         windowing heads get in WindowsBase. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+
+    <!--
+      Strong-named with the ECMA standard key, because PresentationCore grants this assembly
+      friend access (OtherAssemblyAttrs.cs) for ONE internal: the DUCE handle behind a Visual,
+      and a strong-named assembly only accepts strong-named friends. Same key and same reason as
+      the cross-platform test hosts, which WindowsBase grants on identical terms. PublicSign
+      rather than real signing: the key is public, so there is no private half to sign with.
+    -->
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>$(WpfRepoRoot)eng/snk/ECMA.snk</AssemblyOriginatorKeyFile>
+    <NoWarn>$(NoWarn);CS8002</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="WindowsBase">
+      <HintPath>$(WpfBin)WindowsBase/Release/net10.0/WindowsBase.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PresentationCore">
+      <HintPath>$(WpfBin)PresentationCore/Release/net10.0/PresentationCore.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PresentationFramework">
+      <HintPath>$(WpfBin)PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- The automation PROVIDER interfaces (IInvokeProvider and friends). InputDomain
+         activates controls through their automation peers, because that is the only
+         supported way in without the internal input-report path. -->
+    <Reference Include="UIAutomationTypes">
+      <HintPath>$(WpfBin)UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UIAutomationProvider">
+      <HintPath>$(WpfBin)UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="_WpfDevToolsCheckReferences" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(WpfBin)PresentationFramework/Release/net10.0/PresentationFramework.dll')"
+           Text="PresentationFramework.dll was not found under $(WpfBin). Build the fork first (./build.sh -c Release). WpfDevTools references the build OUTPUT, not the projects." />
+  </Target>
+
+</Project>

@@ -19,7 +19,17 @@ namespace Standard
 {
     internal static partial class Utility
     {
-        private static readonly Version _osVersion = Environment.OSVersion.Version;
+        // Off Windows this stays 0.0, so every IsOS*OrNewer below answers false.
+        //
+        // These gates all mean "is this a Windows new enough to have feature X", and each one guards a
+        // Windows-only P/Invoke (dwmapi, uxtheme, ...). Environment.OSVersion.Version returns the KERNEL
+        // version on Linux -- 7.0 here -- which sails past every comparison and lets those calls through
+        // to a DllNotFoundException. SystemParameters.WindowGlassBrush was the one that surfaced it: it
+        // reaches DwmGetColorizationColor, whose own guard is `IsOSVistaOrNewer && IsThemeActive()`, and
+        // uxtheme.dll does not exist here. Answering false off-Windows lets each call site take the
+        // downlevel path it already has, rather than needing a platform check bolted onto each one.
+        private static readonly Version _osVersion =
+            OperatingSystem.IsWindows() ? Environment.OSVersion.Version : new Version(0, 0);
 
         /// <summary>Convert a native integer that represent a color with an alpha channel into a Color struct.</summary>
         /// <param name="color">The integer that represents the color.  Its bits are of the format 0xAARRGGBB.</param>
@@ -100,6 +110,15 @@ namespace Standard
         /// Whether the operating system version is greater than or equal to 11.0* (build 22621).
         /// </summary>
         public static bool IsWindows11_22H2OrNewer => _osVersion.Build >= 22621;
+
+        /// <summary>
+        /// Whether this platform can provide a translucent window backdrop behind a transparent
+        /// window: Windows 11 (Mica/Acrylic via DWM), or the WebGPU compositor on macOS, which
+        /// installs an NSVisualEffectView (behind-window blur) as the Mica substitute. When true
+        /// the Fluent Window style leaves the window Background Transparent so the backdrop shows
+        /// through; otherwise it paints a solid WindowBackground. Referenced from Window.xaml.
+        /// </summary>
+        public static bool IsBackdropSupported => IsOSWindows11OrNewer || !OperatingSystem.IsWindows();
 
         public static BitmapFrame GetBestMatch(IList<BitmapFrame> frames, int width, int height)
         {

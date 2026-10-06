@@ -84,6 +84,7 @@ namespace System.Windows.Media
             {
                 AppDomain.CurrentDomain.ProcessExit -= _helper.ProcessExitHandler;
             }
+            _backend?.Dispose();
         }
 
         #endregion
@@ -98,6 +99,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.IsBuffering; }
                 bool isBuffering = false;
                 HRESULT.Check(MILMedia.IsBuffering(_nativeMedia, ref isBuffering));
                 return isBuffering;
@@ -112,6 +114,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.CanPause; }
                 bool canPause = false;
                 HRESULT.Check(MILMedia.CanPause(_nativeMedia, ref canPause));
                 return canPause;
@@ -126,6 +129,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.DownloadProgress; }
                 double downloadProgress = 0;
                 HRESULT.Check(MILMedia.GetDownloadProgress(_nativeMedia, ref downloadProgress));
                 return downloadProgress;
@@ -140,6 +144,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.BufferingProgress; }
                 double bufferingProgress = 0;
                 HRESULT.Check(MILMedia.GetBufferingProgress(_nativeMedia, ref bufferingProgress));
                 return bufferingProgress;
@@ -154,6 +159,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.NaturalVideoHeight; }
 
                 UInt32 height = 0;
 
@@ -170,6 +176,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.NaturalVideoWidth; }
 
                 UInt32 width = 0;
 
@@ -186,6 +193,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.HasAudio; }
 
                 bool hasAudio = true;
 
@@ -202,6 +210,7 @@ namespace System.Windows.Media
             get
             {
                 VerifyAPI();
+                if (_backend != null) { return _backend.HasVideo; }
 
                 bool hasVideo = false;
 
@@ -256,9 +265,14 @@ namespace System.Windows.Media
                 {
                     if (!_muted)
                     {
-                        int hr = MILMedia.SetVolume(_nativeMedia, value);
-
-                        HRESULT.Check(hr);
+                        if (_backend != null)
+                        {
+                            _backend.SetVolume(value);
+                        }
+                        else
+                        {
+                            HRESULT.Check(MILMedia.SetVolume(_nativeMedia, value));
+                        }
 
                         // value is changing
                         _volume = value;
@@ -302,9 +316,14 @@ namespace System.Windows.Media
                 // is not the same. No need to do extra work.
                 if (!DoubleUtil.AreClose(_balance, value))
                 {
-                    int hr = MILMedia.SetBalance(_nativeMedia, value);
-
-                    HRESULT.Check(hr);
+                    if (_backend != null)
+                    {
+                        _backend.SetBalance(value);
+                    }
+                    else
+                    {
+                        HRESULT.Check(MILMedia.SetBalance(_nativeMedia, value));
+                    }
 
                     // value is changing
                     _balance = value;
@@ -327,7 +346,14 @@ namespace System.Windows.Media
                 VerifyAPI();
                 if (value != _scrubbingEnabled)
                 {
-                    HRESULT.Check(MILMedia.SetIsScrubbingEnabled(_nativeMedia, value));
+                    if (_backend != null)
+                    {
+                        _backend.SetScrubbingEnabled(value);
+                    }
+                    else
+                    {
+                        HRESULT.Check(MILMedia.SetIsScrubbingEnabled(_nativeMedia, value));
+                    }
                     _scrubbingEnabled = value;
                 }
             }
@@ -384,7 +410,14 @@ namespace System.Windows.Media
                 VerifyAPI();
 
                 long mediaLength = 0;
-                HRESULT.Check(MILMedia.GetMediaLength(_nativeMedia, ref mediaLength));
+                if (_backend != null)
+                {
+                    mediaLength = _backend.MediaLengthTicks;
+                }
+                else
+                {
+                    HRESULT.Check(MILMedia.GetMediaLength(_nativeMedia, ref mediaLength));
+                }
                 if (mediaLength == 0)
                 {
                     return Duration.Automatic;
@@ -709,7 +742,14 @@ namespace System.Windows.Media
 
             VerifyNotControlledByClock();
 
-            HRESULT.Check(MILMedia.Close(_nativeMedia));
+            if (_backend != null)
+            {
+                _backend.Close();
+            }
+            else
+            {
+                HRESULT.Check(MILMedia.Close(_nativeMedia));
+            }
 
             //
             // Once we successfully close, we don't have a clock anymore.
@@ -759,7 +799,14 @@ namespace System.Windows.Media
         {
             VerifyAPI();
 
-            HRESULT.Check(MILMedia.NeedUIFrameUpdate(_nativeMedia));
+            if (_backend != null)
+            {
+                _backend.NeedUIFrameUpdate();
+            }
+            else
+            {
+                HRESULT.Check(MILMedia.NeedUIFrameUpdate(_nativeMedia));
+            }
         }
 
         #endregion
@@ -771,32 +818,30 @@ namespace System.Windows.Media
         /// </summary>
         private void CreateMedia(MediaPlayer mediaPlayer)
         {
-            SafeMILHandle unmanagedProxy = null;
-            MediaEventsHelper.CreateMediaEventsHelper(mediaPlayer, out _mediaEventsHelper, out unmanagedProxy);
-            try
-            {
-                using (FactoryMaker myFactory = new FactoryMaker())
-                {
-                    HRESULT.Check(UnsafeNativeMethods.MILFactory2.CreateMediaPlayer(
-                            myFactory.FactoryPtr,
-                            unmanagedProxy,
-                            true,
-                            out _nativeMedia
-                            ));
-                }
-            }
-            catch
-            {
-                if (_nativeMedia != null && !_nativeMedia.IsInvalid)
-                {
-                    _nativeMedia.Close();
-                }
+            MediaEventsHelper.CreateMediaEventsHelper(mediaPlayer, out _mediaEventsHelper, out _);
 
-                throw;
-            }
-
+            // There is no native media object on any platform any more. The milcore player
+            // (wpfgfx_cor3.dll) decoded into milcore's own compositor, which the managed WebGPU
+            // compositor replaced, so even on Windows it played sound into a video that never appeared.
+            // A platform IMediaBackend does the whole job instead and its frames reach the compositor
+            // through SendVideoFrame. The media handle stays INVALID; a zero handle is IsInvalid, so
+            // SafeMediaHandle.ReleaseHandle never runs native code, and the MILMedia.* leaf calls that
+            // remain for backend-less platforms are inert stubs.
+            _nativeMedia = new SafeMediaHandle();
             _helper = new Helper(_nativeMedia);
             AppDomain.CurrentDomain.ProcessExit += _helper.ProcessExitHandler;
+
+            // May be null where no backend exists yet (Android, iOS) -> the element stays blank.
+            _backend = MediaBackendFactory.Create(mediaPlayer);
+            if (_backend != null)
+            {
+                _backend.Opened += () => _mediaEventsHelper.RaiseMediaOpened();
+                _backend.Ended += () => _mediaEventsHelper.RaiseMediaEnded();
+                _backend.Failed += (ex) => _mediaEventsHelper.RaiseMediaFailed(ex);
+                _backend.BufferingStarted += () => _mediaEventsHelper.RaiseBufferingStarted();
+                _backend.BufferingEnded += () => _mediaEventsHelper.RaiseBufferingEnded();
+                _backend.FrameAvailable += () => _mediaEventsHelper.RaiseNewFrame();
+            }
         }
 
         /// <summary>
@@ -804,8 +849,6 @@ namespace System.Windows.Media
         /// </summary>
         private void OpenMedia(Uri source)
         {
-            string toOpen = null;
-
             if (source != null && source.IsAbsoluteUri && source.Scheme == PackUriHelper.UriSchemePack)
             {
                 try
@@ -820,22 +863,31 @@ namespace System.Windows.Media
             }
 
             // Setting a null source effectively disconects the MediaElement.
+            string toOpen = null;
             if (source != null)
             {
                 // get the base directory of the application; never expose this
                 Uri appBase = SecurityHelper.GetBaseDirectory(AppDomain.CurrentDomain);
                 // this extracts the URI to open
                 Uri uriToOpen = ResolveUri(source, appBase);
-                toOpen  = DemandPermissions(uriToOpen);
-            }
-            else
-            {
-                toOpen = null;
+
+                // The security-zone demand maps the URL through urlmon, which exists only on Windows.
+                // Elsewhere the backend is handed a plain file path or http(s) URL directly.
+                toOpen = OperatingSystem.IsWindows()
+                    ? DemandPermissions(uriToOpen)
+                    : (uriToOpen.IsFile ? uriToOpen.LocalPath : uriToOpen.AbsoluteUri);
             }
 
             // We pass in exact same URI for which we demanded permissions so that we can be sure
             // there is no discrepancy between the two.
-            HRESULT.Check(MILMedia.Open(_nativeMedia, toOpen));
+            if (_backend != null)
+            {
+                if (toOpen != null) { _backend.Open(toOpen); }
+            }
+            else
+            {
+                HRESULT.Check(MILMedia.Open(_nativeMedia, toOpen));
+            }
         }
 
         private Uri ResolveUri(Uri uri, Uri appBase)
@@ -877,7 +929,14 @@ namespace System.Windows.Media
         {
             VerifyAPI();
 
-            HRESULT.Check(MILMedia.SetPosition(_nativeMedia, value.Ticks));
+            if (_backend != null)
+            {
+                _backend.SetPositionTicks(value.Ticks);
+            }
+            else
+            {
+                HRESULT.Check(MILMedia.SetPosition(_nativeMedia, value.Ticks));
+            }
         }
 
         /// <summary>
@@ -887,6 +946,10 @@ namespace System.Windows.Media
         {
             VerifyAPI();
 
+            if (_backend != null)
+            {
+                return TimeSpan.FromTicks(_backend.GetPositionTicks());
+            }
             long position = 0;
             HRESULT.Check(MILMedia.GetPosition(_nativeMedia, ref position));
             return TimeSpan.FromTicks(position);
@@ -900,7 +963,14 @@ namespace System.Windows.Media
 
                 ArgumentOutOfRangeException.ThrowIfEqual(value, double.NaN);
 
-                HRESULT.Check(MILMedia.SetRate(_nativeMedia, value));
+                if (_backend != null)
+                {
+                    _backend.SetRate(value);
+                }
+                else
+                {
+                    HRESULT.Check(MILMedia.SetRate(_nativeMedia, value));
+                }
             }
         }
 
@@ -954,17 +1024,15 @@ namespace System.Windows.Media
             // We create _nativeMedia in the constructor, so it should always
             // be initialized.
             //
-            Debug.Assert(_nativeMedia != null && !_nativeMedia.IsInvalid);
+            Debug.Assert(_nativeMedia != null);
 
             //
-            // We only allow calls to any media object on the UI thread.
+            // We only allow calls to any media object on the UI thread. That is all this check does
+            // now: the media handle is intentionally INVALID on every platform (playback is owned by
+            // the IMediaBackend, and MILMedia operations are inert stubs), so an invalid handle is no
+            // longer the version/DLL error it used to signal.
             //
             _dispatcher.VerifyAccess();
-
-            if (_nativeMedia == null || _nativeMedia.IsInvalid)
-            {
-                throw new System.NotSupportedException(SR.Image_BadVersion);
-            }
         }
 
         /// <summary>
@@ -992,26 +1060,29 @@ namespace System.Windows.Media
             bool                    notifyUceDirectly
             )
         {
-            // This is an interrop call, but, it does not set a last error being a COM call. 
+            // There is no native media object to hand to the compositor. Pull the current decoded frame
+            // from the platform backend instead and ship its BGRA pixels over the SendVideoFrame seam,
+            // keyed by this MediaPlayer resource handle -- the MilDrawVideo record (still emitted by
+            // MediaElement) samples it. A fresh array each pass makes the frame texture re-upload.
+            if (_backend == null)
+            {
+                return;
+            }
 
-            //
-            // AddRef to ensure the media player stays alive during transport, even if the
-            // MediaPlayer goes away.  The slave video resource takes ownership of this AddRef.
-            // Note there is still a gray danger zone here -- if the channel command is lost
-            // this reference won't be cleaned up.
-            //
-            // MediaPlayer: AddRef on nativeMedia may be lost if the channel send command fails
-            //
-            // There is no point in addrefing the native media if we are going remote since
-            // we will send null.
-            //
-            UnsafeNativeMethods.MILUnknown.AddRef(_nativeMedia);
-
-            channel.SendCommandMedia(
-                handle,
-                _nativeMedia,
-                notifyUceDirectly
-                );
+            if (_backend.TryLockFrame(out IntPtr baseAddr, out int fw, out int fh, out int rowBytes) &&
+                baseAddr != IntPtr.Zero && fw > 0 && fh > 0)
+            {
+                try
+                {
+                    byte[] bgra = new byte[(long)rowBytes * fh];
+                    System.Runtime.InteropServices.Marshal.Copy(baseAddr, bgra, 0, bgra.Length);
+                    channel.SendVideoFrame(handle, fw, fh, rowBytes, bgra);
+                }
+                finally
+                {
+                    _backend.UnlockFrame();
+                }
+            }
         }
 
         #endregion
@@ -1076,6 +1147,10 @@ namespace System.Windows.Media
         /// Unamanaged Media object
         /// </summary>
         private SafeMediaHandle _nativeMedia;
+
+        // Off-Windows platform media engine (AVFoundation on macOS). Non-null only off-Windows where a backend
+        // exists; every MILMedia.* leaf call in this class routes to it instead of the (no-op'd) native media.
+        private IMediaBackend _backend;
 
         private MediaEventsHelper _mediaEventsHelper;
 

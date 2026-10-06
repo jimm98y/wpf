@@ -1,0 +1,6 @@
+<Project>
+  <!-- Isolate this Android head from the WPF repo's Directory.Build machinery (artifacts output
+       layout, SR-resource generation, strict analyzers, and trimming/linker defaults that conflict
+       with the Android SDK's). Same empty-file trick the sibling iOS/wasm samples use to stop
+       MSBuild's upward search. -->
+</Project>

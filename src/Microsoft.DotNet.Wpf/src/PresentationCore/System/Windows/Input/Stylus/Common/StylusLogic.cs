@@ -189,13 +189,41 @@ namespace System.Windows.Input
         {
             get
             {
-                return !CoreAppContextSwitches.DisableStylusAndTouchSupport;
+                // The WPF stylus/touch input stack (WISP and WM_POINTER) is Win32-only; disable it
+                // off-Windows so no HwndStylusInputProvider is created.
+                if (!OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
+                if (CoreAppContextSwitches.DisableStylusAndTouchSupport)
+                {
+                    return false;
+                }
+
+                // Only the WM_POINTER stack is available in this port (see IsPointerStackEnabled), and
+                // it needs RS2. On anything older there is no stylus/touch stack left to offer, so say
+                // so here rather than letting the WISP stack be selected and then fail. Mouse input is
+                // unaffected -- that is HwndMouseInputProvider, not this.
+                return OSVersionHelper.IsOsWindows10RS2OrGreater;
             }
         }
 
         /// <summary>
-        /// Determines if the WM_POINTER based stack is enabled.
-        /// Pointer is only supported on >= RS2, otherwise gracefully degrade to WISP stack.
+        /// Determines if the WM_POINTER based stack is enabled -- which, in this port, it always is
+        /// whenever stylus/touch support is on at all.
+        /// <para>
+        /// WPF historically defaulted to the WISP stack and treated WM_POINTER as opt-in. WISP cannot
+        /// be used here: it reaches the tablet stack through PenImc_cor3.dll, a COM server, and this
+        /// port ships none of WPF's native DLLs -- the first window to enumerate tablet devices would
+        /// throw DllNotFoundException. WM_POINTER is plain Win32 message handling with no native
+        /// helper behind it, and it is the stack Windows itself has preferred since RS2.
+        /// </para>
+        /// <para>
+        /// CoreAppContextSwitches.EnablePointerSupport and the EnablePointerSupport registry value are
+        /// consequently redundant rather than required. They are still honoured in the sense that
+        /// setting them changes nothing; DisableStylusAndTouchSupport still turns the whole stack off.
+        /// </para>
         /// </summary>
         internal static bool IsPointerStackEnabled
         {
@@ -203,9 +231,7 @@ namespace System.Windows.Input
             {
                 if (!_isPointerStackEnabled.HasValue)
                 {
-                    _isPointerStackEnabled = IsStylusAndTouchSupportEnabled
-                        && (CoreAppContextSwitches.EnablePointerSupport || IsPointerEnabledInRegistry)
-                        && OSVersionHelper.IsOsWindows10RS2OrGreater;
+                    _isPointerStackEnabled = IsStylusAndTouchSupportEnabled;
                 }
 
                 return _isPointerStackEnabled.Value;
@@ -280,6 +306,12 @@ namespace System.Windows.Input
             {
                 bool result = false;
 
+                // The pen/touch "pointer stack" and its opt-in registry value are Windows-only.
+                if (!OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
                 try
                 {
                     result = ((int)(Registry.CurrentUser.OpenSubKey(WpfPointerKey, RegistryKeyPermissionCheck.ReadSubTree)?.GetValue(WpfPointerValue, 0) ?? 0)) == 1;
@@ -324,6 +356,13 @@ namespace System.Windows.Input
         /// </summary>
         protected void ReadSystemConfig()
         {
+            // The WISP stylus/touch configuration lives in the Windows registry; off-Windows keep
+            // the built-in defaults (there is no Windows Ink stack here).
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             object obj;
             RegistryKey stylusKey = null; // This object has finalizer to close the key.
             RegistryKey touchKey = null; // This object has finalizer to close the key.

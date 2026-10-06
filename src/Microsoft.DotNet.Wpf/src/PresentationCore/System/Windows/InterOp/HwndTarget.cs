@@ -288,9 +288,9 @@ namespace System.Windows.Interop
                 // will be left in a state when no other HwndTarget can be created
                 // for it.
                 //
-                if(exceptionThrown)
+                if(exceptionThrown && OperatingSystem.IsWindows())
                 {
-                    // Return value ignored on purpose.
+                    // Return value ignored on purpose. (milcore; nothing to detach off-Windows.)
                     VisualTarget_DetachFromHwnd(hwnd);
                 }
             }
@@ -301,6 +301,12 @@ namespace System.Windows.Interop
         /// </summary>
         private void CheckAndDisableSpecialCharacterLigature()
         {
+            // The LineServices ligature toggle is a native (milcore/LS) call; skip off-Windows.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             NativeMethodsSetLastError.LsDisableSpecialCharacterLigature(CoreAppContextSwitches.DisableSpecialCharacterLigature);
         }
 
@@ -310,6 +316,31 @@ namespace System.Windows.Interop
         /// <remarks>Helper for constructor</remarks>
         private void InitializeDpiAwarenessAndDpiScales()
         {
+            // Off-Windows the Win32 DPI-awareness APIs do not exist. The DPI scale is the window's
+            // backing scale factor (2.0 on Retina), which maps DIPs -> device pixels exactly as the
+            // Win32 per-monitor DPI scale does: the client rects are reported in device pixels
+            // (CocoaWindow.GetPixelSize), the render surface is configured to that pixel size, and
+            // _worldTransform (= this scale) makes WPF render its DIP scene into the larger pixel
+            // target -- so the layer is crisp on Retina. The scale must match the one GetPixelSize
+            // uses; both read CocoaWindow.GetBackingScale (screen-sourced, stable at construction).
+            if (!OperatingSystem.IsWindows())
+            {
+                AppManifestProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
+                ProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
+                DpiAwarenessContext = DpiAwarenessContextValue.SystemAware;
+                var platformWindow = MS.Internal.Interop.PlatformWindow.FromHandle(_hWnd.h);
+                double scale = platformWindow?.GetBackingScale() ?? 1.0;
+                CurrentDpiScale = new DpiScale2(scale, scale);
+                // Track later backing-scale changes (window dragged onto a different-DPI display) so the
+                // DPI scale, layout and render surface follow it -- macOS/browser have no WM_DPICHANGED.
+                if (platformWindow != null)
+                {
+                    _platformWindow = platformWindow;
+                    platformWindow.ScaleChanged += OnPlatformScaleChanged;
+                }
+                return;
+            }
+
             // Only do this once to get:
             // 1. Process DPI Awareness
             // 2. System/Primary monitor's DPI, store it in the first entry of the static array UIElement::MonitorDPIScaleX/Y.
@@ -513,6 +544,14 @@ namespace System.Windows.Interop
         /// </summary>
         private void AttachToHwnd(IntPtr hwnd)
         {
+            // Off-Windows the handle is a Cocoa NSView*, not an HWND: there is no Win32 window to
+            // validate (GetWindowThreadProcessId/IsWindow) and no milcore target to attach. The
+            // WebGPU compositor binds to the view via the DUCE HwndInitialize command instead.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             int processId = 0;
             int threadId = UnsafeNativeMethods.GetWindowThreadProcessId(
                 new HandleRef(this, hwnd),
@@ -562,16 +601,25 @@ namespace System.Windows.Interop
             UnsafeNativeMethods.WTSRegisterSessionNotification(hwnd, NativeMethods.NOTIFY_FOR_THIS_SESSION);
         }
 
-        [DllImport(DllImport.MilCore, EntryPoint = "MilVisualTarget_AttachToHwnd")]
-        internal static extern int VisualTarget_AttachToHwnd(
-            IntPtr hwnd
-            );
+        //
+        // Binding the render target to the window.
+        //
+        // When the managed compositor is driving, this is its business and not milcore's: the sink
+        // is told about the target over the composition channel and builds its own swapchain
+        // surface for the HWND (WpfCompositionSink -> NativePlatform.CreateWindowSurface). Calling
+        // milcore as well would have a second engine claim the same window -- and it is the reason
+        // a Windows app needed wpfgfx_cor3 deployed next to it at all, which this port does not do.
+        //
+        // This used to fall back to milcore when no managed backend had registered, on the reasoning
+        // that milcore was then in charge. It never is: the port ships wpfgfx_cor3.dll on no platform,
+        // so the fallback could only ever throw DllNotFoundException -- which is what happened to any
+        // code creating an HwndSource without having first brought the WebGPU backend up, the unit
+        // tests being the obvious example. Not attaching is the correct outcome there: there is no
+        // native render target to attach to, and the managed sink attaches its own when it registers.
+        //
+        internal static int VisualTarget_AttachToHwnd(IntPtr hwnd) => HRESULT.S_OK;
 
-
-        [DllImport(DllImport.MilCore, EntryPoint = "MilVisualTarget_DetachFromHwnd")]
-        internal static extern int VisualTarget_DetachFromHwnd(
-            IntPtr hwnd
-            );
+        internal static int VisualTarget_DetachFromHwnd(IntPtr hwnd) => HRESULT.S_OK;
 
         internal void InvalidateRenderMode()
         {
@@ -683,7 +731,19 @@ namespace System.Windows.Interop
                 {
                     RootVisual = null;
 
-                    HRESULT.Check(VisualTarget_DetachFromHwnd(_hWnd));
+                    // Detach the off-Windows backing-scale-change handler (no-op on Windows).
+                    if (_platformWindow != null)
+                    {
+                        _platformWindow.ScaleChanged -= OnPlatformScaleChanged;
+                        _platformWindow = null;
+                    }
+
+                    // VisualTarget_DetachFromHwnd is milcore; there is no native visual target to detach
+                    // off-Windows (the managed compositor owns teardown), so skip it there.
+                    if (OperatingSystem.IsWindows())
+                    {
+                        HRESULT.Check(VisualTarget_DetachFromHwnd(_hWnd));
+                    }
 
                     //
                     // Unregister this CompositionTarget from the MediaSystem.
@@ -697,8 +757,11 @@ namespace System.Windows.Interop
                         _notificationWindowHelper = null;
                     }
 
-                    // Unregister for Fast User Switching messages
-                    UnsafeNativeMethods.WTSUnRegisterSessionNotification(_hWnd);
+                    // Unregister for Fast User Switching messages (WTS/session APIs are Windows-only).
+                    if (OperatingSystem.IsWindows())
+                    {
+                        UnsafeNativeMethods.WTSUnRegisterSessionNotification(_hWnd);
+                    }
                 }
 }
             finally
@@ -1086,6 +1149,15 @@ namespace System.Windows.Interop
                         }
 
                         _isMinimized = false;
+
+                        // On Windows the client rect is refreshed by the WM_WINDOWPOSCHANGED that
+                        // precedes WM_SIZE. Off-Windows we synthesize WM_SIZE directly on a Cocoa
+                        // resize, so refresh the rect from the window here before OnResize re-sends it.
+                        if (!OperatingSystem.IsWindows())
+                        {
+                            UpdateWindowAndClientCoordinates();
+                        }
+
                         DoPaint();
 
                         OnResize();
@@ -1353,6 +1425,16 @@ namespace System.Windows.Interop
         /// </summary>
         private void DoPaint()
         {
+            // DoPaint is pure Win32 GDI (BeginPaint/EndPaint/InvalidateRect) used to service
+            // WM_PAINT and prime layered windows; there is no HDC/GDI off-Windows. Skipping it is
+            // a no-op there, and critically it keeps a synthesized WM_SIZE from throwing here
+            // (BeginPaint -> DllNotFound) before the subsequent OnResize(), which is what re-sends
+            // the new window size to the compositor so the render surface reconfigures on resize.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             NativeMethods.PAINTSTRUCT ps = new NativeMethods.PAINTSTRUCT();
             NativeMethods.HDC hdc;
 
@@ -1617,6 +1699,22 @@ namespace System.Windows.Interop
         /// </summary>
         private void UpdateWindowAndClientCoordinates()
         {
+            // Off-Windows there is no GetClientRect/GetWindowRect; take the size from the Cocoa
+            // content view in DEVICE PIXELS (points * backing scale), matching Win32 rect semantics.
+            // These rects size the render surface (device pixels) and are converted back to DIPs for
+            // layout via TransformFromDevice/CurrentDpiScale, so they must be the same backing scale
+            // as CurrentDpiScale. Origin is treated as (0,0).
+            if (!OperatingSystem.IsWindows())
+            {
+                int cw = 0, ch = 0;
+                MS.Internal.Interop.IPlatformWindow view = MS.Internal.Interop.PlatformWindow.FromHandle(_hWnd.h);
+                view?.GetPixelSize(out cw, out ch);
+
+                _hwndWindowRectInScreenCoords = new NativeMethods.RECT(0, 0, cw, ch);
+                _hwndClientRectInScreenCoords = new NativeMethods.RECT(0, 0, cw, ch);
+                return;
+            }
+
             HandleRef hWnd = _hWnd.MakeHandleRef(this);
 
             // Update the window rect
@@ -1731,6 +1829,45 @@ namespace System.Windows.Interop
                     _worldTransform.Matrix,
                     clipBounds
                 });
+        }
+
+        // The non-Windows platform window whose ScaleChanged we subscribed to (null on Windows / when
+        // there is no platform window). Held so the handler can be detached on Dispose.
+        private MS.Internal.Interop.IPlatformWindow _platformWindow;
+
+        /// <summary>
+        /// Off-Windows equivalent of WM_DPICHANGED. Raised by the platform window (on the UI/pump
+        /// thread) when its backing scale changes because it was dragged onto a different-DPI display.
+        /// Unlike Win32 there is no OS-suggested rect and the window's point size is unchanged -- only
+        /// the device-pixel size changes -- so we update the DPI scale + world transform, re-lay-out,
+        /// tell the renderer, then refresh the client rect and reconfigure the render surface to the
+        /// new pixel size (which also re-syncs the CAMetalLayer contentsScale via Configure).
+        /// </summary>
+        private void OnPlatformScaleChanged(double newScale)
+        {
+            if (IsDisposed || newScale <= 0)
+            {
+                return;
+            }
+
+            var oldDpi = CurrentDpiScale;
+            var newDpi = new DpiScale2(newScale, newScale);
+            if (oldDpi == newDpi)
+            {
+                return;
+            }
+
+            CurrentDpiScale = newDpi;
+            UpdateWorldTransform(newDpi);
+            PropagateDpiChangeToRootVisual(oldDpi, newDpi);
+            NotifyListenersOfWorldTransformAndClipBoundsChanged();
+            NotifyRendererOfDpiChange(afterParent: false);
+
+            // The client's device-pixel size changed even though its point size did not; refresh the
+            // client rect and reconfigure/repaint the surface at the new scale.
+            UpdateWindowAndClientCoordinates();
+            OnResize();
+            DoPaint();
         }
 
         /// <summary>
@@ -1941,16 +2078,49 @@ namespace System.Windows.Interop
             bool enableRenderTarget = SafeNativeMethods.IsWindowVisible(_hWnd.MakeHandleRef(this));
             if(enableRenderTarget)
             {
-                if(_windowPosChanging && (positionChanged))
+                if(_windowPosChanging && (positionChanged) && !DUCE.ManagedComposition.IsEnabled)
                 {
                     enableRenderTarget = false;
                 }
             }
 
+            //
+            // The disable/enable handshake above (and the out-of-band SyncFlush pair it costs
+            // in UpdateWindowSettings) exists only to stop a SEPARATE render thread from
+            // painting into the HWND, or resizing it via UpdateLayeredWindow, while the UI
+            // thread is moving it. The managed compositor has no render thread: Channel.Commit
+            // and Channel.SyncFlush render and present synchronously on this very thread,
+            // inside this WndProc, so nothing can race us and there is nothing to synchronize
+            // with. Running the handshake anyway turned each WM_WINDOWPOSCHANGING/CHANGED pair
+            // into FOUR full scene renders, every one of them ending in a vsync-blocked
+            // wgpuSurfacePresent (~10ms apiece here) and every one of them redundant -- during a
+            // title-bar drag nothing in the scene changes at all (measured: parse = 0 visuals).
+            // That was ~45ms of blocking per mouse-move message, and since the modal move loop
+            // in DefWindowProc cannot deliver the next move until this WndProc returns, the
+            // window itself lagged the cursor: ~8-20 position updates/second instead of 60+.
+            //
+            // A pure move needs no repaint whatsoever -- the swap chain belongs to the HWND and
+            // the OS/DWM relocates its contents -- so on WM_WINDOWPOSCHANGING there is simply
+            // nothing to do; the final rect arrives with WM_WINDOWPOSCHANGED, which records it
+            // in-band and posts a render. Resizes are unaffected: their repaint comes from
+            // WM_SIZE -> DoPaint/OnResize -> MediaContext.CompleteRender, not from here.
+            //
+            if (DUCE.ManagedComposition.IsEnabled && _windowPosChanging && enableRenderTarget == _isRenderTargetEnabled)
+            {
+                return;
+            }
 
             if (positionChanged || (enableRenderTarget != _isRenderTargetEnabled))
             {
-                UpdateWindowSettings(enableRenderTarget);
+                // A move that does not resize the window needs its new screen rect recorded, but no
+                // repaint: the scene is identical and the swap chain belongs to the HWND, so the OS
+                // relocates the pixels. (Layered popups included -- they are presented through
+                // UpdateLayeredWindow from a render sized by width/height alone.) Skipping the
+                // render post matters now that the dispatcher really does run inside the modal move
+                // loop: otherwise every mouse-move message would queue a full redraw of an unchanged
+                // scene, and the drag would pay for it frame by frame.
+                bool movedOnly = isMove && !isSize && enableRenderTarget && (enableRenderTarget == _isRenderTargetEnabled);
+                UpdateWindowSettings(enableRenderTarget, null, postRender: !movedOnly);
             }
         }
 
@@ -2105,7 +2275,7 @@ namespace System.Windows.Interop
             UpdateWindowSettings(enableRenderTarget, null);
         }
 
-        private void UpdateWindowSettings(bool enableRenderTarget, DUCE.ChannelSet? channelSet)
+        private void UpdateWindowSettings(bool enableRenderTarget, DUCE.ChannelSet? channelSet, bool postRender = true)
         {
             MediaContext mctx = MediaContext.From(Dispatcher);
 
@@ -2250,10 +2420,13 @@ namespace System.Windows.Interop
             if (_isRenderTargetEnabled)
             {
                 //
-                // Re-render the visual tree.
+                // Re-render the visual tree, unless the caller knows nothing about it changed.
                 //
 
-                mctx.PostRender();
+                if (postRender)
+                {
+                    mctx.PostRender();
+                }
             }
             else
             {

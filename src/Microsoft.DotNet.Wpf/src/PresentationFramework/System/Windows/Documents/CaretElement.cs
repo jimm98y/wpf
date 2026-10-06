@@ -946,6 +946,14 @@ namespace System.Windows.Documents
         // Win32 application have the compatibility to handle the caret event which is Magnifier or Tablet Tip.
         private void Win32CreateCaret()
         {
+            // The Win32 system caret (gdi32 CreateBitmap + user32 CreateCaret) exists only for Win32
+            // IME / accessibility / Magnifier compatibility; WPF renders its own visual caret. Off-
+            // Windows there is no system caret, so skip it.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (!_isSelectionActive)
             {
                 // We do not want to interfere with Win32 caret
@@ -1005,6 +1013,12 @@ namespace System.Windows.Documents
         // Destroy Win32 caret if we create it with checking Win32 error.
         private void Win32DestroyCaret()
         {
+            // No Win32 system caret off-Windows (see Win32CreateCaret).
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (!_isSelectionActive)
             {
                 // We do not want to interfere with Win32 caret
@@ -1035,6 +1049,12 @@ namespace System.Windows.Documents
         // Set Win32 caret position with checking Win32 error.
         private void Win32SetCaretPos()
         {
+            // No Win32 system caret off-Windows (see Win32CreateCaret).
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (!_isSelectionActive)
             {
                 // We do not want to interfere with Win32 caret
@@ -1123,6 +1143,14 @@ namespace System.Windows.Documents
         private int Win32GetCaretBlinkTime()
         {
             Invariant.Assert(_isSelectionActive, "Blink animation should only be required for an owner with active selection.");
+
+            // GetCaretBlinkTime is a user32.dll call that doesn't exist off-Windows (unlike the other
+            // Win32 caret helpers here, this one drives the *visual* blink, so leaving it unguarded made
+            // the whole caret throw and never render). Use the Windows default so the caret blinks.
+            if (!OperatingSystem.IsWindows())
+            {
+                return 530;
+            }
 
             // Win32 GetCaretBlinkTime can return "0" without the error if SetCaretBlinkTime set as "0".
             int caretBlinkTime = (int)SafeNativeMethods.GetCaretBlinkTime();

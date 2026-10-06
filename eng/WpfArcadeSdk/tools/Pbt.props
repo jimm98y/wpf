@@ -4,7 +4,9 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="Exists('$(LocalMicrosoftWinFXTargets)')">
-    <PbtTfm Condition="'$(MSBuildRuntimeType)'=='Core'">net6.0</PbtTfm>
+    <!-- Must match one of PresentationBuildTasks' actual <TargetFrameworks> (net472;net10.0) -
+         it no longer multi-targets net6.0, so requesting it here fails restore. -->
+    <PbtTfm Condition="'$(MSBuildRuntimeType)'=='Core'">net10.0</PbtTfm>
     <PbtTfm Condition="'$(MSBuildRuntimeType)'!='Core'">net472</PbtTfm>
   </PropertyGroup>
 

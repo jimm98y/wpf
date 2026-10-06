@@ -1,0 +1,3 @@
+<Project>
+  <!-- Empty for the same reason as Directory.Build.props: stop the walk into Arcade. -->
+</Project>

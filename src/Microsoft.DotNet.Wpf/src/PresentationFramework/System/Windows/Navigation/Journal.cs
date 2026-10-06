@@ -649,7 +649,9 @@ namespace System.Windows.Navigation
         // instances proved impractical due to restricted access rights. The solution here is to use
         // the system tick count as an initial value and keep incrementing it. This should be good 
         // enough in all normal usage scenarios.
-        private int _journalEntryId = MS.Win32.SafeNativeMethods.GetTickCount();
+        // Environment.TickCount is the cross-platform equivalent of kernel32 GetTickCount (identical on
+        // Windows) — used only to seed a monotonically-increasing journal-entry id, so any tick source works.
+        private int _journalEntryId = Environment.TickCount;
 
         private List<JournalEntry> _journalEntryList = new List<JournalEntry>();
         private int _currentEntryIndex = 0;

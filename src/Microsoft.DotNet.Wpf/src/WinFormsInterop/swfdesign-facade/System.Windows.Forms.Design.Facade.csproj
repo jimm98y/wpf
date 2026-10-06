@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The System.Windows.Forms.Design assembly IDENTITY.
+
+    .NET Framework kept the WinForms designer types in System.Design; modern .NET moved them to an
+    assembly of their own. Code built against either names its own, so both have to resolve to the
+    one that actually carries them here, which is System.Design.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Windows.Forms.Design</AssemblyName>
+    <RootNamespace>System.Windows.Forms.Design</RootNamespace>
+    <AssemblyVersion>4.0.0.0</AssemblyVersion>
+    <Version>4.0.0.0</Version>
+    <FileVersion>99.0.0.0</FileVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS0618;CS0612;CS1591</NoWarn>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)../../../../../eng/snk/MSFT.snk</AssemblyOriginatorKeyFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="AssemblyInfo.cs" />
+    <Compile Include="Forwards.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../System.Design.WebGpu.csproj" Aliases="design" />
+  </ItemGroup>
+
+</Project>

@@ -164,14 +164,12 @@ namespace System.Windows
 
                 Uri uri = BindUriHelper.GetResolvedUri(_baseUri, sourceUri);
 
-                WebRequest request = WpfWebRequestHelper.CreateRequest(uri);
-                WpfWebRequestHelper.ConfigCachePolicy(request, false);
                 ContentType contentType = null;
                 Stream s = null;
 
                 try
                 {
-                     s = WpfWebRequestHelper.GetResponseStream(request, out contentType);
+                     s = WpfWebRequestHelper.GetStreamAndContentType(uri, out contentType);
                 }
                 catch (System.IO.IOException)
                 {

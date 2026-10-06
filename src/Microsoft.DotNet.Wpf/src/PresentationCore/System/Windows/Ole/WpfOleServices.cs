@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Private.Windows.Ole;
+using System.Runtime.InteropServices;
 using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using MS.Internal;
@@ -61,10 +62,82 @@ internal sealed unsafe class WpfOleServices : IOleServices
 
         static HBITMAP GetCompatibleBitmap(object data)
         {
+            // A WPF BitmapSource can't go through SystemDrawingHelper.GetHBitmap (its System.Drawing
+            // extension only understands System.Drawing.Bitmap and returns a null handle) — that left
+            // Clipboard.SetImage(BitmapSource) advertising CF_BITMAP while Clipboard.GetImage() came back
+            // null, NRE'ing callers (e.g. WPFGallery's ClipboardPage) that assume it non-null. Convert
+            // it directly with a managed CreateDIBSection (no System.Drawing / no COM).
+            if (data is BitmapSource bitmapSource)
+            {
+                return BitmapSourceToHBitmap(bitmapSource);
+            }
+
             HBITMAP hbitmap = SystemDrawingHelper.GetHBitmap(data, out int width, out int height);
 
             return hbitmap.IsNull ? HBITMAP.Null : hbitmap.CreateCompatibleBitmap(width, height);
         }
+    }
+
+    // Managed BitmapSource -> HBITMAP (a top-down 32bpp BGRA DIB section), so SetImage round-trips
+    // through the OLE/system clipboard without System.Drawing or the removed bitmap COM. The clipboard
+    // takes ownership of the returned handle (same contract as the System.Drawing path above).
+    private static HBITMAP BitmapSourceToHBitmap(BitmapSource source)
+    {
+        BitmapSource bgra = source.Format == Media.PixelFormats.Bgra32
+            ? source
+            : new FormatConvertedBitmap(source, Media.PixelFormats.Bgra32, null, 0);
+
+        int width = bgra.PixelWidth, height = bgra.PixelHeight;
+        if (width <= 0 || height <= 0)
+        {
+            return HBITMAP.Null;
+        }
+
+        int stride = width * 4;
+        byte[] pixels = new byte[stride * height];
+        bgra.CopyPixels(pixels, stride, 0);
+
+        BITMAPINFOHEADER bmi = new()
+        {
+            biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
+            biWidth = width,
+            biHeight = -height,   // negative => top-down, matching CopyPixels' row order
+            biPlanes = 1,
+            biBitCount = 32,
+            biCompression = 0,    // BI_RGB
+        };
+
+        IntPtr screenDc = GetDC(IntPtr.Zero);
+        IntPtr hbitmap = CreateDIBSection(screenDc, ref bmi, 0 /*DIB_RGB_COLORS*/, out IntPtr bits, IntPtr.Zero, 0);
+        ReleaseDC(IntPtr.Zero, screenDc);
+
+        if (hbitmap == IntPtr.Zero || bits == IntPtr.Zero)
+        {
+            return HBITMAP.Null;
+        }
+
+        Marshal.Copy(pixels, 0, bits, pixels.Length);
+        return (HBITMAP)(nint)hbitmap;
+    }
+
+    [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hWnd);
+    [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+    [DllImport("gdi32.dll")] private static extern IntPtr CreateDIBSection(IntPtr hdc, ref BITMAPINFOHEADER pbmi, uint usage, out IntPtr ppvBits, IntPtr hSection, uint offset);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BITMAPINFOHEADER
+    {
+        public uint biSize;
+        public int biWidth;
+        public int biHeight;
+        public ushort biPlanes;
+        public ushort biBitCount;
+        public uint biCompression;
+        public uint biSizeImage;
+        public int biXPelsPerMeter;
+        public int biYPelsPerMeter;
+        public uint biClrUsed;
+        public uint biClrImportant;
     }
 
     public static bool TryGetObjectFromDataObject<T>(

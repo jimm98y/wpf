@@ -5,7 +5,9 @@
     Condition="'$(AvTraceMessages)'!=''"
     Inputs="$(AvTraceMessages)"
     Outputs="$(IntermediateOutputPath)AvTraceMessages.cs">
-    <Error Condition="!Exists($(PerlCommand.Replace('&quot;','')))" Text="Perl is not found: PerlCommand=$(PerlCommand)" />
+    <!-- Only validated on Windows: there PerlCommand is a restored file path. On macOS/Linux
+         it's the bare "perl" command resolved via PATH, which Exists() can't check. -->
+    <Error Condition="'$(OS)' == 'Windows_NT' and !Exists($(PerlCommand.Replace('&quot;','')))" Text="Perl is not found: PerlCommand=$(PerlCommand)" />
     <MakeDir Condition="!Exists('$(IntermediateOutputPath)')" Directories="$(IntermediateOutputPath)" />
     <Message Text="Generating $(IntermeidateOutputPath)AvTraceMessages.cs from $(AvTraceMessages)"/>
     <Exec

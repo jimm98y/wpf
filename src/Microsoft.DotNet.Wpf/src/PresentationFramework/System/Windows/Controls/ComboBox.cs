@@ -285,6 +285,8 @@ namespace System.Windows.Controls
                 // Make sure to clear the highlight when the dropdown closes
                 comboBox.HighlightedInfo = null;
 
+                try { if (Environment.GetEnvironmentVariable("WPF_WEBGPU_SINK_LOG") is string _lg) System.IO.File.AppendAllText(_lg, $"COMBOCLOSE HasCapture={comboBox.HasCapture} captured={Mouse.Captured?.GetType().Name}\n"); } catch { }
+
                 if (comboBox.HasCapture)
                 {
                     Mouse.Capture(null);

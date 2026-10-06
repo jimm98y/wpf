@@ -20,6 +20,19 @@ namespace System.Windows.Controls.Primitives
         static PopupRoot()
         {
             SnapsToDevicePixelsProperty.OverrideMetadata(typeof(PopupRoot), new FrameworkPropertyMetadata(BooleanBoxes.TrueBox));
+
+            // On Windows, SnapsToDevicePixels snaps the popup content's edges to the device-pixel grid
+            // at render time (via milcore guidelines), so a menu's 1px border always lands on a whole
+            // pixel. The WebGPU renderer doesn't apply those render-time guidelines, and off-Windows text
+            // metrics can measure a popup to a FRACTIONAL device size -- its right/bottom border edge then
+            // falls between pixels and rasterizes at partial coverage (a menu border looks missing on the
+            // right). Turn on layout rounding (a framework-level feature, independent of the renderer)
+            // off-Windows so the popup subtree's sizes/offsets round to whole device pixels and the border
+            // lands on the grid. UseLayoutRounding inherits to the content, so the whole popup snaps.
+            if (!OperatingSystem.IsWindows())
+            {
+                UseLayoutRoundingProperty.OverrideMetadata(typeof(PopupRoot), new FrameworkPropertyMetadata(BooleanBoxes.TrueBox));
+            }
         }
 
         /// <summary>

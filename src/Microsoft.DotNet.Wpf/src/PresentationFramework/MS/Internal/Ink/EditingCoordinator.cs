@@ -692,11 +692,25 @@ namespace MS.Internal.Ink
                     return;
                 }
 
-                // 
+                //
                 // If the mouse down event is from a Stylus, make sure we have a correct inverted state.
                 if ( mouseButtonEventArgs.StylusDevice != null )
                 {
                     UpdateInvertedState(mouseButtonEventArgs.StylusDevice, mouseButtonEventArgs.StylusDevice.Inverted);
+                }
+                else if ( !IsInMidStroke )
+                {
+                    // Off Windows there is no StylusDevice, so the branch above never runs and
+                    // EditingModeInverted could never engage -- turning the pen over did nothing.
+                    // The platform touch seam knows which end is down, for the same reason it knows
+                    // the pressure, so the inverted state comes from there instead.
+                    //
+                    // At the DOWN specifically, and only outside a stroke. UpdateInvertedState
+                    // declines to change anything mid-stroke anyway, but it decides that by asking
+                    // IsInputDeviceCaptured, which casts the device it is given and so cannot be
+                    // passed the null this branch has. It is also why every backend reports the
+                    // contact before the mouse: the seam has to know the end before the press lands.
+                    UpdateInvertedState(null, PlatformTouchSink.CurrentPen.IsInverted);
                 }
             }
             else
@@ -784,7 +798,49 @@ namespace MS.Internal.Ink
                             return;
                         }
                         
-                        stylusPoints = new StylusPointCollection(new Point[] { _capturedMouse.GetPosition(_inkCanvas) });
+                        // A StylusPointCollection built from bare Points takes the DEFAULT pressure
+                        // for every sample. On Windows that is harmless, because a pen has its own
+                        // StylusDevice and never reaches this branch; off Windows there is no
+                        // StylusDevice at all, so every head fell back to the mouse here and a
+                        // pressure-sensitive Pencil or S-Pen drew a uniform line.
+                        //
+                        // The contact's real pressure is known -- the platform touch seam has it --
+                        // so it is applied when the device actually measured one. A finger reports
+                        // none, and then this behaves exactly as it did.
+                        Point position = _capturedMouse.GetPosition(_inkCanvas);
+                        MS.Internal.Interop.PenState pen = PlatformTouchSink.CurrentPen;
+
+                        if (pen.HasTilt)
+                        {
+                            // A StylusPoint can only carry properties its DESCRIPTION names, so tilt
+                            // needs one that declares the two axes beside the required X/Y/pressure.
+                            var description = new StylusPointDescription(new[]
+                            {
+                                new StylusPointPropertyInfo(StylusPointProperties.X),
+                                new StylusPointPropertyInfo(StylusPointProperties.Y),
+                                new StylusPointPropertyInfo(StylusPointProperties.NormalPressure),
+                                new StylusPointPropertyInfo(StylusPointProperties.XTiltOrientation),
+                                new StylusPointPropertyInfo(StylusPointProperties.YTiltOrientation),
+                            });
+
+                            var point = new StylusPoint(position.X, position.Y,
+                                                        pen.HasPressure ? (float)pen.Pressure : 0.5f,
+                                                        description,
+                                                        new[] { (int)Math.Round(pen.TiltX), (int)Math.Round(pen.TiltY) });
+
+                            // The (description, int) overload takes a CAPACITY, not the points.
+                            stylusPoints = new StylusPointCollection(description, 1);
+                            stylusPoints.Add(point);
+                        }
+                        else if (pen.HasPressure)
+                        {
+                            stylusPoints = new StylusPointCollection(
+                                new StylusPoint[] { new StylusPoint(position.X, position.Y, (float)pen.Pressure) });
+                        }
+                        else
+                        {
+                            stylusPoints = new StylusPointCollection(new Point[] { position });
+                        }
                     }
 
                     bool fSucceeded = false;

@@ -269,5 +269,86 @@ namespace Microsoft.Win32
         }
 
         #endregion Private Methods
+
+        #region Public Methods
+
+        /// <summary>
+        ///  Delivers the saved file to the user, on the heads where writing to <see cref="FileDialog.FileName"/>
+        ///  is not by itself a save. Call it once the file has been written.
+        /// </summary>
+        /// <remarks>
+        ///  <para>
+        ///   On Windows, macOS and Linux the user chose a real destination before the write, so this
+        ///   does nothing and returns true; calling it unconditionally is correct and is what makes
+        ///   one piece of save code work on all six heads.
+        ///  </para>
+        ///  <para>
+        ///   On the other three the order is necessarily reversed, because none of them can hand an
+        ///   application a writable destination up front. The browser has no file system to write
+        ///   into and iOS and Android confine an app to its own container, so
+        ///   <see cref="CommonDialog.ShowDialogAsync"/> reserves a private path, the application
+        ///   writes there as usual, and THIS is the step the user sees: a download in the browser,
+        ///   the export sheet on iOS, the Storage Access Framework's create-document picker on
+        ///   Android. Skipping it leaves the file somewhere only the app can reach.
+        ///  </para>
+        /// </remarks>
+        /// <returns>True when the file reached the user, or when the platform needed no such step.</returns>
+        public async System.Threading.Tasks.Task<bool> CommitAsync()
+        {
+            string path = FileName;
+            if (string.IsNullOrEmpty(path)) return false;
+
+            if (OperatingSystem.IsBrowser())
+            {
+                return BrowserDialogs.OfferDownload(path, MimeTypeForExtension(path));
+            }
+
+            if (OperatingSystem.IsIOS())
+            {
+                string[] exported = await UIKitDialogs.ShowExportPanelAsync(path).ConfigureAwait(true);
+                return exported is { Length: > 0 };
+            }
+
+            if (OperatingSystem.IsAndroid())
+            {
+                return await AndroidDialogs.ExportFileAsync(path, MimeTypeForExtension(path)).ConfigureAwait(true);
+            }
+
+            // Desktop: the write already went where the user asked for it.
+            return true;
+        }
+
+        /// <summary>
+        ///  A MIME type for the browser's download and Android's create-document intent.
+        /// </summary>
+        /// <remarks>
+        ///  Only the handful a save dialog commonly produces are named. Anything else becomes
+        ///  application/octet-stream, which every platform accepts and which makes the browser
+        ///  download the file rather than try to display it.
+        /// </remarks>
+        private static string MimeTypeForExtension(string path)
+        {
+            string extension = Path.GetExtension(path);
+            if (string.IsNullOrEmpty(extension)) return "application/octet-stream";
+
+            return extension.ToLowerInvariant() switch
+            {
+                ".txt" or ".log" => "text/plain",
+                ".csv" => "text/csv",
+                ".json" => "application/json",
+                ".xml" => "application/xml",
+                ".html" or ".htm" => "text/html",
+                ".pdf" => "application/pdf",
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".tif" or ".tiff" => "image/tiff",
+                ".bmp" => "image/bmp",
+                ".zip" => "application/zip",
+                _ => "application/octet-stream",
+            };
+        }
+
+        #endregion Public Methods
     }
 }

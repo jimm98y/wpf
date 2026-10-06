@@ -7,7 +7,7 @@
     <DefineConstants Condition="'$(WeakEventTelemetry)'=='true'">$(DefineConstants);WeakEventTelemetry</DefineConstants>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnablePInvokeAnalyzer>false</EnablePInvokeAnalyzer>
-    <NoWarn>$(NoWarn);0618;1058,3003</NoWarn>
+    <NoWarn>$(NoWarn);0618;1058,3003;WPF0001</NoWarn>
     <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
     <Platforms>AnyCPU</Platforms>
     <GenerateDependencyFile>false</GenerateDependencyFile>
@@ -19,9 +19,6 @@
     <Compile Include="$(WpfSourceDir)PresentationFramework\OtherAssemblyAttrs.cs" />
   </ItemGroup>
 
-  <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="Accessibility" />
-  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="$(WpfSourceDir)ReachFramework\ref\ReachFramework-ref.csproj" />
     <ProjectReference Include="$(WpfSourceDir)System.Printing\ref\System.Printing-ref.csproj" />

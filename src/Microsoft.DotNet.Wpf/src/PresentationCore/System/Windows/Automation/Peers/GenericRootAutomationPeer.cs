@@ -34,7 +34,11 @@ namespace System.Windows.Automation.Peers
 
             if(name == string.Empty)
             {
-                IntPtr hwnd = this.Hwnd;
+                // Off Windows there is no window manager holding a title for a bare HwndSource root,
+                // and GetWindowText would be a DllNotFoundException -- which this catch does not
+                // cover, and which would unwind through UpdateSubtree into layout. The unnamed root
+                // an AT then sees is the same thing GetWindowText returns for an untitled window.
+                IntPtr hwnd = OperatingSystem.IsWindows() ? this.Hwnd : IntPtr.Zero;
                 if(hwnd != IntPtr.Zero)
                 {
                     try
@@ -60,7 +64,14 @@ namespace System.Windows.Automation.Peers
         protected override Rect GetBoundingRectangleCore()
         {
             Rect bounds = new Rect(0,0,0,0);
-            
+
+            // No GetWindowRect off Windows; take the managed route UIElementAutomationPeer already
+            // implements, which maps the root visual's rect through the PresentationSource.
+            if (!OperatingSystem.IsWindows())
+            {
+                return base.GetBoundingRectangleCore();
+            }
+
             IntPtr hwnd = this.Hwnd;
             if(hwnd != IntPtr.Zero)
             {
