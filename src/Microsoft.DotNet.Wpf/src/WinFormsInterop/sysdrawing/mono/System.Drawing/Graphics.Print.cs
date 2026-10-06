@@ -557,8 +557,8 @@ namespace System.Drawing
 				// DIB pixel (i, j) is cell (gx + i, gy + j): a hatch from the device origin, anything
 				// else through world -> device -> cells.
 				float [] toCells = Then (dev, new [] { 1f / s, 0f, 0f, 1f / t, -gx, -gy });
-				byte [] fill = hatch ? FillWithBrush (cellBrush, gw, gh, null, new Point (-gx, -gy))
-					: FillWithBrush (cellBrush, gw, gh, toCells, Point.Empty);
+				byte [] fill = hatch ? FillWithBrush (cellBrush, gw, gh, null, new Point (-gx, -gy), true)
+					: FillWithBrush (cellBrush, gw, gh, toCells, Point.Empty, true);
 				if (fill == null) return false;
 				int counter = ++s_bufferDibs;
 				int banded = (gh + rows - 1) / rows * rows;
@@ -1016,10 +1016,11 @@ namespace System.Drawing
 		}
 
 		// GpBitmap::CreateBitmapAndFillWithBrush: a W x H 32bpp ARGB bitmap, transparent, the brush
-		// over all of it through the world-to-bitmap matrix (null: identity).
-		byte [] FillWithBrush (Brush brush, int W, int H, float [] toBitmap, Point origin)
+		// over all of it through the world-to-bitmap matrix (null: identity). <paramref name="scan"/>:
+		// an EpScanDIB's buffer instead -- the spans premultiplied, then Unpremultiply'd.
+		byte [] FillWithBrush (Brush brush, int W, int H, float [] toBitmap, Point origin, bool scan = false)
 		{
-			using (var bmp = new Bitmap (W, H, Imaging.PixelFormat.Format32bppArgb))
+			using (var bmp = new Bitmap (W, H, scan ? Imaging.PixelFormat.Format32bppPArgb : Imaging.PixelFormat.Format32bppArgb))
 			using (Graphics g = FromImage (bmp)) {
 				if (g.gp == null) return null;
 				g.InterpolationMode = _interpolation == InterpolationMode.Invalid ? InterpolationMode.Bilinear : _interpolation;
@@ -1096,16 +1097,21 @@ namespace System.Drawing
 			PushRecordedTransform ();
 		}
 
-		/// <summary>DriverPrint::DrawImage for a parallelogram that is not an upright rectangle on
-		/// the device: drawn into a DIB, banded, clipped (see above). False where GDI+ blits the
-		/// image's own pixels.</summary>
+		/// <summary>DriverPrint::DrawImage @1800ccc30: an opaque image whose device parallelogram is
+		/// an upright, unflipped rectangle is blitted as it is (false here). Any other is drawn into a
+		/// DIB of s device pixels a DIB pixel (see above), banded, and put down by what its pixels
+		/// are: opaque (mode 0x81) through the bleeding scan, clipped to the parallelogram; only
+		/// opaque or clear (mode 9) as the runs of each row's pixels with alpha 5 or more, composited
+		/// on white (NextBufferFunc32bppOver); translucent (mode 0xc3) halftoned, the mask the image
+		/// drawn again at the device's resolution.</summary>
 		bool PrintImageBands (Bitmap bmp, RectangleF src, RectangleF dest, Imaging.ImageAttributes attrs)
 		{
 			if (s_noPrintRaster || GpuRecorder == null) return false;
 			float [] dev = PrintDeviceMatrix ();
 			PointF p0 = Apply (dev, dest.X, dest.Y), p1 = Apply (dev, dest.Right, dest.Y), p2 = Apply (dev, dest.X, dest.Bottom);
 			bool turned = Math.Abs (dev [1]) > 1e-6f * Math.Abs (dev [0]) || Math.Abs (dev [2]) > 1e-6f * Math.Abs (dev [3]);
-			if (!turned && p0.X < p1.X && p0.Y < p2.Y) return false;
+			int hint = attrs == null ? ImageTransparency (bmp, src) : 3;
+			if (!turned && p0.X < p1.X && p0.Y < p2.Y && hint == 3) return false;
 			// Device pixels per source pixel, rounded; held to 100 dpi for a small turned image.
 			int s = (int) (Hypot (p1.X - p0.X, p1.Y - p0.Y) / src.Width + 0.5f);
 			int t = (int) (Hypot (p2.X - p0.X, p2.Y - p0.Y) / src.Height + 0.5f);
@@ -1124,41 +1130,116 @@ namespace System.Drawing
 			if (gw < 1 || gh < 1) return true;
 			if ((long) gw * gh > 64L << 20) return false;
 			int rows = BandRows (gw, gh);
+			int cellRows = gh;
 			gh = (gh + rows - 1) / rows * rows;
-			byte [] px, cover = null;
 			// A mirror lands one DIB pixel further along the mirrored axis than the engine puts
 			// it (measured: a 64 px image flipped at 12 device px per pixel, every column one on).
 			float fx = !turned && p1.X < p0.X ? 1f : 0f, fy = !turned && p2.Y < p0.Y ? 1f : 0f;
 			var at = new [] { new PointF (q0.X - gx + fx, q0.Y - gy + fy), new PointF (q1.X - gx + fx, q1.Y - gy + fy), new PointF (q2.X - gx + fx, q2.Y - gy + fy) };
-			using (var dib = new Bitmap (gw, gh, Imaging.PixelFormat.Format32bppArgb))
+			// The DIB as the scan holds it: the spans premultiplied. An image only opaque or clear is
+			// drawn nearest-neighbour (DrawImage sets the context's interpolation to 5 for it).
+			byte [] pargb = DrawImageScan (bmp, at, src, attrs, gw, gh, hint == 2);
+			if (pargb == null) return false;
+			var clip = new [] { new PointF (dest.X, dest.Y), new PointF (dest.Right, dest.Y), new PointF (dest.Right, dest.Bottom), new PointF (dest.X, dest.Bottom) };
+			var clipTypes = new byte [] { 0, 1, 1, 0x81 };
+			// The pixels the image's parallelogram gives spans: the same shape filled.
+			var quad = new [] { at [0], at [1], new PointF (at [1].X + at [2].X - at [0].X, at [1].Y + at [2].Y - at [0].Y), at [2] };
+			byte [] cover;
+			using (var black = new SolidBrush (Color.Black))
+				cover = ShapeAlpha (black, quad, new byte [] { 0, 1, 1, 0x81 }, FillMode.Alternate, new [] { 1f, 0f, 0f, 1f, 0f, 0f }, gw, gh, Point.Empty);
+			int counter = ++s_bufferDibs;
+			if (hint == 2) {
+				if (cover != null)
+					for (int i = 0; i < cover.Length; i++) if (cover [i] == 0) pargb [i * 4] = pargb [i * 4 + 1] = pargb [i * 4 + 2] = pargb [i * 4 + 3] = 0;
+				// NextBufferFunc32bppOver: clear is white, translucent composited on white.
+				var over = new byte [pargb.Length];
+				for (int i = 0; i < pargb.Length; i += 4) {
+					int a = pargb [i + 3];
+					if (a == 0) { over [i] = over [i + 1] = over [i + 2] = 255; continue; }
+					int k = 255 * (255 - a);
+					k = (((k >> 8) & 0xff) + k >> 8) & 0xff;
+					over [i] = (byte) (pargb [i + 2] + k); over [i + 1] = (byte) (pargb [i + 1] + k); over [i + 2] = (byte) (pargb [i] + k); over [i + 3] = (byte) a;
+				}
+				EmitRuns (over, gw, gh, rows, gx, gy, s, t, clip, clipTypes, dev, false);
+				return true;
+			}
+			// The bleeding scan's colours (and, translucent, the mask from the image at the
+			// device's resolution).
+			var px = new byte [pargb.Length];
+			for (int i = 0; i < pargb.Length; i += 4) {
+				uint c = GdipPixels.UnpremultiplyArgb ((uint) (pargb [i + 3] << 24 | pargb [i + 2] << 16 | pargb [i + 1] << 8 | pargb [i]));
+				px [i] = (byte) (c >> 16); px [i + 1] = (byte) (c >> 8); px [i + 2] = (byte) c; px [i + 3] = (byte) (c >> 24);
+			}
+			if (cover != null) Bleed (px, cover, gw, gh, rows);
+			else ExtendRows (px, gw, gh);
+			if (hint == 3) {
+				EmitBands (px, gw, gh, rows, gx, gy, s, t, clip, clipTypes, dev, false);
+				return true;
+			}
+			var devQuad = new [] { p0, p1, new PointF (p1.X + p2.X - p0.X, p1.Y + p2.Y - p0.Y), p2 };
+			EmitMasked (px, gw, cellRows, rows, gx, gy, s, t, counter, (int bandX, int bandY, int W, int H) => {
+				var bandAt = new [] { new PointF (p0.X - bandX, p0.Y - bandY), new PointF (p1.X - bandX, p1.Y - bandY), new PointF (p2.X - bandX, p2.Y - bandY) };
+				byte [] img = DrawImageScan (bmp, bandAt, src, attrs, W, H);
+				byte [] cov;
+				using (var black = new SolidBrush (Color.Black))
+					cov = ShapeAlpha (black, devQuad, new byte [] { 0, 1, 1, 0x81 }, FillMode.Alternate, new [] { 1f, 0f, 0f, 1f, -bandX, -bandY }, W, H, Point.Empty);
+				if (img == null || cov == null) return (null, 0, 0, 0, 0);
+				var a = new byte [W * H];
+				int minX = int.MaxValue, minY = int.MaxValue, maxX = 0, maxY = 0;
+				for (int y = 0; y < H; y++)
+					for (int x = 0; x < W; x++) {
+						int i = y * W + x;
+						if (cov [i] == 0) continue;
+						a [i] = img [i * 4 + 3];
+						if (x < minX) minX = x;
+						if (x + 1 > maxX) maxX = x + 1;
+						if (y < minY) minY = y;
+						if (y > maxY) maxY = y;
+					}
+				return (a, minX, minY, maxX, maxY);
+			});
+			return true;
+		}
+
+		// The image drawn into a W x H scan buffer through the three points: premultiplied BGRA as
+		// the spans leave it, its edges unfaded (on the printer an image has no faded rim).
+		byte [] DrawImageScan (Bitmap bmp, PointF [] at, RectangleF src, Imaging.ImageAttributes attrs, int W, int H, bool nearest = false)
+		{
+			using (var dib = new Bitmap (W, H, Imaging.PixelFormat.Format32bppPArgb))
 			using (Graphics g = FromImage (dib)) {
-				if (g.gp == null) return false;
-				g.InterpolationMode = _interpolation == InterpolationMode.Invalid ? InterpolationMode.Bilinear : _interpolation;
+				if (g.gp == null) return null;
+				g.InterpolationMode = nearest ? InterpolationMode.NearestNeighbor : _interpolation == InterpolationMode.Invalid ? InterpolationMode.Bilinear : _interpolation;
 				g.PixelOffsetMode = _pixelOffset;
-				if (attrs == null && OpaquePixels (bmp, src)) {
-					// On the printer an opaque image has no faded rim: its edge pixels keep their colour.
+				if (attrs == null) {
 					using (var edge = new Imaging.ImageAttributes ()) {
 						edge.SetWrapMode (WrapMode.TileFlipXY);
 						g.DrawImage (bmp, at, src, GraphicsUnit.Pixel, edge);
 					}
 				} else g.DrawImage (bmp, at, src, GraphicsUnit.Pixel, attrs);
 				g.Flush ();
-				px = GdipPixels.ToRgba (dib.Data.Frame, new Rectangle (0, 0, gw, gh));
+				GdipFrame f = dib.Data.Frame;
+				var bits = new byte [W * H * 4];
+				for (int y = 0; y < H; y++) Buffer.BlockCopy (f.Bits, y * f.Stride, bits, y * W * 4, W * 4);
+				return bits;
 			}
-			bool opaque = attrs == null && OpaquePixels (bmp, src);
-			if (opaque) {
-				// The pixels the image's parallelogram gives spans: the same shape filled.
-				var quad = new [] { at [0], at [1], new PointF (at [1].X + at [2].X - at [0].X, at [1].Y + at [2].Y - at [0].Y), at [2] };
-				using (var black = new SolidBrush (Color.Black))
-					cover = ShapeAlpha (black, quad, new byte [] { 0, 1, 1, 0x81 }, FillMode.Alternate, new [] { 1f, 0f, 0f, 1f, 0f, 0f }, gw, gh, Point.Empty);
+		}
+
+		// The image's transparency over the source rectangle as GDI+ hints it: 3 opaque, 2 every
+		// pixel opaque or clear, 1 anything else.
+		static int ImageTransparency (Bitmap bmp, RectangleF src)
+		{
+			if ((bmp.PixelFormat & Imaging.PixelFormat.Alpha) == 0 && (bmp.PixelFormat & Imaging.PixelFormat.PAlpha) == 0) return 3;
+			var r = Rectangle.Intersect (Rectangle.FromLTRB ((int) Math.Floor (src.Left), (int) Math.Floor (src.Top), (int) Math.Ceiling (src.Right), (int) Math.Ceiling (src.Bottom)),
+				new Rectangle (0, 0, bmp.Width, bmp.Height));
+			if (r.Width <= 0 || r.Height <= 0) return 3;
+			byte [] p = GdipPixels.ToRgba (bmp.Data.Frame, r);
+			bool simple = true;
+			for (int i = 3; i < p.Length; i += 4) {
+				if (p [i] == 255) continue;
+				if (p [i] != 0) return 1;
+				simple = false;
 			}
-			if (cover != null) Bleed (px, cover, gw, gh, rows);
-			else if (opaque) ExtendRows (px, gw, gh);
-			++s_bufferDibs;
-			EmitBands (px, gw, gh, rows, gx, gy, s, t,
-				new [] { new PointF (dest.X, dest.Y), new PointF (dest.Right, dest.Y), new PointF (dest.Right, dest.Bottom), new PointF (dest.X, dest.Bottom) },
-				new byte [] { 0, 1, 1, 0x81 }, dev, false);
-			return true;
+			return simple ? 3 : 2;
 		}
 
 		/// <summary>EpScanDIB::NextBufferFunc24bppBleed @1800c1620, the scan an opaque image's DIB is
@@ -1414,8 +1495,8 @@ namespace System.Drawing
 				int gw = 1 + (bx - gx * sx + bw) / sx, gh = 1 + (by - gy * sy + bh) / sy;
 				if ((long) gw * gh > 64L << 20) return false;
 				int rows = BandRows (gw, gh);
-				byte [] cells = brush is HatchBrush ? FillWithBrush (brush, gw, gh, null, new Point (-gx, -gy))
-					: FillWithBrush (onDevice, gw, gh, new [] { 1f / sx, 0f, 0f, 1f / sy, -gx, -gy }, Point.Empty);
+				byte [] cells = brush is HatchBrush ? FillWithBrush (brush, gw, gh, null, new Point (-gx, -gy), true)
+					: FillWithBrush (onDevice, gw, gh, new [] { 1f / sx, 0f, 0f, 1f / sy, -gx, -gy }, Point.Empty, true);
 				if (cells == null) return false;
 				int counter = ++s_bufferDibs;
 				bool opaque = BrushIsOpaque (brush);

@@ -155,7 +155,8 @@ namespace Wpf.WinFormsInterop.Tests
         public void StrokesCurvesImagesAndClipsStayVector()
         {
             using var bitmap = new Bitmap(4, 3);
-            for (int i = 0; i < 4; i++) bitmap.SetPixel(i, 1, Color.Green);
+            // Opaque: an image with clear pixels is banded, as GDI+ prints it (see the tests below).
+            for (int y = 0; y < 3; y++) for (int i = 0; i < 4; i++) bitmap.SetPixel(i, y, y == 1 ? Color.Green : Color.White);
             PdfDocument pdf = PrintToPdf(e =>
             {
                 Graphics g = e.Graphics;
@@ -513,6 +514,33 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(new byte[] { 200, 40, 40 }, image.Rgb[0..3]);
             int last = (image.W * image.H - 1) * 3;
             Assert.Equal(new byte[] { 40, 90, 200 }, image.Rgb[last..(last + 3)]);
+        }
+
+        [Fact]
+        public void AnImageWithAlphaIsHalftonedOrPutDownAsItsOpaqueRuns()
+        {
+            // Upright but not opaque, DriverPrint::DrawImage bands it as it does a turned one: an
+            // image of half alpha halftoned (its DIB a pixel a source pixel, 12 device pixels
+            // across; the mask at 600 dpi), one only opaque or clear as its runs, nearest-neighbour.
+            using Bitmap half = Tile(64, 48, 128);
+            PdfDocument pdf = PrintAt600(g => g.DrawImage(half, 50, 50, 128, 96));
+            KeyValuePair<string, (int W, int H, byte[] Rgb)> entry = Assert.Single(Images(pdf));
+            Assert.Equal((64, 48), (entry.Value.W, entry.Value.H));
+            var mask = Stencil(pdf, entry.Key);
+            Assert.Equal((768, 576), (mask.W, mask.H));
+            int set = 0;
+            for (int y = 0; y < mask.H; y++) for (int x = 0; x < mask.W; x++) if (Bit(mask, x, y)) set++;
+            Assert.InRange(set, mask.W * mask.H * 45 / 100, mask.W * mask.H * 55 / 100);
+
+            using Bitmap holes = Tile(64, 48, 255);
+            for (int y = 0; y < 48; y++) for (int x = 0; x < 64; x++) if ((x / 8 + y / 8) % 3 == 0) holes.SetPixel(x, y, Color.Transparent);
+            pdf = PrintAt600(g => g.DrawImage(holes, 250, 50, 128, 96));
+            entry = Assert.Single(Images(pdf));
+            mask = Stencil(pdf, entry.Key);
+            Assert.Equal((entry.Value.W, entry.Value.H), (mask.W, mask.H));
+            for (int y = 0; y < 48; y++)
+                for (int x = 0; x < 64; x++)
+                    Assert.Equal((x / 8 + y / 8) % 3 != 0, Bit(mask, x, y));
         }
 
         [Fact]
