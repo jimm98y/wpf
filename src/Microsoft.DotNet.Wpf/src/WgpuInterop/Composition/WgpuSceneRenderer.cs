@@ -6766,6 +6766,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return layout;
         }
 
+        /// <summary>WGPU_TRACE_PIPELINES=1: each pipeline as it is first made, and what it cost.</summary>
+        private static readonly bool s_tracePipelines = Environment.GetEnvironmentVariable("WGPU_TRACE_PIPELINES") == "1";
+
         private IntPtr GetPipeline(WGPUTextureFormat format, FillKind kind) => GetPipeline(format, kind, false);
 
         private IntPtr GetPipeline(WGPUTextureFormat format, FillKind kind, bool sourceCopy)
@@ -6773,6 +6776,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var key = (format, kind, sourceCopy);
             if (_pipelines.TryGetValue(key, out IntPtr cached))
                 return cached;
+            long pipelineStart = s_tracePipelines ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
             IntPtr shader = kind switch
             {
                 FillKind.Clip => GetClipShaderModule(),
@@ -6788,6 +6792,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             };
             IntPtr pipeline = CreatePipeline(_ctx.Device, shader, format, kind, sourceCopy);
             _pipelines[key] = pipeline;
+            if (s_tracePipelines)
+                Console.WriteLine($"[pipeline] {kind} {format} sourceCopy={sourceCopy}: {System.Diagnostics.Stopwatch.GetElapsedTime(pipelineStart).TotalMilliseconds:0.0} ms");
             return pipeline;
         }
 

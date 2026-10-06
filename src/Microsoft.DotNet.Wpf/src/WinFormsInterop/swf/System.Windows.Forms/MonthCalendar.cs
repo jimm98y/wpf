@@ -1988,6 +1988,9 @@ namespace System.Windows.Forms {
 		private static readonly int s_zoomFreezeAt =
 			int.TryParse (Environment.GetEnvironmentVariable ("WF_ZOOM_FREEZE_AT"), out int at) ? at : 0;
 		private int zoom_count;
+		/// <summary>WF_ZOOM_TRACE=1: each zoom tick, on WF_TRACE_FRAMES' clock (ms since the process started).</summary>
+		private static readonly bool s_zoomTrace = Environment.GetEnvironmentVariable ("WF_ZOOM_TRACE") == "1";
+		private static double ZoomTraceNow => (DateTime.Now - System.Diagnostics.Process.GetCurrentProcess ().StartTime).TotalMilliseconds;
 
 		/// <summary>Kept for the themes that ask: a zoom effect is running.</summary>
 		internal bool ZoomTransitioning => zoom_effect != null;
@@ -2025,6 +2028,8 @@ namespace System.Windows.Forms {
 		{
 			EndZoomEffect ();
 			var fx = new ZoomEffectState { From = from, To = to, Index = ++zoom_count };
+			if (s_zoomTrace)
+				Console.WriteLine ($"[zoom] {ZoomTraceNow:0} ms: zoom {zoom_count} {from} -> {to} requested");
 			if (to > from) {
 				fx.A = ZoomEffectGrid (from);
 				fx.B = cell >= 0 ? ZoomCellRect (to, cell) : ZoomEffectGrid (to);
@@ -2074,6 +2079,8 @@ namespace System.Windows.Forms {
 			if (!fx.Started) {
 				fx.Started = true;
 				fx.StartTick = Environment.TickCount;
+				if (s_zoomTrace)
+					Console.WriteLine ($"[zoom] {ZoomTraceNow:0} ms: zoom {fx.Index} clock starts");
 				return;
 			}
 			if (s_zoomFreeze >= 0 && (s_zoomFreezeAt <= 0 || fx.Index == s_zoomFreezeAt)) {
@@ -2097,6 +2104,8 @@ namespace System.Windows.Forms {
 			}
 			fx.Progress = p;
 			AddOutsideBlend (fx, (int) (p * 255.0));
+			if (s_zoomTrace)
+				Console.WriteLine ($"[zoom] {ZoomTraceNow:0} ms: zoom {fx.Index} tick p={p:0.000} blends={fx.OutsideAlphas.Count}");
 			Invalidate ();
 		}
 
