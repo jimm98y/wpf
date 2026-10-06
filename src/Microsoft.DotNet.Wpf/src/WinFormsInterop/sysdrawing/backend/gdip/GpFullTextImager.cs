@@ -281,9 +281,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
         byte[] BidiLevels ()
         {
             bool any = ParagraphLevel == 1;
+            // BuildRunsUpToAndIncluding @1800f00f0: only for a right-to-left paragraph or when the
+            // itemizer's OR of every character's CharacterAttributes flags has 0x200 (the
+            // right-to-left scripts); a mark or an embedding code alone runs no bidi analysis.
             for (int i = 0; i < _n && !any; i++) {
-                int d = GpTextTables.DirClass (Text [i]);
-                any = d == 1 || d == 4 || d == 14 || d == 15;
+                int cp = Text [i];
+                if (char.IsHighSurrogate ((char) cp) && i + 1 < _n && char.IsLowSurrogate (Text [i + 1])) cp = char.ConvertToUtf32 ((char) cp, Text [++i]);
+                any = (GpTextTables.Flags (cp) & 0x200) != 0;
             }
             if (!any || _n == 0) return null;
             var flags = ParagraphLevel == 1 ? GpBidi.Flags.DirectionRightToLeft : 0;
