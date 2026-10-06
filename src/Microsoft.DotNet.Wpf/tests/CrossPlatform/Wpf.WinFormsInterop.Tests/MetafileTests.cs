@@ -291,7 +291,7 @@ namespace Wpf.WinFormsInterop.Tests
         /// byte (recorded on the fixture's own screen, ScreenFor) and its EMF+ playback within the
         /// tolerance, but its GDI playback is not yet exact: six pixels of the 15-degree ClearType
         /// run are a level off.</summary>
-        static readonly HashSet<string> TurnedTextPending = new HashSet<string> { "text_rotate" };
+        static readonly HashSet<string> TurnedTextPending = new HashSet<string> { };
 
         public static TheoryData<string> EmfPlusPlaybackScenarios()
         {

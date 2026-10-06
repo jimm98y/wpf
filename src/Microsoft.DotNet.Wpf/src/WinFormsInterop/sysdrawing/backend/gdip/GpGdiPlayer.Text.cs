@@ -332,6 +332,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             float bx = sxs * c * 16f, by = -sxs * s * 16f, bl = MathF.Sqrt(bx * bx + by * by);
             float ax = -sys * s * 16f, ay = -sys * c * 16f, al = MathF.Sqrt(ax * ax + ay * ay);
             g.UbX = bx / bl; g.UbY = by / bl; g.UaX = ax / al; g.UaY = ay / al;
+            if (Environment.GetEnvironmentVariable("GDIROT_DBG") == "1")
+                Console.Error.WriteLine($"GEN face={lf.Face} h={lf.Height} upem={upem} esc={esc} m={m00},{m01},{m10},{mm11} pt16={pt16} ppem={g.PpemX}x{g.PpemY} em={g.EmPpem} rot={g.Rotated} str={g.Stretched} P={g.P00},{g.P01},{g.P10},{g.P11}");
             return g;
         }
 
@@ -539,6 +541,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         if (!face.TryGetHintedOutline(gids[i], ppem, out outline) || outline.Count == 0) continue;
                         outline = gen != null ? GeneralTransformed(outline, gen) : Turned(outline, axes);
                         if (gen != null) (bmpShiftX, bmpShiftY) = GeneralBitmapShift(outline, face.WantsSymmetricSmoothing(ppemY) ? 5 : 1);
+                        if (gen != null && Environment.GetEnvironmentVariable("GDIROT_DUMP") is { Length: > 0 } dg && dg == gids[i].ToString())
+                        {
+                            var sbd = new System.Text.StringBuilder($"PTS gid={gids[i]} at={xs[i]},{ys[i]} shift={bmpShiftX},{bmpShiftY}:");
+                            void D(System.Numerics.Vector2 p) => sbd.Append($" {(int)Math.Round(p.X * 64f)},{(int)Math.Round(-p.Y * 64f)}");
+                            foreach (PathFigure f in outline)
+                            {
+                                sbd.Append(" |"); D(f.Start);
+                                foreach (PathSegment s in f.Segments)
+                                    switch (s) { case LineSegment l: D(l.Point); break; case QuadraticBezierSegment qq: sbd.Append(" q"); D(qq.Control); D(qq.Point); break; }
+                            }
+                            Console.Error.WriteLine(sbd);
+                        }
                     }
                     if ((fitDropout ?? face.GlyphDropout(gids[i], ppem)) is int gd && gd >= 0) (dropouts ??= new()).Add(ordinal, gd);
                     foreach (PathFigure f in outline)
@@ -680,7 +694,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>A glyph fitted at <see cref="GeneralFit"/>'s sizes (y down, pixels) turned onto
         /// the device as scl_PostTransformGlyph turns it: each 26.6 point (y up) through
-        /// mth_IntelMul's per-product rounding, x' = x P00 + y P10, y' = x P01 + y P11.</summary>
+        /// mth_IntelMul's per-product rounding, x' = x P00 + y P10, y' = x P01 + y P11. Only the
+        /// outline's own points are turned: an implied on-curve point between two off-curve ones
+        /// is made after the turn (fsc_FillGlyph @140034000 averages the two TURNED controls), so it
+        /// is the exact average of the turned controls here, not the turned average.</summary>
         static System.Collections.Generic.List<PathFigure> GeneralTransformed(System.Collections.Generic.List<PathFigure> figs, GeneralFit g)
         {
             System.Numerics.Vector2 T(System.Numerics.Vector2 p)
@@ -690,15 +707,25 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int ny = TrueTypeInterpreter.DwFixMul(x, g.P01) + TrueTypeInterpreter.DwFixMul(y, g.P11);
                 return new System.Numerics.Vector2(nx / 64f, -ny / 64f);
             }
+            static System.Numerics.Vector2 Mid(System.Numerics.Vector2 a, System.Numerics.Vector2 b) => new((a.X + b.X) * 0.5f, (a.Y + b.Y) * 0.5f);
             var r = new System.Collections.Generic.List<PathFigure>(figs.Count);
             foreach (PathFigure f in figs)
             {
-                var c = new PathFigure(T(f.Start)) { Closed = f.Closed };
-                foreach (PathSegment s in f.Segments)
-                    switch (s)
+                int n = f.Segments.Count;
+                // The turned controls, so each implied end can take the average of its own control
+                // and the next one (the last segment's next is the first, round the closed contour).
+                var ctl = new System.Numerics.Vector2?[n];
+                for (int i = 0; i < n; i++)
+                    if (f.Segments[i] is QuadraticBezierSegment qs) ctl[i] = T(qs.Control);
+                System.Numerics.Vector2 End(int i, System.Numerics.Vector2 p)
+                    => f.Segments[i] is QuadraticBezierSegment { ImpliedEnd: true } && ctl[i] is { } a && ctl[(i + 1) % n] is { } b ? Mid(a, b) : T(p);
+                System.Numerics.Vector2 start = f.ImpliedStart && n > 0 && ctl[n - 1] is { } la && ctl[0] is { } fa ? Mid(la, fa) : T(f.Start);
+                var c = new PathFigure(start) { Closed = f.Closed };
+                for (int i = 0; i < n; i++)
+                    switch (f.Segments[i])
                     {
                         case LineSegment l: c.Segments.Add(new LineSegment(T(l.Point))); break;
-                        case QuadraticBezierSegment qq: c.Segments.Add(new QuadraticBezierSegment(T(qq.Control), T(qq.Point))); break;
+                        case QuadraticBezierSegment qq: c.Segments.Add(new QuadraticBezierSegment(ctl[i].Value, End(i, qq.Point))); break;
                         case CubicBezierSegment b: c.Segments.Add(new CubicBezierSegment(T(b.Control1), T(b.Control2), T(b.Point))); break;
                     }
                 r.Add(c);
