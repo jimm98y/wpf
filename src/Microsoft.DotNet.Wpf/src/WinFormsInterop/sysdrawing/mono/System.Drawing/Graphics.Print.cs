@@ -262,9 +262,21 @@ namespace System.Drawing
 				: pen.StartCap == LineCap.Round || pen.StartCap == LineCap.RoundAnchor ? 2 : 0;
 			int join = pen.LineJoin == LineJoin.Bevel ? 1 : pen.LineJoin == LineJoin.Round ? 2 : 0;
 			float [] dash = DashOf (pen);
-			GpuRecorder.StrokePathData (ToXY (pts), types, ArgbOf (pen), PrintPenWidth (pen), dash,
+			GpuRecorder.StrokePathData (ToXY (pts), types, PrintPenArgb (pen), PrintPenWidth (pen), dash,
 				dash != null ? pen.DashOffset : 0f, cap, join, pen.MiterLimit);
 			return true;
+		}
+
+		// The colour a pen strokes with where it is put down as a vector: its own, or for a brush
+		// that has none (a texture, a path gradient -- Pen.Color throws for them) its brush's first.
+		static int PrintPenArgb (Pen pen)
+		{
+			switch (pen.BrushRef) {
+			case LinearGradientBrush lg: lg.GetGpuGradient (out _, out _, out Color c1, out _); return c1.ToArgb ();
+			case PathGradientBrush pg: return pg.CenterArgb;
+			case TextureBrush _: return unchecked ((int) 0xFF000000);
+			default: return ArgbOf (pen);
+			}
 		}
 
 		bool PrintStroke (Pen pen, Action<GraphicsPath> build)
