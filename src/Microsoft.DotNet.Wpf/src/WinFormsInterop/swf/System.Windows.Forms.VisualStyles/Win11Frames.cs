@@ -157,7 +157,7 @@ namespace System.Windows.Forms.VisualStyles
 		static readonly Dictionary<Frame, Bitmap> s_stateImages = new ();
 
 		/// <summary>Premultiplied source over destination, per channel.</summary>
-		static uint Over (uint s, uint d)
+		internal static uint Over (uint s, uint d)
 		{
 			uint sa = s >> 24, inv = 255 - sa, r = 0;
 			for (int sh = 0; sh < 32; sh += 8) {
