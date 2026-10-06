@@ -1970,6 +1970,8 @@ namespace System.Windows.Forms {
 			/// first frame is painted inside the button-down, before the button-up is seen.</summary>
 			public readonly List<bool> OutsideHeadingHot = new List<bool> ();
 			public bool StartHoverTitle;
+			/// <summary>Which zoom this is, from one: WF_ZOOM_FREEZE_AT picks one to freeze.</summary>
+			public int Index;
 		}
 
 		internal ZoomEffectState ZoomEffect => zoom_effect;
@@ -1980,6 +1982,12 @@ namespace System.Windows.Forms {
 		private static readonly double s_zoomFreeze =
 			double.TryParse (Environment.GetEnvironmentVariable ("WF_ZOOM_FREEZE"), System.Globalization.NumberStyles.Float,
 					 System.Globalization.CultureInfo.InvariantCulture, out double f) ? f : -1;
+
+		/// <summary>WF_ZOOM_FREEZE_AT=n: freeze only the n-th zoom, letting the ones before it run out --
+		/// a drill back in clicks the cells of views the earlier zooms must have finished drawing.</summary>
+		private static readonly int s_zoomFreezeAt =
+			int.TryParse (Environment.GetEnvironmentVariable ("WF_ZOOM_FREEZE_AT"), out int at) ? at : 0;
+		private int zoom_count;
 
 		/// <summary>Kept for the themes that ask: a zoom effect is running.</summary>
 		internal bool ZoomTransitioning => zoom_effect != null;
@@ -2016,7 +2024,7 @@ namespace System.Windows.Forms {
 		private void StartZoomEffect (ZoomLevel from, ZoomLevel to, int cell)
 		{
 			EndZoomEffect ();
-			var fx = new ZoomEffectState { From = from, To = to };
+			var fx = new ZoomEffectState { From = from, To = to, Index = ++zoom_count };
 			if (to > from) {
 				fx.A = ZoomEffectGrid (from);
 				fx.B = cell >= 0 ? ZoomCellRect (to, cell) : ZoomEffectGrid (to);
@@ -2032,10 +2040,15 @@ namespace System.Windows.Forms {
 			zoom_effect = fx;
 			// The pointer has not moved, but the view under it has: comctl32 finds what it is on in
 			// the new view at once -- a stock zoom's first picture already has that cell hot.
+			// The heading too: a second click on it, after the first zoom's end took the hot state
+			// away and with no move between, still draws the new view's heading hot in the zoom's
+			// first picture (stock, three recordings).
 			fx.StartHoverTitle = hover_title;
 			fx.FromHoverCell = hover_zoom_cell;
 			fx.FromHoverDate = hover_date;
 			if (last_mouse is Point at) {
+				HitTestInfo title_hit = HitTest (at.X, at.Y);
+				fx.StartHoverTitle = title_hit.HitArea == HitArea.TitleMonth || title_hit.HitArea == HitArea.TitleYear;
 				hover_zoom_cell = to != ZoomLevel.Days ? ZoomCellAt (at) : -1;
 				// Not HitTest: its layout is still the view being left's until the next paint, and it put
 				// the pointer a row lower (5 October where the 27th was under it).
@@ -2063,7 +2076,7 @@ namespace System.Windows.Forms {
 				fx.StartTick = Environment.TickCount;
 				return;
 			}
-			if (s_zoomFreeze >= 0) {
+			if (s_zoomFreeze >= 0 && (s_zoomFreezeAt <= 0 || fx.Index == s_zoomFreezeAt)) {
 				// A still of one frame, to set beside comctl32's: the grid is a function of progress
 				// alone; outside it, the frames before it are WF_ZOOM_FREEZE_ALPHAS (or this one alone).
 				fx.Progress = s_zoomFreeze;
@@ -2489,6 +2502,18 @@ namespace System.Windows.Forms {
 			// hide the year numeric up down if it was clicked
 			if (ShowYearUpDown && hti.HitArea != HitArea.TitleYear) {
 				ShowYearUpDown = false;
+			}
+			// While zoomed out the grid holds months, years or decades, so a click on one picks it and
+			// steps back in. By its cell, not HitTest's area: that is laid out as the days, and the top
+			// row of a zoomed grid lies on their day-name strip -- a click on 2020-2029 found DayOfWeek
+			// and did nothing.
+			if (zoom != ZoomLevel.Days && hti.HitArea is not (HitArea.PrevMonthButton or HitArea.NextMonthButton
+				or HitArea.TitleMonth or HitArea.TitleYear or HitArea.TodayLink)) {
+				int zoom_cell = ZoomCellAt (point);
+				if (zoom_cell >= 0) {
+					ZoomInto (zoom_cell);
+					return;
+				}
 			}
 			switch (hti.HitArea) {
 				case HitArea.PrevMonthButton:
