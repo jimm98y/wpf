@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -234,7 +234,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _dc.VpExt = new Size(Math.Max(1, GpMetafileFormat.Round(dst.Width)), Math.Max(1, GpMetafileFormat.Round(dst.Height)));
                 _base = _s.EmfWorldToDevice;
             }
-            _objects = new GdiObj[Math.Max(16, (int)Le.U16(d.Wmf, 10))];
+            _wmfObjects = Le.U16(d.Wmf, 10);
+            _objects = new GdiObj[Math.Max(16, _wmfObjects)];
+            // WmfEnumState's destination (+0x9d0): the viewport GDI+ set.
+            _dstX = _dc.VpOrg.X; _dstY = _dc.VpOrg.Y; _dstW = _dc.VpExt.Width; _dstH = _dc.VpExt.Height;
         }
 
         static bool FixedScale(int mode, out double perMm)

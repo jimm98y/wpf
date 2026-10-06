@@ -218,7 +218,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 // the background colour on its zeros -- or nothing there in TRANSPARENT mode.
                 byte[] bits = s_gdiHatch[b.Hatch];
                 uint fg = Rgb(b.Color), bg = transparentBk && _dc.BkMode == 1 ? NoPaint : Rgb(_dc.BkColor);
-                int hx = (int)MathF.Round(_base.Dx) + _dc.BrushOrg.X, hy = (int)MathF.Round(_base.Dy) + _dc.BrushOrg.Y;
+                int hx = (int)MathF.Round(_base.Dx) + _dc.BrushOrg.X + WmfPatternX, hy = (int)MathF.Round(_base.Dy) + _dc.BrushOrg.Y + WmfPatternY;
                 return (x, y) => (bits[(((y - hy) % 8) + 8) % 8] & (0x80 >> ((((x - hx) % 8) + 8) % 8))) != 0 ? fg : bg;
             }
             Bitmap pat;
@@ -239,9 +239,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++) px[y * w + x] = Rgb(pat.GetPixel(x, y));
             if (own) pat.Dispose();
-            int ox = (int)MathF.Round(_base.Dx) + _dc.BrushOrg.X, oy = (int)MathF.Round(_base.Dy) + _dc.BrushOrg.Y;
+            int ox = (int)MathF.Round(_base.Dx) + _dc.BrushOrg.X + WmfPatternX, oy = (int)MathF.Round(_base.Dy) + _dc.BrushOrg.Y + WmfPatternY;
             return (x, y) => px[(((y - oy) % h + h) % h) * w + ((x - ox) % w + w) % w];
         }
+
+        // A WMF's patterns line up with the device the DIB is drawn onto, not with the DIB.
+        int WmfPatternX => _wmfCanvas ? -(int)MathF.Floor(_canvasDest[0].X + 0.5f) : 0;
+        int WmfPatternY => _wmfCanvas ? -(int)MathF.Floor(_canvasDest[0].Y + 0.5f) : 0;
 
         /// <summary>A pattern pixel that is not painted (a hatch's background in TRANSPARENT mode).</summary>
         const uint NoPaint = 0xffffffff;
