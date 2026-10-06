@@ -287,11 +287,10 @@ namespace Wpf.WinFormsInterop.Tests
             return (double)count / (a.Width * a.Height);
         }
 
-        /// <summary>Text under a turned world transform: its down-level records are GDI+'s byte for
-        /// byte (recorded on the fixture's own screen, ScreenFor) and its EMF+ playback within the
-        /// tolerance, but its GDI playback is not yet exact: six pixels of the 15-degree ClearType
-        /// run are a level off.</summary>
-        static readonly HashSet<string> TurnedTextPending = new HashSet<string> { };
+        /// <summary>Scenarios whose GDI playback is not yet pixel-exact. Empty: text_rotate's 15-degree
+        /// ClearType run, the last one, became exact when the implied on-curve points were made from
+        /// the TURNED controls (fsc_FillGlyph averages them after scl_PostTransformGlyph).</summary>
+        static readonly HashSet<string> TurnedTextPending = new HashSet<string>();
 
         public static TheoryData<string> EmfPlusPlaybackScenarios()
         {

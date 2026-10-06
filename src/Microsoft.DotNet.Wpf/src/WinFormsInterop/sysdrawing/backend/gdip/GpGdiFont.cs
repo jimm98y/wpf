@@ -34,6 +34,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
     internal sealed class GpGdiFont
     {
         public TrueTypeFont Face;
+        /// <summary>For a SIMULATED italic, the same file without the synthesized slant: ttfd puts
+        /// FO_SIM_ITALIC's shear into the matrix (bSetXform @14001c2c8), so a font whose matrix is
+        /// not a plain scale is fitted unslanted and slanted by the scaler's post-transform.</summary>
+        public TrueTypeFont UprightFace;
         public string FaceName = "";     // as asked, '@' stripped
         public bool Vertical;            // an '@' face
         public int Ppem;
@@ -105,7 +109,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (ppem <= 0) ppem = 1;
             var g = new GpGdiFont
             {
-                Face = t, FaceName = face, Vertical = vertical, Ppem = ppem, Escapement = esc, Weight = weight,
+                Face = t, UprightFace = t.SynthesizesOblique && Resolve(face, sim & 1) is { SynthesizesOblique: false } u ? u : null,
+                FaceName = face, Vertical = vertical, Ppem = ppem, Escapement = esc, Weight = weight,
                 Italic = italic, Underline = ul, StrikeOut = so, Quality = quality,
             };
             if (esc % 3600 != 0)
@@ -146,8 +151,32 @@ namespace System.Drawing.WebGpuBackend.Gdip
         static TrueTypeFont Resolve(string family, int sim)
         {
             if (string.IsNullOrEmpty(family) || FontFiles.Find(family, false, false) == null) return null;
-            return TextMetrics.FontFor(sim, family) as TrueTypeFont;
+            bool bold = (sim & 1) != 0, italic = (sim & 2) != 0;
+            string path = FontFiles.Find(family, bold, italic);
+            if (path == null) return TextMetrics.FontFor(sim, family) as TrueTypeFont;
+            // The face the realization starts from, and what it still has to simulate, per axis:
+            // the file's own 'head'.macStyle against the style asked (TextMetrics.FontFor's single
+            // "styled file" answer drew Tahoma Bold Italic as upright bold, its file being the
+            // bold one), opened at the family's own face in a collection (FontFor reads a .ttc
+            // from byte zero, its 'ttcf' header, and Cambria silently became the default face).
+            string key = path + "|" + family + "|" + sim;
+            lock (s_faces)
+            {
+                if (s_faces.TryGetValue(key, out TrueTypeFont made)) return made;
+                try
+                {
+                    byte[] bytes = System.IO.File.ReadAllBytes(path);
+                    int sfnt = FontFiles.SfntOffset(bytes, family, bold, italic);
+                    FontFiles.DeclaredStyle(bytes, sfnt, out bool fileBold, out bool fileItalic);
+                    made = new TrueTypeFont(bytes, bold && !fileBold, italic && !fileItalic, sfnt);
+                }
+                catch (Exception) { made = null; }
+                made ??= TextMetrics.FontFor(sim, family) as TrueTypeFont;
+                s_faces[key] = made;
+                return made;
+            }
         }
+        static readonly Dictionary<string, TrueTypeFont> s_faces = new Dictionary<string, TrueTypeFont>();
 
         /// <summary>The advance GDI spaces this glyph by, in whole pixels.</summary>
         public int GlyphAdvance(int gid)
