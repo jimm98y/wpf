@@ -101,10 +101,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     while (j < n && lv [j] >= level) j++;
                     int u0 = int.MaxValue, u1 = int.MinValue;
                     for (int k = i; k < j; k++) { u0 = Math.Min (u0, u [k]); u1 = Math.Max (u1, u [k] + segs [k].Width); }
-                    // The spaces hanging past the line's end stay outside the mirrored span -- of a
-                    // reversal that opens the line; one after a run of the line's own direction
-                    // mirrors them with it (measured on the right-to-left batteries).
-                    if (i == 0 && u1 > line.Ls.UrLim && u0 < line.Ls.UrLim) u1 = line.Ls.UrLim;
+                    // ReverseDisplay @180111030 lays the subline out from dup - 1 of the object's own
+                    // presentation: the trailing spaces of a subline submitted for the trailing
+                    // area have no width there (GpLineServices), so they sit at its ink's end.
                     for (int k = i; k < j; k++) u [k] = u0 + u1 - u [k] - segs [k].Width;
                     i = j;
                 }

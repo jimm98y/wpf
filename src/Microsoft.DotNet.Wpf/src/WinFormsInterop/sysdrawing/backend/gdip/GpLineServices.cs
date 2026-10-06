@@ -158,7 +158,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         overflow = true;
                         // A tab whose stop is past the margin breaks through it: the line ends
                         // after the tab (GdipLscbkGetBreakThroughTab).
-                        end = chars [i].Kind == 1 ? i + 1 : FindBreak (chars, i);
+                        end = chars [i].Kind == 1 ? i + 1 : FindBreak (chars, i, fti.ParagraphLevel);
                         break;
                     }
                     u = nu;
@@ -166,6 +166,35 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             if (overflow) endPara = false;
             else if (eop != null && end == chars.Count) { }
+            // ---- the trailing area ----
+            // GetTrailingInfoForTextGroupChunk @18011ec90 walks back from the line's end over its
+            // white space. A reversal object (ols::ols installs the reversal; one per run of runs
+            // nested deeper than the paragraph, CreateLevelChangeRuns @1800f0218) stops it -- unless
+            // its subline was submitted for the trailing area: ReverseSetBreak @180111c90 resubmits
+            // it (LsdnSubmitSublines @180119450, fUseForTrailingArea) when GdipLscbkReverseGetInfo
+            // (@180243e30) asked to suppress trailing spaces (always), the object was first on the
+            // line (ReverseFmt keeps lsfgi.fFirstOnLine: ProcessOneRun @180046248 sets it only for
+            // the first dnode of the MAIN subline, CreateSublineCore @1801127d8 clears +0x62 for every
+            // other) and the line breaks inside it (brkkind prev/next/force, the break before its
+            // end). That subline's trailing spaces are then part of the line's trailing area, and its
+            // presentation (CalcPresForDnodeWithSublines -> CalcPresChunk, never last on the line)
+            // gives them no width.
+            int pl = fti.ParagraphLevel;
+            int Lv (int k) => chars [k].Kind == 2 || chars [k].Run == null ? pl : chars [k].Run.Level;
+            var collapsed = new bool [end];
+            int trailFrom = end;
+            for (int k = end - 1; k >= 0;) {
+                if (Lv (k) <= pl) {
+                    if (chars [k].Space || chars [k].Kind == 2 || chars [k].Kind == 3) { trailFrom = k--; continue; }
+                    break;
+                }
+                int rs = k;
+                while (rs > 0 && Lv (rs - 1) > pl) rs--;
+                bool brokenInside = end < chars.Count && Lv (end) > pl;
+                if (rs != 0 || !brokenInside) break;
+                while (k >= rs && Lv (k) == pl + 1 && chars [k].Space) { collapsed [k] = true; trailFrom = k--; }
+                if (k >= rs) break;
+            }
             // ---- the line's metrics and display nodes ----
             int pos = 0;
             int lastInk = 0;
@@ -178,9 +207,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     line.Segs.Add (seg);
                 }
                 seg.CpLim = ch.Cp + 1;
-                seg.Width += ch.Width;
-                pos += ch.Width;
-                if (!ch.Space && ch.Kind != 2 && ch.Kind != 3) lastInk = pos;
+                int w = collapsed [i] ? 0 : ch.Width;
+                seg.Width += w;
+                pos += w;
+                if (i < trailFrom) lastInk = pos;
             }
             // Glyph arrays for the text nodes.
             foreach (Seg s in line.Segs) {
@@ -201,6 +231,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     s.Adv [g] = adv [g0 - lg0 + g];
                     s.OffU [g] = ou [g0 - lg0 + g];
                     s.OffV [g] = ov [g0 - lg0 + g];
+                }
+                for (int i = 0; i < end; i++) {
+                    if (!collapsed [i] || chars [i].Run != run || chars [i].Cp < s.Cp || chars [i].Cp >= s.CpLim) continue;
+                    int g = run.Shape.ClusterMap [chars [i].Cp - run.Cp] - s.G0;
+                    if (g >= 0 && g < s.GCount) s.Adv [g] = 0;
                 }
             }
             line.UrLim = lastInk;
@@ -247,8 +282,28 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>FindPrevBreakText from the truncation character <paramref name="t"/>: the
         /// character index the line ends before.</summary>
-        static int FindBreak (List<Ch> chars, int t)
+        static int FindBreak (List<Ch> chars, int t, int paraLevel)
         {
+            int trunc = t;
+            bool InSubline (int k) => chars [k].Run != null && chars [k].Kind != 2 && chars [k].Run.Level > paraLevel;
+            // A space in a reversal's subline (TryBreakAtSpace @18011c570: the subline is not the
+            // main one, +0x62) breaks by TryBreakAtSpaceWrap @18011c720: the space does not hang
+            // there, so the truncation can fall on it. Across it from the last non-space before:
+            // to the truncation space itself when two or more spaces lead up to it, else to the
+            // character after it (FindNextChar) -- a space when the run goes on, which the classes
+            // rarely break across. Failing that, the search goes on from the character before the
+            // space (each further space of the run tried the same way).
+            if (chars [t].Space && InSubline (t)) {
+                int b = t - 1;
+                while (b >= 0 && chars [b].Space) b--;
+                for (int s = t; s > b; s--) {
+                    int a = s == t && t - b > 1 ? t : s + 1;
+                    if (b < 0) return Math.Max (1, a);
+                    if (a < chars.Count && GpTextTables.CanBreakAcrossSpaces (chars [b].Brk, chars [a].Brk)) return a;
+                }
+                if (b < 1) return ForceBreak (chars, t);
+                t = b;
+            }
             // Back from the truncation point: the last opportunity at or before it.
             for (int p = t; p > 0; p--) {
                 Ch after = chars [p], before = chars [p - 1];
@@ -261,12 +316,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     while (q >= 0 && chars [q].Space) q--;
                     if (q < 0) return p;
                     if (GpTextTables.CanBreakAcrossSpaces (chars [q].Brk, after.Brk)) return p;
+                    // In a subline the run's other spaces are tried too (TryBreakAtSpaceWrap from
+                    // each, the character after it a space).
+                    if (InSubline (p - 1))
+                        for (int s = p - 2; s > q; s--)
+                            if (GpTextTables.CanBreakAcrossSpaces (chars [q].Brk, chars [s + 1].Brk)) return s + 1;
                     continue;
                 }
                 if (before.Kind == 1 || after.Kind == 1) return p;
                 if (GpTextTables.CanBreakDirect (before.Brk, after.Brk)) return p;
             }
-            // ForceBreakCore: before the truncation character, or after it when it is the first.
+            return ForceBreak (chars, trunc);
+        }
+
+        /// <summary>ForceBreakCore: before the truncation character, or after it when it is the first.</summary>
+        static int ForceBreak (List<Ch> chars, int t)
+        {
             int f = t;
             if (f == 0) {
                 f = 1;
