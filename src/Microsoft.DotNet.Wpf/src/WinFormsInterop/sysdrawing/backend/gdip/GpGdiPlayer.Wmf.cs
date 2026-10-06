@@ -867,7 +867,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 finally { bw.Dispose(); }
                 return;
             }
-            OutputDibWmf(b, d, xd, yd, wd, hd, xs, ys, ws, hs, rop);
+            OutputDibWmf(b, d, n, xd, yd, wd, hd, xs, ys, ws, hs, rop);
         }
 
         /// <summary>WmfEnumState::DIBBitBlt @1800b6770: META_DIBBITBLT / META_DIBSTRETCHBLT. Without a
@@ -902,7 +902,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             // OutputDIB's source y counts from the bottom: biHeight - ySrc - srcH.
             int h = Math.Abs(d.Height);
-            OutputDibWmf(b, d, xd, yd, wd, hd, xs, h - hs - ys, ws, hs, rop);
+            OutputDibWmf(b, d, n, xd, yd, wd, hd, xs, h - hs - ys, ws, hs, rop);
         }
 
         void MonoBlit(byte[] b, in WmfDib d, int xd, int yd, int wd, int hd, int xs, int ys, int ws, int hs, int rop)
@@ -932,7 +932,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>MfEnumState::OutputDIB @1800b7eb0 on a WMF DIB: rewritten when the playback
         /// recolours (or the colours are palette indices), then stretched as Raster.cs does it.</summary>
-        void OutputDibWmf(byte[] b, in WmfDib d, int xd, int yd, int wd, int hd, int xs, int ys, int ws, int hs, int rop)
+        void OutputDibWmf(byte[] b, in WmfDib d, int paramBytes, int xd, int yd, int wd, int hd, int xs, int ys, int ws, int hs, int rop)
         {
             Bitmap bm = null;
             bool modified = false;
@@ -940,7 +940,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 if (ModifyDib(b, d.H, d.BitsAt, d.Usage, ColorAdjustType.Bitmap, out byte[] info, out byte[] bits, out _, d.NumPal))
                 {
-                    // the modified record must hold the rewritten DIB
+                    // OutputDIB @1800b7fac: the header and bits (not the colours) measured against the
+                    // record the DIB came from (+0xa8); a rewritten DIB too big for it is not drawn
+                    if ((long)Le.I32(info, 0) + bits.Length > paramBytes) return;
                     bm = DibFromInfo(info, 0, info.Length, bits, 0, bits.Length);
                     modified = true;
                 }

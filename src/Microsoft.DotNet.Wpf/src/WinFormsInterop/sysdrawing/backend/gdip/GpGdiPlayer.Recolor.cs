@@ -22,8 +22,8 @@
 //        RGB), or the pixels of a 16, 24 or 32bpp DIB (BI_RGB or BI_BITFIELDS) into a 24bpp one
 //        (Modify16BppDib @1800b75e0 expands 5 and 6 bits by repeating them); a black-and-white
 //        monochrome DIB is left alone unless the blit is SRCCOPY (or it is a pattern brush)
-//   MfEnumState::OutputDIB @1800b7eb0        a modified DIB whose header, colours and bits do not
-//        fit in the record they came from is not drawn at all
+//   MfEnumState::OutputDIB @1800b7eb0        a modified DIB whose header and bits (@1800b7fac: not
+//        its colours) do not fit in the record they came from is not drawn at all
 //
 
 using System.Drawing.Imaging;
@@ -159,28 +159,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             // A black-and-white monochrome DIB keeps its colours unless the blit copies it.
             if (rop != 0x00cc0020 && IsBlackWhite(b, h0, false)) return false;
             if (!ModifyDib(b, h0, rec + offBits, usage, ColorAdjustType.Bitmap, out byte[] info, out byte[] bits, out bpp)) return false;
-            // MfEnumState::OutputDIB: the DIB must fit in the record's data.
-            if (blit && info.Length + bits.LongLength > Le.I32(b, rec + 4) - 8) { drop = true; return true; }
-            bm = DibFromInfo(info, 0, info.Length, bits, 0, bits.Length);
-            return true;
-        }
-
-        /// <summary>A WMF record's packed DIB (at <paramref name="dib"/>, the record's parameters
-        /// <paramref name="paramBytes"/> long) as WmfEnumState rewrites it: DIBBITBLT, DIBSTRETCHBLT
-        /// and STRETCHDIB as Bitmap (a 1bpp black-and-white DIB left alone), a BS_DIBPATTERN brush
-        /// (DibCreatePatternBrush @1800b6c68) as Brush.</summary>
-        bool ModifiedPackedDib(byte[] b, int dib, int paramBytes, int usage, bool brush, out Bitmap bm, out bool drop)
-        {
-            bm = null; drop = false;
-            if (Rc == null || dib + 40 > b.Length) return false;
-            if (!brush && IsBlackWhite(b, dib, true)) return false;
-            int biSize = Le.I32(b, dib);
-            if (biSize < 40 || dib + biSize > b.Length) return false;
-            int bitCount = Le.U16(b, dib + 14), comp = Le.I32(b, dib + 16), clrUsed = Le.I32(b, dib + 32);
-            int numPal = bitCount <= 8 ? (clrUsed != 0 ? clrUsed : 1 << bitCount) : comp == 3 ? 3 : 0;
-            int bitsAt = dib + biSize + numPal * (usage == 1 && bitCount <= 8 ? 2 : 4);
-            if (!ModifyDib(b, dib, bitsAt, usage, brush ? ColorAdjustType.Brush : ColorAdjustType.Bitmap, out byte[] info, out byte[] bits, out _)) return false;
-            if (!brush && info.Length + bits.LongLength > paramBytes) { drop = true; return true; }
+            // MfEnumState::OutputDIB @1800b7fac: biSize + the bits must fit in the record's data.
+            if (blit && (long)Le.I32(info, 0) + bits.LongLength > Le.I32(b, rec + 4) - 8) { drop = true; return true; }
             bm = DibFromInfo(info, 0, info.Length, bits, 0, bits.Length);
             return true;
         }
