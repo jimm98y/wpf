@@ -17,7 +17,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
 {
     internal static class GdiHalftone
     {
-        internal static string Trace; // TRACE
         // AAHEADER flags (SetupAAHeader @140148260 local_e8, ComputeAABBP @1401479b0)
         const int AAHF_FLIP_X = 0x1, AAHF_FLIP_Y = 0x2, AAHF_FIXUP = 0x40, AAHF_NO_AA = 0x200,
                   AAHF_FAST_EXP = 0x4000, AAHF_SHRINK_AREA = 0x80000;
@@ -745,7 +744,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _rd = new Reader(_s, sl, _ax.CIn, st, _ay.CIn);
                 if ((_flags & AAHF_FIXUP) != 0) _fix = new Fixup(_rd, _ax.CIn, _ay.CIn);
                 _dstX0 = cl; _dstY0 = ct;
-                Trace = ((_flags & AAHF_NO_AA) != 0 ? "n" : "a") + ((_flags & AAHF_FIXUP) != 0 ? "f" : "") + _cyMode + "" + _cxMode + ((_flags & AAHF_FAST_EXP) != 0 ? "F" : ""); // TRACE
 
                 if ((_flags & AAHF_NO_AA) != 0)
                 {
@@ -760,7 +758,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         case 1: BltDIB_CY(); break;
                         case 2: ShrinkDIB_CY(); break;
                         case 3: ShrinkDIB_CY_SrkCX(); break;
-                        case 5: if ((_flags & AAHF_FAST_EXP) == 0) return null; FastExpAA_CY(); break;
+                        case 4: ExpandDIB_CY(); break;
+                        case 5: if ((_flags & AAHF_FAST_EXP) != 0) FastExpAA_CY(); else ExpandDIB_CY_ExpCX(); break;
                         default: return null;
                     }
                 }
@@ -826,7 +825,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             seen.Add(key); fresh = true;
                         }
                     }
-                    if (!over && limit != 20 && !fresh)
+                    if (limit != 20 && !fresh)
                     {
                         n -= cx;
                         if (n <= 0x900) { _flags |= AAHF_NO_AA; break; }
@@ -972,7 +971,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (first == -1) return null;
                 int srcFirst = first, srcLast = lastSrc + 1 >= srcMin && lastSrc + 1 < srcMax ? lastSrc + 1 : lastSrc;
                 a.E = ent.ToArray(); a.Count = ent.Count; a.Extra = extra; a.Taps = n3 == 0 ? 2 : n4 != 0 ? 4 : 3;
-                if (Environment.GetEnvironmentVariable("HT_DBG") != null) { Console.WriteLine($"expand cIn {cIn} cOut {cOut} m {m} w [{string.Join(",", w)}] first {first} pre? "); for (int q = 0; q < Math.Min(6, ent.Count); q++) Console.WriteLine($"  e{q}: {ent[q] & 0xffff:x4} {(ent[q] >> 16) & 0xffff:x4} {(ent[q] >> 32) & 0xffff:x4} {ent[q] >> 48:x4}"); } // TRACE
                 ulong e0 = a.E[0];
                 int lim, x = first;     // w10: first, or first + 1 once tested below
                 if ((e0 & 0x8000) == 0)
@@ -995,7 +993,6 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
                 if (a.PreRead != 0 && x >= srcMin && x < srcMax) { srcFirst = x; a.Flags |= 1; }
                 a.SrcFirst = srcFirst; a.SrcLast = srcLast; a.DstFirst = firstDst; a.DstLast = lastDst;
-                if (Environment.GetEnvironmentVariable("HT_DBG") != null) Console.WriteLine($"  srcFirst {srcFirst} srcLast {srcLast} pre {a.PreRead:x} flags {a.Flags} dst {firstDst}..{lastDst}"); // TRACE
                 a.CIn = srcLast - srcFirst + 1; a.COut = lastDst - firstDst + 1;
                 return a;
             }
@@ -1424,8 +1421,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
             // SharpenInput @14014e390: (12 cur - prev - next - left - right) / 8 of each pixel of a scan (its
             // ends replicated), into o; then o gets three replicated pixels on the left and two on the right.
-            // Lines carry 9 bytes of padding before index 0 (P0).
-            const int P0 = 9;
+            // Lines carry 12 bytes of padding before index 0 (P0).
+            const int P0 = 12;
 
             static byte Clamp3(int v)
             {
@@ -1529,6 +1526,138 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         Output(bgr);
                         rowsLeft--;
                     }
+                }
+            }
+
+            // The vertical half of both enlarging passes (ExpandDIB_CY, ExpandDIB_CY_ExpCX): four sharpened scans,
+            // S3 the newest, under the entry's weights; the lower weights only join while the one below them is
+            // non-zero (h0 != 0 takes all four, else h1 != 0 three, else h2 != 0 two).
+            static void Expand4(ulong e, byte[] s0, byte[] s1, byte[] s2, byte[] s3, byte[] dst, int n)
+            {
+                int h0 = (int)(e & 0x3fff), h1 = (int)(e >> 16) & 0xffff, h2 = (int)(e >> 32) & 0xffff, h3 = (int)(e >> 48);
+                for (int i = 0; i < n; i++)
+                {
+                    int v = 0x1000 + s3[i] * h3;
+                    if (h0 != 0) v += s0[i] * h0 + s1[i] * h1 + s2[i] * h2;
+                    else if (h1 != 0) v += s1[i] * h1 + s2[i] * h2;
+                    else if (h2 != 0) v += s2[i] * h2;
+                    dst[i] = (byte)(v >> 13);
+                }
+            }
+
+            // ExpandDIB_CY @14014bd20: the destination-width scans of the x pass in a ring of six; each new one
+            // sharpens the one before it against its neighbours ((6c - up - down) / 4), into the oldest's place.
+            void ExpandDIB_CY()
+            {
+                AAInfo ax = _ax, ay = _ay;
+                int nb = ax.COut * 3;
+                var B = new byte[6][];
+                for (int i = 0; i < 6; i++) B[i] = new byte[nb + 16];
+                var line = new byte[ax.CIn * 3 + 16];
+                var bgr = new byte[nb + 16];
+                GetScan(line); CX(line, B[4]);
+                if ((ay.Flags & 1) != 0) { GetScan(line); CX(line, B[5]); }
+                else Array.Copy(B[4], B[5], nb);
+                int hi = ay.PreRead >> 4, total = (ay.PreRead & 0xf) + hi;
+                for (; total != 0; total--)
+                {
+                    RotateRows(B);
+                    if (hi-- > 0) Array.Copy(B[4], B[5], nb);
+                    else { GetScan(line); CX(line, B[5]); }
+                    SharpenRows(B[3], B[4], B[5], nb);
+                }
+                for (int j = 0; j < ay.Count; j++)
+                {
+                    ulong e = ay.E[j];
+                    if ((e & 0x8000) != 0)
+                    {
+                        RotateRows(B);
+                        GetScan(line); CX(line, B[5]);
+                        SharpenRows(B[3], B[4], B[5], nb);
+                    }
+                    Expand4(e, B[0], B[1], B[2], B[3], bgr, nb);
+                    Output(bgr);
+                }
+            }
+
+            static void RotateRows(byte[][] B)
+            {
+                byte[] b0 = B[0];
+                B[0] = B[1]; B[1] = B[2]; B[2] = B[3]; B[3] = B[4]; B[4] = B[5]; B[5] = b0;
+            }
+
+            // B3 := (6 B4 - B5 - B3) / 4
+            static void SharpenRows(byte[] b3, byte[] b4, byte[] b5, int n)
+            {
+                for (int i = 0; i < n; i++) b3[i] = Clamp2(b4[i] * 6 - b5[i] - b3[i]);
+            }
+
+            // ExpYDIB_ExpCX @14014b7d8: the x half of ExpandDIB_CY_ExpCX straight off a SharpenInput scan; the
+            // pointer moves on a pixel with 0x8000, the weights reach three pixels back (the nesting as in
+            // ExpandDIB_CX).
+            static void ExpYDIB_ExpCX(AAInfo a, byte[] src, int p, byte[] dst)
+            {
+                for (int j = 0; j < a.COut; j++)
+                {
+                    ulong e = a.E[j];
+                    p += (int)((e >> 15) & 1) * 3;
+                    int h0 = (int)(e & 0x3fff), h1 = (int)(e >> 16) & 0xffff, h2 = (int)(e >> 32) & 0xffff, h3 = (int)(e >> 48);
+                    for (int c = 0; c < 3; c++)
+                    {
+                        int v = src[p + c] * h3;
+                        if (h2 != 0)
+                        {
+                            v += src[p - 3 + c] * h2;
+                            if (h1 != 0)
+                            {
+                                v += src[p - 6 + c] * h1;
+                                if (h0 != 0) v += src[p - 9 + c] * h0;
+                            }
+                        }
+                        dst[3 * j + c] = (byte)((v + 0x1000) >> 13);
+                    }
+                }
+            }
+
+            // ExpandDIB_CY_ExpCX @14014c5a0: both axes enlarge (more than five times). Raw source scans are
+            // sharpened in two dimensions (SharpenInput), taken across by ExpYDIB_ExpCX into a ring of four,
+            // and down by the y entries.
+            void ExpandDIB_CY_ExpCX()
+            {
+                AAInfo ax = _ax, ay = _ay;
+                int sb = ax.CIn * 3, nb = ax.COut * 3, len = sb + P0 + 12;
+                byte[] rS = new byte[len], rD = new byte[len], r28 = new byte[len], o = new byte[len];
+                var R = new byte[4][];
+                for (int i = 0; i < 4; i++) R[i] = new byte[nb + 16];
+                var bgr = new byte[nb + 16];
+                uint ri = 0xffffffff;
+                int xp = P0 + ((ax.Flags & 1) + (ax.PreRead & 0xf)) * 3 - 3;
+                GetScan(rS, P0);
+                if ((ay.Flags & 1) != 0) GetScan(rD, P0);
+                else Array.Copy(rS, P0, rD, P0, sb);
+                int hi = ay.PreRead >> 4, total = (ay.PreRead & 0xf) + hi;
+                for (; total != 0; total--)
+                {
+                    byte[] t = rS; rS = rD; rD = r28; r28 = t;
+                    ri++;
+                    if (hi-- >= 1) Array.Copy(rS, P0, rD, P0, sb);
+                    else GetScan(rD, P0);
+                    SharpenInput(o, r28, rS, rD, sb);
+                    ExpYDIB_ExpCX(ax, o, xp, R[ri & 3]);
+                }
+                for (int j = 0; j < ay.Count; j++)
+                {
+                    ulong e = ay.E[j];
+                    if ((e & 0x8000) != 0)
+                    {
+                        GetScan(r28, P0);
+                        SharpenInput(o, rS, rD, r28, sb);
+                        ri++;
+                        ExpYDIB_ExpCX(ax, o, xp, R[ri & 3]);
+                        byte[] t = rS; rS = rD; rD = r28; r28 = t;
+                    }
+                    Expand4(e, R[(ri + 1) & 3], R[(ri - 2) & 3], R[(ri - 1) & 3], R[ri & 3], bgr, nb);
+                    Output(bgr);
                 }
             }
 
