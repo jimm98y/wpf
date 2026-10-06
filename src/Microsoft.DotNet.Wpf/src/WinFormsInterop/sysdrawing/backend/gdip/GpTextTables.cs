@@ -132,10 +132,20 @@ namespace System.Drawing.WebGpuBackend.Gdip
             get { try { return System.Globalization.CultureInfo.CurrentCulture.LCID & 0xffff; } catch (Exception) { return 0x409; } }
         }
 
+        /// <summary>ConvertDefaultLocale (LOCALE_SYSTEM_DEFAULT): the system locale (GetSystemDefaultLCID),
+        /// not the UI language.</summary>
         static int SystemDefaultLangId
         {
-            get { try { return System.Globalization.CultureInfo.InstalledUICulture.LCID & 0xffff; } catch (Exception) { return 0x409; } }
+            get {
+                try {
+                    if (OperatingSystem.IsWindows ()) return GetSystemDefaultLCID () & 0xffff;
+                    return System.Globalization.CultureInfo.InstalledUICulture.LCID & 0xffff;
+                } catch (Exception) { return 0x409; }
+            }
         }
+
+        [System.Runtime.InteropServices.DllImport ("kernel32.dll")]
+        static extern int GetSystemDefaultLCID ();
 
         /// <summary>The user's LOCALE_IDIGITSUBSTITUTION: 0 context, 1 none, 2 national.</summary>
         static int UserDigitSubstitute
