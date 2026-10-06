@@ -25,13 +25,17 @@
 //   escapement    a quarter turn: the glyph fitted at its own two ppems, its outline turned onto
 //                 the device and scanned and filtered there like any other; a vertical ('@')
 //                 face's full-width glyphs take their 'vert' form, stand upright and are moved by
-//                 vCalcXformVertical's shift. Other angles, and a mapping that turns, are not drawn
-//                 here (the old path draws them)
+//                 vCalcXformVertical's shift. Any other angle (and a simulated italic at any
+//                 angle but 0, whose slant bSetXform puts in the matrix) takes ttfd's general
+//                 rotation (GeneralRealization): fitted at the folded rows' ppems, turned by
+//                 scl_PostTransformGlyph, implied midpoints made after the turn, the 45-degree
+//                 trick's one-unit shift. A mapping that turns is not drawn here (the old path)
 //   ink           through the DC's clip and ETO_CLIPPED; the background (OPAQUE mode or ETO_OPAQUE)
 //                 the text box in the background colour
 //
-// NOT EXACT: a turned glyph's fit (Times New Roman 'A' at 21 x 29 in the text scenario, about
-// 100 pixels); which glyphs ttfd counts full-width (its per-glyph bit set is not modelled) and the
+// NOT EXACT: a simulated italic at exactly 180 degrees (m01 = 0 keeps compatible widths: a few
+// pixels; the harness has no two-pass oracle for it), an upright simulated italic above ~30ppem
+// (the scale-only path, not the slanted matrix); which glyphs ttfd counts full-width (its per-glyph bit set is not modelled) and the
 // signs of the vertical shift (read off the fixture's ellipsis); a positive lfHeight's VDMX search.
 //
 
@@ -62,11 +66,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GdiXform wtod = TargetWtoD();
             GeneralFit gen = null;
             int rx, ry; bool rStretch;
-            if (font.Escapement % 900 != 0)
+            // A simulated italic turned by any angle is not a quarter turn to the scaler: bSetXform
+            // adds the slant to the glyph's y row, so even 90 and 180 degrees take the general path.
+            bool simItalic = font.UprightFace != null && font.Escapement % 3600 != 0;
+            if (font.Escapement % 900 != 0 || simItalic)
             {
                 // Any other angle: ttfd's general rotation (GeneralRealization).
                 if (m.M11 <= 0f || m.M22 <= 0f) return false;
-                gen = GeneralRealization(font, lf, wtod.M11, wtod.M22, font.Escapement);
+                gen = GeneralRealization(font, lf, wtod.M11, wtod.M22, font.Escapement, simItalic);
                 if (gen == null) return true;
                 (rx, ry, rStretch, q) = (gen.PpemX, gen.PpemY, gen.Stretched, 0);
             }
@@ -208,7 +215,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     // bRealizeFont gives the contrast palette only to a font whose ascender is upright:
                     // RFONT +0x140, fxMaxAscender times the unit ascender's x, must round to zero.
                     bool contrastOk = gen == null ? q % 2 == 0 : Math.Round(font.Ascent * 16.0 * gen.UaX) == 0;
-                    CtLevels lv = GdiClearTypeRun(font.Face, gids, xs, ys, ppemAlong, ppemAcross, gen != null ? -1 : q, (ax, ay, dnx, dny), upright, gen != null ? gen.Stretched : rStretch, gen, contrastOk);
+                    CtLevels lv = GdiClearTypeRun(gen != null && gen.Slanted ? font.UprightFace : font.Face, gids, xs, ys, ppemAlong, ppemAcross, gen != null ? -1 : q, (ax, ay, dnx, dny), upright, gen != null ? gen.Stretched : rStretch, gen, contrastOk);
                     (byte[] A, byte[] B) = CtGamma();
                     uint inkRgb = Rgb(_dc.TextColor);
                     int ir = (int)(inkRgb >> 16) & 255, ig = (int)(inkRgb >> 8) & 255, ib = (int)inkRgb & 255;
@@ -260,6 +267,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public int PpemX, PpemY;            // scl_InitializeScaling's rounded row scales
             public int EmPpem;                  // the context's own ppem (+0x7c): what the gasp is read at
             public bool Rotated, Stretched;     // globals[0x169] bits 0 and 1
+            public bool Slanted;                // FO_SIM_ITALIC's shear is in the matrix
+            public bool Phase45;                // mth_Max45Trick: a row of the folded matrix within 0x22 of 45 degrees
+            public bool Axial;                  // the context's matrix (unslanted) is diagonal or a quarter turn (TT_FONTCONTEXT +0x74 bits 0, 1)
+            public bool M00Zero, M01Zero;       // what fs__NewTransformation reads off the matrix for the word
             public int P00, P01, P10, P11;      // the post-transform, 16.16, glyph y-up to device y-up
             public float UbX, UbY;              // the unit base vector on the screen (y down)
             public float UaX, UaY;              // the unit ascender on the screen
@@ -281,7 +292,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <item>scl_PostTransformGlyph @1400955f0 -> mth_IntelMul @140026b40: the folded matrix
         /// with row 0 divided by x's UNROUNDED scale and row 1 by y's.</item>
         /// </list></summary>
-        GeneralFit GeneralRealization(GpGdiFont font, GdiFont lf, float m11, float m22, int esc)
+        GeneralFit GeneralRealization(GpGdiFont font, GdiFont lf, float m11, float m22, int esc, bool slant = false)
         {
             TrueTypeFont face = font.Face;
             int upem = face.UnitsPerEmForHinting;
@@ -309,12 +320,24 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int k = (int)((num + den / 2) / den);
             int n00 = TrueTypeInterpreter.DwFixMul(m00, k), n01 = TrueTypeInterpreter.DwFixMul(m01, k);
             int n10 = TrueTypeInterpreter.DwFixMul(m10, k), n11 = TrueTypeInterpreter.DwFixMul(mm11, k);
+            // FO_SIM_ITALIC (context flag bit 14): bSetXform leans the glyph's y row by 87/256 of its
+            // x row, after the matrix is divided by the point size -- x' = x + 0x5700 y in the glyph.
+            if (slant)
+            {
+                n10 += TrueTypeInterpreter.DwFixMul(n00, 0x5700);
+                n11 += TrueTypeInterpreter.DwFixMul(n01, 0x5700);
+            }
             int f = (int)(((long)dpi * pt16 + 36) / 72);
             int f00 = TrueTypeInterpreter.DwFixMul(n00, f), f01 = TrueTypeInterpreter.DwFixMul(n01, f);
             int f10 = TrueTypeInterpreter.DwFixMul(n10, f), f11 = TrueTypeInterpreter.DwFixMul(n11, f);
             int sx = Math.Max(Math.Abs(f00), Math.Abs(f01)), sy = Math.Max(Math.Abs(f10), Math.Abs(f11));
-            var g = new GeneralFit { PpemX = (sx + 0x8000) >> 16, PpemY = (sy + 0x8000) >> 16, EmPpem = (f + 0x8000) >> 16 };
+            var g = new GeneralFit { PpemX = (sx + 0x8000) >> 16, PpemY = (sy + 0x8000) >> 16, EmPpem = (f + 0x8000) >> 16,
+                                     Slanted = slant, M00Zero = n00 == 0, M01Zero = n01 == 0,
+                                     Axial = (m01 == 0 && m10 == 0) || (m00 == 0 && mm11 == 0) };
             if (g.PpemX < 1 || g.PpemY < 1) return null;
+            // mth_Max45Trick @14008e418 over clientRec+0x178, the folded matrix: | |a| - |b| | < 0x22.
+            static bool Max45(int a, int b) => Math.Abs(Math.Abs(a) - Math.Abs(b)) < 0x22;
+            g.Phase45 = Max45(f00, f01) || Max45(f10, f11);
             // globals[0x169], from the matrix before the fold.
             if (TrueTypeInterpreter.DwFixMul(n10, n00) + TrueTypeInterpreter.DwFixMul(n11, n01) == 0)
             {
@@ -473,10 +496,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
             // is not 0): ClearType, symmetric if the gasp says so.
             int savedGasp = TrueTypeInterpreter.GdiGaspPpem;
             TrueTypeInterpreter.GdiGaspPpem = gen != null && gen.EmPpem != ppemY ? gen.EmPpem : 0;
-            int runWord = gen != null ? (face.WantsSymmetricSmoothing(ppemY) ? 0x21 : 0x01) : quarter % 2 == 1 ? TurnedWord(face, ppemY) : 0;
+            // fs__NewTransformation @1400254d0 on bSetXform's 0x03 / 0x23: compatible widths (bit 1)
+            // only while m01 is 0, and bit 2 toggled when m00 is 0 for a word without bit 5.
+            int runWord = gen != null ? (gen.M01Zero ? 0 : face.WantsSymmetricSmoothing(ppemY) ? 0x21 : gen.M00Zero ? 0x05 : 0x01)
+                        : quarter % 2 == 1 ? TurnedWord(face, ppemY) : 0;
             int runTurn = quarter > 0 ? TrueTypeInterpreter.PackGdiTurn(axes.Ax, axes.Ay, axes.Dx, axes.Dy) : 0;
             bool savedRotated = TrueTypeInterpreter.GdiRotated;
-            TrueTypeInterpreter.GdiRotated = gen != null && gen.Rotated;
+            TrueTypeInterpreter.GdiRotated = (gen != null && gen.Rotated);
             TrueTypeInterpreter.GdiWord = runWord;
             TrueTypeInterpreter.GdiTurn = runTurn;
             if (!savedSub) TrueTypeFont.SubpixelFitting = true;
@@ -538,7 +564,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         // turn does not (TurnedWord).
                         if (!face.TryGetHintedOutline(gids[i], ppem, out outline) || outline.Count == 0) continue;
                         outline = gen != null ? GeneralTransformed(outline, gen) : Turned(outline, axes);
-                        if (gen != null) (bmpShiftX, bmpShiftY) = GeneralBitmapShift(outline, face.WantsSymmetricSmoothing(ppemY) ? 5 : 1);
+                        if (gen != null && gen.Phase45)
+                        {
+                            // fs_FindBitMapSize @140022a48: under the 45-degree trick (clientRec+0x19c,
+                            // fs__NewTransformation's mth_Max45Trick @14008e418 of either row of the
+                            // matrix) every point of the outline moves one unit right before the box is
+                            // measured -- a unit of the overscaled ClearType x, 1/384 of a pixel -- so
+                            // that no edge of a glyph turned by 45 degrees falls on a sample centre.
+                            for (int k = 0; k < outline.Count; k++) outline[k] = Translated(outline[k], 1f / (64f * 6f), 0f);
+                        }
+                        // lGetGlyphBitmap asks the CONTEXT's flags (bNewXform: diagonal, quarter turn),
+                        // which come from the FONTOBJ's matrix without FO_SIM_ITALIC's slant: a slanted
+                        // glyph at a quarter or half turn keeps the axial placement.
+                        if (gen != null && !gen.Axial) (bmpShiftX, bmpShiftY) = GeneralBitmapShift(outline, face.WantsSymmetricSmoothing(ppemY) ? 5 : 1);
                     }
                     if ((fitDropout ?? face.GlyphDropout(gids[i], ppem)) is int gd && gd >= 0) (dropouts ??= new()).Add(ordinal, gd);
                     foreach (PathFigure f in outline)
@@ -680,7 +718,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>A glyph fitted at <see cref="GeneralFit"/>'s sizes (y down, pixels) turned onto
         /// the device as scl_PostTransformGlyph turns it: each 26.6 point (y up) through
-        /// mth_IntelMul's per-product rounding, x' = x P00 + y P10, y' = x P01 + y P11.</summary>
+        /// mth_IntelMul's per-product rounding, x' = x P00 + y P10, y' = x P01 + y P11. Only the
+        /// outline's own points are turned: an implied on-curve point between two off-curve ones
+        /// is made after the turn (fsc_FillGlyph @140034000 averages the two TURNED controls), so it
+        /// is the exact average of the turned controls here, not the turned average.</summary>
         static System.Collections.Generic.List<PathFigure> GeneralTransformed(System.Collections.Generic.List<PathFigure> figs, GeneralFit g)
         {
             System.Numerics.Vector2 T(System.Numerics.Vector2 p)
@@ -690,15 +731,25 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int ny = TrueTypeInterpreter.DwFixMul(x, g.P01) + TrueTypeInterpreter.DwFixMul(y, g.P11);
                 return new System.Numerics.Vector2(nx / 64f, -ny / 64f);
             }
+            static System.Numerics.Vector2 Mid(System.Numerics.Vector2 a, System.Numerics.Vector2 b) => new((a.X + b.X) * 0.5f, (a.Y + b.Y) * 0.5f);
             var r = new System.Collections.Generic.List<PathFigure>(figs.Count);
             foreach (PathFigure f in figs)
             {
-                var c = new PathFigure(T(f.Start)) { Closed = f.Closed };
-                foreach (PathSegment s in f.Segments)
-                    switch (s)
+                int n = f.Segments.Count;
+                // The turned controls, so each implied end can take the average of its own control
+                // and the next one (the last segment's next is the first, round the closed contour).
+                var ctl = new System.Numerics.Vector2?[n];
+                for (int i = 0; i < n; i++)
+                    if (f.Segments[i] is QuadraticBezierSegment qs) ctl[i] = T(qs.Control);
+                System.Numerics.Vector2 End(int i, System.Numerics.Vector2 p)
+                    => f.Segments[i] is QuadraticBezierSegment { ImpliedEnd: true } && ctl[i] is { } a && ctl[(i + 1) % n] is { } b ? Mid(a, b) : T(p);
+                System.Numerics.Vector2 start = f.ImpliedStart && n > 0 && ctl[n - 1] is { } la && ctl[0] is { } fa ? Mid(la, fa) : T(f.Start);
+                var c = new PathFigure(start) { Closed = f.Closed };
+                for (int i = 0; i < n; i++)
+                    switch (f.Segments[i])
                     {
                         case LineSegment l: c.Segments.Add(new LineSegment(T(l.Point))); break;
-                        case QuadraticBezierSegment qq: c.Segments.Add(new QuadraticBezierSegment(T(qq.Control), T(qq.Point))); break;
+                        case QuadraticBezierSegment qq: c.Segments.Add(new QuadraticBezierSegment(ctl[i].Value, End(i, qq.Point))); break;
                         case CubicBezierSegment b: c.Segments.Add(new CubicBezierSegment(T(b.Control1), T(b.Control2), T(b.Point))); break;
                     }
                 r.Add(c);

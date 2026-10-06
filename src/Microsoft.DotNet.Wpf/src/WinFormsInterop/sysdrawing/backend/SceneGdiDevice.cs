@@ -224,10 +224,97 @@ namespace System.Drawing.WebGpuBackend
                     case RadialGradientBrush radial:
                         Shade(path, () => RadialRings(radial));
                         break;
+                    case ImageBrush image when PrintRaster.Find(image.PixelsRgba) is PrintRaster raster:
+                        Raster(path, raster);
+                        break;
                     case ImageBrush image when image.PixelsRgba != null && image.PixelWidth > 0 && image.PixelHeight > 0:
                         Image(path, image);
                         break;
                 }
+            }
+
+            // ---- the rasters GDI+'s driver puts down its own way (see PrintRaster) ---------------
+
+            private const int SRCINVERT = 0x00660046, SRCAND = 0x008800C6;
+
+            private void Raster(PagePath path, PrintRaster r)
+            {
+                (float x0, float y0, float x1, float y1) = path.Bounds();
+                Vector2 a = Vector2.Transform(new Vector2(x0, y0), _m), b = Vector2.Transform(new Vector2(x1, y1), _m);
+                int left = (int)MathF.Round(a.X), top = (int)MathF.Round(a.Y);
+                int width = (int)MathF.Round(b.X) - left, height = (int)MathF.Round(b.Y) - top;
+                if (width <= 0 || height <= 0) return;
+                if (r.Kind == PrintRaster.KindMasked)
+                {
+                    // XOR the colour, AND the mask, XOR the colour: the colour where the mask is
+                    // set, the paper as it was elsewhere.
+                    StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, r.SrcX, 0, r.SrcW, r.Height, SRCINVERT);
+                    StretchBits(r.Mask, r.MaskWidth, r.MaskHeight, 1, new[] { 0x00FFFFFF, 0 }, left, top, width, height, r.MaskSrcX, 0,
+                                r.MaskSrcW > 0 ? r.MaskSrcW : width, r.MaskHeight, SRCAND);
+                    StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, r.SrcX, 0, r.SrcW, r.Height, SRCINVERT);
+                    return;
+                }
+                if (r.Kind == PrintRaster.KindXorPath)
+                {
+                    // XOR the bitmap, black the shape in (R2_MASKPEN: what is there AND black), XOR
+                    // the bitmap again: the bitmap inside the shape, the paper outside it.
+                    StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, 0, 0, r.Width, r.Height, SRCINVERT);
+                    var shape = new PagePath { EvenOdd = !r.ClipNonZero };
+                    int n = Math.Min(r.ClipTypes.Length, r.ClipXY.Length / 2);
+                    for (int i = 0; i < n; i++)
+                    {
+                        var p = new Vector2(r.ClipXY[i * 2], r.ClipXY[i * 2 + 1]);
+                        int pt = r.ClipTypes[i] & 7;
+                        if (pt == 0) shape.MoveTo(p);
+                        else if (pt == 3 && i + 2 < n)
+                        {
+                            shape.CubicTo(p, new Vector2(r.ClipXY[i * 2 + 2], r.ClipXY[i * 2 + 3]), new Vector2(r.ClipXY[i * 2 + 4], r.ClipXY[i * 2 + 5]));
+                            i += 2;
+                        }
+                        else shape.LineTo(p);
+                        if ((r.ClipTypes[i] & 0x80) != 0) shape.Close();
+                    }
+                    int rop2 = Native.SetROP2(Dc, Native.R2_MASKPEN);
+                    // The recording's units are the identity under _m here (BeginDeviceDraw).
+                    FillSolid(shape, 0);
+                    Native.SetROP2(Dc, rop2);
+                    StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, 0, 0, r.Width, r.Height, SRCINVERT);
+                    return;
+                }
+                // Runs: each row's pixels with alpha 5 or more, a StretchDIBits a run.
+                int s = width / Math.Max(1, r.Width), t = height / Math.Max(1, r.Height);
+                for (int j = 0; j < r.Height; j++)
+                {
+                    int i = 0;
+                    while (i < r.Width)
+                    {
+                        if (r.Color[(j * r.Width + i) * 4 + 3] < 5) { i++; continue; }
+                        int k = i;
+                        while (k < r.Width && r.Color[(j * r.Width + k) * 4 + 3] >= 5) k++;
+                        int n = k - i;
+                        var run = new byte[n * 4];
+                        Buffer.BlockCopy(r.Color, (j * r.Width + i) * 4, run, 0, run.Length);
+                        for (int q = 3; q < run.Length; q += 4) run[q] = 255;
+                        StretchBits(run, n, 1, 32, null, left + s * i, top + t * j, n * s, t, 0, 0, n, 1, Native.SRCCOPY);
+                        i = k;
+                    }
+                }
+            }
+
+            // StretchDIBits of a top-down DIB: 32bpp BGRA, or 1bpp with its two-colour palette.
+            private void StretchBits(byte[] bits, int w, int h, int bpp, int[] palette, int x, int y, int dw, int dh, int sx, int sy, int sw, int sh, int rop)
+            {
+                var bmi = new Native.BITMAPINFO1
+                {
+                    Header = new Native.BITMAPINFOHEADER
+                    {
+                        biSize = Marshal.SizeOf<Native.BITMAPINFOHEADER>(), biWidth = w, biHeight = -h,
+                        biPlanes = 1, biBitCount = (short)bpp, biCompression = 0, biClrUsed = palette?.Length ?? 0,
+                    },
+                    Color0 = palette != null ? palette[0] : 0, Color1 = palette != null && palette.Length > 1 ? palette[1] : 0,
+                };
+                Dump(bits, w, h, bpp, x, y, dw, dh, sx, sy, sw, sh, rop);
+                Native.StretchDIBits(Dc, x, y, dw, dh, sx, sy, sw, sh, bits, ref bmi, 0, rop);
             }
 
             private void FillSolid(PagePath path, int colorRef)
@@ -450,7 +537,7 @@ namespace System.Drawing.WebGpuBackend
                 // What ConvertBitmapToGdi::StretchBlt sets before every blit (hooked: mode 3).
                 Native.SetStretchBltMode(Dc, Native.COLORONCOLOR);
                 Native.SetBrushOrgEx(Dc, 0, 0, IntPtr.Zero);
-                Dump(bgra, w, h, left, top, width, height);
+                Dump(bgra, w, h, 32, left, top, width, height, 0, 0, w, h, Native.SRCCOPY);
                 Native.StretchDIBits(Dc, left, top, width, height, 0, 0, w, h, bgra, ref bmi, 0, Native.SRCCOPY);
             }
 
@@ -459,7 +546,7 @@ namespace System.Drawing.WebGpuBackend
             private static readonly string s_dump = Environment.GetEnvironmentVariable("WF_PRINT_DUMP");
             private static int s_dumped;
 
-            private static void Dump(byte[] bgra, int w, int h, int x, int y, int dw, int dh)
+            private static void Dump(byte[] bits, int w, int h, int bpp, int x, int y, int dw, int dh, int sx, int sy, int sw, int sh, int rop)
             {
                 if (string.IsNullOrEmpty(s_dump)) return;
                 try
@@ -467,17 +554,24 @@ namespace System.Drawing.WebGpuBackend
                     System.IO.Directory.CreateDirectory(s_dump);
                     int n = s_dumped++;
                     System.IO.File.AppendAllText(System.IO.Path.Combine(s_dump, "log.txt"),
-                        $"{n:D4} StretchDIBits dst=({x},{y},{dw},{dh}) bmi={w}x{h}\n");
+                        $"{n:D4} StretchDIBits dst=({x},{y},{dw},{dh}) src=({sx},{sy},{sw},{sh}) bmi={w}x{h}x{bpp} rop={rop:X}\n");
                     using var f = System.IO.File.Create(System.IO.Path.Combine(s_dump, $"{n:D4}.ppm"));
                     byte[] head = System.Text.Encoding.ASCII.GetBytes($"P6\n{w} {h}\n255\n");
                     f.Write(head, 0, head.Length);
                     var row = new byte[w * 3];
+                    int stride = PrintRaster.MaskStride(w);
                     for (int j = 0; j < h; j++)
                     {
                         for (int i = 0; i < w; i++)
                         {
+                            if (bpp == 1)
+                            {
+                                byte v = (bits[j * stride + (i >> 3)] & (0x80 >> (i & 7))) != 0 ? (byte)0 : (byte)255;
+                                row[i * 3] = row[i * 3 + 1] = row[i * 3 + 2] = v;
+                                continue;
+                            }
                             int s = (j * w + i) * 4;
-                            row[i * 3] = bgra[s + 2]; row[i * 3 + 1] = bgra[s + 1]; row[i * 3 + 2] = bgra[s];
+                            row[i * 3] = bits[s + 2]; row[i * 3 + 1] = bits[s + 1]; row[i * 3 + 2] = bits[s];
                         }
                         f.Write(row, 0, row.Length);
                     }
@@ -632,6 +726,11 @@ namespace System.Drawing.WebGpuBackend
                 public int biSize, biWidth, biHeight; public short biPlanes, biBitCount;
                 public int biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant;
             }
+            [StructLayout(LayoutKind.Sequential)]
+            internal struct BITMAPINFO1 { public BITMAPINFOHEADER Header; public int Color0, Color1; }
+            [DllImport("gdi32.dll")] internal static extern int StretchDIBits(IntPtr dc, int x, int y, int w, int h, int sx, int sy, int sw, int sh, byte[] bits, ref BITMAPINFO1 bmi, uint usage, int rop);
+            internal const int R2_MASKPEN = 9;
+            [DllImport("gdi32.dll")] internal static extern int SetROP2(IntPtr dc, int rop2);
             [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
             internal struct LOGFONT
             {

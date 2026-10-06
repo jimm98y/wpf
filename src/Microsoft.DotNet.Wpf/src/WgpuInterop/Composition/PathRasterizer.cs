@@ -1628,6 +1628,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // Rounding outward to whole samples (above) kept the slab probe's half-sample
                 // slab alive; so does this, through the "+1 when equal". WPF_CT_DROPOUT_BOX=0.
                 int gx0 = int.MaxValue, gx1 = int.MinValue, gy0 = int.MaxValue, gy1 = int.MinValue;
+                // fsc_MeasureGlyph@1400344f0 measures the contours' POINTS, controls included; the
+                // walk keeps that box (GdiScanRows.Point). The flattened polygon is the fallback
+                // when there is no walk. WPF_CT_DROPOUT_PTBOX=0 measures the polygon always.
+                if (s_dropoutPointBox && walk != null && walk.PtX0 <= walk.PtX1)
+                {
+                    gx0 = walk.PtX0; gx1 = walk.PtX1; gy0 = walk.PtY0; gy1 = walk.PtY1;
+                }
+                else
                 foreach (List<Vector2> poly in polys)
                     foreach (Vector2 pt in poly)
                     {
@@ -2255,6 +2263,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_dropClamp =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_CLAMP") != "0";
 
+        private static readonly bool s_dropoutPointBox =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_PTBOX") != "0";
+
         private static readonly bool s_boxMeasured =
             Environment.GetEnvironmentVariable("WPF_CT_BOX_MEASURE") != "0";
 
@@ -2441,6 +2452,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // The same for the rows, and for the same reason: DoHorizDropout's fill COLUMN is the
             // midpoint of the span's two crossings, and a sample centre is not one.
             public readonly List<float>[] OnPos, OffPos;
+            // The box of the outline's own POINTS, off-curve controls included, in sixty-fourths of
+            // a pixel of the run (x right, y down): fsc_MeasureGlyph@1400344f0 takes the min and max
+            // over every point of every contour, not over the curve. Where a curve's extreme lies
+            // between its points -- a turned glyph's bowl -- the control reaches past the ink and the
+            // box keeps a row the curve alone would not.
+            public int PtX0 = int.MaxValue, PtX1 = int.MinValue, PtY0 = int.MaxValue, PtY1 = int.MinValue;
+            public void Point(Vector2 p)
+            {
+                int x = (int) MathF.Round(p.X * 64f), y = (int) MathF.Round(p.Y * 64f);
+                if (x < PtX0) PtX0 = x; if (x > PtX1) PtX1 = x;
+                if (y < PtY0) PtY0 = y; if (y > PtY1) PtY1 = y;
+            }
             public GdiScanRows(int nRows, int nCols)
             {
                 On = new List<int>[nRows]; Off = new List<int>[nRows];
@@ -3110,6 +3133,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 PathFigure fig = path.Figures[figureOf[c]];
                 verts.Clear();
                 Vector2 cur = fig.Start;
+                if (!fig.ImpliedStart) L.Point(cur);
                 int cx = Xg(cur.X), cy = Yg(cur.Y), sx = cx, sy = cy;
                 foreach (PathSegment seg in fig.Segments)
                 {
@@ -3118,6 +3142,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         case LineSegment l:
                         {
                             int ex = Xg(l.Point.X), ey = Yg(l.Point.Y);
+                            L.Point(l.Point);
                             verts.Add((cx, cy));
                             GdiLine(cx, cy, ex, ey, L);
                             cx = ex; cy = ey;
@@ -3127,6 +3152,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         {
                             int kx = Xg(qb.Control.X), ky = Yg(qb.Control.Y);
                             int ex = Xg(qb.Point.X), ey = Yg(qb.Point.Y);
+                            L.Point(qb.Control);
+                            if (!qb.ImpliedEnd) L.Point(qb.Point);
                             GdiSpline(cx, cy, kx, ky, ex, ey, L, verts);
                             cx = ex; cy = ey;
                             break;
@@ -3135,6 +3162,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         {
                             // Not a TrueType shape; a few chords keep the path closed.
                             Vector2 p0 = cur;
+                            L.Point(cb.Control1); L.Point(cb.Control2); L.Point(cb.Point);
                             for (int i = 1; i <= 8; i++)
                             {
                                 Vector2 pt = Cubic(p0, cb.Control1, cb.Control2, cb.Point, i / 8f);

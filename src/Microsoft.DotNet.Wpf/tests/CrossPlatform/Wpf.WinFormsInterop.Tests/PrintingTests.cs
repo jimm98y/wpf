@@ -152,10 +152,11 @@ namespace Wpf.WinFormsInterop.Tests
         }
 
         [Fact]
-        public void StrokesCurvesGradientsImagesAndClipsStayVector()
+        public void StrokesCurvesImagesAndClipsStayVector()
         {
             using var bitmap = new Bitmap(4, 3);
-            for (int i = 0; i < 4; i++) bitmap.SetPixel(i, 1, Color.Green);
+            // Opaque: an image with clear pixels is banded, as GDI+ prints it (see the tests below).
+            for (int y = 0; y < 3; y++) for (int i = 0; i < 4; i++) bitmap.SetPixel(i, y, y == 1 ? Color.Green : Color.White);
             PdfDocument pdf = PrintToPdf(e =>
             {
                 Graphics g = e.Graphics;
@@ -177,16 +178,16 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Matches(@"50 60 m\n150 60 l\n150 100 l\n50 100 l\nh\nS", content);
             // An ellipse is Beziers, not a polygon.
             Assert.Contains(" c\n", content, StringComparison.Ordinal);
-            // A gradient is a shading, not bands.
-            Assert.Contains("/Sh0 sh", content, StringComparison.Ordinal);
+            // A straight gradient is what GDI+ prints it as (PrivateFillGradient): one bitmap row
+            // stretched over its bounds, not bands.
             var resources = (PdfDictionary)pdf.Resolve(pdf.Pages()[0]["Resources"]);
-            var shading = (PdfDictionary)pdf.Resolve(((PdfDictionary)pdf.Resolve(resources["Shading"]))["Sh0"]);
-            Assert.Equal(2, Convert.ToInt32(shading["ShadingType"], CultureInfo.InvariantCulture));
+            var gradient = (PdfDictionary)((PdfStream)pdf.Resolve(((PdfDictionary)pdf.Resolve(resources["XObject"]))["Im0"])).Dictionary;
+            Assert.Equal(1, Convert.ToInt32(gradient["Height"], CultureInfo.InvariantCulture));
             // An image is an image XObject in its rectangle.
-            Assert.Contains("/Im0 Do", content, StringComparison.Ordinal);
-            var image = (PdfDictionary)((PdfStream)pdf.Resolve(((PdfDictionary)pdf.Resolve(resources["XObject"]))["Im0"])).Dictionary;
+            Assert.Contains("/Im1 Do", content, StringComparison.Ordinal);
+            var image = (PdfDictionary)((PdfStream)pdf.Resolve(((PdfDictionary)pdf.Resolve(resources["XObject"]))["Im1"])).Dictionary;
             Assert.Equal(4, Convert.ToInt32(image["Width"], CultureInfo.InvariantCulture));
-            Assert.Matches(@"40 0 0 -30 300 180 cm /Im0 Do", content);
+            Assert.Matches(@"40 0 0 -30 300 180 cm /Im1 Do", content);
             // The clip, and everything drawn after it outside it.
             Assert.Contains("50 250 100 30 re W n", content, StringComparison.Ordinal);
 
@@ -314,6 +315,347 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(148, image.H);
             string content = Content(pdf);
             Assert.Contains("W n", content, StringComparison.Ordinal);
+        }
+
+        // ---- what DriverPrint rasterizes: textures, translucency, pens, rims ------------------------
+        //
+        // Each of these was compared bit for bit with what gdiplus.dll hands StretchDIBits printing the
+        // same page to Microsoft Print to PDF at 600 dpi (a hook on its import table); these check the
+        // PDF carries the same DIBs.
+
+        private static Bitmap Tile(int w, int h, int alpha)
+        {
+            var b = new Bitmap(w, h);
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    b.SetPixel(x, y, Color.FromArgb(alpha, 30 + x * 200 / w, 220 - y * 180 / h, (x + y) % 2 == 0 ? 60 : 160));
+            return b;
+        }
+
+        // An image XObject's explicit stencil: width, height, rows of (w + 7) / 8 bytes, set = painted.
+        private static (int W, int H, byte[] Bits) Stencil(PdfDocument pdf, string image)
+        {
+            var resources = (PdfDictionary)pdf.Resolve(pdf.Pages()[0]["Resources"]);
+            var dict = ((PdfStream)pdf.Resolve(((PdfDictionary)pdf.Resolve(resources["XObject"]))[image])).Dictionary;
+            Assert.True(dict.ContainsKey("Mask"), image + " has no /Mask");
+            object maskRef = dict["Mask"];
+            var mask = ((PdfStream)pdf.Resolve(maskRef)).Dictionary;
+            Assert.Equal(true, mask["ImageMask"]);
+            return (Convert.ToInt32(mask["Width"], CultureInfo.InvariantCulture), Convert.ToInt32(mask["Height"], CultureInfo.InvariantCulture),
+                    pdf.StreamData(maskRef));
+        }
+
+        private static bool Bit((int W, int H, byte[] Bits) m, int x, int y) => (m.Bits[y * ((m.W + 7) / 8) + (x >> 3)] & (0x80 >> (x & 7))) != 0;
+
+        [Fact]
+        public void ATextureBrushPrintsOneDibPixelATexel()
+        {
+            // A texel is a hundredth of an inch, six device pixels: the bounds on a grid of six
+            // (202 x 152 from cell 49), each DIB pixel the texel the cell is.
+            using Bitmap tile = Tile(8, 6, 255);
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var tb = new TextureBrush(tile);
+                g.FillRectangle(tb, 50, 50, 200, 150);
+            });
+            var image = Assert.Single(Images(pdf)).Value;
+            Assert.Equal(202, image.W);
+            Assert.Equal(152, image.H);
+            foreach ((int i, int j) in new[] { (1, 1), (10, 7), (100, 50), (150, 120) })
+            {
+                Color c = tile.GetPixel((49 + i) % 8, (49 + j) % 6);
+                int o = (j * image.W + i) * 3;
+                Assert.InRange(image.Rgb[o], c.R - 1, c.R + 1);
+                Assert.InRange(image.Rgb[o + 1], c.G - 1, c.G + 1);
+                Assert.InRange(image.Rgb[o + 2], c.B - 1, c.B + 1);
+            }
+        }
+
+        [Fact]
+        public void ATranslucentHatchIsHalftonedAsGdiPlusDoesIt()
+        {
+            // A printer cannot blend: GDI+ dithers the alpha into a 1bpp mask at the device's
+            // resolution, HT_16x16[(y + n) % 16][x % 16] < alpha, n the DIBs made so far in the
+            // process. The colour DIB is the hatch unpremultiplied (the clear back black); the mask
+            // is set only on the fore colour's cells, and there exactly where the dither says.
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var hb = new HatchBrush(HatchStyle.Cross, Color.FromArgb(128, Color.DarkRed), Color.FromArgb(0, Color.White));
+                g.FillRectangle(hb, 50, 50, 150, 120);
+            });
+            KeyValuePair<string, (int W, int H, byte[] Rgb)> entry = Assert.Single(Images(pdf));
+            var image = entry.Value;
+            var mask = Stencil(pdf, entry.Key);
+            Assert.Equal((150, 120), (image.W, image.H));
+            Assert.Equal((900, 720), (mask.W, mask.H));
+            byte[] ht = HalftoneTable();
+            int best = -1;
+            for (int n = 0; n < 16 && best < 0; n++)
+            {
+                bool all = true;
+                for (int y = 0; y < mask.H && all; y++)
+                    for (int x = 0; x < mask.W && all; x++)
+                    {
+                        int o = ((y / 6) * image.W + x / 6) * 3;
+                        bool fore = image.Rgb[o] == Color.DarkRed.R && image.Rgb[o + 1] == Color.DarkRed.G && image.Rgb[o + 2] == Color.DarkRed.B;
+                        bool want = fore && ht[((300 + y + n) & 15) * 16 + ((300 + x) & 15)] < 128;
+                        all = Bit(mask, x, y) == want;
+                    }
+                if (all) best = n;
+            }
+            Assert.True(best >= 0, "the mask is not GDI+'s dither of the hatch at any row offset");
+        }
+
+        // HT_16x16 (gdiplus.dll): the 16 x 16 ordered dither, a recursive Bayer matrix (its last entry
+        // 254 where the recursion gives 255).
+        private static byte[] HalftoneTable()
+        {
+            var t = new byte[256];
+            for (int y = 0; y < 16; y++)
+                for (int x = 0; x < 16; x++)
+                {
+                    int v = 0;
+                    for (int bit = 0; bit < 4; bit++)
+                    {
+                        int xb = (x >> bit) & 1, yb = (y >> bit) & 1;
+                        v |= ((xb ^ yb) << (7 - 2 * bit)) | (yb << (6 - 2 * bit));
+                    }
+                    t[y * 16 + x] = (byte)Math.Min(v, 254);   // the table stops at 254
+                }
+            return t;
+        }
+
+        [Fact]
+        public void ATranslucentPathGradientIsBandedAtAbout256Cells()
+        {
+            // s = ceil(w / 256): 1801 x 1201 device pixels on cells of 8 x 5, two bands, each a
+            // colour DIB under its own halftone mask.
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var path = new GraphicsPath();
+                path.AddEllipse(50, 50, 300, 200);
+                using var pgb = new PathGradientBrush(path) { CenterColor = Color.FromArgb(200, Color.White), SurroundColors = new[] { Color.FromArgb(128, Color.Navy) } };
+                g.FillPath(pgb, path);
+            });
+            var images = Images(pdf);
+            Assert.Equal(2, images.Count);
+            foreach (KeyValuePair<string, (int W, int H, byte[] Rgb)> im in images)
+            {
+                var mask = Stencil(pdf, im.Key);
+                Assert.Equal(226, im.Value.W);
+                Assert.Equal(8 * im.Value.W, mask.W);
+                Assert.Equal(5 * im.Value.H, mask.H);
+            }
+        }
+
+        [Fact]
+        public void AHatchedPenFillsItsWidenedOutline()
+        {
+            // GDI+ widens the stroke on the device and fills it; the bounds it bands are the
+            // outline's grown once more by the pen's reach (half its width times the miter limit),
+            // which takes a 0.12 inch line's bands back to the page's corner: three of 412 x 63.
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var hb = new HatchBrush(HatchStyle.DiagonalCross, Color.DarkBlue, Color.LightYellow);
+                using var pen = new Pen(hb, 12);
+                g.DrawLine(pen, 50, 50, 350, 120);
+            });
+            var images = Images(pdf);
+            Assert.Equal(3, images.Count);
+            foreach (var im in images.Values) Assert.Equal((412, 63), (im.W, im.H));
+            string content = Content(pdf);
+            Assert.Contains("412 0 0 -63 0 63 cm", content, StringComparison.Ordinal);
+            Assert.Contains("W n", content, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ATextureOfOpaqueAndClearPixelsPrintsItsOpaqueRuns()
+        {
+            // A bitmap whose pixels are all opaque or clear is put down as the runs of each row's
+            // pixels with alpha 5 or more; the PDF carries them as a stencil at the DIB's own size.
+            using Bitmap tile = Tile(8, 6, 255);
+            for (int y = 0; y < 6; y++) for (int x = 0; x < 8; x++) if ((x + y) % 3 == 0) tile.SetPixel(x, y, Color.Transparent);
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var tb = new TextureBrush(tile);
+                g.FillEllipse(tb, 300, 480, 200, 150);
+            });
+            var images = Images(pdf);
+            Assert.NotEmpty(images);
+            int top = 0;
+            foreach (KeyValuePair<string, (int W, int H, byte[] Rgb)> im in images)
+            {
+                var mask = Stencil(pdf, im.Key);
+                Assert.Equal((im.Value.W, im.Value.H), (mask.W, mask.H));
+                for (int j = 0; j < Math.Min(mask.H, 152 - top); j++)
+                    for (int i = 0; i < mask.W; i++)
+                        Assert.Equal(((300 + i) % 8 + (480 + top + j) % 6) % 3 != 0, Bit(mask, i, j));
+                top += im.Value.H;
+            }
+        }
+
+        [Fact]
+        public void ATurnedImageBleedsItsEdgesIntoTheBand()
+        {
+            // NextBufferFunc24bppBleed: the span's edge pixels keep the image's colour and every row
+            // runs on in its end pixel's, so the band's corners are the image's corner colours.
+            using var bitmap = new Bitmap(64, 48);
+            for (int y = 0; y < 48; y++)
+                for (int x = 0; x < 64; x++)
+                    bitmap.SetPixel(x, y, (x / 16 + y / 16) % 2 == 0 ? Color.FromArgb(200, 40, 40) : Color.FromArgb(40, 90, 200));
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                g.TranslateTransform(600, 100);
+                g.RotateTransform(90);
+                g.DrawImage(bitmap, 0, 0, 128, 96);
+            });
+            var image = Assert.Single(Images(pdf)).Value;
+            Assert.Equal((96, 128), (image.W, image.H));
+            Assert.Equal(new byte[] { 200, 40, 40 }, image.Rgb[0..3]);
+            int last = (image.W * image.H - 1) * 3;
+            Assert.Equal(new byte[] { 40, 90, 200 }, image.Rgb[last..(last + 3)]);
+        }
+
+        [Fact]
+        public void AnImageWithAlphaIsHalftonedOrPutDownAsItsOpaqueRuns()
+        {
+            // Upright but not opaque, DriverPrint::DrawImage bands it as it does a turned one: an
+            // image of half alpha halftoned (its DIB a pixel a source pixel, 12 device pixels
+            // across; the mask at 600 dpi), one only opaque or clear as its runs, nearest-neighbour.
+            using Bitmap half = Tile(64, 48, 128);
+            PdfDocument pdf = PrintAt600(g => g.DrawImage(half, 50, 50, 128, 96));
+            KeyValuePair<string, (int W, int H, byte[] Rgb)> entry = Assert.Single(Images(pdf));
+            Assert.Equal((64, 48), (entry.Value.W, entry.Value.H));
+            var mask = Stencil(pdf, entry.Key);
+            Assert.Equal((768, 576), (mask.W, mask.H));
+            int set = 0;
+            for (int y = 0; y < mask.H; y++) for (int x = 0; x < mask.W; x++) if (Bit(mask, x, y)) set++;
+            Assert.InRange(set, mask.W * mask.H * 45 / 100, mask.W * mask.H * 55 / 100);
+
+            using Bitmap holes = Tile(64, 48, 255);
+            for (int y = 0; y < 48; y++) for (int x = 0; x < 64; x++) if ((x / 8 + y / 8) % 3 == 0) holes.SetPixel(x, y, Color.Transparent);
+            pdf = PrintAt600(g => g.DrawImage(holes, 250, 50, 128, 96));
+            entry = Assert.Single(Images(pdf));
+            mask = Stencil(pdf, entry.Key);
+            Assert.Equal((entry.Value.W, entry.Value.H), (mask.W, mask.H));
+            for (int y = 0; y < 48; y++)
+                for (int x = 0; x < 64; x++)
+                    Assert.Equal((x / 8 + y / 8) % 3 != 0, Bit(mask, x, y));
+        }
+
+        [Fact]
+        public void AStraightGradientPrintsAsABitmapOneRowTall()
+        {
+            // PrivateFillGradient: the colour runs across the device, so GDI+ makes the bitmap one
+            // pixel tall over the rectangle's bounds (two pixels out on every side: 1804 x 604) and
+            // stretches it; down the device, one pixel wide.
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var lg = new LinearGradientBrush(new Rectangle(50, 50, 300, 100), Color.Red, Color.Blue, LinearGradientMode.Horizontal);
+                g.FillRectangle(lg, 50, 50, 300, 100);
+            });
+            var image = Assert.Single(Images(pdf)).Value;
+            Assert.Equal((1804, 1), (image.W, image.H));
+            // Red at the left, blue at the right (short of the bounds' last two pixels, where the
+            // tiled brush starts again).
+            Assert.True(image.Rgb[9] > 200 && image.Rgb[11] < 60, $"the left end is {image.Rgb[9]},{image.Rgb[10]},{image.Rgb[11]}");
+            int last = (image.W - 6) * 3;
+            Assert.True(image.Rgb[last] < 60 && image.Rgb[last + 2] > 200, $"the right end is {image.Rgb[last]},{image.Rgb[last + 1]},{image.Rgb[last + 2]}");
+
+            pdf = PrintAt600(g =>
+            {
+                using var lg = new LinearGradientBrush(new Rectangle(400, 350, 300, 100), Color.Red, Color.Blue, LinearGradientMode.Vertical);
+                g.FillRectangle(lg, 400, 350, 300, 100);
+            });
+            image = Assert.Single(Images(pdf)).Value;
+            Assert.Equal((1, 604), (image.W, image.H));
+        }
+
+        [Fact]
+        public void AStraightGradientInAShapeIsItsBitmapInsideTheShape()
+        {
+            // Not a rectangle: SRCINVERT, the shape blacked in, SRCINVERT -- the bitmap where the
+            // shape is, which a PDF says as the bitmap under the shape's clip.
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var lg = new LinearGradientBrush(new Rectangle(50, 350, 300, 100), Color.Red, Color.Blue, LinearGradientMode.Horizontal);
+                g.FillEllipse(lg, 50, 350, 300, 100);
+            });
+            var image = Assert.Single(Images(pdf));
+            Assert.Equal((1801, 1), (image.Value.W, image.Value.H));
+            string content = Content(pdf);
+            int at = content.IndexOf("/" + image.Key + " Do", StringComparison.Ordinal);
+            Assert.True(at > 0 && content.LastIndexOf(" c\n", at, StringComparison.Ordinal) > 0
+                        && content.LastIndexOf(" n\n", at, StringComparison.Ordinal) > content.LastIndexOf("Q\n", at, StringComparison.Ordinal),
+                        "the bitmap is not inside the ellipse's clip:\n" + content);
+        }
+
+        [Fact]
+        public void ATranslucentStraightGradientIsHalftonedAtThreeHundredDpi()
+        {
+            // ConvertBitmapDataAlphaChannelTo1BPP: the bitmap's alpha dithered into a mask of
+            // 300 dpi over the bounds (902 x 302 for 1804 x 604 device pixels), set where it is
+            // over HT_16x16 at the mask's own pixel.
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var lg = new LinearGradientBrush(new Rectangle(50, 500, 300, 100), Color.FromArgb(100, Color.Red), Color.Blue, LinearGradientMode.Horizontal);
+                g.FillRectangle(lg, 50, 500, 300, 100);
+            });
+            KeyValuePair<string, (int W, int H, byte[] Rgb)> entry = Assert.Single(Images(pdf));
+            Assert.Equal((1804, 1), (entry.Value.W, entry.Value.H));
+            var mask = Stencil(pdf, entry.Key);
+            Assert.Equal((902, 302), (mask.W, mask.H));
+            // Nearly opaque at the right end: nearly every pixel set; 100/255 at the left: two in five.
+            int left = 0, right = 0;
+            for (int y = 0; y < 32; y++)
+                for (int x = 0; x < 32; x++)
+                {
+                    if (Bit(mask, 8 + x, 100 + y)) left++;
+                    if (Bit(mask, mask.W - 40 + x, 100 + y)) right++;
+                }
+            Assert.InRange(right, 950, 1024);
+            Assert.InRange(left, 1024 * 30 / 100, 1024 * 50 / 100);
+        }
+
+        [Fact]
+        public void HatchedTextIsHalftonedOnTheDriversThreePixelGrid()
+        {
+            // Below the path size the printer realization's glyphs are bi-level: DriverPrint::
+            // BrushText bands their bounds on its default grid -- three device pixels at 600 dpi --
+            // fills the brush into the colour DIB and puts the glyphs' bits in the mask.
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var hb = new HatchBrush(HatchStyle.Percent50, Color.Black, Color.White);
+                using var f = new Font("Times New Roman", 14);
+                g.DrawString("Small hatched text on a line.", f, hb, 50, 500);
+            });
+            KeyValuePair<string, (int W, int H, byte[] Rgb)> entry = Assert.Single(Images(pdf));
+            var mask = Stencil(pdf, entry.Key);
+            Assert.Equal(3 * entry.Value.W, mask.W);
+            Assert.Equal(3 * entry.Value.H, mask.H);
+            Assert.DoesNotContain(" Tj", Content(pdf), StringComparison.Ordinal);
+            // Percent50 on a grid of three: the colour DIB alternates black and white cell by cell.
+            int o = (10 * entry.Value.W + 10) * 3;
+            Assert.NotEqual(entry.Value.Rgb[o], entry.Value.Rgb[o + 3]);
+        }
+
+        [Fact]
+        public void LargeHatchedTextIsFilledAsItsGlyphOutlines()
+        {
+            // Past 800 device pixels of the face's box the realization is a path one: the glyph
+            // outlines, laid out from the nominal advances (kerned), filled like any shape -- the
+            // hatch banded on the 100 dpi grid inside the outlines' clip.
+            PdfDocument pdf = PrintAt600(g =>
+            {
+                using var hb = new HatchBrush(HatchStyle.DiagonalCross, Color.DarkBlue, Color.LightYellow);
+                using var f = new Font("Arial", 48, FontStyle.Bold);
+                g.DrawString("Hatched", f, hb, 50, 50);
+            });
+            var image = Assert.Single(Images(pdf)).Value;
+            Assert.Equal((262, 50), (image.W, image.H));
+            string content = Content(pdf);
+            Assert.Contains("W n", content, StringComparison.Ordinal);
+            Assert.DoesNotContain(" Tj", content, StringComparison.Ordinal);
         }
 
         [Fact]
