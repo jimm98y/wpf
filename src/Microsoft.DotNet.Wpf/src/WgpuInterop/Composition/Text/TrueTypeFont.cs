@@ -727,6 +727,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return true;
         }
 
+        /// <summary>The glyph's design ink box in y (glyf header), in font units, y up.</summary>
+        internal bool TryGetDesignYExtent(int glyphId, out int yMin, out int yMax)
+        {
+            yMin = yMax = 0;
+            if (_glyfOffset < 0 || glyphId < 0 || glyphId >= _numGlyphs || _loca.Length == 0) return false;
+            uint start = _loca[glyphId], end = _loca[glyphId + 1];
+            if (end <= start) return false;
+            int p = _glyfOffset + (int)start;
+            yMin = (short)U16(p + 4); yMax = (short)U16(p + 8);
+            return true;
+        }
+
         /// <summary>GpFaceRealization::SearchVdmxTable: the FIRST ratio record with bCharSet 1 whose
         /// ratio covers 1:1 governs, and within its group only an exact yPelHeight answers. (Unlike
         /// GDI's own lookup, a miss there does not go on to the next ratio.)</summary>

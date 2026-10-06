@@ -79,7 +79,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // glyph program runs, so the scan control is the prep's at that ppem (fsg_DoScanControl;
                 // neither its turned nor its stretched condition holds).
                 dropout = font.DWriteUnfittedDropout(ppem, TrueTypeFont.DWriteBiLevelWord, turned: false);
-                figures = TransformedOutline(font, gid, ppem, 1f, 0f, 0f, 1f, 0f, 0f, outlineBold: !bitmapBold);
+                // A simulated oblique is the scaler's slant, in the same transform.
+                figures = TransformedOutline(font, gid, ppem, 1f, 0f, -font.ObliqueShearApplied, 1f, 0f, 0f, outlineBold: !bitmapBold);
                 if (figures.Count == 0) return g;
             }
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
