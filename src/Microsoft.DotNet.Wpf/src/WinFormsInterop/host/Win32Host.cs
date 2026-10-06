@@ -426,7 +426,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         double t1 = s_traceFrames ? SinceStart : 0;
         _lastPresentOk = _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.ClientSize.Width, _form.ClientSize.Height);
         if (s_traceFrames && _framesTraced++ < 4000)
-            Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms (paint {t1 - t0:0}, gpu {SinceStart - t1:0})");
+            Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms (paint {t1 - t0:0}, gpu {SinceStart - t1:0}) damage {_wgpu.LastDamage}");
         _lastVer = ver; _lastCaretOn = caretOn;
         if (wantSave)
         {

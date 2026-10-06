@@ -355,7 +355,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 _w = width; _h = height;
                 _root = Visit(old, root, Matrix3x2.Identity, new Scissor(0, 0, width, height), fresh: false, inSnapshot: false);
                 if (old == null || _forceFull) return true;
-                SpreadToText();
+                // So many separate changes that sorting them out would cost more than drawing them.
+                if (_raw.Count > MaxRawRects || !SpreadToText()) return true;
                 Normalize(_raw, rects, width, height);
                 long area = 0;
                 foreach (Scissor r in rects) area += (long)r.W * r.H;
@@ -366,13 +367,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// <summary>A ClearType run is blended against the paper under its WHOLE box (PaperUnder):
             /// a change under any part of it can change every pixel of it. So damage that touches a
             /// run's box takes in all of the box -- repeated, since that box may touch another run.</summary>
-            private void SpreadToText()
+            private bool SpreadToText()
             {
-                if (_raw.Count == 0 || _texts.Count == 0) return;
+                if (_raw.Count == 0 || _texts.Count == 0) return true;
                 bool grew = true;
                 while (grew)
                 {
                     grew = false;
+                    if (_raw.Count > MaxRawRects || (long)_raw.Count * _texts.Count > 4_000_000) return false;
                     for (int t = _texts.Count - 1; t >= 0; t--)
                     {
                         Scissor tb = _texts[t];
@@ -388,7 +390,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         }
                     }
                 }
+                return true;
             }
+
+            private const int MaxRawRects = 512;
 
             private Rec Visit(Rec? old, SceneVisual v, Matrix3x2 parentWorld, Scissor parentClip, bool fresh, bool inSnapshot)
             {
@@ -622,8 +627,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 while (changed)
                 {
                     changed = false;
-                    for (int i = 0; i < outRects.Count && !changed; i++)
-                        for (int j = i + 1; j < outRects.Count; j++)
+                    // One sweep merges every near pair it meets (a grown rectangle keeps absorbing);
+                    // sweeps repeat until one merges nothing.
+                    for (int i = 0; i < outRects.Count; i++)
+                        for (int j = outRects.Count - 1; j > i; j--)
                         {
                             Scissor a = outRects[i], b = outRects[j];
                             if (!Intersect(Inflate(a, Near, Near, Near, Near), b).IsEmpty)
@@ -631,9 +638,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                 outRects[i] = Union(a, b);
                                 outRects.RemoveAt(j);
                                 changed = true;
-                                break;
                             }
                         }
+                    if (!changed && outRects.Count > 4 * MaxRects)
+                    {
+                        // Scattered all over: their bounding box.
+                        Scissor all = outRects[0];
+                        foreach (Scissor r in outRects) all = Union(all, r);
+                        outRects.Clear();
+                        outRects.Add(all);
+                    }
                     if (!changed && outRects.Count > MaxRects)
                     {
                         // Merge the pair whose bounding box adds the least area.
