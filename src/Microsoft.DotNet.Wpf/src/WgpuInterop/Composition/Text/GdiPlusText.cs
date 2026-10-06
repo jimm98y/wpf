@@ -1104,14 +1104,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.StretchPpemY = ppemAlong == ppemAcross ? 0 : ppemAcross;
             List<PathFigure> figures;
             int dropout;
+            bool qbBitmap = false;
             try
             {
                 int ppem = Math.Max(ppemAlong, ppemAcross);
                 int word = grey ? GreyScalerWord ^ 4 : TrueTypeFont.DWriteBiLevelWord;
                 // A simulated bold under a turn is fsg_Embold on the fitted points (the bitmap smear
                 // is only ever asked for under an unrotated transform).
+                qbBitmap = !grey && font.SynthesizesBold && ppem >= 1 && ppem <= 50;
                 if (!font.TryGetDWriteFittedOutline(gid, ppem, word, out figures, out dropout,
-                                                    font.SynthesizesBold ? (x, y, ends) => NaturalClearType.EmboldenOutline(x, y, ends, ppem) : null))
+                                                    font.SynthesizesBold && !qbBitmap ? (x, y, ends) => NaturalClearType.EmboldenOutline(x, y, ends, ppem) : null))
                 {
                     dropout = grey ? 0 : UnfittedDropout;
                     if (!font.TryGetScaledOutline(gid, ppem, out figures)) return g;
@@ -1148,6 +1150,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, turned), ox, oy, w, h, s, dropout, s);
             if (bits is null) return g;
             if (grey) ThinDilate(font, bits, w * s, h * s);
+            if (qbBitmap)
+            {
+                // A bi-level simulated bold at 1..50ppem under a quarter turn (axis-aligned, so
+                // RasterizeInternal @18006c988 still asks for the bitmap bold): sbit_Embolden
+                // @180120940 on the device bitmap, its one-pixel amount along the glyph's x -- the
+                // device's y after the turn (mth_90degRotationFactorForEmboldening swaps the amounts).
+                var nb = (bool[])bits.Clone();
+                for (int r = 0; r + 1 < h; r++)
+                    for (int c = 0; c < w; c++)
+                        if (bits[r * w + c]) nb[(r + 1) * w + c] = true;
+                bits = nb;
+            }
             var cov = new int[w * h];
             int cols = w * s;
             for (int r = 0; r < h * s; r++)

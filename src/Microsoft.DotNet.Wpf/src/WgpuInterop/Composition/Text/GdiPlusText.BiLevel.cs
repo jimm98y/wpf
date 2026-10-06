@@ -166,6 +166,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return lv;
         }
 
+        /// <summary>The scan mode an unfitted glyph under a turned matrix gets: the prep's, where
+        /// fsg_DoScanControl compares the SCANCTRL threshold with scl_InitializeScaling's param_20
+        /// (the larger entry of the matrix's em-scaled second row, 16.16, rounded) and honours its
+        /// rotated and stretched conditions, but the pre-program itself runs at the interpreter's
+        /// size, the em along the turned unit vector. Courier New at 7pt under 30 degrees: param_20
+        /// is 8, the prep runs at 9 and sets another SCANTYPE there.</summary>
+        internal static int TurnedDropout(TrueTypeFont font, float em, float m21, float m22, int word)
+        {
+            long r = (long)Math.Floor(Math.Max(Math.Abs(m21), Math.Abs(m22)) * em * 65536.0 + 0.5);
+            int ppem = (int)((r + 0x8000) >> 16);
+            int prepPpem = (int)MathF.Floor(em * MathF.Sqrt(m21 * m21 + m22 * m22) + 0.5f);
+            return font.DWriteUnfittedDropout(ppem, word, turned: true, prepPpem);
+        }
+
         // ---- glyphs under a transform the fast imager refuses (FullTextImager's path) ----------
         //
         // GpGraphics::DrawPlacedGlyphs passes the device transform's linear part to
@@ -303,7 +317,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     }
                     int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
                     int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
-                    bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figures), ox, oy, w, h, 1, UnfittedDropout, 1);
+                    bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figures), ox, oy, w, h, 1,
+                                                                TurnedDropout(font, em, m21, m22, TrueTypeFont.DWriteBiLevelWord), 1);
                     if (bits is not null)
                     {
                         var bytes = new byte[bits.Length];
@@ -334,6 +349,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                                       float m11, float m12, float m21, float m22,
                                                       float[] xs, float[] ys, int dropout)
         {
+            // The scan control is the prep's, as for every unfitted turned glyph (TurnedDropout).
+            int prep = TurnedDropout(font, em, m21, m22, GreyScalerWord);
+            dropout = prep;
             int n = gids.Count;
             var cov = new Dictionary<(int, int), int>();
             for (int i = 0; i < n; i++)
