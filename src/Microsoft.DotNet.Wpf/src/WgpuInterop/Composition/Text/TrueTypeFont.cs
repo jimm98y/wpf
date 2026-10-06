@@ -239,7 +239,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             _isFixedPitch = tables.TryGetValue("post", out int postTable) && postTable + 16 <= _data.Length
                             && U32(postTable + 12) != 0;
             GdiContrastPalette = ComputeGdiContrastPalette(tables);
-            DWriteThinFamily = ComputeDWriteThinFamily(tables);
+            DWriteThinFace = ComputeDWriteThinFace();
+            DWriteThinFamily = DWriteThinFace && ComputeDWriteThinFamily(tables);
 
             // Outlines are OPTIONAL, because a colour BITMAP font has none.
             //
@@ -458,6 +459,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// exactly); GlyphBitmapRasterizationState then thickens such a face's oversampled glyph
         /// bitmaps if its weight is 500 or less (see <see cref="GdiPlusText"/>'s ThinEmbolden).</summary>
         internal bool DWriteThinFamily { get; }
+
+        /// <summary>The face's thin bit alone, whatever its weight (IsThinFontFamily's answer):
+        /// what DWriteGlyphRunAnalysis::GetAlphaBlendParams reads for its contrast boost.</summary>
+        internal bool DWriteThinFace { get; }
+
+        private bool ComputeDWriteThinFace()
+        {
+            if (!FontFiles.ReadNames(_data, _sfntBase, out string? family, out _, out _)) return false;
+            foreach (string f in s_contrastFamilies)
+                if (string.Equals(f, family, StringComparison.Ordinal)) return true;
+            return false;
+        }
 
         private bool ComputeDWriteThinFamily(Dictionary<string, int> tables)
         {
