@@ -2418,7 +2418,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// does not fit under a turned matrix: the prep's SCANCTRL and SCANTYPE at the scaler's
         /// ppem, where fsg_DoScanControl also honours bit 9 (a rotated matrix, fs__NewTransformation's
         /// 0x400) and bit 10 (any matrix but a uniform scale, 0x1000) -- both true of a turn.</summary>
-        internal int DWriteTurnedDropout(int ppem, int flags)
+        internal int DWriteTurnedDropout(int ppem, int flags) => DWriteUnfittedDropout(ppem, flags, turned: true);
+
+        /// <summary>The same for a glyph not fitted under an unturned uniform scale: the prep's
+        /// SCANCTRL and SCANTYPE, with neither condition bit true.</summary>
+        internal int DWriteUnfittedDropout(int ppem, int flags, bool turned)
         {
             TrueTypeInterpreter? interpreter = Interpreter();
             if (interpreter is null || ppem < 1) return 0;
@@ -2432,7 +2436,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (!interpreter.PrepareForSize(ppem)) return 0;
                 int ctrl = interpreter.PrepScanControl, type = interpreter.PrepScanType;
                 bool on = ((ctrl & 0x100) != 0 && ((ctrl & 0xFF) == 0xFF || ppem <= (ctrl & 0xFF)))
-                          || (ctrl & 0x200) != 0 || (ctrl & 0x400) != 0;
+                          || (turned && ((ctrl & 0x200) != 0 || (ctrl & 0x400) != 0));
                 int scan = on ? type : 2;
                 return (scan & 2) != 0 ? 0 : scan + 1;
             }

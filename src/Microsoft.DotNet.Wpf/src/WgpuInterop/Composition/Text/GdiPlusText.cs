@@ -601,8 +601,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (!NaturalClearType.TryGetGdiClassicOutline(font, gid, ppem, out List<PathFigure> figures, out _)
                 || !XExtent(figures, out float x0, out float x1)) { lsbDu = 0; rsbDu = advDu; return; }
             int left = (int)MathF.Ceiling(x0 * 6f - 0.5f), right = (int)MathF.Floor(x1 * 6f + 0.5f);
+            BoldBox(font, ppem, ref left, ref right);
             lsbDu = (int)Math.Floor(left * (double)upem / (6.0 * ppem) + 0.5);
             rsbDu = (int)Math.Floor((6 * px - right) * (double)upem / (6.0 * ppem) + 0.5);
+        }
+
+        /// <summary>A simulated bold's black box, in sixths of a pixel, for the GDI-classic metrics.
+        /// TrueTypeRasterizer::Implementation::GetMetrics @18006af80 takes the box from the glyph's
+        /// bitmap (GetBitmap, then GetDesignBounds @18006ad18 over its set bits), and
+        /// MakeRasterizerFlagsForMeasuring @180091290 passes the bold simulation on (flag 2), so the
+        /// box is the emboldened glyph's. RasterizeInternal @18006c988 asks the scan for the bitmap
+        /// bold (fs input +0x8c = 1) for a one-sample-a-pixel bitmap at 1..50ppem, a pixel to the
+        /// right; past that fsg_Embold's right half, (amount - amount / 2) pixels of
+        /// (20 ppem - 10) / 1000 + 1. (Its left half is not seen in the measured box at 52 and 53ppem:
+        /// Sylfaen, Lucida Console; not modelled.)</summary>
+        static void BoldBox(TrueTypeFont font, int ppem, ref int left, ref int right)
+        {
+            if (!font.SynthesizesBold) return;
+            int amount = ppem <= 50 ? 1 : (20 * ppem - 10) / 1000 + 1;
+            right += (amount - (amount >> 1)) * 6;
         }
 
         /// <summary>The x extent of the outline the 6x1 bitmap is scanned from, in pixels.</summary>
@@ -938,7 +955,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (cache.TryGetValue(key, out GreyGlyph? hit)) return hit;
             var g = new GreyGlyph();
             int dropout = 0;
-            if (font.TryGetDWriteFittedOutline(gid, em, GreyScalerWord, out List<PathFigure> figures, out dropout)
+            // A simulated bold is fsg_Embold on the fitted points: RasterizeInternal @18006c988 gives
+            // the scan's bitmap bold (fs input +0x8c) only to an x overscale of 1, 6 or 8 under one
+            // row a pixel, so never to a 4x4 raster.
+            int boldPpem = Floor(em + 0.5f);
+            if (font.TryGetDWriteFittedOutline(gid, em, GreyScalerWord, out List<PathFigure> figures, out dropout,
+                                               font.SynthesizesBold ? (x, y, ends) => NaturalClearType.EmboldenOutline(x, y, ends, boldPpem) : null)
                 || font.TryGetScaledOutline(gid, em, out figures))
             {
                 float dx = phaseX / 4f, dy = phaseY / 4f;
