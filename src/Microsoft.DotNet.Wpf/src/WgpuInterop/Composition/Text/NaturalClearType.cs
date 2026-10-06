@@ -552,7 +552,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // matrix's second row (em-scaled 16.16), rounded.
             long r = (long)Math.Floor(Math.Max(Math.Abs(m21), Math.Abs(m22)) * em * 65536.0 + 0.5);
             int ppem = (int)((r + 0x8000) >> 16);
-            GlyphBits bits = Scan(turned, 1, font.DWriteTurnedDropout(ppem, GdiPlusText.NaturalScalerWord));
+            // The pre-program runs at the scaler's interpreter size -- the em along the row, the
+            // length of the turned unit vector, rounded -- while fsg_DoScanControl compares the
+            // SCANCTRL threshold with param_20. Courier New at 7pt under 30 degrees: param_20 is 8,
+            // the prep runs at 9, and its SCANTYPE there is not the one it sets at 8.
+            int prepPpem = (int)MathF.Floor(em * MathF.Sqrt(m21 * m21 + m22 * m22) + 0.5f);
+            int dmode = font.DWriteUnfittedDropout(ppem, GdiPlusText.NaturalScalerWord, turned: true, prepPpem);
+            GlyphBits bits = Scan(turned, 1, dmode);
             // A simulated bold is the scan's own (fs_ContourScan -> fsc_OverscaleToBold), as upright.
             return bits;
         }

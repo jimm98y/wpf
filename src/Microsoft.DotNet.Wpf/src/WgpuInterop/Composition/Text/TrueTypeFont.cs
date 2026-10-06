@@ -2434,8 +2434,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The same for a glyph not fitted under an unturned uniform scale: the prep's
         /// SCANCTRL and SCANTYPE, with neither condition bit true.</summary>
-        internal int DWriteUnfittedDropout(int ppem, int flags, bool turned)
+        internal int DWriteUnfittedDropout(int ppem, int flags, bool turned, int prepPpem = 0)
         {
+            if (prepPpem <= 0) prepPpem = ppem;
             TrueTypeInterpreter? interpreter = Interpreter();
             if (interpreter is null || ppem < 1) return 0;
             int savedFlags = TrueTypeInterpreter.DWriteFlags;
@@ -2445,7 +2446,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeInterpreter.DWriteFlags = flags;
                 TrueTypeInterpreter.BiLevelPass = false;
                 SubpixelFitting = true;
-                if (!interpreter.PrepareForSize(ppem)) return 0;
+                if (!interpreter.PrepareForSize(prepPpem)) return 0;
                 int ctrl = interpreter.PrepScanControl, type = interpreter.PrepScanType;
                 bool on = ((ctrl & 0x100) != 0 && ((ctrl & 0xFF) == 0xFF || ppem <= (ctrl & 0xFF)))
                           || (turned && ((ctrl & 0x200) != 0 || (ctrl & 0x400) != 0));
