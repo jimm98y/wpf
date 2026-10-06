@@ -35,6 +35,7 @@ namespace System.Drawing.WebGpuBackend
         private readonly PdfWriter _writer;
         private readonly PdfFontCache _fonts;
         private readonly PdfImageCache _images;
+        private int _rasters;   // the rasters written (PrintRaster), each its own image
 
         internal ScenePdfDocument(Stream destination, bool leaveOpen = false)
         {
@@ -205,10 +206,111 @@ namespace System.Drawing.WebGpuBackend
                         _c.Append('/').Append(name).Append(" sh\nQ\n");
                         break;
                     }
+                    case ImageBrush image when PrintRaster.Find(image.PixelsRgba) is PrintRaster raster:
+                        Raster(path, raster);
+                        break;
                     case ImageBrush image when image.PixelsRgba != null && image.PixelWidth > 0 && image.PixelHeight > 0:
                         Imaged(path, image);
                         break;
                 }
+            }
+
+            // A raster GDI+'s driver puts down its own way (see PrintRaster), as what it leaves on
+            // the paper: the colour DIB through a stencil -- the halftone mask at the device's
+            // resolution, or the runs' cells -- an explicit /Mask, set samples painted.
+            private void Raster(PagePath path, PrintRaster r)
+            {
+                int cw, ch, mw, mh;
+                byte[] rgb, bits;
+                if (r.Kind == PrintRaster.KindXorPath)
+                {
+                    // What the XOR leaves: the bitmap inside the shape.
+                    rgb = new byte[r.Width * r.Height * 3];
+                    for (int i = 0; i < r.Width * r.Height; i++)
+                    {
+                        rgb[i * 3] = r.Color[i * 4 + 2]; rgb[i * 3 + 1] = r.Color[i * 4 + 1]; rgb[i * 3 + 2] = r.Color[i * 4];
+                    }
+                    var shape = new PagePath { EvenOdd = !r.ClipNonZero };
+                    int n = Math.Min(r.ClipTypes.Length, r.ClipXY.Length / 2);
+                    for (int i = 0; i < n; i++)
+                    {
+                        var p = new Vector2(r.ClipXY[i * 2], r.ClipXY[i * 2 + 1]);
+                        int t = r.ClipTypes[i] & 7;
+                        if (t == 0) shape.MoveTo(p);
+                        else if (t == 3 && i + 2 < n)
+                        {
+                            shape.CubicTo(p, new Vector2(r.ClipXY[i * 2 + 2], r.ClipXY[i * 2 + 3]), new Vector2(r.ClipXY[i * 2 + 4], r.ClipXY[i * 2 + 5]));
+                            i += 2;
+                        }
+                        else shape.LineTo(p);
+                        if ((r.ClipTypes[i] & 0x80) != 0) shape.Close();
+                    }
+                    var plain = new PdfImage
+                    {
+                        ResourceName = "Ir" + (_doc._rasters++).ToString(CultureInfo.InvariantCulture),
+                        ObjectId = _doc._writer.AllocateObject(),
+                    };
+                    _doc._writer.WriteStreamObject(plain.ObjectId, rgb, string.Concat(
+                        "/Type /XObject /Subtype /Image /Width ", r.Width.ToString(CultureInfo.InvariantCulture),
+                        " /Height ", r.Height.ToString(CultureInfo.InvariantCulture), " /ColorSpace /DeviceRGB /BitsPerComponent 8"));
+                    _images.Add(plain);
+                    (float px0, float py0, float px1, float py1) = path.Bounds();
+                    _c.Append("q\n");
+                    ClipPath(shape);
+                    _c.Append(N(px1 - px0)).Append(" 0 0 ").Append(N(-(py1 - py0))).Append(' ')
+                      .Append(N(px0)).Append(' ').Append(N(py1)).Append(" cm /").Append(plain.ResourceName).Append(" Do\nQ\n");
+                    return;
+                }
+                if (r.Kind == PrintRaster.KindMasked)
+                {
+                    cw = r.SrcW; ch = r.Height; mw = r.MaskSrcW > 0 ? r.MaskSrcW : r.DevW; mh = r.MaskHeight;
+                    rgb = new byte[cw * ch * 3];
+                    for (int j = 0; j < ch; j++)
+                        for (int i = 0; i < cw; i++)
+                        {
+                            int o = (j * r.Width + r.SrcX + i) * 4, d = (j * cw + i) * 3;
+                            rgb[d] = r.Color[o + 2]; rgb[d + 1] = r.Color[o + 1]; rgb[d + 2] = r.Color[o];
+                        }
+                    int stride = (mw + 7) / 8;
+                    bits = new byte[stride * mh];
+                    for (int j = 0; j < mh; j++)
+                        for (int i = 0; i < mw; i++)
+                            if (r.MaskBit(r.MaskSrcX + i, j)) bits[j * stride + (i >> 3)] |= (byte)(0x80 >> (i & 7));
+                }
+                else
+                {
+                    cw = mw = r.Width; ch = mh = r.Height;
+                    rgb = new byte[cw * ch * 3];
+                    int stride = (mw + 7) / 8;
+                    bits = new byte[stride * mh];
+                    for (int j = 0; j < ch; j++)
+                        for (int i = 0; i < cw; i++)
+                        {
+                            int o = (j * r.Width + i) * 4, d = (j * cw + i) * 3;
+                            rgb[d] = r.Color[o + 2]; rgb[d + 1] = r.Color[o + 1]; rgb[d + 2] = r.Color[o];
+                            if (r.Color[o + 3] >= 5) bits[j * stride + (i >> 3)] |= (byte)(0x80 >> (i & 7));
+                        }
+                }
+                if (cw <= 0 || ch <= 0 || mw <= 0 || mh <= 0) return;
+                PdfWriter w = _doc._writer;
+                int maskId = w.AllocateObject();
+                w.WriteStreamObject(maskId, bits, string.Concat(
+                    "/Type /XObject /Subtype /Image /Width ", mw.ToString(CultureInfo.InvariantCulture),
+                    " /Height ", mh.ToString(CultureInfo.InvariantCulture), " /ImageMask true /BitsPerComponent 1 /Decode [ 1 0 ]"));
+                var image = new PdfImage
+                {
+                    ResourceName = "Ir" + (_doc._rasters++).ToString(CultureInfo.InvariantCulture),
+                    ObjectId = w.AllocateObject(),
+                };
+                w.WriteStreamObject(image.ObjectId, rgb, string.Concat(
+                    "/Type /XObject /Subtype /Image /Width ", cw.ToString(CultureInfo.InvariantCulture),
+                    " /Height ", ch.ToString(CultureInfo.InvariantCulture),
+                    " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Mask ", maskId.ToString(CultureInfo.InvariantCulture), " 0 R"));
+                _images.Add(image);
+                (float x0, float y0, float x1, float y1) = path.Bounds();
+                _c.Append("q\n");
+                _c.Append(N(x1 - x0)).Append(" 0 0 ").Append(N(-(y1 - y0))).Append(' ')
+                  .Append(N(x0)).Append(' ').Append(N(y1)).Append(" cm /").Append(image.ResourceName).Append(" Do\nQ\n");
             }
 
             private (int Id, string Name) Axial(SceneLinear linear)

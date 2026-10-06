@@ -191,6 +191,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public Vector2 Control { get; }
         public Vector2 Point { get; }
         public QuadraticBezierSegment(Vector2 control, Vector2 point) { Control = control; Point = point; }
+        /// <summary>The end is a TrueType implied on-curve point (the average of this control and
+        /// the next segment's), not a point of the outline -- what a transform applied after the
+        /// figure is built must recompute from the turned controls (scl_PostTransformGlyph turns
+        /// the points; fsc_FillGlyph makes the midpoints afterwards).</summary>
+        internal bool ImpliedEnd { get; init; }
     }
 
     internal sealed class CubicBezierSegment : PathSegment
@@ -210,6 +215,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         public PathFigure() { }
         public PathFigure(Vector2 start) => Start = start;
+        /// <summary>The start is an implied on-curve point (a contour of off-curve points only).</summary>
+        internal bool ImpliedStart { get; init; }
     }
 
     /// <summary>
