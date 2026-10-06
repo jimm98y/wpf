@@ -537,7 +537,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             float tr = Tracking;
             if (run.Script == GpTextTables.ScriptControl) {
                 for (int i = 0; i < count; i++) {
-                    adv [i] = (run.Shape.GlyphProps [g0 + i] & GpTextShaper.PropZeroWidth) == 0 && false
+                    adv [i] = (run.Shape.GlyphProps [g0 + i] & GpTextShaper.PropZeroWidth) == 0
                         ? (int) MathF.Floor (run.Face.DesignAdvance (run.Shape.Glyphs [g0 + i]) * k * tr + 0.5f) : 0;
                     offU [i] = offV [i] = 0;
                 }

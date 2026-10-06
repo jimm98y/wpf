@@ -140,6 +140,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 while (g + 1 < clusters.Count && clusters [g + 1] <= k) g++;
                 s.ClusterMap [k] = (ushort) g;
             }
+            // The generic engine keeps a zero-width joiner's blank glyph in the cluster before it
+            // (FormatRegularCharacters then does not stop at it: it starts no cluster).
+            if (!rtl)
+                for (int k = 1; k < len; k++) {
+                    if (text [start + k] != 0x200d || s.ClusterMap [k] == s.ClusterMap [k - 1]) continue;
+                    int zg = s.ClusterMap [k];
+                    if (k + 1 < len && s.ClusterMap [k + 1] == zg) continue;
+                    s.ClusterMap [k] = s.ClusterMap [k - 1];
+                    s.GlyphProps [zg] = (ushort) (s.GlyphProps [zg] & ~PropClusterStart);
+                }
             return s;
         }
 
@@ -150,10 +160,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
         static readonly string[] DefaultFeatures = { "ccmp", "locl", "rlig", "rclt", "calt", "liga", "clig" };
         static readonly string[] DefaultFeaturesRtl = { "ccmp", "locl", "rtla", "rtlm", "rlig", "rclt", "calt", "liga", "clig" };
 
-        /// <summary>The default-ignorable characters DirectWrite shapes invisible.</summary>
+        /// <summary>TextShaping's ShapingLibraryInternal::IsZeroWidthControlCharacter @180010200 (the
+        /// generic engine's GenericEngineSimpleGetGlyphs and the Arabic engine draw these as the
+        /// blank glyph with no advance): CGJ, the Arabic letter mark, the Mongolian variation
+        /// selectors and vowel separator, U+200B..200F and U+FEFF. The word joiner and the
+        /// invisible operators (U+2060..) are not: the face's glyph, or a fallback for none.</summary>
         internal static bool IsDefaultIgnorable (int c)
-            => c == 0x034f || (c >= 0x180b && c <= 0x180f) || (c >= 0x200b && c <= 0x200f)
-            || (c >= 0x202a && c <= 0x202e) || (c >= 0x2060 && c <= 0x206f)
+            => c == 0x034f || c == 0x061c || (c >= 0x180b && c <= 0x180e) || (c >= 0x200b && c <= 0x200f)
             || c == 0xfeff;
 
         /// <summary>The bidi mirrored form of a character in a right-to-left run.</summary>

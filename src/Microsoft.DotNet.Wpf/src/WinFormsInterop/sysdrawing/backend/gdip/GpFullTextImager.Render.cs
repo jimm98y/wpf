@@ -117,7 +117,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             if (IsVertical) { px = x0; py = y0 + ur; return; }
             bool opposite = seg.Run.Rtl != IsRightToLeft;
-            if (!IsRightToLeft) px = opposite ? x0 + ur + seg.Width : x0 + ur;
+            // A right-to-left subline of a left-to-right line: ReverseDisplay (@180111030) starts it
+            // at dup - 1 of its object, the last unit of its span [a, b).
+            if (!IsRightToLeft) px = opposite ? x0 + ur + seg.Width - 1 : x0 + ur;
             // A left-to-right subline of a right-to-left line: its u span [a, b) covers the pixels
             // (x0 - b, x0 - a], so its left is one unit right of x0 - b.
             else px = opposite ? x0 - ur - seg.Width + 1 : x0 - ur;

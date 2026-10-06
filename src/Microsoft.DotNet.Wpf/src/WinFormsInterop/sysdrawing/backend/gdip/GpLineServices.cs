@@ -63,6 +63,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public bool Space;
             public int Width;                 // its cluster's glyph advances, on the cluster's first character
             public bool ClusterStart;
+            public bool Own;                  // a special Line Services formats as its own dobj (FmtText labels 0x15/0x16)
             public int Glyph;                 // the run's glyph index of its cluster
             public int Brk;                   // its breaking class
         }
@@ -111,7 +112,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         ch.Width = w;
                     }
                     if (run.Script == GpTextTables.ScriptControl) {
-                        ch.Width = 0;
+                        // A control item's other characters (the bidi controls, U+2029, ...) keep
+                        // their glyph's advance: zero for the ones the shaper blanks.
+                        if (c == '\t' || c == '\r' || c == '\n') ch.Width = 0;
                         if (c == '\t') ch.Kind = 1;
                         else if (c == '\r') ch.Kind = 3;   // deleted (FormatStartDelete)
                         else if (c == '\n') {
@@ -129,6 +132,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         ch.Kind = 5;
                         ch.Width = 0;
                     }
+                    // The joiner and non-joiner are LSTXTCFG specials (SetTextConfig @1801178a0 labels
+                    // 0x15 / 0x16): FormatRegularCharacters @1801198c0 stops at one that starts a
+                    // cluster (GdipLscbkIsOffsetClusterStartFromGMAP @180243dc0) and FmtText
+                    // @180047ef0 gives it a one-character dobj of its own.
+                    if ((c == 0x200c || c == 0x200d) && ch.ClusterStart && run.Script != GpTextTables.ScriptControl) ch.Own = true;
                     ch.Space = IsSpace (c);
                     ch.Brk = BreakClass (fti, c, charBreaks);
                     if (ch.Kind == 1) {
@@ -202,7 +210,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             for (int i = 0; i < end; i++) {
                 Ch ch = chars [i];
                 int kind = ch.Kind == 1 ? 1 : ch.Kind == 2 ? 2 : ch.Kind == 3 ? 3 : ch.Kind == 5 ? 5 : 0;
-                if (seg == null || seg.Kind != 0 || kind != 0 || seg.Run != ch.Run) {
+                if (seg == null || seg.Kind != 0 || kind != 0 || seg.Run != ch.Run || ch.Own || (i > 0 && chars [i - 1].Own)) {
                     seg = new Seg { Kind = kind, Run = ch.Run, Cp = ch.Cp, CpLim = ch.Cp, Ur = pos, G0 = ch.Glyph };
                     line.Segs.Add (seg);
                 }
