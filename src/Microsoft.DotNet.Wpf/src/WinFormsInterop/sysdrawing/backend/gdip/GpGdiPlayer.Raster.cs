@@ -119,14 +119,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     }
                 }
                 finally { c.UnlockBits(sd); pargb.UnlockBits(dd); }
-                PointF[] p = _canvasDest;
-                PointF ux = Unit(p[0], p[1]), uy = Unit(p[0], p[2]);
-                var q = new[]
+                // Draw32BppDib @180090f58: the destination rectangle (world units) grown by a device
+                // pixel's world size each side (GpGraphics::GetWorldPixelSize @1800dabf0: the device
+                // vector (1, 1) back through the inverse transform, each part's absolute value),
+                // through the world transform.
+                GpMat wd = _s.EmfWorldToDevice;
+                RectangleF dr = _s.EmfDest;
+                float det = wd.M11 * wd.M22 - wd.M12 * wd.M21;
+                float pxw = 1f, pxh = 1f;
+                if (det != 0f)
                 {
-                    new PointF(p[0].X - ux.X - uy.X, p[0].Y - ux.Y - uy.Y),
-                    new PointF(p[1].X + ux.X - uy.X, p[1].Y + ux.Y - uy.Y),
-                    new PointF(p[2].X - ux.X + uy.X, p[2].Y - ux.Y + uy.Y),
-                };
+                    pxw = MathF.Abs((wd.M22 - wd.M21) / det);
+                    pxh = MathF.Abs((wd.M11 - wd.M12) / det);
+                }
+                if (dr.Width < 0f) pxw = -pxw;
+                if (dr.Height < 0f) pxh = -pxh;
+                float gx = dr.X - pxw, gy = dr.Y - pxh, gw = dr.Width + pxw * 2f, gh = dr.Height + pxh * 2f;
                 Graphics t = _t;
                 t.ResetTransform();
                 t.PageUnit = GraphicsUnit.Pixel;
@@ -135,7 +143,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 InterpolationMode im = _interp == InterpolationMode.NearestNeighbor ? InterpolationMode.Bilinear : _interp;
                 InterpolationMode oldIm = t.InterpolationMode;
                 t.InterpolationMode = im;
-                t.DrawImage(pargb, q, new RectangleF(-1, -1, _cw + 2, _ch + 2), GraphicsUnit.Pixel);
+                // GpGraphics::DrawImage of the rectangle under the world transform
+                using (Matrix wm = wd.ToMatrix()) t.Transform = wm;
+                t.DrawImage(pargb, new RectangleF(gx, gy, gw, gh), new RectangleF(-1, -1, _cw + 2, _ch + 2), GraphicsUnit.Pixel);
+                t.ResetTransform();
                 t.InterpolationMode = oldIm;
             }
 
@@ -243,9 +254,23 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return (x, y) => px[(((y - oy) % h + h) % h) * w + ((x - ox) % w + w) % w];
         }
 
-        // A WMF's patterns line up with the device the DIB is drawn onto, not with the DIB.
-        int WmfPatternX => _wmfCanvas ? -(int)MathF.Floor(_canvasDest[0].X + 0.5f) : 0;
-        int WmfPatternY => _wmfCanvas ? -(int)MathF.Floor(_canvasDest[0].Y + 0.5f) : 0;
+        // GpMetafile::EnumerateForPlayback @180092348 hands GpGraphics::EnumEmf a WMF whose world
+        // transform only translates and scales up-right to play on the destination's own HDC
+        // (EnumEmf's non-DIB branch): GDI's patterns and SelectClipRgn's device units are then the
+        // destination's pixels, the playback's lying at its viewport origin. Any other transform
+        // plays into the 32bpp DIB, whose pixel 0 is the origin.
+        bool WmfOnDestination
+        {
+            get
+            {
+                if (!_wmfCanvas) return false;
+                GpMat w = _s.EmfWorldToDevice;
+                return w.M12 == 0f && w.M21 == 0f && w.M11 >= 0f && w.M22 >= 0f;
+            }
+        }
+
+        int WmfPatternX => WmfOnDestination ? -(int)MathF.Floor(_canvasDest[0].X + 0.5f) : 0;
+        int WmfPatternY => WmfOnDestination ? -(int)MathF.Floor(_canvasDest[0].Y + 0.5f) : 0;
 
         /// <summary>A pattern pixel that is not painted (a hatch's background in TRANSPARENT mode).</summary>
         const uint NoPaint = 0xffffffff;

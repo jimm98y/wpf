@@ -757,6 +757,7 @@ namespace Wpf.WinFormsInterop.Tests
             ("gamma-up", ia => ia.SetGamma (0.6f), 1),
             ("nearest-up", null, 3),
             ("transparent", null, 4),
+            ("turned", null, 5),
         };
 
         static byte[] Play (byte[] file, Action<ImageAttributes> set, int place)
@@ -777,7 +778,8 @@ namespace Wpf.WinFormsInterop.Tests
                         Rectangle dst = place == 0 || place == 4 ? new Rectangle (5, 4, 120, 90) : place == 1 || place == 3 ? new Rectangle (3, 5, 163, 109) : new Rectangle (6, 7, 83, 61);
                         GraphicsUnit u = GraphicsUnit.Pixel;
                         RectangleF src = mf.GetBounds (ref u);
-                        if (ia == null) g.DrawImage (mf, dst);
+                        if (place == 5) g.DrawImage (mf, new [] { new PointF (20, 2), new PointF (128, 22), new PointF (6, 84) });
+                        else if (ia == null) g.DrawImage (mf, dst);
                         else g.DrawImage (mf, new [] { new PointF (dst.Left, dst.Top), new PointF (dst.Right, dst.Top), new PointF (dst.Left, dst.Bottom) }, src, GraphicsUnit.Pixel, ia);
                     }
                 }
