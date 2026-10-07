@@ -115,7 +115,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// a left-to-right run, its right for a right-to-left one -- and its baseline.</summary>
         void DnodePoint (Line line, GpLineServices.Seg seg, int ur, int x0, int y0, out int px, out int py)
         {
-            if (IsVertical) { px = x0; py = y0 + ur; return; }
+            // A vertical line's paragraph is left to right: a right-to-left run's pen starts at its
+            // far end, dup - 1 of its span (DrawGlyphs @18003b720 measures the run's ends from
+            // there, so it meets the line's end and takes the trailing margin).
+            if (IsVertical) { px = x0; py = seg.Run.Rtl ? y0 + ur + seg.Width - 1 : y0 + ur; return; }
             bool opposite = seg.Run.Rtl != IsRightToLeft;
             // A right-to-left subline of a left-to-right line: ReverseDisplay (@180111030) starts it
             // at dup - 1 of its object, the last unit of its span [a, b).
@@ -255,7 +258,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             // so it is never drawn from the face's embedded strikes either.
             float tl = MathF.Max (sx, sy) / 65536f;
             bool turned = !(MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl) && !(MathF.Abs (w2d.M11) <= tl && MathF.Abs (w2d.M22) <= tl);
-            int mode = target.RealizationMode (run.Face, run.Family, run.Em * sx, sx == sy && !turned);
+            int mode = target.RealizationMode (run.Face, run.Family, run.Em, run.Em * sx, sx == sy && !turned);
             if (turned && !vertical && !run.Rtl && target.DrawsAsPath (run.Face, run.Em, mode)) {
                 // SwitchToPath: no GlyphImager -- a design realization's ideal advances from the
                 // cell (GetGlyphStringIdealAdvanceVector), each glyph's path added there, filled.

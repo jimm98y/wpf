@@ -208,10 +208,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (hint == HintClearTypeGridFit
                 && ((squareXform && font.EmbeddedBitmapCount(ppemRound) > 100) || string.Equals(family, "Marlett", StringComparison.OrdinalIgnoreCase)))
                 mode = 1;   // flags & ~0x410000 | 0x800000
-            if (hint == HintAntiAliasGridFit && !font.GaspDoGray(ppemRound)) mode = 1;   // flags & ~0x10000
+            // IsGrayscaleFontSize takes the WORLD em (Realize @1800a22a0: (int) (em + 0.5)), the embedded
+            // strikes the device one.
+            if (hint == HintAntiAliasGridFit && !font.GaspDoGray(Floor(em + 0.5f))) mode = 1;   // flags & ~0x10000
             if (mode <= 2 && !biLevel) return null;
-            // Under a scale only the ClearType realization is modelled (the stretched 6x1 fit).
-            if (scaled && mode != 5) return null;
+            // Under a scale the realization is the device em's: the stretched 6x1 fit for ClearType, the
+            // classic fit at em * m11 for the antialiased and bi-level ones (as the full imager's are).
 
             // CharacterAttributes bit 0x80 sends the string to the full imager: every control
             // character (tab, CR, LF), the complex scripts, and a hot-key prefix.
@@ -286,7 +288,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 if (advType == 2 && scaled) NaturalMetrics(font, gids[i], em, sx, sy, out adv[i], out lsb[i], out rsb[i]);
                 else if (advType == 2) NaturalMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
-                else if (advType == 1) ClassicMetrics(font, gids[i], em, out adv[i], out lsb[i], out rsb[i]);
+                else if (advType == 1) ClassicMetrics(font, gids[i], scaled ? em * sx : em, out adv[i], out lsb[i], out rsb[i]);
                 else DesignMetrics(font, gids[i], out adv[i], out lsb[i], out rsb[i]);
                 if (advType == 0) SimulateDesignMetrics(font, gids[i], designBold ? Floor(upem / 50f + 0.5f) : 0,
                                                         ref adv[i], ref lsb[i], ref rsb[i]);

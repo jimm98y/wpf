@@ -129,7 +129,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GpMatrix w2d = w2dN.Value;
             float sx = MathF.Sqrt (w2d.M11 * w2d.M11 + w2d.M12 * w2d.M12);
             float sy = MathF.Sqrt (w2d.M21 * w2d.M21 + w2d.M22 * w2d.M22);
-            int mode = target.RealizationMode (run.Face, run.Family, run.Em * sx, sx == sy);
+            int mode = target.RealizationMode (run.Face, run.Family, run.Em, run.Em * sx, sx == sy);
             var gi = new GpGlyphImager ();
             gi.Initialize (this, run, seg, w2d, mode, lead, trail, atStart, atEnd);
             if (!gi.Fitted) return;

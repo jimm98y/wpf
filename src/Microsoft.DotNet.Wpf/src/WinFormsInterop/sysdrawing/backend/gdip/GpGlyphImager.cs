@@ -119,6 +119,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     int upem = Face.UnitsPerEmForHinting;
                     bool uniform = TransformToScaleFactor (w2d, out float scale);
                     int ppem = GdipText.AxisPpem (Em * scale);
+                    bool gdipBold = Face.SynthesizesBold && !GpFontMapper.DWriteSimulatesBold (Face);
                     for (int i = 0; i < Count; i++) {
                         float px;
                         if (quarter && (mode == 5 || mode == 1 || mode == 3)) {
@@ -131,10 +132,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             // A bold simulation's outline is a device pixel wider there too.
                             GdipText.SidewaysMetrics (Face, Glyphs [i], Em, Sy, Sx, out int advDu, out _);
                             px = MathF.Floor (advDu * (Em * Sx / upem) + 0.5f)
-                                 + (Face.SynthesizesBold && Face.DesignContours (Glyphs [i]).Count > 0 ? 1 : 0);
+                                 + (Face.SynthesizesBold && !gdipBold && Face.DesignContours (Glyphs [i]).Count > 0 ? 1 : 0);
                         // GetGdiCompatibleGlyphPlacements measures GDI natural only for ClearType: a script
                         // that is placed though not grid-fitted (7..10 under AntiAlias) takes GDI classic.
-                        } else px = GpTextShaper.DeviceAdvancePx (Face, Glyphs [i], Em, Sx, Sy, turned ? 2 : gridFit ? mode : 1) + MirrorPx (Glyphs [i], true);
+                        } else px = GpTextShaper.DeviceAdvancePx (Face, Glyphs [i], Em, Sx, Sy, turned ? 2 : gridFit ? mode : 1) + MirrorPx (Glyphs [i], true)
+                                    - (gdipBold && !turned ? 1 : 0);
+                        // GetGdiCompatibleGlyphPlacements measures the realization's DirectWrite face:
+                        // a bold GDI+ emboldens itself (a family DirectWrite gives no simulated bold,
+                        // realization flag 0x2000) is the regular face there, a pixel narrower.
                         if ((GlyphProps [i] & GpTextShaper.PropZeroWidth) != 0 && run.Script != GpTextTables.ScriptControl) px = 0f;
                         if (i + 1 < Count) {
                             int ku = GpTextShaper.Kern (Face, Script, Glyphs [i], Glyphs [i + 1]);
@@ -386,7 +391,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             left = lim;
             for (int i = from; i < from + count; i++) {
                 if (cum >= lim) break;
-                Bearings (Glyphs [i], out int adv, out int lsb, out _);
+                Bearings (Glyphs [i], out int adv, out int lb, out int rb);
+                int lsb = Rtl ? rb : lb;   // a right-to-left item's logical start is its right side
                 left = Math.Min (left, cum + (int) (lsb * scale * 16f));
                 cum += (int) (adv * scale * 16f);
             }
@@ -394,7 +400,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             right = lim;
             for (int i = from + count - 1; i >= from; i--) {
                 if (cum >= lim) break;
-                Bearings (Glyphs [i], out int adv, out _, out int rsb);
+                Bearings (Glyphs [i], out int adv, out int lb, out int rb);
+                int rsb = Rtl ? lb : rb;
                 right = Math.Min (right, cum + (int) (rsb * scale * 16f));
                 cum += (int) (adv * scale * 16f);
             }
@@ -433,6 +440,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>The realization's axis scales where QuarterCT measures (a vertical item's are turned).</summary>
         float BearingSx = 1f, BearingSy = 1f;
+
+        /// <summary>A glyph's advance in device pixels under a quarter-turned realization: the
+        /// sideways fit's (GetGdiCompatibleGlyphAdvances), a bold simulation's outline a pixel wider.</summary>
+        float SidewaysAdvancePx (int gid)
+        {
+            GdipText.SidewaysMetrics (Face, gid, Em, BearingSy, BearingSx, out int advDu, out _);
+            return advDu * (Em * BearingSx / Face.UnitsPerEmForHinting)
+                   + (Face.SynthesizesBold && Face.DesignContours (gid).Count > 0 ? 1 : 0);
+        }
 
         /// <summary>GetDisplayCellOrigin.</summary>
         public PointF CellOrigin (PointF world)
@@ -481,8 +497,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 // one, in ideal units through +0x78) -- for a path, the design advance at em * r.
                 int upem = Face.UnitsPerEmForHinting;
                 for (int i = 0; i < Count; i++) {
-                    int ideal = Path
+                    // GetGlyphStringIdealAdvanceVector @1800a1ce0: GetGdiCompatibleGlyphAdvances under
+                    // the realization's own transform -- a vertical line's turned one measures
+                    // sideways -- and nothing for the hidden glyph 0xFFFF.
+                    int ideal = Glyphs [i] == 0xffff ? 0 : Path
                         ? (int) MathF.Floor (GpTextShaper.DesignAdvance (Face, Glyphs [i]) * (Em * R / upem) + 0.5f)
+                        : QuarterCT ? (int) MathF.Floor (SidewaysAdvancePx (Glyphs [i]) * F78 + 0.5f)
                         : (int) MathF.Floor ((GpTextShaper.RealizationAdvancePx (Face, Glyphs [i], Em, Sx, Sy, Mode) + MirrorPx (Glyphs [i], false)) * F78 + 0.5f);
                     if (!vertical) o [i].X -= ideal / R;
                     else o [i].Y -= ideal / R;

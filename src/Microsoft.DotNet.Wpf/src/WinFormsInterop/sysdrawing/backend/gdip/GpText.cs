@@ -161,19 +161,21 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
             public GpMatrix? WorldToDevice => _g.WorldToDevice;
 
+            public int RealizationMode (TrueTypeFont face, string family, float em, float emDevice, bool square)
+                => RealizationModeFor (_g.ResolvedTextHint (), face, family, emDevice, square, em);
             public int RealizationMode (TrueTypeFont face, string family, float emDevice, bool square)
                 => RealizationModeFor (_g.ResolvedTextHint (), face, family, emDevice, square);
 
             /// <summary>GpFaceRealization's render mode for a resolved hint: ClearType falls back to
             /// bi-level for a face drawn from its embedded bitmaps at this size (and Marlett),
             /// AntiAliasGridFit for a size the 'gasp' does not grey.</summary>
-            internal static int RealizationModeFor (int hint, TrueTypeFont face, string family, float emDevice, bool square)
+            internal static int RealizationModeFor (int hint, TrueTypeFont face, string family, float emDevice, bool square, float em = float.NaN)
             {
                 int ppem = (int) MathF.Floor (emDevice + 0.5f);
                 if (hint == GdipText.HintClearTypeGridFit
                     && ((square && face.EmbeddedBitmapCount (ppem) > 100) || string.Equals (family, "Marlett", StringComparison.OrdinalIgnoreCase)))
                     return 1;
-                if (hint == GdipText.HintAntiAliasGridFit && !face.GaspDoGray (ppem)) return 1;
+                if (hint == GdipText.HintAntiAliasGridFit && !face.GaspDoGray (float.IsNaN (em) ? ppem : (int) MathF.Floor (em + 0.5f))) return 1;
                 return hint;
             }
 
@@ -784,10 +786,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 break;
             }
             case 3: case 4:
-                lv = GdipText.ComposeGrey (font, run.Glyphs, run.Em, xs, y);
+                lv = GdipText.ComposeGrey (font, run.Glyphs, run.Em * run.Sx, xs, y);
                 break;
             default:
-                lv = GdipText.ComposeMono (font, run.Glyphs, run.Em, xs, y, gridFit: run.Mode == 1);
+                lv = GdipText.ComposeMono (font, run.Glyphs, run.Em * run.Sx, xs, y, gridFit: run.Mode == 1);
                 break;
             }
             if (lv.Width == 0 || lv.Height == 0) return;

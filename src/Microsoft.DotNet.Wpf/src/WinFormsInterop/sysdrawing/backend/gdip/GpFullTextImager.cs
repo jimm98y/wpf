@@ -44,6 +44,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
         GpMatrix? WorldToDevice { get; }
         /// <summary>The render mode the target's realization of this face takes (GpFaceRealization +0x1c).</summary>
         int RealizationMode (TrueTypeFont face, string family, float emDevice, bool square);
+        /// <summary>The same with the world em too: Realize @1800a22a0 asks IsGrayscaleFontSize about
+        /// (int) (em + 0.5) of the WORLD em and GetEmbeddedBitmapCount about the device one.</summary>
+        int RealizationMode (TrueTypeFont face, string family, float em, float emDevice, bool square)
+            => RealizationMode (face, family, emDevice, square);
         /// <summary>GpGraphics::DrawPlacedGlyphs: the glyphs at their device origins.</summary>
         void DrawPlacedGlyphs (GpFullTextImager.Run run, int mode, ushort[] glyphs, PointF[] deviceOrigins,
                                string chars, ushort[] map, int flags);

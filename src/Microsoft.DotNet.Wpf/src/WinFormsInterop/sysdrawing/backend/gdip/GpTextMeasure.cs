@@ -169,6 +169,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             readonly GpMatrix _m; readonly int _hint;
             public MeasureTarget (in GpMatrix m, int hint) { _m = m; _hint = hint == 0 ? GdipText.HintClearTypeGridFit : hint; }
             public GpMatrix? WorldToDevice => _m;
+            public int RealizationMode (TrueTypeFont face, string family, float em, float emDevice, bool square)
+                => ScreenTarget.RealizationModeFor (_hint, face, family, emDevice, square, em);
             public int RealizationMode (TrueTypeFont face, string family, float emDevice, bool square)
                 => ScreenTarget.RealizationModeFor (_hint, face, family, emDevice, square);
             public void DrawPlacedGlyphs (GpFullTextImager.Run run, int mode, ushort[] glyphs, PointF[] o, string chars, ushort[] map, int flags) { }

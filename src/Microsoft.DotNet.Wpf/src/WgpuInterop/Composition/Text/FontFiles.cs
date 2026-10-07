@@ -811,6 +811,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (string.IsNullOrWhiteSpace(family)) return null;
             foreach (string k in ScannedFamilies().Keys)
                 if (string.Equals(k, family, StringComparison.OrdinalIgnoreCase)) return k;
+            // A variable font's named instances are families of their own (DirectWrite's
+            // WIN32_FAMILY_NAMES, GDI's registry): GDI+ answers "Bahnschrift Light" with that
+            // instance, typographic one-em cell and all.
+            if (s_scannedInstances is not null)
+                foreach (string k in s_scannedInstances.Keys)
+                    if (string.Equals(k, family, StringComparison.OrdinalIgnoreCase)) return k;
             return null;
         }
 

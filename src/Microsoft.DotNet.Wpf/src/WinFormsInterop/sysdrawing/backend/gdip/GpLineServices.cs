@@ -64,6 +64,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public int Width;                 // its cluster's glyph advances, on the cluster's first character
             public bool ClusterStart;
             public bool Own;                  // a special Line Services formats as its own dobj (FmtText labels 0x15/0x16)
+            public bool Glue;                 // LSTXTCFG's wchNonBreakSpace (U+00A0) / wchNonBreakHyphen (U+2011)
+            public bool Special;              // an LSTXTCFG special: no-break space and hyphen, en / em dash, en / em / narrow / FE space
             public int Glyph;                 // the run's glyph index of its cluster
             public int Brk;                   // its breaking class
         }
@@ -139,6 +141,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     if ((c == 0x200c || c == 0x200d) && ch.ClusterStart && run.Script != GpTextTables.ScriptControl) ch.Own = true;
                     ch.Space = IsSpace (c);
                     ch.Brk = BreakClass (fti, c, charBreaks);
+                    ch.Glue = c == 0xa0 || c == 0x2011;
+                    ch.Special = c == 0xa0 || c == 0x2011 || c == 0x2013 || c == 0x2014 || c == 0x2002 || c == 0x2003 || c == 0x2009 || c == 0x3000;
                     if (ch.Kind == 1) {
                         ch.Width = NextTab (fti, run, ur) - ur;
                     }
@@ -207,10 +211,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int pos = 0;
             int lastInk = 0;
             Seg seg = null;
+            // An LSTXTCFG special (FmtText formats it as a dobj of its own) is a dnode of its own
+            // wherever it is not left to right in a left-to-right paragraph's main line -- native
+            // RTL "ab cd ok" draws [ab][NBSP][cd ok], LTR "ab cd ok" one run; the
+            // display of a left-to-right main line hands the text's dnodes over together.
+            bool Split (int k) => chars [k].Special && chars [k].Run != null && chars [k].Run.Level > 0;
             for (int i = 0; i < end; i++) {
                 Ch ch = chars [i];
                 int kind = ch.Kind == 1 ? 1 : ch.Kind == 2 ? 2 : ch.Kind == 3 ? 3 : ch.Kind == 5 ? 5 : 0;
-                if (seg == null || seg.Kind != 0 || kind != 0 || seg.Run != ch.Run || ch.Own || (i > 0 && chars [i - 1].Own)) {
+                if (seg == null || seg.Kind != 0 || kind != 0 || seg.Run != ch.Run || ch.Own || (i > 0 && chars [i - 1].Own)
+                    || Split (i) || (i > 0 && Split (i - 1))) {
                     seg = new Seg { Kind = kind, Run = ch.Run, Cp = ch.Cp, CpLim = ch.Cp, Ur = pos, G0 = ch.Glyph };
                     line.Segs.Add (seg);
                 }
@@ -317,6 +327,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 Ch after = chars [p], before = chars [p - 1];
                 if (!after.ClusterStart) continue;
                 if (after.Space) continue;
+                // Line Services' own non-breaking space and hyphen (LSTXTCFG @1802b3330) hold on to
+                // both neighbours whatever the breaking classes say -- under character trimming,
+                // where every class is 0, "dog 2x 99 " truncated at the space ends "dog 2x 9".
+                if (after.Glue || before.Glue) continue;
                 if (before.Space) {
                     // After a run of spaces: the classes either side of the spaces (the spaces
                     // the line starts with may always break).
