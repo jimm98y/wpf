@@ -74,12 +74,17 @@ namespace WgpuInterop.Tests.Rendering
         private static void AssertSame(byte[] want, byte[] got, string what)
         {
             Assert.Equal(want.Length, got.Length);
-            int diff = 0, first = -1;
+            int diff = 0, first = -1, x0 = W, y0 = H, x1 = -1, y1 = -1;
             for (int i = 0; i < want.Length; i++)
-                if (want[i] != got[i]) { diff++; if (first < 0) first = i; }
+                if (want[i] != got[i])
+                {
+                    diff++; if (first < 0) first = i;
+                    int q = i / 4;
+                    x0 = Math.Min(x0, q % W); x1 = Math.Max(x1, q % W); y0 = Math.Min(y0, q / W); y1 = Math.Max(y1, q / W);
+                }
             if (diff == 0) return;
             int p = first / 4;
-            Assert.Fail($"{what}: {diff} bytes differ; first at ({p % W},{p / W}) " +
+            Assert.Fail($"{what}: {diff} bytes differ in ({x0},{y0})-({x1},{y1}); first at ({p % W},{p / W}) " +
                         $"want {want[p * 4]},{want[p * 4 + 1]},{want[p * 4 + 2]},{want[p * 4 + 3]} " +
                         $"got {got[p * 4]},{got[p * 4 + 1]},{got[p * 4 + 2]},{got[p * 4 + 3]}");
         }
@@ -360,6 +365,344 @@ namespace WgpuInterop.Tests.Rendering
             h.Frame(root, expectPartial: true, "inner clip grew");
             root.Children.Remove(other);
             h.Frame(root, expectPartial: true, "sibling removed");
+        }
+
+        // ---- scrolling -------------------------------------------------------------------------
+
+        /// <summary>A scroll viewer as WPF builds one: a window background, a clipped viewport at a
+        /// FRACTIONAL position (a header of measured text height above it), and in it a long content
+        /// visual of rows -- rounded fills, ClearType text, a drop-shadowed card every few rows -- that
+        /// the scroll moves. Over it all, last in z-order, a translucent badge that does not move.</summary>
+        private sealed class ScrollScene
+        {
+            internal readonly SceneVisual Root = new(), Viewport, Content = new(), Badge, Row3 = new();
+            internal const float Top = 22.37f;
+
+            internal ScrollScene(bool withText)
+            {
+                Root.Content.Add(Box(0, 0, W, H, 236, 239, 243));                  // the window background
+                var header = new SceneVisual();
+                header.Content.Add(Box(0, 0, W, Top, 40, 60, 90));
+                Root.Children.Add(header);
+                Viewport = new SceneVisual { Offset = new Vector2(0, Top), Clip = new Rect(8, 0, W - 30, H - Top - 6) };
+                for (int i = 0; i < 24; i++)
+                {
+                    SceneVisual row = i == 3 ? Row3 : new SceneVisual();
+                    row.Offset = new Vector2(12, 4 + i * 27.5f);
+                    row.Content.Add(new GeometryFill(new RoundedRectangleGeometry(new Rect(0, 0, 240, 23), 5, 5),
+                        RgbaColor.FromBytes((byte)(250 - i * 5), 250, (byte)(200 + i * 2), 255)));
+                    if (withText)
+                        row.Content.Add(new GlyphRunDraw($"Row {i}: scrolled, not redrawn", new Vector2(8, 16), 13f, RgbaColor.FromBytes(20, 20, 30, 255)));
+                    if (i % 5 == 2)
+                    {
+                        var card = new SceneVisual { Offset = new Vector2(180, 2), Effect = new DropShadowEffect(RgbaColor.FromBytes(0, 0, 0, 120), 4, 2, 2) };
+                        card.Content.Add(Box(0, 0, 40, 17, 60, 120, 220));
+                        row.Children.Add(card);
+                    }
+                    Content.Children.Add(row);
+                }
+                Viewport.Children.Add(Content);
+                Root.Children.Add(Viewport);
+                // A scroll bar thumb: outside the viewport, and it moves -- ordinary damage.
+                Root.Children.Add(new SceneVisual());
+                Badge = new SceneVisual { Offset = new Vector2(W - 100, 40) };
+                Badge.Content.Add(new GeometryFill(new RoundedRectangleGeometry(new Rect(0, 0, 70, 24), 8, 8),
+                    RgbaColor.FromBytes(0x11, 0x18, 0x27, 0xB8)));
+                Root.Children.Add(Badge);
+                ScrollTo(0);
+            }
+
+            internal void ScrollTo(float offset)
+            {
+                Content.Offset = new Vector2(0, -offset);
+                SceneVisual thumb = Root.Children[2];
+                thumb.Content.Clear();
+                thumb.Content.Add(Box(W - 18, Top + 4 + offset * 0.25f, 10, 40, 140, 140, 150));
+            }
+        }
+
+        [Fact]
+        public void AWholePixelScrollShiftsAndIsExact()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var s = new ScrollScene(withText: true);
+            h.Frame(s.Root, expectPartial: false, "first frame");
+            int shifted = 0;
+            float[] steps = { 7, 13, 1, 30, -12, -3, 24, 2, -10, 15, 9, -9 };
+            float off = 0;
+            foreach (float step in steps)
+            {
+                off += step;
+                s.ScrollTo(off);
+                h.Frame(s.Root, expectPartial: true, $"scroll to {off}");
+                if (h.Target.LastShift is { } sh)
+                {
+                    shifted++;
+                    Assert.Equal(0, sh.Dx);
+                    Assert.Equal(-(int)step, sh.Dy);
+                    // Less than the viewport: the exposed strip, the header's edge, the badge (where it
+                    // is and where the shift dragged it) and the text runs those touch -- which in a
+                    // viewport this small, with a run's box three ems tall, is still a good part of it.
+                    Assert.True(h.Target.LastPixels < 290 * 212, $"scroll {off}: damage {h.Target.LastPixels} px");
+                }
+            }
+            Assert.True(shifted >= steps.Length - 1, $"only {shifted} of {steps.Length} scrolls were shifted");
+        }
+
+        [Fact]
+        public void AScrollWithAChangeInsideAndAMovingOverlayIsExact()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var s = new ScrollScene(withText: true);
+            h.Frame(s.Root, expectPartial: false, "first frame");
+            int shifted = 0;
+            for (int i = 1; i <= 8; i++)
+            {
+                s.ScrollTo(i * 6);
+                // A row's content changing as it scrolls (a hover, a selection) ...
+                s.Row3.Content[0] = new GeometryFill(new RoundedRectangleGeometry(new Rect(0, 0, 240, 23), 5, 5),
+                    RgbaColor.FromBytes((byte)(i * 30), 120, 200, 255));
+                // ... a row added at the end, and the badge drifting over the viewport.
+                if (i == 4)
+                {
+                    var extra = new SceneVisual { Offset = new Vector2(12, 4 + 24 * 27.5f) };
+                    extra.Content.Add(Box(0, 0, 240, 23, 200, 0, 0));
+                    s.Content.Children.Add(extra);
+                }
+                if (i % 3 == 0) s.Badge.Offset = new Vector2(W - 100 - i * 3, 40 + i);
+                h.Frame(s.Root, expectPartial: false, $"scroll+change {i}");
+                if (h.Target.LastShift != null) shifted++;
+            }
+            // Exact on every frame; and with this much changing besides, a shift on some of them
+            // (it is taken only when it touches fewer pixels than redrawing the move would).
+            Assert.True(shifted > 0, "no frame was shifted");
+        }
+
+        [Fact]
+        public void ScrollsThatCannotBeShiftedAreStillExact()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var s = new ScrollScene(withText: true);
+            h.Frame(s.Root, expectPartial: false, "first frame");
+            // Fractional: every edge lands on a new sub-pixel phase; nothing is shifted.
+            s.ScrollTo(3.5f);
+            h.Frame(s.Root, expectPartial: false, "fractional");
+            Assert.Null(h.Target.LastShift);
+            s.ScrollTo(10.25f);
+            h.Frame(s.Root, expectPartial: false, "fractional again");
+            Assert.Null(h.Target.LastShift);
+            // A move that also scales.
+            s.Content.Transform = Matrix3x2.CreateScale(1f, 1.5f) * Matrix3x2.CreateTranslation(0, -20);
+            h.Frame(s.Root, expectPartial: false, "scaled");
+            Assert.Null(h.Target.LastShift);
+            s.Content.Transform = Matrix3x2.Identity;
+            s.ScrollTo(20);
+            h.Frame(s.Root, expectPartial: false, "back to plain");
+            // Under an effect: the blurred pixels are not where the content put them.
+            s.Viewport.Effect = new BlurEffect(3);
+            h.Frame(s.Root, expectPartial: false, "blurred viewport");
+            s.ScrollTo(30);
+            h.Frame(s.Root, expectPartial: false, "scroll under a blur");
+            Assert.Null(h.Target.LastShift);
+            s.Viewport.Effect = null;
+            h.Frame(s.Root, expectPartial: false, "blur gone");
+            // Under a group opacity.
+            s.Viewport.Opacity = 0.8;
+            h.Frame(s.Root, expectPartial: false, "translucent viewport");
+            s.ScrollTo(42);
+            h.Frame(s.Root, expectPartial: false, "scroll under opacity");
+            Assert.Null(h.Target.LastShift);
+            s.Viewport.Opacity = 1;
+            h.Frame(s.Root, expectPartial: false, "opaque again");
+            // And whole pixels once more: shifted.
+            s.ScrollTo(50);
+            h.Frame(s.Root, expectPartial: true, "whole pixels");
+            Assert.NotNull(h.Target.LastShift);
+        }
+
+        [Fact]
+        public void AScrollOverAPatternedBackgroundIsExact()
+        {
+            // Nothing uniform under the viewport: the tiles behind it do not move, so every tile the
+            // viewport shows is damage, twice. Exact whatever it decides.
+            using var h = new Harness(this, NewRenderer, White);
+            var root = new SceneVisual();
+            root.Children.Add(Tiles());
+            var viewport = new SceneVisual { Clip = new Rect(40, 30, 200, 150) };
+            var content = new SceneVisual();
+            for (int i = 0; i < 12; i++)
+                content.Content.Add(Box(50 + (i % 3) * 60, 35 + i * 25, 50, 18, 20, (byte)(i * 20), 200, 160));
+            viewport.Children.Add(content);
+            root.Children.Add(viewport);
+            h.Frame(root, expectPartial: false, "first frame");
+            for (int i = 1; i <= 6; i++)
+            {
+                content.Offset = new Vector2(i % 2 == 0 ? 0 : 3, -i * 11);
+                h.Frame(root, expectPartial: false, $"scroll {i}");
+            }
+        }
+
+        // ---- WinForms-style repaints: fresh recordings compared by value ------------------------
+
+        /// <summary>A grid as a WinForms control records it on every paint: a window visual with
+        /// its clip, a background fill, then per row a clipped cell container holding a fill, a grid
+        /// line and the row's text; a header on top. EVERY object is new on every call, as a repaint
+        /// makes them. <paramref name="first"/> is the first row shown; rows are 20 px.</summary>
+        private static SceneVisual RecordedGrid(int first, Func<int, RgbaColor>? rowColour = null, string? header = "Header")
+        {
+            var window = new SceneVisual { Offset = new Vector2(20, 16), Clip = new Rect(0, 0, 260, 200) };
+            window.Content.Add(Box(0, 0, 260, 200, 255, 255, 255));
+            for (int i = first; i < first + 12; i++)
+            {
+                float y = 24 + (i - first) * 20;
+                RgbaColor c = rowColour?.Invoke(i) ?? RgbaColor.FromBytes((byte)(200 + i % 5 * 10), 240, (byte)(180 + i * 7 % 70), 255);
+                var cell = new SceneVisual { Clip = new Rect(0, y, 240, 20) };
+                cell.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(2, y + 1, 236, 18)), c));
+                cell.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(0, y + 19, 240, 1)), RgbaColor.FromBytes(160, 160, 160, 255)));
+                cell.Content.Add(new GlyphRunDraw($"row {i}", new Vector2(8, y + 15), 12f, RgbaColor.FromBytes(10, 10, 10, 255)));
+                window.Children.Add(cell);
+            }
+            // Drawn after the rows: a header that does not scroll, and a scroll bar.
+            var top = new SceneVisual();
+            top.Content.Add(Box(0, 0, 260, 24, 210, 220, 235));
+            if (header != null) top.Content.Add(new GlyphRunDraw(header, new Vector2(8, 17), 12f, RgbaColor.FromBytes(0, 0, 0, 255)));
+            top.Content.Add(Box(242, 24 + first * 3, 16, 30, 120, 120, 120));
+            window.Children.Add(top);
+            return window;
+        }
+
+        /// <summary>The host's stable root, with each paint's recording put in it.</summary>
+        private sealed class GridHost
+        {
+            private readonly SceneVisual _root = new();
+            internal GridHost() => _root.Content.Add(Box(0, 0, W, H, 230, 230, 230));
+            internal SceneVisual Show(SceneVisual window) { _root.Children.Clear(); _root.Children.Add(window); return _root; }
+        }
+
+        [Fact]
+        public void ARepaintedScrollingGridShiftsAndIsExact()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var host = new GridHost();
+            h.Frame(host.Show(RecordedGrid(0)), expectPartial: false, "first frame");
+            int shifted = 0;
+            int[] firsts = { 1, 2, 4, 3, 6, 5, 5, 9, 8 };
+            foreach (int f in firsts)
+            {
+                h.Frame(host.Show(RecordedGrid(f)), expectPartial: true, $"rows from {f}");
+                if (h.Target.LastShift is { } sh)
+                {
+                    shifted++;
+                    Assert.Equal(0, sh.Dx);
+                    Assert.True(sh.Dy % 20 == 0, $"shift {sh.Dy}");
+                    // One row a step: the exposed row, the header and the scroll bar, not the window.
+                    if (f == 2) Assert.True(h.Target.LastPixels < 260 * 200 / 2, $"rows from {f}: damage {h.Target.LastPixels} px");
+                }
+            }
+            Assert.True(shifted >= 4, $"only {shifted} repaints were shifted");
+        }
+
+        [Fact]
+        public void ARepaintOfTheSameThingDamagesOnlyWhatDiffers()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var host = new GridHost();
+            h.Frame(host.Show(RecordedGrid(3)), expectPartial: false, "first frame");
+            // Every object new, every value the same: nothing to draw.
+            h.Frame(host.Show(RecordedGrid(3)), expectPartial: true, "identical repaint");
+            Assert.Equal(0, h.Target.LastPixels);
+            // One row's colour changed: that row, not the window.
+            h.Frame(host.Show(RecordedGrid(3, i => i == 6 ? RgbaColor.FromBytes(250, 120, 120, 255) : RgbaColor.FromBytes((byte)(200 + i % 5 * 10), 240, (byte)(180 + i * 7 % 70), 255))),
+                expectPartial: true, "one row recoloured");
+            Assert.True(h.Target.LastPixels > 0 && h.Target.LastPixels < 260 * 200 / 3, $"one row: damage {h.Target.LastPixels} px");
+            // The header text changed.
+            h.Frame(host.Show(RecordedGrid(3, header: "Header 2")), expectPartial: true, "header text");
+            h.Frame(host.Show(RecordedGrid(3, header: null)), expectPartial: true, "header text gone");
+        }
+
+        [Fact]
+        public void RepaintsThatAreNotScrollsAreStillExact()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var host = new GridHost();
+            h.Frame(host.Show(RecordedGrid(0)), expectPartial: false, "first frame");
+            // Uniform rows: every row looks alike but its text, so many offsets look plausible.
+            for (int f = 1; f <= 6; f++)
+                h.Frame(host.Show(RecordedGrid(f, _ => RgbaColor.FromBytes(240, 240, 255, 255))), expectPartial: false, $"uniform rows from {f}");
+            // A jump further than the window: nothing in common.
+            h.Frame(host.Show(RecordedGrid(40)), expectPartial: false, "jump");
+            // And back to coloured rows, one step.
+            h.Frame(host.Show(RecordedGrid(41)), expectPartial: false, "coloured again");
+            h.Frame(host.Show(RecordedGrid(42)), expectPartial: false, "one step");
+        }
+
+        /// <summary>A shadowed card entirely outside a viewport's clip still casts its shadow into it
+        /// (the effect spreads the content before the clip). A partial frame whose damage is under
+        /// that shadow must not skip the card.</summary>
+        [Fact]
+        public void AShadowCastFromBeyondTheClipIsExact()
+        {
+            using var h = new Harness(this, NewRenderer, White);
+            var root = new SceneVisual();
+            root.Content.Add(Box(0, 0, W, H, 236, 239, 243));
+            var viewport = new SceneVisual { Clip = new Rect(20, 60, 260, 150) };
+            var card = new SceneVisual { Offset = new Vector2(40, 20), Effect = new DropShadowEffect(RgbaColor.FromBytes(0, 0, 0, 200), 8, 0, 12) };
+            card.Content.Add(Box(0, 0, 120, 36, 255, 255, 255));        // ends at y=56: above the clip
+            viewport.Children.Add(card);
+            var mover = new SceneVisual { Offset = new Vector2(60, 62) };
+            mover.Content.Add(Box(0, 0, 10, 6, 200, 40, 40));
+            viewport.Children.Add(mover);
+            root.Children.Add(viewport);
+            h.Frame(root, expectPartial: false, "first frame");
+            for (int i = 1; i <= 4; i++)
+            {
+                mover.Offset = new Vector2(60 + i * 13, 62 + (i % 2));
+                h.Frame(root, expectPartial: true, $"under the shadow {i}");
+            }
+            // The card moving while wholly clipped away: its shadow inside moves.
+            card.Offset = new Vector2(46, 18);
+            h.Frame(root, expectPartial: true, "clipped card moved");
+        }
+
+        [Fact]
+        public void DamageRectanglesAreDisjointAndCoverEverything()
+        {
+            var rng = new Random(7);
+            for (int trial = 0; trial < 300; trial++)
+            {
+                var raw = new List<WgpuSceneRenderer.Scissor>();
+                int n = rng.Next(1, 60);
+                for (int i = 0; i < n; i++)
+                {
+                    // Long strips across, small boxes, overlapping and nested ones.
+                    int kind = rng.Next(3);
+                    int x = rng.Next(-20, W), y = rng.Next(-20, H);
+                    int w = kind == 0 ? W : rng.Next(1, 120), hh = kind == 1 ? rng.Next(1, 6) : rng.Next(1, 90);
+                    raw.Add(new WgpuSceneRenderer.Scissor(x, y, w, hh));
+                }
+                var rects = new List<WgpuSceneRenderer.Scissor>();
+                WgpuSceneRenderer.DamageTracker.Normalize(raw, rects, W, H);
+                var cover = new int[W * H];
+                foreach (var r in rects)
+                {
+                    Assert.True(r.X >= 0 && r.Y >= 0 && r.X + r.W <= W && r.Y + r.H <= H, $"trial {trial}: outside the target");
+                    for (int y = r.Y; y < r.Y + r.H; y++)
+                        for (int x = r.X; x < r.X + r.W; x++)
+                            cover[y * W + x]++;
+                }
+                foreach (var r in raw)
+                    for (int y = Math.Max(0, r.Y); y < Math.Min(H, r.Y + r.H); y++)
+                        for (int x = Math.Max(0, r.X); x < Math.Min(W, r.X + r.W); x++)
+                            Assert.True(cover[y * W + x] > 0, $"trial {trial}: ({x},{y}) lost");
+                foreach (int c in cover) Assert.True(c <= 1, $"trial {trial}: rectangles overlap");
+                Assert.True(rects.Count <= 16, $"trial {trial}: {rects.Count} rectangles");
+            }
         }
 
         private static PathGeometry Circle(float cx, float cy, float r)

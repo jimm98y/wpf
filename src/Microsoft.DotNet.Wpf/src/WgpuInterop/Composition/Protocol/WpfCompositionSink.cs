@@ -610,6 +610,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 Emit($"PERF/frame: skipped={_perfSkipped} realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
                     $"rasterized={WgpuSceneRenderer.PerfCoverage} (localcache={WgpuSceneRenderer.PerfLocalCoverage}) textures={WgpuSceneRenderer.PerfTextures} bindgroups={WgpuSceneRenderer.PerfBindGroups} layers={WgpuSceneRenderer.PerfLayers} readbacks={WgpuSceneRenderer.PerfReadbacks}");
                 Emit($"PERF/period: frame={ms(_perfPeriodTicks):0.0}ms (max {msr(_perfMaxPeriod):0.0}) in-sink={ms(_perfCommitTicks):0.0}ms elsewhere={ms(_perfPeriodTicks - _perfCommitTicks):0.0}ms");
+                Emit("PERF/damage: " + WgpuSceneRenderer.PartialTarget.PerfSummary());
                 _perfPeriodTicks = 0; _perfCommitTicks = 0; _perfMaxPeriod = 0;
                 long allocNow = GC.GetTotalAllocatedBytes();
                 int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);

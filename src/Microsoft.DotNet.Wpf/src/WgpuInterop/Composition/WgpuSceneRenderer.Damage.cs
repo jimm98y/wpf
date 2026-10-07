@@ -252,10 +252,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static Scissor SnapshotBox(SceneSnapshot snap, Matrix3x2 world)
             => Inflate(RectBox(snap.Dest, world), 2, 2, 2, 2);
 
+        /// <summary>A rectangle's device box, computed EXACTLY as <see cref="DeviceBounds"/> computes a
+        /// clip's scissor (corners summed in double, then transformed): a clip's box here must be the
+        /// renderer's scissor to the pixel. Summing in float instead ended a clip at 22.37 + 211.63
+        /// a row short of the renderer's scissor, and a shadow drawn on that last row was never
+        /// damaged when it moved away.</summary>
         private static Scissor RectBox(Rect r, Matrix3x2 world)
         {
-            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
-            AccRect(r.X, r.Y, r.Width, r.Height, world, 0f, ref minX, ref minY, ref maxX, ref maxY);
+            Vector2 p0 = Vector2.Transform(new Vector2((float)r.X, (float)r.Y), world);
+            Vector2 p1 = Vector2.Transform(new Vector2((float)(r.X + r.Width), (float)r.Y), world);
+            Vector2 p2 = Vector2.Transform(new Vector2((float)(r.X + r.Width), (float)(r.Y + r.Height)), world);
+            Vector2 p3 = Vector2.Transform(new Vector2((float)r.X, (float)(r.Y + r.Height)), world);
+            float minX = MathF.Min(MathF.Min(p0.X, p1.X), MathF.Min(p2.X, p3.X));
+            float minY = MathF.Min(MathF.Min(p0.Y, p1.Y), MathF.Min(p2.Y, p3.Y));
+            float maxX = MathF.Max(MathF.Max(p0.X, p1.X), MathF.Max(p2.X, p3.X));
+            float maxY = MathF.Max(MathF.Max(p0.Y, p1.Y), MathF.Max(p2.Y, p3.Y));
             return ToScissor(minX, minY, maxX, maxY, 0);
         }
 
@@ -310,7 +321,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static int s_damageStamp;
 
         /// <summary>Diffs a scene tree against the previous frame's. One per presentable target.</summary>
-        internal sealed class DamageTracker
+        internal sealed partial class DamageTracker
         {
             private sealed class Rec
             {
@@ -332,9 +343,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 public Scissor Own;       // union of Boxes
                 public Scissor Bounds;    // whole subtree (device, effect spread, clipped)
                 public bool Volatile;     // own content can change without the tree changing
+                public bool Clipped;      // something in the subtree is cut by the clip it is measured under
             }
 
-            private const byte KindText = 1, KindUnknown = 2, KindLive = 4, KindAlways = 8;
+            private const byte KindText = 1, KindUnknown = 2, KindLive = 4, KindAlways = 8, KindCut = 16;
 
             // Live brush sources (ImageBrush.SourceVisual), each diffed by a tracker of its own; a
             // source that changed damages every primitive painting with it.
@@ -348,7 +360,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 SceneVisual src = b.SourceVisual!;
                 if (_sourceChanged.TryGetValue(src, out bool known)) return known;
                 _sourcesSeen.Add(src);
-                if (!_sources.TryGetValue(src, out DamageTracker? t)) _sources[src] = t = new DamageTracker();
+                if (!_sources.TryGetValue(src, out DamageTracker? t)) _sources[src] = t = new DamageTracker(allowShift: false);
                 bool changed = t.Compute(src, Math.Max(1, b.SourceTexW), Math.Max(1, b.SourceTexH), _scratch) || _scratch.Count > 0;
                 _sourceChanged[src] = changed;
                 return changed;
@@ -395,9 +407,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 _sourceChanged.Clear();
                 _forceFull = false;
                 rects.Clear();
+                Shift = null;
+                _scrollRec = null;
+                _scrollInner.Clear();
                 Rec? old = (width == _w && height == _h) ? _root : null;
                 _w = width; _h = height;
-                _root = Visit(old, root, Matrix3x2.Identity, new Scissor(0, 0, width, height), fresh: false, inSnapshot: false);
+                _root = Visit(old, root, Matrix3x2.Identity, new Scissor(0, 0, width, height), fresh: false, inSnapshot: false,
+                    shiftOk: s_scroll && _allowShift);
                 if (_sources.Count > _sourcesSeen.Count)
                 {
                     var gone = new List<SceneVisual>();
@@ -406,55 +422,394 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 if (old == null) { FullReason = "first frame"; return true; }
                 if (_forceFull) { FullReason = "volatile content (3D / live brush / unknown primitive)"; return true; }
+                long target = Math.Max(1L, (long)width * height);
+                if (_scrollRec != null)
+                {
+                    // Two ways to draw a scroll: shift the pixels and redraw what the shift cannot
+                    // produce, or redraw the moved subtree where it was and where it is, as any other
+                    // change. Whichever touches fewer pixels (a shift also copies its rectangle, once
+                    // to a scratch texture and once back, at a fraction of a draw's cost per pixel).
+                    var plain = new List<Scissor>(_raw) { _scrollOldBounds, _scrollRec.Bounds };
+                    var plainRects = new List<Scissor>();
+                    long plainArea = Settle(plain, plainRects, width, height);
+                    if (BuildShift(width, height))
+                    {
+                        long shiftArea = Settle(_raw, rects, width, height);
+                        if (s_scrollTrace)
+                        {
+                            var sb = new System.Text.StringBuilder($"[scroll] settled {shiftArea}:");
+                            foreach (Scissor q in rects) sb.Append($" [{q.X},{q.Y} {q.W}x{q.H}]");
+                            Console.Error.WriteLine(sb.ToString());
+                        }
+                        long copy = (long)Shift!.Value.Src.W * Shift.Value.Src.H;
+                        _scrollWhy = $"scroll: shift {shiftArea} px + copy {copy} px vs redraw {plainArea} px";
+                        if (shiftArea >= 0 && (plainArea < 0 || shiftArea + copy / 4 < plainArea))
+                            return Decide(shiftArea, target);
+                        Shift = null;
+                    }
+                    rects.Clear();
+                    rects.AddRange(plainRects);
+                    if (plainArea < 0) { FullReason = $"{plain.Count} changes"; return true; }
+                    return Decide(plainArea, target);
+                }
+                long area = Settle(_raw, rects, width, height);
                 // So many separate changes that sorting them out would cost more than drawing them.
-                if (_raw.Count > MaxRawRects || !SpreadToText()) { FullReason = $"{_raw.Count} changes"; return true; }
-                Normalize(_raw, rects, width, height);
+                if (area < 0) { FullReason = $"{_raw.Count} changes"; return true; }
+                return Decide(area, target);
+            }
+
+            private bool Decide(long area, long target)
+            {
+                // Most of the target changed: one full frame is no more work and needs no scissors.
+                FullReason = $"{area * 100 / target}% of the target changed";
+                if (_scrollWhy != null) { FullReason += "; " + _scrollWhy; _scrollWhy = null; }
+                bool full = area * 10 > target * 7;
+                if (full) Shift = null;
+                return full;
+            }
+
+            /// <summary>Spread <paramref name="raw"/> to the text it touches and normalize it into
+            /// <paramref name="rects"/>; their area, or -1 when there are too many to sort out.</summary>
+            private long Settle(List<Scissor> raw, List<Scissor> rects, int width, int height)
+            {
+                if (raw.Count > MaxRawRects || !SpreadToText(raw, _texts)) return -1;
+                Normalize(raw, rects, width, height);
                 long area = 0;
                 foreach (Scissor r in rects) area += (long)r.W * r.H;
-                // Most of the target changed: one full frame is no more work and needs no scissors.
-                FullReason = $"{area * 100 / Math.Max(1L, (long)width * height)}% of the target changed";
-                return area * 10 > (long)width * height * 7;
+                return area;
             }
 
             /// <summary>A ClearType run is blended against the paper under its WHOLE box (PaperUnder):
             /// a change under any part of it can change every pixel of it. So damage that touches a
-            /// run's box takes in all of the box -- repeated, since that box may touch another run.</summary>
-            private bool SpreadToText()
+            /// run's box takes in all of the box.
+            /// <para>Once, not to a fixed point: the box taken in is redrawn exactly as the full frame
+            /// draws it (every draw there is collected), and the paper of another run whose box it
+            /// overlaps is read from the draws under THAT box, earlier text skipped -- so it changed
+            /// only if a change touches that box too. Chaining run to overlapping run made a column of
+            /// text lines one piece of damage: a caret in one line of a list redrew the list.</para></summary>
+            private static bool SpreadToText(List<Scissor> raw, List<Scissor> texts)
             {
-                if (_raw.Count == 0 || _texts.Count == 0) return true;
-                bool grew = true;
-                while (grew)
+                int n = raw.Count;
+                if (n == 0 || texts.Count == 0) return true;
+                if (n > MaxRawRects || (long)n * texts.Count > 4_000_000) return false;
+                foreach (Scissor tb in texts)
                 {
-                    grew = false;
-                    if (_raw.Count > MaxRawRects || (long)_raw.Count * _texts.Count > 4_000_000) return false;
-                    for (int t = _texts.Count - 1; t >= 0; t--)
+                    for (int i = 0; i < n; i++)
                     {
-                        Scissor tb = _texts[t];
-                        foreach (Scissor d in _raw)
+                        Scissor d = raw[i];
+                        if (tb.X < d.X + d.W && d.X < tb.X + tb.W && tb.Y < d.Y + d.H && d.Y < tb.Y + tb.H)
                         {
-                            if (tb.X < d.X + d.W && d.X < tb.X + tb.W && tb.Y < d.Y + d.H && d.Y < tb.Y + tb.H)
-                            {
-                                _raw.Add(tb);
-                                _texts.RemoveAt(t);
-                                grew = true;
-                                break;
-                            }
+                            raw.Add(tb);
+                            break;
                         }
                     }
                 }
+                return raw.Count <= MaxRawRects;
+            }
+            // ---- scrolling ------------------------------------------------------------------------
+            //
+            // A scroll moves a whole subtree by whole device pixels inside a clip that stays put. The
+            // persistent texture already holds those pixels, one scroll step away, so the frame
+            // SHIFTS them (ScrollShift) and redraws only what that cannot produce:
+            //
+            //   * the strip the scroll exposed;
+            //   * whatever did not move but draws inside the clip -- an overlay, a badge, a caret --
+            //     both where it is (the shift moved other pixels under it) and one step along (the
+            //     shift dragged its old pixels there). A solid rectangle covering the whole clip is
+            //     the exception: it paints every pixel there alike, so moving them changes nothing
+            //     (a window or panel background);
+            //   * anything that changed inside the moved subtree, where it was (shifted) and where it is;
+            //   * every other change in the frame, where it is, where it was, and where the shift put
+            //     what was there.
+            //
+            // A pixel outside all of that sees, in this frame, exactly the draws it saw one step back
+            // in the last one, in the same order, translated: so it is the full frame's pixel. A
+            // ClearType run takes its paper from what lies under its box, which is the same draws again
+            // unless something still overlaps it -- then that is damage, and SpreadToText takes the run.
+            //
+            // Not attempted (the subtree is damaged where it was and is, as any change): a fractional
+            // or non-integer move, a move that also scales, rotates or skews, a subtree under an
+            // effect, mask, clip geometry, snapshot or group opacity (those pixels are not where their
+            // content put them), a moving subtree that is itself one of those, holds a snapshot, or
+            // holds a layer too big for a region-sized bake (the bake is then cut to the clip and is
+            // not the same picture one step along).
+
+            /// <summary>WGPU_DAMAGE_SCROLL=0 never shifts: a scroll is damage like any other move.</summary>
+            private static readonly bool s_scroll = Environment.GetEnvironmentVariable("WGPU_DAMAGE_SCROLL") != "0";
+            private static readonly bool s_scrollTrace = Environment.GetEnvironmentVariable("WGPU_DAMAGE_SCROLL_TRACE") == "1";
+
+            private readonly bool _allowShift;
+
+            internal DamageTracker(bool allowShift = true) => _allowShift = allowShift;
+
+            /// <summary>The pixels the last Compute wants shifted before its damage is drawn, or null.</summary>
+            internal ScrollShift? Shift { get; private set; }
+
+            private string? _scrollWhy;
+            private Rec? _scrollRec;           // the moved subtree, measured where it is now
+            private Scissor _scrollOldBounds;  // ... and where it was
+            private Scissor _scrollClip;       // the device clip it moved inside
+            private int _scrollDx, _scrollDy;
+            private readonly List<Scissor> _scrollInner = new();
+
+            /// <summary>The moved subtree's record if <paramref name="v"/> only moved by whole device
+            /// pixels since the last frame, else null (and nothing recorded).</summary>
+            private Rec? TryScroll(Rec old, SceneVisual v, Matrix3x2 parentWorld, Scissor parentClip, bool inSnapshot)
+            {
+                if (inSnapshot || parentClip.IsEmpty) return null;
+                Matrix3x2 lo = old.Local, ln = v.LocalToParent;
+                if (lo.M11 != ln.M11 || lo.M12 != ln.M12 || lo.M21 != ln.M21 || lo.M22 != ln.M22) return null;
+                if (!SameState(old, v, ignoreTranslation: true) || !SameContent(old, v)) return null;
+                if (v.Effect != null || v.OpacityMask != null || v.ClipGeometry != null || v.Snapshot != null
+                    || v.Opacity < 0.999) return null;
+                Matrix3x2 wo = lo * parentWorld, wn = ln * parentWorld;
+                float fx = wn.M31 - wo.M31, fy = wn.M32 - wo.M32;
+                int dx = (int)MathF.Round(fx), dy = (int)MathF.Round(fy);
+                if (dx == 0 && dy == 0) return null;
+                // Whole device pixels. The two translations are absolute device coordinates in float,
+                // so a whole-pixel scroll can differ from its integer by a few ulps.
+                const float Ulps = 1f / 2048f;
+                if (MathF.Abs(fx - dx) > Ulps || MathF.Abs(fy - dy) > Ulps) return null;
+                if (Math.Abs(dx) >= parentClip.W || Math.Abs(dy) >= parentClip.H) return null;
+                if (!ShiftableSubtree(v, wn, _w, _h)) return null;
+
+                Rec rec = Visit(null, v, parentWorld, parentClip, fresh: true, inSnapshot: false);
+                _scrollRec = rec;
+                _scrollOldBounds = old.Bounds;
+                _scrollClip = parentClip;
+                _scrollDx = dx; _scrollDy = dy;
+                int mark = _raw.Count;
+                CompareMoved(old, rec, top: true);
+                // CheckLive (above) reported live content where it is now; with the rest, it is
+                // damage inside the moved subtree.
+                for (int i = mark; i < _raw.Count; i++) _scrollInner.Add(_raw[i]);
+                _raw.RemoveRange(mark, _raw.Count - mark);
+                return rec;
+            }
+
+            /// <summary>Whether a moved subtree renders the same picture one whole pixel step along:
+            /// no snapshot in it, and no layer too big to be baked whole.</summary>
+            private static bool ShiftableSubtree(SceneVisual v, Matrix3x2 world, int width, int height)
+            {
+                if (v.Snapshot != null) return false;
+                if (v.Effect != null || v.OpacityMask != null || v.ClipGeometry != null || v.Opacity < 0.999)
+                {
+                    // CollectVisual bakes a layer whole only when its region fits the target; a bigger
+                    // one is cut to the live clip, so what it shows depends on where it is.
+                    Scissor b = SubtreeBox(v, world, out _);
+                    if (b.W + 16 > width || b.H + 16 > height) return false;
+                }
+                foreach (SceneVisual c in v.Children)
+                    if (!ShiftableSubtree(c, c.LocalToParent * world, width, height)) return false;
                 return true;
+            }
+
+            /// <summary>Damage inside a moved subtree: <paramref name="o"/> is its last record, in the
+            /// old position; <paramref name="n"/> the fresh one. Added to _raw in NEW device
+            /// coordinates (an old box is shifted to where the scroll puts its pixels).</summary>
+            private void CompareMoved(Rec o, Rec n, bool top)
+            {
+                int mark = _raw.Count;
+                if (!SameRec(o, n, ignoreTranslation: top))
+                {
+                    _raw.Add(Translate(o.Bounds, _scrollDx, _scrollDy));
+                    _raw.Add(n.Bounds);
+                    return;
+                }
+                if (n.Volatile) _forceFull = true;
+                CheckLive(n, addDamage: true);
+                int common = Math.Min(o.KidCount, n.KidCount);
+                for (int i = 0; i < common; i++)
+                {
+                    Rec? ok = o.Kids[i], nk = n.Kids[i];
+                    if (ok != null && nk != null) CompareMoved(ok, nk, top: false);
+                    else { if (ok != null) _raw.Add(Translate(ok.Bounds, _scrollDx, _scrollDy)); if (nk != null) _raw.Add(nk.Bounds); }
+                }
+                for (int i = common; i < o.KidCount; i++)
+                    if (o.Kids[i] is { } gone) _raw.Add(Translate(gone.Bounds, _scrollDx, _scrollDy));
+                for (int i = common; i < n.KidCount; i++)
+                    if (n.Kids[i] is { } added) _raw.Add(added.Bounds);
+                // A change inside a layer changes the layer: an opacity group can stop being one, an
+                // effect spreads it, a mask is mapped to the content's bounds.
+                if (_raw.Count > mark && (n.Effect != null || n.Mask != null || n.ClipGeometry != null || n.Opacity < 0.999))
+                {
+                    _raw.RemoveRange(mark, _raw.Count - mark);
+                    _raw.Add(Translate(o.Bounds, _scrollDx, _scrollDy));
+                    _raw.Add(n.Bounds);
+                }
+            }
+
+            private static Scissor Translate(Scissor s, int dx, int dy) => s.IsEmpty ? s : new Scissor(s.X + dx, s.Y + dy, s.W, s.H);
+
+            /// <summary>Turns the frame's scroll candidate into a shift and the damage that goes with
+            /// it; false when it does not pay or cannot be done.</summary>
+            private bool BuildShift(int width, int height)
+            {
+                Scissor clip = Intersect(_scrollClip, new Scissor(0, 0, width, height));
+                int dx = _scrollDx, dy = _scrollDy;
+                Scissor dst = Intersect(clip, Translate(clip, dx, dy));
+                if (dst.IsEmpty) return false;
+                var damage = new List<Scissor>(_raw.Count * 2 + _scrollInner.Count + 8);
+                // What the scroll exposed: the clip less the shifted pixels (up to two strips).
+                if (dst.Y > clip.Y) damage.Add(new Scissor(clip.X, clip.Y, clip.W, dst.Y - clip.Y));
+                if (dst.Y + dst.H < clip.Y + clip.H) damage.Add(new Scissor(clip.X, dst.Y + dst.H, clip.W, clip.Y + clip.H - dst.Y - dst.H));
+                if (dst.X > clip.X) damage.Add(new Scissor(clip.X, dst.Y, dst.X - clip.X, dst.H));
+                if (dst.X + dst.W < clip.X + clip.W) damage.Add(new Scissor(dst.X + dst.W, dst.Y, clip.X + clip.W - dst.X - dst.W, dst.H));
+                // Every other change: where it is and was, and where the shift moved what was there.
+                foreach (Scissor r in _raw)
+                {
+                    damage.Add(r);
+                    Scissor moved = Intersect(Translate(r, dx, dy), dst);
+                    if (!moved.IsEmpty) damage.Add(moved);
+                }
+                // (Not cut to the clip: a content scroll's moved records can reach past it.)
+                foreach (Scissor r in _scrollInner)
+                    if (!r.IsEmpty) damage.Add(r);
+                // A run cut by the clip on a side the scroll moves it across: its paper is read under
+                // the CLIPPED box, which is not the same box one step back. (A run the scroll brings
+                // out from under the far edge touches the exposed strip and is taken by SpreadToText.)
+                foreach (Scissor t in _texts)
+                {
+                    if (!Touches(t, clip)) continue;
+                    bool cut = (dy != 0 && (t.Y <= clip.Y || t.Y + t.H >= clip.Y + clip.H))
+                            || (dx != 0 && (t.X <= clip.X || t.X + t.W >= clip.X + clip.W));
+                    if (cut) damage.Add(Intersect(t, clip));
+                }
+                // What did not move but draws over the shifted pixels.
+                int beforeStill = damage.Count;
+                AddStill(_root!, Matrix3x2.Identity, new Scissor(0, 0, width, height), clip, dst, damage);
+                if (s_scrollTrace)
+                {
+                    var sb = new System.Text.StringBuilder($"[scroll] clip [{clip.X},{clip.Y} {clip.W}x{clip.H}] d=({dx},{dy}) raw={_raw.Count} inner={_scrollInner.Count} still={damage.Count - beforeStill}:");
+                    for (int i = 0; i < damage.Count; i++) sb.Append($" [{damage[i].X},{damage[i].Y} {damage[i].W}x{damage[i].H}]");
+                    Console.Error.WriteLine(sb.ToString());
+                }
+                if (damage.Count > MaxRawRects) return false;
+                _raw.Clear();
+                _raw.AddRange(damage);
+                Shift = new ScrollShift(Translate(dst, -dx, -dy), dx, dy);
+                return true;
+            }
+
+            private void AddStill(Rec r, Matrix3x2 parentWorld, Scissor parentClip, Scissor clip, Scissor dst, List<Scissor> damage)
+            {
+                if (ReferenceEquals(r, _scrollRec) || !Touches(r.Bounds, clip)) return;
+                Matrix3x2 world = r.Local * parentWorld;
+                Scissor nodeClip = r.HasClip ? Intersect(parentClip, RectBox(r.Clip, world)) : parentClip;
+                if (r.Snapshot != null || r.Effect != null || r.Mask != null || r.ClipGeometry != null || r.Opacity < 0.999)
+                {
+                    // Drawn as one picture: all of it, unless the moved subtree is inside it (then it
+                    // is an ancestor, which TryScroll only allows without any of these).
+                    StillBox(r.Bounds, clip, dst, damage);
+                    return;
+                }
+                for (int i = 0; i < r.ContentCount; i++)
+                {
+                    Scissor b = r.Boxes[i];
+                    if (!Touches(b, clip)) continue;
+                    if (CoversUniformly(r.Content[i], world, nodeClip, clip)) continue;
+                    if (r.GuidesX == null && r.GuidesY == null && TightFillBox(r.Content[i], world) is { } tight)
+                    {
+                        b = Intersect(tight, nodeClip);
+                        if (!Touches(b, clip)) continue;
+                    }
+                    if (s_scrollTrace) Console.Error.WriteLine($"[scroll] still {r.Content[i].GetType().Name} [{b.X},{b.Y} {b.W}x{b.H}]");
+                    StillBox(b, clip, dst, damage);
+                }
+                for (int i = 0; i < r.KidCount; i++)
+                    if (r.Kids[i] is { } k) AddStill(k, world, nodeClip, clip, dst, damage);
+            }
+
+            /// <summary>The pixels an axis-aligned rectangle fill can write, without the margin every
+            /// other box carries: the antialiased edge reaches half a pixel out. The margin is for
+            /// glyph hinting, filter spill and stroke joins; a fill has none of them, and a panel that
+            /// ends where the scroll viewer begins (a header, a scroll bar) must not count as over it
+            /// -- it would be damage on every scrolled frame, across the viewport's whole width, and
+            /// every text run that damage touched besides. Not for a visual with guidelines, whose
+            /// snapping moves edges.</summary>
+            private static Scissor? TightFillBox(DrawingPrimitive p, Matrix3x2 world)
+            {
+                Rect rect;
+                switch (p)
+                {
+                    case GeometryFill { Geometry: RectangleGeometry rg, IsGlyph: false }: rect = rg.Rect; break;
+                    case GeometryFill { Geometry: RoundedRectangleGeometry rr, IsGlyph: false }: rect = rr.Rect; break;
+                    case GeometryDrawing { Geometry: RectangleGeometry rg, Stroke: null }: rect = rg.Rect; break;
+                    case GeometryDrawing { Geometry: RoundedRectangleGeometry rr, Stroke: null }: rect = rr.Rect; break;
+                    default: return null;
+                }
+                if (world.M12 != 0f || world.M21 != 0f) return null;
+                Vector2 a = Vector2.Transform(new Vector2((float)rect.X, (float)rect.Y), world);
+                Vector2 b = Vector2.Transform(new Vector2((float)(rect.X + rect.Width), (float)(rect.Y + rect.Height)), world);
+                // An edge on a pixel boundary writes nothing past it (a pixel whose centre is half a
+                // pixel out has coverage 0); any other edge is given the half pixel.
+                static float Lo(float v) => MathF.Abs(v - MathF.Round(v)) < 1e-3f ? MathF.Round(v) : v - 0.5f;
+                static float Hi(float v) => MathF.Abs(v - MathF.Round(v)) < 1e-3f ? MathF.Round(v) : v + 0.5f;
+                return ToScissor(Lo(MathF.Min(a.X, b.X)), Lo(MathF.Min(a.Y, b.Y)), Hi(MathF.Max(a.X, b.X)), Hi(MathF.Max(a.Y, b.Y)), 0);
+            }
+
+            private void StillBox(Scissor b, Scissor clip, Scissor dst, List<Scissor> damage)
+            {
+                Scissor at = Intersect(b, clip);
+                if (!at.IsEmpty) damage.Add(at);
+                Scissor dragged = Intersect(Translate(b, _scrollDx, _scrollDy), dst);
+                if (!dragged.IsEmpty) damage.Add(dragged);
+            }
+
+            private static bool Touches(Scissor a, Scissor b)
+                => !a.IsEmpty && !b.IsEmpty && a.X < b.X + b.W && b.X < a.X + a.W && a.Y < b.Y + b.H && b.Y < a.Y + a.H;
+
+            /// <summary>A solid axis-aligned rectangle that paints every pixel of <paramref name="clip"/>
+            /// fully, so every one of them alike: shifting pixels within the clip cannot change what it
+            /// contributes. Its edges must clear the clip by a pixel (antialiasing, snapping) wherever
+            /// the clip is not at the target's edge.</summary>
+            private bool CoversUniformly(DrawingPrimitive p, Matrix3x2 world, Scissor nodeClip, Scissor clip)
+            {
+                Rect rect;
+                switch (p)
+                {
+                    case GeometryFill { Geometry: RectangleGeometry rg, Brush: SolidColorBrush, IsGlyph: false }: rect = rg.Rect; break;
+                    case GeometryDrawing { Geometry: RectangleGeometry rg, Fill: SolidColorBrush, Stroke: null }: rect = rg.Rect; break;
+                    default: return false;
+                }
+                if (world.M12 != 0f || world.M21 != 0f) return false;
+                if (nodeClip.X > clip.X || nodeClip.Y > clip.Y || nodeClip.X + nodeClip.W < clip.X + clip.W
+                    || nodeClip.Y + nodeClip.H < clip.Y + clip.H) return false;
+                Vector2 a = Vector2.Transform(new Vector2((float)rect.X, (float)rect.Y), world);
+                Vector2 b = Vector2.Transform(new Vector2((float)(rect.X + rect.Width), (float)(rect.Y + rect.Height)), world);
+                float x0 = MathF.Min(a.X, b.X), x1 = MathF.Max(a.X, b.X), y0 = MathF.Min(a.Y, b.Y), y1 = MathF.Max(a.Y, b.Y);
+                // An edge on a pixel boundary at or beyond the clip's edge leaves every pixel inside
+                // fully covered; any other edge must clear it by a pixel (antialiasing, snapping).
+                static bool OnGrid(float v) => MathF.Abs(v - MathF.Round(v)) < 1e-3f;
+                bool l = x0 <= clip.X - 1 || (OnGrid(x0) && x0 <= clip.X) || (clip.X <= 0 && x0 <= 0);
+                bool t = y0 <= clip.Y - 1 || (OnGrid(y0) && y0 <= clip.Y) || (clip.Y <= 0 && y0 <= 0);
+                bool r = x1 >= clip.X + clip.W + 1 || (OnGrid(x1) && x1 >= clip.X + clip.W) || (clip.X + clip.W >= _w && x1 >= _w);
+                bool btm = y1 >= clip.Y + clip.H + 1 || (OnGrid(y1) && y1 >= clip.Y + clip.H) || (clip.Y + clip.H >= _h && y1 >= _h);
+                return l && t && r && btm;
             }
 
             private const int MaxRawRects = 512;
 
-            private Rec Visit(Rec? old, SceneVisual v, Matrix3x2 parentWorld, Scissor parentClip, bool fresh, bool inSnapshot)
+            private Rec Visit(Rec? old, SceneVisual v, Matrix3x2 parentWorld, Scissor parentClip, bool fresh, bool inSnapshot, bool shiftOk = false)
             {
                 Matrix3x2 world = v.LocalToParent * parentWorld;
                 Scissor clip = v.Clip is Rect cr ? Intersect(parentClip, RectBox(cr, world)) : parentClip;
                 bool kidsInSnapshot = inSnapshot || v.Snapshot != null;
 
                 bool sameState = old != null && !fresh && SameState(old, v);
+                // A subtree that only MOVED, by whole device pixels, inside a clip that did not: its
+                // pixels can be shifted rather than redrawn (see TryScroll).
+                if (!sameState && old != null && !fresh && shiftOk && _scrollRec == null
+                    && TryScroll(old, v, parentWorld, parentClip, inSnapshot) is { } moved)
+                    return moved;
                 bool sameContent = sameState && SameContent(old!, v);
+                // A fresh recording of what was drawn here before, scrolled (a WinForms control's
+                // repaint): see TryContentScroll.
+                if (s_scrollTrace && sameState && !sameContent && v.Clip.HasValue)
+                    Console.Error.WriteLine($"[scroll] candidate content={v.Content.Count} kids={v.Children.Count} shiftOk={shiftOk} repainted={LooksRepainted(old!, v)}");
+                if (sameState && !sameContent && s_scroll && v.Clip.HasValue && LooksRepainted(old!, v)
+                    && TryContentScroll(old!, v, parentWorld, parentClip, inSnapshot, allowShift: shiftOk && _scrollRec == null) is { } scrolled)
+                    return scrolled;
                 // A content change in a visual that is drawn whole -- an opacity group (whose being a
                 // layer at all depends on how much it draws), a masked visual (its mask is mapped to its
                 // content's bounds), a snapshot -- changes all of it.
@@ -494,9 +849,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 AddTexts(old, inSnapshot);
                 CheckLive(old, addDamage: true);
                 int nk = v.Children.Count;
+                // Pixels under an effect, a mask, a clip geometry, a snapshot or a group opacity are
+                // not where their content put them, so nothing below one is shifted.
+                bool kidsShiftOk = shiftOk && !kidsInSnapshot && v.Effect == null && v.OpacityMask == null
+                    && v.ClipGeometry == null && v.Opacity >= 0.999;
                 if (old.Kids.Length < nk) Array.Resize(ref old.Kids, nk);
                 for (int i = 0; i < nk; i++)
-                    old.Kids[i] = Visit(i < old.KidCount ? old.Kids[i] : null, v.Children[i], world, clip, fresh: false, kidsInSnapshot);
+                    old.Kids[i] = Visit(i < old.KidCount ? old.Kids[i] : null, v.Children[i], world, clip, fresh: false, kidsInSnapshot, kidsShiftOk);
                 for (int i = nk; i < old.KidCount; i++)
                 {
                     if (old.Kids[i] is { } gone) _raw.Add(gone.Bounds);
@@ -510,6 +869,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // than one thing; a change below may flip that and re-round every pixel of it.
                     if (v.Opacity < 0.999)
                     {
+                        _raw.RemoveRange(mark2, _raw.Count - mark2);
+                        _raw.Add(before);
+                        _raw.Add(old.Bounds);
+                    }
+                    else if (v.Effect != null && old.Clipped)
+                    {
+                        // A change cut away by the clip can still show through the effect's spread.
                         _raw.RemoveRange(mark2, _raw.Count - mark2);
                         _raw.Add(before);
                         _raw.Add(old.Bounds);
@@ -558,6 +924,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// for the renderer's culling.</summary>
             private Scissor Finish(Rec rec, SceneVisual v, Matrix3x2 world, Scissor clip)
             {
+                bool cut = false;
+                for (int i = 0; i < rec.ContentCount && !cut; i++) cut = (rec.Kinds[i] & KindCut) != 0;
+                for (int i = 0; i < rec.KidCount && !cut; i++) cut = rec.Kids[i] is { Clipped: true };
+                rec.Clipped = cut;
                 Scissor b;
                 if (v.Snapshot is { } snap)
                     b = SnapshotBox(snap, world);
@@ -567,6 +937,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     for (int i = 0; i < rec.KidCount; i++)
                         if (rec.Kids[i] is { } k) b = Union(b, k.Bounds);
                     b = EffectSpread(v, b);
+                    // The boxes above are cut to the clip, but an effect spreads what its content draws
+                    // BEFORE the clip: a card just above a scroll viewer's edge, all of it clipped away,
+                    // still casts its shadow down into the viewport. Its box measured that way was empty,
+                    // so a partial frame skipped it and lost the shadow.
+                    if (v.Effect != null && rec.Clipped)
+                        b = Union(b, SubtreeBox(v, world, out _));
                 }
                 b = Intersect(b, clip);
                 v.DamageStamp = Stamp;
@@ -594,7 +970,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         kind |= KindAlways;
                     }
                     else known = PrimitiveBox(p, world, ref minX, ref minY, ref maxX, ref maxY);
-                    rec.Boxes[i] = minX <= maxX ? Intersect(clip, ToScissor(minX, minY, maxX, maxY, ContentMargin)) : new Scissor(0, 0, 0, 0);
+                    Scissor whole = minX <= maxX ? ToScissor(minX, minY, maxX, maxY, ContentMargin) : new Scissor(0, 0, 0, 0);
+                    rec.Boxes[i] = Intersect(clip, whole);
+                    if (!whole.IsEmpty && (rec.Boxes[i].W != whole.W || rec.Boxes[i].H != whole.H)) kind |= KindCut;
                     if (!known) { kind |= KindUnknown; rec.Boxes[i] = clip; }
                     if (p is GlyphRunDraw or WpfTextRunDraw or GdiPlusTextDraw) kind |= KindText;
                     if (LiveBrushOf(p) != null) kind |= KindLive;
@@ -652,9 +1030,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             private static bool SameRect(Rect a, Rect b)
                 => a.X == b.X && a.Y == b.Y && a.Width == b.Width && a.Height == b.Height;
 
-            private static bool SameState(Rec r, SceneVisual v)
+            private static bool SameState(Rec r, SceneVisual v, bool ignoreTranslation = false)
             {
-                if (r.Local != v.LocalToParent || r.Opacity != v.Opacity) return false;
+                Matrix3x2 l = v.LocalToParent;
+                if (ignoreTranslation ? !SameLinear(r.Local, l) : r.Local != l) return false;
+                if (r.Opacity != v.Opacity) return false;
                 if (r.HasClip != v.Clip.HasValue || (v.Clip is Rect c && !SameRect(c, r.Clip))) return false;
                 if (!ReferenceEquals(r.ClipGeometry, v.ClipGeometry) || !ReferenceEquals(r.Effect, v.Effect)
                     || !ReferenceEquals(r.Mask, v.OpacityMask) || !ReferenceEquals(r.Snapshot, v.Snapshot)) return false;
@@ -662,6 +1042,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     || s.GdiStretch != r.SnapStretch || s.WindowBlend != r.SnapBlend)) return false;
                 if (r.Aliased != v.AliasedEdges || r.Nearest != v.NearestBitmapScaling) return false;
                 return ReferenceEquals(r.GuidesX, v.GuidelinesX) && ReferenceEquals(r.GuidesY, v.GuidelinesY);
+            }
+
+            private static bool SameLinear(Matrix3x2 a, Matrix3x2 b)
+                => a.M11 == b.M11 && a.M12 == b.M12 && a.M21 == b.M21 && a.M22 == b.M22;
+
+            /// <summary>Two records of one visual, a frame apart: the same state and the same content
+            /// (by reference).</summary>
+            private static bool SameRec(Rec o, Rec n, bool ignoreTranslation)
+            {
+                if (ignoreTranslation ? !SameLinear(o.Local, n.Local) : o.Local != n.Local) return false;
+                if (o.Opacity != n.Opacity || o.HasClip != n.HasClip || (n.HasClip && !SameRect(o.Clip, n.Clip))) return false;
+                if (!ReferenceEquals(o.ClipGeometry, n.ClipGeometry) || !ReferenceEquals(o.Effect, n.Effect)
+                    || !ReferenceEquals(o.Mask, n.Mask) || !ReferenceEquals(o.Snapshot, n.Snapshot)) return false;
+                if (n.Snapshot != null && (!SameRect(o.SnapSource, n.SnapSource) || !SameRect(o.SnapDest, n.SnapDest)
+                    || o.SnapStretch != n.SnapStretch || o.SnapBlend != n.SnapBlend)) return false;
+                if (o.Aliased != n.Aliased || o.Nearest != n.Nearest) return false;
+                if (!ReferenceEquals(o.GuidesX, n.GuidesX) || !ReferenceEquals(o.GuidesY, n.GuidesY)) return false;
+                if (o.ContentCount != n.ContentCount) return false;
+                for (int i = 0; i < n.ContentCount; i++)
+                    if (!ReferenceEquals(o.Content[i], n.Content[i])) return false;
+                return true;
             }
 
             private static bool SameContent(Rec r, SceneVisual v)
@@ -673,13 +1074,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 return true;
             }
 
-            /// <summary>Clamp to the target, drop the empty, and merge until the rectangles are
-            /// DISJOINT (the main pass draws each item once per rectangle, so an overlap would blend
-            /// twice) and few. Near neighbours are merged too: a draw per rectangle costs more than
-            /// the few pixels between them.</summary>
+            /// <summary>WGPU_DAMAGE_RECT_COST=<pixels>: also merge damage rectangles while the cheapest
+            /// merge adds fewer pixels than this (each rectangle re-issues the draws it touches). Off
+            /// by default: measured on the gallery's scroll, any value that merged at all chained
+            /// merges into boxes over 70% of the target, i.e. full frames, and was no faster.</summary>
+            private static readonly long s_rectCost =
+                long.TryParse(Environment.GetEnvironmentVariable("WGPU_DAMAGE_RECT_COST"), out long rc) ? rc : 0;
+
+            /// <summary>Clamp to the target, drop the empty, and reduce to few DISJOINT rectangles
+            /// (the main pass draws each item once per rectangle, so an overlap would blend twice).
+            /// <para>Two rectangles are merged into their bounding box only when that costs few pixels
+            /// over the two (near neighbours: a draw per rectangle costs more than the pixels between
+            /// them). Overlaps that would cost many -- a full-width strip across a card -- are cut
+            /// apart instead. Only past <c>MaxRects</c> are pairs merged at a real cost, cheapest first.
+            /// Plain bounding-box merging turned a scroll's strip, overlay and a few changing cards
+            /// into the whole viewport.</para></summary>
             internal static void Normalize(List<Scissor> raw, List<Scissor> outRects, int width, int height)
             {
-                const int MaxRects = 8, Near = 8;
+                const int MaxRects = 16, Near = 8, Scattered = 256;
                 var target = new Scissor(0, 0, width, height);
                 outRects.Clear();
                 foreach (Scissor r in raw)
@@ -687,47 +1099,106 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     Scissor c = Intersect(r, target);
                     if (!c.IsEmpty) outRects.Add(c);
                 }
-                bool changed = true;
-                while (changed)
+                if (outRects.Count > Scattered)
                 {
-                    changed = false;
-                    // One sweep merges every near pair it meets (a grown rectangle keeps absorbing);
-                    // sweeps repeat until one merges nothing.
-                    for (int i = 0; i < outRects.Count; i++)
-                        for (int j = outRects.Count - 1; j > i; j--)
-                        {
-                            Scissor a = outRects[i], b = outRects[j];
-                            if (!Intersect(Inflate(a, Near, Near, Near, Near), b).IsEmpty)
-                            {
-                                outRects[i] = Union(a, b);
-                                outRects.RemoveAt(j);
-                                changed = true;
-                            }
-                        }
-                    if (!changed && outRects.Count > 4 * MaxRects)
+                    // Scattered all over: their bounding box.
+                    Scissor all = outRects[0];
+                    foreach (Scissor r in outRects) all = Union(all, r);
+                    outRects.Clear();
+                    outRects.Add(all);
+                    return;
+                }
+                for (int round = 0; ; round++)
+                {
+                    MergeCheap(outRects, Near);
+                    MakeDisjoint(outRects);
+                    if (outRects.Count <= 1) return;
+                    if (round == 64)
                     {
-                        // Scattered all over: their bounding box.
+                        // Cutting keeps making pieces faster than merging removes them.
                         Scissor all = outRects[0];
                         foreach (Scissor r in outRects) all = Union(all, r);
                         outRects.Clear();
                         outRects.Add(all);
+                        return;
                     }
-                    if (!changed && outRects.Count > MaxRects)
-                    {
-                        // Merge the pair whose bounding box adds the least area.
-                        long best = long.MaxValue; int bi = 0, bj = 1;
-                        for (int i = 0; i < outRects.Count; i++)
-                            for (int j = i + 1; j < outRects.Count; j++)
-                            {
-                                Scissor u = Union(outRects[i], outRects[j]);
-                                long grow = (long)u.W * u.H - (long)outRects[i].W * outRects[i].H - (long)outRects[j].W * outRects[j].H;
-                                if (grow < best) { best = grow; bi = i; bj = j; }
-                            }
-                        outRects[bi] = Union(outRects[bi], outRects[bj]);
-                        outRects.RemoveAt(bj);
-                        changed = true;
-                    }
+                    // Merge the pair whose bounding box adds the least area, then cut again -- while
+                    // there are too many, or while that costs fewer pixels than a rectangle does: every
+                    // draw the rectangle touches is issued again for it (RectCost).
+                    long best = long.MaxValue; int bi = 0, bj = 1;
+                    for (int i = 0; i < outRects.Count; i++)
+                        for (int j = i + 1; j < outRects.Count; j++)
+                        {
+                            long grow = Area(Union(outRects[i], outRects[j])) - Area(outRects[i]) - Area(outRects[j]);
+                            if (grow < best) { best = grow; bi = i; bj = j; }
+                        }
+                    if (outRects.Count <= MaxRects && best > s_rectCost) return;
+                    outRects[bi] = Union(outRects[bi], outRects[bj]);
+                    outRects.RemoveAt(bj);
                 }
+            }
+
+            private static long Area(Scissor s) => s.IsEmpty ? 0 : (long)s.W * s.H;
+
+            /// <summary>Merge pairs whose bounding box covers little beyond the two: contained,
+            /// overlapping or within <paramref name="near"/> pixels, with the box adding at most
+            /// a near-wide band along the smaller one's edge.</summary>
+            private static void MergeCheap(List<Scissor> rects, int near)
+            {
+                bool changed = true;
+                while (changed)
+                {
+                    changed = false;
+                    for (int i = 0; i < rects.Count; i++)
+                        for (int j = rects.Count - 1; j > i; j--)
+                        {
+                            Scissor a = rects[i], b = rects[j];
+                            if (Intersect(Inflate(a, near, near, near, near), b).IsEmpty) continue;
+                            Scissor u = Union(a, b);
+                            long waste = Area(u) - Area(a) - Area(b) + Area(Intersect(a, b));
+                            long allowance = (long)near * (Math.Min(a.W, b.W) + Math.Min(a.H, b.H)) * 2;
+                            if (waste > allowance) continue;
+                            rects[i] = u;
+                            rects.RemoveAt(j);
+                            changed = true;
+                        }
+                }
+            }
+
+            /// <summary>Cut overlapping rectangles apart: each keeps only what no earlier one covers.</summary>
+            private static void MakeDisjoint(List<Scissor> rects)
+            {
+                var result = new List<Scissor>(rects.Count);
+                var pieces = new List<Scissor>();
+                var next = new List<Scissor>();
+                foreach (Scissor r in rects)
+                {
+                    pieces.Clear();
+                    pieces.Add(r);
+                    foreach (Scissor k in result)
+                    {
+                        next.Clear();
+                        foreach (Scissor p in pieces) Subtract(p, k, next);
+                        pieces.Clear();
+                        pieces.AddRange(next);
+                        if (pieces.Count == 0) break;
+                    }
+                    result.AddRange(pieces);
+                }
+                rects.Clear();
+                rects.AddRange(result);
+            }
+
+            /// <summary><paramref name="a"/> less <paramref name="b"/>, as up to four rectangles.</summary>
+            private static void Subtract(Scissor a, Scissor b, List<Scissor> into)
+            {
+                Scissor o = Intersect(a, b);
+                if (o.IsEmpty) { into.Add(a); return; }
+                int ax1 = a.X + a.W, ay1 = a.Y + a.H, ox1 = o.X + o.W, oy1 = o.Y + o.H;
+                if (o.Y > a.Y) into.Add(new Scissor(a.X, a.Y, a.W, o.Y - a.Y));                // above
+                if (oy1 < ay1) into.Add(new Scissor(a.X, oy1, a.W, ay1 - oy1));                // below
+                if (o.X > a.X) into.Add(new Scissor(a.X, o.Y, o.X - a.X, o.H));                // left
+                if (ox1 < ax1) into.Add(new Scissor(ox1, o.Y, ax1 - ox1, o.H));                // right
             }
         }
 
@@ -742,7 +1213,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         internal void RenderFrameDamaged(SceneVisual root, IntPtr targetView, WGPUTextureFormat format, int width, int height,
             RgbaColor background, bool transparentTarget, List<Scissor>? damage, int cullStamp,
-            IntPtr blitView = default, WGPUTextureFormat blitFormat = default, IntPtr blitBindGroup = default)
+            IntPtr blitView = default, WGPUTextureFormat blitFormat = default, IntPtr blitBindGroup = default,
+            ScrollShift? shift = null, IntPtr scratchView = default)
         {
             try
             {
@@ -789,7 +1261,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     BuildBatchedGeometry(plan, mainData);
                     BuildBatchedStorage();
                     FlushPendingTexUploads(encoder);
+                    if (partial && shift is { } sh && scratchView != IntPtr.Zero) RecordShift(encoder, targetView, scratchView, format, sh);
                     foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
+                    _damagePassW = width; _damagePassH = height;
                     ExecutePass(encoder, new LayerPass(targetView, false, background, mainData, format)
                         { LoadPreserve = partial, Damage = damage }, atlasView);
                     PerfExecAlloc += GC.GetAllocatedBytesForCurrentThread() - ca1;
@@ -817,6 +1291,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 FlushFrameReleases();
             }
             _idScene = root; _idW = width; _idH = height; _idValid = false;
+        }
+
+        // The main pass's target size, for VertexBox (its LayerPass carries no TexW/TexH).
+        private int _damagePassW, _damagePassH;
+
+        /// <summary>The pixels a run of indexed triangles can cover, in the pass's own pixel
+        /// coordinates: their vertices' box, a pixel wider each way. Rasterization writes only
+        /// inside the triangles, so a damage rectangle outside this box gets nothing from the run.</summary>
+        private static void VertexBox(DrawData data, uint firstIndex, uint indexCount, int originX, int originY, int w, int h,
+            out int x0, out int y0, out int x1, out int y1)
+        {
+            List<uint> idx = data.Indices;
+            List<float> v = data.Verts;
+            float nx0 = float.MaxValue, ny0 = float.MaxValue, nx1 = float.MinValue, ny1 = float.MinValue;
+            uint end = Math.Min(firstIndex + indexCount, (uint)idx.Count);
+            for (uint k = firstIndex; k < end; k++)
+            {
+                int at = (int)idx[(int)k] * FloatsPerVertex;
+                if (at + 1 >= v.Count) continue;
+                float px = v[at], py = v[at + 1];
+                if (px < nx0) nx0 = px; if (px > nx1) nx1 = px;
+                if (py < ny0) ny0 = py; if (py > ny1) ny1 = py;
+            }
+            if (nx0 > nx1 || w <= 0 || h <= 0) { x0 = y0 = int.MinValue / 4; x1 = y1 = int.MaxValue / 4; return; }
+            // NDC to pixels: x right, y DOWN.
+            x0 = (int)MathF.Floor((nx0 + 1f) * 0.5f * w) - 1;
+            x1 = (int)MathF.Ceiling((nx1 + 1f) * 0.5f * w) + 1;
+            y0 = (int)MathF.Floor((1f - ny1) * 0.5f * h) - 1;
+            y1 = (int)MathF.Ceiling((1f - ny0) * 0.5f * h) + 1;
         }
 
         /// <summary>The partial frame's clear: a SourceCopy quad of the background over each damage
@@ -898,6 +1401,123 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             _blitPipelines[format] = p;
             return p;
         }
+
+        // ---- scroll shift ------------------------------------------------------------------------
+
+        /// <summary>Pixels of the persistent target to move before a frame's damage is drawn: the
+        /// rectangle <see cref="Src"/> goes to <see cref="Src"/> + (<see cref="Dx"/>, <see cref="Dy"/>).</summary>
+        internal readonly struct ScrollShift
+        {
+            public readonly Scissor Src;
+            public readonly int Dx, Dy;
+            public ScrollShift(Scissor src, int dx, int dy) { Src = src; Dx = dx; Dy = dy; }
+            public Scissor Dst => new Scissor(Src.X + Dx, Src.Y + Dy, Src.W, Src.H);
+        }
+
+        // A texel copy at an integer offset, drawn as the blit's full-target triangle under a scissor.
+        // Not copyTextureToTexture: a texture cannot be copied onto itself where the regions overlap
+        // -- they always do in a scroll -- so the pixels go through a scratch texture either way, and
+        // a draw needs nothing (CopyDst, a binding) that the blit does not already use everywhere.
+        private const string ShiftWgsl = @"
+@group(0) @binding(0) var src : texture_2d<f32>;
+@group(0) @binding(1) var<uniform> off : vec4<i32>;
+@vertex fn vs_main(@builtin(vertex_index) i : u32) -> @builtin(position) vec4<f32> {
+    let x = f32((i << 1u) & 2u) * 2.0 - 1.0;
+    let y = f32(i & 2u) * 2.0 - 1.0;
+    return vec4<f32>(x, y, 0.0, 1.0);
+}
+@fragment fn fs_main(@builtin(position) p : vec4<f32>) -> @location(0) vec4<f32> {
+    return textureLoad(src, vec2<i32>(floor(p.xy)) - off.xy, 0);
+}
+";
+        private IntPtr _shiftModule;
+        private readonly Dictionary<WGPUTextureFormat, IntPtr> _shiftPipelines = new();
+
+        private IntPtr ShiftPipeline(WGPUTextureFormat format)
+        {
+            if (_shiftPipelines.TryGetValue(format, out IntPtr p)) return p;
+            if (_shiftModule == IntPtr.Zero) _shiftModule = CompileWgsl(ShiftWgsl);
+            byte[] vsEntry = System.Text.Encoding.UTF8.GetBytes("vs_main");
+            byte[] fsEntry = System.Text.Encoding.UTF8.GetBytes("fs_main");
+            fixed (byte* pVs = vsEntry)
+            fixed (byte* pFs = fsEntry)
+            {
+                var colorTarget = new WGPUColorTargetState { format = format, blend = null, writeMask = WGPUColorWriteMask_All };
+                var fragment = new WGPUFragmentState
+                {
+                    module = _shiftModule,
+                    entryPoint = new WGPUStringView { data = pFs, length = (nuint)fsEntry.Length },
+                    targetCount = 1,
+                    targets = &colorTarget,
+                };
+                var desc = new WGPURenderPipelineDescriptor
+                {
+                    layout = IntPtr.Zero,
+                    vertex = new WGPUVertexState
+                    {
+                        module = _shiftModule,
+                        entryPoint = new WGPUStringView { data = pVs, length = (nuint)vsEntry.Length },
+                        bufferCount = 0,
+                        buffers = null,
+                    },
+                    primitive = new WGPUPrimitiveState
+                    {
+                        topology = WGPUPrimitiveTopology.TriangleList,
+                        frontFace = WGPUFrontFace.CCW,
+                        cullMode = WGPUCullMode.None,
+                    },
+                    multisample = new WGPUMultisampleState { count = 1, mask = 0xFFFFFFFF },
+                    fragment = &fragment,
+                };
+                p = wgpuDeviceCreateRenderPipeline(_ctx.Device, &desc);
+            }
+            _shiftPipelines[format] = p;
+            return p;
+        }
+
+        /// <summary>One draw of the shift: <paramref name="dstView"/>'s pixels inside
+        /// <paramref name="scissor"/> become <paramref name="srcView"/>'s (dx, dy) back.</summary>
+        private void RecordShiftDraw(IntPtr encoder, IntPtr srcView, IntPtr dstView, WGPUTextureFormat format,
+            Scissor scissor, int dx, int dy, bool load)
+        {
+            IntPtr pipeline = ShiftPipeline(format);
+            ReadOnlySpan<int> off = stackalloc int[] { dx, dy, 0, 0 };
+            IntPtr buf = _ctx.CreateBufferMapped(System.Runtime.InteropServices.MemoryMarshal.AsBytes(off), WGPUBufferUsage.Uniform);
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(pipeline, 0);
+            var entries = stackalloc WGPUBindGroupEntry[2];
+            entries[0] = new WGPUBindGroupEntry { binding = 0, textureView = srcView };
+            entries[1] = new WGPUBindGroupEntry { binding = 1, buffer = buf, offset = 0, size = 16 };
+            var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 2, entries = entries };
+            IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
+            wgpuBindGroupLayoutRelease(layout);
+
+            IntPtr pass = load ? BeginLoadPass(encoder, dstView) : BeginClearPass(encoder, dstView, new RgbaColor(0, 0, 0, 0));
+            wgpuRenderPassEncoderSetPipeline(pass, pipeline);
+            wgpuRenderPassEncoderSetBindGroup(pass, 0, bg, 0, null);
+            wgpuRenderPassEncoderSetScissorRect(pass, (uint)scissor.X, (uint)scissor.Y, (uint)scissor.W, (uint)scissor.H);
+            if (_blitIndices == IntPtr.Zero)
+            {
+                ReadOnlySpan<uint> idx = stackalloc uint[] { 0, 1, 2, 0 };
+                _blitIndices = _ctx.CreateBufferMapped(System.Runtime.InteropServices.MemoryMarshal.AsBytes(idx), WGPUBufferUsage.Index);
+            }
+            wgpuRenderPassEncoderSetIndexBuffer(pass, _blitIndices, WGPUIndexFormat.Uint32, 0, 16);
+            wgpuRenderPassEncoderDrawIndexed(pass, 3, 1, 0, 0, 0);
+            wgpuRenderPassEncoderEnd(pass);
+            DeferReleasePass(pass);
+            DeferReleaseBindGroup(bg);
+            DeferReleaseBuffer(buf);
+        }
+
+        /// <summary>Move <paramref name="shift"/>'s pixels within <paramref name="targetView"/>, by way
+        /// of <paramref name="scratchView"/> (a texture of the target's size and format).</summary>
+        private void RecordShift(IntPtr encoder, IntPtr targetView, IntPtr scratchView, WGPUTextureFormat format, ScrollShift shift)
+        {
+            RecordShiftDraw(encoder, targetView, scratchView, format, shift.Src, 0, 0, load: false);
+            RecordShiftDraw(encoder, scratchView, targetView, format, shift.Dst, shift.Dx, shift.Dy, load: true);
+            PerfShiftedPixels += (long)shift.Src.W * shift.Src.H;
+        }
+
+        [ThreadStatic] internal static long PerfShiftedPixels;
 
         /// <summary>A bind group that lets <see cref="RecordBlit"/> read <paramref name="sourceView"/>
         /// into a <paramref name="format"/> target. Owned by the caller.</summary>
@@ -1015,11 +1635,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             private static readonly string? s_logFile = Environment.GetEnvironmentVariable("WGPU_DAMAGE_LOG");
             private static readonly bool s_trace = Environment.GetEnvironmentVariable("WGPU_DAMAGE_TRACE") == "1";
+            private static readonly string? s_dumpDir = Environment.GetEnvironmentVariable("WGPU_DAMAGE_VERIFY_DUMP");
 
             private readonly WgpuSceneRenderer _r;
             private readonly DamageTracker _tracker = new();
             private readonly List<Scissor> _rects = new();
-            private IntPtr _tex, _view, _blitBg, _vTex, _vView;
+            private IntPtr _tex, _view, _blitBg, _vTex, _vView, _sTex, _sView;
             private WGPUTextureFormat _fmt, _blitFmt;
             private int _w, _h;
             private RgbaColor _bg;
@@ -1031,6 +1652,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             internal bool LastFull { get; private set; }
             internal int LastRects { get; private set; }
             internal long LastPixels { get; private set; }
+            /// <summary>The pixels the last frame shifted instead of redrawing (a scroll), or null.</summary>
+            internal ScrollShift? LastShift { get; private set; }
+
+            /// <summary>Per-thread totals since the last reset, for the PERF logs: frames, how many of them were
+            /// full or shifted, and the pixels drawn against the pixels a full frame would have drawn.</summary>
+            [ThreadStatic] internal static long PerfPresents, PerfFullPresents, PerfShiftPresents, PerfPresentPixels, PerfTargetPixels, PerfTrackTicks,
+                PerfRenderTicks, PerfSplitCollect, PerfSplitEncode, PerfSplitSubmit, PerfSplitDraws;
+
+            internal static string PerfSummary()
+            {
+                if (PerfPresents == 0) return "presents=0";
+                long n = PerfPresents;
+                string Ms(long t) => (t * 1000.0 / System.Diagnostics.Stopwatch.Frequency / n).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+                string s = $"presents={PerfPresents} full={PerfFullPresents} shifted={PerfShiftPresents} " +
+                    $"px/present={PerfPresentPixels / PerfPresents} ({PerfPresentPixels * 100 / Math.Max(1, PerfTargetPixels)}% of the target) " +
+                    $"shifted px/present={PerfShiftedPixels / PerfPresents} track={Ms(PerfTrackTicks)}ms render={Ms(PerfRenderTicks)}ms (collect={Ms(PerfSplitCollect)} encode={Ms(PerfSplitEncode)} submit={Ms(PerfSplitSubmit)}) drawcalls={PerfSplitDraws / PerfPresents}";
+                PerfPresents = PerfFullPresents = PerfShiftPresents = PerfPresentPixels = PerfTargetPixels = PerfTrackTicks = 0;
+                PerfRenderTicks = PerfSplitCollect = PerfSplitEncode = PerfSplitSubmit = PerfSplitDraws = 0;
+                PerfShiftedPixels = 0;
+                return s;
+            }
 
             internal PartialTarget(WgpuSceneRenderer renderer, string name = "")
             {
@@ -1081,26 +1723,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 bool _valid0 = _valid;
                 if (!_valid) _tracker.Reset();
 
+                long tc0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 bool full = _tracker.Compute(root, width, height, _rects);
+                PerfTrackTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tc0;
                 _valid = true;
                 List<Scissor>? damage = full ? null : _rects;
+                ScrollShift? shift = full ? null : _tracker.Shift;
+                LastShift = shift;
+                if (shift != null && _sTex == IntPtr.Zero) (_sTex, _sView) = _r.CreatePersistentTarget(width, height, fmt);
                 LastFull = full;
                 LastRects = full ? 1 : _rects.Count;
                 LastPixels = 0;
                 if (full) LastPixels = (long)width * height;
                 else foreach (Scissor r in _rects) LastPixels += (long)r.W * r.H;
+                PerfPresents++; PerfPresentPixels += LastPixels; PerfTargetPixels += (long)width * height;
+                if (full) PerfFullPresents++;
+                if (shift != null) PerfShiftPresents++;
                 if (s_trace)
-                    Log($"[damage]{_name} frame {_frames}: {(full ? "FULL (" + (_valid0 ? _tracker.FullReason : "target (re)created / background changed") + ")" : $"{_rects.Count} rects {LastPixels} px")} {Describe(damage)}");
+                {
+                    string what = full ? "FULL (" + (_valid0 ? _tracker.FullReason : "target (re)created / background changed") + ")"
+                                       : $"{_rects.Count} rects {LastPixels} px";
+                    if (shift is { } s0) what += $" shift ({s0.Dx},{s0.Dy}) of [{s0.Src.X},{s0.Src.Y} {s0.Src.W}x{s0.Src.H}]";
+                    Log($"[damage]{_name} frame {_frames}: {what} {Describe(damage)}");
+                }
 
                 if (Verify)
                 {
-                    _r.RenderFrameDamaged(root, _view, fmt, width, height, background, transparentTarget, damage, _tracker.Stamp);
+                    _r.RenderFrameDamaged(root, _view, fmt, width, height, background, transparentTarget, damage, _tracker.Stamp,
+                        shift: shift, scratchView: _sView);
                     VerifyAgainstFull(root, width, height, background, transparentTarget, damage);
                     _r.BlitToView(view, viewFormat, _blitBg);
                     return;
                 }
+                long r0 = System.Diagnostics.Stopwatch.GetTimestamp(), c0 = PerfCollectTicks, e0 = PerfEncodeTicks, su0 = PerfSubmitTicks;
+                int d0 = PerfDrawCalls;
                 _r.RenderFrameDamaged(root, _view, fmt, width, height, background, transparentTarget, damage, _tracker.Stamp,
-                    view, viewFormat, _blitBg);
+                    view, viewFormat, _blitBg, shift, _sView);
+                PerfRenderTicks += System.Diagnostics.Stopwatch.GetTimestamp() - r0;
+                PerfSplitCollect += PerfCollectTicks - c0; PerfSplitEncode += PerfEncodeTicks - e0; PerfSplitSubmit += PerfSubmitTicks - su0;
+                PerfSplitDraws += PerfDrawCalls - d0;
             }
 
 #if WGPU_BROWSER
@@ -1151,6 +1812,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 byte[] got = _r.ReadTexture(_tex, width, height);
                 byte[] want = _r.ReadTexture(_vTex, width, height);
                 if (Compare(got, want, width, damage, _frames)) return;
+                if (s_dumpDir != null && _mismatched <= 6)
+                {
+                    // WGPU_DAMAGE_VERIFY_DUMP=<dir>: the two frames as PNGs, full size, to look at.
+                    try
+                    {
+                        PngWriter.Write(System.IO.Path.Combine(s_dumpDir, $"damage{_name.Trim().Replace(' ', '_')}_{_frames}_got.png"), got, width, height, int.MaxValue);
+                        PngWriter.Write(System.IO.Path.Combine(s_dumpDir, $"damage{_name.Trim().Replace(' ', '_')}_{_frames}_want.png"), want, width, height, int.MaxValue);
+                    }
+                    catch { }
+                }
                 // Show the full frame and carry on from it, so a miss is reported once rather than
                 // persisting into every later frame's comparison.
                 (_tex, _vTex) = (_vTex, _tex);
@@ -1191,7 +1862,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 _mismatched++;
                 Log($"[damage-verify]{_name} MISMATCH frame {frame}: {diff} px differ in ({minX},{minY})-({maxX},{maxY}) max delta {maxDelta}; "
-                    + $"damage {Describe(damage)};{samples}");
+                    + $"damage {Describe(damage)}{(LastShift is { } ls ? $" after a shift ({ls.Dx},{ls.Dy}) of [{ls.Src.X},{ls.Src.Y} {ls.Src.W}x{ls.Src.H}]" : "")};{samples}");
                 return false;
             }
 
@@ -1229,6 +1900,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (_tex != IntPtr.Zero) { wgpuTextureRelease(_tex); _tex = IntPtr.Zero; }
                 if (_vView != IntPtr.Zero) { wgpuTextureViewRelease(_vView); _vView = IntPtr.Zero; }
                 if (_vTex != IntPtr.Zero) { wgpuTextureRelease(_vTex); _vTex = IntPtr.Zero; }
+                if (_sView != IntPtr.Zero) { wgpuTextureViewRelease(_sView); _sView = IntPtr.Zero; }
+                if (_sTex != IntPtr.Zero) { wgpuTextureRelease(_sTex); _sTex = IntPtr.Zero; }
             }
 
             public void Dispose() => ReleaseTextures();

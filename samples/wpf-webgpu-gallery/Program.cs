@@ -149,6 +149,7 @@ internal static class Program
         var fpsClock = System.Diagnostics.Stopwatch.StartNew();
         double autoScroll = double.TryParse(Environment.GetEnvironmentVariable("WPF_GALLERY_AUTOSCROLL"),
             System.Globalization.CultureInfo.InvariantCulture, out double asp) ? asp : 0;
+        bool autoScrollSnap = Environment.GetEnvironmentVariable("WPF_GALLERY_AUTOSCROLL_SNAP") == "1";
         var scrollClock = System.Diagnostics.Stopwatch.StartNew();
         CompositionTarget.Rendering += (s, e) =>
         {
@@ -167,6 +168,14 @@ internal static class Program
                 double ms = scrollClock.Elapsed.TotalMilliseconds;
                 double span = scroll.ScrollableHeight, travel = autoScroll * ms / 1000.0 % (2 * span);
                 double off = travel <= span ? travel : 2 * span - travel;
+                // WPF_GALLERY_AUTOSCROLL_SNAP=1: whole device pixels only, as a mouse wheel scrolls
+                // (48 DIPs a notch). A fractional offset puts every card on a new sub-pixel phase, so
+                // nothing rendered at the last offset can be reused at this one.
+                if (autoScrollSnap)
+                {
+                    double ppd = VisualTreeHelper.GetDpi(scroll).PixelsPerDip;
+                    off = Math.Round(off * ppd) / ppd;
+                }
                 scroll.ScrollToVerticalOffset(off);
                 Console.WriteLine($"SCROLL {ms:0.0} {off:0.0}");
             }
