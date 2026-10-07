@@ -169,28 +169,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // 2,959,981 / 2,696,236 / 3,054,907, and then the fitted count 1/3/5 = 2,696,236 /
         // 2,487,683 / 1,864,496.
 
-        // Per-frame perf counters (diagnostics): reset + read by the sink each frame.
-        internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss, PerfShadowHits;
+        // Per-frame perf counters (diagnostics): reset + read by the sink each frame. [ThreadStatic]
+        // because each UI thread has its own sink and render thread, and each prints its own PERF lines:
+        // shared, two threads' frames added into, and reset, one set of numbers.
+        [ThreadStatic] internal static int PerfTextures, PerfBindGroups, PerfCoverage, PerfReadbacks, PerfLayers, PerfLayerHits, PerfLayerMiss, PerfShadowHits;
         /// <summary>Draws routed to the local-space (resampled) coverage cache rather than the exact device-space path.</summary>
-        internal static int PerfLocalCoverage;
+        [ThreadStatic] internal static int PerfLocalCoverage;
 
         /// <summary>
         /// Draws recorded this frame: <see cref="PerfDrawItems"/> counts what the scene asked for,
         /// <see cref="PerfDrawCalls"/> the drawIndexed calls that carried them. The ratio is what
         /// batching buys, and a scene where they are equal is one where nothing could be merged.
         /// </summary>
-        internal static int PerfDrawItems, PerfDrawCalls;
+        [ThreadStatic] internal static int PerfDrawItems, PerfDrawCalls;
 
         /// <summary>Render passes encoded this frame. A pass costs an attachment load and store,
         /// which is why several draws in one beats one draw in each.</summary>
-        internal static int PerfPasses;
+        [ThreadStatic] internal static int PerfPasses;
 
         /// <summary>Edge textures CREATED this frame -- the segment lists coverage masks and strokes
         /// upload. A settled scene should create none: see RentEdgeTexture.</summary>
-        internal static int PerfEdgeTextures;
+        [ThreadStatic] internal static int PerfEdgeTextures;
 
         /// <summary>Coverage-mask textures CREATED this frame, as opposed to taken from the pool.</summary>
-        internal static int PerfMaskTextures;
+        [ThreadStatic] internal static int PerfMaskTextures;
 
         /// <summary>
         /// Native bind-group-layout acquisitions since the process started.
@@ -201,10 +203,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// leaked reference, so what matters is whether the number keeps climbing while an
         /// application renders, not what it was during one frame. In steady state it must not move.
         /// </remarks>
-        internal static int PerfLayoutAcquires;
-        internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks, PerfMaskTicks, PerfBoundsTicks;
-        internal static int PerfMaskCalls;
-        internal static long PerfCollectAlloc, PerfExecAlloc;
+        [ThreadStatic] internal static int PerfLayoutAcquires;
+        [ThreadStatic] internal static long PerfCollectTicks, PerfEncodeTicks, PerfSubmitTicks, PerfHashTicks, PerfMaskTicks, PerfBoundsTicks;
+        [ThreadStatic] internal static int PerfMaskCalls;
+        [ThreadStatic] internal static long PerfCollectAlloc, PerfExecAlloc;
 
         internal static void PerfReset() { PerfTextures = PerfBindGroups = PerfCoverage = PerfReadbacks = PerfLayers = PerfLayerHits = PerfLayerMiss = PerfShadowHits = PerfLocalCoverage = 0; PerfDrawItems = PerfDrawCalls = PerfPasses = PerfEdgeTextures = PerfMaskTextures = 0; PerfCollectTicks = PerfEncodeTicks = PerfSubmitTicks = PerfHashTicks = PerfMaskTicks = PerfBoundsTicks = 0; PerfMaskCalls = 0; }
 

@@ -50,7 +50,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private List<Scissor>? _cullDamage;
         private int _cullStamp;
 
-        internal static int PerfCulledVisuals, PerfCulledPrimitives, PerfCullRetries;
+        [ThreadStatic] internal static int PerfCulledVisuals, PerfCulledPrimitives, PerfCullRetries;
 
         /// <summary>WGPU_DAMAGE_CULL=0 keeps partial frames but collects everything (scissor only).</summary>
         private static readonly bool s_damageCull = Environment.GetEnvironmentVariable("WGPU_DAMAGE_CULL") != "0";
