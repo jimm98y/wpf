@@ -19,7 +19,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             case HatchBrush hb:
                 return new HatchSpan (scan, hb, _ctx.RenderingOrigin);
             case LinearGradientBrush lg:
-                return new LineGradientSpan (scan, lg, WorldToDevice);
+                return SpanDevice is { } sd ? new LineGradientSpan (scan, lg, sd.WorldToDevice, sd.X, sd.Y) : new LineGradientSpan (scan, lg, WorldToDevice);
             case PathGradientBrush pg:
                 return CreatePathGradientSpan (pg, scan, draw);
             case TextureBrush tb:

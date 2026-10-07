@@ -55,14 +55,20 @@ namespace System.Drawing
 
 		/// <summary>The image's bounds and their unit (a bitmap's pixels; a metafile's frame, in
 		/// pixels at its dpi) and its resolution.</summary>
-		static RectangleF ImageBounds (Image image, out GraphicsUnit unit, out float dpiX, out float dpiY)
+		static RectangleF ImageBounds (Image image, out GraphicsUnit unit, out float dpiX, out float dpiY, bool real = false)
 		{
 			if (image is Metafile mf) {
+				// GpImage vtable +0xa8, GpMetafile::GetBounds(RectF*) @1801a8710: the header's
+				// whole-pixel box (+0x38 .. +0x44) -- the source GdipDrawImage @180059c50,
+				// GdipDrawImagePoints @18005a0c0 and GdipEnumerateMetafileDest* take. Only
+				// GdipDrawImageRect @18005a690 (and GdipGetImageBounds) ask a metafile for its
+				// real, frame bounds instead (+0x178).
 				unit = GraphicsUnit.Pixel;
-				RectangleF b = mf.MetafileBounds (ref unit);
+				RectangleF rb = mf.MetafileBounds (ref unit);
+				GpMetafileHeader h = mf.header;
 				dpiX = mf.MetafileDpiX;
 				dpiY = mf.MetafileDpiY;
-				return b;
+				return real ? rb : new RectangleF (h.X, h.Y, h.Width, h.Height);
 			}
 			unit = GraphicsUnit.Pixel;
 			dpiX = image.HorizontalResolution;
@@ -108,7 +114,7 @@ namespace System.Drawing
 		bool MetaDrawImage (Image image, RectangleF dst)
 		{
 			if (image == null || (mf_rec == null && !(image is Metafile))) return false;
-			RectangleF src = ImageBounds (image, out GraphicsUnit unit, out _, out _);
+			RectangleF src = ImageBounds (image, out GraphicsUnit unit, out _, out _, true);
 			return MetaDrawImage (image, dst, src, unit, null);
 		}
 
@@ -131,7 +137,18 @@ namespace System.Drawing
 				mf_rec.DrawImage (image, dst, src, unit, ia);
 				return true;
 			}
-			GpMetafilePlayer.Play (this, (Metafile) image, Parallelogram (dst), src, unit, ia);
+			// GpGraphics::DrawImage(rect, rect) @18000f418: the source onto the destination as a
+			// scale and translation (identity when the source has no width or height), the source
+			// normalised to run forwards.
+			var m = GpMat.Identity;
+			float sr = src.Width + src.X, sb = src.Height + src.Y;
+			if (src.X != sr && src.Y != sb) {
+				float a = (dst.Width + dst.X - dst.X) / (sr - src.X), d = (dst.Height + dst.Y - dst.Y) / (sb - src.Y);
+				m = new GpMat (a, 0f, 0f, d, dst.Width + dst.X - a * sr, dst.Height + dst.Y - d * sb);
+			}
+			if (src.Width < 0f) { src.X = sr; src.Width = -src.Width; }
+			if (src.Height < 0f) { src.Y = sb; src.Height = -src.Height; }
+			GpMetafilePlayer.PlayImage (this, (Metafile) image, m, src, unit, ia);
 			return true;
 		}
 
@@ -151,7 +168,12 @@ namespace System.Drawing
 				mf_rec.DrawImagePoints (image, (PointF []) pts.Clone (), s, unit, ia);
 				return true;
 			}
-			GpMetafilePlayer.Play (this, (Metafile) image, (PointF []) pts.Clone (), s, unit, ia);
+			// GpGraphics::DrawImage(points, rect) @180076c40: InferAffineMatrix of the source onto
+			// the points (its status not looked at), UndoSourceFlip, then DrawImage(rect, matrix).
+			GpMat.InferAffine (pts, s, out GpMat pm);
+			if (s.Width < 0f) { s.X += s.Width; s.Width = -s.Width; }
+			if (s.Height < 0f) { s.Y += s.Height; s.Height = -s.Height; }
+			GpMetafilePlayer.PlayImage (this, (Metafile) image, pm, s, unit, ia);
 			return true;
 		}
 

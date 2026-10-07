@@ -124,7 +124,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (va == 0 && gen == null) { fx += (long)asc * 16 * dnx; fy += (long)asc * 16 * dny; }
             else if (va == 8 && gen == null) { fx -= (long)desc * 16 * dnx; fy -= (long)desc * 16 * dny; }
             int ha = align & 6;
-            if (ha == 6 && gen == null) { fx -= total / 2 * ax; fy -= total / 2 * ay; }
+            // ESTROBJ::vInit @1401afcc0 after vCharPos_H1 (an unturned, unmirrored scale): the glyphs
+            // already sit on whole pixels, and TA_CENTER / TA_RIGHT move them all back by whole
+            // pixels, (total / 2 + 8) >> 4 or (total + 8) >> 4 (C's division); the turned paths
+            // (vCharPos_G*) move the 28.4 reference point instead.
+            bool hPath = gen == null && q == 0 && ax == 1 && dny == 1;
+            int hShift = 0;
+            if (hPath && ha == 6) hShift = (int)((total / 2 + 8) >> 4);
+            else if (hPath && ha == 2) hShift = (int)((total + 8) >> 4);
+            else if (ha == 6 && gen == null) { fx -= total / 2 * ax; fy -= total / 2 * ay; }
             else if (ha == 2 && gen == null) { fx -= total * ax; fy -= total * ay; }
             if (gen != null)
             {
@@ -162,6 +170,31 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         for (int x = e.Left; x < e.Right; x++)
                             if (x >= 0 && y >= 0 && x < _cw && y < _ch && (mask == null || mask[y * _cw + x])) px[y * _cw + x] = bk;
                 }
+                else if (_dc.BkMode == 2 && gen == null && q == 0 && ax == 1 && ay == 0 && dny == 1 && ppemAlong == ppemAcross)
+                {
+                    // ESTROBJ::vCharPos_H1 @1401aed88 (its glyph-data branch): along the baseline the
+                    // least of 0 and each pen plus the glyph's GLYPHDATA fxA, to the greatest of the
+                    // total advance and each pen plus fxAB -- the columns the glyph's bitmap lights;
+                    // ESTROBJ::bOpaqueArea @1401ad4f0's horizontal box at the reference pixel
+                    // (+8 >> 4), that left floored and right ceiled; and GrepExtTextOutWLocked
+                    // @1401a8a98 widens a ClearType font's box by a pixel each side (rfont +0xc bit 28).
+                    long xl = 0, xr = 0;
+                    for (int i = 0; i < n; i++)
+                    {
+                        int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
+                        GdiPlusText.GreyGlyph g = GdiPlusText.Mono(font.Face, gid, ppemAlong, gridFit: true);
+                        if (g.Width <= 0 || g.Height <= 0) continue;
+                        xl = Math.Min(xl, pens[i] + g.Left * 16);
+                        xr = Math.Max(xr, pens[i] + (g.Left + g.Width) * 16);
+                    }
+                    xr = Math.Max(xr, total);
+                    int x0 = (int)((fx + 8) >> 4) - hShift, y0 = (int)((fy + 8) >> 4);
+                    int l = x0 + (int)(xl >> 4) - 1, r = x0 + (int)((xr + 15) >> 4) + 1;
+                    int t = y0 - asc, b = y0 + desc;
+                    for (int y = t; y < b; y++)
+                        for (int x = l; x < r; x++)
+                            if (Visible(x, y)) px[y * _cw + x] = bk;
+                }
                 else if (_dc.BkMode == 2 && gen == null)
                 {
                     int x0 = (int)((fx + 8) >> 4), y0 = (int)((fy + 8) >> 4);
@@ -186,7 +219,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     {
                         gids[i] = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
                         long gx = gen != null ? fx + R16(pens[i] * gen.UbX) : fx + pens[i] * ax, gy = gen != null ? fy + R16(pens[i] * gen.UbY) : fy + pens[i] * ay;
-                        xs[i] = (int)((gx + 8) >> 4);
+                        xs[i] = (int)((gx + 8) >> 4) - hShift;
                         ys[i] = (int)((gy + 8) >> 4);
                     }
                     bool[] upright = null;

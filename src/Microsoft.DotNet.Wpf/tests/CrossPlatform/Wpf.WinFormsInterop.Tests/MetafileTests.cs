@@ -228,13 +228,25 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(ImageFormat.Emf, mf.RawFormat);
         }
 
-        /// <summary>DrawImage(metafile, rect) on a bitmap is the playback of its bounds into the rectangle.</summary>
+        /// <summary>DrawImage(metafile, rect) on a bitmap is the playback GpGraphics::DrawImage
+        /// @18000f418 sets up: the metafile's real bounds (GdipDrawImageRect asks a metafile for
+        /// those, vtable +0x178) onto the rectangle as a scale and translation, prepended to the
+        /// world transform, played onto themselves.</summary>
         [Theory]
         [MemberData(nameof(Scenarios))]
         public void DrawImage_of_a_metafile_is_its_playback(string scenario)
         {
             using var mf = new Metafile(Path.Combine(Dir, "plus", scenario + ".emf"));
-            using Bitmap want = PlayInto(mf, 120, 90, new RectangleF(5, 5, 110, 80));
+            var dest = new RectangleF(5, 5, 110, 80);
+            RectangleF src = mf.RealBounds;
+            float a = (dest.Right - dest.X) / (src.Right - src.X), d = (dest.Bottom - dest.Y) / (src.Bottom - src.Y);
+            var m = new GpMat(a, 0f, 0f, d, dest.Right - a * src.Right, dest.Bottom - d * src.Bottom);
+            using var want = new Bitmap(120, 90, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(want))
+            {
+                g.Clear(Color.White);
+                GpMetafilePlayer.PlayImage(g, mf, m, src, GraphicsUnit.Pixel, null);
+            }
             using var got = new Bitmap(120, 90, PixelFormat.Format32bppArgb);
             using (Graphics g = Graphics.FromImage(got))
             {
@@ -260,16 +272,15 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.True(sb.Length == 0, sb.ToString());
         }
 
-        /// <summary>A metafile drawn as GDI+ draws it for Graphics.DrawImage(mf, rect): the source
-        /// is the metafile's bounds in pixels.</summary>
+        /// <summary>A metafile drawn as the GDI+ oracle drew it: Graphics.DrawImage(mf, rect) onto
+        /// white.</summary>
         internal static Bitmap PlayInto(Metafile mf, int w, int h, RectangleF dest)
         {
             var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.Clear(Color.White);
-                GpMetafilePlayer.Play(g, mf, new[] { dest.Location, new PointF(dest.Right, dest.Top), new PointF(dest.Left, dest.Bottom) },
-                    mf.RealBounds, GraphicsUnit.Pixel, null);
+                g.DrawImage(mf, dest);
             }
             return bmp;
         }
