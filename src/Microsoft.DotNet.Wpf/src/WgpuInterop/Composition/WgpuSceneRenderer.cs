@@ -931,6 +931,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             d.DrawInfo.Clear();
             // Keyed by draw index, so they belong to this pass's draws and go with them.
             d.GradientPaper?.Clear(); d.ClearDraws?.Clear();
+            d.Culled?.Clear(); d.CullConflict = false;
             d.VbOffset = d.IbOffset = -1;
             _inUseDrawData.Add(d);
             return d;
@@ -953,7 +954,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return nb;
         }
 
-        private readonly struct Scissor
+        internal readonly struct Scissor
         {
             public readonly int X, Y, W, H;
             public Scissor(int x, int y, int w, int h) { X = x; Y = y; W = w; H = h; }
@@ -1003,6 +1004,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// <summary>Draws (by index into <see cref="Draws"/>) that write nothing -- a gradient
             /// clear at every stop -- and so touch no paper.</summary>
             public Dictionary<int, bool>? ClearDraws;
+            /// <summary>Partial redraw: the device boxes of what this pass's collect SKIPPED because it
+            /// lay wholly outside the damage. Set only on a partial frame's main pass. Every draw it
+            /// would have made lies inside one of these, so a <see cref="PaperUnder"/> question whose
+            /// box touches one could have been answered differently by the full frame -- which sets
+            /// <see cref="CullConflict"/>, and the frame is collected again without culling.</summary>
+            public List<Scissor>? Culled;
+            public bool CullConflict;
             // Byte offsets of this pass's vertices/indices inside the frame's shared batched geometry
             // buffers (BuildBatchedGeometry). -1 = no geometry / not yet assigned this frame.
             public int VbOffset = -1, IbOffset = -1;
@@ -1048,6 +1056,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // Load (preserve) instead of clear the target -- used to rasterize a new glyph into its
             // shelf region of the persistent GPU glyph atlas without wiping the glyphs already there.
             public bool LoadPreserve;
+            // Partial redraw: the disjoint device rectangles this (main) pass may write. Every draw's
+            // scissor is intersected with each of them; null = the whole target.
+            public List<Scissor>? Damage;
 
             public LayerPass(IntPtr targetView, bool clearTransparent, RgbaColor clearColor, DrawData data, WGPUTextureFormat format)
             {
@@ -1442,7 +1453,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     IntPtr bg = atlasBindGroup;
                     DeferReleaseBindGroup(bg);
                 }
-                RecordDraws(pass, lp.Format, vbuf, ibuf, lp.Data, atlasBindGroup, lp.OriginX, lp.OriginY, lp.TexW, lp.TexH);
+                RecordDraws(pass, lp.Format, vbuf, ibuf, lp.Data, atlasBindGroup, lp.OriginX, lp.OriginY, lp.TexW, lp.TexH, lp.Damage);
             }
             wgpuRenderPassEncoderEnd(pass);
             IntPtr passLocal = pass;
@@ -1464,6 +1475,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Scissor clip = parentClip;
             if (v.Clip.HasValue)
                 clip = Intersect(parentClip, DeviceBounds(v.Clip.Value, world, width, height));
+            if (_cullData != null && ReferenceEquals(outData, _cullData) && CullVisual(v, clip))
+                return;
 
             double vOpacity = Math.Clamp(v.Opacity, 0.0, 1.0);
             if (v.Snapshot is { } snap)
@@ -2584,6 +2597,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     CollectVisual(nested.Visual, world, accOpacity, clip, outData, plan, width, height, format);
                 else
                 {
+                    if (_cullData != null && ReferenceEquals(outData, _cullData) && CullPrimitive(primitive, world, clip))
+                        continue;
                     // Pre-render any GPU-live content-brush source (deduped) before the fill samples it.
                     if (GpuSourceBrushOf(primitive) is { } cbImg) EnsureContentSourceTexture(cbImg, plan);
                     EmitPrimitive(primitive, world, accOpacity, clip, width, height, format, outData);
@@ -4811,6 +4826,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                              Func<Vector2, Vector2> fromNdc, out Func<int, int, RgbaColor?>? field)
         {
             field = null;
+            if (data.Culled is { Count: > 0 } culled && !data.CullConflict)
+            {
+                // The full frame would have walked draws this partial collect skipped; if any of them
+                // could touch the box, the answer below may not be the full frame's.
+                foreach (Scissor c in culled)
+                    if (c.X - 1 < x1 && x0 < c.X + c.W + 1 && c.Y - 1 < y1 && y0 < c.Y + c.H + 1)
+                    { data.CullConflict = true; break; }
+            }
             if (s_paperAt is not null) s_paperChain = $"want=({x0},{y0},{x1},{y1})";
             List<DrawItem> draws = data.Draws;
             List<PaperInfo> info = data.DrawInfo;
@@ -6413,7 +6436,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private void RecordDraws(IntPtr pass, WGPUTextureFormat format, IntPtr vbuf, IntPtr ibuf, DrawData data, IntPtr atlasBindGroup,
-            int originX = 0, int originY = 0, int texW = 0, int texH = 0)
+            int originX = 0, int originY = 0, int texW = 0, int texH = 0, List<Scissor>? damage = null)
         {
             wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vbuf, (ulong)data.VbOffset, (ulong)(data.Verts.Count * sizeof(float)));
             wgpuRenderPassEncoderSetIndexBuffer(pass, ibuf, WGPUIndexFormat.Uint32, (ulong)data.IbOffset, (ulong)(data.Indices.Count * sizeof(uint)));
@@ -6479,6 +6502,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 {
                     wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
                     boundBindGroup = bindGroup;
+                }
+
+                if (damage != null)
+                {
+                    // Partial redraw: the same draw once per damage rectangle it reaches, scissored to
+                    // it. The rectangles are disjoint, so no pixel is blended twice.
+                    PerfDrawItems += merged;
+                    foreach (Scissor dr in damage)
+                    {
+                        int qx = Math.Max(sx, dr.X), qy = Math.Max(sy, dr.Y);
+                        int qr = Math.Min(sx + sw, dr.X + dr.W), qb = Math.Min(sy + sh, dr.Y + dr.H);
+                        if (qr <= qx || qb <= qy) continue;
+                        if (!haveScissor || qx != bx || qy != by || qr - qx != bw || qb - qy != bh)
+                        {
+                            wgpuRenderPassEncoderSetScissorRect(pass, (uint)qx, (uint)qy, (uint)(qr - qx), (uint)(qb - qy));
+                            haveScissor = true;
+                            bx = qx; by = qy; bw = qr - qx; bh = qb - qy;
+                        }
+                        PerfDrawCalls++;
+                        wgpuRenderPassEncoderDrawIndexed(pass, indexCount, 1, firstIndex, 0, 0);
+                    }
+                    continue;
                 }
 
                 if (!haveScissor || sx != bx || sy != by || sw != bw || sh != bh)
