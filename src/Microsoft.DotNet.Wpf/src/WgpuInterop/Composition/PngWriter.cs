@@ -99,19 +99,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static uint[] s_crcTable;
         private static uint Crc32(byte[] type, byte[] data)
         {
-            if (s_crcTable == null)
+            // Built whole, then published: two threads writing PNGs at once (two UI threads' sinks,
+            // each dumping a frame) must never see a table that is still being filled.
+            uint[] table = s_crcTable;
+            if (table == null)
             {
-                s_crcTable = new uint[256];
+                table = new uint[256];
                 for (uint n = 0; n < 256; n++)
                 {
                     uint c = n;
                     for (int k = 0; k < 8; k++) c = (c & 1) != 0 ? 0xEDB88320 ^ (c >> 1) : c >> 1;
-                    s_crcTable[n] = c;
+                    table[n] = c;
                 }
+                s_crcTable = table;
             }
             uint crc = 0xFFFFFFFF;
-            foreach (byte x in type) crc = s_crcTable[(crc ^ x) & 0xff] ^ (crc >> 8);
-            foreach (byte x in data) crc = s_crcTable[(crc ^ x) & 0xff] ^ (crc >> 8);
+            foreach (byte x in type) crc = table[(crc ^ x) & 0xff] ^ (crc >> 8);
+            foreach (byte x in data) crc = table[(crc ^ x) & 0xff] ^ (crc >> 8);
             return crc ^ 0xFFFFFFFF;
         }
     }

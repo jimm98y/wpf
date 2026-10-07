@@ -156,6 +156,10 @@ namespace MS.Internal.Interop
         /// <param name="x">Origin in top-left device PIXELS (borderless popups; the main window fills the activity).</param>
         public void Create(string title, int x, int y, int width, int height, bool borderless)
         {
+            // Android has one UI thread (the main Looper's); a view touched from another throws
+            // CalledFromWrongThreadException on the Java side, across JNI. Refuse here instead.
+            ClaimUiThread("create a WPF window");
+
             IsBorderless = borderless;
             InstallCompositorResolver();
 
@@ -487,7 +491,38 @@ namespace MS.Internal.Interop
         // they live here so Dispatcher talks to ONE windowing backend per platform.
 
         /// <summary>Start the per-frame pump. False when there is no host/activity to drive it.</summary>
-        public static bool StartFrameCallback(Action tick) => Host?.StartFrameCallback(tick) ?? false;
+        /// <remarks>The head holds ONE frame callback and delivers it on the UI thread, so a second
+        /// thread's Dispatcher.Run would silently replace the first's pump and have the UI thread
+        /// drain another thread's queue. Refused instead.</remarks>
+        public static bool StartFrameCallback(Action tick)
+        {
+            ClaimUiThread("run a Dispatcher");
+            return Host?.StartFrameCallback(tick) ?? false;
+        }
+
+        private static System.Threading.Thread s_uiThread;
+
+        /// <summary>
+        /// Records the calling thread as THE UI thread on first use (the head reaches WPF from the
+        /// main Looper: Activity.onCreate creates the window and runs the Dispatcher), and throws an
+        /// InvalidOperationException on any other live thread afterwards.
+        /// </summary>
+        internal static void ClaimUiThread(string what)
+        {
+            System.Threading.Thread me = System.Threading.Thread.CurrentThread;
+            while (true)
+            {
+                System.Threading.Thread prior = System.Threading.Interlocked.CompareExchange(ref s_uiThread, me, null);
+                if (prior == null || prior == me) return;
+                if (prior.IsAlive)
+                {
+                    throw new InvalidOperationException(
+                        $"Android has one UI thread; cannot {what} on another. Marshal the call to the UI " +
+                        "thread's Dispatcher.");
+                }
+                if (System.Threading.Interlocked.CompareExchange(ref s_uiThread, me, prior) == prior) return;
+            }
+        }
 
         /// <summary>Stop the pump for good (dispatcher shutdown).</summary>
         public static void StopFrameCallback() => Host?.StopFrameCallback();

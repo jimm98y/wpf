@@ -2916,7 +2916,65 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// globals[0x49a], six, which is three lamps of two samples each.</summary>
         internal const int ClearTypeOversample = 6;
 
-        internal static bool SubpixelFitting { get; set; }
+        /// <remarks>
+        /// <para>PER THREAD, over a process default. The fit is chosen where the renderer picks the
+        /// mode (<see cref="SetRenderingModeDefault"/>), then flipped for single runs -- a bi-level
+        /// run, a natural-ClearType pass -- and restored. With one UI thread a plain static did. With
+        /// two, each compositing on its own render thread, one thread's flip for a bi-level run
+        /// landed in the middle of the other's ClearType run and fitted its glyphs for the wrong
+        /// rasterizer. So a set belongs to the thread that made it, and a thread that has not set
+        /// one -- or set it before the mode was last chosen -- reads the default, which is what
+        /// every thread read before.</para>
+        /// </remarks>
+        internal static bool SubpixelFitting
+        {
+            get
+            {
+                int t = t_subpixelFitting;
+                return t != 0 && t_subpixelFittingEra == s_renderingModeEra ? t > 0 : s_subpixelFittingDefault;
+            }
+            set
+            {
+                t_subpixelFitting = value ? 1 : -1;
+                t_subpixelFittingEra = s_renderingModeEra;
+            }
+        }
+
+        [ThreadStatic] private static int t_subpixelFitting;       // 0 = not set on this thread
+        [ThreadStatic] private static int t_subpixelFittingEra;
+        private static volatile bool s_subpixelFittingDefault;
+
+        /// <summary>Bumped whenever the default mode CHANGES, which retires every thread's own
+        /// setting; starts at 1 so a thread's never-written era cannot match it.</summary>
+        private static volatile int s_renderingModeEra = 1;
+        private static readonly object s_renderingModeLock = new object();
+
+        /// <summary>
+        /// The rendering mode the process draws in, as a renderer chose it: the default every thread
+        /// reads. Choosing the mode it already is changes nothing -- every renderer chooses at
+        /// construction, and a second UI thread bringing its renderer up must not retire a flip the
+        /// first thread is in the middle of.
+        /// </summary>
+        internal static void SetRenderingModeDefault(bool subpixelFitting, bool clearTypeRendering)
+        {
+            lock (s_renderingModeLock)
+            {
+                if (s_subpixelFittingDefault == subpixelFitting && s_clearTypeRenderingDefault == clearTypeRendering
+                    && s_renderingModeChosen)
+                {
+                    // Still make this thread's own reading agree, as a plain static would have.
+                    SubpixelFitting = subpixelFitting;
+                    ClearTypeRendering = clearTypeRendering;
+                    return;
+                }
+                s_subpixelFittingDefault = subpixelFitting;
+                s_clearTypeRenderingDefault = clearTypeRendering;
+                s_renderingModeChosen = true;
+                s_renderingModeEra++;
+            }
+        }
+
+        private static bool s_renderingModeChosen;
 
         /// <summary>WPF_CT_COMPOFF=1 rounds a component offset on the LAMP grid in x, as
         /// scl_CalcComponentOffset does. It is GDI's rule and it measures net positive on its
@@ -2940,7 +2998,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <para>Separate from <see cref="SubpixelFitting"/> on purpose: the stage tests toggle that
         /// to fit a glyph both ways, and doing so must not change what the face is told.</para>
         /// </summary>
-        internal static bool ClearTypeRendering { get; set; } = true;
+        /// <remarks>Per thread over a process default, like <see cref="SubpixelFitting"/> and for
+        /// the same reason.</remarks>
+        internal static bool ClearTypeRendering
+        {
+            get
+            {
+                int t = t_clearTypeRendering;
+                return t != 0 && t_clearTypeRenderingEra == s_renderingModeEra ? t > 0 : s_clearTypeRenderingDefault;
+            }
+            set
+            {
+                t_clearTypeRendering = value ? 1 : -1;
+                t_clearTypeRenderingEra = s_renderingModeEra;
+            }
+        }
+
+        [ThreadStatic] private static int t_clearTypeRendering;    // 0 = not set on this thread
+        [ThreadStatic] private static int t_clearTypeRenderingEra;
+        private static volatile bool s_clearTypeRenderingDefault = true;
 
         /// <summary>Snap the fitted glyph's left edge onto a whole pixel: 1 nearest, 2 ceil, 3 floor.
         /// <para>WPF_X_LSBSNAP.</para></summary>

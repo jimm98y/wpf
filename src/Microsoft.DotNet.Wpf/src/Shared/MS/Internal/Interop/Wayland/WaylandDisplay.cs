@@ -73,6 +73,50 @@ namespace MS.Internal.Interop.Wayland
 
         public static bool IsActive => Display != IntPtr.Zero;
 
+        // ONE UI THREAD. The connection's default event queue is dispatched by whichever thread reads
+        // it, and every listener here (input, configure, frame callbacks) then runs on THAT thread,
+        // against windows another Dispatcher owns. A second WPF thread running Dispatcher.Run polled
+        // the same fd as the first and stole its events. So the connection belongs to the first thread
+        // that creates a window: it alone pumps, and a window on any other thread is refused up front
+        // (WaylandWindow.Create) rather than corrupting the first thread's state.
+        private static System.Threading.Thread? s_uiThread;
+
+        /// <summary>
+        /// Whether the calling thread services the connection: the UI thread, or any thread while no
+        /// window has claimed it yet. A Dispatcher on any other thread waits on its own managed event.
+        /// </summary>
+        public static bool IsPumpThread
+        {
+            get
+            {
+                if (Display == IntPtr.Zero) return false;
+                System.Threading.Thread? ui = System.Threading.Volatile.Read(ref s_uiThread);
+                return ui == null || ui == System.Threading.Thread.CurrentThread || !ui.IsAlive;
+            }
+        }
+
+        /// <summary>Claims the connection for the calling thread as it creates a window; throws, before
+        /// any protocol object exists, on any other thread while the claimant is alive.</summary>
+        internal static void ClaimUiThread()
+        {
+            System.Threading.Thread me = System.Threading.Thread.CurrentThread;
+            while (true)
+            {
+                System.Threading.Thread? prior = System.Threading.Interlocked.CompareExchange(ref s_uiThread, me, null);
+                if (prior == null || prior == me) return;
+                if (prior.IsAlive)
+                {
+                    throw new InvalidOperationException(
+                        "The Wayland head serves its windows from ONE UI thread, and that is thread " +
+                        (prior.Name ?? prior.ManagedThreadId.ToString(System.Globalization.CultureInfo.InvariantCulture)) +
+                        ". A window cannot be created on another thread: the compositor connection's events " +
+                        "are dispatched on the thread that reads them. Create it through that thread's Dispatcher.");
+                }
+                // The old UI thread has exited: the connection passes to this one.
+                if (System.Threading.Interlocked.CompareExchange(ref s_uiThread, me, prior) == prior) return;
+            }
+        }
+
         internal static readonly List<WaylandOutput> Outputs = new();
 
         /// <summary>

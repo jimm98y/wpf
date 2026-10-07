@@ -174,7 +174,7 @@ namespace System.Windows.Threading
                 // WndProc runs and routes input into WPF (which in turn Signal()s us with real work).
                 WaitWindows(timeoutMilliseconds);
             }
-            else if (MS.Internal.Interop.Wayland.WaylandDisplay.IsActive)
+            else if (MS.Internal.Interop.Wayland.WaylandDisplay.IsPumpThread)
             {
                 // Linux/Wayland: the same shape as the Windows arm, for the same reason. Compositor
                 // input arrives on the connection's file descriptor, which a bare managed event wait

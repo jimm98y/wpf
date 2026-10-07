@@ -548,9 +548,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         public static IEnumerable<string> SystemLink(string family)
         {
             if (!OperatingSystem.IsWindows()) return System.Array.Empty<string>();
-            if (s_systemLink is null)
-                s_systemLink = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-            if (s_systemLink.TryGetValue(family, out string[]? cached)) return cached;
+            // Every UI thread's render thread resolves fallbacks through here; a Dictionary written
+            // by two of them at once corrupts itself.
+            lock (s_systemLink)
+                if (s_systemLink.TryGetValue(family, out string[]? cached)) return cached;
 
             var faces = new List<string>();
             foreach (string line in MultiString(
@@ -566,10 +567,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                                 : Path.GetFileNameWithoutExtension(fields[0]);
                 if (!string.IsNullOrWhiteSpace(face)) faces.Add(face.Trim());
             }
-            return s_systemLink[family] = faces.ToArray();
+            string[] result = faces.ToArray();
+            lock (s_systemLink) s_systemLink[family] = result;
+            return result;
         }
 
-        private static Dictionary<string, string[]>? s_systemLink;
+        private static readonly Dictionary<string, string[]> s_systemLink = new(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>One REG_MULTI_SZ value, or nothing at all if it is absent.</summary>
         private static string[] MultiString(string subKey, string valueName)

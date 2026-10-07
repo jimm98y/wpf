@@ -19,7 +19,12 @@
 // dependency one-way preserves WgpuInterop's independent build + test story.
 //
 // Threading: like milcore's render thread, a single sink instance is driven from
-// one thread (the channel/UI thread for SameThread channels).
+// one thread (the channel/UI thread for SameThread channels). There is ONE SINK PER
+// UI THREAD: DUCE.ManagedComposition creates an instance on each thread that opens
+// a channel, so two windows on two Dispatchers get two engines, two GPU devices and
+// two render threads, and disposes it when that thread's last channel closes. What
+// is shared between sinks is static here and is either immutable, locked, or
+// [ThreadStatic] (the rasterizer's per-run knobs).
 //
 
 using System;
@@ -92,11 +97,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// live instance -- DUCE.ManagedComposition constructs it reflectively and keeps the
         /// only reference privately.
         /// </summary>
-        public static WpfCompositionSink? Current { get; private set; }
+        /// <remarks>
+        /// There is one sink per UI thread (DUCE.ManagedComposition creates each on the thread whose
+        /// channels it serves), so this is the CALLING thread's sink -- the one whose engine decoded
+        /// that thread's visuals -- falling back to the most recently created live one for a caller
+        /// on a thread with none.
+        /// </remarks>
+        public static WpfCompositionSink? Current
+        {
+            get
+            {
+                WpfCompositionSink? mine = t_current;
+                if (mine != null && !mine._disposed) return mine;
+                WpfCompositionSink? last = s_last;
+                return last != null && !last._disposed ? last : null;
+            }
+        }
+
+        [ThreadStatic] private static WpfCompositionSink? t_current;
+        private static volatile WpfCompositionSink? s_last;
+
+        /// <summary>How many sinks exist and have not been disposed (diagnostics and tests): one per
+        /// UI thread that has opened a channel and not yet shut its Dispatcher down.</summary>
+        public static int LiveCount => System.Threading.Volatile.Read(ref s_liveCount);
+        private static int s_liveCount;
+
+        /// <summary>The UI thread this sink serves (the thread that created it).</summary>
+        private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
+
+        /// <summary>Whether this sink has created a GPU device (tests: a thread that only decodes
+        /// commands never does).</summary>
+        public bool HasGpu => _ctx != null;
 
         public WpfCompositionSink()
         {
-            Current = this;
+            t_current = this;
+            s_last = this;
+            System.Threading.Interlocked.Increment(ref s_liveCount);
             // Resolve WPF glyph runs to real fonts so text renders. The run carries a
             // managed font descriptor (file path + face index + style simulations from
             // GlyphTypeface), so this is fully cross-platform -- no COM / DirectWrite.
@@ -113,19 +150,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// mode lays text out with (DirectWrite's GDI-compatible metrics). Called by PresentationCore
         /// on the UI thread, through the text stack's GdiCompatibleAdvances hook, so it resolves fonts
         /// into instances of its own -- the render thread's are not safe to share -- and serializes.
-        /// -1 when the face cannot be read.</summary>
-        public int GdiCompatibleAdvance(string path, int faceIndex, int simulations, int ppem, int glyph)
+        /// -1 when the face cannot be read.
+        /// <para>STATIC, with one font cache for the process: the hook is process-wide (the text stack
+        /// lays out on every UI thread and knows nothing of which sink is whose), it is bound once,
+        /// and it has to keep working after whichever sink came first has been disposed. The answer
+        /// depends on nothing but the face.</para></summary>
+        public static int GdiCompatibleAdvance(string path, int faceIndex, int simulations, int ppem, int glyph)
         {
-            lock (_advanceFonts)
+            lock (s_advanceFonts)
             {
-                if (_advanceFonts.Resolve(new Text.FontDescriptor(path, faceIndex, simulations))
+                if (s_advanceFonts.Resolve(new Text.FontDescriptor(path, faceIndex, simulations))
                         is not Text.IHintedGlyphFont font || ppem <= 0 || glyph < 0)
                     return -1;
                 return (int)MathF.Round(font.DeviceAdvance(glyph, ppem));
             }
         }
 
-        private readonly Text.ManagedFontResolver _advanceFonts = new();
+        private static readonly Text.ManagedFontResolver s_advanceFonts = new();
 
         /// <summary>Total swap-chain textures successfully acquired (diagnostics/tests).</summary>
         public int AcquiredFrames { get; private set; }
@@ -361,6 +402,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 HandOver(render: false, wait: true);
                 return result;
             }
+            if (_disposed) return null;
             try
             {
                 _engine.Realize();
@@ -396,6 +438,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// <summary>Render and present every target that has a window and a root visual.</summary>
         public void RenderTargets()
         {
+            // A last commit can still be queued behind Dispose (the channel commits as it closes);
+            // there is nothing left to draw it with.
+            if (_disposed) return;
             EnsureGpu();         // ensure the renderer (and VisualRasterizer) exist before Realize
             if (_headless)
             {
@@ -534,15 +579,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
             _perfRenderAlloc += GC.GetAllocatedBytesForCurrentThread() - ra1;
 
-            // A window that has gone keeps no persistent frame (a window-sized texture each).
+            // A window that has gone keeps no persistent frame (a window-sized texture each) -- and
+            // no swap chain either. Its surface used to stay in this dictionary for the life of the
+            // sink, so every window a UI thread ever closed held its back buffers until exit.
+            List<uint>? gone = null;
             foreach (KeyValuePair<uint, TargetSurface> s in _surfaces)
             {
-                if (s.Value.Partial != null && !_engine.Targets.ContainsKey(s.Key))
-                {
-                    s.Value.Partial.Dispose();
-                    s.Value.Partial = null;
-                }
+                if (_engine.Targets.ContainsKey(s.Key)) continue;
+                s.Value.Partial?.Dispose();
+                s.Value.Partial = null;
+                if (s.Value.Surface != IntPtr.Zero) wgpuSurfaceRelease(s.Value.Surface);
+                s.Value.Surface = IntPtr.Zero;
+                (gone ??= new List<uint>()).Add(s.Key);
             }
+            if (gone != null)
+                foreach (uint k in gone) _surfaces.Remove(k);
 
             _renderer!.EndFrame();
             _statsRendered++;
@@ -1084,6 +1135,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             {
                 if (s_logPath != null) WgpuContext.LogSink = Log;
+                long created0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 _ctx = WgpuContext.Create();
 
                 // A real default font + shaper so text-STRING glyph runs (GlyphRunDraw with .Text) —
@@ -1106,7 +1158,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     return px;
                 };
 #endif
-                Log($"WebGPU device created (0x{_ctx.Device:x}) {_ctx.AdapterDescription}");
+                Log($"WebGPU device created (0x{_ctx.Device:x}) {_ctx.AdapterDescription} " +
+                    $"[UI thread {_ownerThreadId}, {System.Diagnostics.Stopwatch.GetElapsedTime(created0).TotalMilliseconds:0}ms, {LiveCount} live sink(s)]");
             }
         }
 
@@ -1336,21 +1389,49 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             return found;
         }
 
+        /// <summary>
+        /// Releases the sink's swap chains, renderer and device. DUCE.ManagedComposition calls this
+        /// when the last channel of the sink's UI thread closes -- the thread's MediaContext went with
+        /// its Dispatcher -- so a UI thread that exits gives its GPU resources back.
+        /// </summary>
         public void Dispose()
         {
             if (_disposed) return;
-            // Finish what was handed over and stop the render thread first: it owns every GPU object
-            // released below and may be in the middle of a frame.
-            StopRenderThread();
             _disposed = true;
+            System.Threading.Interlocked.Decrement(ref s_liveCount);
+            if (s_last == this) s_last = null;
+            if (t_current == this) t_current = null;
+
+            // The GPU objects are released ON THE RENDER THREAD when there is one, then it is stopped.
+            // It created all of them, and on Windows' GL backend the context's hidden window belongs
+            // to it: a window dies with the thread that owns it, and a context made current on a
+            // destroyed window's DC is not one wgpu can tear down.
+            if (_rtThread != null)
+            {
+                Record(ReleaseGpu);
+                HandOver(render: false, wait: true);
+            }
+            StopRenderThread();
+            ReleaseGpu();     // no render thread (or it is gone): here; a no-op when already done
+            Log($"WpfCompositionSink disposed (thread {_ownerThreadId}, {LiveCount} live)");
+        }
+
+        private void ReleaseGpu()
+        {
             foreach (TargetSurface ts in _surfaces.Values)
             {
                 ts.Partial?.Dispose();
+                ts.Partial = null;
                 if (ts.Surface != IntPtr.Zero) wgpuSurfaceRelease(ts.Surface);
+                ts.Surface = IntPtr.Zero;
             }
             _surfaces.Clear();
             _renderer?.Dispose();
+            _renderer = null;
             _ctx?.Dispose();
+            _ctx = null;
+            // Never bring a device back up for a disposed sink (EnsureGpu skips a headless one).
+            _headless = true;
         }
 
         private sealed class TargetSurface

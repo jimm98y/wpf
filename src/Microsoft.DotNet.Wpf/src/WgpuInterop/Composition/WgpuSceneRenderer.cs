@@ -4278,13 +4278,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // the outline has to be fitted the right way before it ever reaches the rasterizer --
                 // so this is set here, where the mode is chosen, not down in the draw where the mask
                 // is made. The glyph caches are keyed by it, so the two modes cannot cross.
-                Text.TrueTypeFont.SubpixelFitting = value;
+                // (Process-wide default, as it always was; see TrueTypeFont.SetRenderingModeDefault for
+                // why a run that flips it does so for its own thread only.)
+                Text.TrueTypeFont.SetRenderingModeDefault(value, value);
                 // And which MODE is being drawn, which is not the same question. The hinting rules
                 // ask a face whether ClearType is on (GETINFO) and round on a sixteenth of a pixel
                 // when it is; with ClearType off, GDI's rasterizer answers no and rounds on whole
                 // pixels. Kept apart from SubpixelFitting deliberately -- the stage tests toggle
                 // that to compare the two fits and must not change what the face is told.
-                Text.TrueTypeFont.ClearTypeRendering = value;
+                // (Set together with SubpixelFitting above.)
             }
         }
         private bool _clearType = InitClearType();
@@ -4306,11 +4308,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             bool on = forced == "1" || forced == "0"
                 ? forced == "1"
                 : Platform.Win32Interop.FontSmoothingKind() == 2;
-            Text.TrueTypeFont.SubpixelFitting = on;
+            Text.TrueTypeFont.SetRenderingModeDefault(on, on);
             // Both, and for the same reason the property setter sets both: this runs as a FIELD
             // INITIALIZER and never goes through that setter, so anything set only there is missed
             // for the whole life of the renderer.
-            Text.TrueTypeFont.ClearTypeRendering = on;
+            // (ClearTypeRendering is set with it, above.)
             return on;
         }
 

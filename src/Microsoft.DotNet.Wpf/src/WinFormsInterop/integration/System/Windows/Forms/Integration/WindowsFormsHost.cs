@@ -64,55 +64,104 @@ namespace System.Windows.Forms.Integration
                 Environment.SetEnvironmentVariable("WF_GPU_RASTER", "1");
         }
 
-        // Every live host, and the ONE render tick that serves them all. The message pump
-        // (Application.DoEvents) is process-wide and EmbeddedContent.Set replaces the whole hosted
-        // set, so a per-instance tick would both pump N times a frame and let each host erase the
-        // others' scenes -- two hosts in one window, and only the last one drawn would appear.
-        private static readonly List<WindowsFormsHost> s_hosts = new List<WindowsFormsHost>();
-        private static readonly object s_lock = new object();
-        private static bool s_ticking;
+        // Every live host, and ONE render tick PER UI THREAD that serves all of that thread's hosts.
+        // EmbeddedContent.Set replaces the calling thread's whole hosted set, so a per-instance tick
+        // would both pump N times a frame and let each host erase the others' scenes -- two hosts in
+        // one window, and only the last one drawn would appear.
+        //
+        // Per thread rather than per process because CompositionTarget.Rendering is the CALLING
+        // thread's MediaContext, and a host belongs to its Dispatcher: one tick for the process ran
+        // on whichever UI thread subscribed first and walked the other thread's hosts from there
+        // (IsVisible, TransformToAncestor -- each a cross-thread access). The driver keeps a message
+        // queue per thread too, so each tick's DoEvents pumps its own thread's controls.
+        private sealed class Tick
+        {
+            public Tick(Dispatcher dispatcher) => Dispatcher = dispatcher;
+            public readonly Dispatcher Dispatcher;
+            public readonly List<WindowsFormsHost> Hosts = new List<WindowsFormsHost>();
 
-        // Content that is composited the same way but is not a WindowsFormsHost - today, the
-        // HwndHost-derived hosts claimed through HwndHostForeignContent. EmbeddedContent.Set
-        // REPLACES the whole hosted set, so there can only ever be one publisher; everything that
-        // wants to be on screen has to come through this tick.
-        private static readonly List<IEmbeddedContentSource> s_extraSources = new List<IEmbeddedContentSource>();
+            // Content that is composited the same way but is not a WindowsFormsHost - today, the
+            // HwndHost-derived hosts claimed through HwndHostForeignContent. EmbeddedContent.Set
+            // REPLACES the thread's hosted set, so there can only be one publisher per thread;
+            // everything that wants to be on screen has to come through this tick.
+            public readonly List<IEmbeddedContentSource> Extras = new List<IEmbeddedContentSource>();
+            public int LastPaintVersion = -1;
+            public bool Subscribed;
+            public bool IsEmpty => Hosts.Count == 0 && Extras.Count == 0;
+        }
+
+        private static readonly Dictionary<Dispatcher, Tick> s_ticks = new Dictionary<Dispatcher, Tick>();
+        private static readonly object s_lock = new object();
+
+        /// <summary>The calling thread's tick, created and subscribed on first use. Under s_lock.</summary>
+        private static Tick CurrentTick()
+        {
+            Dispatcher d = Dispatcher.CurrentDispatcher;
+            if (!s_ticks.TryGetValue(d, out Tick tick)) s_ticks[d] = tick = new Tick(d);
+            if (!tick.Subscribed)
+            {
+                tick.Subscribed = true;
+                CompositionTarget.Rendering += OnRendering;
+            }
+            return tick;
+        }
+
+        /// <summary>
+        /// Removes <paramref name="tick"/>'s last member's traces: its Rendering subscription and the
+        /// thread's published scenes. Both belong to the tick's thread (the subscription is that
+        /// thread's MediaContext, the published set is keyed by thread), so a removal made from some
+        /// other thread is carried out over there.
+        /// </summary>
+        private static void Retire(Tick tick)
+        {
+            if (tick.Dispatcher.CheckAccess())
+            {
+                lock (s_lock)
+                {
+                    if (!tick.IsEmpty) return;      // something was added back meanwhile
+                    if (tick.Subscribed)
+                    {
+                        tick.Subscribed = false;
+                        CompositionTarget.Rendering -= OnRendering;
+                    }
+                    s_ticks.Remove(tick.Dispatcher);
+                }
+                // Nothing of this thread's is on screen any more; leaving the last scenes registered
+                // would freeze a ghost of the control tree over the window.
+                EmbeddedContent.Set(null);
+                EmbeddedContent.SetCaret(IntPtr.Zero, 0, 0, 0, 0, false);
+            }
+            else if (!tick.Dispatcher.HasShutdownStarted)
+            {
+                tick.Dispatcher.BeginInvoke(DispatcherPriority.Send, new Action(() => Retire(tick)));
+            }
+            else
+            {
+                lock (s_lock) s_ticks.Remove(tick.Dispatcher);
+            }
+        }
 
         internal static void AddSource(IEmbeddedContentSource source)
         {
             lock (s_lock)
             {
-                if (s_extraSources.Contains(source)) return;
-                s_extraSources.Add(source);
-                if (!s_ticking)
-                {
-                    s_ticking = true;
-                    CompositionTarget.Rendering += OnRendering;
-                }
+                Tick tick = CurrentTick();
+                if (!tick.Extras.Contains(source)) tick.Extras.Add(source);
             }
         }
 
         internal static void RemoveSource(IEmbeddedContentSource source)
         {
-            bool last;
+            Tick emptied = null;
             lock (s_lock)
             {
-                s_extraSources.Remove(source);
-                last = s_hosts.Count == 0 && s_extraSources.Count == 0;
-                if (last && s_ticking)
+                foreach (Tick tick in s_ticks.Values)
                 {
-                    s_ticking = false;
-                    CompositionTarget.Rendering -= OnRendering;
+                    if (tick.Extras.Remove(source) && tick.IsEmpty) emptied = tick;
                 }
             }
-
-            if (last)
-            {
-                EmbeddedContent.Set(null);
-                EmbeddedContent.SetCaret(0, 0, 0, 0, false);
-            }
+            if (emptied != null) Retire(emptied);
         }
-        private static int s_lastPaintVersion = -1;
 
         private readonly SWF.Form _container;      // the hosted surface; registered with the driver, never shown as an OS window
         private XplatUIWebGpu _driver;
@@ -786,13 +835,9 @@ namespace System.Windows.Forms.Integration
             if (_disposed) return;
             lock (s_lock)
             {
-                if (s_hosts.Contains(this)) return;
-                s_hosts.Add(this);
-                if (!s_ticking)
-                {
-                    s_ticking = true;
-                    CompositionTarget.Rendering += OnRendering;
-                }
+                Tick tick = CurrentTick();
+                if (tick.Hosts.Contains(this)) return;
+                tick.Hosts.Add(this);
             }
 
             _driver = XplatUIWebGpu.GetInstance();
@@ -821,39 +866,34 @@ namespace System.Windows.Forms.Integration
 
         private void Detach()
         {
-            bool last;
+            Tick emptied = null;
             lock (s_lock)
             {
-                s_hosts.Remove(this);
-                last = s_hosts.Count == 0 && s_extraSources.Count == 0;
-                if (last && s_ticking)
+                foreach (Tick tick in s_ticks.Values)
                 {
-                    s_ticking = false;
-                    CompositionTarget.Rendering -= OnRendering;
+                    if (tick.Hosts.Remove(this) && tick.IsEmpty) emptied = tick;
                 }
             }
-            // Nothing of ours is on screen any more; leaving the last scenes registered would freeze
-            // a ghost of the control tree over the window.
-            if (last)
-            {
-                EmbeddedContent.Set(null);
-                EmbeddedContent.SetCaret(0, 0, 0, 0, false);
-            }
+            if (emptied != null) Retire(emptied);
         }
 
         private static void OnRendering(object sender, EventArgs e)
         {
             WindowsFormsHost[] hosts;
             IEmbeddedContentSource[] extras;
+            Tick tick;
             lock (s_lock)
             {
-                hosts = s_hosts.ToArray();
-                extras = s_extraSources.ToArray();
+                // This thread's hosts only: the event is this thread's MediaContext, and the
+                // top-level pump's timer is this thread's Dispatcher.
+                if (!s_ticks.TryGetValue(Dispatcher.CurrentDispatcher, out tick)) return;
+                hosts = tick.Hosts.ToArray();
+                extras = tick.Extras.ToArray();
             }
             if (hosts.Length == 0 && extras.Length == 0) return;
 
-            // One pump for the whole process: this is what advances WinForms layout, paints,
-            // timers and the caret blink.
+            // One pump per UI thread: this is what advances WinForms layout, paints, timers and the
+            // caret blink. The driver's queues are per thread, so it pumps this thread's controls.
             SWF.Application.DoEvents();
 
             var items = new List<EmbeddedItem>();
@@ -880,9 +920,9 @@ namespace System.Windows.Forms.Integration
             // The driver is process-wide; take it from whichever source exists.
             XplatUIWebGpu driver = hosts.Length > 0 ? hosts[0]._driver : XplatUIWebGpu.GetInstance();
             int version = driver?.GetPaintVersion() ?? 0;
-            if (version != s_lastPaintVersion || moved)
+            if (version != tick.LastPaintVersion || moved)
             {
-                s_lastPaintVersion = version;
+                tick.LastPaintVersion = version;
                 foreach (WindowsFormsHost h in hosts) h.InvalidateVisual();
                 foreach (IEmbeddedContentSource src in extras) src.Invalidate();
             }
@@ -955,7 +995,7 @@ namespace System.Windows.Forms.Integration
         /// CreateCaret/SetCaretPos, and its blink is advanced by the pump above.</summary>
         private void PublishCaret()
         {
-            if (_driver == null) { EmbeddedContent.SetCaret(0, 0, 0, 0, false); return; }
+            if (_driver == null) { EmbeddedContent.SetCaret(IntPtr.Zero, 0, 0, 0, 0, false); return; }
 
             PresentationSource src = PresentationSource.FromVisual(this);
             if (src?.CompositionTarget == null || src.RootVisual == null) return;
@@ -966,12 +1006,12 @@ namespace System.Windows.Forms.Integration
 
             if (_driver.GetCaret(out int cx, out int cy, out int cw, out int ch))
             {
-                EmbeddedContent.SetCaret(
+                EmbeddedContent.SetCaret((src as HwndSource)?.Handle ?? IntPtr.Zero,
                     (float)(origin.X * dpi) + (cx - _formOx) * (float)dpi,
                     (float)(origin.Y * dpi) + (cy - _formOy) * (float)dpi,
                     Math.Max(1, cw) * (float)dpi, ch * (float)dpi, true);
             }
-            else EmbeddedContent.SetCaret(0, 0, 0, 0, false);
+            else EmbeddedContent.SetCaret(IntPtr.Zero, 0, 0, 0, 0, false);
         }
 
         private static IEnumerable<SWF.Control> Flatten(SWF.Control c)

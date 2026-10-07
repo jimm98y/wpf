@@ -1925,9 +1925,17 @@ namespace MS.Internal.Interop
         // again (see PumpUntilVisible), which is what keeps event dispatch from nesting into itself.
         private static int s_pumpDepth;
 
+        /// <summary>Whether the calling thread is the process's main thread, the only one AppKit
+        /// accepts windows and event pumping on. Every other thread's Dispatcher waits on its own
+        /// managed event instead of pumping here.</summary>
+        internal static bool IsMainThread => pthread_main_np() != 0;
+
         internal static void PumpEvents(int maxMilliseconds)
         {
             if (!s_appInitialized) return;
+            // AppKit traps (not throws) when its event queue is read off the main thread, so a stray
+            // caller on another thread must find a no-op here rather than a dead process.
+            if (!IsMainThread) return;
             s_pumpDepth++;
             try { PumpEventsCore(maxMilliseconds); }
             finally { s_pumpDepth--; }

@@ -950,7 +950,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The 16.16 magnitude of the component matrix the next glyph is being hinted
         /// under, or 0 for none. See Hint.</summary>
-        internal static int ChildScale16;
+        [ThreadStatic] internal static int ChildScale16;
 
         /// <summary>The size's own scale while a transformed child is being hinted (0 = no
         /// child). A transformed component's ORIGINAL phantoms scale with its points (at the
@@ -968,7 +968,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             Environment.GetEnvironmentVariable("WPF_CT_PHASE_NOPROG") == "1";
 
         /// <summary>The y magnitude when it differs from x's (0 = same as ChildScale16).</summary>
-        internal static int ChildScaleY16;
+        [ThreadStatic] internal static int ChildScaleY16;
         private int _childScaleY;
 
         /// <summary>The composite's advance span: its font-unit advance scaled ONCE, as
@@ -1941,7 +1941,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>The advance the glyph will actually be laid out at, in 64ths, or 0 when it is
         /// not known. Set by the font before a ClearType run; used only by advance-phantom mode 3.
         /// </summary>
-        internal static int CompatibleAdvance64;
+        [ThreadStatic] internal static int CompatibleAdvance64;
 
         private static readonly bool s_preScaleNumSpan =
             Environment.GetEnvironmentVariable("WPF_CT_PRESCALE_NUM") != "compat";
@@ -1949,7 +1949,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>The bi-level pass's phantom advance span in sixty-fourths, UNROUNDED -- the
         /// numerator fs__Contour actually uses for the phase scale. See the note at the scale.
         /// </summary>
-        internal static int BiLevelSpan64;
+        [ThreadStatic] internal static int BiLevelSpan64;
 
         /// <summary>Set for the ClearType pass when the bi-level measuring pass never touched the
         /// advance phantom in x. See the numerator in ApplyPhaseControl.</summary>
@@ -1970,7 +1970,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>Composite recursion depth of the glyph being hinted: 0 for a glyph asked for
         /// directly, 1+ for a component of a composite. WPF_CT_PHASE_DEPTH selects which of them
         /// the phase runs for.</summary>
-        internal static int HintDepth;
+        [ThreadStatic] internal static int HintDepth;
 
         /// <summary>The composite root's linear advance (26.6) while its components are hinted,
         /// else zero.</summary>

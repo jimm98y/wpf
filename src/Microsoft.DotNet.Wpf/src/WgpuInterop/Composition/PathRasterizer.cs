@@ -487,7 +487,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// smoothing is a per-size property of the FACE, not a global choice. Ambient rather than a
         /// parameter for the same reason <see cref="PreFilterLut"/> is: the rasterization is reached
         /// through the generic shape path, which knows nothing about fonts.</para></summary>
-        internal static int SubpixelRowsForRun;
+        [ThreadStatic] internal static int SubpixelRowsForRun;
 
         /// <summary>SCANTYPE + 1 when the run's face asks for dropout control at this size, else 0.
         /// Set by the renderer per run.</summary>
@@ -496,11 +496,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_spanEndInclusive =
             Environment.GetEnvironmentVariable("WPF_CT_SPANEND") != "old";
 
-        internal static int DropoutForRun;
+        [ThreadStatic] internal static int DropoutForRun;
 
         /// <summary>FO_SIM_BOLD's horizontal smear, in whole pixels, for the run being drawn; zero
         /// for a face that is not being emboldened. See <see cref="EmboldenLampRows"/>.</summary>
-        internal static int SimBoldPixelsForRun;
+        [ThreadStatic] internal static int SimBoldPixelsForRun;
 
         /// <summary>WPF_SIM_BOLD_PAD=0: do not widen the raster for the smear.</summary>
         private static readonly bool s_simBoldPad =
@@ -544,8 +544,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>How many bits the dropout pass set on the last rasterization, and how many
         /// times it ran. A diagnostic: the edge solver renders a GeometryFill rather than a glyph
         /// run, and this is how to tell whether the pass it is inverting is the one that draws.</summary>
-        internal static int LastDropoutFills;
-        internal static int LastDropoutRuns;
+        [ThreadStatic] internal static int LastDropoutFills;
+        [ThreadStatic] internal static int LastDropoutRuns;
         private static readonly bool s_dropoutTrace = Environment.GetEnvironmentVariable("WPF_DROPOUT_TRACE") == "2";
 
         /// <summary>WPF_DROPOUT_TRACE=3: every INSIDE span ApplyVerticalDropout looks at, before
@@ -764,7 +764,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// is. The two palettes are `fontdrvhost+0xa7a60` (the plain three-lamp box sum) and
         /// `+0xa7960`, and `ulClearTypeFilter_6x1` picks between them on its third argument.</para>
         /// </summary>
-        internal static bool ContrastFilterForRun;
+        [ThreadStatic] internal static bool ContrastFilterForRun;
 
         /// <summary>`fontdrvhost+0xa7960` decoded through the code table at `+0xa7420`: for each of
         /// the 243 base-3 indices over five contiguous lamps (the first lamp most significant), the
@@ -805,7 +805,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         /// <summary>Whether the face asked for SYMMETRIC SMOOTHING at this size, set by the
         /// renderer from the gasp for the same reason SubpixelRowsForRun is.</summary>
-        internal static bool SymmetricVerticalForRun;
+        [ThreadStatic] internal static bool SymmetricVerticalForRun;
 
         /// <summary>MEASURED AND WRONG IN THIS FORM, and kept because the gap it was built for
         /// is real and someone will try this first.
@@ -1390,7 +1390,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         /// <summary>The run's ppem, so the vertical-coverage rule can be limited to the sizes
         /// where features are genuinely sub-pixel tall. Set by the renderer per run.</summary>
-        internal static int PpemForRun;
+        [ThreadStatic] internal static int PpemForRun;
 
         /// <summary>See the horizontal case in GdiLine. WPF_CT_HROW=old.</summary>
         private static readonly bool s_hRowOld =
@@ -3958,7 +3958,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Which GLYPH each figure of the run belongs to, set by the glyph-run path for
         /// the length of one coverage mask and null everywhere else. A single glyph needs none of
         /// this: one group is the whole path, which is what a null array means.</summary>
-        internal static int[]? FigureGlyphIdsForRun;
+        [ThreadStatic] internal static int[]? FigureGlyphIdsForRun;
 
         /// <summary>The device rows each glyph of the run may put ink in, [Top, Bottom), keyed by
         /// the same glyph ordinal as FigureGlyphIdsForRun; null for no clip.
@@ -3970,15 +3970,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// climbs past the ascent loses its top row: Tahoma Bold 'E-acute' at 20ppem reaches row
         /// -21 and GDI's ascent is 20. The rows go AFTER scan conversion and dropout control, which
         /// is why this clips coverage rather than the outline.</para></summary>
-        internal static Dictionary<int, (int Top, int Bottom)>? GlyphRowClipForRun;
+        [ThreadStatic] internal static Dictionary<int, (int Top, int Bottom)>? GlyphRowClipForRun;
 
         /// <summary>Per glyph ordinal, the mask columns [Left, Right) whose lamps survive --
         /// TrueTypeFont.TryGetGdiColumnLimits. Null for no clip.</summary>
-        internal static Dictionary<int, (int Left, int Right)>? GlyphColClipForRun;
+        [ThreadStatic] internal static Dictionary<int, (int Left, int Right)>? GlyphColClipForRun;
 
         /// <summary>Per glyph ordinal, the DropoutForRun value that glyph's own graphics state asks
         /// for (TrueTypeFont.GlyphDropout); glyphs not listed take the run's.</summary>
-        internal static Dictionary<int, int>? GlyphDropoutForRun;
+        [ThreadStatic] internal static Dictionary<int, int>? GlyphDropoutForRun;
 
         [ThreadStatic] private static int s_colClipL, s_colClipR;
         [ThreadStatic] private static byte[]? s_lastLamp;

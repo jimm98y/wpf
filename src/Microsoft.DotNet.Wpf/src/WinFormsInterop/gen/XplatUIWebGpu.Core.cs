@@ -1727,43 +1727,53 @@ namespace System.Windows.Forms
 		// Text caret: WinForms drives it via CreateCaret/SetCaretPos/CaretVisible/DestroyCaret.
 		// We just track its window + client rect + logical visibility; the host draws a blinking
 		// vertical bar at the screen position (the backing bitmaps don't contain the caret).
-		private IntPtr _caretHwnd; private int _caretX, _caretY, _caretW = 1, _caretH; private bool _caretVisible;
+		//
+		// ONE CARET PER THREAD, as user32 has it (a caret belongs to the thread's message queue). With
+		// one for the process, a second UI thread's focused edit took the first thread's caret away,
+		// and each thread's host drew the other's caret into its own window.
+		private sealed class CaretState
+		{
+			public IntPtr Hwnd; public int X, Y, W = 1, H; public bool Visible;
 
-		// user32 restarts the blink whenever the caret is created, moved or shown: it appears at once
-		// (an edit that has just taken the focus shows its caret) and goes off a blink time later.
-		// Hosts blinked it against a clock of their own, so a freshly focused edit could come up in
-		// the OFF half and show no caret for up to half a second.
-		private long _caretSince = Environment.TickCount64;
+			// user32 restarts the blink whenever the caret is created, moved or shown: it appears at
+			// once (an edit that has just taken the focus shows its caret) and goes off a blink time
+			// later. Hosts blinked it against a clock of their own, so a freshly focused edit could
+			// come up in the OFF half and show no caret for up to half a second.
+			public long Since = Environment.TickCount64;
+		}
+
+		[ThreadStatic] private static CaretState t_caret;
+		private static CaretState ThreadCaret => t_caret ??= new CaretState();
 
 		internal override void CreateCaret(IntPtr hwnd, int width, int height)
-		{ _caretHwnd = hwnd; _caretW = Math.Max(1, width); _caretH = height; _caretSince = Environment.TickCount64; }
+		{ ThreadCaret.Hwnd = hwnd; ThreadCaret.W = Math.Max(1, width); ThreadCaret.H = height; ThreadCaret.Since = Environment.TickCount64; }
 		internal override void SetCaretPos(IntPtr hwnd, int x, int y)
 		{
-			if (hwnd != _caretHwnd || x != _caretX || y != _caretY) _caretSince = Environment.TickCount64;
-			_caretHwnd = hwnd; _caretX = x; _caretY = y;
+			if (hwnd != ThreadCaret.Hwnd || x != ThreadCaret.X || y != ThreadCaret.Y) ThreadCaret.Since = Environment.TickCount64;
+			ThreadCaret.Hwnd = hwnd; ThreadCaret.X = x; ThreadCaret.Y = y;
 		}
 		internal override void CaretVisible(IntPtr hwnd, bool visible)
 		{
-			if (hwnd != _caretHwnd) return;
-			if (visible && !_caretVisible) _caretSince = Environment.TickCount64;
-			_caretVisible = visible;
+			if (hwnd != ThreadCaret.Hwnd) return;
+			if (visible && !ThreadCaret.Visible) ThreadCaret.Since = Environment.TickCount64;
+			ThreadCaret.Visible = visible;
 		}
 
 		/// <summary>Milliseconds since the caret last restarted its blink; a host shows it while
 		/// (this / CaretBlinkTime) is even.</summary>
-		internal long GetCaretBlinkElapsed() => Environment.TickCount64 - _caretSince;
+		internal long GetCaretBlinkElapsed() => Environment.TickCount64 - ThreadCaret.Since;
 		internal override void DestroyCaret(IntPtr hwnd)
-		{ if (hwnd == _caretHwnd) { _caretHwnd = IntPtr.Zero; _caretVisible = false; } }
+		{ if (hwnd == ThreadCaret.Hwnd) { ThreadCaret.Hwnd = IntPtr.Zero; ThreadCaret.Visible = false; } }
 
 		/// <summary>Caret screen rect + logical visibility (the host blinks/draws it).</summary>
 		internal bool GetCaret(out int screenX, out int screenY, out int width, out int height)
 		{
 			screenX = screenY = width = height = 0;
-			if (!_caretVisible || _caretHwnd == IntPtr.Zero) return false;
-			Hwnd h = Hwnd.ObjectFromHandle(_caretHwnd);
+			if (!ThreadCaret.Visible || ThreadCaret.Hwnd == IntPtr.Zero) return false;
+			Hwnd h = Hwnd.ObjectFromHandle(ThreadCaret.Hwnd);
 			if (h == null || !h.visible) return false;
 			Point p = ScreenLocation(h);
-			screenX = p.X + _caretX; screenY = p.Y + _caretY; width = _caretW; height = _caretH;
+			screenX = p.X + ThreadCaret.X; screenY = p.Y + ThreadCaret.Y; width = ThreadCaret.W; height = ThreadCaret.H;
 			return true;
 		}
 		internal override void RequestNCRecalc(IntPtr hwnd) { }

@@ -2077,6 +2077,14 @@ namespace System.Windows.Threading
                 {
                     throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on iOS.");
                 }
+                // One UI thread. The display link fires on the main thread and UIKitWindow keeps ONE
+                // tick, so a Dispatcher.Run anywhere else would replace the main thread's pump with
+                // this one's and have the main thread drain another thread's queue.
+                if (!MS.Internal.Interop.UIKitWindow.IsMainThread)
+                {
+                    throw new InvalidOperationException(
+                        "iOS has one UI thread: Dispatcher.Run is supported on the main thread only.");
+                }
                 RunIosPump(frame);
                 return;
             }
@@ -2412,6 +2420,8 @@ namespace System.Windows.Threading
         // dispatcher thread, and ProcessQueue has hard UI-thread affinity.
         private void RunAndroidPump(DispatcherFrame frame)
         {
+            // One UI thread (see AndroidWindow.StartFrameCallback); refused before any state changes.
+            MS.Internal.Interop.AndroidWindow.ClaimUiThread("run a Dispatcher");
             _frameDepth++;
 
             var dispatcherSyncContext = new DispatcherSynchronizationContext(this);
@@ -2523,7 +2533,13 @@ namespace System.Windows.Threading
             // window (CoreAnimation / window-server handshake) and delivers input; a bare managed
             // wait leaves the CAMetalLayer occluded. If work was already signaled, don't block:
             // just drain pending events and return so the queue is processed promptly.
-            if (OperatingSystem.IsMacOS())
+            //
+            // The MAIN thread only. AppKit's event queue belongs to it, and -nextEventMatchingMask:
+            // asserts that it is being called there (a __builtin_trap: the process dies with no
+            // managed stack). A Dispatcher on any other thread -- a worker that only renders a
+            // RenderTargetBitmap, or a second UI thread whose windows AppKit will refuse -- waits on
+            // its own managed event like every other platform.
+            if (OperatingSystem.IsMacOS() && MS.Internal.Interop.CocoaWindow.IsMainThread)
             {
                 int cap = (timeout < 0 || timeout > NativeEventPumpIntervalMs) ? NativeEventPumpIntervalMs : timeout;
 
@@ -2545,7 +2561,7 @@ namespace System.Windows.Threading
             // WPF_LINUX_POLL_PUMP=1 falls back to the macOS-shaped periodic slice: five lines that
             // always make progress, kept as an escape hatch if the fd integration ever misbehaves.
             if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid() &&
-                MS.Internal.Interop.Wayland.WaylandDisplay.IsActive)
+                MS.Internal.Interop.Wayland.WaylandDisplay.IsPumpThread)
             {
                 if (s_linuxPollPump)
                 {

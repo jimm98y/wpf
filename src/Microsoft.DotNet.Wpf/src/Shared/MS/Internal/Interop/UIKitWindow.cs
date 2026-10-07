@@ -70,6 +70,16 @@ namespace MS.Internal.Interop
         /// <param name="x">Origin in top-left device PIXELS (borderless popups; the main window fills the screen).</param>
         public void Create(string title, int x, int y, int width, int height, bool borderless)
         {
+            // UIKit views exist on the main thread only; touching one elsewhere is undefined (and
+            // the views and z-order registries below are not locked). Refuse catchably, as the
+            // Cocoa head does, instead of corrupting the one UI thread there is.
+            if (!IsMainThread)
+            {
+                throw new InvalidOperationException(
+                    "iOS has one UI thread: a WPF window can only be created on the main thread. " +
+                    "Marshal the call to the main thread's Dispatcher.");
+            }
+
             IsBorderless = borderless;
 
             double scale = ScreenScale();
@@ -952,6 +962,16 @@ namespace MS.Internal.Interop
 
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlopen(string path, int mode);
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlsym(IntPtr handle, string symbol);
+
+        /// <summary>Non-zero on the process's main thread -- the only one UIKit accepts views on.</summary>
+        [DllImport("/usr/lib/libSystem.dylib")] private static extern int pthread_main_np();
+
+        /// <summary>
+        /// Whether the calling thread is the main thread: iOS has exactly one UI thread, and the
+        /// display link that drives the Dispatcher fires on it. A second WPF UI thread cannot be
+        /// supported here; WindowsBase's Dispatcher and <see cref="Create"/> refuse one with this.
+        /// </summary>
+        internal static bool IsMainThread => pthread_main_np() != 0;
 
         [DllImport(ObjC)] private static extern IntPtr objc_getClass(string name);
         [DllImport(ObjC)] private static extern IntPtr sel_registerName(string name);

@@ -184,6 +184,9 @@ namespace MS.Internal.Interop.Wayland
         public void Create(string title, int x, int y, int width, int height, bool borderless, IntPtr owner)
         {
             EnsureApplication();
+            // One UI thread per connection (WaylandDisplay.ClaimUiThread): a second one gets an
+            // exception it can catch, before any protocol object exists.
+            WaylandDisplay.ClaimUiThread();
             EnsureStaticListeners();
 
             _borderless = borderless;
