@@ -545,6 +545,103 @@ namespace WgpuInterop.Tests.Rendering
             }
         }
 
+        // ---- WinForms-style repaints: fresh recordings compared by value ------------------------
+
+        /// <summary>A grid as a WinForms control records it on every paint: a window visual with
+        /// its clip, a background fill, then per row a clipped cell container holding a fill, a grid
+        /// line and the row's text; a header on top. EVERY object is new on every call, as a repaint
+        /// makes them. <paramref name="first"/> is the first row shown; rows are 20 px.</summary>
+        private static SceneVisual RecordedGrid(int first, Func<int, RgbaColor>? rowColour = null, string? header = "Header")
+        {
+            var window = new SceneVisual { Offset = new Vector2(20, 16), Clip = new Rect(0, 0, 260, 200) };
+            window.Content.Add(Box(0, 0, 260, 200, 255, 255, 255));
+            for (int i = first; i < first + 12; i++)
+            {
+                float y = 24 + (i - first) * 20;
+                RgbaColor c = rowColour?.Invoke(i) ?? RgbaColor.FromBytes((byte)(200 + i % 5 * 10), 240, (byte)(180 + i * 7 % 70), 255);
+                var cell = new SceneVisual { Clip = new Rect(0, y, 240, 20) };
+                cell.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(2, y + 1, 236, 18)), c));
+                cell.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(0, y + 19, 240, 1)), RgbaColor.FromBytes(160, 160, 160, 255)));
+                cell.Content.Add(new GlyphRunDraw($"row {i}", new Vector2(8, y + 15), 12f, RgbaColor.FromBytes(10, 10, 10, 255)));
+                window.Children.Add(cell);
+            }
+            // Drawn after the rows: a header that does not scroll, and a scroll bar.
+            var top = new SceneVisual();
+            top.Content.Add(Box(0, 0, 260, 24, 210, 220, 235));
+            if (header != null) top.Content.Add(new GlyphRunDraw(header, new Vector2(8, 17), 12f, RgbaColor.FromBytes(0, 0, 0, 255)));
+            top.Content.Add(Box(242, 24 + first * 3, 16, 30, 120, 120, 120));
+            window.Children.Add(top);
+            return window;
+        }
+
+        /// <summary>The host's stable root, with each paint's recording put in it.</summary>
+        private sealed class GridHost
+        {
+            private readonly SceneVisual _root = new();
+            internal GridHost() => _root.Content.Add(Box(0, 0, W, H, 230, 230, 230));
+            internal SceneVisual Show(SceneVisual window) { _root.Children.Clear(); _root.Children.Add(window); return _root; }
+        }
+
+        [Fact]
+        public void ARepaintedScrollingGridShiftsAndIsExact()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var host = new GridHost();
+            h.Frame(host.Show(RecordedGrid(0)), expectPartial: false, "first frame");
+            int shifted = 0;
+            int[] firsts = { 1, 2, 4, 3, 6, 5, 5, 9, 8 };
+            foreach (int f in firsts)
+            {
+                h.Frame(host.Show(RecordedGrid(f)), expectPartial: true, $"rows from {f}");
+                if (h.Target.LastShift is { } sh)
+                {
+                    shifted++;
+                    Assert.Equal(0, sh.Dx);
+                    Assert.True(sh.Dy % 20 == 0, $"shift {sh.Dy}");
+                    // One row a step: the exposed row, the header and the scroll bar, not the window.
+                    if (f == 2) Assert.True(h.Target.LastPixels < 260 * 200 / 2, $"rows from {f}: damage {h.Target.LastPixels} px");
+                }
+            }
+            Assert.True(shifted >= 4, $"only {shifted} repaints were shifted");
+        }
+
+        [Fact]
+        public void ARepaintOfTheSameThingDamagesOnlyWhatDiffers()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var host = new GridHost();
+            h.Frame(host.Show(RecordedGrid(3)), expectPartial: false, "first frame");
+            // Every object new, every value the same: nothing to draw.
+            h.Frame(host.Show(RecordedGrid(3)), expectPartial: true, "identical repaint");
+            Assert.Equal(0, h.Target.LastPixels);
+            // One row's colour changed: that row, not the window.
+            h.Frame(host.Show(RecordedGrid(3, i => i == 6 ? RgbaColor.FromBytes(250, 120, 120, 255) : RgbaColor.FromBytes((byte)(200 + i % 5 * 10), 240, (byte)(180 + i * 7 % 70), 255))),
+                expectPartial: true, "one row recoloured");
+            Assert.True(h.Target.LastPixels > 0 && h.Target.LastPixels < 260 * 200 / 3, $"one row: damage {h.Target.LastPixels} px");
+            // The header text changed.
+            h.Frame(host.Show(RecordedGrid(3, header: "Header 2")), expectPartial: true, "header text");
+            h.Frame(host.Show(RecordedGrid(3, header: null)), expectPartial: true, "header text gone");
+        }
+
+        [Fact]
+        public void RepaintsThatAreNotScrollsAreStillExact()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var host = new GridHost();
+            h.Frame(host.Show(RecordedGrid(0)), expectPartial: false, "first frame");
+            // Uniform rows: every row looks alike but its text, so many offsets look plausible.
+            for (int f = 1; f <= 6; f++)
+                h.Frame(host.Show(RecordedGrid(f, _ => RgbaColor.FromBytes(240, 240, 255, 255))), expectPartial: false, $"uniform rows from {f}");
+            // A jump further than the window: nothing in common.
+            h.Frame(host.Show(RecordedGrid(40)), expectPartial: false, "jump");
+            // And back to coloured rows, one step.
+            h.Frame(host.Show(RecordedGrid(41)), expectPartial: false, "coloured again");
+            h.Frame(host.Show(RecordedGrid(42)), expectPartial: false, "one step");
+        }
+
         /// <summary>A shadowed card entirely outside a viewport's clip still casts its shadow into it
         /// (the effect spreads the content before the clip). A partial frame whose damage is under
         /// that shadow must not skip the card.</summary>

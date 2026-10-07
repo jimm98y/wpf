@@ -321,7 +321,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static int s_damageStamp;
 
         /// <summary>Diffs a scene tree against the previous frame's. One per presentable target.</summary>
-        internal sealed class DamageTracker
+        internal sealed partial class DamageTracker
         {
             private sealed class Rec
             {
@@ -662,11 +662,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     Scissor moved = Intersect(Translate(r, dx, dy), dst);
                     if (!moved.IsEmpty) damage.Add(moved);
                 }
+                // (Not cut to the clip: a content scroll's moved records can reach past it.)
                 foreach (Scissor r in _scrollInner)
-                {
-                    Scissor c = Intersect(r, clip);
-                    if (!c.IsEmpty) damage.Add(c);
-                }
+                    if (!r.IsEmpty) damage.Add(r);
                 // A run cut by the clip on a side the scroll moves it across: its paper is read under
                 // the CLIPPED box, which is not the same box one step back. (A run the scroll brings
                 // out from under the far edge touches the exposed strip and is taken by SpreadToText.)
@@ -780,10 +778,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 Vector2 a = Vector2.Transform(new Vector2((float)rect.X, (float)rect.Y), world);
                 Vector2 b = Vector2.Transform(new Vector2((float)(rect.X + rect.Width), (float)(rect.Y + rect.Height)), world);
                 float x0 = MathF.Min(a.X, b.X), x1 = MathF.Max(a.X, b.X), y0 = MathF.Min(a.Y, b.Y), y1 = MathF.Max(a.Y, b.Y);
-                bool l = x0 <= clip.X - 1 || (clip.X <= 0 && x0 <= 0);
-                bool t = y0 <= clip.Y - 1 || (clip.Y <= 0 && y0 <= 0);
-                bool r = x1 >= clip.X + clip.W + 1 || (clip.X + clip.W >= _w && x1 >= _w);
-                bool btm = y1 >= clip.Y + clip.H + 1 || (clip.Y + clip.H >= _h && y1 >= _h);
+                // An edge on a pixel boundary at or beyond the clip's edge leaves every pixel inside
+                // fully covered; any other edge must clear it by a pixel (antialiasing, snapping).
+                static bool OnGrid(float v) => MathF.Abs(v - MathF.Round(v)) < 1e-3f;
+                bool l = x0 <= clip.X - 1 || (OnGrid(x0) && x0 <= clip.X) || (clip.X <= 0 && x0 <= 0);
+                bool t = y0 <= clip.Y - 1 || (OnGrid(y0) && y0 <= clip.Y) || (clip.Y <= 0 && y0 <= 0);
+                bool r = x1 >= clip.X + clip.W + 1 || (OnGrid(x1) && x1 >= clip.X + clip.W) || (clip.X + clip.W >= _w && x1 >= _w);
+                bool btm = y1 >= clip.Y + clip.H + 1 || (OnGrid(y1) && y1 >= clip.Y + clip.H) || (clip.Y + clip.H >= _h && y1 >= _h);
                 return l && t && r && btm;
             }
 
@@ -802,6 +803,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     && TryScroll(old, v, parentWorld, parentClip, inSnapshot) is { } moved)
                     return moved;
                 bool sameContent = sameState && SameContent(old!, v);
+                // A fresh recording of what was drawn here before, scrolled (a WinForms control's
+                // repaint): see TryContentScroll.
+                if (s_scrollTrace && sameState && !sameContent && v.Clip.HasValue)
+                    Console.Error.WriteLine($"[scroll] candidate content={v.Content.Count} kids={v.Children.Count} shiftOk={shiftOk} repainted={LooksRepainted(old!, v)}");
+                if (sameState && !sameContent && s_scroll && v.Clip.HasValue && LooksRepainted(old!, v)
+                    && TryContentScroll(old!, v, parentWorld, parentClip, inSnapshot, allowShift: shiftOk && _scrollRec == null) is { } scrolled)
+                    return scrolled;
                 // A content change in a visual that is drawn whole -- an opacity group (whose being a
                 // layer at all depends on how much it draws), a masked visual (its mask is mapped to its
                 // content's bounds), a snapshot -- changes all of it.
