@@ -778,3 +778,448 @@ D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab \ncd
 M|def|Consolas|10|3|0|0|0x800|0|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
 M|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
 M|def|Consolas|10|3|0|0|0x800|0|0|-|-|-|-|2,2,200,90|-|-|abcd
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2048|0|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2048|0|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|2048|0|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|2048|0|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|0|1|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2048|1|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|0|1|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2048|1|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|0|1|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|2048|1|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|0|1|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|2048|1|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|0|2|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2048|2|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|0|2|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2048|2|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|0|2|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|2048|2|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|0|2|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|2048|2|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghi jk
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghi  jk
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnopqr stu
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnopqr  stu
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnop qr stu
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefgh ijk
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|x abcdefg hij
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחט יכ
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחט  יכ
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחטאבגדהוזחט יכ
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|א אבגדהוזחט י
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghi jk
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghi  jk
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnopqr stu
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnopqr  stu
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnop qr stu
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefgh ijk
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|x abcdefg hij
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחט יכ
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחט  יכ
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחטאבגדהוזחט יכ
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|א אבגדהוזחט י
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Bcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ecd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Fcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Acd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Bcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ccd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Dcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ecd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2060cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2061cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u206Acd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFEFFcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00ADcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u034Fcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFE0Fcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Bcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ecd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Fcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Acd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Bcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ccd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Dcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ecd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2060cd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2061cd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u206Acd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFEFFcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00ADcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u034Fcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFE0Fcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Bcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ecd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Fcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Acd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Bcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ccd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Dcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ecd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2060cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2061cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u206Acd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFEFFcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00ADcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u034Fcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFE0Fcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Bcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ecd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Fcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Acd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Bcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ccd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Dcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ecd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2060cd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2061cd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u206Acd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFEFFcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00ADcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u034Fcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFE0Fcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00A0cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u00A0cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2011cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2011cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2014cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2013cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2003cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2003cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2002cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2002cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2009cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2009cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u3000cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u3000cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2029cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u200Dcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u200Ccd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00A0cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u00A0cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2014cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2014cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2013cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2013cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2003cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2003cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2002cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2002cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2009cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2009cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u3000cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u3000cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2029cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u200Dcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u200Ccd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200D\u200Dcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00AD\u00ADcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|א‏ב
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‏cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|א‎ב
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‎cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|א‪ב
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|aא‮בb
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|א‍ב
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|א‌ב
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‮cd‬ef
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‫cd‬ef
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|א‏ב
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|ab‏cd
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|א‎ב
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|ab‎cd
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|א‪ב
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|aא‮בb
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|א‍ב
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|א‌ב
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|ab‮cd‬ef
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|ab‫cd‬ef
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‏אcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|abא‏cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‏‏cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‏
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‏‫cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|abא‪cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‎אcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‫אcd
+D|def|Microsoft Sans Serif|8|3|2|0|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|0|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|1|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|1|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|2|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|2|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|3|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|3|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|4|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|4|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|5|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|5|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|typo|Calibri|10|3|0|5|4|0|0|-|-|-|-|2,2,300,100|-|-|fix\ufeffab\ufeff
+D|def|Times New Roman|8|3|0|5|4096|1|0|-|-|-|-|2,2,300,100|-|-|abfix\u200f 
+D|def|Calibri|10|3|2|1|4|2|0|-|-|-|-|2,2,300,100|-|-|WAVE 
+M|def|Courier New|10|3|2|5|32|2|0|-|-|-|-|2,2,60,100|-|-|Hello\u200f ab\u202afix\u034ffix\u034f 
+M|def|Segoe UI|10|3|0|4|0|1|0|-|-|-|-|2,2,60,100|-|-|x\u2060 ab WAVE\u200e 
+D|def|Verdana|8|3|1|1|32|1|0|-|-|-|-|2,2,60,100|-|-|word\u2060WAVE\u200eword\u200b word\u200d
+M|def|Courier New|8|3|1|5|0|1|0|-|-|-|-|2,2,0,100|-|-|Hello\u202aab\u202a 
+M|typo|Arial|10|3|0|1|0|1|0|-|-|-|-|2,2,0,100|-|-|word\u200f ab
+M|def|Calibri|10|3|0|4|4096|0|0|-|-|-|-|2,2,300,100|-|-|fix\u202ax\ufeff
+D|def|Courier New|8|3|0|3|0|2|0|-|-|-|-|2,2,300,100|-|-|fix\u200bx\u00ad
+D|def|Consolas|12|3|1|1|0|2|0|-|-|-|-|2,2,300,100|-|-|Hello
+D|typo|Times New Roman|10|3|0|5|4|1|0|-|-|-|-|2,2,300,100|-|-|ab\ufe0fHello\u200fword\u200cWAVE 
+M|typo|Times New Roman|8|3|0|1|4096|2|0|-|-|-|-|2,2,300,100|-|-|Helloab\u00ad
+M|def|Verdana|12|3|0|1|4|1|0|-|-|-|-|2,2,300,100|-|-|Hello\u202c word\u200dfix\u200bab\u200c
+M|typo|Calibri|10|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|wordx\u200bfix\u202a
+M|typo|Arial|12|3|1|5|0|1|0|-|-|-|-|2,2,0,100|-|-|x\ufeff word\u00ad fix\u2060
+D|def|Arial|12|3|1|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|ab\u202cabab\u00ad
+M|typo|Verdana|10|3|2|3|32|2|0|-|-|-|-|2,2,0,100|-|-|Helloword
+D|typo|Verdana|10|3|0|4|0|2|0|-|-|-|-|2,2,300,100|-|-|wordWAVE\u2060Hello\u200d
+D|typo|Segoe UI|8|3|0|5|4096|0|0|-|-|-|-|2,2,0,100|-|-|word 
+M|def|Segoe UI|12|3|1|5|0|2|0|-|-|-|-|2,2,0,100|-|-|ab fix\u034f 
+M|typo|Calibri|10|3|1|1|4|0|0|-|-|-|-|2,2,300,100|-|-|WAVE\u200eHello\ufeff 
+D|def|Tahoma|8|3|0|4|0|0|0|-|-|-|-|2,2,0,100|-|-|Hello 
+D|def|Verdana|8|3|2|3|0|2|0|-|-|-|-|2,2,300,100|-|-|Hello
+D|def|Calibri|10|3|0|3|0|2|0|-|-|-|-|2,2,60,100|-|-|xx\u034f WAVE
+D|typo|Times New Roman|12|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u202a
+D|def|Calibri|12|3|1|5|0|2|0|-|-|-|-|2,2,0,100|-|-|fix
+D|typo|Consolas|8|3|0|4|4096|1|0|-|-|-|-|2,2,300,100|-|-|ab\u200d 
+M|def|Calibri|8|3|0|5|32|1|0|-|-|-|-|2,2,300,100|-|-|WAVE 
+D|typo|Tahoma|12|3|0|3|4|2|0|-|-|-|-|2,2,300,100|-|-|fixxWAVE\u200f
+M|typo|Calibri|8|3|2|5|0|2|0|-|-|-|-|2,2,0,100|-|-|word\ufe0f 
+D|def|Segoe UI|12|3|0|5|0|1|0|-|-|-|-|2,2,0,100|-|-|ab\u200c fix\u00ad
+M|def|Tahoma|8|3|2|4|0|1|0|-|-|-|-|2,2,60,100|-|-|x\u00adword\u200e ab
+D|def|Times New Roman|8|3|0|3|4|1|0|-|-|-|-|2,2,0,100|-|-|WAVE\ufeffab word\u200f WAVE
+D|def|Verdana|8|3|2|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|ab\u200e x
+M|def|Tahoma|8|3|0|5|0|2|0|-|-|-|-|2,2,300,100|-|-|fix\ufe0f abx\u200c
+D|def|Segoe UI|12|3|1|1|0|0|0|-|-|-|-|2,2,300,100|-|-|x\ufeff
+D|def|Times New Roman|10|3|0|1|4|1|0|-|-|-|-|2,2,300,100|-|-|WAVE\u200dxWAVE 
+D|def|Segoe UI|12|3|1|5|4|0|0|-|-|-|-|2,2,60,100|-|-|ab
+M|def|Tahoma|12|3|2|4|32|1|0|-|-|-|-|2,2,60,100|-|-|WAVE\u200d 
+D|def|Times New Roman|10|3|0|1|0|1|0|-|-|-|-|2,2,0,100|-|-|word\ufeff 
+D|typo|Courier New|12|3|0|5|4|2|0|-|-|-|-|2,2,0,100|-|-|wordword\ufe0fab\u200b
+D|typo|Segoe UI|12|3|1|5|4|0|0|-|-|-|-|2,2,60,100|-|-|x\u200d
+D|typo|Tahoma|10|3|1|5|32|0|0|-|-|-|-|2,2,60,100|-|-|WAVE\u200c
+D|def|Times New Roman|10|3|0|5|4096|2|0|-|-|-|-|2,2,0,100|-|-|x\u202afix\u034f ab
+D|typo|Segoe UI|10|3|0|5|32|2|0|-|-|-|-|2,2,300,100|-|-|ab
+D|typo|Times New Roman|8|3|2|5|32|2|0|-|-|-|-|2,2,0,100|-|-|fix\u2060ab\ufeff word\ufe0f word
+D|typo|Times New Roman|10|3|0|3|4096|1|0|-|-|-|-|2,2,300,100|-|-|fixx\u200d Hello\u200b ab\u202a
+D|typo|Consolas|8|3|1|1|4096|2|0|-|-|-|-|2,2,0,100|-|-|x\ufe0f
+D|typo|Arial|10|3|1|3|4096|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u202a WAVE\ufeff
+M|def|Verdana|12|3|2|3|32|1|0|-|-|-|-|2,2,60,100|-|-|fix\u202cWAVEHello
+D|def|Tahoma|10|3|1|5|32|1|0|-|-|-|-|2,2,60,100|-|-|x\u200bx
+M|def|Consolas|12|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|fixab\ufe0f
+M|typo|Tahoma|10|3|2|1|32|2|0|-|-|-|-|2,2,0,100|-|-|word\u200e 
+D|typo|Consolas|10|3|0|5|4096|2|0|-|-|-|-|2,2,60,100|-|-|x\u200cfix\u2060ab
+M|def|Courier New|8|3|0|1|0|0|0|-|-|-|-|2,2,60,100|-|-|word
+M|def|Tahoma|10|3|1|5|0|0|0|-|-|-|-|2,2,0,100|-|-|x\u200eab\u200c
+D|typo|Calibri|12|3|0|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|fix\u200f
+M|typo|Consolas|8|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|xHello word\u200b
+D|typo|Verdana|12|3|0|3|32|2|0|-|-|-|-|2,2,300,100|-|-|x\u2060x Hello\u200f x\ufe0f
+D|def|Verdana|12|3|0|5|32|1|0|-|-|-|-|2,2,60,100|-|-|word\u200d
+D|def|Tahoma|12|3|0|1|4|2|0|-|-|-|-|2,2,300,100|-|-|word\u034fHello\ufeff 
+M|def|Verdana|10|3|0|4|4|0|0|-|-|-|-|2,2,300,100|-|-|fixab\u200bHello\u2060 
+M|def|Segoe UI|12|3|1|5|4|2|0|-|-|-|-|2,2,60,100|-|-|fixHello\u2060ab fix\u202c
+M|typo|Calibri|10|3|2|1|0|0|0|-|-|-|-|2,2,0,100|-|-|ab\u200fab\ufeff
+D|def|Verdana|10|3|2|1|4096|1|0|-|-|-|-|2,2,60,100|-|-|fix\ufeffWAVE\ufeffWAVE\u00ad 
+M|typo|Consolas|12|3|1|4|32|0|0|-|-|-|-|2,2,300,100|-|-|WAVE Hello\u200ffix\u200cWAVE\ufe0f
+M|typo|Courier New|12|3|0|5|32|1|0|-|-|-|-|2,2,300,100|-|-|fix\u2060 word\u00ad fixHello\ufeff
+D|def|Times New Roman|8|3|0|3|32|1|0|-|-|-|-|2,2,300,100|-|-|word\u034fword\u00ad 
+M|def|Verdana|12|3|1|1|0|1|0|-|-|-|-|2,2,0,100|-|-|x\u2060 WAVE\u202c
+D|def|Tahoma|12|3|1|4|4|0|0|-|-|-|-|2,2,60,100|-|-|Hello\ufe0fWAVE\u200d Hello\ufeff 
+D|def|Segoe UI|12|3|0|3|32|2|0|-|-|-|-|2,2,0,100|-|-|fix\ufe0fab\u202c
+M|def|Calibri|12|3|1|3|0|1|0|-|-|-|-|2,2,60,100|-|-|ab\u200dab\u200fword\u2060
+D|typo|Calibri|12|3|0|1|4|1|0|-|-|-|-|2,2,300,100|-|-|x\u200bWAVEab
+D|typo|Segoe UI|10|3|0|3|4|0|0|-|-|-|-|2,2,60,100|-|-|WAVE\ufe0fWAVE\u200eWAVE\u00ad WAVE\ufe0f 
+D|def|Courier New|12|3|0|1|0|2|0|-|-|-|-|2,2,0,100|-|-|fixWAVE\u200dxx\u202a
+M|typo|Arial|12|3|2|3|4096|0|0|-|-|-|-|2,2,0,100|-|-|ab\ufe0f fix\u00ad
+M|typo|Segoe UI|8|3|2|4|0|0|0|-|-|-|-|2,2,60,100|-|-|Hello\u202cfix\u2060fix\u202a WAVE\u202a
+D|typo|Courier New|8|3|0|1|4|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u202cab\u2060
+D|typo|Consolas|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-|word\u200d fix\u200dWAVE\ufe0fHello\u200b
+D|typo|Calibri|12|3|2|1|32|1|0|-|-|-|-|2,2,60,100|-|-|ab\ufefffix\u2060
+M|def|Times New Roman|8|3|0|5|4096|1|0|-|-|-|-|2,2,60,100|-|-|xx\u034f
+D|def|Segoe UI|12|3|1|4|4|0|0|-|-|-|-|2,2,0,100|-|-|fixHello\u2060word
+D|typo|Calibri|12|3|0|3|0|2|0|-|-|-|-|2,2,60,100|-|-|WAVE\u202a x\u200cHello\ufe0f 
+M|def|Calibri|8|3|0|4|4|0|0|-|-|-|-|2,2,60,100|-|-|ab\u00ad Hello\u200dWAVE\u034fWAVE\u200e
+D|typo|Courier New|8|3|2|1|0|2|0|-|-|-|-|2,2,60,100|-|-|wordWAVE\ufeffWAVE\u202a
+M|typo|Tahoma|8|3|0|4|4096|1|0|-|-|-|-|2,2,0,100|-|-|word\u200e word\ufe0f fix Hello
+D|typo|Segoe UI|8|3|1|5|0|2|0|-|-|-|-|2,2,60,100|-|-|WAVE\u200fWAVE\u202aHello\ufe0f
+D|def|Courier New|8|3|2|1|4|2|0|-|-|-|-|2,2,0,100|-|-|ab\u200bxx 
+M|def|Calibri|12|3|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|ab\u2060 Hello\u202c 
+D|def|Consolas|12|3|0|1|4|0|0|-|-|-|-|2,2,300,100|-|-|WAVE WAVE fix\u200e
+D|typo|Times New Roman|10|3|0|4|4096|1|0|-|-|-|-|2,2,300,100|-|-|WAVEWAVE\u00ad 
+D|def|Segoe UI|12|3|0|3|32|1|0|-|-|-|-|2,2,0,100|-|-|x\u200efix\u00adword\u200c 
+D|def|Tahoma|8|3|0|1|32|0|0|-|-|-|-|2,2,60,100|-|-|wordx\u2060 ab\ufe0fab
+D|typo|Times New Roman|12|3|0|3|4096|1|0|-|-|-|-|2,2,300,100|-|-|Hello
+D|typo|Courier New|12|3|2|3|4|2|0|-|-|-|-|2,2,300,100|-|-|fix\u200d 
+D|typo|Segoe UI|12|3|0|5|32|2|0|-|-|-|-|2,2,60,100|-|-|Hello\u200e fix\u202a 
+D|typo|Segoe UI|8|3|0|1|0|1|0|-|-|-|-|2,2,0,100|-|-|x\u200f fix\u034f WAVE\u200e
+D|typo|Arial|8|3|1|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|WAVEHello\u00ad
+M|typo|Times New Roman|12|3|0|5|0|2|0|-|-|-|-|2,2,60,100|-|-|fix 
+D|typo|Times New Roman|8|3|1|5|0|0|0|-|-|-|-|2,2,0,100|-|-|fix\u200d WAVE\ufeffWAVE\u00adab\u202a
+D|def|Segoe UI|12|3|0|4|4096|2|0|-|-|-|-|2,2,300,100|-|-|x\u202cHello\u202c
+D|typo|Times New Roman|12|3|1|5|4|2|0|-|-|-|-|2,2,60,100|-|-|wordxx\u202c 
+M|def|Courier New|12|3|0|1|0|0|0|-|-|-|-|2,2,60,100|-|-|WAVE\u2060
+M|def|Calibri|12|3|0|5|0|0|0|-|-|-|-|2,2,60,100|-|-|x\ufeff WAVE\u2060
+D|typo|Calibri|8|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|ab\u202c
+M|typo|Times New Roman|8|3|0|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|word
+D|typo|Calibri|8|3|2|3|32|1|0|-|-|-|-|2,2,300,100|-|-|x\u202c fix\u202aWAVE\u202a 
+M|typo|Verdana|10|3|1|1|4|1|0|-|-|-|-|2,2,0,100|-|-|word\u00adHelloword\u2060
+D|def|Calibri|8|3|0|4|0|0|0|-|-|-|-|2,2,300,100|-|-|ab\u200cwordHello\ufe0fWAVE\u202c
+D|def|Consolas|8|3|0|5|32|1|0|-|-|-|-|2,2,0,100|-|-|word\ufeff
+M|typo|Calibri|8|3|1|3|0|0|0|-|-|-|-|2,2,60,100|-|-|fix\u200fword\u2060
+D|def|Consolas|12|3|1|4|0|1|0|-|-|-|-|2,2,300,100|-|-|fixWAVE\u202aHello\u202aab
+D|typo|Calibri|8|3|0|4|0|0|0|-|-|-|-|2,2,0,100|-|-|ab\u00ad 
+M|def|Times New Roman|12|3|2|5|0|1|0|-|-|-|-|2,2,0,100|-|-|WAVE\u200cHello\u200b xab\u00ad
+D|typo|Tahoma|10|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|xab\ufe0f
+D|def|Calibri|10|3|0|5|0|2|0|-|-|-|-|2,2,300,100|-|-|Hello\u202c ab\u200dab\u00ad WAVE\u200b
+D|def|Calibri|10|3|0|5|4|2|0|-|-|-|-|2,2,60,100|-|-|ab\u202aword\ufe0fWAVE\u00ad 
+D|def|Courier New|10|3|0|5|32|1|0|-|-|-|-|2,2,300,100|-|-|x\ufe0f 
+D|def|Tahoma|8|3|1|1|0|2|0|-|-|-|-|2,2,0,100|-|-|fix\u2060WAVE word\u200eWAVE\u200d 
+D|typo|Courier New|10|3|1|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|fix fixHello\u202aab\u200f
+M|typo|Consolas|10|3|0|1|4|2|0|-|-|-|-|2,2,0,100|-|-|fix\u200fword\u200cx\u034f 
+D|def|Courier New|10|3|0|5|32|0|0|-|-|-|-|2,2,300,100|-|-|fix\u200ex\u202c
+D|def|Courier New|8|3|1|5|4096|2|0|-|-|-|-|2,2,0,100|-|-|ab\u200fab\u034fab\u200d
+D|typo|Times New Roman|12|3|0|1|4|2|0|-|-|-|-|2,2,300,100|-|-|x Hello 
+M|def|Arial|10|3|0|1|32|0|0|-|-|-|-|2,2,60,100|-|-|Hello\u200f
+D|typo|Calibri|10|3|2|1|4096|2|0|-|-|-|-|2,2,300,100|-|-|word\ufe0f
+D|def|Calibri|8|3|1|1|0|1|0|-|-|-|-|2,2,0,100|-|-|Helloword\u2060
+D|typo|Times New Roman|12|3|0|5|0|2|0|-|-|-|-|2,2,60,100|-|-|fix\u200b word\ufeff
+D|def|Verdana|8|3|0|5|0|1|0|-|-|-|-|2,2,60,100|-|-|Hello WAVE\u200e 
+M|def|Tahoma|10|3|2|4|0|1|0|-|-|-|-|2,2,0,100|-|-|x\ufe0fHello\u202c
+D|typo|Arial|12|3|0|3|32|1|0|-|-|-|-|2,2,0,100|-|-|Hello\ufe0fwordfix\u200f 
+D|def|Arial|8|3|0|1|4|0|0|-|-|-|-|2,2,60,100|-|-|Hello\u00adx 
+D|typo|Courier New|8|3|2|3|32|1|0|-|-|-|-|2,2,300,100|-|-|Hello\u202a
+D|typo|Verdana|10|3|2|3|4096|2|0|-|-|-|-|2,2,300,100|-|-|x\u034f
+D|typo|Verdana|8|3|2|4|0|1|0|-|-|-|-|2,2,0,100|-|-|ab\u200dword
+D|typo|Verdana|8|3|1|5|0|1|0|-|-|-|-|2,2,60,100|-|-|fix 
+D|typo|Calibri|12|3|1|1|4096|2|0|-|-|-|-|2,2,0,100|-|-|WAVE\u202aword\u200b word 
+D|typo|Consolas|10|3|1|5|32|2|0|-|-|-|-|2,2,300,100|-|-|xHello\ufe0fab\u034f
+D|def|Verdana|8|3|1|4|4|0|0|-|-|-|-|2,2,60,100|-|-|x\u202a xWAVE
+D|typo|Arial|12|3|2|5|0|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u200bwordx\u00ad
+M|def|Times New Roman|12|3|1|1|0|1|0|-|-|-|-|2,2,0,100|-|-|x\u2060 WAVE\u202cab\u202a
+D|def|Arial|8|3|2|4|0|0|0|-|-|-|-|2,2,0,100|-|-|wordword\u200dWAVE\ufeff WAVE\u00ad
+M|def|Courier New|8|3|1|5|32|1|0|-|-|-|-|2,2,300,100|-|-|x\u00ad x\u2060
+D|typo|Calibri|10|3|2|5|4|0|0|-|-|-|-|2,2,0,100|-|-|word\u200bfix\u200c x\ufe0fHello\u202a
+M|typo|Arial|12|3|0|5|4096|0|0|-|-|-|-|2,2,60,100|-|-|Hellowordx\u200b
+D|typo|Tahoma|10|3|2|5|0|1|0|-|-|-|-|2,2,60,100|-|-|fix\u202cword\u034f WAVE\u200dword\ufe0f
+D|typo|Tahoma|10|3|1|1|4096|1|0|-|-|-|-|2,2,60,100|-|-|fix\u034f fix\u202a Hello\ufeff
+D|def|Tahoma|8|3|1|5|0|2|0|-|-|-|-|2,2,300,100|-|-|Hello\u200e ab\u202c
+D|def|Consolas|12|3|0|3|4|2|0|-|-|-|-|2,2,300,100|-|-|WAVEWAVEab\u200f WAVE 
+M|def|Consolas|8|3|2|3|0|2|0|-|-|-|-|2,2,0,100|-|-|WAVEfixab\u200cab\u00ad
+D|typo|Tahoma|10|3|2|5|4|2|0|-|-|-|-|2,2,300,100|-|-|fixx\ufe0fword\u200d
+D|typo|Courier New|10|3|0|5|4|2|0|-|-|-|-|2,2,60,100|-|-|word\u202c
+D|def|Consolas|12|3|0|4|0|1|0|-|-|-|-|2,2,0,100|-|-|Hello\u034ffix\u202cWAVE\u200e 
+D|def|Segoe UI|8|3|0|1|0|1|0|-|-|-|-|2,2,0,100|-|-|WAVE\u202c
+M|typo|Consolas|8|3|0|5|0|1|0|-|-|-|-|2,2,300,100|-|-|x\u200cx\u202c word\u200e
+D|typo|Consolas|10|3|1|4|4|1|0|-|-|-|-|2,2,0,100|-|-|ab\u200fword\u202a ab\u200e
+M|def|Courier New|10|3|0|3|4|0|0|-|-|-|-|2,2,300,100|-|-|fixab\u2060 
+D|def|Arial|10|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-|WAVE\ufeffab
+D|def|Verdana|8|3|2|5|0|2|0|-|-|-|-|2,2,60,100|-|-|fixWAVE\u200b 
+D|typo|Segoe UI|12|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|ab\u200e WAVE\u202c
+D|def|Verdana|10|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u200cHello fix\u200dHello\u200b 
+D|typo|Segoe UI|10|3|0|4|4|2|0|-|-|-|-|2,2,0,100|-|-|word\u200c ab\u00adxab\u200b 
+M|def|Courier New|12|3|0|5|32|0|0|-|-|-|-|2,2,60,100|-|-|WAVEfixWAVEword\u200c 
+D|def|Segoe UI|8|3|1|5|0|2|0|-|-|-|-|2,2,60,100|-|-|word\u2060
+M|def|Calibri|10|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-|ab\u200bfix\u202cab
+D|typo|Verdana|10|3|0|3|4|0|0|-|-|-|-|2,2,60,100|-|-|fix\u034ffix\ufefffix
+D|def|Tahoma|12|3|0|5|4096|1|0|-|-|-|-|2,2,0,100|-|-|abHello\u200d word\u202a
+D|typo|Consolas|8|3|1|5|4|2|0|-|-|-|-|2,2,300,100|-|-|x\u202c 
+D|def|Consolas|10|3|1|3|4|1|0|-|-|-|-|2,2,300,100|-|-|word\u200cWAVE\ufe0f
+D|def|Arial|12|3|2|5|4096|0|0|-|-|-|-|2,2,0,100|-|-|wordWAVE 
+M|def|Consolas|12|3|1|5|0|1|0|-|-|-|-|2,2,60,100|-|-|xHello 
+M|def|Times New Roman|12|3|0|5|0|1|0|-|-|-|-|2,2,0,100|-|-|WAVE x
+D|def|Calibri|10|3|1|3|4096|0|0|-|-|-|-|2,2,0,100|-|-|fix\u202cfix word\u200bWAVE\ufe0f 
+D|def|Times New Roman|12|3|2|1|0|2|0|-|-|-|-|2,2,0,100|-|-|x\u200bword\u200b word\ufe0f
+D|def|Times New Roman|10|3|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|word\u200c
+D|typo|Tahoma|12|3|2|5|4|0|0|-|-|-|-|2,2,0,100|-|-|wordWAVE\u034fwordab
+M|typo|Verdana|12|3|2|5|32|1|0|-|-|-|-|2,2,0,100|-|-|fix\u200d ab\u200c WAVE\u200c word\u00ad
+M|def|Calibri|12|3|2|3|0|2|0|-|-|-|-|2,2,60,100|-|-|Hello\u200dWAVE\ufe0f 
+D|def|Courier New|12|3|2|4|0|1|0|-|-|-|-|2,2,0,100|-|-|Hello\ufe0f
+D|def|Verdana|12|3|2|1|4096|2|0|-|-|-|-|2,2,0,100|-|-|x\ufe0fab\ufeff WAVE
+D|typo|Calibri|8|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab\u200fx\u00ad fix\ufe0f
+M|def|Segoe UI|8|3|1|3|4096|2|0|-|-|-|-|2,2,60,100|-|-|Hello\u200c wordx
+M|def|Calibri|12|3|0|4|0|1|0|-|-|-|-|2,2,0,100|-|-|word x\ufeffWAVE
+D|typo|Courier New|10|3|0|1|0|0|0|-|-|-|-|2,2,300,100|-|-|x\u200cWAVE\u202afix 
+D|def|Verdana|8|3|1|5|0|2|0|-|-|-|-|2,2,60,100|-|-|x
+D|def|Times New Roman|8|3|2|4|4096|1|0|-|-|-|-|2,2,300,100|-|-|ab\u200b Hello\u200e
+D|typo|Consolas|10|3|0|1|4096|1|0|-|-|-|-|2,2,300,100|-|-|x\u200c WAVE\u202a 
+M|def|Consolas|10|3|0|5|32|2|0|-|-|-|-|2,2,300,100|-|-|word\ufeffHello
+D|def|Verdana|10|3|1|5|32|2|0|-|-|-|-|2,2,300,100|-|-|word\ufeffab ab fix\u200e
+D|typo|Times New Roman|12|3|0|5|0|0|0|-|-|-|-|2,2,60,100|-|-|Hello WAVE x 
+D|typo|Tahoma|12|3|2|1|4096|0|0|-|-|-|-|2,2,60,100|-|-|x WAVE\u00ad x\u202a 
+M|def|Calibri|10|3|2|4|4|1|0|-|-|-|-|2,2,300,100|-|-|fix\u200dHello\u2060 
+D|typo|Verdana|12|3|2|5|32|0|0|-|-|-|-|2,2,300,100|-|-|fix\ufe0fx\u200bHelloab\u200b 
+M|def|Times New Roman|10|3|0|5|4096|2|0|-|-|-|-|2,2,60,100|-|-|Hello\u200d fix\u200fx\u200e 
+D|def|Verdana|8|3|2|3|4096|2|0|-|-|-|-|2,2,60,100|-|-|Hello
+D|typo|Consolas|8|3|1|1|0|2|0|-|-|-|-|2,2,300,100|-|-|wordxWAVE
