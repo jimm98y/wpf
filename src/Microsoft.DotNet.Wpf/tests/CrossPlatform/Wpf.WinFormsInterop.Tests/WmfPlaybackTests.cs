@@ -805,24 +805,16 @@ namespace Wpf.WinFormsInterop.Tests
             { "emf/pixels/turned", "8907d9bde09bf950" },
         };
 
-        // What the port does not draw as GDI+ does yet: text (GpGdiPlayer.Text.cs: the opaque box's
-        // left edge, TA_BASELINE with TA_CENTER, the default font made TrueType); a turned
-        // placement's final DrawImage of the DIB (+-1 on a few edge pixels) and its 1:1 HALFTONE
-        // DIBs; a stretched DIB into a mirrored destination; two pixels of a shrunk 1bpp DIB; an
-        // EMF played turned.
+        // What the port does not draw as GDI+ does yet, all text (GpGdiPlayer.Text.cs): a
+        // scaled or turned placement's realized fonts, underline and strikeout, the Courier New
+        // glyphs at 30 degrees, and the default font (GDI+ creates SYSTEM_FONT's LOGFONT, 20 x 9
+        // here, with OUT_TT_ONLY_PRECIS, but draws it smaller than that LOGFONT realizes to).
         private static readonly HashSet<string> Pending = new()
         {
-            "text/0/1x",
             "text/0/up",
             "text/0/down",
-            "text/0/invert",
-            "text/0/brush-invert",
-            "text/0/pen-invert",
-            "text/0/text-invert",
-            "text/0/bitmap-invert",
             "text/0/gamma-up",
             "text/0/nearest-up",
-            "text/0/transparent",
             "text/0/turned",
             "text/1/1x",
             "text/1/up",
