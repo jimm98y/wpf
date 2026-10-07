@@ -31,6 +31,11 @@ namespace System.Windows.Interop
             _threadSlot = Thread.AllocateDataSlot();
         }
 
+        // DWM cloaking for the window's first frame (see the constructor). Windows only.
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, uint attr, ref int value, int size);
+        private const uint DWMWA_CLOAK = 13;
+
         /// <summary>
         ///    Constructs an instance of the HwndSource class that will always resize to its content size.
         /// </summary>
@@ -287,6 +292,31 @@ namespace System.Windows.Interop
                 }
             }
             _constructionParameters = null;
+
+            // A top-level window is shown before its first frame is rendered, and the first present
+            // compiles the pipelines -- most of a second on some GPUs -- during which DWM draws the
+            // empty swapchain: black. Cloak it until the composition sink has presented its first
+            // frame (the sink uncloaks it then); the timer only stands in for a present that never
+            // comes. Layered and per-pixel-alpha windows present by UpdateLayeredWindow, not a surface.
+            if (OperatingSystem.IsWindows()
+                && (parameters.WindowStyle & 0x40000000) == 0              // WS_CHILD
+                && (parameters.ExtendedWindowStyle & 0x00080000) == 0      // WS_EX_LAYERED
+                && !_hwndTarget.UsesPerPixelOpacity)
+            {
+                IntPtr cloaked = _hwndWrapper.Handle;
+                int on = 1;
+                if (DwmSetWindowAttribute(cloaked, DWMWA_CLOAK, ref on, sizeof(int)) == 0)
+                {
+                    var uncloak = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(3) };
+                    uncloak.Tick += (s, e) =>
+                    {
+                        uncloak.Stop();
+                        int off = 0;
+                        DwmSetWindowAttribute(cloaked, DWMWA_CLOAK, ref off, sizeof(int));
+                    };
+                    uncloak.Start();
+                }
+            }
 
             if (!parameters.HasAssignedSize)
                 _sizeToContent = SizeToContent.WidthAndHeight;

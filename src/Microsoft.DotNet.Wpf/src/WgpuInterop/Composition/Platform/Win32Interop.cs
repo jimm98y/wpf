@@ -123,7 +123,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
 
         [DllImport("dwmapi.dll")]
         private static extern int DwmGetWindowAttribute(IntPtr hwnd, uint attr, out int value, int size);
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, uint attr, ref int value, int size);
         private const uint DWMWA_SYSTEMBACKDROP_TYPE = 38;
+        private const uint DWMWA_CLOAK = 13;
+
+        /// <summary>Shows a window HwndSource cloaked when it made it: a WPF window is shown before
+        /// its first frame has been rendered (the first present compiles the pipelines, most of a
+        /// second on some GPUs), and until then DWM draws its empty swapchain -- black. Uncloaking a
+        /// window that was never cloaked does nothing.</summary>
+        internal static void Uncloak(IntPtr hwnd)
+        {
+            if (!OperatingSystem.IsWindows() || hwnd == IntPtr.Zero) return;
+            int off = 0;
+            DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, ref off, sizeof(int));
+        }
 
         /// <summary>
         /// False when the window has a DWM system backdrop (Mica/Acrylic/Tabbed) enabled — WPF's Fluent

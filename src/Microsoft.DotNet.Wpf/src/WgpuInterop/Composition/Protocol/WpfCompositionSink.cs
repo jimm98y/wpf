@@ -182,6 +182,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // compositor flush vs. a frame inside a continuous animation burst (which composites on its own).
         private readonly System.Collections.Generic.Dictionary<ulong, long> _lastPresentTicks = new();
         private readonly System.Collections.Generic.Dictionary<ulong, int> _targetPresentCount = new();
+        /// <summary>The windows already shown after their first frame with content (Windows only).</summary>
+        private readonly System.Collections.Generic.HashSet<ulong> _uncloaked = new();
+
+        /// <summary>Whether a scene draws anything at all: a primitive anywhere in it.</summary>
+        private static bool HasContent(SceneVisual? v)
+        {
+            if (v == null) return false;
+            if (v.Content.Count > 0) return true;
+            foreach (SceneVisual c in v.Children)
+                if (HasContent(c)) return true;
+            return false;
+        }
 
         /// <summary>The decoded composition state (exposed for verification).</summary>
         public MilcoreEngine Engine => _engine;
@@ -765,6 +777,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     : (nowTicks - lastTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
                 _targetPresentCount.TryGetValue((ulong)t.Hwnd, out int tpc);
                 _targetPresentCount[(ulong)t.Hwnd] = tpc + 1;
+                // The window's first frame WITH SOMETHING IN IT is on the glass: show the window
+                // HwndSource cloaked. Not the first frame as such -- the first presents come before
+                // WPF has given the window any content, and are the clear colour: a second of black.
+                if (OperatingSystem.IsWindows() && !_uncloaked.Contains((ulong)t.Hwnd) && HasContent(root))
+                {
+                    _uncloaked.Add((ulong)t.Hwnd);
+                    Platform.Win32Interop.Uncloak((IntPtr)t.Hwnd);
+                }
                 if (tpc < 8 || msSincePresent > 100.0)
                 {
                     // Wait for the GPU to FINISH presenting this drawable before committing the compositor
