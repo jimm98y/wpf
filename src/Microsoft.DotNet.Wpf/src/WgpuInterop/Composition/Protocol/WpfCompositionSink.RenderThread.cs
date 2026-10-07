@@ -65,6 +65,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         private bool _rtStopping;
 
+        // Scroll snapping (DamageTracker.DecideSnap): when the render thread must draw a frame on its
+        // own (Stopwatch ticks, 0 = never), and whether the frame it is drawing is that one.
+        private long _settleDue;
+        private bool _settleFrame;
+
         private void Record(Action call)
         {
             EnsureRenderThread();
@@ -138,19 +143,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // Idle, but not deaf: wgpu's GL backend gives this thread a hidden window for its
                     // context, and a thread that owns a window has to process its messages or every
                     // sender -- a broadcast, the driver -- waits on it.
+                    bool settleNow = false;
                     while (_rtHanded == null)
                     {
                         if (_rtStopping) return;
+                        // A snapped scroll has been still long enough: draw it at its true offset,
+                        // although nothing new has arrived (see DamageTracker.DecideSnap).
+                        long due = _settleDue;
+                        if (due != 0 && System.Diagnostics.Stopwatch.GetTimestamp() >= due) { settleNow = true; break; }
                         if (Monitor.Wait(_rtLock, 4)) continue;
                         Monitor.Exit(_rtLock);
                         try { Platform.NativePlatform.PumpThreadMessages(); }
                         finally { Monitor.Enter(_rtLock); }
                     }
-                    batch = _rtHanded;
-                    render = _rtRender;
-                    seq = _rtHandedSeq;
-                    _rtHanded = null;
-                    _rtRender = false;
+                    if (settleNow && _rtHanded == null)
+                    {
+                        _settleDue = 0;
+                        _settleFrame = true;
+                        batch = new List<Action>();
+                        render = true;
+                        seq = _rtDoneSeq;
+                    }
+                    else
+                    {
+                        batch = _rtHanded!;
+                        render = _rtRender;
+                        seq = _rtHandedSeq;
+                        _rtHanded = null;
+                        _rtRender = false;
+                    }
                 }
                 foreach (Action call in batch) Run(call);
                 if (render) Run(RenderTargets);

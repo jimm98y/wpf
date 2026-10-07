@@ -83,6 +83,11 @@ namespace WgpuInterop.Tests.Rendering
                     x0 = Math.Min(x0, q % W); x1 = Math.Max(x1, q % W); y0 = Math.Min(y0, q / W); y1 = Math.Max(y1, q / W);
                 }
             if (diff == 0) return;
+            if (Environment.GetEnvironmentVariable("PARTIAL_TEST_DUMP") is { } dump)
+            {
+                PngWriter.Write(System.IO.Path.Combine(dump, "want.png"), want, W, H, int.MaxValue);
+                PngWriter.Write(System.IO.Path.Combine(dump, "got.png"), got, W, H, int.MaxValue);
+            }
             int p = first / 4;
             Assert.Fail($"{what}: {diff} bytes differ in ({x0},{y0})-({x1},{y1}); first at ({p % W},{p / W}) " +
                         $"want {want[p * 4]},{want[p * 4 + 1]},{want[p * 4 + 2]},{want[p * 4 + 3]} " +
@@ -429,13 +434,17 @@ namespace WgpuInterop.Tests.Rendering
             var s = new ScrollScene(withText: true);
             h.Frame(s.Root, expectPartial: false, "first frame");
             int shifted = 0;
-            float[] steps = { 7, 13, 1, 30, -12, -3, 24, 2, -10, 15, 9, -9 };
+            // Even steps shift. An odd one does not (positions round half to even, so content on a
+            // tie would land a pixel differently): it is redrawn, still exactly.
+            float[] steps = { 8, 12, 2, 30, -12, -4, 24, 3, -10, 14, 8, -8 };
             float off = 0;
             foreach (float step in steps)
             {
                 off += step;
                 s.ScrollTo(off);
-                h.Frame(s.Root, expectPartial: true, $"scroll to {off}");
+                bool odd = ((int)step & 1) != 0;
+                h.Frame(s.Root, expectPartial: !odd, $"scroll to {off}");
+                if (odd) Assert.Null(h.Target.LastShift);
                 if (h.Target.LastShift is { } sh)
                 {
                     shifted++;
@@ -543,6 +552,118 @@ namespace WgpuInterop.Tests.Rendering
                 content.Offset = new Vector2(i % 2 == 0 ? 0 : 3, -i * 11);
                 h.Frame(root, expectPartial: false, $"scroll {i}");
             }
+        }
+
+        // ---- scroll snapping: whole pixels while moving, the true offset once settled ----------
+
+        private static long Ms(int ms) => ms * System.Diagnostics.Stopwatch.Frequency / 1000;
+
+        /// <summary>World translation of the scroll content as drawn.</summary>
+        private static Vector2 DrawnAt(ScrollScene s)
+        {
+            Matrix3x2 w = s.Content.LocalToParent * s.Viewport.LocalToParent;
+            return new Vector2(w.M31, w.M32);
+        }
+
+        [Fact]
+        public void AFractionalScrollInMotionIsDrawnOnWholePixelsAndShifted()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            long now = Ms(1000);
+            h.Target.SnapScroll = true;
+            h.Target.Clock = () => now;
+            var s = new ScrollScene(withText: true);
+            h.Frame(s.Root, expectPartial: false, "first frame");
+            float rest = DrawnAt(s).Y;              // a fractional phase: the viewport is at 22.37
+            int shifted = 0;
+            float off = 0;
+            for (int i = 1; i <= 10; i++)
+            {
+                now += Ms(16);
+                off += 3.37f;                     // a trackpad's sub-pixel steps
+                s.ScrollTo(off);
+                // Exact against a full render of what is drawn -- the snapped scene.
+                h.Frame(s.Root, expectPartial: true, $"moving to {off}");
+                // Drawn an even number of whole pixels from where it rested, within a pixel of where
+                // it really is.
+                float moved = DrawnAt(s).Y - rest;
+                Assert.True(MathF.Abs(moved - 2 * MathF.Round(moved / 2)) < 1e-3f, $"drawn {moved} px from rest");
+                Assert.True(MathF.Abs(s.Content.SnapNudge.Y) <= 1f + 1e-4f, $"nudge {s.Content.SnapNudge.Y}");
+                Assert.NotEqual(0, h.Target.SettleDue);
+                if (h.Target.LastShift != null) shifted++;
+            }
+            Assert.True(shifted >= 9, $"only {shifted} of 10 moving frames were shifted");
+        }
+
+        [Fact]
+        public void ASettledScrollIsDrawnAtItsTrueOffsetExactly()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            long now = Ms(1000);
+            h.Target.SnapScroll = true;
+            h.Target.Clock = () => now;
+            var s = new ScrollScene(withText: true);
+            h.Frame(s.Root, expectPartial: false, "first frame");
+            for (int i = 1; i <= 6; i++)
+            {
+                now += Ms(16);
+                s.ScrollTo(i * 2.71f);
+                h.Frame(s.Root, expectPartial: true, $"moving {i}");
+            }
+            // Still, but not for long enough: still snapped, nothing to draw.
+            now += Ms(40);
+            h.Frame(s.Root, expectPartial: true, "still, not settled");
+            Assert.NotEqual(0f, s.Content.SnapNudge.Y);
+            Assert.Equal(0, h.Target.LastPixels);
+            // The settle frame: the true, fractional offset. Harness.Frame compares it byte for byte
+            // with a fresh renderer drawing the scene with no nudge -- a never-snapped render.
+            now = h.Target.SettleDue;
+            h.Frame(s.Root, expectPartial: false, "settled");
+            Assert.Equal(Vector2.Zero, s.Content.SnapNudge);
+            Assert.Null(h.Target.LastShift);
+            Assert.Equal(0, h.Target.SettleDue);
+            Vector2 at = DrawnAt(s);
+            Assert.True(MathF.Abs(at.Y - MathF.Round(at.Y)) > 1e-3f, "the true offset is fractional");
+            // And a target that never snapped, shown the same final scene, has the same pixels.
+            using var never = new Harness(this, () => NewRenderer(font), White);
+            never.Frame(s.Root, expectPartial: false, "never snapped");
+            // Settled and nothing moves: nothing more is drawn, and the image stays the true one.
+            now += Ms(500);
+            h.Frame(s.Root, expectPartial: true, "after settling");
+            Assert.Equal(0, h.Target.LastPixels);
+        }
+
+        [Fact]
+        public void SnappingIsRenderOnlyAndHitTestingSeesWhatIsDrawn()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            long now = Ms(1000);
+            h.Target.SnapScroll = true;
+            h.Target.Clock = () => now;
+            var s = new ScrollScene(withText: false);
+            h.Frame(s.Root, expectPartial: false, "first frame");
+            now += Ms(16);
+            s.ScrollTo(5.4f);
+            h.Frame(s.Root, expectPartial: true, "moving");
+            // The scene still says where layout put it; only what is drawn moved, by at most one
+            // device pixel (an even number of pixels from rest: 5.4 -> 6, 0.6 px).
+            Assert.Equal(new Vector2(0, -5.4f), s.Content.Offset);
+            Assert.True(MathF.Abs(s.Content.SnapNudge.Y) <= 1f, $"nudge {s.Content.SnapNudge.Y}");
+            // The renderer's hit test reads the same transforms the frame was drawn with: a pixel
+            // inside a row as drawn is that row, while it moves.
+            uint id = 0;
+            foreach (SceneVisual row in s.Content.Children) row.Id = ++id;
+            SceneVisual row1 = s.Content.Children[1];
+            Matrix3x2 drawn = row1.LocalToParent * s.Content.LocalToParent * s.Viewport.LocalToParent;
+            int px = (int)(drawn.M31 + 100), py = (int)MathF.Floor(drawn.M32 + 0.5f);   // the row's first drawn line
+            Assert.Equal(row1.Id, h.Renderer.HitTest(s.Root, px, py, W, H));
+            // Settled, nothing is nudged and the same point is hit-tested against the true offset.
+            now += Ms(1000);
+            h.Frame(s.Root, expectPartial: false, "settled");
+            Assert.Equal(Vector2.Zero, s.Content.SnapNudge);
         }
 
         // ---- WinForms-style repaints: fresh recordings compared by value ------------------------

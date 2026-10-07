@@ -325,7 +325,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             private sealed class Rec
             {
-                public Matrix3x2 Local;
+                public Matrix3x2 Local;          // as displayed: SnapNudge included
+                public Matrix3x2 TrueLocal;      // as the scene has it
+                public long LastMove;            // when its true translation last changed (scroll snapping)
+                public Vector2 SnapAnchor;       // where it was drawn when the snapped motion began
                 public double Opacity;
                 public bool HasClip;
                 public Rect Clip;
@@ -400,6 +403,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             internal bool Compute(SceneVisual root, int width, int height, List<Scissor> rects)
             {
                 Stamp = Interlocked.Increment(ref s_damageStamp);
+                _now = Clock();
+                SettleDue = 0;
                 if (Stamp == 0) Stamp = Interlocked.Increment(ref s_damageStamp);
                 _raw.Clear();
                 _texts.Clear();
@@ -570,10 +575,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // so a whole-pixel scroll can differ from its integer by a few ulps.
                 const float Ulps = 1f / 2048f;
                 if (MathF.Abs(fx - dx) > Ulps || MathF.Abs(fy - dy) > Ulps) return null;
+                // And an EVEN number of them: positions are rounded half to even, so content on a tie
+                // lands a pixel differently after an odd move (see SnapNudgeFor).
+                if ((dx & 1) != 0 || (dy & 1) != 0) return null;
                 if (Math.Abs(dx) >= parentClip.W || Math.Abs(dy) >= parentClip.H) return null;
                 if (!ShiftableSubtree(v, wn, _w, _h)) return null;
 
-                Rec rec = Visit(null, v, parentWorld, parentClip, fresh: true, inSnapshot: false);
+                Rec rec = Visit(null, v, parentWorld, parentClip, fresh: true, inSnapshot: false, keepNudge: true);
                 _scrollRec = rec;
                 _scrollOldBounds = old.Bounds;
                 _scrollClip = parentClip;
@@ -790,7 +798,133 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             private const int MaxRawRects = 512;
 
-            private Rec Visit(Rec? old, SceneVisual v, Matrix3x2 parentWorld, Scissor parentClip, bool fresh, bool inSnapshot, bool shiftOk = false)
+            private Rec Visit(Rec? old, SceneVisual v, Matrix3x2 parentWorld, Scissor parentClip, bool fresh, bool inSnapshot,
+                bool shiftOk = false, bool keepNudge = false, bool parentClipped = false)
+            {
+                long lastMove = 0;
+                Vector2 anchor = default;
+                // Only a snapping tracker touches nudges: a live brush source's tracker visits visuals
+                // the window's tracker has already decided for this frame.
+                if (SnapScroll)
+                {
+                    if (!fresh) lastMove = DecideSnap(old, v, parentWorld, parentClipped, out anchor);
+                    else if (!keepNudge) v.SnapNudge = default;
+                }
+                Rec rec = VisitCore(old, v, parentWorld, parentClip, fresh, inSnapshot, shiftOk);
+                rec.TrueLocal = v.TrueLocalToParent;
+                if (!fresh) { rec.LastMove = lastMove; rec.SnapAnchor = anchor; }
+                return rec;
+            }
+
+            // ---- scroll snapping ----------------------------------------------------------------
+            //
+            // A trackpad, an inertial fling or a programmatic smooth scroll moves the content by
+            // FRACTIONS of a pixel. Each such frame puts every card on a new sub-pixel phase: nothing
+            // rendered for the last frame can be reused (the gallery re-baked all 25 layers a frame) and
+            // nothing can be shifted (TryScroll needs whole pixels). So WHILE THE SCROLL IS MOVING its
+            // content is drawn at the offset rounded to whole device pixels (SceneVisual.SnapNudge,
+            // render-only), and once it has been still for SettleMs it is drawn once more at its TRUE
+            // offset -- the picture a never-snapped render shows, which is what stock WPF shows at rest.
+            //
+            // Which visuals: one whose translation (and only its translation) changed since the last
+            // frame, under a parent that clips it -- a ScrollContentPresenter's child -- and whose
+            // parent's world is axis-aligned. The sink re-renders at SettleDue even with nothing new
+            // to draw (WpfCompositionSink: the render thread's idle wait), which is the settle frame.
+
+            /// <summary>WGPU_SCROLL_SNAP=0: draw a moving scroll at its true sub-pixel offset.</summary>
+            internal static readonly bool s_snapScroll = Environment.GetEnvironmentVariable("WGPU_SCROLL_SNAP") != "0";
+
+            /// <summary>How long a snapped scroll must be still before its true offset is drawn.
+            /// 100 ms: trackpads, inertia and smooth scrolling deliver an offset every frame (10-17 ms)
+            /// while they move, so a scroll still for six frames has stopped; a frame or two would also
+            /// settle in the middle of a slow drag whose input skips a frame, and every settle re-renders
+            /// what it covers at the true phase (the layer re-bakes snapping exists to avoid).
+            /// WGPU_SCROLL_SETTLE_MS overrides it.</summary>
+            internal static readonly int SettleMs =
+                int.TryParse(Environment.GetEnvironmentVariable("WGPU_SCROLL_SETTLE_MS"), out int sm) ? Math.Max(0, sm) : 100;
+
+            private static readonly long s_settleTicks = SettleMs * System.Diagnostics.Stopwatch.Frequency / 1000;
+
+            /// <summary>Whether this tracker snaps moving scrolls; set only where the owner can render
+            /// the settle frame unprompted.</summary>
+            internal bool SnapScroll { get; set; }
+
+            /// <summary>The clock Compute reads (Stopwatch ticks); tests set it to step time.</summary>
+            internal Func<long> Clock { get; set; } = System.Diagnostics.Stopwatch.GetTimestamp;
+
+            private long _now;
+
+            /// <summary>When the earliest snapped scroll of the last Compute settles (Stopwatch ticks),
+            /// or 0: the owner must render a frame then, changed or not.</summary>
+            internal long SettleDue { get; private set; }
+
+            /// <summary>Sets <paramref name="v"/>'s SnapNudge for this frame and returns when its true
+            /// translation last changed.</summary>
+            private long DecideSnap(Rec? old, SceneVisual v, Matrix3x2 parentWorld, bool parentClipped, out Vector2 anchor)
+            {
+                Vector2 nudge = default;
+                long lastMove = old?.LastMove ?? 0;
+                anchor = old?.SnapAnchor ?? default;
+                if (SnapScroll && s_snapScroll && parentClipped && old != null
+                    && parentWorld.M12 == 0f && parentWorld.M21 == 0f && parentWorld.M11 != 0f && parentWorld.M22 != 0f)
+                {
+                    Matrix3x2 t = v.TrueLocalToParent, o = old.TrueLocal;
+                    bool wasMoving = lastMove != 0 && _now - lastMove < s_settleTicks;
+                    if (SameLinear(o, t) && (o.M31 != t.M31 || o.M32 != t.M32))
+                    {
+                        if (!wasMoving)
+                        {
+                            // The motion starts from where it was last drawn: frames keep that
+                            // sub-pixel phase -- the first one shifts too, and every layer baked at
+                            // rest is reused for the whole motion.
+                            Matrix3x2 shown = old.Local * parentWorld;
+                            anchor = new Vector2(shown.M31, shown.M32);
+                        }
+                        lastMove = _now;
+                    }
+                    else if (!SameLinear(o, t)) lastMove = 0;
+                    if (lastMove != 0 && _now - lastMove < s_settleTicks)
+                    {
+                        nudge = SnapNudgeFor(v, parentWorld, anchor);
+                        long due = lastMove + s_settleTicks;
+                        if (SettleDue == 0 || due < SettleDue) SettleDue = due;
+                    }
+                    else lastMove = 0;
+                }
+                v.SnapNudge = nudge;
+                return lastMove;
+            }
+
+            /// <summary>The nudge that draws <paramref name="v"/> an EVEN number of device pixels from
+            /// <paramref name="anchor"/>, nearest its true position, exactly as the renderer computes the
+            /// translation (v.LocalToParent * parentWorld, in float).
+            /// <para>Even, not just whole: the renderer rounds positions half to even (text baselines,
+            /// half-pixel snaps), so content sitting on a tie lands one pixel differently after an ODD
+            /// shift, and that frame is not a shift of the last. An even shift keeps every tie on the same
+            /// side. The cost is that what is drawn is up to one device pixel from the true position while
+            /// the scroll moves (half a pixel would be whole-pixel snapping).</para>
+            /// <para>Exactly: a first estimate can land a few ulps off the target, which is not a
+            /// whole-pixel move either; it is walked ulp by ulp.</para></summary>
+            private static Vector2 SnapNudgeFor(SceneVisual v, Matrix3x2 parentWorld, Vector2 anchor)
+            {
+                Matrix3x2 w0 = v.TrueLocalToParent * parentWorld;
+                float tx = anchor.X + 2f * MathF.Round((w0.M31 - anchor.X) * 0.5f);
+                float ty = anchor.Y + 2f * MathF.Round((w0.M32 - anchor.Y) * 0.5f);
+                var n = new Vector2((tx - w0.M31) / parentWorld.M11, (ty - w0.M32) / parentWorld.M22);
+                for (int k = 0; k < 16; k++)
+                {
+                    v.SnapNudge = n;
+                    Matrix3x2 w = v.LocalToParent * parentWorld;
+                    if (w.M31 == tx && w.M32 == ty) return n;
+                    float nx = n.X, ny = n.Y;
+                    if (w.M31 != tx) nx = (w.M31 < tx) == (parentWorld.M11 > 0) ? MathF.BitIncrement(nx) : MathF.BitDecrement(nx);
+                    if (w.M32 != ty) ny = (w.M32 < ty) == (parentWorld.M22 > 0) ? MathF.BitIncrement(ny) : MathF.BitDecrement(ny);
+                    n = new Vector2(nx, ny);
+                }
+                return n;    // as near as float gets; TryScroll's tolerance covers the rest
+            }
+
+            private Rec VisitCore(Rec? old, SceneVisual v, Matrix3x2 parentWorld, Scissor parentClip, bool fresh, bool inSnapshot, bool shiftOk)
             {
                 Matrix3x2 world = v.LocalToParent * parentWorld;
                 Scissor clip = v.Clip is Rect cr ? Intersect(parentClip, RectBox(cr, world)) : parentClip;
@@ -855,7 +989,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     && v.ClipGeometry == null && v.Opacity >= 0.999;
                 if (old.Kids.Length < nk) Array.Resize(ref old.Kids, nk);
                 for (int i = 0; i < nk; i++)
-                    old.Kids[i] = Visit(i < old.KidCount ? old.Kids[i] : null, v.Children[i], world, clip, fresh: false, kidsInSnapshot, kidsShiftOk);
+                    old.Kids[i] = Visit(i < old.KidCount ? old.Kids[i] : null, v.Children[i], world, clip, fresh: false, kidsInSnapshot, kidsShiftOk,
+                        parentClipped: v.Clip.HasValue);
                 for (int i = nk; i < old.KidCount; i++)
                 {
                     if (old.Kids[i] is { } gone) _raw.Add(gone.Bounds);
@@ -1679,6 +1814,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 _r = renderer;
                 _name = name;
             }
+
+            /// <summary>Snap scrolls while they move (DamageTracker.DecideSnap). Only for an owner that
+            /// renders a frame at <see cref="SettleDue"/> whether or not anything changed.</summary>
+            internal bool SnapScroll { get => _tracker.SnapScroll; set => _tracker.SnapScroll = value; }
+
+            /// <summary>When a snapped scroll settles and must be drawn at its true offset (Stopwatch
+            /// ticks), or 0.</summary>
+            internal long SettleDue => _tracker.SettleDue;
+
+            /// <summary>The tracker's clock, for tests.</summary>
+            internal Func<long> Clock { get => _tracker.Clock; set => _tracker.Clock = value; }
 
             /// <summary>The next frame is drawn in full (contents lost, surface recreated, ...).</summary>
             internal void Invalidate() => _valid = false;
