@@ -53,6 +53,9 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" Version="3.0.0" />
     <PackageReference Include="Microsoft.Testing.Platform" Version="1.7.3" />
+    <!-- Named by the PresentationFramework closure a real Window loads (as in Wpf.Window.Tests). -->
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
   </ItemGroup>
 
   <!--
@@ -106,6 +109,13 @@
     <Reference Include="WindowsBase"><HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationCore"><HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework"><HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath><Private>true</Private></Reference>
+    <!-- What a real WPF Window needs at run time (WindowsFormsHostOnTwoUiThreadsTests shows two). -->
+    <Reference Include="System.Xaml"><HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="DirectWriteForwarder"><HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationTypes"><HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="UIAutomationProvider"><HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Aero2"><HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="System.Windows.Forms"><HintPath>$(_Swf)/System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="WindowsFormsIntegration"><HintPath>$(_Swf)/../../../integration/bin/Release/net10.0/WindowsFormsIntegration.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Mono.System.Drawing"><HintPath>$(_Swf)/Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
