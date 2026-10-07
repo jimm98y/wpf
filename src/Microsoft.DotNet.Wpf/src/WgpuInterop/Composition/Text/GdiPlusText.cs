@@ -215,7 +215,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             if (mode <= 2 && !biLevel) return null;
             // Under a scale only the ClearType realization is modelled (the stretched 6x1 fit).
             if (scaled && mode != 5) return null;
-            if (font.SynthesizesOblique && (mode == 3 || mode == 4)) return null;
+            // An oblique simulation under the antialiased hints: the fitted outline is sheared in
+            // TrueTypeFont (ObliqueShearApplied) like every other mode.
 
             // CharacterAttributes bit 0x80 sends the string to the full imager: every control
             // character (tab, CR, LF), the complex scripts, and a hot-key prefix.
