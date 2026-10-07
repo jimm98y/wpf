@@ -548,11 +548,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             List<PathFigure> turned = GdiPlusText.TransformedOutline(font, glyphId, em, m11, m12, m21, m22, 0f, 0f);
             if (turned.Count == 0) return s_empty;
-            // The scaler's ppem: scl_InitializeScaling's param_20, the larger entry of the
-            // matrix's second row (em-scaled 16.16), rounded.
-            long r = (long)Math.Floor(Math.Max(Math.Abs(m21), Math.Abs(m22)) * em * 65536.0 + 0.5);
-            int ppem = (int)((r + 0x8000) >> 16);
-            GlyphBits bits = Scan(turned, 1, font.DWriteTurnedDropout(ppem, GdiPlusText.NaturalScalerWord));
+            int dmode = GdiPlusText.TurnedDropout(font, em, m21, m22, GdiPlusText.NaturalScalerWord);
+            GlyphBits bits = Scan(turned, 1, dmode);
             // A simulated bold is the scan's own (fs_ContourScan -> fsc_OverscaleToBold), as upright.
             return bits;
         }

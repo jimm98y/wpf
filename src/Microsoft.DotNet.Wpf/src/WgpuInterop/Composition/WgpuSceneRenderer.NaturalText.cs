@@ -65,6 +65,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly int s_wpfDisplayGammaIndex = Math.Clamp((int)(
             ((Platform.Win32Interop.FontSmoothingContrast() is int c && c > 0 ? c : 1200) / 1000f - 1.0f) * 10.0f), 0, 12);
 
+        /// <summary>The enhanced contrast table for a run. DWriteGlyphRunAnalysis::GetAlphaBlendParams
+        /// @18000cd90 adds 0.5 to the contrast it reports when the analysis' thin flag is set
+        /// (GlyphRunAnalysis::GlyphRunAnalysis @180127960 copies the face's thin bit, +0x60 bit 2,
+        /// set by OpenTypeFontFaceBuilder::IsThinFontFamily @18002fb58): the monitor's 0.5 becomes
+        /// 1.0 for natural text, and GDI-classic text, otherwise given none, gets 0.5.</summary>
+        private static byte[] ContrastTableFor(Text.TrueTypeFont font, bool display)
+        {
+            if (!font.DWriteThinFace) return display ? s_identityTable : s_wpfContrastTable;
+            return display ? s_thinDisplayContrastTable : s_thinContrastTable;
+        }
+
+        private static readonly byte[] s_thinContrastTable = BuildContrastTable(WpfTextContrast + 0.5f);
+        private static readonly byte[] s_thinDisplayContrastTable = BuildContrastTable(0.5f);
+
         /// <summary>The identity: no enhanced contrast.</summary>
         private static readonly byte[] s_identityTable = BuildContrastTable(0f);
 
@@ -142,6 +156,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (_naturalGlyphs.Count > 20000) _naturalGlyphs.Clear();
                     gb = display ? Text.NaturalClearType.RasterizeGdiClassic(run.Font, run.Glyphs[i], ppem)
                                  : Text.NaturalClearType.Rasterize(run.Font, run.Glyphs[i], ppem, nSub);
+                    // A thin face's oversampled bitmap is thickened (GdiPlusText.ThinEmbolden).
+                    gb = Text.GdiPlusText.ThinEmbolden(run.Font, gb);
                     _naturalGlyphs[gkey] = gb;
                 }
                 bits[i] = gb;
@@ -223,7 +239,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 PerfCoverage++;
                 byte[] tex = Text.NaturalClearType.RunTexture(bits, xs, ys, out _, out _, out _, out _, nSub);
                 byte[] rgba = WpfNaturalMask(tex, tl, tw, th, frac, px0 - oxi, mw, ink, alpha, paper,
-                    display ? s_wpfDisplayGammaIndex : s_wpfGammaIndex, display ? s_identityTable : s_wpfContrastTable,
+                    display ? s_wpfDisplayGammaIndex : s_wpfGammaIndex, ContrastTableFor(run.Font, display),
                     colCover, rowCover);
                 (IntPtr t, IntPtr view) = CreateRgbaTexture(rgba, mw, mh);
                 cm = new CachedMask

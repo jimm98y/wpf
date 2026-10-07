@@ -182,6 +182,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // compositor flush vs. a frame inside a continuous animation burst (which composites on its own).
         private readonly System.Collections.Generic.Dictionary<ulong, long> _lastPresentTicks = new();
         private readonly System.Collections.Generic.Dictionary<ulong, int> _targetPresentCount = new();
+        /// <summary>The windows already shown after their first frame with content (Windows only).</summary>
+        private readonly System.Collections.Generic.HashSet<ulong> _uncloaked = new();
+
+        /// <summary>Whether a scene draws anything at all: a primitive anywhere in it.</summary>
+        private static bool HasContent(SceneVisual? v)
+        {
+            if (v == null) return false;
+            if (v.Content.Count > 0) return true;
+            foreach (SceneVisual c in v.Children)
+                if (HasContent(c)) return true;
+            return false;
+        }
 
         /// <summary>The decoded composition state (exposed for verification).</summary>
         public MilcoreEngine Engine => _engine;
@@ -522,6 +534,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
             _perfRenderAlloc += GC.GetAllocatedBytesForCurrentThread() - ra1;
 
+            // A window that has gone keeps no persistent frame (a window-sized texture each).
+            foreach (KeyValuePair<uint, TargetSurface> s in _surfaces)
+            {
+                if (s.Value.Partial != null && !_engine.Targets.ContainsKey(s.Key))
+                {
+                    s.Value.Partial.Dispose();
+                    s.Value.Partial = null;
+                }
+            }
+
             _renderer!.EndFrame();
             _statsRendered++;
             _engine.ClearDirty();
@@ -725,7 +747,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             RgbaColor clear = ts.Transparent ? new RgbaColor(0, 0, 0, 0) : t.ClearColor;
             // Composite any hosted (WindowsFormsHost) scenes on top of the WPF scene — same SceneVisual
             // type + same renderer, so no bitmap/readback.
-            _renderer!.RenderSceneToView(EmbeddedContent.Compose(root, ts.Hwnd), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
+            // Partial redraw: only what changed since this surface's last frame is rendered, into a
+            // texture that keeps the rest, which is then copied to the swap chain. The embedded
+            // (WinForms) scenes are part of the tree it diffs, so their changes are damage too.
+            ts.Partial ??= new WgpuSceneRenderer.PartialTarget(_renderer!, $" wpf 0x{t.Hwnd:x}");
+            ts.Partial.Render(EmbeddedContent.Compose(root, ts.Hwnd), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 
             // Definitive on-screen capture: read back the REAL swapchain texture (not a separate
@@ -765,6 +791,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     : (nowTicks - lastTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
                 _targetPresentCount.TryGetValue((ulong)t.Hwnd, out int tpc);
                 _targetPresentCount[(ulong)t.Hwnd] = tpc + 1;
+                // The window's first frame WITH SOMETHING IN IT is on the glass: show the window
+                // HwndSource cloaked. Not the first frame as such -- the first presents come before
+                // WPF has given the window any content, and are the clear colour: a second of black.
+                if (OperatingSystem.IsWindows() && !_uncloaked.Contains((ulong)t.Hwnd) && HasContent(root))
+                {
+                    _uncloaked.Add((ulong)t.Hwnd);
+                    Platform.Win32Interop.Uncloak((IntPtr)t.Hwnd);
+                }
                 if (tpc < 8 || msSincePresent > 100.0)
                 {
                     // Wait for the GPU to FINISH presenting this drawable before committing the compositor
@@ -1088,6 +1122,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (_surfaces.TryGetValue(targetHandle, out TargetSurface? stale)
                 && (stale.Surface == IntPtr.Zero || stale.NativeWindow != liveWindow))
             {
+                stale.Partial?.Dispose();
                 if (stale.Surface != IntPtr.Zero) wgpuSurfaceRelease(stale.Surface);
                 _surfaces.Remove(targetHandle);
             }
@@ -1310,6 +1345,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _disposed = true;
             foreach (TargetSurface ts in _surfaces.Values)
             {
+                ts.Partial?.Dispose();
                 if (ts.Surface != IntPtr.Zero) wgpuSurfaceRelease(ts.Surface);
             }
             _surfaces.Clear();
@@ -1344,6 +1380,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             /// <summary>Layered popup target: configure with premultiplied alpha + clear transparent so
             /// the popup's shadow/rounded corners composite over the content behind the window.</summary>
             public bool Transparent;
+            /// <summary>The persistent frame partial redraw renders into (created on first present).</summary>
+            public WgpuSceneRenderer.PartialTarget? Partial;
         }
     }
 }

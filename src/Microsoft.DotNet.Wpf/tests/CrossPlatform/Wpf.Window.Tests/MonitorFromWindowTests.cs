@@ -130,7 +130,9 @@ namespace Wpf.Window.Tests
                 double scale = UiThread.Invoke(() =>
                 {
                     IntPtr handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
-                    double s = PlatformWindow.FromHandle(handle).GetBackingScale();
+                    // Windows has no platform-window object: the window's own DPI is its scale.
+                    double s = OperatingSystem.IsWindows() ? GetDpiForWindow(handle) / 96.0
+                        : PlatformWindow.FromHandle(handle).GetBackingScale();
                     return s > 0 ? s : 1.0;
                 });
 
@@ -152,8 +154,22 @@ namespace Wpf.Window.Tests
         private static (int X, int Y) OriginOf(System.Windows.Window window) => UiThread.Invoke(() =>
         {
             IntPtr handle = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+            if (OperatingSystem.IsWindows())
+            {
+                GetWindowRect(handle, out Rect32 r);
+                return (r.Left, r.Top);
+            }
             PlatformWindow.FromHandle(handle).GetWindowScreenOriginPixels(out int sx, out int sy);
             return (sx, sy);
         });
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        private struct Rect32 { public int Left, Top, Right, Bottom; }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hwnd, out Rect32 rect);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr hwnd);
     }
 }

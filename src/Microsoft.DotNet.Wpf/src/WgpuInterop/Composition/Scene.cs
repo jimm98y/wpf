@@ -886,6 +886,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         internal float GuidesM11, GuidesM22, GuidesM31, GuidesM32;
         internal int GuidesVersion;
 
+        // Partial redraw (WgpuSceneRenderer.DamageTracker): this visual's whole-subtree device bounds,
+        // conservative and clipped, as the tracker last measured them, stamped with that walk's id so
+        // the renderer can tell a current measurement from a stale one. Lets a partial frame skip a
+        // subtree that cannot reach the damage without walking it.
+        internal int DamageStamp;
+        internal int DamageX, DamageY, DamageW, DamageH;
+
         /// <summary>Drawing content recorded by this visual, in local space.</summary>
         public List<DrawingPrimitive> Content { get; } = new();
 

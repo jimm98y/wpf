@@ -1966,7 +1966,8 @@ namespace System.Windows.Forms
 		/// pictures: the 28th and the 29th follow their cells, the months view's Sep the client. The
 		/// recorder has no XOR, so this is told what is underneath, which is one colour wherever it
 		/// is used.</summary>
-		private void DrawFocusRectInverted (Graphics dc, Rectangle r, Color under, Point origin, Color? underTopLeft = null)
+		private void DrawFocusRectInverted (Graphics dc, Rectangle r, Color under, Point origin, Color? underTopLeft = null,
+						    Color? underCorners = null)
 		{
 			if (r.Width <= 0 || r.Height <= 0)
 				return;
@@ -1977,8 +1978,11 @@ namespace System.Windows.Forms
 			Brush tl_brush = ResPool.GetSolidBrush (Color.FromArgb (255 - tl.R, 255 - tl.G, 255 - tl.B));
 			int right = r.Right - 1, bottom = r.Bottom - 1;
 			// And state 3's four inner corners are darker again: a dot there is their negative.
-			Brush corner_brush = underTopLeft != null
-				? ResPool.GetSolidBrush (Color.FromArgb (255 - MonthCalSelectedHotCorner.R, 255 - MonthCalSelectedHotCorner.G, 255 - MonthCalSelectedHotCorner.B))
+			// And whatever else stands on the corners -- the today ring's translucent pixel just inside
+			// each of its corners, when the focused day is today.
+			Color? corner_under = underCorners ?? (underTopLeft != null ? MonthCalSelectedHotCorner : (Color?) null);
+			Brush corner_brush = corner_under is Color cu
+				? ResPool.GetSolidBrush (Color.FromArgb (255 - cu.R, 255 - cu.G, 255 - cu.B))
 				: null;
 			bool Dot (int x, int y) => ((x - origin.X + y - origin.Y) & 1) == 1;
 			for (int x = r.X; x <= right; x++) {
@@ -2113,15 +2117,17 @@ namespace System.Windows.Forms
 					FillSelectedWash (dc, hot ? Rectangle.FromLTRB (cell.X + 2, cell.Y + 2, cell.Right - 2, cell.Bottom - 2) : rect);
 				if (!monthcal_focus_day)
 					return;
-				if (hot) {
-					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? mc.paint_origin, MonthCalSelectedHotShade);
+				// The focus rectangle a pixel in, as round the current cell of a zoomed view: comctl32
+				// draws it on the focused day whenever the calendar has the focus, not only while a
+				// click is held -- and LAST, a DrawFocusRect over the finished day. On today that is over
+				// the today ring, drawn after this, so it waits for the ring (DrawTodayCircle).
+				if (!hot && !mc.Focused)
 					return;
-				}
-				// And the focus rectangle a pixel in, as round the current cell of a zoomed view:
-				// comctl32 draws it on the focused day whenever the calendar has the focus, not only
-				// while a click is held.
-				if (mc.Focused)
-					DrawFocusRectInverted (dc, rect, MonthCalSelectedWash, MonthCalPictureOrigin ?? mc.paint_origin);
+				var focus = (rect, origin: MonthCalPictureOrigin ?? mc.paint_origin, hot);
+				if (mc.ShowTodayCircle && mc.SelectionStart.Date == mc.TodayDate.Date && mc.SelectionEnd.Date == mc.TodayDate.Date)
+					monthcal_pending_focus = focus;
+				else
+					DrawDayFocus (dc, focus, null);
 				return;
 			}
 			dc.FillRectangle (brush, rect);
@@ -2137,6 +2143,27 @@ namespace System.Windows.Forms
 				return;
 			Win11Frames.Draw (dc, Win11Frames.Get ("MONTHCAL", 5, 5),
 				new Rectangle (rectangle.X, rectangle.Y, rectangle.Width + 1, rectangle.Height + 1));
+			// The focused day's rectangle, which comctl32 XORs over the ring: its corners stand on the
+			// ring's translucent pixel just inside each corner, over the selection under it.
+			if (monthcal_pending_focus is { } focus) {
+				monthcal_pending_focus = null;
+				if (Rectangle.Inflate (rectangle, -1, -1).Location == focus.rect.Location) {
+					uint inside = Win11Frames.MonthCalToday ().Pixels [6];
+					Color paper = focus.hot ? MonthCalSelectedHotCorner : MonthCalSelectedWash;
+					DrawDayFocus (dc, focus, Color.FromArgb ((int) (Win11Frames.Over (inside, (uint) paper.ToArgb ()) | 0xff000000u)));
+				}
+			}
+		}
+
+		/// <summary>A focused day waiting for the today ring before its focus rectangle goes on.</summary>
+		private (Rectangle rect, Point origin, bool hot)? monthcal_pending_focus;
+
+		private void DrawDayFocus (Graphics dc, (Rectangle rect, Point origin, bool hot) focus, Color? underCorners)
+		{
+			if (focus.hot)
+				DrawFocusRectInverted (dc, focus.rect, MonthCalSelectedWash, focus.origin, MonthCalSelectedHotShade, underCorners);
+			else
+				DrawFocusRectInverted (dc, focus.rect, MonthCalSelectedWash, focus.origin, null, underCorners);
 		}
 
 		// ---- the same drawing, without Windows ---------------------------------------

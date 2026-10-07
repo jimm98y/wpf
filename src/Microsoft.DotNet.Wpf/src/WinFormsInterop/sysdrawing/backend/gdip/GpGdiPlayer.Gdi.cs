@@ -362,6 +362,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void GdiFillAndStroke(GdiPath p, bool fill, bool stroke)
         {
             if (_inPath) { _gPath ??= new GdiPath(); _gPath.Append(p); return; }
+            if (fill && stroke && GdiStrokeAndFillRop(p, DrawPen(), -1)) return;
             if (fill && _dc.Brush != null && _dc.Brush.Style != 1)
             {
                 // EPATHOBJ_bSimpleStrokeAndFill @140168450: the fill flattens the path in place, so
@@ -414,6 +415,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (kind == 0 && pen != null && pen.OldGeometric && !_inPath)
             {
                 // GrepRectangle: an old pen strokes the box with mitred corners.
+                if (GdiStrokeAndFillRop(p, pen, 2)) return;
                 GdiFillAndStroke(p, true, false);
                 GdiStroke(p, pen, 2);
                 return;
@@ -462,6 +464,43 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
             }
             GdiStroke(p);
+        }
+
+        /// <summary>EngStrokeAndFillPath @14016a690: a geometric pen under any ROP2 but R2_COPYPEN
+        /// paints its widened region (WINDING) with the pen, then the fill's region less that one
+        /// with the brush -- no pixel twice. False when that is not the case (fill, then stroke).</summary>
+        bool GdiStrokeAndFillRop(GdiPath p, GdiPen pen, int join)
+        {
+            if (_dc.Rop2 == 13 || Nop || pen == null || pen.Null) return false;
+            if (_dc.Brush == null || _dc.Brush.Style == 1) return false;
+            if (!GeometricLineAttrs(pen, out GdiLineAttrs la)) return false;
+            if (!ReferenceEquals(_dc.StylePen, _dc.Pen)) { _dc.StyleState = 0; _dc.StylePen = _dc.Pen; }
+            if (join >= 0) la.Join = join;
+            var f = new GdiPath();
+            foreach (GdiPath.Figure fig in p.Figures)
+            {
+                var c = new GdiPath.Figure { Closed = true };
+                c.X.AddRange(fig.X); c.Y.AddRange(fig.Y); c.Bezier.AddRange(fig.Bezier);
+                f.Figures.Add(c);
+            }
+            int[] box = { 0, 0, _cw, _ch };
+            GdiRgn inside = GdiRgn.FromSpans(GdiFill.Spans(f, _dc.PolyFill == 2, box));
+            GdiPath wide = GdiWiden.Widen(p.Flattened(), TargetWtoD(), la);
+            GdiRgn edge = wide == null ? GdiRgn.FromRects(new List<(int, int, int, int)>()) : GdiRgn.FromSpans(GdiFill.Spans(wide, true, box));
+            uint color = Rgb(pen.Color);
+            GdiPaint(SpansOf(edge), (x, y) => color);
+            Func<int, int, uint> pattern = PatternOf(true);
+            if (pattern != null) GdiPaint(SpansOf(GdiRgn.Combine(inside, edge, 4)), pattern);
+            return true;
+        }
+
+        static List<GdiSpan> SpansOf(GdiRgn rg)
+        {
+            var spans = new List<GdiSpan>();
+            foreach (var q in rg.Rects())
+                for (int y = q.T; y < q.B; y++) spans.Add(new GdiSpan(y, q.L, q.R));
+            spans.Sort((a, b) => a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X0.CompareTo(b.X0));
+            return spans;
         }
 
         void GdiFillPath(GdiPath p, bool winding)
@@ -759,9 +798,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>GreFillRgn @14018e9c8: the region in logical units, through the world-to-device
         /// transform when that is not the identity.</summary>
-        void GdiFillRgn(GpReader r, int cb)
+        void GdiFillRgn(GpReader r, int cb) => GdiFillRects(RgnRects(r, cb));
+
+        /// <summary>GreFillRgn on rectangles in logical units (a WMF region's too).</summary>
+        void GdiFillRects(List<(int L, int T, int R, int B)> rects)
         {
-            List<(int L, int T, int R, int B)> rects = RgnRects(r, cb);
             if (rects.Count == 0 || Nop) return;
             GdiXform m = TargetWtoD();
             GdiRgn rg = RectsThrough(rects, m, _wmfCanvas);
@@ -780,10 +821,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// miter limit, ENDCAP_ROUND, width 2 max(w, h), the transform's axis of the smaller side
         /// scaled by min / max), filled WINDING, cut down to the region (the region itself under an
         /// identity transform, else its outline filled ALTERNATE) and painted with the brush.</summary>
-        void GdiFrameRgn(GpReader r, int cb, int w, int h)
+        void GdiFrameRgn(GpReader r, int cb, int w, int h) => GdiFrameRects(RgnRects(r, cb), w, h);
+
+        void GdiFrameRects(List<(int L, int T, int R, int B)> rects, int w, int h)
         {
             w = Math.Abs(w); h = Math.Abs(h);
-            List<(int L, int T, int R, int B)> rects = RgnRects(r, cb);
             if (rects.Count == 0 || w < 1 || h < 1 || Nop) return;
             GdiRgn logical = GdiRgn.FromRects(rects);
             if (logical.Empty) return;
@@ -820,6 +862,21 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 for (int y = q.T; y < q.B; y++) spans.Add(new GdiSpan(y, q.L, q.R));
             spans.Sort((a, b) => a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X0.CompareTo(b.X0));
             GdiPaint(spans, pattern);
+        }
+
+        /// <summary>GreInvertRgn: the region (logical units) through the transform, each pixel
+        /// inverted (DSTINVERT) within the clip.</summary>
+        void GdiInvertRects(List<(int L, int T, int R, int B)> rects)
+        {
+            if (rects.Count == 0) return;
+            GdiRgn rg = RectsThrough(rects, TargetWtoD(), _wmfCanvas);
+            var spans = new List<GdiSpan>();
+            foreach (var q in rg.Rects())
+                for (int y = q.T; y < q.B; y++) spans.Add(new GdiSpan(y, q.L, q.R));
+            spans.Sort((a, b) => a.Y != b.Y ? a.Y.CompareTo(b.Y) : a.X0.CompareTo(b.X0));
+            int saved = _dc.Rop2;
+            _dc.Rop2 = 6;
+            try { GdiPaint(spans, (x, y) => 0); } finally { _dc.Rop2 = saved; }
         }
 
         // ---- the poly records ---------------------------------------------------------------------

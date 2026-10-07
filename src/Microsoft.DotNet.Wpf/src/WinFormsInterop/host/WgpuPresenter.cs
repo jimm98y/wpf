@@ -83,7 +83,15 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         // caption. It had the plain shaper while the composition sink had the kerning one, so the
         // measurements agreed with Windows and the pixels did not.
         _renderer = new WgpuSceneRenderer(ctx, LoadFont(), new KerningTextShaper());
+        _partial = new WgpuSceneRenderer.PartialTarget(_renderer, " wf");
     }
+
+    // Partial redraw: the frames are rendered into a texture that keeps the previous one, only where
+    // the scenes changed, and copied to the swap chain (see WgpuSceneRenderer.PartialTarget).
+    private readonly WgpuSceneRenderer.PartialTarget _partial;
+
+    /// <summary>The last scene present's damage, for frame traces: "full" or "N rects, P px".</summary>
+    internal string LastDamage => _partial.LastFull ? "full" : $"{_partial.LastRects} rects {_partial.LastPixels} px";
 
     // The face the presenter rasterizes control text with. It MUST stay in step with the one
     // System.Drawing's GPU-raster backend measures with (TextMetrics.LoadFont) — the theme centres
@@ -172,7 +180,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             st.status != WGPUSurfaceGetCurrentTextureStatus.Occluded) return false;
 
         IntPtr view = wgpuTextureCreateView(st.texture, IntPtr.Zero);
-        _renderer.RenderSceneToView(root, view, _format, DeviceWidth, DeviceHeight, ClearColor);
+        _partial.Render(root, view, _format, DeviceWidth, DeviceHeight, ClearColor, false);
         WGPUStatus presented = wgpuSurfacePresent(_surface);
         bool ok = presented == WGPUStatus.Success;
         // A window that shows the CLEAR COLOUR and nothing else looks exactly like a renderer that
@@ -346,6 +354,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
     public void Dispose()
     {
+        _partial?.Dispose();
         _renderer?.Dispose();
         _ctx?.Dispose();
     }

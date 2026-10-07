@@ -50,6 +50,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         bool Canvas => _canvas != null;
 
+        // The DIB of the blit in hand as GDI gets it (header + colours, bits), for HALFTONE.
+        byte[] _htInfo, _htBits;
+        int _htBitsAt;
+
         /// <summary>CreateDibSection32Bpp + Init32BppDibToTransparent: the DIB for the destination
         /// whose device corners are <paramref name="p"/>; false when it has no area.</summary>
         bool StartCanvas(PointF[] p)
@@ -119,14 +123,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     }
                 }
                 finally { c.UnlockBits(sd); pargb.UnlockBits(dd); }
-                PointF[] p = _canvasDest;
-                PointF ux = Unit(p[0], p[1]), uy = Unit(p[0], p[2]);
-                var q = new[]
+                // Draw32BppDib @180090f58: the destination rectangle (world units) grown by a device
+                // pixel's world size each side (GpGraphics::GetWorldPixelSize @1800dabf0: the device
+                // vector (1, 1) back through the inverse transform, each part's absolute value),
+                // through the world transform.
+                GpMat wd = _s.EmfWorldToDevice;
+                RectangleF dr = _s.EmfDest;
+                float det = wd.M11 * wd.M22 - wd.M12 * wd.M21;
+                float pxw = 1f, pxh = 1f;
+                if (det != 0f)
                 {
-                    new PointF(p[0].X - ux.X - uy.X, p[0].Y - ux.Y - uy.Y),
-                    new PointF(p[1].X + ux.X - uy.X, p[1].Y + ux.Y - uy.Y),
-                    new PointF(p[2].X - ux.X + uy.X, p[2].Y - ux.Y + uy.Y),
-                };
+                    pxw = MathF.Abs((wd.M22 - wd.M21) / det);
+                    pxh = MathF.Abs((wd.M11 - wd.M12) / det);
+                }
+                if (dr.Width < 0f) pxw = -pxw;
+                if (dr.Height < 0f) pxh = -pxh;
+                float gx = dr.X - pxw, gy = dr.Y - pxh, gw = dr.Width + pxw * 2f, gh = dr.Height + pxh * 2f;
                 Graphics t = _t;
                 t.ResetTransform();
                 t.PageUnit = GraphicsUnit.Pixel;
@@ -135,7 +147,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 InterpolationMode im = _interp == InterpolationMode.NearestNeighbor ? InterpolationMode.Bilinear : _interp;
                 InterpolationMode oldIm = t.InterpolationMode;
                 t.InterpolationMode = im;
-                t.DrawImage(pargb, q, new RectangleF(-1, -1, _cw + 2, _ch + 2), GraphicsUnit.Pixel);
+                // GpGraphics::DrawImage of the rectangle under the world transform
+                using (Matrix wm = wd.ToMatrix()) t.Transform = wm;
+                t.DrawImage(pargb, new RectangleF(gx, gy, gw, gh), new RectangleF(-1, -1, _cw + 2, _ch + 2), GraphicsUnit.Pixel);
+                t.ResetTransform();
                 t.InterpolationMode = oldIm;
             }
 
@@ -218,7 +233,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 // the background colour on its zeros -- or nothing there in TRANSPARENT mode.
                 byte[] bits = s_gdiHatch[b.Hatch];
                 uint fg = Rgb(b.Color), bg = transparentBk && _dc.BkMode == 1 ? NoPaint : Rgb(_dc.BkColor);
-                int hx = (int)MathF.Round(_base.Dx) + _dc.BrushOrg.X, hy = (int)MathF.Round(_base.Dy) + _dc.BrushOrg.Y;
+                int hx = (int)MathF.Round(_base.Dx) + _dc.BrushOrg.X + WmfPatternX, hy = (int)MathF.Round(_base.Dy) + _dc.BrushOrg.Y + WmfPatternY;
                 return (x, y) => (bits[(((y - hy) % 8) + 8) % 8] & (0x80 >> ((((x - hx) % 8) + 8) % 8))) != 0 ? fg : bg;
             }
             Bitmap pat;
@@ -239,9 +254,27 @@ namespace System.Drawing.WebGpuBackend.Gdip
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++) px[y * w + x] = Rgb(pat.GetPixel(x, y));
             if (own) pat.Dispose();
-            int ox = (int)MathF.Round(_base.Dx) + _dc.BrushOrg.X, oy = (int)MathF.Round(_base.Dy) + _dc.BrushOrg.Y;
+            int ox = (int)MathF.Round(_base.Dx) + _dc.BrushOrg.X + WmfPatternX, oy = (int)MathF.Round(_base.Dy) + _dc.BrushOrg.Y + WmfPatternY;
             return (x, y) => px[(((y - oy) % h + h) % h) * w + ((x - ox) % w + w) % w];
         }
+
+        // GpMetafile::EnumerateForPlayback @180092348 hands GpGraphics::EnumEmf a WMF whose world
+        // transform only translates and scales up-right to play on the destination's own HDC
+        // (EnumEmf's non-DIB branch): GDI's patterns and SelectClipRgn's device units are then the
+        // destination's pixels, the playback's lying at its viewport origin. Any other transform
+        // plays into the 32bpp DIB, whose pixel 0 is the origin.
+        bool WmfOnDestination
+        {
+            get
+            {
+                if (!_wmfCanvas) return false;
+                GpMat w = _s.EmfWorldToDevice;
+                return w.M12 == 0f && w.M21 == 0f && w.M11 >= 0f && w.M22 >= 0f;
+            }
+        }
+
+        int WmfPatternX => WmfOnDestination ? -(int)MathF.Floor(_canvasDest[0].X + 0.5f) : 0;
+        int WmfPatternY => WmfOnDestination ? -(int)MathF.Floor(_canvasDest[0].Y + 0.5f) : 0;
 
         /// <summary>A pattern pixel that is not painted (a hatch's background in TRANSPARENT mode).</summary>
         const uint NoPaint = 0xffffffff;
@@ -335,7 +368,27 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     if (sx1 < sx0) { (sx0, sx1) = (sx1 + 1, sx0 + 1); mx = !mx; }   // bOrderStupid on the source
                     if (sy1 < sy0) { (sy0, sy1) = (sy1 + 1, sy0 + 1); my = !my; }
                     if (sx1 == sx0 || sy1 == sy0) return true;
-                    source = StretchSource(spx, sw, sh, sx0, sy0, sx1 - sx0, sy1 - sy0, dw, dh, mx, my);
+                    // BLTRECORD::bStretch @14017cba0: a stretch through the BLTRECORD (a bitmap's, or a
+                    // DIB's under a ROP other than SRCCOPY) that is not HALFTONE, in GM_COMPATIBLE,
+                    // not mirrored, by at most one pixel each way is BLTRECORD::bBitBlt @14017c910:
+                    // copied, a missing last column / row dropped, an extra one the last again.
+                    bool viaBltRecord = _wmfCanvas && _dc.StretchMode != 4 && (!dib || rr != 0xcc0020);
+                    if (viaBltRecord && !mx && !my && Math.Abs(dw - (sx1 - sx0)) <= 1 && Math.Abs(dh - (sy1 - sy0)) <= 1)
+                    {
+                        int bx = sx0, by = sy0, bw = sx1 - sx0, bh = sy1 - sy0;
+                        uint[] q = spx; int qw = sw, qh = sh;
+                        source = (i, j) => q[Math.Clamp(by + Math.Min(j, bh - 1), 0, qh - 1) * qw + Math.Clamp(bx + Math.Min(i, bw - 1), 0, qw - 1)];
+                    }
+                    else if (_htInfo != null && _dc.StretchMode == 4
+                        && GdiHalftone.Stretch(_htInfo, 0, _htBits, _htBitsAt, (int)src.X, sh - (int)src.Y - (int)src.Height, (int)src.Width, (int)src.Height,
+                            mirrorX ? -dw : dw, mirrorY ? -dh : dh) is uint[] ht)
+                    {
+                        // HALFTONE (MfEnumState::OutputDIB's mode for a SRCCOPY GDI+ did not stretch
+                        // first): win32k's AA halftone engine (GdiHalftone.cs), from the DIB's own bits.
+                        int hw = dw;
+                        source = (i, j) => ht[j * hw + i];
+                    }
+                    else source = StretchSource(spx, sw, sh, sx0, sy0, sx1 - sx0, sy1 - sy0, dw, dh, mx, my, _dc.StretchMode);
                 }
             }
             bool[] clip = ClipMask();
@@ -371,8 +424,32 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// it unmirrored; the stretch is stretch::vInitStrDDA @1401bfda0's DDA, which gives source
         /// pixel k the destination pixels from floor((k D + (S - 1) / 2) / S), so destination pixel
         /// x reads k = floor(((x + 1) S - (S - 1) / 2 - 1) / D).</summary>
-        static Func<int, int, uint> StretchSource(uint[] px, int w, int h, int sx, int sy, int sW, int sH, int dW, int dH, bool mirrorX, bool mirrorY)
+        static Func<int, int, uint> StretchSource(uint[] px, int w, int h, int sx, int sy, int sW, int sH, int dW, int dH, bool mirrorX, bool mirrorY, int mode = 3)
         {
+            // BLACKONWHITE / WHITEONBLACK shrinking (stretch::pxrlStrRead01AND @1401be970,
+            // pxrlStrRead24AND @1401bf6b0, ...OR): the source pixels the DDA skips are ANDed (ORed)
+            // into the destination pixel the next one writes.
+            if ((mode == 1 || mode == 2) && (dW < sW || dH < sH))
+            {
+                var c0 = new int[dW]; var c1 = new int[dW]; var r0 = new int[dH]; var r1 = new int[dH];
+                int Kx(int i) => i < 0 ? -1 : (int)(((long)(i + 1) * sW - ((sW - 1) >> 1) - 1) / dW);
+                int Ky(int j) => j < 0 ? -1 : (int)(((long)(j + 1) * sH - ((sH - 1) >> 1) - 1) / dH);
+                for (int i = 0; i < dW; i++) { c1[i] = Kx(i); c0[i] = dW < sW ? Kx(i - 1) + 1 : c1[i]; if (c0[i] > c1[i]) c0[i] = c1[i]; }
+                for (int j = 0; j < dH; j++) { r1[j] = Ky(j); r0[j] = dH < sH ? Ky(j - 1) + 1 : r1[j]; if (r0[j] > r1[j]) r0[j] = r1[j]; }
+                bool and = mode == 1;
+                return (i, j) =>
+                {
+                    uint v = and ? 0xffffffu : 0;
+                    for (int ky = r0[j]; ky <= r1[j]; ky++)
+                        for (int kx = c0[i]; kx <= c1[i]; kx++)
+                        {
+                            int ux = mirrorX ? sW - 1 - kx : kx, uy = mirrorY ? sH - 1 - ky : ky;
+                            uint p = px[Math.Clamp(sy + uy, 0, h - 1) * w + Math.Clamp(sx + ux, 0, w - 1)];
+                            v = and ? v & p : v | p;
+                        }
+                    return v;
+                };
+            }
             var us = new int[dW];
             var vs = new int[dH];
             for (int i = 0; i < dW; i++)
