@@ -177,4 +177,13 @@ internal sealed class BrowserHost : IWinFormsHost
     }
 
     public void SaveFrame(string path) { /* no screen readback on the browser present path */ }
+
+    // The form closed itself. The page is this one window, so there is nothing to destroy but the
+    // GPU side; the canvas keeps the last frame. (IWinFormsHost gained Close in a3a63f9a2 and this
+    // head was never rebuilt, so it stopped compiling.)
+    public void Close()
+    {
+        _wgpu?.Dispose();
+        _wgpu = null;
+    }
 }
