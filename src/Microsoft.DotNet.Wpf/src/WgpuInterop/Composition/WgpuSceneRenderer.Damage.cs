@@ -1092,7 +1092,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (s_trace)
                     Log($"[damage]{_name} frame {_frames}: {(full ? "FULL (" + (_valid0 ? _tracker.FullReason : "target (re)created / background changed") + ")" : $"{_rects.Count} rects {LastPixels} px")} {Describe(damage)}");
 
-#if !WGPU_BROWSER
                 if (Verify)
                 {
                     _r.RenderFrameDamaged(root, _view, fmt, width, height, background, transparentTarget, damage, _tracker.Stamp);
@@ -1100,12 +1099,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     _r.BlitToView(view, viewFormat, _blitBg);
                     return;
                 }
-#endif
                 _r.RenderFrameDamaged(root, _view, fmt, width, height, background, transparentTarget, damage, _tracker.Stamp,
                     view, viewFormat, _blitBg);
             }
 
-#if !WGPU_BROWSER
+#if WGPU_BROWSER
+            private void VerifyAgainstFull(SceneVisual root, int width, int height, RgbaColor background, bool transparentTarget,
+                List<Scissor>? damage)
+            {
+                // The browser cannot map a buffer synchronously. Both textures are copied out NOW (the
+                // copies are queued ahead of the next frame's render, so they see this frame), and the
+                // comparison runs in JS when the maps resolve: two whole frames marshalled into managed
+                // arrays every frame would be ~10 MB of garbage per frame. The partial frame is what
+                // gets shown; after a miss the next frame is drawn in full so the miss is not carried
+                // forward.
+                if (_vTex == IntPtr.Zero) (_vTex, _vView) = _r.CreatePersistentTarget(width, height, _fmt);
+                _r.RenderFrameDamaged(root, _vView, _fmt, width, height, background, transparentTarget, null, 0);
+                long frame = _frames;
+                List<Scissor>? damageCopy = damage == null ? null : new List<Scissor>(damage);
+                _r.CompareTexturesAsync(_tex, _vTex, width, height).ContinueWith(t =>
+                {
+                    if (t.IsFaulted) { Log($"[damage-verify]{_name} readback failed: {t.Exception?.GetBaseException().Message}"); return; }
+                    if (!ReportSummary(t.Result, damageCopy, frame)) _valid = false;
+                }, System.Threading.Tasks.TaskScheduler.Default);
+            }
+
+            /// <summary>Reports wgpu-interop.js compareTextures' summary:
+            /// "diff minX minY maxX maxY maxDelta" then "|x,y,got RGBA,want RGBA" per sample.</summary>
+            private bool ReportSummary(string summary, List<Scissor>? damage, long frame)
+            {
+                string[] parts = summary.Split('|');
+                string[] head = parts[0].Split(' ');
+                int diff = int.Parse(head[0]);
+                var samples = new System.Text.StringBuilder();
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    string[] v = parts[i].Split(',');
+                    int x = int.Parse(v[0]), y = int.Parse(v[1]);
+                    samples.Append($" ({x},{y}) got {v[2]},{v[3]},{v[4]},{v[5]} want {v[6]},{v[7]},{v[8]},{v[9]}"
+                        + (InDamage(damage, x, y) ? " IN-DAMAGE" : " outside"));
+                }
+                return Report(diff, int.Parse(head[1]), int.Parse(head[2]), int.Parse(head[3]), int.Parse(head[4]),
+                    int.Parse(head[5]), samples, damage, frame);
+            }
+#else
             private void VerifyAgainstFull(SceneVisual root, int width, int height, RgbaColor background, bool transparentTarget,
                 List<Scissor>? damage)
             {
@@ -1113,7 +1150,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 _r.RenderFrameDamaged(root, _vView, _fmt, width, height, background, transparentTarget, null, 0);
                 byte[] got = _r.ReadTexture(_tex, width, height);
                 byte[] want = _r.ReadTexture(_vTex, width, height);
-                _verified++;
+                if (Compare(got, want, width, damage, _frames)) return;
+                // Show the full frame and carry on from it, so a miss is reported once rather than
+                // persisting into every later frame's comparison.
+                (_tex, _vTex) = (_vTex, _tex);
+                (_view, _vView) = (_vView, _view);
+                if (_blitBg != IntPtr.Zero) wgpuBindGroupRelease(_blitBg);
+                _blitBg = _r.CreateBlitBindGroup(_view, _blitFmt);
+            }
+#endif
+
+            /// <summary>Compares a partial frame with the full one and logs; true when identical.</summary>
+            private bool Compare(byte[] got, byte[] want, int width, List<Scissor>? damage, long frame)
+            {
                 int diff = 0, minX = int.MaxValue, minY = int.MaxValue, maxX = -1, maxY = -1, maxDelta = 0;
                 var samples = new System.Text.StringBuilder();
                 for (int i = 0; i < got.Length; i += 4)
@@ -1127,23 +1176,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         samples.Append($" ({x},{y}) got {got[i]},{got[i + 1]},{got[i + 2]},{got[i + 3]} want {want[i]},{want[i + 1]},{want[i + 2]},{want[i + 3]}"
                             + (InDamage(damage, x, y) ? " IN-DAMAGE" : " outside"));
                 }
+                return Report(diff, minX, minY, maxX, maxY, maxDelta, samples, damage, frame);
+            }
+
+            private bool Report(int diff, int minX, int minY, int maxX, int maxY, int maxDelta, System.Text.StringBuilder samples,
+                List<Scissor>? damage, long frame)
+            {
+                _verified++;
                 if (diff == 0)
                 {
                     if (_verified % 60 == 1)
                         Log($"[damage-verify]{_name} {_verified} frames verified, {_mismatched} mismatched; last: {(damage == null ? "FULL" : $"{damage.Count} rects")}");
-                    return;
+                    return true;
                 }
                 _mismatched++;
-                Log($"[damage-verify]{_name} MISMATCH frame {_frames}: {diff} px differ in ({minX},{minY})-({maxX},{maxY}) max delta {maxDelta}; "
+                Log($"[damage-verify]{_name} MISMATCH frame {frame}: {diff} px differ in ({minX},{minY})-({maxX},{maxY}) max delta {maxDelta}; "
                     + $"damage {Describe(damage)};{samples}");
-                // Show the full frame and carry on from it, so a miss is reported once rather than
-                // persisting into every later frame's comparison.
-                (_tex, _vTex) = (_vTex, _tex);
-                (_view, _vView) = (_vView, _view);
-                if (_blitBg != IntPtr.Zero) wgpuBindGroupRelease(_blitBg);
-                _blitBg = _r.CreateBlitBindGroup(_view, _blitFmt);
+                return false;
             }
-#endif
 
             private static bool InDamage(List<Scissor>? damage, int x, int y)
             {

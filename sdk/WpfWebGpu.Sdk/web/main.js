@@ -45,6 +45,18 @@ try {
         .withEnvironmentVariable('WPF_WEBGPU_SINK_LOG', '/sink.log');
     if (params.has('perf')) builder = builder.withEnvironmentVariable('WPF_WEBGPU_PERF_CONSOLE', '1');
     if (params.has('firstchance')) builder = builder.withEnvironmentVariable('WPF_WEBGPU_LOG_FIRST_CHANCE', '1');
+    // A page has no environment block, so the renderer's knobs come from the URL instead:
+    //   ?damage=0        every frame in full (WGPU_DAMAGE=0) -- the A/B for partial redraw
+    //   ?damageverify    render each frame partial AND full and log every differing pixel
+    //   ?damagetrace     log each frame's damage rectangles
+    //   ?env=NAME=V,...  any other variable
+    if (params.get('damage') === '0') builder = builder.withEnvironmentVariable('WGPU_DAMAGE', '0');
+    if (params.has('damageverify')) builder = builder.withEnvironmentVariable('WGPU_DAMAGE_VERIFY', '1');
+    if (params.has('damagetrace')) builder = builder.withEnvironmentVariable('WGPU_DAMAGE_TRACE', '1');
+    for (const kv of (params.get('env') || '').split(',')) {
+        const eq = kv.indexOf('=');
+        if (eq > 0) builder = builder.withEnvironmentVariable(kv.slice(0, eq), kv.slice(eq + 1));
+    }
     if (args) builder = builder.withApplicationArguments(...args.split(','));
     const runtime = await builder.create();
     const { setModuleImports, runMain, Module } = runtime;
