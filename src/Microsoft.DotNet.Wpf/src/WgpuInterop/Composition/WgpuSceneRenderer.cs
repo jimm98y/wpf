@@ -1595,6 +1595,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 long stableKey = LayerCacheKey(v, world, region, shiftReusable: true, fullTarget: fullTarget);
                 long key = stableKey;
                 bool cacheHit = _layerCache.TryGetValue(key, out CachedLayer? cl);
+                if (!cacheHit && !fullTarget)
+                {
+                    // A phase within float noise of a 1/256 boundary: the bake may sit in the
+                    // neighbouring bucket (see PhaseQ).
+                    int nx = PhaseNudge(world.M31 - region.X), ny = PhaseNudge(world.M32 - region.Y);
+                    if (nx != 0 && !cacheHit)
+                        cacheHit = _layerCache.TryGetValue(key = LayerCacheKey(v, world, region, true, false, nx, 0), out cl);
+                    if (ny != 0 && !cacheHit)
+                        cacheHit = _layerCache.TryGetValue(key = LayerCacheKey(v, world, region, true, false, 0, ny), out cl);
+                    if (nx != 0 && ny != 0 && !cacheHit)
+                        cacheHit = _layerCache.TryGetValue(key = LayerCacheKey(v, world, region, true, false, nx, ny), out cl);
+                    if (!cacheHit) key = stableKey;
+                }
                 if (!cacheHit && !shiftReusable)
                 {
                     key = LayerCacheKey(v, world, region, shiftReusable: false, fullTarget: fullTarget);
@@ -2167,7 +2180,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private void HF(float f) => HV(BitConverter.SingleToInt32Bits(f));
         private void HR(Rect r) { HF(r.X); HF(r.Y); HF(r.Width); HF(r.Height); }
 
-        private long LayerCacheKey(SceneVisual v, Matrix3x2 world, Scissor region, bool shiftReusable = true, bool fullTarget = false)
+        // A layer's sub-pixel phase within its region, in 1/256ths of a pixel (the rasterizer's own
+        // vertex precision), for the cache key. The phase is a difference of two device coordinates
+        // held in float, so the same card one whole-pixel scroll step later carries a phase a few
+        // ulps off the last one -- 1e-4 px at a 2000 px offset. Hashed as raw bits, that noise missed
+        // every scrolled card on every frame (the gallery: hits=0 miss=25 under a wheel scroll),
+        // re-baking 25 shadowed layers for pictures that had not changed. Rounded to the 1/256 grid
+        // the noise vanishes; a phase sitting within noise of a grid boundary is looked up on both
+        // sides of it (PhaseNudge).
+        private const float PhaseGrid = 256f;
+        private static long PhaseQ(float phase, int nudge) => (long)MathF.Round(phase * PhaseGrid) + nudge;
+
+        /// <summary>The other 1/256 bucket a phase this close to a boundary may have landed in on the
+        /// frame it was baked, or 0.</summary>
+        private static int PhaseNudge(float phase)
+        {
+            float d = phase * PhaseGrid - MathF.Round(phase * PhaseGrid);
+            return d > 0.4f ? 1 : d < -0.4f ? -1 : 0;
+        }
+
+        private long LayerCacheKey(SceneVisual v, Matrix3x2 world, Scissor region, bool shiftReusable = true, bool fullTarget = false,
+            int nudgeX = 0, int nudgeY = 0)
         {
             _hash = unchecked((long)1469598103934665603UL);
             // Key on region SIZE, not origin, and on translation RELATIVE to the region origin. A cached
@@ -2195,7 +2228,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // forces a re-render only when the layer genuinely moves within its region. Full-target layers
             // are excluded: their region never moves, so hashing it would defeat shift-reuse, and they are
             // already corrected at composite time via OrigTX/OrigTY.
-            else if (!fullTarget) { HF(world.M31 - region.X); HF(world.M32 - region.Y); }
+            else if (!fullTarget) { HV(PhaseQ(world.M31 - region.X, nudgeX)); HV(PhaseQ(world.M32 - region.Y, nudgeY)); }
             float bx = world.M31, by = world.M32;
             // Clip-geometry / opacity-mask take precedence over effects (matches RenderLayerToCache).
             if (v.ClipGeometry is { } cg) { HV(103); HashGeo(cg); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
@@ -2223,15 +2256,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // ~20fps scroll stall). The cached texture is re-composited at the current region origin; the only
         // approximation is a <=1px whole-pixel snap of the cached content, standard for a scroll cache.
         // Scale/rotation/skew (M11..M22) are hashed exactly, so rotating/scaling cards re-render.
+        //
+        // Below the top node it hashes each node's LOCAL transform, which says the same thing (a
+        // node's world relative to the top is the product of the locals in between, under the top's
+        // linear part, hashed once) without the float noise: (world - topWorld) is a difference of
+        // two absolute device coordinates, a few ulps different at every scroll offset, and as raw
+        // bits that alone missed every card of a scrolled gallery. bx/by are kept for callers.
         private void HashVisual(SceneVisual n, Matrix3x2 w, float bx, float by)
         {
-            HF(w.M11); HF(w.M12); HF(w.M21); HF(w.M22); HF(w.M31 - bx); HF(w.M32 - by);
+            HF(w.M11); HF(w.M12); HF(w.M21); HF(w.M22); HF(0f); HF(0f);
+            HashVisualBody(n);
+        }
+
+        private void HashVisualBody(SceneVisual n)
+        {
             HV(BitConverter.DoubleToInt64Bits(n.Opacity));
             if (n.Clip is { } c) HR(c); else HV(7);
             if (n.OpacityMask is { } nm) HashBrush(nm);
             if (n.ClipGeometry is { } ncg) HashGeo(ncg);
             foreach (DrawingPrimitive p0 in n.Content) foreach (DrawingPrimitive p in WpfTextRunDraw.Expand(p0)) HashPrimitive(p);
-            foreach (SceneVisual ch in n.Children) HashVisual(ch, ch.LocalToParent * w, bx, by);
+            foreach (SceneVisual ch in n.Children)
+            {
+                Matrix3x2 l = ch.LocalToParent;
+                HF(l.M11); HF(l.M12); HF(l.M21); HF(l.M22); HF(l.M31); HF(l.M32);
+                HashVisualBody(ch);
+            }
         }
 
         // Everything a primitive renders FROM has to be in here. Anything that is not is invisible to
