@@ -131,7 +131,18 @@ namespace System.Drawing
 				mf_rec.DrawImage (image, dst, src, unit, ia);
 				return true;
 			}
-			GpMetafilePlayer.Play (this, (Metafile) image, Parallelogram (dst), src, unit, ia);
+			// GpGraphics::DrawImage(rect, rect) @18000f418: the source onto the destination as a
+			// scale and translation (identity when the source has no width or height), the source
+			// normalised to run forwards.
+			var m = GpMat.Identity;
+			float sr = src.Width + src.X, sb = src.Height + src.Y;
+			if (src.X != sr && src.Y != sb) {
+				float a = (dst.Width + dst.X - dst.X) / (sr - src.X), d = (dst.Height + dst.Y - dst.Y) / (sb - src.Y);
+				m = new GpMat (a, 0f, 0f, d, dst.Width + dst.X - a * sr, dst.Height + dst.Y - d * sb);
+			}
+			if (src.Width < 0f) { src.X = sr; src.Width = -src.Width; }
+			if (src.Height < 0f) { src.Y = sb; src.Height = -src.Height; }
+			GpMetafilePlayer.PlayImage (this, (Metafile) image, m, src, unit, ia);
 			return true;
 		}
 
@@ -151,7 +162,12 @@ namespace System.Drawing
 				mf_rec.DrawImagePoints (image, (PointF []) pts.Clone (), s, unit, ia);
 				return true;
 			}
-			GpMetafilePlayer.Play (this, (Metafile) image, (PointF []) pts.Clone (), s, unit, ia);
+			// GpGraphics::DrawImage(points, rect) @180076c40: InferAffineMatrix of the source onto
+			// the points (its status not looked at), UndoSourceFlip, then DrawImage(rect, matrix).
+			GpMat.InferAffine (pts, s, out GpMat pm);
+			if (s.Width < 0f) { s.X += s.Width; s.Width = -s.Width; }
+			if (s.Height < 0f) { s.Y += s.Height; s.Height = -s.Height; }
+			GpMetafilePlayer.PlayImage (this, (Metafile) image, pm, s, unit, ia);
 			return true;
 		}
 
