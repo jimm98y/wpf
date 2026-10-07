@@ -84,6 +84,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         public float DpiX, DpiY;
         public GpMatrix WorldToDevice;
+        /// <summary>A larger device this surface is a piece of, which gradients are walked in
+        /// (DriverPrint's bands: GDI+ evaluates the gradient at the band's absolute coordinates, its
+        /// matrix the world to that device): that matrix and where this surface's pixel (0, 0) lies
+        /// on it. Null for a surface that is its own device.</summary>
+        public (GpMatrix WorldToDevice, int X, int Y)? SpanDevice;
         DpRegion _visibleClip;
 
         public GpGraphics (GdipFrame frame)

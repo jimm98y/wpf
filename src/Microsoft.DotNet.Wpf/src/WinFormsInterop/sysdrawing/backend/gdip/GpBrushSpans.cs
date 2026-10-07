@@ -76,12 +76,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
     internal sealed class LineGradientSpan : GpSpan
     {
         readonly int _dx, _dy, _origin, _mask;
+        readonly int _ox, _oy;     // the surface's pixel (0, 0) on the device the walk runs in
         readonly ulong[] _start, _end;
 
         public bool Valid { get; }
 
-        public LineGradientSpan (GpScan scan, LinearGradientBrush lg, in GpMatrix worldToDevice) : base (scan)
+        public LineGradientSpan (GpScan scan, LinearGradientBrush lg, in GpMatrix worldToDevice, int originX = 0, int originY = 0) : base (scan)
         {
+            _ox = originX; _oy = originY;
             GpMatrix m = GpMatrix.Multiply (lg.Xform, worldToDevice);
             RectangleF rect = lg.Rectangle;
             bool preset = lg.PresetSet;
@@ -249,7 +251,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         protected override void Fill (uint[] buf, int y, int x, int n)
         {
-            int u0 = unchecked (_dy * y + _dx * x + _origin);
+            int u0 = unchecked (_dy * (y + _oy) + _dx * (x + _ox) + _origin);
             for (int i = 0; i < n; i++) {
                 int u = unchecked (u0 + _dx * i);
                 int idx = (u >> 16) & _mask;
