@@ -1066,6 +1066,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 return true;
             }
 
+            /// <summary>WGPU_DAMAGE_RECT_COST=<pixels>: also merge damage rectangles while the cheapest
+            /// merge adds fewer pixels than this (each rectangle re-issues the draws it touches). Off
+            /// by default: measured on the gallery's scroll, any value that merged at all chained
+            /// merges into boxes over 70% of the target, i.e. full frames, and was no faster.</summary>
+            private static readonly long s_rectCost =
+                long.TryParse(Environment.GetEnvironmentVariable("WGPU_DAMAGE_RECT_COST"), out long rc) ? rc : 0;
+
             /// <summary>Clamp to the target, drop the empty, and reduce to few DISJOINT rectangles
             /// (the main pass draws each item once per rectangle, so an overlap would blend twice).
             /// <para>Two rectangles are merged into their bounding box only when that costs few pixels
@@ -1097,7 +1104,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 {
                     MergeCheap(outRects, Near);
                     MakeDisjoint(outRects);
-                    if (outRects.Count <= MaxRects) return;
+                    if (outRects.Count <= 1) return;
                     if (round == 64)
                     {
                         // Cutting keeps making pieces faster than merging removes them.
@@ -1107,7 +1114,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         outRects.Add(all);
                         return;
                     }
-                    // Merge the pair whose bounding box adds the least area, then cut again.
+                    // Merge the pair whose bounding box adds the least area, then cut again -- while
+                    // there are too many, or while that costs fewer pixels than a rectangle does: every
+                    // draw the rectangle touches is issued again for it (RectCost).
                     long best = long.MaxValue; int bi = 0, bj = 1;
                     for (int i = 0; i < outRects.Count; i++)
                         for (int j = i + 1; j < outRects.Count; j++)
@@ -1115,6 +1124,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             long grow = Area(Union(outRects[i], outRects[j])) - Area(outRects[i]) - Area(outRects[j]);
                             if (grow < best) { best = grow; bi = i; bj = j; }
                         }
+                    if (outRects.Count <= MaxRects && best > s_rectCost) return;
                     outRects[bi] = Union(outRects[bi], outRects[bj]);
                     outRects.RemoveAt(bj);
                 }
@@ -1245,6 +1255,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     FlushPendingTexUploads(encoder);
                     if (partial && shift is { } sh && scratchView != IntPtr.Zero) RecordShift(encoder, targetView, scratchView, format, sh);
                     foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
+                    _damagePassW = width; _damagePassH = height;
                     ExecutePass(encoder, new LayerPass(targetView, false, background, mainData, format)
                         { LoadPreserve = partial, Damage = damage }, atlasView);
                     PerfExecAlloc += GC.GetAllocatedBytesForCurrentThread() - ca1;
@@ -1272,6 +1283,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 FlushFrameReleases();
             }
             _idScene = root; _idW = width; _idH = height; _idValid = false;
+        }
+
+        // The main pass's target size, for VertexBox (its LayerPass carries no TexW/TexH).
+        private int _damagePassW, _damagePassH;
+
+        /// <summary>The pixels a run of indexed triangles can cover, in the pass's own pixel
+        /// coordinates: their vertices' box, a pixel wider each way. Rasterization writes only
+        /// inside the triangles, so a damage rectangle outside this box gets nothing from the run.</summary>
+        private static void VertexBox(DrawData data, uint firstIndex, uint indexCount, int originX, int originY, int w, int h,
+            out int x0, out int y0, out int x1, out int y1)
+        {
+            List<uint> idx = data.Indices;
+            List<float> v = data.Verts;
+            float nx0 = float.MaxValue, ny0 = float.MaxValue, nx1 = float.MinValue, ny1 = float.MinValue;
+            uint end = Math.Min(firstIndex + indexCount, (uint)idx.Count);
+            for (uint k = firstIndex; k < end; k++)
+            {
+                int at = (int)idx[(int)k] * FloatsPerVertex;
+                if (at + 1 >= v.Count) continue;
+                float px = v[at], py = v[at + 1];
+                if (px < nx0) nx0 = px; if (px > nx1) nx1 = px;
+                if (py < ny0) ny0 = py; if (py > ny1) ny1 = py;
+            }
+            if (nx0 > nx1 || w <= 0 || h <= 0) { x0 = y0 = int.MinValue / 4; x1 = y1 = int.MaxValue / 4; return; }
+            // NDC to pixels: x right, y DOWN.
+            x0 = (int)MathF.Floor((nx0 + 1f) * 0.5f * w) - 1;
+            x1 = (int)MathF.Ceiling((nx1 + 1f) * 0.5f * w) + 1;
+            y0 = (int)MathF.Floor((1f - ny1) * 0.5f * h) - 1;
+            y1 = (int)MathF.Ceiling((1f - ny0) * 0.5f * h) + 1;
         }
 
         /// <summary>The partial frame's clear: a SourceCopy quad of the background over each damage
@@ -1609,15 +1649,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             /// <summary>Per-thread totals since the last reset, for the PERF logs: frames, how many of them were
             /// full or shifted, and the pixels drawn against the pixels a full frame would have drawn.</summary>
-            [ThreadStatic] internal static long PerfPresents, PerfFullPresents, PerfShiftPresents, PerfPresentPixels, PerfTargetPixels;
+            [ThreadStatic] internal static long PerfPresents, PerfFullPresents, PerfShiftPresents, PerfPresentPixels, PerfTargetPixels, PerfTrackTicks,
+                PerfRenderTicks, PerfSplitCollect, PerfSplitEncode, PerfSplitSubmit, PerfSplitDraws;
 
             internal static string PerfSummary()
             {
                 if (PerfPresents == 0) return "presents=0";
+                long n = PerfPresents;
+                string Ms(long t) => (t * 1000.0 / System.Diagnostics.Stopwatch.Frequency / n).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
                 string s = $"presents={PerfPresents} full={PerfFullPresents} shifted={PerfShiftPresents} " +
                     $"px/present={PerfPresentPixels / PerfPresents} ({PerfPresentPixels * 100 / Math.Max(1, PerfTargetPixels)}% of the target) " +
-                    $"shifted px/present={PerfShiftedPixels / PerfPresents}";
-                PerfPresents = PerfFullPresents = PerfShiftPresents = PerfPresentPixels = PerfTargetPixels = 0;
+                    $"shifted px/present={PerfShiftedPixels / PerfPresents} track={Ms(PerfTrackTicks)}ms render={Ms(PerfRenderTicks)}ms (collect={Ms(PerfSplitCollect)} encode={Ms(PerfSplitEncode)} submit={Ms(PerfSplitSubmit)}) drawcalls={PerfSplitDraws / PerfPresents}";
+                PerfPresents = PerfFullPresents = PerfShiftPresents = PerfPresentPixels = PerfTargetPixels = PerfTrackTicks = 0;
+                PerfRenderTicks = PerfSplitCollect = PerfSplitEncode = PerfSplitSubmit = PerfSplitDraws = 0;
                 PerfShiftedPixels = 0;
                 return s;
             }
@@ -1671,7 +1715,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 bool _valid0 = _valid;
                 if (!_valid) _tracker.Reset();
 
+                long tc0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 bool full = _tracker.Compute(root, width, height, _rects);
+                PerfTrackTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tc0;
                 _valid = true;
                 List<Scissor>? damage = full ? null : _rects;
                 ScrollShift? shift = full ? null : _tracker.Shift;
@@ -1703,8 +1749,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     return;
                 }
 #endif
+                long r0 = System.Diagnostics.Stopwatch.GetTimestamp(), c0 = PerfCollectTicks, e0 = PerfEncodeTicks, su0 = PerfSubmitTicks;
+                int d0 = PerfDrawCalls;
                 _r.RenderFrameDamaged(root, _view, fmt, width, height, background, transparentTarget, damage, _tracker.Stamp,
                     view, viewFormat, _blitBg, shift, _sView);
+                PerfRenderTicks += System.Diagnostics.Stopwatch.GetTimestamp() - r0;
+                PerfSplitCollect += PerfCollectTicks - c0; PerfSplitEncode += PerfEncodeTicks - e0; PerfSplitSubmit += PerfSubmitTicks - su0;
+                PerfSplitDraws += PerfDrawCalls - d0;
             }
 
 #if !WGPU_BROWSER

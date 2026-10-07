@@ -6566,10 +6566,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // Partial redraw: the same draw once per damage rectangle it reaches, scissored to
                     // it. The rectangles are disjoint, so no pixel is blended twice.
                     PerfDrawItems += merged;
+                    // Only the rectangles the batch's VERTICES reach, not every one its scissor does:
+                    // a batch under a scroll viewer's clip spans the viewport, and drawing it once per
+                    // damage rectangle there multiplied a scrolled frame's draw calls by five.
+                    VertexBox(data, firstIndex, indexCount, originX, originY, texW > 0 ? texW : _damagePassW,
+                        texH > 0 ? texH : _damagePassH, out int vx0, out int vy0, out int vx1, out int vy1);
+                    int ex0 = Math.Max(sx, vx0), ey0 = Math.Max(sy, vy0);
+                    int ex1 = Math.Min(sx + sw, vx1), ey1 = Math.Min(sy + sh, vy1);
                     foreach (Scissor dr in damage)
                     {
-                        int qx = Math.Max(sx, dr.X), qy = Math.Max(sy, dr.Y);
-                        int qr = Math.Min(sx + sw, dr.X + dr.W), qb = Math.Min(sy + sh, dr.Y + dr.H);
+                        int qx = Math.Max(ex0, dr.X), qy = Math.Max(ey0, dr.Y);
+                        int qr = Math.Min(ex1, dr.X + dr.W), qb = Math.Min(ey1, dr.Y + dr.H);
                         if (qr <= qx || qb <= qy) continue;
                         if (!haveScissor || qx != bx || qy != by || qr - qx != bw || qb - qy != bh)
                         {
