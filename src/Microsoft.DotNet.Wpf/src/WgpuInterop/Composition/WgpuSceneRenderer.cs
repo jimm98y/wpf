@@ -2148,6 +2148,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // (e.g. a nested blur at absolute x~800 vs a 224-wide card region -> nothing drawn).
             var region = Intersect(new Scissor(cl.Rx, cl.Ry, cl.Rw, cl.Rh),
                                    new Scissor((int)_devOX, (int)_devOY, width, height));
+            // ...and to the live clip. A blur or a drop shadow is the layer's own content, and the
+            // visual's ancestors clip it like any other: a card's shadow in a scroll viewer used to be
+            // composited past the viewport's edge, over whatever lay beyond it.
+            region = Intersect(region, clip);
             if (cl.Mode == 3 || cl.Mode == 4)
             {
                 // Geometry-clip / opacity-mask: modulate the (region-sized) layer by the cached R8 mask.
