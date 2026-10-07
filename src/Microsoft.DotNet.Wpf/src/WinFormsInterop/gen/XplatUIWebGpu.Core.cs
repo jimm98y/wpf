@@ -16,11 +16,20 @@ namespace System.Windows.Forms
 	internal partial class XplatUIWebGpu : XplatUIDriver
 	{
 		private static XplatUIWebGpu instance;
+		// Two WPF UI threads can host WinForms at once (WindowsFormsHost ticks per Dispatcher), and both
+		// reach here first thing: an unguarded check-then-create made two drivers, each with half the
+		// windows.
 		public static XplatUIWebGpu GetInstance()
 		{
-			if (instance == null) instance = new XplatUIWebGpu();
-			return instance;
+			XplatUIWebGpu i = System.Threading.Volatile.Read(ref instance);
+			if (i != null) return i;
+			lock (s_instanceLock)
+			{
+				if (instance == null) System.Threading.Volatile.Write(ref instance, new XplatUIWebGpu());
+				return instance;
+			}
 		}
+		private static readonly object s_instanceLock = new object();
 		private XplatUIWebGpu() { }
 
 		// Cursors belong to the OS compositor on every head this driver serves (Wayland sets them by
