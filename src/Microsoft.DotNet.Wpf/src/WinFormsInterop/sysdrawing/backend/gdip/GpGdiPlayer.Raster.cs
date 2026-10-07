@@ -82,6 +82,46 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return true;
         }
 
+        bool _direct;                    // the DIB stands for the target's own HDC (device space)
+
+        /// <summary>EnumEmf playing on the target's HDC: a DIB over the target's device space from
+        /// its origin to past the destination's corners, which GDI draws into as it would into the
+        /// target (the DC's clip is the playback's), copied one to one at the end.</summary>
+        bool StartDirectCanvas(PointF[] p)
+        {
+            float mx = Math.Max(Math.Max(p[0].X, p[1].X), Math.Max(p[2].X, p[1].X + p[2].X - p[0].X));
+            float my = Math.Max(Math.Max(p[0].Y, p[1].Y), Math.Max(p[2].Y, p[1].Y + p[2].Y - p[0].Y));
+            if (!(mx > 0f) || !(my > 0f) || mx > 0x4000 || my > 0x4000) return false;
+            int w = (int)MathF.Ceiling(mx) + 2, h = (int)MathF.Ceiling(my) + 2;
+            _interp = _t.InterpolationMode;
+            _canvas = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            BitmapData bd = _canvas.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                var row = new int[w];
+                for (int i = 0; i < w; i++) row[i] = unchecked((int)Transparent);
+                for (int y = 0; y < h; y++) System.Runtime.InteropServices.Marshal.Copy(row, 0, bd.Scan0 + y * bd.Stride, w);
+            }
+            finally { _canvas.UnlockBits(bd); }
+            _cw = w; _ch = h;
+            _canvasDest = p;
+            _target = _t;
+            _t = Graphics.FromImage(_canvas);
+            _direct = true;
+            return true;
+        }
+
+        /// <summary>Gives the DIB up before anything was drawn (nothing to play).</summary>
+        void AbortCanvas()
+        {
+            if (_canvas == null) return;
+            _t.Dispose();
+            _t = _target;
+            _canvas.Dispose();
+            _canvas = null;
+            _direct = false;
+        }
+
         static void AdjustForMaximumSize(ref int big, ref int small)
         {
             int b = big;
@@ -123,6 +163,28 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     }
                 }
                 finally { c.UnlockBits(sd); pargb.UnlockBits(dd); }
+                if (_direct)
+                {
+                    // GDI drew on the target itself: what it touched, one to one, inside the clip
+                    // SetupClippingForMetafilePlayback gave the DC.
+                    _direct = false;
+                    Graphics g = _t;
+                    g.ResetTransform();
+                    g.PageUnit = GraphicsUnit.Pixel;
+                    g.PageScale = 1f;
+                    if (_s.BaseClip == null) g.ResetClip(); else g.Clip = _s.BaseClip;
+                    InterpolationMode oim = g.InterpolationMode;
+                    PixelOffsetMode opm = g.PixelOffsetMode;
+                    CompositingMode ocm = g.CompositingMode;
+                    g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.CompositingMode = CompositingMode.SourceOver;
+                    g.DrawImage(pargb, new Rectangle(0, 0, _cw, _ch), 0, 0, _cw, _ch, GraphicsUnit.Pixel);
+                    g.InterpolationMode = oim;
+                    g.PixelOffsetMode = opm;
+                    g.CompositingMode = ocm;
+                    return;
+                }
                 // Draw32BppDib @180090f58: the destination rectangle (world units) grown by a device
                 // pixel's world size each side (GpGraphics::GetWorldPixelSize @1800dabf0: the device
                 // vector (1, 1) back through the inverse transform, each part's absolute value),

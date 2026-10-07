@@ -848,7 +848,6 @@ namespace Wpf.WinFormsInterop.Tests
             "text/2/nearest-up",
             "text/2/transparent",
             "text/2/turned",
-            "emf/pixels/turned",
         };
 
         [Fact]

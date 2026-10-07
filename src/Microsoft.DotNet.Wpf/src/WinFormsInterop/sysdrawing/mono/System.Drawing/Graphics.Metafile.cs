@@ -55,14 +55,20 @@ namespace System.Drawing
 
 		/// <summary>The image's bounds and their unit (a bitmap's pixels; a metafile's frame, in
 		/// pixels at its dpi) and its resolution.</summary>
-		static RectangleF ImageBounds (Image image, out GraphicsUnit unit, out float dpiX, out float dpiY)
+		static RectangleF ImageBounds (Image image, out GraphicsUnit unit, out float dpiX, out float dpiY, bool real = false)
 		{
 			if (image is Metafile mf) {
+				// GpImage vtable +0xa8, GpMetafile::GetBounds(RectF*) @1801a8710: the header's
+				// whole-pixel box (+0x38 .. +0x44) -- the source GdipDrawImage @180059c50,
+				// GdipDrawImagePoints @18005a0c0 and GdipEnumerateMetafileDest* take. Only
+				// GdipDrawImageRect @18005a690 (and GdipGetImageBounds) ask a metafile for its
+				// real, frame bounds instead (+0x178).
 				unit = GraphicsUnit.Pixel;
-				RectangleF b = mf.MetafileBounds (ref unit);
+				RectangleF rb = mf.MetafileBounds (ref unit);
+				GpMetafileHeader h = mf.header;
 				dpiX = mf.MetafileDpiX;
 				dpiY = mf.MetafileDpiY;
-				return b;
+				return real ? rb : new RectangleF (h.X, h.Y, h.Width, h.Height);
 			}
 			unit = GraphicsUnit.Pixel;
 			dpiX = image.HorizontalResolution;
@@ -108,7 +114,7 @@ namespace System.Drawing
 		bool MetaDrawImage (Image image, RectangleF dst)
 		{
 			if (image == null || (mf_rec == null && !(image is Metafile))) return false;
-			RectangleF src = ImageBounds (image, out GraphicsUnit unit, out _, out _);
+			RectangleF src = ImageBounds (image, out GraphicsUnit unit, out _, out _, true);
 			return MetaDrawImage (image, dst, src, unit, null);
 		}
 

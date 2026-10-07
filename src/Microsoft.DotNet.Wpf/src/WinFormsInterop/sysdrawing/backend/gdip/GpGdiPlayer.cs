@@ -185,14 +185,44 @@ namespace System.Drawing.WebGpuBackend.Gdip
             // given); the destination here is the unit square of the playback's world.
             RectangleF dst = _s.EmfDest;
             GpMat toDevice = _s.EmfWorldToDevice;
+            // GpMetafile::EnumerateForPlayback @180092348 plays an EMF whose playback transform
+            // turns or shears (+0x14b0 complexity past scale) on the target's own HDC: EnumEmf
+            // @180091520 with neither its viewport nor its DIB branch puts the DC in GM_ADVANCED,
+            // sets the playback's world-to-device matrix and hands EnumerateEmfRecords the
+            // destination rounded (floor(v + 0.5) of left, top, right, bottom), which it shortens
+            // by one. The DIB here is the target's device space from its origin.
+            if ((toDevice.Complexity & ~3) != 0 && StartDirectCanvas(DestCorners(dst)))
+            {
+                int l = (int)MathF.Floor(dst.X + 0.5f), t = (int)MathF.Floor(dst.Y + 0.5f);
+                int r = (int)MathF.Floor(dst.Width + dst.X + 0.5f), b = (int)MathF.Floor(dst.Height + dst.Y + 0.5f);
+                if (b <= t || r <= l) { AbortCanvas(); _base = toDevice; return; }
+                dst = new RectangleF(l, t, r - 1 - l, b - 1 - t);
+                GdiBeginEmf(h, l, t, r - 1, b - 1, toDevice);
+            }
+            // One that only scales, neither way mirrored, plays there too (EnumEmf's viewport
+            // branch): the destination's corners through the matrix, each RasterizerCeiling
+            // @18000c0e8 ((floor(16 v + 0.5) + 15) >> 4), are the device rectangle PlayEnhMetaFile
+            // maps the frame onto (less one), the DC's world transform the identity.
+            else if ((toDevice.Complexity & ~3) == 0 && !(toDevice.M11 < 0f) && !(toDevice.M22 < 0f)
+                && StartDirectCanvas(DestCorners(dst)))
+            {
+                var c = new[] { new PointF(dst.X, dst.Y), new PointF(dst.Width + dst.X, dst.Height + dst.Y) };
+                toDevice.Transform(c);
+                static int Ceil(float v) => ((int)MathF.Floor(v * 16f + 0.5f) + 15) >> 4;
+                int l = Ceil(c[0].X), t = Ceil(c[0].Y), r = Ceil(c[1].X), b = Ceil(c[1].Y);
+                if (!(l < r && t < b)) { AbortCanvas(); _base = toDevice; return; }
+                dst = new RectangleF(l, t, r - 1 - l, b - 1 - t);
+                toDevice = GpMat.Identity;
+                GdiBeginEmf(h, l, t, r - 1, b - 1, GpMat.Identity);
+            }
             // GpGraphics::EnumEmf: GDI plays the picture into a DIB of the destination's device size.
-            if (StartCanvas(DestCorners(dst)))
+            else if (StartCanvas(DestCorners(dst)))
             {
                 // MetafilePlayer::EnumerateEmfRecords hands PlayEnhMetaFile (0, 0, w - 1, h - 1): the
                 // frame spans the rectangle's extents.
                 dst = new RectangleF(0, 0, _cw - 1, _ch - 1);
                 toDevice = GpMat.Identity;
-                GdiBeginEmf(h);
+                GdiBeginEmf(h, 0, 0, _cw - 1, _ch - 1, GpMat.Identity);
             }
             double kx = 100.0 * _mmCx / _devCx, ky = 100.0 * _mmCy / _devCy;
             double fw = fr - fl, fh = fb - ft;
