@@ -139,6 +139,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Create a wgpu instance limited to <paramref name="backends"/> (0 = all).</summary>
         private static IntPtr CreateInstance(ulong backends)
         {
+            // Before wgpu's GL backend makes its first WGL context (see WglShim).
+            if (OperatingSystem.IsWindows())
+                Platform.WglShim.Install();
             IntPtr waylandDisplay = LinuxPlatform.WaylandDisplay;
             if (backends == WGPUInstanceBackend_All && waylandDisplay == IntPtr.Zero)
                 return wgpuCreateInstance(null);
