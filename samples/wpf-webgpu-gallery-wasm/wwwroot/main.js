@@ -6,6 +6,7 @@ import * as wgpuInterop from './wgpu-interop.js'
 import * as wpfBrowserWindow from './browser-window.js'
 import * as wpfBrowserMedia from './browser-media.js'
 import * as wpfDevTools from './devtools-bridge.js'
+import * as wpfBrowserWebView from './browser-webview.js'
 
 const status = document.getElementById('wpf-status');
 
@@ -44,6 +45,18 @@ try {
         .withEnvironmentVariable('WPF_USE_WEBGPU_COMPOSITION', '1')
         .withEnvironmentVariable('WPF_WEBGPU_SINK_LOG', '/sink.log');
     if (params.has('perf')) builder = builder.withEnvironmentVariable('WPF_WEBGPU_PERF_CONSOLE', '1');
+    // A page has no environment block, so the renderer's knobs come from the URL instead:
+    //   ?damage=0        every frame in full (WGPU_DAMAGE=0) -- the A/B for partial redraw
+    //   ?damageverify    render each frame partial AND full and log every differing pixel
+    //   ?damagetrace     log each frame's damage rectangles
+    //   ?env=NAME=V,...  any other variable
+    if (params.get('damage') === '0') builder = builder.withEnvironmentVariable('WGPU_DAMAGE', '0');
+    if (params.has('damageverify')) builder = builder.withEnvironmentVariable('WGPU_DAMAGE_VERIFY', '1');
+    if (params.has('damagetrace')) builder = builder.withEnvironmentVariable('WGPU_DAMAGE_TRACE', '1');
+    for (const kv of (params.get('env') || '').split(',')) {
+        const eq = kv.indexOf('=');
+        if (eq > 0) builder = builder.withEnvironmentVariable(kv.slice(0, eq), kv.slice(eq + 1));
+    }
     // ?devtools[=port] turns the CDP visual-tree inspector on. There is no socket in a browser,
     // so it is a message port -- see devtools-bridge.js for how to drive it.
     if (params.has('devtools'))
@@ -77,6 +90,7 @@ try {
     setModuleImports('wpfBrowserWindow', wpfBrowserWindow);
     setModuleImports('wpfBrowserMedia', wpfBrowserMedia);
     setModuleImports('wpfDevTools', wpfDevTools);
+    setModuleImports('wpfBrowserWebView', wpfBrowserWebView);
 
     // The bridge cannot reach the managed exports by itself, and they have to be in place
     // BEFORE runMain: the inspector starts when the app creates its first window, which is

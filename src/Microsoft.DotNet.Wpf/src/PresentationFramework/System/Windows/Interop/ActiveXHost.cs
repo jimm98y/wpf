@@ -217,8 +217,14 @@ namespace System.Windows.Interop
                 // on screen, only how big its own window is.
                 base.OnWindowPositionChanged(bounds);
 
+                // Except in the browser: there the overlay is an <iframe> in the page, with no host
+                // window around it for HwndHost to move, so it has to be told where the control is
+                // within the WPF window (device pixels, as bounds are).
+                bool placedInWindow = OperatingSystem.IsBrowser();
                 _webViewBackend?.SetBounds(
-                    0, 0, (int)bounds.Width, (int)bounds.Height, GetBackingScale());
+                    placedInWindow ? (int)Math.Round(bounds.X) : 0,
+                    placedInWindow ? (int)Math.Round(bounds.Y) : 0,
+                    (int)bounds.Width, (int)bounds.Height, GetBackingScale());
                 return;
             }
 
@@ -322,6 +328,15 @@ namespace System.Windows.Interop
 
             _webViewHostWindow = new HandleRef(this, host);
             _webViewReady = _webViewBackend.AttachAsync(host);
+
+            if (OperatingSystem.IsBrowser())
+            {
+                // HwndHost shows and hides its window to follow IsVisible; the browser's iframe is
+                // not that window, so it has to be told directly or a collapsed WebBrowser (or one
+                // on a hidden tab) keeps covering the page.
+                _webViewBackend.SetVisible(IsVisible);
+                IsVisibleChanged += (s, e) => _webViewBackend?.SetVisible((bool)e.NewValue);
+            }
 
             OnWebViewAttaching(_webViewBackend, _webViewReady);
 

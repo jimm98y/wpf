@@ -121,9 +121,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Browser
         [JSImport("readbackTexture", ModuleName)]
         internal static partial Task<int> ReadbackTexture(int device, int texture, int width, int height);
 
-        [JSImport("takeBytes", ModuleName)]
-        [return: JSMarshalAs<JSType.Array<JSType.Number>>]
-        internal static partial byte[] TakeBytes(int id);
+        [JSImport("bytesLength", ModuleName)]
+        internal static partial int BytesLength(int id);
+
+        [JSImport("copyBytes", ModuleName)]
+        internal static partial void CopyBytes(int id, [JSMarshalAs<JSType.MemoryView>] Span<byte> destination);
+
+        /// <summary>Takes the bytes readbackTexture parked. Copied straight into a managed array
+        /// through a memory view: returning byte[] as JSType.Array&lt;Number&gt; marshals a whole
+        /// frame element by element, and those arrays were never collected (a WGPU_DAMAGE_VERIFY run
+        /// taking two per frame reached 1.7 GB of heap and died with "memory access out of bounds").</summary>
+        internal static byte[] TakeBytes(int id)
+        {
+            var bytes = new byte[BytesLength(id)];
+            CopyBytes(id, bytes);
+            return bytes;
+        }
+
+        // WGPU_DAMAGE_VERIFY: compare two textures in JS, return a text summary (see compareTextures).
+        [JSImport("compareTextures", ModuleName)]
+        internal static partial Task<string> CompareTextures(int device, int textureA, int textureB, int width, int height, int maxSamples);
 
         // Async GPU hit-test readback: the packed visual id at a device point.
         [JSImport("readbackTexel", ModuleName)]

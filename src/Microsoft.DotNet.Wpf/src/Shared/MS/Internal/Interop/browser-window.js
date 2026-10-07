@@ -1019,10 +1019,14 @@ export function offerDownload(path, mimeType) {
     }
 }
 
-// The wasm virtual file system, reached through whichever handle this runtime exposes. Module.FS is
-// the long-standing one; globalThis.FS appears when the runtime is built with FS exported.
+// The wasm virtual file system, reached through whichever handle this runtime exposes. The .NET
+// runtime keeps its emscripten Module private (no globalThis.Module), so the boot script publishes
+// runtime.Module.FS as globalThis.__wpfFS -- both main.js files do, for /fonts -- and that is the one
+// that exists. Without it every picked file failed with "no wasm file system", OpenFileDialog
+// reported a cancellation and a SaveFileDialog path pointed into a directory never created.
+// Module.FS / globalThis.FS remain for a runtime that does export them.
 function fs() {
-    return globalThis.Module?.FS ?? globalThis.FS ?? null;
+    return globalThis.__wpfFS ?? globalThis.Module?.FS ?? globalThis.FS ?? null;
 }
 
 function mkdirp(path) {

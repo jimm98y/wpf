@@ -37,6 +37,7 @@ internal static class WasmBoot
             Console.WriteLine("GalleryWasm: WebGPU ready, starting WPF...");
             int rc = Program.Main(args);
             Console.WriteLine($"GalleryWasm: WPF started (pump running), Main rc={rc}");
+            BrowserProbes.Start(args);
             return rc;
         }
         catch (Exception ex)

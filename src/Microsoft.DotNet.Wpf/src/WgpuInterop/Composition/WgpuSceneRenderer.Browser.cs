@@ -45,6 +45,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         /// <summary>
+        /// Compares two CopySrc RGBA8-family textures pixel for pixel in JS (WGPU_DAMAGE_VERIFY) and
+        /// returns compareTextures' summary. The copies are submitted before this returns -- the JS
+        /// encodes and submits synchronously and only its maps await -- so they capture the
+        /// textures as they are now, whatever is rendered into them next.
+        /// </summary>
+        internal Task<string> CompareTexturesAsync(IntPtr a, IntPtr b, int width, int height)
+            => Browser.WgpuBrowserJs.CompareTextures((int)_ctx.Device, (int)a, (int)b, width, height, 12);
+
+        /// <summary>
         /// Browser GPU hit test against the last composited scene: renders the visual-id buffer
         /// once per frame (lazily, on the first query) and awaits a 1-pixel readback of the point.
         /// Returns the topmost visual's id, or 0 for no hit / out of range.

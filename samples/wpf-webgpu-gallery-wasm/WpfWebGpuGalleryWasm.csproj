@@ -271,6 +271,15 @@
          these are here so the shared gallery sources compile and the card can attempt to init. -->
     <Reference Include="System.Windows.Forms"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\bin\Release\net10.0\System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Mono.System.Drawing"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\sysdrawing\bin\Release\net10.0\Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
+    <!-- The real WindowsFormsHost (the fork's WebGPU WindowsFormsIntegration), for BrowserProbes.cs:
+         it installs WinForms' platform bridges (file, message-box and colour dialogs) that only a
+         WPF-hosted WinForms can reach on this head. Built against the desktop interop; the assembly
+         names match, so the browser interop above is what binds at run time, as in the SDK. -->
+    <!-- The fork's WebView2 controls (same identity as the NuGet package), for BrowserProbes.cs.
+         Built from src/Microsoft.DotNet.Wpf/src/WebView2 into artifacts/bin, outside the sln. -->
+    <Reference Include="Microsoft.Web.WebView2.Core"><HintPath>..\..\artifacts\bin\Microsoft.Web.WebView2.Core\Release\net10.0\Microsoft.Web.WebView2.Core.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Web.WebView2.Wpf"><HintPath>..\..\artifacts\bin\Microsoft.Web.WebView2.Wpf\Release\net10.0\Microsoft.Web.WebView2.Wpf.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="WindowsFormsIntegration"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\integration\bin\Release\net10.0\WindowsFormsIntegration.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
 
   <!-- WPF's reflectively-loaded deps. Their NuGet packages ship these in the Microsoft.WindowsDesktop.App
@@ -406,7 +415,9 @@
           Condition="'$(SkipDependencyBuild)' != 'true'">
     <MSBuild Projects="..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\WgpuInterop.Browser.csproj;
                        ..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\sysdrawing\System.Drawing.WebGpu.csproj;
-                       ..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\System.Windows.Forms.WebGpu.csproj"
+                       ..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\System.Windows.Forms.WebGpu.csproj;
+                       ..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\integration\WindowsFormsIntegration.WebGpu.csproj;
+                       ..\..\src\Microsoft.DotNet.Wpf\src\WebView2\Microsoft.Web.WebView2.Wpf\Microsoft.Web.WebView2.Wpf.csproj"
              Targets="Build" Properties="Configuration=Release" BuildInParallel="false" />
   </Target>
 
@@ -420,6 +431,9 @@
          so wwwroot held a hand-made copy, and edits to the real module (the relay connector among
          them) simply never reached the page. -->
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\Shared\MS\Internal\Interop\devtools-bridge.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+    <!-- The web view's iframe half (WebBrowser / WebView2 on this head). Without it registered in
+         main.js the first WebBrowser dies on an unregistered JS module. -->
+    <Copy SourceFiles="..\..\sdk\WpfWebGpu.Sdk\web\browser-webview.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
   </Target>
 
   <!-- Stage the bundled fonts and record what was staged, mirroring WpfWebGpuScaffoldWeb in the

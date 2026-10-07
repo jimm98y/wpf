@@ -317,10 +317,57 @@ export async function readbackTexture(deviceId, textureId, width, height) {
     return put(out);
 }
 
-export function takeBytes(id) {
+export function bytesLength(id) {
+    const o = get(id);
+    return o ? o.length : 0;
+}
+
+// Copies parked bytes into a managed array (a MemoryView over it) and drops them.
+export function copyBytes(id, destination) {
     const o = get(id);
     objs.delete(id);
-    return o ?? new Uint8Array(0);
+    if (o) destination.set(o, 0);
+}
+
+// WGPU_DAMAGE_VERIFY: compare two same-sized RGBA8 textures pixel for pixel without bringing
+// either into managed memory. The copies are submitted before the first await, so they see the
+// textures as they are when this is called. Returns "diff minX minY maxX maxY maxDelta" followed
+// by "|x,y,r,g,b,a,R,G,B,A" for the first maxSamples differing pixels (lower case = texture A).
+export async function compareTextures(deviceId, textureA, textureB, width, height, maxSamples) {
+    const device = get(deviceId);
+    const bytesPerRow = Math.ceil((width * 4) / 256) * 256;
+    const mk = () => device.createBuffer({ size: bytesPerRow * height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const ba = mk(), bb = mk();
+    const enc = device.createCommandEncoder();
+    for (const [tex, buf] of [[textureA, ba], [textureB, bb]])
+        enc.copyTextureToBuffer({ texture: get(tex) }, { buffer: buf, bytesPerRow, rowsPerImage: height },
+            { width, height, depthOrArrayLayers: 1 });
+    device.queue.submit([enc.finish()]);
+    try {
+        await Promise.all([ba.mapAsync(GPUMapMode.READ), bb.mapAsync(GPUMapMode.READ)]);
+        const a8 = new Uint8Array(ba.getMappedRange()), b8 = new Uint8Array(bb.getMappedRange());
+        const a32 = new Uint32Array(a8.buffer, a8.byteOffset, a8.byteLength >> 2);
+        const b32 = new Uint32Array(b8.buffer, b8.byteOffset, b8.byteLength >> 2);
+        let diff = 0, minX = 2147483647, minY = 2147483647, maxX = -1, maxY = -1, maxDelta = 0;
+        let samples = '';
+        const wordsPerRow = bytesPerRow >> 2;
+        for (let y = 0; y < height; y++) {
+            const row = y * wordsPerRow;
+            for (let x = 0; x < width; x++) {
+                if (a32[row + x] === b32[row + x]) continue;
+                diff++;
+                if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+                const i = (row + x) << 2;
+                for (let c = 0; c < 4; c++) maxDelta = Math.max(maxDelta, Math.abs(a8[i + c] - b8[i + c]));
+                if (diff <= maxSamples)
+                    samples += `|${x},${y},${a8[i]},${a8[i + 1]},${a8[i + 2]},${a8[i + 3]},${b8[i]},${b8[i + 1]},${b8[i + 2]},${b8[i + 3]}`;
+            }
+        }
+        return `${diff} ${minX} ${minY} ${maxX} ${maxY} ${maxDelta}${samples}`;
+    } finally {
+        ba.destroy();
+        bb.destroy();
+    }
 }
 
 // Async 1-texel readback for GPU hit testing: returns the packed visual id at (x,y)

@@ -157,7 +157,13 @@ namespace System.Windows
             //
             // So there, fill the window and centre the prompt inside it, over a scrim. That is what
             // a modal looks like on a phone anyway.
-            bool screenSizedWindow = MessageBox.CannotBlock
+            //
+            // Not the browser, although it cannot block either: there a second window floats over
+            // the page at the size it asks for (browser-window.js createWindow), like a desktop
+            // dialog. Treated as a phone, the prompt opened as an owner-sized OPAQUE window -- its
+            // scrim composited over the window's own clear colour, a grey slab -- offset from the
+            // owner by its default position, covering most of the page.
+            bool screenSizedWindow = (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid())
                                      && owner != null
                                      && owner.ActualWidth >= 1
                                      && owner.ActualHeight >= 1;

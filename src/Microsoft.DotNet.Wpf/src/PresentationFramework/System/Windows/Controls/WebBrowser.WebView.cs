@@ -355,13 +355,19 @@ namespace System.Windows.Controls
             string expression = WebViewScript.BuildInvokeExpression(scriptName, args);
             Task<string> pending = WebViewBackend.ExecuteScriptAsync(expression);
 
-            var frame = new System.Windows.Threading.DispatcherFrame();
+            // An engine that answered on the spot needs no wait. That is not only a shortcut: the
+            // browser head's iframe evaluates synchronously, and it is also the one head whose
+            // dispatcher cannot push a nested frame at all (its pump is the page's event loop).
+            if (!pending.IsCompleted)
+            {
+                var frame = new System.Windows.Threading.DispatcherFrame();
 
-            pending.ContinueWith(
-                _ => Dispatcher.BeginInvoke((Action)(() => frame.Continue = false)),
-                TaskScheduler.Default);
+                pending.ContinueWith(
+                    _ => Dispatcher.BeginInvoke((Action)(() => frame.Continue = false)),
+                    TaskScheduler.Default);
 
-            System.Windows.Threading.Dispatcher.PushFrame(frame);
+                System.Windows.Threading.Dispatcher.PushFrame(frame);
+            }
 
             if (pending.IsFaulted)
             {

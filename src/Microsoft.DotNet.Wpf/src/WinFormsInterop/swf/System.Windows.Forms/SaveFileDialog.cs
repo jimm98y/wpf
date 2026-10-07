@@ -90,6 +90,19 @@ namespace System.Windows.Forms {
 			
 			return retValue;
 		}
+
+		/// <summary>Port extension, the counterpart of WPF's SaveFileDialog.CommitAsync: after
+		/// writing to <see cref="FileDialog.FileName"/>, hand the file to the user. A no-op that
+		/// returns true on the desktop heads, where the user picked a real destination; in the
+		/// browser the dialog returns a path in the wasm file system and THIS is the download --
+		/// without it a WinForms save in the browser wrote a file nobody could ever reach.</summary>
+		public System.Threading.Tasks.Task<bool> CommitAsync ()
+		{
+			IFileDialogBridge bridge = XplatUIWebGpu.FileDialogBridge;
+			if (bridge == null)
+				return System.Threading.Tasks.Task.FromResult (!string.IsNullOrEmpty (FileName));
+			return bridge.CommitSaveAsync (FileName);
+		}
 		#endregion	// Public Instance Methods
 		
 		public override void Reset ()
