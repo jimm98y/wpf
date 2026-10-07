@@ -235,6 +235,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 UnderlineThickness = (short) U16(postUl + 10);
             }
             HasVerticalMetrics = tables.ContainsKey("vmtx") || tables.ContainsKey("VORG");
+            if (tables.TryGetValue("vmtx", out int vmtx) && tables.TryGetValue("vhea", out int vhea) && vhea + 36 <= _data.Length)
+            {
+                _vmtx = vmtx;
+                _vmtxLong = U16(vhea + 34);
+            }
             _vdmx = tables.TryGetValue("VDMX", out int vdmx) ? vdmx : -1;
             _isFixedPitch = tables.TryGetValue("post", out int postTable) && postTable + 16 <= _data.Length
                             && U32(postTable + 12) != 0;
@@ -1650,6 +1655,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int _sxHeight, _sCapHeight;
         private int _winAscent, _winDescent;
         private int _vdmx = -1;         // 'VDMX' table offset, or -1 when the face ships none
+        private int _vmtx = -1, _vmtxLong;   // 'vmtx' and vhea.numOfLongVerMetrics
+
+        /// <summary>The design advance height DirectWrite's GetDesignGlyphAdvances gives sideways
+        /// (isSideways): vmtx where the face has it (with vhea), otherwise sTypoAscender -
+        /// sTypoDescender for every glyph (Verdana 1989, Segoe UI Bold 1922).</summary>
+        internal int DesignAdvanceHeight(int glyphId)
+        {
+            if (_vmtx < 0 || _vmtxLong <= 0) return TypoAscender - TypoDescender;
+            int i = Math.Min(glyphId, _vmtxLong - 1);
+            int at = _vmtx + 4 * i;
+            return at + 2 <= _data.Length ? U16(at) : TypoAscender - TypoDescender;
+        }
 
         /// <summary>WPF_CT_GASP_NOSYM=1: answer NO to symmetric smoothing for a face with no
         /// 'gasp', as we used to. See the fallback in GaspFlags.</summary>

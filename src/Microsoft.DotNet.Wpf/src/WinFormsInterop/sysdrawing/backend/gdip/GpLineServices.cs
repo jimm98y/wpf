@@ -347,6 +347,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             while (f > 0 && f < chars.Count && !chars [f].ClusterStart) f--;
             if (f == 0) f = 1;
+            // After the first character, the paragraph's end right behind it stays on the line (a
+            // deleted CR, the EOP): native "w\r\nab" and "ws\r\nab" in a column narrower than a
+            // letter end the forced line with them, where a space behind it starts the next line.
+            if (t == 0)
+                while (f < chars.Count && (chars [f].Kind == 2 || chars [f].Kind == 3)) f++;
             return f;
         }
 

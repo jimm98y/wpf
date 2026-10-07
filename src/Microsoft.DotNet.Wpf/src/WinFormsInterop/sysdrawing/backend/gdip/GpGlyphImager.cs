@@ -91,7 +91,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             float tl = MathF.Max (MathF.Abs (w2d.M11) + MathF.Abs (w2d.M12), MathF.Abs (w2d.M21) + MathF.Abs (w2d.M22)) * tol;
             bool quarterTurn = MathF.Abs (w2d.M11) <= tl && MathF.Abs (w2d.M22) <= tl, quarter = quarterTurn && !sideways;
             bool turned = !s_rotFit && !(MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl) && !quarterTurn;
-            QuarterCT = quarter && mode == 5;
+            // FullTextImager::DrawGlyphs @18003b720 realizes a vertical line's non-upright item
+            // under the world-to-device turned by 90 degrees (GetFontTransform, inlined: rotate when
+            // the format's vertical bit and the item's upright bit 8 differ) and hands the
+            // GlyphImager the plain world-to-device: the placements stay upright, but
+            // GetGlyphStringSidebearings measures under the realization's quarter turn.
+            QuarterCT = (quarter || (sideways && !quarterTurn && !turned)) && (mode == 5 || mode == 1 || mode == 3);
+            BearingSx = sideways && !quarterTurn ? Sy : Sx;
+            BearingSy = sideways && !quarterTurn ? Sx : Sy;
             Turned = turned;
             MirrorX = mode == 5 &&MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl && w2d.M11 < 0f;
             if ((Flags & 0x20000000) == 0 && Script != GpTextTables.ScriptControl
@@ -125,7 +132,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             GdipText.SidewaysMetrics (Face, Glyphs [i], Em, Sy, Sx, out int advDu, out _);
                             px = MathF.Floor (advDu * (Em * Sx / upem) + 0.5f)
                                  + (Face.SynthesizesBold && Face.DesignContours (Glyphs [i]).Count > 0 ? 1 : 0);
-                        } else px = GpTextShaper.DeviceAdvancePx (Face, Glyphs [i], Em, Sx, Sy, turned ? 2 : mode) + MirrorPx (Glyphs [i], true);
+                        // GetGdiCompatibleGlyphPlacements measures GDI natural only for ClearType: a script
+                        // that is placed though not grid-fitted (7..10 under AntiAlias) takes GDI classic.
+                        } else px = GpTextShaper.DeviceAdvancePx (Face, Glyphs [i], Em, Sx, Sy, turned ? 2 : gridFit ? mode : 1) + MirrorPx (Glyphs [i], true);
                         if ((GlyphProps [i] & GpTextShaper.PropZeroWidth) != 0 && run.Script != GpTextTables.ScriptControl) px = 0f;
                         if (i + 1 < Count) {
                             int ku = GpTextShaper.Kern (Face, Script, Glyphs [i], Glyphs [i + 1]);
@@ -231,6 +240,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 bool skipZeroCheck = false;
                 if ((Flags & 4) == 0 && (lead || trail)) {
                     SideBearings (from + ls, mid, out int lsb16, out int rsb16);
+                    if (s_debug) Console.Error.WriteLine ($"ADJ sb lsb16={lsb16} rsb16={rsb16} f78={F78} delta={delta} qct={QuarterCT}");
                     if (lead) {
                         int v = (int) MathF.Floor (F78 * lsb16 * 0.0625f + 0.5f);
                         if (v < 0) {
@@ -369,7 +379,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         void SideBearings (int from, int count, out int left, out int right)
         {
             int upem = Face.UnitsPerEmForHinting;
-            float scale = Em * Sx / upem;
+            float scale = Em * (QuarterCT ? BearingSx : Sx) / upem;
             GdipText.DeviceAscentDescent (Face, Em / upem * Sx, out int asc, out int desc);
             int lim = (asc + desc) * 32;
             int cum = 0;
@@ -408,8 +418,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 lsb = (int) MathF.Floor (x0 + 0.5f);
                 rsb = adv - (int) MathF.Floor (x1 + 0.5f);
             } else if (QuarterCT) {
-                GdipText.SidewaysMetrics (Face, gid, Em, Sy, Sx, out adv, out _);
-                GdipText.SidewaysBearings (Face, gid, Em, Sy, Sx, out lsb, out rsb);
+                GdipText.SidewaysMetrics (Face, gid, Em, BearingSy, BearingSx, out adv, out _);
+                GdipText.SidewaysBearings (Face, gid, Em, BearingSy, BearingSx, out lsb, out rsb);
             } else if (Mode == 1 || Mode == 3) GpTextShaper.ClassicMetrics (Face, gid, Em * Sx, out adv, out lsb, out rsb);
             else if (Mode == 2 || Mode == 4) GdipText.DesignMetrics (Face, gid, out adv, out lsb, out rsb);
             else GdipText.NaturalMetrics (Face, gid, Em, Sx, Sx, MirrorX, out adv, out lsb, out rsb);
@@ -420,6 +430,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         /// <summary>A ClearType realization under a quarter turn (its glyphs fitted sideways).</summary>
         public bool QuarterCT;
+
+        /// <summary>The realization's axis scales where QuarterCT measures (a vertical item's are turned).</summary>
+        float BearingSx = 1f, BearingSy = 1f;
 
         /// <summary>GetDisplayCellOrigin.</summary>
         public PointF CellOrigin (PointF world)

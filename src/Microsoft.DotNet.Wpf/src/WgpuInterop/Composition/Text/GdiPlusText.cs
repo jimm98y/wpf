@@ -802,7 +802,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// through em * m22, and its vertical origin (sTypoAscender, for a face with no vertical
         /// metrics) rounded to the pixels of the device x scale and back through em * m11.
         /// Times New Roman's .notdef at em 20 under (1.1014, 1.4904): 1580 and 1395 (design 1593
-        /// and 1420); under (1.4, 1.4904) 1580 and 1390.</summary>
+        /// and 1420); under (1.4, 1.4904) 1580 and 1390.
+        /// A square transform goes back through its whole ppem instead (NaturalMetrics' rule:
+        /// Segoe UI '?' at em 14.667 under (0, 1, -1, 0) has rsb 137 = 1 px * 2048 / 15).</summary>
         internal static void SidewaysMetrics(TrueTypeFont font, int gid, float em, float m11, float m22,
                                              out int advDu, out int voyDu)
         {
@@ -818,11 +820,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // Sideways a glyph with no outline rounds as any other (DirectWrite: Verdana Bold's
                 // space at 16 under (0, 1, -1, 0) is 640 units, 5 px; upright natural it is 768).
                 int px = (span64 + 32) >> 6;
-                advDu = (int)Math.Floor(px * (double)upem / (em * m22) + 0.5);
+                advDu = (int)Math.Floor(px * (double)upem / (along == across ? along : em * m22) + 0.5);
             }
             finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
             int voyPx = (int)Math.Floor(font.TypoAscender * (double)across / upem + 0.5);
-            voyDu = (int)Math.Floor(voyPx * (double)upem / (em * m11) + 0.5);
+            voyDu = (int)Math.Floor(voyPx * (double)upem / (along == across ? across : em * m11) + 0.5);
         }
 
         /// <summary>The side bearings GetGdiCompatibleGlyphMetrics gives a glyph under a quarter
@@ -843,7 +845,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 if (!OutlineXExtent(font, gid, Math.Max(along, across), out float x0, out float x1, SidewaysScalerWord))
                 { lsbDu = 0; rsbDu = advDu; return; }
-                double k = upem / (double)(em * m22);
+                double k = upem / (double)(along == across ? along : em * m22);
                 int left = (int)MathF.Ceiling(x0 - 0.5f), right = (int)MathF.Floor(x1 + 0.5f);
                 int px = (int)Math.Floor(advDu / k + 0.5);
                 lsbDu = (int)Math.Floor(left * k + 0.5);

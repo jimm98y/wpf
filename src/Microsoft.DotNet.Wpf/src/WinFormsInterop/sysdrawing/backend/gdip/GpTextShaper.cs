@@ -266,6 +266,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return a;
         }
 
+        /// <summary>GetDesignGlyphAdvances sideways: the advance height, widened as the advance is
+        /// for a bold simulation (AdjustGlyphMetricsForBoldSimulation @180247ce8).</summary>
+        public static int DesignAdvanceHeight (TrueTypeFont face, int gid)
+        {
+            int a = face.DesignAdvanceHeight (gid);
+            if (face.SynthesizesBold && HasContours (face, gid) && GpFontMapper.DWriteSimulatesBold (face))
+                a += (int) MathF.Floor (face.UnitsPerEmForHinting / 50f + 0.5f);
+            return a;
+        }
+
         static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TrueTypeFont, Dictionary<int, bool>> s_contours = new ();
 
         static bool HasContours (TrueTypeFont face, int gid)
@@ -278,13 +288,13 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         /// <summary>GetGlyphPlacements at an em of <paramref name="em"/> (design units scaled by em / upem).</summary>
-        public static float[] GetGlyphAdvances (TrueTypeFont face, ushort[] glyphs, int start, int count, int itemScript, float em)
+        public static float[] GetGlyphAdvances (TrueTypeFont face, ushort[] glyphs, int start, int count, int itemScript, float em, bool unsimulated = false)
         {
             int upem = face.UnitsPerEmForHinting;
             float k = em / upem;
             var adv = new float [count];
             for (int i = 0; i < count; i++) {
-                int a = DesignAdvance (face, glyphs [start + i]);
+                int a = unsimulated ? face.DesignAdvance (glyphs [start + i]) : DesignAdvance (face, glyphs [start + i]);
                 if (i + 1 < count) a += Kern (face, itemScript, glyphs [start + i], glyphs [start + i + 1]);
                 adv [i] = a * k;
             }

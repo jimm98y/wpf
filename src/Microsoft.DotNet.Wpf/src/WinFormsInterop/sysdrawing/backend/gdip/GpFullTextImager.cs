@@ -444,7 +444,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int count = Math.Max (1, c1 - Math.Max (0, c0));
                 int n = GpFontFallback.For (Family).GetUniformFallbackFace (Text, pos, Math.Min (count, rem), Style & 3, script, out string fam, out int faceStyle);
                 n = Math.Max (1, Math.Min (n, rem));
-                TrueTypeFont face = fam == null ? Face : GdiPlusText.Face (fam, faceStyle == (Style & 3) ? Style & 3 : faceStyle) ?? Face;
+                // The fallback family's face for the style asked: GDI+ takes the slot of the style the family
+                // supports and its realization simulates the rest (flags 0x2000 / 0x4000 for a bold / italic
+                // asked of a face that is not), a slot DirectWrite fills with a simulated face included.
+                TrueTypeFont face = fam == null ? Face : GdiPlusText.Face (fam, Style & 3) ?? Face;
                 var piece = Piece (run, pos, n, Shape (face, pos, n, script, level, hotkey));
                 if (!ReferenceEquals (face, Face)) {
                     piece.Face = face; piece.Family = fam;
@@ -528,7 +531,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             double k = (double) (Tracking * ((run.Em / run.Face.UnitsPerEmForHinting) * R));
             int g = run.Face.GlyphIndexOf (ch);
-            return (int) MathF.Floor ((float) (GpTextShaper.DesignAdvance (run.Face, g) * k) + 0.5f);
+            // SimpleGetRunCharWidths @18003e0c8: GetDesignGlyphAdvances sideways (the run's format
+            // flags & 2) in a vertical format -- the advance height.
+            int adv = IsVertical ? GpTextShaper.DesignAdvanceHeight (run.Face, g) : GpTextShaper.DesignAdvance (run.Face, g);
+            return (int) MathF.Floor ((float) (adv * k) + 0.5f);
         }
 
         /// <summary>GdipLscbkGetGlyphPositions: the glyphs' advances from GetGlyphPlacements at
@@ -547,9 +553,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
                 return;
             }
-            float[] a = GpTextShaper.GetGlyphAdvances (run.Face, run.Shape.Glyphs, g0, count, run.Script, upem * k);
+            // GdipLscbkGetGlyphPositions @18003d790 measures a face DirectWrite emboldens (its
+            // GetSimulations & 1), not sideways and not of 2048 units to the em, unemboldened -- with
+            // the family's face of the style less bold -- and each advance there that is not zero
+            // gains (2 * upem - 1) / 100 ideal units. (An italic asked of a slot face that is not
+            // italic is measured with an oblique-only face; DirectWrite fills every italic slot with
+            // a simulated oblique where the family has none, so the port never meets that case.)
+            bool boldConst = run.Face.SynthesizesBold && GpFontMapper.DWriteSimulatesBold (run.Face)
+                             && (run.ItemFlags & 0x8) == 0 && upem != 2048;
+            int boldAdd = boldConst ? (2 * upem - 1) / 100 : 0;
+            float[] a = GpTextShaper.GetGlyphAdvances (run.Face, run.Shape.Glyphs, g0, count, run.Script, upem * k, unsimulated: boldConst);
             for (int i = 0; i < count; i++) {
                 adv [i] = (run.Shape.GlyphProps [g0 + i] & GpTextShaper.PropZeroWidth) != 0 ? 0 : (int) MathF.Floor (a [i] * tr + 0.5f);
+                if (adv [i] != 0) adv [i] += boldAdd;
                 offU [i] = offV [i] = 0;
             }
         }
@@ -763,7 +779,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             for (int i = 0; i < glyphs.Length; i++) {
                 // GetDesignGlyphAdvances, sideways in a vertical format: the advance height (the
                 // typographic ascent less descent for a face with no vertical metrics).
-                int adv = (iflags & 0x20) != 0 ? Face.TypoAscender - Face.TypoDescender : GpTextShaper.DesignAdvance (Face, glyphs [i]);
+                int adv = (iflags & 0x20) != 0 ? GpTextShaper.DesignAdvanceHeight (Face, glyphs [i]) : GpTextShaper.DesignAdvance (Face, glyphs [i]);
                 EllipsisAdvances [i] = (int) MathF.Floor ((float) (adv * k) + 0.5f);
                 _ellipsisWidth += EllipsisAdvances [i];
             }
