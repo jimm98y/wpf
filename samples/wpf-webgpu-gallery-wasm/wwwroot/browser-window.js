@@ -833,6 +833,62 @@ export function clipboardHasPng() {
     return clipPng !== null && clipPng.length > 0;
 }
 
+// ---- message boxes ----------------------------------------------------------------------------
+
+// The page's own modal prompts. Both block the page until answered, which is why a message box can
+// use them although nothing else on this head can wait: the browser runs the modal loop itself.
+export function showAlert(message) { window.alert(message); }
+export function showConfirm(message) { return window.confirm(message); }
+
+// ---- colour picker ----------------------------------------------------------------------------
+//
+// The browser's own colour chooser is an <input type=color>: the page cannot show it except by
+// "clicking" such an element (showPicker() where it exists), and the answer arrives later on its
+// change event -- so this returns a Promise, as WinForms' ColorDialog.ShowDialogAsync expects.
+// Resolves to "#rrggbb", or to "" when the picker closed without a choice. A fresh element each
+// time, placed mid-viewport and invisible, because the browser opens its picker next to it.
+//
+// No event says "closed without a choice" everywhere: "cancel" is fired by some browsers only, and
+// a picker that is dismissed on an unchanged value fires nothing at all. So the window getting the
+// focus back with no change by then is read as the dismissal -- after a pause, because a browser
+// may return the focus before it delivers the change. (The element's own blur is no signal: it
+// fires as the picker OPENS, when the window hands the focus to it.)
+export function pickColorAsync(initialHex) {
+    return new Promise((resolve) => {
+        try {
+            const input = document.createElement("input");
+            input.type = "color";
+            input.value = /^#[0-9a-fA-F]{6}$/.test(initialHex) ? initialHex.toLowerCase() : "#000000";
+            input.style.cssText = "position:fixed;left:50%;top:50%;width:1px;height:1px;opacity:0;border:0;padding:0;";
+
+            let settled = false;
+            let changed = false;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                input.remove();
+                resolve(value);
+            };
+            const dismissedLater = () => setTimeout(() => { if (!changed) finish(""); }, 500);
+
+            input.addEventListener("change", () => { changed = true; finish(input.value); });
+            input.addEventListener("cancel", () => finish(""));
+            window.addEventListener("focus", dismissedLater, { once: true });
+
+            document.body.appendChild(input);
+            input.focus();
+            if (typeof input.showPicker === "function") {
+                try { input.showPicker(); } catch (e) { input.click(); }
+            } else {
+                input.click();
+            }
+        } catch (e) {
+            console.warn("WPF colour picker could not open:", e);
+            resolve("");
+        }
+    });
+}
+
 // ---- file dialogs -----------------------------------------------------------------------------
 //
 // A browser has no file SYSTEM to show a path from, so "open a file" and "save a file" mean
@@ -963,10 +1019,14 @@ export function offerDownload(path, mimeType) {
     }
 }
 
-// The wasm virtual file system, reached through whichever handle this runtime exposes. Module.FS is
-// the long-standing one; globalThis.FS appears when the runtime is built with FS exported.
+// The wasm virtual file system, reached through whichever handle this runtime exposes. The .NET
+// runtime keeps its emscripten Module private (no globalThis.Module), so the boot script publishes
+// runtime.Module.FS as globalThis.__wpfFS -- both main.js files do, for /fonts -- and that is the one
+// that exists. Without it every picked file failed with "no wasm file system", OpenFileDialog
+// reported a cancellation and a SaveFileDialog path pointed into a directory never created.
+// Module.FS / globalThis.FS remain for a runtime that does export them.
 function fs() {
-    return globalThis.Module?.FS ?? globalThis.FS ?? null;
+    return globalThis.__wpfFS ?? globalThis.Module?.FS ?? globalThis.FS ?? null;
 }
 
 function mkdirp(path) {

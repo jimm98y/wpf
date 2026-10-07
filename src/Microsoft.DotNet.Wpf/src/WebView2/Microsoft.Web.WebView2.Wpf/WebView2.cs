@@ -156,6 +156,13 @@ namespace Microsoft.Web.WebView2.Wpf
             _ready = _backend.AttachAsync(_hostWindow);
             _coreWebView2 = new CoreWebView2(_backend);
 
+            if (OperatingSystem.IsBrowser())
+            {
+                // HwndHost hides its window to follow IsVisible; the iframe is not that window.
+                _backend.SetVisible(IsVisible);
+                IsVisibleChanged += (s, e) => _backend?.SetVisible((bool)e.NewValue);
+            }
+
             // Continued onto the Dispatcher rather than a synchronization-context TaskScheduler: the
             // window is built during the first measure pass, which can run before Dispatcher.Run has
             // installed that context, and asking for the scheduler then throws.
@@ -193,10 +200,16 @@ namespace Microsoft.Web.WebView2.Wpf
 
         protected override void OnWindowPositionChanged(Rect rcBoundingBox)
         {
-            // HwndHost moves the host window; the engine then fills it.
+            // HwndHost moves the host window; the engine then fills it. Except in the browser, where
+            // the overlay is an <iframe> in the page with no host window around it, so it is told
+            // where the control is within the WPF window (as WebBrowser's ActiveXHost does).
             base.OnWindowPositionChanged(rcBoundingBox);
 
-            _backend?.SetBounds(0, 0, (int)rcBoundingBox.Width, (int)rcBoundingBox.Height, BackingScale());
+            bool placedInWindow = OperatingSystem.IsBrowser();
+            _backend?.SetBounds(
+                placedInWindow ? (int)Math.Round(rcBoundingBox.X) : 0,
+                placedInWindow ? (int)Math.Round(rcBoundingBox.Y) : 0,
+                (int)rcBoundingBox.Width, (int)rcBoundingBox.Height, BackingScale());
         }
 
         private double BackingScale()

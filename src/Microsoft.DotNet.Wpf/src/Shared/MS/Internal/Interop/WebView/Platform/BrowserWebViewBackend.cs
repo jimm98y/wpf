@@ -49,6 +49,7 @@ namespace MS.Internal.Interop.WebView
         private double _zoom = 1.0;
         private string _lastRequestedUri;
         private bool _wasReady;
+        private bool _showingString;
         private ulong _navigationId;
         private Timer _pump;
         private TaskCompletionSource<object> _attach;
@@ -69,7 +70,7 @@ namespace MS.Internal.Interop.WebView
             // The handle is the synthetic one WebViewHostWindow minted; the frame is keyed by it, so
             // nothing managed ever holds a DOM object.
             _handle = (int)ownerWindow;
-            Js.CreateFrame(_handle);
+            Js.CreateFrame(_handle, (int)WebViewHostWindow.BrowserParentOf(ownerWindow));
             _attached = true;
 
             Js.SetVisible(_handle, _visible);
@@ -120,12 +121,21 @@ namespace MS.Internal.Interop.WebView
             // frame's readiness changing -- which is what an embedder can actually observe.
             bool ready = Js.IsReady(_handle);
 
-            if (ready && !_wasReady)
+            // Nothing to report before the first navigation: the frame's initial about:blank is
+            // "ready" the moment it is inserted, and announcing it raised Navigated/LoadCompleted for
+            // a navigation nobody asked for.
+            if (ready && !_wasReady && _navigationId != 0)
             {
                 _wasReady = true;
 
                 DocumentTitleChanged?.Invoke(this, EventArgs.Empty);
-                SourceChanged?.Invoke(this, new WebViewSourceChangedEventArgs { IsNewDocument = true });
+                // As WebView2: content handed over as a string has no source to change to, and
+                // WebBrowser raises Navigated for it from NavigationCompleted -- answering both
+                // made it raise Navigated twice.
+                if (!_showingString)
+                {
+                    SourceChanged?.Invoke(this, new WebViewSourceChangedEventArgs { IsNewDocument = true });
+                }
                 NavigationCompleted?.Invoke(this, new WebViewNavigationCompletedEventArgs
                 {
                     IsSuccess = true,
@@ -139,26 +149,18 @@ namespace MS.Internal.Interop.WebView
                 ContentLoading?.Invoke(this, EventArgs.Empty);
             }
 
-            // Messages, one per tick at most so a chatty page cannot starve the frame.
+            // Messages, sixteen per tick at most so a chatty page cannot starve the frame. Each
+            // frame has a queue of its own: with one queue for the page, every web view's pump took
+            // whatever came next and dropped the messages that were not its own -- a WebBrowser
+            // next to a WebView2 lost about half of its window.external calls to the other's pump.
             for (int i = 0; i < 16; i++)
             {
-                string message = Js.TakeMessage();
+                string body = Js.TakeMessage(_handle);
 
-                if (message is null)
+                if (body is null)
                 {
                     break;
                 }
-
-                int space = message.IndexOf(' ');
-
-                if (space <= 0 ||
-                    !int.TryParse(message.AsSpan(0, space), out int handle) ||
-                    handle != _handle)
-                {
-                    continue;
-                }
-
-                string body = message.Substring(space + 1);
 
                 WebMessageReceived?.Invoke(this, new WebViewMessageReceivedEventArgs
                 {
@@ -197,6 +199,7 @@ namespace MS.Internal.Interop.WebView
             RaiseNavigationStarting(uri);
             _lastRequestedUri = uri;
             _wasReady = false;
+            _showingString = false;
             Js.Navigate(_handle, uri);
         }
 
@@ -206,6 +209,7 @@ namespace MS.Internal.Interop.WebView
             RaiseNavigationStarting(null);
             _lastRequestedUri = null;
             _wasReady = false;
+            _showingString = true;
             Js.NavigateToString(_handle, htmlContent);
         }
 
@@ -409,7 +413,7 @@ namespace MS.Internal.Interop.WebView
         {
             private const string Module = "wpfBrowserWebView";
 
-            [JSImport("createFrame", Module)] internal static partial void CreateFrame(int handle);
+            [JSImport("createFrame", Module)] internal static partial void CreateFrame(int handle, int parentWindow);
             [JSImport("destroyFrame", Module)] internal static partial void DestroyFrame(int handle);
             [JSImport("setBounds", Module)] internal static partial void SetBounds(int handle, int x, int y, int width, int height, double scale);
             [JSImport("setVisible", Module)] internal static partial void SetVisible(int handle, bool visible);
@@ -423,7 +427,7 @@ namespace MS.Internal.Interop.WebView
             [JSImport("executeScript", Module)] internal static partial string ExecuteScript(int handle, string script);
             [JSImport("addDocumentScript", Module)] internal static partial void AddDocumentScript(int handle, string script);
             [JSImport("postMessage", Module)] internal static partial void PostMessage(int handle, string json);
-            [JSImport("takeMessage", Module)] internal static partial string TakeMessage();
+            [JSImport("takeMessage", Module)] internal static partial string TakeMessage(int handle);
             [JSImport("clearData", Module)] internal static partial void ClearData();
         }
     }

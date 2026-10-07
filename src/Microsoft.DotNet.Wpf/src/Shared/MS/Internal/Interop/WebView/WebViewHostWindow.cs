@@ -48,13 +48,44 @@ namespace MS.Internal.Interop.WebView
                 // unique and not zero -- the range avoids HwndWrapper's synthetic handles
                 // (0x7F00_0000+) and BrowserWindow's (0x0B00_0000+), so a handle can always be told
                 // apart from a window's by inspection.
-                return (IntPtr)System.Threading.Interlocked.Increment(ref s_browserHandle);
+                IntPtr handle = (IntPtr)NextBrowserHandle();
+                // Remembered so the backend can place its iframe relative to the window's canvas:
+                // the page is not the window, and a window need not sit at the page's origin.
+                lock (s_browserParents) s_browserParents[handle] = parent;
+                return handle;
             }
 
             return IntPtr.Zero;
         }
 
-        private static int s_browserHandle = 0x0C00_0000;
+        /// <summary>
+        /// The next browser overlay key, unique in the PROCESS. This file is link-compiled into
+        /// PresentationFramework, Microsoft.Web.WebView2.Core and System.Windows.Forms, and a static
+        /// counter here is one counter per copy: a WebBrowser and a WebView2 in the same page both
+        /// minted 0x0C000001, the JS side keeps one iframe per key, and the two controls ended up
+        /// driving the same frame (each one's navigations reported by the other). The counter
+        /// therefore lives in AppContext data, which every copy shares -- the same device the
+        /// Android registration uses.
+        /// </summary>
+        private static int NextBrowserHandle()
+        {
+            const string Key = "MS.Internal.Interop.WebView.Browser.NextHandle";
+            if (AppContext.GetData(Key) is not System.Runtime.CompilerServices.StrongBox<int> counter)
+            {
+                // The browser runs managed code on one thread, so there is no race to lose here.
+                counter = new System.Runtime.CompilerServices.StrongBox<int>(0x0C00_0000);
+                AppContext.SetData(Key, counter);
+            }
+            return System.Threading.Interlocked.Increment(ref counter.Value);
+        }
+        private static readonly System.Collections.Generic.Dictionary<IntPtr, IntPtr> s_browserParents = new();
+
+        /// <summary>The WPF window a browser overlay key was created in, or zero.</summary>
+        internal static IntPtr BrowserParentOf(IntPtr window)
+        {
+            lock (s_browserParents)
+                return s_browserParents.TryGetValue(window, out IntPtr parent) ? parent : IntPtr.Zero;
+        }
 
         /// <summary>
         /// Move and resize the host window, in device pixels relative to the window it was created
@@ -80,6 +111,11 @@ namespace MS.Internal.Interop.WebView
         /// </summary>
         internal static void Destroy(IntPtr window)
         {
+            if (window != IntPtr.Zero && OperatingSystem.IsBrowser())
+            {
+                lock (s_browserParents) s_browserParents.Remove(window);
+            }
+
             if (window != IntPtr.Zero && OperatingSystem.IsWindows())
             {
                 Win32.Destroy(window);

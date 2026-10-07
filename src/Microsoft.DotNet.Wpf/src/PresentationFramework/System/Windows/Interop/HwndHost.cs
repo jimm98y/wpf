@@ -67,7 +67,7 @@ namespace System.Windows.Interop
             {
                 // A foreign handle is never a window, so the IsWindow probe below would discard
                 // it on the first read and take the host's content with it.
-                if (_hwnd.Handle != IntPtr.Zero && !_isForeignChild)
+                if (_hwnd.Handle != IntPtr.Zero && !IsNotWin32Window)
                 {
                     if (!UnsafeNativeMethods.IsWindow(_hwnd))
                     {
@@ -299,7 +299,7 @@ namespace System.Windows.Interop
         /// </summary>
         protected virtual bool HasFocusWithinCore()
         {
-            if (_isForeignChild)
+            if (IsNotWin32Window)
             {
                 // GetFocus/IsChild walk the Win32 focus chain, which a driver-minted handle is not
                 // part of. WPF's own notion of focus for this element is what there is to report.
@@ -381,7 +381,7 @@ namespace System.Windows.Interop
                 {
                     HwndHostForeignContent.SetVisible?.Invoke(this, _hwnd.Handle, true);
                 }
-                else
+                else if (!_isPlatformOverlay)
                 {
                     UnsafeNativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_SHOW);
                 }
@@ -397,7 +397,7 @@ namespace System.Windows.Interop
                 {
                     HwndHostForeignContent.SetVisible?.Invoke(this, _hwnd.Handle, false);
                 }
-                else
+                else if (!_isPlatformOverlay)
                 {
                     UnsafeNativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_HIDE);
                 }
@@ -419,7 +419,7 @@ namespace System.Windows.Interop
             // on it - and no RTL or cross-DPI adjustment to make: the claimant places the content
             // from this element's own transform, which already carries both. The client rect is
             // returned as computed.
-            if (_isForeignChild)
+            if (IsNotWin32Window)
             {
                 return PointUtil.FromRect(rectClient);
             }
@@ -445,7 +445,7 @@ namespace System.Windows.Interop
         {
             get
             {
-                if (!_hasDpiAwarenessContextTransition || _isForeignChild) return 1;
+                if (!_hasDpiAwarenessContextTransition || IsNotWin32Window) return 1;
                 DpiScale2 dpi = DpiUtil.GetWindowDpi(Handle, fallbackToNearestMonitorHeuristic: false);
                 DpiScale2 dpiParent = DpiUtil.GetWindowDpi(UnsafeNativeMethods.GetParent(_hwnd), fallbackToNearestMonitorHeuristic: false);
 
@@ -693,6 +693,11 @@ namespace System.Windows.Interop
                 return;
             }
 
+            if (_isPlatformOverlay)
+            {
+                return;     // the derived host places its overlay (OnWindowPositionChanged override)
+            }
+
             UnsafeNativeMethods.SetWindowPos(_hwnd,
                                            new HandleRef(null, IntPtr.Zero),
                                            (int)rcBoundingBox.X,
@@ -769,7 +774,7 @@ namespace System.Windows.Interop
             // None of it applies to a foreign child: it has no HWND to scrape, and its pixels are
             // in the WebGPU scene the claimant publishes. Returning null yields an empty drawing,
             // which is the same thing this returns for a host that has no window yet.
-            if(Handle != IntPtr.Zero && !_isForeignChild)
+            if(Handle != IntPtr.Zero && !IsNotWin32Window)
             {
                 NativeMethods.RECT rc = new NativeMethods.RECT();
                 SafeNativeMethods.GetWindowRect(_hwnd, ref rc);
@@ -942,7 +947,7 @@ namespace System.Windows.Interop
             }
 
             bool boolNewValue = (bool)e.NewValue;
-            if (_isForeignChild)
+            if (IsNotWin32Window)
             {
                 return;     // no Win32 window to enable; the claimant owns interaction
             }
@@ -969,6 +974,7 @@ namespace System.Windows.Interop
             {
                 HwndHostForeignContent.SetVisible?.Invoke(this, _hwnd.Handle, vis);
             }
+            else if (_isPlatformOverlay) { /* the derived host shows and hides its overlay */ }
             else if(vis)
                 UnsafeNativeMethods.ShowWindowAsync(_hwnd, NativeMethods.SW_SHOWNA);
             else
@@ -1040,7 +1046,7 @@ namespace System.Windows.Interop
                         this.IsEnabledChanged += _handlerEnabledChanged;
                         this.IsVisibleChanged += _handlerVisibleChanged;
                     }
-                    else if(_isForeignChild)
+                    else if(IsNotWin32Window)
                     {
                         // Nothing to reparent: the handle is not a Win32 window, it is a
                         // driver-minted one that the claimant composites (see BuildWindow). Asking
@@ -1055,7 +1061,7 @@ namespace System.Windows.Interop
                         UnsafeNativeMethods.SetParent(_hwnd, new HandleRef(null,hwndParent));
                     }
                 }
-                else if (!_isForeignChild && Handle != IntPtr.Zero)
+                else if (!IsNotWin32Window && Handle != IntPtr.Zero)
                 {
                     // Reparent the window to notification-only window provided by SystemResources
                     // This keeps the child window around, but it is not visible.  We can reparent the 
@@ -1112,6 +1118,19 @@ namespace System.Windows.Interop
                 }
 
                 throw new InvalidOperationException(SR.ChildWindowNotCreated);
+            }
+
+            if (!OperatingSystem.IsWindows())
+            {
+                // Off Windows a hosted "child window" is a platform overlay's key (the browser
+                // head's web view is an <iframe> keyed by such a handle), not an HWND: it has no
+                // style bits, no parent and no window procedure to check or subclass, and the
+                // emulated GetWindowLong answers "not a child" for it, so the checks below refused
+                // every one of them. The derived host places the overlay itself, through
+                // OnWindowPositionChanged, and shows and hides it.
+                _isPlatformOverlay = true;
+                InvalidateMeasure();
+                return;
             }
 
             // Make sure that the window that was created is indeed a child window.
@@ -1195,6 +1214,7 @@ namespace System.Windows.Interop
                 HwndHostForeignContent.Detach?.Invoke(this, _hwnd.Handle);
                 _isForeignChild = false;
             }
+            _isPlatformOverlay = false;
 
             HandleRef hwnd = _hwnd;
             _hwnd = new HandleRef(null, IntPtr.Zero);
@@ -1260,6 +1280,13 @@ namespace System.Windows.Interop
         // Set when BuildWindowCore returned something that is not an HWND and a claimant took it.
         // Every Win32 operation on _hwnd is skipped from then on - see HwndHostForeignContent.
         private bool _isForeignChild;
+
+        // Off Windows: the handle is a platform overlay's key, placed and shown by the derived host
+        // (see BuildWindow). Every Win32 operation on it is skipped, as for a foreign child, but no
+        // HwndHostForeignContent claimant is involved.
+        private bool _isPlatformOverlay;
+
+        private bool IsNotWin32Window => _isForeignChild || _isPlatformOverlay;
 
         private class WeakEventDispatcherShutdown: WeakReference
         {
