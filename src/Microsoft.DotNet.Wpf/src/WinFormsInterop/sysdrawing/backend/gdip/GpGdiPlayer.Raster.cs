@@ -358,7 +358,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             new RectangleF(src.X, src.Y, src.Width - wsgn, src.Height - hsgn), GraphicsUnit.Pixel, ia);
                     }
                     spx = Pixels(pre, out sw, out sh);
-                    source = StretchSource(spx, sw, sh, 0, 0, sw, sh, dw, dh, mirrorX, mirrorY);
+                    // OutputDIB then leaves the stretch mode it set (HALFTONE for a SRCCOPY,
+                    // COLORONCOLOR otherwise) and StretchDIBits the 24bpp result, top-down
+                    // (biHeight -gh); HALFTONE runs win32k's AA engine even where the sizes agree.
+                    if (_dc.StretchMode == 4 && GdiHalftone.Stretch(Dib24Info(sw, sh), 0, Dib24Bits(spx, sw, sh), 0, 0, 0, sw, sh,
+                            mirrorX ? -dw : dw, mirrorY ? -dh : dh) is uint[] ht)
+                    {
+                        int hw = dw;
+                        source = (i, j) => ht[j * hw + i];
+                    }
+                    else source = StretchSource(spx, sw, sh, 0, 0, sw, sh, dw, dh, mirrorX, mirrorY);
                 }
                 else
                 {
@@ -465,6 +474,33 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 vs[j] = Math.Clamp(sy + k, 0, h - 1);
             }
             return (i, j) => px[vs[j] * w + us[i]];
+        }
+
+        /// <summary>The BITMAPINFOHEADER OutputDIB builds for its stretched bitmap: 24bpp, top-down.</summary>
+        static byte[] Dib24Info(int w, int h)
+        {
+            var info = new byte[40];
+            Le.W32(info, 0, 40);
+            Le.W32(info, 4, w);
+            Le.W32(info, 8, -h);
+            info[12] = 1;
+            info[14] = 24;
+            return info;
+        }
+
+        /// <summary>0x00RRGGBB pixels as 24bpp DIB scans (B, G, R; rows padded to four bytes).</summary>
+        static byte[] Dib24Bits(uint[] px, int w, int h)
+        {
+            int stride = (w * 3 + 3) & ~3;
+            var bits = new byte[stride * h];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    uint p = px[y * w + x];
+                    int q = y * stride + x * 3;
+                    bits[q] = (byte)p; bits[q + 1] = (byte)(p >> 8); bits[q + 2] = (byte)(p >> 16);
+                }
+            return bits;
         }
 
         static uint[] Pixels(Bitmap b, out int w, out int h)
