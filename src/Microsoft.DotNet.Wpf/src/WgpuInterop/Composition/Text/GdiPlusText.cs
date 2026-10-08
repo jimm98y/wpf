@@ -114,6 +114,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             /// <summary>The world-to-device axis scale the run was laid out under (m11, m22): the
             /// origin is in world units, the advances in device pixels.</summary>
             public float Sx = 1f, Sy = 1f;
+            /// <summary>A run the GDI+ engine has already realized and composed (a full-imager
+            /// string, or one under a transform the fast imager refuses): its levels on the device,
+            /// relative to the world's translation, cut to its clip, for render mode <see cref="Mode"/>.
+            /// <see cref="Glyphs"/> is empty and the run is drawn only under a translation.</summary>
+            public Levels? Pre;
+            /// <summary><see cref="Pre"/>'s content key (<see cref="LevelsKey"/>), made once.</summary>
+            public long PreKey;
             /// <summary>The 6x1 glyph of the run's i'th glyph at the device size it is drawn at.</summary>
             public NaturalClearType.GlyphBits GlyphBits(TrueTypeFont font, int i)
                 => Sx == 1f && Sy == 1f ? Glyph(font, Glyphs[i], Em)
@@ -494,6 +501,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             xs[0] = x0;
             for (int i = 1; i < n; i++) xs[i] = xs[i - 1] + run.Advances[i - 1];
             return xs;
+        }
+
+        /// <summary>A content key for a run's levels: their shape and values, not their place.</summary>
+        internal static long LevelsKey(Levels lv)
+        {
+            long key = 1469598103934665603L;
+            unchecked
+            {
+                key = (key ^ lv.Width) * 1099511628211L;
+                key = (key ^ lv.Height) * 1099511628211L;
+                key = (key ^ (lv.Grey ? 1 : 0)) * 1099511628211L;
+                foreach (byte b in lv.Index) key = (key ^ b) * 1099511628211L;
+            }
+            return key;
         }
 
         /// <summary>A fast-imager run's levels on the device, as DpDriver::DrawGlyphs @1800a43b0

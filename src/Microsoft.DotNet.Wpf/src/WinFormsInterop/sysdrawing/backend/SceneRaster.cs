@@ -468,9 +468,17 @@ namespace System.Drawing.WebGpuBackend
             GdipText.Run run = draw.Run;
             // The run's own axis scale and a translation (WgpuSceneRenderer.EmitGdiPlusText).
             if (m.M11 != run.Sx || m.M22 != run.Sy || m.M12 != 0f || m.M21 != 0f) return false;
-            TrueTypeFont font = GdipText.Face (draw.FontFamily, draw.Style);
-            if (font == null || run.Glyphs.Length == 0) return font != null;
-            GdipText.Levels lv = GdipText.ComposeRun (font, run, m.M31, m.M32, out _, out _);
+            GdipText.Levels lv;
+            if (run.Pre is { } pre) {
+                // Composed by the engine already, relative to the world's translation.
+                if (m.M31 != MathF.Floor (m.M31) || m.M32 != MathF.Floor (m.M32)) return false;
+                lv = new GdipText.Levels { Grey = pre.Grey, Left = pre.Left + (int) m.M31, Top = pre.Top + (int) m.M32,
+                                           Width = pre.Width, Height = pre.Height, Index = pre.Index };
+            } else {
+                TrueTypeFont font = GdipText.Face (draw.FontFamily, draw.Style);
+                if (font == null || run.Glyphs.Length == 0) return font != null;
+                lv = GdipText.ComposeRun (font, run, m.M31, m.M32, out _, out _);
+            }
             if (lv.Width == 0 || lv.Height == 0) return true;
             int cx0 = 0, cy0 = 0, cx1 = _w, cy1 = _h;
             if (run.HasClip) {

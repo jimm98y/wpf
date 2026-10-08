@@ -39,13 +39,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // be that scale and a translation. Anything else draws the ordinary string run.
             bool drawable = s_gammaComposite && !_transparentTarget
                             && world.M11 == run.Sx && world.M22 == run.Sy && world.M12 == 0f && world.M21 == 0f
-                            && FontFor(draw.Style, draw.FontFamily) is Text.TrueTypeFont;
+                            && (run.Pre is not null
+                                ? world.M31 == MathF.Floor(world.M31) && world.M32 == MathF.Floor(world.M32)
+                                : FontFor(draw.Style, draw.FontFamily) is Text.TrueTypeFont);
             if (s_gdiPlusTrace)
                 Console.Error.WriteLine($"[gdiplus] glyphs={run.Glyphs.Length} em={run.Em} mode={run.Mode} scale=({run.Sx},{run.Sy}) "
                                         + $"origin=({run.OriginX},{run.OriginY}) world=({world.M11},{world.M22},{world.M31},{world.M32}) drawable={drawable}");
             if (!drawable)
             {
                 EmitText(draw.Fallback, world, opacity, clip, width, height, format, data);
+                return;
+            }
+            if (run.Pre is { } pre)
+            {
+                EmitGdiPlusLevels(draw, Shifted(pre, (int)world.M31, (int)world.M32), opacity, clip, width, height, format, data,
+                                  run.PreKey != 0 ? run.PreKey : Text.GdiPlusText.LevelsKey(pre));
                 return;
             }
             var font = (Text.TrueTypeFont)FontFor(draw.Style, draw.FontFamily);
@@ -83,6 +91,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (clip.IsEmpty) return;
             }
 
+            long glyphKey = 23;
+            unchecked
+            {
+                glyphKey = glyphKey * 31 + font.GetHashCode();
+                glyphKey = glyphKey * 31 + BitConverter.SingleToInt32Bits(run.Em);
+                glyphKey = glyphKey * 31 + BitConverter.SingleToInt32Bits(run.Sx);
+                glyphKey = glyphKey * 31 + BitConverter.SingleToInt32Bits(run.Sy);
+                glyphKey = glyphKey * 31 + (run.FixedFilter ? 1 : 0);
+                for (int i = 0; i < n; i++)
+                {
+                    glyphKey = glyphKey * 31 + run.Glyphs[i];
+                    glyphKey = glyphKey * 31 + BitConverter.SingleToInt32Bits(xs[i] - lv.Left);
+                }
+                glyphKey = glyphKey * 31 + BitConverter.SingleToInt32Bits(y - lv.Top);
+            }
+            EmitGdiPlusLevels(draw, lv, opacity, clip, width, height, format, data, glyphKey);
+        }
+
+        /// <summary>A precomposed run's levels moved by a whole-pixel translation.</summary>
+        private static Text.GdiPlusText.Levels Shifted(Text.GdiPlusText.Levels lv, int dx, int dy)
+            => new Text.GdiPlusText.Levels { Grey = lv.Grey, Left = lv.Left + dx, Top = lv.Top + dy, Width = lv.Width, Height = lv.Height, Index = lv.Index };
+
+        /// <summary>A run's levels on the device, blended GDI+'s way: the layout clip already applied.</summary>
+        private void EmitGdiPlusLevels(GdiPlusTextDraw draw, Text.GdiPlusText.Levels lv, double opacity, Scissor clip,
+            int width, int height, WGPUTextureFormat format, DrawData data, long shapeKey)
+        {
+            Text.GdiPlusText.Run run = draw.Run;
+            if (lv.Width == 0 || lv.Height == 0) return;
             int argb = draw.Argb;
             byte br = (byte)(argb >> 16), bgc = (byte)(argb >> 8), bb = (byte)argb;
             int alpha = (int)Math.Clamp(Math.Round(((argb >> 24) & 0xff) * Math.Clamp(opacity, 0.0, 1.0)), 0, 255);
@@ -98,17 +134,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             long key = 23;
             unchecked
             {
-                key = key * 31 + font.GetHashCode();
-                key = key * 31 + BitConverter.SingleToInt32Bits(run.Em);
-                key = key * 31 + BitConverter.SingleToInt32Bits(run.Sx);
-                key = key * 31 + BitConverter.SingleToInt32Bits(run.Sy);
-                key = key * 31 + (run.FixedFilter ? 1 : 0) + 2 * run.Mode + 16 * run.Contrast;
-                for (int i = 0; i < n; i++)
-                {
-                    key = key * 31 + run.Glyphs[i];
-                    key = key * 31 + BitConverter.SingleToInt32Bits(xs[i] - px0);
-                }
-                key = key * 31 + BitConverter.SingleToInt32Bits(y - py0);
+                key = key * 31 + shapeKey;
+                key = key * 31 + 2 * run.Mode + 16 * run.Contrast;
                 key = key * 397 ^ ((long)(argb & 0xffffff) | (long)alpha << 24);
                 if (paper is { } pp)
                     key = key * 397 ^ (1L << 40 | (long)ToByte(pp.R) << 16 | (long)ToByte(pp.G) << 8 | ToByte(pp.B));

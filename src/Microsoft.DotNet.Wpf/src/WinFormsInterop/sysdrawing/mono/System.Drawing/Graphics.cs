@@ -2324,7 +2324,20 @@ namespace System.Drawing
 		/// through its text gamma table.</summary>
 		bool TryDrawGdiPlusText (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
 		{
-			if (!s_gdiPlusText || font.Underline || font.Strikeout)
+			if (!s_gdiPlusText)
+				return false;
+			// GpGraphics::DrawString hands FastTextImager the world-to-device transform: a positive
+			// axis scale is laid out and realized at the device's size (Initialize@1800393c0, the
+			// stretched fits); the renderer draws the run under that scale and no other. What the
+			// fast imager refuses under a transform -- a turned or sheared world, the full imager's
+			// strings, the style lines -- this port's GDI+ engine lays out and realizes as it does
+			// for a bitmap, and the renderer blends its levels (DrawGdiPlusThroughEngine).
+			float [] wm = RecordingMatrix ();
+			bool identity = wm [0] == 1f && wm [1] == 0f && wm [2] == 0f && wm [3] == 1f;
+			bool axis = wm [1] == 0f && wm [2] == 0f && wm [0] > 0f && wm [3] > 0f;
+			if (!identity && (!axis || font.Underline || font.Strikeout || (format != null && format.TabStopCount > 0)))
+				return DrawGdiPlusThroughEngine (s, font, brush, rect, format);
+			if (font.Underline || font.Strikeout)
 				return false;
 			string family = font.FontFamily?.Name;
 			if (string.IsNullOrEmpty (family))
@@ -2345,13 +2358,7 @@ namespace System.Drawing
 				lineAlign = (int) format.LineAlignment;
 				hotkey = format.HotkeyPrefix != Text.HotkeyPrefix.None;
 			}
-			// GpGraphics::DrawString hands FastTextImager the world-to-device transform: a positive
-			// axis scale is laid out and realized at the device's size (Initialize@1800393c0, the
-			// stretched fits); the renderer draws the run under that scale and no other. A turned
-			// or sheared world keeps the unscaled layout, which the renderer will not take.
-			float [] wm = RecordingMatrix ();
-			bool axis = wm [1] == 0f && wm [2] == 0f && wm [0] > 0f && wm [3] > 0f;
-			float sx = axis ? wm [0] : 1f, sy = axis ? wm [3] : 1f;
+			float sx = wm [0], sy = wm [3];
 			// FastTextImager::Initialize +0xd0: no width to fit for NoWrap without trimming.
 			float wrap = format != null && (format.FormatFlags & StringFormatFlags.NoWrap) != 0
 				     && format.Trimming == StringTrimming.None ? 0f : rect.Width;
@@ -2361,12 +2368,145 @@ namespace System.Drawing
 				// The renderer draws the bi-level realizations under an axis scale.
 				biLevel: axis, sx: sx, sy: sy, wrapWidth: wrap);
 			if (layout == null && asPath)
-				return axis && FillGdiPlusTextOutlines (s, font, brush, rect, format, sx, sy);
+				return FillGdiPlusTextOutlines (s, font, brush, rect, format, sx, sy);
 			if (layout == null)
-				return false;
+				return !identity && DrawGdiPlusThroughEngine (s, font, brush, rect, format);
 			if (!empty)
 				GpuRecorder.DrawGdiPlusText (layout, s, ArgbOf (brush), style, family);
 			return true;
+		}
+
+		/// <summary>A window's DrawString under a transform, drawn the way GpGraphics::DrawString
+		/// draws it: this port's GDI+ engine lays the string out and realizes it under the window's
+		/// world and page (the fast imager, or FullTextImager::DrawGlyphs @18003b720 with its turned,
+		/// stretched and sideways realizations, the path realizations, the style lines) on a scratch
+		/// surface whose OutputText hands each run's levels, cut to the clip, to the renderer
+		/// instead of blending them (GpGraphics.TextLevelsSink) -- the blend is the window's, against
+		/// the paper under it. What the engine fills or strokes instead (a path realization, an
+		/// underline) is drawn as the image it made. Modelled outside containers, at a whole-pixel
+		/// offset; false otherwise (the caller's old path).</summary>
+		bool DrawGdiPlusThroughEngine (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
+		{
+			if (rec_in_container || font.FontFamily == null || !(brush is SolidBrush))
+				return false;
+			float [] wm = RecordingMatrix ();
+			GpuRecorder.GetTranslation (out float tx, out float ty);
+			float ox = tx - wm [4], oy = ty - wm [5];
+			if (ox != (int) ox || oy != (int) oy)
+				return false;
+			float det = wm [0] * wm [3] - wm [1] * wm [2];
+			if (!(Math.Abs (det) > 1e-6f))
+				return false;
+			// The device box the string can reach: the layout rectangle widened by the string's
+			// own measure either way (an alignment in an empty rectangle, an overhang) and two ems,
+			// through the transform.
+			SizeF m;
+			using (var mb = new Bitmap (1, 1, PixelFormat.Format32bppArgb))
+			using (var mg = FromImage (mb)) {
+				mg.PageUnit = rec_unit == GraphicsUnit.Display ? GraphicsUnit.Pixel : rec_unit;
+				mg.PageScale = rec_page_scale;
+				m = mg.MeasureString (s, font, rect.Width > 0f ? new SizeF (rect.Width, Math.Max (rect.Height, 0f)) : SizeF.Empty, format);
+			}
+			float em = font.SizeInPoints * DpiY / 72f;
+			float pad = 2f * em / Math.Max (PageFactor, 1e-6f);
+			float x0 = rect.X - m.Width - pad, y0 = rect.Y - m.Height - pad;
+			float x1 = rect.X + Math.Max (rect.Width, 0f) + m.Width + pad, y1 = rect.Y + Math.Max (rect.Height, 0f) + m.Height + pad;
+			float dx0 = float.MaxValue, dy0 = float.MaxValue, dx1 = float.MinValue, dy1 = float.MinValue;
+			foreach ((float px, float py) in new [] { (x0, y0), (x1, y0), (x0, y1), (x1, y1) }) {
+				float X = wm [0] * px + wm [2] * py + wm [4], Y = wm [1] * px + wm [3] * py + wm [5];
+				dx0 = Math.Min (dx0, X); dy0 = Math.Min (dy0, Y); dx1 = Math.Max (dx1, X); dy1 = Math.Max (dy1, Y);
+			}
+			if (!(dx1 > dx0) || !(dy1 > dy0) || dx1 - dx0 > 8192f || dy1 - dy0 > 8192f)
+				return false;
+			int bx = (int) Math.Floor (dx0), by = (int) Math.Floor (dy0);
+			int bw = (int) Math.Ceiling (dx1) - bx + 1, bh = (int) Math.Ceiling (dy1) - by + 1;
+			var runs = new System.Collections.Generic.List<(Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Levels Lv, int Mode, int Contrast)> ();
+			using (var bmp = new Bitmap (bw, bh, PixelFormat.Format32bppArgb)) {
+				using (var g = FromImage (bmp)) {
+					if (g.gp == null || g.image_target == null)
+						return false;
+					// The window's page and world, then the scratch surface's offset (in page units).
+					g.PageUnit = rec_unit == GraphicsUnit.Display ? GraphicsUnit.Pixel : rec_unit;
+					g.PageScale = rec_page_scale;
+					float pf = PageFactor;
+					g.SetRecWorld (RecWorld);
+					g.RecordedCombine (new [] { 1f, 0f, 0f, 1f, -bx / pf, -by / pf }, Drawing2D.MatrixOrder.Append);
+					g.recorded_text_hint = recorded_text_hint;
+					g.recorded_text_contrast = recorded_text_contrast;
+					g.gpu_smoothing = gpu_smoothing;
+					g.gp.TextLevelsSink = (lv, mode, contrast) => runs.Add ((lv, mode, contrast));
+					try {
+						if (!g.EngineDrawString (s, font, brush, rect, format))
+							return false;
+					} finally {
+						g.gp.TextLevelsSink = null;
+					}
+				}
+				string family = font.FontFamily.Name;
+				int style = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
+				int argb = ArgbOf (brush);
+				// Device pixels, relative to the recording's origin: drawn with no world at all.
+				GpuRecorder.SetWorldTransform (1f, 0f, 0f, 1f, 0f, 0f);
+				try {
+					foreach ((var lv, int mode, int contrast) in runs) {
+						var at = new Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Levels {
+							Grey = lv.Grey, Left = lv.Left + bx, Top = lv.Top + by, Width = lv.Width, Height = lv.Height, Index = lv.Index };
+						var run = new Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Run {
+							Pre = at, PreKey = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.LevelsKey (at),
+							Mode = mode, Hint = (int) recorded_text_hint, Contrast = contrast,
+							Em = em * (float) Math.Sqrt (Math.Abs (det)), OriginX = at.Left, OriginY = at.Top + at.Height,
+						};
+						GpuRecorder.DrawGdiPlusText (run, s, argb, style, family);
+					}
+					RecordEngineImage (bmp, bx, by);
+				} finally {
+					PushRecordedTransform ();
+				}
+			}
+			return true;
+		}
+
+		/// <summary>What a scratch engine surface drew besides text (a path realization's fill, a
+		/// style line), as an image at its device place under the current transform.</summary>
+		void RecordEngineImage (Bitmap bmp, int x, int y)
+		{
+			int bw = bmp.Width, bh = bmp.Height;
+			BitmapData d = bmp.LockBits (new Rectangle (0, 0, bw, bh), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+			var bgra = new byte [bw * bh * 4];
+			for (int j = 0; j < bh; j++)
+				Marshal.Copy (d.Scan0 + j * d.Stride, bgra, j * bw * 4, bw * 4);
+			bmp.UnlockBits (d);
+			for (int i = 0; i < bgra.Length; i += 4)
+				(bgra [i], bgra [i + 2]) = (bgra [i + 2], bgra [i]);
+			RecordCoverage (bgra, bw, bh, x, y);
+		}
+
+		/// <summary>An RGBA coverage image at a device place, as bands of the rows that hold ink, each
+		/// cropped to its ink: transparent pixels write nothing, and a box that claims them hides
+		/// the paper from text drawn beside the ink (WgpuSceneRenderer.PaperUnder knows no image).</summary>
+		void RecordCoverage (byte [] rgba, int w, int h, int x, int y)
+		{
+			int bandTop = -1, b0 = 0, b1 = 0;
+			void Emit (int top, int bottom, int c0, int c1)
+			{
+				int cw = c1 - c0 + 1, ch = bottom - top + 1;
+				var part = new byte [cw * ch * 4];
+				for (int r = 0; r < ch; r++)
+					Buffer.BlockCopy (rgba, ((top + r) * w + c0) * 4, part, r * cw * 4, cw * 4);
+				GpuRecorder.DrawImage (part, cw, ch, x + c0, y + top, cw, ch);
+			}
+			for (int r = 0; r <= h; r++) {
+				int c0 = -1, c1 = -1;
+				if (r < h)
+					for (int c = 0; c < w; c++)
+						if (rgba [(r * w + c) * 4 + 3] != 0) { if (c0 < 0) c0 = c; c1 = c; }
+				// A row with no ink, or ink that strays far from the band's, ends the band.
+				bool ends = bandTop >= 0 && (c0 < 0 || c0 < b0 - 8 || c0 > b0 + 8 || c1 < b1 - 8 || c1 > b1 + 8);
+				if (ends) { Emit (bandTop, r - 1, b0, b1); bandTop = -1; }
+				if (c0 < 0) continue;
+				if (bandTop < 0) { bandTop = r; b0 = c0; b1 = c1; }
+				else { b0 = Math.Min (b0, c0); b1 = Math.Max (b1, c1); }
+			}
 		}
 
 		/// <summary>A string whose realization GDI+ switches to outlines (GpFaceRealization::Realize's
@@ -2422,6 +2562,7 @@ namespace System.Drawing
 					bmp.UnlockBits (d);
 					for (int i = 0; i < bgra.Length; i += 4)
 						(bgra [i], bgra [i + 2]) = (bgra [i + 2], bgra [i]);
+					// (The bands of it that hold ink: RecordCoverage.)
 					// The coverage is the device's: drawn under the world's translation alone.
 					bool scaled = sx != 1f || sy != 1f;
 					if (scaled) {
@@ -2429,7 +2570,7 @@ namespace System.Drawing
 						GpuRecorder.SetWorldTransform (1f, 0f, 0f, 1f, wm [4], wm [5]);
 					}
 					try {
-						GpuRecorder.DrawImage (bgra, bw, bh, bx, by, bw, bh);
+						RecordCoverage (bgra, bw, bh, bx, by);
 					} finally {
 						if (scaled)
 							PushRecordedTransform ();

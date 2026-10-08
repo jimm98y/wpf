@@ -168,6 +168,66 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(0, differ);
         }
 
+        /// <summary>What the fast imager refuses under a transform -- a turned world, a wrapping or
+        /// multi-line string, tabs, the style lines, a layout rectangle that clips -- a window has the
+        /// GDI+ engine lay out and realize, and blends the levels itself: the recorded string,
+        /// rasterized, is the engine's bitmap.</summary>
+        [Theory]
+        [InlineData("rotate30", 5)]
+        [InlineData("rotate90", 4)]
+        [InlineData("rotate-45", 1)]
+        [InlineData("wrap", 5)]
+        [InlineData("wrap", 3)]
+        [InlineData("tabs", 5)]
+        [InlineData("underline", 5)]
+        [InlineData("clip", 5)]
+        [InlineData("lines", 4)]
+        public void DrawString_ThroughTheEngine_IsTheEnginesOnScreen(string kind, int hint)
+        {
+            Assert.SkipUnless(FacesInstalled("segoeui.ttf", "verdana.ttf", "arial.ttf"), "needs the Windows faces");
+            using var font = new Font(kind == "underline" ? "Arial" : "Segoe UI", 9f, kind == "underline" ? FontStyle.Underline : FontStyle.Regular, GraphicsUnit.Pixel);
+            void Draw(Graphics g)
+            {
+                switch (kind)
+                {
+                    case "rotate30": g.TranslateTransform(60f, 10f); g.RotateTransform(30f); break;
+                    case "rotate90": g.TranslateTransform(120f, 4f); g.RotateTransform(90f); break;
+                    case "rotate-45": g.TranslateTransform(20f, 70f); g.RotateTransform(-45f); break;
+                    default: g.ScaleTransform(kind == "tabs" ? 1.5f : 1f, kind == "clip" ? 2f : 1.5f); break;
+                }
+                g.TextRenderingHint = (System.Drawing.Text.TextRenderingHint)hint;
+                switch (kind)
+                {
+                    case "wrap": g.DrawString("Wrapped Hamburgefonstiv text in a narrow box", font, Brushes.Black, new RectangleF(3f, 2f, 90f, 60f)); break;
+                    case "lines": g.DrawString("two\nlines", font, Brushes.Black, 3f, 2f); break;
+                    case "tabs": g.DrawString("a\tb\tc", font, Brushes.Black, 3f, 4f); break;
+                    case "clip": g.DrawString("Clipped by its layout rectangle", font, Brushes.Black, new RectangleF(3f, 2f, 70f, 12f)); break;
+                    default: g.DrawString("Turned Hamburgefonstiv 0123", font, Brushes.Black, 3f, 4f); break;
+                }
+            }
+            using var engine = new Bitmap(400, 160, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(engine)) { g.Clear(Color.White); Draw(g); }
+
+            Graphics r = GpuRaster.NewRecording();
+            Draw(r);
+            object scene = GpuRaster.EndScene(r);
+            using var screen = new Bitmap(400, 160, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(screen)) g.Clear(Color.White);
+            screen.GetPixel(0, 0);   // the clear on the pixels
+            SceneRaster.Render(screen.managed.Frame, new[] { scene });
+
+            int differ = 0, ink = 0;
+            for (int yy = 0; yy < 160; yy++)
+                for (int xx = 0; xx < 400; xx++)
+                {
+                    Color a = engine.GetPixel(xx, yy), b = screen.GetPixel(xx, yy);
+                    if (a.ToArgb() != Color.White.ToArgb()) ink++;
+                    if (a != b) differ++;
+                }
+            Assert.True(ink > 20, "the engine drew nothing");
+            Assert.Equal(0, differ);
+        }
+
         [Theory]
         [InlineData("tab\there")]       // control characters: the full imager (Line Services)
         [InlineData("two\nlines")]
