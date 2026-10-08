@@ -602,6 +602,42 @@ namespace MS.Internal.TextFormatting
         }
 
         /// <summary>
+        ///  Puts every combining mark in the cluster of the character before it, once substitution
+        ///  is done: the mark keeps its own glyph, but a caret steps over a base and its marks as one
+        ///  cell, as DWrite's shaping engines cluster them (GenericEngineGetGlyphs keeps an
+        ///  IS_COMBINING character with its base; the Hebrew and Arabic engines do the same). It
+        ///  happens AFTER the GSUB pass because the per-character features (the Arabic joining
+        ///  forms) find their glyphs through the cluster map.
+        /// </summary>
+        internal static unsafe void MergeMarkClusters(char* text, int charCount, ushort* clusterMap, int glyphCount)
+        {
+            for (int i = 1; i < charCount; i++)
+            {
+                if (clusterMap[i] == clusterMap[i - 1]) continue;
+                int cp = text[i];
+                if (char.IsLowSurrogate(text[i])) continue;
+                if (char.IsHighSurrogate(text[i]) && i + 1 < charCount && char.IsLowSurrogate(text[i + 1]))
+                {
+                    cp = char.ConvertToUtf32(text[i], text[i + 1]);
+                }
+                if (CharUnicodeInfo.GetUnicodeCategory(cp) is not (UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark))
+                {
+                    continue;
+                }
+
+                // Only a mark whose glyphs follow its base's can join it; anything else would make the
+                // map non-monotonic.
+                ushort from = clusterMap[i];
+                ushort to = clusterMap[i - 1];
+                if (from < to) continue;
+                for (int j = i; j < charCount && clusterMap[j] == from; j++)
+                {
+                    clusterMap[j] = to;
+                }
+            }
+        }
+
+        /// <summary>
         ///  Shapes a nominal run held in managed arrays, resizing them as substitution requires.
         /// </summary>
         /// <remarks>

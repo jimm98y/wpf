@@ -1740,6 +1740,10 @@ namespace MS.Internal.TextFormatting
                             pfCanGlyphAlone);
 
                         fIsGlyphBuffersUsed = glyphCount <= cgiGlyphBuffers ? 1 : 0;
+                        if (fIsGlyphBuffersUsed != 0)
+                        {
+                            ManagedOpenTypeShaper.MergeMarkClusters(pwchText, cchText, puClusterMap, glyphCount);
+                        }
                     }
                     else
                     {

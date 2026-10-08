@@ -1677,13 +1677,15 @@ namespace MS.Internal.TextFormatting
             int depthQueryMax, IntPtr pSubLineInfo, out int actualDepthQuery, ref LsTextCell lsTextCell)
         {
             ManagedLsRun run = line.Runs[runIndex];
-            CellBounds(run, offset, out int x, out int w);
+            ClusterBounds(run, offset, out int first, out int last, out int x, out int w);
 
-            lsTextCell.lscpStartCell = cp;
-            lsTextCell.lscpEndCell = cp;
+            // The cell is the glyph CLUSTER: a base with its marks, a ligature. FullTextLine puts the
+            // caret stops inside it (one per character, or one for the cluster in a run with marks).
+            lsTextCell.lscpStartCell = run.CpFirst + first;
+            lsTextCell.lscpEndCell = run.CpFirst + last;
             lsTextCell.pointUvStartCell = new LSPOINT(LeadingU(line, run.IsRightToLeft, x, w), 0);
             lsTextCell.dupCell = Math.Max(w, 1);
-            lsTextCell.cCharsInCell = 1;
+            lsTextCell.cCharsInCell = last - first + 1;
             lsTextCell.cGlyphsInCell = 1;
 
             actualDepthQuery = 0;
@@ -1768,21 +1770,30 @@ namespace MS.Internal.TextFormatting
         }
 
         /// <summary>
-        ///  Where the character at <paramref name="offset"/> within a run sits visually (left-based,
-        ///  line-relative), and how wide it is.
+        ///  The glyph cluster the character at <paramref name="offset"/> of a run belongs to, as its
+        ///  first and last character, and where it sits visually (left-based, line-relative).
         /// </summary>
         /// <remarks>
-        ///  Characters run the way their run does. In a right-to-left run the first logical character
-        ///  is at the run's RIGHT edge and later ones march leftward.
+        ///  Characters run the way their run does: in a right-to-left run the first logical character
+        ///  is at the run's RIGHT edge and later ones march leftward. Widths are per CHARACTER (a
+        ///  cluster's advance split over its characters), so a cluster is the sum of its characters'.
         /// </remarks>
-        private static void CellBounds(ManagedLsRun run, int offset, out int x, out int width)
+        private static void ClusterBounds(ManagedLsRun run, int offset, out int first, out int last, out int x, out int width)
         {
-            // Per CHARACTER, not per glyph: a ligature is one glyph for several characters, and a
-            // cluster several glyphs for one.
+            first = offset;
+            last = offset;
+            ushort[] map = run.ClusterMap;
+            if (run.GlyphBased && !run.IsTab && map != null && offset < run.CchText && map.Length >= run.CchText)
+            {
+                while (first > 0 && map[first - 1] == map[offset]) first--;
+                while (last + 1 < run.CchText && map[last + 1] == map[offset]) last++;
+            }
+
             int[] widths = run.CharWidths ?? run.Advances ?? Array.Empty<int>();
             int before = 0;
-            for (int i = 0; i < offset && i < widths.Length; i++) before += widths[i];
-            width = offset < widths.Length ? widths[offset] : 0;
+            for (int i = 0; i < first && i < widths.Length; i++) before += widths[i];
+            width = 0;
+            for (int i = first; i <= last && i < widths.Length; i++) width += widths[i];
 
             x = run.IsRightToLeft
                 ? run.PenX + run.Width - before - width
@@ -1819,11 +1830,10 @@ namespace MS.Internal.TextFormatting
                     int slack = pass == 2 ? s_rtlCell : 0;
 
                     int lead = LeadingU(line, run.IsRightToLeft, run.PenX, run.Width);
-                    int[] widths = run.CharWidths ?? run.Advances ?? Array.Empty<int>();
                     int v = 0;
-                    for (int i = 0; i < run.CchText; i++)
+                    for (int i = 0; i < run.CchText; )
                     {
-                        int w = i < widths.Length ? widths[i] : 0;
+                        ClusterBounds(run, i, out _, out int last, out _, out int w);
                         bool hit = against
                             ? u > lead - v - w - slack && u <= lead - v + slack
                             : u >= lead + v - slack && u < lead + v + w + slack;
@@ -1833,6 +1843,7 @@ namespace MS.Internal.TextFormatting
                             return LsErr.None;
                         }
                         v += w;
+                        i = last + 1;
                     }
                 }
             }

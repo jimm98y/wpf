@@ -448,6 +448,17 @@ namespace MS.Internal.Text.TextInterface
             uint g = 0;
             for (uint i = 0; i < textLength; i++)
             {
+                // A base letter and its combining marks draw as the precomposed character when the
+                // font has it, as DWrite's generic shaping engine maps them (CdmComposition).
+                if (CdmComposition.TryCompose(text, (int)i, (int)textLength, out char composed, out int consumed)
+                    && d.GlyphIndex(composed) is ushort composedGlyph && composedGlyph != 0)
+                {
+                    for (int k = 0; k < consumed; k++) clusterMap[i + k] = (ushort)g;
+                    gids[g++] = composedGlyph;
+                    i += (uint)consumed - 1;
+                    continue;
+                }
+
                 uint cp = text[i];
                 bool pair = char.IsHighSurrogate(text[i]) && i + 1 < textLength && char.IsLowSurrogate(text[i + 1]);
                 if (pair)

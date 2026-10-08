@@ -176,5 +176,35 @@ namespace Wpf.Text.Tests
                              string.Join(" ", bounds));
             }
         }
+
+        // DWrite composes a base and its combining marks into the precomposed character (TextShaping's
+        // CDM tables), all or nothing, and keeps a mark in its base's cluster either way.
+        [Theory]
+        [InlineData("á", "105", new[] { 0, 2670, 2670 })]
+        [InlineData("ế", "1219", new[] { 0, 2670, 2670, 2670 })]
+        [InlineData("á̂", "68 1171 2114", new[] { 0, 2670, 2670, 2670 })]
+        [InlineData("Ά", "497", new[] { 0, 3204, 3204 })]
+        public void CombiningMarksComposeAndCluster(string text, string glyphs, int[] carets)
+        {
+            SkipUnlessInstalled("Arial");
+            (TextLine line, List<Run> runs) = Format("Arial", 16, text);
+            using (line)
+            {
+                Assert.Equal(glyphs, string.Join(" ", runs.SelectMany(r => r.Glyphs)));
+                Assert.Equal(carets, Carets(line, text.Length));
+            }
+        }
+
+        [Fact]
+        public void HebrewPointsShareTheirLettersCaret()
+        {
+            SkipUnlessInstalled("Segoe UI");
+            const string text = "שָׁלוֹם";
+            (TextLine line, _) = Format("Segoe UI", 16, text);
+            using (line)
+            {
+                Assert.Equal(new[] { 11026, 7260, 7260, 7260, 4616, 3329, 3329, 11027 }, Carets(line, text.Length));
+            }
+        }
     }
 }
