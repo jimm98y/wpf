@@ -259,7 +259,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             float tl = MathF.Max (sx, sy) / 65536f;
             bool turned = !(MathF.Abs (w2d.M12) <= tl && MathF.Abs (w2d.M21) <= tl) && !(MathF.Abs (w2d.M11) <= tl && MathF.Abs (w2d.M22) <= tl);
             int mode = target.RealizationMode (run.Face, run.Family, run.Em, run.Em * sx, sx == sy && !turned);
-            if (turned && !vertical && !run.Rtl && target.DrawsAsPath (run.Face, run.Em, mode)) {
+            if (!vertical && !run.Rtl && target.DrawsAsPath (run.Face, run.Em, mode)) {
                 // SwitchToPath: no GlyphImager -- a design realization's ideal advances from the
                 // cell (GetGlyphStringIdealAdvanceVector), each glyph's path added there, filled.
                 var gp = new GpGlyphImager ();

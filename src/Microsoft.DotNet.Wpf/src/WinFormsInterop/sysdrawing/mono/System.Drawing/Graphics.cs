@@ -2347,11 +2347,43 @@ namespace System.Drawing
 			}
 			object layout = WebGpuBackend.TextMetrics.LayoutGdiPlus (s, family, style, font.SizeInPoints,
 				rect.X, rect.Y, rect.Width, rect.Height, flags, typographic, align, lineAlign, hotkey,
-				(int) recorded_text_hint, recorded_text_contrast, out bool empty);
+				(int) recorded_text_hint, recorded_text_contrast, out bool empty, out bool asPath);
+			if (layout == null && asPath)
+				return FillGdiPlusTextOutlines (s, font, brush, rect, format);
 			if (layout == null)
 				return false;
 			if (!empty)
 				GpuRecorder.DrawGdiPlusText (layout, s, ArgbOf (brush), style, family);
+			return true;
+		}
+
+		/// <summary>A string whose realization GDI+ switches to outlines (GpFaceRealization::Realize's
+		/// SwitchToPath @1801ed568: a device box over 100 pixels tall under ClearType, over 200 under
+		/// the antialiased hints, over 800 otherwise): FastTextImager answers status 6 and
+		/// FullTextImager::DrawGlyphs @18003b720 adds each glyph's outline at the design-realization
+		/// layout and fills the lot with GpGraphics::FillPath -- the layout GraphicsPath.AddString
+		/// makes, filled with the graphics' own smoothing. Modelled for a pixel page with no
+		/// scaling; false otherwise (the caller's old path).</summary>
+		bool FillGdiPlusTextOutlines (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
+		{
+			if (PageUnit != GraphicsUnit.Pixel && PageUnit != GraphicsUnit.Display)
+				return false;
+			if (PageScale != 1f || font.FontFamily == null)
+				return false;
+			float em = font.SizeInPoints * DpiY / 72f;
+			using (var path = new GraphicsPath ()) {
+				path.AddString (s, font.FontFamily, (int) font.Style & 3, em, rect, format);
+				if (path.PointCount > 0) {
+					// SetTextLinesAntialiasMode::SetAAMode @1800eb708 for a path realization:
+					// antialiased for AntiAlias and AntiAliasGridFit, aliased otherwise.
+					SmoothingMode saved = SmoothingMode;
+					TextRenderingHint h = recorded_text_hint;
+					SmoothingMode = h == TextRenderingHint.AntiAlias || h == TextRenderingHint.AntiAliasGridFit
+						? SmoothingMode.AntiAlias : SmoothingMode.None;
+					try { FillPath (brush, path); }
+					finally { SmoothingMode = saved; }
+				}
+			}
 			return true;
 		}
 

@@ -12,6 +12,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
         internal static Action<int, float, ushort[], float[]> Placed;
         /// <summary>(device pen width, pen unit, the line's world points x0,y0,x1,y1).</summary>
         internal static Action<float, int, float[]> Line;
+        /// <summary>A path realization's glyphs filled (FullTextImager::DrawGlyphs' GpGraphics::FillPath).</summary>
+        internal static Action PathFilled;
 
         internal static void ReportPlaced (int mode, float em, ushort[] glyphs, float[] xs, float[] ys)
         {

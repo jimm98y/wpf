@@ -80,7 +80,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // ppem in the scaler's arithmetic (font units x64 through the post-transform). No
                 // glyph program runs, so the scan control is the prep's at that ppem (fsg_DoScanControl;
                 // neither its turned nor its stretched condition holds).
-                dropout = font.DWriteUnfittedDropout(ppem, TrueTypeFont.DWriteBiLevelWord, turned: false);
+                // fs__NewTransformation hands scl_InitializeScaling the no-hint flag (+0xd6, NewTransform
+                // @18006bc80: the grid-fit bit clear), and scl_InitializeScaling @18008a0c8 then sets
+                // the interpreter's ppem (+0x184 / +0x188) to the face's units per em, so the prep the
+                // scan control comes from (fsg_SimpleInnerGridFit copies its SCANCTRL / SCANTYPE)
+                // measures MPPEM = upem: MS Gothic's (MPPEM <= 64 ? 511 : 0) turns dropout control
+                // off, Courier New's (MPPEM < 9 ? SCANTYPE 4) keeps SCANTYPE 1. fsg_DoScanControl's
+                // threshold is still compared with the device size (scl_InitializeScaling's param_20).
+                dropout = font.DWriteUnfittedDropout(ppem, TrueTypeFont.DWriteBiLevelWord, turned: false,
+                                                     prepPpem: font.UnitsPerEmForHinting);
                 // A simulated oblique is the scaler's slant, in the same transform.
                 figures = TransformedOutline(font, gid, ppem, 1f, 0f, -font.ObliqueShearApplied, 1f, 0f, 0f, outlineBold: !bitmapBold);
                 if (figures.Count == 0) return g;
@@ -174,6 +182,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// rotated and stretched conditions, but the pre-program itself runs at the interpreter's
         /// size, the em along the turned unit vector. Courier New at 7pt under 30 degrees: param_20
         /// is 8, the prep runs at 9 and sets another SCANTYPE there.</summary>
+        /// <summary>scl_InitializeScaling's param_20 for an axis-aligned matrix: |m22| em-scaled, 16.16, rounded.</summary>
+        static int AxisDropoutPpem(float em, float m22)
+        {
+            long r = (long)Math.Floor(Math.Abs(m22) * em * 65536.0 + 0.5);
+            return (int)((r + 0x8000) >> 16);
+        }
+
         internal static int TurnedDropout(TrueTypeFont font, float em, float m21, float m22, int word)
         {
             long r = (long)Math.Floor(Math.Max(Math.Abs(m21), Math.Abs(m22)) * em * 65536.0 + 0.5);
@@ -324,7 +339,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     int ox = (int)MathF.Floor(x0) - 1, oy = (int)MathF.Floor(y0) - 1;
                     int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
                     bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figures), ox, oy, w, h, 1,
-                                                                TurnedDropout(font, em, m21, m22, TrueTypeFont.DWriteBiLevelWord), 1);
+                                                                m12 == 0f && m21 == 0f
+                                                                    ? font.DWriteUnfittedDropout(AxisDropoutPpem(em, m22), TrueTypeFont.DWriteBiLevelWord,
+                                                                                                 turned: m11 != m22, prepPpem: font.UnitsPerEmForHinting)
+                                                                    : TurnedDropout(font, em, m21, m22, TrueTypeFont.DWriteBiLevelWord), 1);
                     if (bits is not null)
                     {
                         var bytes = new byte[bits.Length];
