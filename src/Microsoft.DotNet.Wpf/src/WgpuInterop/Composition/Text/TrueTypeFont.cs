@@ -221,6 +221,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _winAscent = U16(os2 + 74);
                 _winDescent = U16(os2 + 76);
                 _xAvgCharWidth = (short) U16(os2 + 2);
+                _hasOs2 = true;
+                if (os2 + 42 <= _data.Length) { _panoseFamily = _data[os2 + 32]; _panoseProportion = _data[os2 + 35]; }
+                if (U16(os2) >= 1 && os2 + 82 <= _data.Length) _codePageRange1 = (uint) (U16(os2 + 78) << 16 | U16(os2 + 80));
                 StrikeoutSize = (short) U16(os2 + 26);
                 StrikeoutPosition = (short) U16(os2 + 28);
                 if (os2 + 72 <= _data.Length)
@@ -581,6 +584,90 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         private readonly short _xAvgCharWidth;
+        private readonly bool _hasOs2;
+        private readonly byte _panoseFamily, _panoseProportion;
+        private readonly uint _codePageRange1;
+        private bool[]? _dwriteFullWidth;
+        private bool _dwriteFullWidthDone;
+
+        /// <summary>
+        ///  DirectWrite's "compatible full-width" glyphs (FontFace::IsCompatibleFullWidthGlyph
+        ///  @18002ede8), which its GDI-compatible widths make two half widths: built by
+        ///  OpenTypeFontFaceBuilder::WriteCompatibleFullWidthGlyphBits @1800f9660 only for a legacy
+        ///  East Asian face that IsMonospacedFont @18002f110 calls monospaced (PANOSE family 0, 2 or 4
+        ///  with proportion 9; family 3 or 5 with proportion 3; else post.isFixedPitch), in the
+        ///  code page its OS/2 ulCodePageRange1 names first (JIS 932, Big5 950, PRC 936, Wansung
+        ///  949). ReadCompatibleFullWidthGlyphBits @180030338 marks the glyph of every BMP
+        ///  character inside one of the ranges at @180370af0 (Hangul Jamo, general punctuation,
+        ///  letterlike symbols, the enclosed and box/arrow blocks, CJK, Yi, Hangul syllables, the
+        ///  private use and compatibility ideographs, CJK compatibility forms, the full-width
+        ///  forms) and of every other character the code page writes in two bytes
+        ///  (WideCharToMultiByte, WC_NO_BEST_FIT_CHARS).
+        /// </summary>
+        internal bool DWriteCompatibleFullWidth(int glyphId)
+        {
+            if (!_dwriteFullWidthDone)
+            {
+                _dwriteFullWidth = ComputeDWriteFullWidth();
+                _dwriteFullWidthDone = true;
+            }
+            return _dwriteFullWidth is { } bits && glyphId >= 0 && glyphId < bits.Length && bits[glyphId];
+        }
+
+        private static readonly int[] s_fullWidthRanges =
+        {
+            0x1100, 0x11ff, 0x2000, 0x206f, 0x2100, 0x214f, 0x2460, 0x24ff, 0x25a0, 0x27ff, 0x3001, 0x319f,
+            0x31f0, 0x4dff, 0x4e00, 0x9fff, 0xa000, 0xa4cf, 0xac00, 0xd7a3, 0xe000, 0xfaff, 0xfe30, 0xfe4f,
+            0xff01, 0xff60, 0xffe0, 0xffee, 0x10000, 0x10000,
+        };
+
+        private bool[]? ComputeDWriteFullWidth()
+        {
+            if (!DWriteLegacyEastAsian || !_hasOs2) return null;
+            int cp = (_codePageRange1 & (1u << 17)) != 0 ? 932 : (_codePageRange1 & (1u << 20)) != 0 ? 950
+                   : (_codePageRange1 & (1u << 18)) != 0 ? 936 : (_codePageRange1 & (1u << 19)) != 0 ? 949 : 0;
+            if (cp == 0) return null;
+            bool mono = _panoseFamily is 0 or 2 or 4 ? _panoseProportion == 9 : _panoseFamily is 3 or 5 && _panoseProportion == 3;
+            if (!mono && !_isFixedPitch) return null;
+            System.Text.Encoding enc;
+            try
+            {
+                enc = System.Text.CodePagesEncodingProvider.Instance.GetEncoding(cp,
+                    new System.Text.EncoderReplacementFallback("?"), System.Text.DecoderFallback.ReplacementFallback)
+                    ?? throw new NotSupportedException();
+            }
+            catch (Exception) { return null; }
+            var bits = new bool[_numGlyphs];
+            Span<char> one = stackalloc char[1];
+            Span<byte> outb = stackalloc byte[8];
+            int k = 0;
+            for (int c = 0; c < 0x10000; c++)
+            {
+                while (s_fullWidthRanges[2 * k + 1] < c) k++;
+                if (c < s_fullWidthRanges[2 * k])
+                {
+                    one[0] = (char) c;
+                    int n;
+                    try { n = enc.GetBytes(one, outb); } catch (Exception) { n = 1; }
+                    if (n < 2) continue;
+                }
+                int g = GlyphIndex((char) c);
+                if (g > 0 && g < bits.Length) bits[g] = true;
+            }
+            return bits;
+        }
+
+        /// <summary>
+        ///  TrueTypeRasterizer::Implementation::GetCompatibleWidthInfo @18006a2f0's half width at a
+        ///  whole ppem (+0x21c), in pixels: (ppem * 65536 / upem, in integers) times OS/2's
+        ///  xAvgCharWidth (or half the head box's width when that is 0), rounded to a pixel.
+        /// </summary>
+        internal int DWriteCompatibleHalfWidthPx(int ppem)
+        {
+            int avg = _xAvgCharWidth != 0 ? (ushort) _xAvgCharWidth : (ushort) ((_headXMax - _headXMin) / 2);
+            long per = ((long) ppem << 16) / Math.Max(1, _unitsPerEm);
+            return (int) ((per * avg + 0x8000) >> 16);
+        }
 
         /// <summary>OS/2's xAvgCharWidth in design units (IFIMETRICS.fwdAveCharWidth).</summary>
         internal int XAvgCharWidth => _xAvgCharWidth;

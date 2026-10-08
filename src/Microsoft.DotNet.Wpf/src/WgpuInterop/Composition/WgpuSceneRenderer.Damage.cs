@@ -160,10 +160,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     return true;
                 case GdiPlusTextDraw gp:
                     TextBox(gp.Fallback, world, ref minX, ref minY, ref maxX, ref maxY);
-                    if (gp.Run is { } run)
+                    if (gp.Run is { Pre: { } pre })
+                    {
+                        // Composed on the device already, relative to the world's translation.
+                        minX = MathF.Min(minX, pre.Left + world.M31 - 1f); maxX = MathF.Max(maxX, pre.Left + pre.Width + world.M31 + 1f);
+                        minY = MathF.Min(minY, pre.Top + world.M32 - 1f); maxY = MathF.Max(maxY, pre.Top + pre.Height + world.M32 + 1f);
+                    }
+                    else if (gp.Run is { } run)
                     {
                         // The GDI+ layout is in device units from the run's own origin.
-                        float em = run.Em, ox = run.OriginX + world.M31, oy = run.OriginY + world.M32;
+                        // (The world origin through the run's axis scale; the device em the larger axis'.)
+                        float em = run.Em * MathF.Max(run.Sx, run.Sy), ox = run.Sx * run.OriginX + world.M31, oy = run.Sy * run.OriginY + world.M32;
                         float w = (run.Glyphs.Length + 2) * em * 1.5f;
                         minX = MathF.Min(minX, ox - 2f * em); maxX = MathF.Max(maxX, ox + w);
                         minY = MathF.Min(minY, oy - 2f * em); maxY = MathF.Max(maxY, oy + 2f * em);

@@ -906,6 +906,31 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return true;
         }
 
+        /// <summary>Set by a window's Graphics that has this engine lay a string out and realize it
+        /// but not blend it: each run's levels (render mode, TextContrast) arrive here, cut to the
+        /// clip, instead of being written into the surface -- the blend is the window's, against
+        /// the paper under it (WgpuSceneRenderer.EmitGdiPlusText).</summary>
+        internal Action<GdipText.Levels, int, int> TextLevelsSink;
+
+        /// <summary>The clipped spans of a run's levels, kept: what the clip lets OutputText write.</summary>
+        sealed class LevelsCapture : ISpanSink
+        {
+            readonly GdipText.Levels _lv;
+            public readonly GdipText.Levels Kept;
+            public LevelsCapture (GdipText.Levels lv)
+            {
+                _lv = lv;
+                Kept = new GdipText.Levels { Grey = lv.Grey, Left = lv.Left, Top = lv.Top, Width = lv.Width, Height = lv.Height,
+                                             Index = new byte [lv.Index.Length] };
+            }
+            public void OutputSpan (int y, int left, int right)
+            {
+                int row = (y - _lv.Top) * _lv.Width;
+                for (int x = Math.Max (left, _lv.Left); x < right && x < _lv.Left + _lv.Width; x++)
+                    Kept.Index [row + x - _lv.Left] = _lv.Index [row + x - _lv.Left];
+            }
+        }
+
         /// <summary>A composed run's levels into the surface, row by row through the clip.</summary>
         void OutputText (GdipText.Levels lv, int mode, Brush brush, int contrast)
         {
@@ -913,6 +938,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (clip.IsEmpty) return;
             var bounds = new Rectangle (lv.Left, lv.Top, lv.Width, lv.Height);
             if (!clip.IsVisible (bounds)) return;
+            if (TextLevelsSink != null) {
+                var keep = new LevelsCapture (lv);
+                ISpanSink wrapped = clip.Wrap (keep);
+                for (int r = 0; r < lv.Height; r++)
+                    wrapped.OutputSpan (lv.Top + r, lv.Left, lv.Left + lv.Width);
+                TextLevelsSink (keep.Kept, mode, contrast);
+                return;
+            }
             GpScan scan = NewScan ();
             SolidBrush solid = brush as SolidBrush;
             uint argb = solid != null ? (uint) solid.Color.ToArgb () : 0u;

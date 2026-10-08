@@ -114,6 +114,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             /// <summary>The world-to-device axis scale the run was laid out under (m11, m22): the
             /// origin is in world units, the advances in device pixels.</summary>
             public float Sx = 1f, Sy = 1f;
+            /// <summary>A run the GDI+ engine has already realized and composed (a full-imager
+            /// string, or one under a transform the fast imager refuses): its levels on the device,
+            /// relative to the world's translation, cut to its clip, for render mode <see cref="Mode"/>.
+            /// <see cref="Glyphs"/> is empty and the run is drawn only under a translation.</summary>
+            public Levels? Pre;
+            /// <summary><see cref="Pre"/>'s content key (<see cref="LevelsKey"/>), made once.</summary>
+            public long PreKey;
             /// <summary>The 6x1 glyph of the run's i'th glyph at the device size it is drawn at.</summary>
             public NaturalClearType.GlyphBits GlyphBits(TrueTypeFont font, int i)
                 => Sx == 1f && Sy == 1f ? Glyph(font, Glyphs[i], Em)
@@ -496,6 +503,42 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return xs;
         }
 
+        /// <summary>A content key for a run's levels: their shape and values, not their place.</summary>
+        internal static long LevelsKey(Levels lv)
+        {
+            long key = 1469598103934665603L;
+            unchecked
+            {
+                key = (key ^ lv.Width) * 1099511628211L;
+                key = (key ^ lv.Height) * 1099511628211L;
+                key = (key ^ (lv.Grey ? 1 : 0)) * 1099511628211L;
+                foreach (byte b in lv.Index) key = (key ^ b) * 1099511628211L;
+            }
+            return key;
+        }
+
+        /// <summary>A fast-imager run's levels on the device, as DpDriver::DrawGlyphs @1800a43b0
+        /// composes them for its render mode: the world origin through the run's axis scale (Sx, Sy)
+        /// and the translation (dx, dy) -- GetDeviceBaselineOrigin, the grid-fitted layout then
+        /// rounding the device x -- then 6x1 glyphs through the filter (ClearType), 4x4 glyphs by
+        /// max (3, 4) or raster type 0 bits (1, 2) at the device size, stretched where the axes'
+        /// whole ppems differ (<see cref="ComposeAxis"/>). <paramref name="bits"/> may supply the
+        /// ClearType glyph of the run's i'th glyph (a cache).</summary>
+        internal static Levels ComposeRun(TrueTypeFont font, Run run, float dx, float dy, out float[] xs, out float y,
+                                          Func<int, NaturalClearType.GlyphBits>? bits = null)
+        {
+            xs = GlyphXs(run, run.Sx == 1f ? run.OriginX + dx : run.Sx * run.OriginX + dx);
+            y = run.Sy == 1f ? run.OriginY + dy : run.Sy * run.OriginY + dy;
+            if (run.Glyphs.Length == 0) return new Levels();
+            if (run.Mode == 5)
+            {
+                var gb = new NaturalClearType.GlyphBits[run.Glyphs.Length];
+                for (int i = 0; i < gb.Length; i++) gb[i] = bits?.Invoke(i) ?? run.GlyphBits(font, i);
+                return Compose(gb, xs, y, run.FixedFilter);
+            }
+            return ComposeAxis(font, run.Glyphs, run.Mode, run.Em, run.Sx, run.Sy, xs, y);
+        }
+
         /// <summary>IDWriteFontFace1::GetGdiCompatibleGlyphAdvances / -Metrics with useGdiNatural,
         /// in design units. DirectWrite measures GDI-compatibly at the WHOLE ppem: the advance is the
         /// scaler's phantom span under word 1 (fitted whatever 'gasp' says, as the bitmaps are; the
@@ -518,6 +561,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// (Microsoft Sans Serif's space at 13ppem, 3.453 -> 3; Segoe UI's at 9, 2.465 -> 3). Where
         /// the prep inhibits grid fitting (<paramref name="inhibited"/>) the scaler does not round it
         /// at all: Verdana's space at 7ppem, 2.461 -> 2.</para></summary>
+        /// <summary>The whole-pixel advance either GDI-compatible measure gives a legacy East Asian
+        /// face at one of its strike sizes (<see cref="StrikeBox"/>): TrueTypeRasterizer::Implementation::
+        /// NewTransform @18006bc80 hands the scaler word 0 -- the bi-level fit -- and GetMetrics
+        /// @18006af80 rounds its phantom span. A glyph the strike lacks is fitted all the same: MS
+        /// Gothic's ideographs at the odd sizes 7..21 are ppem + 1 wide (8 at 7 px), as two of its
+        /// rounded-up half widths (<see cref="CompatibleFullWidthPx"/>).</summary>
+        static int StrikeSizeAdvancePx(TrueTypeFont font, int gid, int ppem)
+        {
+            if (CompatibleFullWidthPx(font, gid, ppem, out int full)) return full;
+            return (int)MathF.Round(NaturalClearType.GdiClassicAdvance(font, gid, ppem));
+        }
+
+        /// <summary>TrueTypeRasterizer::Implementation::TryGetCompatibleDisplayWidth @18006c4d0 for a
+        /// compatible full-width glyph (<see cref="TrueTypeFont.DWriteCompatibleFullWidth"/>) of a
+        /// square transform with a ppem byte: whatever 'hdmx' or the linear width says, a width that
+        /// is not the half width (GetCompatibleWidthInfo's +0x21c) becomes two of them, a pixel more
+        /// for a bold simulation. GDI_CLASSIC asks at every size, GDI_NATURAL where the measure keeps
+        /// its bitmap flag (a strike size, ShouldCheckHdmx @1801ccba8): MS Gothic's ideographs are
+        /// 8 px at 7 ppem, 24 at 23.</summary>
+        static bool CompatibleFullWidthPx(TrueTypeFont font, int gid, int ppem, out int px)
+        {
+            px = 0;
+            if (ppem < 1 || ppem > 255 || !font.DWriteCompatibleFullWidth(gid)) return false;
+            int half = font.DWriteCompatibleHalfWidthPx(ppem);
+            if (half <= 0) return false;
+            px = 2 * half + (font.SynthesizesBold ? 1 : 0);
+            return true;
+        }
+
         static int NaturalPx(int span64, bool hasOutline, bool mirrored, bool inhibited = false)
         {
             int bias = hasOutline || inhibited ? 32 : 34;
@@ -572,8 +644,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // eight faces at 6..24pt, 29/64 stays down (Microsoft Sans Serif at 13ppem, 3.453 -> 3)
             // and 30/64 goes up (Segoe UI at 9ppem, 2.465 -> 3; Verdana Bold at 16, 5.469 -> 6).
             int px = NaturalPx(span64, hasOutline, mirrored, !hasOutline && font.DWriteGridFitInhibited(ppem, NaturalScalerWord));
+            bool sInk = false; int sl = 0, sr = 0;
+            bool strike = !mirrored && StrikeBox(font, gid, ppem, out sInk, out sl, out sr);
+            // At a size the legacy East Asian face has a strike for, NewTransform @18006bc80 keeps
+            // MakeRasterizerFlagsForMeasuring's bitmap flag (0x40) and hands the scaler word 0
+            // whether GDI_NATURAL or GDI_CLASSIC asked: the natural advance is the classic one
+            // (MS PGothic / MS UI Gothic 'b', 'd', 'p', 'q' at 9 px: 4 px, not word 1's 5; every
+            // glyph of the three faces at 7..22 px agrees with DirectWrite's).
+            if (strike) px = StrikeSizeAdvancePx(font, gid, ppem);
             advDu = DWriteUnits(px, ppem, upem);
-            if (!mirrored && StrikeBox(font, gid, ppem, out bool sInk, out int sl, out int sr))
+            if (strike)
             {
                 if (!sInk) { lsbDu = 0; rsbDu = advDu; }
                 else DWriteBearings(sl * 6, sr * 6, px, ppem, upem, out lsbDu, out rsbDu);
@@ -777,9 +857,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int ppem = Floor(em + 0.5f);
             if (ppem < 1) ppem = 1;
             int upem = font.UnitsPerEmForHinting;
-            int px = (int)MathF.Round(NaturalClearType.GdiClassicAdvance(font, gid, ppem));
+            bool strike = StrikeBox(font, gid, ppem, out bool sInk, out int sl, out int sr);
+            if (!CompatibleFullWidthPx(font, gid, ppem, out int px))
+                px = (int)MathF.Round(NaturalClearType.GdiClassicAdvance(font, gid, ppem));
             advDu = DWriteUnits(px, ppem, upem);
-            if (StrikeBox(font, gid, ppem, out bool sInk, out int sl, out int sr))
+            if (strike)
             {
                 if (!sInk) { lsbDu = 0; rsbDu = advDu; }
                 else DWriteBearings(sl * 6, sr * 6, px, ppem, upem, out lsbDu, out rsbDu);

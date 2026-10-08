@@ -351,6 +351,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         anchor = new Vector2(run.OriginX, run.OriginY);
                         h = Mix(h, 5); h = Mix(h, gp.Argb); h = Mix(h, run.Glyphs.Length); h = MixF(h, run.Em);
                         foreach (ushort gl in run.Glyphs) h = Mix(h, gl);
+                        if (run.Pre is { } pre) { h = Mix(h, (int)run.PreKey); h = Mix(h, (int)(run.PreKey >> 32)); h = Mix(h, pre.Width); h = Mix(h, pre.Height); }
                         break;
                     default:
                         key = 0;
@@ -458,6 +459,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             private static bool SameRun(GdiPlusText.Run n, GdiPlusText.Run o, Vector2 delta)
             {
+                // Levels the engine composed: the same shape, moved by the delta.
+                if (n.Pre is not null || o.Pre is not null)
+                    return n.Pre is { } np && o.Pre is { } op && n.PreKey == o.PreKey && n.Mode == o.Mode && n.Contrast == o.Contrast
+                           && np.Width == op.Width && np.Height == op.Height && np.Grey == op.Grey
+                           && Near(np.Left, op.Left + delta.X) && Near(np.Top, op.Top + delta.Y)
+                           && np.Index.AsSpan().SequenceEqual(op.Index);
                 if (!Near(n.OriginX, o.OriginX + delta.X) || !Near(n.OriginY, o.OriginY + delta.Y)) return false;
                 if (n.RoundOrigin != o.RoundOrigin || n.LeadOffset != o.LeadOffset || n.Lead != o.Lead || n.LastAdvance != o.LastAdvance
                     || n.Em != o.Em || n.Mode != o.Mode || n.Hint != o.Hint || n.FixedFilter != o.FixedFilter || n.Contrast != o.Contrast
