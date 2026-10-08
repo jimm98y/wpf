@@ -43,7 +43,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <summary>ComputeComplexity.</summary>
         public int ComputeComplexity()
         {
-            const float eps = 1.1920928955078125e-07f;
+            // REAL_EPSILON as the binary holds it (@1800346a0, 0x3a1c4000): a scale within it of 1 is
+            // no scale, and Transform then only translates. A metafile drawn into a rectangle the
+            // size of its frame (299.98 x 199.99 pixels into 300 x 200 units) is scaled by 1.0000573
+            // -- a translation to GDI+, which so places it exactly where a FLT_EPSILON tolerance
+            // stretched it a printer pixel wider and taller.
+            const float eps = 0.00059604645f;
             float a11 = Math.Abs(M11), a22 = Math.Abs(M22), a12 = Math.Abs(M12), a21 = Math.Abs(M21);
             float big = a11 <= a22 ? a22 : a11;
             float other = a12 <= a21 ? a21 : a12;
