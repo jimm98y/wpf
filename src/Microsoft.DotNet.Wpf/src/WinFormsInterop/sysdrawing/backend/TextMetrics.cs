@@ -159,7 +159,7 @@ namespace System.Drawing.WebGpuBackend
                                              bool typographic, int align, int lineAlign, bool hotkeyPrefix,
                                              int hint, int contrast, out bool empty)
             => LayoutGdiPlus(text, family, style, sizePt, x, y, width, height, formatFlags, typographic, align, lineAlign,
-                             hotkeyPrefix, hint, contrast, out empty, out _);
+                             hotkeyPrefix, hint, contrast, out empty, out _, biLevel: false);
 
         /// <summary>The same; <paramref name="asPath"/> says a null answer was GDI+'s switch to
         /// outlines (GdiPlusText.SwitchesToPath): the string is too big for glyph bitmaps and GDI+
@@ -167,14 +167,14 @@ namespace System.Drawing.WebGpuBackend
         internal static object LayoutGdiPlus(string text, string family, int style, float sizePt,
                                              float x, float y, float width, float height, int formatFlags,
                                              bool typographic, int align, int lineAlign, bool hotkeyPrefix,
-                                             int hint, int contrast, out bool empty, out bool asPath)
+                                             int hint, int contrast, out bool empty, out bool asPath, bool biLevel = true)
         {
             empty = false;
             asPath = false;
             TrueTypeFont face = GdiPlusText.Face(family, style);
             if (face is null) return null;
             GdiPlusText.Run run = GdiPlusText.Layout(face, family, sizePt, text, x, y, width, height, formatFlags,
-                                                     typographic, align, lineAlign, hotkeyPrefix, hint);
+                                                     typographic, align, lineAlign, hotkeyPrefix, hint, biLevel: biLevel);
             if (run is null) { asPath = GdiPlusText.LastPath; return null; }
             run.Contrast = contrast;
             empty = run.Glyphs.Length == 0;

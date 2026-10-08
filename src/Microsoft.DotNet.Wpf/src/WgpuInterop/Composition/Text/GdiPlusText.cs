@@ -185,6 +185,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // The realizations: ClearType (5), the 4x4 antialiased ones (3 grid-fitted, 4 not), and
             // -- for a caller that draws them (biLevel) -- the bi-level ones (1 grid-fitted, 2 not).
             if (hint < HintSingleBitPerPixelGridFit || hint > HintClearTypeGridFit) return null;
+            // Realize: a realization too big for glyph bitmaps is a path realization, and the fast
+            // imager answers status 6 for it (SwitchesToPath) -- whatever the hint, so a caller that
+            // does not draw the bi-level realizations still hears it.
+            // (A printer's realization is its own, bi-level one: the caller decides; switchToPath false.)
+            float em = sizePt * (dpi / 72f);
+            if (!(em > 0f)) return null;
+            if (switchToPath && SwitchesToPath(font, em, sx, 0f, 0f, sy, RealizationFlags(hint, font.SynthesizesBold, font.SynthesizesOblique)))
+                { LastFull = true; LastPath = true; return null; }
             if (!biLevel && (hint == HintSingleBitPerPixelGridFit || hint == HintSingleBitPerPixel)) return null;
             // Format flags & 0x40000003: right to left, vertical. MeasureTrailingSpaces changes the
             // trailing-space handling, which is not modelled.
@@ -198,13 +206,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
             // The device's resolution: 96 for a window, the printer's for a printed page, where GDI+
             // runs the same imager at the device's em (and the caller's rectangle is in its pixels).
-            float em = sizePt * (dpi / 72f);
-            if (!(em > 0f)) return null;
-            // Realize: a realization too big for glyph bitmaps is a path realization, and the fast
-            // imager answers status 6 for it (SwitchesToPath).
-            // (A printer's realization is its own, bi-level one: the caller decides; switchToPath false.)
-            if (switchToPath && SwitchesToPath(font, em, sx, 0f, 0f, sy, RealizationFlags(hint, font.SynthesizesBold, font.SynthesizesOblique)))
-                { LastFull = true; LastPath = true; return null; }
             if (em > 1000f) return null;
             int ppemRound = Floor(em + 0.5f);
             // Realize: under ClearType a face DirectWrite draws from its embedded bitmaps at this size,
