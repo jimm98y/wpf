@@ -415,10 +415,27 @@ namespace MS.Internal.TextFormatting
                 buffers = Seed(charCount, glyphs, glyphCount, clusterMap);
                 used = script;
 
+                if (plan.IsIndic)
+                {
+                    DecomposeSplitMatras(glyphTypeface, text, charCount, buffers.CharMap, buffers.GlyphInfoList);
+                }
+
                 result = OpenTypeLayout.SubstituteGlyphs(
                     font, buffers.LayoutWorkspace, script, DfltLangSys,
                     features, features.Length, 0,
                     charCount, buffers.CharMap, buffers.GlyphInfoList);
+
+                if (plan.IsIndic && result == OpenTypeLayoutResult.Success)
+                {
+                    // A shaping engine's order: the basic forms first, then the syllables are
+                    // reordered, then the presentation forms see the reordered glyphs.
+                    ReorderIndicSyllables(text, charCount, buffers.CharMap, buffers.GlyphInfoList);
+                    Feature[] presentation = plan.IndicPresentationFeatures(text, charCount);
+                    result = OpenTypeLayout.SubstituteGlyphs(
+                        font, buffers.LayoutWorkspace, script, DfltLangSys,
+                        presentation, presentation.Length, 0,
+                        charCount, buffers.CharMap, buffers.GlyphInfoList);
+                }
 
                 if (!IsScriptMiss(result))
                 {
@@ -666,6 +683,187 @@ namespace MS.Internal.TextFormatting
                 offsets[g].du += pixels ? (int)(dx * unitToIdeal) : TruncateOffset(dx, designToIdeal);
                 offsets[g].dv += pixels ? (int)(workOffsets[g].dy * unitToIdeal) : TruncateOffset(workOffsets[g].dy, designToIdeal);
             }
+        }
+
+        // ---- Indic reordering ---------------------------------------------------------------
+
+        /// <summary>The vowel signs written BEFORE the consonant they follow (the left matras).</summary>
+        private static bool IsPreBaseMatra(char c) => c is '\u093F' or '\u094E'
+            or '\u09BF' or '\u09C7' or '\u09C8'
+            or '\u0A3F' or '\u0ABF'
+            or '\u0B47'
+            or '\u0BC6' or '\u0BC7' or '\u0BC8'
+            or '\u0D46' or '\u0D47' or '\u0D48';
+
+        private static bool IsIndicVirama(char c) => c >= '\u0900' && c <= '\u0D7F' && (c & 0x7F) == 0x4D;
+
+        /// <summary>
+        ///  The two-part vowel signs that start BEFORE their consonant, as their canonical
+        ///  decompositions: Bengali o/au, Oriya ai/o/au, Tamil o/oo/au, Malayalam o/oo/au.
+        /// </summary>
+        private static (char Pre, char Post)? SplitMatra(char c) => c switch
+        {
+            '\u09CB' => ('\u09C7', '\u09BE'), '\u09CC' => ('\u09C7', '\u09D7'),
+            '\u0B48' => ('\u0B47', '\u0B56'), '\u0B4B' => ('\u0B47', '\u0B3E'), '\u0B4C' => ('\u0B47', '\u0B57'),
+            '\u0BCA' => ('\u0BC6', '\u0BBE'), '\u0BCB' => ('\u0BC7', '\u0BBE'), '\u0BCC' => ('\u0BC6', '\u0BD7'),
+            '\u0D4A' => ('\u0D46', '\u0D3E'), '\u0D4B' => ('\u0D47', '\u0D3E'), '\u0D4C' => ('\u0D46', '\u0D57'),
+            _ => null,
+        };
+
+        /// <summary>
+        ///  DirectWrite's Indic engine shapes a two-part vowel as its two parts: the character keeps
+        ///  one place in the text and gets two glyphs, so the first can be reordered in front of its
+        ///  consonant like any pre-base matra (Tamil "mozhi": e-sign, ma, aa-sign).
+        /// </summary>
+        private static unsafe void DecomposeSplitMatras(GlyphTypeface glyphTypeface, char* text, int charCount,
+                                                        UshortList charmap, GlyphInfoList glyphInfo)
+        {
+            for (int c = 0; c < charCount; c++)
+            {
+                if (SplitMatra(text[c]) is not (char pre, char post)) continue;
+                if (!glyphTypeface.CharacterToGlyphMap.TryGetValue(pre, out ushort preGlyph) || preGlyph == 0) continue;
+                if (!glyphTypeface.CharacterToGlyphMap.TryGetValue(post, out ushort postGlyph) || postGlyph == 0) continue;
+
+                int g = charmap[c];
+                if (g >= glyphInfo.Length || (c > 0 && charmap[c - 1] == g) || (c + 1 < charCount && charmap[c + 1] == g)) continue;
+                glyphInfo.Insert(g, 1);
+                glyphInfo.Glyphs[g] = preGlyph;
+                glyphInfo.Glyphs[g + 1] = postGlyph;
+                for (int k = g; k <= g + 1; k++)
+                {
+                    glyphInfo.GlyphFlags[k] = (ushort)GlyphFlags.Unresolved;
+                    glyphInfo.FirstChars[k] = (ushort)c;
+                    glyphInfo.LigatureCounts[k] = 1;
+                }
+                for (int k = c + 1; k < charCount; k++) charmap[k] = (ushort)(charmap[k] + 1);
+            }
+        }
+
+        private static bool IsIndicMark(char c)
+            => CharUnicodeInfo.GetUnicodeCategory(c) is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark;
+
+        /// <summary>One orthographic syllable: a base, the consonants a virama binds to it (and a
+        /// joiner after the virama), and the signs that hang off the result.</summary>
+        private static unsafe int IndicSyllableEnd(char* text, int at, int charCount)
+        {
+            int i = at + 1;
+            while (i < charCount)
+            {
+                char c = text[i];
+                if (IsIndicMark(c)) { i++; continue; }
+                if (c is '\u200D' or '\u200C' && IsIndicVirama(text[i - 1])) { i++; continue; }
+                // A virama binds the next consonant into the syllable -- except Tamil's pulli, which
+                // ends one: "ll" + "lai" is two syllables, and the ai-sign goes before the second lla.
+                if ((IsIndicVirama(text[i - 1]) && !IsTamil(text[i - 1]))
+                    || (text[i - 1] is '\u200D' && i >= 2 && IsIndicVirama(text[i - 2])))
+                {
+                    i++;
+                    continue;
+                }
+                break;
+            }
+            return i;
+        }
+
+        private static bool IsTamil(char c) => c >= (char)0x0B80 && c <= (char)0x0BFF;
+
+        /// <summary>Candrabindu, anusvara and visarga: offsets 1 to 3 of every Indic block.</summary>
+        private static bool IsSyllableModifier(char c) => c >= (char)0x0900 && c <= (char)0x0D7F && (c & 0x7F) is >= 1 and <= 3;
+
+        /// <summary>The ra whose post-virama form is written before the base: Malayalam's 'pref'.
+        /// (Oriya, Telugu and Kannada ligate virama + ra too, into a below- or post-base form that
+        /// stays where it is.)</summary>
+        private static bool IsPrefRa(char c) => c is '\u0D30';
+
+        /// <summary>Ra, whose virama form at the start of a syllable is the reph.</summary>
+        private static bool IsIndicRa(char c) => c is '\u0930' or '\u09B0' or '\u0AB0' or '\u0B30'
+            or '\u0C30' or '\u0CB0';
+
+        /// <summary>
+        ///  Reorders each syllable after the basic forms, as DirectWrite's Indic engine does: a reph
+        ///  (the rphf form of a syllable-initial ra + virama) goes to the END of the syllable --
+        ///  "rtha" is tha, reph; "rthu" tha, u, reph -- and a pre-base matra to the front, in front of
+        ///  the conjunct or half forms the basic forms made. The syllable becomes one cluster, as
+        ///  DirectWrite's cluster map has it (its glyphs are no longer in character order).
+        /// </summary>
+        private static unsafe void ReorderIndicSyllables(char* text, int charCount, UshortList charmap, GlyphInfoList glyphInfo)
+        {
+            int glyphCount = glyphInfo.Length;
+            for (int c = 0; c < charCount; )
+            {
+                int end = IndicSyllableEnd(text, c, charCount);
+                int gs = charmap[c];
+                int ge = end < charCount ? charmap[end] : glyphCount;
+                int reph = ge > gs + 1 && end - c > 2 && IsIndicRa(text[c]) && IsIndicVirama(text[c + 1])
+                           && charmap[c + 1] == gs && charmap[c + 2] != gs
+                    ? gs : -1;
+                // A pre-base consonant form (Malayalam's virama + ra, 'pref') goes in front of the base.
+                for (int i = c + 1; i + 1 < end && ge > gs + 1; i++)
+                {
+                    if (!IsIndicVirama(text[i]) || !IsPrefRa(text[i + 1])) continue;
+                    int g = charmap[i];
+                    if (g <= gs || g >= ge || charmap[i + 1] != g) continue;   // no pre-base form was made
+                    MoveGlyph(glyphInfo, g, gs);
+                    if (reph >= 0) reph++;
+                    break;
+                }
+                for (int i = c + 1; i < end && ge > gs + 1; i++)
+                {
+                    if (!IsPreBaseMatra(text[i]) && SplitMatra(text[i]) is null) continue;
+                    int g = charmap[i];
+                    if (g <= gs || g >= ge) continue;   // it went into a ligature: nothing to move
+                    MoveGlyph(glyphInfo, g, gs);
+                    if (reph >= 0) reph++;
+                    break;
+                }
+                if (reph >= 0)
+                {
+                    // ... before the syllable modifiers (candrabindu, anusvara, visarga), which the
+                    // face then joins it with: "rtham" is tha, reph+anusvara.
+                    int to = ge - 1;
+                    while (to > reph && IsSyllableModifier(text[glyphInfo.FirstChars[to]])) to--;
+                    MoveGlyphForward(glyphInfo, reph, to);
+                }
+                if (ge > gs)
+                {
+                    for (int k = c; k < end; k++) charmap[k] = (ushort)gs;
+                }
+                c = end;
+            }
+        }
+
+        private static void MoveGlyphForward(GlyphInfoList glyphInfo, int from, int to)
+        {
+            ushort glyph = glyphInfo.Glyphs[from], flags = glyphInfo.GlyphFlags[from];
+            ushort first = glyphInfo.FirstChars[from], count = glyphInfo.LigatureCounts[from];
+            for (int g = from; g < to; g++)
+            {
+                glyphInfo.Glyphs[g] = glyphInfo.Glyphs[g + 1];
+                glyphInfo.GlyphFlags[g] = glyphInfo.GlyphFlags[g + 1];
+                glyphInfo.FirstChars[g] = glyphInfo.FirstChars[g + 1];
+                glyphInfo.LigatureCounts[g] = glyphInfo.LigatureCounts[g + 1];
+            }
+            glyphInfo.Glyphs[to] = glyph;
+            glyphInfo.GlyphFlags[to] = flags;
+            glyphInfo.FirstChars[to] = first;
+            glyphInfo.LigatureCounts[to] = count;
+        }
+
+        private static void MoveGlyph(GlyphInfoList glyphInfo, int from, int to)
+        {
+            ushort glyph = glyphInfo.Glyphs[from], flags = glyphInfo.GlyphFlags[from];
+            ushort first = glyphInfo.FirstChars[from], count = glyphInfo.LigatureCounts[from];
+            for (int g = from; g > to; g--)
+            {
+                glyphInfo.Glyphs[g] = glyphInfo.Glyphs[g - 1];
+                glyphInfo.GlyphFlags[g] = glyphInfo.GlyphFlags[g - 1];
+                glyphInfo.FirstChars[g] = glyphInfo.FirstChars[g - 1];
+                glyphInfo.LigatureCounts[g] = glyphInfo.LigatureCounts[g - 1];
+            }
+            glyphInfo.Glyphs[to] = glyph;
+            glyphInfo.GlyphFlags[to] = flags;
+            glyphInfo.FirstChars[to] = first;
+            glyphInfo.LigatureCounts[to] = count;
         }
 
         /// <summary>
@@ -1033,10 +1231,9 @@ namespace MS.Internal.TextFormatting
                         break;
 
                     case ScriptClass.Indic:
-                        // The feature set without the reordering. Conjuncts (cjct), half forms,
-                        // rakar/rephs and nukta composition all come from these, so applying them is
-                        // a large improvement on nominal glyphs -- but a pre-base matra still needs
-                        // MOVING before its consonant, and nothing here does that.
+                        // The basic forms only: conjuncts, half forms, rakar/rephs, nukta
+                        // composition. The syllables are reordered after these and the
+                        // presentation forms applied to the result (IndicPresentationFeatures).
                         Add(features, "ccmp", all);
                         Add(features, "locl", all);
                         Add(features, "nukt", all);
@@ -1049,13 +1246,6 @@ namespace MS.Internal.TextFormatting
                         Add(features, "pstf", all);
                         Add(features, "vatu", all);
                         Add(features, "cjct", all);
-                        Add(features, "pres", all);
-                        Add(features, "abvs", all);
-                        Add(features, "blws", all);
-                        Add(features, "psts", all);
-                        Add(features, "haln", all);
-                        Add(features, "calt", all);
-                        Add(features, "clig", all);
                         break;
 
                     default:
@@ -1071,6 +1261,34 @@ namespace MS.Internal.TextFormatting
                         break;
                 }
 
+                return features.ToArray();
+            }
+
+            public bool IsIndic => _class == ScriptClass.Indic;
+
+            /// <summary>The Indic presentation forms, applied once the syllables are reordered;
+            /// 'init' on the syllable that starts a word (Bengali's word-initial e-matra).</summary>
+            public unsafe Feature[] IndicPresentationFeatures(char* text, int charCount)
+            {
+                var features = new System.Collections.Generic.List<Feature>(8);
+                ushort all = (ushort)charCount;
+                for (int c = 0; c < charCount; )
+                {
+                    int end = IndicSyllableEnd(text, c, charCount);
+                    bool wordStart = c == 0 || !(char.IsLetter(text[c - 1]) || IsIndicMark(text[c - 1]));
+                    if (wordStart && char.IsLetter(text[c]))
+                    {
+                        features.Add(new Feature((ushort)c, (ushort)(end - c), Tag("init"), 1));
+                    }
+                    c = end;
+                }
+                Add(features, "pres", all);
+                Add(features, "abvs", all);
+                Add(features, "blws", all);
+                Add(features, "psts", all);
+                Add(features, "haln", all);
+                Add(features, "calt", all);
+                Add(features, "clig", all);
                 return features.ToArray();
             }
 
