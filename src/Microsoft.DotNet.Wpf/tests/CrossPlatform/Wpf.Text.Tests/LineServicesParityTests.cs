@@ -177,6 +177,37 @@ namespace Wpf.Text.Tests
             }
         }
 
+        // Items are cut where DirectWrite's script analysis changes script -- the Unicode Script
+        // property, so Han, Hiragana and Katakana are three items and three glyph runs -- and a
+        // control character with no visual (ZWSP, BOM, bidi controls) is an item of its own, drawn
+        // as the blank glyph with no advance (GetBlankGlyphsForControlCharacters).
+        [Fact]
+        public void ItemsFollowDirectWritesScripts()
+        {
+            SkipUnlessInstalled("Yu Gothic UI");
+            const string text = "\u65E5\u672C\u8A9E\u306E\u30C6\u30AD\u30B9\u30C8\u3002";
+            (TextLine line, List<Run> runs) = Format("Yu Gothic UI", 16, text);
+            using (line)
+            {
+                Assert.Equal(new[] { 0.0, 48.0, 61.0533 }, runs.Select(r => Math.Round(r.X, 4)).ToArray());
+                Assert.Equal(new[] { 0, 4800, 9600, 14400, 18316, 21916, 25516, 29163, 32475, 35663 }, Carets(line, 9));
+            }
+        }
+
+        [Theory]
+        [InlineData("a\uFEFFb")]
+        [InlineData("a\u200Bb")]
+        public void ControlCharactersAreBlankAndWithoutAdvance(string text)
+        {
+            SkipUnlessInstalled("Arial");
+            (TextLine line, List<Run> runs) = Format("Arial", 16, text);
+            using (line)
+            {
+                Assert.Equal("68|3|69", string.Join("|", runs.Select(r => string.Join(" ", r.Glyphs))));
+                Assert.Equal(new[] { 0, 2670, 2670, 5340 }, Carets(line, 3));
+            }
+        }
+
         // DWrite composes a base and its combining marks into the precomposed character (TextShaping's
         // CDM tables), all or nothing, and keeps a mark in its base's cluster either way.
         [Theory]

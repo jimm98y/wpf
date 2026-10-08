@@ -61,6 +61,10 @@ namespace MS.Internal.Text.TextInterface
 
         public bool HasCombiningMark => _hasCombiningMark;
 
+        /// <summary>DWRITE_SCRIPT_SHAPES_NO_VISUAL: control characters, which the forwarder gives
+        /// blank glyphs (or LS's substituted hyphen) and no advance, and which are not shaped.</summary>
+        public bool IsNoVisual => ScriptKey == TextAnalyzer.NoVisualScriptKey;
+
         public bool CanShapeTogether(ItemProps other)
             => other != null && other.ScriptKey == ScriptKey
                && Equals(other._digitCulture, _digitCulture);
@@ -155,7 +159,6 @@ namespace MS.Internal.Text.TextInterface
             if (length == 0) return spans;
 
             int n = (int)length;
-            var scriptOf = classificationUtility as IScriptClassification;
 
             var combining = new bool[n];
             var caret = new bool[n];
@@ -182,11 +185,12 @@ namespace MS.Internal.Text.TextInterface
                     out bool isCombining, out bool needsCaretInfo, out bool isIndic,
                     out bool isDigit, out bool isLatin, out bool isStrong);
 
-                // A C0/C1 control has no visual and DWrite gives it a run of its own
-                // (DWRITE_SCRIPT_SHAPES_NO_VISUAL), whatever surrounds it.
-                int s = scalar < 0x20 || (scalar >= 0x7F && scalar <= 0x9F) ? NoVisualScript
-                      : scriptOf != null ? scriptOf.GetScript(scalar)
-                      : isStrong ? (isLatin ? 1 : isIndic ? 2 : 3) : 0;
+                // The script is DirectWrite's own (DWriteScripts, the Unicode Script property as
+                // AnalyzeScript reports it), and a character it says has no visual -- a C0/C1
+                // control, a bidi or format control -- is a run of its own whatever surrounds it
+                // (DWRITE_SCRIPT_SHAPES_NO_VISUAL).
+                int dwScript = DWriteScripts.Of(scalar, out bool noVisual);
+                int s = noVisual ? NoVisualScript : dwScript;
 
                 for (int u = i; u < i + units; u++)
                 {
@@ -257,6 +261,7 @@ namespace MS.Internal.Text.TextInterface
 
         private const int Unresolved = -1;
         private const int NoVisualScript = -2;
+        internal const int NoVisualScriptKey = NoVisualScript;
         private const int CommonScript = 0;
 
         public static void AnalyzeExtendedCharactersAndDigits(
@@ -339,6 +344,24 @@ namespace MS.Internal.Text.TextInterface
         {
             Managed.OpenTypeFontData d = font.Face.GetData();
 
+            if (itemProps != null && itemProps.IsNoVisual)
+            {
+                // TextAnalyzer::GetBlankGlyphsForControlCharacters: one blank glyph per character,
+                // the hyphen's where LS put a hyphen in place of a soft hyphen.
+                actualGlyphCount = textLength;
+                if (maxGlyphCount < textLength) return;
+                for (uint i = 0; i < textLength; i++)
+                {
+                    ushort hyphen = textString[i] == CharHyphen ? (ushort)d.GlyphIndex(CharHyphen) : (ushort)0;
+                    glyphIndices[i] = textString[i] == CharHyphen ? hyphen : blankGlyphIndex;
+                    clusterMap[i] = (ushort)i;
+                    if (textProps != null) textProps[i] = 0;
+                    if (glyphProps != null) glyphProps[i] = 0;
+                    if (pfCanGlyphAlone != null) pfCanGlyphAlone[i] = 1;
+                }
+                return;
+            }
+
             var cmap = new ushort[textLength];
             var gids = new ushort[textLength];
             actualGlyphCount = MapNominal(textString, textLength, d, blankGlyphIndex, cmap, gids, isRightToLeft);
@@ -383,6 +406,26 @@ namespace MS.Internal.Text.TextInterface
         {
             Managed.OpenTypeFontData d = font.Face.GetData();
             double toIdeal = fontEmSize / d.UnitsPerEm * scalingFactor;
+            if (itemProps != null && itemProps.IsNoVisual)
+            {
+                // TextAnalyzer::GetGlyphPlacementsForControlCharacters: no advance, except a hyphen
+                // LS substituted, at its own width (whole pixels in Display mode).
+                for (uint g = 0; g < glyphCount; g++)
+                {
+                    if (g < textLength && textString[g] == CharHyphen)
+                    {
+                        double aw = SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[g]) * fontEmSize / d.UnitsPerEm;
+                        double approx = Math.Round(aw * pixelsPerDip) / pixelsPerDip;
+                        glyphAdvances[g] = (int)Math.Round(approx * scalingFactor);
+                    }
+                    else
+                    {
+                        glyphAdvances[g] = 0;
+                    }
+                }
+                glyphOffsets = new GlyphOffset[glyphCount];
+                return;
+            }
             // GDI_CLASSIC (TextFormattingMode.Display): DirectWrite's GetGdiCompatibleGlyphPlacements
             // hands back GDI's own whole-pixel advance, in DIPs.
             double pixels = fontEmSize * pixelsPerDip;

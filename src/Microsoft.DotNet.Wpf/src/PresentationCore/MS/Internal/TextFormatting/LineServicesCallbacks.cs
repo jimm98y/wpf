@@ -1717,7 +1717,13 @@ namespace MS.Internal.TextFormatting
 
                     glyphCount = (int)actualGlyphCount;
 
-                    if (glyphCount <= cgiGlyphBuffers)
+                    if (glyphCount <= cgiGlyphBuffers && lsrunFirst.Shapeable.ItemProps?.IsNoVisual == true)
+                    {
+                        // Control characters: blank glyphs, not shaped (the forwarder's
+                        // GetBlankGlyphsForControlCharacters).
+                        fIsGlyphBuffersUsed = 1;
+                    }
+                    else if (glyphCount <= cgiGlyphBuffers)
                     {
                         // The off-Windows text backend produces only nominal cmap glyphs (no
                         // OpenType features), so the font's GSUB is applied here with WPF's own
@@ -1838,7 +1844,7 @@ namespace MS.Internal.TextFormatting
                 // designToIdeal matches the scale the backend used for the advances above:
                 // EmSize/DesignEmHeight * ToIdeal.
                 ushort designEmHeight = glyphTypeface.DesignEmHeight;
-                if (designEmHeight != 0)
+                if (designEmHeight != 0 && lsrunFirst.Shapeable.ItemProps?.IsNoVisual != true)
                 {
                     ManagedOpenTypeShaper.Position(
                         glyphTypeface,

@@ -1689,7 +1689,7 @@ namespace MS.Internal.TextFormatting
             lsTextCell.lscpStartCell = run.CpFirst + first;
             lsTextCell.lscpEndCell = run.CpFirst + last;
             lsTextCell.pointUvStartCell = new LSPOINT(LeadingU(line, run.IsRightToLeft, x, w), 0);
-            lsTextCell.dupCell = Math.Max(w, 1);
+            lsTextCell.dupCell = w;   // zero for a zero-width cell: its trailing edge is its leading edge
             lsTextCell.cCharsInCell = last - first + 1;
             lsTextCell.cGlyphsInCell = 1;
 
