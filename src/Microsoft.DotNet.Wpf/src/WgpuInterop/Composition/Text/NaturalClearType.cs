@@ -93,6 +93,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     figures = GdiPlusText.TransformedOutline(font, glyphId, ppem, 1f, 0f, -font.ObliqueShearApplied, 1f, 0f, 0f,
                                                              outlineBold: outlineBold, dwriteEmbold: true);
                     if (figures.Count == 0) return s_empty;
+                    // The prep still runs and its scan control still applies (DWriteUnfittedDropout).
+                    if (s_unfittedDropout) dropout = font.DWriteUnfittedDropout(ppem, flags);
                 }
                 else if (!font.TryGetScaledOutline(glyphId, pixelsPerEm, out figures)) return s_empty;
             }
@@ -587,6 +589,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         private static readonly bool s_noDropout = Environment.GetEnvironmentVariable("WPF_NCT_NODROPOUT") == "1";
+
+        /// <summary>WPF_NCT_UNFITTED_DROPOUT=0: scan an unfitted natural glyph without the prep's dropout
+        /// control, as before.</summary>
+        private static readonly bool s_unfittedDropout = Environment.GetEnvironmentVariable("WPF_NCT_UNFITTED_DROPOUT") != "0";
 
         /// <summary>A glyph turned a quarter clockwise (GDI+'s sideways glyph in vertical text): the
         /// fit the scaler makes before its post-transform, the figures mapped (x, y) -> (-y, x) --

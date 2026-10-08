@@ -367,7 +367,7 @@ namespace WgpuInterop.Tests.Text
             foreach (float em in sizes)
                 for (int gid = lo; gid <= hi && gid < font.GlyphCount; gid++)
                 {
-                    if (!font.IsCompositeGlyphId(gid)) continue;
+                    if (Environment.GetEnvironmentVariable("WPF_NATURAL_ALL") != "1" && !font.IsCompositeGlyphId(gid)) continue;
                     for (int classic = 0; classic < 2; classic++)
                     {
                         int mode = classic == 1 ? 2 : DWriteOracle.RecommendedMode(face, em);
@@ -404,6 +404,47 @@ namespace WgpuInterop.Tests.Text
         /// word its elements merge into it, a simple element contributing its word whether or not
         /// its program changed it (see TrueTypeFont.DWriteScanRule). Never raise it.</summary>
         private const int ArabicCompositeCeiling = 0;
+
+        /// <summary>RATCHET. Glyphs DirectWrite does not grid-fit (the gasp declines fitting at 5..8ppem)
+        /// are still scanned with the prep's dropout control (TrueTypeFont.DWriteUnfittedDropout), and
+        /// the dropout fill is clamped into the scan's sample-column box (PathRasterizer, WPF_CT_BOX_SUBCOL).
+        /// Without either, 1,316 of these 2,888 glyphs (Arabic forms, thin-stemmed boxes, dots) differed.
+        /// Never raise these.</summary>
+        private static readonly Dictionary<string, int> UnfittedCeiling = new() { ["arial"] = 0, ["times"] = 0 };
+
+        [Theory]
+        [InlineData("arial")]
+        [InlineData("times")]
+        public void UnfittedGlyphsAreDirectWritesTexture(string file)
+        {
+            string? path = FontPath(file);
+            Assert.SkipWhen(path is null, "needs the Windows face and DirectWrite");
+            var font = new TrueTypeFont(File.ReadAllBytes(path!));
+            IntPtr face = DWriteOracle.FontFace(path!);
+            var misses = new List<string>();
+            int total = 0;
+            foreach (float em in new[] { 5f, 6f, 7f, 8f })
+            {
+                int mode = DWriteOracle.RecommendedMode(face, em);
+                if (mode != 4 && mode != 5) continue;
+                int nSub = mode == 5 ? 5 : 1;
+                for (int gid = 748; gid <= 1108; gid++)
+                {
+                    byte[] theirs = DWriteOracle.AlphaTexture(face, em, new[] { (ushort)gid }, new[] { 0f }, null, mode,
+                        out int tl, out int tt, out int tr, out int tb);
+                    NaturalClearType.GlyphBits bits = NaturalClearType.Rasterize(font, gid, em, nSub);
+                    byte[] ours = NaturalClearType.RunTexture(new[] { bits }, new[] { 0f }, new[] { 0f },
+                        out int ol, out int ot, out int ow, out int oh, nSub);
+                    total++;
+                    long d = Diff(theirs, tl, tt, tr - tl, tb - tt, ours, ol, ot, ow, oh);
+                    if (d != 0) misses.Add($"{em}:{gid}={d}");
+                }
+            }
+            Report($"UNFITTED {file}: {total - misses.Count}/{total} exact; {string.Join(" ", misses.Take(40))}");
+            if (Environment.GetEnvironmentVariable("WPF_NATURAL_REPORT") is null)
+                Assert.True(misses.Count <= UnfittedCeiling[file],
+                    $"{misses.Count} of {total} differ (ceiling {UnfittedCeiling[file]}): {string.Join(" ", misses.Take(40))}");
+        }
 
         [Theory]
         [MemberData(nameof(Faces))]

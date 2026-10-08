@@ -1720,6 +1720,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     yMin = (int) Math.Max(0, baseSub + rMin);
                     yMax = (int) Math.Min(nRows, baseSub + rMax);
                 }
+                // ...AND IN COLUMNS TOO. DoHorizDropout (dwrite @18008c420, fontdrvhost @140095a38)
+                // clamps its fill column into the scan converter's x bounds (+0x18 / +0x1c, set by
+                // fsc_SetupScan from fsc_MeasureGlyph's box), which are overscaled SAMPLE columns,
+                // (xmin + 0x1f) >> 6 to (xmax + 0x20) >> 6 exclusive -- not whole pixels. A stem a
+                // sample thin on the glyph's own left edge (Times New Roman's 32-unit box, the
+                // .notdef forms, at 5ppem: 240..270 in 1/384 px, between two sample centres) has
+                // its non-smart fill aimed one column left of the crossing, at sample 3, and
+                // clamped to sample 4, the box's first. WPF_CT_BOX_SUBCOL=0 keeps the pixel box.
+                if (s_boxMeasured && s_boxSubCol)
+                {
+                    int X = perPixel;
+                    long xmin = (long) gx0 * X, xmax = (long) gx1 * X;
+                    long cMin = (xmin + 0x1f) >> 6, cMax = (xmax + 0x20) >> 6;
+                    if (cMax == cMin) cMax++;
+                    xMin = (int) Math.Max(0, cMin - (long) originX * X);
+                    xMax = (int) Math.Min(nCols, cMax - (long) originX * X);
+                }
             }
             if (xMin >= xMax || yMin >= yMax) return new List<(int, int)>();
 
@@ -2259,6 +2276,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// coordinate directly, as this did before 2026-09-20. See the note at the box.</summary>
         private static readonly bool s_boxSubRow =
             Environment.GetEnvironmentVariable("WPF_CT_BOX_SUBROW") != "0";
+
+        private static readonly bool s_boxSubCol =
+            Environment.GetEnvironmentVariable("WPF_CT_BOX_SUBCOL") != "0";
 
         private static readonly bool s_dropClamp =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_CLAMP") != "0";

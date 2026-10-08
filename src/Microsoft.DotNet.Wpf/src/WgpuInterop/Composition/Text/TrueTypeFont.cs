@@ -2771,6 +2771,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
         }
 
+        /// <summary>The dropout mode DirectWrite scans a glyph it does NOT grid-fit with (the gasp
+        /// declines fitting at the size), in <see cref="DWriteFit"/>'s encoding: 0 none, else the
+        /// SCANTYPE + 1. The prep still runs, and fsg_SimpleInnerGridFit @18007ae40 starts its scan
+        /// outputs from the global graphics state (+0x84 SCANCTRL, +0x86 SCANTYPE) the prep left;
+        /// with no glyph program to change them, fsg_ExecuteGlyph @180078e70 writes the scan word
+        /// from them (SCANCTRL's test at the size ? SCANTYPE : 2), and fs_ContourScan hands it to
+        /// fsc_FillGlyph (+0x170). Arial's 32-unit box (.notdef forms) at 7ppem needs it: its
+        /// one-sample stems only exist through the dropout fill.</summary>
+        internal int DWriteUnfittedDropout(float pixelsPerEm, int flags)
+        {
+            TrueTypeInterpreter? interpreter = Interpreter();
+            if (interpreter is null) return 0;
+            int savedFlags = TrueTypeInterpreter.DWriteFlags;
+            bool savedBi = TrueTypeInterpreter.BiLevelPass, savedSub = SubpixelFitting;
+            try
+            {
+                bool bi = flags == DWriteBiLevelWord;
+                TrueTypeInterpreter.DWriteFlags = flags;
+                TrueTypeInterpreter.BiLevelPass = bi;
+                SubpixelFitting = !bi;
+                if (!interpreter.PrepareForSize(pixelsPerEm)) return 0;
+                int scan = DoScanControl(interpreter.PrepScanControl, (int)MathF.Round(pixelsPerEm, MidpointRounding.AwayFromZero))
+                    ? interpreter.PrepScanType : 2;
+                return (scan & 2) != 0 ? 0 : scan + 1;
+            }
+            finally
+            {
+                TrueTypeInterpreter.DWriteFlags = savedFlags;
+                TrueTypeInterpreter.BiLevelPass = savedBi;
+                SubpixelFitting = savedSub;
+            }
+        }
+
         /// <summary>The glyph's points fitted under DirectWrite's mode word at a size, per contour, in
         /// pixels, y up, before any simulated shear; null where the face has no program for it. A
         /// simulated bold is the scaler's (fsg_Embold, <see cref="GdiEmbolden"/>) on the fitted points.</summary>
