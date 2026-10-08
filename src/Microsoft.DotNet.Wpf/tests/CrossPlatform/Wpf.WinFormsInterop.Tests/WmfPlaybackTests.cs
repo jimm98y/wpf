@@ -805,23 +805,11 @@ namespace Wpf.WinFormsInterop.Tests
             { "emf/pixels/turned", "8907d9bde09bf950" },
         };
 
-        // What the port does not draw as GDI+ does yet, all text (GpGdiPlayer.Text.cs): a
-        // scaled or turned placement's realized fonts, underline and strikeout, the Courier New
-        // glyphs at 30 degrees, and the default font (GDI+ creates SYSTEM_FONT's LOGFONT, 20 x 9
-        // here, with OUT_TT_ONLY_PRECIS, but draws it smaller than that LOGFONT realizes to).
+        // What the port does not draw as GDI+ does yet: in the turned placement, the 'g' of
+        // Courier New escaped 30 degrees (fitted at 10 x 10 ppem by ttfd's general rotation; its
+        // pen, vCharPos_G2's, is the same pixel either way the 32.32 sum is floored).
         private static readonly HashSet<string> Pending = new()
         {
-            "text/1/1x",
-            "text/1/up",
-            "text/1/down",
-            "text/1/invert",
-            "text/1/brush-invert",
-            "text/1/pen-invert",
-            "text/1/text-invert",
-            "text/1/bitmap-invert",
-            "text/1/gamma-up",
-            "text/1/nearest-up",
-            "text/1/transparent",
             "text/1/turned",
         };
 
