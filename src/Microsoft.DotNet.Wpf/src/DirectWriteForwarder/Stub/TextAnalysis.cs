@@ -316,9 +316,8 @@ namespace MS.Internal.Text.TextInterface
             Array.Copy(gids, glyphIndices, glyphCount);
             glyphAdvances = new int[glyphCount];
             glyphOffsets = new GlyphOffset[glyphCount];
-            double toIdeal = fontEmSize / d.UnitsPerEm * scalingFactor;
             for (uint i = 0; i < glyphCount; i++)
-                glyphAdvances[i] = (int)Math.Round(SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[i]) * toIdeal);
+                glyphAdvances[i] = DWriteIdealAdvance(SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[i]), fontEmSize, d.UnitsPerEm, scalingFactor);
         }
 
         public void GetGlyphs(
@@ -405,7 +404,6 @@ namespace MS.Internal.Text.TextInterface
             )
         {
             Managed.OpenTypeFontData d = font.Face.GetData();
-            double toIdeal = fontEmSize / d.UnitsPerEm * scalingFactor;
             if (itemProps != null && itemProps.IsNoVisual)
             {
                 // TextAnalyzer::GetGlyphPlacementsForControlCharacters: no advance, except a hyphen
@@ -435,9 +433,22 @@ namespace MS.Internal.Text.TextInterface
                 int px = gdi ? GdiCompatibleAdvances.PixelAdvance(font.Face, (int)font.Face.Simulations, pixels, glyphIndices[g]) : -1;
                 glyphAdvances[g] = px >= 0
                     ? (int)Math.Round(px / (double)pixelsPerDip * scalingFactor)
-                    : (int)Math.Round(SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[g]) * toIdeal);
+                    : DWriteIdealAdvance(SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[g]), fontEmSize, d.UnitsPerEm, scalingFactor);
             }
             glyphOffsets = new GlyphOffset[glyphCount];
+        }
+
+        /// <summary>
+        ///  A design-unit advance as stock WPF holds it: DirectWrite's FLOAT advance -- design units
+        ///  times (float)emSize / unitsPerEm in float -- rounded into ideal units the forwarder's way,
+        ///  round(advance * emSize * scalingFactor / (float)emSize) (TextAnalyzer.cpp).
+        /// </summary>
+        internal static int DWriteIdealAdvance(int design, double fontEmSize, int unitsPerEm, double scalingFactor)
+        {
+            float emSizeFloat = (float)fontEmSize;
+            float scale = emSizeFloat / unitsPerEm;
+            float advance = design * scale;
+            return (int)Math.Round(advance * fontEmSize * scalingFactor / emSizeFloat);
         }
 
         /// <summary>The Unicode Bidi_Mirroring_Glyph of a character, or null: the paired brackets

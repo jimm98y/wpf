@@ -86,6 +86,25 @@ namespace Wpf.Text.Tests
             Assert.Equal(offsets, actualOffsets);
         }
 
+        // An advance is DirectWrite's FLOAT advance rounded into ideal units: at 8 pt (10.667 px)
+        // Calibri's 1080-unit V is 1687.5000005 exactly and 1687.49997 through the float, and stock
+        // has 1687. Kerned or not, through GPOS (Calibri) or the nominal metrics (Microsoft YaHei).
+        [Theory]
+        [InlineData("Calibri", "To Ty Va Av Aw", new[] { 0, 1275, 2962, 3685, 5099, 6547, 7270, 8908, 10441, 11164, 12956, 14401, 15124, 16976, 19263 })]
+        [InlineData("Microsoft YaHei", "abc AVA", new[] { 0, 1769, 3813, 5418, 6365, 8617, 10781, 13033 })]
+        public void AdvancesRoundDirectWritesFloat(string family, string text, int[] carets)
+        {
+            var typeface = new Typeface(new FontFamily(family), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+            Assert.SkipUnless(typeface.TryGetGlyphTypeface(out GlyphTypeface? gt)
+                              && gt!.Win32FamilyNames.Values.Contains(family), $"{family} is not installed");
+
+            var properties = new RunProperties(family, 10.6666667);
+            using TextLine line = TextFormatter.Create().FormatLine(
+                new StringTextSource(text, properties), 0, 10000, new ParagraphProperties(properties), null);
+            Assert.Equal(carets, Enumerable.Range(0, text.Length + 1)
+                .Select(i => (int)System.Math.Round(line.GetDistanceFromCharacterHit(new CharacterHit(i, 0)) * 300)).ToArray());
+        }
+
         // Display mode places marks in DEVICE PIXELS, every anchor rounded on its own
         // (GetGdiCompatibleGlyphPlacements): the kasra under initial beh at 16 ppem is
         // round(-155/128) - round(95/128) = -2, the sukun on seen 0,-1 where the exact

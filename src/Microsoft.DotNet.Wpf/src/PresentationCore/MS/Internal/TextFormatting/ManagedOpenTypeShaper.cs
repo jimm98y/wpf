@@ -667,9 +667,9 @@ namespace MS.Internal.TextFormatting
                 // as WPF rounds the float advance DWrite's GetGlyphPlacements returns with the
                 // kerning already in it. Rounding the nominal advance and the adjustment separately
                 // is off by an ideal unit on some glyphs, which a long line adds up.
-                int nominal = (int)Math.Round(designAdvances[g] * designToIdeal);
+                int nominal = DWriteIdealAdvance(designAdvances[g], designToIdeal, designEm);
                 advances[g] = !pixels && advances[g] == nominal
-                    ? (int)Math.Round(workAdvances[g] * designToIdeal)
+                    ? DWriteIdealAdvance(workAdvances[g], designToIdeal, designEm)
                     : advances[g] + Round((workAdvances[g] - designAdvances[g]) * unitToIdeal);
                 // The engine's dx is physical (+ right); DirectWrite's offset runs in the reading
                 // direction, so a right-to-left run's is the negation (a qamats DirectWrite puts at
@@ -680,8 +680,8 @@ namespace MS.Internal.TextFormatting
                 // Right to left the reading-direction offset is XAdvance - XPlacement (rtlShift holds
                 // the XAdvance the value records applied; dx stayed the physical placement).
                 int dx = isRightToLeft ? rtlShift[g] - workOffsets[g].dx : workOffsets[g].dx;
-                offsets[g].du += pixels ? (int)(dx * unitToIdeal) : TruncateOffset(dx, designToIdeal);
-                offsets[g].dv += pixels ? (int)(workOffsets[g].dy * unitToIdeal) : TruncateOffset(workOffsets[g].dy, designToIdeal);
+                offsets[g].du += pixels ? (int)(dx * unitToIdeal) : TruncateOffset(dx, designToIdeal, designEm);
+                offsets[g].dv += pixels ? (int)(workOffsets[g].dy * unitToIdeal) : TruncateOffset(workOffsets[g].dy, designToIdeal, designEm);
             }
         }
 
@@ -1015,7 +1015,7 @@ namespace MS.Internal.TextFormatting
                 {
                     glyphAdvances[g] = designEm == 0
                         ? 0
-                        : Round(DesignAdvance(glyphTypeface, glyphIndices[g], designEm) * designToIdeal);
+                        : DWriteIdealAdvance(DesignAdvance(glyphTypeface, glyphIndices[g], designEm), designToIdeal, designEm);
                 }
             }
             if (glyphOffsets.Length != glyphCount)
@@ -1148,12 +1148,33 @@ namespace MS.Internal.TextFormatting
 
         private static int Round(double value) => (int)Math.Round(value, MidpointRounding.AwayFromZero);
 
-        /// <summary>A design-unit offset as the forwarder turns DWrite's into ideal units: the
-        /// float DIP offset (design units times emSize / unitsPerEm in float), truncated after
-        /// scaling by the ideal factor.</summary>
-        private static int TruncateOffset(int design, double designToIdeal)
+        /// <summary>DirectWrite's em scale: the float em size over the units per em, in float.</summary>
+        private static float DWriteScale(double designToIdeal, ushort designEm, out double emSize)
         {
-            float scale = (float)(designToIdeal / TextFormatterImp.ToIdeal);
+            emSize = designToIdeal * designEm / TextFormatterImp.ToIdeal;
+            return (float)emSize / designEm;
+        }
+
+        /// <summary>
+        ///  A design-unit advance as stock WPF gets it: DirectWrite's FLOAT advance (design units
+        ///  times the float em scale), rounded into ideal units the forwarder's way,
+        ///  round(advance * emSize * 300 / (float)emSize) (TextAnalyzer.cpp). Rounding the exact
+        ///  product instead is one unit off wherever it sits on a half: Calibri's 1080-unit V at
+        ///  10.667 px (8 pt) is 1687.5000005 exactly but 1687.49997 through the float.
+        /// </summary>
+        internal static int DWriteIdealAdvance(int design, double designToIdeal, ushort designEm)
+        {
+            float scale = DWriteScale(designToIdeal, designEm, out double emSize);
+            float advance = design * scale;
+            return (int)Math.Round(advance * emSize * TextFormatterImp.ToIdeal / (float)emSize);
+        }
+
+        /// <summary>A design-unit offset as the forwarder turns DWrite's into ideal units: the
+        /// float DIP offset (design units times the float em scale), truncated after scaling by the
+        /// ideal factor.</summary>
+        private static int TruncateOffset(int design, double designToIdeal, ushort designEm)
+        {
+            float scale = DWriteScale(designToIdeal, designEm, out _);
             float dip = design * scale;
             return (int)(dip * TextFormatterImp.ToIdeal);
         }
