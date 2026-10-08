@@ -103,7 +103,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _wmfStarted = true;
                 // CreateTrueTypeFont @1800b4638: the DC's font (SYSTEM_FONT) with OUT_TT_ONLY_PRECIS.
                 // SYSTEM_FONT's LOGFONT: 16 x 7, bold, PROOF_QUALITY, VARIABLE_PITCH | FF_SWISS, the
-                // charset of the system's ANSI code page.
+                // charset of the system's ANSI code page. TrueType only, the mapper has no "System"
+                // face and no FontMapper default for the charset, so the emergency walk takes Arial
+                // Bold; its 16 is a CELL (vQuantizeXform's VDMX search: 13ppem, 13 + 3) and its 7 an
+                // lfWidth (bGetNtoW_Win31: x = 7 / xAvgCharWidth, 13.28ppem), a matrix that is not
+                // square, so every advance is linear (GpGdiFont.DeviceAdvance).
                 _dc.Font = new GdiFont { Height = 16, Width = 7, Weight = 700, Face = "System", PitchAndFamily = 0x22, Quality = 2, CharSet = AnsiCharSet() };
             }
             switch (fn)
@@ -667,7 +671,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// advance plus the extra; null when none is set.</summary>
         int[] SpacedAdvances(string s)
         {
-            if (_charExtra == 0) return null;
+            if (_charExtra == 0 || Canvas) return null;    // the canvas text adds it itself
             GdiFont lf = _dc.Font;
             if (lf == null) return null;
             GpGdiFont font = GpGdiFont.Get(lf.Face, lf.Height, lf.Escapement, lf.Weight, lf.Italic, lf.Underline, lf.StrikeOut, lf.Quality, lf.CharSet, lf.PitchAndFamily);

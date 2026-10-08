@@ -30,6 +30,13 @@
 //                 rotation (GeneralRealization): fitted at the folded rows' ppems, turned by
 //                 scl_PostTransformGlyph, implied midpoints made after the turn, the 45-degree
 //                 trick's one-unit shift. A mapping that turns is not drawn here (the old path)
+//   no advances   (a WMF TEXTOUT) the realized glyphs' own fxD (GpGdiFont.DeviceAdvance), summed
+//                 in 28.4 with SetTextCharacterExtra's extra (vCharPos_H3 / vCharPos_G2); at an
+//                 angle the linear fxD along the unit base vector, the 32.32 sum floored
+//   WMF fonts     no SetFontXform: bGetNtoW_Win31 takes ex / ey from the page (NotionalX), so the
+//                 font is square on the device; lfWidth; a positive height's VDMX cell search
+//   extras        underline and strikeout (lQueryDEVICEMETRICS' ptlUnderline1 / ptlStrikeOut and
+//                 thicknesses, ESTROBJ::bExtraRectsToPath), unturned runs
 //   ink           through the DC's clip and ETO_CLIPPED; the background (OPAQUE mode or ETO_OPAQUE)
 //                 the text box in the background colour
 //
@@ -52,7 +59,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             GdiFont lf = _dc.Font;
             if (lf == null) return false;
-            GpGdiFont font = GpGdiFont.Get(lf.Face, lf.Height, lf.Escapement, lf.Weight, lf.Italic, lf.Underline, lf.StrikeOut, lf.Quality, lf.CharSet, lf.PitchAndFamily);
+            GpGdiFont font = GpGdiFont.Get(lf.Face, lf.Height, lf.Escapement, lf.Weight, lf.Italic, lf.Underline, lf.StrikeOut, lf.Quality, lf.CharSet, lf.PitchAndFamily, lf.Width);
             if (font == null) return false;
             GpMat m = LogicalToTarget;
             if (m.M12 != 0f || m.M21 != 0f) return false;
@@ -95,12 +102,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             bool updateCp = (align & 1) != 0;
             PointF refp = ToTarget(updateCp ? _dc.Pos : logical);
             long fx = (long)Math.Floor(refp.X * 16.0 + 0.5), fy = (long)Math.Floor(refp.Y * 16.0 + 0.5);
-            // The reference point through the DC's own 28.4 world-to-device transform (bCvtPts),
-            // as GDI's ExtTextOut takes it, where the record's point is whole.
+            // The reference point through the DC's own 28.4 world-to-device transform, as
+            // GrepExtTextOutWLocked @1401a8a98 takes it (EXFORMOBJ::fxFastX / fxFastY or bXform:
+            // NOT snapped to the pixel as a GM_COMPATIBLE figure's points are), where the record's
+            // point is whole.
             PointF rl = updateCp ? _dc.Pos : logical;
             if (rl.X == MathF.Floor(rl.X) && rl.Y == MathF.Floor(rl.Y))
             {
-                Fix(wtod, rl.X, rl.Y, out int rfx, out int rfy);
+                wtod.Point((int)rl.X, (int)rl.Y, out int rfx, out int rfy);
                 fx = rfx; fy = rfy;
             }
             // Unit vectors along the baseline and down (device).
@@ -110,15 +119,74 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (m.M22 < 0f) { ay = -ay; dny = -dny; }
             float scaleAcross = q % 2 == 0 ? sy : sx;
             int asc = (int)Math.Round(font.Ascent * scaleAcross), desc = (int)Math.Round(font.Descent * scaleAcross);
-            var pens = new long[n + 1];
-            long sum = 0;
-            for (int i = 0; i < n; i++)
+            if (gen == null && q == 0 && (scaleAcross != 1f || ppemAcross != font.Ppem))
             {
-                pens[i] = (long)Math.Floor(sum * along * 16.0 + 0.5);
-                int adv = dx != null && i < dx.Length ? dx[i] : font.CharAdvance(s[i]);
-                sum += adv;
+                // The device font's own tmAscent / tmDescent (the realization at the device ppem),
+                // not the logical font's scaled.
+                TrueTypeFont ft = font.Face;
+                if (!ft.TryGetGdiLineMetrics(ppemAcross, out asc, out desc))
+                {
+                    asc = (int)Math.Round(ft.WinAscent * (double)ppemAcross / ft.UnitsPerEmForHinting);
+                    desc = (int)Math.Round(ft.WinDescent * (double)ppemAcross / ft.UnitsPerEmForHinting);
+                }
             }
-            pens[n] = (long)Math.Floor(sum * along * 16.0 + 0.5);
+            var pens = new long[n + 1];
+            long[] penX = null, penY = null;     // a general rotation's 28.4 glyph offsets (vCharPos_G2)
+            long sum = 0;
+            if (dx == null && gen == null && q == 0)
+            {
+                // No advances: ESTROBJ sums the realized glyphs' own device advances (GLYPHDATA
+                // fxD, whole pixels), and SetTextCharacterExtra's extra through the mapping.
+                long dev = 0;
+                int extra = _charExtra == 0 ? 0 : (int)Math.Floor(_charExtra * along * 16.0 + 0.5);
+                for (int i = 0; i < n; i++)
+                {
+                    pens[i] = dev;
+                    int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
+                    int fxd = font.DeviceAdvance(gid, ppemAlong, ppemAcross, _rM00, _rSquare, rStretch) * 16;
+                    // vCharPos_G2 @1401ae2d8: the extra (bFToL of the RFONT's base scale +0x190 times
+                    // the DC's logical extra) only where it leaves the advance positive.
+                    dev += fxd + (extra != 0 && extra + fxd > 0 ? extra : 0);
+                }
+                pens[n] = dev;
+                sum = (long)Math.Floor(dev / (along * 16.0) + 0.5);
+            }
+            else if (dx == null && gen != null)
+            {
+                // No advances at an angle: ESTROBJ::vCharPos_G2 @1401ae2d8 sums each glyph's ptqD
+                // (32.32) and puts the glyph at the sum's whole 28.4 (its high word); ttfd's
+                // vFillGLYPHDATA @140012568 makes a matrix that is not diagonal a LINEAR fxD,
+                // bFToL(hmtx advance x the base scale +0xe0), and ptqD that times the unit base
+                // vector (vLTimesVtfl).
+                penX = new long[n + 1]; penY = new long[n + 1];
+                double qx = 0, qy = 0;
+                long dev = 0;
+                int extra = _charExtra == 0 ? 0 : (int)Math.Floor(_charExtra * along * 16.0 + 0.5);
+                for (int i = 0; i < n; i++)
+                {
+                    penX[i] = (long)Math.Floor(qx); penY[i] = (long)Math.Floor(qy);
+                    pens[i] = dev;
+                    int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
+                    int fxd = (int)MathF.Floor(font.Face.DesignAdvance(gid) * gen.BaseLen + 0.5f);
+                    if (font.Face.GdiEmboldensBitmap) fxd += 16;
+                    int step = fxd + (extra != 0 && extra + fxd > 0 ? extra : 0);
+                    dev += step;
+                    qx += (double)(step * gen.UbX); qy += (double)(step * gen.UbY);
+                }
+                penX[n] = (long)Math.Floor(qx); penY[n] = (long)Math.Floor(qy);
+                pens[n] = dev;
+                sum = (long)Math.Floor(dev / (along * 16.0) + 0.5);
+            }
+            else
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    pens[i] = (long)Math.Floor(sum * along * 16.0 + 0.5);
+                    int adv = dx != null && i < dx.Length ? dx[i] : font.CharAdvance(s[i]) + _charExtra;
+                    sum += adv;
+                }
+                pens[n] = (long)Math.Floor(sum * along * 16.0 + 0.5);
+            }
             long total = pens[n];
             int va = align & 0x18;
             if (va == 0 && gen == null) { fx += (long)asc * 16 * dnx; fy += (long)asc * 16 * dny; }
@@ -170,7 +238,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         for (int x = e.Left; x < e.Right; x++)
                             if (x >= 0 && y >= 0 && x < _cw && y < _ch && (mask == null || mask[y * _cw + x])) px[y * _cw + x] = bk;
                 }
-                else if (_dc.BkMode == 2 && gen == null && q == 0 && ax == 1 && ay == 0 && dny == 1 && ppemAlong == ppemAcross)
+                else if (_dc.BkMode == 2 && gen == null && q == 0 && ax == 1 && ay == 0 && dny == 1)
                 {
                     // ESTROBJ::vCharPos_H1 @1401aed88 (its glyph-data branch): along the baseline the
                     // least of 0 and each pen plus the glyph's GLYPHDATA fxA, to the greatest of the
@@ -182,7 +250,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     for (int i = 0; i < n; i++)
                     {
                         int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
-                        GdiPlusText.GreyGlyph g = GdiPlusText.Mono(font.Face, gid, ppemAlong, gridFit: true);
+                        GdiPlusText.GreyGlyph g = MonoAt(font.Face, gid, ppemAlong, ppemAcross, rStretch);
                         if (g.Width <= 0 || g.Height <= 0) continue;
                         xl = Math.Min(xl, pens[i] + g.Left * 16);
                         xr = Math.Max(xr, pens[i] + (g.Left + g.Width) * 16);
@@ -218,7 +286,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     for (int i = 0; i < n; i++)
                     {
                         gids[i] = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
-                        long gx = gen != null ? fx + R16(pens[i] * gen.UbX) : fx + pens[i] * ax, gy = gen != null ? fy + R16(pens[i] * gen.UbY) : fy + pens[i] * ay;
+                        long gx = penX != null ? fx + penX[i] : gen != null ? fx + R16(pens[i] * gen.UbX) : fx + pens[i] * ax,
+                             gy = penY != null ? fy + penY[i] : gen != null ? fy + R16(pens[i] * gen.UbY) : fy + pens[i] * ay;
                         xs[i] = (int)((gx + 8) >> 4) - hShift;
                         ys[i] = (int)((gy + 8) >> 4);
                     }
@@ -267,6 +336,34 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             px[y * _cw + x] = unchecked((int)(0xff000000u | (uint)Lamp(kr, ir, dr) << 16 | (uint)Lamp(kg, ig, dg) << 8 | (uint)Lamp(kb, ib, db)));
                         }
                 }
+                if ((font.Underline || font.StrikeOut) && gen == null && q == 0 && ax == 1 && dny == 1)
+                {
+                    // The text extras: lQueryDEVICEMETRICS @140011940 (fontdrvhost) hands win32k
+                    // ptlUnderline1 / ptlULThickness / ptlStrikeOut / ptlSOThickness, for a diagonal
+                    // matrix each the face's value (post underlinePosition / underlineThickness, OS/2
+                    // yStrikeoutPosition / yStrikeoutSize) times the context's y scale (+0x60,
+                    // 16.16), rounded ((v >> 15) + 1 >> 1), a thickness that rounds to 0 made 1, a
+                    // position negated (y down). ESTROBJ::bExtraRectsToPath @1402f2c28 puts each
+                    // rectangle at the run's reference pixel ((ref + 8) & ~15) plus the offset, as
+                    // long as the run's advance vector (ESTROBJ +0x58) and as thick as the
+                    // thickness, and GrepExtTextOutWLocked fills it with the text brush through the
+                    // text's clip.
+                    TrueTypeFont ft = font.Face;
+                    int m22 = _rM22;
+                    static int Scale(int m, int v) => (int)(((long)m * v >> 15) + 1 >> 1);
+                    static int Thick(int m, int v) { int t = Scale(m, v); return t != 0 ? t : m > 0 ? 1 : -1; }
+                    int inkPx = unchecked((int)(0xff000000u | Rgb(_dc.TextColor)));
+                    int x0 = (int)((fx + 8) >> 4) - hShift, y0 = (int)((fy + 8) >> 4);
+                    int w = (int)((total + 7) >> 4);
+                    void Bar(int top, int h)
+                    {
+                        for (int y = top; y < top + h; y++)
+                            for (int x = x0; x < x0 + w; x++)
+                                if (Visible(x, y)) px[y * _cw + x] = inkPx;
+                    }
+                    if (font.Underline) Bar(y0 - Scale(m22, ft.UnderlinePosition), Thick(m22, ft.UnderlineThickness));
+                    if (font.StrikeOut) Bar(y0 - Scale(m22, ft.StrikeoutPosition), Thick(m22, ft.StrikeoutSize));
+                }
                 System.Runtime.InteropServices.Marshal.Copy(px, 0, bd.Scan0, px.Length);
             }
             finally { _canvas.UnlockBits(bd); }
@@ -274,6 +371,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _dc.Pos = new PointF(_dc.Pos.X + sum, _dc.Pos.Y);
             return true;
         }
+        /// <summary>The bi-level glyph (an EMF / metafile DC's realization) at x and y ppems.</summary>
+        static GdiPlusText.GreyGlyph MonoAt(TrueTypeFont face, int gid, int ppemX, int ppemY, bool stretchInfo)
+        {
+            if (ppemX == ppemY && !stretchInfo) return GdiPlusText.Mono(face, gid, ppemY, gridFit: true);
+            int sx = TrueTypeInterpreter.StretchPpemX, sy = TrueTypeInterpreter.StretchPpemY, si = TrueTypeInterpreter.GdiStretchInfo;
+            TrueTypeInterpreter.StretchPpemX = ppemX != ppemY ? ppemX : 0;
+            TrueTypeInterpreter.StretchPpemY = ppemX != ppemY ? ppemY : 0;
+            TrueTypeInterpreter.GdiStretchInfo = stretchInfo ? 1 : 2;
+            try { return GdiPlusText.Mono(face, gid, ppemY, gridFit: true); }
+            finally { TrueTypeInterpreter.StretchPpemX = sx; TrueTypeInterpreter.StretchPpemY = sy; TrueTypeInterpreter.GdiStretchInfo = si; }
+        }
+
         static readonly int[] s_lampWeight = { 0, 174763, 349525, 524288, 699051, 873813, 1048576 };
         static (byte[] A, byte[] B)? s_ctGamma;
 
@@ -307,6 +416,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public int P00, P01, P10, P11;      // the post-transform, 16.16, glyph y-up to device y-up
             public float UbX, UbY;              // the unit base vector on the screen (y down)
             public float UaX, UaY;              // the unit ascender on the screen
+            public float BaseLen;               // the base vector's length, 28.4 per font unit (TT_FONTCONTEXT +0xe0)
         }
 
         /// <summary>The realization of a font turned by <paramref name="esc"/> tenths of a degree,
@@ -333,12 +443,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (lf.Height < 0) h = (float)-lf.Height / upem;
             else if (lf.Height > 0) h = (float)lf.Height / (face.WinAscent + face.WinDescent);
             else h = (float)font.Ppem / upem;
-            float wx = h;
-            if (_fontExScale != 0f && _fontEyScale != 0f)
-            {
-                wx = MathF.Abs(h * _fontEyScale);
-                if (_fontExScale != 1f) wx = wx / _fontExScale;
-            }
+            float wx = NotionalX(face, lf, h, m11, m22);
             float sxs = MathF.Abs(wx * m11) * 0.0625f, sys = MathF.Abs(h * m22) * 0.0625f;
             float c = GdiTrig.Cos(GdiTrig.Degrees(esc)), s = GdiTrig.Sin(GdiTrig.Degrees(esc));
             static int Fx(float v) => v < 0f ? -(int)Math.Floor(-v * 65536.0 + 0.5) : (int)Math.Floor(v * 65536.0 + 0.5);
@@ -388,6 +493,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             float bx = sxs * c * 16f, by = -sxs * s * 16f, bl = MathF.Sqrt(bx * bx + by * by);
             float ax = -sys * s * 16f, ay = -sys * c * 16f, al = MathF.Sqrt(ax * ax + ay * ay);
             g.UbX = bx / bl; g.UbY = by / bl; g.UaX = ax / al; g.UaY = ay / al;
+            g.BaseLen = bl;
             return g;
         }
 
@@ -411,6 +517,49 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         float _fontExScale, _fontEyScale;    // the record's SetFontXform, 0 for none (GM_ADVANCED)
+        int _rM00 = 0x10000, _rM22 = 0x10000; bool _rSquare = true;  // RealizedPpems' context x scale (TT_FONTCONTEXT +0x50, 16.16) and whether it is y's
+
+        /// <summary>bGetNtoW_Win31 @1401e7910's x scale (notional to world) for a font whose y scale
+        /// is <paramref name="h"/>. Its ex / ey are the font xform SetFontXform put on the DC
+        /// (dc+0x1c4 / +0x1c8: an EMF record played GM_COMPATIBLE), else the page's own scales
+        /// (dcattr+0x14c / +0x13c and +0x150 / +0x140, viewport over window extent, or the
+        /// world-to-device matrix over 16): a WMF played into a stretched placement realizes its
+        /// font square on the device, y's scale on both axes.
+        /// <list type="bullet">
+        /// <item>lfWidth 0: x = |h ey| / ex;</item>
+        /// <item>lfWidth w: x = w / fwdAveCharWidth (IFI +0x4c), unless round(avg h ey) is under a
+        /// pixel or no more than round(w ex) / 256, which a TrueType face takes as lfWidth 0.</item>
+        /// </list></summary>
+        float NotionalX(TrueTypeFont face, GdiFont lf, float h, float m11, float m22)
+        {
+            float ex = _fontExScale, ey = _fontEyScale;
+            if (ex == 0f || ey == 0f)
+            {
+                if (!_wmfCanvas) return h;
+                ex = m11 * 0.0625f; ey = m22 * 0.0625f;
+                if (ex == 0f || ey == 0f) return h;
+            }
+            float f15 = ey != 1f ? MathF.Abs(h * ey) : MathF.Abs(h);
+            float wx = f15;
+            if (lf.Width != 0)
+            {
+                float w = Math.Abs(lf.Width);
+                bool fits = true;
+                int iw = Math.Abs(lf.Width);
+                if (ex != 1f)
+                {
+                    w *= ex;
+                    if (MathF.Abs(w) >= 2.1e9f) fits = false; else iw = Math.Abs((int)MathF.Floor(MathF.Abs(w) + 0.5f));
+                    w = MathF.Abs(w);
+                }
+                float avg = face.XAvgCharWidth;
+                float f16 = avg * f15;
+                int ia = MathF.Abs(f16) >= 2.1e9f ? -1 : (int)MathF.Floor(f16 + 0.5f);
+                if (ia >= 1 && fits && ia > iw / 256) wx = w / avg;
+            }
+            if (ex != 1f) wx /= ex;
+            return MathF.Abs(wx);
+        }
 
         /// <summary>The whole ppem of each axis GDI realizes a scale-only font at.
         /// <list type="bullet">
@@ -433,13 +582,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (lf.Height < 0) h = (float)-lf.Height / upem;
             else if (lf.Height > 0) h = (float)lf.Height / (face.WinAscent + face.WinDescent);
             else h = (float)font.Ppem / upem;
-            float wx = h;
-            float ex = _fontExScale, ey = _fontEyScale;
-            if (ex != 0f && ey != 0f)
-            {
-                wx = MathF.Abs(h * ey);
-                if (ex != 1f) wx = wx / ex;
-            }
+            float wx = NotionalX(face, lf, h, m11, m22);
             float dx = MathF.Abs(wx * m11) * 0.0625f, dy = MathF.Abs(h * m22) * 0.0625f;
             static int Fx(float v) => (int)Math.Floor(v * 65536.0 + 0.5);
             int m11fx = Fx(dx), m22fx = Fx(dy);
@@ -468,13 +611,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 return (Axis(m11fx), Axis(m22fx), TrueTypeInterpreter.DwFixMul(r0, r0) != TrueTypeInterpreter.DwFixMul(r1, r1));
             }
             int ppemY = (int)(((long)m22fx * upem + 0x8000) >> 16);
+            if (scaleOnly && face.HasVdmx && lf.Height > 0) ppemY = GpGdiFont.CellPpem(face, m22fx);
             if (ppemY < 1) return (0, 0, false);
             int m22eff = m22fx;
             // vQuantizeXform @14001ea70, for a face with a 'VDMX': y becomes exactly the ppem over
             // the em, and x follows it in proportion -- or becomes y, when the difference moves
             // the face's average character width (IFIMETRICS.fwdAveCharWidth) by less than half a
             // pixel, so a nearly square transform is made square.
-            if (scaleOnly && face.HasVdmx && lf.Height <= 0)
+            if (scaleOnly && face.HasVdmx)
             {
                 int m22q = (int)((((long)ppemY << 16) + upem / 2) / upem);
                 m22eff = m22q;
@@ -487,6 +631,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             // STRETCHED (GETINFO selector 4): bSetXform hands the scaler the identity when +0x50 equals
             // +0x60, else x is m00 over y's size, and the rows then differ in length.
             bool stretchedInfo = m11fx != m22eff && TrueTypeInterpreter.DwFixMul(m00, m00) != 0x10000;
+            _rM00 = m11fx; _rSquare = m11fx == m22eff; _rM22 = m22eff;
             return (ppemX, ppemY, stretchedInfo);
         }
 

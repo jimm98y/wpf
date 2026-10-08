@@ -43,6 +43,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public int Ppem;
         public int Ascent, Descent;      // tmAscent, tmDescent
         public int Escapement;           // tenths of a degree
+        public int Width;                // lfWidth (0: the face's own aspect)
         public int Weight;
         public bool Italic, Underline, StrikeOut;
         public int Quality;
@@ -68,13 +69,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         public static GpGdiFont Get(string name, int height, int esc, int weight, bool italic, bool ul, bool so, int quality,
-                                    int charset = 1, int pitchFamily = 0)
+                                    int charset = 1, int pitchFamily = 0, int width = 0)
         {
-            string key = name + "|" + height + "|" + esc + "|" + weight + "|" + italic + ul + so + "|" + quality + "|" + charset + "|" + pitchFamily;
+            string key = name + "|" + height + "|" + width + "|" + esc + "|" + weight + "|" + italic + ul + so + "|" + quality + "|" + charset + "|" + pitchFamily;
             lock (s_cache)
             {
                 if (s_cache.TryGetValue(key, out GpGdiFont f)) return f;
                 f = Make(name, height, esc, weight, italic, ul, so, quality, charset, pitchFamily);
+                if (f != null) f.Width = width;
                 s_cache[key] = f;
                 return f;
             }
@@ -104,6 +106,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 int cell = t.WinAscent + t.WinDescent;
                 ppem = cell > 0 ? (int)Math.Round((double)height * upem / cell) : height;
+                if (cell > 0 && t.HasVdmx && esc % 3600 == 0)
+                    ppem = CellPpem(t, (int)Math.Floor((double)height / cell * 65536.0 + 0.5));
             }
             else ppem = 16;
             if (ppem <= 0) ppem = 1;
@@ -148,6 +152,39 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return g;
         }
 
+        /// <summary>vQuantizeXform @14001ea70 (fontdrvhost) for a face with a 'VDMX' and a positive
+        /// lfHeight (a CELL height, TT_FONTCONTEXT +0x28 bit 15 clear): the device cell is
+        /// FixMul(m22, usWinAscent + usWinDescent); bSearchVdmxTable @14001e880 takes the first
+        /// record whose yMax - yMin is that cell (a record past it ends the search); failing that,
+        /// a walk from FixMul(m22, upem) one ppem at a time, each size's height its record's or the
+        /// cell scaled, down while it is taller and up while it is shorter, stopping at the last
+        /// size not taller. <paramref name="m22"/> is the notional-to-device y scale in 16.16; the
+        /// answer is the ppem (+0x7c) the scale is then quantized to (upem over it).</summary>
+        internal static int CellPpem(TrueTypeFont t, int m22)
+        {
+            int upem = t.UnitsPerEmForHinting, cell = t.WinAscent + t.WinDescent;
+            int ppem = (int)(((long)m22 * upem + 0x8000) >> 16);
+            if (cell <= 0) return ppem;
+            int target = (int)(((long)m22 * cell + 0x8000) >> 16);
+            for (int p = 1; p <= 255; p++)
+            {
+                if (!t.TryGetVdmxExtents(p, out int yMax, out int yMin)) continue;
+                int h = yMax - yMin;
+                if (h > target) break;
+                if (h == target) return p;
+            }
+            bool down = false, up = false;
+            for (int i = 0; i < 256 && ppem > 0; i++)
+            {
+                int h = t.TryGetVdmxExtents(ppem, out int yMax, out int yMin) ? yMax - yMin
+                      : (int)(((long)ppem * cell + upem / 2) / upem);
+                if (h == target) return ppem;
+                if (h < target) { if (down) return ppem; ppem++; up = true; }
+                else { ppem--; if (up) return ppem; down = true; }
+            }
+            return ppem;
+        }
+
         static TrueTypeFont Resolve(string family, int sim)
         {
             if (string.IsNullOrEmpty(family) || FontFiles.Find(family, false, false) == null) return null;
@@ -183,6 +220,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             if (Face.TryGetDeviceAdvance(gid, Ppem, out float a)) return (int)MathF.Round(a);
             return (int)MathF.Round(Face.Advance(gid) * Ppem / Face.PixelsPerEm);
+        }
+
+        /// <summary>The advance (whole device pixels) of a glyph of the font realized at
+        /// <paramref name="ppemX"/> x <paramref name="ppemY"/> with the 16.16 x scale
+        /// <paramref name="m00"/> (square: x's scale is y's): GLYPHDATA fxD, what ESTROBJ sums
+        /// when ExtTextOut is handed no advances.</summary>
+        public int DeviceAdvance(int gid, int ppemX, int ppemY, int m00, bool square, bool stretchInfo = false)
+        {
+            if (Face.TryGetStretchedAdvance(gid, m00, square, ppemX, ppemY, out float a, stretchInfo ? 1 : 2)) return (int)MathF.Round(a);
+            return (int)(((long)m00 * Face.DesignAdvance(gid) + 0x8000) >> 16);
         }
 
         /// <summary>GetTextExtentExPoint's width of one character: its glyph through the cmap.</summary>
