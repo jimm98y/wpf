@@ -13,6 +13,15 @@
 // fton on Windows, ftoo for the port).
 //
 // job: op|base|face|size|unit|style|hint|flags|align|lalign|trim|hotkey|tabs|digits|x,y,w,h|xform|ranges|text
+// (op P draws the string unhooked and logs an FNV-1a digest of the 400x160 BGRA bitmap: "PX <hex>".)
+//
+// gasp_oracle.jobs.txt / .native.txt are the same for the sizes where the faces' 'gasp' tables decline
+// grid fitting (GRIDFIT or SYMMETRIC_GRIDFIT clear) or their preps inhibit it: every TextRenderingHint,
+// DrawString's glyph runs and pixels, MeasureString, AddString, upright and under uniform scales, and
+// typographic strings whose ends overhang (the black-box test reads the GDI-classic side bearings).
+// GDI+ fits all of them: its metrics are DirectWrite's GDI_CLASSIC / GDI_NATURAL measure, which reads
+// no gasp bit (TrueTypeFont.GdiClassicFit). Recorded one job per process: GDI+'s realization cache
+// makes an AntiAliasGridFit string's render mode depend on what the process drew before.
 //
 
 using System;
@@ -147,6 +156,19 @@ namespace Wpf.WinFormsInterop.Tests
             if (m != null) g.Transform = m;
             switch (op)
             {
+                case "P":
+                {
+                    if (sf == null) g.DrawString(text, font, Brushes.Black, rect);
+                    else g.DrawString(text, font, Brushes.Black, rect, sf);
+                    var d = bmp.LockBits(new Rectangle(0, 0, W, H), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+                    var buf = new byte[W * H * 4];
+                    System.Runtime.InteropServices.Marshal.Copy(d.Scan0, buf, 0, buf.Length);
+                    bmp.UnlockBits(d);
+                    ulong h = 1469598103934665603UL;
+                    foreach (byte b in buf) { h ^= b; h *= 1099511628211UL; }
+                    log.Append("PX ").Append(h.ToString("x16")).Append('\n');
+                    break;
+                }
                 case "D":
                     t_hooking = true;
                     try
@@ -195,11 +217,11 @@ namespace Wpf.WinFormsInterop.Tests
             }
         }
 
-        static List<(string Job, string Log)> Native()
+        static List<(string Job, string Log)> Native(string file = "fti_oracle.native.txt")
         {
             var list = new List<(string, string)>();
             string job = null; var sb = new StringBuilder();
-            foreach (string line in File.ReadAllLines(Path.Combine(Dir, "fti_oracle.native.txt"), Encoding.UTF8))
+            foreach (string line in File.ReadAllLines(Path.Combine(Dir, file), Encoding.UTF8))
             {
                 if (line.StartsWith("J ", StringComparison.Ordinal))
                 {
@@ -214,13 +236,20 @@ namespace Wpf.WinFormsInterop.Tests
 
         /// <summary>Every job lays out, measures and adds to a path exactly as gdiplus.dll does.</summary>
         [Fact]
-        public void Text_layout_matches_GdiPlus()
+        public void Text_layout_matches_GdiPlus() => Battery("fti_oracle.native.txt");
+
+        /// <summary>The same at the sizes the faces' 'gasp' (or prep) declines grid fitting, pixels
+        /// included: GDI+ fits there all the same.</summary>
+        [Fact]
+        public void Text_at_gasp_declined_sizes_matches_GdiPlus() => Battery("gasp_oracle.native.txt");
+
+        static void Battery(string file)
         {
             if (!OperatingSystem.IsWindows()) return;   // the battery's faces are Windows'
             Install();
             var bad = new StringBuilder();
             int failed = 0, n = 0;
-            foreach ((string job, string native) in Native())
+            foreach ((string job, string native) in Native(file))
             {
                 n++;
                 string ours = Run(job);

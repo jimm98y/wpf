@@ -1,0 +1,1050 @@
+D|def|Segoe UI|6|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI|6|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI|6|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI|6|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|6|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|6|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|6|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|6|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|6|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Segoe UI|6|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI|7|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Segoe UI|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Segoe UI|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Tahoma|7|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Tahoma|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Tahoma|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Tahoma|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Tahoma|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Tahoma|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Tahoma|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Tahoma|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Tahoma|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Tahoma|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Verdana|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Verdana|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Verdana|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Verdana|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Verdana|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Verdana|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Verdana|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Verdana|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Verdana|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Verdana|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Verdana|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Verdana|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Verdana|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Verdana|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Verdana|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|6|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|6|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|6|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|6|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|6|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|6|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|6|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Arial|6|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Consolas|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|9|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|9|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|9|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|9|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|9|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|9|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|9|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|9|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|10|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|10|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|10|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|10|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Consolas|10|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|10|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|10|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Consolas|10|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Consolas|10|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Calibri|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Calibri|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Calibri|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Calibri|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Calibri|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Calibri|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Calibri|9|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Calibri|9|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Calibri|9|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Calibri|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Calibri|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Georgia|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Georgia|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Georgia|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Georgia|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Georgia|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Georgia|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Georgia|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Times New Roman|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Times New Roman|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Times New Roman|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Times New Roman|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Times New Roman|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Times New Roman|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Times New Roman|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Times New Roman|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Times New Roman|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Times New Roman|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Times New Roman|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|7|2|1|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|7|2|1|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|7|2|1|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|7|2|1|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|8|2|1|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|8|2|1|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|8|2|1|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Arial|8|2|1|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|8|2|1|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|8|2|1|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|8|2|1|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|8|2|1|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Arial|8|2|1|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Times New Roman|8|2|1|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Times New Roman|8|2|1|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Times New Roman|8|2|1|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Times New Roman|8|2|1|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Times New Roman|8|2|1|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Times New Roman|8|2|1|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Times New Roman|8|2|1|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Courier New|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Courier New|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Courier New|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Courier New|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Courier New|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Courier New|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Courier New|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Microsoft Sans Serif|7|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Microsoft Sans Serif|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Microsoft Sans Serif|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Microsoft Sans Serif|7|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Microsoft Sans Serif|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Microsoft Sans Serif|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Microsoft Sans Serif|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Microsoft Sans Serif|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Microsoft Sans Serif|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Microsoft Sans Serif|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Microsoft Sans Serif|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Microsoft Sans Serif|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|18|2|0|1|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|18|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|18|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|18|2|0|1|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|18|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|18|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|18|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|36|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|36|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|36|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|36|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|36|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|36|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|40|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Segoe UI Light|40|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|40|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|40|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|40|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Segoe UI Light|40|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|MS Gothic|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|9|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|9|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|9|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|9|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|9|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|9|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+A|def|MS Gothic|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|20|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|20|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|20|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|20|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|20|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|20|2|0|3|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|20|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|20|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|20|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|20|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|20|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|20|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|20|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+A|def|MS Gothic|21|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|2|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|3|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|1|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|21|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|1|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|24|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|24|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|24|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|24|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|24|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|24|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|24|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|24|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+D|def|MS Gothic|24|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+M|def|MS Gothic|24|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+D|def|Microsoft YaHei|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|21|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|21|2|0|3|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|21|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|21|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|21|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|21|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|21|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|21|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|22|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|22|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|22|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+A|def|Microsoft YaHei|22|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|2|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|22|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|22|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|22|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|22|2|0|1|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|22|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|22|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|22|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|26|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|26|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|26|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|26|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|26|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+A|def|Microsoft YaHei|26|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|26|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|26|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|26|2|0|2|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|26|2|0|3|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+D|def|Microsoft YaHei|26|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|26|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|26|2|0|2|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|26|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|26|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|26|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+M|def|Microsoft YaHei|26|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+D|def|Malgun Gothic Semilight|7|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|7|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Malgun Gothic Semilight|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|7|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|1|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Malgun Gothic Semilight|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|16|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|16|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|16|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|16|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|16|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|16|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|17|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|17|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|17|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|17|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|17|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|17|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|17|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|22|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|22|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|22|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic Semilight|22|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|22|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|22|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|22|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic Semilight|22|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic|9|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic|9|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic|9|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic|9|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic|10|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic|10|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic|10|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Malgun Gothic|10|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic|10|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic|10|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic|10|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Malgun Gothic|10|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Malgun Gothic|10|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|9|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|9|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|9|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Cascadia Code|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|51|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|51|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|51|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|51|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|51|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|51|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|51|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|51|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Cascadia Code|51|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|56|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|56|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Cascadia Code|56|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|56|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|56|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|56|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|56|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Cascadia Code|56|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Trebuchet MS|8|2|1|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Trebuchet MS|8|2|1|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Trebuchet MS|8|2|1|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Trebuchet MS|8|2|1|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Trebuchet MS|8|2|1|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Trebuchet MS|8|2|1|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Trebuchet MS|8|2|1|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Trebuchet MS|8|2|1|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Comic Sans MS|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Comic Sans MS|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Comic Sans MS|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Comic Sans MS|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Comic Sans MS|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Comic Sans MS|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Palatino Linotype|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Palatino Linotype|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Palatino Linotype|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Palatino Linotype|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Palatino Linotype|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Palatino Linotype|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Palatino Linotype|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Palatino Linotype|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Palatino Linotype|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|def|Palatino Linotype|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Palatino Linotype|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Palatino Linotype|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Palatino Linotype|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+M|def|Palatino Linotype|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+A|def|Palatino Linotype|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI|6|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI|6|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI|6|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Tahoma|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Tahoma|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Tahoma|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Tahoma|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Tahoma|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Tahoma|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Tahoma|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Tahoma|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Verdana|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Verdana|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Verdana|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|6|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|6|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|6|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|9|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|9|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|10|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|10|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|10|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Consolas|10|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Calibri|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Calibri|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Calibri|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Calibri|9|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Calibri|9|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Calibri|9|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Calibri|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Georgia|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Georgia|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Georgia|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Times New Roman|7|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Times New Roman|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Times New Roman|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Times New Roman|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Times New Roman|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Times New Roman|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Times New Roman|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|7|2|1|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|7|2|1|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|7|2|1|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|8|2|1|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|8|2|1|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Arial|8|2|1|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Times New Roman|8|2|1|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Times New Roman|8|2|1|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Times New Roman|8|2|1|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Courier New|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Courier New|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Courier New|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Courier New|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Microsoft Sans Serif|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Microsoft Sans Serif|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Microsoft Sans Serif|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Microsoft Sans Serif|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Microsoft Sans Serif|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Microsoft Sans Serif|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Microsoft Sans Serif|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Microsoft Sans Serif|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|18|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|18|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|36|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|36|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|36|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|36|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|40|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|40|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|40|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Segoe UI Light|40|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|MS Gothic|9|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|9|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|9|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|20|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|20|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|20|2|0|3|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|20|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|20|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|20|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|21|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|21|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|21|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|21|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|24|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|24|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|24|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|24|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|24|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|24|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|24|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+P|def|MS Gothic|24|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 日本
+P|def|Microsoft YaHei|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|21|2|0|2|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|21|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|21|2|0|1|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|22|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|22|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|22|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|22|2|0|2|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|22|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|22|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|22|2|0|1|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|22|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|1|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|1|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+P|def|Microsoft YaHei|26|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburg 123 中文
+P|def|Malgun Gothic Semilight|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|7|2|0|3|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|8|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|1.5,0,0,1.5,0.5,0.25|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|2,0,0,2,0,0|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|16|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|16|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|17|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|17|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|17|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|22|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|22|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic Semilight|22|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic|9|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic|9|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic|9|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic|9|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic|9|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic|10|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Malgun Gothic|10|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Cascadia Code|9|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Cascadia Code|9|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Cascadia Code|51|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Cascadia Code|51|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Cascadia Code|51|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Cascadia Code|56|2|0|1|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Cascadia Code|56|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Cascadia Code|56|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Trebuchet MS|8|2|1|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Comic Sans MS|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Comic Sans MS|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Palatino Linotype|7|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Palatino Linotype|7|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Palatino Linotype|7|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Palatino Linotype|7|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Palatino Linotype|8|2|0|0|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Palatino Linotype|8|2|0|2|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Palatino Linotype|8|2|0|3|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Palatino Linotype|8|2|0|4|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+P|def|Palatino Linotype|8|2|0|5|0|0|0|-|-|-|-|2,2,396,156|-|-|Gasp Hamburgefonstiv 0123
+D|typo|Segoe UI|5|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Segoe UI|5|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Segoe UI|5|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Segoe UI|5|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Segoe UI|5|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|Segoe UI|5|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Segoe UI|5|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Segoe UI|6|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Segoe UI|6|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Segoe UI|6|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Segoe UI|6|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Segoe UI|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Segoe UI|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Segoe UI|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Segoe UI|6|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Segoe UI|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Segoe UI|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Segoe UI|7|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Segoe UI|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Segoe UI|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Segoe UI|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Segoe UI|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Segoe UI|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Segoe UI|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Segoe UI|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Segoe UI|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Segoe UI|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Segoe UI|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Segoe UI|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Segoe UI|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Segoe UI|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Segoe UI|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Segoe UI|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Segoe UI|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Segoe UI|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Segoe UI|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Segoe UI|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Segoe UI|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Segoe UI|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Segoe UI|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Segoe UI|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Segoe UI|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Tahoma|6|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Tahoma|6|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Tahoma|6|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Tahoma|6|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Tahoma|6|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Tahoma|6|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Tahoma|6|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Tahoma|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Tahoma|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Tahoma|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Tahoma|6|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Tahoma|6|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Tahoma|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Tahoma|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Tahoma|7|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Tahoma|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Tahoma|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Tahoma|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Tahoma|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Tahoma|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Tahoma|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Tahoma|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Tahoma|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Tahoma|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Tahoma|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Tahoma|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Verdana|6|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Verdana|6|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Verdana|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Verdana|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Verdana|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Verdana|6|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Verdana|6|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Verdana|6|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Verdana|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Verdana|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Verdana|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Verdana|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Verdana|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Verdana|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Verdana|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Verdana|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Verdana|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Verdana|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Verdana|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Verdana|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Verdana|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Verdana|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Verdana|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Verdana|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Verdana|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Arial|6|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Arial|6|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Arial|6|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|Arial|6|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Arial|6|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Arial|6|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Arial|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Arial|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Arial|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Arial|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Arial|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Arial|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Arial|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Arial|7|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Arial|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Arial|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Arial|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Arial|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Arial|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Arial|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Arial|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Arial|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Arial|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Arial|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Arial|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Arial|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Arial|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Arial|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Arial|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Consolas|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Consolas|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Consolas|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Consolas|7|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Consolas|7|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Consolas|7|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Consolas|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Consolas|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Consolas|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Consolas|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Consolas|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|Consolas|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Consolas|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Consolas|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Consolas|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Consolas|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Consolas|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Consolas|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Consolas|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Consolas|9|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Consolas|9|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Consolas|9|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Consolas|9|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Consolas|9|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Consolas|9|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Consolas|9|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Consolas|9|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Consolas|10|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Consolas|10|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Consolas|10|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Consolas|10|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Consolas|10|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Consolas|10|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Calibri|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Calibri|7|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Calibri|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|Calibri|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Calibri|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Calibri|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Calibri|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Calibri|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Calibri|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Calibri|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Calibri|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Calibri|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Calibri|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Calibri|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Calibri|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Calibri|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Calibri|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Calibri|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Calibri|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Calibri|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Calibri|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Calibri|9|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Calibri|9|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Calibri|9|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Calibri|9|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Calibri|9|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Calibri|9|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Calibri|9|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Calibri|9|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Calibri|9|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Georgia|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Georgia|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Georgia|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Georgia|7|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Georgia|7|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Georgia|7|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Georgia|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Georgia|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Georgia|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Georgia|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Georgia|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Georgia|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Georgia|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|Georgia|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Georgia|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Georgia|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Georgia|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Georgia|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Georgia|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Times New Roman|6|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Times New Roman|6|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Times New Roman|6|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Times New Roman|6|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Times New Roman|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Times New Roman|7|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Times New Roman|7|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Times New Roman|7|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Times New Roman|7|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Times New Roman|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Times New Roman|7|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Times New Roman|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Times New Roman|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Times New Roman|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Times New Roman|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Times New Roman|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Times New Roman|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Times New Roman|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Times New Roman|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Times New Roman|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Segoe UI Light|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Segoe UI Light|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Segoe UI Light|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Segoe UI Light|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Segoe UI Light|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Segoe UI Light|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Segoe UI Light|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Segoe UI Light|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Segoe UI Light|36|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Segoe UI Light|36|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Segoe UI Light|36|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Segoe UI Light|36|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Segoe UI Light|36|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Segoe UI Light|36|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Segoe UI Light|36|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Segoe UI Light|36|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Segoe UI Light|36|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Segoe UI Light|36|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Segoe UI Light|40|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Segoe UI Light|40|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Segoe UI Light|40|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Segoe UI Light|40|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Segoe UI Light|40|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Segoe UI Light|40|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Segoe UI Light|40|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Segoe UI Light|40|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|MS Gothic|21|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|MS Gothic|21|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|MS Gothic|21|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|MS Gothic|21|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|MS Gothic|21|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|MS Gothic|24|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|MS Gothic|24|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|MS Gothic|24|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|MS Gothic|24|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|MS Gothic|24|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|MS Gothic|24|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|MS Gothic|24|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|MS Gothic|24|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|MS Gothic|30|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|MS Gothic|30|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|MS Gothic|30|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|MS Gothic|30|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|MS Gothic|30|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|MS Gothic|30|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|MS Gothic|30|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Microsoft YaHei|22|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Microsoft YaHei|22|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Microsoft YaHei|22|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Microsoft YaHei|22|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Microsoft YaHei|22|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|Microsoft YaHei|22|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Microsoft YaHei|22|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Microsoft YaHei|22|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|Microsoft YaHei|22|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Microsoft YaHei|26|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Microsoft YaHei|26|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Microsoft YaHei|26|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Microsoft YaHei|26|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Microsoft YaHei|26|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Microsoft YaHei|26|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Microsoft YaHei|26|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Microsoft YaHei|26|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Microsoft YaHei|30|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Microsoft YaHei|30|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Microsoft YaHei|30|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Microsoft YaHei|30|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Microsoft YaHei|30|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Microsoft YaHei|30|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Malgun Gothic Semilight|16|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Malgun Gothic Semilight|16|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Malgun Gothic Semilight|16|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Malgun Gothic Semilight|16|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Malgun Gothic Semilight|16|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Malgun Gothic Semilight|16|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Malgun Gothic Semilight|16|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Malgun Gothic Semilight|16|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Malgun Gothic Semilight|16|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Malgun Gothic Semilight|17|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Malgun Gothic Semilight|17|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Malgun Gothic Semilight|17|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Malgun Gothic Semilight|17|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Malgun Gothic Semilight|17|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Malgun Gothic Semilight|17|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Malgun Gothic Semilight|17|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Malgun Gothic Semilight|17|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Malgun Gothic Semilight|17|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Malgun Gothic Semilight|17|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Malgun Gothic Semilight|17|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Malgun Gothic Semilight|17|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Malgun Gothic Semilight|17|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Malgun Gothic Semilight|20|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Malgun Gothic Semilight|20|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Malgun Gothic Semilight|20|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Malgun Gothic Semilight|20|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Malgun Gothic Semilight|20|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Malgun Gothic Semilight|22|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|Malgun Gothic Semilight|22|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Malgun Gothic Semilight|22|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Malgun Gothic Semilight|22|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Malgun Gothic Semilight|22|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Malgun Gothic Semilight|22|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Malgun Gothic Semilight|22|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Malgun Gothic|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Malgun Gothic|8|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Malgun Gothic|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Malgun Gothic|8|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Malgun Gothic|8|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Malgun Gothic|8|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|x
+D|typo|Malgun Gothic|8|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Malgun Gothic|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Malgun Gothic|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Malgun Gothic|8|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Malgun Gothic|9|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|j
+D|typo|Malgun Gothic|9|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Malgun Gothic|9|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Malgun Gothic|9|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Malgun Gothic|9|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Malgun Gothic|9|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Malgun Gothic|9|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Malgun Gothic|9|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Malgun Gothic|9|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Malgun Gothic|9|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Malgun Gothic|10|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Malgun Gothic|10|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Malgun Gothic|10|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Malgun Gothic|10|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Malgun Gothic|10|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Malgun Gothic|10|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Malgun Gothic|10|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Malgun Gothic|10|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Malgun Gothic|10|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Malgun Gothic|10|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Cascadia Code|9|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Cascadia Code|9|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Cascadia Code|9|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Cascadia Code|9|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Cascadia Code|9|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Cascadia Code|9|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Cascadia Code|9|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Cascadia Code|51|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Cascadia Code|51|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|J
+D|typo|Cascadia Code|51|2|0|1|0|0|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Cascadia Code|51|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Cascadia Code|51|2|0|1|0|2|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Cascadia Code|51|2|0|3|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Cascadia Code|51|2|0|3|0|2|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Cascadia Code|51|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Cascadia Code|51|2|0|5|0|0|0|-|-|-|-|20,20,300,100|-|-|oj
+D|typo|Cascadia Code|51|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Cascadia Code|51|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Cascadia Code|51|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|To
+D|typo|Cascadia Code|51|2|0|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Times New Roman|6|2|2|1|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Times New Roman|6|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Times New Roman|6|2|2|3|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Times New Roman|6|2|2|3|0|2|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Times New Roman|6|2|2|3|0|2|0|-|-|-|-|20,20,300,100|-|-|v
+D|typo|Times New Roman|6|2|2|5|0|2|0|-|-|-|-|20,20,300,100|-|-|f
+D|typo|Times New Roman|6|2|2|5|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Times New Roman|7|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Times New Roman|7|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Times New Roman|7|2|2|3|0|0|0|-|-|-|-|20,20,300,100|-|-|W
+D|typo|Times New Roman|7|2|2|3|0|0|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Times New Roman|7|2|2|5|0|2|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Times New Roman|8|2|2|1|0|0|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Times New Roman|8|2|2|1|0|0|0|-|-|-|-|20,20,300,100|-|-|fj
+D|typo|Times New Roman|8|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|y
+D|typo|Times New Roman|8|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|_
+D|typo|Times New Roman|8|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Times New Roman|8|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Times New Roman|8|2|2|3|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Times New Roman|8|2|2|3|0|2|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Times New Roman|8|2|2|3|0|2|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Times New Roman|8|2|2|5|0|2|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Times New Roman|8|2|2|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Segoe UI|6|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Segoe UI|6|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|yA
+D|typo|Segoe UI|6|2|2|3|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Segoe UI|6|2|2|3|0|2|0|-|-|-|-|20,20,300,100|-|-|7
+D|typo|Segoe UI|6|2|2|5|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Segoe UI|7|2|2|1|0|0|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Segoe UI|7|2|2|1|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Segoe UI|7|2|2|1|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Segoe UI|7|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|fo
+D|typo|Segoe UI|7|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Segoe UI|7|2|2|5|0|0|0|-|-|-|-|20,20,300,100|-|-|V
+D|typo|Segoe UI|7|2|2|5|0|0|0|-|-|-|-|20,20,300,100|-|-|/
+D|typo|Segoe UI|7|2|2|5|0|0|0|-|-|-|-|20,20,300,100|-|-|of
+D|typo|Segoe UI|7|2|2|5|0|2|0|-|-|-|-|20,20,300,100|-|-|A
+D|typo|Segoe UI|7|2|2|5|0|2|0|-|-|-|-|20,20,300,100|-|-|Wavy
+D|typo|Segoe UI|8|2|2|1|0|2|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Segoe UI|8|2|2|3|0|0|0|-|-|-|-|20,20,300,100|-|-|T
+D|typo|Segoe UI|8|2|2|3|0|0|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Segoe UI|8|2|2|3|0|2|0|-|-|-|-|20,20,300,100|-|-|Y
+D|typo|Segoe UI|8|2|2|3|0|2|0|-|-|-|-|20,20,300,100|-|-|Ay
+D|typo|Segoe UI|8|2|2|5|0|0|0|-|-|-|-|20,20,300,100|-|-|w
+D|typo|Segoe UI|8|2|2|5|0|0|0|-|-|-|-|20,20,300,100|-|-|jo
+D|typo|Segoe UI|8|2|2|5|0|0|0|-|-|-|-|20,20,300,100|-|-|oT
+D|typo|Segoe UI|8|2|2|5|0|2|0|-|-|-|-|20,20,300,100|-|-|T

@@ -693,22 +693,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// reproduces for WinForms; the scan and the filter are the natural mode's (6x1).</summary>
         internal static GlyphBits RasterizeGdiClassic(TrueTypeFont font, int glyphId, float pixelsPerEm)
         {
-            if (!TryGetGdiClassicOutline(font, glyphId, pixelsPerEm, out List<PathFigure>? figures, out int dropout,
-                                         dwriteGridFit: true))
+            if (!TryGetGdiClassicOutline(font, glyphId, pixelsPerEm, out List<PathFigure>? figures, out int dropout))
                 return s_empty;
             // GDI_CLASSIC is scanned 6x1 too, so a simulated bold is the bitmap smear up to 50ppem.
             GlyphBits bits = Scan(figures, 1, dropout);
             return font.SynthesizesBold ? Embolden(bits, (int)MathF.Floor(pixelsPerEm + 0.5f)) : bits;
         }
 
-        /// <summary>The GDI_CLASSIC fit itself (see <see cref="RasterizeGdiClassic"/>), in device pixels.</summary>
-        /// <param name="dwriteGridFit">Fit whatever the face's 'gasp' says, as DirectWrite's GDI_CLASSIC
-        /// does (<see cref="TrueTypeFont.IgnoreGaspSymmetricGridfit"/>); GDI+'s metrics leave it off.</param>
+        /// <summary>The GDI_CLASSIC fit itself (see <see cref="RasterizeGdiClassic"/>), in device pixels:
+        /// fitted whatever the face's 'gasp' says (<see cref="TrueTypeFont.GdiClassicFit"/>). WPF's
+        /// Display text and GDI+'s classic metrics (the grid-fitted hints other than ClearType) both
+        /// ask DirectWrite for it, so it is one fit for both.</summary>
         internal static bool TryGetGdiClassicOutline(TrueTypeFont font, int glyphId, float pixelsPerEm,
-                                                     out List<PathFigure> figures, out int dropout,
-                                                     bool dwriteGridFit = false)
+                                                     out List<PathFigure> figures, out int dropout)
         {
-            bool savedIgnore = TrueTypeFont.IgnoreGaspSymmetricGridfit;
+            bool savedIgnore = TrueTypeFont.GdiClassicFit;
             bool savedSub = TrueTypeFont.SubpixelFitting, savedCt = TrueTypeFont.ClearTypeRendering;
             bool? savedSym = TrueTypeInterpreter.SymmetricAnswerOverride;
             bool savedMove = TrueTypeInterpreter.DWriteMovePoint;
@@ -719,7 +718,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeFont.ClearTypeRendering = true;
                 TrueTypeInterpreter.SymmetricAnswerOverride = false;
                 TrueTypeInterpreter.DWriteMovePoint = true;
-                TrueTypeFont.IgnoreGaspSymmetricGridfit = dwriteGridFit;
+                TrueTypeFont.GdiClassicFit = true;
                 if (!((IHintedGlyphFont)font).TryGetHintedOutline(glyphId, pixelsPerEm, out List<PathFigure>? got) || got is null)
                 {
                     figures = new List<PathFigure>();
@@ -735,8 +734,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeFont.ClearTypeRendering = savedCt;
                 TrueTypeInterpreter.SymmetricAnswerOverride = savedSym;
                 TrueTypeInterpreter.DWriteMovePoint = savedMove;
-                TrueTypeFont.IgnoreGaspSymmetricGridfit = savedIgnore;
+                TrueTypeFont.GdiClassicFit = savedIgnore;
             }
+        }
+
+        /// <summary>The GDI_CLASSIC advance in whole pixels (GetGdiCompatibleGlyphAdvances with
+        /// useGdiNatural off): 'hdmx', the linear advance a face declares, else the fitted phantoms
+        /// -- with no 'gasp' consulted (<see cref="TrueTypeFont.GdiClassicFit"/>).</summary>
+        internal static float GdiClassicAdvance(TrueTypeFont font, int glyphId, int ppem)
+        {
+            bool saved = TrueTypeFont.GdiClassicFit;
+            TrueTypeFont.GdiClassicFit = true;
+            try { return font.DeviceAdvance(glyphId, ppem); }
+            finally { TrueTypeFont.GdiClassicFit = saved; }
         }
 
         /// <summary>DirectWrite's rounding of a float to an int in GlyphRunAnalysis: truncate, then

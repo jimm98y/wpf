@@ -59,6 +59,22 @@ namespace WgpuInterop.Tests.Text
             return face;
         }
 
+        /// <summary>IDWriteFontFace::GetGdiCompatibleGlyphMetrics (slot 17) at <paramref name="emSize"/>
+        /// pixels, no transform: per glyph the advance and the left and right side bearings in design
+        /// units. <paramref name="gdiNatural"/> picks DWRITE_MEASURING_MODE_GDI_NATURAL over
+        /// GDI_CLASSIC -- what GDI+ asks for its ClearType and its other grid-fitted hints.</summary>
+        internal static (int Advance, int Lsb, int Rsb)[] GdiCompatibleGlyphMetrics(IntPtr face, float emSize, ushort[] glyphs, bool gdiNatural)
+        {
+            var m = new int[glyphs.Length * 7];
+            fixed (ushort* g = glyphs)
+            fixed (int* pm = m)
+                Check(((delegate* unmanaged[Stdcall]<IntPtr, float, float, void*, int, ushort*, uint, int*, int, int>)V(face)[17])(
+                    face, emSize, 1f, null, gdiNatural ? 1 : 0, g, (uint)glyphs.Length, pm, 0), "GetGdiCompatibleGlyphMetrics");
+            var r = new (int, int, int)[glyphs.Length];
+            for (int i = 0; i < glyphs.Length; i++) r[i] = (m[i * 7 + 1], m[i * 7], m[i * 7 + 2]);
+            return r;
+        }
+
         /// <summary>DWRITE_RENDERING_MODE_NATURAL (4) or NATURAL_SYMMETRIC (5) -- or whatever DirectWrite
         /// recommends for this face and size under the default rendering params.</summary>
         internal static int RecommendedMode(IntPtr face, float emSize)

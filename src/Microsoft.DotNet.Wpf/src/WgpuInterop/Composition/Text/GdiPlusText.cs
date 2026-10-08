@@ -494,12 +494,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// ~0xffff, when the inverse transform is diagonal, and only then multiplies it back by the
         /// inverse's m11 (+0x1f8). Under a transform that mirrors x the span is negative there, so a
         /// half rounds the other way: Arial 's' at 21 ppem spans exactly 10.5 pixels and is 11
-        /// upright, 10 mirrored.</summary>
-        static int NaturalPx(int span64, bool hasOutline, bool mirrored)
+        /// upright, 10 mirrored.
+        /// <para>A glyph with no outline has no program to move its advance phantom, so the span is
+        /// the scaled one as scl_RoundCurrentSideBearingPnt leaves it -- (v + 2) &amp; ~3, a
+        /// sixteenth, on the ClearType axis -- which is the same as rounding up from 30/64
+        /// (Microsoft Sans Serif's space at 13ppem, 3.453 -> 3; Segoe UI's at 9, 2.465 -> 3). Where
+        /// the prep inhibits grid fitting (<paramref name="inhibited"/>) the scaler does not round it
+        /// at all: Verdana's space at 7ppem, 2.461 -> 2.</para></summary>
+        static int NaturalPx(int span64, bool hasOutline, bool mirrored, bool inhibited = false)
         {
-            int bias = hasOutline ? 32 : 34;
+            int bias = hasOutline || inhibited ? 32 : 34;
             return mirrored ? -((-span64 + bias) >> 6) : (span64 + bias) >> 6;
         }
+
+        /// <summary>A whole-pixel advance back in design units, as TrueTypeRasterizer::Implementation::
+        /// GetMetrics @18006a7a0 forms it: the pixels times the inverse transform's m11 (a float),
+        /// to 16.16 (Fixed16_16::FloatToFixedInt32 @1800239c0), then (upem * v + 0x8000) >> 16.
+        /// Segoe UI 'G' at 51ppem is 35 px: 35 / 51 = 0.686275 = 44976/65536, 1405.5 + 0.5 -> 1406
+        /// units, where 35 * 2048 / 51 = 1405.49 rounds to 1405.</summary>
+        internal static int DWriteUnits(int px, float m11, int upem)
+            => DWriteUnits16(DWriteFixed(px * DWriteInverse(m11)), upem);
+
+        /// <summary>A side bearing in design units from the bitmap's box: GetDesignBounds @18006a538
+        /// takes the first and one-past-the-last set sample, times 1/6 (the x overscale), through the
+        /// inverse transform (GlyphBoundingBox::AddPoint), to 16.16; GetMetrics then subtracts the
+        /// right edge from the advance in 16.16 before scaling to units.</summary>
+        static void DWriteBearings(int left6, int right6, int px, float m11, int upem, out int lsbDu, out int rsbDu)
+        {
+            float inv = DWriteInverse(m11);
+            const float sixth = 1f / 6f;
+            lsbDu = DWriteUnits16(DWriteFixed(left6 * sixth * inv), upem);
+            rsbDu = DWriteUnits16(DWriteFixed(px * inv) - DWriteFixed(right6 * sixth * inv), upem);
+        }
+
+        /// <summary>NewTransform @18006bc80's inverse m11 of a diagonal transform: m22 / (m11 m22), in float.</summary>
+        static float DWriteInverse(float m11) { float r = 1f / (m11 * m11); return m11 * r; }
+
+        /// <summary>Fixed16_16::FloatToFixedInt32 @1800239c0: ((long) (f * 2^32) + 0x8000) >> 16.</summary>
+        static int DWriteFixed(float f) => (int)(((long)(f * 4294967296f) + 0x8000) >> 16);
+
+        static int DWriteUnits16(int v16, int upem) => (int)(((long)upem * v16 + 0x8000) >> 16);
 
         /// <summary><see cref="NaturalMetrics(TrueTypeFont, int, float, out int, out int, out int)"/>
         /// under a transform that mirrors x (<paramref name="mirrored"/>: m11 &lt; 0, axis-aligned).</summary>
@@ -520,8 +554,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // A glyph with no outline (the space) rounds up from 30/64, not 32/64: measured over
             // eight faces at 6..24pt, 29/64 stays down (Microsoft Sans Serif at 13ppem, 3.453 -> 3)
             // and 30/64 goes up (Segoe UI at 9ppem, 2.465 -> 3; Verdana Bold at 16, 5.469 -> 6).
-            int px = NaturalPx(span64, hasOutline, mirrored);
-            advDu = (int)Math.Floor(px * (double)upem / ppem + 0.5);
+            int px = NaturalPx(span64, hasOutline, mirrored, !hasOutline && font.DWriteGridFitInhibited(ppem, NaturalScalerWord));
+            advDu = DWriteUnits(px, ppem, upem);
             if (!OutlineXExtent(font, gid, ppem, out float x0, out float x1)) { lsbDu = 0; rsbDu = advDu; }
             else
             {
@@ -529,8 +563,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // inward on the left, outward on the right). Checked against DirectWrite's own
                 // answers over eight faces, 6..24pt: within one design unit for all but ~2%.
                 int left = (int)MathF.Ceiling(x0 * 6f - 0.5f), right = (int)MathF.Floor(x1 * 6f + 0.5f);
-                lsbDu = (int)Math.Floor(left * (double)upem / (6.0 * ppem) + 0.5);
-                rsbDu = (int)Math.Floor((6 * px - right) * (double)upem / (6.0 * ppem) + 0.5);
+                DWriteBearings(left, right, px, ppem, upem, out lsbDu, out rsbDu);
             }
             lock (cache)
             {
@@ -566,14 +599,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 int ppem = Math.Max(ppx, ppy);
                 if (!font.TryGetDWriteFittedSpan64(gid, ppem, NaturalScalerWord, out int span64))
                     span64 = (int)MathF.Round(design * 64f * ppx / upem, MidpointRounding.AwayFromZero);
-                int px = NaturalPx(span64, hasOutline, mirrored);
-                advDu = (int)Math.Floor(px * (double)upem / ex + 0.5);
+                int px = NaturalPx(span64, hasOutline, mirrored, !hasOutline && font.DWriteGridFitInhibited(ppem, NaturalScalerWord));
+                advDu = DWriteUnits(px, ex, upem);
                 if (!OutlineXExtent(font, gid, ppem, out float x0, out float x1)) { lsbDu = 0; rsbDu = advDu; }
                 else
                 {
                     int left = (int)MathF.Ceiling(x0 * 6f - 0.5f), right = (int)MathF.Floor(x1 * 6f + 0.5f);
-                    lsbDu = (int)Math.Floor(left * (double)upem / (6.0 * ex) + 0.5);
-                    rsbDu = (int)Math.Floor((6 * px - right) * (double)upem / (6.0 * ex) + 0.5);
+                    DWriteBearings(left, right, px, ex, upem, out lsbDu, out rsbDu);
                 }
             }
             finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
@@ -604,20 +636,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>The same with useGdiNatural off (GDI_CLASSIC), for the grid-fitted hints other than
         /// ClearType: GDI's own compatible advance at the whole ppem (hdmx, or the bi-level program),
-        /// back in design units; the side bearings from the bi-level fit's box in whole pixels.</summary>
+        /// back in design units; the side bearings from the fit's box in sixths of a pixel. GDI+
+        /// asks GetGdiCompatibleGlyphMetrics (vtable 0x88, GpFaceRealization::GetGlyphStringSidebearings
+        /// @180024530) and -Advances (0xc0, GetGlyphStringDeviceAdvanceVector @1800a19d0) with
+        /// useGdiNatural = (advance type == 2), so this is DirectWrite's GDI_CLASSIC measure, which
+        /// fits whatever the face's 'gasp' says (<see cref="TrueTypeFont.GdiClassicFit"/>).</summary>
         internal static void ClassicMetrics(TrueTypeFont font, int gid, float em, out int advDu, out int lsbDu, out int rsbDu)
         {
             int ppem = Floor(em + 0.5f);
             if (ppem < 1) ppem = 1;
             int upem = font.UnitsPerEmForHinting;
-            int px = (int)MathF.Round(font.DeviceAdvance(gid, ppem));
-            advDu = (int)Math.Floor(px * (double)upem / ppem + 0.5);
+            int px = (int)MathF.Round(NaturalClearType.GdiClassicAdvance(font, gid, ppem));
+            advDu = DWriteUnits(px, ppem, upem);
             if (!NaturalClearType.TryGetGdiClassicOutline(font, gid, ppem, out List<PathFigure> figures, out _)
                 || !XExtent(figures, out float x0, out float x1)) { lsbDu = 0; rsbDu = advDu; return; }
             int left = (int)MathF.Ceiling(x0 * 6f - 0.5f), right = (int)MathF.Floor(x1 * 6f + 0.5f);
             BoldBox(font, ppem, ref left, ref right);
-            lsbDu = (int)Math.Floor(left * (double)upem / (6.0 * ppem) + 0.5);
-            rsbDu = (int)Math.Floor((6 * px - right) * (double)upem / (6.0 * ppem) + 0.5);
+            DWriteBearings(left, right, px, ppem, upem, out lsbDu, out rsbDu);
         }
 
         /// <summary>A simulated bold's black box, in sixths of a pixel, for the GDI-classic metrics.
@@ -822,7 +857,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // Sideways a glyph with no outline rounds as any other (DirectWrite: Verdana Bold's
                 // space at 16 under (0, 1, -1, 0) is 640 units, 5 px; upright natural it is 768).
                 int px = (span64 + 32) >> 6;
-                advDu = (int)Math.Floor(px * (double)upem / (along == across ? along : em * m22) + 0.5);
+                advDu = DWriteUnits(px, along == across ? along : em * m22, upem);
             }
             finally { TrueTypeInterpreter.StretchPpemX = sxs; TrueTypeInterpreter.StretchPpemY = sys; }
             int voyPx = (int)Math.Floor(font.TypoAscender * (double)across / upem + 0.5);

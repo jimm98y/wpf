@@ -281,8 +281,30 @@ namespace System.Drawing
 			switch (font.Unit) {
 			case GraphicsUnit.World: return font.Size;
 			case GraphicsUnit.Pixel: return font.Size * (print_mode ? 100f / print_dpi_y : 1f) / PageFactor;
-			default: return font.SizeInPoints / 72f * BasePerInch / PageFactor;
 			}
+			if (print_mode) {
+				// GpGraphics::DrawString @180010f00's GetScaleForAlternatePageUnit in its own float
+				// order -- size * (dpiY / per-inch / mx), mx the page multiplier (a printer's Display
+				// unit is a hundredth of an inch) -- which is not the same float as points / 72 * 100:
+				// 48pt is 66.666664 world units there, 66.66667 here, and a glyph outline scaled by
+				// the one or the other lands a printer pixel apart now and then.
+				float d = print_dpi_x, sc = rec_page_scale, mx;
+				switch (rec_unit) {
+				case GraphicsUnit.Pixel: mx = sc; break;
+				case GraphicsUnit.Inch: mx = d * sc; break;
+				case GraphicsUnit.Point: mx = d * sc / 72f; break;
+				case GraphicsUnit.Document: mx = d * sc / 300f; break;
+				case GraphicsUnit.Millimeter: mx = d * sc / 25.4f; break;
+				default: mx = d / 100f * sc; break;   // Display, World
+				}
+				switch (font.Unit) {
+				case GraphicsUnit.Inch: return font.Size * (print_dpi_y / mx);
+				case GraphicsUnit.Document: return font.Size * (print_dpi_y / 300f / mx);
+				case GraphicsUnit.Millimeter: return font.Size * (print_dpi_y / 25.4f / mx);
+				default: return font.SizeInPoints * (print_dpi_y / 72f / mx);
+				}
+			}
+			return font.SizeInPoints / 72f * BasePerInch / PageFactor;
 		}
 
 		// ---- strokes and fills on a page -------------------------------------------------------
@@ -1836,28 +1858,20 @@ namespace System.Drawing
 			Brush onDevice = BrushOnDevice (brush, w2d, out bool owned);
 			try {
 				if (face.TryGetGdiColumnLimits (em, out int left, out int right) && right - left > 800) {
-					// A path realization lays the string out from its own (unfitted) advances.
-					// (measured: the nominal layout, its tracking, and the legacy kern pairs -- Arial Bold
-					// "Textured" at 400 ppem is 30 pixels narrower than "Hatched"'s spacing makes it, T-e -152).
-					var prun = PrintFastLayout (s, font, rect, format, out _, out _, out _, out _, out _, out _, 4);
-					if (prun != null && prun.Glyphs.Length == run.Glyphs.Length) {
-						run = prun;
-						xs = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.GlyphXs (run, run.OriginX);
-						KernNominal (face, run.Glyphs, xs, em);
+					// A PATH realization is not the fast imager's: FastTextImager::DrawString @180038298
+					// answers 6 for one (GpFaceRealization +0x14 == 1) and the string goes to the full
+					// imager, whose DrawGlyphs @18003b720 takes its path branch on any device but a
+					// metafile's: each glyph's outline from a design realization (GetGlyphPath
+					// @1800a1878), placed at the line's cell origin plus Line Services' own ideal
+					// advances, through GetFontTransform (GpPath::AddGlyphPath @18001adb0) into one
+					// winding path, and that filled with the brush in world space (GpGraphics::FillPath
+					// @1800762d0) -- the same outlines GraphicsPath.AddString makes, nothing snapped to
+					// the device: the baseline is the cell's, a fraction of a pixel where the fast
+					// imager's would have been.
+					using (var gp = new GraphicsPath (FillMode.Winding)) {
+						gp.AddString (s, font.FontFamily, (int) font.Style, FontEmWorld (font), rect, format);
+						return PrintRasterFill (brush, gp, false);
 					}
-					// The glyph outlines, placed, as one device-space path.
-					var pts = new List<PointF> (); var types = new List<byte> ();
-					for (int i = 0; i < run.Glyphs.Length; i++) {
-						if (!face.TryGetScaledOutline (run.Glyphs [i], em, out var figures)) continue;
-						// Each glyph at its origin's whole pixel across (measured: "Gradient" at 400 ppem
-						// ends a pixel short of the fractional origins' outline), its baseline as laid out.
-						AddFigures (figures, (float) Math.Floor (xs [i]), run.OriginY, pts, types);
-					}
-					if (pts.Count == 0) return true;
-					float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
-					foreach (PointF p in pts) { x0 = Math.Min (x0, p.X); y0 = Math.Min (y0, p.Y); x1 = Math.Max (x1, p.X); y1 = Math.Max (y1, p.Y); }
-					if (!WebGpuBackend.Gdip.GpStroke.BoundsToRect (RectangleF.FromLTRB (x0, y0, x1, y1), out Rectangle r)) return true;
-					return PrintBrushRaster (onDevice, pts.ToArray (), types.ToArray (), FillMode.Winding, identity, r.X, r.Y, r.Width, r.Height);
 				}
 				var lv = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.ComposeMono (face, run.Glyphs, em, xs, run.OriginY, true);
 				if (lv.Width <= 0 || lv.Height <= 0) return true;
@@ -1913,23 +1927,6 @@ namespace System.Drawing
 			}
 		}
 
-		// The legacy 'kern' pairs on a nominal layout's glyph origins, at the layout's own spacing
-		// (its advances over the design's: the format's tracking).
-		static void KernNominal (Microsoft.Wpf.Interop.WebGpu.Composition.Text.TrueTypeFont face, ushort [] glyphs, float [] xs, float em)
-		{
-			int n = glyphs.Length;
-			if (n < 2) return;
-			float design = 0f;
-			for (int i = 0; i + 1 < n; i++) design += face.DesignAdvance (glyphs [i]);
-			if (!(design > 0f)) return;
-			float unit = (xs [n - 1] - xs [0]) / design;
-			float shift = 0f;
-			for (int i = 1; i < n; i++) {
-				if (face.TryGetKernUnits (glyphs [i - 1], glyphs [i], out int k)) shift += k * unit;
-				xs [i] += shift;
-			}
-		}
-
 		// The driver's band grid when nothing sets it (GpGraphics::GetFromGdiPrinterDC @180079788):
 		// one device pixel up to 100 dpi, three below 1200, dpi / 200 from there.
 		static int DefaultBandScale (float dpi)
@@ -1959,46 +1956,6 @@ namespace System.Drawing
 				case LinearGradientBrush lg: { var c = (LinearGradientBrush) lg.Clone (); c.MultiplyTransform (m, MatrixOrder.Append); owned = true; return c; }
 				}
 			return brush;
-		}
-
-		// A glyph's figures (device pixels, y down, from its origin) as GDI+ path points at (ox, oy).
-		// The glyph outline as GDI hands it to GDI+ (GetGlyphOutline, the scaler's 26.6 points), a
-		// figure's closing line back to its start left implicit.
-		static System.Numerics.Vector2 Q64 (System.Numerics.Vector2 v) => new System.Numerics.Vector2 (MathF.Round (v.X * 64f) / 64f, MathF.Round (v.Y * 64f) / 64f);
-
-		static void AddFigures (List<Microsoft.Wpf.Interop.WebGpu.Composition.PathFigure> figures, float ox, float oy, List<PointF> pts, List<byte> types)
-		{
-			foreach (var f in figures) {
-				if (f.Segments.Count == 0) continue;
-				int start = pts.Count;
-				var cur = Q64 (f.Start);
-				var first = cur;
-				pts.Add (new PointF (cur.X + ox, cur.Y + oy)); types.Add (0);
-				for (int k = 0; k < f.Segments.Count; k++) {
-					var sg = f.Segments [k];
-					switch (sg) {
-					case Microsoft.Wpf.Interop.WebGpu.Composition.LineSegment l: {
-						var p = Q64 (l.Point);
-						if (k == f.Segments.Count - 1 && p == first) break;
-						pts.Add (new PointF (p.X + ox, p.Y + oy)); types.Add (1); cur = p; break;
-					}
-					case Microsoft.Wpf.Interop.WebGpu.Composition.QuadraticBezierSegment q: {
-						var qc = Q64 (q.Control); var qp = Q64 (q.Point);
-						var c1 = cur + (qc - cur) * (2f / 3f);
-						var c2 = qp + (qc - qp) * (2f / 3f);
-						pts.Add (new PointF (c1.X + ox, c1.Y + oy)); pts.Add (new PointF (c2.X + ox, c2.Y + oy)); pts.Add (new PointF (qp.X + ox, qp.Y + oy));
-						types.Add (3); types.Add (3); types.Add (3); cur = qp; break;
-					}
-					case Microsoft.Wpf.Interop.WebGpu.Composition.CubicBezierSegment c: {
-						var c1 = Q64 (c.Control1); var c2 = Q64 (c.Control2); var cp = Q64 (c.Point);
-						pts.Add (new PointF (c1.X + ox, c1.Y + oy)); pts.Add (new PointF (c2.X + ox, c2.Y + oy)); pts.Add (new PointF (cp.X + ox, cp.Y + oy));
-						types.Add (3); types.Add (3); types.Add (3); cur = cp; break;
-					}
-					}
-				}
-				if (pts.Count - start < 2) { pts.RemoveRange (start, pts.Count - start); types.RemoveRange (start, types.Count - start); continue; }
-				types [types.Count - 1] |= 0x80;
-			}
 		}
 
 		static readonly bool s_noPrintFullText = Environment.GetEnvironmentVariable ("WF_PRINT_FTI") == "0";
