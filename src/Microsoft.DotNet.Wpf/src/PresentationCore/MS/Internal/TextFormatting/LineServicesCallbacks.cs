@@ -1851,7 +1851,11 @@ namespace MS.Internal.TextFormatting
                         lsrunFirst.Shapeable.EmSize * TextFormatterImp.ToIdeal / designEmHeight,
                         piGlyphAdvances,
                         piiGlyphOffsets,
-                        piGlyphProperties);
+                        piGlyphProperties,
+                        FullText.TextFormattingMode == TextFormattingMode.Display
+                            ? lsrunFirst.Shapeable.EmSize * FullText.StoreFrom(lsrunFirst.Type).Settings.TextSource.PixelsPerDip
+                            : 0,
+                        FullText.StoreFrom(lsrunFirst.Type).Settings.TextSource.PixelsPerDip);
                 }
 
 

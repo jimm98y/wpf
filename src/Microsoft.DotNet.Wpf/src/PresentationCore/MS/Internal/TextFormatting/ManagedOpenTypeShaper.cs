@@ -494,7 +494,9 @@ namespace MS.Internal.TextFormatting
             double        designToIdeal,   // design units -> the caller's ideal units
             int*          advances,        // in/out: ideal-unit advances
             GlyphOffset*  offsets,         // in/out: ideal-unit offsets
-            uint*         glyphProps = null // in (may be null): the source characters Substitute recorded
+            uint*         glyphProps = null, // in (may be null): the source characters Substitute recorded
+            double        pixelsPerEm = 0,  // Display mode: the device ppem (0 in Ideal mode)
+            double        pixelsPerDip = 1
             )
         {
             if (glyphTypeface == null || charCount <= 0 || glyphCount <= 0)
@@ -505,7 +507,7 @@ namespace MS.Internal.TextFormatting
             try
             {
                 PositionCore(glyphTypeface, text, charCount, glyphs, glyphCount, clusterMap,
-                             isRightToLeft, designToIdeal, advances, offsets, glyphProps);
+                             isRightToLeft, designToIdeal, advances, offsets, glyphProps, pixelsPerEm, pixelsPerDip);
             }
             catch (Exception e)
             {
@@ -526,7 +528,9 @@ namespace MS.Internal.TextFormatting
             double        designToIdeal,
             int*          advances,
             GlyphOffset*  offsets,
-            uint*         glyphProps
+            uint*         glyphProps,
+            double        pixelsPerEm,
+            double        pixelsPerDip
             )
         {
             FontFaceLayoutInfo layout = glyphTypeface.FontFaceLayoutInfo;
@@ -556,6 +560,22 @@ namespace MS.Internal.TextFormatting
                 designAdvances[g] = DesignAdvance(glyphTypeface, glyphs[g], designEm);
             }
 
+            // Display mode positions in DEVICE PIXELS, as DirectWrite's GetGdiCompatibleGlyphPlacements
+            // does: the same OTLS engine with pixel metrics, so every anchor and value is rounded to
+            // pixels on its own (Positioning.DesignToPixels) and device tables apply. A kasra under
+            // Arial's initial beh at 32 ppem is round(-155) - round(95) = -3 px, not round(-3.9).
+            // The advances it starts from are the caller's, already GDI-compatible whole pixels.
+            ushort ppem = pixelsPerEm > 0 ? (ushort)Math.Round(pixelsPerEm, MidpointRounding.AwayFromZero) : (ushort)0;
+            bool pixels = ppem > 0 && pixelsPerDip > 0;
+            double unitToIdeal = pixels ? TextFormatterImp.ToIdeal / pixelsPerDip : designToIdeal;
+            if (pixels)
+            {
+                for (int g = 0; g < glyphCount; g++)
+                {
+                    designAdvances[g] = (int)Math.Round(advances[g] * pixelsPerDip / TextFormatterImp.ToIdeal);
+                }
+            }
+
             int[] workAdvances = (int[])designAdvances.Clone();
             LayoutOffset[] workOffsets = new LayoutOffset[glyphCount];
 
@@ -566,8 +586,9 @@ namespace MS.Internal.TextFormatting
             // identity then). PixelsEm = 0 with it: a GPOS device table indexed by 0 ppem is out of
             // its own size range and contributes nothing, which is what we want -- device deltas are
             // hinting adjustments in PIXELS and would otherwise be added to a design-unit total.
-            var metrics = new LayoutMetrics(
-                isRightToLeft ? TextFlowDirection.RTL : TextFlowDirection.LTR, 0, 0, 0);
+            var metrics = pixels
+                ? new LayoutMetrics(isRightToLeft ? TextFlowDirection.RTL : TextFlowDirection.LTR, designEm, ppem, ppem)
+                : new LayoutMetrics(isRightToLeft ? TextFlowDirection.RTL : TextFlowDirection.LTR, 0, 0, 0);
 
             OpenTypeLayoutResult result = OpenTypeLayoutResult.ScriptNotFound;
             uint used = 0;
@@ -630,9 +651,9 @@ namespace MS.Internal.TextFormatting
                 // kerning already in it. Rounding the nominal advance and the adjustment separately
                 // is off by an ideal unit on some glyphs, which a long line adds up.
                 int nominal = (int)Math.Round(designAdvances[g] * designToIdeal);
-                advances[g] = advances[g] == nominal
+                advances[g] = !pixels && advances[g] == nominal
                     ? (int)Math.Round(workAdvances[g] * designToIdeal)
-                    : advances[g] + Round((workAdvances[g] - designAdvances[g]) * designToIdeal);
+                    : advances[g] + Round((workAdvances[g] - designAdvances[g]) * unitToIdeal);
                 // The engine's dx is physical (+ right); DirectWrite's offset runs in the reading
                 // direction, so a right-to-left run's is the negation (a qamats DirectWrite puts at
                 // -4.16 the engine puts at +4.16). The forwarder TRUNCATES an offset into ideal units
@@ -641,8 +662,9 @@ namespace MS.Internal.TextFormatting
                 // at -809 where stock has -808.
                 // Right to left the reading-direction offset is XAdvance - XPlacement (rtlShift holds
                 // the XAdvance the value records applied; dx stayed the physical placement).
-                offsets[g].du += TruncateOffset(isRightToLeft ? rtlShift[g] - workOffsets[g].dx : workOffsets[g].dx, designToIdeal);
-                offsets[g].dv += TruncateOffset(workOffsets[g].dy, designToIdeal);
+                int dx = isRightToLeft ? rtlShift[g] - workOffsets[g].dx : workOffsets[g].dx;
+                offsets[g].du += pixels ? (int)(dx * unitToIdeal) : TruncateOffset(dx, designToIdeal);
+                offsets[g].dv += pixels ? (int)(workOffsets[g].dy * unitToIdeal) : TruncateOffset(workOffsets[g].dy, designToIdeal);
             }
         }
 

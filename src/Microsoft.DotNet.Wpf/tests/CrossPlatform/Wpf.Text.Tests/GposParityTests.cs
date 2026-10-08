@@ -31,11 +31,13 @@ namespace Wpf.Text.Tests
 {
     public class GposParityTests
     {
-        private static (string Glyphs, string Offsets) Shape(string family, double size, string text)
+        private static (string Glyphs, string Offsets) Shape(string family, double size, string text,
+                                                            TextFormattingMode mode = TextFormattingMode.Ideal)
         {
-            var properties = new RunProperties(family, size);
-            using TextLine line = TextFormatter.Create().FormatLine(
-                new StringTextSource(text, properties), 0, 10000, new ParagraphProperties(properties), null);
+            var properties = new RunProperties(family, size) { PixelsPerDip = 1 };
+            var source = new StringTextSource(text, properties) { PixelsPerDip = 1 };
+            using TextLine line = TextFormatter.Create(mode).FormatLine(
+                source, 0, 10000, new ParagraphProperties(properties), null);
 
             var visual = new DrawingVisual();
             using (DrawingContext context = visual.RenderOpen())
@@ -82,6 +84,21 @@ namespace Wpf.Text.Tests
             (string actualGlyphs, string actualOffsets) = Shape(family, size, text);
             Assert.Equal(glyphs, actualGlyphs);
             Assert.Equal(offsets, actualOffsets);
+        }
+
+        // Display mode places marks in DEVICE PIXELS, every anchor rounded on its own
+        // (GetGdiCompatibleGlyphPlacements): the kasra under initial beh at 16 ppem is
+        // round(-155/128) - round(95/128) = -2, the sukun on seen 0,-1 where the exact
+        // difference rounds to -1,0.
+        [Fact]
+        public void DisplayModeMarksSitOnWholePixels()
+        {
+            var typeface = new Typeface(new FontFamily("Arial"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+            Assert.SkipUnless(typeface.TryGetGlyphTypeface(out GlyphTypeface? gt)
+                              && gt!.Win32FamilyNames.Values.Contains("Arial"), "Arial is not installed");
+
+            (_, string offsets) = Shape("Arial", 16, "بِسْمِ", TextFormattingMode.Display);
+            Assert.Equal("0,0 0,-2 0,0 0,-1 0,0 -2,-2", offsets);
         }
     }
 }
