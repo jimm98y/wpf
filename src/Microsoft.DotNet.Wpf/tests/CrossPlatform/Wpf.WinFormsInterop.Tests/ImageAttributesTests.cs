@@ -662,12 +662,10 @@ namespace Wpf.WinFormsInterop.Tests
         };
 
         // Not yet: GDI's ClearType text in a recoloured EMF (GpGdiPlayer.Text.cs) is a level off
-        // on 28 pixels of the sepia one, and one bilinear sample of a recoloured, turned EMF+
-        // texture is a level off.
+        // on 28 pixels of the sepia one.
         private static readonly HashSet<string> Pending = new HashSet<string>
         {
             "metafile/emfonly/text_lines/default-sepia",
-            "metafile/plus/fills/brush-invert",
         };
 
         // The output channel separates through the colour directory's rswop.icm (and the profile

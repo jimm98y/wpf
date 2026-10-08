@@ -41,6 +41,38 @@ namespace System.Drawing.WebGpuBackend.Gdip
             Run(target, mf, destParallelogram, srcRect, srcUnit, null, IntPtr.Zero, ia);
         }
 
+        /// <summary>GpGraphics::DrawImage(image, rect, matrix) @18000f530 for a metafile: the source
+        /// (in <paramref name="srcUnit"/>, running forwards) brought to pixels at the metafile's
+        /// resolution (the matrix scaled back), the matrix prepended to the world transform, and
+        /// EnumerateForPlayback of that pixel rectangle onto itself.</summary>
+        public static void PlayImage(Graphics target, Metafile mf, GpMat m, RectangleF src, GraphicsUnit srcUnit, ImageAttributes ia)
+        {
+            if (target == null) throw new ArgumentNullException("graphics");
+            if (mf == null) throw new ArgumentNullException("metafile");
+            mf.CheckPlayable();
+            if (mf.playback != null)
+                throw new InvalidOperationException("Object is currently in use elsewhere.");
+            if (srcUnit != GraphicsUnit.World && srcUnit != GraphicsUnit.Display && srcUnit != GraphicsUnit.Pixel)
+            {
+                GpMetafileHeader h = mf.header;
+                PixelMultipliers(srcUnit, h.DpiX, h.DpiY, out float fx, out float fy);
+                src = new RectangleF(src.X * fx, src.Y * fy, src.Width * fx, src.Height * fy);
+                m.Scale(1f / fx, 1f / fy, MatrixOrder.Prepend);
+            }
+            var s = new Session(target, mf, null, ia);
+            mf.playback = s;
+            try
+            {
+                s.Begin(m, src, src, GraphicsUnit.Pixel);
+                s.Walk();
+            }
+            finally
+            {
+                mf.playback = null;
+                s.End();
+            }
+        }
+
         /// <summary>Graphics.EnumerateMetafile: each record handed to the callback, which plays it
         /// (Metafile.PlayRecord) or not.</summary>
         public static void Enumerate(Graphics target, Metafile mf, PointF[] destParallelogram, RectangleF srcRect, GraphicsUnit srcUnit,

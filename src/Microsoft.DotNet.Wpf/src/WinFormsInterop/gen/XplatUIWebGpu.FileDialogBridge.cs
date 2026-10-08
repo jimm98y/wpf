@@ -74,6 +74,14 @@ namespace System.Windows.Forms
             return System.Threading.Tasks.Task.FromResult((ok, path));
         }
 
+        /// <summary>SaveFileDialog.CommitAsync: hand a file the application has written to the
+        /// path a save dialog returned over to the user. Nothing to do where the user chose a real
+        /// destination up front (every desktop); in the browser it is the download, on iOS and
+        /// Android the export -- see WPF's SaveFileDialog.CommitAsync, which the WPF-hosted bridge
+        /// delegates to.</summary>
+        System.Threading.Tasks.Task<bool> CommitSaveAsync(string path)
+            => System.Threading.Tasks.Task.FromResult(!string.IsNullOrEmpty(path));
+
         /// <summary>Whether ShowFolder is worth calling at all.
         /// <para>Needed because "the user cancelled" and "this bridge has no folder browser" are both
         /// false from ShowFolder, and they must not lead to the same place: a bridge that does files

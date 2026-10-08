@@ -501,8 +501,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         $"skipped={_statsSkipped}");
                 }
             }
+            bool settling = _settleFrame;
+            _settleFrame = false;
             if (s_skipUnchanged && !sigChanged && !_engine.Dirty && !_engine.HasContentBrushes
-                && _presentedAllTargets)
+                && _presentedAllTargets && !settling)
             {
                 _renderer!.EndFrame();
                 _perfSkipped++;
@@ -595,6 +597,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (gone != null)
                 foreach (uint k in gone) _surfaces.Remove(k);
 
+            long settle = 0;
+            foreach (TargetSurface s in _surfaces.Values)
+                if (s.Partial is { SettleDue: > 0 } pt && (settle == 0 || pt.SettleDue < settle)) settle = pt.SettleDue;
+            _settleDue = settle;
+
             _renderer!.EndFrame();
             _statsRendered++;
             _engine.ClearDirty();
@@ -610,6 +617,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 Emit($"PERF/frame: skipped={_perfSkipped} realize={ms(_perfRealizeTicks):0.0}ms render={ms(_perfRenderOnlyTicks):0.0}ms present={ms(_perfPresentTicks):0.0}ms | " +
                     $"rasterized={WgpuSceneRenderer.PerfCoverage} (localcache={WgpuSceneRenderer.PerfLocalCoverage}) textures={WgpuSceneRenderer.PerfTextures} bindgroups={WgpuSceneRenderer.PerfBindGroups} layers={WgpuSceneRenderer.PerfLayers} readbacks={WgpuSceneRenderer.PerfReadbacks}");
                 Emit($"PERF/period: frame={ms(_perfPeriodTicks):0.0}ms (max {msr(_perfMaxPeriod):0.0}) in-sink={ms(_perfCommitTicks):0.0}ms elsewhere={ms(_perfPeriodTicks - _perfCommitTicks):0.0}ms");
+                Emit("PERF/damage: " + WgpuSceneRenderer.PartialTarget.PerfSummary());
                 _perfPeriodTicks = 0; _perfCommitTicks = 0; _perfMaxPeriod = 0;
                 long allocNow = GC.GetTotalAllocatedBytes();
                 int g0 = GC.CollectionCount(0), g1 = GC.CollectionCount(1), g2 = GC.CollectionCount(2);
@@ -801,7 +809,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // Partial redraw: only what changed since this surface's last frame is rendered, into a
             // texture that keeps the rest, which is then copied to the swap chain. The embedded
             // (WinForms) scenes are part of the tree it diffs, so their changes are damage too.
-            ts.Partial ??= new WgpuSceneRenderer.PartialTarget(_renderer!, $" wpf 0x{t.Hwnd:x}");
+            // Scroll snapping needs a frame drawn when the scroll settles, which only the render
+            // thread can draw unprompted (its idle wait watches SettleDue).
+            ts.Partial ??= new WgpuSceneRenderer.PartialTarget(_renderer!, $" wpf 0x{t.Hwnd:x}") { SnapScroll = UseRenderThread };
             ts.Partial.Render(EmbeddedContent.Compose(root, ts.Hwnd), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 

@@ -34,7 +34,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
     internal sealed partial class GpGdiPlayer
     {
         // PlayEnhMetaFile's frame mapping, the XFORM the target's world transform starts as.
-        float _b11 = 1, _b22 = 1, _bdx, _bdy;
+        float _b11 = 1, _b12, _b21, _b22 = 1, _bdx, _bdy;
         bool _wmfCanvas;              // a WMF: GM_COMPATIBLE, no world transform
         GdiPath _gPath;               // the path bracket, in 28.4 device units
 
@@ -43,26 +43,31 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         // ---- the transforms ---------------------------------------------------------------------
 
-        /// <summary>bInternalPlayEMF's frame mapping onto (0, 0, w - 1, h - 1).</summary>
-        void GdiBeginEmf(byte[] h)
+        /// <summary>bInternalPlayEMF @18005f2e8's frame mapping onto the rectangle (l, t, r, b) it
+        /// is handed (the DIB's (0, 0, w - 1, h - 1)), combined with the world transform the
+        /// target DC already has (NtGdiGetTransform 0x204; identity in the DIB): m11 = w11 * sx',
+        /// m12 = w12 * sx', m21 = w21 * sy', m22 = w22 * sy', dx = (w21 * fy + w11 * fx) + wdx,
+        /// dy = (w22 * fy + w12 * fx) + wdy (@18005f6ac, no fused products).</summary>
+        void GdiBeginEmf(byte[] h, int rl, int rt, int rr, int rb, GpMat world)
         {
             int fl = Le.I32(h, 24), ft = Le.I32(h, 28), fr = Le.I32(h, 32), fb = Le.I32(h, 36);
             int devX = Le.I32(h, 72), devY = Le.I32(h, 76), mmX = Le.I32(h, 80), mmY = Le.I32(h, 84);
-            int rl = 0, rt = 0, rr = _cw - 1, rb = _ch - 1;
             int rw = rr - rl, rh = rb - rt;
             float sx = fr == fl ? (float)(rw + 1) : (float)rw / (float)(fr - fl);
             float sy = fb == ft ? (float)(rh + 1) : (float)rh / (float)(fb - ft);
-            float m11 = (((float)mmX * 100f) / (float)devX) * sx;
-            float m22 = (((float)mmY * 100f) / (float)devY) * sy;
-            float dx = (float)rl - (float)fl * sx;
-            float dy = (float)rt - (float)ft * sy;
-            // The current world transform (identity) times that: 0 * dy + 1 * dx + 0.
-            dx = 0f * dy + 1f * dx + 0f;
-            dy = 1f * dy + 0f * dx + 0f;
+            float kx = (((float)mmX * 100f) / (float)devX) * sx;
+            float ky = (((float)mmY * 100f) / (float)devY) * sy;
+            float fx = (float)rl - (float)fl * sx;
+            float fy = (float)rt - (float)ft * sy;
+            float m11 = world.M11 * kx, m12 = world.M12 * kx;
+            float m21 = world.M21 * ky, m22 = world.M22 * ky;
+            float dx = world.M21 * fy + world.M11 * fx + world.Dx;
+            float dy = world.M22 * fy + world.M12 * fx + world.Dy;
             const float lo = 0.999f, hi = 1.001f;   // 0x3f7fbe77, 0x3f8020c5
-            if (lo <= m11 && m11 <= hi && lo <= m22 && m22 <= hi) { m11 = 1f; m22 = 1f; }
-            _b11 = m11; _b22 = m22; _bdx = dx; _bdy = dy;
-            SetTargetWorld(m11, 0, 0, m22, dx, dy);
+            if (world.M12 == 0f && world.M21 == 0f && m12 == 0f && m21 == 0f
+                && lo <= m11 && m11 <= hi && lo <= m22 && m22 <= hi) { m11 = 1f; m22 = 1f; }
+            _b11 = m11; _b12 = m12; _b21 = m21; _b22 = m22; _bdx = dx; _bdy = dy;
+            SetTargetWorld(m11, m12, m21, m22, dx, dy);
             _dc.VWorld = GdiXform.Identity;
             _dc.VWorldIdentity = true;
         }
@@ -183,7 +188,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GdiXform v = WtoD(_dc.VWorld, _dc.VWorldIdentity, _dc.MapMode, _dc.WinOrg, VirtualWinExt(), _dc.VpOrg, VirtualVpExt());
             const float k = 0.0625f;
             GdiXform a = GdiXform.FromXform(v.M11 * k, v.M12 * k, v.M21 * k, v.M22 * k, v.Dx * k, v.Dy * k);
-            GdiXform b = GdiXform.FromXform(_b11, 0, 0, _b22, _bdx, _bdy);
+            GdiXform b = GdiXform.FromXform(_b11, _b12, _b21, _b22, _bdx, _bdy);
             GdiXform c = GdiXform.Multiply(a, b);
             SetTargetWorld(c.M11, c.M12, c.M21, c.M22, c.Dx, c.Dy);
         }
@@ -778,7 +783,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         GdiXform BaseLToFx()
         {
-            GdiXform w = GdiXform.FromXform(_b11, 0, 0, _b22, _bdx, _bdy);
+            GdiXform w = GdiXform.FromXform(_b11, _b12, _b21, _b22, _bdx, _bdy);
             return GdiXform.WorldToDevice(w, 16, 16, 0, 0, true);
         }
 

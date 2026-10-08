@@ -570,7 +570,7 @@ namespace System.Drawing
 				// else through world -> device -> cells.
 				float [] toCells = Then (dev, new [] { 1f / s, 0f, 0f, 1f / t, -gx, -gy });
 				byte [] fill = hatch ? FillWithBrush (cellBrush, gw, gh, null, new Point (-gx, -gy), true)
-					: FillWithBrush (cellBrush, gw, gh, toCells, Point.Empty, true);
+					: FillWithBrush (cellBrush, gw, gh, toCells, Point.Empty, true, Then (dev, new [] { 1f / s, 0f, 0f, 1f / t, 0f, 0f }), new Point (gx, gy));
 				if (fill == null) return false;
 				int counter = ++s_bufferDibs;
 				int banded = (gh + rows - 1) / rows * rows;
@@ -793,7 +793,17 @@ namespace System.Drawing
 				}
 				return alpha;
 			}
-			return ShapeAlpha (brush, pts, types, fillMode, toBand, W, H, Point.Empty);
+			// The band is a piece of the page: GDI+ walks a gradient at the band's absolute
+			// device coordinates, under the world-to-device matrix of the page itself.
+			return ShapeAlpha (brush, pts, types, fillMode, toBand, W, H, Point.Empty, dev, new Point (bandX, bandY));
+		}
+
+		// A band's Graphics as a piece of a larger device (GpGraphics.SpanDevice): the gradient
+		// spans evaluated at that device's coordinates, under its world-to-device matrix.
+		static void SetSpanDevice (Graphics g, float [] spanDevice, Point at)
+		{
+			if (spanDevice == null) return;
+			g.gp.SpanDevice = (new WebGpuBackend.Gdip.GpMatrix (spanDevice [0], spanDevice [1], spanDevice [2], spanDevice [3], spanDevice [4], spanDevice [5]), at.X, at.Y);
 		}
 
 		byte [] SolidAlpha (int a, PointF [] pts, byte [] types, FillMode fillMode, float [] toBand, int W, int H)
@@ -815,11 +825,12 @@ namespace System.Drawing
 		}
 
 		// A W x H transparent bitmap with the shape filled into it through toBand: its alpha.
-		byte [] ShapeAlpha (Brush brush, PointF [] pts, byte [] types, FillMode fillMode, float [] toBand, int W, int H, Point origin)
+		byte [] ShapeAlpha (Brush brush, PointF [] pts, byte [] types, FillMode fillMode, float [] toBand, int W, int H, Point origin, float [] spanDevice = null, Point spanAt = default)
 		{
 			using (var bmp = new Bitmap (W, H, Imaging.PixelFormat.Format32bppArgb))
 			using (Graphics g = FromImage (bmp)) {
 				if (g.gp == null) return null;
+				SetSpanDevice (g, spanDevice, spanAt);
 				g.SmoothingMode = gpu_smoothing;
 				g.InterpolationMode = _interpolation == InterpolationMode.Invalid ? InterpolationMode.Bilinear : _interpolation;
 				g.PixelOffsetMode = _pixelOffset;
@@ -1030,11 +1041,12 @@ namespace System.Drawing
 		// GpBitmap::CreateBitmapAndFillWithBrush: a W x H 32bpp ARGB bitmap, transparent, the brush
 		// over all of it through the world-to-bitmap matrix (null: identity). <paramref name="scan"/>:
 		// an EpScanDIB's buffer instead -- the spans premultiplied, then Unpremultiply'd.
-		byte [] FillWithBrush (Brush brush, int W, int H, float [] toBitmap, Point origin, bool scan = false)
+		byte [] FillWithBrush (Brush brush, int W, int H, float [] toBitmap, Point origin, bool scan = false, float [] spanDevice = null, Point spanAt = default)
 		{
 			using (var bmp = new Bitmap (W, H, scan ? Imaging.PixelFormat.Format32bppPArgb : Imaging.PixelFormat.Format32bppArgb))
 			using (Graphics g = FromImage (bmp)) {
 				if (g.gp == null) return null;
+				SetSpanDevice (g, spanDevice, spanAt);
 				g.InterpolationMode = _interpolation == InterpolationMode.Invalid ? InterpolationMode.Bilinear : _interpolation;
 				g.PixelOffsetMode = _pixelOffset;
 				g.RenderingOrigin = origin;

@@ -536,6 +536,11 @@ namespace System.Windows.Forms.Integration
                 return (true, new[] { dlg.FileName }, dlg.FilterIndex);
             }
 
+            // WPF's SaveFileDialog already knows each head's last step (download, export sheet,
+            // create-document picker); a dialog carrying just the path is all it needs.
+            public System.Threading.Tasks.Task<bool> CommitSaveAsync(string path)
+                => new Microsoft.Win32.SaveFileDialog { FileName = path }.CommitAsync();
+
             public async System.Threading.Tasks.Task<(bool ok, string selectedPath)> ShowFolderAsync(SWF.FolderDialogRequest request)
             {
                 var dlg = new Microsoft.Win32.OpenFolderDialog();

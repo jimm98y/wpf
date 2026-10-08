@@ -82,6 +82,46 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return true;
         }
 
+        bool _direct;                    // the DIB stands for the target's own HDC (device space)
+
+        /// <summary>EnumEmf playing on the target's HDC: a DIB over the target's device space from
+        /// its origin to past the destination's corners, which GDI draws into as it would into the
+        /// target (the DC's clip is the playback's), copied one to one at the end.</summary>
+        bool StartDirectCanvas(PointF[] p)
+        {
+            float mx = Math.Max(Math.Max(p[0].X, p[1].X), Math.Max(p[2].X, p[1].X + p[2].X - p[0].X));
+            float my = Math.Max(Math.Max(p[0].Y, p[1].Y), Math.Max(p[2].Y, p[1].Y + p[2].Y - p[0].Y));
+            if (!(mx > 0f) || !(my > 0f) || mx > 0x4000 || my > 0x4000) return false;
+            int w = (int)MathF.Ceiling(mx) + 2, h = (int)MathF.Ceiling(my) + 2;
+            _interp = _t.InterpolationMode;
+            _canvas = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+            BitmapData bd = _canvas.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                var row = new int[w];
+                for (int i = 0; i < w; i++) row[i] = unchecked((int)Transparent);
+                for (int y = 0; y < h; y++) System.Runtime.InteropServices.Marshal.Copy(row, 0, bd.Scan0 + y * bd.Stride, w);
+            }
+            finally { _canvas.UnlockBits(bd); }
+            _cw = w; _ch = h;
+            _canvasDest = p;
+            _target = _t;
+            _t = Graphics.FromImage(_canvas);
+            _direct = true;
+            return true;
+        }
+
+        /// <summary>Gives the DIB up before anything was drawn (nothing to play).</summary>
+        void AbortCanvas()
+        {
+            if (_canvas == null) return;
+            _t.Dispose();
+            _t = _target;
+            _canvas.Dispose();
+            _canvas = null;
+            _direct = false;
+        }
+
         static void AdjustForMaximumSize(ref int big, ref int small)
         {
             int b = big;
@@ -123,6 +163,28 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     }
                 }
                 finally { c.UnlockBits(sd); pargb.UnlockBits(dd); }
+                if (_direct)
+                {
+                    // GDI drew on the target itself: what it touched, one to one, inside the clip
+                    // SetupClippingForMetafilePlayback gave the DC.
+                    _direct = false;
+                    Graphics g = _t;
+                    g.ResetTransform();
+                    g.PageUnit = GraphicsUnit.Pixel;
+                    g.PageScale = 1f;
+                    if (_s.BaseClip == null) g.ResetClip(); else g.Clip = _s.BaseClip;
+                    InterpolationMode oim = g.InterpolationMode;
+                    PixelOffsetMode opm = g.PixelOffsetMode;
+                    CompositingMode ocm = g.CompositingMode;
+                    g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                    g.PixelOffsetMode = PixelOffsetMode.Half;
+                    g.CompositingMode = CompositingMode.SourceOver;
+                    g.DrawImage(pargb, new Rectangle(0, 0, _cw, _ch), 0, 0, _cw, _ch, GraphicsUnit.Pixel);
+                    g.InterpolationMode = oim;
+                    g.PixelOffsetMode = opm;
+                    g.CompositingMode = ocm;
+                    return;
+                }
                 // Draw32BppDib @180090f58: the destination rectangle (world units) grown by a device
                 // pixel's world size each side (GpGraphics::GetWorldPixelSize @1800dabf0: the device
                 // vector (1, 1) back through the inverse transform, each part's absolute value),
@@ -358,7 +420,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             new RectangleF(src.X, src.Y, src.Width - wsgn, src.Height - hsgn), GraphicsUnit.Pixel, ia);
                     }
                     spx = Pixels(pre, out sw, out sh);
-                    source = StretchSource(spx, sw, sh, 0, 0, sw, sh, dw, dh, mirrorX, mirrorY);
+                    // OutputDIB then leaves the stretch mode it set (HALFTONE for a SRCCOPY,
+                    // COLORONCOLOR otherwise) and StretchDIBits the 24bpp result, top-down
+                    // (biHeight -gh); HALFTONE runs win32k's AA engine even where the sizes agree.
+                    if (_dc.StretchMode == 4 && GdiHalftone.Stretch(Dib24Info(sw, sh), 0, Dib24Bits(spx, sw, sh), 0, 0, 0, sw, sh,
+                            mirrorX ? -dw : dw, mirrorY ? -dh : dh) is uint[] ht)
+                    {
+                        int hw = dw;
+                        source = (i, j) => ht[j * hw + i];
+                    }
+                    else source = StretchSource(spx, sw, sh, 0, 0, sw, sh, dw, dh, mirrorX, mirrorY);
                 }
                 else
                 {
@@ -465,6 +536,33 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 vs[j] = Math.Clamp(sy + k, 0, h - 1);
             }
             return (i, j) => px[vs[j] * w + us[i]];
+        }
+
+        /// <summary>The BITMAPINFOHEADER OutputDIB builds for its stretched bitmap: 24bpp, top-down.</summary>
+        static byte[] Dib24Info(int w, int h)
+        {
+            var info = new byte[40];
+            Le.W32(info, 0, 40);
+            Le.W32(info, 4, w);
+            Le.W32(info, 8, -h);
+            info[12] = 1;
+            info[14] = 24;
+            return info;
+        }
+
+        /// <summary>0x00RRGGBB pixels as 24bpp DIB scans (B, G, R; rows padded to four bytes).</summary>
+        static byte[] Dib24Bits(uint[] px, int w, int h)
+        {
+            int stride = (w * 3 + 3) & ~3;
+            var bits = new byte[stride * h];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    uint p = px[y * w + x];
+                    int q = y * stride + x * 3;
+                    bits[q] = (byte)p; bits[q + 1] = (byte)(p >> 8); bits[q + 2] = (byte)(p >> 16);
+                }
+            return bits;
         }
 
         static uint[] Pixels(Bitmap b, out int w, out int h)

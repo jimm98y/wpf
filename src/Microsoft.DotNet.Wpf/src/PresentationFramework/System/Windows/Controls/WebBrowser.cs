@@ -823,6 +823,14 @@ namespace System.Windows.Controls
             Justification="CoInternetSetFeatureEnabled() returns error for an unknown FCK. We expect this to happen with older versions of IE.")]
         private static void TurnOnFeatureControlKeys()
         {
+            // urlmon's feature controls configure the IE WebOC, which exists only on Windows. Off
+            // Windows the P/Invoke threw DllNotFoundException from this static constructor, so the
+            // first WebBrowser on any other head failed with a TypeInitializationException.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             Version osver = Environment.OSVersion.Version;
             if (osver.Major == 5 && osver.Minor == 2 && osver.MajorRevision == 0) 
             {

@@ -688,6 +688,23 @@ namespace System.Windows
                 }
             }
 
+            // The browser's own prompts are the one thing on that head that CAN wait: alert and
+            // confirm block the page and the browser runs the modal loop. They carry OK and
+            // OK/Cancel, so those two answer synchronously, as on a desktop; other button sets have
+            // only the managed box, which needs ShowAsync (below). Without this arm even a plain
+            // MessageBox.Show("Saved") threw on the browser.
+            if (OperatingSystem.IsBrowser() && MS.Internal.Interop.BrowserDialogs.IsAvailable
+                && (button == MessageBoxButton.OK || button == MessageBoxButton.OKCancel))
+            {
+                string text = string.IsNullOrEmpty(caption) ? messageBoxText : caption + "\n\n" + messageBoxText;
+                if (button == MessageBoxButton.OK)
+                {
+                    MS.Internal.Interop.BrowserDialogs.Alert(text);
+                    return MessageBoxResult.OK;
+                }
+                return MS.Internal.Interop.BrowserDialogs.Confirm(text) ? MessageBoxResult.OK : MessageBoxResult.Cancel;
+            }
+
             // No native message box on this platform (Linux has none, and xdg-desktop-portal does
             // not provide one) -- so draw one with WPF. Viable because the desktop heads keep the
             // blocking dispatcher loop, hence a real nested frame; see ManagedMessageBox.

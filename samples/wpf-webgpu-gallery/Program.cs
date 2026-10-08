@@ -149,6 +149,17 @@ internal static class Program
         var fpsClock = System.Diagnostics.Stopwatch.StartNew();
         double autoScroll = double.TryParse(Environment.GetEnvironmentVariable("WPF_GALLERY_AUTOSCROLL"),
             System.Globalization.CultureInfo.InvariantCulture, out double asp) ? asp : 0;
+        bool autoScrollSnap = Environment.GetEnvironmentVariable("WPF_GALLERY_AUTOSCROLL_SNAP") == "1";
+        // WPF_GALLERY_FREEZE=<ms>,<offset>: at <ms> stop everything that moves -- the scroll parks at
+        // <offset>, the animations hold one fixed instant, the fps badge stops counting -- so two
+        // runs end on the same picture and can be compared pixel for pixel (scroll snapping's settle).
+        double freezeMs = -1, freezeOffset = 0;
+        if (Environment.GetEnvironmentVariable("WPF_GALLERY_FREEZE") is { } fz && fz.Split(',') is { Length: 2 } fzp)
+        {
+            freezeMs = double.Parse(fzp[0], System.Globalization.CultureInfo.InvariantCulture);
+            freezeOffset = double.Parse(fzp[1], System.Globalization.CultureInfo.InvariantCulture);
+        }
+        bool frozen = false;
         var scrollClock = System.Diagnostics.Stopwatch.StartNew();
         CompositionTarget.Rendering += (s, e) =>
         {
@@ -162,11 +173,27 @@ internal static class Program
             // WPF_GALLERY_AUTOSCROLL=<px per second>: a programmatic smooth scroll, down and back up,
             // driven by elapsed time so the offset per frame shows whether frames are evenly paced.
             // Each tick logs "SCROLL <ms> <offset>" -- the measure of scroll smoothness.
+            if (!frozen && freezeMs >= 0 && scrollClock.Elapsed.TotalMilliseconds >= freezeMs)
+            {
+                frozen = true;
+                scroll.ScrollToVerticalOffset(freezeOffset);
+                fpsText.Text = "-- fps";
+                Console.WriteLine($"FROZEN {scrollClock.Elapsed.TotalMilliseconds:0.0} {freezeOffset}");
+            }
+            if (frozen) return;
             if (autoScroll > 0 && scroll.ScrollableHeight > 0)
             {
                 double ms = scrollClock.Elapsed.TotalMilliseconds;
                 double span = scroll.ScrollableHeight, travel = autoScroll * ms / 1000.0 % (2 * span);
                 double off = travel <= span ? travel : 2 * span - travel;
+                // WPF_GALLERY_AUTOSCROLL_SNAP=1: whole device pixels only, as a mouse wheel scrolls
+                // (48 DIPs a notch). A fractional offset puts every card on a new sub-pixel phase, so
+                // nothing rendered at the last offset can be reused at this one.
+                if (autoScrollSnap)
+                {
+                    double ppd = VisualTreeHelper.GetDpi(scroll).PixelsPerDip;
+                    off = Math.Round(off * ppd) / ppd;
+                }
                 scroll.ScrollToVerticalOffset(off);
                 Console.WriteLine($"SCROLL {ms:0.0} {off:0.0}");
             }
@@ -211,7 +238,7 @@ internal static class Program
         var motionClock = System.Diagnostics.Stopwatch.StartNew();
         CompositionTarget.Rendering += (s, e) =>
         {
-            double t = motionClock.Elapsed.TotalSeconds;
+            double t = frozen ? 1.0 : motionClock.Elapsed.TotalSeconds;
             spin.Angle = (t * 90.0) % 360.0;
             rot3d.Angle = (t * 45.0) % 360.0;
             progress.Value = (t * 30.0) % 101.0;
@@ -224,6 +251,7 @@ internal static class Program
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         timer.Tick += (s, e) =>
         {
+            if (frozen) { if (list.Items.Count > 0) list.SelectedIndex = 0; if (tabs.Items.Count > 0) tabs.SelectedIndex = 0; autoCheck.IsChecked = true; return; }
             if (list.Items.Count > 0) list.SelectedIndex = (frame / 25) % list.Items.Count;
             if (tabs.Items.Count > 0) tabs.SelectedIndex = (frame / 45) % tabs.Items.Count;
             autoCheck.IsChecked = (frame / 40) % 2 == 0;
