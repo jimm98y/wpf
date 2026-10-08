@@ -154,26 +154,39 @@ namespace System.Drawing.WebGpuBackend.Gdip
             else if (dx == null && gen != null)
             {
                 // No advances at an angle: ESTROBJ::vCharPos_G2 @1401ae2d8 sums each glyph's ptqD
-                // (32.32) and puts the glyph at the sum's whole 28.4 (its high word); ttfd's
+                // (32.32) from 0x80000000 -- half a 28.4 unit -- and puts the glyph at the sum's
+                // high word, so the 28.4 pen is the sum ROUNDED half up, not floored. ttfd's
                 // vFillGLYPHDATA @140012568 makes a matrix that is not diagonal a LINEAR fxD,
-                // bFToL(hmtx advance x the base scale +0xe0), and ptqD that times the unit base
-                // vector (vLTimesVtfl).
+                // bFToL(hmtx advance x the base scale +0xe0), and a ptqD of vLTimesVtfl
+                // @14008b538: the notional advance (font units, as a float) times the base vector
+                // +0xd0 itself, 16 (eXX, eXY), each product made 32.32 exactly (vEfToLfx
+                // @14008b5f0) -- the unrounded linear advance, not fxD along the unit vector. A
+                // simulated bold adds +0xe8, the unit vector times 16, to a ptqD that is not zero.
+                // The DC's character extra goes along win32k's own unit base vector (RFONT +0x188).
                 penX = new long[n + 1]; penY = new long[n + 1];
-                double qx = 0, qy = 0;
+                long qx = 0x80000000L, qy = 0x80000000L;
                 long dev = 0;
                 int extra = _charExtra == 0 ? 0 : (int)Math.Floor(_charExtra * along * 16.0 + 0.5);
+                long ubX = EfToLfx(gen.UbX), ubY = EfToLfx(gen.UbY);
                 for (int i = 0; i < n; i++)
                 {
-                    penX[i] = (long)Math.Floor(qx); penY[i] = (long)Math.Floor(qy);
+                    penX[i] = qx >> 32; penY[i] = qy >> 32;
                     pens[i] = dev;
                     int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
-                    int fxd = (int)MathF.Floor(font.Face.DesignAdvance(gid) * gen.BaseLen + 0.5f);
-                    if (font.Face.GdiEmboldensBitmap) fxd += 16;
-                    int step = fxd + (extra != 0 && extra + fxd > 0 ? extra : 0);
+                    int adv = font.Face.DesignAdvance(gid);
+                    int fxd = (int)MathF.Floor(adv * gen.BaseLen + 0.5f);
+                    long dX = EfToLfx((float)adv * gen.VecX), dY = EfToLfx((float)adv * gen.VecY);
+                    if (font.Face.GdiEmboldensBitmap)
+                    {
+                        fxd += 16;
+                        if (dX != 0 || dY != 0) { dX += EfToLfx(gen.UbX * 16f); dY += EfToLfx(gen.UbY * 16f); }
+                    }
+                    int step = fxd;
+                    if (extra != 0 && extra + fxd > 0) { step += extra; dX += extra * ubX; dY += extra * ubY; }
                     dev += step;
-                    qx += (double)(step * gen.UbX); qy += (double)(step * gen.UbY);
+                    qx += dX; qy += dY;
                 }
-                penX[n] = (long)Math.Floor(qx); penY[n] = (long)Math.Floor(qy);
+                penX[n] = qx >> 32; penY[n] = qy >> 32;
                 pens[n] = dev;
                 sum = (long)Math.Floor(dev / (along * 16.0) + 0.5);
             }
@@ -417,6 +430,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             public float UbX, UbY;              // the unit base vector on the screen (y down)
             public float UaX, UaY;              // the unit ascender on the screen
             public float BaseLen;               // the base vector's length, 28.4 per font unit (TT_FONTCONTEXT +0xe0)
+            public float VecX, VecY;            // the base vector itself, 16 (eXX, eXY) (TT_FONTCONTEXT +0xd0)
         }
 
         /// <summary>The realization of a font turned by <paramref name="esc"/> tenths of a degree,
@@ -490,11 +504,45 @@ namespace System.Drawing.WebGpuBackend.Gdip
             g.P10 = sy == 0x10000 ? f10 : DivRound(f10, sy); g.P11 = sy == 0x10000 ? f11 : DivRound(f11, sy);
             // ttfd's unit vectors (bComputeMaxGlyph: the base 16 (M11, M12), the ascender -16
             // (M21, M22), each over its length), on the screen.
-            float bx = sxs * c * 16f, by = -sxs * s * 16f, bl = MathF.Sqrt(bx * bx + by * by);
-            float ax = -sys * s * 16f, ay = -sys * c * 16f, al = MathF.Sqrt(ax * ax + ay * ay);
+            // The lengths are EFLOAT::vSqrt's (truncated) of the float sum of squares.
+            float bx = sxs * c * 16f, by = -sxs * s * 16f, bl = EfSqrt(bx * bx + by * by);
+            float ax = -sys * s * 16f, ay = -sys * c * 16f, al = EfSqrt(ax * ax + ay * ay);
             g.UbX = bx / bl; g.UbY = by / bl; g.UaX = ax / al; g.UaY = ay / al;
-            g.BaseLen = bl;
+            g.BaseLen = bl; g.VecX = bx; g.VecY = by;
             return g;
+        }
+
+        /// <summary>vEfToLfx @14008b5f0 (fontdrvhost): a float made 32.32 by shifting its mantissa,
+        /// exactly where it fits (the magnitude truncated where it does not), the sign put back
+        /// after.</summary>
+        static long EfToLfx(float f)
+        {
+            uint b = BitConverter.SingleToUInt32Bits(f);
+            long m = (b & 0x7fffff) | 0x800000;
+            int sh = (sbyte)(byte)((sbyte)(byte)(b >> 23) - 0x76);
+            long v = sh < 0 ? m >> Math.Min(63, -sh) : m << sh;
+            return (int)b < 0 ? -v : v;
+        }
+
+        /// <summary>EFLOAT::vSqrt @14008b570 (fontdrvhost): the square root of a float by integer
+        /// digit extraction over its mantissa, truncated (not rounded to nearest).</summary>
+        static float EfSqrt(float f)
+        {
+            uint b = BitConverter.SingleToUInt32Bits(f);
+            uint e = b >> 23 & 0xff, m = (b & 0x7fffff) | 0x800000;
+            uint odd = (e - 1) & 1;
+            uint x = odd != 0 ? m << 8 : m << 7;
+            ulong rem = 0; uint root = 0;
+            for (int i = 0; i < 24; i++)
+            {
+                uint two = root * 2;
+                uint top = (uint)((rem << 32 | x) >> 30);
+                uint trial = root * 4 + 1;
+                rem = trial <= top ? top - trial : top;
+                x <<= 2;
+                root = trial <= top ? two + 1 : two;
+            }
+            return BitConverter.UInt32BitsToSingle(root & 0x7fffff | ((odd ^ 1) + e + 0x7e >> 1) << 23);
         }
 
         /// <summary>iHipot @14001c800 (fontdrvhost): an integer hypotenuse.</summary>

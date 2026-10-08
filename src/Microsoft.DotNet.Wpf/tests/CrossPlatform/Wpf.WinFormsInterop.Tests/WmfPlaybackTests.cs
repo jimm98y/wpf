@@ -805,13 +805,10 @@ namespace Wpf.WinFormsInterop.Tests
             { "emf/pixels/turned", "8907d9bde09bf950" },
         };
 
-        // What the port does not draw as GDI+ does yet: in the turned placement, the 'g' of
-        // Courier New escaped 30 degrees (fitted at 10 x 10 ppem by ttfd's general rotation; its
-        // pen, vCharPos_G2's, is the same pixel either way the 32.32 sum is floored).
-        private static readonly HashSet<string> Pending = new()
-        {
-            "text/1/turned",
-        };
+        // What the port does not draw as GDI+ does yet (nothing now: the last, the turned 'g' of
+        // Courier New escaped 30 degrees, was vCharPos_G2's pen -- its 32.32 sum starts at half a
+        // 28.4 unit, so the pen is the sum rounded, not floored).
+        private static readonly HashSet<string> Pending = new();
 
         [Fact]
         public void Wmf_battery_is_GdiPlus_bytes()
