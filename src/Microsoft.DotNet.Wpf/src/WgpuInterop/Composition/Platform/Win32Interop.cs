@@ -225,6 +225,60 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW", SetLastError = true)]
         private static extern bool SystemParametersInfo(uint action, uint param, ref uint value, uint winIni);
 
+        /// <summary>The monitor rendering parameters DirectWrite gives WPF's text
+        /// (DWriteRenderingParams::CreateRenderingParamsFromDeviceName @1800142b8, dwrite.dll):
+        /// gamma 1.8, enhanced contrast 0.5 and ClearType level 1 unless
+        /// Software\Microsoft\Avalon.Graphics\&lt;display&gt; under HKCU (or, for the gamma, HKLM)
+        /// says otherwise -- GammaLevel 1000..2200 thousandths, EnhancedContrastLevel 0..400 and
+        /// ClearTypeLevel 0..100 hundredths, HKCU only. A display with no key of its own reads the
+        /// primary display device's.</summary>
+        internal static void DWriteMonitorParams(out float gamma, out float enhancedContrast, out float clearTypeLevel)
+        {
+            gamma = 1.8f; enhancedContrast = 0.5f; clearTypeLevel = 1f;
+            if (!OperatingSystem.IsWindows()) return;
+            try
+            {
+                string? device = PrimaryDisplayDeviceName();
+                if (device is null) return;
+                const string root = @"Software\Microsoft\Avalon.Graphics\";
+                using var cu = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(root + device);
+                using var lm = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(root + device);
+                if ((cu?.GetValue("GammaLevel") ?? lm?.GetValue("GammaLevel")) is int g && (uint)(g - 1000) < 0x4b1)
+                    gamma = g * 0.001f;
+                if (cu is null) return;
+                if (cu.GetValue("ClearTypeLevel") is int c && (uint)c < 0x65) clearTypeLevel = c * 0.01f;
+                if (cu.GetValue("EnhancedContrastLevel") is int e && (uint)e < 0x191) enhancedContrast = e * 0.01f;
+            }
+            catch (Exception) { }
+        }
+
+        /// <summary>The primary display device's name without its "\.\" prefix (DISPLAY1).</summary>
+        private static string? PrimaryDisplayDeviceName()
+        {
+            var dd = new DisplayDevice { cb = Marshal.SizeOf<DisplayDevice>() };
+            for (uint i = 0; EnumDisplayDevices(null, i, ref dd, 0); i++)
+            {
+                if ((dd.StateFlags & 4) != 0)   // DISPLAY_DEVICE_PRIMARY_DEVICE
+                    return dd.DeviceName.StartsWith(@"\.\", StringComparison.Ordinal) ? dd.DeviceName.Substring(4) : dd.DeviceName;
+                dd.cb = Marshal.SizeOf<DisplayDevice>();
+            }
+            return null;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct DisplayDevice
+        {
+            public int cb;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+            public int StateFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+        }
+
+        [DllImport("user32.dll", EntryPoint = "EnumDisplayDevicesW", CharSet = CharSet.Unicode)]
+        private static extern bool EnumDisplayDevices(string? device, uint devNum, ref DisplayDevice dd, uint flags);
+
         // PM_QS_SENDMESSAGE alone: Windows delivers pending SENT messages inside the call and reports
         // no posted one, so nothing is removed from the queue.
         [StructLayout(LayoutKind.Sequential)]

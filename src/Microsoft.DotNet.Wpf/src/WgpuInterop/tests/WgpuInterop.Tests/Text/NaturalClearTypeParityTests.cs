@@ -181,6 +181,40 @@ namespace WgpuInterop.Tests.Text
                     $"{misses.Count} of {total} differ (ceiling {GlyphCeiling[file]}): {string.Join(" ", misses.Take(40))}");
         }
 
+        /// <summary>A size half way between two ppem (WPF at 250% asks for 13pt = 43.33 px, and
+        /// 30.5 px is a tie): the scaler hints at the 16.16 size rounded half UP, so 30.5 is 31
+        /// (MathF.Round's even 30 drew Segoe UI at 0.90 of DirectWrite's ink).</summary>
+        [Theory]
+        [InlineData("segoeui")]
+        [InlineData("arial")]
+        public void HalfPixelSizesAreDirectWritesTexture(string file)
+        {
+            string? path = FontPath(file);
+            Assert.SkipWhen(path is null, "needs the Windows face and DirectWrite");
+            var font = new TrueTypeFont(File.ReadAllBytes(path!));
+            IntPtr face = DWriteOracle.FontFace(path!);
+            var misses = new List<string>();
+            foreach (float em in new[] { 12.5f, 16.5f, 30.5f })
+            {
+                int mode = DWriteOracle.RecommendedMode(face, em);
+                if (mode != 4 && mode != 5) continue;
+                int nSub = mode == 5 ? 5 : 1;
+                foreach (char c in "Hamburgefonstiv")
+                {
+                    int gid = font.GlyphIndex(c);
+                    if (gid <= 0) continue;
+                    byte[] theirs = DWriteOracle.AlphaTexture(face, em, new[] { (ushort)gid }, new[] { 0f }, null, mode,
+                        out int tl, out int tt, out int tr, out int tb);
+                    NaturalClearType.GlyphBits bits = NaturalClearType.Rasterize(font, gid, em, nSub);
+                    byte[] ours = NaturalClearType.RunTexture(new[] { bits }, new[] { 0f }, new[] { 0f },
+                        out int ol, out int ot, out int ow, out int oh, nSub);
+                    long d = Diff(theirs, tl, tt, tr - tl, tb - tt, ours, ol, ot, ow, oh);
+                    if (d != 0) misses.Add($"{em}:'{c}'={d}");
+                }
+            }
+            Assert.True(misses.Count <= 2, string.Join(" ", misses));
+        }
+
         /// <summary>WPF's DISPLAY formatting mode: DWRITE_RENDERING_MODE_GDI_CLASSIC with the GDI
         /// measuring mode, which is GDI's own ClearType fit through DirectWrite's 6x1 filter.</summary>
         [Theory]

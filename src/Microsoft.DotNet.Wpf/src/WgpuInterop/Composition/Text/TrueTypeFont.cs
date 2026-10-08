@@ -2523,7 +2523,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (glyph is null || !interpreter.Hint(glyph, pixelsPerEm)) return null;
                 int ctrl = glyph.ScanControl >= 0 ? glyph.ScanControl : interpreter.PrepScanControl;
                 int type = glyph.ScanType >= 0 ? glyph.ScanType : interpreter.PrepScanType;
-                int scan = DoScanControl(ctrl, (int)MathF.Round(pixelsPerEm)) ? type : 2;
+                int scan = DoScanControl(ctrl, (int)MathF.Round(pixelsPerEm, MidpointRounding.AwayFromZero)) ? type : 2;
                 dropout = (scan & 2) != 0 ? 0 : scan + 1;
             }
             finally

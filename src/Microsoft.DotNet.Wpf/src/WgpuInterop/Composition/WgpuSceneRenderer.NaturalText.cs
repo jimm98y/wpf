@@ -48,9 +48,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         };
 
         /// <summary>The monitor's DirectWrite rendering parameters as GetAlphaBlendParams reports
-        /// them. Windows' defaults -- gamma 1.8, enhanced contrast 0.5, ClearType level 1 -- are what
-        /// every run on the reference machine reported.</summary>
-        private const float WpfTextGamma = 1.8f, WpfTextContrast = 0.5f;
+        /// them, read where DirectWrite reads them (Win32Interop.DWriteMonitorParams): Windows'
+        /// defaults -- gamma 1.8, enhanced contrast 0.5 -- unless Avalon.Graphics says otherwise.</summary>
+        private static readonly float WpfTextGamma = MonitorParam(0), WpfTextContrast = MonitorParam(1);
+
+        private static float MonitorParam(int which)
+        {
+            Platform.Win32Interop.DWriteMonitorParams(out float gamma, out float contrast, out _);
+            return which == 0 ? gamma : contrast;
+        }
 
         /// <summary>CDisplaySet::CompileSettings: (UINT)((gamma - 1) * 10) in single precision, which for
         /// 1.8 is SEVEN (1.8f - 1 is 0.79999995), clamped to the table.</summary>

@@ -2143,7 +2143,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// state the glyphs start from, so re-running it per glyph would be pure cost.</summary>
         private bool PrepareSize(float pixelsPerEm)
         {
-            int ppem = (int)MathF.Round(pixelsPerEm);
+            // A fractional size is hinted at the whole ppem the scaler rounds it to: the 16.16 size
+            // rounded half up (MakeRasterizerTransform), so 30.5 is 31 -- not MathF.Round's even 30
+            // (WPF at 30.5 px: Segoe UI drew 0.90 of DirectWrite's ink).
+            int ppem = (int)MathF.Round(pixelsPerEm, MidpointRounding.AwayFromZero);
             // A STRETCHED size (see StretchPpemX): the larger axis is the size.
             int sx = StretchPpemX, sy = StretchPpemY;
             bool stretched = sx > 0 && sy > 0 && sx != sy;
