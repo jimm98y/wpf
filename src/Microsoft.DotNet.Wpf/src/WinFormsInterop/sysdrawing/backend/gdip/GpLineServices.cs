@@ -348,6 +348,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (before.Kind == 1 || after.Kind == 1) return p;
                 if (GpTextTables.CanBreakDirect (before.Brk, after.Brk)) return p;
             }
+            // The main line breaks by its dobjs: a truncation inside a reversal object that does not
+            // start the line breaks before the object (native RTL "[bracket]" in a column narrower
+            // than the word ends the first line with the "["); the object, when it starts the
+            // line, breaks inside its subline.
+            if (InSubline (trunc)) {
+                int rs = trunc;
+                while (rs > 0 && InSubline (rs - 1)) rs--;
+                if (rs > 0) return rs;
+            }
             return ForceBreak (chars, trunc);
         }
 

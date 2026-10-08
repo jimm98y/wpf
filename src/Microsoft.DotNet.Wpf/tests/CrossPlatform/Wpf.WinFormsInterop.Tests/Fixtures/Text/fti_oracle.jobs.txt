@@ -1605,3 +1605,116 @@ D|def|Segoe UI|8.25|3|2|0|4096|2|2|3|-|-|-|10,2,160,150|-|-|why? well-known\nwel
 D|typo|Segoe UI|8|3|0|3|2048|0|0|1|-|-|-|3.5,5.25,260,0|1.1,0,0,1.1,0.5,0.25|-|comma, 
 D|def|Arial|16|3|3|0|2048|2|2|2|-|-|-|2,0,130,40|0.9166667,0,0,0.9166667,0.5,2|-|over\n#tag
 D|null|Arial|7|3|2|0|0|0|0|2|-|-|-|2,0,200,20|-|-|comma,  'single'  x-ray why? "quoted" dog jumps  lines\n"quoted"  magna l words why?
+R|def|Verdana|11|3|0|0|1|0|2|2|-|-|-|10,2,40,400|-|0:1;1:1;2:1;8:1;9:1;10:1;11:1|[bracket]\nTo
+R|def|Verdana|11|3|0|0|1|0|0|0|-|-|-|10,2,40,400|-|0:1;1:1;2:1;8:1;9:1;10:1;11:1|[bracket]\nTo
+R|def|Verdana|11|3|0|0|1|0|0|0|-|-|-|10,2,40,400|-|0:1;1:1;2:1;8:1|[bracket]
+R|def|Verdana|11|3|0|0|1|0|0|0|-|-|-|10,2,40,400|-|0:1;1:1;2:1;8:1|xbracketx
+D|def|Verdana|11|3|0|0|4096|1|2|2|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|4097|1|2|2|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|4097|1|2|1|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|4097|1|2|3|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|4097|1|2|2|-|-|-|10,2,40,400|-|-|bracket\nTo
+D|def|Verdana|11|3|0|0|4097|1|2|2|-|-|-|10,2,40,400|-|-|(bracket\nTo
+D|def|Verdana|11|3|0|0|4097|0|2|2|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|1|0|2|2|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|1|0|2|2|-|-|-|10,2,40,400|-|-|[bracket] it\nTo
+D|def|Trebuchet MS|16|3|1|0|1|2|1|1|-|-|-|3.5,5.25,40,60|-|-|#tag {brace} do
+D|null|Segoe UI|7|3|3|0|0|0|0|3|-|-|-|2,5.25,100,40|-|-|well-known elit\nfluffy  'single' semi;\nfluffy  aliqua\n"quoted" "quoted" lazy dolore yes!
+D|null|Arial|11|3|1|0|0|0|0|3|-|-|-|10,5.25,1000,60|-|-|consectetur  sit To\njumps comma, yes!
+D|def|Courier New|12|3|0|0|2048|2|2|2|-|-|-|3.5,0,100,20|-|-|fox 1 over quick sed incididunt\nelit  incididunt i tempor  eiusmod 1
+D|typo|Courier New|11|3|0|0|16385|1|2|4|-|-|-|3.5,2,60,1000|-|-|50% Lorem dolor office do {brace}
+D|typo|Calibri|11|3|0|0|5|0|1|2|-|-|-|0,5.25,130,150|-|-|these\nlines AVATAR elit  ok over
+D|typo|Tahoma|8.25|3|0|0|8192|2|0|1|-|-|-|10,0,100,0|-|-|eiusmod  dog #tag l brown office  semi; [bracket]
+D|def|Arial|20|3|0|0|4097|2|2|1|-|-|-|0,5.25,40,0|-|-|#tag e-mail  WAVE
+D|def|Microsoft Sans Serif|8.25|3|3|0|4101|2|2|0|-|-|-|3.5,0,260,20|-|-| why? fox well-known 
+D|null|Calibri|10|3|0|0|0|0|0|2|-|-|-|0,2,130,0|-|-|dolore x-ray AVATAR 12345678901234 12345678901234
+D|typo|Georgia|14|3|3|0|10240|2|1|2|-|-|-|2,0,260,60|-|-|incididunt
+D|def|Arial|9|3|0|0|8193|0|1|1|-|-|-|0,0,60,150|-|-| [bracket] 12345678901234
+D|def|Georgia|11|3|1|0|16385|2|2|1|-|-|-|3.5,0,130,0|-|-|50%  50%\nthese  well-known dolor over\nok lines  dog
+D|typo|Tahoma|16|3|1|0|0|0|1|2|-|-|-|2,0,260,0|-|-|brown sed\noffice
+D|def|Trebuchet MS|10|3|0|0|4|0|2|2|-|-|-|2,2,40,0|-|-|ok  do amet ok  end.\njumps\nLorem "quoted" {brace} 0 
+D|def|Courier New|10|3|3|0|1|0|1|0|-|-|-|3.5,2,1000,0|-|-|consectetur aliqua x-ray\n50% incididunt #tag do eiusmod
+D|def|Courier New|12|3|0|0|4101|0|0|3|-|-|-|3.5,5.25,1000,40|-|-|brown WAVE\nthe  $100  {brace}  tempor quick e-mail  0  over fox
+D|typo|Segoe UI|14|3|0|0|24577|2|2|0|-|-|-|3.5,2,80,0|-|-|lazy over 1 "quoted" @home\ndolore ipsum To "quoted" {brace} To\nwhy?
+D|def|Consolas|9|3|0|0|2049|2|2|1|-|-|-|10,2,260,150|-|-|12345678901234 consectetur quick 
+D|def|Arial|8|3|1|0|20481|0|0|0|-|-|-|3.5,2,260,20|-|-|AVATAR elit\nadipiscing fox et dolore @home 
+D|def|Verdana|11|3|2|0|28672|2|2|4|-|-|-|0,5.25,60,0|-|-|the
+D|def|Calibri|11|3|0|0|1|2|2|3|-|-|-|3.5,0,40,20|-|-|tempor colon: eiusmod
+D|def|Consolas|8.25|3|1|0|14341|0|1|3|-|-|-|2,5.25,160,1000|-|-| 50% elit  aliqua dolor lines dolore  well-known wrap 1 
+D|def|Trebuchet MS|8.25|3|2|0|1|0|2|4|-|-|-|3.5,0,260,60|-|-|'single' dolor e-mail aliqua @home et
+D|def|Consolas|20|3|3|0|16385|1|2|4|-|-|-|10,5.25,40,1000|-|-|labore over Mississippi jumps dolore\nLorem\ncomma,\ndo  ok quick  "quoted" 
+D|def|Segoe UI|7|3|0|0|4096|1|1|0|-|-|-|3.5,0,80,60|-|-|$100 lazy  To superlongwordwithoutanybreaks
+D|typo|Consolas|8.25|3|0|0|4|1|0|2|-|-|-|3.5,0,160,60|-|-|lines dolore  dolor wrap\n[bracket]\nlabore quick\nsit\nAVATAR fly a/b
+D|def|Calibri|16|3|0|0|0|0|2|1|-|-|-|10,2,40,0|-|-|Mississippi 'single' 
+D|typo|Georgia|11|3|2|0|6148|0|0|0|-|-|-|3.5,0,130,100|-|-|why? Mississippi\nMississippi i\nend.
+D|def|Tahoma|7|3|0|0|24577|1|0|1|-|-|-|2,2,60,100|-|-|the ipsum\nyes!\nwrap tempor [bracket] [bracket]
+D|null|Arial|10|3|2|0|0|0|0|2|-|-|-|0,2,1000,0|-|-|50%  l Lorem  @home lazy
+D|def|Consolas|14|3|3|0|14336|0|2|0|-|-|-|2,0,130,0|-|-|well-known dolor\ndo amet\nincididunt labore  magna  $100
+D|def|Calibri|10|3|1|0|26624|0|2|1|-|-|-|3.5,2,130,60|-|-|"quoted" dolore dolore
+D|def|Consolas|12|3|0|0|10241|1|1|3|-|-|-|3.5,5.25,160,0|-|-|l #tag quick  incididunt\nbrown 'single'\nWAVE wrap\ncolon: {brace} jumps 
+D|def|Times New Roman|8|3|0|0|8193|0|2|1|-|-|-|0,5.25,100,0|-|-| colon: fox do #tag  aliqua  tempor comma, fox
+D|null|Segoe UI|7|3|0|0|0|0|0|2|-|-|-|0,2,0,60|-|-|labore end.\net 50% 50% fox quick ok
+D|null|Tahoma|9|3|2|0|0|0|0|1|-|-|-|0,5.25,100,0|-|-|why?  comma, sed comma, l To
+D|def|Segoe UI|8.25|3|0|0|2048|0|0|1|-|-|-|10,2,60,0|-|-|wrap fly tempor aliqua  fly over @home ok over over eiusmod
+D|typo|Trebuchet MS|7|3|3|0|18437|2|1|0|-|-|-|3.5,5.25,160,1000|-|-|1 50% To
+D|null|Segoe UI|10|3|3|0|0|0|0|3|-|-|-|2,0,0,0|-|-|quick  well-known AVATAR  x-ray brown fox why? [bracket] end. lazy  office 'single'
+D|typo|Times New Roman|10|3|0|0|8193|0|0|3|-|-|-|2,5.25,60,1000|-|-|AVATAR ipsum et\nx-ray eiusmod aliqua tempor  over
+D|def|Courier New|16|3|1|0|14337|2|2|4|-|-|-|0,0,80,100|-|-|a/b  [bracket] well-known a/b\nsemi;
+D|def|Consolas|7|3|3|0|0|1|1|1|-|-|-|2,0,1000,0|-|-|(paren)\na/b aliqua
+D|def|Consolas|16|3|0|0|1|2|2|3|-|-|-|2,5.25,60,0|-|-|quick do
+D|def|Segoe UI|9|3|3|0|0|1|2|3|-|-|-|3.5,0,1000,150|-|-|fluffy fox #tag x-ray ipsum (paren) e-mail lines  yes!  brown\n1
+D|def|Verdana|8.25|3|2|0|4|2|2|1|-|-|-|2,0,0,150|-|-|i ut a/b
+D|typo|Georgia|12|3|0|0|5|2|1|4|-|-|-|0,2,80,100|-|-|ut
+D|def|Tahoma|10|3|3|0|16385|2|1|0|-|-|-|10,0,200,20|-|-|magna a/b [bracket] sit  0 elit "quoted"\nlazy e-mail\nWAVE  magna comma,
+D|null|Segoe UI|8.25|3|0|0|0|0|0|4|-|-|-|10,0,200,0|-|-|sed\nTo\nok
+D|def|Times New Roman|14|3|0|0|2048|0|0|3|-|-|-|3.5,5.25,200,40|-|-|Mississippi 0 adipiscing "quoted" do over
+D|def|Verdana|8.25|3|3|0|2048|1|1|4|-|-|-|0,2,1000,0|-|-|i #tag the fly amet\nx-ray
+D|def|Consolas|16|3|1|0|20481|0|2|0|-|-|-|10,0,60,100|-|-|superlongwordwithoutanybreaks
+D|null|Courier New|9|3|1|0|0|0|0|4|-|-|-|0,5.25,40,100|-|-|well-known\nyes! ut\n'single'\nWAVE 0
+D|typo|Microsoft Sans Serif|20|3|2|0|28673|1|2|2|-|-|-|3.5,2,260,100|-|-|jumps\nyes! "quoted" tempor
+D|null|Microsoft Sans Serif|7|3|2|0|0|0|0|3|-|-|-|3.5,2,1000,150|-|-|sit fox  0\nelit fluffy\nquick\nsed comma, dolor\ncomma, well-known  wrap 
+D|def|Segoe UI|9|3|2|0|5|2|0|0|-|-|-|10,2,260,60|-|-| labore  ok\nMississippi
+D|def|Tahoma|8|3|3|0|1|1|2|4|-|-|-|10,2,160,40|-|-| why? the office\n'single' a/b  'single'
+D|typo|Trebuchet MS|11|3|2|0|4097|0|0|3|-|-|-|2,0,40,60|-|-|ut dog sed these\nadipiscing
+D|typo|Microsoft Sans Serif|8.25|3|3|0|4|0|1|2|-|-|-|3.5,5.25,100,60|-|-| fox #tag\n[bracket] over
+D|null|Georgia|12|3|0|0|0|0|0|4|-|-|-|0,5.25,40,60|-|-|end. e-mail do lines lines
+D|typo|Tahoma|9|3|3|0|1|2|0|0|-|-|-|0,0,80,0|-|-|[bracket] fly labore elit words amet i\nAVATAR\na/b  why? et\nipsum
+D|def|Courier New|8|3|0|0|22529|2|2|2|-|-|-|3.5,5.25,60,150|-|-|dolor  WAVE dog Mississippi  i
+D|typo|Arial|8.25|3|3|0|5|2|0|4|-|-|-|10,0,1000,60|-|-|#tag 50%\n#tag dog\neiusmod end. quick over
+D|def|Consolas|12|3|1|0|2049|2|1|0|-|-|-|3.5,0,40,0|-|-|end.
+D|typo|Microsoft Sans Serif|20|3|0|0|1|2|1|3|-|-|-|10,0,1000,0|-|-|0 et quick well-known 12345678901234 #tag semi; 12345678901234\n1 l
+D|def|Microsoft Sans Serif|10|3|0|0|0|1|0|2|-|-|-|3.5,0,80,100|-|-| labore  wrap $100\nfluffy  i 12345678901234 [bracket]\nlabore sed brown jumps
+D|def|Georgia|9|3|0|0|0|1|0|3|-|-|-|2,5.25,60,100|-|-|labore brown fluffy dolore ipsum  semi; 
+D|def|Verdana|7|3|0|0|1|1|0|3|-|-|-|2,0,0,100|-|-|over words
+D|def|Consolas|7|3|3|0|18433|1|2|0|-|-|-|0,5.25,40,60|-|-|WAVE incididunt semi;  comma, et superlongwordwithoutanybreaks\naliqua ok Mississippi ok 12345678901234  words
+D|def|Georgia|8|3|1|0|2049|0|1|4|-|-|-|3.5,0,40,0|-|-|lines [bracket]  x-ray  quick To  the "quoted"
+D|typo|Georgia|9|3|0|0|1|0|0|2|-|-|-|3.5,5.25,80,0|-|-|[bracket] dolore
+D|typo|Verdana|8.25|3|1|0|4097|2|1|4|-|-|-|10,0,60,1000|-|-|0 semi;  consectetur  brown 12345678901234 12345678901234 
+D|def|Calibri|20|3|1|0|6145|0|2|3|-|-|-|3.5,0,160,100|-|-| brown  Lorem\n{brace} i 0
+D|def|Microsoft Sans Serif|8.25|3|0|0|1|0|2|2|-|-|-|0,2,260,40|-|-|"quoted"  Mississippi these words\namet these
+D|def|Segoe UI|14|3|0|0|10241|0|0|3|-|-|-|0,2,260,60|-|-| 1 sit dog
+D|def|Tahoma|9|3|0|0|1|1|2|2|-|-|-|10,2,100,150|-|-|fly\nlabore WAVE\nlazy WAVE\ne-mail
+D|def|Courier New|8|3|2|0|1|2|0|4|-|-|-|0,0,60,150|-|-|office end.  #tag
+D|def|Calibri|12|3|3|0|8193|0|0|0|-|-|-|2,0,0,150|-|-|brown e-mail  l  x-ray {brace} magna  To office quick wrap yes! $100
+D|def|Segoe UI|9|3|2|0|28673|0|1|2|-|-|-|3.5,0,40,100|-|-|et  50% superlongwordwithoutanybreaks colon: do office sit To
+D|def|Verdana|9|3|0|0|0|0|2|0|-|-|-|2,2,1000,60|-|-|over wrap\nfly x-ray tempor
+D|null|Times New Roman|20|3|2|0|0|0|0|1|-|-|-|3.5,0,0,60|-|-| i\nx-ray\naliqua a/b  #tag sed 12345678901234 ok ipsum words dog lines
+D|typo|Verdana|8|3|2|0|20481|0|0|4|-|-|-|2,0,260,20|-|-|brown  why?  fluffy "quoted" 0 ut  wrap words  Mississippi Lorem
+D|typo|Segoe UI|7|3|0|0|1|1|2|4|-|-|-|0,0,130,0|-|-| fluffy 'single'\nadipiscing end. 
+D|def|Arial|7|3|0|0|2049|2|2|0|-|-|-|0,0,40,100|-|-|fluffy (paren)  jumps  x-ray\nsit  (paren)\nwrap x-ray superlongwordwithoutanybreaks adipiscing Mississippi
+D|typo|Trebuchet MS|14|3|0|0|2049|1|0|0|-|-|-|2,0,160,0|-|-|adipiscing lazy elit colon:  tempor jumps AVATAR lazy wrap
+D|def|Arial|7|3|2|0|2049|0|2|3|-|-|-|3.5,2,130,1000|-|-| labore et ut 'single'\n'single'\nwhy? x-ray\nincididunt x-ray quick
+D|def|Calibri|12|3|1|0|1|2|2|1|-|-|-|2,2,130,150|-|-|[bracket]\ne-mail a/b elit ok lazy yes! the  e-mail Mississippi #tag lines
+D|typo|Arial|7|3|0|0|0|2|0|1|-|-|-|2,2,160,20|-|-|i these well-known  fluffy\n"quoted" 12345678901234 12345678901234 lazy
+D|null|Consolas|8.25|3|0|0|0|0|0|2|-|-|-|0,2,260,20|-|-|{brace}\nfox\nsuperlongwordwithoutanybreaks ok  the 
+D|def|Microsoft Sans Serif|10|3|2|0|0|2|2|0|-|-|-|3.5,5.25,80,0|-|-|magna\ntempor eiusmod jumps labore Lorem dolore  over  tempor
+D|def|Times New Roman|11|3|2|0|8193|2|2|4|-|-|-|2,5.25,260,100|-|-|comma, AVATAR i\n0  ok i Mississippi consectetur fluffy
+D|typo|Times New Roman|20|3|0|0|1|1|2|0|-|-|-|0,5.25,40,0|-|-|office fluffy aliqua
+D|def|Calibri|9|3|0|0|2048|1|0|2|-|-|-|0,2,260,0|-|-|dolor amet
+D|typo|Trebuchet MS|20|3|2|0|6144|2|0|4|-|-|-|3.5,2,60,1000|-|-|{brace} over these lines do semi; "quoted" dog semi; ut
+D|typo|Times New Roman|20|3|3|0|0|1|1|2|-|-|-|0,0,60,60|-|-| jumps 'single' words "quoted" 'single' ipsum ut sit  office  well-known 50%
+D|null|Verdana|10|3|0|0|0|0|0|0|-|-|-|0,2,1000,20|-|-|over  50% comma, $100 labore do dolor  brown lazy\nthe  wrap 'single'
+D|def|Trebuchet MS|8|3|3|0|20481|1|0|2|-|-|-|2,2,100,20|-|-|yes! lines\nyes!
+D|def|Microsoft Sans Serif|20|3|0|0|18437|2|0|0|-|-|-|3.5,2,0,60|-|-| why? dolor semi; do
+D|null|Georgia|11|3|3|0|0|0|0|1|-|-|-|10,2,260,40|-|-| eiusmod To dolor WAVE To\nWAVE aliqua  semi; e-mail ok
+D|def|Trebuchet MS|14|3|2|0|20481|1|0|1|-|-|-|10,2,0,60|-|-|over  ut  Lorem\n@home dolore  "quoted"\nMississippi 0  et
