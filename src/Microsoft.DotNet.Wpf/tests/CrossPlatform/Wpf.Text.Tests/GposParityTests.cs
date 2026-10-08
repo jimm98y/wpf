@@ -70,11 +70,11 @@ namespace Wpf.Text.Tests
         }
 
         [Theory]
-        [InlineData("Arial", 12, "בְּ", "718 653", "0,0 -2.688,0")]
-        [InlineData("Arial", 16, "اللَّهُ", "4101 841 757", "0,0 -4.016,-0.816 0.16,-2.496")]
-        [InlineData("Calibri", 12, "لرَّحم", "5218 4933 4697 4832 5251", "0,0 0,0 -1.608,4.092 0,0 0,0")]
-        [InlineData("Microsoft Uighur", 14, "لأ", "572 111", "0,0 -0.98,7.154")]
-        [InlineData("Segoe UI", 14, "ٹہے", "2396 2402 4022", "0,0 0,0 0,0")]
+        [InlineData("Arial", 12, "\u05D1\u05BC\u05B0", "718 653", "0,0 -2.688,0")]
+        [InlineData("Arial", 16, "\u0627\u0644\u0644\u0651\u064E\u0647\u064F", "4101 841 757", "0,0 -4.016,-0.816 0.16,-2.496")]
+        [InlineData("Calibri", 12, "\u0644\u0631\u0651\u064E\u062D\u0645", "5218 4933 4697 4832 5251", "0,0 0,0 -1.608,4.092 0,0 0,0")]
+        [InlineData("Microsoft Uighur", 14, "\u0644\u0623", "572 111", "0,0 -0.98,7.154")]
+        [InlineData("Segoe UI", 14, "\u0679\u06C1\u06D2", "2396 2402 4022", "0,0 0,0 0,0")]
         public void MarksAndFormsAreDirectWrites(string family, double size, string text, string glyphs, string offsets)
         {
             var typeface = new Typeface(new FontFamily(family), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
@@ -97,7 +97,7 @@ namespace Wpf.Text.Tests
             Assert.SkipUnless(typeface.TryGetGlyphTypeface(out GlyphTypeface? gt)
                               && gt!.Win32FamilyNames.Values.Contains("Arial"), "Arial is not installed");
 
-            (_, string offsets) = Shape("Arial", 16, "بِسْمِ", TextFormattingMode.Display);
+            (_, string offsets) = Shape("Arial", 16, "\u0628\u0650\u0633\u0652\u0645\u0650", TextFormattingMode.Display);
             Assert.Equal("0,0 0,-2 0,0 0,-1 0,0 -2,-2", offsets);
         }
     }

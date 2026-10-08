@@ -355,11 +355,11 @@ namespace MS.Internal.TextFormatting
             }
             return ch switch
             {
-                '̇' or '̈' => 9,
-                '͏' => 10,
-                '̣' => 4,
-                '‌' or '‍' => 11,
-                'ﬞ' => 2,
+                '\u0307' or '\u0308' => 9,
+                '\u034F' => 10,
+                '\u0323' => 4,
+                '\u200C' or '\u200D' => 11,
+                '\uFB1E' => 2,
                 _ => 0,
             };
         }

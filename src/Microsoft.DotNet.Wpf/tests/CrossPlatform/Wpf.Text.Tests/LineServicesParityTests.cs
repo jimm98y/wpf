@@ -132,9 +132,9 @@ namespace Wpf.Text.Tests
         [InlineData("a\tb", new[] { 0, 2670, 19200, 21870 }, "68|3|69")]
         [InlineData("T\t\tT", new[] { 0, 2932, 19200, 38400, 41332 }, "55|3|3|55")]
         [InlineData("a-b", new[] { 0, 2670, 4268, 6938 }, "68|16|69")]
-        [InlineData("a b", new[] { 0, 2670, 4004, 6674 }, "68|3|69")]
-        [InlineData("a b", new[] { 0, 2670, 7470, 10140 }, "68|3|69")]
-        [InlineData("a­b", new[] { 0, 2670, 2670, 5340 }, "68|69")]
+        [InlineData("a\u00A0b", new[] { 0, 2670, 4004, 6674 }, "68|3|69")]
+        [InlineData("a\u2003b", new[] { 0, 2670, 7470, 10140 }, "68|3|69")]
+        [InlineData("a\u00ADb", new[] { 0, 2670, 2670, 5340 }, "68|69")]
         public void SpecialCharactersAreDnodesOfTheirOwn(string text, int[] carets, string glyphRuns)
         {
             SkipUnlessInstalled("Arial");
@@ -152,7 +152,7 @@ namespace Wpf.Text.Tests
         public void CaretsRunInTheParagraphsDirection(bool rtl, int[] carets)
         {
             SkipUnlessInstalled("Tahoma");
-            const string text = "abc שלום def";
+            const string text = "abc \u05E9\u05DC\u05D5\u05DD def";
             (TextLine line, _) = Format("Tahoma", 16, text, rtl);
             using (line)
             {
@@ -164,7 +164,7 @@ namespace Wpf.Text.Tests
         public void TextBoundsOfAReversedRunAreItsOwnDirection()
         {
             SkipUnlessInstalled("Tahoma");
-            const string text = "שלום abc";
+            const string text = "\u05E9\u05DC\u05D5\u05DD abc";
             (TextLine line, _) = Format("Tahoma", 16, text);
             using (line)
             {
@@ -180,10 +180,10 @@ namespace Wpf.Text.Tests
         // DWrite composes a base and its combining marks into the precomposed character (TextShaping's
         // CDM tables), all or nothing, and keeps a mark in its base's cluster either way.
         [Theory]
-        [InlineData("á", "105", new[] { 0, 2670, 2670 })]
-        [InlineData("ế", "1219", new[] { 0, 2670, 2670, 2670 })]
-        [InlineData("á̂", "68 1171 2114", new[] { 0, 2670, 2670, 2670 })]
-        [InlineData("Ά", "497", new[] { 0, 3204, 3204 })]
+        [InlineData("a\u0301", "105", new[] { 0, 2670, 2670 })]
+        [InlineData("e\u0302\u0301", "1219", new[] { 0, 2670, 2670, 2670 })]
+        [InlineData("a\u0301\u0302", "68 1171 2114", new[] { 0, 2670, 2670, 2670 })]
+        [InlineData("\u0391\u0301", "497", new[] { 0, 3204, 3204 })]
         public void CombiningMarksComposeAndCluster(string text, string glyphs, int[] carets)
         {
             SkipUnlessInstalled("Arial");
@@ -199,7 +199,7 @@ namespace Wpf.Text.Tests
         public void HebrewPointsShareTheirLettersCaret()
         {
             SkipUnlessInstalled("Segoe UI");
-            const string text = "שָׁלוֹם";
+            const string text = "\u05E9\u05B8\u05C1\u05DC\u05D5\u05B9\u05DD";
             (TextLine line, _) = Format("Segoe UI", 16, text);
             using (line)
             {
