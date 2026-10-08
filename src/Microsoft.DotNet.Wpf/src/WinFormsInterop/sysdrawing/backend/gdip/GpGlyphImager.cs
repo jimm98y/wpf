@@ -52,6 +52,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public int Mode;
         public GpMatrix W2D;
         public bool Path;                    // AddToPath: no realization, design advances
+        public float PathTracking = 1f;      // the format's tracking (+0x50), the path realization's x scale
         static readonly bool s_quarterSnap = Environment.GetEnvironmentVariable ("WF_FTI_QSNAP") == "1";   // measured: GDI+ does not
         static readonly bool s_rotFit = Environment.GetEnvironmentVariable ("WF_FTI_ROTFIT") == "1";
         static readonly bool s_debug = Environment.GetEnvironmentVariable ("WF_FTI_DEBUG") == "1";
@@ -70,6 +71,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             Array.Copy (run.Shape.GlyphProps, seg.G0, GlyphProps, 0, Count);
             Nominal = seg.Adv; NomOffU = seg.OffU; NomOffV = seg.OffV;
             Flags = fti.FormatFlags;
+            PathTracking = fti.Tracking;
             Align = fti.Format?.Align ?? 0;
             M70 = leadMargin; M74 = trailMargin;
             Rtl = run.Rtl;
@@ -494,14 +496,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (Rtl && (ItemFlags & 0x10) == 0) {
                 // Right to left: each glyph's origin is at its right; back to its left by its ideal advance.
                 // GetGlyphStringIdealAdvanceVector: the realization's advance (the device's hinted
-                // one, in ideal units through +0x78) -- for a path, the design advance at em * r.
+                // one, in ideal units through +0x78) -- for a path, the design advance at em * r,
+                // tracked: FullTextImager::DrawGlyphs @18003b720 builds the path realization
+                // (GpFaceRealization @1800a15c8) under a matrix GpMatrix::Scale'd @1800da788 by the
+                // format's tracking (+0x50) along x when that is not 1, and GetGlyphStringIdealAdvanceVector
+                // rounds that realization's advance through 2048 / upem -- so a right-to-left glyph
+                // sits at the left of its tracked cell, as Line Services spaced it.
                 int upem = Face.UnitsPerEmForHinting;
                 for (int i = 0; i < Count; i++) {
                     // GetGlyphStringIdealAdvanceVector @1800a1ce0: GetGdiCompatibleGlyphAdvances under
                     // the realization's own transform -- a vertical line's turned one measures
                     // sideways -- and nothing for the hidden glyph 0xFFFF.
                     int ideal = Glyphs [i] == 0xffff ? 0 : Path
-                        ? (int) MathF.Floor (GpTextShaper.DesignAdvance (Face, Glyphs [i]) * (Em * R / upem) + 0.5f)
+                        ? (int) MathF.Floor (GpTextShaper.DesignAdvance (Face, Glyphs [i]) * (Em * R / upem) * (vertical ? 1f : PathTracking) + 0.5f)
                         : QuarterCT ? (int) MathF.Floor (SidewaysAdvancePx (Glyphs [i]) * F78 + 0.5f)
                         : (int) MathF.Floor ((GpTextShaper.RealizationAdvancePx (Face, Glyphs [i], Em, Sx, Sy, Mode) + MirrorPx (Glyphs [i], false)) * F78 + 0.5f);
                     if (!vertical) o [i].X -= ideal / R;

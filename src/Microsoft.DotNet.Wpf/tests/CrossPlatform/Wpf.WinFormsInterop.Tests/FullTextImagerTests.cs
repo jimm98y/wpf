@@ -10,7 +10,10 @@
 // device origins; each decoration line; the measured sizes; the ranges' region scans; the path's
 // points). The port reports the same through GpTextTrace; every job must agree to the last bit.
 // The jobs are a sample of the batteries the port matches (scratchpad fto harness: gen/genmr,
-// fton on Windows, ftoo for the port).
+// fton on Windows, ftoo for the port). The last fifty (round r9) are right-to-left AddString at
+// 12..120 px (a path's right-to-left glyph sits at the left of its TRACKED cell) and tab stops
+// (past the last stop the next multiple of the increment from the line's start; no increment
+// moves a tab one ideal unit), recorded with FillPath hooked.
 //
 // job: op|base|face|size|unit|style|hint|flags|align|lalign|trim|hotkey|tabs|digits|x,y,w,h|xform|ranges|text
 // (op P draws the string unhooked and logs an FNV-1a digest of the 400x160 BGRA bitmap: "PX <hex>".)

@@ -394,10 +394,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 increment = (int) MathF.Floor (f.Tabs [^1] * r + 0.5f);
             }
             foreach (int s in stops) if (s > ur) return s;
-            if (increment <= 0) return ur;
-            int last = stops.Count > 0 ? stops [^1] : 0;
-            while (last <= ur) last += increment;
-            return last;
+            // FindTab @180120150 past the last stop: the next multiple of the increment from the
+            // line's start (not from the last stop) -- ((inc + ur) / inc) * inc in C's integer
+            // division, (ur / inc) * inc for a pen left of the start -- and an increment of 0 is 1,
+            // so a format with no stops moves a tab one ideal unit on.
+            int inc = increment == 0 ? 1 : increment;
+            return ((ur < 0 ? 0 : inc) + ur) / inc * inc;
         }
     }
 }
