@@ -226,6 +226,26 @@ namespace Wpf.Text.Tests
             }
         }
 
+        // Display mode at 200%. A right-to-left run closes with a CloseAnchor escape, which LS consumes
+        // as the end of the reverse object -- it has no height, where the paragraph's unrounded ideal
+        // metrics made the line a pixel taller than stock's (13.5 against 13). The widths are GDI's
+        // whole pixels from the first line a process formats: the backend's advances used to arrive
+        // only once something was composed, and a line formatted before that took ideal ones.
+        [Fact]
+        public void DisplayModeRightToLeftLineInACompositeFace()
+        {
+            SkipUnlessInstalled("Segoe UI");
+            const string text = "שלום עולם";
+            var properties = new RunProperties("Global User Interface", 11) { PixelsPerDip = 2 };
+            var source = new StringTextSource(text, properties) { PixelsPerDip = 2 };
+            using TextLine line = TextFormatter.Create(TextFormattingMode.Display).FormatLine(
+                source, 0, 0, new Paragraph(properties, false), null);
+            Assert.Equal(13, line.Height, 6);
+            Assert.Equal(10, line.Baseline, 6);
+            Assert.Equal(new[] { 15150, 12600, 10800, 9900, 7650, 6750, 4800, 3900, 2250, 15150 },
+                         Carets(line, text.Length));
+        }
+
         [Fact]
         public void HebrewPointsShareTheirLettersCaret()
         {

@@ -380,7 +380,12 @@ namespace MS.Internal.TextFormatting
                     continue;
                 }
 
-                if (!isText || fHidden != 0)
+                // CloseAnchor arrives as text, its characters the reverse object's terminator escape
+                // (TextStore's esc.szObjectTerminator). LineServices consumes an escape as the end of
+                // the object it closes: it is not a dnode, has no width and adds nothing to the line's
+                // height -- where the paragraph's default ideal metrics, unrounded in Display mode,
+                // made a right-to-left line in a composite face a pixel taller than stock's.
+                if (!isText || fHidden != 0 || runKind == Plsrun.CloseAnchor)
                 {
                     // A control (e.g. bidi Reverse, whose placeholder char is also U+FFFC) or hidden
                     // run. Unlike a hard break it does NOT terminate the line -- it is a zero-width,
