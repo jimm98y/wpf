@@ -182,6 +182,7 @@ namespace Wpf.Document.Tests
         [Fact]
         public void CancellingCopyLeavesTheClipboardAlone()
         {
+            WaitForTheClipboard();
             DocumentHarness.Sta<object?>(() =>
             {
                 Clipboard.SetText("previous contents");
@@ -203,6 +204,7 @@ namespace Wpf.Document.Tests
         [Fact]
         public void CopyThenPasteMovesTextBetweenEditors()
         {
+            WaitForTheClipboard();
             DocumentHarness.Sta<object?>(() =>
             {
                 ApplicationCommands.Copy.Execute(parameter: null, target: PlainEditor("round trip"));
@@ -223,6 +225,7 @@ namespace Wpf.Document.Tests
         [Fact]
         public void CutRemovesTheSelectionAndCopiesIt()
         {
+            WaitForTheClipboard();
             DocumentHarness.Sta<object?>(() =>
             {
                 var editor = new TextBox { Text = "keep cut" };
@@ -235,5 +238,34 @@ namespace Wpf.Document.Tests
                 return null;
             });
         }
+
+        /// <summary>
+        ///  Waits until no other process holds the system clipboard. Run straight after other suites
+        ///  -- whose last test left data on it -- clipboard history or the VM's clipboard sync can
+        ///  keep it open for longer than .NET's own ten retries a tenth of a second apart, and these
+        ///  three failed with CLIPBRD_E_CANT_OPEN, or a Cut that copied nothing and so deleted
+        ///  nothing, while passing every time on their own. Stock WPF would fail the same way.
+        /// </summary>
+        private static void WaitForTheClipboard()
+        {
+            if (!OperatingSystem.IsWindows())
+                return;
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            while (waited.ElapsedMilliseconds < 10_000)
+            {
+                if (OpenClipboard(IntPtr.Zero))
+                {
+                    CloseClipboard();
+                    return;
+                }
+                System.Threading.Thread.Sleep(50);
+            }
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool OpenClipboard(IntPtr owner);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool CloseClipboard();
     }
 }
