@@ -292,10 +292,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             /// <summary>GpFaceRealization::Realize's SwitchToPath @1801ed568 (GdipText.SwitchesToPath):
             /// the realization FullTextImager::DrawGlyphs asks for -- the resolved hint's flag word,
             /// under the target's transform -- is too big for glyph bitmaps.</summary>
-            public bool DrawsAsPath (TrueTypeFont face, float em, int mode)
+            public bool DrawsAsPath (TrueTypeFont face, float em, int mode, bool sideways = false)
             {
                 GpMatrix m = _g.WorldToDevice;
-                return GdipText.SwitchesToPath (face, em, m.M11, m.M12, m.M21, m.M22,
+                // A sideways run is realized under GetFontTransform's quarter turn ahead of the
+                // world-to-device matrix: (x, y) -> (y, -x), then the device's.
+                float m11 = m.M11, m12 = m.M12, m21 = m.M21, m22 = m.M22;
+                if (sideways) (m11, m12, m21, m22) = (m.M21, m.M22, -m.M11, -m.M12);
+                return GdipText.SwitchesToPath (face, em, m11, m12, m21, m22,
                                                 GdipText.RealizationFlags (_g.ResolvedTextHint (), face.SynthesizesBold, face.SynthesizesOblique));
             }
 
@@ -305,7 +309,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 var path = new GpPath (FillMode.Winding);
                 for (int i = 0; i < glyphs.Length; i++)
-                    if (glyphs [i] != 0xffff) GpPathText.AddGlyphOutline (path, run.Face, glyphs [i], run.Em, worldOrigins [i].X, worldOrigins [i].Y);
+                    if (glyphs [i] != 0xffff) GpPathText.AddRunGlyphOutline (path, run, glyphs [i], worldOrigins [i].X, worldOrigins [i].Y);
                 if (path.Points.Count == 0) return;
                 GpTextTrace.PathFilled?.Invoke ();
                 // FullTextImager::Render @18003cbe8's SetTextLinesAntialiasMode::SetAAMode @1800eb708:
