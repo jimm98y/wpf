@@ -9,6 +9,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 
 namespace System.Windows.Forms
 {
@@ -48,6 +49,97 @@ namespace System.Windows.Forms
             HostWindow = window;
             HostScale = scale;
             HostWindowReady?.Invoke();
+        }
+
+        // ---- where a top-level control is on screen ------------------------------------------------
+        //
+        // A control that puts a REAL native thing over its rectangle -- a web engine's view, an
+        // <iframe> -- has to know which native window its form is presented in, and where. With the
+        // driver's own top-level hosts (Win32Host, CocoaHost) the form IS the host window, at its
+        // origin, and HostWindow says everything. It does not when the form is presented somewhere
+        // else: WindowsFormsHost presents its container form inside a WPF window at the host
+        // element's position, which moves with layout and scrolling; the browser head presents the
+        // form, frame and all, onto a canvas. Those presenters register a placement for the
+        // top-level control they present, and the overlay controls ask TryPlace instead of assuming
+        // HostWindow at the origin.
+
+        /// <summary>Where a presented top-level control is: its native <c>Window</c>; the driver
+        /// screen point (<c>OriginX</c>, <c>OriginY</c>) that is drawn at device pixel (<c>X</c>,
+        /// <c>Y</c>) of that window; the driver-unit to device-pixel <c>Scale</c>; and whether it is
+        /// being shown at all.</summary>
+        internal delegate (IntPtr Window, float X, float Y, int OriginX, int OriginY, float Scale, bool Visible) Placement();
+
+        private static readonly Dictionary<Control, Placement> s_placements = new();
+
+        /// <summary>Raised when a placement is registered, withdrawn or has moved: overlay controls
+        /// that have not found their window yet try again, and the rest re-place themselves.</summary>
+        internal static event Action<Control> PlacementChanged;
+
+        /// <summary>Register (or, with null, withdraw) how <paramref name="topLevel"/> is presented.</summary>
+        internal static void SetPlacement(Control topLevel, Placement placement)
+        {
+            if (topLevel == null) return;
+            lock (s_lock)
+            {
+                if (placement == null) s_placements.Remove(topLevel);
+                else s_placements[topLevel] = placement;
+            }
+            RaisePlacementChanged(topLevel);
+        }
+
+        /// <summary><paramref name="topLevel"/>'s placement moved (or was shown or hidden).</summary>
+        internal static void RaisePlacementChanged(Control topLevel) => PlacementChanged?.Invoke(topLevel);
+
+        /// <summary>Whether <paramref name="control"/> is inside <paramref name="topLevel"/> (or is it).</summary>
+        internal static bool IsWithin(Control control, Control topLevel)
+        {
+            Control top = control;
+            while (top?.Parent != null) top = top.Parent;
+            return top != null && ReferenceEquals(top, topLevel);
+        }
+
+        /// <summary>Where <paramref name="control"/>'s rectangle is, in device pixels of the native
+        /// window it is presented in. False when it is not presented anywhere yet.</summary>
+        internal static bool TryPlace(Control control, out IntPtr window, out Rectangle device, out float scale, out bool visible)
+        {
+            window = IntPtr.Zero; device = Rectangle.Empty; scale = 1f; visible = false;
+            if (control == null) return false;
+
+            Control top = control;
+            while (top.Parent != null) top = top.Parent;
+
+            Placement placement;
+            lock (s_lock) s_placements.TryGetValue(top, out placement);
+
+            if (placement != null)
+            {
+                var p = placement();
+                if (p.Window == IntPtr.Zero) return false;
+                Point screen = control.PointToScreen(Point.Empty);
+                scale = p.Scale > 0 ? p.Scale : 1f;
+                window = p.Window;
+                visible = p.Visible;
+                device = new Rectangle(
+                    (int)Math.Round(p.X + (screen.X - p.OriginX) * scale),
+                    (int)Math.Round(p.Y + (screen.Y - p.OriginY) * scale),
+                    (int)Math.Round(control.Width * scale),
+                    (int)Math.Round(control.Height * scale));
+                return true;
+            }
+
+            if (HostWindow == IntPtr.Zero) return false;
+
+            // The driver's own top-level host: the form fills the host window from its origin.
+            Point origin = Point.Empty;
+            for (Control c = control; c is not null && c is not Form; c = c.Parent)
+                origin.Offset(c.Left, c.Top);
+            scale = HostScale <= 0 ? 1f : HostScale;
+            window = HostWindow;
+            visible = true;
+            device = new Rectangle(
+                (int)Math.Round(origin.X * scale), (int)Math.Round(origin.Y * scale),
+                (int)Math.Round(control.Width * scale), (int)Math.Round(control.Height * scale));
+            return true;
         }
 
         internal static void Register(IEmbeddedScene item)

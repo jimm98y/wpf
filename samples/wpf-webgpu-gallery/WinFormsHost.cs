@@ -80,7 +80,9 @@ internal sealed class WinFormsHost : FrameworkElement
             _driver = xplat.GetField("driver", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
             var dt = _driver.GetType();
             MethodInfo M(string n) => dt.GetMethod(n, BindingFlags.NonPublic | BindingFlags.Instance);
-            _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
+            // This form's windows only: GetPresentWindows answers EVERY visible window in the driver,
+            // so with a real WindowsFormsHost on the same page this card drew that host's controls too.
+            _getPresent = M("GetSubtreeWindows") ?? M("GetPresentWindows"); _getScene = M("GetWindowScene");
             _getVersion = M("GetPaintVersion"); _getSize = M("GetWindowSizePacked");
             _getCaret = M("GetCaret");
             _down = M("InjectMouseDown"); _up = M("InjectMouseUp"); _move = M("InjectMouseMove");
@@ -95,6 +97,7 @@ internal sealed class WinFormsHost : FrameworkElement
             // Self-drive: pump WinForms + re-register the scene every WPF render frame, and keep frames
             // coming, so the embedded controls stay live regardless of the host app's own render loop.
             CompositionTarget.Rendering += (s, e) => { UpdateFrame(); InvalidateVisual(); };
+            Unloaded += (s, e) => EmbeddedContent.Withdraw(this);
         }
 
         // ---- input: forward WPF mouse/keyboard over this element to the WinForms driver -------------
@@ -181,7 +184,8 @@ internal sealed class WinFormsHost : FrameworkElement
             SWF.Application.DoEvents();
 
             var src = PresentationSource.FromVisual(this);
-            if (src == null || !IsVisible) return;         // not laid out yet
+            if (src == null || !IsVisible) { EmbeddedContent.Withdraw(this); return; }   // not laid out yet, or hidden
+            IntPtr window = (src as System.Windows.Interop.HwndSource)?.Handle ?? IntPtr.Zero;
             double dpi = src.CompositionTarget.TransformToDevice.M11;
             Point o;
             try { o = this.TransformToAncestor(src.RootVisual).Transform(new Point(0, 0)); }
@@ -208,9 +212,11 @@ internal sealed class WinFormsHost : FrameworkElement
                 float py = hostDevY + ((int)wins[i + 2] - oy) * (float)dpi;
                 if (diag) Console.Error.WriteLine($"  win h=0x{((long)h):x} scr=({wins[i + 1]},{wins[i + 2]}) size={w}x{hh} -> dev rect=({px},{py} {w * (float)dpi}x{hh * (float)dpi})");
                 items.Add(new EmbeddedItem { Scene = scene, DeviceX = px, DeviceY = py,
-                                             DeviceW = w * (float)dpi, DeviceH = hh * (float)dpi, Scale = (float)dpi });
+                                             DeviceW = w * (float)dpi, DeviceH = hh * (float)dpi, Scale = (float)dpi,
+                                             Window = window });
             }
-            EmbeddedContent.Set(items);
+            // Published under this host, so a real WindowsFormsHost on the same page keeps its own set.
+            EmbeddedContent.Set(this, items);
 
             // Text caret: the driver tracks CreateCaret/SetCaretPos + blink (toggled by WinForms' blink
             // timer, which our DoEvents pump advances). Place it in device pixels on top of the controls.
@@ -221,10 +227,10 @@ internal sealed class WinFormsHost : FrameworkElement
                 if (vis)
                 {
                     int cx = (int)a[0], cy = (int)a[1], cw = (int)a[2], ch = (int)a[3];
-                    EmbeddedContent.SetCaret(hostDevX + (cx - ox) * (float)dpi, hostDevY + (cy - oy) * (float)dpi,
+                    EmbeddedContent.SetCaret(this, window, hostDevX + (cx - ox) * (float)dpi, hostDevY + (cy - oy) * (float)dpi,
                                              Math.Max(1, cw) * (float)dpi, ch * (float)dpi, true);
                 }
-                else EmbeddedContent.SetCaret(0, 0, 0, 0, false);
+                else EmbeddedContent.SetCaret(this, window, 0, 0, 0, 0, false);
             }
         }
 

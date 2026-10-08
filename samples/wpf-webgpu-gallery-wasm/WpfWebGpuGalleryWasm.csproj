@@ -279,6 +279,7 @@
          Built from src/Microsoft.DotNet.Wpf/src/WebView2 into artifacts/bin, outside the sln. -->
     <Reference Include="Microsoft.Web.WebView2.Core"><HintPath>..\..\artifacts\bin\Microsoft.Web.WebView2.Core\Release\net10.0\Microsoft.Web.WebView2.Core.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Microsoft.Web.WebView2.Wpf"><HintPath>..\..\artifacts\bin\Microsoft.Web.WebView2.Wpf\Release\net10.0\Microsoft.Web.WebView2.Wpf.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Web.WebView2.WinForms"><HintPath>..\..\artifacts\bin\Microsoft.Web.WebView2.WinForms\Release\net10.0\Microsoft.Web.WebView2.WinForms.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="WindowsFormsIntegration"><HintPath>..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\integration\bin\Release\net10.0\WindowsFormsIntegration.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>
 
@@ -417,7 +418,8 @@
                        ..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\sysdrawing\System.Drawing.WebGpu.csproj;
                        ..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\System.Windows.Forms.WebGpu.csproj;
                        ..\..\src\Microsoft.DotNet.Wpf\src\WinFormsInterop\integration\WindowsFormsIntegration.WebGpu.csproj;
-                       ..\..\src\Microsoft.DotNet.Wpf\src\WebView2\Microsoft.Web.WebView2.Wpf\Microsoft.Web.WebView2.Wpf.csproj"
+                       ..\..\src\Microsoft.DotNet.Wpf\src\WebView2\Microsoft.Web.WebView2.Wpf\Microsoft.Web.WebView2.Wpf.csproj;
+                       ..\..\src\Microsoft.DotNet.Wpf\src\WebView2\Microsoft.Web.WebView2.WinForms\Microsoft.Web.WebView2.WinForms.csproj"
              Targets="Build" Properties="Configuration=Release" BuildInParallel="false" />
   </Target>
 

@@ -51,6 +51,11 @@ namespace System.Windows.Forms
         {
             _bridge = new HtmlBridge(() => _backend);
 
+            // A presenter other than the driver's own host (WindowsFormsHost, the browser head)
+            // registers where it shows its form; that is both how this control finds a window to
+            // start in and how it hears that its form moved without it moving inside the form.
+            EmbeddedScenes.PlacementChanged += OnPlacementChanged;
+
             if (EmbeddedScenes.HostWindow != IntPtr.Zero)
             {
                 BeginInitialize();
@@ -80,11 +85,37 @@ namespace System.Windows.Forms
             }
         }
 
+        private void OnPlacementChanged(Control topLevel)
+        {
+            // Only this control's own form: presenters on other UI threads raise this too.
+            if (_disposed || !EmbeddedScenes.IsWithin(this, topLevel))
+            {
+                return;
+            }
+
+            if (_backend is not null)
+            {
+                UpdateEngineBounds();
+                return;
+            }
+
+            // Swallowed for the reason OnHostWindowReady gives: this runs inside the presenter.
+            try
+            {
+                BeginInitialize();
+            }
+            catch (Exception ex)
+            {
+                _initializationFailure = ex;
+            }
+        }
+
         private Exception _initializationFailure;
 
         private void BeginInitialize()
         {
-            if (_backend is not null || _disposed || EmbeddedScenes.HostWindow == IntPtr.Zero)
+            if (_backend is not null || _disposed
+                || !EmbeddedScenes.TryPlace(this, out IntPtr parentWindow, out _, out _, out _))
             {
                 return;
             }
@@ -97,7 +128,7 @@ namespace System.Windows.Forms
                     "No web engine is available on this platform, so web content cannot be hosted.");
             }
 
-            _hostWindow = WebViewHostWindow.Create(EmbeddedScenes.HostWindow,
+            _hostWindow = WebViewHostWindow.Create(parentWindow,
                                                    Math.Max(1, Width), Math.Max(1, Height));
 
             if (_hostWindow == IntPtr.Zero)
@@ -127,18 +158,8 @@ namespace System.Windows.Forms
             // dispatched -- which is how this first failed, with the engine starting perfectly and
             // the control never hearing about it. A Timer tick IS dispatched, by the driver's own
             // loop, on the UI thread.
-            var watch = new Timer { Interval = 10 };
-
-            watch.Tick += (s, e) =>
+            void Attached()
             {
-                if (!attach.IsCompleted)
-                {
-                    return;
-                }
-
-                watch.Stop();
-                watch.Dispose();
-
                 if (attach.IsFaulted)
                 {
                     _initializationFailure = attach.Exception?.GetBaseException();
@@ -155,6 +176,28 @@ namespace System.Windows.Forms
                 Action pending = _pending;
                 _pending = null;
                 pending?.Invoke();
+            }
+
+            // An engine that is up by the time AttachAsync returns (the browser's iframe is) needs
+            // no watching -- and must not wait for a Timer the host may not be ticking yet.
+            if (attach.IsCompleted)
+            {
+                Attached();
+                return;
+            }
+
+            var watch = new Timer { Interval = 10 };
+
+            watch.Tick += (s, e) =>
+            {
+                if (!attach.IsCompleted)
+                {
+                    return;
+                }
+
+                watch.Stop();
+                watch.Dispose();
+                Attached();
             };
 
             watch.Start();
@@ -402,13 +445,14 @@ namespace System.Windows.Forms
         protected override void OnVisibleChanged(EventArgs e)
         {
             base.OnVisibleChanged(e);
-            _backend?.SetVisible(Visible);
+            UpdateEngineBounds();
         }
 
         /// <summary>
-        /// Move the engine's window to wherever this control now sits. The control's coordinates are
-        /// in the driver's form space and the engine's window is a child of the HOST's window, so the
-        /// position is walked up the control tree to the form and scaled to device pixels.
+        /// Move the engine's window to wherever this control now sits, and show it only while both
+        /// the control and whatever presents its form are visible. The control's coordinates are in
+        /// the driver's form space and the engine's window is a child of the native window the form
+        /// is presented in, so EmbeddedScenes maps the rectangle there, in device pixels.
         /// </summary>
         private void UpdateEngineBounds()
         {
@@ -417,24 +461,15 @@ namespace System.Windows.Forms
                 return;
             }
 
-            Point origin = Point.Empty;
-
-            for (Control c = this; c is not null && c is not Form; c = c.Parent)
+            if (!EmbeddedScenes.TryPlace(this, out _, out Rectangle device, out float scale, out bool shown))
             {
-                origin.Offset(c.Left, c.Top);
+                return;
             }
 
-            float scale = EmbeddedScenes.HostScale <= 0 ? 1f : EmbeddedScenes.HostScale;
+            WebViewHostWindow.Move(_hostWindow, device.X, device.Y, device.Width, device.Height);
 
-            int w = (int)Math.Round(Width * scale);
-            int h = (int)Math.Round(Height * scale);
-
-            WebViewHostWindow.Move(_hostWindow,
-                                   (int)Math.Round(origin.X * scale),
-                                   (int)Math.Round(origin.Y * scale),
-                                   w, h);
-
-            _backend.SetBounds(0, 0, w, h, scale);
+            _backend.SetBounds(0, 0, device.Width, device.Height, scale);
+            _backend.SetVisible(Visible && shown);
         }
 
         // ---- events -------------------------------------------------------------------------------------
@@ -771,6 +806,7 @@ namespace System.Windows.Forms
             {
                 _disposed = true;
                 EmbeddedScenes.HostWindowReady -= OnHostWindowReady;
+                EmbeddedScenes.PlacementChanged -= OnPlacementChanged;
 
                 if (_sinkCreated)
                 {

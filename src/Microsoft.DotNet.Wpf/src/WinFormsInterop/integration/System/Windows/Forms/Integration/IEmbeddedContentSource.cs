@@ -10,8 +10,8 @@ namespace System.Windows.Forms.Integration
     /// Something whose WinForms window scenes are published into the WPF scene each frame.
     /// </summary>
     /// <remarks>
-    /// EmbeddedContent.Set replaces the entire hosted set, so exactly one component may publish.
-    /// WindowsFormsHost owns that tick; anything else that wants to be composited - an
+    /// WindowsFormsHost's per-thread tick pumps WinForms once a frame and publishes one set into
+    /// EmbeddedContent; anything else of this assembly's that wants to be composited - an
     /// HwndHost-derived host claimed through HwndHostForeignContent, for instance - contributes
     /// through this interface instead of running a tick of its own.
     /// </remarks>

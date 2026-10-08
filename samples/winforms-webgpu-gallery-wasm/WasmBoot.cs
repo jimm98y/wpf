@@ -52,6 +52,33 @@ internal static class WasmBoot
             cb.CheckedChanged += (s, e) => Console.WriteLine($"CheckBox -> {cb.Checked}");
             list.SelectedIndexChanged += (s, e) => Console.WriteLine($"List -> {list.SelectedItem}");
 
+            // ?args=web: a WebBrowser, which on this head is an <iframe> laid over the canvas at the
+            // control's rectangle, plus buttons that hide it and move/resize it.
+            WebBrowser web = null;
+            Button webHide = null, webMove = null;
+            if (Array.IndexOf(args, "web") >= 0)
+            {
+                f.Height = 560;
+                web = new WebBrowser { Left = 12, Top = 345, Width = 420, Height = 150 };
+                webHide = new Button { Text = "Hide web", Left = 12, Top = 262, Width = 100, Height = 28 };
+                webMove = new Button { Text = "Move web", Left = 120, Top = 262, Width = 100, Height = 28 };
+                webHide.Click += (s, e) =>
+                {
+                    web.Visible = !web.Visible;
+                    webHide.Text = web.Visible ? "Hide web" : "Show web";
+                    Console.WriteLine($"WEB visible={web.Visible}");
+                };
+                bool moved = false;
+                webMove.Click += (s, e) =>
+                {
+                    moved = !moved;
+                    web.SetBounds(moved ? 120 : 12, moved ? 380 : 345, moved ? 300 : 420, moved ? 110 : 150);
+                    Console.WriteLine($"WEB bounds={web.Bounds}");
+                };
+                web.DocumentCompleted += (s, e) => Console.WriteLine($"WEB DocumentCompleted {e.Url}");
+                f.Controls.Add(web); f.Controls.Add(webHide); f.Controls.Add(webMove);
+            }
+
             f.CreateControl();
             f.Show();
             foreach (Control c in Flatten(f)) c.Invalidate(true);
@@ -60,6 +87,19 @@ internal static class WasmBoot
             IWinFormsHost host = new BrowserHost(f);
             host.Show();
             Console.WriteLine("WinFormsWasm: window shown; entering async pump.");
+
+            if (web != null)
+            {
+                web.DocumentText =
+                    "<html><body style='margin:0;background:#cfe8cf;font:15px sans-serif'>" +
+                    "<div style='border:3px solid #2a7a2a;height:calc(100vh - 6px);box-sizing:border-box;padding:6px'>" +
+                    "WinForms WebBrowser in the browser: an iframe at the control's rectangle</div></body></html>";
+                foreach (Control c in new Control[] { webHide, webMove, web })
+                {
+                    Point p = c.PointToScreen(new Point(c.Width / 2, c.Height / 2));
+                    Console.WriteLine($"WEB-BTN {(c == web ? "web" : c.Text.Replace(' ', '_'))} {p.X - f.Left} {p.Y - f.Top}");
+                }
+            }
 
             // Self-scheduling message loop: never blocks the browser thread.
             while (true)
