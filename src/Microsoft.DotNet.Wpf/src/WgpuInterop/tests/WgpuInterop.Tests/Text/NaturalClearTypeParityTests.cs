@@ -342,6 +342,69 @@ namespace WgpuInterop.Tests.Text
             [("tahoma", 2)] = 0, [("segoeui", 2)] = 0, [("tahoma", 1)] = 0, [("segoeui", 1)] = 0, [("sylfaen", 0)] = 0, [("sylfaen", 1)] = 0, [("sylfaen", 3)] = 0,
         };
 
+        /// <summary>Arial's Arabic composites (a letter and its dots, shadda with a vowel mark) about
+        /// the size its prep stops asking for dropout control (17 -> 18ppem, where its 'gasp' also
+        /// turns symmetric: a coincidence), 16..36ppem, glyph by glyph, in the natural modes and
+        /// GDI_CLASSIC. WPF_NATURAL_GIDS=lo-hi widens the glyph range,
+        /// WPF_NATURAL_SIZES=a,b,... the sizes.</summary>
+        [Fact]
+        public void ArialArabicCompositesAreDirectWritesTexture()
+        {
+            string file = Environment.GetEnvironmentVariable("WPF_NATURAL_FACE") is { Length: > 0 } ff ? ff : "arial";
+            string? path = FontPath(file);
+            Assert.SkipWhen(path is null, "needs the Windows face and DirectWrite");
+            var font = new TrueTypeFont(File.ReadAllBytes(path!));
+            IntPtr face = DWriteOracle.FontFace(path!);
+            int lo = 700, hi = 1400;
+            if (Environment.GetEnvironmentVariable("WPF_NATURAL_GIDS") is { Length: > 0 } gr)
+            { string[] e = gr.Split('-'); lo = int.Parse(e[0]); hi = int.Parse(e[^1]); }
+            float[] sizes = Environment.GetEnvironmentVariable("WPF_NATURAL_SIZES") is { Length: > 0 } sz
+                ? sz.Split(',').Select(float.Parse).ToArray()
+                : new[] { 16f, 17f, 18f, 19f, 20f, 22f, 24f, 26f, 28f, 30f, 32f, 36f };
+            var misses = new List<string>();
+            int total = 0;
+            long sum = 0;
+            foreach (float em in sizes)
+                for (int gid = lo; gid <= hi && gid < font.GlyphCount; gid++)
+                {
+                    if (!font.IsCompositeGlyphId(gid)) continue;
+                    for (int classic = 0; classic < 2; classic++)
+                    {
+                        int mode = classic == 1 ? 2 : DWriteOracle.RecommendedMode(face, em);
+                        if (classic == 0 && mode != 4 && mode != 5) continue;
+                        int nSub = mode == 5 ? 5 : 1;
+                        byte[] theirs = DWriteOracle.AlphaTexture(face, em, new[] { (ushort)gid }, new[] { 0f }, null, mode,
+                            out int tl, out int tt, out int tr, out int tb, measuring: classic);
+                        NaturalClearType.GlyphBits bits = classic == 1
+                            ? NaturalClearType.RasterizeGdiClassic(font, gid, em)
+                            : NaturalClearType.Rasterize(font, gid, em, nSub);
+                        byte[] ours = NaturalClearType.RunTexture(new[] { bits }, new[] { 0f }, new[] { 0f },
+                            out int ol, out int ot, out int ow, out int oh, nSub);
+                        total++;
+                        long d = Diff(theirs, tl, tt, tr - tl, tb - tt, ours, ol, ot, ow, oh);
+                        sum += d;
+                        if (d != 0) misses.Add($"{(classic == 1 ? "g" : "")}{em}:{gid}={d}");
+                        if (Environment.GetEnvironmentVariable("WPF_NATURAL_SHOW") == $"{(classic == 1 ? "g" : "")}{em}/{gid}")
+                        {
+                            Report("DWRITE " + Show(theirs, tl, tt, tr - tl, tb - tt));
+                            Report("OURS   " + Show(ours, ol, ot, ow, oh));
+                        }
+                    }
+                }
+            Report($"ARABIC {file} [{lo},{hi}]: {total - misses.Count}/{total} exact, sum {sum}; by size "
+                   + string.Join(" ", misses.GroupBy(m => m[..m.IndexOf(':')]).Select(g => $"{g.Key}x{g.Count()}"))
+                   + $"; {string.Join(" ", misses.Take(60))}");
+            if (Environment.GetEnvironmentVariable("WPF_NATURAL_REPORT") is null)
+                Assert.True(misses.Count <= ArabicCompositeCeiling,
+                    $"{misses.Count} of {total} differ (ceiling {ArabicCompositeCeiling}): {string.Join(" ", misses.Take(40))}");
+        }
+
+        /// <summary>RATCHET. These were 1,838 of 8,088 (sum 554,679) at 18ppem and up, every one a
+        /// composite whose components alone matched: DirectWrite scans a composite with the scan
+        /// word its elements merge into it, a simple element contributing its word whether or not
+        /// its program changed it (see TrueTypeFont.DWriteScanRule). Never raise it.</summary>
+        private const int ArabicCompositeCeiling = 0;
+
         [Theory]
         [MemberData(nameof(Faces))]
         public void RunsAreDirectWritesTexture(string file)

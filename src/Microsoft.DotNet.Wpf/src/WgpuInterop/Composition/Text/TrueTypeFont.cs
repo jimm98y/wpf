@@ -1922,13 +1922,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// it runs -- overwrites the result. Returns the renderer's DropoutForRun value (scan type
         /// + 1, or 0 for none), or -1 when nothing was recorded.</summary>
         internal int GlyphDropout(int gid, float pixelsPerEm)
-            => s_perGlyphScan && _glyphScan.TryGetValue((gid, SpanSizeKey(pixelsPerEm)), out int t)
+            => s_perGlyphScan && _glyphScan.TryGetValue((gid, SpanSizeKey(pixelsPerEm), DWriteScanRule), out int t)
                ? ((t & 2) != 0 ? 0 : t + 1) : -1;
+
+        /// <summary>DIRECTWRITE'S SCALER MERGES DIFFERENTLY. Its fsg_ExecuteGlyph@180078e70 writes a
+        /// SIMPLE element's scan word (+0x98) unconditionally -- fsg_DoScanControl(SCANCTRL, ppem) ?
+        /// SCANTYPE : 2 from what its program left, or prep's -- where fontdrvhost writes it only
+        /// when the program changed the scan state; only the composite branch asks whether its own
+        /// program changed anything (fsg_CompositeInnerGridFit's flag out of itrp_ExecuteGlyphPgm).
+        /// The merge itself (fsg_MergeGlyphData@18007a2a8: first child as it is, the rest
+        /// (child &amp; 3 | 4) &amp; parent) is the same. Arial's Arabic composites at 18ppem and up
+        /// have a shadda or a dot group whose word is prep's 2 (no dropout) beside a mark whose
+        /// program sets SCANTYPE 1: DirectWrite merges 2 then (1 &amp; 3 | 4) &amp; 2 = 0 and scans the
+        /// composite with dropout control, fontdrvhost's rule (and the composite's own prep word
+        /// we used) without. Every DirectWrite mode: the natural ones and GDI_CLASSIC.</summary>
+        private static bool DWriteScanRule => TrueTypeInterpreter.DWriteFlags != 0 || GdiClassicFit;
+
+        private static readonly bool s_dwriteScanMerge =
+            Environment.GetEnvironmentVariable("WPF_DW_SCAN_MERGE") != "0";
 
         private static readonly bool s_perGlyphScan =
             Environment.GetEnvironmentVariable("WPF_CT_SCAN_PERGLYPH") != "0";
 
-        private readonly Dictionary<(int, long), int> _glyphScan = new();
+        private readonly Dictionary<(int, long, bool), int> _glyphScan = new();
         [ThreadStatic] private static int[]? s_scanAcc;
 
         private void RecordScanType(TrueTypeInterpreter interpreter, GlyphProgram glyph, int gid,
@@ -1943,7 +1959,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // The parent's accumulator starts empty (0xffff) for each composite.
                 int acc = glyph.Composite ? s_scanAcc[depth + 1] : -1;
                 int mine;
-                if (s_scanChangedOnly)
+                bool changedHere = glyph.ScanControl >= 0
+                                   && (glyph.ScanControl != interpreter.PrepScanControl
+                                       || glyph.ScanType != interpreter.PrepScanType);
+                if (s_dwriteScanMerge && DWriteScanRule)
+                    mine = glyph.Composite ? (changedHere || acc < 0 ? own : acc) : own;
+                else if (s_scanChangedOnly)
                 {
                     // AN ELEMENT ONLY SAYS SOMETHING IF ITS PROGRAM CHANGED THE SCAN STATE.
                     // itrp_ExecuteGlyphPgm@140037320 reports `gs+0x84 != gs+0x44` -- the glyph's
@@ -1975,7 +1996,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     if (mine < 0)
                         mine = DoScanControl(interpreter.PrepScanControl, (int) MathF.Round(pixelsPerEm))
                                ? interpreter.PrepScanType : 2;
-                    _glyphScan[(gid, SpanSizeKey(pixelsPerEm))] = mine;
+                    _glyphScan[(gid, SpanSizeKey(pixelsPerEm), DWriteScanRule)] = mine;
                 }
             }
         }
@@ -2652,13 +2673,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeInterpreter.SimBoldAdvanceUnits = 0;
                 SubpixelFitting = !bi;
 
-                glyph = (short)U16(_glyfOffset + (int)start) >= 0
+                bool composite = (short)U16(_glyfOffset + (int)start) < 0;
+                if (composite) ResetScanAcc(0);
+                glyph = !composite
                     ? ReadGlyphProgram(glyphId)
                     : ReadCompositeProgram(interpreter, glyphId, pixelsPerEm, 0);
                 if (glyph is null || !interpreter.Hint(glyph, pixelsPerEm)) return null;
                 int ctrl = glyph.ScanControl >= 0 ? glyph.ScanControl : interpreter.PrepScanControl;
                 int type = glyph.ScanType >= 0 ? glyph.ScanType : interpreter.PrepScanType;
                 int scan = DoScanControl(ctrl, (int)MathF.Round(pixelsPerEm, MidpointRounding.AwayFromZero)) ? type : 2;
+                // A composite whose own program left the scan state alone is scanned with what its
+                // elements merged into it (see DWriteScanRule).
+                if (composite && s_dwriteScanMerge && s_scanAcc is { } acc && acc[1] >= 0
+                    && !(glyph.ScanControl >= 0 && (glyph.ScanControl != interpreter.PrepScanControl
+                                                    || glyph.ScanType != interpreter.PrepScanType)))
+                    scan = acc[1];
                 dropout = (scan & 2) != 0 ? 0 : scan + 1;
             }
             finally
@@ -2935,10 +2964,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         /// <summary>True if the glyph for <paramref name="c"/> is a composite glyph.</summary>
-        public bool IsCompositeGlyph(char c)
+        public bool IsCompositeGlyph(char c) => IsCompositeGlyphId(_cmap.Map(c));
+
+        /// <summary>True if glyph <paramref name="gid"/> is a composite glyph.</summary>
+        internal bool IsCompositeGlyphId(int gid)
         {
-            int gid = _cmap.Map(c);
-            if (gid == 0 || _loca.Length == 0) return false;
+            if (gid <= 0 || gid >= _numGlyphs || _loca.Length == 0) return false;
             uint start = _loca[gid], end = _loca[gid + 1];
             if (end <= start) return false;
             return (short)U16(_glyfOffset + (int)start) < 0;
@@ -3795,7 +3826,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (s_twoPassGlyph && !TrueTypeInterpreter.BiLevelPass && SubpixelFitting)
                     interpreter.Hint(glyph, pixelsPerEm);
                 hinted = interpreter.Hint(glyph, pixelsPerEm);
-                if (hinted && !TrueTypeInterpreter.BiLevelPass && !s_measuringCtSpan)
+                if (hinted && (!TrueTypeInterpreter.BiLevelPass || TrueTypeInterpreter.DWriteFlags != 0) && !s_measuringCtSpan)
                     RecordScanType(interpreter, glyph, gid, pixelsPerEm, depth);
                 // THE SIMULATED BOLD, AS GDI APPLIES IT: once, to the whole glyph tree, after its
                 // programs and in both passes -- see GdiEmbolden.
