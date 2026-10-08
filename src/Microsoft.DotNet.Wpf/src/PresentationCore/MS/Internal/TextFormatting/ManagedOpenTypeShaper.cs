@@ -698,15 +698,30 @@ namespace MS.Internal.TextFormatting
         private static bool IsIndicVirama(char c) => c >= '\u0900' && c <= '\u0D7F' && (c & 0x7F) == 0x4D;
 
         /// <summary>
-        ///  The two-part vowel signs that start BEFORE their consonant, as their canonical
-        ///  decompositions: Bengali o/au, Oriya ai/o/au, Tamil o/oo/au, Malayalam o/oo/au.
+        ///  The vowel signs DirectWrite shapes as their canonical decompositions -- the two-part
+        ///  (and Kannada's three-part) vowels: Bengali o/au, Oriya ai/o/au, Tamil o/oo/au, Telugu
+        ///  ai, Kannada ii/ee/ai/o/oo, Malayalam o/oo/au. Kannada "prii" comes back as its i-sign
+        ///  and a U+0CD5 length mark.
         /// </summary>
-        private static (char Pre, char Post)? SplitMatra(char c) => c switch
+        private static string SplitMatra(char c) => c switch
         {
-            '\u09CB' => ('\u09C7', '\u09BE'), '\u09CC' => ('\u09C7', '\u09D7'),
-            '\u0B48' => ('\u0B47', '\u0B56'), '\u0B4B' => ('\u0B47', '\u0B3E'), '\u0B4C' => ('\u0B47', '\u0B57'),
-            '\u0BCA' => ('\u0BC6', '\u0BBE'), '\u0BCB' => ('\u0BC7', '\u0BBE'), '\u0BCC' => ('\u0BC6', '\u0BD7'),
-            '\u0D4A' => ('\u0D46', '\u0D3E'), '\u0D4B' => ('\u0D47', '\u0D3E'), '\u0D4C' => ('\u0D46', '\u0D57'),
+            '\u09CB' => "\u09C7\u09BE",
+            '\u09CC' => "\u09C7\u09D7",
+            '\u0B48' => "\u0B47\u0B56",
+            '\u0B4B' => "\u0B47\u0B3E",
+            '\u0B4C' => "\u0B47\u0B57",
+            '\u0BCA' => "\u0BC6\u0BBE",
+            '\u0BCB' => "\u0BC7\u0BBE",
+            '\u0BCC' => "\u0BC6\u0BD7",
+            '\u0C48' => "\u0C46\u0C56",
+            '\u0CC0' => "\u0CBF\u0CD5",
+            '\u0CC7' => "\u0CC6\u0CD5",
+            '\u0CC8' => "\u0CC6\u0CD6",
+            '\u0CCA' => "\u0CC6\u0CC2",
+            '\u0CCB' => "\u0CC6\u0CC2\u0CD5",
+            '\u0D4A' => "\u0D46\u0D3E",
+            '\u0D4B' => "\u0D47\u0D3E",
+            '\u0D4C' => "\u0D46\u0D57",
             _ => null,
         };
 
@@ -720,22 +735,27 @@ namespace MS.Internal.TextFormatting
         {
             for (int c = 0; c < charCount; c++)
             {
-                if (SplitMatra(text[c]) is not (char pre, char post)) continue;
-                if (!glyphTypeface.CharacterToGlyphMap.TryGetValue(pre, out ushort preGlyph) || preGlyph == 0) continue;
-                if (!glyphTypeface.CharacterToGlyphMap.TryGetValue(post, out ushort postGlyph) || postGlyph == 0) continue;
+                if (SplitMatra(text[c]) is not string parts) continue;
+                var partGlyphs = new ushort[parts.Length];
+                bool mapped = true;
+                for (int k = 0; k < parts.Length && mapped; k++)
+                {
+                    mapped = glyphTypeface.CharacterToGlyphMap.TryGetValue(parts[k], out partGlyphs[k]) && partGlyphs[k] != 0;
+                }
+                if (!mapped) continue;
 
                 int g = charmap[c];
                 if (g >= glyphInfo.Length || (c > 0 && charmap[c - 1] == g) || (c + 1 < charCount && charmap[c + 1] == g)) continue;
-                glyphInfo.Insert(g, 1);
-                glyphInfo.Glyphs[g] = preGlyph;
-                glyphInfo.Glyphs[g + 1] = postGlyph;
-                for (int k = g; k <= g + 1; k++)
+                int extra = parts.Length - 1;
+                glyphInfo.Insert(g, extra);
+                for (int k = 0; k < parts.Length; k++)
                 {
-                    glyphInfo.GlyphFlags[k] = (ushort)GlyphFlags.Unresolved;
-                    glyphInfo.FirstChars[k] = (ushort)c;
-                    glyphInfo.LigatureCounts[k] = 1;
+                    glyphInfo.Glyphs[g + k] = partGlyphs[k];
+                    glyphInfo.GlyphFlags[g + k] = (ushort)GlyphFlags.Unresolved;
+                    glyphInfo.FirstChars[g + k] = (ushort)c;
+                    glyphInfo.LigatureCounts[g + k] = 1;
                 }
-                for (int k = c + 1; k < charCount; k++) charmap[k] = (ushort)(charmap[k] + 1);
+                for (int k = c + 1; k < charCount; k++) charmap[k] = (ushort)(charmap[k] + extra);
             }
         }
 
@@ -775,6 +795,14 @@ namespace MS.Internal.TextFormatting
         /// stays where it is.)</summary>
         private static bool IsPrefRa(char c) => c is '\u0D30';
 
+        // Bengali puts its reph before a post-base matra ("rbaa": ba, reph, aa); Devanagari after it
+        // ("rvo": va, o, reph, which the face then ligates).
+        private static bool RephBeforePostBase(char ra) => ra is '\u09B0';
+
+        /// <summary>The right-side (post-base) vowel signs of the scripts whose reph precedes them.</summary>
+        private static bool IsPostBaseMatra(char c) => c is '\u093B' or '\u093E' or '\u0940' or '\u0949' or '\u094A' or '\u094B' or '\u094C' or '\u094F'
+            or '\u09BE' or '\u09C0' or '\u09D7' or '\u0ABE' or '\u0AC0' or '\u0AC9' or '\u0ACB' or '\u0ACC';
+
         /// <summary>Ra, whose virama form at the start of a syllable is the reph.</summary>
         private static bool IsIndicRa(char c) => c is '\u0930' or '\u09B0' or '\u0AB0' or '\u0B30'
             or '\u0C30' or '\u0CB0';
@@ -797,19 +825,21 @@ namespace MS.Internal.TextFormatting
                 int reph = ge > gs + 1 && end - c > 2 && IsIndicRa(text[c]) && IsIndicVirama(text[c + 1])
                            && charmap[c + 1] == gs && charmap[c + 2] != gs
                     ? gs : -1;
-                // A pre-base consonant form (Malayalam's virama + ra, 'pref') goes in front of the base.
+                // A pre-base consonant form (Malayalam's virama + ra, 'pref') goes in front of the
+                // consonant it follows -- the base: "stra" is sa, virama, ra-form, ta.
                 for (int i = c + 1; i + 1 < end && ge > gs + 1; i++)
                 {
                     if (!IsIndicVirama(text[i]) || !IsPrefRa(text[i + 1])) continue;
                     int g = charmap[i];
-                    if (g <= gs || g >= ge || charmap[i + 1] != g) continue;   // no pre-base form was made
-                    MoveGlyph(glyphInfo, g, gs);
-                    if (reph >= 0) reph++;
+                    int baseGlyph = charmap[i - 1];
+                    if (g <= gs || g >= ge || charmap[i + 1] != g || baseGlyph >= g) continue;   // no pre-base form was made
+                    MoveGlyph(glyphInfo, g, baseGlyph);
+                    if (reph >= baseGlyph) reph++;
                     break;
                 }
                 for (int i = c + 1; i < end && ge > gs + 1; i++)
                 {
-                    if (!IsPreBaseMatra(text[i]) && SplitMatra(text[i]) is null) continue;
+                    if (!IsPreBaseMatra(text[i]) && !(SplitMatra(text[i]) is string parts && IsPreBaseMatra(parts[0]))) continue;
                     int g = charmap[i];
                     if (g <= gs || g >= ge) continue;   // it went into a ligature: nothing to move
                     MoveGlyph(glyphInfo, g, gs);
@@ -822,6 +852,13 @@ namespace MS.Internal.TextFormatting
                     // face then joins it with: "rtham" is tha, reph+anusvara.
                     int to = ge - 1;
                     while (to > reph && IsSyllableModifier(text[glyphInfo.FirstChars[to]])) to--;
+                    if (RephBeforePostBase(text[c]))
+                    {
+                        for (int g = reph + 1; g <= to; g++)
+                        {
+                            if (IsPostBaseMatra(text[glyphInfo.FirstChars[g]])) { to = g - 1; break; }
+                        }
+                    }
                     MoveGlyphForward(glyphInfo, reph, to);
                 }
                 if (ge > gs)
