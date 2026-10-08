@@ -27,7 +27,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 {
     internal sealed partial class GpMetafileRecorder
     {
-        sealed class PathToGdi
+        internal sealed class PathToGdi
         {
             public bool Valid;
             public int X, Y, W, H;            // +4: the device bounds

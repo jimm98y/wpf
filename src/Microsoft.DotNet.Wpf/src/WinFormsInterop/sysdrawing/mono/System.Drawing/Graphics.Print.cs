@@ -57,10 +57,56 @@ namespace System.Drawing
 			g.print_dpi_x = dpiX > 0 ? dpiX : 600f;
 			g.print_dpi_y = dpiY > 0 ? dpiY : 600f;
 			g.print_visible = visible;
+			int dw = (int) Math.Floor (visible.Right * g.print_dpi_x / 100f + 0.5f), dh = (int) Math.Floor (visible.Bottom * g.print_dpi_y / 100f + 0.5f);
+			g.print_clip = new WebGpuBackend.Gdip.GpGraphics (new Rectangle (0, 0, Math.Max (0, dw), Math.Max (0, dh)), g.print_dpi_x, g.print_dpi_y);
 			return g;
 		}
 
 		bool ManagedState => nativeObject == IntPtr.Zero;
+
+		/// <summary>A printed page's clip, as GDI+ keeps it: in device space, through Save/Restore and
+		/// containers (a context with no pixels; its world-to-device is the page's).</summary>
+		internal WebGpuBackend.Gdip.GpGraphics print_clip;
+
+		/// <summary>A page's clip after any change to it: recorded as the region GDI+ now holds (its
+		/// device rectangles, which a GDI device clips to as DpDriver::SetupClipping does), not as the
+		/// verbs that made it. False when this is not a printed page.</summary>
+		bool PrintRecordClip ()
+		{
+			if (!print_mode || print_clip == null || GpuRecorder == null) return false;
+			GpuRecorder.ResetAllClips ();
+			WebGpuBackend.Gdip.GpRegion app = print_clip.AppClip;
+			if (app == null) return true;
+			WebGpuBackend.Gdip.DpRegion d = app.Device (WebGpuBackend.Gdip.GpMatrix.CreateIdentity ());
+			var rects = new List<int> ();
+			foreach (WebGpuBackend.Gdip.DpRegion.Band b in d.Bands)
+				for (int i = 0; i + 1 < b.X.Length; i += 2) { rects.Add (b.X [i]); rects.Add (b.Top); rects.Add (b.X [i + 1]); rects.Add (b.Bottom); }
+			if (rects.Count == 0) { GpuRecorder.SetClipRect (0, 0, 0, 0, false); return true; }
+			// The rectangles back in world units, under the transform the recorder now has.
+			float [] inv = Invert (PrintDeviceMatrix ());
+			if (inv == null) return true;
+			int n = rects.Count / 4;
+			var xy = new float [n * 8];
+			var types = new byte [n * 4];
+			for (int k = 0; k < n; k++) {
+				float l = rects [k * 4], t = rects [k * 4 + 1], r = rects [k * 4 + 2], b = rects [k * 4 + 3];
+				PointF [] c = { Apply (inv, l, t), Apply (inv, r, t), Apply (inv, r, b), Apply (inv, l, b) };
+				for (int j = 0; j < 4; j++) { xy [k * 8 + j * 2] = c [j].X; xy [k * 8 + j * 2 + 1] = c [j].Y; }
+				types [k * 4] = 0; types [k * 4 + 1] = 1; types [k * 4 + 2] = 1; types [k * 4 + 3] = 0x81;
+			}
+			GpuRecorder.SetRegionClip (xy, types, rects.ToArray ());
+			return true;
+		}
+
+		WebGpuBackend.Gdip.GpGraphics PrintClipState ()
+		{
+			if (print_clip == null) return null;
+			float [] m = PrintDeviceMatrix ();
+			print_clip.SetPage (GraphicsUnit.Pixel, 1f);
+			print_clip.SetPixelOffset (_pixelOffset);
+			print_clip.SetWorld (new WebGpuBackend.Gdip.GpMatrix (m [0], m [1], m [2], m [3], m [4], m [5]));
+			return print_clip;
+		}
 
 		// Recording units per inch: a page's hundredths, a bitmap's own resolution, a screen's 96.
 		float BasePerInch => print_mode ? 100f : mf_rec != null ? mf_rec.DpiX : image_target != null ? image_target.HorizontalResolution : 96f;
@@ -296,6 +342,7 @@ namespace System.Drawing
 			try { pts = path.PathPoints; types = path.PathTypes; nonZero = path.FillMode == FillMode.Winding; }
 			catch (Exception) { return true; }
 			if (pts.Length < 3) return true;
+			if (brush is SolidBrush sb) { PrintSolidPath (sb, pts, types, path.FillMode); return true; }
 			if (PrintRasterFill (brush, path, false)) return true;
 			if (TryHatch (brush, out HatchTile ht)) {
 				foreach (PointF [] sub in FlattenSubpaths (path))
@@ -327,15 +374,100 @@ namespace System.Drawing
 			if (!print_mode || GpuRecorder == null) return false;
 			if (brush == null) throw new ArgumentNullException ("brush");
 			if (w <= 0 || h <= 0) return true;
-			if (brush is SolidBrush) { GpuRecorder.FillRect (x, y, w, h, ArgbOf (brush)); return true; }
+			if (brush is SolidBrush sb) { PrintSolidRects (sb, new [] { new RectangleF (x, y, w, h) }); return true; }
 			if (IsRasterBrush (brush))
-				using (var rp = new GraphicsPath ()) {
+				// DriverPrint::FillRects hands PrivateFillRect an upright rectangle as a WINDING path
+				// (GpGraphics::FillRects fills any other as an alternate one).
+				using (var rp = new GraphicsPath (UprightDevice () ? FillMode.Winding : FillMode.Alternate)) {
 					rp.AddRectangle (new RectangleF (x, y, w, h));
 					if (PrintRasterFill (brush, rp, UprightDevice ())) return true;
 				}
 			if (TryGradient (brush, out GradientDesc gd)) { GpuRecorder.FillShapeGradientSmooth (GradientShape.Rect, x, y, w, h, gd); return true; }
 			return PrintFill (brush, gp => gp.AddRectangle (new RectangleF (x, y, w, h)));
 		}
+
+		/// <summary>FillRectangles on a page: GpGraphics::FillRects hands a solid brush's rectangles to
+		/// the driver in one call (one bounds, one dither); any other brush one rectangle at a time.</summary>
+		internal bool PrintFillRects (Brush brush, RectangleF [] rects)
+		{
+			if (!print_mode || GpuRecorder == null) return false;
+			if (brush is SolidBrush sb) { PrintSolidRects (sb, rects); return true; }
+			foreach (RectangleF r in rects) PrintFillRect (brush, r.X, r.Y, r.Width, r.Height);
+			return true;
+		}
+
+		// ---- solid fills, as DriverPrint puts them to GDI (see backend/PrintGdiFill.cs) ----------
+
+		/// <summary>GpGraphics::FillRects @ a printer: an upright, aliased device takes the rectangles
+		/// to DriverPrint::FillRects @1800ce1e0; anything else fills them as a path.</summary>
+		void PrintSolidRects (SolidBrush brush, RectangleF [] rects)
+		{
+			var list = new List<RectangleF> ();
+			foreach (RectangleF r in rects)
+				if (r.X <= r.Width + r.X && r.Y <= r.Height + r.Y) list.Add (r);
+			if (list.Count == 0) return;
+			if (!UprightDevice () || WebGpuBackend.Gdip.GpRaster.AntialiasMode (gpu_smoothing) != 0) {
+				var pts = new List<PointF> ();
+				var types = new List<byte> ();
+				foreach (RectangleF r in list) {
+					pts.Add (new PointF (r.X, r.Y)); pts.Add (new PointF (r.Right, r.Y));
+					pts.Add (new PointF (r.Right, r.Bottom)); pts.Add (new PointF (r.X, r.Bottom));
+					types.Add (0); types.Add (1); types.Add (1); types.Add (0x81);
+				}
+				PrintSolidPath (brush, pts.ToArray (), types.ToArray (), FillMode.Alternate);
+				return;
+			}
+			// SetupBrush @1800d11f0: an alpha under 2 draws nothing.
+			Color c = brush.Color;
+			if (c.A < 2) return;
+			float [] dev = PrintDeviceMatrix ();
+			var m = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
+			var cr = new WebGpuBackend.Gdip.GpMetafileRecorder.RectFToGdi (list.ToArray (), m, null);
+			if (cr.Rects.Count == 0) return;
+			var fill = NewGdiFill (c, WebGpuBackend.GdiShape.Of (cr));
+			var xy = new float [list.Count * 8];
+			var tp = new byte [list.Count * 4];
+			for (int i = 0; i < list.Count; i++) {
+				RectangleF r = list [i];
+				float [] q = { r.Left, r.Top, r.Right, r.Top, r.Right, r.Bottom, r.Left, r.Bottom };
+				Array.Copy (q, 0, xy, i * 8, 8);
+				tp [i * 4] = 0; tp [i * 4 + 1] = 1; tp [i * 4 + 2] = 1; tp [i * 4 + 3] = 0x81;
+			}
+			GpuRecorder.FillPathPrint (xy, tp, true, c.ToArgb (), fill);
+		}
+
+		/// <summary>DriverPrint::FillPath @1800cded0 of a solid brush: ConvertPathToGdi (flags 0x13)
+		/// of the path, its bounds the draw rectangle GpGraphics::RenderFillPath gives the driver.</summary>
+		void PrintSolidPath (SolidBrush brush, PointF [] pts, byte [] types, FillMode mode)
+		{
+			Color c = brush.Color;
+			if (c.A < 2 || pts.Length < 3) return;
+			float [] dev = PrintDeviceMatrix ();
+			var m = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
+			float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+			foreach (PointF p0 in pts) {
+				PointF p = m.Transform (p0);
+				x0 = Math.Min (x0, p.X); y0 = Math.Min (y0, p.Y); x1 = Math.Max (x1, p.X); y1 = Math.Max (y1, p.Y);
+			}
+			if (!(Math.Abs (x1 - x0) >= 1.1920929e-07f) || !(Math.Abs (y1 - y0) >= 1.1920929e-07f)) return;
+			// RenderFillPath: floor of the origin, ceiling of the far edge, plus one.
+			int bx = (int) Math.Floor (x0), by = (int) Math.Floor (y0);
+			var draw = new Rectangle (bx, by, (int) Math.Ceiling (x1) - bx + 1, (int) Math.Ceiling (y1) - by + 1);
+			WebGpuBackend.Gdip.GpMetafileRecorder.PathToGdi cp;
+			try {
+				cp = new WebGpuBackend.Gdip.GpMetafileRecorder.PathToGdi (new WebGpuBackend.Gdip.GpPath (pts, types, mode), m, 0x13, draw);
+			} catch (Exception) { return; }
+			if (!cp.Valid || cp.IsEmpty) return;
+			var fill = NewGdiFill (c, WebGpuBackend.GdiShape.Of (cp));
+			GpuRecorder.FillPathPrint (ToXY (pts), types, mode == FillMode.Winding, c.ToArgb (), fill);
+		}
+
+		WebGpuBackend.PrintGdiFill NewGdiFill (Color c, WebGpuBackend.GdiShape shape) => new WebGpuBackend.PrintGdiFill {
+			Color = c.R | (c.G << 8) | (c.B << 16),
+			// FillPath / FillRects: under 0xfe, ConvertAlphaToGdi::SetAlpha(alpha, 1, 1).
+			AlphaDib = c.A < 0xfe ? WebGpuBackend.PrintGdiFill.NextAlphaDib (c.A) : null,
+			Shape = shape, DpiX = print_dpi_x, DpiY = print_dpi_y,
+		};
 
 		// DrawImage at a point draws an image at its PHYSICAL size: its pixels at its own resolution.
 		SizeF PrintImageSize (Image image)
@@ -498,17 +630,25 @@ namespace System.Drawing
 				if (!LinearGradientIsStraight (ls, dev, out bool horizontal) || !LinearGradientIsRaster (ls, dev)) return false;
 				return PrintStraightGradient (ls, horizontal, pts, types, nonZero, dev, bx, by, bw, bh);
 			}
-			if (brush is LinearGradientBrush lg && LinearGradientIsOpaque (lg)) {
+			// The bitmap branch takes an opaque brush, or a translucent one whose alpha hardly varies
+			// (IsNearConstant: SetupBrush's alpha is the mean of the least and greatest), which
+			// ConvertBitmapToGdi::StretchBlt @1800d9e60 dithers: the bitmap SRCINVERT, the bounds
+			// PatBlt DPa with the alpha brush, the bitmap SRCINVERT again.
+			int nearAlpha = -1;
+			if (brush is LinearGradientBrush nl && !LinearGradientIsOpaque (nl) && NearConstantAlpha (nl, out int nlo, out int nhi)) nearAlpha = (nlo + nhi) >> 1;
+			if (brush is PathGradientBrush np && !PathGradientIsOpaque (np) && PathNearConstantAlpha (np, out int plo, out int phi)) nearAlpha = (plo + phi) >> 1;
+			if (brush is LinearGradientBrush lg && (LinearGradientIsOpaque (lg) || nearAlpha >= 0)) {
 				// A rectangle-gradient bitmap: at most 256 on a side, over the fill's device bounds.
 				int LW = Math.Max (1, Math.Min (bw, 256)), LH = Math.Max (1, Math.Min (bh, 256));
 				float [] toLinear = Then (dev, new [] { LW / (float) bw, 0f, 0f, LH / (float) bh, -bx * LW / (float) bw, -by * LH / (float) bh });
 				byte [] lpx = FillWithBrush (brush, LW, LH, toLinear, Point.Empty);
 				if (lpx == null) return false;
+				if (nearAlpha >= 0) { EmitAlphaXor (lpx, LW, LH, new RectangleF (bx, by, bw, bh), pts, types, dev, nonZero, nearAlpha); return true; }
 				Opaque (lpx);
 				EmitDeviceImage (lpx, LW, LH, new RectangleF (bx, by, bw, bh), pts, types, dev, nonZero);
 				return true;
 			}
-			if (brush is PathGradientBrush pg && PathGradientIsOpaque (pg)) {
+			if (brush is PathGradientBrush pg && (PathGradientIsOpaque (pg) || nearAlpha >= 0)) {
 				bool rect = PathGradientIsRectangular (pg);
 				int W = GradientBitmapSide (bw, rect), H = GradientBitmapSide (bh, rect);
 				// World -> bitmap: world -> device, then the device bounds onto the bitmap.
@@ -520,6 +660,7 @@ namespace System.Drawing
 					rgba = FillWithBrush (inflated, W, H, toBitmap, Point.Empty);
 				}
 				if (rgba == null) return false;
+				if (nearAlpha >= 0) { EmitAlphaXor (rgba, W, H, new RectangleF (bx, by, bw, bh), pts, types, dev, nonZero, nearAlpha); return true; }
 				Opaque (rgba);
 				EmitDeviceImage (rgba, W, H, new RectangleF (bx, by, bw, bh), pts, types, dev, nonZero);
 				return true;
@@ -527,7 +668,6 @@ namespace System.Drawing
 
 			// Banded (the rest of PrivateFillRect): the bounds as the clip leaves them, on a grid of
 			// s x t device pixels a DIB pixel.
-			if (!VisibleDeviceRect (ref bx, ref by, ref bw, ref bh)) return true;
 			int s, t, kind;
 			bool hatch = false;
 			Brush cellBrush = brush;
@@ -561,6 +701,9 @@ namespace System.Drawing
 				}
 				break;
 			}
+			// (The grid is the unclipped bounds' -- a gradient's s and t above are -- the DIB the
+			// part GpRegion::GetRectVisibility leaves of them.)
+			if (!VisibleDeviceRect (ref bx, ref by, ref bw, ref bh)) { cellClone?.Dispose (); return true; }
 			try {
 				int gx = bx / s, gy = by / t;
 				int gw = 1 + (bx - gx * s + bw) / s, gh = 1 + (by - gy * t + bh) / t;
@@ -584,7 +727,7 @@ namespace System.Drawing
 				} else if (kind == WebGpuBackend.PrintRaster.KindRuns) {
 					EmitRuns (fill, gw, gh, rows, gx, gy, s, t, pts, types, dev, nonZero);
 				} else {
-					EmitMasked (fill, gw, gh, rows, gx, gy, s, t, counter, (int bx_, int by_, int w_, int h_) => {
+					EmitMasked (fill, gw, gh, rows, gx, gy, s, t, counter, dropClips: true, bandAlpha: (int bx_, int by_, int w_, int h_) => {
 						byte [] a = BandAlpha (brush, pts, types, fillMode, dev, bx_, by_, w_, h_, s, t, out int x0_, out int y0_, out int x1_, out int y1_);
 						return (a, x0_, y0_, x1_, y1_);
 					});
@@ -602,6 +745,13 @@ namespace System.Drawing
 			int px0 = (int) Math.Floor (print_visible.X * print_dpi_x / 100f + 0.5f), py0 = (int) Math.Floor (print_visible.Y * print_dpi_y / 100f + 0.5f);
 			int px1 = (int) Math.Floor (print_visible.Right * print_dpi_x / 100f + 0.5f), py1 = (int) Math.Floor (print_visible.Bottom * print_dpi_y / 100f + 0.5f);
 			int x0 = Math.Max (x, px0), y0 = Math.Max (y, py0), x1 = Math.Min (x + w, px1), y1 = Math.Min (y + h, py1);
+			// The visible clip too (the page's and the caller's): its bounds.
+			if (print_clip != null) {
+				WebGpuBackend.Gdip.DpRegion v = print_clip.VisibleClipRegion;
+				if (v == null || v.IsEmpty) return false;
+				Rectangle cb = v.Bounds;
+				x0 = Math.Max (x0, cb.Left); y0 = Math.Max (y0, cb.Top); x1 = Math.Min (x1, cb.Right); y1 = Math.Min (y1, cb.Bottom);
+			}
 			if (x1 <= x0 || y1 <= y0) return false;
 			x = x0; y = y0; w = x1 - x0; h = y1 - y0;
 			return true;
@@ -653,10 +803,13 @@ namespace System.Drawing
 		/// at the device's resolution -- a pixel set where HT_16x16[(y + n) % 16][x % 16] is under the
 		/// alpha there, n the DIB count -- put down XOR / AND / XOR (DriverNonPS::OutputBufferDIB)
 		/// over the band's covered part (EpScanDIB::GetActualBounds) unless the mask is empty.</summary>
-		void EmitMasked (byte [] cells, int gw, int gh, int rows, int gx, int gy, int s, int t, int counter, BandAlphaFn bandAlpha)
+		void EmitMasked (byte [] cells, int gw, int gh, int rows, int gx, int gy, int s, int t, int counter, BandAlphaFn bandAlpha, bool dropClips = false)
 		{
 			int bandW = gw * s, bandH = rows * t, stride = WebGpuBackend.PrintRaster.MaskStride (bandW);
 			int st = BeginDeviceDraw (null, null, false, null);
+			// A fill's mask is already the shape inside the clip, and GDI+ puts it down with no clip
+			// on the DC at all (DriverNonPS::OutputBufferDIB): so does the page.
+			if (dropClips) GpuRecorder.ResetAllClips ();
 			try {
 				for (int top = 0; top < gh; top += rows) {
 					int bandX = gx * s, bandY = (gy + top) * t;
@@ -749,7 +902,25 @@ namespace System.Drawing
 		/// (DpDriver::FillPath into the scan DIB's render mode 1): per pixel the alpha left there,
 		/// and the box of every pixel the rasterizer gave a span (minX, minY inclusive, maxX
 		/// exclusive, maxY inclusive; maxX 0 when none), band-relative.</summary>
+		// The visible clip in a band's coordinates while BandAlpha renders it (null: none).
+		WebGpuBackend.Gdip.GpRegion band_clip;
+
 		byte [] BandAlpha (Brush brush, PointF [] pts, byte [] types, FillMode fillMode, float [] dev, int bandX, int bandY, int W, int H,
+			int s, int t, out int minX, out int minY, out int maxX, out int maxY)
+		{
+			band_clip = null;
+			if (print_clip?.AppClip is WebGpuBackend.Gdip.GpRegion app) {
+				band_clip = app.Clone ();
+				band_clip.Offset (-bandX, -bandY);
+			}
+			try {
+				return BandAlphaClipped (brush, pts, types, fillMode, dev, bandX, bandY, W, H, s, t, out minX, out minY, out maxX, out maxY);
+			} finally {
+				band_clip = null;
+			}
+		}
+
+		byte [] BandAlphaClipped (Brush brush, PointF [] pts, byte [] types, FillMode fillMode, float [] dev, int bandX, int bandY, int W, int H,
 			int s, int t, out int minX, out int minY, out int maxX, out int maxY)
 		{
 			minX = minY = int.MaxValue; maxX = maxY = 0;
@@ -836,6 +1007,9 @@ namespace System.Drawing
 				g.PixelOffsetMode = _pixelOffset;
 				g.RenderingOrigin = origin;
 				g.Transform = new Matrix (toBand [0], toBand [1], toBand [2], toBand [3], toBand [4], toBand [5]);
+				// The mask is the shape INSIDE the visible clip: the scan DIB's spans are clipped
+				// as any device's are (render mode 1 keeps the context's clip).
+				if (band_clip is WebGpuBackend.Gdip.GpRegion bc) g.gp.CombineDeviceClip (bc, CombineMode.Replace);
 				using (var gp = new GraphicsPath (pts, types, fillMode)) g.FillPath (brush, gp);
 				g.Flush ();
 				byte [] rgba = GdipPixels.ToRgba (bmp.Data.Frame, new Rectangle (0, 0, W, H));
@@ -904,19 +1078,9 @@ namespace System.Drawing
 			return horizontal || Math.Abs (m22) <= tol;
 		}
 
-		// What of a linear gradient this file rasterizes as DriverPrint does: every angle but a
-		// straight translucent one whose alpha hardly varies (GpLineGradient::IsNearConstant), which
-		// GDI+ puts down through a halftone GDI brush.
-		static bool LinearGradientIsRaster (LinearGradientBrush lg, float [] dev)
-		{
-			if (LinearGradientIsBitmap (lg, dev) || LinearGradientIsOpaque (lg)) return true;
-			int lo = 255, hi = 0;
-			try {
-				Color [] cs = lg.InterpolationColorsWereSet ? lg.InterpolationColors.Colors : lg.LinearColors;
-				foreach (Color c in cs) { lo = Math.Min (lo, c.A); hi = Math.Max (hi, c.A); }
-			} catch (Exception) { return false; }
-			return hi - lo >= 16;
-		}
+		// What of a linear gradient this file puts down as DriverPrint does: all of it now (a straight
+		// translucent one whose alpha hardly varies is the XOR with an alpha brush, PrintStraightGradient).
+		static bool LinearGradientIsRaster (LinearGradientBrush lg, float [] dev) => true;
 
 		/// <summary>PrivateFillRect's straight linear gradient (DriverPrint::PrivateFillGradient
 		/// @1800cf370): a bitmap one pixel tall across the fill's device bounds (one wide down them),
@@ -940,8 +1104,12 @@ namespace System.Drawing
 				color [i * 4] = px [i * 4 + 2]; color [i * 4 + 1] = px [i * 4 + 1]; color [i * 4 + 2] = px [i * 4]; color [i * 4 + 3] = 255;
 				if (px [i * 4 + 3] < 0xfd) solid = false;
 			}
-			if (opaque) {
-				if (IsDeviceRect (pts, dev)) {
+			// SetupBrush: a translucent brush whose alpha hardly varies (GpRectGradient::IsNearConstant
+			// @1801a8d30: the colours' alphas span under 16) is dithered at the mean of the two ends.
+			int nearAlpha = -1;
+			if (!opaque && NearConstantAlpha (lg, out int lo, out int hi)) nearAlpha = (lo + hi) >> 1;
+			if (opaque || nearAlpha >= 0) {
+				if (opaque && IsDeviceRect (pts, dev)) {
 					Opaque (px);
 					EmitDeviceImage (px, W, H, new RectangleF (bx, by, bw, bh), pts, types, dev, nonZero);
 					return true;
@@ -955,10 +1123,15 @@ namespace System.Drawing
 					PointF d = Apply (dev, pts [i].X, pts [i].Y);
 					xor.ClipXY [i * 2] = d.X * kx; xor.ClipXY [i * 2 + 1] = d.Y * ky;
 				}
+				// The shape ConvertPathToGdi (flags 2) makes of the path, filled under R2_MASKPEN with the
+				// stock black brush, or the alpha brush of SetAlpha(alpha, 1, 1).
+				xor.Shape = XorShape (pts, types, nonZero, dev);
+				if (nearAlpha == 0) return true;
+				if (nearAlpha > 0) xor.AlphaDib = WebGpuBackend.PrintGdiFill.NextAlphaDib (nearAlpha);
 				WebGpuBackend.PrintRaster.Attach (px, xor);
-				Opaque (px);
+				if (opaque) Opaque (px);
 				// (Clipped to the shape for whoever draws the picture; on the paper the XOR does it.)
-				int st0 = BeginDeviceDraw (pts, types, nonZero, dev);
+				int st0 = BeginDeviceDraw (pts, types, nonZero, dev, previewOnly: true);
 				GpuRecorder.DrawImage (px, W, H, bx * kx, by * ky, bw * kx, bh * ky);
 				EndDeviceDraw (st0);
 				return true;
@@ -995,6 +1168,27 @@ namespace System.Drawing
 			} finally {
 				EndDeviceDraw (st);
 			}
+		}
+
+		static WebGpuBackend.GdiShape XorShape (PointF [] pts, byte [] types, bool nonZero, float [] dev)
+		{
+			var m = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
+			try {
+				var cp = new WebGpuBackend.Gdip.GpMetafileRecorder.PathToGdi (new WebGpuBackend.Gdip.GpPath (pts, types, nonZero ? FillMode.Winding : FillMode.Alternate), m, 2, null);
+				return cp.Valid ? WebGpuBackend.GdiShape.Of (cp) : null;
+			} catch (Exception) { return null; }
+		}
+
+		/// <summary>GpRectGradient::IsNearConstant @1801a8d30: the least and greatest alpha of the
+		/// colours (the preset blend's when there is one) span under 16.</summary>
+		static bool NearConstantAlpha (LinearGradientBrush lg, out int lo, out int hi)
+		{
+			lo = 255; hi = 0;
+			try {
+				Color [] cs = lg.InterpolationColorsWereSet ? lg.InterpolationColors.Colors : lg.LinearColors;
+				foreach (Color c in cs) { lo = Math.Min (lo, c.A); hi = Math.Max (hi, c.A); }
+			} catch (Exception) { return false; }
+			return hi - lo < 16;
 		}
 
 		// DpPath::IsRectangular of four points on the device: an upright rectangle.
@@ -1073,6 +1267,38 @@ namespace System.Drawing
 			EndDeviceDraw (st);
 		}
 
+		/// <summary>ConvertBitmapToGdi::StretchBlt of a bitmap with an alpha level (its +0x28), inside
+		/// the shape's clip: SetAlpha(alpha, 1, 1), the bitmap SRCINVERT over the device rectangle,
+		/// the rectangle PatBlt DPa with the alpha brush, the bitmap SRCINVERT again.</summary>
+		void EmitAlphaXor (byte [] rgba, int w, int h, RectangleF device, PointF [] pts, byte [] types, float [] dev, bool nonZero, int alpha)
+		{
+			// SetAlpha(0) is the stock white brush: the two XORs cancel and the paper is left alone.
+			if (alpha <= 0) return;
+			var color = new byte [w * h * 4];
+			for (int i = 0; i < w * h; i++) {
+				color [i * 4] = rgba [i * 4 + 2]; color [i * 4 + 1] = rgba [i * 4 + 1]; color [i * 4 + 2] = rgba [i * 4]; color [i * 4 + 3] = 255;
+			}
+			var raster = new WebGpuBackend.PrintRaster {
+				Kind = WebGpuBackend.PrintRaster.KindAlphaXor, Color = color, Width = w, Height = h, SrcW = w, S = 1, T = 1,
+				DevX = (int) device.X, DevY = (int) device.Y, DevW = (int) device.Width, DevH = (int) device.Height,
+				AlphaDib = alpha < 0xff ? WebGpuBackend.PrintGdiFill.NextAlphaDib (alpha) : null,
+			};
+			// The preview: the bitmap at its own alpha.
+			WebGpuBackend.PrintRaster.Attach (rgba, raster);
+			EmitDeviceImage (rgba, w, h, device, pts, types, dev, nonZero);
+		}
+
+		/// <summary>GpPathGradient::IsNearConstant @1801a3c50: the centre's and the surround's (or the
+		/// preset blend's) alphas span under 16.</summary>
+		static bool PathNearConstantAlpha (PathGradientBrush pg, out int lo, out int hi)
+		{
+			lo = hi = (int) ((uint) pg.CenterArgb >> 24);
+			int [] cs = pg.PresetSet && pg.StoredPresetArgb is int [] pr ? pr : pg.SurroundArgb;
+			if (cs != null)
+				foreach (int c in cs) { int a = (int) ((uint) c >> 24); lo = Math.Min (lo, a); hi = Math.Max (hi, a); }
+			return hi - lo < 16;
+		}
+
 		// SetupPrintBanding: ceil(w * h * 4 / 128000) bands of ceil(h / bands) rows, the last as
 		// tall as the others (it runs on past the shape; the clip keeps it in).
 		static int BandRows (int w, int h)
@@ -1099,7 +1325,7 @@ namespace System.Drawing
 		// The recording's own units are the page's hundredths of an inch, where a device rectangle
 		// is device pixels times 100 / dpi. A clip given as points under dev (world or device to device pixels): taken to device
 		// pixels and set in the recording's own units once the transform is the identity.
-		int BeginDeviceDraw (PointF [] pts, byte [] types, bool nonZero, float [] dev)
+		int BeginDeviceDraw (PointF [] pts, byte [] types, bool nonZero, float [] dev, bool previewOnly = false)
 		{
 			int st = GpuRecorder.SaveState ();
 			GpuRecorder.SetWorldTransform (1f, 0f, 0f, 1f, 0f, 0f);
@@ -1110,7 +1336,8 @@ namespace System.Drawing
 					PointF d = Apply (dev, pts [i].X, pts [i].Y);
 					xy [i * 2] = d.X * kx; xy [i * 2 + 1] = d.Y * ky;
 				}
-				GpuRecorder.SetClipPath (xy, types, nonZero, false);
+				if (previewOnly) GpuRecorder.SetPreviewClipPath (xy, types, nonZero);
+				else GpuRecorder.SetClipPath (xy, types, nonZero, false);
 			}
 			return st;
 		}

@@ -278,6 +278,22 @@ namespace System.Drawing.WebGpuBackend
             PushClip(null, geo);
         }
 
+        public void SetRegionClip(float[] xy, byte[] types, int[] deviceRects)
+        {
+            PathGeometry geo = PathData(xy, types, true, closeAll: true);
+            if (geo == null) { PushClip(new Rect(0, 0, 0, 0), null); return; }
+            ScenePageWalker.MarkRegionClip(geo, deviceRects);
+            PushClip(null, geo);
+        }
+
+        public void SetPreviewClipPath(float[] xy, byte[] types, bool nonZero)
+        {
+            PathGeometry geo = PathData(xy, types, nonZero, closeAll: true);
+            if (geo == null) { PushClip(new Rect(0, 0, 0, 0), null); return; }
+            ScenePageWalker.MarkPreviewOnly(geo);
+            PushClip(null, geo);
+        }
+
         /// <summary>Removes the clip set last (the counterpart of one SetClip*).</summary>
         public void ClearClip()
         {
@@ -713,6 +729,15 @@ namespace System.Drawing.WebGpuBackend
             PathGeometry geo = PathData(xy, types, nonZero, closeAll: true);
             if (geo == null) return;
             Add(gradient is GradientDesc g ? new GeometryFill(geo, GradientBrush(g)) : new GeometryFill(geo, Rgba(argb)));
+        }
+
+        public void FillPathPrint(float[] xy, byte[] types, bool nonZero, int argb, object printFill)
+        {
+            PathGeometry geo = PathData(xy, types, nonZero, closeAll: true);
+            if (geo == null) return;
+            var brush = new SolidColorBrush(Rgba(argb));
+            if (printFill is PrintGdiFill f) PrintGdiFill.Attach(brush, f);
+            Add(new GeometryFill(geo, brush));
         }
 
         /// <summary>A gradient fill of a rectangle or ellipse, smooth rather than in GDI+'s sixteen

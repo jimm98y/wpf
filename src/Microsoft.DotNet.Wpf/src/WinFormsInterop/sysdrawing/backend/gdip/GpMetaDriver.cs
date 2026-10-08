@@ -432,6 +432,22 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <summary>CreateAlphaBrush @1800d9000: a 1bpp DIB pattern, black where the dither keeps the
         /// colour, its phase stepped by the driver's counter.</summary>
         static GpEmfDc.GdiObject CreateAlphaBrush(uint level, bool big)
+            => GpEmfDc.CreateDIBPatternBrushPt(AlphaBrushDib(level, big, GpMetaDriverState.AlphaPhase), 0);
+
+        /// <summary>SetAlpha(level, 1, exact) as DriverPrint::FillPath @1800cded0 makes it for a printer:
+        /// the phase (DAT_1802e8398, this driver's too) stepped, then CreateAlphaBrush's packed DIB.</summary>
+        internal static byte[] NextAlphaBrushDib(uint level, bool big)
+        {
+            lock (GpMetaDriverState.Lock)
+            {
+                GpMetaDriverState.AlphaPhase++;
+                return AlphaBrushDib(level, big, GpMetaDriverState.AlphaPhase);
+            }
+        }
+
+        /// <summary>CreateAlphaBrush's packed DIB: size x size, bottom-up, 1bpp, black (0) where the
+        /// colour is kept, white (1) where the alpha is no more than the dither's threshold.</summary>
+        internal static byte[] AlphaBrushDib(uint level, bool big, uint alphaPhase)
         {
             int size = big ? 16 : 8;
             byte[] table = big ? HT16 : HT8;
@@ -441,7 +457,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             Le.W16(p, 12, 1); Le.W16(p, 14, 1);
             Le.W32(p, 20, size * stride);
             Le.W32(p, 44, 0xffffff);
-            int phase = (int)(GpMetaDriverState.AlphaPhase % (uint)(size * size));
+            int phase = (int)(alphaPhase % (uint)(size * size));
             int rowPhase = phase / size;
             for (int r = 0; r < size; r++)
             {
@@ -462,7 +478,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     p[48 + r * stride + k] = (byte)bits;
                 }
             }
-            return GpEmfDc.CreateDIBPatternBrushPt(p, 0);
+            return p;
         }
 
         /// <summary>ConvertAlphaToGdi::SetAlpha: the mask brush for an alpha (quantized to fours
@@ -492,7 +508,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         // ---- ConvertRectFToGdi ----------------------------------------------------------------------
 
-        sealed class RectFToGdi
+        internal sealed class RectFToGdi
         {
             public int X, Y, W, H;            // +4: the device rectangle
             public int Mult = 1;              // +0xa8

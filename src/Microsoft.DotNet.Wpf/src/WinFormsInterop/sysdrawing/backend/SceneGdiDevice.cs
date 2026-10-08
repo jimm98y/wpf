@@ -67,7 +67,9 @@ namespace System.Drawing.WebGpuBackend
             Native.SetBkMode(_dc, Native.TRANSPARENT);
             Native.SetGraphicsMode(_dc, Native.GM_ADVANCED);
             var sink = new GdiPageSink(this, Matrix3x2.CreateScale(_dpiX / 100f, _dpiY / 100f));
+            sink.CleanTheHdc();
             ScenePageWalker.Walk(root, sink);
+            sink.EndPage();
             Native.RestoreDC(_dc, saved);
         }
 
@@ -190,6 +192,28 @@ namespace System.Drawing.WebGpuBackend
 
             public void ClipPath(PagePath path)
             {
+                if (path.DeviceRects is int[] rects)
+                {
+                    // DpDriver::SetupClipping @1800dea20: a rectangle as IntersectClipRect, any other
+                    // region as ExtSelectClipRgn(RGN_AND) of its rectangles.
+                    if (rects.Length == 4)
+                    {
+                        Log($"IntersectClipRect {rects[0]},{rects[1]},{rects[2]},{rects[3]}");
+                        Native.IntersectClipRect(Dc, rects[0], rects[1], rects[2], rects[3]);
+                        return;
+                    }
+                    IntPtr rgn = Native.CreateRectRgn(0, 0, 0, 0);
+                    for (int i = 0; i + 3 < rects.Length; i += 4)
+                    {
+                        IntPtr r = Native.CreateRectRgn(rects[i], rects[i + 1], rects[i + 2], rects[i + 3]);
+                        Native.CombineRgn(rgn, rgn, r, 2 /* RGN_OR */);
+                        Native.DeleteObject(r);
+                    }
+                    Log("ExtSelectClipRgn rgn 1");
+                    Native.ExtSelectClipRgn(Dc, rgn, Native.RGN_AND);
+                    Native.DeleteObject(rgn);
+                    return;
+                }
                 if (path.IsEmpty) { Native.IntersectClipRect(Dc, 0, 0, 0, 0); return; }
                 Native.SetPolyFillMode(Dc, path.EvenOdd ? Native.ALTERNATE : Native.WINDING);
                 if (BuildPath(path)) Native.SelectClipPath(Dc, Native.RGN_AND);
@@ -214,6 +238,9 @@ namespace System.Drawing.WebGpuBackend
                 if (path.IsEmpty) return;
                 switch (brush)
                 {
+                    case SolidColorBrush solid when PrintGdiFill.Find(solid) is PrintGdiFill gdi:
+                        GdiFill(gdi);
+                        break;
                     case SolidColorBrush solid:
                         if (AlphaOf(solid.Color) * _opacity <= 0) return;
                         FillSolid(path, ColorRef(solid.Color));
@@ -249,9 +276,23 @@ namespace System.Drawing.WebGpuBackend
                     // XOR the colour, AND the mask, XOR the colour: the colour where the mask is
                     // set, the paper as it was elsewhere.
                     StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, r.SrcX, 0, r.SrcW, r.Height, SRCINVERT);
-                    StretchBits(r.Mask, r.MaskWidth, r.MaskHeight, 1, new[] { 0x00FFFFFF, 0 }, left, top, width, height, r.MaskSrcX, 0,
+                    StretchBits(r.Mask, r.MaskWidth, r.MaskHeight, 1, new[] { unchecked((int)0xFFFFFFFF), 0 }, left, top, width, height, r.MaskSrcX, 0,
                                 r.MaskSrcW > 0 ? r.MaskSrcW : width, r.MaskHeight, SRCAND);
                     StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, r.SrcX, 0, r.SrcW, r.Height, SRCINVERT);
+                    return;
+                }
+                if (r.Kind == PrintRaster.KindAlphaXor)
+                {
+                    // ConvertBitmapToGdi::StretchBlt with an alpha level: the bitmap XOR, the rectangle
+                    // ANDed with the alpha brush (DPa), the bitmap XOR again -- inside the shape's clip.
+                    IntPtr mask = r.AlphaDib != null ? CreateDIBPatternBrushPt(r.AlphaDib) : Native.GetStockObject(Native.BLACK_BRUSH);
+                    Native.SetStretchBltMode(Dc, Native.COLORONCOLOR);
+                    StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, 0, 0, r.Width, r.Height, SRCINVERT);
+                    IntPtr h = SelectBrush(mask);
+                    PatBlt(left, top, width, height, PATAND);
+                    SelectBrush(h);
+                    StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, 0, 0, r.Width, r.Height, SRCINVERT);
+                    if (r.AlphaDib != null) Native.DeleteObject(mask);
                     return;
                 }
                 if (r.Kind == PrintRaster.KindXorPath)
@@ -274,10 +315,23 @@ namespace System.Drawing.WebGpuBackend
                         else shape.LineTo(p);
                         if ((r.ClipTypes[i] & 0x80) != 0) shape.Close();
                     }
-                    int rop2 = Native.SetROP2(Dc, Native.R2_MASKPEN);
-                    // The recording's units are the identity under _m here (BeginDeviceDraw).
-                    FillSolid(shape, 0);
-                    Native.SetROP2(Dc, rop2);
+                    if (r.Shape != null)
+                    {
+                        // ConvertPathToGdi::Fill of the shape under R2_MASKPEN, with the alpha brush
+                        // (a near-constant translucent gradient) or the stock black one.
+                        IntPtr mask = r.AlphaDib != null ? CreateDIBPatternBrushPt(r.AlphaDib) : Native.GetStockObject(Native.BLACK_BRUSH);
+                        int rop2 = SetROP2(Native.R2_MASKPEN);
+                        ShapeFill(r.Shape, mask);
+                        SetROP2(rop2);
+                        if (r.AlphaDib != null) Native.DeleteObject(mask);
+                    }
+                    else
+                    {
+                        int rop2 = Native.SetROP2(Dc, Native.R2_MASKPEN);
+                        // The recording's units are the identity under _m here (BeginDeviceDraw).
+                        FillSolid(shape, 0);
+                        Native.SetROP2(Dc, rop2);
+                    }
                     StretchBits(r.Color, r.Width, r.Height, 32, null, left, top, width, height, 0, 0, r.Width, r.Height, SRCINVERT);
                     return;
                 }
@@ -301,20 +355,356 @@ namespace System.Drawing.WebGpuBackend
                 }
             }
 
+            // ---- GDI+'s solid fills (see PrintGdiFill) ---------------------------------------------
+
+            private const int PATINVERT = 0x005A0049, PATAND = 0x00A000C9, PATCOPY = 0x00F00021;
+
+            // ConvertBrushToGdi at DriverPrint+0x58: the one solid brush the driver keeps, made
+            // afresh only when the colour changes.
+            private IntPtr _solid;
+            private int _solidColor = -1;
+
+            /// <summary>DpContext::GetHdc's first use (CleanTheHdc @180037c28): MM_TEXT and R2_COPYPEN.</summary>
+            internal void CleanTheHdc()
+            {
+                Native.SetMapMode(Dc, 1);
+                SetROP2(13);
+            }
+
+            internal void EndPage()
+            {
+                if (_solid != IntPtr.Zero) Native.DeleteObject(_solid);
+                _solid = IntPtr.Zero;
+                _solidColor = -1;
+            }
+
+            private IntPtr SolidBrush(int color)
+            {
+                if (_solid != IntPtr.Zero && _solidColor == color) return _solid;
+                if (_solid != IntPtr.Zero) Native.DeleteObject(_solid);
+                _solid = Native.CreateSolidBrush(color);
+                _solidColor = color;
+                Log($"CreateSolidBrush {color:X6} -> {NewBrush(_solid)}");
+                return _solid;
+            }
+
+            /// <summary>DriverPrint::FillPath @1800cded0 / FillRects @1800ce1e0 of a solid brush: the
+            /// shape as it is (alpha 0xfe or more), or dithered between two PATINVERTs.</summary>
+            private void GdiFill(PrintGdiFill f)
+            {
+                GdiShape s = f.Shape;
+                if (s == null) return;
+                IntPtr color = SolidBrush(f.Color);
+                if (f.AlphaDib == null)
+                {
+                    if (s.IsRects) RectsFill(s, color, PATCOPY);
+                    else ShapeFill(s, color);
+                    return;
+                }
+                IntPtr mask = CreateDIBPatternBrushPt(f.AlphaDib);
+                if (s.IsRects)
+                {
+                    // ConvertRectFToGdi::AlphaFill @1800d8b60.
+                    IntPtr h = SelectBrush(color);
+                    PatBlt(s.X, s.Y, s.W, s.H, PATINVERT);
+                    int old = SetTextColor(Native.GetBkColor(Dc));
+                    RectsFill(s, mask, PATAND);
+                    SetTextColor(old);
+                    PatBlt(s.X, s.Y, s.W, s.H, PATINVERT);
+                    SelectBrush(h);
+                }
+                else
+                {
+                    // ConvertPathToGdi::AlphaFill @1800d8a50.
+                    IntPtr h = SelectBrush(color);
+                    PatBlt(s.X, s.Y, s.W, s.H, PATINVERT);
+                    int rop2 = SetROP2(Native.R2_MASKPEN);
+                    int old = SetTextColor(Native.GetBkColor(Dc));
+                    ShapeFill(s, mask);
+                    SetTextColor(old);
+                    SetROP2(rop2);
+                    PatBlt(s.X, s.Y, s.W, s.H, PATINVERT);
+                    SelectBrush(h);
+                }
+                Native.DeleteObject(mask);
+            }
+
+            /// <summary>ConvertRectFToGdi::Fill @1800340b8: each rectangle PatBlt'd with the ROP, the
+            /// null pen selected.</summary>
+            private void RectsFill(GdiShape s, IntPtr brush, int rop)
+            {
+                IntPtr h = SelectBrush(brush);
+                IntPtr p = SelectPen(Native.GetStockObject(Native.NULL_PEN));
+                for (int i = 0; i + 3 < s.Rects.Length; i += 4)
+                    PatBlt(s.Rects[i], s.Rects[i + 1], s.Rects[i + 2] - s.Rects[i], s.Rects[i + 3] - s.Rects[i + 1], rop);
+                SelectPen(p);
+                SelectBrush(h);
+            }
+
+            /// <summary>ConvertPathToGdi::Fill @1800d95c0 (no increased resolution): polygons with the
+            /// null pen, or the path built and FillPath'd.</summary>
+            private void ShapeFill(GdiShape s, IntPtr brush)
+            {
+                if (s.NPts < 1) return;
+                IntPtr h = SelectBrush(brush);
+                int fm = SetPolyFillMode(s.FillMode);
+                if ((s.Flags & 1) != 0)
+                {
+                    IntPtr p = SelectPen(Native.GetStockObject(Native.NULL_PEN));
+                    if (s.NSub == 1) Polygon(s.Pts, 0, s.NPts);
+                    else PolyPolygonDraw(s.Pts, 0, s.Counts, 0, s.NSub);
+                    SelectPen(p);
+                }
+                else
+                {
+                    BeginPath();
+                    if ((s.Flags & 0x10) == 0) DrawMixedPath(s);
+                    else PolyBezier(s.Pts, 0, s.NPts);
+                    EndPath();
+                    FillPathNow();
+                }
+                SetPolyFillMode(fm);
+                SelectBrush(h);
+            }
+
+            /// <summary>ConvertPathToGdi::DrawMixedPath @1802232c8.</summary>
+            private void DrawMixedPath(GdiShape s)
+            {
+                int i = 0, last = s.NPts - 1;
+                while (i <= last)
+                {
+                    int t = s.Types[i] & 7;
+                    if (t == 0)
+                    {
+                        if (i > 0 && (s.Types[i - 1] & 0x80) != 0) CloseFigure();
+                        MoveTo(s.Pts[i * 2], s.Pts[i * 2 + 1]);
+                        i++;
+                        continue;
+                    }
+                    int j = i;
+                    do j++; while (j <= last && (s.Types[j] & 7) == t);
+                    if (t == 3) PolyBezierTo(s.Pts, i, j - i);
+                    else if (j - i == 1) LineTo(s.Pts[i * 2], s.Pts[i * 2 + 1]);
+                    else PolylineTo(s.Pts, i, j - i);
+                    i = j;
+                }
+                if ((s.Types[s.NPts - 1] & 0x80) != 0) CloseFigure();
+            }
+
+            /// <summary>CPolyPolygon::Draw @1800d91b0: more than 31 polygons split in eight runs when
+            /// their boxes are disjoint.</summary>
+            private void PolyPolygonDraw(int[] pts, int ptFrom, int[] counts, int cFrom, int npoly)
+            {
+                if (npoly > 0x1f)
+                {
+                    int size = npoly / 8;
+                    var runs = new (int P, int C, int N, int L, int T, int R, int B)[8];
+                    int p = ptFrom;
+                    for (int k = 0; k < 8; k++)
+                    {
+                        int cnt = k == 7 ? npoly - 7 * size : size;
+                        int c0 = cFrom + k * size;
+                        int total = 0;
+                        for (int q = 0; q < cnt; q++) total += counts[c0 + q];
+                        int l = pts[p * 2], t = pts[p * 2 + 1], r = l, b = t;
+                        for (int q = 1; q < total; q++)
+                        {
+                            int x = pts[(p + q) * 2], y = pts[(p + q) * 2 + 1];
+                            if (x < l) l = x; if (x > r) r = x;
+                            if (y < t) t = y; if (y > b) b = y;
+                        }
+                        runs[k] = (p, c0, cnt, l, t, r, b);
+                        p += total;
+                    }
+                    bool disjoint = true;
+                    for (int a = 0; a < 8 && disjoint; a++)
+                        for (int c = a + 1; c < 8; c++)
+                            if (runs[a].L < runs[c].R && runs[a].T < runs[c].B && runs[c].L < runs[a].R && runs[c].T < runs[a].B)
+                            { disjoint = false; break; }
+                    if (disjoint)
+                    {
+                        for (int k = 0; k < 8; k++) PolyPolygonDraw(pts, runs[k].P, counts, runs[k].C, runs[k].N);
+                        return;
+                    }
+                }
+                int sum = 0;
+                for (int q = 0; q < npoly; q++) sum += counts[cFrom + q];
+                var xy = new int[sum * 2];
+                Array.Copy(pts, ptFrom * 2, xy, 0, sum * 2);
+                var cs = new int[npoly];
+                Array.Copy(counts, cFrom, cs, 0, npoly);
+                Log($"PolyPolygon counts=[{string.Join(",", cs)}] {Pts(xy, 0, sum)} {State()}");
+                Native.PolyPolygon(Dc, xy, cs, npoly);
+            }
+
+            // ---- the GDI calls, each logged as the stock hook logs gdiplus.dll's (WF_PRINT_DUMP) --
+
+            private static int s_brushNo;
+            private static readonly Dictionary<IntPtr, string> s_brushIds = new();
+            private static Dictionary<IntPtr, int> s_stock;
+
+            private static string NewBrush(IntPtr h)
+            {
+                if (string.IsNullOrEmpty(s_dump)) return null;
+                string id = "b" + (s_brushNo++);
+                lock (s_brushIds) s_brushIds[h] = id;
+                return id;
+            }
+
+            private static string Name(IntPtr h)
+            {
+                if (h == IntPtr.Zero) return "null";
+                if (s_stock == null)
+                {
+                    var st = new Dictionary<IntPtr, int>();
+                    for (int i = 0; i <= 19; i++) { IntPtr o = Native.GetStockObject(i); if (o != IntPtr.Zero) st.TryAdd(o, i); }
+                    s_stock = st;
+                }
+                if (s_stock.TryGetValue(h, out int k)) return "stock" + k;
+                lock (s_brushIds) return s_brushIds.TryGetValue(h, out string s) ? s : "?";
+            }
+
+            private static void Log(string line)
+            {
+                if (string.IsNullOrEmpty(s_dump)) return;
+                try
+                {
+                    System.IO.Directory.CreateDirectory(s_dump);
+                    System.IO.File.AppendAllText(System.IO.Path.Combine(s_dump, "log.txt"), "     " + line + "\n");
+                }
+                catch (Exception) { }
+            }
+
+            private string State()
+            {
+                if (string.IsNullOrEmpty(s_dump)) return null;
+                Native.GetClipBox(Dc, out Native.RECT clip);
+                Native.GetBrushOrgEx(Dc, out Native.POINT org);
+                return $"brush={Name(Native.GetCurrentObject(Dc, 2))} rop2={Native.GetROP2(Dc)} text={Native.GetTextColor(Dc):X6} bk={Native.GetBkColor(Dc):X6} org={org.x},{org.y} fill={Native.GetPolyFillMode(Dc)} clipbox=({clip.l},{clip.t},{clip.r},{clip.b})";
+            }
+
+            private static string Pts(int[] pts, int from, int n)
+            {
+                if (string.IsNullOrEmpty(s_dump)) return null;
+                var sb = new System.Text.StringBuilder($"n={n} [");
+                for (int i = 0; i < n; i++) sb.Append(pts[(from + i) * 2]).Append(',').Append(pts[(from + i) * 2 + 1]).Append(i + 1 < n ? " " : "");
+                return sb.Append(']').ToString();
+            }
+
+            private static int[] Slice(int[] pts, int from, int n)
+            {
+                var r = new int[n * 2];
+                Array.Copy(pts, from * 2, r, 0, n * 2);
+                return r;
+            }
+
+            private IntPtr SelectBrush(IntPtr h)
+            {
+                Log($"SelectObject brush {Name(h)}");
+                return Native.SelectObject(Dc, h);
+            }
+
+            private IntPtr SelectPen(IntPtr h)
+            {
+                Log($"SelectObject pen {Name(h)}");
+                return Native.SelectObject(Dc, h);
+            }
+
+            private void PatBlt(int x, int y, int w, int h, int rop)
+            {
+                Log($"PatBlt ({x},{y},{w},{h}) rop={rop:X} {State()}");
+                Native.PatBlt(Dc, x, y, w, h, rop);
+            }
+
+            private int SetROP2(int rop2) { Log($"SetROP2 {rop2}"); return Native.SetROP2(Dc, rop2); }
+            private int SetTextColor(int c) { Log($"SetTextColor {c:X6}"); return Native.SetTextColor(Dc, c); }
+            private int SetPolyFillMode(int m) { Log($"SetPolyFillMode {m}"); return Native.SetPolyFillMode(Dc, m); }
+            private void BeginPath() { Log("BeginPath"); Native.BeginPath(Dc); }
+            private void EndPath() { Log("EndPath"); Native.EndPath(Dc); }
+            private void CloseFigure() { Log("CloseFigure"); Native.CloseFigure(Dc); }
+            private void FillPathNow() { Log($"FillPath {State()}"); Native.FillPath(Dc); }
+            private void MoveTo(int x, int y) { Log($"MoveToEx {x},{y}"); Native.MoveToEx(Dc, x, y, IntPtr.Zero); }
+            private void LineTo(int x, int y) { Log($"LineTo {x},{y}"); Native.LineTo(Dc, x, y); }
+
+            private void Polygon(int[] pts, int from, int n)
+            {
+                Log($"Polygon {Pts(pts, from, n)} {State()}");
+                Native.Polygon(Dc, Slice(pts, from, n), n);
+            }
+
+            private void PolyBezier(int[] pts, int from, int n)
+            {
+                Log($"PolyBezier {Pts(pts, from, n)}");
+                Native.PolyBezier(Dc, Slice(pts, from, n), (uint)n);
+            }
+
+            private void PolyBezierTo(int[] pts, int from, int n)
+            {
+                Log($"PolyBezierTo {Pts(pts, from, n)}");
+                Native.PolyBezierToI(Dc, Slice(pts, from, n), (uint)n);
+            }
+
+            private void PolylineTo(int[] pts, int from, int n)
+            {
+                Log($"PolylineTo {Pts(pts, from, n)}");
+                Native.PolylineTo(Dc, Slice(pts, from, n), (uint)n);
+            }
+
+            private static IntPtr CreateDIBPatternBrushPt(byte[] packed)
+            {
+                IntPtr h = Native.CreateDIBPatternBrushPt(packed, 0);
+                if (!string.IsNullOrEmpty(s_dump))
+                {
+                    int w = BitConverter.ToInt32(packed, 4), ht = BitConverter.ToInt32(packed, 8);
+                    int bpp = BitConverter.ToInt16(packed, 14), comp = BitConverter.ToInt32(packed, 16), size = BitConverter.ToInt32(packed, 20);
+                    int used = BitConverter.ToInt32(packed, 32);
+                    int pal = bpp <= 8 ? (used != 0 ? used : 1 << bpp) : 0;
+                    var pals = new string[pal];
+                    for (int i = 0; i < pal; i++) pals[i] = BitConverter.ToUInt32(packed, 40 + i * 4).ToString("X6");
+                    int stride = ((w * bpp + 31) / 32) * 4, at = 40 + pal * 4;
+                    var rows = new string[Math.Abs(ht)];
+                    for (int r = 0; r < rows.Length; r++) rows[r] = Convert.ToHexString(packed, at + r * stride, stride).ToLowerInvariant();
+                    Log($"CreateDIBPatternBrushPt {w}x{ht}x{bpp} comp={comp} size={size} usage=0 pal=[{string.Join(",", pals)}] bits={string.Join("/", rows)} -> {NewBrush(h)}");
+                }
+                return h;
+            }
+
             // StretchDIBits of a top-down DIB: 32bpp BGRA, or 1bpp with its two-colour palette.
+            // The DIB as GDI+'s driver hands it over (DriverNonPS::OutputBufferDIB, ConvertBitmapToGdi):
+            // BOTTOM-UP, the colour 24bpp, a mask 1bpp under a white (0xFFFFFFFF) / black palette.
+            // (The source rectangles here are always whole rows, so the flip leaves them as they are.)
             private void StretchBits(byte[] bits, int w, int h, int bpp, int[] palette, int x, int y, int dw, int dh, int sx, int sy, int sw, int sh, int rop)
             {
+                Dump(bits, w, h, bpp, x, y, dw, dh, sx, sy, sw, sh, rop, palette);
+                byte[] up;
+                int outBpp = bpp;
+                if (bpp == 32)
+                {
+                    outBpp = 24;
+                    int stride = ((w * 24 + 31) / 32) * 4;
+                    up = new byte[stride * h];
+                    for (int j = 0; j < h; j++)
+                    {
+                        int d = (h - 1 - j) * stride, o = j * w * 4;
+                        for (int i = 0; i < w; i++) { up[d + i * 3] = bits[o + i * 4]; up[d + i * 3 + 1] = bits[o + i * 4 + 1]; up[d + i * 3 + 2] = bits[o + i * 4 + 2]; }
+                    }
+                }
+                else
+                {
+                    int stride = PrintRaster.MaskStride(w);
+                    up = new byte[stride * h];
+                    for (int j = 0; j < h; j++) Buffer.BlockCopy(bits, j * stride, up, (h - 1 - j) * stride, stride);
+                }
                 var bmi = new Native.BITMAPINFO1
                 {
                     Header = new Native.BITMAPINFOHEADER
                     {
-                        biSize = Marshal.SizeOf<Native.BITMAPINFOHEADER>(), biWidth = w, biHeight = -h,
-                        biPlanes = 1, biBitCount = (short)bpp, biCompression = 0, biClrUsed = palette?.Length ?? 0,
+                        biSize = Marshal.SizeOf<Native.BITMAPINFOHEADER>(), biWidth = w, biHeight = h,
+                        biPlanes = 1, biBitCount = (short)outBpp, biCompression = 0, biClrUsed = palette?.Length ?? 0,
                     },
                     Color0 = palette != null ? palette[0] : 0, Color1 = palette != null && palette.Length > 1 ? palette[1] : 0,
                 };
-                Dump(bits, w, h, bpp, x, y, dw, dh, sx, sy, sw, sh, rop);
-                Native.StretchDIBits(Dc, x, y, dw, dh, sx, sy, sw, sh, bits, ref bmi, 0, rop);
+                Native.StretchDIBits(Dc, x, y, dw, dh, sx, sy, sw, sh, up, ref bmi, 0, rop);
             }
 
             private void FillSolid(PagePath path, int colorRef)
@@ -546,7 +936,7 @@ namespace System.Drawing.WebGpuBackend
             private static readonly string s_dump = Environment.GetEnvironmentVariable("WF_PRINT_DUMP");
             private static int s_dumped;
 
-            private static void Dump(byte[] bits, int w, int h, int bpp, int x, int y, int dw, int dh, int sx, int sy, int sw, int sh, int rop)
+            private static void Dump(byte[] bits, int w, int h, int bpp, int x, int y, int dw, int dh, int sx, int sy, int sw, int sh, int rop, int[] palette = null)
             {
                 if (string.IsNullOrEmpty(s_dump)) return;
                 try
@@ -554,7 +944,7 @@ namespace System.Drawing.WebGpuBackend
                     System.IO.Directory.CreateDirectory(s_dump);
                     int n = s_dumped++;
                     System.IO.File.AppendAllText(System.IO.Path.Combine(s_dump, "log.txt"),
-                        $"{n:D4} StretchDIBits dst=({x},{y},{dw},{dh}) src=({sx},{sy},{sw},{sh}) bmi={w}x{h}x{bpp} rop={rop:X}\n");
+                        $"{n:D4} StretchDIBits dst=({x},{y},{dw},{dh}) src=({sx},{sy},{sw},{sh}) bmi={w}x{h}x{bpp} rop={rop:X}{(palette != null ? " pal=[" + string.Join(",", Array.ConvertAll(palette, c => ((uint)c).ToString("X6"))) + "]" : "")}\n");
                     using var f = System.IO.File.Create(System.IO.Path.Combine(s_dump, $"{n:D4}.ppm"));
                     byte[] head = System.Text.Encoding.ASCII.GetBytes($"P6\n{w} {h}\n255\n");
                     f.Write(head, 0, head.Length);
@@ -729,7 +1119,26 @@ namespace System.Drawing.WebGpuBackend
             [StructLayout(LayoutKind.Sequential)]
             internal struct BITMAPINFO1 { public BITMAPINFOHEADER Header; public int Color0, Color1; }
             [DllImport("gdi32.dll")] internal static extern int StretchDIBits(IntPtr dc, int x, int y, int w, int h, int sx, int sy, int sw, int sh, byte[] bits, ref BITMAPINFO1 bmi, uint usage, int rop);
-            internal const int R2_MASKPEN = 9;
+            internal const int R2_MASKPEN = 9, BLACK_BRUSH = 4;
+            [StructLayout(LayoutKind.Sequential)] internal struct RECT { public int l, t, r, b; }
+            [DllImport("gdi32.dll")] internal static extern int SetMapMode(IntPtr dc, int mode);
+            [DllImport("gdi32.dll")] internal static extern IntPtr CreateRectRgn(int l, int t, int r, int b);
+            [DllImport("gdi32.dll")] internal static extern int CombineRgn(IntPtr dst, IntPtr a, IntPtr b, int mode);
+            [DllImport("gdi32.dll")] internal static extern int ExtSelectClipRgn(IntPtr dc, IntPtr rgn, int mode);
+            [DllImport("gdi32.dll")] internal static extern bool PatBlt(IntPtr dc, int x, int y, int w, int h, int rop);
+            [DllImport("gdi32.dll")] internal static extern IntPtr CreateDIBPatternBrushPt(byte[] packed, uint usage);
+            [DllImport("gdi32.dll")] internal static extern bool Polygon(IntPtr dc, int[] pts, int n);
+            [DllImport("gdi32.dll")] internal static extern bool PolyPolygon(IntPtr dc, int[] pts, int[] counts, int n);
+            [DllImport("gdi32.dll")] internal static extern bool PolyBezier(IntPtr dc, int[] pts, uint n);
+            [DllImport("gdi32.dll", EntryPoint = "PolyBezierTo")] internal static extern bool PolyBezierToI(IntPtr dc, int[] pts, uint n);
+            [DllImport("gdi32.dll")] internal static extern bool PolylineTo(IntPtr dc, int[] pts, uint n);
+            [DllImport("gdi32.dll")] internal static extern IntPtr GetCurrentObject(IntPtr dc, uint type);
+            [DllImport("gdi32.dll")] internal static extern int GetROP2(IntPtr dc);
+            [DllImport("gdi32.dll")] internal static extern int GetTextColor(IntPtr dc);
+            [DllImport("gdi32.dll")] internal static extern int GetBkColor(IntPtr dc);
+            [DllImport("gdi32.dll")] internal static extern int GetPolyFillMode(IntPtr dc);
+            [DllImport("gdi32.dll")] internal static extern bool GetBrushOrgEx(IntPtr dc, out POINT p);
+            [DllImport("gdi32.dll")] internal static extern int GetClipBox(IntPtr dc, out RECT r);
             [DllImport("gdi32.dll")] internal static extern int SetROP2(IntPtr dc, int rop2);
             [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
             internal struct LOGFONT

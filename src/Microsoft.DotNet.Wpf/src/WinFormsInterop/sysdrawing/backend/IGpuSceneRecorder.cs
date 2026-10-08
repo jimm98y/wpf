@@ -96,8 +96,17 @@ namespace System.Drawing
         void ResetAllClips();
         /// <summary>Clip to a GDI+ path (points as x,y pairs, a type byte each); exclude = outside it.</summary>
         void SetClipPath(float[] xy, byte[] types, bool nonZero, bool exclude);
+        /// <summary>A clip only a picture of the page needs: what follows does its own clipping on a
+        /// printer (an XOR raster), so the page devices pass it by.</summary>
+        void SetPreviewClipPath(float[] xy, byte[] types, bool nonZero);
+        /// <summary>A printed page's clip as GDI+ hands it to GDI: its region's device rectangles
+        /// (l, t, r, b quadruples), with the same rectangles as a path in the current units.</summary>
+        void SetRegionClip(float[] xy, byte[] types, int[] deviceRects);
         /// <summary>Fill a GDI+ path keeping its curves; a gradient when given, else the solid colour.</summary>
         void FillPathData(float[] xy, byte[] types, bool nonZero, int argb, GradientDesc? gradient);
+        /// <summary>A solid fill of a GDI+ path with what a printer device is to put down instead
+        /// (a PrintGdiFill) kept beside its brush.</summary>
+        void FillPathPrint(float[] xy, byte[] types, bool nonZero, int argb, object printFill);
         /// <summary>A rectangle or ellipse filled with a SMOOTH gradient.</summary>
         void FillShapeGradientSmooth(GradientShape shape, float x, float y, float w, float h, GradientDesc g);
         /// <summary>Stroke a GDI+ path with a pen: caps 0 flat / 1 square / 2 round, joins 0 miter /

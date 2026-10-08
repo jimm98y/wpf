@@ -163,6 +163,13 @@ namespace System.Drawing.WebGpuBackend
 
             public void ClipPath(PagePath path)
             {
+                if (path.DeviceRects is { Length: 4 } && path.Points.Count == 4)
+                {
+                    // A page clip region of one rectangle: the rectangle.
+                    (float x0, float y0, float x1, float y1) = path.Bounds();
+                    ClipRect(x0, y0, x1 - x0, y1 - y0);
+                    return;
+                }
                 if (path.IsEmpty) { _c.Append("0 0 0 0 re W n\n"); return; }
                 AppendPath(path);
                 _c.Append(path.EvenOdd ? "W* n\n" : "W n\n");
@@ -175,6 +182,9 @@ namespace System.Drawing.WebGpuBackend
                 if (path.IsEmpty) return;
                 switch (brush)
                 {
+                    case SolidColorBrush solid when PrintGdiFill.Find(solid) is PrintGdiFill gdi:
+                        GdiFill(path, gdi);
+                        break;
                     case SolidColorBrush solid:
                     {
                         (double r, double g, double b, double a) = ScenePageWalker.Srgb(solid.Color);
@@ -220,9 +230,26 @@ namespace System.Drawing.WebGpuBackend
             // resolution, or the runs' cells -- an explicit /Mask, set samples painted.
             private void Raster(PagePath path, PrintRaster r)
             {
-                int cw, ch, mw, mh;
-                byte[] rgb, bits;
-                if (r.Kind == PrintRaster.KindXorPath)
+                int cw = 0, ch = 0, mw = 0, mh = 0;
+                byte[] rgb = null, bits = null;
+                if (r.Kind == PrintRaster.KindAlphaXor)
+                {
+                    // What the XOR / DPa / XOR leaves: the bitmap where the alpha brush is black, a
+                    // stencil at the device's resolution over the rectangle (the clip keeps the shape).
+                    if (r.DevW <= 0 || r.DevH <= 0) return;
+                    rgb = new byte[r.Width * r.Height * 3];
+                    for (int i = 0; i < r.Width * r.Height; i++)
+                    {
+                        rgb[i * 3] = r.Color[i * 4 + 2]; rgb[i * 3 + 1] = r.Color[i * 4 + 1]; rgb[i * 3 + 2] = r.Color[i * 4];
+                    }
+                    int ms = (r.DevW + 7) / 8;
+                    bits = new byte[ms * r.DevH];
+                    for (int j = 0; j < r.DevH; j++)
+                        for (int i = 0; i < r.DevW; i++)
+                            if (r.AlphaDib == null || PrintGdiFill.AlphaKeeps(r.AlphaDib, r.DevX + i, r.DevY + j)) bits[j * ms + (i >> 3)] |= (byte)(0x80 >> (i & 7));
+                    cw = r.Width; ch = r.Height; mw = r.DevW; mh = r.DevH;
+                }
+                else if (r.Kind == PrintRaster.KindXorPath)
                 {
                     // What the XOR leaves: the bitmap inside the shape.
                     rgb = new byte[r.Width * r.Height * 3];
@@ -250,9 +277,25 @@ namespace System.Drawing.WebGpuBackend
                         ResourceName = "Ir" + (_doc._rasters++).ToString(CultureInfo.InvariantCulture),
                         ObjectId = _doc._writer.AllocateObject(),
                     };
+                    string maskRef = "";
+                    if (r.AlphaDib != null && r.DevW > 0 && r.DevH > 0)
+                    {
+                        // A near-constant translucent gradient: the bitmap only where the alpha brush is
+                        // black, which is a stencil at the device's resolution over the bounds.
+                        int ms = (r.DevW + 7) / 8;
+                        var mbits = new byte[ms * r.DevH];
+                        for (int j = 0; j < r.DevH; j++)
+                            for (int i = 0; i < r.DevW; i++)
+                                if (PrintGdiFill.AlphaKeeps(r.AlphaDib, r.DevX + i, r.DevY + j)) mbits[j * ms + (i >> 3)] |= (byte)(0x80 >> (i & 7));
+                        int mid = _doc._writer.AllocateObject();
+                        _doc._writer.WriteStreamObject(mid, mbits, string.Concat(
+                            "/Type /XObject /Subtype /Image /Width ", r.DevW.ToString(CultureInfo.InvariantCulture),
+                            " /Height ", r.DevH.ToString(CultureInfo.InvariantCulture), " /ImageMask true /BitsPerComponent 1 /Decode [ 1 0 ]"));
+                        maskRef = " /Mask " + mid.ToString(CultureInfo.InvariantCulture) + " 0 R";
+                    }
                     _doc._writer.WriteStreamObject(plain.ObjectId, rgb, string.Concat(
                         "/Type /XObject /Subtype /Image /Width ", r.Width.ToString(CultureInfo.InvariantCulture),
-                        " /Height ", r.Height.ToString(CultureInfo.InvariantCulture), " /ColorSpace /DeviceRGB /BitsPerComponent 8"));
+                        " /Height ", r.Height.ToString(CultureInfo.InvariantCulture), " /ColorSpace /DeviceRGB /BitsPerComponent 8", maskRef));
                     _images.Add(plain);
                     (float px0, float py0, float px1, float py1) = path.Bounds();
                     _c.Append("q\n");
@@ -261,7 +304,8 @@ namespace System.Drawing.WebGpuBackend
                       .Append(N(px0)).Append(' ').Append(N(py1)).Append(" cm /").Append(plain.ResourceName).Append(" Do\nQ\n");
                     return;
                 }
-                if (r.Kind == PrintRaster.KindMasked)
+                if (r.Kind == PrintRaster.KindAlphaXor) { }
+                else if (r.Kind == PrintRaster.KindMasked)
                 {
                     cw = r.SrcW; ch = r.Height; mw = r.MaskSrcW > 0 ? r.MaskSrcW : r.DevW; mh = r.MaskHeight;
                     rgb = new byte[cw * ch * 3];
@@ -493,6 +537,57 @@ namespace System.Drawing.WebGpuBackend
                     _alpha[alpha] = name;
                 }
                 _c.Append('/').Append(name).Append(" gs\n");
+            }
+
+            // ---- GDI+'s solid fills (see PrintGdiFill) -----------------------------------------
+
+            // The printer's device pixels onto the page's default space: dpi / 100 of them a
+            // hundredth of an inch, through the page's own matrix.
+            private Matrix3x2 DeviceToDefault(float dpiX, float dpiY)
+                => Matrix3x2.CreateScale(100f / dpiX, 100f / dpiY) * new Matrix3x2(0.72f, 0, 0, -0.72f, 0, _height * 0.72f);
+
+            // A coloured tiling pattern of the alpha brush (16 x 16 device pixels, anchored at the
+            // device's origin as the DC's brush origin is): the colour through the brush's bits as a
+            // stencil -- an image mask paints its 0 samples, the brush's black. The DIB is bottom-up
+            // and pattern space runs down the device, so its rows go in as they are.
+            private string AlphaPattern(byte[] dib, string rgb, float dpiX, float dpiY)
+            {
+                byte[] head = Encoding.ASCII.GetBytes(rgb + "16 0 0 16 0 0 cm\nBI /W 16 /H 16 /IM true /BPC 1 ID ");
+                byte[] tail = Encoding.ASCII.GetBytes("\nEI\n");
+                var cell = new byte[head.Length + 32 + tail.Length];
+                Buffer.BlockCopy(head, 0, cell, 0, head.Length);
+                for (int row = 0; row < 16; row++)
+                {
+                    cell[head.Length + row * 2] = dib[PrintGdiFill.AlphaDibBits + row * PrintGdiFill.AlphaDibStride];
+                    cell[head.Length + row * 2 + 1] = dib[PrintGdiFill.AlphaDibBits + row * PrintGdiFill.AlphaDibStride + 1];
+                }
+                Buffer.BlockCopy(tail, 0, cell, head.Length + 32, tail.Length);
+                Matrix3x2 d = DeviceToDefault(dpiX, dpiY);
+                PdfWriter w = _doc._writer;
+                int id = w.AllocateObject();
+                w.WriteStreamObject(id, cell, string.Concat(
+                    "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [ 0 0 16 16 ] /XStep 16 /YStep 16",
+                    " /Matrix [ ", N(d.M11), " ", N(d.M12), " ", N(d.M21), " ", N(d.M22), " ", N(d.M31), " ", N(d.M32), " ]",
+                    " /Resources << >>"));
+                string name = "P" + _patterns.Count.ToString(CultureInfo.InvariantCulture);
+                _patterns.Add((name, id));
+                return name;
+            }
+
+            /// <summary>What DriverPrint leaves on the paper: the shape in the colour -- all of it when
+            /// opaque, else where the alpha brush is black. The shape stays the page's own vector
+            /// (GDI is handed it rounded to device pixels; a PDF has no device to round to).</summary>
+            private void GdiFill(PagePath shape, PrintGdiFill f)
+            {
+                if (shape.IsEmpty) return;
+                double r = (f.Color & 0xff) / 255.0, g = ((f.Color >> 8) & 0xff) / 255.0, b = ((f.Color >> 16) & 0xff) / 255.0;
+                string rgb = string.Concat(N(r), " ", N(g), " ", N(b), " rg\n");
+                _c.Append("q\n");
+                if (f.AlphaDib == null) _c.Append(rgb);
+                else _c.Append("/Pattern cs /").Append(AlphaPattern(f.AlphaDib, rgb, f.DpiX, f.DpiY)).Append(" scn\n");
+                AppendPath(shape);
+                _c.Append(shape.EvenOdd ? "f*\n" : "f\n");
+                _c.Append("Q\n");
             }
 
             private void AppendPath(PagePath path)

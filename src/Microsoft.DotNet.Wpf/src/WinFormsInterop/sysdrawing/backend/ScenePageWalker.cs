@@ -32,6 +32,8 @@ namespace System.Drawing.WebGpuBackend
         internal readonly List<Op> Ops = new();
         internal readonly List<Vector2> Points = new();   // Move/Line: 1, Cubic: 3, Close: 0
         internal bool EvenOdd;
+        /// <summary>A clip that is a printed page's clip region: its device rectangles (l, t, r, b).</summary>
+        internal int[] DeviceRects;
 
         internal bool IsEmpty => Ops.Count == 0;
 
@@ -193,6 +195,16 @@ namespace System.Drawing.WebGpuBackend
     {
         internal static void Walk(SceneVisual root, IPageSink sink) => Visit(root, sink);
 
+        // Clips a picture of the page needs and the page devices do not (SetPreviewClipPath).
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<PathGeometry, object> s_previewOnly = new();
+
+        internal static void MarkPreviewOnly(PathGeometry g) => s_previewOnly.AddOrUpdate(g, s_previewOnly);
+
+        // A page's clip region in device rectangles (SetRegionClip), for a device that clips as GDI does.
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<PathGeometry, int[]> s_regionClips = new();
+
+        internal static void MarkRegionClip(PathGeometry g, int[] deviceRects) => s_regionClips.AddOrUpdate(g, deviceRects);
+
         private static void Visit(SceneVisual v, IPageSink sink)
         {
             sink.Save();
@@ -213,7 +225,12 @@ namespace System.Drawing.WebGpuBackend
                 }
             }
             if (v.Clip is Microsoft.Wpf.Interop.WebGpu.Composition.Rect clip) sink.ClipRect(clip.X, clip.Y, clip.Width, clip.Height);
-            if (v.ClipGeometry is PathGeometry cg) sink.ClipPath(PagePath.Of(cg));
+            if (v.ClipGeometry is PathGeometry cg && !s_previewOnly.TryGetValue(cg, out _))
+            {
+                PagePath clipPath = PagePath.Of(cg);
+                if (s_regionClips.TryGetValue(cg, out int[] rects)) clipPath.DeviceRects = rects;
+                sink.ClipPath(clipPath);
+            }
             if (v.Opacity < 1.0) sink.Opacity((float)v.Opacity);
             foreach (DrawingPrimitive p in v.Content) Emit(p, sink);
             foreach (SceneVisual child in v.Children) Visit(child, sink);

@@ -73,7 +73,7 @@ namespace System.Drawing
 		/// coordinates of the transform current when they are made.</summary>
 		GpGraphics EngineState ()
 		{
-			if (gp == null) return null;
+			if (gp == null) return PrintClipState ();
 			SyncEngine ();
 			return gp;
 		}
@@ -454,6 +454,7 @@ namespace System.Drawing
 		{
 			mf_rec?.ResetClip ();
 			gp?.ResetClip ();
+			print_clip?.ResetClip ();
 		}
 
 		void EngineOffsetClip (float dx, float dy)

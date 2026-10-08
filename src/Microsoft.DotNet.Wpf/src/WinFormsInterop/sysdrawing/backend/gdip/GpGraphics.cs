@@ -100,6 +100,23 @@ namespace System.Drawing.WebGpuBackend.Gdip
             UpdateVisibleClip ();
         }
 
+        /// <summary>A context with no pixels behind it: the clip and its save/restore stack of a
+        /// surface <paramref name="surface"/> (a printed page's device rectangle), nothing drawn.</summary>
+        public GpGraphics (Rectangle surface, float dpiX, float dpiY)
+        {
+            _surface = surface;
+            DpiX = dpiX; DpiY = dpiY;
+            UpdateWorldToDevice ();
+            UpdateVisibleClip ();
+        }
+
+        /// <summary>BeginContainer for a clip-only context: the clip starts over inside it, the outer
+        /// visible clip still bounding it; the transform is the caller's to set.</summary>
+        public void PushClipContainer (int tag) => PushContainer (tag, GpMatrix.CreateIdentity ());
+
+        /// <summary>The visible clip (surface, container clips and app clip) in device space.</summary>
+        public DpRegion VisibleClipRegion => _visibleClip;
+
         // ---- state ----------------------------------------------------------------------------------
 
         public GpMatrix World => _ctx.World;

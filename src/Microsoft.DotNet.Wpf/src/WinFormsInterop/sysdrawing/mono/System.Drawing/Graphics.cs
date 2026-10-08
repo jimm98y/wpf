@@ -688,6 +688,7 @@ namespace System.Drawing
 				if (rects == true) gp.BeginContainer (token, dst, src, unit);
 				else gp.BeginContainer (token);
 			}
+			print_clip?.PushClipContainer (token);
 			// The recorder: the container's transform becomes the base every world transform is
 			// composed onto, and the quality settings start over.
 			rec_container = new float [] { container.M11, container.M12, container.M21, container.M22, container.Dx, container.Dy };
@@ -718,6 +719,7 @@ namespace System.Drawing
 				SyncEngine ();
 				if (!container) gp.Save (token);
 			}
+			if (!container) print_clip?.Save (token);
 			return token;
 		}
 
@@ -726,6 +728,7 @@ namespace System.Drawing
 			GpuRecorder?.RestoreState (token);
 			RecordedRestore (token);
 			gp?.Restore (token);
+			print_clip?.Restore (token);
 		}
 
 		public void Clear (Color color)
@@ -2566,6 +2569,7 @@ namespace System.Drawing
 		public void ExcludeClip (Rectangle rect)
 		{
 						EngineClipRect (rect, CombineMode.Exclude);
+			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, true); return; }
 			
 		}
@@ -2575,6 +2579,7 @@ namespace System.Drawing
 			if (region == null)
 				throw new ArgumentNullException ("region");
 						EngineClipRegion (region, CombineMode.Exclude);
+			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) { RecordRegionClip (region, true); return; }
 			
 		}
@@ -2925,6 +2930,7 @@ namespace System.Drawing
 			var rf = new RectangleF [rects.Length];
 			for (int i = 0; i < rf.Length; i++) rf [i] = rects [i];
 			if (EngineFillRects (brush, rf)) return;
+			if (PrintFillRects (brush, rf)) return;
 			if (GpuRecorder != null) { foreach (Rectangle r in rects) FillRectangle (brush, r); return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
@@ -2941,6 +2947,7 @@ namespace System.Drawing
 			if (rects == null)
 				throw new ArgumentNullException ("rects");
 			if (EngineFillRects (brush, rects)) return;
+			if (PrintFillRects (brush, rects)) return;
 			if (GpuRecorder != null) { foreach (RectangleF r in rects) FillRectangle (brush, r); return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
@@ -3208,6 +3215,7 @@ namespace System.Drawing
 			if (region == null)
 				throw new ArgumentNullException ("region");
 						EngineClipRegion (region, CombineMode.Intersect);
+			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) { RecordRegionClip (region, false); return; }
 			
 		}
@@ -3215,6 +3223,7 @@ namespace System.Drawing
 				public void IntersectClip (RectangleF rect)
 		{
 			EngineClipRect (rect, CombineMode.Intersect);
+			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, false); return; }
 			
 		}
@@ -3224,6 +3233,7 @@ namespace System.Drawing
 			// The recorder too, as the RectangleF overload does: this one had no recording path, so
 			// every integer clip -- TextRenderer's, a theme part's -- was dropped under the GPU.
 						EngineClipRect (rect, CombineMode.Intersect);
+			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, false); return; }
 			
 		}
@@ -3637,6 +3647,7 @@ namespace System.Drawing
 				public void SetClip (Rectangle rect, CombineMode combineMode)
 		{
 			EngineClipRect (rect, combineMode);
+			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) {
 				if (print_mode && combineMode == CombineMode.Replace) GpuRecorder.ResetAllClips ();
 								GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude);
@@ -3649,6 +3660,7 @@ namespace System.Drawing
 				public void SetClip (RectangleF rect, CombineMode combineMode)
 		{
 			EngineClipRect (rect, combineMode);
+			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) {
 				if (print_mode && combineMode == CombineMode.Replace) GpuRecorder.ResetAllClips ();
 								GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude);
@@ -3705,6 +3717,7 @@ namespace System.Drawing
 						if (region == null)
 				throw new ArgumentNullException ("region");
 			EngineClipRegion (region, combineMode);
+			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) {
 				// Replacing the clip means "from here on, draw inside this instead". It does NOT
 				// mean "go back to drawing where whatever came before went" -- but that is what
@@ -3730,6 +3743,7 @@ namespace System.Drawing
 			if (path == null)
 				throw new ArgumentNullException ("path");
 						EngineClipPath (path, combineMode);
+			if (PrintRecordClip ()) return;
 			PrintClip (path, combineMode);
 			
 		}
@@ -3765,6 +3779,7 @@ namespace System.Drawing
 		{
 			// GpGraphics::OffsetClip: the app clip moved by the vector, in device space.
 			EngineOffsetClip (dx, dy);
+			if (PrintRecordClip ()) return;
 		}
 
 		public void TranslateTransform (float dx, float dy)
