@@ -69,7 +69,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 _oldRecords.Clear();
                 if (!Flatten(old, parentWorld, parentClip, _oldRecords) || _oldRecords.Count < 8) return Why($"old not flat ({_oldRecords.Count})");
 
-                Rec rec = Visit(null, v, parentWorld, parentClip, fresh: true, inSnapshot: false);
+                Rec rec = Visit(null, v, parentWorld, parentClip, fresh: true, inSnapshot: false, keepNudge: true);
                 _newRecords.Clear();
                 if (!Flatten(rec, parentWorld, parentClip, _newRecords) || _newRecords.Count < 8) return Why($"new not flat ({_newRecords.Count})");
 
@@ -229,6 +229,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         Vector2 d = n.Anchor - _oldRecords[i].Anchor;
                         int ix = (int)MathF.Round(d.X), iy = (int)MathF.Round(d.Y);
                         if ((ix == 0 && iy == 0) || MathF.Abs(d.X - ix) > 1e-3f || MathF.Abs(d.Y - iy) > 1e-3f) continue;
+                        // Even only, as TryScroll: positions round half to even.
+                        if (((ix | iy) & 1) != 0) continue;
                         // A record drawn once (a row's text) says where it went; one drawn in every
                         // row (a check box, a grid line) votes for every multiple of the row height.
                         votes.TryGetValue((ix, iy), out int c);

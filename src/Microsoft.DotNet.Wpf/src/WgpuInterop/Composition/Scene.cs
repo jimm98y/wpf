@@ -899,6 +899,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public List<SceneVisual> Children { get; } = new();
 
         /// <summary>Maps a local point to the parent's coordinate space.</summary>
-        public Matrix3x2 LocalToParent => Transform * Matrix3x2.CreateTranslation(Offset);
+        public Matrix3x2 LocalToParent => Transform * Matrix3x2.CreateTranslation(Offset + SnapNudge);
+
+        /// <summary><see cref="LocalToParent"/> without <see cref="SnapNudge"/>: where the scene puts it.</summary>
+        internal Matrix3x2 TrueLocalToParent => Transform * Matrix3x2.CreateTranslation(Offset);
+
+        /// <summary>Set by the damage tracker while this visual is a scroll in motion: the offset (parent
+        /// units) that puts it on whole device pixels, so a moving frame can shift the last one's pixels
+        /// instead of re-rendering everything at a new sub-pixel phase. Render-only -- nothing in the
+        /// scene, layout or hit testing sees it -- and zero again once the scroll has settled.</summary>
+        internal Vector2 SnapNudge;
     }
 }
