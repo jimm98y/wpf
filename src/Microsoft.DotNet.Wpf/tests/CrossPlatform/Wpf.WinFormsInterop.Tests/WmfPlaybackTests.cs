@@ -811,11 +811,6 @@ namespace Wpf.WinFormsInterop.Tests
         // here, with OUT_TT_ONLY_PRECIS, but draws it smaller than that LOGFONT realizes to).
         private static readonly HashSet<string> Pending = new()
         {
-            "text/0/up",
-            "text/0/down",
-            "text/0/gamma-up",
-            "text/0/nearest-up",
-            "text/0/turned",
             "text/1/1x",
             "text/1/up",
             "text/1/down",
@@ -828,17 +823,10 @@ namespace Wpf.WinFormsInterop.Tests
             "text/1/nearest-up",
             "text/1/transparent",
             "text/1/turned",
-            "text/2/1x",
             "text/2/up",
             "text/2/down",
-            "text/2/invert",
-            "text/2/brush-invert",
-            "text/2/pen-invert",
-            "text/2/text-invert",
-            "text/2/bitmap-invert",
             "text/2/gamma-up",
             "text/2/nearest-up",
-            "text/2/transparent",
             "text/2/turned",
         };
 

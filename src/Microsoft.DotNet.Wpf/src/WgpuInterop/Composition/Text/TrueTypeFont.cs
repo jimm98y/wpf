@@ -108,6 +108,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// leaves between the phantom points -- see <see cref="CompatibleAdvance"/>.</summary>
         private const int HeadInstructionsAlterAdvance = 0x10;
         private bool _instructionsMayAlterAdvance = true;
+        private int _headFlags;
         private int _ltshGlyphs;
         private readonly int _glyfOffset;
         private readonly uint[] _loca;          // numGlyphs+1 glyph data offsets
@@ -301,6 +302,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int unitsPerEm = U16(head + 18);
             int indexToLocFormat = (short)U16(head + 50);
             _instructionsMayAlterAdvance = (U16(head + 16) & HeadInstructionsAlterAdvance) != 0;
+            _headFlags = U16(head + 16);
             _unitsPerEm = unitsPerEm;
             _scale = BaseEmPixels / (float)unitsPerEm;
             _numGlyphs = U16(maxp + 4);
@@ -1024,6 +1026,48 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return true;
         }
 
+        /// <summary>GLYPHDATA fxD of a glyph realized by ttfd under a diagonal matrix (vFillGLYPHDATA
+        /// @140012568 -> bGetFastAdvanceWidth @140010618, fontdrvhost). A square matrix (x's 16.16
+        /// scale equal to y's: TT_FONTCONTEXT +0x74 bit 4, and vFindHdmxTable's row at +0x88) takes
+        /// the 'hdmx' row; without one the advance is LINEAR -- hmtx times the context's x scale
+        /// <paramref name="m00"/> (+0x50), rounded to the pixel -- when head.flags has neither bit
+        /// 2 nor bit 4 or the glyph's 'LTSH' threshold is at most the ppem (+0x7c), and otherwise
+        /// the fitted advance (fs_GlyphInfoType +0x48). A matrix that is not square (lfWidth, a
+        /// stretched mapping) is always linear: Arial Bold at 16 x 7 is 13 x 13.28 ppem and its
+        /// 'a' 'e' 'x' 'w' 'E' come out 7 7 7 10 9 where the 13ppem hdmx says 8 8 8 11 8.
+        /// FO_SIM_BOLD's pixel added.</summary>
+        internal bool TryGetStretchedAdvance(int glyphId, int m00, bool square, int ppemX, int ppemY, out float advance, int stretchInfo = 0)
+        {
+            advance = 0f;
+            if (glyphId < 0 || glyphId >= _numGlyphs || ppemX <= 0 || ppemY <= 0) return false;
+            if (square && TryGetHdmxAdvance(glyphId, ppemY, out advance))
+            {
+                if (GdiEmboldens) advance += SimBoldAdvancePixels(ppemY);
+                return true;
+            }
+            // TT_FONTCONTEXT +0x74 bit 4 is set (bComputeMaxGlyph @14001b198) only when x's scale is
+            // y's and positive; without it bGetFastAdvanceWidth takes the linear advance outright.
+            bool linear = !square || (_headFlags & 0x14) == 0;
+            if (!linear && _ltshOffset >= 0 && glyphId < _ltshGlyphs && _data[_ltshOffset + glyphId] <= ppemY) linear = true;
+            bool ok;
+            if (linear)
+            {
+                long v = (long)m00 * DesignAdvance(glyphId);
+                advance = (int)((v + 0x8000) >> 16);
+                ok = true;
+            }
+            else
+            {
+                int sx = TrueTypeInterpreter.StretchPpemX, sy = TrueTypeInterpreter.StretchPpemY, si = TrueTypeInterpreter.GdiStretchInfo;
+                TrueTypeInterpreter.StretchPpemX = ppemX != ppemY ? ppemX : 0; TrueTypeInterpreter.StretchPpemY = ppemX != ppemY ? ppemY : 0;
+                if (stretchInfo != 0) TrueTypeInterpreter.GdiStretchInfo = stretchInfo;
+                try { ok = TryGetHintedAdvance(glyphId, ppemY, out advance); }
+                finally { TrueTypeInterpreter.StretchPpemX = sx; TrueTypeInterpreter.StretchPpemY = sy; TrueTypeInterpreter.GdiStretchInfo = si; }
+            }
+            if (ok && GdiEmboldens) advance += SimBoldAdvancePixels(ppemY);
+            return ok;
+        }
+
         private bool TryGetDeviceAdvanceCore(int glyphId, float pixelsPerEm, out float advance)
         {
             advance = 0f;
@@ -1170,7 +1214,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// <summary>How far the hinted outlines reach at this size, from 'VDMX'. False when the face
         /// ships none, when no ratio range applies, or when the size is outside the range recorded.
         /// </summary>
-        private bool TryGetVdmxExtents(int ppem, out int yMax, out int yMin)
+        internal bool TryGetVdmxExtents(int ppem, out int yMax, out int yMin)
         {
             yMax = yMin = 0;
             if (_vdmx < 0 || ppem <= 0 || ppem > 0xFFFF) return false;
