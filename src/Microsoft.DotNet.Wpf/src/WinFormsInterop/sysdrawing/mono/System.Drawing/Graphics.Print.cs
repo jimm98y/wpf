@@ -1809,7 +1809,7 @@ namespace System.Drawing
 			float emDevice = FontEmWorld (font) * dev;
 			return Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Layout (face, family, emDevice * 72f / print_dpi_x, s,
 				(rect.X * sx + tx) * dx, (rect.Y * sy + ty) * dx, rect.Width * dev, rect.Height * dev,
-				flags, typographic, align, lineAlign, hotkey, hint, print_dpi_x);
+				flags, typographic, align, lineAlign, hotkey, hint, print_dpi_x, switchToPath: false);
 		}
 
 		bool TryPrintGdiPlusText (string s, Font font, int argb, RectangleF rect, StringFormat format)

@@ -21,7 +21,15 @@
 // typographic strings whose ends overhang (the black-box test reads the GDI-classic side bearings).
 // GDI+ fits all of them: its metrics are DirectWrite's GDI_CLASSIC / GDI_NATURAL measure, which reads
 // no gasp bit (TrueTypeFont.GdiClassicFit). Recorded one job per process: GDI+'s realization cache
-// makes an AntiAliasGridFit string's render mode depend on what the process drew before.
+// makes an AntiAliasGridFit string's render mode depend on what the process drew before: its
+// lookup (FastTextImager::DrawString @180038298) keys on the notional-to-device matrix and the flag
+// word, while IsGrayscaleFontSize was asked the WORLD em, so Tahoma 8px AntiAliasGridFit under a 2x
+// scale (grey at 8) leaves a grey realization that a later upright 16px string reuses.
+// The jobs after the gasp ones cover what round r8 closed: the non-ClearType hints under an
+// anisotropic scale (GDI-classic metrics and glyphs fitted at each axis' ppem, no hdmx), the
+// unfitted SingleBitPerPixel scan control (the prep run at MPPEM = units per em), MS Gothic's
+// strike-size side bearings, and the path realizations either side of SwitchToPath's box limits
+// (native GDI+'s FullTextImager::DrawGlyphs GpGraphics::FillPath, hooked: "FILLPATH").
 //
 
 using System;
@@ -57,6 +65,7 @@ namespace Wpf.WinFormsInterop.Tests
                 if (s_installed) return;
                 GpTextTrace.Placed = (mode, em, g, xy) => { if (t_hooking) Placed(mode, em, g, xy); };
                 GpTextTrace.Line = (w, u, xy) => { if (t_hooking) Line(w, u, xy); };
+                GpTextTrace.PathFilled = () => { if (t_hooking) t_log.Append("FILLPATH\n"); };
                 s_installed = true;
             }
         }

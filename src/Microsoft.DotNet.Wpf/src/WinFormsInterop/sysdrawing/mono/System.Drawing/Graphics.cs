@@ -2347,11 +2347,69 @@ namespace System.Drawing
 			}
 			object layout = WebGpuBackend.TextMetrics.LayoutGdiPlus (s, family, style, font.SizeInPoints,
 				rect.X, rect.Y, rect.Width, rect.Height, flags, typographic, align, lineAlign, hotkey,
-				(int) recorded_text_hint, recorded_text_contrast, out bool empty);
+				(int) recorded_text_hint, recorded_text_contrast, out bool empty, out bool asPath,
+				// The renderer draws the bi-level realizations only untransformed.
+				biLevel: rec_world [0] == 1f && rec_world [1] == 0f && rec_world [2] == 0f && rec_world [3] == 1f);
+			if (layout == null && asPath)
+				return FillGdiPlusTextOutlines (s, font, brush, rect, format);
 			if (layout == null)
 				return false;
 			if (!empty)
 				GpuRecorder.DrawGdiPlusText (layout, s, ArgbOf (brush), style, family);
+			return true;
+		}
+
+		/// <summary>A string whose realization GDI+ switches to outlines (GpFaceRealization::Realize's
+		/// SwitchToPath @1801ed568: a device box over 100 pixels tall under ClearType, over 200 under
+		/// the antialiased hints, over 800 otherwise): FastTextImager answers status 6 and
+		/// FullTextImager::DrawGlyphs @18003b720 adds each glyph's outline at the design-realization
+		/// layout and fills the lot with GpGraphics::FillPath -- the layout GraphicsPath.AddString
+		/// makes, filled with the graphics' own smoothing. Modelled for a pixel page with no
+		/// scaling; false otherwise (the caller's old path).</summary>
+		bool FillGdiPlusTextOutlines (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
+		{
+			if (PageUnit != GraphicsUnit.Pixel && PageUnit != GraphicsUnit.Display)
+				return false;
+			if (PageScale != 1f || font.FontFamily == null)
+				return false;
+			float em = font.SizeInPoints * DpiY / 72f;
+			using (var path = new GraphicsPath ()) {
+				path.AddString (s, font.FontFamily, (int) font.Style & 3, em, rect, format);
+				if (path.PointCount == 0)
+					return true;
+				// GpGraphics::FillPath through GDI+'s own rasterizer: the path filled into a
+				// bitmap Graphics (this port's GDI+ engine) at its device position, the coverage
+				// drawn as an image. SetTextLinesAntialiasMode::SetAAMode @1800eb708 for a path
+				// realization: antialiased for AntiAlias and AntiAliasGridFit, aliased otherwise.
+				GpuRecorder.GetTranslation (out float tx, out float ty);
+				RectangleF bounds = path.GetBounds ();
+				if (tx != (int) tx || ty != (int) ty || bounds.Width <= 0 || bounds.Height <= 0
+				    || bounds.Width > 8192 || bounds.Height > 8192)
+					return false;
+				int bx = (int) Math.Floor (bounds.X) - 1, by = (int) Math.Floor (bounds.Y) - 1;
+				int bw = (int) Math.Ceiling (bounds.Right) + 1 - bx, bh = (int) Math.Ceiling (bounds.Bottom) + 1 - by;
+				TextRenderingHint h = recorded_text_hint;
+				using (var bmp = new Bitmap (bw, bh, PixelFormat.Format32bppArgb)) {
+					using (var g = FromImage (bmp)) {
+						g.SmoothingMode = h == TextRenderingHint.AntiAlias || h == TextRenderingHint.AntiAliasGridFit
+							? SmoothingMode.AntiAlias : SmoothingMode.None;
+						g.TranslateTransform (-bx, -by);
+						// FullTextImager::Draw @1800f0360: the layout rectangle clips unless NoClip.
+						if (rect.Width != 0f && rect.Height != 0f
+						    && (format == null || (format.FormatFlags & StringFormatFlags.NoClip) == 0))
+							g.SetClip (rect);
+						g.FillPath (brush, path);
+					}
+					BitmapData d = bmp.LockBits (new Rectangle (0, 0, bw, bh), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+					var bgra = new byte [bw * bh * 4];
+					for (int j = 0; j < bh; j++)
+						Marshal.Copy (d.Scan0 + j * d.Stride, bgra, j * bw * 4, bw * 4);
+					bmp.UnlockBits (d);
+					for (int i = 0; i < bgra.Length; i += 4)
+						(bgra [i], bgra [i + 2]) = (bgra [i + 2], bgra [i]);
+					GpuRecorder.DrawImage (bgra, bw, bh, bx, by, bw, bh);
+				}
+			}
 			return true;
 		}
 

@@ -282,22 +282,26 @@ namespace System.Drawing.WebGpuBackend.Gdip
                                  : sx == sy ? GdipText.Glyph (face, glyphs [i], em * sx)
                                  : GdipText.Glyph (face, glyphs [i], ppX, GdipText.AxisPpem (em * sy));
                     lv = GdipText.Compose (bits, xs, ys, 0f, face.GdiPlusFixedFilter);
-                } else if (mode == 3 || mode == 4) {
-                    lv = GdipText.ComposeGrey (face, glyphs, em * sx, xs, ys [0]);
                 } else {
-                    lv = GdipText.ComposeMono (face, glyphs, em * sx, xs, ys [0], gridFit: mode == 1);
+                    lv = GdipText.ComposeAxis (face, glyphs, mode, em, sx, sy, xs, ys [0]);
                 }
                 if (lv.Width == 0 || lv.Height == 0) return;
                 _g.OutputText (lv, mode == 5 ? 5 : mode, _brush, _g._ctx.TextContrast);
             }
 
-            /// <summary>GpFaceRealization::Realize's SwitchToPath @1801ed568 for a realization under a
-            /// turned transform: bGetDEVICEMETRICS @1800a2c08 takes the face's glyph box (y widened by
-            /// upem / 64 each way) through the notional-to-device matrix in 28.4 and rounds it out to
-            /// pixels; DrawGlyphs' flags for the mode (0x418000 ClearType, 0x18000 / 0x118000 the
-            /// antialiased modes, 0x48000 / 0x8000 bi-level) then switch to outlines when the box
-            /// is taller than 100 pixels (bit 22), or wider or taller than 200 (bit 16) or 800.</summary>
-            public bool DrawsAsPath (TrueTypeFont face, float em, int mode) => SwitchToPath (face, em, _g.WorldToDevice, mode);
+            /// <summary>GpFaceRealization::Realize's SwitchToPath @1801ed568 (GdipText.SwitchesToPath):
+            /// the realization FullTextImager::DrawGlyphs asks for -- the resolved hint's flag word,
+            /// under the target's transform -- is too big for glyph bitmaps.</summary>
+            public bool DrawsAsPath (TrueTypeFont face, float em, int mode, bool sideways = false)
+            {
+                GpMatrix m = _g.WorldToDevice;
+                // A sideways run is realized under GetFontTransform's quarter turn ahead of the
+                // world-to-device matrix: (x, y) -> (y, -x), then the device's.
+                float m11 = m.M11, m12 = m.M12, m21 = m.M21, m22 = m.M22;
+                if (sideways) (m11, m12, m21, m22) = (m.M21, m.M22, -m.M11, -m.M12);
+                return GdipText.SwitchesToPath (face, em, m11, m12, m21, m22,
+                                                GdipText.RealizationFlags (_g.ResolvedTextHint (), face.SynthesizesBold, face.SynthesizesOblique));
+            }
 
             /// <summary>The switched realization's glyphs: their outlines at the world origins,
             /// filled through the transform with the graphics' own smoothing (GpGraphics::FillPath).</summary>
@@ -305,29 +309,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 var path = new GpPath (FillMode.Winding);
                 for (int i = 0; i < glyphs.Length; i++)
-                    if (glyphs [i] != 0xffff) GpPathText.AddGlyphOutline (path, run.Face, glyphs [i], run.Em, worldOrigins [i].X, worldOrigins [i].Y);
+                    if (glyphs [i] != 0xffff) GpPathText.AddRunGlyphOutline (path, run, glyphs [i], worldOrigins [i].X, worldOrigins [i].Y);
                 if (path.Points.Count == 0) return;
-                _g.FillPath (_brush, path.Points.ToArray (), path.Types.ToArray (), FillMode.Winding);
-            }
-
-            static bool SwitchToPath (TrueTypeFont face, float em, GpMatrix m, int mode)
-            {
-                int upem = face.UnitsPerEmForHinting;
-                if (upem <= 0) return false;
-                float k = em / upem;
-                float y0 = -face.HeadYMax - (upem >> 6), y1 = -face.HeadYMin + (upem >> 6);
-                float x0 = face.HeadXMin, x1 = face.HeadXMax;
-                long minX = long.MaxValue, maxX = long.MinValue, minY = long.MaxValue, maxY = long.MinValue;
-                static long Fix (float v) => v < 0f ? -(long)MathF.Floor (-v * 16f + 0.5f) : (long)MathF.Floor (v * 16f + 0.5f);
-                foreach ((float x, float y) in new[] { (x0, y0), (x1, y0), (x0, y1), (x1, y1) }) {
-                    long dx = Fix ((x * m.M11 + y * m.M21) * k), dy = Fix ((x * m.M12 + y * m.M22) * k);
-                    minX = Math.Min (minX, dx); maxX = Math.Max (maxX, dx);
-                    minY = Math.Min (minY, dy); maxY = Math.Max (maxY, dy);
-                }
-                long w = ((maxX + 15) >> 4) - (minX >> 4), h = ((maxY + 15) >> 4) - (minY >> 4);
-                if (mode == 5) return h > 100;
-                int lim = mode == 3 || mode == 4 ? 200 : 800;
-                return w > lim || h > lim;
+                GpTextTrace.PathFilled?.Invoke ();
+                // FullTextImager::Render @18003cbe8's SetTextLinesAntialiasMode::SetAAMode @1800eb708:
+                // for a path realization the graphics' own hint decides -- antialiased (mode 4) for
+                // AntiAlias and AntiAliasGridFit, aliased (3) otherwise.
+                int hint = _g.ResolvedTextHint ();
+                SmoothingMode sm = _g._ctx.Smoothing;
+                _g._ctx.Smoothing = hint == GdipText.HintAntiAlias || hint == GdipText.HintAntiAliasGridFit
+                    ? SmoothingMode.AntiAlias : SmoothingMode.None;
+                try { _g.FillPath (_brush, path.Points.ToArray (), path.Types.ToArray (), FillMode.Winding); }
+                finally { _g._ctx.Smoothing = sm; }
             }
 
             /// <summary>Glyphs under a turned transform: their outlines at the world origins, filled
@@ -785,11 +778,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 lv = GdipText.Compose (bits, xs, y, run.FixedFilter);
                 break;
             }
-            case 3: case 4:
-                lv = GdipText.ComposeGrey (font, run.Glyphs, run.Em * run.Sx, xs, y);
-                break;
             default:
-                lv = GdipText.ComposeMono (font, run.Glyphs, run.Em * run.Sx, xs, y, gridFit: run.Mode == 1);
+                lv = GdipText.ComposeAxis (font, run.Glyphs, run.Mode, run.Em, run.Sx, run.Sy, xs, y);
                 break;
             }
             if (lv.Width == 0 || lv.Height == 0) return;

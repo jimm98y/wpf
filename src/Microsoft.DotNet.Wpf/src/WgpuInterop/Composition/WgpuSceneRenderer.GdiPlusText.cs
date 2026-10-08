@@ -57,6 +57,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Text.GdiPlusText.Levels lv;
             if (run.Mode == Text.GdiPlusText.HintAntiAlias || run.Mode == Text.GdiPlusText.HintAntiAliasGridFit)
                 lv = Text.GdiPlusText.ComposeGrey(font, run.Glyphs, run.Em, xs, y);
+            else if (run.Mode == Text.GdiPlusText.HintSingleBitPerPixelGridFit || run.Mode == Text.GdiPlusText.HintSingleBitPerPixel)
+                // The bi-level realizations (SingleBitPerPixel[GridFit], an AntiAliasGridFit size the
+                // gasp does not grey, ClearType at an embedded-bitmap size): raster type 0 bits, the
+                // brush where they are set (coverage 15).
+                lv = Text.GdiPlusText.ComposeMono(font, run.Glyphs, run.Em, xs, y, gridFit: run.Mode == Text.GdiPlusText.HintSingleBitPerPixelGridFit);
             else
             {
                 var bits = new Text.NaturalClearType.GlyphBits[n];

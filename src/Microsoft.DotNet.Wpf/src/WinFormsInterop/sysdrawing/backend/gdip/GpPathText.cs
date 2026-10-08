@@ -91,6 +91,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
             AddGlyph (path, font, gid, new Matrix2 (k, 0f, 0f, k), ox, oy, font.SynthesizesOblique);
         }
 
+        /// <summary>The same for a glyph of a full-imager run: a sideways run's glyph is turned by
+        /// GetFontTransform's quarter turn, as AddGlyphs turns it.</summary>
+        internal static void AddRunGlyphOutline (GpPath path, GpFullTextImager.Run run, int gid, float ox, float oy)
+        {
+            TrueTypeFont font = run.Face;
+            float k = run.Em / font.UnitsPerEmForHinting;
+            bool sideways = (run.ItemFlags & 0x20) != 0 && (run.ItemFlags & 0x8) == 0;
+            const float c90 = -4.371139e-08f;
+            Matrix2 m = sideways ? new Matrix2 (c90 * k, k, -k, c90 * k) : new Matrix2 (k, 0f, 0f, k);
+            AddGlyph (path, font, gid, m, ox, oy, font.SynthesizesOblique);
+        }
+
         readonly struct Matrix2
         {
             public readonly float M11, M12, M21, M22;
