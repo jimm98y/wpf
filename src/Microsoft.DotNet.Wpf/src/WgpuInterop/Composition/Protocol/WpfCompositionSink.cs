@@ -1001,10 +1001,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     string numbered = System.IO.Path.Combine(
                         System.IO.Path.GetDirectoryName(dump) ?? ".",
                         System.IO.Path.GetFileNameWithoutExtension(dump) + "_" + frame.ToString("000") + System.IO.Path.GetExtension(dump));
-                    PngWriter.Write(numbered, px, t.Width, t.Height);
+                    if (numbered.EndsWith(".raw", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Full resolution, uncompressed: int width, int height, then BGRA rows -- the
+                        // layout a PrintWindow capture is saved in, for comparing pixel for pixel when
+                        // the desktop cannot be captured (a locked session captures black).
+                        var raw = new byte[8 + px.Length];
+                        BitConverter.TryWriteBytes(raw.AsSpan(0, 4), t.Width);
+                        BitConverter.TryWriteBytes(raw.AsSpan(4, 4), t.Height);
+                        for (int i = 0; i < px.Length; i += 4)
+                        {
+                            raw[8 + i] = px[i + 2]; raw[8 + i + 1] = px[i + 1]; raw[8 + i + 2] = px[i]; raw[8 + i + 3] = px[i + 3];
+                        }
+                        System.IO.File.WriteAllBytes(numbered, raw);
+                    }
+                    else
+                    {
+                        PngWriter.Write(numbered, px, t.Width, t.Height);
+                    }
                     Log($"wrote screenshot {numbered}");
 
                     // Also a 1:1 (un-downsampled) crop of a region so detail is visible.
+                    if (numbered.EndsWith(".raw", StringComparison.OrdinalIgnoreCase)) return;
                     int ox = Math.Clamp(int.TryParse(Environment.GetEnvironmentVariable("WPF_WEBGPU_CROP_X"), out int cx) ? cx : 0, 0, Math.Max(0, t.Width - 1));
                     int oy = Math.Clamp(int.TryParse(Environment.GetEnvironmentVariable("WPF_WEBGPU_CROP_Y"), out int cy) ? cy : 0, 0, Math.Max(0, t.Height - 1));
                     int cw = Math.Min(1000, t.Width - ox), ch = Math.Min(560, t.Height - oy);

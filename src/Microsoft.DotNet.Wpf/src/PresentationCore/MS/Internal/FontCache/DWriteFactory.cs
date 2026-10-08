@@ -24,6 +24,10 @@ namespace MS.Internal.FontCache
 
             Text.TextInterface.LocalizedErrorMsgs.EnumeratorNotStarted = SR.Enumerator_NotStarted;
             Text.TextInterface.LocalizedErrorMsgs.EnumeratorReachedEnd = SR.Enumerator_ReachedEnd;
+
+            // Display-mode advances come from the composition backend's rasterizer; make them
+            // available before the first line is formatted, not only once something is composed.
+            System.Windows.Media.Composition.DUCE.ManagedComposition.EnsureTextMetricsProvider();
         }
 
         internal static Text.TextInterface.Factory Instance

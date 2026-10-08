@@ -44,6 +44,23 @@ namespace MS.Internal.TextFormatting
         public int CpFirst;                 // first cp of this run
         public int CchText;                 // characters consumed
         public char[] Text;                 // run characters (Text[0..CchText])
+
+        /// <summary>
+        ///  The characters LineServices measures, shapes and draws in place of <see cref="Text"/>,
+        ///  or null when they are the same: a special-character dnode is presented as the character
+        ///  its class is formatted with (FormatSpecial: U+00A0 as a space, U+2011 as a hyphen), and
+        ///  a tab as a space (FormatStartTab). Text keeps the originals, which line breaking reads.
+        /// </summary>
+        public char[] Pres;
+
+        /// <summary>A tab dnode: as wide as the tab stop it reaches, drawn as a space.</summary>
+        public bool IsTab;
+
+        /// <summary>A typographic-space dnode (FormatSpecial kind 8): drawn as wchSpace characters at
+        /// its own characters' widths (LsDisplayText).</summary>
+        public bool DrawSpaces;
+
+        public char[] Shaped => Pres ?? Text;
         public ushort[] Glyphs;             // glyph indices
         public ushort[] ClusterMap;         // char->glyph cluster map
         public ushort[] CharProps;          // per-char properties (from GetGlyphs)
@@ -107,6 +124,10 @@ namespace MS.Internal.TextFormatting
         public LineServicesCallbacks Callbacks;
         public LsContextInfo ContextInfo;
         public GCHandle Self;
+
+        // LoSetTabs: the paragraph's incremental tab and its own tab stops, ideal units.
+        public int IncrementalTab;
+        public LsTbd[] Tabs = Array.Empty<LsTbd>();
     }
 
     internal static class ManagedLineServices
@@ -159,7 +180,14 @@ namespace MS.Internal.TextFormatting
         internal static LsErr SetBreaking(IntPtr ploc, int strategy) => LsErr.None;
 
         internal static unsafe LsErr SetTabs(IntPtr ploc, int durIncrementalTab, int tabCount, LsTbd* pTabs)
-            => LsErr.None;
+        {
+            ManagedLsContext ctx = ContextFrom(ploc);
+            ctx.IncrementalTab = durIncrementalTab;
+            var tabs = new LsTbd[pTabs != null && tabCount > 0 ? tabCount : 0];
+            for (int i = 0; i < tabs.Length; i++) tabs[i] = pTabs[i];
+            ctx.Tabs = tabs;
+            return LsErr.None;
+        }
 
         // ---- break records (single-line formatting doesn't chain, but TextBox may clone) ----
 
@@ -237,6 +265,7 @@ namespace MS.Internal.TextFormatting
 
             const int MaxCharsGuard = 1 << 20;
             char[] fetchBuf = new char[512];
+            PendingTab pendingTab = default;
 
             while (!lineFull)
             {
@@ -351,7 +380,12 @@ namespace MS.Internal.TextFormatting
                     continue;
                 }
 
-                if (!isText || fHidden != 0)
+                // CloseAnchor arrives as text, its characters the reverse object's terminator escape
+                // (TextStore's esc.szObjectTerminator). LineServices consumes an escape as the end of
+                // the object it closes: it is not a dnode, has no width and adds nothing to the line's
+                // height -- where the paragraph's default ideal metrics, unrounded in Display mode,
+                // made a right-to-left line in a composite face a pixel taller than stock's.
+                if (!isText || fHidden != 0 || runKind == Plsrun.CloseAnchor)
                 {
                     // A control (e.g. bidi Reverse, whose placeholder char is also U+FFFC) or hidden
                     // run. Unlike a hard break it does NOT terminate the line -- it is a zero-width,
@@ -372,12 +406,77 @@ namespace MS.Internal.TextFormatting
                     continue;
                 }
 
+                // LineServices formats a fetched text run as one or more DNODES, and every dnode is
+                // drawn on its own (DrawTextRun / DrawGlyphs per dnode) even where its glyphs were
+                // shaped with its neighbours'. Cut the run to its first dnode; the rest is fetched
+                // again from where it ends, as LS does.
+                bool glyphBased = (chp.flags & LsChp.Flags.fGlyphBased) != 0;
+                DnodeKind dnode = FirstDnode(runText, cchText, glyphBased, out int dnodeLength, out char presChar);
+                if (dnodeLength < cchText)
+                {
+                    runText = runText[..dnodeLength];
+                    cchText = dnodeLength;
+                }
+                if (dnode is DnodeKind.SpecialUnshaped or DnodeKind.SpecialSpace)
+                {
+                    glyphBased = false;
+                }
+
+                if (dnode == DnodeKind.Empty)
+                {
+                    // FormatStartEmptyDobj (the soft hyphen): no width and nothing drawn.
+                    line.Runs.Add(new ManagedLsRun
+                    {
+                        Plsrun = plsrun, CpFirst = cp, CchText = cchText, Text = runText,
+                        Glyphs = Array.Empty<ushort>(), ClusterMap = Array.Empty<ushort>(),
+                        CharProps = Array.Empty<ushort>(), GlyphProps = Array.Empty<uint>(),
+                        Advances = Array.Empty<int>(), Offsets = Array.Empty<GlyphOffset>(),
+                        GlyphCount = 0, PenX = penX, Width = 0, IsText = false, BidiLevel = bidiLevel,
+                    });
+                    cp += cchText;
+                    continue;
+                }
+
+                char[] presText = null;
+                if (presChar != '\0')
+                {
+                    presText = new char[cchText];
+                    Array.Fill(presText, presChar);
+                }
+
+                if (dnode == DnodeKind.Tab)
+                {
+                    // LsHandleTab: a tab first settles the right/centre/decimal tab before it, whose
+                    // width depended on the text up to here, then reaches for its own stop.
+                    penX = ResolvePendingTab(line, ref pendingTab, penX, column);
+                    int tabWidth = BeginTab(ctx, line.Runs.Count, penX, ref pendingTab);
+                    var tab = new ManagedLsRun
+                    {
+                        Plsrun = plsrun, PlsrunPtr = plsrunPtr, CpFirst = cp, CchText = cchText, Text = runText,
+                        Pres = presText, IsTab = true, IsText = true, BidiLevel = bidiLevel,
+                        Glyphs = Array.Empty<ushort>(), ClusterMap = new ushort[cchText],
+                        CharProps = new ushort[cchText], GlyphProps = Array.Empty<uint>(),
+                        Advances = Array.Empty<int>(), Offsets = Array.Empty<GlyphOffset>(),
+                        GlyphCount = 0, PenX = penX, Width = tabWidth, CharWidths = new[] { tabWidth },
+                    };
+                    LsTxM tabMetrics = new LsTxM();
+                    cb.GetRunTextMetrics(ploc, plsrun, LsDevice.Presentation, LsTFlow.lstflowES, ref tabMetrics);
+                    tab.Ascent = tabMetrics.dvAscent;
+                    tab.Descent = tabMetrics.dvDescent;
+                    lineAscent = Math.Max(lineAscent, tab.Ascent);
+                    lineDescent = Math.Max(lineDescent, tab.Descent);
+                    line.Runs.Add(tab);
+                    penX += tabWidth;
+                    cp += cchText;
+                    continue;
+                }
+
                 // Measure the run (ideal char widths), capped to the remaining column width. This is
                 // also what records how far formatting has measured (FullText.CpMeasured), so it runs
                 // for every text run, including the glyph-based ones whose widths Place replaces.
                 int[] charWidths = new int[cchText];
                 int totalWidth = 0, fitted = 0;
-                fixed (char* pText = runText)
+                fixed (char* pText = presText ?? runText)
                 fixed (int* pCw = charWidths)
                 {
                     cb.GetRunCharWidths(ploc, plsrun, LsDevice.Presentation, pText, cchText,
@@ -387,14 +486,14 @@ namespace MS.Internal.TextFormatting
 
                 // Shape the run onto the line -- together with the runs before it that it shares a
                 // glyph chunk with, which can re-measure those too -- and fit what it now measures.
-                bool glyphBased = (chp.flags & LsChp.Flags.fGlyphBased) != 0;
                 ManagedLsRun prev = line.Runs.Count > 0 ? line.Runs[^1] : null;
                 var run = new ManagedLsRun
                 {
                     Plsrun = plsrun, PlsrunPtr = plsrunPtr, CpFirst = cp, CchText = cchText, Text = runText,
-                    IsText = true, BidiLevel = bidiLevel, GlyphBased = glyphBased,
+                    Pres = presText, IsText = true, BidiLevel = bidiLevel, GlyphBased = glyphBased,
                     JoinsPrevious = glyphBased && prev != null && prev.IsText && prev.GlyphBased
                                     && ShapesWith(cb, ploc, prev.Plsrun, plsrun),
+                    DrawSpaces = dnode == DnodeKind.SpecialSpace,
                 };
                 line.Runs.Add(run);
                 Place(cb, ploc, line, line.Runs.Count - 1, charWidths);
@@ -457,6 +556,7 @@ namespace MS.Internal.TextFormatting
                 if (consume < cchText)
                 {
                     run.Text = runText[..consume];
+                    run.Pres = presText?[..consume];
                     run.CchText = consume;
                     Place(cb, ploc, line, line.Runs.Count - 1, charWidths);
                 }
@@ -471,6 +571,9 @@ namespace MS.Internal.TextFormatting
                 penX = run.PenX + run.Width;
                 cp += consume;
             }
+
+            // The last right/centre/decimal tab is settled by the text after it on the line.
+            penX = ResolvePendingTab(line, ref pendingTab, penX, column);
 
             // A blank line still needs a height; fall back to the paragraph's line metrics.
             if (lineAscent == 0 && lineDescent == 0)
@@ -502,6 +605,13 @@ namespace MS.Internal.TextFormatting
             // actually go. Everything downstream (drawing, caret, hit-testing) reads run.PenX, so
             // this is the single place the visual order is decided.
             int lineWidth = ReorderRunsVisually(line, baseLevel);
+
+            // How deep the sublines go -- one per embedding level above the paragraph's -- which is
+            // the size of the subline arrays FullTextLine queries with.
+            foreach (ManagedLsRun r in line.Runs)
+            {
+                maxDepth = Math.Max(maxDepth, r.BidiLevel - baseLevel + 1);
+            }
 
             line.Callbacks = cb;
             line.CpLim = cp;
@@ -894,7 +1004,7 @@ namespace MS.Internal.TextFormatting
             LineServicesCallbacks cb, IntPtr ploc, ManagedLsLine line, int index, int keep)
         {
             ManagedLsRun r = line.Runs[index];
-            char[] text = r.Text[..keep];
+            char[] text = r.Shaped[..keep];
             int[] charWidths = new int[keep];
             int totalWidth = 0, fitted = 0;
             fixed (char* pText = text)
@@ -907,10 +1017,215 @@ namespace MS.Internal.TextFormatting
                 }
             }
 
-            r.Text = text;
+            r.Text = r.Text[..keep];
+            r.Pres = r.Pres?[..keep];
             r.CchText = keep;
             Place(cb, ploc, line, index, charWidths);
             return true;
+        }
+
+        // ---- dnodes (LSTXTFMT.C) ----
+
+        // Special: a FormatSpecial dnode of kind 0/1 (shaped like text); SpecialUnshaped: kind 5/6
+        // (U+00A0, U+2011); SpecialSpace: kind 8, the typographic spaces, drawn as wchSpace.
+        private enum DnodeKind { Regular, Spaces, Special, SpecialUnshaped, SpecialSpace, OneChar, Empty, Tab }
+
+        // No dnode holds more characters than this: FormatRegularCharacters, FormatSpaces and
+        // FormatSpecial all format at most 0x7D of a run's characters at a time.
+        private const int MaxDnodeCharacters = 0x7D;
+
+        /// <summary>
+        ///  The class LineServices files a character under (LsSetTextConfig's TxtAddSpec calls, over
+        ///  the special characters TextFormatterContext.Init configures), or 0 for an ordinary one.
+        /// </summary>
+        private static int SpecialClass(char c) => c switch
+        {
+            '\u0000' => 0x10,     // wchNull
+            ' ' => 0x01,          // wchSpace
+            '\t' => 0x02,         // wchTab
+            '\u2029' => 0x04,     // wchEndPara1 (and wchEscAnmRun)
+            '\u2028' => 0x07,     // wchEndLineInPara
+            '\u00A0' => 0x0B,     // wchNonBreakSpace
+            '\u2011' => 0x0C,     // wchNonBreakHyphen
+            '\u00AD' => 0x0D,     // wchNonReqHyphen
+            '\u2003' => 0x0E,     // wchEmSpace
+            '\u2002' => 0x0F,     // wchEnSpace
+            '-' or '\u2013' or '\u2014' => 0x11,   // wchHyphen, wchEnDash, wchEmDash
+            '\u2009' => 0x12,     // wchNarrowSpace
+            '\u3000' => 0x15,     // wchFESpace
+            '\u200D' => 0x16,     // wchJoiner
+            '\u200C' => 0x17,     // wchNonJoiner
+            _ => 0,
+        };
+
+        /// <summary>
+        ///  How LsFmtText formats the start of a fetched text run: the kind and length of its first
+        ///  dnode, and the character it is presented as ('\0' for the run's own characters).
+        /// </summary>
+        /// <remarks>
+        ///  <list type="bullet">
+        ///   <item>FormatRegularCharacters: ordinary characters and the spaces among them, up to the
+        ///   first other special character.</item>
+        ///   <item>FormatSpaces: a run that STARTS with spaces has them as a dnode of their own -- so
+        ///   " abc" draws as two glyph runs, the space's and the word's, though they are one run of
+        ///   text and shaped together.</item>
+        ///   <item>FormatSpecial: a repeat of one special character -- a hyphen or dash, a no-break or
+        ///   typographic space -- presented as the character its class is formatted with.</item>
+        ///   <item>FormatStartTab / FormatStartEmptyDobj / FormatStartOneRegularChar: one character.</item>
+        ///  </list>
+        ///  A joiner inside glyph-based text is left in its run: its cluster belongs to the letters
+        ///  around it, and a dnode boundary through a cluster would cut the shaping it exists for.
+        /// </remarks>
+        private static DnodeKind FirstDnode(char[] text, int cch, bool glyphBased, out int length, out char pres)
+        {
+            pres = '\0';
+            int limit = Math.Min(cch, MaxDnodeCharacters);
+            int cls = SpecialClass(text[0]);
+            if (glyphBased && cls is 0x16 or 0x17) cls = 0;
+            switch (cls)
+            {
+                case 0x01:
+                    length = 1;
+                    while (length < limit && text[length] == ' ') length++;
+                    return DnodeKind.Spaces;
+                case 0x02:
+                    length = 1;
+                    pres = ' ';
+                    return DnodeKind.Tab;
+                case 0x0D:
+                    length = 1;
+                    return DnodeKind.Empty;
+                case 0x16:
+                case 0x17:
+                    length = 1;
+                    return DnodeKind.OneChar;
+                case 0x0B:
+                case 0x0C:
+                case 0x0E:
+                case 0x0F:
+                case 0x10:
+                case 0x11:
+                case 0x12:
+                case 0x15:
+                    // FormatSpecial(ref, pres, kind): U+00A0 is formatted as wchSpace (kind 5), U+2011
+                    // as wchHyphen (6), the typographic spaces as themselves (8), the hyphen, the
+                    // dashes (0 or 1) and wchNull (0) as themselves. A repeat of one character is one
+                    // dnode. Only kinds 0 and 1 are text LS shapes; the others are drawn from their
+                    // characters (LsDisplayText), and kind 8 as spaces.
+                    pres = cls == 0x0B ? ' ' : cls == 0x0C ? '-' : '\0';
+                    length = 1;
+                    while (length < limit && text[length] == text[0]) length++;
+                    return cls is 0x10 or 0x11 ? DnodeKind.Special
+                         : cls is 0x0B or 0x0C ? DnodeKind.SpecialUnshaped
+                         : DnodeKind.SpecialSpace;
+            }
+
+            length = 1;
+            while (length < limit)
+            {
+                int c = SpecialClass(text[length]);
+                if (glyphBased && c is 0x16 or 0x17) c = 0;
+                if (c != 0 && c != 0x01) break;
+                length++;
+            }
+            return DnodeKind.Regular;
+        }
+
+        // ---- tabs (TABUTILS.C) ----
+
+        // A right, centre or decimal tab waits for the text after it before it knows its width.
+        private struct PendingTab
+        {
+            public int RunIndex;            // the tab's run, -1 when none is pending
+            public LsKTab Kind;
+            public int Ur;                  // the tab stop
+            public int UrBefore;            // the pen where the tab began
+            public bool Active;
+        }
+
+        /// <summary>
+        ///  FindTab + LsGetCurTabInfoCore: the stop a tab at <paramref name="pen"/> reaches -- the
+        ///  first of the paragraph's stops beyond the pen, else the next multiple of the incremental
+        ///  tab -- and the tab's width. A left tab's width is known now; any other kind is pending and
+        ///  zero wide until <see cref="ResolvePendingTab"/>.
+        /// </summary>
+        private static int BeginTab(ManagedLsContext ctx, int runIndex, int pen, ref PendingTab pending)
+        {
+            LsKTab kind = LsKTab.lsktLeft;
+            int ur = 0;
+            bool found = false;
+            foreach (LsTbd tbd in ctx.Tabs)
+            {
+                if (pen < tbd.ur)
+                {
+                    kind = tbd.lskt;
+                    ur = tbd.ur;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                int inc = ctx.IncrementalTab == 0 ? 1 : ctx.IncrementalTab;
+                ur = ((pen < 0 ? 0 : inc) + pen) / inc * inc;
+            }
+
+            if (kind == LsKTab.lsktLeft)
+            {
+                return ur - pen;
+            }
+
+            pending = new PendingTab { RunIndex = runIndex, Kind = kind, Ur = ur, UrBefore = pen, Active = true };
+            return 0;
+        }
+
+        /// <summary>
+        ///  LsResolvePrevTabCore: gives the pending tab the width that puts the text after it where
+        ///  its kind says (ending at the stop, or centred on it), moves that text along, and returns
+        ///  the pen after it.
+        /// </summary>
+        private static int ResolvePendingTab(ManagedLsLine line, ref PendingTab pending, int pen, int column)
+        {
+            if (!pending.Active) return pen;
+            int index = pending.RunIndex;
+            pending.Active = false;
+            if (index < 0 || index >= line.Runs.Count) return pen;
+
+            int text = pen - pending.UrBefore;
+            int trailing = 0;
+            for (int r = line.Runs.Count - 1; r > index; r--)
+            {
+                ManagedLsRun run = line.Runs[r];
+                if (!run.IsText || run.Text == null) continue;
+                bool ink = false;
+                for (int i = Math.Min(run.CchText, run.Text.Length) - 1; i >= 0; i--)
+                {
+                    if (run.Text[i] != ' ') { ink = true; break; }
+                    trailing += run.CharWidths != null && i < run.CharWidths.Length ? run.CharWidths[i] : 0;
+                }
+                if (ink) break;
+            }
+            if (pending.Kind is LsKTab.lsktCenter or LsKTab.lsktRight)
+            {
+                text -= trailing;
+                if (pending.Kind == LsKTab.lsktCenter) text /= 2;
+            }
+
+            int width = pending.Ur - text - pending.UrBefore;
+            if (pending.Ur < column && column < width - trailing + pen)
+            {
+                width = column - pen + trailing;
+            }
+            if (width <= 0) return pen;
+
+            ManagedLsRun tab = line.Runs[index];
+            tab.Width = width;
+            tab.CharWidths = new[] { width };
+            for (int r = index + 1; r < line.Runs.Count; r++)
+            {
+                line.Runs[r].PenX += width;
+            }
+            return pen + width;
         }
 
         /// <summary>Whether two neighbouring runs are shaped as one glyph chunk.</summary>
@@ -961,7 +1276,7 @@ namespace MS.Internal.TextFormatting
             // Shaped on its own: not glyph-based, the first of its chunk, or a chunk whose glyphs do
             // not divide cleanly between its runs (see ShapeChunk).
             run.JoinsPrevious = false;
-            ShapeRuns(cb, ploc, new[] { run.PlsrunPtr }, new[] { run.CchText }, run.Text[..run.CchText],
+            ShapeRuns(cb, ploc, new[] { run.PlsrunPtr }, new[] { run.CchText }, run.Shaped[..run.CchText],
                       out ushort[] glyphs, out ushort[] clusters, out ushort[] charProps,
                       out uint[] glyphProps, out int[] advances, out GlyphOffset[] offsets, out int glyphCount);
 
@@ -1027,7 +1342,7 @@ namespace MS.Internal.TextFormatting
             var text = new char[total];
             for (int k = 0, at = 0; k < runCount; k++)
             {
-                Array.Copy(line.Runs[first + k].Text, 0, text, at, cchs[k]);
+                Array.Copy(line.Runs[first + k].Shaped, 0, text, at, cchs[k]);
                 at += cchs[k];
             }
 
@@ -1177,6 +1492,11 @@ namespace MS.Internal.TextFormatting
             {
                 cb.GetGlyphPositions(ploc, pPlsruns, pCchs, plsruns.Length, LsDevice.Presentation, pText,
                     pCluster, pCharProps, cch, pGlyphs, pGlyphProps, gc, LsTFlow.lstflowES, pAdvances, pOffsets);
+
+                // Shaped: from here on a combining mark is part of its base's cluster (carets, cells,
+                // the glyph run's cluster map). Not before -- GSUB's per-character features and GPOS's
+                // mark-to-ligature components both read which glyph each character became.
+                ManagedOpenTypeShaper.MergeMarkClusters(pText, cch, pCluster, gc);
             }
         }
 
@@ -1200,7 +1520,11 @@ namespace MS.Internal.TextFormatting
 
             foreach (ManagedLsRun run in line.Runs)
             {
-                if (!run.IsText || run.GlyphCount == 0) continue;
+                // A run that is not glyph-based is drawn as LS draws a text dnode, from its characters
+                // and their widths (DrawTextRun -> ComputeUnshapedGlyphRun): the nominal fast-path
+                // runs, symbol fonts, and every tab.
+                bool unshaped = !run.GlyphBased || run.IsTab;
+                if (!run.IsText || (unshaped ? run.CchText == 0 : run.GlyphCount == 0)) continue;
 
                 // Run x-origin, which is the run's LEADING edge and therefore depends on the run's own
                 // direction: a right-to-left run is anchored at its RIGHT edge and its glyphs march
@@ -1222,20 +1546,44 @@ namespace MS.Internal.TextFormatting
                 LSPOINT ptRun = new LSPOINT(runX, baseline);
                 var lsHeights = new LsHeights { dvAscent = run.Ascent, dvDescent = run.Descent, dvMultiLineHeight = run.Ascent + run.Descent };
                 var clip = clipRect;
-                var expTypes = new LsExpType[run.GlyphCount];
 
-                fixed (char* pText = run.Text)
-                fixed (ushort* pCluster = run.ClusterMap)
-                fixed (ushort* pCharProps = run.CharProps)
-                fixed (ushort* pGlyphs = run.Glyphs)
-                fixed (int* pAdvances = run.Advances)
-                fixed (uint* pGlyphProps = run.GlyphProps)
-                fixed (GlyphOffset* pOffsets = run.Offsets)
-                fixed (LsExpType* pExp = expTypes)
+                if (unshaped)
                 {
-                    cb.DrawGlyphs(ploline, run.Plsrun, pText, pCluster, pCharProps, run.CchText,
-                        pGlyphs, pAdvances, pAdvances, pOffsets, pGlyphProps, pExp, run.GlyphCount,
-                        LsTFlow.lstflowES, displayMode, ref ptRun, ref lsHeights, run.Width, ref clip);
+                    int[] widths = run.CharWidths ?? new int[run.CchText];
+                    char[] chars = run.Shaped;
+                    if (run.DrawSpaces)
+                    {
+                        chars = new char[run.CchText];
+                        Array.Fill(chars, ' ');
+                    }
+                    fixed (char* pText = chars)
+                    fixed (int* pWidths = widths)
+                    {
+                        // An unshaped glyph run always reads left to right; LS hands a right-to-left
+                        // dnode over with its subline's flow and its leading edge, and
+                        // ComputeUnshapedGlyphRun steps back to the left edge from there.
+                        cb.DrawTextRun(ploline, run.Plsrun, ref ptRun, pText, pWidths, run.CchText,
+                            run.IsRightToLeft ? LsTFlow.lstflowWS : LsTFlow.lstflowES, displayMode,
+                            ref ptRun, ref lsHeights, run.Width, ref clip);
+                    }
+                }
+                else
+                {
+                    var expTypes = new LsExpType[run.GlyphCount];
+
+                    fixed (char* pText = run.Shaped)
+                    fixed (ushort* pCluster = run.ClusterMap)
+                    fixed (ushort* pCharProps = run.CharProps)
+                    fixed (ushort* pGlyphs = run.Glyphs)
+                    fixed (int* pAdvances = run.Advances)
+                    fixed (uint* pGlyphProps = run.GlyphProps)
+                    fixed (GlyphOffset* pOffsets = run.Offsets)
+                    fixed (LsExpType* pExp = expTypes)
+                    {
+                        cb.DrawGlyphs(ploline, run.Plsrun, pText, pCluster, pCharProps, run.CchText,
+                            pGlyphs, pAdvances, pAdvances, pOffsets, pGlyphProps, pExp, run.GlyphCount,
+                            LsTFlow.lstflowES, displayMode, ref ptRun, ref lsHeights, run.Width, ref clip);
+                    }
                 }
 
                 // Native LS draws underline/strikethrough/overline/baseline during LoDisplayLine; replay
@@ -1248,45 +1596,168 @@ namespace MS.Internal.TextFormatting
             return LsErr.None;
         }
 
-        // ---- hit-testing (greedy single-direction cp<->x mapping) ----
+        // ---- hit-testing: cp <-> u, the way LineServices reports it ----
+        //
+        // LS answers queries in the MAIN subline's coordinate u, which runs in the paragraph's
+        // direction from the line's start (its right edge in a right-to-left paragraph), and
+        // describes each cell by the sublines that contain it: the main one, then one per bidi
+        // embedding (the reverse objects), each flowing its own way. FullTextLine turns that into
+        // carets, hit tests and selection bounds -- the leading edge of a cell in a run that reads
+        // against the main flow is its far edge, a trailing hit walks backwards from there -- so
+        // reporting every cell left-to-right from the line's left edge put the caret of every
+        // right-to-left character, and every character of a right-to-left paragraph, on the wrong
+        // side. A run reading against the paragraph sits one ideal unit inside its leading edge,
+        // as it is drawn (DisplayLine).
 
-        // Fills the caller's LsQSubInfo buffer (one level deep: no nested sublines in the
-        // greedy single-direction engine) and the text cell for one character of a run.
-        // FullTextLine's hit-testing REQUIRES actualDepthQuery > 0 and dupCell > 0 —
-        // with an empty subline array it silently falls back to "line start", which
-        // broke caret placement and word selection wherever the shim formats text.
-        // NOTE lscpEndCell is the LAST lscp still inside the cell (== start for a
-        // single-codepoint cell), not one-past-the-end.
-        private static unsafe void FillQueryResult(ManagedLsLine line, ManagedLsRun run, int cp, int cellX, int cellW,
+        /// <summary>The main-direction u of the visual (left-based) span [x, x + w).</summary>
+        private static void SpanU(ManagedLsLine line, bool against, int x, int w, out int u0, out int u1)
+        {
+            if (line.RightToLeft)
+            {
+                u0 = line.Width - x - w;
+                u1 = line.Width - x;
+            }
+            else
+            {
+                u0 = x;
+                u1 = x + w;
+            }
+            if (against)
+            {
+                u0 -= s_rtlCell;
+                u1 -= s_rtlCell;
+            }
+        }
+
+        /// <summary>
+        ///  The u at which something flowing <paramref name="rightToLeft"/> starts, given the
+        ///  visual span it covers.
+        /// </summary>
+        private static int LeadingU(ManagedLsLine line, bool rightToLeft, int x, int w)
+        {
+            bool against = rightToLeft != line.RightToLeft;
+            SpanU(line, against, x, w, out int u0, out int u1);
+            return against ? u1 : u0;
+        }
+
+        /// <summary>
+        ///  The text runs around <paramref name="index"/> whose level is at least
+        ///  <paramref name="level"/>: one subline's content, as [first, last] run indices.
+        /// </summary>
+        private static void SublineSpan(ManagedLsLine line, int index, int level, out int first, out int last)
+        {
+            first = index;
+            last = index;
+            for (int r = index - 1; r >= 0; r--)
+            {
+                ManagedLsRun run = line.Runs[r];
+                if (run.BidiLevel < level && run.IsText) break;
+                if (run.BidiLevel < level) continue;      // a marker inside: keep looking
+                if (run.IsText) first = r;
+            }
+            for (int r = index + 1; r < line.Runs.Count; r++)
+            {
+                ManagedLsRun run = line.Runs[r];
+                if (run.BidiLevel < level && run.IsText) break;
+                if (run.BidiLevel < level) continue;
+                if (run.IsText) last = r;
+            }
+            // A marker run between two spans belongs to neither; trim to text at the ends.
+            while (first < index && (!line.Runs[first].IsText || line.Runs[first].BidiLevel < level)) first++;
+            while (last > index && (!line.Runs[last].IsText || line.Runs[last].BidiLevel < level)) last--;
+        }
+
+        private static void SpanExtent(ManagedLsLine line, int first, int last, int level,
+            out int cpFirst, out int cpLim, out int x0, out int x1)
+        {
+            cpFirst = int.MaxValue; cpLim = int.MinValue; x0 = int.MaxValue; x1 = int.MinValue;
+            for (int r = first; r <= last; r++)
+            {
+                ManagedLsRun run = line.Runs[r];
+                if (!run.IsText || run.BidiLevel < level) continue;
+                cpFirst = Math.Min(cpFirst, run.CpFirst);
+                cpLim = Math.Max(cpLim, run.CpFirst + run.CchText);
+                x0 = Math.Min(x0, run.PenX);
+                x1 = Math.Max(x1, run.PenX + run.Width);
+            }
+            if (cpFirst == int.MaxValue) { cpFirst = cpLim = line.Runs[first].CpFirst; x0 = x1 = line.Runs[first].PenX; }
+        }
+
+        private static unsafe void FillQueryResult(ManagedLsLine line, int runIndex, int cp, int offset,
             int depthQueryMax, IntPtr pSubLineInfo, out int actualDepthQuery, ref LsTextCell lsTextCell)
         {
-            lsTextCell.lscpStartCell = cp;
-            lsTextCell.lscpEndCell = cp;
-            lsTextCell.pointUvStartCell = new LSPOINT(cellX, 0);
-            lsTextCell.dupCell = Math.Max(cellW, 1);
-            lsTextCell.cCharsInCell = 1;
+            ManagedLsRun run = line.Runs[runIndex];
+            ClusterBounds(run, offset, out int first, out int last, out int x, out int w);
+
+            // The cell is the glyph CLUSTER: a base with its marks, a ligature. FullTextLine puts the
+            // caret stops inside it (one per character, or one for the cluster in a run with marks).
+            lsTextCell.lscpStartCell = run.CpFirst + first;
+            lsTextCell.lscpEndCell = run.CpFirst + last;
+            lsTextCell.pointUvStartCell = new LSPOINT(LeadingU(line, run.IsRightToLeft, x, w), 0);
+            lsTextCell.dupCell = w;   // zero for a zero-width cell: its trailing edge is its leading edge
+            lsTextCell.cCharsInCell = last - first + 1;
             lsTextCell.cGlyphsInCell = 1;
 
             actualDepthQuery = 0;
-            if (pSubLineInfo != IntPtr.Zero && depthQueryMax >= 1)
+            if (pSubLineInfo == IntPtr.Zero || depthQueryMax < 1)
             {
+                return;
+            }
+
+            // One subline per embedding level from the paragraph's up to the run's.
+            int baseLevel = line.RightToLeft ? 1 : 0;
+            int depth = Math.Max(1, Math.Min(depthQueryMax, (run.IsText ? run.BidiLevel : baseLevel) - baseLevel + 1));
+            var subs = (LsQSubInfo*)pSubLineInfo;
+            for (int k = 0; k < depth; k++)
+            {
+                int level = baseLevel + k;
+                bool rtl = (level & 1) != 0;
                 var sub = new LsQSubInfo
                 {
-                    lstflowSubLine = LsTFlow.lstflowES,
-                    lscpFirstSubLine = line.CpFirst,
-                    lsdcpSubLine = Math.Max(1, line.CpLim - line.CpFirst),
-                    pointUvStartSubLine = new LSPOINT(0, 0),
-                    dupSubLine = line.Width,
+                    lstflowSubLine = rtl ? LsTFlow.lstflowWS : LsTFlow.lstflowES,
                     idobj = (uint)MS.Internal.TextFormatting.TextStore.ObjectId.Text_chp,
-                    plsrun = (IntPtr)(uint)run.Plsrun,
-                    lscpFirstRun = run.CpFirst,
-                    lsdcpRun = run.CchText,
-                    pointUvStartRun = new LSPOINT(run.PenX, 0),
-                    dupRun = run.Width,
                 };
-                *(LsQSubInfo*)pSubLineInfo = sub;
-                actualDepthQuery = 1;
+
+                if (k == 0)
+                {
+                    sub.lscpFirstSubLine = line.CpFirst;
+                    sub.lsdcpSubLine = Math.Max(1, line.CpLim - line.CpFirst);
+                    sub.pointUvStartSubLine = new LSPOINT(0, 0);
+                    sub.dupSubLine = line.Width;
+                }
+                else
+                {
+                    SublineSpan(line, runIndex, level, out int f, out int l);
+                    SpanExtent(line, f, l, level, out int c0, out int c1, out int x0, out int x1);
+                    sub.lscpFirstSubLine = c0;
+                    sub.lsdcpSubLine = Math.Max(1, c1 - c0);
+                    sub.pointUvStartSubLine = new LSPOINT(LeadingU(line, rtl, x0, x1 - x0), 0);
+                    sub.dupSubLine = x1 - x0;
+                }
+
+                if (k == depth - 1)
+                {
+                    // The run itself.
+                    sub.plsrun = (IntPtr)(uint)run.Plsrun;
+                    sub.lscpFirstRun = run.CpFirst;
+                    sub.lsdcpRun = run.CchText;
+                    sub.pointUvStartRun = new LSPOINT(LeadingU(line, run.IsRightToLeft, run.PenX, run.Width), 0);
+                    sub.dupRun = run.Width;
+                }
+                else
+                {
+                    // The reverse object that holds the next subline in: its content's extent.
+                    SublineSpan(line, runIndex, level + 1, out int f, out int l);
+                    SpanExtent(line, f, l, level + 1, out int c0, out int c1, out int x0, out int x1);
+                    sub.plsrun = (IntPtr)(uint)run.Plsrun;
+                    sub.lscpFirstRun = c0;
+                    sub.lsdcpRun = Math.Max(1, c1 - c0);
+                    sub.pointUvStartRun = new LSPOINT(LeadingU(line, rtl, x0, x1 - x0), 0);
+                    sub.dupRun = x1 - x0;
+                }
+                subs[k] = sub;
             }
+            actualDepthQuery = depth;
         }
 
         internal static unsafe LsErr QueryLineCpPpoint(IntPtr ploline, int lscpQuery, int depthQueryMax,
@@ -1295,13 +1766,13 @@ namespace MS.Internal.TextFormatting
             ManagedLsLine line = LineFrom(ploline);
             actualDepthQuery = 0;
             lsTextCell = new LsTextCell();
-            foreach (ManagedLsRun run in line.Runs)
+            for (int r = 0; r < line.Runs.Count; r++)
             {
+                ManagedLsRun run = line.Runs[r];
                 if (lscpQuery >= run.CpFirst && lscpQuery < run.CpFirst + run.CchText)
                 {
-                    int offset = lscpQuery - run.CpFirst;
-                    CellBounds(run, offset, out int x, out int w);
-                    FillQueryResult(line, run, lscpQuery, x, w, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
+                    FillQueryResult(line, r, lscpQuery, lscpQuery - run.CpFirst, depthQueryMax, pSubLineInfo,
+                        out actualDepthQuery, ref lsTextCell);
                     return LsErr.None;
                 }
             }
@@ -1309,22 +1780,30 @@ namespace MS.Internal.TextFormatting
         }
 
         /// <summary>
-        ///  Where the character at <paramref name="offset"/> within a run sits, and how wide it is.
+        ///  The glyph cluster the character at <paramref name="offset"/> of a run belongs to, as its
+        ///  first and last character, and where it sits visually (left-based, line-relative).
         /// </summary>
         /// <remarks>
-        ///  Characters run the way their run does. In a right-to-left run the first logical character
-        ///  is at the run's RIGHT edge and later ones march leftward, so measuring from PenX forward
-        ///  puts the caret at the mirror image of where the glyph actually is -- click at the start of
-        ///  a Hebrew word and the caret lands at its end.
+        ///  Characters run the way their run does: in a right-to-left run the first logical character
+        ///  is at the run's RIGHT edge and later ones march leftward. Widths are per CHARACTER (a
+        ///  cluster's advance split over its characters), so a cluster is the sum of its characters'.
         /// </remarks>
-        private static void CellBounds(ManagedLsRun run, int offset, out int x, out int width)
+        private static void ClusterBounds(ManagedLsRun run, int offset, out int first, out int last, out int x, out int width)
         {
-            // Per CHARACTER, not per glyph: a ligature is one glyph for several characters, and a
-            // cluster several glyphs for one.
-            int[] widths = run.CharWidths ?? run.Advances;
+            first = offset;
+            last = offset;
+            ushort[] map = run.ClusterMap;
+            if (run.GlyphBased && !run.IsTab && map != null && offset < run.CchText && map.Length >= run.CchText)
+            {
+                while (first > 0 && map[first - 1] == map[offset]) first--;
+                while (last + 1 < run.CchText && map[last + 1] == map[offset]) last++;
+            }
+
+            int[] widths = run.CharWidths ?? run.Advances ?? Array.Empty<int>();
             int before = 0;
-            for (int i = 0; i < offset && i < widths.Length; i++) before += widths[i];
-            width = offset < widths.Length ? widths[offset] : 0;
+            for (int i = 0; i < first && i < widths.Length; i++) before += widths[i];
+            width = 0;
+            for (int i = first; i <= last && i < widths.Length; i++) width += widths[i];
 
             x = run.IsRightToLeft
                 ? run.PenX + run.Width - before - width
@@ -1337,54 +1816,68 @@ namespace MS.Internal.TextFormatting
             ManagedLsLine line = LineFrom(ploline);
             actualDepthQuery = 0;
             lsTextCell = new LsTextCell();
-            int qx = ptQuery.x;
+            int u = ptQuery.x;
 
             // Point->cp maps only onto TEXT runs. The trailing break/control run exists so
             // cp->x queries (selection bounds) can resolve its codepoints, but a POINT past
             // the text must resolve to the last real character: returning the break cp put
             // the caret beyond the document and TextBoxView.GetTextPositionFromDistance
             // throws ("Requested distance is outside the content...").
-            // Runs are no longer in x order once bidi reordering has run, so this asks each run
-            // whether the point is inside IT rather than walking the line from left to right.
-            // The rightmost run is likewise the one with the largest PenX, not the last in the list.
-            ManagedLsRun rightmost = null;
-            foreach (ManagedLsRun run in line.Runs)
+            //
+            // A cell is half open in its OWN subline's direction, [v, v + w) from the run's leading
+            // edge, so in main-direction u a cell of a run reading against the paragraph is
+            // (lead - v - w, lead - v]. Such a run also sits one unit into its neighbour's edge
+            // cell, and where they overlap the point is its: those runs are asked first. The last
+            // pass forgives the one-unit gap the shift leaves at the run's other end.
+            for (int pass = 0; pass < 3; pass++)
             {
-                if (!run.IsText) continue;
-                if (rightmost == null || run.PenX > rightmost.PenX) rightmost = run;
-
-                if (qx < run.PenX || qx >= run.PenX + run.Width) continue;
-
-                for (int i = 0; i < run.CchText; i++)
+                for (int r = 0; r < line.Runs.Count; r++)
                 {
-                    CellBounds(run, i, out int x, out int w);
-                    if (qx >= x && qx < x + w)
+                    ManagedLsRun run = line.Runs[r];
+                    if (!run.IsText || run.CchText == 0) continue;
+                    bool against = run.IsRightToLeft != line.RightToLeft;
+                    if (pass < 2 && against != (pass == 0)) continue;
+                    int slack = pass == 2 ? s_rtlCell : 0;
+
+                    int lead = LeadingU(line, run.IsRightToLeft, run.PenX, run.Width);
+                    int v = 0;
+                    for (int i = 0; i < run.CchText; )
                     {
-                        FillQueryResult(line, run, run.CpFirst + i, x, w, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
-                        return LsErr.None;
+                        ClusterBounds(run, i, out _, out int last, out _, out int w);
+                        bool hit = against
+                            ? u > lead - v - w - slack && u <= lead - v + slack
+                            : u >= lead + v - slack && u < lead + v + w + slack;
+                        if (hit && w > 0)
+                        {
+                            FillQueryResult(line, r, run.CpFirst + i, i, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
+                            return LsErr.None;
+                        }
+                        v += w;
+                        i = last + 1;
                     }
                 }
             }
 
-            // Outside every run: the nearest edge of the text. A line with no text runs (blank line)
-            // returns an empty cell; the caller's fallback places the caret at the line start, which
-            // is correct there.
-            if (rightmost != null && rightmost.CchText > 0)
+            // Outside every run: the character at the nearest visual edge of the text. A line with no
+            // text runs (blank line) returns an empty cell; the caller's fallback places the caret at
+            // the line start, which is correct there.
+            int qx = line.RightToLeft ? line.Width - u : u;
+            int leftmost = -1, rightmost = -1;
+            for (int r = 0; r < line.Runs.Count; r++)
             {
-                ManagedLsRun edgeRun = rightmost;
-                if (qx < 0)
-                {
-                    foreach (ManagedLsRun run in line.Runs)
-                    {
-                        if (run.IsText && run.PenX < edgeRun.PenX) edgeRun = run;
-                    }
-                }
-
-                // The logical character at that visual edge: the last one for a left-to-right run,
-                // the first one for a right-to-left run.
-                int i = edgeRun.IsRightToLeft ? 0 : edgeRun.CchText - 1;
-                CellBounds(edgeRun, i, out int x, out int w);
-                FillQueryResult(line, edgeRun, edgeRun.CpFirst + i, x, w, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
+                ManagedLsRun run = line.Runs[r];
+                if (!run.IsText || run.CchText == 0) continue;
+                if (rightmost < 0 || run.PenX + run.Width > line.Runs[rightmost].PenX + line.Runs[rightmost].Width) rightmost = r;
+                if (leftmost < 0 || run.PenX < line.Runs[leftmost].PenX) leftmost = r;
+            }
+            bool left = qx < line.Width / 2;
+            int edge = left ? leftmost : rightmost;
+            if (edge >= 0)
+            {
+                ManagedLsRun edgeRun = line.Runs[edge];
+                // The logical character at that visual edge.
+                int i = left == edgeRun.IsRightToLeft ? edgeRun.CchText - 1 : 0;
+                FillQueryResult(line, edge, edgeRun.CpFirst + i, i, depthQueryMax, pSubLineInfo, out actualDepthQuery, ref lsTextCell);
             }
             return LsErr.None;
         }

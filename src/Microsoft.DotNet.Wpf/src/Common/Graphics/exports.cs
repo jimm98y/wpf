@@ -711,6 +711,38 @@ namespace System.Windows.Media.Composition
                 }
             }
 
+            /// <summary>
+            /// Hands the text stack the backend's GDI-compatible advances (see AutoRegister) without
+            /// registering the backend itself. Text is laid out before anything is composed -- a
+            /// FormattedText measured at startup, a window's first Measure, a TextFormatter in a
+            /// console -- and a Display-mode line formatted before the backend had registered took
+            /// IDEAL advances: the first line of a process came out a pixel short or long (Segoe UI
+            /// "שלום" at 11px, 25 against stock's 26). Called from
+            /// MS.Internal.FontCache.DWriteFactory's static constructor, before any text is shaped.
+            /// </summary>
+            internal static void EnsureTextMetricsProvider()
+            {
+                if (MS.Internal.Text.TextInterface.GdiCompatibleAdvances.Provider != null || !IsSwitchEnabled())
+                {
+                    return;
+                }
+                try
+                {
+                    System.Reflection.Assembly asm = System.Reflection.Assembly.Load(BackendAssembly);
+                    if (asm.GetType(BackendType, throwOnError: false)?.GetMethod("GdiCompatibleAdvance")
+                            is System.Reflection.MethodInfo advance && advance.IsStatic)
+                    {
+                        MS.Internal.Text.TextInterface.GdiCompatibleAdvances.Provider =
+                            (Func<string, int, int, int, int, int>)advance.CreateDelegate(
+                                typeof(Func<string, int, int, int, int, int>));
+                    }
+                }
+                catch
+                {
+                    // Backend unavailable: AutoRegister falls back to milcore, and text to ideal widths.
+                }
+            }
+
             private static bool IsSwitchEnabled()
             {
                 // The WebGPU managed compositor is the DEFAULT. It is used whenever the backend

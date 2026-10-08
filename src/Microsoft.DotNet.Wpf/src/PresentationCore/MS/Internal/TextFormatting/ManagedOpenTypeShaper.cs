@@ -96,7 +96,8 @@ namespace MS.Internal.TextFormatting
             int           glyphCount,
             int           glyphCapacity,   // how many glyphs the buffers can hold
             ushort*       clusterMap,      // in/out: char -> glyph index
-            int*          canGlyphAlone    // in/out (may be null): per-char independence flag
+            int*          canGlyphAlone,   // in/out (may be null): per-char independence flag
+            uint*         glyphProps = null // out (may be null): each glyph's source character, see GlyphSourceShift
             )
         {
             // No direction parameter: GSUB lookups are defined over glyphs in LOGICAL order for
@@ -111,15 +112,17 @@ namespace MS.Internal.TextFormatting
             try
             {
                 if (TryGetCachedSubstitution(glyphTypeface, text, charCount, glyphs, glyphCapacity,
-                                             clusterMap, canGlyphAlone, out int cached))
+                                             clusterMap, canGlyphAlone, glyphProps, out int cached))
                 {
                     return cached;
                 }
 
+                ushort[] sources = new ushort[Math.Max(glyphCapacity, glyphCount)];
                 int produced = SubstituteCore(glyphTypeface, text, charCount, glyphs, glyphCount,
-                                              glyphCapacity, clusterMap, canGlyphAlone);
+                                              glyphCapacity, clusterMap, canGlyphAlone, sources);
+                WriteGlyphSources(glyphProps, sources, produced, glyphCapacity);
                 CacheSubstitution(glyphTypeface, text, charCount, glyphs, produced, glyphCapacity,
-                                  clusterMap, canGlyphAlone);
+                                  clusterMap, canGlyphAlone, sources);
                 return produced;
             }
             catch (Exception e)
@@ -129,6 +132,25 @@ namespace MS.Internal.TextFormatting
                 // that by dropping the run -- text vanishes rather than merely being unshaped.
                 if (s_log) Log($"GSUB face='{FamilyOf(glyphTypeface)}' THREW {e}");
                 return glyphCount;
+            }
+        }
+
+        // A glyph's source character -- which character GSUB made it from -- rides from the
+        // substitution pass to the positioning pass in the HIGH half of its glyph properties, which
+        // nothing else in this backend reads (the forwarder stub writes the low half, zero). The
+        // cluster map alone cannot say it: a mark decomposed out of a character that then joined a
+        // ligature (Microsoft Uighur's lam + alef-with-hamza: lam-alef and a hamza) belongs to a
+        // cluster it does not start, and mark-to-ligature needs its character to find its component.
+        // DirectWrite keeps the same thing in its shaping glyph properties between GetGlyphs and
+        // GetGlyphPlacements.
+        private const int GlyphSourceShift = 16;
+
+        private static unsafe void WriteGlyphSources(uint* glyphProps, ushort[] sources, int glyphCount, int glyphCapacity)
+        {
+            if (glyphProps == null || sources == null || glyphCount > glyphCapacity) return;
+            for (int g = 0; g < glyphCount && g < sources.Length; g++)
+            {
+                glyphProps[g] = (glyphProps[g] & 0xFFFF) | ((uint)sources[g] << GlyphSourceShift);
             }
         }
 
@@ -156,6 +178,7 @@ namespace MS.Internal.TextFormatting
             public ushort[] Glyphs;
             public ushort[] ClusterMap;
             public int[] CanGlyphAlone;   // null when the caller did not ask for it
+            public ushort[] Sources;      // each glyph's source character + 1, 0 when unknown
             public int GlyphCount;
         }
 
@@ -176,7 +199,7 @@ namespace MS.Internal.TextFormatting
 
         private static unsafe bool TryGetCachedSubstitution(
             GlyphTypeface glyphTypeface, char* text, int charCount,
-            ushort* glyphs, int glyphCapacity, ushort* clusterMap, int* canGlyphAlone,
+            ushort* glyphs, int glyphCapacity, ushort* clusterMap, int* canGlyphAlone, uint* glyphProps,
             out int glyphCountOut)
         {
             glyphCountOut = 0;
@@ -212,6 +235,7 @@ namespace MS.Internal.TextFormatting
             {
                 for (int c = 0; c < charCount; c++) canGlyphAlone[c] = run.CanGlyphAlone[c];
             }
+            WriteGlyphSources(glyphProps, run.Sources, run.GlyphCount, glyphCapacity);
 
             glyphCountOut = run.GlyphCount;
             return true;
@@ -219,7 +243,8 @@ namespace MS.Internal.TextFormatting
 
         private static unsafe void CacheSubstitution(
             GlyphTypeface glyphTypeface, char* text, int charCount,
-            ushort* glyphs, int glyphCount, int glyphCapacity, ushort* clusterMap, int* canGlyphAlone)
+            ushort* glyphs, int glyphCount, int glyphCapacity, ushort* clusterMap, int* canGlyphAlone,
+            ushort[] sources)
         {
             // Only in-place results are cacheable: when the run did not fit, the buffers still hold
             // the caller's input and there is nothing to remember.
@@ -239,6 +264,7 @@ namespace MS.Internal.TextFormatting
             {
                 Glyphs = new ushort[glyphCount],
                 ClusterMap = new ushort[charCount],
+                Sources = sources[..glyphCount],
                 GlyphCount = glyphCount,
             };
             for (int g = 0; g < glyphCount; g++) run.Glyphs[g] = glyphs[g];
@@ -329,11 +355,11 @@ namespace MS.Internal.TextFormatting
             }
             return ch switch
             {
-                '̇' or '̈' => 9,
-                '͏' => 10,
-                '̣' => 4,
-                '‌' or '‍' => 11,
-                'ﬞ' => 2,
+                '\u0307' or '\u0308' => 9,
+                '\u034F' => 10,
+                '\u0323' => 4,
+                '\u200C' or '\u200D' => 11,
+                '\uFB1E' => 2,
                 _ => 0,
             };
         }
@@ -358,7 +384,8 @@ namespace MS.Internal.TextFormatting
             int           glyphCount,
             int           glyphCapacity,
             ushort*       clusterMap,
-            int*          canGlyphAlone
+            int*          canGlyphAlone,
+            ushort[]      sources          // out: each glyph's source character + 1 (0: unknown)
             )
         {
             ReorderHebrewMarks(text, charCount, glyphs, glyphCount, clusterMap);
@@ -388,10 +415,27 @@ namespace MS.Internal.TextFormatting
                 buffers = Seed(charCount, glyphs, glyphCount, clusterMap);
                 used = script;
 
+                if (plan.IsIndic)
+                {
+                    DecomposeSplitMatras(glyphTypeface, text, charCount, buffers.CharMap, buffers.GlyphInfoList);
+                }
+
                 result = OpenTypeLayout.SubstituteGlyphs(
                     font, buffers.LayoutWorkspace, script, DfltLangSys,
                     features, features.Length, 0,
                     charCount, buffers.CharMap, buffers.GlyphInfoList);
+
+                if (plan.IsIndic && result == OpenTypeLayoutResult.Success)
+                {
+                    // A shaping engine's order: the basic forms first, then the syllables are
+                    // reordered, then the presentation forms see the reordered glyphs.
+                    ReorderIndicSyllables(text, charCount, buffers.CharMap, buffers.GlyphInfoList);
+                    Feature[] presentation = plan.IndicPresentationFeatures(text, charCount);
+                    result = OpenTypeLayout.SubstituteGlyphs(
+                        font, buffers.LayoutWorkspace, script, DfltLangSys,
+                        presentation, presentation.Length, 0,
+                        charCount, buffers.CharMap, buffers.GlyphInfoList);
+                }
 
                 if (!IsScriptMiss(result))
                 {
@@ -423,6 +467,7 @@ namespace MS.Internal.TextFormatting
             for (int g = 0; g < newGlyphCount; g++)
             {
                 glyphs[g] = glyphInfo.Glyphs[g];
+                sources[g] = (ushort)(glyphInfo.FirstChars[g] + 1);
             }
             for (int c = 0; c < charCount; c++)
             {
@@ -465,7 +510,10 @@ namespace MS.Internal.TextFormatting
             bool          isRightToLeft,
             double        designToIdeal,   // design units -> the caller's ideal units
             int*          advances,        // in/out: ideal-unit advances
-            GlyphOffset*  offsets          // in/out: ideal-unit offsets
+            GlyphOffset*  offsets,         // in/out: ideal-unit offsets
+            uint*         glyphProps = null, // in (may be null): the source characters Substitute recorded
+            double        pixelsPerEm = 0,  // Display mode: the device ppem (0 in Ideal mode)
+            double        pixelsPerDip = 1
             )
         {
             if (glyphTypeface == null || charCount <= 0 || glyphCount <= 0)
@@ -476,7 +524,7 @@ namespace MS.Internal.TextFormatting
             try
             {
                 PositionCore(glyphTypeface, text, charCount, glyphs, glyphCount, clusterMap,
-                             isRightToLeft, designToIdeal, advances, offsets);
+                             isRightToLeft, designToIdeal, advances, offsets, glyphProps, pixelsPerEm, pixelsPerDip);
             }
             catch (Exception e)
             {
@@ -496,7 +544,10 @@ namespace MS.Internal.TextFormatting
             bool          isRightToLeft,
             double        designToIdeal,
             int*          advances,
-            GlyphOffset*  offsets
+            GlyphOffset*  offsets,
+            uint*         glyphProps,
+            double        pixelsPerEm,
+            double        pixelsPerDip
             )
         {
             FontFaceLayoutInfo layout = glyphTypeface.FontFaceLayoutInfo;
@@ -526,42 +577,69 @@ namespace MS.Internal.TextFormatting
                 designAdvances[g] = DesignAdvance(glyphTypeface, glyphs[g], designEm);
             }
 
+            // Display mode positions in DEVICE PIXELS, as DirectWrite's GetGdiCompatibleGlyphPlacements
+            // does: the same OTLS engine with pixel metrics, so every anchor and value is rounded to
+            // pixels on its own (Positioning.DesignToPixels) and device tables apply. A kasra under
+            // Arial's initial beh at 32 ppem is round(-155) - round(95) = -3 px, not round(-3.9).
+            // The advances it starts from are the caller's, already GDI-compatible whole pixels.
+            ushort ppem = pixelsPerEm > 0 ? (ushort)Math.Round(pixelsPerEm, MidpointRounding.AwayFromZero) : (ushort)0;
+            bool pixels = ppem > 0 && pixelsPerDip > 0;
+            double unitToIdeal = pixels ? TextFormatterImp.ToIdeal / pixelsPerDip : designToIdeal;
+            if (pixels)
+            {
+                for (int g = 0; g < glyphCount; g++)
+                {
+                    designAdvances[g] = (int)Math.Round(advances[g] * pixelsPerDip / TextFormatterImp.ToIdeal);
+                }
+            }
+
             int[] workAdvances = (int[])designAdvances.Clone();
             LayoutOffset[] workOffsets = new LayoutOffset[glyphCount];
 
             IOpenTypeFont font = new GsubGposTables(layout);
-            ShaperBuffers buffers = Seed(charCount, glyphs, glyphCount, clusterMap);
+            ShaperBuffers buffers = Seed(charCount, glyphs, glyphCount, clusterMap, glyphProps);
 
             // DesignEmHeight = 0 asks the engine for design units (Positioning.DesignToPixels is the
             // identity then). PixelsEm = 0 with it: a GPOS device table indexed by 0 ppem is out of
             // its own size range and contributes nothing, which is what we want -- device deltas are
             // hinting adjustments in PIXELS and would otherwise be added to a design-unit total.
-            var metrics = new LayoutMetrics(
-                isRightToLeft ? TextFlowDirection.RTL : TextFlowDirection.LTR, 0, 0, 0);
+            var metrics = pixels
+                ? new LayoutMetrics(isRightToLeft ? TextFlowDirection.RTL : TextFlowDirection.LTR, designEm, ppem, ppem)
+                : new LayoutMetrics(isRightToLeft ? TextFlowDirection.RTL : TextFlowDirection.LTR, 0, 0, 0);
 
             OpenTypeLayoutResult result = OpenTypeLayoutResult.ScriptNotFound;
             uint used = 0;
 
+            int[] rtlShift = isRightToLeft ? new int[glyphCount] : null;
             fixed (int* pWorkAdvances = workAdvances)
             fixed (LayoutOffset* pWorkOffsets = workOffsets)
             {
-                foreach (uint script in plan.ScriptCandidates(DfltScript))
+                try
                 {
-                    buffers = Seed(charCount, glyphs, glyphCount, clusterMap);
-                    Array.Copy(designAdvances, workAdvances, glyphCount);
-                    Array.Clear(workOffsets, 0, glyphCount);
-                    used = script;
-
-                    result = OpenTypeLayout.PositionGlyphs(
-                        font, buffers.LayoutWorkspace, script, DfltLangSys, metrics,
-                        features, features.Length, 0,
-                        charCount, buffers.CharMap, buffers.GlyphInfoList,
-                        pWorkAdvances, pWorkOffsets);
-
-                    if (!IsScriptMiss(result))
+                    foreach (uint script in plan.ScriptCandidates(DfltScript))
                     {
-                        break;
+                        buffers = Seed(charCount, glyphs, glyphCount, clusterMap, glyphProps);
+                        Array.Copy(designAdvances, workAdvances, glyphCount);
+                        Array.Clear(workOffsets, 0, glyphCount);
+                        if (rtlShift != null) Array.Clear(rtlShift, 0, glyphCount);
+                        used = script;
+
+                        Positioning.RtlAdvanceShift = rtlShift;
+                        result = OpenTypeLayout.PositionGlyphs(
+                            font, buffers.LayoutWorkspace, script, DfltLangSys, metrics,
+                            features, features.Length, 0,
+                            charCount, buffers.CharMap, buffers.GlyphInfoList,
+                            pWorkAdvances, pWorkOffsets);
+
+                        if (!IsScriptMiss(result))
+                        {
+                            break;
+                        }
                     }
+                }
+                finally
+                {
+                    Positioning.RtlAdvanceShift = null;
                 }
             }
 
@@ -589,15 +667,276 @@ namespace MS.Internal.TextFormatting
                 // as WPF rounds the float advance DWrite's GetGlyphPlacements returns with the
                 // kerning already in it. Rounding the nominal advance and the adjustment separately
                 // is off by an ideal unit on some glyphs, which a long line adds up.
-                int nominal = (int)Math.Round(designAdvances[g] * designToIdeal);
-                advances[g] = advances[g] == nominal
-                    ? (int)Math.Round(workAdvances[g] * designToIdeal)
-                    : advances[g] + Round((workAdvances[g] - designAdvances[g]) * designToIdeal);
+                int nominal = DWriteIdealAdvance(designAdvances[g], designToIdeal, designEm);
+                advances[g] = !pixels && advances[g] == nominal
+                    ? DWriteIdealAdvance(workAdvances[g], designToIdeal, designEm)
+                    : advances[g] + Round((workAdvances[g] - designAdvances[g]) * unitToIdeal);
                 // The engine's dx is physical (+ right); DirectWrite's offset runs in the reading
                 // direction, so a right-to-left run's is the negation (a qamats DirectWrite puts at
-                // -4.16 the engine puts at +4.16).
-                offsets[g].du += Round((isRightToLeft ? -workOffsets[g].dx : workOffsets[g].dx) * designToIdeal);
-                offsets[g].dv += Round(workOffsets[g].dy * designToIdeal);
+                // -4.16 the engine puts at +4.16). The forwarder TRUNCATES an offset into ideal units
+                // -- du = (int)(advanceOffset * scalingFactor), TextAnalyzer.cpp -- of DWrite's float
+                // offset, the design value times the float em scale; rounding it put Arial's sheva
+                // at -809 where stock has -808.
+                // Right to left the reading-direction offset is XAdvance - XPlacement (rtlShift holds
+                // the XAdvance the value records applied; dx stayed the physical placement).
+                int dx = isRightToLeft ? rtlShift[g] - workOffsets[g].dx : workOffsets[g].dx;
+                offsets[g].du += pixels ? (int)(dx * unitToIdeal) : TruncateOffset(dx, designToIdeal, designEm);
+                offsets[g].dv += pixels ? (int)(workOffsets[g].dy * unitToIdeal) : TruncateOffset(workOffsets[g].dy, designToIdeal, designEm);
+            }
+        }
+
+        // ---- Indic reordering ---------------------------------------------------------------
+
+        /// <summary>The vowel signs written BEFORE the consonant they follow (the left matras).</summary>
+        private static bool IsPreBaseMatra(char c) => c is '\u093F' or '\u094E'
+            or '\u09BF' or '\u09C7' or '\u09C8'
+            or '\u0A3F' or '\u0ABF'
+            or '\u0B47'
+            or '\u0BC6' or '\u0BC7' or '\u0BC8'
+            or '\u0D46' or '\u0D47' or '\u0D48';
+
+        private static bool IsIndicVirama(char c) => c >= '\u0900' && c <= '\u0D7F' && (c & 0x7F) == 0x4D;
+
+        /// <summary>
+        ///  The vowel signs DirectWrite shapes as their canonical decompositions -- the two-part
+        ///  (and Kannada's three-part) vowels: Bengali o/au, Oriya ai/o/au, Tamil o/oo/au, Telugu
+        ///  ai, Kannada ii/ee/ai/o/oo, Malayalam o/oo/au. Kannada "prii" comes back as its i-sign
+        ///  and a U+0CD5 length mark.
+        /// </summary>
+        private static string SplitMatra(char c) => c switch
+        {
+            '\u09CB' => "\u09C7\u09BE",
+            '\u09CC' => "\u09C7\u09D7",
+            '\u0B48' => "\u0B47\u0B56",
+            '\u0B4B' => "\u0B47\u0B3E",
+            '\u0B4C' => "\u0B47\u0B57",
+            '\u0BCA' => "\u0BC6\u0BBE",
+            '\u0BCB' => "\u0BC7\u0BBE",
+            '\u0BCC' => "\u0BC6\u0BD7",
+            '\u0C48' => "\u0C46\u0C56",
+            '\u0CC0' => "\u0CBF\u0CD5",
+            '\u0CC7' => "\u0CC6\u0CD5",
+            '\u0CC8' => "\u0CC6\u0CD6",
+            '\u0CCA' => "\u0CC6\u0CC2",
+            '\u0CCB' => "\u0CC6\u0CC2\u0CD5",
+            '\u0D4A' => "\u0D46\u0D3E",
+            '\u0D4B' => "\u0D47\u0D3E",
+            '\u0D4C' => "\u0D46\u0D57",
+            _ => null,
+        };
+
+        /// <summary>
+        ///  DirectWrite's Indic engine shapes a two-part vowel as its two parts: the character keeps
+        ///  one place in the text and gets two glyphs, so the first can be reordered in front of its
+        ///  consonant like any pre-base matra (Tamil "mozhi": e-sign, ma, aa-sign).
+        /// </summary>
+        private static unsafe void DecomposeSplitMatras(GlyphTypeface glyphTypeface, char* text, int charCount,
+                                                        UshortList charmap, GlyphInfoList glyphInfo)
+        {
+            for (int c = 0; c < charCount; c++)
+            {
+                if (SplitMatra(text[c]) is not string parts) continue;
+                var partGlyphs = new ushort[parts.Length];
+                bool mapped = true;
+                for (int k = 0; k < parts.Length && mapped; k++)
+                {
+                    mapped = glyphTypeface.CharacterToGlyphMap.TryGetValue(parts[k], out partGlyphs[k]) && partGlyphs[k] != 0;
+                }
+                if (!mapped) continue;
+
+                int g = charmap[c];
+                if (g >= glyphInfo.Length || (c > 0 && charmap[c - 1] == g) || (c + 1 < charCount && charmap[c + 1] == g)) continue;
+                int extra = parts.Length - 1;
+                glyphInfo.Insert(g, extra);
+                for (int k = 0; k < parts.Length; k++)
+                {
+                    glyphInfo.Glyphs[g + k] = partGlyphs[k];
+                    glyphInfo.GlyphFlags[g + k] = (ushort)GlyphFlags.Unresolved;
+                    glyphInfo.FirstChars[g + k] = (ushort)c;
+                    glyphInfo.LigatureCounts[g + k] = 1;
+                }
+                for (int k = c + 1; k < charCount; k++) charmap[k] = (ushort)(charmap[k] + extra);
+            }
+        }
+
+        private static bool IsIndicMark(char c)
+            => CharUnicodeInfo.GetUnicodeCategory(c) is UnicodeCategory.NonSpacingMark or UnicodeCategory.SpacingCombiningMark;
+
+        /// <summary>One orthographic syllable: a base, the consonants a virama binds to it (and a
+        /// joiner after the virama), and the signs that hang off the result.</summary>
+        private static unsafe int IndicSyllableEnd(char* text, int at, int charCount)
+        {
+            int i = at + 1;
+            while (i < charCount)
+            {
+                char c = text[i];
+                if (IsIndicMark(c)) { i++; continue; }
+                if (c is '\u200D' or '\u200C' && IsIndicVirama(text[i - 1])) { i++; continue; }
+                // A virama binds the next consonant into the syllable -- except Tamil's pulli, which
+                // ends one: "ll" + "lai" is two syllables, and the ai-sign goes before the second lla.
+                if ((IsIndicVirama(text[i - 1]) && !IsTamil(text[i - 1]))
+                    || (text[i - 1] is '\u200D' && i >= 2 && IsIndicVirama(text[i - 2])))
+                {
+                    i++;
+                    continue;
+                }
+                break;
+            }
+            return i;
+        }
+
+        private static bool IsTamil(char c) => c >= (char)0x0B80 && c <= (char)0x0BFF;
+
+        /// <summary>Candrabindu, anusvara and visarga: offsets 1 to 3 of every Indic block.</summary>
+        private static bool IsSyllableModifier(char c) => c >= (char)0x0900 && c <= (char)0x0D7F && (c & 0x7F) is >= 1 and <= 3;
+
+        /// <summary>The ra whose post-virama form is written before the base: Malayalam's 'pref'.
+        /// (Oriya, Telugu and Kannada ligate virama + ra too, into a below- or post-base form that
+        /// stays where it is.)</summary>
+        private static bool IsPrefRa(char c) => c is '\u0D30';
+
+        // Bengali puts its reph before a post-base matra ("rbaa": ba, reph, aa); Devanagari after it
+        // ("rvo": va, o, reph, which the face then ligates).
+        private static bool RephBeforePostBase(char ra) => ra is '\u09B0';
+
+        /// <summary>The right-side (post-base) vowel signs of the scripts whose reph precedes them.</summary>
+        private static bool IsPostBaseMatra(char c) => c is '\u093B' or '\u093E' or '\u0940' or '\u0949' or '\u094A' or '\u094B' or '\u094C' or '\u094F'
+            or '\u09BE' or '\u09C0' or '\u09D7' or '\u0ABE' or '\u0AC0' or '\u0AC9' or '\u0ACB' or '\u0ACC';
+
+        /// <summary>Ra, whose virama form at the start of a syllable is the reph.</summary>
+        private static bool IsIndicRa(char c) => c is '\u0930' or '\u09B0' or '\u0AB0' or '\u0B30'
+            or '\u0C30' or '\u0CB0';
+
+        /// <summary>
+        ///  Reorders each syllable after the basic forms, as DirectWrite's Indic engine does: a reph
+        ///  (the rphf form of a syllable-initial ra + virama) goes to the END of the syllable --
+        ///  "rtha" is tha, reph; "rthu" tha, u, reph -- and a pre-base matra to the front, in front of
+        ///  the conjunct or half forms the basic forms made. The syllable becomes one cluster, as
+        ///  DirectWrite's cluster map has it (its glyphs are no longer in character order).
+        /// </summary>
+        private static unsafe void ReorderIndicSyllables(char* text, int charCount, UshortList charmap, GlyphInfoList glyphInfo)
+        {
+            int glyphCount = glyphInfo.Length;
+            for (int c = 0; c < charCount; )
+            {
+                int end = IndicSyllableEnd(text, c, charCount);
+                int gs = charmap[c];
+                int ge = end < charCount ? charmap[end] : glyphCount;
+                int reph = ge > gs + 1 && end - c > 2 && IsIndicRa(text[c]) && IsIndicVirama(text[c + 1])
+                           && charmap[c + 1] == gs && charmap[c + 2] != gs
+                    ? gs : -1;
+                // A pre-base consonant form (Malayalam's virama + ra, 'pref') goes in front of the
+                // consonant it follows -- the base: "stra" is sa, virama, ra-form, ta.
+                for (int i = c + 1; i + 1 < end && ge > gs + 1; i++)
+                {
+                    if (!IsIndicVirama(text[i]) || !IsPrefRa(text[i + 1])) continue;
+                    int g = charmap[i];
+                    int baseGlyph = charmap[i - 1];
+                    if (g <= gs || g >= ge || charmap[i + 1] != g || baseGlyph >= g) continue;   // no pre-base form was made
+                    MoveGlyph(glyphInfo, g, baseGlyph);
+                    if (reph >= baseGlyph) reph++;
+                    break;
+                }
+                for (int i = c + 1; i < end && ge > gs + 1; i++)
+                {
+                    if (!IsPreBaseMatra(text[i]) && !(SplitMatra(text[i]) is string parts && IsPreBaseMatra(parts[0]))) continue;
+                    int g = charmap[i];
+                    if (g <= gs || g >= ge) continue;   // it went into a ligature: nothing to move
+                    MoveGlyph(glyphInfo, g, gs);
+                    if (reph >= 0) reph++;
+                    break;
+                }
+                if (reph >= 0)
+                {
+                    // ... before the syllable modifiers (candrabindu, anusvara, visarga), which the
+                    // face then joins it with: "rtham" is tha, reph+anusvara.
+                    int to = ge - 1;
+                    while (to > reph && IsSyllableModifier(text[glyphInfo.FirstChars[to]])) to--;
+                    if (RephBeforePostBase(text[c]))
+                    {
+                        for (int g = reph + 1; g <= to; g++)
+                        {
+                            if (IsPostBaseMatra(text[glyphInfo.FirstChars[g]])) { to = g - 1; break; }
+                        }
+                    }
+                    MoveGlyphForward(glyphInfo, reph, to);
+                }
+                if (ge > gs)
+                {
+                    for (int k = c; k < end; k++) charmap[k] = (ushort)gs;
+                }
+                c = end;
+            }
+        }
+
+        private static void MoveGlyphForward(GlyphInfoList glyphInfo, int from, int to)
+        {
+            ushort glyph = glyphInfo.Glyphs[from], flags = glyphInfo.GlyphFlags[from];
+            ushort first = glyphInfo.FirstChars[from], count = glyphInfo.LigatureCounts[from];
+            for (int g = from; g < to; g++)
+            {
+                glyphInfo.Glyphs[g] = glyphInfo.Glyphs[g + 1];
+                glyphInfo.GlyphFlags[g] = glyphInfo.GlyphFlags[g + 1];
+                glyphInfo.FirstChars[g] = glyphInfo.FirstChars[g + 1];
+                glyphInfo.LigatureCounts[g] = glyphInfo.LigatureCounts[g + 1];
+            }
+            glyphInfo.Glyphs[to] = glyph;
+            glyphInfo.GlyphFlags[to] = flags;
+            glyphInfo.FirstChars[to] = first;
+            glyphInfo.LigatureCounts[to] = count;
+        }
+
+        private static void MoveGlyph(GlyphInfoList glyphInfo, int from, int to)
+        {
+            ushort glyph = glyphInfo.Glyphs[from], flags = glyphInfo.GlyphFlags[from];
+            ushort first = glyphInfo.FirstChars[from], count = glyphInfo.LigatureCounts[from];
+            for (int g = from; g > to; g--)
+            {
+                glyphInfo.Glyphs[g] = glyphInfo.Glyphs[g - 1];
+                glyphInfo.GlyphFlags[g] = glyphInfo.GlyphFlags[g - 1];
+                glyphInfo.FirstChars[g] = glyphInfo.FirstChars[g - 1];
+                glyphInfo.LigatureCounts[g] = glyphInfo.LigatureCounts[g - 1];
+            }
+            glyphInfo.Glyphs[to] = glyph;
+            glyphInfo.GlyphFlags[to] = flags;
+            glyphInfo.FirstChars[to] = first;
+            glyphInfo.LigatureCounts[to] = count;
+        }
+
+        /// <summary>
+        ///  Puts every combining mark in the cluster of the character before it, once the run is
+        ///  shaped: the mark keeps its own glyph, but a caret steps over a base and its marks as one
+        ///  cell, as DWrite's shaping engines cluster them (GenericEngineGetGlyphs keeps an
+        ///  IS_COMBINING character with its base; the Hebrew and Arabic engines do the same). It
+        ///  happens after GSUB and GPOS because both read the cluster map: the per-character
+        ///  features (the Arabic joining forms) to find their glyphs, mark-to-ligature to find which
+        ///  component a mark sits on.
+        /// </summary>
+        internal static unsafe void MergeMarkClusters(char* text, int charCount, ushort* clusterMap, int glyphCount)
+        {
+            for (int i = 1; i < charCount; i++)
+            {
+                if (clusterMap[i] == clusterMap[i - 1]) continue;
+                int cp = text[i];
+                if (char.IsLowSurrogate(text[i])) continue;
+                if (char.IsHighSurrogate(text[i]) && i + 1 < charCount && char.IsLowSurrogate(text[i + 1]))
+                {
+                    cp = char.ConvertToUtf32(text[i], text[i + 1]);
+                }
+                if (CharUnicodeInfo.GetUnicodeCategory(cp) is not (UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark))
+                {
+                    continue;
+                }
+
+                // Only a mark whose glyphs follow its base's can join it; anything else would make the
+                // map non-monotonic.
+                ushort from = clusterMap[i];
+                ushort to = clusterMap[i - 1];
+                if (from < to) continue;
+                for (int j = i; j < charCount && clusterMap[j] == from; j++)
+                {
+                    clusterMap[j] = to;
+                }
             }
         }
 
@@ -676,7 +1015,7 @@ namespace MS.Internal.TextFormatting
                 {
                     glyphAdvances[g] = designEm == 0
                         ? 0
-                        : Round(DesignAdvance(glyphTypeface, glyphIndices[g], designEm) * designToIdeal);
+                        : DWriteIdealAdvance(DesignAdvance(glyphTypeface, glyphIndices[g], designEm), designToIdeal, designEm);
                 }
             }
             if (glyphOffsets.Length != glyphCount)
@@ -712,7 +1051,8 @@ namespace MS.Internal.TextFormatting
         ///  IgnoreMarks on a kerning lookup did not ignore marks and mark attachment could not find
         ///  its marks.
         /// </remarks>
-        private static unsafe ShaperBuffers Seed(int charCount, ushort* glyphs, int glyphCount, ushort* clusterMap)
+        private static unsafe ShaperBuffers Seed(int charCount, ushort* glyphs, int glyphCount, ushort* clusterMap,
+                                                 uint* glyphProps = null)
         {
             var buffers = new ShaperBuffers((ushort)charCount, (ushort)glyphCount);
             GlyphInfoList glyphInfo = buffers.GlyphInfoList;
@@ -747,6 +1087,13 @@ namespace MS.Internal.TextFormatting
 
             for (int g = 0; g < glyphCount; g++)
             {
+                // A glyph no character maps to (a decomposition product inside a cluster) takes the
+                // character Substitute recorded it came from.
+                int source = glyphProps != null ? (int)(glyphProps[g] >> GlyphSourceShift) - 1 : -1;
+                if (glyphInfo.FirstChars[g] == ushort.MaxValue && source >= 0 && source < charCount)
+                {
+                    glyphInfo.FirstChars[g] = (ushort)source;
+                }
                 if (glyphInfo.FirstChars[g] == ushort.MaxValue)
                 {
                     glyphInfo.FirstChars[g] = (ushort)g;
@@ -800,6 +1147,37 @@ namespace MS.Internal.TextFormatting
         }
 
         private static int Round(double value) => (int)Math.Round(value, MidpointRounding.AwayFromZero);
+
+        /// <summary>DirectWrite's em scale: the float em size over the units per em, in float.</summary>
+        private static float DWriteScale(double designToIdeal, ushort designEm, out double emSize)
+        {
+            emSize = designToIdeal * designEm / TextFormatterImp.ToIdeal;
+            return (float)emSize / designEm;
+        }
+
+        /// <summary>
+        ///  A design-unit advance as stock WPF gets it: DirectWrite's FLOAT advance (design units
+        ///  times the float em scale), rounded into ideal units the forwarder's way,
+        ///  round(advance * emSize * 300 / (float)emSize) (TextAnalyzer.cpp). Rounding the exact
+        ///  product instead is one unit off wherever it sits on a half: Calibri's 1080-unit V at
+        ///  10.667 px (8 pt) is 1687.5000005 exactly but 1687.49997 through the float.
+        /// </summary>
+        internal static int DWriteIdealAdvance(int design, double designToIdeal, ushort designEm)
+        {
+            float scale = DWriteScale(designToIdeal, designEm, out double emSize);
+            float advance = design * scale;
+            return (int)Math.Round(advance * emSize * TextFormatterImp.ToIdeal / (float)emSize);
+        }
+
+        /// <summary>A design-unit offset as the forwarder turns DWrite's into ideal units: the
+        /// float DIP offset (design units times the float em scale), truncated after scaling by the
+        /// ideal factor.</summary>
+        private static int TruncateOffset(int design, double designToIdeal, ushort designEm)
+        {
+            float scale = DWriteScale(designToIdeal, designEm, out _);
+            float dip = design * scale;
+            return (int)(dip * TextFormatterImp.ToIdeal);
+        }
 
         private static string FamilyOf(GlyphTypeface glyphTypeface)
         {
@@ -911,10 +1289,9 @@ namespace MS.Internal.TextFormatting
                         break;
 
                     case ScriptClass.Indic:
-                        // The feature set without the reordering. Conjuncts (cjct), half forms,
-                        // rakar/rephs and nukta composition all come from these, so applying them is
-                        // a large improvement on nominal glyphs -- but a pre-base matra still needs
-                        // MOVING before its consonant, and nothing here does that.
+                        // The basic forms only: conjuncts, half forms, rakar/rephs, nukta
+                        // composition. The syllables are reordered after these and the
+                        // presentation forms applied to the result (IndicPresentationFeatures).
                         Add(features, "ccmp", all);
                         Add(features, "locl", all);
                         Add(features, "nukt", all);
@@ -927,13 +1304,6 @@ namespace MS.Internal.TextFormatting
                         Add(features, "pstf", all);
                         Add(features, "vatu", all);
                         Add(features, "cjct", all);
-                        Add(features, "pres", all);
-                        Add(features, "abvs", all);
-                        Add(features, "blws", all);
-                        Add(features, "psts", all);
-                        Add(features, "haln", all);
-                        Add(features, "calt", all);
-                        Add(features, "clig", all);
                         break;
 
                     default:
@@ -949,6 +1319,34 @@ namespace MS.Internal.TextFormatting
                         break;
                 }
 
+                return features.ToArray();
+            }
+
+            public bool IsIndic => _class == ScriptClass.Indic;
+
+            /// <summary>The Indic presentation forms, applied once the syllables are reordered;
+            /// 'init' on the syllable that starts a word (Bengali's word-initial e-matra).</summary>
+            public unsafe Feature[] IndicPresentationFeatures(char* text, int charCount)
+            {
+                var features = new System.Collections.Generic.List<Feature>(8);
+                ushort all = (ushort)charCount;
+                for (int c = 0; c < charCount; )
+                {
+                    int end = IndicSyllableEnd(text, c, charCount);
+                    bool wordStart = c == 0 || !(char.IsLetter(text[c - 1]) || IsIndicMark(text[c - 1]));
+                    if (wordStart && char.IsLetter(text[c]))
+                    {
+                        features.Add(new Feature((ushort)c, (ushort)(end - c), Tag("init"), 1));
+                    }
+                    c = end;
+                }
+                Add(features, "pres", all);
+                Add(features, "abvs", all);
+                Add(features, "blws", all);
+                Add(features, "psts", all);
+                Add(features, "haln", all);
+                Add(features, "calt", all);
+                Add(features, "clig", all);
                 return features.ToArray();
             }
 
@@ -1212,6 +1610,8 @@ namespace MS.Internal.TextFormatting
 
                 case 0x200C:    // ZERO WIDTH NON-JOINER
                 case 0x0621:    // ARABIC LETTER HAMZA
+                case 0x0674:    // ARABIC LETTER HIGH HAMZA
+                case 0x08AD:    // ARABIC LETTER LOW ALEF
                     return JoiningType.NonJoining;
             }
 
@@ -1265,9 +1665,7 @@ namespace MS.Internal.TextFormatting
                 case 0x0675:
                 case 0x0676:
                 case 0x0677:
-                case 0x06C0:
-                case 0x06C1:
-                case 0x06C2:
+                case 0x06C0:    // (HEH GOAL U+06C1 and U+06C2 are DUAL-joining: Urdu's medial heh)
                 case 0x06C3:
                 case 0x06C4:
                 case 0x06C5:
@@ -1281,6 +1679,14 @@ namespace MS.Internal.TextFormatting
                 case 0x06CF:
                 case 0x06D2:    // YEH BARREE
                 case 0x06D3:    // YEH BARREE WITH HAMZA ABOVE
+                case 0x06D5:    // AE
+                case 0x06EE:    // DAL WITH INVERTED V
+                case 0x06EF:    // REH WITH INVERTED V
+                case 0x0759: case 0x075A: case 0x075B:      // Arabic Supplement dal/reh forms
+                case 0x076B: case 0x076C: case 0x0771:
+                case 0x0773: case 0x0774: case 0x0778: case 0x0779:
+                case 0x08AA: case 0x08AB: case 0x08AC:      // Arabic Extended-A reh/waw forms
+                case 0x08AE: case 0x08B1: case 0x08B2: case 0x08B9:
                 case 0x0710:    // SYRIAC ALAPH
                 case 0x0715:    // SYRIAC DALATH
                 case 0x0716:

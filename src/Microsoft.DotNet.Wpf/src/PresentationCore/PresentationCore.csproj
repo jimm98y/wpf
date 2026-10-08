@@ -110,6 +110,7 @@
     <Compile Include="MS\Internal\CheckedPointers.cs" />
     <Compile Include="MS\Internal\Classification.cs" />
     <Compile Include="MS\Internal\ManagedClassification.cs" />
+    <Compile Include="MS\Internal\ManagedClassificationData.cs" />
     <Compile Include="MS\Internal\CoreAppContextSwitches.cs" />
     <Compile Include="MS\Internal\CustomCategoryAttribute.cs" />
     <Compile Include="MS\Internal\DeferredElementTreeState.cs" />

@@ -246,6 +246,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             GdiContrastPalette = ComputeGdiContrastPalette(tables);
             DWriteThinFace = ComputeDWriteThinFace();
             DWriteThinFamily = DWriteThinFace && ComputeDWriteThinFamily(tables);
+            _eblcTable = tables.TryGetValue("EBLC", out int eblcTable) ? eblcTable : -1;
+            _headTable = head;
+            _hasGlyfOrCff = tables.ContainsKey("glyf") || tables.ContainsKey("CFF ");
 
             // Outlines are OPTIONAL, because a colour BITMAP font has none.
             //
@@ -486,6 +489,86 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 if (string.Equals(f, family, StringComparison.Ordinal)) return true;
             return false;
         }
+
+        private readonly int _eblcTable, _headTable;
+        private readonly bool _hasGlyfOrCff;
+        private bool? _dwriteLegacyEastAsian;
+
+        /// <summary>
+        ///  The six characters of each script OpenTypeFontFaceBuilder::IsLegacyEastAsian @18002f788
+        ///  asks the face's strikes for (@18036b928): Japanese kana, Hangul, simplified and
+        ///  traditional Han.
+        /// </summary>
+        private static readonly char[] s_legacyEastAsianProbes =
+        {
+            '\u3044', '\u3046', '\u3093', '\u3057', '\u306E', '\u304B',
+            '\uC774', '\uB2E4', '\uB294', '\uC758', '\uC5D0', '\uD558',
+            '\u6C49', '\u5B57', '\u4E2D', '\u7684', '\u4E2A', '\u4EEC',
+            '\u6F22', '\u5011', '\u4E09', '\u4E86', '\u5B78', '\u7232',
+        };
+
+        /// <summary>
+        ///  Whether DirectWrite draws this face's EBDT strikes: the extended region's flag 1 (+0x11c),
+        ///  which ReadFontFaceExtended @180033710 sets from IsLegacyEastAsian @18002f788. A face with
+        ///  an EBLC table qualifies when it has no outlines at all ('glyf' or 'CFF '); otherwise not
+        ///  if its head flags say it was made for ClearType (bit 13), and else only when the glyphs of
+        ///  all six probe characters of one script fall inside the strikes' index subtables (their
+        ///  first..last glyph ranges, over every strike together). GlyphRunAnalysis @180127960 clears
+        ///  the rendering mode's bitmap bit (0x800000) for any other face, so Calibri's and Courier
+        ///  New's strikes are never drawn while MS Gothic's and SimSun's are.
+        /// </summary>
+        internal bool DWriteLegacyEastAsian => _dwriteLegacyEastAsian ??= ComputeDWriteLegacyEastAsian();
+
+        private bool ComputeDWriteLegacyEastAsian()
+        {
+            if (_eblcTable < 0 || _eblcTable + 8 > _data.Length) return false;
+            if (!_hasGlyfOrCff) return true;
+            if ((U16(_headTable + 16) & 0x2000) != 0) return false;
+
+            var probes = new int[s_legacyEastAsianProbes.Length];
+            bool anyMapped = false;
+            for (int group = 0; group < probes.Length; group += 6)
+            {
+                bool all = true;
+                for (int k = 0; k < 6; k++)
+                {
+                    probes[group + k] = Math.Max(0, GlyphIndex(s_legacyEastAsianProbes[group + k]));
+                    if (probes[group + k] == 0) all = false;
+                }
+                if (!all) for (int k = 0; k < 6; k++) probes[group + k] = 0;
+                anyMapped |= all;
+            }
+            if (!anyMapped) return false;
+
+            var covered = new bool[probes.Length];
+            uint numSizes = U32(_eblcTable + 4);
+            for (uint i = 0; i < numSizes; i++)
+            {
+                int record = _eblcTable + 8 + (int) i * 48;
+                if (record + 48 > _data.Length) break;
+                int array = _eblcTable + (int) U32(record);
+                uint subtables = U32(record + 8);
+                for (uint j = 0; j < subtables; j++)
+                {
+                    int entry = array + (int) j * 8;
+                    if (entry + 8 > _data.Length) break;
+                    int first = U16(entry), last = U16(entry + 2);
+                    for (int k = 0; k < probes.Length; k++)
+                        if (probes[k] != 0 && first <= probes[k] && probes[k] <= last) covered[k] = true;
+                }
+            }
+            for (int group = 0; group < probes.Length; group += 6)
+            {
+                bool all = true;
+                for (int k = 0; k < 6; k++) all &= covered[group + k];
+                if (all) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Whether the bitmaps this face hands GlyphRunPainter are its 1-bit EBDT strikes
+        /// rather than colour artwork.</summary>
+        internal bool BitmapsAreMonoStrikes => _bitmaps is not null && ReferenceEquals(_bitmaps, _metricStrikes);
 
         private bool DeclaresDbcsCharset(Dictionary<string, int> tables)
         {
@@ -1499,8 +1582,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                       * 2 + (TrueTypeInterpreter.DWriteMovePoint ? 1 : 0)
                       // A stretched GDI fit (the EMF player's, StretchPpemX/Y) is another fit.
                       + (TrueTypeInterpreter.StretchPpemX << 20 | TrueTypeInterpreter.StretchPpemY << 10) * 64,
-                      // ...and so is a turned one (GdiWord: no compatible widths, ClearType along y).
-                      TrueTypeInterpreter.GdiKey);
+                      // ...and so is a turned one (GdiWord: no compatible widths, ClearType along y),
+                      // and DirectWrite's GDI_CLASSIC fit, which no gasp declines.
+                      TrueTypeInterpreter.GdiKey | (IgnoreGaspSymmetricGridfit ? 1 << 30 : 0));
             int callNo = 0;
             bool probe = s_outlineProbe && glyphId == s_probeGid;
             if (probe)
@@ -1552,7 +1636,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // our instruction trace is identical to the driver's. WPF_CT_GASP_SYMFIT=0 fits anyway.
             if (!FaceWantsGridFit(pixelsPerEm) || PrepInhibitsGridFit(pixelsPerEm)
                 || (s_scaleUnhintedFaces && Interpreter() is null)
-                || (s_gaspSymGridfitGovernsOutline && ClearTypeRendering
+                || (s_gaspSymGridfitGovernsOutline && ClearTypeRendering && !IgnoreGaspSymmetricGridfit
                     && GaspDeclinesClearTypeGridFit(pixelsPerEm)))
             {
                 // The outline as drawn, SCALED TO THIS SIZE -- not a refusal. Callers of this method
@@ -1688,6 +1772,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// glyph is fitted at other sizes (TrueTypeInterpreter.GdiGaspPpem), else the size itself.</summary>
         private static int GaspPpemFor(float pixelsPerEm)
             => TrueTypeInterpreter.GdiGaspPpem > 0 ? TrueTypeInterpreter.GdiGaspPpem : (int) MathF.Round(pixelsPerEm);
+
+        /// <summary>
+        ///  DirectWrite fitting in GDI_CLASSIC: its rendering mode attributes carry 0x80000, for which
+        ///  ResolveGridFitMode @1800913a0 answers DWRITE_GRID_FIT_MODE_ENABLED without reading the
+        ///  face's ranges -- so a version 1 'gasp' that clears SYMMETRIC_GRIDFIT (Microsoft YaHei and
+        ///  MS Gothic above 20ppem) is fitted there all the same, where GDI's own ClearType
+        ///  realization leaves it unfitted. Per thread, set around a fit by
+        ///  NaturalClearType.TryGetGdiClassicOutline, and part of the hinted cache's key.
+        /// </summary>
+        [ThreadStatic] internal static bool IgnoreGaspSymmetricGridfit;
+
+        /// <summary>
+        ///  Whether DirectWrite grid-fits this face at this size in its NATURAL and
+        ///  NATURAL_SYMMETRIC modes: their attributes carry 0x100000, for which ResolveGridFitMode
+        ///  @1800913a0 binary-searches the face's SYMMETRIC_GRIDFIT ranges -- the list
+        ///  ReadRenderingModeRanges @1800348a0 builds from a version 1 'gasp' (bit 2), at the ppem
+        ///  rounded half away -- and fits when the size falls in a range that sets it. A face with
+        ///  no 'gasp', or a version 0 one, has no list, and is fitted at every size. Not the GRIDFIT
+        ///  bit: Microsoft YaHei above 21ppem and MS Gothic above 20 say GRIDFIT and not
+        ///  SYMMETRIC_GRIDFIT, and DirectWrite draws them unfitted.
+        /// </summary>
+        internal bool DWriteNaturalGridFit(float pixelsPerEm)
+        {
+            if (_gasp < 0 || U16(_gasp) == 0) return true;
+            int ppem = (int) MathF.Round(pixelsPerEm, MidpointRounding.AwayFromZero);
+            int ranges = U16(_gasp + 2);
+            int at = _gasp + 4;
+            for (int i = 0; i < ranges; i++, at += 4)
+                if (ppem <= U16(at))
+                    return (U16(at + 2) & GaspSymmetricGridfit) != 0;
+            return false;
+        }
 
         private bool GaspDeclinesClearTypeGridFit(float pixelsPerEm)
         {

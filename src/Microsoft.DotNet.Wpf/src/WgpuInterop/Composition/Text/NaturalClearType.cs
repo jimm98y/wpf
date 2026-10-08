@@ -58,6 +58,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             /// <summary>bits[row * Width + column].</summary>
             public bool[] Bits = Array.Empty<bool>();
             public bool IsEmpty => Width == 0 || Height == 0;
+            /// <summary>An embedded 1-bit strike glyph (see <see cref="DWriteStrike"/>): Bits are whole
+            /// PIXELS, Left and Top pixel offsets, and the texture takes it unfiltered.</summary>
+            public bool Strike;
         }
 
         private static readonly GlyphBits s_empty = new();
@@ -76,16 +79,92 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // smear (see EmboldenOutline): NATURAL_SYMMETRIC, and past 50ppem.
             int ppem = (int)MathF.Floor(pixelsPerEm + 0.5f);
             bool outlineBold = font.SynthesizesBold && (nSub > 1 || ppem > 50);
-            if (!gridFit || (!forceGridFit && !font.WantsGridFit(pixelsPerEm))
+            if (!gridFit || (!forceGridFit && !font.DWriteNaturalGridFit(pixelsPerEm))
                 || !font.TryGetDWriteFittedOutline(glyphId, pixelsPerEm, flags, out figures, out dropout,
                                                    outlineBold ? (x, y, ends) => EmboldenOutline(x, y, ends, ppem) : null))
             {
                 dropout = 0;
-                if (!font.TryGetScaledOutline(glyphId, pixelsPerEm, out figures)) return s_empty;
+                if (!forceGridFit)
+                {
+                    // DirectWrite's unfitted glyph: MakeRasterizerTransform rounds the square transform
+                    // to its whole ppem (24.5 draws as 25, 37.33 as 37), and the outline is the design
+                    // one through that matrix in the scaler's arithmetic -- emboldened, under a
+                    // simulated bold, by fsg_Embold in the unscaled frame (EmboldenOutline at the upem).
+                    figures = GdiPlusText.TransformedOutline(font, glyphId, ppem, 1f, 0f, -font.ObliqueShearApplied, 1f, 0f, 0f,
+                                                             outlineBold: outlineBold, dwriteEmbold: true);
+                    if (figures.Count == 0) return s_empty;
+                }
+                else if (!font.TryGetScaledOutline(glyphId, pixelsPerEm, out figures)) return s_empty;
             }
             GlyphBits bits = Scan(figures, nSub, dropout);
             return font.SynthesizesBold && !outlineBold ? Embolden(bits, ppem) : bits;
         }
+
+        /// <summary>
+        ///  The glyph's EBDT strike as DirectWrite draws it, or null when it draws the outline.
+        ///  MakeRasterizerFlagsForRendering @180091328 asks the scaler for bitmaps (0x40) when the
+        ///  glyph is grid-fitted and the rendering mode's attributes carry 0x800000 -- GDI_CLASSIC,
+        ///  GDI_NATURAL and NATURAL do, NATURAL_SYMMETRIC does not -- and GlyphRunAnalysis @180127960
+        ///  clears that bit for a face that is not legacy East Asian
+        ///  (<see cref="TrueTypeFont.DWriteLegacyEastAsian"/>); NewTransform @18006c460 keeps it when
+        ///  fs_FindBlocForPpem finds a strike at the whole ppem, and a glyph the strike holds is its
+        ///  bitmap. Such a glyph sits on a whole pixel (its origin rounded half away) and goes into the
+        ///  texture as it is, every channel full where a pixel is set -- no filter, no bleed into its
+        ///  neighbours. Under simulated bold the strike is expanded to the oversample and emboldened
+        ///  there, as an outline's bitmap is, and THAT is filtered like any outline.
+        ///  <para>In GDI_CLASSIC the strike changes the whole SIZE: NewTransform zeroes the scaler
+        ///  word for a GDI mode (flags 0x30) that keeps the bitmap flag, so a glyph the strike does not
+        ///  hold is fitted and scanned bi-level -- raster type 0, one sample a pixel
+        ///  (<see cref="GdiPlusText.Mono"/>) -- and drawn the strike's way: SimSun's Latin at
+        ///  12..17ppem, MS Gothic's U+01CD at 12. NATURAL keeps its word and filters those.</para>
+        /// </summary>
+        internal static GlyphBits? DWriteStrike(TrueTypeFont font, int glyphId, float pixelsPerEm, bool gdiClassic = false)
+        {
+            int ppem = RoundHalfAway(pixelsPerEm);
+            if (!font.DWriteLegacyEastAsian || !(gdiClassic || font.DWriteNaturalGridFit(pixelsPerEm))) return null;
+            int width, height, left, top;
+            Func<int, int, bool> set;
+            if (font.TryGetStrikeGlyph(glyphId, ppem, out BitmapGlyph bmp))
+            {
+                (width, height, left, top) = (bmp.PixelWidth, bmp.PixelHeight, bmp.BearingX, -bmp.BearingY);
+                byte[] mask = bmp.Png;
+                set = (x, y) => mask[y * bmp.PixelWidth + x] != 0;
+            }
+            else if (gdiClassic && font.EmbeddedBitmapCount(ppem) > 0)
+            {
+                GdiPlusText.GreyGlyph mono = GdiPlusText.Mono(font, glyphId, ppem, gridFit: true, unsmeared: true);
+                (width, height, left, top) = (mono.Width, mono.Height, mono.Left, mono.Top);
+                byte[] coverage = mono.Coverage;
+                set = (x, y) => coverage[y * mono.Width + x] != 0;
+            }
+            else return null;
+
+            if (!font.SynthesizesBold)
+            {
+                var g = new GlyphBits
+                {
+                    Strike = true, Left = left, Top = top, Width = width, Height = height,
+                    Bits = new bool[width * height],
+                };
+                for (int y = 0; y < height; y++)
+                    for (int x = 0; x < width; x++) g.Bits[y * width + x] = set(x, y);
+                return g;
+            }
+
+            // Expanded to the oversample and emboldened there the outline's way (fsc_OverscaleToBold,
+            // see Embolden: a gap of one pixel keeps two samples open), strike or bi-level fit alike.
+            var bold = new GlyphBits
+            {
+                Left = 6 * left, Top = top, Width = 6 * width, Height = height,
+                Bits = new bool[6 * width * height],
+            };
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                    if (set(x, y))
+                        for (int c = 6 * x; c < 6 * x + 6; c++) bold.Bits[y * bold.Width + c] = true;
+            return Embolden(bold, ppem);
+        }
+
 
         /// <summary>DirectWrite's simulated bold, fs_ContourScan -> fsc_OverscaleToBold on the 6x
         /// oversampled bitmap (the outline itself is not emboldened). At 24ppem and under, for a
@@ -614,7 +693,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// reproduces for WinForms; the scan and the filter are the natural mode's (6x1).</summary>
         internal static GlyphBits RasterizeGdiClassic(TrueTypeFont font, int glyphId, float pixelsPerEm)
         {
-            if (!TryGetGdiClassicOutline(font, glyphId, pixelsPerEm, out List<PathFigure>? figures, out int dropout))
+            if (!TryGetGdiClassicOutline(font, glyphId, pixelsPerEm, out List<PathFigure>? figures, out int dropout,
+                                         dwriteGridFit: true))
                 return s_empty;
             // GDI_CLASSIC is scanned 6x1 too, so a simulated bold is the bitmap smear up to 50ppem.
             GlyphBits bits = Scan(figures, 1, dropout);
@@ -622,9 +702,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         }
 
         /// <summary>The GDI_CLASSIC fit itself (see <see cref="RasterizeGdiClassic"/>), in device pixels.</summary>
+        /// <param name="dwriteGridFit">Fit whatever the face's 'gasp' says, as DirectWrite's GDI_CLASSIC
+        /// does (<see cref="TrueTypeFont.IgnoreGaspSymmetricGridfit"/>); GDI+'s metrics leave it off.</param>
         internal static bool TryGetGdiClassicOutline(TrueTypeFont font, int glyphId, float pixelsPerEm,
-                                                     out List<PathFigure> figures, out int dropout)
+                                                     out List<PathFigure> figures, out int dropout,
+                                                     bool dwriteGridFit = false)
         {
+            bool savedIgnore = TrueTypeFont.IgnoreGaspSymmetricGridfit;
             bool savedSub = TrueTypeFont.SubpixelFitting, savedCt = TrueTypeFont.ClearTypeRendering;
             bool? savedSym = TrueTypeInterpreter.SymmetricAnswerOverride;
             bool savedMove = TrueTypeInterpreter.DWriteMovePoint;
@@ -635,6 +719,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeFont.ClearTypeRendering = true;
                 TrueTypeInterpreter.SymmetricAnswerOverride = false;
                 TrueTypeInterpreter.DWriteMovePoint = true;
+                TrueTypeFont.IgnoreGaspSymmetricGridfit = dwriteGridFit;
                 if (!((IHintedGlyphFont)font).TryGetHintedOutline(glyphId, pixelsPerEm, out List<PathFigure>? got) || got is null)
                 {
                     figures = new List<PathFigure>();
@@ -650,6 +735,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeFont.ClearTypeRendering = savedCt;
                 TrueTypeInterpreter.SymmetricAnswerOverride = savedSym;
                 TrueTypeInterpreter.DWriteMovePoint = savedMove;
+                TrueTypeFont.IgnoreGaspSymmetricGridfit = savedIgnore;
             }
         }
 
@@ -686,28 +772,49 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                                     IReadOnlyList<float> ys, int nSub, bool texture, out int left, out int top,
                                     out int width, out int height)
         {
-            // Samples and rows of every glyph, in the run's frame.
+            // Samples and rows of every glyph, in the run's frame; a strike glyph's pixels.
             int n = glyphs.Count;
             var sx = new int[n]; var sy = new int[n];
             int s0 = int.MaxValue, s1 = int.MinValue, y0 = int.MaxValue, y1 = int.MinValue;
+            int p0 = int.MaxValue, p1 = int.MinValue, q0 = int.MaxValue, q1 = int.MinValue;
             for (int i = 0; i < n; i++)
             {
                 GlyphBits g = glyphs[i];
                 if (g.IsEmpty) continue;
+                if (g.Strike)
+                {
+                    sx[i] = RoundHalfAway(xs[i]) + g.Left;
+                    sy[i] = RoundHalfAway(ys[i]) + g.Top;
+                    p0 = Math.Min(p0, sx[i]); p1 = Math.Max(p1, sx[i] + g.Width);
+                    q0 = Math.Min(q0, sy[i]); q1 = Math.Max(q1, sy[i] + g.Height);
+                    continue;
+                }
                 sx[i] = RoundHalfAway(6f * xs[i]) + g.Left;
                 sy[i] = RoundHalfAway(nSub * ys[i]) + g.Top;
                 s0 = Math.Min(s0, sx[i]); s1 = Math.Max(s1, sx[i] + g.Width);
                 y0 = Math.Min(y0, sy[i]); y1 = Math.Max(y1, sy[i] + g.Height);
             }
-            if (s0 > s1) { left = top = width = height = 0; return Array.Empty<byte>(); }
+            if (s0 > s1 && p0 > p1) { left = top = width = height = 0; return Array.Empty<byte>(); }
 
             // Every pixel whose ten-sample window [6p-2, 6p+8) reaches ink; whole pixel rows
-            // (GlyphRunAnalysis rounds the sub-row bounds out to a multiple of the oversample).
-            left = FloorDiv(s0 - 7, 6);
-            int right = FloorDiv(s1 + 1, 6) + 1;
-            int r0 = FloorDiv(y0, nSub), r1 = FloorDiv(y1 + nSub - 1, nSub);
-            top = r0; height = r1 - r0; width = right - left;
-            y0 = r0 * nSub;
+            // (GlyphRunAnalysis rounds the sub-row bounds out to a multiple of the oversample);
+            // and every pixel of a strike.
+            left = int.MaxValue; top = int.MaxValue;
+            int right = int.MinValue, bottom = int.MinValue;
+            if (s0 <= s1)
+            {
+                left = FloorDiv(s0 - 7, 6);
+                right = FloorDiv(s1 + 1, 6) + 1;
+                top = FloorDiv(y0, nSub);
+                bottom = FloorDiv(y1 + nSub - 1, nSub);
+            }
+            if (p0 <= p1)
+            {
+                left = Math.Min(left, p0); right = Math.Max(right, p1);
+                top = Math.Min(top, q0); bottom = Math.Max(bottom, q1);
+            }
+            height = bottom - top; width = right - left;
+            y0 = top * nSub;
             if (!texture) return Array.Empty<byte>();
             int subRows = height * nSub;
 
@@ -717,7 +824,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             for (int i = 0; i < n; i++)
             {
                 GlyphBits g = glyphs[i];
-                if (g.IsEmpty) continue;
+                if (g.IsEmpty || g.Strike) continue;
                 for (int r = 0; r < g.Height; r++)
                 {
                     int row = sy[i] + r - y0;
@@ -742,6 +849,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                         }
                         tex[(row * width + p) * 3 + k] = nSub == 1 ? ramp[sum] : (byte)((sum * 255 + 108) / 216);
                     }
+
+            // The strikes over it, every channel full.
+            for (int i = 0; i < n; i++)
+            {
+                GlyphBits g = glyphs[i];
+                if (g.IsEmpty || !g.Strike) continue;
+                for (int r = 0; r < g.Height; r++)
+                    for (int c = 0; c < g.Width; c++)
+                        if (g.Bits[r * g.Width + c])
+                        {
+                            int at = ((sy[i] + r - top) * width + sx[i] + c - left) * 3;
+                            tex[at] = tex[at + 1] = tex[at + 2] = 255;
+                        }
+            }
             return tex;
         }
 

@@ -149,9 +149,11 @@ namespace MS.Internal
             // WPF's table files the space and ASCII punctuation under Latin, but they are neutrals:
             // DWrite gives them the Common script, so a space between two Hebrew words is
             // Hebrew and the phrase is one item. Only strong characters and marks carry a script.
+            // A simple combining mark (U+0300..U+036F and the like, filed under Latin) is Unicode's
+            // Inherited script: it belongs to its base, so "alpha" U+0301 is one Greek item and the
+            // pair composes as one cluster.
             byte itemClass = charAttribute.ItemClass;
             bool neutral = itemClass != (byte)ItemClass.StrongClass
-                        && itemClass != (byte)ItemClass.SimpleMarkClass
                         && itemClass != (byte)ItemClass.ComplexMarkClass;
             return neutral || script is ScriptID.Default or ScriptID.Digit or ScriptID.Mirror or ScriptID.Control
                 ? 0

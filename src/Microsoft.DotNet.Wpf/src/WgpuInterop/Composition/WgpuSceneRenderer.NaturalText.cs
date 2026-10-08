@@ -160,10 +160,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (!_naturalGlyphs.TryGetValue(gkey, out Text.NaturalClearType.GlyphBits? gb))
                 {
                     if (_naturalGlyphs.Count > 20000) _naturalGlyphs.Clear();
-                    gb = display ? Text.NaturalClearType.RasterizeGdiClassic(run.Font, run.Glyphs[i], ppem)
-                                 : Text.NaturalClearType.Rasterize(run.Font, run.Glyphs[i], ppem, nSub);
-                    // A thin face's oversampled bitmap is thickened (GdiPlusText.ThinEmbolden).
-                    gb = Text.GdiPlusText.ThinEmbolden(run.Font, gb);
+                    // A legacy East Asian face's embedded strike, where DirectWrite draws it: every
+                    // mode but NATURAL_SYMMETRIC (see DWriteStrike).
+                    gb = nSub == 1 ? Text.NaturalClearType.DWriteStrike(run.Font, run.Glyphs[i], ppem, display) : null;
+                    if (gb is null)
+                    {
+                        gb = display ? Text.NaturalClearType.RasterizeGdiClassic(run.Font, run.Glyphs[i], ppem)
+                                     : Text.NaturalClearType.Rasterize(run.Font, run.Glyphs[i], ppem, nSub);
+                        // A thin face's oversampled bitmap is thickened (GdiPlusText.ThinEmbolden).
+                        gb = Text.GdiPlusText.ThinEmbolden(run.Font, gb);
+                    }
                     _naturalGlyphs[gkey] = gb;
                 }
                 bits[i] = gb;

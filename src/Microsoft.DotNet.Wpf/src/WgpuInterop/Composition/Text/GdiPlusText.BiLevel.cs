@@ -31,20 +31,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 {
     internal static partial class GdiPlusText
     {
-        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TrueTypeFont, Dictionary<(int, int, bool), GreyGlyph>>
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TrueTypeFont, Dictionary<(int, int, int), GreyGlyph>>
             s_mono = new();
 
         /// <summary>DirectWrite's raster type 0 glyph for GDI+: <paramref name="gridFit"/> the bi-level
         /// fit at the whole ppem (or the size's embedded strike), else the outline scaled to the em;
         /// scanned one sample a pixel with the scan converter's dropout control. Coverage is 15
-        /// where a bit is set; Left/Top are relative to the pixel the origin rounds to.</summary>
-        internal static GreyGlyph Mono(TrueTypeFont font, int gid, float em, bool gridFit)
+        /// where a bit is set; Left/Top are relative to the pixel the origin rounds to.
+        /// <paramref name="unsmeared"/> leaves a simulated bold's bitmap smear off, for a caller
+        /// that emboldens the bitmap itself (NaturalClearType.DWriteStrike).</summary>
+        internal static GreyGlyph Mono(TrueTypeFont font, int gid, float em, bool gridFit, bool unsmeared = false)
         {
-            var cache = s_mono.GetValue(font, _ => new Dictionary<(int, int, bool), GreyGlyph>());
-            var key = (gid, BitConverter.SingleToInt32Bits(em), gridFit);
+            var cache = s_mono.GetValue(font, _ => new Dictionary<(int, int, int), GreyGlyph>());
+            var key = (gid, BitConverter.SingleToInt32Bits(em), (gridFit ? 1 : 0) | (unsmeared ? 2 : 0));
             lock (cache)
                 if (cache.TryGetValue(key, out GreyGlyph? hit)) return hit;
-            GreyGlyph g = BuildMono(font, gid, em, gridFit);
+            GreyGlyph g = BuildMono(font, gid, em, gridFit, unsmeared);
             lock (cache)
             {
                 if (cache.Count > 8192) cache.Clear();
@@ -53,7 +55,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return g;
         }
 
-        private static GreyGlyph BuildMono(TrueTypeFont font, int gid, float em, bool gridFit)
+        private static GreyGlyph BuildMono(TrueTypeFont font, int gid, float em, bool gridFit, bool unsmeared)
         {
             var g = new GreyGlyph();
             int ppem = Floor(em + 0.5f);
@@ -105,7 +107,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int w = (int)MathF.Ceiling(x1) + 1 - ox, h = (int)MathF.Ceiling(y1) + 1 - oy;
             bool[]? bits = PathRasterizer.ScanGlyphBits(new PathGeometry(FillRule.NonZero, figures), ox, oy, w, h, 1, dropout, 1);
             if (bits is null) return g;
-            int smear = bitmapBold ? (20 * ppem - 10) / 1000 + 1 : 0;
+            int smear = bitmapBold && !unsmeared ? (20 * ppem - 10) / 1000 + 1 : 0;
             int wb = w + smear;
             var bytes = new byte[wb * h];
             for (int r = 0; r < h; r++)
@@ -229,7 +231,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// </list></summary>
         internal static List<PathFigure> TransformedOutline(TrueTypeFont font, int gid, float em,
                                                             float m11, float m12, float m21, float m22, float dx, float dy,
-                                                            bool outlineBold = true)
+                                                            bool outlineBold = true, bool dwriteEmbold = false)
         {
             var figures = new List<PathFigure>();
             if (!UnfittedTurnedPoints(font, em, m11, m12, m21, m22, out int p00, out int p01, out int p10, out int p11))
@@ -249,7 +251,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 }
                 ends[k] = at - 1;
             }
-            if (font.SynthesizesBold && outlineBold) TrueTypeFont.GdiEmboldenUnfitted(X26, Y26, ends, font.UnitsPerEmForHinting);
+            if (font.SynthesizesBold && outlineBold)
+            {
+                if (dwriteEmbold) NaturalClearType.EmboldenOutline(X26, Y26, ends, font.UnitsPerEmForHinting);
+                else TrueTypeFont.GdiEmboldenUnfitted(X26, Y26, ends, font.UnitsPerEmForHinting);
+            }
             static int Mul(int a, int b) { long pr = (long)a * b; return (int)((pr + (pr >> 63) + 0x8000) >> 16); }
             int baseAt = 0;
             foreach ((System.Numerics.Vector2[] pts, bool[] on) in contours)

@@ -61,6 +61,10 @@ namespace MS.Internal.Text.TextInterface
 
         public bool HasCombiningMark => _hasCombiningMark;
 
+        /// <summary>DWRITE_SCRIPT_SHAPES_NO_VISUAL: control characters, which the forwarder gives
+        /// blank glyphs (or LS's substituted hyphen) and no advance, and which are not shaped.</summary>
+        public bool IsNoVisual => ScriptKey == TextAnalyzer.NoVisualScriptKey;
+
         public bool CanShapeTogether(ItemProps other)
             => other != null && other.ScriptKey == ScriptKey
                && Equals(other._digitCulture, _digitCulture);
@@ -155,7 +159,6 @@ namespace MS.Internal.Text.TextInterface
             if (length == 0) return spans;
 
             int n = (int)length;
-            var scriptOf = classificationUtility as IScriptClassification;
 
             var combining = new bool[n];
             var caret = new bool[n];
@@ -182,11 +185,12 @@ namespace MS.Internal.Text.TextInterface
                     out bool isCombining, out bool needsCaretInfo, out bool isIndic,
                     out bool isDigit, out bool isLatin, out bool isStrong);
 
-                // A C0/C1 control has no visual and DWrite gives it a run of its own
-                // (DWRITE_SCRIPT_SHAPES_NO_VISUAL), whatever surrounds it.
-                int s = scalar < 0x20 || (scalar >= 0x7F && scalar <= 0x9F) ? NoVisualScript
-                      : scriptOf != null ? scriptOf.GetScript(scalar)
-                      : isStrong ? (isLatin ? 1 : isIndic ? 2 : 3) : 0;
+                // The script is DirectWrite's own (DWriteScripts, the Unicode Script property as
+                // AnalyzeScript reports it), and a character it says has no visual -- a C0/C1
+                // control, a bidi or format control -- is a run of its own whatever surrounds it
+                // (DWRITE_SCRIPT_SHAPES_NO_VISUAL).
+                int dwScript = DWriteScripts.Of(scalar, out bool noVisual);
+                int s = noVisual ? NoVisualScript : dwScript;
 
                 for (int u = i; u < i + units; u++)
                 {
@@ -218,12 +222,6 @@ namespace MS.Internal.Text.TextInterface
                     carry = script[i];
                 }
             }
-
-            // Except whitespace at the very START of the text: DWrite leaves it an item of its own
-            // (" abc" and " (abc" are two items, "( abc" and "1 abc" one). The text is a bidi
-            // level run, so this is what splits the space after a Hebrew word from a Latin one.
-            for (int i = 0; i < n && char.IsWhiteSpace(text[i]) && script[i] != NoVisualScript; i++)
-                script[i] = LeadingWhitespace;
 
             int start = 0;
             for (int i = 1; i <= n; i++)
@@ -263,8 +261,8 @@ namespace MS.Internal.Text.TextInterface
 
         private const int Unresolved = -1;
         private const int NoVisualScript = -2;
+        internal const int NoVisualScriptKey = NoVisualScript;
         private const int CommonScript = 0;
-        private const int LeadingWhitespace = -3;
 
         public static void AnalyzeExtendedCharactersAndDigits(
             char* text,
@@ -318,9 +316,8 @@ namespace MS.Internal.Text.TextInterface
             Array.Copy(gids, glyphIndices, glyphCount);
             glyphAdvances = new int[glyphCount];
             glyphOffsets = new GlyphOffset[glyphCount];
-            double toIdeal = fontEmSize / d.UnitsPerEm * scalingFactor;
             for (uint i = 0; i < glyphCount; i++)
-                glyphAdvances[i] = (int)Math.Round(SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[i]) * toIdeal);
+                glyphAdvances[i] = DWriteIdealAdvance(SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[i]), fontEmSize, d.UnitsPerEm, scalingFactor);
         }
 
         public void GetGlyphs(
@@ -345,6 +342,24 @@ namespace MS.Internal.Text.TextInterface
             )
         {
             Managed.OpenTypeFontData d = font.Face.GetData();
+
+            if (itemProps != null && itemProps.IsNoVisual)
+            {
+                // TextAnalyzer::GetBlankGlyphsForControlCharacters: one blank glyph per character,
+                // the hyphen's where LS put a hyphen in place of a soft hyphen.
+                actualGlyphCount = textLength;
+                if (maxGlyphCount < textLength) return;
+                for (uint i = 0; i < textLength; i++)
+                {
+                    ushort hyphen = textString[i] == CharHyphen ? (ushort)d.GlyphIndex(CharHyphen) : (ushort)0;
+                    glyphIndices[i] = textString[i] == CharHyphen ? hyphen : blankGlyphIndex;
+                    clusterMap[i] = (ushort)i;
+                    if (textProps != null) textProps[i] = 0;
+                    if (glyphProps != null) glyphProps[i] = 0;
+                    if (pfCanGlyphAlone != null) pfCanGlyphAlone[i] = 1;
+                }
+                return;
+            }
 
             var cmap = new ushort[textLength];
             var gids = new ushort[textLength];
@@ -389,7 +404,26 @@ namespace MS.Internal.Text.TextInterface
             )
         {
             Managed.OpenTypeFontData d = font.Face.GetData();
-            double toIdeal = fontEmSize / d.UnitsPerEm * scalingFactor;
+            if (itemProps != null && itemProps.IsNoVisual)
+            {
+                // TextAnalyzer::GetGlyphPlacementsForControlCharacters: no advance, except a hyphen
+                // LS substituted, at its own width (whole pixels in Display mode).
+                for (uint g = 0; g < glyphCount; g++)
+                {
+                    if (g < textLength && textString[g] == CharHyphen)
+                    {
+                        double aw = SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[g]) * fontEmSize / d.UnitsPerEm;
+                        double approx = Math.Round(aw * pixelsPerDip) / pixelsPerDip;
+                        glyphAdvances[g] = (int)Math.Round(approx * scalingFactor);
+                    }
+                    else
+                    {
+                        glyphAdvances[g] = 0;
+                    }
+                }
+                glyphOffsets = new GlyphOffset[glyphCount];
+                return;
+            }
             // GDI_CLASSIC (TextFormattingMode.Display): DirectWrite's GetGdiCompatibleGlyphPlacements
             // hands back GDI's own whole-pixel advance, in DIPs.
             double pixels = fontEmSize * pixelsPerDip;
@@ -399,9 +433,22 @@ namespace MS.Internal.Text.TextInterface
                 int px = gdi ? GdiCompatibleAdvances.PixelAdvance(font.Face, (int)font.Face.Simulations, pixels, glyphIndices[g]) : -1;
                 glyphAdvances[g] = px >= 0
                     ? (int)Math.Round(px / (double)pixelsPerDip * scalingFactor)
-                    : (int)Math.Round(SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[g]) * toIdeal);
+                    : DWriteIdealAdvance(SimulatedMetrics.BoldAdvance(d, font.Face.Simulations, glyphIndices[g]), fontEmSize, d.UnitsPerEm, scalingFactor);
             }
             glyphOffsets = new GlyphOffset[glyphCount];
+        }
+
+        /// <summary>
+        ///  A design-unit advance as stock WPF holds it: DirectWrite's FLOAT advance -- design units
+        ///  times (float)emSize / unitsPerEm in float -- rounded into ideal units the forwarder's way,
+        ///  round(advance * emSize * scalingFactor / (float)emSize) (TextAnalyzer.cpp).
+        /// </summary>
+        internal static int DWriteIdealAdvance(int design, double fontEmSize, int unitsPerEm, double scalingFactor)
+        {
+            float emSizeFloat = (float)fontEmSize;
+            float scale = emSizeFloat / unitsPerEm;
+            float advance = design * scale;
+            return (int)Math.Round(advance * fontEmSize * scalingFactor / emSizeFloat);
         }
 
         /// <summary>The Unicode Bidi_Mirroring_Glyph of a character, or null: the paired brackets
@@ -455,6 +502,17 @@ namespace MS.Internal.Text.TextInterface
             uint g = 0;
             for (uint i = 0; i < textLength; i++)
             {
+                // A base letter and its combining marks draw as the precomposed character when the
+                // font has it, as DWrite's generic shaping engine maps them (CdmComposition).
+                if (CdmComposition.TryCompose(text, (int)i, (int)textLength, out char composed, out int consumed)
+                    && d.GlyphIndex(composed) is ushort composedGlyph && composedGlyph != 0)
+                {
+                    for (int k = 0; k < consumed; k++) clusterMap[i + k] = (ushort)g;
+                    gids[g++] = composedGlyph;
+                    i += (uint)consumed - 1;
+                    continue;
+                }
+
                 uint cp = text[i];
                 bool pair = char.IsHighSurrogate(text[i]) && i + 1 < textLength && char.IsLowSurrogate(text[i + 1]);
                 if (pair)
