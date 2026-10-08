@@ -1962,26 +1962,38 @@ namespace System.Drawing
 		}
 
 		// A glyph's figures (device pixels, y down, from its origin) as GDI+ path points at (ox, oy).
+		// The glyph outline as GDI hands it to GDI+ (GetGlyphOutline, the scaler's 26.6 points), a
+		// figure's closing line back to its start left implicit.
+		static System.Numerics.Vector2 Q64 (System.Numerics.Vector2 v) => new System.Numerics.Vector2 (MathF.Round (v.X * 64f) / 64f, MathF.Round (v.Y * 64f) / 64f);
+
 		static void AddFigures (List<Microsoft.Wpf.Interop.WebGpu.Composition.PathFigure> figures, float ox, float oy, List<PointF> pts, List<byte> types)
 		{
 			foreach (var f in figures) {
 				if (f.Segments.Count == 0) continue;
 				int start = pts.Count;
-				var cur = f.Start;
+				var cur = Q64 (f.Start);
+				var first = cur;
 				pts.Add (new PointF (cur.X + ox, cur.Y + oy)); types.Add (0);
-				foreach (var sg in f.Segments) {
+				for (int k = 0; k < f.Segments.Count; k++) {
+					var sg = f.Segments [k];
 					switch (sg) {
-					case Microsoft.Wpf.Interop.WebGpu.Composition.LineSegment l:
-						pts.Add (new PointF (l.Point.X + ox, l.Point.Y + oy)); types.Add (1); cur = l.Point; break;
-					case Microsoft.Wpf.Interop.WebGpu.Composition.QuadraticBezierSegment q: {
-						var c1 = cur + (q.Control - cur) * (2f / 3f);
-						var c2 = q.Point + (q.Control - q.Point) * (2f / 3f);
-						pts.Add (new PointF (c1.X + ox, c1.Y + oy)); pts.Add (new PointF (c2.X + ox, c2.Y + oy)); pts.Add (new PointF (q.Point.X + ox, q.Point.Y + oy));
-						types.Add (3); types.Add (3); types.Add (3); cur = q.Point; break;
+					case Microsoft.Wpf.Interop.WebGpu.Composition.LineSegment l: {
+						var p = Q64 (l.Point);
+						if (k == f.Segments.Count - 1 && p == first) break;
+						pts.Add (new PointF (p.X + ox, p.Y + oy)); types.Add (1); cur = p; break;
 					}
-					case Microsoft.Wpf.Interop.WebGpu.Composition.CubicBezierSegment c:
-						pts.Add (new PointF (c.Control1.X + ox, c.Control1.Y + oy)); pts.Add (new PointF (c.Control2.X + ox, c.Control2.Y + oy)); pts.Add (new PointF (c.Point.X + ox, c.Point.Y + oy));
-						types.Add (3); types.Add (3); types.Add (3); cur = c.Point; break;
+					case Microsoft.Wpf.Interop.WebGpu.Composition.QuadraticBezierSegment q: {
+						var qc = Q64 (q.Control); var qp = Q64 (q.Point);
+						var c1 = cur + (qc - cur) * (2f / 3f);
+						var c2 = qp + (qc - qp) * (2f / 3f);
+						pts.Add (new PointF (c1.X + ox, c1.Y + oy)); pts.Add (new PointF (c2.X + ox, c2.Y + oy)); pts.Add (new PointF (qp.X + ox, qp.Y + oy));
+						types.Add (3); types.Add (3); types.Add (3); cur = qp; break;
+					}
+					case Microsoft.Wpf.Interop.WebGpu.Composition.CubicBezierSegment c: {
+						var c1 = Q64 (c.Control1); var c2 = Q64 (c.Control2); var cp = Q64 (c.Point);
+						pts.Add (new PointF (c1.X + ox, c1.Y + oy)); pts.Add (new PointF (c2.X + ox, c2.Y + oy)); pts.Add (new PointF (cp.X + ox, cp.Y + oy));
+						types.Add (3); types.Add (3); types.Add (3); cur = cp; break;
+					}
 					}
 				}
 				if (pts.Count - start < 2) { pts.RemoveRange (start, pts.Count - start); types.RemoveRange (start, types.Count - start); continue; }
