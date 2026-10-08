@@ -89,6 +89,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// matrix the world to that device): that matrix and where this surface's pixel (0, 0) lies
         /// on it. Null for a surface that is its own device.</summary>
         public (GpMatrix WorldToDevice, int X, int Y)? SpanDevice;
+        /// <summary>The same for an image: its source-to-device matrix on the larger device (what
+        /// DpDriver::DrawImage builds there) and where this surface's pixel (0, 0) lies on it.</summary>
+        public (GpMatrix WorldToDevice, PointF[] WorldPoints, int X, int Y)? ImageSpanDevice;
         DpRegion _visibleClip;
 
         public GpGraphics (GdipFrame frame)

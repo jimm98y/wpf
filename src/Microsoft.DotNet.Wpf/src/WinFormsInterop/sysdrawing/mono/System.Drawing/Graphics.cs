@@ -2965,6 +2965,7 @@ namespace System.Drawing
 			if (region == null)
 				throw new ArgumentNullException ("region");
 			if (EngineFillRegion (brush, region)) return;
+			if (PrintFillRegion (brush, region)) return;
 			if (GpuRecorder != null) { foreach (RectangleF r in region.GetRegionScans (new Matrix ())) FillRectangle (brush, r.X, r.Y, r.Width, r.Height); return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");

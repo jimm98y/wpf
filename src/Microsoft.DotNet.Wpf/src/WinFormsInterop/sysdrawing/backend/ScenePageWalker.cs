@@ -34,6 +34,8 @@ namespace System.Drawing.WebGpuBackend
         internal bool EvenOdd;
         /// <summary>A clip that is a printed page's clip region: its device rectangles (l, t, r, b).</summary>
         internal int[] DeviceRects;
+        /// <summary>A clip that is a fill's own path: its device form as GDI is to be handed it.</summary>
+        internal GdiShape GdiClip;
 
         internal bool IsEmpty => Ops.Count == 0;
 
@@ -205,6 +207,11 @@ namespace System.Drawing.WebGpuBackend
 
         internal static void MarkRegionClip(PathGeometry g, int[] deviceRects) => s_regionClips.AddOrUpdate(g, deviceRects);
 
+        // A fill's path clip as ConvertPathToGdi gives it to GDI (SetGdiPathClip).
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<PathGeometry, GdiShape> s_gdiPathClips = new();
+
+        internal static void MarkGdiPathClip(PathGeometry g, GdiShape s) => s_gdiPathClips.AddOrUpdate(g, s);
+
         private static void Visit(SceneVisual v, IPageSink sink)
         {
             sink.Save();
@@ -229,6 +236,7 @@ namespace System.Drawing.WebGpuBackend
             {
                 PagePath clipPath = PagePath.Of(cg);
                 if (s_regionClips.TryGetValue(cg, out int[] rects)) clipPath.DeviceRects = rects;
+                if (s_gdiPathClips.TryGetValue(cg, out GdiShape shape)) clipPath.GdiClip = shape;
                 sink.ClipPath(clipPath);
             }
             if (v.Opacity < 1.0) sink.Opacity((float)v.Opacity);

@@ -70,12 +70,118 @@ namespace System.Drawing.WebGpuBackend
         internal static byte[] NextAlphaDib(int alpha) => GpMetafileRecorder.NextAlphaBrushDib((uint)alpha, true);
     }
 
+    /// <summary>ConvertPenToGdi @1800d8620 as DriverPrint::StrokePath asks for it: the GDI pen a
+    /// GDI+ pen becomes (ExtCreatePen's style and width, the miter limit set beside it), the colour
+    /// the brush's, and the shape ConvertPathToGdi::Draw @1800d9270 strokes with it.</summary>
+    internal sealed class GdiPen
+    {
+        public uint Style;
+        public int Width;
+        public bool SetMiter;
+        public float Miter;
+        public int Color;
+        public GdiShape Shape;
+
+        private static readonly ConditionalWeakTable<object, GdiPen> s_table = new();
+
+        internal static void Attach(object sceneBrush, GdiPen pen) => s_table.AddOrUpdate(sceneBrush, pen);
+
+        internal static GdiPen Find(object sceneBrush)
+            => sceneBrush != null && s_table.TryGetValue(sceneBrush, out GdiPen p) ? p : null;
+
+        /// <summary>The pen, or null where ConvertPenToGdi fails (the caller then widens); flags
+        /// gains 0x20 for a one-pixel cosmetic pen.</summary>
+        internal static GdiPen From(DpPen pen, GpMatrix m, float dpi, ref int flags)
+        {
+            int join = pen.Join;
+            uint type = 0x10000;
+            if ((pen.CompoundCount > 0 || pen.Alignment != 0) && (flags & 1) == 0) return null;
+            float w = pen.Width;
+            int width;
+            bool thin;
+            if (pen.Unit == 0)
+            {
+                if (m.Complexity != 0)
+                {
+                    PointF v = m.VectorTransform(new PointF(w, 0f));
+                    w = MathF.Sqrt((v.Y - 0f) * (v.Y - 0f) + (v.X - 0f) * (v.X - 0f));
+                }
+                width = (int)(w + 0.5f);
+                thin = width < 2 && pen.StartCap != 0xff && pen.EndCap != 0xff;
+                if (width < 2) width = 1;
+            }
+            else
+            {
+                w = DpPen.DeviceWidth(w, pen.Unit, dpi);
+                width = (int)(w + 0.5f);
+                thin = width < 2;
+            }
+            if (thin)
+            {
+                width = 1;
+                if ((flags & 8) == 0) { flags |= 0x20; type = 0; }
+                else join = 2;
+            }
+            uint style;
+            switch (pen.DashStyle)
+            {
+                case 0: style = 0; break;
+                case 1: style = 1; break;
+                case 2: style = 2; break;
+                case 3: style = 3; break;
+                case 4: style = 4; break;
+                default:
+                    if ((flags & 1) == 0) return null;
+                    style = 0;
+                    break;
+            }
+            var gp = new GdiPen();
+            if (type == 0x10000)
+            {
+                if ((flags & 2) == 0 && style != 0)
+                {
+                    if ((flags & 1) == 0) return null;
+                    style = 0;
+                }
+                else if (style != 0 && (flags & 2) != 0) return null;
+                int cap = pen.StartCap;
+                int other = style != 0 ? pen.DashCap : cap;
+                if ((cap != pen.EndCap || pen.EndCap != other || other != cap) && (flags & 1) == 0) return null;
+                if (cap == 0) style |= 0x200;
+                else if (cap == 1) style |= 0x100;
+                else if (cap != 2)
+                {
+                    if ((flags & 1) == 0) return null;
+                    style |= 0x200;
+                }
+                bool miter = false;
+                if (join == 1) style |= 0x1000;
+                else if (join != 2)
+                {
+                    if (join != 0 && join != 3 && (flags & 1) == 0) return null;
+                    miter = true;
+                }
+                if (miter)
+                {
+                    style |= 0x2000;
+                    gp.SetMiter = true;
+                    gp.Miter = pen.MiterLimit;
+                }
+            }
+            gp.Style = style | type;
+            gp.Width = width;
+            return gp;
+        }
+    }
+
     /// <summary>What ConvertPathToGdi / ConvertRectFToGdi make of a shape: device POINTs and how GDI
     /// is asked to fill them, and the device bounds the PATINVERTs cover.</summary>
     internal sealed class GdiShape
     {
         /// <summary>Rectangles (l, t, r, b quadruples), filled by PatBlt.</summary>
         public int[] Rects;
+        /// <summary>A region (l, t, r, b rectangles), filled by FillRgn.</summary>
+        public int[] Region;
         /// <summary>ConvertPathToGdi's flags (+0x1b4): 1 polygons, 0x10 one figure of Beziers, else
         /// a mixed path; and GDI's fill mode (1 ALTERNATE, 2 WINDING).</summary>
         public int Flags, FillMode;

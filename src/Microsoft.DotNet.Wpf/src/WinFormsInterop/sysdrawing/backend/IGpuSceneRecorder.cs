@@ -102,6 +102,13 @@ namespace System.Drawing
         /// <summary>A printed page's clip as GDI+ hands it to GDI: its region's device rectangles
         /// (l, t, r, b quadruples), with the same rectangles as a path in the current units.</summary>
         void SetRegionClip(float[] xy, byte[] types, int[] deviceRects);
+        /// <summary>A clip to a fill's own path as DriverPrint::SetupPathClipping puts it to GDI: the
+        /// path in the current units, and what ConvertPathToGdi makes of it (a GdiShape).</summary>
+        void SetGdiPathClip(float[] xy, byte[] types, bool nonZero, object gdiShape);
+        /// <summary>StrokePathData with what a printer device is to put down instead (a GdiPen)
+        /// kept beside its brush.</summary>
+        void StrokePathPrint(float[] xy, byte[] types, int argb, float width, float[] dash, float dashOffset,
+                             int cap, int join, float miterLimit, object gdiPen);
         /// <summary>Fill a GDI+ path keeping its curves; a gradient when given, else the solid colour.</summary>
         void FillPathData(float[] xy, byte[] types, bool nonZero, int argb, GradientDesc? gradient);
         /// <summary>A solid fill of a GDI+ path with what a printer device is to put down instead

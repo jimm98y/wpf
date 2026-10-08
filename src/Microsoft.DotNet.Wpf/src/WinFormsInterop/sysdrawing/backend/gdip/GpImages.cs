@@ -512,7 +512,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
             var dstRect = new RectangleF (c0x, c0y, c2x - c0x, c2y - c0y);
             GpClip clip = Clip;
             GpScan scan = NewScan ();
-            GpSpan span = CreateImageSpan (src, scan, m, ia, (int) _ctx.Interpolation, srcRect, dstRect, pts);
+            GpSpan span;
+            GpMatrix sm = GpMatrix.CreateIdentity ();
+            if (ImageSpanDevice is { } isd && InferAffine (isd.WorldPoints, srcRect, ref sm)) {
+                // A band of a larger device: the image's matrix on that device (the destination in
+                // its world, the source rectangle as PipeLockBits left it), walked at its coordinates.
+                sm = GpMatrix.Multiply (sm, isd.WorldToDevice);
+                span = CreateImageSpan (src, scan, sm, ia, (int) _ctx.Interpolation, srcRect, dstRect, pts);
+                if (span is GpBilinearSpan bs) { bs.OffsetX = isd.X; bs.OffsetY = isd.Y; }
+                else span = CreateImageSpan (src, scan, m, ia, (int) _ctx.Interpolation, srcRect, dstRect, pts);
+            } else span = CreateImageSpan (src, scan, m, ia, (int) _ctx.Interpolation, srcRect, dstRect, pts);
             if (span == null) return;
             if (1.1920929e-07f < srcRect.Width && 1.1920929e-07f < srcRect.Height) {
                 var poly = new PointF [] { new PointF (x, y), new PointF (srcRect.Width + x, y), new PointF (srcRect.Width + x, srcRect.Height + y), new PointF (x, srcRect.Height + y) };

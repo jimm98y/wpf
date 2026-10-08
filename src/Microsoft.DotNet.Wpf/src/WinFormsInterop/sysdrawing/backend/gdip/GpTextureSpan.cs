@@ -26,6 +26,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             GdipFrame tile = tb.TileFrame;
             if (tile == null || tile.Width <= 0 || tile.Height <= 0) return null;
+            if (SpanDevice is { } sd) {
+                // A band of a larger device (a printer's scan DIB): the texture's matrix on that
+                // device, the span walked at its coordinates.
+                GpSpan span = TextureOutputSpan (scan, Lock (tile), GpMatrix.Multiply (tb.Gp, sd.WorldToDevice), (int) tb.WrapMode);
+                if (span is GpBilinearSpan bs) { bs.OffsetX = sd.X; bs.OffsetY = sd.Y; return bs; }
+            }
             return TextureOutputSpan (scan, Lock (tile), GpMatrix.Multiply (tb.Gp, WorldToDevice), (int) tb.WrapMode);
         }
 

@@ -63,6 +63,17 @@ namespace System.Drawing.WebGpuBackend
         /// see PrintGdiFill) or, when that is null, the stock black brush.</summary>
         public GdiShape Shape;
         public byte[] AlphaDib;
+        /// <summary>Masked: the mask goes to GDI under a black / white palette, its bits the other way
+        /// round (ConvertBitmapDataAlphaChannelTo1BPP @1800d8d68), not OutputBufferDIB's white / black.</summary>
+        public bool MaskBlackFirst;
+
+        // The bands of a scan DIB (DriverNonPS::OutputBufferDIB): images that go to GDI 24bpp as they
+        // are, where any other is palettised as ConvertBitmapToGdi does it.
+        private static readonly ConditionalWeakTable<byte[], object> s_scanDibs = new();
+
+        internal static void MarkScanDib(byte[] previewRgba) => s_scanDibs.AddOrUpdate(previewRgba, s_scanDibs);
+
+        internal static bool IsScanDib(byte[] previewRgba) => previewRgba != null && s_scanDibs.TryGetValue(previewRgba, out _);
         /// <summary>Device pixels per DIB pixel.</summary>
         public int S, T;
         /// <summary>The device rectangle the raster covers (for Runs, the band).</summary>

@@ -172,13 +172,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     case GraphicsUnit.Inch: mx = dx; my = dy; break;
                     case GraphicsUnit.Document: mx = dx / 300f; my = dy / 300f; break;
                     case GraphicsUnit.Millimeter: mx = dx / 25.4f; my = dy / 25.4f; break;
+                    // A printer's Display unit is a hundredth of an inch (GpGraphics on a printer DC).
+                    case GraphicsUnit.Display when g.print_mode: mx = dx / 100f; my = dy / 100f; break;
                     default: mx = 1f; my = 1f; break;
                 }
                 return new GpMat(mx * s, 0, 0, my * s, 0, 0);
             }
 
             /// <summary>The target's device transform with <paramref name="world"/> as its world transform.</summary>
-            GpMat Device(GpMat world) => GpMat.Multiply(world, PageToDevice(Target));
+            // The target's page-to-device as it stood when the playback began (TargetClip and the
+            // players set the page unit to Pixel on the way, which on a printer is not Display).
+            GpMat? _pageToDevice;
+
+            GpMat Device(GpMat world) => GpMat.Multiply(world, _pageToDevice ?? PageToDevice(Target));
 
             // EnumerateForPlayback, from the destination (unit) rectangle on.
             public void Begin(GpMat unitToWorld, RectangleF dest, RectangleF src, GraphicsUnit srcUnit)
@@ -187,6 +193,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (dest.Width == 0f || dest.Height == 0f || src.Width == 0f || src.Height == 0f) { _aborted = true; return; }
                 if (h.Type == MetafileType.Emf && Le.U32(h.Raw, 52) < 3) { _aborted = true; return; }
 
+                _pageToDevice = PageToDevice(Target);
                 GpMat world0 = GpMat.Multiply(unitToWorld, GpMat.From(Target.Transform));
                 _saved = Target.Save();
                 TargetWorldToDevice = Device(world0);

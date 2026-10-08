@@ -203,6 +203,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
         readonly int _wrap;
         readonly uint _clamp;
         readonly GpMatrix _inv;
+        /// <summary>Where this surface's pixel (0, 0) lies on the device the matrix maps to (a band
+        /// of a printer's scan DIB): spans are walked at the device's own coordinates.</summary>
+        public int OffsetX, OffsetY;
 
         public GpBilinearSpan (GpScan scan, DpBitmapSrc src, in GpMatrix srcToDevice, DpImageAttr ia) : base (scan)
         {
@@ -220,7 +223,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         protected override void Fill (uint[] buf, int y, int left, int n)
         {
-            float fy = y, xl = left, xr = left + n;
+            float fy = y + OffsetY, xl = left + OffsetX, xr = left + OffsetX + n;
             float x0 = xl, y0 = fy, x1 = xr, y1 = fy;
             _inv.Transform (ref x0, ref y0);
             _inv.Transform (ref x1, ref y1);

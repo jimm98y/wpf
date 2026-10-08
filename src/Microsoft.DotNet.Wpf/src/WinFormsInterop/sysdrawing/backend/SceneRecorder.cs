@@ -278,6 +278,32 @@ namespace System.Drawing.WebGpuBackend
             PushClip(null, geo);
         }
 
+        public void StrokePathPrint(float[] xy, byte[] types, int argb, float width, float[] dash, float dashOffset,
+                                    int cap, int join, float miterLimit, object gdiPen)
+        {
+            PathGeometry geo = PathData(xy, types, nonZero: true, closeAll: false);
+            if (geo == null) return;
+            double[] dashes = null;
+            if (dash != null && dash.Length > 0)
+            {
+                dashes = new double[dash.Length];
+                for (int i = 0; i < dash.Length; i++) dashes[i] = dash[i];
+            }
+            LineCap lc = cap == 2 ? LineCap.Round : cap == 1 ? LineCap.Square : LineCap.Butt;
+            LineJoin lj = join == 2 ? LineJoin.Round : join == 1 ? LineJoin.Bevel : LineJoin.Miter;
+            var brush = new SolidColorBrush(Rgba(argb));
+            if (gdiPen is GdiPen p) GdiPen.Attach(brush, p);
+            Add(new GeometryStroke(geo, brush, new StrokeStyle(width, lc, lj, miterLimit > 0 ? miterLimit : 10.0, dashes, dashOffset)));
+        }
+
+        public void SetGdiPathClip(float[] xy, byte[] types, bool nonZero, object gdiShape)
+        {
+            PathGeometry geo = PathData(xy, types, nonZero, closeAll: true);
+            if (geo == null) { PushClip(new Rect(0, 0, 0, 0), null); return; }
+            if (gdiShape is GdiShape s) ScenePageWalker.MarkGdiPathClip(geo, s);
+            PushClip(null, geo);
+        }
+
         public void SetRegionClip(float[] xy, byte[] types, int[] deviceRects)
         {
             PathGeometry geo = PathData(xy, types, true, closeAll: true);

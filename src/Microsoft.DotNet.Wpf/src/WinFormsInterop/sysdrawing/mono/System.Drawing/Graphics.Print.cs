@@ -75,9 +75,9 @@ namespace System.Drawing
 		{
 			if (!print_mode || print_clip == null || GpuRecorder == null) return false;
 			GpuRecorder.ResetAllClips ();
-			WebGpuBackend.Gdip.GpRegion app = print_clip.AppClip;
-			if (app == null) return true;
-			WebGpuBackend.Gdip.DpRegion d = app.Device (WebGpuBackend.Gdip.GpMatrix.CreateIdentity ());
+			if (print_clip.AppClip == null) return true;
+			// The visible clip: the caller's inside the page.
+			WebGpuBackend.Gdip.DpRegion d = print_clip.VisibleClipRegion;
 			var rects = new List<int> ();
 			foreach (WebGpuBackend.Gdip.DpRegion.Band b in d.Bands)
 				for (int i = 0; i + 1 < b.X.Length; i += 2) { rects.Add (b.X [i]); rects.Add (b.Top); rects.Add (b.X [i + 1]); rects.Add (b.Bottom); }
@@ -304,6 +304,7 @@ namespace System.Drawing
 			try { pts = path.PathPoints; types = path.PathTypes; } catch (Exception) { return true; }
 			if (pts.Length < 2) return true;
 			if (PrintRasterStroke (pen, pts, types, path.FillMode)) return true;
+			if (!s_noPrintRaster && pen.BrushRef is SolidBrush psb && PrintSolidStroke (pen, psb, pts, types, path.FillMode)) return true;
 			int cap = pen.StartCap == LineCap.Square || pen.StartCap == LineCap.SquareAnchor ? 1
 				: pen.StartCap == LineCap.Round || pen.StartCap == LineCap.RoundAnchor ? 2 : 0;
 			int join = pen.LineJoin == LineJoin.Bevel ? 1 : pen.LineJoin == LineJoin.Round ? 2 : 0;
@@ -438,11 +439,11 @@ namespace System.Drawing
 
 		/// <summary>DriverPrint::FillPath @1800cded0 of a solid brush: ConvertPathToGdi (flags 0x13)
 		/// of the path, its bounds the draw rectangle GpGraphics::RenderFillPath gives the driver.</summary>
-		void PrintSolidPath (SolidBrush brush, PointF [] pts, byte [] types, FillMode mode)
+		void PrintSolidPath (SolidBrush brush, PointF [] pts, byte [] types, FillMode mode, float [] devOverride = null, Rectangle? drawOverride = null)
 		{
 			Color c = brush.Color;
 			if (c.A < 2 || pts.Length < 3) return;
-			float [] dev = PrintDeviceMatrix ();
+			float [] dev = devOverride ?? PrintDeviceMatrix ();
 			var m = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
 			float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
 			foreach (PointF p0 in pts) {
@@ -452,14 +453,121 @@ namespace System.Drawing
 			if (!(Math.Abs (x1 - x0) >= 1.1920929e-07f) || !(Math.Abs (y1 - y0) >= 1.1920929e-07f)) return;
 			// RenderFillPath: floor of the origin, ceiling of the far edge, plus one.
 			int bx = (int) Math.Floor (x0), by = (int) Math.Floor (y0);
-			var draw = new Rectangle (bx, by, (int) Math.Ceiling (x1) - bx + 1, (int) Math.Ceiling (y1) - by + 1);
+			var draw = drawOverride ?? new Rectangle (bx, by, (int) Math.Ceiling (x1) - bx + 1, (int) Math.Ceiling (y1) - by + 1);
 			WebGpuBackend.Gdip.GpMetafileRecorder.PathToGdi cp;
 			try {
 				cp = new WebGpuBackend.Gdip.GpMetafileRecorder.PathToGdi (new WebGpuBackend.Gdip.GpPath (pts, types, mode), m, 0x13, draw);
 			} catch (Exception) { return; }
 			if (!cp.Valid || cp.IsEmpty) return;
 			var fill = NewGdiFill (c, WebGpuBackend.GdiShape.Of (cp));
+			if (devOverride != null) {
+				// The points are the device's: recorded in the recording's units, the transform the identity.
+				float kx = 100f / print_dpi_x, ky = 100f / print_dpi_y;
+				var xy = new float [pts.Length * 2];
+				for (int i = 0; i < pts.Length; i++) { PointF d = Apply (dev, pts [i].X, pts [i].Y); xy [i * 2] = d.X * kx; xy [i * 2 + 1] = d.Y * ky; }
+				int st = BeginDeviceDraw (null, null, false, null);
+				GpuRecorder.FillPathPrint (xy, types, mode == FillMode.Winding, c.ToArgb (), fill);
+				EndDeviceDraw (st);
+				return;
+			}
 			GpuRecorder.FillPathPrint (ToXY (pts), types, mode == FillMode.Winding, c.ToArgb (), fill);
+		}
+
+		/// <summary>DriverPrint::StrokePath @1800d21b0 for a solid brush. An opaque brush and a pen
+		/// GDI can say (no alignment, no compound; ConvertPenToGdi @1800d8620 with flags 2: no dashes,
+		/// one cap all round, a known join) goes down as that GDI pen drawing ConvertPathToGdi's
+		/// shape (Draw @1800d9270). Anything else is widened on the device and the outline FILLED
+		/// with the brush (DriverPrint::FillPath, the world the identity).</summary>
+		bool PrintSolidStroke (Pen pen, SolidBrush brush, PointF [] pts, byte [] types, FillMode fillMode)
+		{
+			Color c = brush.Color;
+			// SetupBrush: an alpha under 2 draws nothing.
+			if (c.A < 2) return true;
+			float [] dev = PrintDeviceMatrix ();
+			var m = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
+			var dp = WebGpuBackend.Gdip.DpPen.From (pen);
+			var gp = new WebGpuBackend.Gdip.GpPath (pts, types, fillMode);
+			bool opaque = c.A == 255 || _compositingMode == CompositingMode.SourceCopy;
+			if (opaque && dp.Alignment == 0 && dp.CompoundCount == 0) {
+				RectangleF b = WebGpuBackend.Gdip.GpStroke.Bounds (gp, m, dp, print_dpi_x);
+				if (!WebGpuBackend.Gdip.GpStroke.BoundsToRect (b, out Rectangle draw)) return true;
+				int flags = 2;
+				if (WebGpuBackend.GdiPen.From (dp, m, print_dpi_x, ref flags) is WebGpuBackend.GdiPen gpen) {
+					WebGpuBackend.Gdip.GpMetafileRecorder.PathToGdi cp;
+					try { cp = new WebGpuBackend.Gdip.GpMetafileRecorder.PathToGdi (gp, m, flags, draw); } catch (Exception) { return false; }
+					if (!cp.Valid) return false;
+					if (cp.IsEmpty) return true;
+					gpen.Color = c.R | (c.G << 8) | (c.B << 16);
+					gpen.Shape = WebGpuBackend.GdiShape.Of (cp);
+					int cap = pen.StartCap == LineCap.Square || pen.StartCap == LineCap.SquareAnchor ? 1
+						: pen.StartCap == LineCap.Round || pen.StartCap == LineCap.RoundAnchor ? 2 : 0;
+					int join = pen.LineJoin == LineJoin.Bevel ? 1 : pen.LineJoin == LineJoin.Round ? 2 : 0;
+					GpuRecorder.StrokePathPrint (ToXY (pts), types, c.ToArgb (), PrintPenWidth (pen), null, 0f, cap, join, pen.MiterLimit, gpen);
+					return true;
+				}
+			}
+			// Widened on the device (GpPath::GetWidenedPath), the brush's and the pen's transforms
+			// taken on to it, its bounds with the pen (GpPath::GetBounds), and filled.
+			var w2d = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
+			WebGpuBackend.Gdip.GpPath widened;
+			try { widened = WebGpuBackend.Gdip.GpPen.GetWidenedPath (gp, dp, w2d, 0.25f, print_dpi_x); } catch (Exception) { return false; }
+			if (widened == null || widened.Count == 0) return true;
+			WebGpuBackend.Gdip.DpPen dpDev = dp.Clone ();
+			dpDev.Xform = WebGpuBackend.Gdip.GpMatrix.Multiply (dp.Xform, w2d);
+			RectangleF wb = WebGpuBackend.Gdip.GpStroke.Bounds (widened, WebGpuBackend.Gdip.GpMatrix.CreateIdentity (), dpDev, print_dpi_x);
+			if (!WebGpuBackend.Gdip.GpStroke.BoundsToRect (wb, out Rectangle wr)) return true;
+			PrintSolidPath (brush, widened.PointArray (), widened.TypeArray (), FillMode.Winding, new [] { 1f, 0f, 0f, 1f, 0f, 0f }, wr);
+			return true;
+		}
+
+		/// <summary>DriverPrint::FillRegion @1800ce5b0. A solid brush fills the region ANDed with the
+		/// visible clip as GDI's region (ConvertRegionToGdi @1800cbe30): FillRgn, or the alpha brush's
+		/// FillRgn between two PATINVERTs of its bounds (ConvertRegionToGdi::AlphaFill @1800d8c58).
+		/// Any other brush fills the region's outline (RegionToPath::ConvertRegionToPath, back in world
+		/// units) as a path.</summary>
+		internal bool PrintFillRegion (Brush brush, Region region)
+		{
+			if (!print_mode || GpuRecorder == null || region?.gp == null) return false;
+			float [] dev = PrintDeviceMatrix ();
+			var m = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
+			WebGpuBackend.Gdip.DpRegion d;
+			try { d = region.gp.Device (m); } catch (Exception) { return false; }
+			if (brush is SolidBrush sb) {
+				Color c = sb.Color;
+				if (c.A < 2) return true;
+				WebGpuBackend.Gdip.DpRegion vis = print_clip?.VisibleClipRegion;
+				WebGpuBackend.Gdip.DpRegion r = vis != null ? WebGpuBackend.Gdip.DpRegion.Combine (d, vis, WebGpuBackend.Gdip.DpRegion.Op.And) : d;
+				if (r.IsEmpty) return true;
+				var rects = new List<int> ();
+				foreach (WebGpuBackend.Gdip.DpRegion.Band b in r.Bands)
+					for (int i = 0; i + 1 < b.X.Length; i += 2) { rects.Add (b.X [i]); rects.Add (b.Top); rects.Add (b.X [i + 1]); rects.Add (b.Bottom); }
+				Rectangle bb = r.Bounds;
+				var fill = NewGdiFill (c, new WebGpuBackend.GdiShape { Region = rects.ToArray (), FillMode = 1, X = bb.X, Y = bb.Y, W = bb.Width, H = bb.Height });
+				float kx = 100f / print_dpi_x, ky = 100f / print_dpi_y;
+				int n = rects.Count / 4;
+				var xy = new float [n * 8];
+				var tp = new byte [n * 4];
+				for (int k = 0; k < n; k++) {
+					float l = rects [k * 4] * kx, t = rects [k * 4 + 1] * ky, rr = rects [k * 4 + 2] * kx, bt = rects [k * 4 + 3] * ky;
+					float [] q = { l, t, rr, t, rr, bt, l, bt };
+					Array.Copy (q, 0, xy, k * 8, 8);
+					tp [k * 4] = 0; tp [k * 4 + 1] = 1; tp [k * 4 + 2] = 1; tp [k * 4 + 3] = 0x81;
+				}
+				int st = BeginDeviceDraw (null, null, false, null);
+				GpuRecorder.FillPathPrint (xy, tp, true, c.ToArgb (), fill);
+				EndDeviceDraw (st);
+				return true;
+			}
+			WebGpuBackend.Gdip.GpPath outline = WebGpuBackend.Gdip.GpRegionToPath.Convert (d);
+			if (outline == null || outline.Count == 0) return true;
+			float [] inv = Invert (dev);
+			if (inv == null) return true;
+			PointF [] op = outline.PointArray ();
+			for (int i = 0; i < op.Length; i++) op [i] = Apply (inv, op [i].X, op [i].Y);
+			// GpPath::GpPath(points, types, count, 0): an alternate path.
+			using (var gp = new GraphicsPath (op, outline.TypeArray (), FillMode.Alternate))
+				PrintFill (brush, gp);
+			return true;
 		}
 
 		WebGpuBackend.PrintGdiFill NewGdiFill (Color c, WebGpuBackend.GdiShape shape) => new WebGpuBackend.PrintGdiFill {
@@ -1158,7 +1266,7 @@ namespace System.Drawing
 				}
 				var raster = new WebGpuBackend.PrintRaster {
 					Kind = WebGpuBackend.PrintRaster.KindMasked, Color = color, Width = W, Height = H, SrcX = 0, SrcW = W,
-					Mask = mask, MaskWidth = mw, MaskHeight = mh, MaskSrcX = 0, MaskSrcW = mw, S = 1, T = 1,
+					Mask = mask, MaskWidth = mw, MaskHeight = mh, MaskSrcX = 0, MaskSrcW = mw, S = 1, T = 1, MaskBlackFirst = true,
 					DevX = bx, DevY = by, DevW = bw, DevH = bh,
 				};
 				// The preview: the colour at the bitmap's own alpha.
@@ -1168,6 +1276,15 @@ namespace System.Drawing
 			} finally {
 				EndDeviceDraw (st);
 			}
+		}
+
+		static WebGpuBackend.GdiShape GdiPathClip (PointF [] pts, byte [] types, bool nonZero, float [] dev)
+		{
+			var m = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
+			try {
+				var cp = new WebGpuBackend.Gdip.GpMetafileRecorder.PathToGdi (new WebGpuBackend.Gdip.GpPath (pts, types, nonZero ? FillMode.Winding : FillMode.Alternate), m, 0, null);
+				return cp.Valid ? WebGpuBackend.GdiShape.Of (cp) : null;
+			} catch (Exception) { return null; }
 		}
 
 		static WebGpuBackend.GdiShape XorShape (PointF [] pts, byte [] types, bool nonZero, float [] dev)
@@ -1317,6 +1434,8 @@ namespace System.Drawing
 				int n = Math.Min (rows, h - top);
 				var band = new byte [w * n * 4];
 				Buffer.BlockCopy (rgba, top * w * 4, band, 0, band.Length);
+				// (A band of the scan DIB: DriverNonPS::OutputBufferDIB hands it over 24bpp as it is.)
+				WebGpuBackend.PrintRaster.MarkScanDib (band);
 				GpuRecorder.DrawImage (band, w, n, gx * s * kx, (gy + top) * t * ky, w * s * kx, n * t * ky);
 			}
 			EndDeviceDraw (st);
@@ -1337,7 +1456,8 @@ namespace System.Drawing
 					xy [i * 2] = d.X * kx; xy [i * 2 + 1] = d.Y * ky;
 				}
 				if (previewOnly) GpuRecorder.SetPreviewClipPath (xy, types, nonZero);
-				else GpuRecorder.SetClipPath (xy, types, nonZero, false);
+				// DriverPrint::SetupPathClipping @1800d18d0: ConvertPathToGdi (flags 0) and AndClip.
+				else GpuRecorder.SetGdiPathClip (xy, types, nonZero, GdiPathClip (pts, types, nonZero, dev));
 			}
 			return st;
 		}
@@ -1389,7 +1509,14 @@ namespace System.Drawing
 			var at = new [] { new PointF (q0.X - gx + fx, q0.Y - gy + fy), new PointF (q1.X - gx + fx, q1.Y - gy + fy), new PointF (q2.X - gx + fx, q2.Y - gy + fy) };
 			// The DIB as the scan holds it: the spans premultiplied. An image only opaque or clear is
 			// drawn nearest-neighbour (DrawImage sets the context's interpolation to 5 for it).
-			byte [] pargb = DrawImageScan (bmp, at, src, attrs, gw, gh, hint == 2);
+			// DriverPrint::DrawImage: the context's matrix scaled by 1 / s, 1 / t (appended), and the
+			// image drawn on it at the device's own cell coordinates (DpDriver::DrawImage).
+			var cellM = new WebGpuBackend.Gdip.GpMatrix (dev [0], dev [1], dev [2], dev [3], dev [4], dev [5]);
+			cellM.Scale (1f / s, 1f / t, true);
+			var worldAt = new [] { new PointF (dest.X, dest.Y), new PointF (dest.Right, dest.Y), new PointF (dest.X, dest.Bottom) };
+			(WebGpuBackend.Gdip.GpMatrix, PointF [], int, int)? imageDevice = null;
+			if (fx == 0f && fy == 0f) imageDevice = (cellM, worldAt, gx, gy);
+			byte [] pargb = DrawImageScan (bmp, at, src, attrs, gw, gh, hint == 2, imageDevice);
 			if (pargb == null) return false;
 			var clip = new [] { new PointF (dest.X, dest.Y), new PointF (dest.Right, dest.Y), new PointF (dest.Right, dest.Bottom), new PointF (dest.X, dest.Bottom) };
 			var clipTypes = new byte [] { 0, 1, 1, 0x81 };
@@ -1411,7 +1538,7 @@ namespace System.Drawing
 					k = (((k >> 8) & 0xff) + k >> 8) & 0xff;
 					over [i] = (byte) (pargb [i + 2] + k); over [i + 1] = (byte) (pargb [i + 1] + k); over [i + 2] = (byte) (pargb [i] + k); over [i + 3] = (byte) a;
 				}
-				EmitRuns (over, gw, gh, rows, gx, gy, s, t, clip, clipTypes, dev, false);
+				EmitRuns (over, gw, gh, rows, gx, gy, s, t, clip, clipTypes, dev, true);
 				return true;
 			}
 			// The bleeding scan's colours (and, translucent, the mask from the image at the
@@ -1424,7 +1551,7 @@ namespace System.Drawing
 			if (cover != null) Bleed (px, cover, gw, gh, rows);
 			else ExtendRows (px, gw, gh);
 			if (hint == 3) {
-				EmitBands (px, gw, gh, rows, gx, gy, s, t, clip, clipTypes, dev, false);
+				EmitBands (px, gw, gh, rows, gx, gy, s, t, clip, clipTypes, dev, true);
 				return true;
 			}
 			var devQuad = new [] { p0, p1, new PointF (p1.X + p2.X - p0.X, p1.Y + p2.Y - p0.Y), p2 };
@@ -1454,11 +1581,13 @@ namespace System.Drawing
 
 		// The image drawn into a W x H scan buffer through the three points: premultiplied BGRA as
 		// the spans leave it, its edges unfaded (on the printer an image has no faded rim).
-		byte [] DrawImageScan (Bitmap bmp, PointF [] at, RectangleF src, Imaging.ImageAttributes attrs, int W, int H, bool nearest = false)
+		byte [] DrawImageScan (Bitmap bmp, PointF [] at, RectangleF src, Imaging.ImageAttributes attrs, int W, int H, bool nearest = false,
+			(WebGpuBackend.Gdip.GpMatrix, PointF [], int, int)? imageDevice = null)
 		{
 			using (var dib = new Bitmap (W, H, Imaging.PixelFormat.Format32bppPArgb))
 			using (Graphics g = FromImage (dib)) {
 				if (g.gp == null) return null;
+				g.gp.ImageSpanDevice = imageDevice;
 				g.InterpolationMode = nearest ? InterpolationMode.NearestNeighbor : _interpolation == InterpolationMode.Invalid ? InterpolationMode.Bilinear : _interpolation;
 				g.PixelOffsetMode = _pixelOffset;
 				if (attrs == null) {
