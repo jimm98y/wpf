@@ -159,6 +159,29 @@ Android and iOS are the same app assembly hosted by a small platform project (`n
 `samples/wpf-gallery-ios`. Those heads reference `lib/wpf` and get their native backend the way each
 platform requires it — packed into the APK, statically linked into the iOS executable.
 
+### RenderTargetBitmap in the browser
+
+The browser is the one head where `RenderTargetBitmap.Render` cannot hand the pixels back before it
+returns. A WebGPU readback maps a buffer through a Promise, and the page's single thread only sees
+it resolve after returning to the event loop, so a blocking map would wait forever. What the port
+does instead:
+
+* `Render` renders the visual **immediately** (the GPU work is encoded and submitted inside the
+  call), so the bitmap shows the visual as it was at the call, as on every other head.
+* The pixels land when the readback resolves, typically within a frame. The bitmap then raises
+  `Changed`, so an `Image` or `ImageBrush` showing it updates by itself. On-screen use needs no
+  change.
+* Code that **reads** the pixels (`CopyPixels`, an encoder, `BitmapFrame.Create`, a clone) has to
+  wait for them: `await rtb.RenderAsync(visual)` instead of `rtb.Render(visual)`. A synchronous read
+  straight after `Render` sees the previous contents (transparent the first time). On the other
+  heads `RenderAsync` returns an already completed task.
+* If `Render` is called again (or `Clear`) before a readback lands, the later call wins, and
+  awaiting the earlier `RenderAsync` still completes once the bitmap holds the later render.
+
+What it costs: one GPU-to-CPU copy and a copy from the JS heap into managed memory per render (about
+4 bytes per pixel each, plus a staging buffer for as long as the readback is in flight), and the
+latency of one event-loop turn before the pixels are readable.
+
 ## What you get in the output
 
 A Windows build drops the WPF assemblies, `wgpu_native.dll` for the RID being built, the ANGLE GL

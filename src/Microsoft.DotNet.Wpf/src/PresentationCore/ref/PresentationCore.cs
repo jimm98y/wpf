@@ -11913,6 +11913,7 @@ namespace System.Windows.Media.Imaging
         protected override void GetAsFrozenCore(System.Windows.Freezable sourceFreezable) { }
         protected override void GetCurrentValueAsFrozenCore(System.Windows.Freezable sourceFreezable) { }
         public void Render(System.Windows.Media.Visual visual) { }
+        public System.Threading.Tasks.Task RenderAsync(System.Windows.Media.Visual visual) { throw null; }
     }
     public enum Rotation
     {

@@ -112,6 +112,18 @@ namespace System.Windows.Media.Imaging
                     // the RenderTargetBitmap's managed backing (fires contents-changed).
                     //
 
+                    if (OperatingSystem.IsBrowser())
+                    {
+                        // The browser's GPU readback is a Promise this thread cannot wait for.
+                        // The render itself happens here, now; the pixels arrive later and are
+                        // installed then (RenderTargetBitmap.RenderAsync is the way to wait).
+                        System.Threading.Tasks.Task<byte[]> pending = Renderer.RenderManagedAsync(
+                            channel, visual, sizeX, sizeY, dpiX, dpiY, worldTransform, windowClip);
+                        mctx.ReleaseSyncChannel(channel);
+                        _bitmapTarget.SetPendingPixels(pending);
+                        return;
+                    }
+
                     byte[] pixels = Renderer.Render(
                         IntPtr.Zero, channel, visual, sizeX, sizeY, dpiX, dpiY, worldTransform, windowClip);
 

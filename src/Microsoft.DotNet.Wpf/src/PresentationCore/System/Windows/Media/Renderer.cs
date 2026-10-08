@@ -45,6 +45,40 @@ namespace System.Windows.Media
             Matrix worldTransform,
             Rect windowClip
             )
+            => Render(pRenderTarget, channel, visual, width, height, dpiX, dpiY, worldTransform, windowClip,
+                      static (c, h) => c.ReadbackTarget(h));
+
+        /// <summary>
+        /// Managed composition only: <see cref="Render(IntPtr, DUCE.Channel, Visual, int, int, double, double, Matrix, Rect)"/>
+        /// for a backend that cannot block on its GPU readback (the browser). The visual is
+        /// rendered before this returns -- the pixels show it as it is now -- and the task
+        /// completes when they are back on the CPU.
+        /// </summary>
+        internal static System.Threading.Tasks.Task<byte[]> RenderManagedAsync(
+            DUCE.Channel channel,
+            Visual visual,
+            int width,
+            int height,
+            double dpiX,
+            double dpiY,
+            Matrix worldTransform,
+            Rect windowClip
+            )
+            => Render(IntPtr.Zero, channel, visual, width, height, dpiX, dpiY, worldTransform, windowClip,
+                      static (c, h) => c.ReadbackTargetAsync(h));
+
+        private static T Render<T>(
+            IntPtr pRenderTarget,
+            DUCE.Channel channel,
+            Visual visual,
+            int width,
+            int height,
+            double dpiX,
+            double dpiY,
+            Matrix worldTransform,
+            Rect windowClip,
+            Func<DUCE.Channel, DUCE.ResourceHandle, T> readback
+            ) where T : class
         {
             DUCE.Resource target =
                 new DUCE.Resource();
@@ -123,7 +157,7 @@ namespace System.Windows.Media
                 // rendered pixels back over the channel instead (before the target is released).
                 if (DUCE.ManagedComposition.IsEnabled)
                 {
-                    return channel.ReadbackTarget(targetHandle);
+                    return readback(channel, targetHandle);
                 }
                 return null;
             }
