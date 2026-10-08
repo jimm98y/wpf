@@ -163,18 +163,23 @@ namespace System.Drawing.WebGpuBackend
 
         /// <summary>The same; <paramref name="asPath"/> says a null answer was GDI+'s switch to
         /// outlines (GdiPlusText.SwitchesToPath): the string is too big for glyph bitmaps and GDI+
-        /// fills its glyphs' outlines instead.</summary>
+        /// fills its glyphs' outlines instead. <paramref name="sx"/>, <paramref name="sy"/> are the
+        /// world-to-device axis scale the string is drawn under (the layout stays in world units, its
+        /// realization and advances are the device's); <paramref name="wrapWidth"/> the width the
+        /// string must fit (FastTextImager::Initialize +0xd0), NaN for the layout rectangle's.</summary>
         internal static object LayoutGdiPlus(string text, string family, int style, float sizePt,
                                              float x, float y, float width, float height, int formatFlags,
                                              bool typographic, int align, int lineAlign, bool hotkeyPrefix,
-                                             int hint, int contrast, out bool empty, out bool asPath, bool biLevel = true)
+                                             int hint, int contrast, out bool empty, out bool asPath, bool biLevel = true,
+                                             float sx = 1f, float sy = 1f, float wrapWidth = float.NaN)
         {
             empty = false;
             asPath = false;
             TrueTypeFont face = GdiPlusText.Face(family, style);
             if (face is null) return null;
             GdiPlusText.Run run = GdiPlusText.Layout(face, family, sizePt, text, x, y, width, height, formatFlags,
-                                                     typographic, align, lineAlign, hotkeyPrefix, hint, biLevel: biLevel);
+                                                     typographic, align, lineAlign, hotkeyPrefix, hint, biLevel: biLevel,
+                                                     sx: sx, sy: sy, wrapWidth: wrapWidth);
             if (run is null) { asPath = GdiPlusText.LastPath; return null; }
             run.Contrast = contrast;
             empty = run.Glyphs.Length == 0;

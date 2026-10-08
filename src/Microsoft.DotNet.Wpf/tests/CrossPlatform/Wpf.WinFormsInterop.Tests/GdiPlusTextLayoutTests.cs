@@ -122,6 +122,52 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(19f, got.Value.Y);
         }
 
+        /// <summary>A window's DrawString under an axis scale is the fast imager's under that scale,
+        /// as a bitmap's is (GpGraphics::DrawString hands FastTextImager the world-to-device
+        /// transform: the device em's realization, the stretched fits where the axes' ppems differ,
+        /// the advances on the device): the recorded string, rasterized, is the engine's to the
+        /// pixel -- every hint, the bi-level ones included.</summary>
+        [Theory]
+        [InlineData(1f, 1.5f, 5, "Verdana", 8f)]
+        [InlineData(1f, 1.5f, 3, "Verdana", 8f)]
+        [InlineData(1f, 1.5f, 1, "Segoe UI", 9f)]
+        [InlineData(1f, 1.5f, 4, "Arial", 9f)]
+        [InlineData(1f, 1.5f, 2, "Calibri", 9f)]
+        [InlineData(2f, 2f, 5, "Tahoma", 8f)]
+        [InlineData(2f, 2f, 3, "Times New Roman", 9f)]
+        [InlineData(1.5f, 1f, 5, "Segoe UI", 9f)]
+        [InlineData(1.25f, 1.25f, 1, "Arial", 10f)]
+        public void DrawString_UnderAnAxisScale_IsTheEnginesOnScreen(float sx, float sy, int hint, string face, float px)
+        {
+            Assert.SkipUnless(FacesInstalled("verdana.ttf", "segoeui.ttf", "arial.ttf", "calibri.ttf", "tahoma.ttf", "times.ttf"),
+                              "needs the Windows faces");
+            using var font = new Font(face, px, GraphicsUnit.Pixel);
+            const string text = "Stretched Hamburgefonstiv 0123";
+            void Draw(Graphics g)
+            {
+                g.ScaleTransform(sx, sy);
+                g.TextRenderingHint = (System.Drawing.Text.TextRenderingHint)hint;
+                g.DrawString(text, font, Brushes.Black, 3f, 4f);
+            }
+            using var engine = new Bitmap(400, 80, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(engine)) { g.Clear(Color.White); Draw(g); }
+
+            Graphics r = GpuRaster.NewRecording();
+            Draw(r);
+            object scene = GpuRaster.EndScene(r);
+            Assert.True(Find(scene, new System.Text.StringBuilder()) is not null, "not recorded as GDI+ text");
+            using var screen = new Bitmap(400, 80, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(screen)) g.Clear(Color.White);
+            screen.GetPixel(0, 0);   // the clear on the pixels
+            SceneRaster.Render(screen.managed.Frame, new[] { scene });
+
+            int differ = 0;
+            for (int yy = 0; yy < 80; yy++)
+                for (int xx = 0; xx < 400; xx++)
+                    if (engine.GetPixel(xx, yy) != screen.GetPixel(xx, yy)) differ++;
+            Assert.Equal(0, differ);
+        }
+
         [Theory]
         [InlineData("tab\there")]       // control characters: the full imager (Line Services)
         [InlineData("two\nlines")]

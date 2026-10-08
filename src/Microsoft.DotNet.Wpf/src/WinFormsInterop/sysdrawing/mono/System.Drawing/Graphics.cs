@@ -2345,13 +2345,23 @@ namespace System.Drawing
 				lineAlign = (int) format.LineAlignment;
 				hotkey = format.HotkeyPrefix != Text.HotkeyPrefix.None;
 			}
+			// GpGraphics::DrawString hands FastTextImager the world-to-device transform: a positive
+			// axis scale is laid out and realized at the device's size (Initialize@1800393c0, the
+			// stretched fits); the renderer draws the run under that scale and no other. A turned
+			// or sheared world keeps the unscaled layout, which the renderer will not take.
+			float [] wm = RecordingMatrix ();
+			bool axis = wm [1] == 0f && wm [2] == 0f && wm [0] > 0f && wm [3] > 0f;
+			float sx = axis ? wm [0] : 1f, sy = axis ? wm [3] : 1f;
+			// FastTextImager::Initialize +0xd0: no width to fit for NoWrap without trimming.
+			float wrap = format != null && (format.FormatFlags & StringFormatFlags.NoWrap) != 0
+				     && format.Trimming == StringTrimming.None ? 0f : rect.Width;
 			object layout = WebGpuBackend.TextMetrics.LayoutGdiPlus (s, family, style, font.SizeInPoints,
 				rect.X, rect.Y, rect.Width, rect.Height, flags, typographic, align, lineAlign, hotkey,
 				(int) recorded_text_hint, recorded_text_contrast, out bool empty, out bool asPath,
-				// The renderer draws the bi-level realizations only untransformed.
-				biLevel: rec_world [0] == 1f && rec_world [1] == 0f && rec_world [2] == 0f && rec_world [3] == 1f);
+				// The renderer draws the bi-level realizations under an axis scale.
+				biLevel: axis, sx: sx, sy: sy, wrapWidth: wrap);
 			if (layout == null && asPath)
-				return FillGdiPlusTextOutlines (s, font, brush, rect, format);
+				return axis && FillGdiPlusTextOutlines (s, font, brush, rect, format, sx, sy);
 			if (layout == null)
 				return false;
 			if (!empty)
@@ -2364,9 +2374,11 @@ namespace System.Drawing
 		/// the antialiased hints, over 800 otherwise): FastTextImager answers status 6 and
 		/// FullTextImager::DrawGlyphs @18003b720 adds each glyph's outline at the design-realization
 		/// layout and fills the lot with GpGraphics::FillPath -- the layout GraphicsPath.AddString
-		/// makes, filled with the graphics' own smoothing. Modelled for a pixel page with no
-		/// scaling; false otherwise (the caller's old path).</summary>
-		bool FillGdiPlusTextOutlines (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
+		/// makes, filled with the graphics' own smoothing, through the world's axis scale
+		/// (<paramref name="sx"/>, <paramref name="sy"/>). Modelled for a pixel page; false
+		/// otherwise (the caller's old path).</summary>
+		bool FillGdiPlusTextOutlines (string s, Font font, Brush brush, RectangleF rect, StringFormat format,
+					      float sx = 1f, float sy = 1f)
 		{
 			if (PageUnit != GraphicsUnit.Pixel && PageUnit != GraphicsUnit.Display)
 				return false;
@@ -2382,7 +2394,9 @@ namespace System.Drawing
 				// drawn as an image. SetTextLinesAntialiasMode::SetAAMode @1800eb708 for a path
 				// realization: antialiased for AntiAlias and AntiAliasGridFit, aliased otherwise.
 				GpuRecorder.GetTranslation (out float tx, out float ty);
-				RectangleF bounds = path.GetBounds ();
+				RectangleF wb = path.GetBounds ();
+				// The device box relative to the world's translation: the world box through the scale.
+				var bounds = RectangleF.FromLTRB (wb.Left * sx, wb.Top * sy, wb.Right * sx, wb.Bottom * sy);
 				if (tx != (int) tx || ty != (int) ty || bounds.Width <= 0 || bounds.Height <= 0
 				    || bounds.Width > 8192 || bounds.Height > 8192)
 					return false;
@@ -2394,6 +2408,7 @@ namespace System.Drawing
 						g.SmoothingMode = h == TextRenderingHint.AntiAlias || h == TextRenderingHint.AntiAliasGridFit
 							? SmoothingMode.AntiAlias : SmoothingMode.None;
 						g.TranslateTransform (-bx, -by);
+						g.ScaleTransform (sx, sy);
 						// FullTextImager::Draw @1800f0360: the layout rectangle clips unless NoClip.
 						if (rect.Width != 0f && rect.Height != 0f
 						    && (format == null || (format.FormatFlags & StringFormatFlags.NoClip) == 0))
@@ -2407,7 +2422,18 @@ namespace System.Drawing
 					bmp.UnlockBits (d);
 					for (int i = 0; i < bgra.Length; i += 4)
 						(bgra [i], bgra [i + 2]) = (bgra [i + 2], bgra [i]);
-					GpuRecorder.DrawImage (bgra, bw, bh, bx, by, bw, bh);
+					// The coverage is the device's: drawn under the world's translation alone.
+					bool scaled = sx != 1f || sy != 1f;
+					if (scaled) {
+						float [] wm = RecordingMatrix ();
+						GpuRecorder.SetWorldTransform (1f, 0f, 0f, 1f, wm [4], wm [5]);
+					}
+					try {
+						GpuRecorder.DrawImage (bgra, bw, bh, bx, by, bw, bh);
+					} finally {
+						if (scaled)
+							PushRecordedTransform ();
+					}
 				}
 			}
 			return true;

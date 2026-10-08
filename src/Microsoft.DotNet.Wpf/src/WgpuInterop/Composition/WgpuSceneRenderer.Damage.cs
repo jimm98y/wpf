@@ -163,7 +163,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (gp.Run is { } run)
                     {
                         // The GDI+ layout is in device units from the run's own origin.
-                        float em = run.Em, ox = run.OriginX + world.M31, oy = run.OriginY + world.M32;
+                        // (The world origin through the run's axis scale; the device em the larger axis'.)
+                        float em = run.Em * MathF.Max(run.Sx, run.Sy), ox = run.Sx * run.OriginX + world.M31, oy = run.Sy * run.OriginY + world.M32;
                         float w = (run.Glyphs.Length + 2) * em * 1.5f;
                         minX = MathF.Min(minX, ox - 2f * em); maxX = MathF.Max(maxX, ox + w);
                         minY = MathF.Min(minY, oy - 2f * em); maxY = MathF.Max(maxY, oy + 2f * em);

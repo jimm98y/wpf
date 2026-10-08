@@ -496,6 +496,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return xs;
         }
 
+        /// <summary>A fast-imager run's levels on the device, as DpDriver::DrawGlyphs @1800a43b0
+        /// composes them for its render mode: the world origin through the run's axis scale (Sx, Sy)
+        /// and the translation (dx, dy) -- GetDeviceBaselineOrigin, the grid-fitted layout then
+        /// rounding the device x -- then 6x1 glyphs through the filter (ClearType), 4x4 glyphs by
+        /// max (3, 4) or raster type 0 bits (1, 2) at the device size, stretched where the axes'
+        /// whole ppems differ (<see cref="ComposeAxis"/>). <paramref name="bits"/> may supply the
+        /// ClearType glyph of the run's i'th glyph (a cache).</summary>
+        internal static Levels ComposeRun(TrueTypeFont font, Run run, float dx, float dy, out float[] xs, out float y,
+                                          Func<int, NaturalClearType.GlyphBits>? bits = null)
+        {
+            xs = GlyphXs(run, run.Sx == 1f ? run.OriginX + dx : run.Sx * run.OriginX + dx);
+            y = run.Sy == 1f ? run.OriginY + dy : run.Sy * run.OriginY + dy;
+            if (run.Glyphs.Length == 0) return new Levels();
+            if (run.Mode == 5)
+            {
+                var gb = new NaturalClearType.GlyphBits[run.Glyphs.Length];
+                for (int i = 0; i < gb.Length; i++) gb[i] = bits?.Invoke(i) ?? run.GlyphBits(font, i);
+                return Compose(gb, xs, y, run.FixedFilter);
+            }
+            return ComposeAxis(font, run.Glyphs, run.Mode, run.Em, run.Sx, run.Sy, xs, y);
+        }
+
         /// <summary>IDWriteFontFace1::GetGdiCompatibleGlyphAdvances / -Metrics with useGdiNatural,
         /// in design units. DirectWrite measures GDI-compatibly at the WHOLE ppem: the advance is the
         /// scaler's phantom span under word 1 (fitted whatever 'gasp' says, as the bitmaps are; the

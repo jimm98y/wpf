@@ -465,25 +465,17 @@ namespace System.Drawing.WebGpuBackend
         public bool GdiPlusText (GdiPlusTextDraw draw)
         {
             Matrix3x2 m = _s.M;
-            if (m.M11 != 1f || m.M22 != 1f || m.M12 != 0f || m.M21 != 0f) return false;
-            TrueTypeFont font = GdipText.Face (draw.FontFamily, draw.Style);
             GdipText.Run run = draw.Run;
+            // The run's own axis scale and a translation (WgpuSceneRenderer.EmitGdiPlusText).
+            if (m.M11 != run.Sx || m.M22 != run.Sy || m.M12 != 0f || m.M21 != 0f) return false;
+            TrueTypeFont font = GdipText.Face (draw.FontFamily, draw.Style);
             if (font == null || run.Glyphs.Length == 0) return font != null;
-            float[] xs = GdipText.GlyphXs (run, run.OriginX + m.M31);
-            float y = run.OriginY + m.M32;
-            GdipText.Levels lv;
-            if (run.Mode == GdipText.HintAntiAlias || run.Mode == GdipText.HintAntiAliasGridFit)
-                lv = GdipText.ComposeGrey (font, run.Glyphs, run.Em, xs, y);
-            else {
-                var bits = new NaturalClearType.GlyphBits [run.Glyphs.Length];
-                for (int i = 0; i < bits.Length; i++) bits [i] = GdipText.Glyph (font, run.Glyphs [i], run.Em);
-                lv = GdipText.Compose (bits, xs, y, run.FixedFilter);
-            }
+            GdipText.Levels lv = GdipText.ComposeRun (font, run, m.M31, m.M32, out _, out _);
             if (lv.Width == 0 || lv.Height == 0) return true;
             int cx0 = 0, cy0 = 0, cx1 = _w, cy1 = _h;
             if (run.HasClip) {
-                cx0 = (int) MathF.Ceiling (run.ClipX + m.M31); cy0 = (int) MathF.Ceiling (run.ClipY + m.M32);
-                cx1 = (int) MathF.Ceiling (run.ClipX + run.ClipW + m.M31); cy1 = (int) MathF.Ceiling (run.ClipY + run.ClipH + m.M32);
+                cx0 = (int) MathF.Ceiling (run.Sx * run.ClipX + m.M31); cy0 = (int) MathF.Ceiling (run.Sy * run.ClipY + m.M32);
+                cx1 = (int) MathF.Ceiling (run.Sx * (run.ClipX + run.ClipW) + m.M31); cy1 = (int) MathF.Ceiling (run.Sy * (run.ClipY + run.ClipH) + m.M32);
             }
             int argb = draw.Argb;
             byte br = (byte) (argb >> 16), bg = (byte) (argb >> 8), bb = (byte) argb;

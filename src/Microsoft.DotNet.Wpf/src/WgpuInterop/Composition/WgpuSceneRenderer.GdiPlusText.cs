@@ -23,7 +23,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 {
     internal sealed unsafe partial class WgpuSceneRenderer
     {
-        private readonly Dictionary<(Text.TrueTypeFont Font, int Glyph, float Em), Text.NaturalClearType.GlyphBits>
+        private readonly Dictionary<(Text.TrueTypeFont Font, int Glyph, float Em, float Sx, float Sy), Text.NaturalClearType.GlyphBits>
             _gdiPlusGlyphs = new();
 
         /// <summary>WPF_GDIPLUS_TRACE=1 reports each GDI+ run and how it was drawn.</summary>
@@ -34,14 +34,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (clip.IsEmpty) return;
             Text.GdiPlusText.Run run = draw.Run;
-            // FastTextImager takes only a positive axis scale; this port lays out at 96 dpi, so the
-            // device transform has to be a translation. Anything else draws the ordinary string run.
+            // FastTextImager takes only a positive axis scale (Initialize@1800393c0), and the run was
+            // laid out under the one the caller's world had (Run.Sx, Sy): the device transform has to
+            // be that scale and a translation. Anything else draws the ordinary string run.
             bool drawable = s_gammaComposite && !_transparentTarget
-                            && world.M11 == 1f && world.M22 == 1f && world.M12 == 0f && world.M21 == 0f
+                            && world.M11 == run.Sx && world.M22 == run.Sy && world.M12 == 0f && world.M21 == 0f
                             && FontFor(draw.Style, draw.FontFamily) is Text.TrueTypeFont;
             if (s_gdiPlusTrace)
-                Console.Error.WriteLine($"[gdiplus] glyphs={run.Glyphs.Length} em={run.Em} origin=({run.OriginX},{run.OriginY}) "
-                                        + $"world=({world.M31},{world.M32}) drawable={drawable}");
+                Console.Error.WriteLine($"[gdiplus] glyphs={run.Glyphs.Length} em={run.Em} mode={run.Mode} scale=({run.Sx},{run.Sy}) "
+                                        + $"origin=({run.OriginX},{run.OriginY}) world=({world.M11},{world.M22},{world.M31},{world.M32}) drawable={drawable}");
             if (!drawable)
             {
                 EmitText(draw.Fallback, world, opacity, clip, width, height, format, data);
@@ -51,42 +52,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             int n = run.Glyphs.Length;
             if (n == 0) return;
 
-            // Device positions, as GDI+ forms them (float sums from the rounded origin).
-            float[] xs = Text.GdiPlusText.GlyphXs(run, run.OriginX + world.M31);
-            float y = run.OriginY + world.M32;
-            Text.GdiPlusText.Levels lv;
-            if (run.Mode == Text.GdiPlusText.HintAntiAlias || run.Mode == Text.GdiPlusText.HintAntiAliasGridFit)
-                lv = Text.GdiPlusText.ComposeGrey(font, run.Glyphs, run.Em, xs, y);
-            else if (run.Mode == Text.GdiPlusText.HintSingleBitPerPixelGridFit || run.Mode == Text.GdiPlusText.HintSingleBitPerPixel)
-                // The bi-level realizations (SingleBitPerPixel[GridFit], an AntiAliasGridFit size the
-                // gasp does not grey, ClearType at an embedded-bitmap size): raster type 0 bits, the
-                // brush where they are set (coverage 15).
-                lv = Text.GdiPlusText.ComposeMono(font, run.Glyphs, run.Em, xs, y, gridFit: run.Mode == Text.GdiPlusText.HintSingleBitPerPixelGridFit);
-            else
-            {
-                var bits = new Text.NaturalClearType.GlyphBits[n];
-                for (int i = 0; i < n; i++)
+            // Device positions, as GDI+ forms them (the world origin through the scale, float sums
+            // from the rounded origin), composed for the render mode: 6x1 glyphs through the filter
+            // (ClearType), 4x4 by max (the antialiased hints), raster type 0 bits for the bi-level
+            // realizations (SingleBitPerPixel[GridFit], an AntiAliasGridFit size the gasp does not
+            // grey, ClearType at an embedded-bitmap size), fitted stretched where the axes differ.
+            Text.GdiPlusText.Levels lv = Text.GdiPlusText.ComposeRun(font, run, world.M31, world.M32, out float[] xs, out float y,
+                i =>
                 {
-                    var gkey = (font, (int)run.Glyphs[i], run.Em);
+                    var gkey = (font, (int)run.Glyphs[i], run.Em, run.Sx, run.Sy);
                     if (!_gdiPlusGlyphs.TryGetValue(gkey, out Text.NaturalClearType.GlyphBits? gb))
                     {
                         if (_gdiPlusGlyphs.Count > 20000) _gdiPlusGlyphs.Clear();
-                        gb = Text.GdiPlusText.Glyph(font, run.Glyphs[i], run.Em);
+                        gb = run.GlyphBits(font, i);
                         _gdiPlusGlyphs[gkey] = gb;
                     }
-                    bits[i] = gb;
-                }
-                lv = Text.GdiPlusText.Compose(bits, xs, y, run.FixedFilter);
-            }
+                    return gb;
+                });
             if (lv.Width == 0 || lv.Height == 0) return;
 
-            // The layout rectangle as GDI+ clips to it: pixels [ceil(l), ceil(r)) x [ceil(t), ceil(b)).
+            // The layout rectangle as GDI+ clips to it, through the scale: pixels [ceil(l), ceil(r))
+            // x [ceil(t), ceil(b)).
             if (run.HasClip)
             {
-                float l = run.ClipX + world.M31, t = run.ClipY + world.M32;
+                float l = run.Sx * run.ClipX + world.M31, t = run.Sy * run.ClipY + world.M32;
                 int cx0 = (int)MathF.Ceiling(l), cy0 = (int)MathF.Ceiling(t);
-                int cx1 = (int)MathF.Ceiling(run.ClipX + run.ClipW + world.M31);
-                int cy1 = (int)MathF.Ceiling(run.ClipY + run.ClipH + world.M32);
+                int cx1 = (int)MathF.Ceiling(run.Sx * (run.ClipX + run.ClipW) + world.M31);
+                int cy1 = (int)MathF.Ceiling(run.Sy * (run.ClipY + run.ClipH) + world.M32);
                 clip = Intersect(clip, new Scissor(cx0, cy0, cx1 - cx0, cy1 - cy0));
                 if (clip.IsEmpty) return;
             }
@@ -108,6 +100,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 key = key * 31 + font.GetHashCode();
                 key = key * 31 + BitConverter.SingleToInt32Bits(run.Em);
+                key = key * 31 + BitConverter.SingleToInt32Bits(run.Sx);
+                key = key * 31 + BitConverter.SingleToInt32Bits(run.Sy);
                 key = key * 31 + (run.FixedFilter ? 1 : 0) + 2 * run.Mode + 16 * run.Contrast;
                 for (int i = 0; i < n; i++)
                 {
