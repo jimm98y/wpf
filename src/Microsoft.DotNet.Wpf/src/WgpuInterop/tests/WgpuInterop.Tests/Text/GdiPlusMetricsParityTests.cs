@@ -62,5 +62,38 @@ namespace WgpuInterop.Tests.Text
                 }
             Assert.True(misses.Count == 0, $"{misses.Count} glyph metrics differ from DirectWrite's: {string.Join(" ", misses.Take(30))}");
         }
+
+        /// <summary>The legacy East Asian faces of msgothic.ttc around and inside their strike sizes
+        /// (7..22): there NewTransform @18006bc80 keeps the measure's bitmap flag and hands the scaler
+        /// word 0 for GDI_NATURAL too, so the natural advance is the classic one (MS PGothic 'b' at
+        /// 9 px is 4 px, word 1 would say 5), and the box is the strike's ink.</summary>
+        [Theory]
+        [InlineData("MS Gothic", 0)]
+        [InlineData("MS PGothic", 1)]
+        [InlineData("MS UI Gothic", 2)]
+        public void LegacyEastAsianStrikeSizesAreDirectWrites(string family, int index)
+        {
+            string path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "msgothic.ttc");
+            Assert.SkipWhen(!OperatingSystem.IsWindows() || !File.Exists(path), "needs MS Gothic and DirectWrite");
+            TrueTypeFont? font = GdiPlusText.Face(family, 0);
+            Assert.SkipWhen(font is null, "the family does not resolve");
+            IntPtr face = DWriteOracle.FontFace(path, index);
+            ushort[] gids = ("bdpq" + Chars + "日本語あ").Select(c => (ushort)font!.GlyphIndex(c)).Where(g => g > 0).Distinct().ToArray();
+            var misses = new List<string>();
+            foreach (int ppem in new[] { 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 22, 23, 24 })
+                foreach (bool natural in new[] { false, true })
+                {
+                    var theirs = DWriteOracle.GdiCompatibleGlyphMetrics(face, ppem, gids, natural);
+                    for (int i = 0; i < gids.Length; i++)
+                    {
+                        int adv, lsb, rsb;
+                        if (natural) GdiPlusText.NaturalMetrics(font!, gids[i], ppem, out adv, out lsb, out rsb);
+                        else GdiPlusText.ClassicMetrics(font!, gids[i], ppem, out adv, out lsb, out rsb);
+                        if ((adv, lsb, rsb) != theirs[i])
+                            misses.Add($"{ppem}{(natural ? "n" : "c")}:g{gids[i]} {adv},{lsb},{rsb}/{theirs[i].Advance},{theirs[i].Lsb},{theirs[i].Rsb}");
+                    }
+                }
+            Assert.True(misses.Count == 0, $"{misses.Count} glyph metrics differ from DirectWrite's: {string.Join(" ", misses.Take(30))}");
+        }
     }
 }

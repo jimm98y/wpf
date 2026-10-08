@@ -540,6 +540,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// (Microsoft Sans Serif's space at 13ppem, 3.453 -> 3; Segoe UI's at 9, 2.465 -> 3). Where
         /// the prep inhibits grid fitting (<paramref name="inhibited"/>) the scaler does not round it
         /// at all: Verdana's space at 7ppem, 2.461 -> 2.</para></summary>
+        /// <summary>The whole-pixel advance either GDI-compatible measure gives a legacy East Asian
+        /// face at one of its strike sizes (<see cref="StrikeBox"/>): TrueTypeRasterizer::Implementation::
+        /// NewTransform @18006bc80 hands the scaler word 0 -- the bi-level fit -- and GetMetrics
+        /// @18006af80 rounds its phantom span. A glyph the strike lacks is fitted all the same: MS
+        /// Gothic's ideographs at the odd sizes 7..21 are ppem + 1 wide (8 at 7 px), as two of its
+        /// rounded-up half widths (<see cref="CompatibleFullWidthPx"/>).</summary>
+        static int StrikeSizeAdvancePx(TrueTypeFont font, int gid, int ppem)
+        {
+            if (CompatibleFullWidthPx(font, gid, ppem, out int full)) return full;
+            return (int)MathF.Round(NaturalClearType.GdiClassicAdvance(font, gid, ppem));
+        }
+
+        /// <summary>TrueTypeRasterizer::Implementation::TryGetCompatibleDisplayWidth @18006c4d0 for a
+        /// compatible full-width glyph (<see cref="TrueTypeFont.DWriteCompatibleFullWidth"/>) of a
+        /// square transform with a ppem byte: whatever 'hdmx' or the linear width says, a width that
+        /// is not the half width (GetCompatibleWidthInfo's +0x21c) becomes two of them, a pixel more
+        /// for a bold simulation. GDI_CLASSIC asks at every size, GDI_NATURAL where the measure keeps
+        /// its bitmap flag (a strike size, ShouldCheckHdmx @1801ccba8): MS Gothic's ideographs are
+        /// 8 px at 7 ppem, 24 at 23.</summary>
+        static bool CompatibleFullWidthPx(TrueTypeFont font, int gid, int ppem, out int px)
+        {
+            px = 0;
+            if (ppem < 1 || ppem > 255 || !font.DWriteCompatibleFullWidth(gid)) return false;
+            int half = font.DWriteCompatibleHalfWidthPx(ppem);
+            if (half <= 0) return false;
+            px = 2 * half + (font.SynthesizesBold ? 1 : 0);
+            return true;
+        }
+
         static int NaturalPx(int span64, bool hasOutline, bool mirrored, bool inhibited = false)
         {
             int bias = hasOutline || inhibited ? 32 : 34;
@@ -594,8 +623,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // eight faces at 6..24pt, 29/64 stays down (Microsoft Sans Serif at 13ppem, 3.453 -> 3)
             // and 30/64 goes up (Segoe UI at 9ppem, 2.465 -> 3; Verdana Bold at 16, 5.469 -> 6).
             int px = NaturalPx(span64, hasOutline, mirrored, !hasOutline && font.DWriteGridFitInhibited(ppem, NaturalScalerWord));
+            bool sInk = false; int sl = 0, sr = 0;
+            bool strike = !mirrored && StrikeBox(font, gid, ppem, out sInk, out sl, out sr);
+            // At a size the legacy East Asian face has a strike for, NewTransform @18006bc80 keeps
+            // MakeRasterizerFlagsForMeasuring's bitmap flag (0x40) and hands the scaler word 0
+            // whether GDI_NATURAL or GDI_CLASSIC asked: the natural advance is the classic one
+            // (MS PGothic / MS UI Gothic 'b', 'd', 'p', 'q' at 9 px: 4 px, not word 1's 5; every
+            // glyph of the three faces at 7..22 px agrees with DirectWrite's).
+            if (strike) px = StrikeSizeAdvancePx(font, gid, ppem);
             advDu = DWriteUnits(px, ppem, upem);
-            if (!mirrored && StrikeBox(font, gid, ppem, out bool sInk, out int sl, out int sr))
+            if (strike)
             {
                 if (!sInk) { lsbDu = 0; rsbDu = advDu; }
                 else DWriteBearings(sl * 6, sr * 6, px, ppem, upem, out lsbDu, out rsbDu);
@@ -799,9 +836,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             int ppem = Floor(em + 0.5f);
             if (ppem < 1) ppem = 1;
             int upem = font.UnitsPerEmForHinting;
-            int px = (int)MathF.Round(NaturalClearType.GdiClassicAdvance(font, gid, ppem));
+            bool strike = StrikeBox(font, gid, ppem, out bool sInk, out int sl, out int sr);
+            if (!CompatibleFullWidthPx(font, gid, ppem, out int px))
+                px = (int)MathF.Round(NaturalClearType.GdiClassicAdvance(font, gid, ppem));
             advDu = DWriteUnits(px, ppem, upem);
-            if (StrikeBox(font, gid, ppem, out bool sInk, out int sl, out int sr))
+            if (strike)
             {
                 if (!sInk) { lsbDu = 0; rsbDu = advDu; }
                 else DWriteBearings(sl * 6, sr * 6, px, ppem, upem, out lsbDu, out rsbDu);
