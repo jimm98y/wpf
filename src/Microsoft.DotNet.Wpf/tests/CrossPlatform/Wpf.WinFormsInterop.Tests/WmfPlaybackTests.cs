@@ -823,11 +823,6 @@ namespace Wpf.WinFormsInterop.Tests
             "text/1/nearest-up",
             "text/1/transparent",
             "text/1/turned",
-            "text/2/up",
-            "text/2/down",
-            "text/2/gamma-up",
-            "text/2/nearest-up",
-            "text/2/turned",
         };
 
         [Fact]

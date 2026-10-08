@@ -95,12 +95,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             bool updateCp = (align & 1) != 0;
             PointF refp = ToTarget(updateCp ? _dc.Pos : logical);
             long fx = (long)Math.Floor(refp.X * 16.0 + 0.5), fy = (long)Math.Floor(refp.Y * 16.0 + 0.5);
-            // The reference point through the DC's own 28.4 world-to-device transform (bCvtPts),
-            // as GDI's ExtTextOut takes it, where the record's point is whole.
+            // The reference point through the DC's own 28.4 world-to-device transform, as
+            // GrepExtTextOutWLocked @1401a8a98 takes it (EXFORMOBJ::fxFastX / fxFastY or bXform:
+            // NOT snapped to the pixel as a GM_COMPATIBLE figure's points are), where the record's
+            // point is whole.
             PointF rl = updateCp ? _dc.Pos : logical;
             if (rl.X == MathF.Floor(rl.X) && rl.Y == MathF.Floor(rl.Y))
             {
-                Fix(wtod, rl.X, rl.Y, out int rfx, out int rfy);
+                wtod.Point((int)rl.X, (int)rl.Y, out int rfx, out int rfy);
                 fx = rfx; fy = rfy;
             }
             // Unit vectors along the baseline and down (device).
@@ -128,15 +130,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 // No advances: ESTROBJ sums the realized glyphs' own device advances (GLYPHDATA
                 // fxD, whole pixels), and SetTextCharacterExtra's extra through the mapping.
                 long dev = 0;
-                int extra = _charExtra == 0 ? 0 : (int)Math.Floor(_charExtra * along + 0.5);
+                int extra = _charExtra == 0 ? 0 : (int)Math.Floor(_charExtra * along * 16.0 + 0.5);
                 for (int i = 0; i < n; i++)
                 {
-                    pens[i] = dev * 16;
+                    pens[i] = dev;
                     int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
-                    dev += font.DeviceAdvance(gid, ppemAlong, ppemAcross, _rM00, _rSquare, rStretch) + extra;
+                    int fxd = font.DeviceAdvance(gid, ppemAlong, ppemAcross, _rM00, _rSquare, rStretch) * 16;
+                    // vCharPos_G2 @1401ae2d8: the extra (bFToL of the RFONT's base scale +0x190 times
+                    // the DC's logical extra) only where it leaves the advance positive.
+                    dev += fxd + (extra != 0 && extra + fxd > 0 ? extra : 0);
                 }
-                pens[n] = dev * 16;
-                sum = (long)Math.Floor(dev / along + 0.5);
+                pens[n] = dev;
+                sum = (long)Math.Floor(dev / (along * 16.0) + 0.5);
             }
             else
             {
@@ -199,7 +204,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         for (int x = e.Left; x < e.Right; x++)
                             if (x >= 0 && y >= 0 && x < _cw && y < _ch && (mask == null || mask[y * _cw + x])) px[y * _cw + x] = bk;
                 }
-                else if (_dc.BkMode == 2 && gen == null && q == 0 && ax == 1 && ay == 0 && dny == 1 && ppemAlong == ppemAcross)
+                else if (_dc.BkMode == 2 && gen == null && q == 0 && ax == 1 && ay == 0 && dny == 1)
                 {
                     // ESTROBJ::vCharPos_H1 @1401aed88 (its glyph-data branch): along the baseline the
                     // least of 0 and each pen plus the glyph's GLYPHDATA fxA, to the greatest of the
@@ -211,7 +216,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     for (int i = 0; i < n; i++)
                     {
                         int gid = glyphIndex ? s[i] : font.Face.GlyphIndex(s[i]);
-                        GdiPlusText.GreyGlyph g = GdiPlusText.Mono(font.Face, gid, ppemAlong, gridFit: true);
+                        GdiPlusText.GreyGlyph g = MonoAt(font.Face, gid, ppemAlong, ppemAcross, rStretch);
                         if (g.Width <= 0 || g.Height <= 0) continue;
                         xl = Math.Min(xl, pens[i] + g.Left * 16);
                         xr = Math.Max(xr, pens[i] + (g.Left + g.Width) * 16);
@@ -303,6 +308,18 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 _dc.Pos = new PointF(_dc.Pos.X + sum, _dc.Pos.Y);
             return true;
         }
+        /// <summary>The bi-level glyph (an EMF / metafile DC's realization) at x and y ppems.</summary>
+        static GdiPlusText.GreyGlyph MonoAt(TrueTypeFont face, int gid, int ppemX, int ppemY, bool stretchInfo)
+        {
+            if (ppemX == ppemY && !stretchInfo) return GdiPlusText.Mono(face, gid, ppemY, gridFit: true);
+            int sx = TrueTypeInterpreter.StretchPpemX, sy = TrueTypeInterpreter.StretchPpemY, si = TrueTypeInterpreter.GdiStretchInfo;
+            TrueTypeInterpreter.StretchPpemX = ppemX != ppemY ? ppemX : 0;
+            TrueTypeInterpreter.StretchPpemY = ppemX != ppemY ? ppemY : 0;
+            TrueTypeInterpreter.GdiStretchInfo = stretchInfo ? 1 : 2;
+            try { return GdiPlusText.Mono(face, gid, ppemY, gridFit: true); }
+            finally { TrueTypeInterpreter.StretchPpemX = sx; TrueTypeInterpreter.StretchPpemY = sy; TrueTypeInterpreter.GdiStretchInfo = si; }
+        }
+
         static readonly int[] s_lampWeight = { 0, 174763, 349525, 524288, 699051, 873813, 1048576 };
         static (byte[] A, byte[] B)? s_ctGamma;
 
