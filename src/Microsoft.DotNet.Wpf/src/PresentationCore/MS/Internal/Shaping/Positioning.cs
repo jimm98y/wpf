@@ -6,6 +6,15 @@ namespace MS.Internal.Shaping
 
     internal static class Positioning
     {
+        /// <summary>
+        ///  Set by a caller that turns right-to-left results into DirectWrite's reading-direction
+        ///  offsets itself: per glyph, the XAdvance its value records applied. With it the glyph's
+        ///  dx stays its PHYSICAL placement, which is what a mark anchored to it is placed from;
+        ///  without it (null) the value record folds the advance into dx as before.
+        /// </summary>
+        [System.ThreadStatic]
+        internal static int[] RtlAdvanceShift;
+
         public static int DesignToPixels(ushort DesignUnitsPerEm, ushort PixelsPerEm, int Value)
         {
             //Result requested in design units 
@@ -230,7 +239,8 @@ namespace MS.Internal.Shaping
         public void AdjustPos(  FontTable Table,
                                 LayoutMetrics Metrics,
                                 ref LayoutOffset GlyphOffset,
-                                ref int    GlyphAdvance
+                                ref int    GlyphAdvance,
+                                int        GlyphIndex = -1
                              )
         {
             int curOffset=offset;
@@ -262,7 +272,19 @@ namespace MS.Internal.Shaping
                     // XAdvance-only -765 on yeh barree after dal comes back as an offset of -765.
                     if (Metrics.Direction==TextFlowDirection.RTL)
                     {
-                        GlyphOffset.dx -= xAdvance;
+                        // DirectWrite places a mark from its base's physical placement, XPlacement
+                        // alone (Calibri's reh before hah, -300/-300: the base reports offset 0, its
+                        // sheva-like mark -275 = -(575 - 300), not -575), so where the caller can
+                        // take the advance into account itself it is kept out of dx.
+                        int[] shift = Positioning.RtlAdvanceShift;
+                        if (shift != null && GlyphIndex >= 0 && GlyphIndex < shift.Length)
+                        {
+                            shift[GlyphIndex] += xAdvance;
+                        }
+                        else
+                        {
+                            GlyphOffset.dx -= xAdvance;
+                        }
                     }
                 curOffset+=2;
             }
@@ -547,7 +569,7 @@ namespace MS.Internal.Shaping
                     return false;
             }
 
-            valueRecord.AdjustPos(Table, Metrics, ref Offsets[FirstGlyph], ref Advances[FirstGlyph]);
+            valueRecord.AdjustPos(Table, Metrics, ref Offsets[FirstGlyph], ref Advances[FirstGlyph], FirstGlyph);
             
             return true;
         }        
@@ -829,8 +851,8 @@ namespace MS.Internal.Shaping
             }
             
             //Now adjust positions
-            firstValueRecord.AdjustPos (Table, Metrics, ref Offsets[FirstGlyph],  ref Advances[FirstGlyph]);
-            secondValueRecord.AdjustPos(Table, Metrics, ref Offsets[secondGlyph], ref Advances[secondGlyph]);
+            firstValueRecord.AdjustPos (Table, Metrics, ref Offsets[FirstGlyph],  ref Advances[FirstGlyph], FirstGlyph);
+            secondValueRecord.AdjustPos(Table, Metrics, ref Offsets[secondGlyph], ref Advances[secondGlyph], secondGlyph);
             
             return true;
         }
@@ -1147,6 +1169,14 @@ namespace MS.Internal.Shaping
             
             int mark2CoverageIndex = Mark2Coverage(Table).GetGlyphIndex(Table,GlyphInfo.Glyphs[mark2Glyph]);
             if (mark2CoverageIndex==-1) return false;
+
+            // Two marks on a LIGATURE stack only when they sit on the same component: a character
+            // of the ligature between them (Arial's Allah: shadda+fatha on the second lam, damma on
+            // the heh) means the second mark attaches to its own component, not to the first mark.
+            if (GlyphInfo.FirstChars[mark2Glyph] + GlyphInfo.LigatureCounts[mark2Glyph] < GlyphInfo.FirstChars[mark1Glyph])
+            {
+                return false;
+            }
 
             ushort classCount = Mark1ClassCount(Table);
             MarkArray mark1Array = Mark1Array(Table);

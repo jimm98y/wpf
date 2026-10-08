@@ -1487,6 +1487,11 @@ namespace MS.Internal.TextFormatting
             {
                 cb.GetGlyphPositions(ploc, pPlsruns, pCchs, plsruns.Length, LsDevice.Presentation, pText,
                     pCluster, pCharProps, cch, pGlyphs, pGlyphProps, gc, LsTFlow.lstflowES, pAdvances, pOffsets);
+
+                // Shaped: from here on a combining mark is part of its base's cluster (carets, cells,
+                // the glyph run's cluster map). Not before -- GSUB's per-character features and GPOS's
+                // mark-to-ligature components both read which glyph each character became.
+                ManagedOpenTypeShaper.MergeMarkClusters(pText, cch, pCluster, gc);
             }
         }
 

@@ -96,7 +96,8 @@ namespace MS.Internal.TextFormatting
             int           glyphCount,
             int           glyphCapacity,   // how many glyphs the buffers can hold
             ushort*       clusterMap,      // in/out: char -> glyph index
-            int*          canGlyphAlone    // in/out (may be null): per-char independence flag
+            int*          canGlyphAlone,   // in/out (may be null): per-char independence flag
+            uint*         glyphProps = null // out (may be null): each glyph's source character, see GlyphSourceShift
             )
         {
             // No direction parameter: GSUB lookups are defined over glyphs in LOGICAL order for
@@ -111,15 +112,17 @@ namespace MS.Internal.TextFormatting
             try
             {
                 if (TryGetCachedSubstitution(glyphTypeface, text, charCount, glyphs, glyphCapacity,
-                                             clusterMap, canGlyphAlone, out int cached))
+                                             clusterMap, canGlyphAlone, glyphProps, out int cached))
                 {
                     return cached;
                 }
 
+                ushort[] sources = new ushort[Math.Max(glyphCapacity, glyphCount)];
                 int produced = SubstituteCore(glyphTypeface, text, charCount, glyphs, glyphCount,
-                                              glyphCapacity, clusterMap, canGlyphAlone);
+                                              glyphCapacity, clusterMap, canGlyphAlone, sources);
+                WriteGlyphSources(glyphProps, sources, produced, glyphCapacity);
                 CacheSubstitution(glyphTypeface, text, charCount, glyphs, produced, glyphCapacity,
-                                  clusterMap, canGlyphAlone);
+                                  clusterMap, canGlyphAlone, sources);
                 return produced;
             }
             catch (Exception e)
@@ -129,6 +132,25 @@ namespace MS.Internal.TextFormatting
                 // that by dropping the run -- text vanishes rather than merely being unshaped.
                 if (s_log) Log($"GSUB face='{FamilyOf(glyphTypeface)}' THREW {e}");
                 return glyphCount;
+            }
+        }
+
+        // A glyph's source character -- which character GSUB made it from -- rides from the
+        // substitution pass to the positioning pass in the HIGH half of its glyph properties, which
+        // nothing else in this backend reads (the forwarder stub writes the low half, zero). The
+        // cluster map alone cannot say it: a mark decomposed out of a character that then joined a
+        // ligature (Microsoft Uighur's lam + alef-with-hamza: lam-alef and a hamza) belongs to a
+        // cluster it does not start, and mark-to-ligature needs its character to find its component.
+        // DirectWrite keeps the same thing in its shaping glyph properties between GetGlyphs and
+        // GetGlyphPlacements.
+        private const int GlyphSourceShift = 16;
+
+        private static unsafe void WriteGlyphSources(uint* glyphProps, ushort[] sources, int glyphCount, int glyphCapacity)
+        {
+            if (glyphProps == null || sources == null || glyphCount > glyphCapacity) return;
+            for (int g = 0; g < glyphCount && g < sources.Length; g++)
+            {
+                glyphProps[g] = (glyphProps[g] & 0xFFFF) | ((uint)sources[g] << GlyphSourceShift);
             }
         }
 
@@ -156,6 +178,7 @@ namespace MS.Internal.TextFormatting
             public ushort[] Glyphs;
             public ushort[] ClusterMap;
             public int[] CanGlyphAlone;   // null when the caller did not ask for it
+            public ushort[] Sources;      // each glyph's source character + 1, 0 when unknown
             public int GlyphCount;
         }
 
@@ -176,7 +199,7 @@ namespace MS.Internal.TextFormatting
 
         private static unsafe bool TryGetCachedSubstitution(
             GlyphTypeface glyphTypeface, char* text, int charCount,
-            ushort* glyphs, int glyphCapacity, ushort* clusterMap, int* canGlyphAlone,
+            ushort* glyphs, int glyphCapacity, ushort* clusterMap, int* canGlyphAlone, uint* glyphProps,
             out int glyphCountOut)
         {
             glyphCountOut = 0;
@@ -212,6 +235,7 @@ namespace MS.Internal.TextFormatting
             {
                 for (int c = 0; c < charCount; c++) canGlyphAlone[c] = run.CanGlyphAlone[c];
             }
+            WriteGlyphSources(glyphProps, run.Sources, run.GlyphCount, glyphCapacity);
 
             glyphCountOut = run.GlyphCount;
             return true;
@@ -219,7 +243,8 @@ namespace MS.Internal.TextFormatting
 
         private static unsafe void CacheSubstitution(
             GlyphTypeface glyphTypeface, char* text, int charCount,
-            ushort* glyphs, int glyphCount, int glyphCapacity, ushort* clusterMap, int* canGlyphAlone)
+            ushort* glyphs, int glyphCount, int glyphCapacity, ushort* clusterMap, int* canGlyphAlone,
+            ushort[] sources)
         {
             // Only in-place results are cacheable: when the run did not fit, the buffers still hold
             // the caller's input and there is nothing to remember.
@@ -239,6 +264,7 @@ namespace MS.Internal.TextFormatting
             {
                 Glyphs = new ushort[glyphCount],
                 ClusterMap = new ushort[charCount],
+                Sources = sources[..glyphCount],
                 GlyphCount = glyphCount,
             };
             for (int g = 0; g < glyphCount; g++) run.Glyphs[g] = glyphs[g];
@@ -358,7 +384,8 @@ namespace MS.Internal.TextFormatting
             int           glyphCount,
             int           glyphCapacity,
             ushort*       clusterMap,
-            int*          canGlyphAlone
+            int*          canGlyphAlone,
+            ushort[]      sources          // out: each glyph's source character + 1 (0: unknown)
             )
         {
             ReorderHebrewMarks(text, charCount, glyphs, glyphCount, clusterMap);
@@ -423,6 +450,7 @@ namespace MS.Internal.TextFormatting
             for (int g = 0; g < newGlyphCount; g++)
             {
                 glyphs[g] = glyphInfo.Glyphs[g];
+                sources[g] = (ushort)(glyphInfo.FirstChars[g] + 1);
             }
             for (int c = 0; c < charCount; c++)
             {
@@ -465,7 +493,8 @@ namespace MS.Internal.TextFormatting
             bool          isRightToLeft,
             double        designToIdeal,   // design units -> the caller's ideal units
             int*          advances,        // in/out: ideal-unit advances
-            GlyphOffset*  offsets          // in/out: ideal-unit offsets
+            GlyphOffset*  offsets,         // in/out: ideal-unit offsets
+            uint*         glyphProps = null // in (may be null): the source characters Substitute recorded
             )
         {
             if (glyphTypeface == null || charCount <= 0 || glyphCount <= 0)
@@ -476,7 +505,7 @@ namespace MS.Internal.TextFormatting
             try
             {
                 PositionCore(glyphTypeface, text, charCount, glyphs, glyphCount, clusterMap,
-                             isRightToLeft, designToIdeal, advances, offsets);
+                             isRightToLeft, designToIdeal, advances, offsets, glyphProps);
             }
             catch (Exception e)
             {
@@ -496,7 +525,8 @@ namespace MS.Internal.TextFormatting
             bool          isRightToLeft,
             double        designToIdeal,
             int*          advances,
-            GlyphOffset*  offsets
+            GlyphOffset*  offsets,
+            uint*         glyphProps
             )
         {
             FontFaceLayoutInfo layout = glyphTypeface.FontFaceLayoutInfo;
@@ -530,7 +560,7 @@ namespace MS.Internal.TextFormatting
             LayoutOffset[] workOffsets = new LayoutOffset[glyphCount];
 
             IOpenTypeFont font = new GsubGposTables(layout);
-            ShaperBuffers buffers = Seed(charCount, glyphs, glyphCount, clusterMap);
+            ShaperBuffers buffers = Seed(charCount, glyphs, glyphCount, clusterMap, glyphProps);
 
             // DesignEmHeight = 0 asks the engine for design units (Positioning.DesignToPixels is the
             // identity then). PixelsEm = 0 with it: a GPOS device table indexed by 0 ppem is out of
@@ -542,26 +572,36 @@ namespace MS.Internal.TextFormatting
             OpenTypeLayoutResult result = OpenTypeLayoutResult.ScriptNotFound;
             uint used = 0;
 
+            int[] rtlShift = isRightToLeft ? new int[glyphCount] : null;
             fixed (int* pWorkAdvances = workAdvances)
             fixed (LayoutOffset* pWorkOffsets = workOffsets)
             {
-                foreach (uint script in plan.ScriptCandidates(DfltScript))
+                try
                 {
-                    buffers = Seed(charCount, glyphs, glyphCount, clusterMap);
-                    Array.Copy(designAdvances, workAdvances, glyphCount);
-                    Array.Clear(workOffsets, 0, glyphCount);
-                    used = script;
-
-                    result = OpenTypeLayout.PositionGlyphs(
-                        font, buffers.LayoutWorkspace, script, DfltLangSys, metrics,
-                        features, features.Length, 0,
-                        charCount, buffers.CharMap, buffers.GlyphInfoList,
-                        pWorkAdvances, pWorkOffsets);
-
-                    if (!IsScriptMiss(result))
+                    foreach (uint script in plan.ScriptCandidates(DfltScript))
                     {
-                        break;
+                        buffers = Seed(charCount, glyphs, glyphCount, clusterMap, glyphProps);
+                        Array.Copy(designAdvances, workAdvances, glyphCount);
+                        Array.Clear(workOffsets, 0, glyphCount);
+                        if (rtlShift != null) Array.Clear(rtlShift, 0, glyphCount);
+                        used = script;
+
+                        Positioning.RtlAdvanceShift = rtlShift;
+                        result = OpenTypeLayout.PositionGlyphs(
+                            font, buffers.LayoutWorkspace, script, DfltLangSys, metrics,
+                            features, features.Length, 0,
+                            charCount, buffers.CharMap, buffers.GlyphInfoList,
+                            pWorkAdvances, pWorkOffsets);
+
+                        if (!IsScriptMiss(result))
+                        {
+                            break;
+                        }
                     }
+                }
+                finally
+                {
+                    Positioning.RtlAdvanceShift = null;
                 }
             }
 
@@ -595,19 +635,25 @@ namespace MS.Internal.TextFormatting
                     : advances[g] + Round((workAdvances[g] - designAdvances[g]) * designToIdeal);
                 // The engine's dx is physical (+ right); DirectWrite's offset runs in the reading
                 // direction, so a right-to-left run's is the negation (a qamats DirectWrite puts at
-                // -4.16 the engine puts at +4.16).
-                offsets[g].du += Round((isRightToLeft ? -workOffsets[g].dx : workOffsets[g].dx) * designToIdeal);
-                offsets[g].dv += Round(workOffsets[g].dy * designToIdeal);
+                // -4.16 the engine puts at +4.16). The forwarder TRUNCATES an offset into ideal units
+                // -- du = (int)(advanceOffset * scalingFactor), TextAnalyzer.cpp -- of DWrite's float
+                // offset, the design value times the float em scale; rounding it put Arial's sheva
+                // at -809 where stock has -808.
+                // Right to left the reading-direction offset is XAdvance - XPlacement (rtlShift holds
+                // the XAdvance the value records applied; dx stayed the physical placement).
+                offsets[g].du += TruncateOffset(isRightToLeft ? rtlShift[g] - workOffsets[g].dx : workOffsets[g].dx, designToIdeal);
+                offsets[g].dv += TruncateOffset(workOffsets[g].dy, designToIdeal);
             }
         }
 
         /// <summary>
-        ///  Puts every combining mark in the cluster of the character before it, once substitution
-        ///  is done: the mark keeps its own glyph, but a caret steps over a base and its marks as one
+        ///  Puts every combining mark in the cluster of the character before it, once the run is
+        ///  shaped: the mark keeps its own glyph, but a caret steps over a base and its marks as one
         ///  cell, as DWrite's shaping engines cluster them (GenericEngineGetGlyphs keeps an
         ///  IS_COMBINING character with its base; the Hebrew and Arabic engines do the same). It
-        ///  happens AFTER the GSUB pass because the per-character features (the Arabic joining
-        ///  forms) find their glyphs through the cluster map.
+        ///  happens after GSUB and GPOS because both read the cluster map: the per-character
+        ///  features (the Arabic joining forms) to find their glyphs, mark-to-ligature to find which
+        ///  component a mark sits on.
         /// </summary>
         internal static unsafe void MergeMarkClusters(char* text, int charCount, ushort* clusterMap, int glyphCount)
         {
@@ -748,7 +794,8 @@ namespace MS.Internal.TextFormatting
         ///  IgnoreMarks on a kerning lookup did not ignore marks and mark attachment could not find
         ///  its marks.
         /// </remarks>
-        private static unsafe ShaperBuffers Seed(int charCount, ushort* glyphs, int glyphCount, ushort* clusterMap)
+        private static unsafe ShaperBuffers Seed(int charCount, ushort* glyphs, int glyphCount, ushort* clusterMap,
+                                                 uint* glyphProps = null)
         {
             var buffers = new ShaperBuffers((ushort)charCount, (ushort)glyphCount);
             GlyphInfoList glyphInfo = buffers.GlyphInfoList;
@@ -783,6 +830,13 @@ namespace MS.Internal.TextFormatting
 
             for (int g = 0; g < glyphCount; g++)
             {
+                // A glyph no character maps to (a decomposition product inside a cluster) takes the
+                // character Substitute recorded it came from.
+                int source = glyphProps != null ? (int)(glyphProps[g] >> GlyphSourceShift) - 1 : -1;
+                if (glyphInfo.FirstChars[g] == ushort.MaxValue && source >= 0 && source < charCount)
+                {
+                    glyphInfo.FirstChars[g] = (ushort)source;
+                }
                 if (glyphInfo.FirstChars[g] == ushort.MaxValue)
                 {
                     glyphInfo.FirstChars[g] = (ushort)g;
@@ -836,6 +890,16 @@ namespace MS.Internal.TextFormatting
         }
 
         private static int Round(double value) => (int)Math.Round(value, MidpointRounding.AwayFromZero);
+
+        /// <summary>A design-unit offset as the forwarder turns DWrite's into ideal units: the
+        /// float DIP offset (design units times emSize / unitsPerEm in float), truncated after
+        /// scaling by the ideal factor.</summary>
+        private static int TruncateOffset(int design, double designToIdeal)
+        {
+            float scale = (float)(designToIdeal / TextFormatterImp.ToIdeal);
+            float dip = design * scale;
+            return (int)(dip * TextFormatterImp.ToIdeal);
+        }
 
         private static string FamilyOf(GlyphTypeface glyphTypeface)
         {
@@ -1248,6 +1312,8 @@ namespace MS.Internal.TextFormatting
 
                 case 0x200C:    // ZERO WIDTH NON-JOINER
                 case 0x0621:    // ARABIC LETTER HAMZA
+                case 0x0674:    // ARABIC LETTER HIGH HAMZA
+                case 0x08AD:    // ARABIC LETTER LOW ALEF
                     return JoiningType.NonJoining;
             }
 
@@ -1301,9 +1367,7 @@ namespace MS.Internal.TextFormatting
                 case 0x0675:
                 case 0x0676:
                 case 0x0677:
-                case 0x06C0:
-                case 0x06C1:
-                case 0x06C2:
+                case 0x06C0:    // (HEH GOAL U+06C1 and U+06C2 are DUAL-joining: Urdu's medial heh)
                 case 0x06C3:
                 case 0x06C4:
                 case 0x06C5:
@@ -1317,6 +1381,14 @@ namespace MS.Internal.TextFormatting
                 case 0x06CF:
                 case 0x06D2:    // YEH BARREE
                 case 0x06D3:    // YEH BARREE WITH HAMZA ABOVE
+                case 0x06D5:    // AE
+                case 0x06EE:    // DAL WITH INVERTED V
+                case 0x06EF:    // REH WITH INVERTED V
+                case 0x0759: case 0x075A: case 0x075B:      // Arabic Supplement dal/reh forms
+                case 0x076B: case 0x076C: case 0x0771:
+                case 0x0773: case 0x0774: case 0x0778: case 0x0779:
+                case 0x08AA: case 0x08AB: case 0x08AC:      // Arabic Extended-A reh/waw forms
+                case 0x08AE: case 0x08B1: case 0x08B2: case 0x08B9:
                 case 0x0710:    // SYRIAC ALAPH
                 case 0x0715:    // SYRIAC DALATH
                 case 0x0716:

@@ -1737,13 +1737,10 @@ namespace MS.Internal.TextFormatting
                             glyphCount,
                             cgiGlyphBuffers,
                             puClusterMap,
-                            pfCanGlyphAlone);
+                            pfCanGlyphAlone,
+                            piGlyphPropsBuffer);
 
                         fIsGlyphBuffersUsed = glyphCount <= cgiGlyphBuffers ? 1 : 0;
-                        if (fIsGlyphBuffersUsed != 0)
-                        {
-                            ManagedOpenTypeShaper.MergeMarkClusters(pwchText, cchText, puClusterMap, glyphCount);
-                        }
                     }
                     else
                     {
@@ -1853,7 +1850,8 @@ namespace MS.Internal.TextFormatting
                         isRightToLeft,
                         lsrunFirst.Shapeable.EmSize * TextFormatterImp.ToIdeal / designEmHeight,
                         piGlyphAdvances,
-                        piiGlyphOffsets);
+                        piiGlyphOffsets,
+                        piGlyphProperties);
                 }
 
 
