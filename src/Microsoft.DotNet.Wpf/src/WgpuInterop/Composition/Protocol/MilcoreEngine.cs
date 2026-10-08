@@ -2493,7 +2493,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // COLR/CPAL emoji decomposes into -- is GlyphRunPainter's business, shared with the
                 // scene renderer's string-run path so the two cannot drift apart again.
                 _glyphFills.Clear();
-                Text.GlyphRunPainter.Paint(font, colorFont, run.Indices[i], scale, gx, gy, _glyphFills);
+                // A face's 1-bit EBDT strikes are not artwork: DirectWrite draws them only inside its
+                // own glyph analysis (NaturalClearType.DWriteStrike), and WPF's geometry is the outline.
+                Text.GlyphRunPainter.Paint(font, colorFont,
+                    font is Text.TrueTypeFont { BitmapsAreMonoStrikes: true } ? null : font as Text.IBitmapGlyphFont,
+                    run.Indices[i], scale, gx, gy, _glyphFills);
 
                 foreach (Text.GlyphFill gf in _glyphFills)
                 {
