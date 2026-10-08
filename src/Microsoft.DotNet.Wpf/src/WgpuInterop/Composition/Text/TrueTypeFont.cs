@@ -1342,7 +1342,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // -> 5) and Verdana Bold 'o' (5.492 -> 6) looked like hinted advances until the
             // sixty-fourths were put back. A VERSION 0 table has no ClearType bits and GDI fits
             // those faces at every size: Arial Bold 'w' at 8ppem is 6.22 linear and 5 in GDI.
-            if (!(ClearTypeRendering && GaspDeclinesClearTypeGridFit(pixelsPerEm))
+            // (DirectWrite's GDI_CLASSIC measure reads no 'gasp': GdiClassicFit.)
+            if (!(ClearTypeRendering && !GdiClassicFit && GaspDeclinesClearTypeGridFit(pixelsPerEm))
                 && TryGetHintedAdvance(gid, pixelsPerEm, out float hinted))
                 return hinted;
             // AWAY FROM ZERO, because that is what GDI does and MathF.Round does not: its default
@@ -1584,7 +1585,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                       + (TrueTypeInterpreter.StretchPpemX << 20 | TrueTypeInterpreter.StretchPpemY << 10) * 64,
                       // ...and so is a turned one (GdiWord: no compatible widths, ClearType along y),
                       // and DirectWrite's GDI_CLASSIC fit, which no gasp declines.
-                      TrueTypeInterpreter.GdiKey | (IgnoreGaspSymmetricGridfit ? 1 << 30 : 0));
+                      TrueTypeInterpreter.GdiKey | (GdiClassicFit ? 1 << 30 : 0));
             int callNo = 0;
             bool probe = s_outlineProbe && glyphId == s_probeGid;
             if (probe)
@@ -1634,9 +1635,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // MV Boli never sets it (its ranges are DOGRAY, GRIDFIT, GRIDFIT+DOGRAY), and every
             // one of its glyphs differed from GDI by twenty to seventy pixels at 16ppem although
             // our instruction trace is identical to the driver's. WPF_CT_GASP_SYMFIT=0 fits anyway.
-            if (!FaceWantsGridFit(pixelsPerEm) || PrepInhibitsGridFit(pixelsPerEm)
+            // ...NONE OF WHICH DIRECTWRITE'S GDI_CLASSIC FIT READS (GdiClassicFit): no 'gasp' bit,
+            // and a prep that inhibits the glyph programs is left to the interpreter, whose run
+            // skips them and keeps the scaler's own 26.6 outline -- not this branch's GDI one.
+            if ((!GdiClassicFit && (!FaceWantsGridFit(pixelsPerEm) || PrepInhibitsGridFit(pixelsPerEm)))
                 || (s_scaleUnhintedFaces && Interpreter() is null)
-                || (s_gaspSymGridfitGovernsOutline && ClearTypeRendering && !IgnoreGaspSymmetricGridfit
+                || (s_gaspSymGridfitGovernsOutline && ClearTypeRendering && !GdiClassicFit
                     && GaspDeclinesClearTypeGridFit(pixelsPerEm)))
             {
                 // The outline as drawn, SCALED TO THIS SIZE -- not a refusal. Callers of this method
@@ -1774,14 +1778,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             => TrueTypeInterpreter.GdiGaspPpem > 0 ? TrueTypeInterpreter.GdiGaspPpem : (int) MathF.Round(pixelsPerEm);
 
         /// <summary>
-        ///  DirectWrite fitting in GDI_CLASSIC: its rendering mode attributes carry 0x80000, for which
-        ///  ResolveGridFitMode @1800913a0 answers DWRITE_GRID_FIT_MODE_ENABLED without reading the
-        ///  face's ranges -- so a version 1 'gasp' that clears SYMMETRIC_GRIDFIT (Microsoft YaHei and
-        ///  MS Gothic above 20ppem) is fitted there all the same, where GDI's own ClearType
-        ///  realization leaves it unfitted. Per thread, set around a fit by
-        ///  NaturalClearType.TryGetGdiClassicOutline, and part of the hinted cache's key.
+        ///  DirectWrite's GDI_CLASSIC fit, which reads NO 'gasp' bit (dwrite 10.0.26100, arm64):
+        ///  <list type="bullet">
+        ///  <item>rendering: the mode's attributes carry 0x80000, for which ResolveGridFitMode
+        ///  @180090b90 answers DWRITE_GRID_FIT_MODE_ENABLED without looking at the face's ranges;</item>
+        ///  <item>measuring (GetGdiCompatibleGlyphMetrics/-Advances @18000b280/@1800d92b0 with
+        ///  useGdiNatural off, which is what GDI+'s classic advance type asks for):
+        ///  MakeRasterizerFlagsForMeasuring @180090a80 gives 0x11, which
+        ///  TrueTypeRasterizer::Implementation::NewTransform @18006bc80 turns into scaler word 3,
+        ///  fitted, with no range consulted;</item>
+        ///  <item>and the ranges themselves (OpenTypeFontFaceBuilder::ReadRenderingModeRanges
+        ///  @180033f40) are built from DOGRAY, SYMMETRIC_GRIDFIT and SYMMETRIC_SMOOTHING only -- the
+        ///  GRIDFIT bit is never read by DirectWrite at all.</item>
+        ///  </list>
+        ///  So Microsoft YaHei and MS Gothic above 20ppem (SYMMETRIC_GRIDFIT clear) and every face's
+        ///  sizes below its GRIDFIT threshold (Arial, Consolas, Times New Roman at 7..10ppem) are
+        ///  fitted. A prep that sets INSTCTRL still switches the glyph programs off -- that is the
+        ///  scaler's own state -- and the outline is then the scaler's 26.6 scaling, the
+        ///  interpreter's, not GDI's unfitted outline (Segoe UI, Tahoma, Verdana at 5..8ppem: the
+        ///  GDI_CLASSIC oracle went 1,155 of 1,974 glyphs exact to 1,962). Per thread, set by
+        ///  NaturalClearType.TryGetGdiClassicOutline and GdiClassicAdvance, and part of the hinted
+        ///  cache's key.
         /// </summary>
-        [ThreadStatic] internal static bool IgnoreGaspSymmetricGridfit;
+        [ThreadStatic] internal static bool GdiClassicFit;
 
         /// <summary>
         ///  Whether DirectWrite grid-fits this face at this size in its NATURAL and
@@ -2654,6 +2673,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
 
             return glyph;
+        }
+
+        /// <summary>Whether the face's prep sets INSTCTRL selector 1 at this size under DirectWrite's
+        /// mode word -- the state in which its scaler only scales (fsg_SimpleInnerGridFit @18007a628):
+        /// no glyph program, no side-bearing shift, the phantoms not rounded.</summary>
+        internal bool DWriteGridFitInhibited(float pixelsPerEm, int flags)
+        {
+            int savedFlags = TrueTypeInterpreter.DWriteFlags;
+            bool savedBi = TrueTypeInterpreter.BiLevelPass, savedSub = SubpixelFitting;
+            try
+            {
+                bool bi = flags == DWriteBiLevelWord;
+                TrueTypeInterpreter.DWriteFlags = flags;
+                TrueTypeInterpreter.BiLevelPass = bi;
+                SubpixelFitting = !bi;
+                return PrepInhibitsGridFit(pixelsPerEm);
+            }
+            finally
+            {
+                TrueTypeInterpreter.DWriteFlags = savedFlags;
+                TrueTypeInterpreter.BiLevelPass = savedBi;
+                SubpixelFitting = savedSub;
+            }
         }
 
         /// <summary>The glyph's points fitted under DirectWrite's mode word at a size, per contour, in

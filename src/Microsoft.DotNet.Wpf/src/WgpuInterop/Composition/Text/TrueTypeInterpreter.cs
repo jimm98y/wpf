@@ -516,6 +516,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// is GDI's, but the arithmetic is dwrite.dll's copy (see FreedomStepY).</summary>
         [ThreadStatic] internal static bool DWriteMovePoint;
 
+        /// <summary>See LoadGlyph: an inhibited DirectWrite fit keeps its scaled phantoms.</summary>
+        private static readonly bool s_dwInhibitScaled = EnvVar.Get("WPF_DW_INHIBIT_SCALED") != "0";
+
         /// <summary>GDI's word as fs__NewTransformation@1400254d0 (fontdrvhost) leaves it for a
         /// transform that is not a plain scale, or 0 for the upright word (0x03 / 0x23, see
         /// <see cref="DWriteFlags"/>). bSetXform@14001c2c8 hands the scaler 0x03, or 0x23 when the
@@ -2477,7 +2480,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // placed by MIRP keeps its control-value width; a point placed relative to an
             // untouched neighbour rides on the scaled outline. Nothing is corrected afterwards.
             _preScaled = false;
-            if (s_advancePhantom == 4 && !glyph.Composite && CompatibleAdvance64 > 0 && !BiLevelPass)
+            // A PREP THAT INHIBITS GRID FITTING SKIPS ALL OF THIS IN DIRECTWRITE'S SCALER.
+            // fsg_SimpleInnerGridFit @18007a628 (dwrite) tests INSTCTRL selector 1 (globalGS +0x88
+            // bit 0) first, and when it is set only scales the points and the phantoms
+            // (scl_ScaleOldCharPoints / scl_ScaleOldPhantomPoints) and copies them to the current
+            // ones: no scl_AdjustOldCharSideBearing shift, no scl_RoundCurrentSideBearingPnt. The
+            // advance phantom stays where the scaling put it, so the natural advance of Segoe UI 'G'
+            // at 8ppem (5.488 px) is 351/64 -> 5, where a sixteenth-rounded phantom made it 352 -> 6.
+            // Only for DirectWrite's fits (a mode word, or its GDI_CLASSIC fit); GDI's own runs keep
+            // what they measure. WPF_DW_INHIBIT_SCALED=0 rounds them as before.
+            bool inhibitScaled = s_dwInhibitScaled && GridFitInhibited && (DWriteFlags != 0 || DWriteMovePoint) && !glyph.Composite;
+            if (!inhibitScaled && s_advancePhantom == 4 && !glyph.Composite && CompatibleAdvance64 > 0 && !BiLevelPass)
             {
                 int lin = z.CurX[glyph.PointCount + 1] - z.CurX[glyph.PointCount];
                 // THE SAME NUMERATOR AS THE PHASE. fs__Contour has ONE factor, globals[0x1d0] =
@@ -2520,7 +2533,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // amount, copies both to the current points, and then rebuilds pp2 from the font-unit
             // advance (below). Times Bold 'ij'@16: pp1 1.5/64 -> 2 -> 4 in GDI, where ours stayed 2.
             // WPF_CT_COMPOSITE_PP1=0 leaves it.
-            if (glyph.Composite && s_compositePp1 && glyph.CompositeAdvanceUnits >= 0)
+            if (inhibitScaled) { }   // the phantoms stay as scaled (above)
+            else if (glyph.Composite && s_compositePp1 && glyph.CompositeAdvanceUnits >= 0)
             {
                 int v = z.CurX[glyph.PointCount];
                 int r = SubpixelXHere && !BiLevelPass ? (v + 2) & ~3 : Pix(v);
@@ -2539,6 +2553,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // the ORIGINAL phantom (twice, real points then phantoms) and only then memcpys the
             // original array over the current one, so the current left phantom is never rounded
             // on its own account.
+            if (!inhibitScaled)
             z.CurX[glyph.PointCount + 1] = s_advancePhantom switch
             {
                 // THE BI-LEVEL PASS IS THE MEASUREMENT OF THE ADVANCE, and a bi-level rasterizer
@@ -2610,7 +2625,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // on either grid -- there is no ClearType branch in the y half, because nothing
             // oversamples y. It writes CUR only, leaving ORG where the scaling put it, exactly as
             // the x half does. WPF_CT_YPHANTOM=0 leaves them unrounded.
-            if (s_yPhantomRound && glyph.PointCount + 3 < n)
+            if (s_yPhantomRound && !inhibitScaled && glyph.PointCount + 3 < n)
             {
                 int p3 = glyph.PointCount + 2, p4 = glyph.PointCount + 3;
                 int advY = z.CurY[p4] - z.CurY[p3];
@@ -2629,7 +2644,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // s_lsbRoundMode) show NO shift, so this is only the measuring pass, not bi-level
             // fitting in general. WPF_CT_MEASURE_LSB=0 restores the unshifted measurement.
             bool measureShift = s_measureLsb && MeasuringAdvance && BiLevelPass && TrueTypeFont.SubpixelFitting;
-            if ((LsbRoundHere || measureShift) && !glyph.Composite && glyph.PointCount < n)
+            if ((LsbRoundHere || measureShift) && !inhibitScaled && !glyph.Composite && glyph.PointCount < n)
             {
                 int pp1 = glyph.PointCount;
                 int org = z.OrgX[pp1];

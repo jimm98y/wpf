@@ -38,6 +38,17 @@ namespace WgpuInterop.Tests.Text
             ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 0, ["arial"] = 0, ["times"] = 0, ["verdana"] = 0,
         };
 
+        /// <summary>GDI_CLASSIC at the sizes the faces' 'gasp' tables (GRIDFIT, SYMMETRIC_GRIDFIT) and
+        /// preps (INSTCTRL) decline fitting. DirectWrite reads no gasp bit there (see
+        /// TrueTypeFont.GdiClassicFit); before that was modelled these read 281, 300, 291, 231, 56
+        /// and 210 of 564 exact. What is left is single rows of '_' and '-'.</summary>
+        private static readonly Dictionary<string, int> GdiClassicGaspCeiling = new()
+        {
+            ["segoeui"] = 5, ["consola"] = 6, ["tahoma"] = 3, ["arial"] = 2, ["times"] = 5, ["verdana"] = 4,
+        };
+
+        private static readonly float[] GaspSizes = { 5f, 6f, 7f, 8f, 9f, 10f };
+
         private static readonly Dictionary<string, int> RunCeiling = new()
         {
             ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 0, ["arial"] = 0, ["times"] = 0, ["verdana"] = 0,
@@ -220,6 +231,16 @@ namespace WgpuInterop.Tests.Text
         [Theory]
         [MemberData(nameof(Faces))]
         public void GdiClassicGlyphsAreDirectWritesTexture(string file)
+            => GdiClassicGlyphs(file, Sizes, GdiClassicCeiling[file], "GDI_CLASSIC");
+
+        /// <summary>The same where the face asks for no fitting: DirectWrite's GDI_CLASSIC fits there
+        /// all the same.</summary>
+        [Theory]
+        [MemberData(nameof(Faces))]
+        public void GdiClassicGlyphsAreDirectWritesTextureWhereGaspDeclines(string file)
+            => GdiClassicGlyphs(file, GaspSizes, GdiClassicGaspCeiling[file], "GDI_CLASSIC gasp");
+
+        private static void GdiClassicGlyphs(string file, float[] sizes, int ceiling, string label)
         {
             string? path = FontPath(file);
             Assert.SkipWhen(path is null, "needs the Windows face and DirectWrite");
@@ -228,7 +249,7 @@ namespace WgpuInterop.Tests.Text
 
             var misses = new List<string>();
             int total = 0;
-            foreach (float em in Sizes)
+            foreach (float em in sizes)
                 foreach (char c in Printable)
                 {
                     int gid = font.GlyphIndex(c);
@@ -242,10 +263,10 @@ namespace WgpuInterop.Tests.Text
                     long d = Diff(theirs, tl, tt, tr - tl, tb - tt, ours, ol, ot, ow, oh);
                     if (d != 0) misses.Add($"{em}:'{c}'={d}");
                 }
-            Report($"GDI_CLASSIC {file}: {total - misses.Count}/{total} glyphs exact; {string.Join(" ", misses.Take(40))}");
+            Report($"{label} {file}: {total - misses.Count}/{total} glyphs exact; {string.Join(" ", misses.Take(40))}");
             if (Environment.GetEnvironmentVariable("WPF_NATURAL_REPORT") is null)
-                Assert.True(misses.Count <= GdiClassicCeiling[file],
-                    $"{misses.Count} of {total} differ (ceiling {GdiClassicCeiling[file]}): {string.Join(" ", misses.Take(40))}");
+                Assert.True(misses.Count <= ceiling,
+                    $"{misses.Count} of {total} differ (ceiling {ceiling}): {string.Join(" ", misses.Take(40))}");
         }
 
         /// <summary>The style SIMULATIONS DirectWrite applies in its scaler (DWRITE_FONT_SIMULATIONS):
