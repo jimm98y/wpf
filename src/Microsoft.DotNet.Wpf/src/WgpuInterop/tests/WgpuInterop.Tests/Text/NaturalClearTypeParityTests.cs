@@ -350,7 +350,7 @@ namespace WgpuInterop.Tests.Text
         /// the size its prep stops asking for dropout control (17 -> 18ppem, where its 'gasp' also
         /// turns symmetric: a coincidence), 16..36ppem, glyph by glyph, in the natural modes and
         /// GDI_CLASSIC. WPF_NATURAL_GIDS=lo-hi widens the glyph range,
-        /// WPF_NATURAL_SIZES=a,b,... the sizes.</summary>
+        /// WPF_NATURAL_SIZES=a,b,... the sizes, WPF_NATURAL_FACE the face, WPF_NATURAL_ALL=1 simple glyphs too.</summary>
         [Fact]
         public void ArialArabicCompositesAreDirectWritesTexture()
             => ArabicComposites(Environment.GetEnvironmentVariable("WPF_NATURAL_FACE") is { Length: > 0 } ff ? ff : "arial",
