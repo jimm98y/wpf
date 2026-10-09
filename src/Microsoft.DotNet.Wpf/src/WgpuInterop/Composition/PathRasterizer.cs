@@ -1534,6 +1534,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// to right, filling column C-1 or the midpoint) and their bits are visible to the column
         /// pass, which runs left to right taking each column's crossings from the LAST back.
         /// Returns the bits set, as (sample column, sub-row from the top).</para></summary>
+        /// <summary>WPF_CT_DROPOUT_STABLE=0: List.Sort (introsort, unstable) for the crossing lists.</summary>
+        private static readonly bool s_closeFirst =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_CLOSEFIRST") != "0";
+
+        private static readonly bool s_dropoutStable =
+            Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_STABLE") != "0";
+
+        /// <summary>A crossing list in index order, ties kept in the order they were added.
+        /// AddVertSmartScan / AddHorizSmartScan (dwrite @18008c340 / @18008c190, fontdrvhost
+        /// @140041de0 / @140041c40) insert each crossing after every entry it is not strictly
+        /// less than, so equal indices stay in insertion order -- and LookForDropouts pairs
+        /// them by position. List.Sort is unstable: Consolas '*' at 9ppem has two dropout spans
+        /// at the same row index in one column (either side of an arm's tip), and which pair the
+        /// backward walk met first, and so which row was lit, was the sort's coin toss.</summary>
+        private static void StableByIndex(List<(int I, float V)> list)
+        {
+            if (!s_dropoutStable) { list.Sort(static (u, v) => u.Item1.CompareTo(v.Item1)); return; }
+            for (int i = 1; i < list.Count; i++)
+            {
+                var x = list[i];
+                int j = i - 1;
+                while (j >= 0 && x.I < list[j].I) { list[j + 1] = list[j]; j--; }
+                list[j + 1] = x;
+            }
+        }
+
         private static List<(int Col, int SubRow)> GdiDropoutFills(List<List<Vector2>> polys,
             FillRule fillRule, int originX, int originY, int width, int height, int nSub,
             GdiScanRows? walk = null)
@@ -1690,6 +1716,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     long xmin = (long) gx0 * X, xmax = (long) gx1 * X;
                     long rMin = (ymin + 0x1f) >> 6, rMax = (ymax + 0x20) >> 6;
                     long cMin = (xmin + 0x1f) >> 6, cMax = (xmax + 0x20) >> 6;
+                    // fsc_FillGlyph (dwrite @18007e738, fontdrvhost @140033fa0) clears the scan
+                    // word's stub bit when fsc_MeasureGlyph had to GROW this box by a row or a
+                    // column (GlyphBitMap +10): a feature with no sample in it at all is filled
+                    // to its ends. Arial's '_' at 5 and 6ppem in GDI_CLASSIC (unfitted, INSTCTRL)
+                    // is that bar: its end columns were taken for stubs. WPF_CT_GROWN_STUBS=1
+                    // keeps the stub test there.
+                    if ((rMax == rMin || cMax == cMin) && !s_grownKeepsStubs) stubs = false;
                     if (rMax == rMin) rMax++;
                     if (cMax == cMin) cMax++;
                     int B = (int) Math.Floor(rMin / (double) S), T = (int) Math.Ceiling(rMax / (double) S);
@@ -1719,6 +1752,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     int baseSub = nRows + originY * nSub;
                     yMin = (int) Math.Max(0, baseSub + rMin);
                     yMax = (int) Math.Min(nRows, baseSub + rMax);
+                }
+                // ...AND IN COLUMNS TOO. DoHorizDropout (dwrite @18008c420, fontdrvhost @140095a38)
+                // clamps its fill column into the scan converter's x bounds (+0x18 / +0x1c, set by
+                // fsc_SetupScan from fsc_MeasureGlyph's box), which are overscaled SAMPLE columns,
+                // (xmin + 0x1f) >> 6 to (xmax + 0x20) >> 6 exclusive -- not whole pixels. A stem a
+                // sample thin on the glyph's own left edge (Times New Roman's 32-unit box, the
+                // .notdef forms, at 5ppem: 240..270 in 1/384 px, between two sample centres) has
+                // its non-smart fill aimed one column left of the crossing, at sample 3, and
+                // clamped to sample 4, the box's first. WPF_CT_BOX_SUBCOL=0 keeps the pixel box.
+                if (s_boxMeasured && s_boxSubCol)
+                {
+                    int X = perPixel;
+                    long xmin = (long) gx0 * X, xmax = (long) gx1 * X;
+                    long cMin = (xmin + 0x1f) >> 6, cMax = (xmax + 0x20) >> 6;
+                    if (cMax == cMin) cMax++;
+                    xMin = (int) Math.Max(0, cMin - (long) originX * X);
+                    xMax = (int) Math.Min(nCols, cMax - (long) originX * X);
                 }
             }
             if (xMin >= xMax || yMin >= yMax) return new List<(int, int)>();
@@ -1752,8 +1802,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 foreach (Vector2[] a in P)
                 {
                     int m = a.Length;
-                    for (int i = 0; i < m; i++)
+                    // (a flattened contour may repeat its first point at the end)
+                    int mm = m > 1 && a[m - 1] == a[0] ? m - 1 : m;
+                    for (int ii = 0; ii < m; ii++)
                     {
+                        // THE CLOSING EDGE FIRST. fsc_FillGlyph walks each contour from its END
+                        // point back to its start and on round, so the edge into the first point is
+                        // the first to add its crossings, and ties keep that order (StableByIndex).
+                        // WPF_CT_DROPOUT_CLOSEFIRST=0 starts at the first point.
+                        int i = !s_closeFirst ? ii : ii < mm ? (ii + mm - 1) % mm : ii;
                         Vector2 p = a[i], q = a[(i + 1) % m];
                         if (p.X == q.X) continue;
                         float lo = MathF.Min(p.X, q.X), hi = MathF.Max(p.X, q.X);
@@ -1833,8 +1890,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             for (int C = 0; C < nCols; C++)
             {
-                colOn[C].Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                colOff[C].Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                StableByIndex(colOn[C]);
+                StableByIndex(colOff[C]);
             }
             // THE STUB TESTS' COUNTS, FROM THE ARRAYS THE FILL ACTUALLY WROTE.
             // <para>DoVertDropout's two three-term gates call VertCrossings@1400426c0 and
@@ -1865,8 +1922,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     var on = new List<(int, float)>(); var off = new List<(int, float)>();
                     foreach (int r in walk.ColOn[C]) { int R = s_dropoutNoFlip ? r : nRows - 1 - r; on.Add((R, R + 0.5f)); }
                     foreach (int r in walk.ColOff[C]) { int R = s_dropoutNoFlip ? r : nRows - 1 - r; off.Add((R, R + 0.5f)); }
-                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    StableByIndex(on);
+                    StableByIndex(off);
                     cntColOn[C] = on; cntColOff[C] = off;
                 }
                 for (int R = 0; R < nRows; R++)
@@ -1875,8 +1932,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     var on = new List<(int, float)>(); var off = new List<(int, float)>();
                     foreach (int c in walk.On[r]) on.Add((c, c + 0.5f));
                     foreach (int c in walk.Off[r]) off.Add((c, c + 0.5f));
-                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    StableByIndex(on);
+                    StableByIndex(off);
                     cntRowOn[R] = on; cntRowOff[R] = off;
                 }
             }
@@ -1917,8 +1974,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 foreach (Vector2[] a in P)
                 {
                     int m = a.Length;
-                    for (int i = 0; i < m; i++)
+                    // (a flattened contour may repeat its first point at the end)
+                    int mm = m > 1 && a[m - 1] == a[0] ? m - 1 : m;
+                    for (int ii = 0; ii < m; ii++)
                     {
+                        // THE CLOSING EDGE FIRST. fsc_FillGlyph walks each contour from its END
+                        // point back to its start and on round, so the edge into the first point is
+                        // the first to add its crossings, and ties keep that order (StableByIndex).
+                        // WPF_CT_DROPOUT_CLOSEFIRST=0 starts at the first point.
+                        int i = !s_closeFirst ? ii : ii < mm ? (ii + mm - 1) % mm : ii;
                         Vector2 p = a[i], q = a[(i + 1) % m];
                         if (p.Y == q.Y) continue;
                         float lo = MathF.Min(p.Y, q.Y), hi = MathF.Max(p.Y, q.Y);
@@ -1975,8 +2039,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             for (int R = 0; R < nRows; R++)
             {
-                rowOn[R].Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                rowOff[R].Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                StableByIndex(rowOn[R]);
+                StableByIndex(rowOff[R]);
             }
             // VertCrossings / HorizCrossings walk the on and off lists together and count both.
             // AND A CROSSING LIST OUTSIDE THE GLYPH'S BOX COUNTS ZERO. VertCrossings@1400426c0 and
@@ -2050,8 +2114,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         off.Add(s_dropoutNoFlip
                             ? (walk.ColOff[C][k], walk.ColOffPos[C][k])
                             : (nRows - 1 - walk.ColOff[C][k], nRows - walk.ColOffPos[C][k]));
-                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    StableByIndex(on);
+                    StableByIndex(off);
                     colOn[C] = on; colOff[C] = off;
                 }
                 for (int R = 0; (s_dropoutExactMode & 2) != 0 && R < nRows; R++)
@@ -2062,8 +2126,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         on.Add((walk.On[r][k], s_rowPosExact ? walk.OnPos[r][k] : walk.On[r][k] + 0.5f));
                     for (int k = 0; k < walk.Off[r].Count; k++)
                         off.Add((walk.Off[r][k], s_rowPosExact ? walk.OffPos[r][k] : walk.Off[r][k] + 0.5f));
-                    on.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
-                    off.Sort(static (u, v) => u.Item1.CompareTo(v.Item1));
+                    StableByIndex(on);
+                    StableByIndex(off);
                     rowOn[R] = on; rowOff[R] = off;
                 }
             }
@@ -2259,6 +2323,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// coordinate directly, as this did before 2026-09-20. See the note at the box.</summary>
         private static readonly bool s_boxSubRow =
             Environment.GetEnvironmentVariable("WPF_CT_BOX_SUBROW") != "0";
+
+        private static readonly bool s_boxSubCol =
+            Environment.GetEnvironmentVariable("WPF_CT_BOX_SUBCOL") != "0";
+
+        private static readonly bool s_grownKeepsStubs =
+            Environment.GetEnvironmentVariable("WPF_CT_GROWN_STUBS") == "1";
 
         private static readonly bool s_dropClamp =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_CLAMP") != "0";
@@ -3099,6 +3169,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return bits;
         }
 
+        private static Vector2 SegmentEnd(PathSegment s) => s switch
+        {
+            LineSegment l => l.Point,
+            QuadraticBezierSegment q => q.Point,
+            CubicBezierSegment c => c.Point,
+            _ => default,
+        };
+
         private static List<(float X, int Dir)>[] GdiExactRows(PathGeometry path, List<int> figureOf,
             int firstContour, int lastContour, int originX, int originY, int width, int height, int nSub,
             out GdiScanRows walk, int xScale = SubpixelsPerPixel * 2)
@@ -3134,8 +3212,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 verts.Clear();
                 Vector2 cur = fig.Start;
                 if (!fig.ImpliedStart) L.Point(cur);
+                // THE CLOSING PIECE FIRST, as fsc_FillGlyph walks a contour from its end point
+                // round to its start: the crossings it adds go into the lists first, and the
+                // dropout pairs equal indices by their order (StableByIndex). Only where the
+                // figure's last segment closes it onto its start, which is how a glyph's is built.
+                // WPF_CT_DROPOUT_CLOSEFIRST=0 walks from the start.
+                IEnumerable<PathSegment> order = fig.Segments;
+                int nSeg = fig.Segments.Count;
+                if (s_closeFirst && nSeg > 1 && SegmentEnd(fig.Segments[nSeg - 1]) == fig.Start)
+                {
+                    Vector2 lastStart = nSeg > 1 ? SegmentEnd(fig.Segments[nSeg - 2]) : fig.Start;
+                    cur = lastStart;
+                    var rot = new List<PathSegment>(nSeg) { fig.Segments[nSeg - 1] };
+                    for (int k = 0; k < nSeg - 1; k++) rot.Add(fig.Segments[k]);
+                    order = rot;
+                }
                 int cx = Xg(cur.X), cy = Yg(cur.Y), sx = cx, sy = cy;
-                foreach (PathSegment seg in fig.Segments)
+                foreach (PathSegment seg in order)
                 {
                     switch (seg)
                     {

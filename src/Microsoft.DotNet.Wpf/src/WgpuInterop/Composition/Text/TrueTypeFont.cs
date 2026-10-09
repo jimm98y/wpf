@@ -2858,6 +2858,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
         }
 
+        /// <summary>The dropout mode DirectWrite scans a glyph it does NOT grid-fit with (the gasp
+        /// declines fitting at the size), in <see cref="DWriteFit"/>'s encoding: 0 none, else the
+        /// SCANTYPE + 1. The prep still runs, and fsg_SimpleInnerGridFit @18007ae40 starts its scan
+        /// outputs from the global graphics state (+0x84 SCANCTRL, +0x86 SCANTYPE) the prep left;
+        /// with no glyph program to change them, fsg_ExecuteGlyph @180078e70 writes the scan word
+        /// from them (SCANCTRL's test at the size ? SCANTYPE : 2), and fs_ContourScan hands it to
+        /// fsc_FillGlyph (+0x170). Arial's 32-unit box (.notdef forms) at 7ppem needs it: its
+        /// one-sample stems only exist through the dropout fill.</summary>
+        internal int DWriteUnfittedDropout(float pixelsPerEm, int flags)
+        {
+            TrueTypeInterpreter? interpreter = Interpreter();
+            if (interpreter is null) return 0;
+            int savedFlags = TrueTypeInterpreter.DWriteFlags;
+            bool savedBi = TrueTypeInterpreter.BiLevelPass, savedSub = SubpixelFitting;
+            try
+            {
+                bool bi = flags == DWriteBiLevelWord;
+                TrueTypeInterpreter.DWriteFlags = flags;
+                TrueTypeInterpreter.BiLevelPass = bi;
+                SubpixelFitting = !bi;
+                if (!interpreter.PrepareForSize(pixelsPerEm)) return 0;
+                int scan = DoScanControl(interpreter.PrepScanControl, (int)MathF.Round(pixelsPerEm, MidpointRounding.AwayFromZero))
+                    ? interpreter.PrepScanType : 2;
+                return (scan & 2) != 0 ? 0 : scan + 1;
+            }
+            finally
+            {
+                TrueTypeInterpreter.DWriteFlags = savedFlags;
+                TrueTypeInterpreter.BiLevelPass = savedBi;
+                SubpixelFitting = savedSub;
+            }
+        }
+
         /// <summary>The glyph's points fitted under DirectWrite's mode word at a size, per contour, in
         /// pixels, y up, before any simulated shear; null where the face has no program for it. A
         /// simulated bold is the scaler's (fsg_Embold, <see cref="GdiEmbolden"/>) on the fitted points.</summary>
@@ -3718,9 +3751,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // AND THE UNROUNDED SPAN THE PHASE ACTUALLY WANTS -- from a ClearType pass at
             // factor one, as fs__Contour's first pass is (TryGetClearTypeSpan64), falling back
             // to the bi-level span. WPF_CT_SPAN_PASS=bilevel uses the bi-level span only.
-            TrueTypeInterpreter.BiLevelSpan64 =
-                s_spanFromCtPass && TryGetClearTypeSpan64(gid, pixelsPerEm, out int ct64) ? ct64
-                : TryGetHintedSpan64(gid, pixelsPerEm, out int sp64) ? sp64 : 0;
+            bool spanMeasured = true;
+            if (s_spanFromCtPass && TryGetClearTypeSpan64(gid, pixelsPerEm, out int ct64)) TrueTypeInterpreter.BiLevelSpan64 = ct64;
+            else if (TryGetHintedSpan64(gid, pixelsPerEm, out int sp64)) TrueTypeInterpreter.BiLevelSpan64 = sp64;
+            else
+            {
+                // TryGetHintedSpan64 answers false for a span that measured zero as well as for one
+                // it could not measure; the cache says which.
+                TrueTypeInterpreter.BiLevelSpan64 = 0;
+                spanMeasured = _hintedSpans.TryGetValue((gid, SpanSizeKey(pixelsPerEm)), out int z0) && z0 == 0;
+            }
+            // A SPAN THAT MEASURES ZERO IS NOT "NO MEASUREMENT". fs__Contour sets the factor to
+            // exactly 1.0 when pass one's phantom span is zero, and a composite that borrows a
+            // zero-advance component's metrics (USE_MY_METRICS) has exactly that: Tahoma's hamza
+            // forms (uni0654/0655, hmtx 512, borrowing glyph 792's 0) are GDI's component fit
+            // unmoved, where falling back to the compatible advance (5px) over the root's linear
+            // 4.5 stretched them. WPF_CT_SPAN_ZERO_GATE=0 falls back as before.
+            TrueTypeInterpreter.BiLevelSpanZero = spanMeasured && TrueTypeInterpreter.BiLevelSpan64 == 0;
             // ...UNLESS THE SIZE HAS AN EMBEDDED STRIKE. fs__Contour@140024220 takes the numerator
             // from pass one's phantom span only while clientRec+0x351 is clear; with a strike at
             // this size it calls sbit_CalcDevHorMetrics instead, and the numerator is the strike's
@@ -3763,7 +3810,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 // inputs BEFORE the components are hinted, and have them inherit it.
                 // WPF_CT_COMPONENT_FACTOR=own gives each component its own again.
                 int sc = TrueTypeInterpreter.CompatibleAdvance64, ss = TrueTypeInterpreter.BiLevelSpan64;
-                bool su = TrueTypeInterpreter.BiLevelPhantomUntouched, si = s_inheritPhaseInputs;
+                bool su = TrueTypeInterpreter.BiLevelPhantomUntouched, si = s_inheritPhaseInputs, sz = TrueTypeInterpreter.BiLevelSpanZero;
                 int sl = TrueTypeInterpreter.RootLinear64;
                 try
                 {
@@ -3780,6 +3827,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     TrueTypeInterpreter.CompatibleAdvance64 = sc;
                     TrueTypeInterpreter.BiLevelSpan64 = ss;
                     TrueTypeInterpreter.BiLevelPhantomUntouched = su;
+                    TrueTypeInterpreter.BiLevelSpanZero = sz;
                     TrueTypeInterpreter.RootLinear64 = sl;
                     s_inheritPhaseInputs = si;
                 }
@@ -3910,6 +3958,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             TrueTypeInterpreter.HintDepth = depth;
             int savedCompat = TrueTypeInterpreter.CompatibleAdvance64;
             int savedSpan = TrueTypeInterpreter.BiLevelSpan64;
+            bool savedSpanZero = TrueTypeInterpreter.BiLevelSpanZero;
             bool savedUntouched = TrueTypeInterpreter.BiLevelPhantomUntouched;
             if (s_measuringCtSpan || TrueTypeInterpreter.GdiNoCompatibleWidths)
             {
@@ -3969,6 +4018,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 TrueTypeInterpreter.CompatibleAdvance64 = savedCompat;
                 TrueTypeInterpreter.BiLevelSpan64 = savedSpan;
                 TrueTypeInterpreter.BiLevelPhantomUntouched = savedUntouched;
+                TrueTypeInterpreter.BiLevelSpanZero = savedSpanZero;
                 TrueTypeInterpreter.HintDepth = savedDepth;
                 TrueTypeInterpreter.SimBoldAdvanceUnits = savedBoldUnits;
             }

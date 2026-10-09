@@ -41,10 +41,14 @@ namespace WgpuInterop.Tests.Text
         /// <summary>GDI_CLASSIC at the sizes the faces' 'gasp' tables (GRIDFIT, SYMMETRIC_GRIDFIT) and
         /// preps (INSTCTRL) decline fitting. DirectWrite reads no gasp bit there (see
         /// TrueTypeFont.GdiClassicFit); before that was modelled these read 281, 300, 291, 231, 56
-        /// and 210 of 564 exact. What is left is single rows of '_' and '-'.</summary>
+        /// and 210 of 564 exact. The single rows of '_' and '-' that were left (25) were the unfitted bars'
+        /// end columns taken for stubs: fsc_FillGlyph clears the stub bit when fsc_MeasureGlyph grew the
+        /// box (PathRasterizer, WPF_CT_GROWN_STUBS). The last, Consolas '*' at 9, was two dropout spans at one
+        /// index in one column: their order in the crossing lists (PathRasterizer.StableByIndex, the walk's
+        /// closing piece first) decides which is filled.</summary>
         private static readonly Dictionary<string, int> GdiClassicGaspCeiling = new()
         {
-            ["segoeui"] = 5, ["consola"] = 6, ["tahoma"] = 3, ["arial"] = 2, ["times"] = 5, ["verdana"] = 4,
+            ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 0, ["arial"] = 0, ["times"] = 0, ["verdana"] = 0,
         };
 
         private static readonly float[] GaspSizes = { 5f, 6f, 7f, 8f, 9f, 10f };
@@ -346,16 +350,25 @@ namespace WgpuInterop.Tests.Text
         /// the size its prep stops asking for dropout control (17 -> 18ppem, where its 'gasp' also
         /// turns symmetric: a coincidence), 16..36ppem, glyph by glyph, in the natural modes and
         /// GDI_CLASSIC. WPF_NATURAL_GIDS=lo-hi widens the glyph range,
-        /// WPF_NATURAL_SIZES=a,b,... the sizes.</summary>
+        /// WPF_NATURAL_SIZES=a,b,... the sizes, WPF_NATURAL_FACE the face, WPF_NATURAL_ALL=1 simple glyphs too.</summary>
         [Fact]
         public void ArialArabicCompositesAreDirectWritesTexture()
+            => ArabicComposites(Environment.GetEnvironmentVariable("WPF_NATURAL_FACE") is { Length: > 0 } ff ? ff : "arial",
+                                700, 1400, ArabicCompositeCeiling);
+
+        /// <summary>RATCHET. Tahoma's hamza forms (uni0654/0655) borrow a zero-advance component's
+        /// metrics, so pass one's phantom span is zero and the phase factor is exactly 1
+        /// (TrueTypeInterpreter.BiLevelSpanZero); they differed in GDI_CLASSIC at every size from 14ppem.
+        /// Never raise it.</summary>
+        [Fact]
+        public void TahomaHamzaCompositesAreDirectWritesTexture() => ArabicComposites("tahoma", 1260, 1280, 0);
+
+        private static void ArabicComposites(string file, int lo, int hi, int ceiling)
         {
-            string file = Environment.GetEnvironmentVariable("WPF_NATURAL_FACE") is { Length: > 0 } ff ? ff : "arial";
             string? path = FontPath(file);
             Assert.SkipWhen(path is null, "needs the Windows face and DirectWrite");
             var font = new TrueTypeFont(File.ReadAllBytes(path!));
             IntPtr face = DWriteOracle.FontFace(path!);
-            int lo = 700, hi = 1400;
             if (Environment.GetEnvironmentVariable("WPF_NATURAL_GIDS") is { Length: > 0 } gr)
             { string[] e = gr.Split('-'); lo = int.Parse(e[0]); hi = int.Parse(e[^1]); }
             float[] sizes = Environment.GetEnvironmentVariable("WPF_NATURAL_SIZES") is { Length: > 0 } sz
@@ -367,7 +380,7 @@ namespace WgpuInterop.Tests.Text
             foreach (float em in sizes)
                 for (int gid = lo; gid <= hi && gid < font.GlyphCount; gid++)
                 {
-                    if (!font.IsCompositeGlyphId(gid)) continue;
+                    if (Environment.GetEnvironmentVariable("WPF_NATURAL_ALL") != "1" && !font.IsCompositeGlyphId(gid)) continue;
                     for (int classic = 0; classic < 2; classic++)
                     {
                         int mode = classic == 1 ? 2 : DWriteOracle.RecommendedMode(face, em);
@@ -395,8 +408,8 @@ namespace WgpuInterop.Tests.Text
                    + string.Join(" ", misses.GroupBy(m => m[..m.IndexOf(':')]).Select(g => $"{g.Key}x{g.Count()}"))
                    + $"; {string.Join(" ", misses.Take(60))}");
             if (Environment.GetEnvironmentVariable("WPF_NATURAL_REPORT") is null)
-                Assert.True(misses.Count <= ArabicCompositeCeiling,
-                    $"{misses.Count} of {total} differ (ceiling {ArabicCompositeCeiling}): {string.Join(" ", misses.Take(40))}");
+                Assert.True(misses.Count <= ceiling,
+                    $"{misses.Count} of {total} differ (ceiling {ceiling}): {string.Join(" ", misses.Take(40))}");
         }
 
         /// <summary>RATCHET. These were 1,838 of 8,088 (sum 554,679) at 18ppem and up, every one a
@@ -404,6 +417,47 @@ namespace WgpuInterop.Tests.Text
         /// word its elements merge into it, a simple element contributing its word whether or not
         /// its program changed it (see TrueTypeFont.DWriteScanRule). Never raise it.</summary>
         private const int ArabicCompositeCeiling = 0;
+
+        /// <summary>RATCHET. Glyphs DirectWrite does not grid-fit (the gasp declines fitting at 5..8ppem)
+        /// are still scanned with the prep's dropout control (TrueTypeFont.DWriteUnfittedDropout), and
+        /// the dropout fill is clamped into the scan's sample-column box (PathRasterizer, WPF_CT_BOX_SUBCOL).
+        /// Without either, 1,316 of these 2,888 glyphs (Arabic forms, thin-stemmed boxes, dots) differed.
+        /// Never raise these.</summary>
+        private static readonly Dictionary<string, int> UnfittedCeiling = new() { ["arial"] = 0, ["times"] = 0 };
+
+        [Theory]
+        [InlineData("arial")]
+        [InlineData("times")]
+        public void UnfittedGlyphsAreDirectWritesTexture(string file)
+        {
+            string? path = FontPath(file);
+            Assert.SkipWhen(path is null, "needs the Windows face and DirectWrite");
+            var font = new TrueTypeFont(File.ReadAllBytes(path!));
+            IntPtr face = DWriteOracle.FontFace(path!);
+            var misses = new List<string>();
+            int total = 0;
+            foreach (float em in new[] { 5f, 6f, 7f, 8f })
+            {
+                int mode = DWriteOracle.RecommendedMode(face, em);
+                if (mode != 4 && mode != 5) continue;
+                int nSub = mode == 5 ? 5 : 1;
+                for (int gid = 748; gid <= 1108; gid++)
+                {
+                    byte[] theirs = DWriteOracle.AlphaTexture(face, em, new[] { (ushort)gid }, new[] { 0f }, null, mode,
+                        out int tl, out int tt, out int tr, out int tb);
+                    NaturalClearType.GlyphBits bits = NaturalClearType.Rasterize(font, gid, em, nSub);
+                    byte[] ours = NaturalClearType.RunTexture(new[] { bits }, new[] { 0f }, new[] { 0f },
+                        out int ol, out int ot, out int ow, out int oh, nSub);
+                    total++;
+                    long d = Diff(theirs, tl, tt, tr - tl, tb - tt, ours, ol, ot, ow, oh);
+                    if (d != 0) misses.Add($"{em}:{gid}={d}");
+                }
+            }
+            Report($"UNFITTED {file}: {total - misses.Count}/{total} exact; {string.Join(" ", misses.Take(40))}");
+            if (Environment.GetEnvironmentVariable("WPF_NATURAL_REPORT") is null)
+                Assert.True(misses.Count <= UnfittedCeiling[file],
+                    $"{misses.Count} of {total} differ (ceiling {UnfittedCeiling[file]}): {string.Join(" ", misses.Take(40))}");
+        }
 
         [Theory]
         [MemberData(nameof(Faces))]
