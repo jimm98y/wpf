@@ -43,10 +43,12 @@ namespace WgpuInterop.Tests.Text
         /// TrueTypeFont.GdiClassicFit); before that was modelled these read 281, 300, 291, 231, 56
         /// and 210 of 564 exact. The single rows of '_' and '-' that were left (25) were the unfitted bars'
         /// end columns taken for stubs: fsc_FillGlyph clears the stub bit when fsc_MeasureGlyph grew the
-        /// box (PathRasterizer, WPF_CT_GROWN_STUBS). Consolas '*' at 9 is what remains.</summary>
+        /// box (PathRasterizer, WPF_CT_GROWN_STUBS). The last, Consolas '*' at 9, was two dropout spans at one
+        /// index in one column: their order in the crossing lists (PathRasterizer.StableByIndex, the walk's
+        /// closing piece first) decides which is filled.</summary>
         private static readonly Dictionary<string, int> GdiClassicGaspCeiling = new()
         {
-            ["segoeui"] = 0, ["consola"] = 1, ["tahoma"] = 0, ["arial"] = 0, ["times"] = 0, ["verdana"] = 0,
+            ["segoeui"] = 0, ["consola"] = 0, ["tahoma"] = 0, ["arial"] = 0, ["times"] = 0, ["verdana"] = 0,
         };
 
         private static readonly float[] GaspSizes = { 5f, 6f, 7f, 8f, 9f, 10f };
