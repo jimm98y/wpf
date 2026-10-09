@@ -65,9 +65,9 @@ namespace System.Windows.Forms.Integration
         }
 
         // Every live host, and ONE render tick PER UI THREAD that serves all of that thread's hosts.
-        // EmbeddedContent.Set replaces the calling thread's whole hosted set, so a per-instance tick
-        // would both pump N times a frame and let each host erase the others' scenes -- two hosts in
-        // one window, and only the last one drawn would appear.
+        // The tick is the owner of the set it publishes into EmbeddedContent (other publishers on the
+        // same thread -- an app's own host -- keep theirs). A per-instance tick would pump N times a
+        // frame, and the driver's one caret needs one place that decides which host it is in.
         //
         // Per thread rather than per process because CompositionTarget.Rendering is the CALLING
         // thread's MediaContext, and a host belongs to its Dispatcher: one tick for the process ran
@@ -81,11 +81,12 @@ namespace System.Windows.Forms.Integration
             public readonly List<WindowsFormsHost> Hosts = new List<WindowsFormsHost>();
 
             // Content that is composited the same way but is not a WindowsFormsHost - today, the
-            // HwndHost-derived hosts claimed through HwndHostForeignContent. EmbeddedContent.Set
-            // REPLACES the thread's hosted set, so there can only be one publisher per thread;
-            // everything that wants to be on screen has to come through this tick.
+            // HwndHost-derived hosts claimed through HwndHostForeignContent. They ride
+            // this tick so that the thread is pumped once a frame and their scenes are published
+            // in the same set as the hosts'.
             public readonly List<IEmbeddedContentSource> Extras = new List<IEmbeddedContentSource>();
             public int LastPaintVersion = -1;
+            public WindowsFormsHost LastInputHost;   // where popups go when no host has focus
             public bool Subscribed;
             public bool IsEmpty => Hosts.Count == 0 && Extras.Count == 0;
         }
@@ -128,8 +129,7 @@ namespace System.Windows.Forms.Integration
                 }
                 // Nothing of this thread's is on screen any more; leaving the last scenes registered
                 // would freeze a ghost of the control tree over the window.
-                EmbeddedContent.Set(null);
-                EmbeddedContent.SetCaret(IntPtr.Zero, 0, 0, 0, 0, false);
+                EmbeddedContent.Withdraw(tick);
             }
             else if (!tick.Dispatcher.HasShutdownStarted)
             {
@@ -170,6 +170,14 @@ namespace System.Windows.Forms.Integration
         private bool _leftDown;
         private bool _disposed;
         private double _lastDevX = double.NaN, _lastDevY, _lastDevW, _lastDevH;
+
+        // Where the container form is presented, for the controls that put a native overlay over
+        // their rectangle (WebBrowser, WebView2): the WPF window, the device position of the
+        // container's origin in it, the DPI and whether the host is shown. Refreshed by Collect;
+        // the window stays zero until the first frame has placed the host.
+        private IntPtr _placeWindow;
+        private float _placeScale = 1f;
+        private bool _placeShown;
 
         public WindowsFormsHost()
         {
@@ -254,6 +262,7 @@ namespace System.Windows.Forms.Integration
             if (!disposing) return;
             Detach();
             _child = null;
+            SWF.EmbeddedScenes.SetPlacement(_container, null);
             _container.Dispose();
         }
 
@@ -312,6 +321,7 @@ namespace System.Windows.Forms.Integration
         protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
         {
             if (_driver == null) return;
+            lock (s_lock) if (s_ticks.TryGetValue(Dispatcher, out Tick t)) t.LastInputHost = this;
             Focus();
             CaptureMouse();
             var (x, y) = ToDriver(e.GetPosition(this));
@@ -865,12 +875,20 @@ namespace System.Windows.Forms.Integration
 
             _container.CreateControl();
             _container.Show();          // registers the window tree with the driver and paints it
+            SWF.EmbeddedScenes.SetPlacement(_container, () =>
+                (_placeWindow, (float)_lastDevX, (float)_lastDevY, _formOx, _formOy, _placeScale, _placeShown));
             foreach (SWF.Control c in Flatten(_container)) c.Invalidate(true);
             SWF.Application.DoEvents();
         }
 
         private void Detach()
         {
+            if (_placeShown)
+            {
+                _placeShown = false;
+                SWF.EmbeddedScenes.RaisePlacementChanged(_container);   // an overlay must not outlive its host on screen
+            }
+
             Tick emptied = null;
             lock (s_lock)
             {
@@ -899,14 +917,25 @@ namespace System.Windows.Forms.Integration
 
             // One pump per UI thread: this is what advances WinForms layout, paints, timers and the
             // caret blink. The driver's queues are per thread, so it pumps this thread's controls.
+            // DoEvents only drains the queue: WinForms timers are fired by the driver's own message
+            // loop, which a WPF app never runs, so without this a hosted control's Timer never
+            // ticked (WebBrowser and WebView2 watch their engine start-up with one). Due timers
+            // only, and this thread's only: the list is shared by every UI thread.
+            XplatUIWebGpu.GetInstance()?.TickTimers(callingThreadOnly: true);
             SWF.Application.DoEvents();
 
             var items = new List<EmbeddedItem>();
+            // Popups are top-level windows of the driver with no host of their own: they go to the
+            // host the user is working in -- the focused one, else the last one clicked.
+            WindowsFormsHost popupHost = null;
+            foreach (WindowsFormsHost h in hosts) if (h.IsKeyboardFocusWithin) popupHost = h;
+            if (popupHost == null && tick.LastInputHost != null && Array.IndexOf(hosts, tick.LastInputHost) >= 0) popupHost = tick.LastInputHost;
+            popupHost ??= hosts.Length > 0 ? hosts[0] : null;
             WindowsFormsHost caretHost = null;
             bool moved = false;
             foreach (WindowsFormsHost h in hosts)
             {
-                if (h.Collect(items)) moved = true;
+                if (h.Collect(items, ReferenceEquals(h, popupHost))) moved = true;
                 // The driver has ONE caret, belonging to whatever has focus; mapping it through the
                 // wrong host's origin would place it in the wrong window. Keyboard focus is what
                 // identifies the right one -- with a single host, it is that host by elimination.
@@ -916,8 +945,9 @@ namespace System.Windows.Forms.Integration
             {
                 if (src.Collect(items)) moved = true;
             }
-            EmbeddedContent.Set(items);
-            caretHost?.PublishCaret();
+            EmbeddedContent.Set(tick, items);
+            if (caretHost != null) caretHost.PublishCaret(tick);
+            else EmbeddedContent.SetCaret(tick, IntPtr.Zero, 0, 0, 0, 0, false);
 
             // Present-on-change: a WPF frame is only worth forcing when the hosted pixels actually
             // changed (a control repainted) or a host moved under them (a scroll or a splitter drag).
@@ -935,9 +965,13 @@ namespace System.Windows.Forms.Integration
 
         /// <summary>Add this host's window scenes, placed at its device rect. Returns true when that
         /// rect changed since the previous frame.</summary>
-        private bool Collect(List<EmbeddedItem> into)
+        private bool Collect(List<EmbeddedItem> into, bool withPopups)
         {
-            if (_driver == null || !IsVisible) return false;
+            if (_driver == null || !IsVisible)
+            {
+                if (_placeShown) { _placeShown = false; SWF.EmbeddedScenes.RaisePlacementChanged(_container); }
+                return false;
+            }
 
             PresentationSource src = PresentationSource.FromVisual(this);
             if (src?.CompositionTarget == null || src.RootVisual == null) return false;
@@ -949,8 +983,14 @@ namespace System.Windows.Forms.Integration
 
             float hostDevX = (float)(origin.X * dpi), hostDevY = (float)(origin.Y * dpi);
 
-            long[] wins = _driver.GetPresentWindows(_container.Handle);
+            // This host's own windows, and the popups (drop-downs, menus, tooltips) when it is the
+            // host they belong to. GetPresentWindows hands back EVERY visible window in the
+            // driver, so each host drew every other host's controls -- and the forms of anything
+            // else presenting WinForms -- at its own origin: two hosts on a page showed each
+            // other's controls stacked on top of their own.
+            long[] wins = _driver.GetSubtreeWindows(_container.Handle);
             if (wins == null || wins.Length < 3) return false;
+            if (withPopups) wins = AppendPopups(wins);
             int ox = (int)wins[1], oy = (int)wins[2];
             _formOx = ox; _formOy = oy;             // input mapping uses the same origin
 
@@ -992,15 +1032,40 @@ namespace System.Windows.Forms.Integration
                       || _lastDevW != RenderSize.Width || _lastDevH != RenderSize.Height;
             _lastDevX = hostDevX; _lastDevY = hostDevY;
             _lastDevW = RenderSize.Width; _lastDevH = RenderSize.Height;
+
+            IntPtr window = (src as HwndSource)?.Handle ?? IntPtr.Zero;
+            if (moved || window != _placeWindow || !_placeShown || _placeScale != (float)dpi)
+            {
+                _placeWindow = window; _placeScale = (float)dpi; _placeShown = true;
+                SWF.EmbeddedScenes.RaisePlacementChanged(_container);
+            }
             return moved;
+        }
+
+        /// <summary><paramref name="own"/> followed by every visible popup window of the driver
+        /// that is not already in it, as {handle, screenX, screenY} triples.</summary>
+        private long[] AppendPopups(long[] own)
+        {
+            long[] all = _driver.GetPresentWindows(_container.Handle);
+            if (all == null) return own;
+            var mine = new HashSet<long>();
+            for (int i = 0; i + 2 < own.Length; i += 3) mine.Add(own[i]);
+            List<long> result = null;
+            for (int i = 0; i + 2 < all.Length; i += 3)
+            {
+                if (mine.Contains(all[i]) || !_driver.IsPopupWindow((IntPtr)all[i])) continue;
+                result ??= new List<long>(own);
+                result.Add(all[i]); result.Add(all[i + 1]); result.Add(all[i + 2]);
+            }
+            return result?.ToArray() ?? own;
         }
 
         /// <summary>Place the driver's text caret in device pixels, on top of the hosted scenes. The
         /// recorded scenes do not contain it: WinForms drives it out of band through
         /// CreateCaret/SetCaretPos, and its blink is advanced by the pump above.</summary>
-        private void PublishCaret()
+        private void PublishCaret(object owner)
         {
-            if (_driver == null) { EmbeddedContent.SetCaret(IntPtr.Zero, 0, 0, 0, 0, false); return; }
+            if (_driver == null) { EmbeddedContent.SetCaret(owner, IntPtr.Zero, 0, 0, 0, 0, false); return; }
 
             PresentationSource src = PresentationSource.FromVisual(this);
             if (src?.CompositionTarget == null || src.RootVisual == null) return;
@@ -1011,12 +1076,12 @@ namespace System.Windows.Forms.Integration
 
             if (_driver.GetCaret(out int cx, out int cy, out int cw, out int ch))
             {
-                EmbeddedContent.SetCaret((src as HwndSource)?.Handle ?? IntPtr.Zero,
+                EmbeddedContent.SetCaret(owner, (src as HwndSource)?.Handle ?? IntPtr.Zero,
                     (float)(origin.X * dpi) + (cx - _formOx) * (float)dpi,
                     (float)(origin.Y * dpi) + (cy - _formOy) * (float)dpi,
                     Math.Max(1, cw) * (float)dpi, ch * (float)dpi, true);
             }
-            else EmbeddedContent.SetCaret(IntPtr.Zero, 0, 0, 0, 0, false);
+            else EmbeddedContent.SetCaret(owner, IntPtr.Zero, 0, 0, 0, 0, false);
         }
 
         private static IEnumerable<SWF.Control> Flatten(SWF.Control c)

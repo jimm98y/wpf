@@ -103,6 +103,26 @@ namespace MS.Internal.Interop.WebView
             {
                 Win32.Move(window, x, y, Math.Max(1, width), Math.Max(1, height));
             }
+
+            if (window != IntPtr.Zero && OperatingSystem.IsBrowser())
+            {
+                // There is no window to move: the iframe is the engine's whole view. Remember where
+                // the "window" would be, and the backend adds it to the engine bounds it is given
+                // (which a WinForms control gives as 0,0 -- filling its host window, as on Windows).
+                // Without this the frame of a WinForms WebBrowser sat at the canvas's top-left
+                // corner whatever the control's position.
+                lock (s_browserParents) s_browserOffsets[window] = (x, y);
+            }
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<IntPtr, (int X, int Y)> s_browserOffsets = new();
+
+        /// <summary>Where <see cref="Move"/> last put a browser overlay key's "window", in device
+        /// pixels within the WPF window (or canvas) it was created in; zero when never moved.</summary>
+        internal static (int X, int Y) BrowserOffsetOf(IntPtr window)
+        {
+            lock (s_browserParents)
+                return s_browserOffsets.TryGetValue(window, out (int, int) offset) ? offset : (0, 0);
         }
 
         /// <summary>
@@ -113,7 +133,11 @@ namespace MS.Internal.Interop.WebView
         {
             if (window != IntPtr.Zero && OperatingSystem.IsBrowser())
             {
-                lock (s_browserParents) s_browserParents.Remove(window);
+                lock (s_browserParents)
+                {
+                    s_browserParents.Remove(window);
+                    s_browserOffsets.Remove(window);
+                }
             }
 
             if (window != IntPtr.Zero && OperatingSystem.IsWindows())

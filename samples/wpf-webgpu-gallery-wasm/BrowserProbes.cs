@@ -264,6 +264,117 @@ internal static class BrowserProbes
             Console.WriteLine($"PROBE wv2Script result={r}");
         });
 
+        // ---- WinForms' WebBrowser and WebView2, inside a WindowsFormsHost ----
+        // Their iframes must follow the WinForms control within the host, the host within the WPF
+        // window, and the visibility of both.
+        var wfWebPanel = new SWF.Panel { Width = 640, Height = 90, BackColor = System.Drawing.Color.FromArgb(0xF0, 0xE6, 0xD8) };
+        wfWebPanel.Controls.Add(new SWF.Label { Text = "WinForms web:", Left = 4, Top = 36, Width = 100 });
+        var wfWeb = new SWF.WebBrowser { Left = 110, Top = 2, Width = 250, Height = 86 };
+        var wfWv2 = new Microsoft.Web.WebView2.WinForms.WebView2 { Left = 370, Top = 2, Width = 266, Height = 86 };
+        wfWebPanel.Controls.Add(wfWeb);
+        wfWebPanel.Controls.Add(wfWv2);
+        var wfWebHost = new System.Windows.Forms.Integration.WindowsFormsHost
+        {
+            Child = wfWebPanel, Width = 640, Height = 90, Margin = new Thickness(0, 6, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        stack.Children.Add(wfWebHost);
+        Add("wfWebLoad", async () =>
+        {
+            wfWeb.DocumentText = "<html><body style='margin:0;background:#cfe8cf;font:14px sans-serif'>" +
+                "<div style='border:3px solid #2a7a2a;height:calc(100vh - 6px);box-sizing:border-box;padding:4px'>WinForms WebBrowser</div></body></html>";
+            await wfWv2.EnsureCoreWebView2Async();
+            wfWv2.NavigateToString("<html><body style='margin:0;background:#e8cfe8;font:14px sans-serif'>" +
+                "<div style='border:3px solid #7a2a7a;height:calc(100vh - 6px);box-sizing:border-box;padding:4px'>WinForms WebView2</div></body></html>");
+            Console.WriteLine($"PROBE wfWebLoad web={wfWeb.Bounds} wv2={wfWv2.Bounds}");
+        });
+        Add("wfWebHide", () =>
+        {
+            wfWeb.Visible = !wfWeb.Visible;
+            Console.WriteLine($"PROBE wfWebHide visible={wfWeb.Visible}");
+            return Task.CompletedTask;
+        });
+        Add("wfWebMove", () =>
+        {
+            bool moved = wfWeb.Left != 110;
+            wfWeb.SetBounds(moved ? 110 : 150, moved ? 2 : 20, moved ? 250 : 180, moved ? 86 : 60);
+            Console.WriteLine($"PROBE wfWebMove bounds={wfWeb.Bounds}");
+            return Task.CompletedTask;
+        });
+        Add("wfHostHide", () =>
+        {
+            wfWebHost.Visibility = wfWebHost.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+            Console.WriteLine($"PROBE wfHostHide visibility={wfWebHost.Visibility}");
+            return Task.CompletedTask;
+        });
+        Add("wfHostMove", () =>
+        {
+            wfWebHost.Margin = new Thickness(wfWebHost.Margin.Left == 0 ? 60 : 0, 6, 0, 0);
+            Console.WriteLine($"PROBE wfHostMove margin={wfWebHost.Margin.Left}");
+            return Task.CompletedTask;
+        });
+
+        // ---- RenderTargetBitmap: the readback is a Promise here ----
+        var rtbRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
+        var rtbImage = new Image { Width = 200, Height = 60, Stretch = Stretch.Fill };
+        var rtbSample = new Border
+        {
+            Width = 200, Height = 60,
+            Background = new LinearGradientBrush(Colors.OrangeRed, Colors.SteelBlue, 0),
+            Child = new TextBlock { Text = "RTB source", FontSize = 20, Foreground = Brushes.White, Margin = new Thickness(8) },
+        };
+        rtbRow.Children.Add(rtbSample);
+        rtbRow.Children.Add(new TextBlock { Text = " -> ", VerticalAlignment = VerticalAlignment.Center });
+        rtbRow.Children.Add(new Border { BorderBrush = Brushes.Gray, BorderThickness = new Thickness(1), Child = rtbImage });
+        stack.Children.Add(rtbRow);
+        static string Census(System.Windows.Media.Imaging.RenderTargetBitmap rtb)
+        {
+            var px = new byte[rtb.PixelWidth * rtb.PixelHeight * 4];
+            rtb.CopyPixels(px, rtb.PixelWidth * 4, 0);
+            long opaque = 0;
+            for (int i = 3; i < px.Length; i += 4) if (px[i] != 0) opaque++;
+            int c = (10 * rtb.PixelWidth + 10) * 4;
+            return $"opaque={opaque}/{px.Length / 4} px(10,10)=B{px[c]},G{px[c + 1]},R{px[c + 2]},A{px[c + 3]}";
+        }
+        static System.Windows.Media.Imaging.RenderTargetBitmap NewRtb()
+            => new System.Windows.Media.Imaging.RenderTargetBitmap(200, 60, 96, 96, PixelFormats.Pbgra32);
+        Add("rtbSync", async () =>
+        {
+            // What existing code does: Render, then read straight away. On this head the read sees
+            // the previous contents; the Image still updates when the pixels land.
+            var rtb = NewRtb();
+            rtb.Render(rtbSample);
+            Console.WriteLine($"PROBE rtbSync immediately {Census(rtb)}");
+            rtbImage.Source = rtb;
+            await Task.Delay(500);
+            Console.WriteLine($"PROBE rtbSync later {Census(rtb)}");
+        });
+        Add("rtbAsync", async () =>
+        {
+            var rtb = NewRtb();
+            await rtb.RenderAsync(rtbSample);
+            Console.WriteLine($"PROBE rtbAsync awaited {Census(rtb)}");
+            var enc = new System.Windows.Media.Imaging.PngBitmapEncoder();
+            enc.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(rtb));
+            using var ms = new System.IO.MemoryStream();
+            enc.Save(ms);
+            Console.WriteLine($"PROBE rtbAsync png={ms.Length} bytes");
+            rtbImage.Source = rtb;
+        });
+        Add("rtbTwice", async () =>
+        {
+            // A second Render before the first readback lands: the later one wins, and awaiting
+            // the earlier one still ends with the bitmap rendered.
+            var rtb = NewRtb();
+            Task first = rtb.RenderAsync(rtbSample);
+            Task second = rtb.RenderAsync(rtbSample);
+            await first;
+            Console.WriteLine($"PROBE rtbTwice first {Census(rtb)} secondDone={second.IsCompleted}");
+            await second;
+            rtb.Clear();
+            Console.WriteLine($"PROBE rtbTwice cleared {Census(rtb)}");
+        });
+
         // Tell the driver where everything is, once layout has placed it.
         var announce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1500) };
         announce.Tick += (s, e) =>

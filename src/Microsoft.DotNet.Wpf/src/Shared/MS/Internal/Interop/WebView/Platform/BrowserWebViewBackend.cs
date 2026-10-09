@@ -177,7 +177,10 @@ namespace MS.Internal.Interop.WebView
         {
             if (_attached)
             {
-                Js.SetBounds(_handle, x, y, width, height, scale);
+                // Relative to the host "window", wherever WebViewHostWindow.Move put it (WinForms
+                // moves it; WPF positions the control's rect directly and never moves it).
+                (int ox, int oy) = WebViewHostWindow.BrowserOffsetOf((IntPtr)_handle);
+                Js.SetBounds(_handle, ox + x, oy + y, width, height, scale);
             }
         }
 

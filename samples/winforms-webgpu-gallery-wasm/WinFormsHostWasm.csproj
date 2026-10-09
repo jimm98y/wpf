@@ -90,6 +90,8 @@
        static-web-asset discovery or the integrity hashes go stale. -->
   <Target Name="CopyInteropJs" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
     <Copy SourceFiles="..\..\src\Microsoft.DotNet.Wpf\src\WgpuInterop\Browser\wgpu-interop.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+    <!-- The iframe backend of WinForms' WebBrowser (module wpfBrowserWebView), as in the WPF gallery. -->
+    <Copy SourceFiles="..\..\sdk\WpfWebGpu.Sdk\web\browser-webview.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
   </Target>
 
   <ItemGroup>

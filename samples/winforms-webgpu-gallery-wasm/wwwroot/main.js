@@ -1,6 +1,7 @@
 import { dotnet } from './_framework/dotnet.js'
 import * as wgpuInterop from './wgpu-interop.js'
 import * as winformsInterop from './winforms-interop.js'
+import * as wpfBrowserWebView from './browser-webview.js'
 
 const status = document.getElementById('wf-status');
 const FONTS = ['LiberationSans-Regular.ttf'];
@@ -10,6 +11,7 @@ try {
     //   ?damage=0        every frame in full (WGPU_DAMAGE=0) -- the A/B for partial redraw
     //   ?damageverify    render each frame partial AND full and log every differing pixel
     //   ?damagetrace     log each frame's damage rectangles
+    //   ?args=web        add a WebBrowser (an <iframe> over the canvas) to the demo form
     //   ?env=NAME=V,...  any other variable
     const params = new URLSearchParams(location.search);
     let builder = dotnet
@@ -22,12 +24,15 @@ try {
         const eq = kv.indexOf('=');
         if (eq > 0) builder = builder.withEnvironmentVariable(kv.slice(0, eq), kv.slice(eq + 1));
     }
+    const args = params.get('args');
+    if (args) builder = builder.withApplicationArguments(...args.split(','));
     const runtime = await builder.create();
     const { setModuleImports, runMain, Module } = runtime;
     globalThis.__wpfFS = Module.FS;
 
     setModuleImports('wgpuInterop', wgpuInterop);
     setModuleImports('winformsInterop', winformsInterop);
+    setModuleImports('wpfBrowserWebView', wpfBrowserWebView);
 
     // Mount fonts into the wasm VFS where our TextMetrics / WgpuPresenter scan (/fonts).
     status.innerText = 'loading fonts…';

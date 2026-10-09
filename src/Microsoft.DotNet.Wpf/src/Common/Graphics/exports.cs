@@ -171,6 +171,15 @@ namespace System.Windows.Media.Composition
         byte[] ReadbackTarget(int channelId, uint targetHandle);
 
         /// <summary>
+        /// <see cref="ReadbackTarget"/> for a backend whose GPU readback cannot block (the browser:
+        /// WebGPU maps a buffer only through a Promise, and the page's one thread cannot wait for
+        /// it). The target is rendered before this returns -- what the pixels show is fixed at the
+        /// call -- and the task completes when they are back on the CPU. Backends with a blocking
+        /// readback return an already completed task.
+        /// </summary>
+        System.Threading.Tasks.Task<byte[]> ReadbackTargetAsync(int channelId, uint targetHandle);
+
+        /// <summary>
         /// The back channel: reports the last present so WPF can pace itself against the display.
         /// Returns false when nothing is pending.
         /// </summary>
@@ -473,6 +482,9 @@ namespace System.Windows.Media.Composition
 
                 public byte[] ReadbackTarget(int channelId, uint targetHandle)
                     => IsDisposed ? null : _impl.ReadbackTarget(channelId, targetHandle);
+
+                public System.Threading.Tasks.Task<byte[]> ReadbackTargetAsync(int channelId, uint targetHandle)
+                    => IsDisposed ? System.Threading.Tasks.Task.FromResult<byte[]>(null) : _impl.ReadbackTargetAsync(channelId, targetHandle);
 
                 public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime)
                 {
@@ -793,6 +805,8 @@ namespace System.Windows.Media.Composition
             public void Commit(int channelId) { }
             public void SyncFlush(int channelId) { }
             public byte[] ReadbackTarget(int channelId, uint targetHandle) => null;
+            public System.Threading.Tasks.Task<byte[]> ReadbackTargetAsync(int channelId, uint targetHandle)
+                => System.Threading.Tasks.Task.FromResult<byte[]>(null);
 
             public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime)
             {
@@ -832,6 +846,7 @@ namespace System.Windows.Media.Composition
             private readonly Action<int> _commit;
             private readonly Action<int> _syncFlush;
             private readonly Func<int, uint, byte[]> _readbackTarget;
+            private readonly Func<int, uint, System.Threading.Tasks.Task<byte[]>> _readbackTargetAsync;   // optional
             private readonly TryDequeuePresentedFn _tryDequeuePresented;
 
             internal ReflectionMilCompositionSink(object impl)
@@ -851,6 +866,9 @@ namespace System.Windows.Media.Composition
                 _commit = Bind<Action<int>>(impl, t, "Commit");
                 _syncFlush = Bind<Action<int>>(impl, t, "SyncFlush");
                 _readbackTarget = Bind<Func<int, uint, byte[]>>(impl, t, "ReadbackTarget");
+                // Optional: a backend without it reads back synchronously, wrapped in a done task.
+                if (t.GetMethod("ReadbackTargetAsync") != null)
+                    _readbackTargetAsync = Bind<Func<int, uint, System.Threading.Tasks.Task<byte[]>>>(impl, t, "ReadbackTargetAsync");
                 _tryDequeuePresented = Bind<TryDequeuePresentedFn>(impl, t, "TryDequeuePresented");
             }
 
@@ -913,6 +931,11 @@ namespace System.Windows.Media.Composition
             public void SyncFlush(int channelId) => _syncFlush(channelId);
 
             public byte[] ReadbackTarget(int channelId, uint targetHandle) => _readbackTarget(channelId, targetHandle);
+
+            public System.Threading.Tasks.Task<byte[]> ReadbackTargetAsync(int channelId, uint targetHandle) =>
+                _readbackTargetAsync != null
+                    ? _readbackTargetAsync(channelId, targetHandle)
+                    : System.Threading.Tasks.Task.FromResult(_readbackTarget(channelId, targetHandle));
 
             public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime) =>
                 _tryDequeuePresented(channelId, out windowHandle, out presentationTime);
@@ -1358,6 +1381,15 @@ namespace System.Windows.Media.Composition
             /// </summary>
             internal byte[] ReadbackTarget(DUCE.ResourceHandle targetHandle) =>
                 _sink?.ReadbackTarget(_managedId, (uint)targetHandle);
+
+            /// <summary>
+            /// Managed composition only: <see cref="ReadbackTarget"/> for a backend that cannot
+            /// block on its readback (see <see cref="IMilCompositionSink.ReadbackTargetAsync"/>).
+            /// The target is rendered before this returns.
+            /// </summary>
+            internal System.Threading.Tasks.Task<byte[]> ReadbackTargetAsync(DUCE.ResourceHandle targetHandle) =>
+                _sink?.ReadbackTargetAsync(_managedId, (uint)targetHandle)
+                ?? System.Threading.Tasks.Task.FromResult<byte[]>(null);
 
             /// <summary>
             /// Internal only: CreateOrAddRefOnChannel addrefs the resource corresponding to the

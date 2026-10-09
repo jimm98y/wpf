@@ -58,6 +58,10 @@ namespace Microsoft.Web.WebView2.WinForms
         {
             // The engine cannot exist before the host's real window does. In a WinForms app that
             // window is created by the host as the form comes up, which may be after this control.
+            // A form presented by something else (WindowsFormsHost, the browser head) is placed
+            // through EmbeddedScenes instead, which says when it moves or appears.
+            EmbeddedScenes.PlacementChanged += OnPlacementChanged;
+
             if (EmbeddedScenes.HostWindow != IntPtr.Zero)
             {
                 BeginInitialize();
@@ -65,6 +69,24 @@ namespace Microsoft.Web.WebView2.WinForms
             else
             {
                 EmbeddedScenes.HostWindowReady += OnHostWindowReady;
+            }
+        }
+
+        private void OnPlacementChanged(Control topLevel)
+        {
+            // Only this control's own form: presenters on other UI threads raise this too.
+            if (_disposed || !EmbeddedScenes.IsWithin(this, topLevel))
+            {
+                return;
+            }
+
+            if (_host is null)
+            {
+                BeginInitialize();
+            }
+            else
+            {
+                UpdateEngineBounds();
             }
         }
 
@@ -153,12 +175,13 @@ namespace Microsoft.Web.WebView2.WinForms
         {
             // Nothing to do yet if the host's window has not been published; the HostWindowReady
             // subscription in the constructor brings us back here when it is.
-            if (_ready is not null || _disposed || EmbeddedScenes.HostWindow == IntPtr.Zero)
+            if (_ready is not null || _disposed || _initialized.Task.IsCompleted
+                || !EmbeddedScenes.TryPlace(this, out IntPtr parentWindow, out _, out _, out _))
             {
                 return;
             }
 
-            _host = CoreWebView2Host.Create(EmbeddedScenes.HostWindow,
+            _host = CoreWebView2Host.Create(parentWindow,
                                             Math.Max(1, Width), Math.Max(1, Height));
 
             if (_host is null)
@@ -259,7 +282,7 @@ namespace Microsoft.Web.WebView2.WinForms
         protected override void OnVisibleChanged(EventArgs e)
         {
             base.OnVisibleChanged(e);
-            _host?.SetVisible(Visible);
+            UpdateEngineBounds();
         }
 
         protected override void OnParentChanged(EventArgs e)
@@ -273,11 +296,12 @@ namespace Microsoft.Web.WebView2.WinForms
         /// </summary>
         /// <remarks>
         /// The control's own coordinates are in the driver's form space; the engine's window is a
-        /// child of the HOST's window, so the position has to be walked up the control tree to the
-        /// form and then scaled to device pixels. This is the same translation ElementHost performs
-        /// for a hosted WPF tree, and it has to run on every move, resize and reparent -- a WinForms
-        /// control can be scrolled by its container without either event firing on the control
-        /// itself, which is why OnParentChanged is included.
+        /// child of the native window the form is presented in, so EmbeddedScenes maps the rectangle
+        /// there, in device pixels -- walking up to the form for the driver's own host, through the
+        /// presenter's registered placement for a form shown inside WPF or on a browser canvas. It
+        /// has to run on every move, resize and reparent -- a WinForms control can be scrolled by its
+        /// container without either event firing on the control itself, which is why
+        /// OnParentChanged is included -- and whenever the presenter itself moves.
         /// </remarks>
         private void UpdateEngineBounds()
         {
@@ -286,19 +310,13 @@ namespace Microsoft.Web.WebView2.WinForms
                 return;
             }
 
-            Point origin = Point.Empty;
-
-            for (Control c = this; c is not null && c is not Form; c = c.Parent)
+            if (!EmbeddedScenes.TryPlace(this, out _, out Rectangle device, out float scale, out bool shown))
             {
-                origin.Offset(c.Left, c.Top);
+                return;
             }
 
-            float scale = EmbeddedScenes.HostScale <= 0 ? 1f : EmbeddedScenes.HostScale;
-
-            _host.Move((int)Math.Round(origin.X * scale),
-                       (int)Math.Round(origin.Y * scale),
-                       (int)Math.Round(Width * scale),
-                       (int)Math.Round(Height * scale));
+            _host.Move(device.X, device.Y, device.Width, device.Height, scale);
+            _host.SetVisible(Visible && shown);
         }
 
         // ---- navigation --------------------------------------------------------------------------------
@@ -395,6 +413,7 @@ namespace Microsoft.Web.WebView2.WinForms
             {
                 _disposed = true;
                 EmbeddedScenes.HostWindowReady -= OnHostWindowReady;
+                EmbeddedScenes.PlacementChanged -= OnPlacementChanged;
 
                 _host?.Dispose();
                 _host = null;

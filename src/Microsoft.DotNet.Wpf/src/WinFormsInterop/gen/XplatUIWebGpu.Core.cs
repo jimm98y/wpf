@@ -1141,22 +1141,28 @@ namespace System.Windows.Forms
 		// pumps; ours has a managed one, so this is a list and a clock.
 
 		private readonly List<Timer> timers = new List<Timer>();
+		// The thread that enabled each timer. A WPF UI thread pumping its hosted controls fires only
+		// its own (TickTimers(callingThreadOnly: true)); the list is shared by every thread.
+		private readonly Dictionary<Timer, int> timerThreads = new Dictionary<Timer, int>();
 
 		internal override void SetTimer(Timer timer)
 		{
-			lock (timers) { if (!timers.Contains(timer)) timers.Add(timer); }
+			lock (timers) { if (!timers.Contains(timer)) timers.Add(timer); timerThreads[timer] = Environment.CurrentManagedThreadId; }
 		}
 
 		internal override void KillTimer(Timer timer)
 		{
-			lock (timers) timers.Remove(timer);
+			lock (timers) { timers.Remove(timer); timerThreads.Remove(timer); }
 		}
 
 		/// <summary>Fire every timer whose deadline has passed, and return the shortest wait until the
 		/// next one is due (or -1 when none are). Ticks run OUTSIDE the lock: a handler is arbitrary
 		/// app code and routinely starts or stops timers.</summary>
-		internal int TickTimers()
+		internal int TickTimers() => TickTimers(callingThreadOnly: false);
+
+		internal int TickTimers(bool callingThreadOnly)
 		{
+			int me = Environment.CurrentManagedThreadId;
 			Timer[] due = null;
 			int count = 0;
 			long now = Timer.StopWatchNowMilliseconds;
@@ -1166,6 +1172,7 @@ namespace System.Windows.Forms
 				if (timers.Count == 0) return -1;
 				foreach (Timer t in timers)
 				{
+					if (callingThreadOnly && timerThreads.TryGetValue(t, out int owner) && owner != me) continue;
 					long remaining = t.Expires - now;
 					if (remaining <= 0)
 					{

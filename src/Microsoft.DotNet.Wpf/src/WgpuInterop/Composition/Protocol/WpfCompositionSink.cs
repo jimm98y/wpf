@@ -433,6 +433,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
         }
 
+        /// <summary>
+        /// <see cref="ReadbackTarget"/> without blocking on the readback. The target is rendered
+        /// before this returns; the task completes when the pixels are on the CPU. Only the
+        /// browser needs that -- its readback is a Promise, and the page's single thread cannot
+        /// wait for it -- so everywhere else this is the synchronous readback, already done.
+        /// </summary>
+        public System.Threading.Tasks.Task<byte[]?> ReadbackTargetAsync(int channelId, uint targetHandle)
+        {
+#if WGPU_BROWSER
+            return ReadbackTargetBrowserAsync(targetHandle);
+#else
+            return System.Threading.Tasks.Task.FromResult(ReadbackTarget(channelId, targetHandle));
+#endif
+        }
+
         // ---- presentation ------------------------------------------------------------
 
         /// <summary>Render and present every target that has a window and a root visual.</summary>

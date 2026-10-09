@@ -54,8 +54,33 @@ internal sealed class BrowserHost : IWinFormsHost
         var bc = _form.BackColor;
         _wgpu.ClearColor = new RgbaColor(SrgbToLinear(bc.R / 255f), SrgbToLinear(bc.G / 255f), SrgbToLinear(bc.B / 255f), 1f);
         Console.WriteLine($"BrowserHost: canvas={handle} surface=0x{surface:x} scale={scale}");
+        _canvas = handle; _scale = (float)scale;
+        PublishPlacement();
         Present();
     }
+
+    private int _canvas;
+    private float _scale = 1f;
+    private int _formOx, _formOy;
+
+    // Tell the controls that put a native overlay over themselves (WebBrowser's <iframe>) where
+    // this form is: on canvas _canvas, its window's top-left (frame included) at the canvas origin.
+    // The seam is internal to System.Windows.Forms, as the driver's methods above are.
+    private void PublishPlacement()
+    {
+        Type es = typeof(Control).Assembly.GetType("System.Windows.Forms.EmbeddedScenes");
+        Type placementType = es?.GetNestedType("Placement", BindingFlags.NonPublic);
+        if (placementType == null) { Console.WriteLine("BrowserHost: no EmbeddedScenes placement seam"); return; }
+        long[] wins = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+        if (wins.Length >= 3) { _formOx = (int)wins[1]; _formOy = (int)wins[2]; }
+        Delegate placement = Delegate.CreateDelegate(placementType, this,
+            typeof(BrowserHost).GetMethod(nameof(PlacementNow), BindingFlags.NonPublic | BindingFlags.Instance));
+        es.GetMethod("SetPlacement", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { _form, placement });
+        es.GetMethod("PublishHostWindow", BindingFlags.NonPublic | BindingFlags.Static).Invoke(null, new object[] { (IntPtr)_canvas, _scale });
+    }
+
+    private (IntPtr, float, float, int, int, float, bool) PlacementNow()
+        => ((IntPtr)_canvas, 0f, 0f, _formOx, _formOy, _scale, _form.Visible);
 
     public void Present()
     {

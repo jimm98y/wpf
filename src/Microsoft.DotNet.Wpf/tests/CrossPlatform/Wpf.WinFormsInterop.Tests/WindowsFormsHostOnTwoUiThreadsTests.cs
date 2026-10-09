@@ -99,10 +99,10 @@ namespace Wpf.WinFormsInterop.Tests
             Type ec = Assembly.Load("Microsoft.Wpf.Interop.WebGpu")
                 .GetType("Microsoft.Wpf.Interop.WebGpu.Composition.EmbeddedContent", throwOnError: true)!;
             var gate = ec.GetField("s_lock", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
-            var byThread = (IDictionary)ec.GetField("s_byThread", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+            var publishers = (IEnumerable)ec.GetField("s_publishers", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
             lock (gate)
             {
-                return byThread.Values.Cast<object>()
+                return publishers.Cast<object>()
                     .SelectMany(p => ((IEnumerable)p.GetType().GetField("Items")!.GetValue(p)!).Cast<object>())
                     .Select(i => (IntPtr)i.GetType().GetProperty("Window")!.GetValue(i)!)
                     .Distinct()

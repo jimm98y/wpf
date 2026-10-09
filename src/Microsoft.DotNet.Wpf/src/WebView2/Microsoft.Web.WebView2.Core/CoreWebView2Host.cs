@@ -71,11 +71,13 @@ namespace Microsoft.Web.WebView2.Core
 
         internal IntPtr HostWindow => _hostWindow;
 
-        /// <summary>Move the host window within its parent, in device pixels.</summary>
-        internal void Move(int x, int y, int width, int height)
+        /// <summary>Move the host window within its parent, in device pixels; <paramref name="scale"/>
+        /// is the backing scale, which the engines that think in points (WKWebView, the browser's CSS
+        /// pixels) need. It was always 1, so on a 2x display those drew the page at double size.</summary>
+        internal void Move(int x, int y, int width, int height, double scale = 1.0)
         {
             WebViewHostWindow.Move(_hostWindow, x, y, width, height);
-            _backend?.SetBounds(0, 0, Math.Max(1, width), Math.Max(1, height), 1.0);
+            _backend?.SetBounds(0, 0, Math.Max(1, width), Math.Max(1, height), scale);
         }
 
         /// <summary>Size the engine inside a host window someone else positions (the WPF path).</summary>
