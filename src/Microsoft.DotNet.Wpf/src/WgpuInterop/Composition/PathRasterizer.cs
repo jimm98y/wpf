@@ -1690,6 +1690,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     long xmin = (long) gx0 * X, xmax = (long) gx1 * X;
                     long rMin = (ymin + 0x1f) >> 6, rMax = (ymax + 0x20) >> 6;
                     long cMin = (xmin + 0x1f) >> 6, cMax = (xmax + 0x20) >> 6;
+                    // fsc_FillGlyph (dwrite @18007e738, fontdrvhost @140033fa0) clears the scan
+                    // word's stub bit when fsc_MeasureGlyph had to GROW this box by a row or a
+                    // column (GlyphBitMap +10): a feature with no sample in it at all is filled
+                    // to its ends. Arial's '_' at 5 and 6ppem in GDI_CLASSIC (unfitted, INSTCTRL)
+                    // is that bar: its end columns were taken for stubs. WPF_CT_GROWN_STUBS=1
+                    // keeps the stub test there.
+                    if ((rMax == rMin || cMax == cMin) && !s_grownKeepsStubs) stubs = false;
                     if (rMax == rMin) rMax++;
                     if (cMax == cMin) cMax++;
                     int B = (int) Math.Floor(rMin / (double) S), T = (int) Math.Ceiling(rMax / (double) S);
@@ -2279,6 +2286,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private static readonly bool s_boxSubCol =
             Environment.GetEnvironmentVariable("WPF_CT_BOX_SUBCOL") != "0";
+
+        private static readonly bool s_grownKeepsStubs =
+            Environment.GetEnvironmentVariable("WPF_CT_GROWN_STUBS") == "1";
 
         private static readonly bool s_dropClamp =
             Environment.GetEnvironmentVariable("WPF_CT_DROPOUT_CLAMP") != "0";

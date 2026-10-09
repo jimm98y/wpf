@@ -732,6 +732,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 }
                 figures = got;
                 dropout = Math.Max(0, font.GlyphDropout(glyphId, pixelsPerEm));
+                if (Environment.GetEnvironmentVariable("WPF_DBG_GC") is { Length: > 0 } dbg)
+                {
+                    var sb = new System.Text.StringBuilder($"GC gid={glyphId} ppem={pixelsPerEm} dropout={dropout}:");
+                    foreach (PathFigure f in figures) { sb.Append(" | ").Append(f.Start.X * 384).Append(',').Append(f.Start.Y * 64); foreach (PathSegment sg in f.Segments) if (sg is LineSegment l) sb.Append(' ').Append(l.Point.X * 384).Append(',').Append(l.Point.Y * 64); }
+                    System.IO.File.AppendAllText(dbg, sb.ToString() + (char)10);
+                }
                 return true;
             }
             finally

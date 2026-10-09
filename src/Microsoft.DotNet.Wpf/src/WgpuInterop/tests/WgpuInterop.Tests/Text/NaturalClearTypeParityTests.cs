@@ -41,10 +41,12 @@ namespace WgpuInterop.Tests.Text
         /// <summary>GDI_CLASSIC at the sizes the faces' 'gasp' tables (GRIDFIT, SYMMETRIC_GRIDFIT) and
         /// preps (INSTCTRL) decline fitting. DirectWrite reads no gasp bit there (see
         /// TrueTypeFont.GdiClassicFit); before that was modelled these read 281, 300, 291, 231, 56
-        /// and 210 of 564 exact. What is left is single rows of '_' and '-'.</summary>
+        /// and 210 of 564 exact. The single rows of '_' and '-' that were left (25) were the unfitted bars'
+        /// end columns taken for stubs: fsc_FillGlyph clears the stub bit when fsc_MeasureGlyph grew the
+        /// box (PathRasterizer, WPF_CT_GROWN_STUBS). Consolas '*' at 9 is what remains.</summary>
         private static readonly Dictionary<string, int> GdiClassicGaspCeiling = new()
         {
-            ["segoeui"] = 5, ["consola"] = 6, ["tahoma"] = 3, ["arial"] = 2, ["times"] = 5, ["verdana"] = 4,
+            ["segoeui"] = 0, ["consola"] = 1, ["tahoma"] = 0, ["arial"] = 0, ["times"] = 0, ["verdana"] = 0,
         };
 
         private static readonly float[] GaspSizes = { 5f, 6f, 7f, 8f, 9f, 10f };
