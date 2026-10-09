@@ -351,13 +351,22 @@ namespace WgpuInterop.Tests.Text
         /// WPF_NATURAL_SIZES=a,b,... the sizes.</summary>
         [Fact]
         public void ArialArabicCompositesAreDirectWritesTexture()
+            => ArabicComposites(Environment.GetEnvironmentVariable("WPF_NATURAL_FACE") is { Length: > 0 } ff ? ff : "arial",
+                                700, 1400, ArabicCompositeCeiling);
+
+        /// <summary>RATCHET. Tahoma's hamza forms (uni0654/0655) borrow a zero-advance component's
+        /// metrics, so pass one's phantom span is zero and the phase factor is exactly 1
+        /// (TrueTypeInterpreter.BiLevelSpanZero); they differed in GDI_CLASSIC at every size from 14ppem.
+        /// Never raise it.</summary>
+        [Fact]
+        public void TahomaHamzaCompositesAreDirectWritesTexture() => ArabicComposites("tahoma", 1260, 1280, 0);
+
+        private static void ArabicComposites(string file, int lo, int hi, int ceiling)
         {
-            string file = Environment.GetEnvironmentVariable("WPF_NATURAL_FACE") is { Length: > 0 } ff ? ff : "arial";
             string? path = FontPath(file);
             Assert.SkipWhen(path is null, "needs the Windows face and DirectWrite");
             var font = new TrueTypeFont(File.ReadAllBytes(path!));
             IntPtr face = DWriteOracle.FontFace(path!);
-            int lo = 700, hi = 1400;
             if (Environment.GetEnvironmentVariable("WPF_NATURAL_GIDS") is { Length: > 0 } gr)
             { string[] e = gr.Split('-'); lo = int.Parse(e[0]); hi = int.Parse(e[^1]); }
             float[] sizes = Environment.GetEnvironmentVariable("WPF_NATURAL_SIZES") is { Length: > 0 } sz
@@ -397,8 +406,8 @@ namespace WgpuInterop.Tests.Text
                    + string.Join(" ", misses.GroupBy(m => m[..m.IndexOf(':')]).Select(g => $"{g.Key}x{g.Count()}"))
                    + $"; {string.Join(" ", misses.Take(60))}");
             if (Environment.GetEnvironmentVariable("WPF_NATURAL_REPORT") is null)
-                Assert.True(misses.Count <= ArabicCompositeCeiling,
-                    $"{misses.Count} of {total} differ (ceiling {ArabicCompositeCeiling}): {string.Join(" ", misses.Take(40))}");
+                Assert.True(misses.Count <= ceiling,
+                    $"{misses.Count} of {total} differ (ceiling {ceiling}): {string.Join(" ", misses.Take(40))}");
         }
 
         /// <summary>RATCHET. These were 1,838 of 8,088 (sum 554,679) at 18ppem and up, every one a

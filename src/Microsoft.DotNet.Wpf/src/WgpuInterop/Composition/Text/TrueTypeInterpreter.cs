@@ -1958,6 +1958,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// advance phantom in x. See the numerator in ApplyPhaseControl.</summary>
         [ThreadStatic] internal static bool BiLevelPhantomUntouched;
 
+        /// <summary>The phase's span was measured and is zero (see TrueTypeFont.SetPhaseInputs): the
+        /// factor is exactly 1.</summary>
+        [ThreadStatic] internal static bool BiLevelSpanZero;
+
+        private static readonly bool s_spanZeroGate =
+            Environment.GetEnvironmentVariable("WPF_CT_SPAN_ZERO_GATE") != "0";
+
         /// <summary>Whether the last run touched the advance phantom (pp2) in x.</summary>
         internal bool AdvancePhantomTouchedX
             => _realPoints + 1 < _glyphZone.Tags.Length && (_glyphZone.Tags[_realPoints + 1] & TagTouchX) != 0;
@@ -3376,6 +3383,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // comma-below (uni0326) in 'lcommaaccent' unphased where GDI moves it with the rest.
             if (RootLinear64 > 0 && HintDepth > 0) linear = RootLinear64;
             if (linear <= 0 || CompatibleAdvance64 <= 0) return;
+            if (s_spanZeroGate && BiLevelSpanZero && s_phaseNumSpan) return;
             _ctFrac = CompatibleAdvance64 / (float) linear - 1f;
             // GS+0x1d0 is a 16.16 FIXED, not a float, and every phase below is derived from it by
             // integer arithmetic. Carrying it as a float rounded differently from GDI at the last
