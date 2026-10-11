@@ -94,6 +94,17 @@ namespace System.Windows.Media.Imaging
             _dpiY = sourceBitmap._dpiY;
             _format = sourceBitmap._format;
 
+            if (UseManagedBacking)
+            {
+                _managedPixels = (byte[])sourceBitmap._managedPixels?.Clone()
+                    ?? new byte[_pixelWidth * _pixelHeight * 4];
+                _managedStride = _pixelWidth * 4;
+                _isSourceCached = true;
+                _syncObject = _managedPixels;
+                _bitmapInit.EndInit();
+                return;
+            }
+
             //
             // In order to make a deep clone we need to
             // create a new bitmap with the contents of the
@@ -185,11 +196,115 @@ namespace System.Windows.Media.Imaging
         }
 
         /// <summary>
+        /// Renders the specified Visual tree to the BitmapRenderTarget, and completes when the
+        /// rendered pixels are in this bitmap.
+        /// </summary>
+        /// <remarks>
+        /// <para>Wherever the GPU can be read back synchronously -- every head but the browser --
+        /// this is <see cref="Render(Visual)"/> and the returned task has already completed.</para>
+        /// <para>In the browser a GPU readback is a Promise, which the page's single thread cannot
+        /// wait for, so <see cref="Render(Visual)"/> renders the visual immediately (the pixels show
+        /// it as it was at the call) but they reach the CPU only after control returns to the event
+        /// loop. Until then <see cref="BitmapSource.CopyPixels(Int32Rect, Array, int, int)"/>, an
+        /// encoder or a clone see the bitmap's previous contents. On-screen consumers need nothing:
+        /// the bitmap raises <see cref="Freezable.Changed"/> when the pixels land and is redrawn
+        /// with them. Code that reads the pixels should await this method instead.</para>
+        /// </remarks>
+        public System.Threading.Tasks.Task RenderAsync(Visual visual)
+        {
+            Render(visual);
+            return _pendingRender ?? System.Threading.Tasks.Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Managed composition, browser: the render has been submitted and its pixels will be
+        /// read back by <paramref name="pixels"/>. Installs them when they arrive, unless a later
+        /// Render or Clear has replaced this one by then.
+        /// </summary>
+        internal void SetPendingPixels(System.Threading.Tasks.Task<byte[]> pixels)
+        {
+            int generation = ++_renderGeneration;
+            if (pixels.IsCompleted)
+            {
+                _pendingRender = null;
+                SetRenderedPixels(pixels.IsCompletedSuccessfully ? pixels.Result : null);
+                return;
+            }
+            _pendingRender = InstallWhenReadBack(pixels, generation);
+        }
+
+        private async System.Threading.Tasks.Task InstallWhenReadBack(System.Threading.Tasks.Task<byte[]> pixels, int generation)
+        {
+            byte[] px;
+            try
+            {
+                px = await pixels;
+            }
+            catch (Exception)
+            {
+                px = null;        // a failed readback leaves the previous contents, as Render does
+            }
+
+            // No thread hop: the browser has one thread, and the readback resolves on it.
+
+            if (generation != _renderGeneration)
+            {
+                // Superseded by a later Render (or a Clear). Whoever awaits this one wants the
+                // bitmap rendered, so finish with the render that replaced it.
+                System.Threading.Tasks.Task newer = _pendingRender;
+                if (newer != null)
+                {
+                    await newer;
+                }
+                return;
+            }
+
+            _pendingRender = null;
+            SetRenderedPixels(px);
+        }
+
+        /// <summary>
         /// Clears the render target and sets every pixel to black transparent
         /// </summary>
         public void Clear()
         {
+            if (UseManagedBacking)
+            {
+                // A readback still in flight belongs to a render this Clear comes after.
+                _renderGeneration++;
+                _pendingRender = null;
+                if (_managedPixels != null)
+                {
+                    Array.Clear(_managedPixels);
+                }
+                RenderTargetContentsChanged();
+                return;
+            }
+
             HRESULT.Check(MILRenderTargetBitmap.Clear(_renderTargetBitmap));
+            RenderTargetContentsChanged();
+        }
+
+        /// <summary>
+        /// True when this bitmap is backed by a managed pixel buffer instead of a native MIL
+        /// render target (managed composition backend, or any non-Windows platform).
+        /// </summary>
+        private static bool UseManagedBacking =>
+            DUCE.ManagedComposition.IsEnabled || !OperatingSystem.IsWindows();
+
+        /// <summary>
+        /// Managed composition: installs the pixels rendered by the backend (premultiplied
+        /// BGRA32, top-down, PixelWidth*4 stride) as this bitmap's backing and notifies
+        /// consumers. A null result leaves the previous contents in place.
+        /// </summary>
+        internal void SetRenderedPixels(byte[] pixels)
+        {
+            if (pixels != null && pixels.Length == _pixelWidth * _pixelHeight * 4)
+            {
+                _managedPixels = pixels;
+                _managedStride = _pixelWidth * 4;
+                _syncObject = _managedPixels;
+            }
             RenderTargetContentsChanged();
         }
 
@@ -226,6 +341,19 @@ namespace System.Windows.Media.Imaging
         ///
         internal override void FinalizeCreation()
         {
+            // Managed composition (and any platform without native MIL): back the bitmap with a
+            // managed pixel buffer, like CachedBitmap.InitFromMemoryPtr. Render() fills it via a
+            // sync-channel render + GPU readback from the managed backend.
+            if (UseManagedBacking)
+            {
+                _managedPixels = new byte[_pixelWidth * _pixelHeight * 4];
+                _managedStride = _pixelWidth * 4;
+                _isSourceCached = true;
+                _syncObject = _managedPixels;
+                CreationCompleted = true;
+                return;
+            }
+
             try
             {
                 using (FactoryMaker myFactory = new FactoryMaker())
@@ -273,6 +401,11 @@ namespace System.Windows.Media.Imaging
 }
 
         private SafeMILHandle /* IMILRenderTargetBitmap */ _renderTargetBitmap;
+
+        // Browser only: the readback of the latest Render, until its pixels are installed, and
+        // the count that lets a later Render or Clear win over a readback still in flight.
+        private System.Threading.Tasks.Task _pendingRender;
+        private int _renderGeneration;
 }
     #endregion // RenderTargetBitmap
 }

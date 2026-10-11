@@ -3,6 +3,7 @@
 
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 
@@ -107,6 +108,35 @@ namespace Microsoft.Win32
                 tempParentHwnd?.Dispose();
             }
         }
+
+        /// <summary>
+        ///  Shows the dialog without blocking the calling thread, completing when the user answers.
+        /// </summary>
+        /// <remarks>
+        ///  <para>
+        ///   This exists because three of this port's heads cannot implement <see cref="ShowDialog"/>
+        ///   at all. Browser, iOS and Android each run inside a loop the dispatcher does not own -- the
+        ///   JS event loop, UIKit's run loop, Android's Looper -- so a nested dispatcher frame is
+        ///   refused (see Dispatcher.PushFrameImpl) and there is no way for a synchronous call to wait
+        ///   for an answer that arrives in a later callback. Every native picker on those platforms
+        ///   is asynchronous for the same reason. So the API has to be too.
+        ///  </para>
+        ///  <para>
+        ///   It is not a browser/mobile-only API. On Windows, macOS and Linux this runs the ordinary
+        ///   modal dialog and hands back an already-completed task, so one piece of application code
+        ///   awaiting this works on all six heads -- which is the point of having it rather than
+        ///   making callers branch per platform.
+        ///  </para>
+        /// </remarks>
+        /// <returns>
+        ///  True when the user accepted, false when they cancelled, exactly as <see cref="ShowDialog"/>.
+        /// </returns>
+        public virtual Task<bool?> ShowDialogAsync() => Task.FromResult(ShowDialog());
+
+        /// <summary>
+        ///  Shows the dialog without blocking, owned by the given window.
+        /// </summary>
+        public virtual Task<bool?> ShowDialogAsync(Window owner) => Task.FromResult(ShowDialog(owner));
 
         /// <summary>
         ///  Runs a common dialog box, with the owner as the given Window

@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System.Windows.Media.Composition;
@@ -235,7 +235,24 @@ namespace System.Windows.Media.Imaging
                     // update the local palette
                     if (_format.Palettized)
                     {
-                        _palette = Imaging.BitmapPalette.CreateFromBitmapSource(this);
+                        // CreateFromBitmapSource reads the palette off the native
+                        // IWICBitmapSource, and a managed-backed source has none -- consumers key
+                        // off a null handle (see WicSourceHandle). Asking anyway handed a null
+                        // SafeHandle to the P/Invoke:
+                        //
+                        //   System.ArgumentNullException: SafeHandle cannot be null. (Parameter 'pHandle')
+                        //      at BitmapPalette.CreateFromBitmapSource(BitmapSource source)
+                        //      at BitmapSource.get_Palette()
+                        //      at FormatConvertedBitmap.FinalizeCreation()
+                        //
+                        // thrown from inside the render pass, which left the window black. A
+                        // managed source carries whatever palette it was given; there is nothing
+                        // to discover natively.
+                        BitmapSourceSafeMILHandle wicSource = WicSourceHandle;
+                        if (wicSource != null && !wicSource.IsInvalid)
+                        {
+                            _palette = Imaging.BitmapPalette.CreateFromBitmapSource(this);
+                        }
                     }
                 }
 
@@ -567,6 +584,11 @@ namespace System.Windows.Media.Imaging
                 CompleteDelayedCreation();
                 if (_wicSource == null || _wicSource.IsInvalid)
                 {
+                    // The lazy IWICBitmapSource wrapper is COM interop, which does not exist
+                    // off-Windows -- managed-backed sources (_managedPixels) have no native
+                    // identity there and consumers key off a null handle instead.
+                    return _wicSource;
+
                     ManagedBitmapSource managedBitmapSource = new ManagedBitmapSource(this);
                     _wicSource = new BitmapSourceSafeMILHandle(Marshal.GetComInterfaceForObject(
                             managedBitmapSource,
@@ -602,6 +624,16 @@ namespace System.Windows.Media.Imaging
         internal virtual void UpdateCachedSettings()
         {
             EnsureShouldUseVirtuals();
+
+            // Managed-backed bitmap (off-Windows): _format/_pixelWidth/_pixelHeight are already set by the
+            // producer (decoder or a managed transform). There is no native WIC source to query, so the
+            // GetPixelFormat/GetSize/GetResolution calls below would throw -- skip them.
+            if (_managedPixels != null)
+            {
+                if (_dpiX <= 0) _dpiX = 96.0;
+                if (_dpiY <= 0) _dpiY = 96.0;
+                return;
+            }
 
             uint pw, ph;
 
@@ -702,6 +734,14 @@ namespace System.Windows.Media.Imaging
 
             lock (_syncObject)
             {
+                // Managed (off-Windows) backing: copy the requested rect out of the in-memory
+                // buffer instead of calling into WIC.
+                if (_managedPixels != null)
+                {
+                    CopyPixelsFromManagedBuffer(sourceRect, buffer, stride);
+                    return;
+                }
+
                 HRESULT.Check(UnsafeNativeMethods.WICBitmapSource.CopyPixels(
                     WicSourceHandle,
                     ref sourceRect,
@@ -709,6 +749,54 @@ namespace System.Windows.Media.Imaging
                     bufferSize,
                     buffer
                     ));
+            }
+        }
+
+        /// <summary>
+        /// Copies a rectangle of the managed pixel backing (see <see cref="_managedPixels"/>) into
+        /// the destination buffer. Only whole-byte pixel formats are supported (the formats WPF's
+        /// managed composition path uses); the source rect is assumed byte-aligned.
+        /// </summary>
+        private unsafe void CopyPixelsFromManagedBuffer(Int32Rect sourceRect, IntPtr buffer, int stride)
+        {
+            int bitsPerPixel = Format.BitsPerPixel;
+            int rowBytes = checked((sourceRect.Width * bitsPerPixel + 7) / 8);
+            int srcBitX = checked(sourceRect.X * bitsPerPixel);
+            int srcByteX = srcBitX / 8;
+            // For a format narrower than a byte the requested run usually starts PART WAY INTO a
+            // byte -- with 1bpp only every eighth column is byte-aligned -- and copying whole bytes
+            // then hands back a run offset by up to seven pixels. The returned bits have to be
+            // re-packed so the run's first pixel lands in the top bits of the first output byte,
+            // which is where a caller reading the result as a sourceRect.Width-wide bitmap looks.
+            int bitShift = srcBitX % 8;
+
+            byte* dst = (byte*)buffer;
+            for (int row = 0; row < sourceRect.Height; row++)
+            {
+                int srcRow = checked((sourceRect.Y + row) * _managedStride);
+                int srcIndex = checked(srcRow + srcByteX);
+                int dstIndex = checked(row * stride);
+
+                if (bitShift == 0)
+                {
+                    for (int b = 0; b < rowBytes; b++)
+                    {
+                        dst[dstIndex + b] = _managedPixels[srcIndex + b];
+                    }
+                }
+                else
+                {
+                    // Each output byte straddles two source bytes. Bits pulled in past the end of
+                    // the row are beyond the requested width, so reading zero there is harmless.
+                    int rowEnd = Math.Min(srcRow + _managedStride, _managedPixels.Length);
+                    for (int b = 0; b < rowBytes; b++)
+                    {
+                        int si = srcIndex + b;
+                        int high = si < rowEnd ? _managedPixels[si] : 0;
+                        int low = si + 1 < rowEnd ? _managedPixels[si + 1] : 0;
+                        dst[dstIndex + b] = (byte)(((high << bitShift) | (low >> (8 - bitShift))) & 0xFF);
+                    }
+                }
             }
         }
 
@@ -936,12 +1024,84 @@ namespace System.Windows.Media.Imaging
                 // We may end up loading in the bitmap bits so it's necessary to take the sync lock here.
                 lock (_syncObject)
                 {
-                    channel.SendCommandBitmapSource(
-                        _duceResource.GetHandle(channel),
-                        DUCECompatiblePtr
-                        );
+                    if (DUCE.ManagedComposition.IsEnabled)
+                    {
+                        // Cross-platform backend: copy pixels with WPF's managed imaging
+                        // stack and send bytes -- no native IWICBitmapSource COM pointer
+                        // crosses into the backend.
+                        byte[] pixels = CopyPixelsForManagedComposition(out int width, out int height, out int stride);
+                        if (pixels != null)
+                        {
+                            channel.SendCommandBitmapData(
+                                _duceResource.GetHandle(channel),
+                                width, height, stride, pixels);
+                        }
+                    }
+                    else
+                    {
+                        channel.SendCommandBitmapSource(
+                            _duceResource.GetHandle(channel),
+                            DUCECompatiblePtr
+                            );
+                    }
                 }
             }
+        }
+
+        /// <summary>
+        /// Copy this bitmap's pixels into a straight (non-premultiplied) BGRA32 buffer for
+        /// the managed composition backend. Uses only WPF's managed imaging APIs, so the
+        /// cross-platform backend never dereferences a native bitmap pointer. Returns null
+        /// if the bitmap has no pixels.
+        /// </summary>
+        internal byte[] CopyPixelsForManagedComposition(out int width, out int height, out int stride)
+        {
+            width = 0; height = 0; stride = 0;
+
+            // Normalize any source format to the single straight-BGRA32 layout the backend
+            // understands. Pbgra32 (e.g. RenderTargetBitmap) is un-premultiplied in managed code;
+            // FormatConvertedBitmap is native WIC, so it must not be hit for formats that appear
+            // on non-Windows platforms.
+            bool premultiplied = Format == PixelFormats.Pbgra32;
+            bool opaque = Format == PixelFormats.Bgr32;   // alpha byte is undefined; force 255
+            BitmapSource source = (Format == PixelFormats.Bgra32 || premultiplied || opaque)
+                ? this
+                : new FormatConvertedBitmap(this, PixelFormats.Bgra32, null, 0);
+
+            int w = source.PixelWidth;
+            int h = source.PixelHeight;
+            if (w <= 0 || h <= 0)
+            {
+                return null;
+            }
+
+            int rowBytes = checked(w * 4);
+            byte[] pixels = new byte[checked(rowBytes * h)];
+            source.CopyPixels(pixels, rowBytes, 0);
+
+            if (premultiplied)
+            {
+                for (int i = 0; i < pixels.Length; i += 4)
+                {
+                    byte a = pixels[i + 3];
+                    if (a != 0 && a != 255)
+                    {
+                        pixels[i] = (byte)Math.Min(255, (pixels[i] * 255) / a);
+                        pixels[i + 1] = (byte)Math.Min(255, (pixels[i + 1] * 255) / a);
+                        pixels[i + 2] = (byte)Math.Min(255, (pixels[i + 2] * 255) / a);
+                    }
+                }
+            }
+            else if (opaque)
+            {
+                for (int i = 3; i < pixels.Length; i += 4)
+                {
+                    pixels[i] = 255;
+                }
+            }
+
+            width = w; height = h; stride = rowBytes;
+            return pixels;
         }
 
         /// <summary>
@@ -1533,6 +1693,14 @@ namespace System.Windows.Media.Imaging
 
         internal object _syncObject;
         internal bool _isSourceCached;
+
+        // Off-Windows there is no native WIC bitmap to hold pixels. When _managedPixels is non-null
+        // this bitmap is backed by an in-memory buffer instead of a WICBitmapSource: the cached
+        // settings (_format/_pixelWidth/_pixelHeight/_dpi) are populated directly and CopyPixels
+        // reads from this buffer. Used by the managed composition path, which extracts BGRA32 bytes
+        // via CopyPixels rather than dereferencing a COM pointer.
+        internal byte[] _managedPixels;
+        internal int _managedStride;
 
         // Setting this to true causes us to throw away the old DUCECompatiblePtr which contains
         // a cache of the bitmap in video memory. We'll create a new DUCECompatiblePtr and

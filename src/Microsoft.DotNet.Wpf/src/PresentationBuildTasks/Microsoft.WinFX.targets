@@ -395,8 +395,19 @@
         <_DestGeneratedNuGetPropsAndTargets Include="$(BaseIntermediateOutputPath)$(_TemporaryTargetAssemblyProjectName).nuget.dgspec.json"/>
       </ItemGroup>
 
-      <!-- Project assets and nuget.cache files must also be copied if a custom BaseIntermediateOutputPath is set. -->
-      <ItemGroup Condition="'$(IncludePackageReferencesDuringMarkupCompilation)' != 'false' and '$(_InitialBaseIntermediateOutputPath)' != '$(BaseIntermediateOutputPath)'">
+      <!-- Project assets and nuget.cache files must also be copied if a custom BaseIntermediateOutputPath is set.
+
+           The two paths are compared NORMALIZED, because they are not written in the same form: the
+           captured initial value is the SDK's literal default "obj\" (relative, backslash), while
+           BaseIntermediateOutputPath has since been made absolute with the platform's separator. On
+           Windows the raw strings happen to match anyway; off-Windows they never do, so every project
+           looked as if it had a custom intermediate path. The consequence is not a stray copy but a
+           DELETION: these same items are deleted after the markup compile (see the Delete at the end
+           of this target), so building the project removed its own obj/project.assets.json and the
+           next evaluation failed with NETSDK1004 "Assets file not found. Run a NuGet package restore".
+           Backslashes are folded first: off-Windows GetFullPath treats "\" as an ordinary character,
+           so "obj\" would normalize to a directory literally named "obj\" and still not match. -->
+      <ItemGroup Condition="'$(IncludePackageReferencesDuringMarkupCompilation)' != 'false' and '$(_InitialBaseIntermediateOutputPath)' != '' and '$([MSBuild]::NormalizeDirectory($(_InitialBaseIntermediateOutputPath.Replace(`\`,`/`))))' != '$([MSBuild]::NormalizeDirectory($(BaseIntermediateOutputPath)))'">
         <_SourceGeneratedNuGetPropsAndTargets Include="$(MSBuildProjectExtensionsPath)project.assets.json"/>
         <_SourceGeneratedNuGetPropsAndTargets Include="$(MSBuildProjectExtensionsPath)project.nuget.cache"/>
 

@@ -799,6 +799,32 @@ namespace System.Windows
                 {
                 }
 
+                // Theme assemblies (e.g. PresentationFramework.Aero2) ship next to PresentationFramework
+                // but an app that doesn't reference them won't list them in its .deps.json, so the
+                // deps-based Assembly.Load above can't resolve them even though the DLL is deployed in
+                // the app directory. Fall back to loading it by path from the base directory. (On Windows
+                // this rarely triggers because the theme assemblies are part of the WPF runtime pack.)
+                if (assembly == null)
+                {
+                    try
+                    {
+                        string candidate = System.IO.Path.Combine(AppContext.BaseDirectory, assemblyName + ".dll");
+                        if (System.IO.File.Exists(candidate))
+                        {
+                            assembly = Assembly.LoadFrom(candidate);
+                        }
+                    }
+                    catch (FileNotFoundException)
+                    {
+                    }
+                    catch (BadImageFormatException)
+                    {
+                    }
+                    catch (IOException)
+                    {
+                    }
+                }
+
                 // Wires themes KnownTypeHelper
                 if (_assemblyName == PresentationFrameworkName && assembly != null)
                 {
@@ -935,7 +961,14 @@ namespace System.Windows
                     System.Xaml.XamlObjectWriterSettings owSettings = XamlReader.CreateObjectWriterSettingsForBaml();
                     if (assembly != null)
                     {
-                        owSettings.AccessLevel = XamlAccessLevel.AssemblyAccessTo(assembly);
+                        // XamlAccessLevel is type-forwarded to System.Windows.Extensions, whose types
+                        // throw PlatformNotSupportedException off-Windows. System-theme BAML is trusted
+                        // and predominantly instantiates public types, so skip the internals-access grant
+                        // there rather than fail the whole theme dictionary load.
+                        if (System.OperatingSystem.IsWindows())
+                        {
+                            owSettings.AccessLevel = XamlAccessLevel.AssemblyAccessTo(assembly);
+                        }
 
                         AssemblyName asemblyName = new AssemblyName(assembly.FullName);
                         Uri streamUri = null;
@@ -1018,6 +1051,18 @@ namespace System.Windows
         /// </summary>
         private static void EnsureResourceChangeListener()
         {
+            // The resource-change listener is a hidden Win32 window that receives WM_SETTINGCHANGE /
+            // theme / DPI-change broadcasts. Those broadcasts are Windows-only, so off-Windows we
+            // skip creating the window and just keep the (empty) bookkeeping collections non-null;
+            // system-setting change notifications are simply not delivered.
+            if (!OperatingSystem.IsWindows())
+            {
+                _hwndNotify ??= new Dictionary<DpiUtil.HwndDpiInfo, HwndWrapper>();
+                _hwndNotifyHook ??= new Dictionary<DpiUtil.HwndDpiInfo, HwndWrapperHook>();
+                _dpiAwarenessContextAndDpis ??= new List<DpiUtil.HwndDpiInfo>();
+                return;
+            }
+
             // Create a new notify window if we haven't already created any corresponding to ProcessDpiAwarenessContextValue for this thread.
             if (_hwndNotify == null ||
                 _hwndNotifyHook == null ||

@@ -137,6 +137,19 @@ namespace System.Windows.Media.Imaging
             throw new NotImplementedException();
         }
 
+        /// <summary>
+        /// Managed PNG encoding for platforms without native WIC. PNG is single-image, so the
+        /// first frame is encoded; a BitmapFrameEncode is unwrapped to its underlying source
+        /// (the frame itself has no pixel backing off-Windows).
+        /// </summary>
+        internal override bool TryManagedEncode(System.IO.Stream stream)
+        {
+            BitmapFrame frame = Frames[0];
+            BitmapSource source = (frame as BitmapFrameEncode)?._source ?? (BitmapSource)frame;
+            ManagedPngEncoder.Save(source, stream);
+            return true;
+        }
+
         #endregion
 
         #region Data Members

@@ -1849,6 +1849,18 @@ namespace System.Windows.Documents
 
             ITextSelection thisSelection = (ITextSelection)this;
 
+            // Establish a consistent, non-null active state BEFORE the pointer normalization
+            // below. On Windows GetInsertionPosition is a pure pointer operation, but in the
+            // managed (no-PTS) layout path it can synchronously validate layout and raise
+            // TextView.Updated, which re-enters here (caret/selection refresh, undo state
+            // recording) and reads AnchorPosition/MovingPosition. If _anchorPosition were still
+            // null / _movingPositionEdge still None at that moment (with a non-empty selection),
+            // those getters would FailFast. Seeding the fields with valid values first closes
+            // that re-entrancy window; the normalization result overwrites _anchorPosition below.
+            _movingPositionEdge = ConvertToMovingEdge(anchorPosition, movingPosition);
+            _movingPositionDirection = movingPosition.LogicalDirection;
+            _anchorPosition = anchorPosition.GetFrozenPointer(anchorPosition.LogicalDirection);
+
             // Normalize and store new selection anchor position
             _anchorPosition = anchorPosition.GetInsertionPosition(anchorPosition.LogicalDirection);
 
@@ -1861,9 +1873,6 @@ namespace System.Windows.Documents
             {
                 _anchorPosition = thisSelection.End.GetFrozenPointer(_anchorPosition.LogicalDirection);
             }
-
-            _movingPositionEdge = ConvertToMovingEdge(anchorPosition, movingPosition);
-            _movingPositionDirection = movingPosition.LogicalDirection;
         }
 
         // Uses the current selection state to match an ITextPointer to one of the possible
@@ -2469,6 +2478,13 @@ namespace System.Windows.Documents
         /// </returns>
         private static bool IsBidiInputLanguage(CultureInfo cultureInfo)
         {
+            // Off-Windows there is no GetLocaleInfoW font-signature query; use the managed RTL flag
+            // to detect a bidi (Arabic/Hebrew/etc.) input language.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return cultureInfo.TextInfo.IsRightToLeft;
+            }
+
             bool bidiInput;
             string fontSignature;
 

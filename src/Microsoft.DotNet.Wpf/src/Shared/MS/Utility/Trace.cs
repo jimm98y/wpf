@@ -112,7 +112,12 @@ namespace MS.Utility
         {
             Guid providerGuid = new Guid("E13B77A8-14B6-11DE-8069-001B212B5009");
 
-            if (Environment.OSVersion.Version.Major < 6 ||
+            if (!OperatingSystem.IsWindows())
+            {
+                // ETW is a Windows-only facility; use a no-op provider elsewhere.
+                EventProvider = new NullTraceProvider();
+            }
+            else if (Environment.OSVersion.Version.Major < 6 ||
                 IsClassicETWRegistryEnabled())
             {
                 EventProvider = new ClassicTraceProvider();
@@ -126,7 +131,9 @@ namespace MS.Utility
 
         private static bool IsClassicETWRegistryEnabled()
         {
-            string regKey = @"HKEY_CURRENT_USER\Software\Microsoft\Avalon.Graphics\";                
+            // Only reached on Windows (see the OS check in the static constructor); the opt-in
+            // value lives in the Windows registry.
+            string regKey = @"HKEY_CURRENT_USER\Software\Microsoft\Avalon.Graphics\";
             return int.Equals(1, Microsoft.Win32.Registry.GetValue(regKey, "ClassicETW", 0));
         }
     }

@@ -1,0 +1,208 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The WPF Gallery (dotnet/wpf-samples) running on iOS.
+
+    The gallery itself is NOT rebuilt here. It is a XAML app, and its markup is already compiled to
+    BAML inside WPFGallery.dll by its own net10.0 build (via WpfWebGpu.Sdk) - so this head just
+    REFERENCES that assembly and calls its public static App.Main(), exactly as IosSpike references
+    the from-source fork rather than rebuilding it. That keeps markup compilation on the one TFM the
+    SDK supports and leaves this project as pure iOS scaffolding: UIApplication -> scene -> root
+    UIView -> WPF.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-ios</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>true</ImplicitUsings>
+    <!-- 14.0, not the template's 13.0: the vendored libwgpu_native.a is built with minos 14.0. -->
+    <SupportedOSPlatformVersion>14.0</SupportedOSPlatformVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>WpfGalleryIos</AssemblyName>
+    <RootNamespace>WpfGalleryIos</RootNamespace>
+    <!-- The gallery + WPF are full of [Obsolete]/platform-guarded API; this is a host, not a lint target. -->
+    <NoWarn>$(NoWarn);CA1416;CS0618</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+
+    <_Gallery>$(MSBuildThisFileDirectory)../../../WPF-Samples/Sample Applications/WPFGallery/bin/Release/net10.0</_Gallery>
+    <_Art>$(MSBuildThisFileDirectory)../../artifacts/bin</_Art>
+    <_Src>$(MSBuildThisFileDirectory)../../src/Microsoft.DotNet.Wpf/src</_Src>
+  </PropertyGroup>
+
+  <!--
+    Trimming ON, exactly as IosSpike does - and NOT because the app wants it. With linking disabled
+    (MtouchLink=None, and also SdkOnly) the SDK's assembly-gathering step resolves WindowsBase from
+    the iOS RUNTIME PACK, which ships a 16KB type-forwarding facade of that name, instead of the
+    fork's real 1MB assembly; the app then dies at startup with
+        TypeLoadException: expected class 'MS.Internal.Interop.UIKitWindow' in assembly 'WindowsBase'
+    Linking is what makes the REFERENCED assembly win that collision.
+
+    The gallery resolves controls, converters and view-models by NAME out of BAML and through DI, so
+    a trimmer has no static edge to follow. TrimmerRootAssembly keeps a whole assembly, so rooting
+    every assembly that XAML/DI reach by name gives back the "nothing removed" behaviour while still
+    letting the linker settle the duplicate.
+  -->
+  <PropertyGroup>
+    <TrimMode Condition="'$(Configuration)' == 'Release'">full</TrimMode>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <!-- Only assemblies the linker actually processes can be roots: the ones it is told to Skip
+         (the package/interpreted set) fail with IL1035. These are the same roots IosSpike uses,
+         plus the gallery and the XAML/theme assemblies its BAML names at run time. -->
+    <TrimmerRootAssembly Include="WPFGallery" />
+    <TrimmerRootAssembly Include="Microsoft.Wpf.Interop.WebGpu" />
+    <TrimmerRootAssembly Include="PresentationCore" />
+    <!-- Named by a string inside the Fluent theme's BAML, so nothing static points at it. -->
+    <TrimmerRootAssembly Include="System.Windows.Controls.Ribbon" />
+    <!-- Reached by Assembly.Load from PresentationCore, so nothing static points at it either. -->
+    <TrimmerRootAssembly Include="Microsoft.Wpf.DevTools" />
+    <TrimmerRootAssembly Include="PresentationFramework" />
+    <TrimmerRootAssembly Include="PresentationFramework.Fluent" />
+    <TrimmerRootAssembly Include="PresentationFramework.Aero2" />
+    <TrimmerRootAssembly Include="WindowsBase" />
+    <TrimmerRootAssembly Include="System.Xaml" />
+    <!-- Nothing REFERENCES this statically - the gallery's BAML names it - so the trimmer dropped it
+         and pages using behaviors died with FileNotFoundException on Microsoft.Xaml.Behaviors. -->
+    <TrimmerRootAssembly Include="Microsoft.Xaml.Behaviors" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The iOS FLAVOUR of the binding (Wgpu.Library = "__Internal"): iOS cannot load a third-party
+         dylib, so wgpu-native is linked statically and the imports must name the main image. -->
+    <ProjectReference Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/Ios/WgpuInterop.Ios.csproj" />
+  </ItemGroup>
+
+  <!--
+    The gallery and the libraries it needs that are not on NuGet for this TFM, STAGED into lib/.
+    Referencing them straight out of the gallery's output directory does not work: that folder also
+    contains its own copies of WindowsBase/PresentationCore/..., and assembly resolution prefers a
+    sibling of the reference it is resolving - so the fork's WindowsBase lost to the one next door
+    and the app died at startup with
+        TypeLoadException: expected class 'MS.Internal.Interop.UIKitWindow' in assembly 'WindowsBase'
+    (the resolved copy predates that type). lib/ holds ONLY these assemblies, so nothing competes.
+    Refreshed from the gallery build by StageGalleryAssemblies below.
+  -->
+  <ItemGroup>
+    <Reference Include="WPFGallery">              <HintPath>lib/WPFGallery.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Xaml.Behaviors"><HintPath>lib/Microsoft.Xaml.Behaviors.dll</HintPath></Reference>
+    <Reference Include="CommunityToolkit.Mvvm">   <HintPath>lib/CommunityToolkit.Mvvm.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <Target Name="StageGalleryAssemblies" BeforeTargets="ResolveAssemblyReferences"
+          Condition="Exists('$(_Gallery)/WPFGallery.dll')">
+    <Copy SourceFiles="$(_Gallery)/WPFGallery.dll;$(_Gallery)/Microsoft.Xaml.Behaviors.dll;$(_Gallery)/CommunityToolkit.Mvvm.dll"
+          DestinationFolder="$(MSBuildThisFileDirectory)lib" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- Microsoft.Extensions.* (the gallery hosts a generic-host container). Same versions its own
+       csproj pins; these are netstandard/net8.0 packages, so they resolve for net10.0-ios. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+  </ItemGroup>
+
+  <!-- The from-source WPF fork, as built artifacts (Arcade does not participate in the iOS build). -->
+  <ItemGroup>
+    <Reference Include="WindowsBase">                <HintPath>$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath></Reference>
+    <Reference Include="System.Xaml">                <HintPath>$(_Art)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath></Reference>
+    <Reference Include="PresentationCore">           <HintPath>$(_Art)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework">      <HintPath>$(_Art)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath></Reference>
+    <Reference Include="DirectWriteForwarder">       <HintPath>$(_Art)/DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll</HintPath></Reference>
+    <Reference Include="ReachFramework">             <HintPath>$(_Art)/ReachFramework/Release/net10.0/ReachFramework.dll</HintPath></Reference>
+    <Reference Include="PresentationUI">             <HintPath>$(_Art)/PresentationUI/Release/net10.0/PresentationUI.dll</HintPath></Reference>
+    <Reference Include="System.Printing">            <HintPath>$(_Art)/System.Printing.Managed/Release/net10.0/System.Printing.dll</HintPath></Reference>
+    <Reference Include="UIAutomationTypes">          <HintPath>$(_Art)/UIAutomationTypes/Release/net10.0/UIAutomationTypes.dll</HintPath></Reference>
+    <Reference Include="UIAutomationProvider">       <HintPath>$(_Art)/UIAutomationProvider/Release/net10.0/UIAutomationProvider.dll</HintPath></Reference>
+    <!-- Theme dictionaries: the gallery sets ThemeMode.System, which loads the Fluent theme. -->
+    <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath></Reference>
+    <Reference Include="PresentationFramework.Aero2"> <HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath></Reference>
+    <!-- The Fluent theme's BAML names the Ribbon assembly, so it is resolved at parse time even
+         by an app that has no ribbon in it. -->
+    <Reference Include="System.Windows.Controls.Ribbon"><HintPath>$(_Art)/System.Windows.Controls.Ribbon/Release/net10.0/System.Windows.Controls.Ribbon.dll</HintPath></Reference>
+    <!-- The CDP visual-tree inspector. Referenced rather than dropped beside the app: an iOS
+         app is a bundle, and the application directory the bootstrap probes has nothing in it
+         that was not packaged. Costs ~18 KB and starts nothing unless WPF_DEVTOOLS is set. -->
+    <Reference Include="Microsoft.Wpf.DevTools">     <HintPath>$(_Src)/WpfDevTools/bin/Release/net10.0/Microsoft.Wpf.DevTools.dll</HintPath></Reference>
+
+  </ItemGroup>
+
+  <!--
+    The fork's cross-platform Microsoft.Win32.SystemEvents / Microsoft.Win32.Registry shims, the same
+    ones WpfWebGpu.Sdk ships to the desktop and browser heads. The framework copies are throw-only
+    stubs off Windows, and the gallery subscribes to SystemEvents.UserPreferenceChanged from
+    HeaderTile, MainWindow and several pages, so DashboardPage failed to construct with
+        PlatformNotSupportedException: PlatformNotSupported_SystemEvents
+    wrapped in a XamlParseException, and the app came up BLACK. ExcludeAssets=all neutralises the
+    transitive packages (their identity would otherwise win resolution) so ours is the only copy.
+  -->
+  <ItemGroup>
+    <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath></Reference>
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" ExcludeAssets="all" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <!-- Nothing statically reaches the shims' event plumbing; keep them whole like the other roots. -->
+    <TrimmerRootAssembly Include="Microsoft.Win32.SystemEvents" />
+    <TrimmerRootAssembly Include="Microsoft.Win32.Registry" />
+  </ItemGroup>
+
+  <!-- Windows-only assemblies WindowsBase/PresentationCore reference but no iOS path reaches; the
+       REFERENCE assemblies exist only to satisfy mono-aot-cross's "resolve everything" rule. -->
+  <PropertyGroup>
+    <_WinDesktopRef>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/10.0.10/ref/net10.0</_WinDesktopRef>
+    <MtouchInterpreter>System.Windows.Primitives,System.Private.Windows.Core,Accessibility,PresentationUI,ReachFramework,System.Printing,UIAutomationTypes,UIAutomationProvider,System.Drawing.Common</MtouchInterpreter>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Accessibility">              <HintPath>lib/Accessibility.dll</HintPath></Reference>
+    <Reference Include="System.Windows.Primitives">  <HintPath>lib/System.Windows.Primitives.dll</HintPath></Reference>
+    <Reference Include="System.Private.Windows.Core"><HintPath>lib/System.Private.Windows.Core.dll</HintPath></Reference>
+  </ItemGroup>
+
+  <!--
+    Microsoft.NETCore.App's iOS runtime pack ships its OWN WindowsBase.dll - a 16KB type-forwarding
+    facade - and with MtouchLink=None the whole pack is copied into the app verbatim, landing on top
+    of the fork's real 1MB WindowsBase. The app then died at startup with
+        TypeLoadException: expected class 'MS.Internal.Interop.UIKitWindow' in assembly 'WindowsBase'
+    because the facade has no such type. IosSpike never hit this: it links, and linking resolves the
+    duplicate in favour of the referenced assembly. Drop the pack's copy so ours is the only one.
+  -->
+  <Target Name="DropRuntimePackWindowsBase" AfterTargets="ResolveRuntimePackAssets">
+    <ItemGroup>
+      <RuntimePackAsset Remove="@(RuntimePackAsset)" Condition="'%(Filename)' == 'WindowsBase'" />
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                             Condition="'%(Filename)' == 'WindowsBase' And '%(AssetType)' == 'runtime' And !$([System.String]::Copy('%(FullPath)').Contains('artifacts'))" />
+    </ItemGroup>
+  </Target>
+
+  <!-- mono-aot-cross must RESOLVE every assembly the WPF closure names, even unreachable ones. -->
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+  </ItemGroup>
+
+  <!-- iOS has no readable system font directory, so fonts travel in the bundle; SystemFontCatalog's
+       iOS branch probes AppContext.BaseDirectory/fonts. -->
+  <ItemGroup>
+    <BundleResource Include="../../sdk/WpfWebGpu.Fonts/fonts/*.ttf" Link="fonts/%(Filename)%(Extension)" />
+    <!-- The CJK font is a .ttc collection, which the glob above does not match. iOS cannot read
+         the system fonts at all, so this is the only Japanese/Chinese/Korean font the app has. -->
+    <BundleResource Include="../../sdk/WpfWebGpu.Fonts/fonts/*.ttc" Link="fonts/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- wgpu-native, statically linked into the app executable. -->
+  <ItemGroup>
+    <NativeReference Include="../../src/Microsoft.DotNet.Wpf/src/WgpuInterop/native/ios-arm64-simulator/lib/libwgpu_native.a">
+      <Kind>Static</Kind>
+      <ForceLoad>True</ForceLoad>
+      <Frameworks>Metal QuartzCore Foundation CoreGraphics IOSurface</Frameworks>
+    </NativeReference>
+  </ItemGroup>
+
+</Project>

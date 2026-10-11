@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Cross-platform drop-in replacement for the Windows-only Microsoft.Win32.SystemEvents runtime
+       package. Built with the SAME strong-name identity (name + AssemblyVersion 10.0.0.0 + Microsoft
+       public key token cc7b13ffcd2ddd51 via PUBLIC signing — .NET Core does not verify the signature,
+       only the token) so it satisfies references compiled against the real assembly and shadows it in
+       the app output. The WpfWebGpu.Sdk bundles this for non-Windows heads (see Sdk.targets). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Microsoft.Win32.SystemEvents</AssemblyName>
+    <RootNamespace>Microsoft.Win32</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyVersion>10.0.0.0</AssemblyVersion>
+    <FileVersion>10.0.10.0</FileVersion>
+    <Version>10.0.10</Version>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>systemevents.publickey</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Standalone (outside the Arcade build); keep it self-contained. -->
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+  </PropertyGroup>
+
+</Project>

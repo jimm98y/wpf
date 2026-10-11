@@ -9,7 +9,11 @@
     <Platforms>AnyCPU</Platforms>
     <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
     <!--The field '{0}' is never used -->
-    <NoWarn>$(NoWarn);0169</NoWarn>
+    <!-- WPF0001: this stub re-declares the public surface, so it both DECLARES the
+         [Experimental] ThemeMode API and REFERENCES it (ThemeModeConverter appears in a
+         TypeConverterAttribute), which the analyzer flags inside the very file that opts
+         into it. Non-shipping cycle-breaker: suppress rather than annotate generated code. -->
+    <NoWarn>$(NoWarn);0169;WPF0001</NoWarn>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 

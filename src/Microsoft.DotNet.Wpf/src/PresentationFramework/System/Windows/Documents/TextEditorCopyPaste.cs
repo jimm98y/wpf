@@ -56,9 +56,9 @@ namespace System.Windows.Documents
         /// <summary>
         /// Creates DataObject for Copy and Drag operations
         /// </summary>
-        internal static DataObject _CreateDataObject(TextEditor This, bool isDragDrop)
+        internal static IDataObject _CreateDataObject(TextEditor This, bool isDragDrop)
         {
-            DataObject dataObject;
+            IDataObject dataObject;
             // Create the data object for drag and drop.
             //  We could provide more extensibility here -
             // by allowing application to create its own DataObject.
@@ -67,7 +67,12 @@ namespace System.Windows.Documents
             // create your own implementation of it, but you
             // really cannot, because there is no way of
             // using it in our TextEditor.Copy/Drag.
-            dataObject = new DataObject();
+            //
+            // Off Windows this must NOT be a DataObject: that type builds a native OLE adapter in its
+            // constructor and throws DllNotFoundException for OLE32.dll. Since this method backs Copy
+            // and Cut as well as drag, going through the factory is what keeps all three working
+            // there -- Clipboard already routes around the same problem on its own side.
+            dataObject = DataObjectFactory.Create();
 
             // Get plain text and copy it into the data object.
             string textString = This.Selection.Text;
@@ -124,7 +129,9 @@ namespace System.Windows.Documents
                     Image image = This.Selection.GetUIElementSelected() as Image;
                     if (image != null && image.Source is System.Windows.Media.Imaging.BitmapSource)
                     {
-                        dataObject.SetImage((System.Windows.Media.Imaging.BitmapSource)image.Source);
+                        // What DataObject.SetImage does, spelled out because that method is not on
+                        // IDataObject.
+                        dataObject.SetData(DataFormats.Bitmap, image.Source, /*autoConvert:*/true);
                     }
                 }
 
@@ -249,7 +256,7 @@ namespace System.Windows.Documents
             {
                 formatToApply = DataFormats.Text;
             }
-            else if (This.AcceptsRichContent && dataObject is DataObject && ((DataObject)dataObject).ContainsImage())
+            else if (This.AcceptsRichContent && dataObject.GetDataPresent(DataFormats.Bitmap, autoConvert: false))
             {
                 formatToApply = DataFormats.Bitmap;
             }
@@ -278,7 +285,7 @@ namespace System.Windows.Documents
                 // Copy content onto the clipboard
 
                 // Note: _CreateDataObject raises a public event which might throw a recoverable exception.
-                DataObject dataObject = TextEditorCopyPaste._CreateDataObject(This, /*isDragDrop:*/false);
+                IDataObject dataObject = TextEditorCopyPaste._CreateDataObject(This, /*isDragDrop:*/false);
 
                 if (dataObject != null)
                 {
@@ -324,7 +331,7 @@ namespace System.Windows.Documents
             if (This.Selection != null && !This.Selection.IsEmpty)
             {
                 // Note: _CreateDataObject raises a public event which might throw a recoverable exception.
-                DataObject dataObject = TextEditorCopyPaste._CreateDataObject(This, /*isDragDrop:*/false);
+                IDataObject dataObject = TextEditorCopyPaste._CreateDataObject(This, /*isDragDrop:*/false);
 
                 if (dataObject != null)
                 {

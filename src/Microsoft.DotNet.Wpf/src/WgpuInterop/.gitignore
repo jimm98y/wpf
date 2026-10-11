@@ -1,0 +1,3 @@
+# Downloaded wgpu-native binaries + headers are not committed. Fetch with
+# eng/fetch-wgpu.ps1 (records the pinned version). Only source is tracked.
+native/

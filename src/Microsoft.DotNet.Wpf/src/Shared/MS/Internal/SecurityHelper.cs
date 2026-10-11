@@ -212,6 +212,14 @@ namespace MS.Internal.Drt
        {
             object value = null;
 
+            // The Windows registry only exists on Windows; on other platforms the root keys
+            // (Registry.CurrentUser / Registry.LocalMachine) are null. Treat "no registry" the
+            // same as "value not present" so callers fall back to their default behavior.
+            if (baseRegistryKey == null || !OperatingSystem.IsWindows())
+            {
+                return null;
+            }
+
             RegistryKey key = baseRegistryKey.OpenSubKey(keyName);
             if (key != null)
             {

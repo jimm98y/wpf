@@ -1,0 +1,405 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+
+//
+// The part of Line Services (statically linked into gdiplus.dll) the full imager drives, as GDI+
+// configures it (ols::ols @1800f2240: one text object and the reversal object; LSTXTCFG @1802b3330:
+// tab 0009, end of paragraph CR 000d (deleted) / LF 000a; the breaking table LineBreakBehavior):
+//
+//   LsCreateLine @180045be8 -> CreateLineCore @18010fa60 -> FiniFormatGeneralCase @1800453f0
+//       runs are fetched from the line's first cp and formatted with nominal character widths
+//       (FormatRegularCharacters @1801198c0 / GetWidths @180124030) up to the margin plus a slack
+//       of (margin / 32) * k, k doubling while the line turns out not to have overflowed once
+//       its text has glyph advances (ApplyNominalToIdeal @180120bc0 -> ApplyGlyphsToRange
+//       @1800494b8 -> GdipLscbkGetGlyphs / GdipLscbkGetGlyphPositions, at each chunk's end). So
+//       the line is decided by the GLYPH advances of the text before the margin -- what this
+//       formats with directly.
+//   BreakGeneralCase @180113770   TruncateCore finds the character the margin falls in;
+//       FindPrevBreakCore -> FindPrevBreakText @18011b8b0 walks back from it: after a run of
+//       spaces (TryBreakAtSpace, the spaces hanging past the margin) when the classes either side
+//       may break across spaces, between two characters (TryPrevBreakRegular @18011d338) when
+//       LineBreakBehavior lets them break directly; with neither, ForceBreakCore @180114ac8 breaks
+//       before the character that overflowed (after it, when it is the line's first).
+//   HandleTab @180112f90   a tab advances to the first stop past the pen (FullTextImager::GetTabStops:
+//       the format's stops, then every increment).
+//   LSLINFO   ascent, descent and height the largest of the line's runs (GdipLscbkGetRunTextMetrics
+//       @1800f93f0: round(cell ascent * k), round(cell descent * k), round(line spacing * k)),
+//       cpLim, and whether the line ended its paragraph (endrEndPara = 2).
+//
+
+using System.Collections.Generic;
+using Run = System.Drawing.WebGpuBackend.Gdip.GpFullTextImager.Run;
+
+namespace System.Drawing.WebGpuBackend.Gdip
+{
+    internal static class GpLineServices
+    {
+        /// <summary>A display dnode: a run's glyphs, a tab, or the paragraph end.</summary>
+        internal sealed class Seg
+        {
+            public int Kind;                 // 0 text, 1 tab, 2 end of paragraph, 3 deleted (CR), 5 hidden (LSTXTCFG)
+            public Run Run;
+            public int Cp, CpLim;
+            public int Ur, Width;
+            public int G0, GCount;           // the run's glyphs [G0, G0 + GCount)
+            public int[] Adv, OffU, OffV;    // per glyph, ideal units
+        }
+
+        internal sealed class LsLine
+        {
+            public readonly List<Seg> Segs = new List<Seg> ();
+            public int CpLim;
+            public bool EndPara;
+            public int UrLim, UrLimWithSpaces;
+            public int Ascent, Descent, Height;
+        }
+
+        /// <summary>One character as the formatter sees it.</summary>
+        struct Ch
+        {
+            public int Cp;
+            public Run Run;
+            public int Kind;                  // 0 text, 1 tab, 2 LF (end of paragraph), 3 CR (deleted), 4 end-of-paragraph run
+            public bool Space;
+            public int Width;                 // its cluster's glyph advances, on the cluster's first character
+            public bool ClusterStart;
+            public bool Own;                  // a special Line Services formats as its own dobj (FmtText labels 0x15/0x16)
+            public bool Glue;                 // LSTXTCFG's wchNonBreakSpace (U+00A0) / wchNonBreakHyphen (U+2011)
+            public bool Special;              // an LSTXTCFG special: no-break space and hyphen, en / em dash, en / em / narrow / FE space
+            public int Glyph;                 // the run's glyph index of its cluster
+            public int Brk;                   // its breaking class
+        }
+
+        static bool IsSpace (int ch) => ch == ' ';
+
+        internal static bool IsHidden (int ch) => ch == 0xfeff || ch == 0xad;
+
+        public static LsLine CreateLine (GpFullTextImager fti, int cpFirst, int dua, bool charBreaks)
+        {
+            var line = new LsLine ();
+            var chars = new List<Ch> ();
+            string text = fti.Text;
+            // Collect the line's characters, with glyph advances, until the paragraph ends or the
+            // text has passed the margin by a line's worth (the break is always before the margin).
+            int cp = cpFirst;
+            int ur = 0;
+            long limit = (long) dua + 0x40000;
+            Run eop = null;
+            bool endPara = false;
+            while (true) {
+                Run run = fti.RunAt (cp);
+                if (run == null) break;
+                if (run.Kind == 1) { eop = run; endPara = true; break; }
+                int from = cp - run.Cp, count = run.Len - from;
+                // The glyph advances of the run's part from here (one GetGlyphPositions over it).
+                int g0 = run.Shape.ClusterMap [from];
+                int ng = run.Shape.Glyphs.Length - g0;
+                var adv = new int [ng]; var ou = new int [ng]; var ov = new int [ng];
+                if (ng > 0) fti.GlyphPositions (run, g0, ng, adv, ou, ov);
+                bool stop = false;
+                for (int k = 0; k < count; k++) {
+                    int c = text [run.Str + from + k];
+                    var ch = new Ch { Cp = cp + k, Run = run, Kind = 0 };
+                    int gi = run.Shape.ClusterMap [from + k];
+                    ch.Glyph = gi;
+                    ch.ClusterStart = k == 0 || run.Shape.ClusterMap [from + k - 1] != gi;
+                    if (ch.ClusterStart) {
+                        int gEnd = from + k + 1 < run.Len ? run.Shape.ClusterMap [from + k + 1] : run.Shape.Glyphs.Length;
+                        // A cluster's glyphs: up to the next cluster's first.
+                        int kk = from + k + 1;
+                        while (kk < run.Len && run.Shape.ClusterMap [kk] == gi) kk++;
+                        gEnd = kk < run.Len ? run.Shape.ClusterMap [kk] : run.Shape.Glyphs.Length;
+                        int w = 0;
+                        for (int g = gi; g < gEnd; g++) w += adv [g - g0];
+                        ch.Width = w;
+                    }
+                    if (run.Script == GpTextTables.ScriptControl) {
+                        // A control item's other characters (the bidi controls, U+2029, ...) keep
+                        // their glyph's advance: zero for the ones the shaper blanks.
+                        if (c == '\t' || c == '\r' || c == '\n') ch.Width = 0;
+                        if (c == '\t') ch.Kind = 1;
+                        else if (c == '\r') ch.Kind = 3;   // deleted (FormatStartDelete)
+                        else if (c == '\n') {
+                            // The end of the paragraph (FormatStartEol): as wide as the visible
+                            // paragraph mark U+00B6 (GetVisiCharDup), which only a line measured
+                            // with its trailing spaces sees.
+                            ch.Kind = 2;
+                            ch.Width = fti.CharWidths (run, '¶');
+                        }
+                    }
+                    else if (IsHidden (c)) {
+                        // LSTXTCFG (@1802b3330) names these to Line Services: the no-break
+                        // (U+FEFF) and the optional hyphen are formatted as nothing -- no width,
+                        // no glyph displayed, their own dnode (the joiners draw a blank).
+                        ch.Kind = 5;
+                        ch.Width = 0;
+                    }
+                    // The joiner and non-joiner are LSTXTCFG specials (SetTextConfig @1801178a0 labels
+                    // 0x15 / 0x16): FormatRegularCharacters @1801198c0 stops at one that starts a
+                    // cluster (GdipLscbkIsOffsetClusterStartFromGMAP @180243dc0) and FmtText
+                    // @180047ef0 gives it a one-character dobj of its own.
+                    if ((c == 0x200c || c == 0x200d) && ch.ClusterStart && run.Script != GpTextTables.ScriptControl) ch.Own = true;
+                    ch.Space = IsSpace (c);
+                    ch.Brk = BreakClass (fti, c, charBreaks);
+                    ch.Glue = c == 0xa0 || c == 0x2011;
+                    ch.Special = c == 0xa0 || c == 0x2011 || c == 0x2013 || c == 0x2014 || c == 0x2002 || c == 0x2003 || c == 0x2009 || c == 0x3000;
+                    if (ch.Kind == 1) {
+                        ch.Width = NextTab (fti, run, ur) - ur;
+                    }
+                    chars.Add (ch);
+                    ur += ch.Width;
+                    if (ch.Kind == 2) { endPara = true; stop = true; break; }
+                    if (ur > limit) { stop = true; break; }
+                }
+                if (stop) break;
+                cp = run.Cp + run.Len;
+            }
+
+            // ---- where the line ends ----
+            int end = chars.Count;          // characters [0, end) are on the line
+            bool overflow = false;
+            {
+                int u = 0;
+                for (int i = 0; i < chars.Count; i++) {
+                    int nu = u + chars [i].Width;
+                    // Spaces hang past the margin -- except inside a reversal object (a run nested deeper than
+                    // the paragraph), whose subline is formatted with them.
+                    bool hangs = chars [i].Space && (chars [i].Run == null || chars [i].Run.Level == fti.ParagraphLevel);
+                    if (nu > dua && !hangs && chars [i].Kind != 2 && chars [i].Kind != 3) {
+                        // The truncation character: the first whose right edge passes the margin.
+                        overflow = true;
+                        // A tab whose stop is past the margin breaks through it: the line ends
+                        // after the tab (GdipLscbkGetBreakThroughTab).
+                        end = chars [i].Kind == 1 ? i + 1 : FindBreak (chars, i, fti.ParagraphLevel);
+                        break;
+                    }
+                    u = nu;
+                }
+            }
+            if (overflow) endPara = false;
+            else if (eop != null && end == chars.Count) { }
+            // ---- the trailing area ----
+            // GetTrailingInfoForTextGroupChunk @18011ec90 walks back from the line's end over its
+            // white space. A reversal object (ols::ols installs the reversal; one per run of runs
+            // nested deeper than the paragraph, CreateLevelChangeRuns @1800f0218) stops it -- unless
+            // its subline was submitted for the trailing area: ReverseSetBreak @180111c90 resubmits
+            // it (LsdnSubmitSublines @180119450, fUseForTrailingArea) when GdipLscbkReverseGetInfo
+            // (@180243e30) asked to suppress trailing spaces (always), the object was first on the
+            // line (ReverseFmt keeps lsfgi.fFirstOnLine: ProcessOneRun @180046248 sets it only for
+            // the first dnode of the MAIN subline, CreateSublineCore @1801127d8 clears +0x62 for every
+            // other) and the line breaks inside it (brkkind prev/next/force, the break before its
+            // end). That subline's trailing spaces are then part of the line's trailing area, and its
+            // presentation (CalcPresForDnodeWithSublines -> CalcPresChunk, never last on the line)
+            // gives them no width.
+            int pl = fti.ParagraphLevel;
+            int Lv (int k) => chars [k].Kind == 2 || chars [k].Run == null ? pl : chars [k].Run.Level;
+            var collapsed = new bool [end];
+            int trailFrom = end;
+            for (int k = end - 1; k >= 0;) {
+                if (Lv (k) <= pl) {
+                    if (chars [k].Space || chars [k].Kind == 2 || chars [k].Kind == 3) { trailFrom = k--; continue; }
+                    break;
+                }
+                int rs = k;
+                while (rs > 0 && Lv (rs - 1) > pl) rs--;
+                bool brokenInside = end < chars.Count && Lv (end) > pl;
+                if (rs != 0 || !brokenInside) break;
+                while (k >= rs && Lv (k) == pl + 1 && chars [k].Space) { collapsed [k] = true; trailFrom = k--; }
+                if (k >= rs) break;
+            }
+            // ---- the line's metrics and display nodes ----
+            int pos = 0;
+            int lastInk = 0;
+            Seg seg = null;
+            // An LSTXTCFG special (FmtText formats it as a dobj of its own) is a dnode of its own
+            // wherever it is not left to right in a left-to-right paragraph's main line -- native
+            // RTL "ab cd ok" draws [ab][NBSP][cd ok], LTR "ab cd ok" one run; the
+            // display of a left-to-right main line hands the text's dnodes over together.
+            bool Split (int k) => chars [k].Special && chars [k].Run != null && chars [k].Run.Level > 0;
+            for (int i = 0; i < end; i++) {
+                Ch ch = chars [i];
+                int kind = ch.Kind == 1 ? 1 : ch.Kind == 2 ? 2 : ch.Kind == 3 ? 3 : ch.Kind == 5 ? 5 : 0;
+                if (seg == null || seg.Kind != 0 || kind != 0 || seg.Run != ch.Run || ch.Own || (i > 0 && chars [i - 1].Own)
+                    || Split (i) || (i > 0 && Split (i - 1))) {
+                    seg = new Seg { Kind = kind, Run = ch.Run, Cp = ch.Cp, CpLim = ch.Cp, Ur = pos, G0 = ch.Glyph };
+                    line.Segs.Add (seg);
+                }
+                seg.CpLim = ch.Cp + 1;
+                int w = collapsed [i] ? 0 : ch.Width;
+                seg.Width += w;
+                pos += w;
+                if (i < trailFrom) lastInk = pos;
+            }
+            // Glyph arrays for the text nodes.
+            foreach (Seg s in line.Segs) {
+                if (s.Kind != 0) continue;
+                Run run = s.Run;
+                int from = s.Cp - run.Cp, to = s.CpLim - run.Cp;
+                int g0 = run.Shape.ClusterMap [from];
+                int g1 = to < run.Len ? run.Shape.ClusterMap [to] : run.Shape.Glyphs.Length;
+                s.G0 = g0; s.GCount = Math.Max (0, g1 - g0);
+                s.Adv = new int [s.GCount]; s.OffU = new int [s.GCount]; s.OffV = new int [s.GCount];
+                // The advances as the line formatted them (one GetGlyphPositions from the line's cp in the run).
+                int lineFrom = Math.Max (cpFirst, run.Cp) - run.Cp;
+                int lg0 = run.Shape.ClusterMap [lineFrom];
+                int n = run.Shape.Glyphs.Length - lg0;
+                var adv = new int [n]; var ou = new int [n]; var ov = new int [n];
+                fti.GlyphPositions (run, lg0, n, adv, ou, ov);
+                for (int g = 0; g < s.GCount; g++) {
+                    s.Adv [g] = adv [g0 - lg0 + g];
+                    s.OffU [g] = ou [g0 - lg0 + g];
+                    s.OffV [g] = ov [g0 - lg0 + g];
+                }
+                for (int i = 0; i < end; i++) {
+                    if (!collapsed [i] || chars [i].Run != run || chars [i].Cp < s.Cp || chars [i].Cp >= s.CpLim) continue;
+                    int g = run.Shape.ClusterMap [chars [i].Cp - run.Cp] - s.G0;
+                    if (g >= 0 && g < s.GCount) s.Adv [g] = 0;
+                }
+            }
+            line.UrLim = lastInk;
+            line.UrLimWithSpaces = pos;
+            if (end < chars.Count) line.CpLim = chars [end].Cp;
+            else if (eop != null) line.CpLim = eop.Cp + eop.Len;
+            else line.CpLim = chars.Count > 0 ? chars [^1].Cp + 1 : cpFirst;
+            line.EndPara = endPara && end == chars.Count;
+            // LSLINFO heights: the largest of the line's runs (the end-of-paragraph run counts).
+            var seen = new List<Run> ();
+            void Metric (Run r)
+            {
+                if (r == null || seen.Contains (r)) return;
+                seen.Add (r);
+                RunMetrics (fti, r, out int a, out int d, out int h);
+                line.Ascent = Math.Max (line.Ascent, a);
+                line.Descent = Math.Max (line.Descent, d);
+                line.Height = Math.Max (line.Height, h);
+            }
+            for (int i = 0; i < end; i++) Metric (chars [i].Run);
+            if (eop != null && end == chars.Count) Metric (eop);
+            if (seen.Count == 0) Metric (fti.RunAt (Math.Min (cpFirst, fti.Text.Length)));
+            return line;
+        }
+
+        /// <summary>GdipLscbkGetRunTextMetrics.</summary>
+        static void RunMetrics (GpFullTextImager fti, Run run, out int asc, out int desc, out int height)
+        {
+            // The formatting's family, style and em at the run (not a fallback run's face or em).
+            var m = fti.Metrics;
+            float k = fti.Em / m.Upem * fti.R;
+            asc = (int) MathF.Floor (m.Ascent * k + 0.5f);
+            desc = (int) MathF.Floor (m.Descent * k + 0.5f);
+            height = (int) MathF.Floor ((ushort) (m.Gap + m.Descent + m.Ascent) * k + 0.5f);
+        }
+
+        /// <summary>GdipLscbkGetBreakingClasses: the class of a character's char class; with
+        /// character trimming every character but a space is class 0 (a break anywhere).</summary>
+        static int BreakClass (GpFullTextImager fti, int ch, bool charBreaks)
+        {
+            if (charBreaks && ch != ' ' && (ch & 0xf800) != 0xd800) return 0;
+            return GpTextTables.BreakClass (ch, false);
+        }
+
+        /// <summary>FindPrevBreakText from the truncation character <paramref name="t"/>: the
+        /// character index the line ends before.</summary>
+        static int FindBreak (List<Ch> chars, int t, int paraLevel)
+        {
+            int trunc = t;
+            bool InSubline (int k) => chars [k].Run != null && chars [k].Kind != 2 && chars [k].Run.Level > paraLevel;
+            // A space in a reversal's subline (TryBreakAtSpace @18011c570: the subline is not the
+            // main one, +0x62) breaks by TryBreakAtSpaceWrap @18011c720: the space does not hang
+            // there, so the truncation can fall on it. Across it from the last non-space before:
+            // to the truncation space itself when two or more spaces lead up to it, else to the
+            // character after it (FindNextChar) -- a space when the run goes on, which the classes
+            // rarely break across. Failing that, the search goes on from the character before the
+            // space (each further space of the run tried the same way).
+            if (chars [t].Space && InSubline (t)) {
+                int b = t - 1;
+                while (b >= 0 && chars [b].Space) b--;
+                for (int s = t; s > b; s--) {
+                    int a = s == t && t - b > 1 ? t : s + 1;
+                    if (b < 0) return Math.Max (1, a);
+                    if (a < chars.Count && GpTextTables.CanBreakAcrossSpaces (chars [b].Brk, chars [a].Brk)) return a;
+                }
+                if (b < 1) return ForceBreak (chars, t);
+                t = b;
+            }
+            // Back from the truncation point: the last opportunity at or before it.
+            for (int p = t; p > 0; p--) {
+                Ch after = chars [p], before = chars [p - 1];
+                if (!after.ClusterStart) continue;
+                if (after.Space) continue;
+                // Line Services' own non-breaking space and hyphen (LSTXTCFG @1802b3330) hold on to
+                // both neighbours whatever the breaking classes say -- under character trimming,
+                // where every class is 0, "dog 2x 99 " truncated at the space ends "dog 2x 9".
+                if (after.Glue || before.Glue) continue;
+                if (before.Space) {
+                    // After a run of spaces: the classes either side of the spaces (the spaces
+                    // the line starts with may always break).
+                    int q = p - 1;
+                    while (q >= 0 && chars [q].Space) q--;
+                    if (q < 0) return p;
+                    if (GpTextTables.CanBreakAcrossSpaces (chars [q].Brk, after.Brk)) return p;
+                    // In a subline the run's other spaces are tried too (TryBreakAtSpaceWrap from
+                    // each, the character after it a space).
+                    if (InSubline (p - 1))
+                        for (int s = p - 2; s > q; s--)
+                            if (GpTextTables.CanBreakAcrossSpaces (chars [q].Brk, chars [s + 1].Brk)) return s + 1;
+                    continue;
+                }
+                if (before.Kind == 1 || after.Kind == 1) return p;
+                if (GpTextTables.CanBreakDirect (before.Brk, after.Brk)) return p;
+            }
+            // The main line breaks by its dobjs: a truncation inside a reversal object that does not
+            // start the line breaks before the object (native RTL "[bracket]" in a column narrower
+            // than the word ends the first line with the "["); the object, when it starts the
+            // line, breaks inside its subline.
+            if (InSubline (trunc)) {
+                int rs = trunc;
+                while (rs > 0 && InSubline (rs - 1)) rs--;
+                if (rs > 0) return rs;
+            }
+            return ForceBreak (chars, trunc);
+        }
+
+        /// <summary>ForceBreakCore: before the truncation character, or after it when it is the first.</summary>
+        static int ForceBreak (List<Ch> chars, int t)
+        {
+            int f = t;
+            if (f == 0) {
+                f = 1;
+                while (f < chars.Count && !chars [f].ClusterStart) f++;
+            }
+            while (f > 0 && f < chars.Count && !chars [f].ClusterStart) f--;
+            if (f == 0) f = 1;
+            // After the first character, the paragraph's end right behind it stays on the line (a
+            // deleted CR, the EOP): native "w\r\nab" and "ws\r\nab" in a column narrower than a
+            // letter end the forced line with them, where a space behind it starts the next line.
+            if (t == 0)
+                while (f < chars.Count && (chars [f].Kind == 2 || chars [f].Kind == 3)) f++;
+            return f;
+        }
+
+        /// <summary>The tab stop after <paramref name="ur"/> (GetTabStops @1800f15e0, FindTab):
+        /// the format's stops, then every increment.</summary>
+        static int NextTab (GpFullTextImager fti, Run run, int ur)
+        {
+            GpTextFormat f = fti.Format;
+            float r = fti.R;
+            int increment;
+            var stops = new List<int> ();
+            if (f == null) increment = (int) MathF.Floor (fti.Em * 4f * r + 0.5f);
+            else if (f.Tabs.Length == 0) increment = (int) MathF.Floor (r * f.FirstTab + 0.5f);
+            else {
+                float cum = f.FirstTab;
+                foreach (float t in f.Tabs) { cum += t; stops.Add ((int) MathF.Round (r * cum, MidpointRounding.ToEven)); }
+                increment = (int) MathF.Floor (f.Tabs [^1] * r + 0.5f);
+            }
+            foreach (int s in stops) if (s > ur) return s;
+            // FindTab @180120150 past the last stop: the next multiple of the increment from the
+            // line's start (not from the last stop) -- ((inc + ur) / inc) * inc in C's integer
+            // division, (ur / inc) * inc for a pen left of the start -- and an increment of 0 is 1,
+            // so a format with no stops moves a tab one ideal unit on.
+            int inc = increment == 0 ? 1 : increment;
+            return ((ur < 0 ? 0 : inc) + ur) / inc * inc;
+        }
+    }
+}

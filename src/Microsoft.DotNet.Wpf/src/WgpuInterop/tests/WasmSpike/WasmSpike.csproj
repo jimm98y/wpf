@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <PropertyGroup>
+    <!-- Browser smoke test for the JS-interop WebGPU backend: boots the dotnet
+         wasm runtime, initializes WgpuBrowser, then drives the internal Wgpu
+         surface directly (context -> canvas surface -> clear + triangle). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>WgpuInterop.WasmSpike</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
+    <ProjectReference Include="..\..\Browser\WgpuInterop.Browser.csproj" />
+  </ItemGroup>
+
+  <!-- Keep the served copy of the JS glue in sync with the backend's source.
+       Must run before static-web-asset discovery or the fingerprint/integrity
+       hashes are computed from the stale copy. -->
+  <Target Name="CopyWgpuInteropJs" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
+    <Copy SourceFiles="..\..\Browser\wgpu-interop.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

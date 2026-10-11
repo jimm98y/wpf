@@ -3852,6 +3852,15 @@ Do you want to replace it?</value>
   <data name="WebBrowserNoCastToIWebBrowser2" xml:space="preserve">
     <value>Cannot get IWebBrowser2 from the native ActiveX control.</value>
   </data>
+  <data name="WebBrowserNoEngine" xml:space="preserve">
+    <value>No web engine is available on this platform, so web content cannot be hosted.</value>
+  </data>
+  <data name="WebBrowserTargetFrameNotSupported" xml:space="preserve">
+    <value>Navigating a named target frame is not supported by this web engine.</value>
+  </data>
+  <data name="WebBrowserDocumentNotSupported" xml:space="preserve">
+    <value>WebBrowser.Document is only available when the legacy ActiveX host is enabled on Windows. Use InvokeScript, or the WebView2 control's ExecuteScriptAsync, to work with the page instead.</value>
+  </data>
   <data name="WebBrowserOverlap" xml:space="preserve">
     <value>Frames hosting HTML content cannot overlap each other in partial trust.</value>
   </data>

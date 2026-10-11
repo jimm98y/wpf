@@ -50,12 +50,16 @@ namespace MS.Internal
                     if (!_fileExtensionToMimeType.TryGetValue(completeExt, out mimeType))
                     {
                         //
-                        // If the hashtable doesn't contain the MimeType for this extension, 
+                        // If the hashtable doesn't contain the MimeType for this extension,
                         // Call UrlMon API to get it, once UrlMon API returns a vallid MimeType,
-                        // update it into the hashtable, so that the next time query for a Uri 
+                        // update it into the hashtable, so that the next time query for a Uri
                         // with the same extension will be faster.
                         //
-                        mimeType = GetMimeTypeFromUrlMon(uriSource);
+                        // UrlMon (FindMimeFromData) is a Windows COM API; off-Windows derive the type
+                        // from the file extension instead so image resources (png/gif/bmp/...) resolve.
+                        mimeType = System.OperatingSystem.IsWindows()
+                            ? GetMimeTypeFromUrlMon(uriSource)
+                            : GetMimeTypeFromExtension(completeExt);
 
                         if (mimeType != ContentType.Empty)
                         {
@@ -67,6 +71,32 @@ namespace MS.Internal
             }
 
             return mimeType;
+        }
+
+        //
+        // Cross-platform MimeType lookup by file extension (off-Windows replacement for the
+        // Windows-only UrlMon FindMimeFromData). Covers the common web/image types; anything else
+        // falls back to application/octet-stream (callers treat that as "unknown binary").
+        //
+        private static ContentType GetMimeTypeFromExtension(string extension)
+        {
+            switch (extension)
+            {
+                case "png":            return new ContentType("image/png");
+                case "jpg":
+                case "jpeg":
+                case "jpe":            return new ContentType("image/jpeg");
+                case "gif":            return new ContentType("image/gif");
+                case "bmp":            return new ContentType("image/bmp");
+                case "ico":            return new ContentType("image/x-icon");
+                case "tif":
+                case "tiff":           return new ContentType("image/tiff");
+                case "webp":           return new ContentType("image/webp");
+                case "wmp":            return new ContentType("image/vnd.ms-photo");
+                case "xml":            return new ContentType("text/xml");
+                case "txt":            return TextPlainMime;
+                default:               return OctetMime;
+            }
         }
 
         //

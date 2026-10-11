@@ -13,6 +13,13 @@ using BuildInfo = MS.Internal.ReachFramework.BuildInfo;
 
 [assembly: InternalsVisibleTo("System.Printing, PublicKey=" + BuildInfo.WCP_PUBLIC_KEY_STRING)]
 
+// The cross-platform printing tests (tests/CrossPlatform/Wpf.Printing.Tests). The PDF writer's
+// object, font and sfnt layers are internal on purpose -- they are a file format, not an API -- but
+// they are also where the failures that matter live, and a test that could only go through the
+// public writer would be asserting on a whole rendered document to check one dictionary key.
+// Public-key-less, matching how WindowsBase grants the platform tests the same access.
+[assembly: InternalsVisibleTo("Wpf.Printing.Tests, PublicKey=00000000000000000400000000000000")]
+
 // This code is debug only until we decide to go all the way with enforcements.
 #if ENFORCEMENT
 #endif

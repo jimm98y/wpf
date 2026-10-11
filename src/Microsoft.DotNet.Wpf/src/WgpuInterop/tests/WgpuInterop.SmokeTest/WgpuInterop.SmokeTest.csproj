@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- RID whose staged wgpu-native binary we copy next to the app. Defaults
+         to the host RID; override with -p:WgpuRid=linux-x64 etc. -->
+    <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>
+    <WgpuNativeDir>$(MSBuildThisFileDirectory)..\..\native\$(WgpuRid)\lib\</WgpuNativeDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\WgpuInterop.csproj" />
+  </ItemGroup>
+
+  <!-- Copy the staged wgpu-native shared library next to the test binary so the
+       OS loader resolves it. Run eng/fetch-wgpu.ps1 first to populate native/. -->
+  <ItemGroup>
+    <None Include="$(WgpuNativeDir)wgpu_native.dll"   Condition="Exists('$(WgpuNativeDir)wgpu_native.dll')"   CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WgpuNativeDir)libwgpu_native.so" Condition="Exists('$(WgpuNativeDir)libwgpu_native.so')" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WgpuNativeDir)libwgpu_native.dylib" Condition="Exists('$(WgpuNativeDir)libwgpu_native.dylib')" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <Target Name="WarnIfNoNativeLib" BeforeTargets="Build"
+          Condition="!Exists('$(WgpuNativeDir)wgpu_native.dll') And !Exists('$(WgpuNativeDir)libwgpu_native.so') And !Exists('$(WgpuNativeDir)libwgpu_native.dylib')">
+    <Warning Text="wgpu-native binary not found in '$(WgpuNativeDir)'. Run eng/fetch-wgpu.ps1 -Rid $(WgpuRid) first." />
+  </Target>
+
+</Project>

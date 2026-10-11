@@ -92,72 +92,246 @@ namespace MS.Internal.Drt
 #endif
 #else       // Base/Core/FW + DRT
 
-    [DllImport(PresentationNativeDll, EntryPoint="EnableWindowWrapper", SetLastError = true, ExactSpelling = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
-        public static extern bool EnableWindow(HandleRef hWnd, bool enable);
+        //
+        // These used to bind to the *Wrapper exports in PresentationNative_cor3.dll. They are plain
+        // user32 P/Invokes now, because the port must not depend on WPF's shipped native DLLs on any
+        // platform -- Windows included.
+        //
+        // The wrappers existed for one reason: several of these APIs legitimately return 0/NULL on
+        // success, so a caller cannot tell "returned zero" from "failed" without clearing the last
+        // error FIRST. The native shim did SetLastError(0) and then called through.
+        // Marshal.SetLastSystemError(0) is that same clear, so ClearLastError() before each call
+        // preserves the semantics the callers were written against.
+        //
+        // GetWindowLongPtr/SetWindowLongPtr need the size split: on 64-bit they are real user32
+        // exports, but on 32-bit Windows they are macros for the non-Ptr versions and no export of
+        // that name exists, so binding to it would fail at first call.
+        //
 
-        [DllImport(PresentationNativeDll, EntryPoint="GetAncestorWrapper", CharSet = CharSet.Auto)]
-        public static extern IntPtr GetAncestor(IntPtr hwnd, int gaFlags);
+        private const string User32 = "user32.dll";
 
-        [DllImport(PresentationNativeDll, EntryPoint="GetKeyboardLayoutListWrapper", SetLastError = true, ExactSpelling=true, CharSet=CharSet.Auto)]
-        public static extern int GetKeyboardLayoutList(int size, [Out, MarshalAs(UnmanagedType.LPArray)] IntPtr[] hkls);
+        private static void ClearLastError() => Marshal.SetLastSystemError(0);
 
-        [DllImport(PresentationNativeDll, EntryPoint="GetParentWrapper", SetLastError = true)]
-        public static extern IntPtr GetParent(HandleRef hWnd);
+        public static bool EnableWindow(HandleRef hWnd, bool enable)
+        {
+            ClearLastError();
+            bool result = EnableWindowImpl(hWnd.Handle, enable);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="GetWindowWrapper", ExactSpelling = true, SetLastError = true)]
-        public static extern IntPtr GetWindow(IntPtr hWnd, int uCmd);
+        public static IntPtr GetAncestor(IntPtr hwnd, int gaFlags)
+        {
+            ClearLastError();
+            return GetAncestorImpl(hwnd, gaFlags);
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="GetWindowLongWrapper", CharSet=CharSet.Auto, SetLastError=true)]
-        public static extern Int32 GetWindowLong(HandleRef hWnd, int nIndex );
+        public static int GetKeyboardLayoutList(int size, [Out] IntPtr[] hkls)
+        {
+            ClearLastError();
+            return GetKeyboardLayoutListImpl(size, hkls);
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="GetWindowLongWrapper", CharSet=CharSet.Auto, SetLastError=true)]
-        public static extern Int32 GetWindowLong(IntPtr hWnd, int nIndex );
+        public static IntPtr GetParent(HandleRef hWnd)
+        {
+            ClearLastError();
+            IntPtr result = GetParentImpl(hWnd.Handle);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="GetWindowLongWrapper", CharSet=CharSet.Auto, SetLastError=true)]
-        public static extern NativeMethods.WndProc GetWindowLongWndProc(HandleRef hWnd, int nIndex);
+        public static IntPtr GetWindow(IntPtr hWnd, int uCmd)
+        {
+            ClearLastError();
+            return GetWindowImpl(hWnd, uCmd);
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="GetWindowLongPtrWrapper", CharSet=CharSet.Auto, SetLastError=true)]
-        public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+        public static int GetWindowLong(HandleRef hWnd, int nIndex)
+        {
+            int result = GetWindowLong(hWnd.Handle, nIndex);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="GetWindowLongPtrWrapper", CharSet=CharSet.Auto, SetLastError=true)]
-        public static extern IntPtr GetWindowLongPtr(HandleRef hWnd, int nIndex);
+        public static int GetWindowLong(IntPtr hWnd, int nIndex)
+        {
+            ClearLastError();
+            return GetWindowLongImpl(hWnd, nIndex);
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="GetWindowLongPtrWrapper", CharSet=CharSet.Auto, SetLastError=true)]
-        public static extern NativeMethods.WndProc GetWindowLongPtrWndProc(HandleRef hWnd, int nIndex);
+        public static NativeMethods.WndProc GetWindowLongWndProc(HandleRef hWnd, int nIndex)
+        {
+            ClearLastError();
+            NativeMethods.WndProc result = GetWindowLongWndProcImpl(hWnd.Handle, nIndex);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint = "GetWindowTextWrapper", CharSet=CharSet.Auto, BestFitMapping = false, SetLastError = true)]
-        public static extern int GetWindowText(HandleRef hWnd, [Out] StringBuilder lpString, int nMaxCount);
+        public static IntPtr GetWindowLongPtr(HandleRef hWnd, int nIndex)
+        {
+            IntPtr result = GetWindowLongPtr(hWnd.Handle, nIndex);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint = "GetWindowTextLengthWrapper", CharSet = System.Runtime.InteropServices.CharSet.Auto, SetLastError = true)]
-        public static extern int GetWindowTextLength(HandleRef hWnd);
+        public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex)
+        {
+            ClearLastError();
+            return IntPtr.Size == 8
+                ? GetWindowLongPtrImpl(hWnd, nIndex)
+                : (IntPtr)GetWindowLongImpl(hWnd, nIndex);
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="MapWindowPointsWrapper", SetLastError = true, ExactSpelling=true, CharSet=CharSet.Auto)]
-        public static extern int MapWindowPoints(HandleRef hWndFrom, HandleRef hWndTo, [In, Out] ref NativeMethods.RECT rect, int cPoints);
+        public static NativeMethods.WndProc GetWindowLongPtrWndProc(HandleRef hWnd, int nIndex)
+        {
+            ClearLastError();
+            NativeMethods.WndProc result = IntPtr.Size == 8
+                ? GetWindowLongPtrWndProcImpl(hWnd.Handle, nIndex)
+                : GetWindowLongWndProcImpl(hWnd.Handle, nIndex);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="SetFocusWrapper", SetLastError = true)]
-        public static extern IntPtr SetFocus(HandleRef hWnd);
+        public static int GetWindowText(HandleRef hWnd, [Out] StringBuilder lpString, int nMaxCount)
+        {
+            ClearLastError();
+            int result = GetWindowTextImpl(hWnd.Handle, lpString, nMaxCount);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="SetWindowLongWrapper", CharSet=CharSet.Auto)]
-        public static extern Int32 SetWindowLong(HandleRef hWnd, int nIndex, Int32 dwNewLong);
+        public static int GetWindowTextLength(HandleRef hWnd)
+        {
+            ClearLastError();
+            int result = GetWindowTextLengthImpl(hWnd.Handle);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="SetWindowLongWrapper", CharSet=CharSet.Auto)]
-        public static extern Int32 SetWindowLong(IntPtr hWnd, int nIndex, Int32 dwNewLong);
+        public static int MapWindowPoints(HandleRef hWndFrom, HandleRef hWndTo, [In, Out] ref NativeMethods.RECT rect, int cPoints)
+        {
+            ClearLastError();
+            int result = MapWindowPointsImpl(hWndFrom.Handle, hWndTo.Handle, ref rect, cPoints);
+            GC.KeepAlive(hWndFrom.Wrapper);
+            GC.KeepAlive(hWndTo.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="SetWindowLongWrapper", CharSet=CharSet.Auto, SetLastError=true)]
-        public static extern Int32 SetWindowLongWndProc(HandleRef hWnd, int nIndex, NativeMethods.WndProc dwNewLong);
+        public static IntPtr SetFocus(HandleRef hWnd)
+        {
+            ClearLastError();
+            IntPtr result = SetFocusImpl(hWnd.Handle);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="SetWindowLongPtrWrapper", CharSet=CharSet.Auto)]
-        public static extern IntPtr SetWindowLongPtr(HandleRef hWnd, int nIndex, IntPtr dwNewLong);
+        public static int SetWindowLong(HandleRef hWnd, int nIndex, int dwNewLong)
+        {
+            int result = SetWindowLong(hWnd.Handle, nIndex, dwNewLong);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="SetWindowLongPtrWrapper", CharSet=CharSet.Auto)]
-        public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+        public static int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong)
+        {
+            ClearLastError();
+            return SetWindowLongImpl(hWnd, nIndex, dwNewLong);
+        }
 
-        [DllImport(PresentationNativeDll, EntryPoint="SetWindowLongPtrWrapper", CharSet=CharSet.Auto, SetLastError=true)]
-        public static extern IntPtr SetWindowLongPtrWndProc(HandleRef hWnd, int nIndex, NativeMethods.WndProc dwNewLong);
+        public static int SetWindowLongWndProc(HandleRef hWnd, int nIndex, NativeMethods.WndProc dwNewLong)
+        {
+            ClearLastError();
+            int result = SetWindowLongWndProcImpl(hWnd.Handle, nIndex, dwNewLong);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
+
+        public static IntPtr SetWindowLongPtr(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
+        {
+            IntPtr result = SetWindowLongPtr(hWnd.Handle, nIndex, dwNewLong);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
+
+        public static IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong)
+        {
+            ClearLastError();
+            return IntPtr.Size == 8
+                ? SetWindowLongPtrImpl(hWnd, nIndex, dwNewLong)
+                : (IntPtr)SetWindowLongImpl(hWnd, nIndex, (int)dwNewLong);
+        }
+
+        public static IntPtr SetWindowLongPtrWndProc(HandleRef hWnd, int nIndex, NativeMethods.WndProc dwNewLong)
+        {
+            ClearLastError();
+            IntPtr result = IntPtr.Size == 8
+                ? SetWindowLongPtrWndProcImpl(hWnd.Handle, nIndex, dwNewLong)
+                : (IntPtr)SetWindowLongWndProcImpl(hWnd.Handle, nIndex, dwNewLong);
+            GC.KeepAlive(hWnd.Wrapper);
+            return result;
+        }
+
+        [DllImport(User32, EntryPoint = "EnableWindow", SetLastError = true, ExactSpelling = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool EnableWindowImpl(IntPtr hWnd, bool enable);
+
+        [DllImport(User32, EntryPoint = "GetAncestor", SetLastError = true, ExactSpelling = true)]
+        private static extern IntPtr GetAncestorImpl(IntPtr hwnd, int gaFlags);
+
+        [DllImport(User32, EntryPoint = "GetKeyboardLayoutList", SetLastError = true, ExactSpelling = true)]
+        private static extern int GetKeyboardLayoutListImpl(int size, [Out, MarshalAs(UnmanagedType.LPArray)] IntPtr[] hkls);
+
+        [DllImport(User32, EntryPoint = "GetParent", SetLastError = true, ExactSpelling = true)]
+        private static extern IntPtr GetParentImpl(IntPtr hWnd);
+
+        [DllImport(User32, EntryPoint = "GetWindow", SetLastError = true, ExactSpelling = true)]
+        private static extern IntPtr GetWindowImpl(IntPtr hWnd, int uCmd);
+
+        [DllImport(User32, EntryPoint = "GetWindowLongW", SetLastError = true, ExactSpelling = true)]
+        private static extern int GetWindowLongImpl(IntPtr hWnd, int nIndex);
+
+        [DllImport(User32, EntryPoint = "GetWindowLongW", SetLastError = true, ExactSpelling = true)]
+        private static extern NativeMethods.WndProc GetWindowLongWndProcImpl(IntPtr hWnd, int nIndex);
+
+        [DllImport(User32, EntryPoint = "GetWindowLongPtrW", SetLastError = true, ExactSpelling = true)]
+        private static extern IntPtr GetWindowLongPtrImpl(IntPtr hWnd, int nIndex);
+
+        [DllImport(User32, EntryPoint = "GetWindowLongPtrW", SetLastError = true, ExactSpelling = true)]
+        private static extern NativeMethods.WndProc GetWindowLongPtrWndProcImpl(IntPtr hWnd, int nIndex);
+
+        [DllImport(User32, EntryPoint = "GetWindowTextW", SetLastError = true, ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int GetWindowTextImpl(IntPtr hWnd, [Out] StringBuilder lpString, int nMaxCount);
+
+        [DllImport(User32, EntryPoint = "GetWindowTextLengthW", SetLastError = true, ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int GetWindowTextLengthImpl(IntPtr hWnd);
+
+        [DllImport(User32, EntryPoint = "MapWindowPoints", SetLastError = true, ExactSpelling = true)]
+        private static extern int MapWindowPointsImpl(IntPtr hWndFrom, IntPtr hWndTo, [In, Out] ref NativeMethods.RECT rect, int cPoints);
+
+        [DllImport(User32, EntryPoint = "SetFocus", SetLastError = true, ExactSpelling = true)]
+        private static extern IntPtr SetFocusImpl(IntPtr hWnd);
+
+        [DllImport(User32, EntryPoint = "SetWindowLongW", SetLastError = true, ExactSpelling = true)]
+        private static extern int SetWindowLongImpl(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [DllImport(User32, EntryPoint = "SetWindowLongW", SetLastError = true, ExactSpelling = true)]
+        private static extern int SetWindowLongWndProcImpl(IntPtr hWnd, int nIndex, NativeMethods.WndProc dwNewLong);
+
+        [DllImport(User32, EntryPoint = "SetWindowLongPtrW", SetLastError = true, ExactSpelling = true)]
+        private static extern IntPtr SetWindowLongPtrImpl(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+        [DllImport(User32, EntryPoint = "SetWindowLongPtrW", SetLastError = true, ExactSpelling = true)]
+        private static extern IntPtr SetWindowLongPtrWndProcImpl(IntPtr hWnd, int nIndex, NativeMethods.WndProc dwNewLong);
 
 #endif
 
-        [DllImport(PresentationNativeDll, EntryPoint="LsDisableSpecialCharacterLigature")]
-        public static extern void LsDisableSpecialCharacterLigature(bool fDisable);
+        /// <summary>
+        /// Once a global inside the native Line Services engine. The managed engine
+        /// (ManagedLineServices) does not form these ligatures in the first place, so there is
+        /// nothing to disable and this is a no-op rather than a load of PresentationNative.
+        /// </summary>
+        public static void LsDisableSpecialCharacterLigature(bool fDisable)
+        {
+        }
     }
 }

@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>probe frame</title></head>
+<body style="background:#c8f0d0;font:16px sans-serif">
+  <h3 id="h">Same-origin page loaded by WebBrowser.Navigate (BrowserProbes.cs)</h3>
+  <script>
+    function add(a, b) { return a + b; }
+    window.addEventListener('message', function (e) {
+      document.getElementById('h').textContent = 'got: ' + JSON.stringify(e.data);
+    });
+  </script>
+</body>
+</html>

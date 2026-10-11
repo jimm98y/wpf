@@ -90,7 +90,7 @@ namespace System.Windows.Media.Imaging
             }
 
             SafeMILHandle renderTargetBitmap = _bitmapTarget.MILRenderTarget;
-            Debug.Assert (renderTargetBitmap != null, "Render Target is null");
+            Debug.Assert(renderTargetBitmap != null || DUCE.ManagedComposition.IsEnabled, "Render Target is null");
 
             IntPtr pIRenderTargetBitmap = IntPtr.Zero;
 
@@ -103,6 +103,34 @@ namespace System.Windows.Media.Imaging
                 MediaContext mctx = MediaContext.CurrentMediaContext;
                 DUCE.Channel channel = mctx.AllocateSyncChannel();
 
+                if (DUCE.ManagedComposition.IsEnabled)
+                {
+                    //
+                    // Managed composition: there is no native IMILRenderTargetBitmap. The
+                    // visual is marshalled on the sync channel like on the native path, and
+                    // the backend renders the target and hands the pixels back, which become
+                    // the RenderTargetBitmap's managed backing (fires contents-changed).
+                    //
+
+                    if (OperatingSystem.IsBrowser())
+                    {
+                        // The browser's GPU readback is a Promise this thread cannot wait for.
+                        // The render itself happens here, now; the pixels arrive later and are
+                        // installed then (RenderTargetBitmap.RenderAsync is the way to wait).
+                        System.Threading.Tasks.Task<byte[]> pending = Renderer.RenderManagedAsync(
+                            channel, visual, sizeX, sizeY, dpiX, dpiY, worldTransform, windowClip);
+                        mctx.ReleaseSyncChannel(channel);
+                        _bitmapTarget.SetPendingPixels(pending);
+                        return;
+                    }
+
+                    byte[] pixels = Renderer.Render(
+                        IntPtr.Zero, channel, visual, sizeX, sizeY, dpiX, dpiY, worldTransform, windowClip);
+
+                    mctx.ReleaseSyncChannel(channel);
+                    _bitmapTarget.SetRenderedPixels(pixels);
+                    return;
+                }
 
                 //
                 // Acquire the target bitmap.
@@ -128,7 +156,7 @@ namespace System.Windows.Media.Imaging
                     sizeY,
                     dpiX,
                     dpiY,
-                    worldTransform,                    
+                    worldTransform,
                     windowClip);
 
                 //

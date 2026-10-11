@@ -89,6 +89,100 @@ namespace System.Windows.Media.Imaging
             _bitmapInit.EnsureInitializedComplete();
             BitmapSourceSafeMILHandle wicFormatter = null;
 
+            // Off-Windows there is no native WIC format converter, so the conversion runs on the
+            // source's managed pixel backing.
+            //
+            // The SOURCE is expanded to straight BGRA32 by ManagedPixelConverter, which is what
+            // knows how to read a format narrower than 32 bits -- sub-byte formats especially, where
+            // a byte holds up to eight pixels. Doing that inline here is what this used to attempt,
+            // by stepping the source four bytes per pixel whatever its format actually was: Bgr24
+            // skewed along each row, Gray8 read four pixels' worth per pixel, and 1/2/4bpp read
+            // clean off the end of the buffer.
+            //
+            // The DESTINATION is still only honoured to the extent the managed backing can express
+            // it: greyscale destinations (Gray8/16/32Float, BlackWhite) are computed by luminance,
+            // anything else keeps the expanded colour. Either way the backing is published as
+            // Bgra32, which is what this bitmap then reports as its format.
+            if (Source?._managedPixels != null)
+            {
+                int sw = Source.PixelWidth, sh = Source.PixelHeight;
+                byte[] dst = ManagedPixelConverter.ToBgra32(
+                    Source._managedPixels, Source._managedStride, sw, sh, Source.Format, Source.Palette);
+
+                if (dst == null)
+                {
+                    // A format the converter does not know. Leaving the source untouched keeps
+                    // whatever it already was rather than publishing pixels read as the wrong shape.
+                    dst = new byte[sw * 4 * sh];
+                }
+
+                Guid g = DestinationFormat.Guid;
+
+                // A destination that is not 32bpp BGRA is PACKED into its real layout and reported
+                // as itself -- including the sub-byte and indexed formats, which is what makes
+                // asking for Indexed4 or BlackWhite mean anything. Previously every destination came
+                // back 32bpp wearing the requested format's name, so quantising an image and then
+                // reading Format (or saving it) was told something untrue.
+                if (g != PixelFormats.Bgra32.Guid && g != PixelFormats.Pbgra32.Guid)
+                {
+                    byte[] packed = ManagedPixelConverter.FromBgra32(
+                        dst, sw, sh, DestinationFormat, DestinationPalette, out int packedStride);
+                    if (packed != null)
+                    {
+                        _managedPixels = packed;
+                        _managedStride = packedStride;
+                        _format = DestinationFormat;
+                        _palette = DestinationPalette;
+                        _pixelWidth = sw; _pixelHeight = sh; _isSourceCached = Source.IsSourceCached;
+                        CreationCompleted = true;
+                        UpdateCachedSettings();
+                        return;
+                    }
+                }
+
+                // Destinations the packer does not model (Gray32Float and the other float formats)
+                // keep the old best effort: greyscale by luminance, published as Bgra32.
+                bool gray = g == PixelFormats.Gray8.Guid || g == PixelFormats.Gray16.Guid
+                         || g == PixelFormats.Gray32Float.Guid || g == PixelFormats.BlackWhite.Guid;
+                if (gray)
+                {
+                    for (int i = 0; i < dst.Length; i += 4)
+                    {
+                        byte l = (byte)((dst[i + 2] * 77 + dst[i + 1] * 150 + dst[i] * 29) >> 8);  // Rec.601 luma
+                        dst[i] = dst[i + 1] = dst[i + 2] = l;
+                    }
+                }
+
+                // A PREMULTIPLIED destination has to come back premultiplied, and be labelled so.
+                // The converter above always produces straight colour, so asking for Pbgra32 and
+                // getting straight bytes back leaves the caller to premultiply-or-not by guesswork:
+                // the XPS/PDF image path asks for Pbgra32 precisely so it can undo the
+                // premultiplication itself, and undoing it on data that was never premultiplied
+                // washes half-transparent pixels out (a 50% grey came back at 253 instead of 127).
+                bool premultiplied = g == PixelFormats.Pbgra32.Guid;
+                if (premultiplied)
+                {
+                    for (int i = 0; i < dst.Length; i += 4)
+                    {
+                        byte a = dst[i + 3];
+                        if (a != 255)
+                        {
+                            dst[i] = (byte)(dst[i] * a / 255);
+                            dst[i + 1] = (byte)(dst[i + 1] * a / 255);
+                            dst[i + 2] = (byte)(dst[i + 2] * a / 255);
+                        }
+                    }
+                }
+
+                _managedPixels = dst;
+                _managedStride = sw * 4;
+                _format = premultiplied ? PixelFormats.Pbgra32 : PixelFormats.Bgra32;
+                _pixelWidth = sw; _pixelHeight = sh; _isSourceCached = Source.IsSourceCached;
+                CreationCompleted = true;
+                UpdateCachedSettings();
+                return;
+            }
+
             using (FactoryMaker factoryMaker = new FactoryMaker())
             {
                 try

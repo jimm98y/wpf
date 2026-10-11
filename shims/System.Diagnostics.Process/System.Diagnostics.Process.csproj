@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Browser replacement for System.Diagnostics.Process, whose wasm build throws
+       PlatformNotSupportedException from EVERY member — including Process.GetCurrentProcess(), which
+       is not about spawning anything and is what real apps call for self-diagnostics (memory, CPU
+       time, thread count). One such call in a constructor is enough to take a whole subsystem down:
+       WpfHexEditorIDE's plugin host builds a metrics engine in its ctor, so the browser head loaded
+       ZERO plugins with "[PluginSystem] Failed to initialize: Process_PlatformNotSupported" — the
+       plugins themselves were fine and never got the chance to load.
+
+       So GetCurrentProcess() answers with real, cheap numbers taken from the runtime, and only the
+       things a browser genuinely cannot do (starting or killing a process) refuse — with a message
+       that says why. Same strong-name identity as the real assembly so existing references bind to
+       it; bundled for the browser head only (see Sdk.targets), exactly like the Registry and
+       SystemEvents shims. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Diagnostics.Process</AssemblyName>
+    <RootNamespace>System.Diagnostics</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- Higher than the shared-framework 10.0.0.0 for the same reason as the Registry shim: RAR must
+         not mistake it for the in-box assembly, so it is copied app-local and wins name unification. -->
+    <AssemblyVersion>10.0.9999.0</AssemblyVersion>
+    <FileVersion>10.0.9999.0</FileVersion>
+    <Version>10.0.9999</Version>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>msft.publickey</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>CA1416;CS0067</NoWarn>
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

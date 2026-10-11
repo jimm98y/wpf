@@ -127,10 +127,19 @@ namespace MS.Win32
             _themeState = new ThemeState(!SystemParameters.HighContrast && SafeNativeMethods.IsUxThemeActive(), null, null);
         }
 
+        // Off-Windows there is no UxTheme; the native theme queries (IsUxThemeActive/
+        // GetCurrentThemeName) report inactive, which would fall the whole app back to the
+        // Win9x-style "classic" theme. Report the modern Aero2 (NormalColor) theme instead -- the
+        // same default WPF uses on Windows 8+/10/11 -- so controls pick up PresentationFramework.Aero2.
+        private static bool UseManagedModernTheme => !System.OperatingSystem.IsWindows();
+        internal const string ManagedThemeName = "Aero2";
+        internal const string ManagedThemeColor = "NormalColor";
+
         internal static bool IsActive
         {
             get
             {
+                if (UseManagedModernTheme) return true;
                 return IsActiveCompatWrapper;
             }
         }
@@ -139,6 +148,7 @@ namespace MS.Win32
         {
             get
             {
+                if (UseManagedModernTheme) return ManagedThemeName;
                 return ThemeNameCompatWrapper;
             }
         }
@@ -147,6 +157,7 @@ namespace MS.Win32
         {
             get
             {
+                if (UseManagedModernTheme) return ManagedThemeColor;
                 return ThemeColorCompatWrapper;
             }
         }
@@ -155,6 +166,10 @@ namespace MS.Win32
         {
             get
             {
+                if (UseManagedModernTheme)
+                {
+                    return $"themes/{ManagedThemeName.ToLowerInvariant()}.{ManagedThemeColor.ToLowerInvariant()}";
+                }
                 return ThemedResourceNameCompatWrapper;
             }
         }

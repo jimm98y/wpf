@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    WindowsFormsIntegration for the cross-platform (WebGPU) stack: System.Windows.Forms.Integration.
+    ElementHost, hosting a WPF element tree inside a Windows Forms control.
+
+    Same assembly name, namespace and core API as the Windows-only original, so existing app code
+    compiles unchanged, but built against the fork's Mono System.Windows.Forms and its from-source
+    WPF instead of Microsoft.WindowsDesktop.App, which ships its own WinForms and would shadow ours.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>WindowsFormsIntegration</AssemblyName>
+    <RootNamespace>System.Windows.Forms.Integration</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <NoWarn>$(NoWarn);CA1416;CS8002</NoWarn>
+    <!-- Public-signed with the same ECMA key as System.Windows.Forms next door, because that one is
+         strong-named now and a strong-named assembly can only grant InternalsVisibleTo to a named
+         public key (see host/InternalsVisibleTo.cs, which this satisfies). -->
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)../../../../../eng/snk/ECMA.snk</AssemblyOriginatorKeyFile>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <_Wpf>$(MSBuildThisFileDirectory)../../../../../artifacts/bin</_Wpf>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The WinForms half (its host/ seam is exposed to this assembly by name) and the shared
+         WebGPU interop that carries the scene between the two compositors. -->
+    <ProjectReference Include="../System.Windows.Forms.WebGpu.csproj" />
+    <ProjectReference Include="../sysdrawing/System.Drawing.WebGpu.csproj" />
+    <ProjectReference Include="../../WgpuInterop/WgpuInterop.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The WPF half: this fork's assemblies from artifacts/bin (run build.cmd first). -->
+    <Reference Include="PresentationFramework"><HintPath>$(_Wpf)/PresentationFramework/Release/net10.0/PresentationFramework.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PresentationCore"><HintPath>$(_Wpf)/PresentationCore/Release/net10.0/PresentationCore.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="WindowsBase"><HintPath>$(_Wpf)/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.Xaml"><HintPath>$(_Wpf)/System.Xaml/Release/net10.0/System.Xaml.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <!-- Our vendored Mono.System.Drawing must be the SOLE System.Drawing.* provider: WPF drags in the
+       framework System.Drawing.Common, which would collide on those types (CS0433). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

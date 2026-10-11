@@ -1,0 +1,3 @@
+# Legacy staging output from the pre-0.1.1 assemble.sh (packing now reads the repo
+# build outputs directly); ignored in case old checkouts still have it.
+WpfWebGpu.Sdk/staging/

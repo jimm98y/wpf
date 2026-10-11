@@ -6,7 +6,7 @@
     <CLSCompliant>false</CLSCompliant>
     <Nullable>enable</Nullable>
     <ChecksumAlgorithm>SHA256</ChecksumAlgorithm>
-    <Platforms>x86;x64;arm64</Platforms>
+    <Platforms>AnyCPU;x86;x64;arm64</Platforms>
 
     <!--
       We align casing and naming with Win32 API. As such some types have all lower case names, which

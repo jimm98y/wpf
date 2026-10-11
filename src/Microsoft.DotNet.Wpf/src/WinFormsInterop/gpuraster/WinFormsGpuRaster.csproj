@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>WinFormsGpuRaster</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The WebGPU scene renderer (WGSL). Internals exposed via InternalsVisibleTo. -->
+    <ProjectReference Include="../../WgpuInterop/WgpuInterop.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../WgpuInterop/native/osx-arm64/lib/libwgpu_native.dylib">
+      <Link>libwgpu_native.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

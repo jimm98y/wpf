@@ -30,8 +30,11 @@ namespace System.Windows.Media
         /// If fRenderForBitmapEffect is true, the method calls special methods on visual
         /// to render it specifically for an effect to be applied to it. It excludes
         /// properties such as transform, clip, offset and guidelines.
+        /// On the native path the composed pixels land in <paramref name="pRenderTarget"/> and
+        /// the return value is null; under managed composition the pixels are read back from
+        /// the backend and returned (premultiplied BGRA32, top-down, width*4 stride).
         /// </summary>
-        internal static void Render(
+        internal static byte[] Render(
             IntPtr pRenderTarget,
             DUCE.Channel channel,
             Visual visual,
@@ -42,6 +45,40 @@ namespace System.Windows.Media
             Matrix worldTransform,
             Rect windowClip
             )
+            => Render(pRenderTarget, channel, visual, width, height, dpiX, dpiY, worldTransform, windowClip,
+                      static (c, h) => c.ReadbackTarget(h));
+
+        /// <summary>
+        /// Managed composition only: <see cref="Render(IntPtr, DUCE.Channel, Visual, int, int, double, double, Matrix, Rect)"/>
+        /// for a backend that cannot block on its GPU readback (the browser). The visual is
+        /// rendered before this returns -- the pixels show it as it is now -- and the task
+        /// completes when they are back on the CPU.
+        /// </summary>
+        internal static System.Threading.Tasks.Task<byte[]> RenderManagedAsync(
+            DUCE.Channel channel,
+            Visual visual,
+            int width,
+            int height,
+            double dpiX,
+            double dpiY,
+            Matrix worldTransform,
+            Rect windowClip
+            )
+            => Render(IntPtr.Zero, channel, visual, width, height, dpiX, dpiY, worldTransform, windowClip,
+                      static (c, h) => c.ReadbackTargetAsync(h));
+
+        private static T Render<T>(
+            IntPtr pRenderTarget,
+            DUCE.Channel channel,
+            Visual visual,
+            int width,
+            int height,
+            double dpiX,
+            double dpiY,
+            Matrix worldTransform,
+            Rect windowClip,
+            Func<DUCE.Channel, DUCE.ResourceHandle, T> readback
+            ) where T : class
         {
             DUCE.Resource target =
                 new DUCE.Resource();
@@ -115,7 +152,15 @@ namespace System.Windows.Media
 
                 MediaContext mediaContext = MediaContext.CurrentMediaContext;
                 mediaContext.NotifySyncChannelMessage(channel);
-}
+
+                // Managed composition: the backend has no access to pRenderTarget; fetch the
+                // rendered pixels back over the channel instead (before the target is released).
+                if (DUCE.ManagedComposition.IsEnabled)
+                {
+                    return readback(channel, targetHandle);
+                }
+                return null;
+            }
             finally
             {
                 // ------------------------------------------------------------

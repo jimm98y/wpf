@@ -113,8 +113,25 @@ namespace System.Windows.Shell
     {
         static JumpList()
         {
-            // Passing NULL for the HMODULE returns the running executable path.
-            _FullName = UnsafeNativeMethods.GetModuleFileName(new HandleRef());
+            // Off-Windows there is no kernel32, so the P/Invoke below throws -- out of a STATIC
+            // constructor, which turns every later touch of this type into a
+            // TypeInitializationException that no amount of catching at the call site can undo.
+            // That is severe out of proportion to what the type does here: an app that merely
+            // *has* a JumpList (a taskbar feature Windows alone implements, and one apps set up
+            // unconditionally at startup) failed with "The type initializer for
+            // 'System.Windows.Shell.JumpList' threw an exception" rather than simply having no
+            // jump list. Environment.ProcessPath is the same value on every platform, so the
+            // type initializes everywhere and the individual shell operations stay free to fail
+            // on their own terms.
+            if (OperatingSystem.IsWindows())
+            {
+                // Passing NULL for the HMODULE returns the running executable path.
+                _FullName = UnsafeNativeMethods.GetModuleFileName(new HandleRef());
+            }
+            else
+            {
+                _FullName = Environment.ProcessPath ?? string.Empty;
+            }
         }
 
         /// <summary>
@@ -443,15 +460,24 @@ namespace System.Windows.Shell
         private void ApplyList()
         {
             Debug.Assert(_initializing == false);
-            Verify.IsApartmentState(ApartmentState.STA);
 
             // We don't want to force applications to conditionally check this before constructing a JumpList,
             // but if we're not on 7 then this isn't going to work.  Fail fast.
+            //
+            // This gate is deliberately BEFORE the apartment check below. Utilities pins the OS version to
+            // 0.0 off-Windows, so this is the branch every non-Windows head takes, and it is the graceful
+            // one: the items are reported back through JumpItemsRejected exactly as on a downlevel Windows.
+            // The STA requirement belongs to the COM work further down (Shell's ICustomDestinationList),
+            // and there is no COM here -- apartments are a Windows concept, so GetApartmentState answers
+            // Unknown and the verify threw "This operation requires the thread's apartment state to be
+            // 'STA'" on a perfectly correct UI thread, for a taskbar feature the platform does not have.
             if (!Utilities.IsOSWindows7OrNewer)
             {
                 RejectEverything();
                 return;
             }
+
+            Verify.IsApartmentState(ApartmentState.STA);
 
             List<JumpItem> successList;
             List<_RejectedJumpItemPair> rejectedList;

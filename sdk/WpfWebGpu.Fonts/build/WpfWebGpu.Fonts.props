@@ -1,0 +1,15 @@
+﻿<!--
+  Imported automatically by NuGet into every project that references WpfWebGpu.Fonts (that is what
+  build/<PackageId>.props means). It deliberately does nothing except say where the fonts are:
+  WpfWebGpu.Sdk decides what to do with them, and that differs per head — copied beside the app on
+  the unix desktop heads, staged into wwwroot/fonts in the browser, bundled as assets on Android and
+  iOS. Content items would instead land in every head's output the same way, which is wrong for all
+  of them.
+-->
+<Project>
+
+  <PropertyGroup>
+    <WpfWebGpuFontsRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)../fonts'))</WpfWebGpuFontsRoot>
+  </PropertyGroup>
+
+</Project>

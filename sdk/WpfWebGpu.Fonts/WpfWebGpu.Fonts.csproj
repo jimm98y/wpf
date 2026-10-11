@@ -1,0 +1,57 @@
+﻿<!-- Pack-only project for WpfWebGpu.Fonts: the font bundle the port carries because the platform
+     does not.
+
+     Why this is a SEPARATE package rather than part of WpfWebGpu.Sdk, where it used to live: it is
+     27 MB, which was two thirds of the SDK package, and only two of the six heads ever read it. The
+     Windows head has Segoe UI, Segoe Fluent Icons, Cascadia and a system emoji font already, so every
+     Windows app was downloading the CJK collection and the emoji face to leave them on disk unused.
+     WpfWebGpu.Sdk now PackageReferences this one only on the heads that need it (see
+     _WpfWebGpuNeedsFonts in Sdk.targets), which is also why the fonts are exposed as a PROPERTY
+     ($(WpfWebGpuFontsRoot), set by build/WpfWebGpu.Fonts.props) rather than as content items: the SDK
+     decides what to do with them per head — copy beside the app on unix desktop, stage into wwwroot
+     in the browser — and content items would land in every head's output identically.
+
+     What is in the bundle and why each family is there is documented at the point of use, in
+     WpfWebGpu.Sdk/Sdk/Sdk.targets. -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>WpfWebGpu.Fonts</PackageId>
+    <Version>0.1.1</Version>
+    <Authors>wpf-webgpu</Authors>
+    <Description>Font bundle for the WPF-on-WebGPU stack: the families the non-Windows heads have no system copy of (Selawik for Segoe UI, Segoe Fluent Icons/MDL2 as Symbols, Cascadia Code, Noto Sans CJK, and a COLR emoji face). Consumed by WpfWebGpu.Sdk through $(WpfWebGpuFontsRoot); see each font's own LICENSE file in the package.</Description>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <!-- NU5100: assets not under lib/ (deliberate — this package is data, not a library). -->
+    <NoWarn>$(NoWarn);NU5100;NU5128</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzers>false</RunAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The bundle itself, licences included: .ttf, .ttc (Noto Sans CJK is an OpenType COLLECTION,
+         and a *.ttf glob silently leaves it behind) and the .txt licences that must travel with it. -->
+    <None Include="fonts/**" Pack="true" PackagePath="fonts/" />
+    <!-- Imported automatically by NuGet into any project that references this package; all it does is
+         point $(WpfWebGpuFontsRoot) at the folder above. -->
+    <None Include="build/WpfWebGpu.Fonts.props" Pack="true" PackagePath="build/" />
+  </ItemGroup>
+
+  <Target Name="WpfWebGpuFontsValidateInputs" BeforeTargets="GenerateNuspec">
+    <!-- Every head that consumes this package substitutes Selawik for Segoe UI FIRST, and the CJK
+         collection is the only font any head has for Japanese/Chinese/Korean. Packing without them
+         produces a package that looks fine and renders wrong (fallback letterforms, or boxes), so
+         fail here instead. eng/check-font-substitutions.py makes the same check against the sources. -->
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)fonts/Selawik-Regular.ttf')"
+           Text="WpfWebGpu.Fonts is missing Selawik-Regular.ttf — the first substitute the font stack asks for in place of Segoe UI. Every non-Windows head would silently fall through to Liberation for all UI text." />
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)fonts/NotoSansCJK-Regular.ttc')"
+           Text="WpfWebGpu.Fonts is missing NotoSansCJK-Regular.ttc — no head would have a font for Japanese, Chinese or Korean text." />
+    <Error Condition="!Exists('$(MSBuildThisFileDirectory)fonts/Symbols.ttf')"
+           Text="WpfWebGpu.Fonts is missing Symbols.ttf — the Fluent theme's glyph icons (chevrons, checkmarks, NavigationView) would render as missing-glyph boxes off Windows." />
+  </Target>
+
+</Project>

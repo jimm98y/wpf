@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A cross-platform replacement for the Windows-only Microsoft.Web.WebView2.WinForms assembly,
+    carrying the same strong-name identity so an application's existing PackageReference and designer
+    code bind to it unchanged. See the Core project for how the identity works.
+
+    References the fork's Mono System.Windows.Forms (and its vendored System.Drawing), not the
+    framework's: this control has to derive from the same Control the application does, and this
+    stack never resolves Microsoft.WindowsDesktop.App. It also needs friend access to that assembly's
+    EmbeddedScenes seam, which is granted in WinFormsInterop/host/InternalsVisibleTo.cs.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Microsoft.Web.WebView2.WinForms</AssemblyName>
+    <RootNamespace>Microsoft.Web.WebView2.WinForms</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+
+    <AssemblyVersion>1.0.4022.49</AssemblyVersion>
+    <FileVersion>1.0.4022.49</FileVersion>
+    <Version>1.0.4022.49</Version>
+
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>../webview2.publickey</AssemblyOriginatorKeyFile>
+
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CA1416;CS0067</NoWarn>
+
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <_WinForms>$(MSBuildThisFileDirectory)../../WinFormsInterop</_WinForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Microsoft.Web.WebView2.Core/Microsoft.Web.WebView2.Core.csproj" />
+    <ProjectReference Include="$(_WinForms)/System.Windows.Forms.WebGpu.csproj" />
+    <ProjectReference Include="$(_WinForms)/sysdrawing/System.Drawing.WebGpu.csproj" />
+  </ItemGroup>
+
+  <!-- The vendored Mono.System.Drawing is the sole System.Drawing.* provider on this stack; evict
+       the framework one so Color/Point resolve to a single definition (CS0433 otherwise). -->
+  <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferencePath Remove="@(ReferencePath)"
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

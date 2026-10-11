@@ -36,11 +36,16 @@ namespace MS.Win32
         {
             DetachMessage = UnsafeNativeMethods.RegisterWindowMessage("HwndSubclass.DetachMessage");
 
-            // Go find the address of DefWindowProc.
-            IntPtr hModuleUser32 = UnsafeNativeMethods.GetModuleHandle(ExternDll.User32);
-            IntPtr address = UnsafeNativeMethods.GetProcAddress(new HandleRef(null,hModuleUser32), "DefWindowProcW");
+            // DefWindowProc lives in user32 (Windows only). Off-Windows there is no Win32 window
+            // proc to subclass - HwndWrapper uses the Cocoa backend instead - so leave it unset.
+            if (OperatingSystem.IsWindows())
+            {
+                // Go find the address of DefWindowProc.
+                IntPtr hModuleUser32 = UnsafeNativeMethods.GetModuleHandle(ExternDll.User32);
+                IntPtr address = UnsafeNativeMethods.GetProcAddress(new HandleRef(null,hModuleUser32), "DefWindowProcW");
 
-            DefWndProc = address;
+                DefWndProc = address;
+            }
         }
 
         /// <summary>

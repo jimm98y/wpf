@@ -1873,9 +1873,22 @@ namespace System.Windows.Media
             command.ManagedBounds = (Rect)adjustedInkBoundingBox;
             command.GlyphCount = checked((UInt16)glyphCount);
             command.BidiLevel = checked((UInt16)_bidiLevel);
-            command.pIDWriteFont = (UInt64)_glyphTypeface.GetDWriteFontAddRef;
+            // The managed (WebGPU) compositor resolves fonts from a platform-neutral
+            // descriptor appended below, not from the native IDWriteFont pointer, so
+            // skip the AddRef (the managed path never Releases it) and send 0.
+            command.pIDWriteFont = DUCE.ManagedComposition.IsEnabled
+                ? 0UL
+                : (UInt64)_glyphTypeface.GetDWriteFontAddRef;
             command.DWriteTextMeasuringMethod = (UInt16)DWriteTypeConverter.
                                                         Convert(_textFormattingMode);
+
+            // When the managed compositor is active, append a COM-free font descriptor
+            // (file path + face index + style simulations) so it can rasterize glyph
+            // outlines without DirectWrite. Null on a non-local/embedded font (then the
+            // run is simply skipped by the managed backend), or when not enabled.
+            byte[] managedFontTrailer = DUCE.ManagedComposition.IsEnabled
+                ? BuildManagedFontTrailer()
+                : null;
 
             // Advances
             // Offsets
@@ -1897,6 +1910,12 @@ namespace System.Windows.Media
                 if (_glyphOffsets != null && _glyphOffsets.Count != 0)
                 {
                     varDataSize += glyphCount * (2 * sizeof(float));
+                }
+
+                // managed font descriptor trailer (COM-free font resolution)
+                if (managedFontTrailer != null)
+                {
+                    varDataSize += managedFontTrailer.Length;
                 }
 
                 channel.BeginCommand(
@@ -1984,7 +2003,50 @@ namespace System.Windows.Media
                         }
                     }
 }
+                // managed font descriptor trailer (see BuildManagedFontTrailer)
+                if (managedFontTrailer != null)
+                {
+                    fixed (byte* pTrailer = managedFontTrailer)
+                    {
+                        channel.AppendCommandData(pTrailer, managedFontTrailer.Length);
+                    }
+                }
                 channel.EndCommand();
+            }
+        }
+
+        /// <summary>
+        /// Build the platform-neutral font descriptor appended to a glyph run for the
+        /// managed (WebGPU) compositor: ['W','F','N','T'][faceIndex:int32]
+        /// [styleSimulations:int32][pathByteCount:int32][UTF-8 file path]. Returns null
+        /// for a non-local/embedded font (which the managed backend will skip).
+        /// </summary>
+        private byte[] BuildManagedFontTrailer()
+        {
+            try
+            {
+                Uri uri = _glyphTypeface.FontUri;
+                if (uri == null)
+                    return null;
+
+                // The managed resolver re-parses file URIs; a local path is the common
+                // case. The face index travels separately, so any '#index' fragment in
+                // the URI is irrelevant to the resolver.
+                string path = uri.IsFile ? uri.LocalPath : uri.AbsoluteUri;
+                byte[] pathBytes = System.Text.Encoding.UTF8.GetBytes(path);
+
+                byte[] buf = new byte[16 + pathBytes.Length];
+                buf[0] = (byte)'W'; buf[1] = (byte)'F'; buf[2] = (byte)'N'; buf[3] = (byte)'T';
+                BitConverter.TryWriteBytes(buf.AsSpan(4), _glyphTypeface.FaceIndex);
+                BitConverter.TryWriteBytes(buf.AsSpan(8), (int)_glyphTypeface.StyleSimulations);
+                BitConverter.TryWriteBytes(buf.AsSpan(12), pathBytes.Length);
+                Array.Copy(pathBytes, 0, buf, 16, pathBytes.Length);
+                return buf;
+            }
+            catch
+            {
+                // Any failure to describe the font: fall back to skipping (no trailer).
+                return null;
             }
         }
 

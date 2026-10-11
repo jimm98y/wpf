@@ -1177,35 +1177,6 @@ namespace Standard
         ZOOM = MAXIMIZE,
     }
 
-    /// <summary>
-    /// GDI+ Status codes
-    /// </summary>
-    internal enum Status
-    {
-        Ok = 0,
-        GenericError = 1,
-        InvalidParameter = 2,
-        OutOfMemory = 3,
-        ObjectBusy = 4,
-        InsufficientBuffer = 5,
-        NotImplemented = 6,
-        Win32Error = 7,
-        WrongState = 8,
-        Aborted = 9,
-        FileNotFound = 10,
-        ValueOverflow = 11,
-        AccessDenied = 12,
-        UnknownImageFormat = 13,
-        FontFamilyNotFound = 14,
-        FontStyleNotFound = 15,
-        NotTrueTypeFont = 16,
-        UnsupportedGdiplusVersion = 17,
-        GdiplusNotInitialized = 18,
-        PropertyNotFound = 19,
-        PropertyNotSupported = 20,
-        ProfileNotFound = 21,
-    }
-
     internal enum MOUSEEVENTF : int
     {
         //mouse event constants
@@ -1515,34 +1486,6 @@ namespace Standard
         protected override bool ReleaseHandle()
         {
             return NativeMethods.DeleteObject(handle);
-        }
-    }
-
-    internal sealed class SafeGdiplusStartupToken : SafeHandleZeroOrMinusOneIsInvalid
-    {
-        private SafeGdiplusStartupToken() : base(true) { }
-
-        protected override bool ReleaseHandle()
-        {
-            Status s = NativeMethods.GdiplusShutdown(this.handle);
-            return s == Status.Ok;
-        }
-
-        [SuppressMessage("Microsoft.Reliability", "CA2000:Dispose objects before losing scope")]
-        [SuppressMessage("Microsoft.Usage", "CA2201:DoNotRaiseReservedExceptionTypes")]
-        public static SafeGdiplusStartupToken Startup()
-        {
-            SafeGdiplusStartupToken safeHandle = new SafeGdiplusStartupToken();
-            IntPtr unsafeHandle;
-            StartupOutput output;
-            Status s = NativeMethods.GdiplusStartup(out unsafeHandle, new StartupInput(), out output);
-            if (s == Status.Ok)
-            {
-                safeHandle.handle = unsafeHandle;
-                return safeHandle;
-            }
-            safeHandle.Dispose();
-            throw new Exception("Unable to initialize GDI+");
         }
     }
 
@@ -2112,22 +2055,6 @@ namespace Standard
     {
         public int cx;
         public int cy;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct StartupOutput
-    {
-        public IntPtr hook;
-        public IntPtr unhook;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal class StartupInput
-    {
-        public int GdiplusVersion = 1;
-        public IntPtr DebugEventCallback;
-        public bool SuppressBackgroundThread;
-        public bool SuppressExternalCodecs;
     }
 
     [SuppressMessage("Microsoft.Performance", "CA1812:AvoidUninstantiatedInternalClasses")]
@@ -2840,27 +2767,6 @@ namespace Standard
             }
             return rc;
         }
-
-        [DllImport("gdiplus.dll")]
-        public static extern Status GdipCreateBitmapFromStream(IStream stream, out IntPtr bitmap);
-
-        [DllImport("gdiplus.dll")]
-        public static extern Status GdipCreateHBITMAPFromBitmap(IntPtr bitmap, out IntPtr hbmReturn, Int32 background);
-
-        [DllImport("gdiplus.dll")]
-        public static extern Status GdipCreateHICONFromBitmap(IntPtr bitmap, out IntPtr hbmReturn);
-
-        [DllImport("gdiplus.dll")]
-        public static extern Status GdipDisposeImage(IntPtr image);
-
-        [DllImport("gdiplus.dll")]
-        public static extern Status GdipImageForceValidation(IntPtr image);
-
-        [DllImport("gdiplus.dll")]
-        public static extern Status GdiplusStartup(out IntPtr token, StartupInput input, out StartupOutput output);
-
-        [DllImport("gdiplus.dll")]
-        public static extern Status GdiplusShutdown(IntPtr token);
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]

@@ -1,0 +1,1770 @@
+D|def|Microsoft Sans Serif|8.25|3|2|0|0|1|0|-|-|-|-|3.5,5.25,200,150|-|-|incididunt  yes! 12345678901234 [bracket]  50% (paren)  the  well-known c\d
+D|typo|Consolas|9|3|2|0|0|0|2|-|-|-|-|10,0,260,0|-|-| lines  ut #tag tempor  ok Lorem
+D|def|Courier New|10|3|0|0|0|0|1|-|-|-|-|10,0,60,20|-|-| lines comma,  (paren) 12345678901234 magna
+D|def|Segoe UI|9|3|0|0|0|1|1|-|-|-|-|3.5,5.25,260,150|-|-|superlongwordwithoutanybreaks 0 lines ut 0
+D|def|Verdana|9|3|0|0|0|2|2|-|-|-|-|2,0,40,0|-|-| aliqua why?  these WAVE these  these  brown quick i [bracket] ok 'single' adipiscing
+D|typo|Microsoft Sans Serif|11|3|0|0|0|1|0|-|-|-|-|3.5,5.25,40,0|-|-|0 50% l  0 [bracket] WAVE  x-ray quick dolor
+D|null|Verdana|11|3|0|0|0|0|0|-|-|-|-|10,5.25,260,20|-|-| #tag well-known  12345678901234 labore 12345678901234
+D|def|Verdana|8.25|3|3|0|0|2|1|-|-|-|-|3.5,2,130,0|-|-|(paren) semi; fly "quoted" quick
+D|null|Calibri|14|3|2|0|0|0|0|-|-|-|-|10,0,100,0|-|-|Lorem end. @home AVATAR dog
+D|def|Verdana|20|3|0|0|0|2|0|-|-|-|-|3.5,2,80,150|-|-|Mississippi  words  these  sed WAVE yes! words sit Mississippi 
+D|def|Courier New|8|3|0|0|0|0|2|-|-|-|-|10,5.25,100,60|-|-|{brace} brown  12345678901234 brown Lorem  #tag  e-mail e-mail
+D|def|Arial|20|3|1|0|0|0|2|-|-|-|-|10,0,130,60|-|-|ok e-mail over  tempor sed dog ipsum over  dolor 1
+D|def|Courier New|10|3|2|0|0|1|2|-|-|-|-|3.5,0,80,0|-|-|#tag
+D|def|Georgia|12|3|1|0|0|0|0|-|-|-|-|10,2,0,100|-|-|[bracket] consectetur do et dolore dog
+D|null|Arial|20|3|0|0|0|0|0|-|-|-|-|3.5,2,260,40|-|-| sed  [bracket] aliqua x-ray dolore aliqua labore 1 1 x-ray l the  superlongwordwithoutanybreaks  AVATAR
+D|def|Arial|14|3|3|0|0|2|0|-|-|-|-|0,0,200,0|-|-| wrap brown  amet
+D|def|Verdana|14|3|0|0|0|1|0|-|-|-|-|0,2,80,0|-|-| do
+D|null|Verdana|16|3|0|0|0|0|0|-|-|-|-|2,2,40,150|-|-|sit fox {brace}  a/b lines  #tag adipiscing  fly ipsum end.  AVATAR
+D|typo|Courier New|9|3|2|0|0|1|1|-|-|-|-|0,0,0,0|-|-|et @home  i $100 why? the wrap  colon: adipiscing  ut
+D|typo|Verdana|20|3|0|0|0|1|2|-|-|-|-|0,2,60,0|-|-|ipsum comma,  Mississippi  #tag lazy  dolore well-known
+D|def|Calibri|12|3|3|0|0|0|2|-|-|-|-|0,5.25,200,150|-|-|colon: labore AVATAR  the Mississippi jumps  To 
+D|typo|Georgia|12|3|1|0|0|1|2|-|-|-|-|2,5.25,200,150|-|-| colon:  i lines  words elit e-mail {brace}
+D|def|Trebuchet MS|7|3|3|0|0|2|1|-|-|-|-|2,2,0,150|-|-|do  a/b consectetur consectetur AVATAR comma, over dolor these  semi;  superlongwordwithoutanybreaks {brace}  ut  jumps
+D|def|Segoe UI|8.25|3|2|0|0|1|0|-|-|-|-|0,2,200,60|-|-|labore  wrap wrap AVATAR  well-known  colon:  end.
+D|def|Times New Roman|20|3|1|0|0|2|2|-|-|-|-|10,2,260,0|-|-|{brace} eiusmod
+D|typo|Tahoma|10|3|0|0|0|2|1|-|-|-|-|10,2,100,100|-|-|@home  wrap  ipsum x-ray  a/b
+D|typo|Segoe UI|8|3|0|0|0|1|0|-|-|-|-|3.5,2,0,20|-|-|1 
+D|def|Verdana|16|3|3|0|0|1|2|-|-|-|-|3.5,5.25,100,0|-|-|over jumps sit sit semi; x-ray
+D|typo|Courier New|16|3|0|0|0|1|2|-|-|-|-|0,0,260,20|-|-|adipiscing  (paren)  incididunt words  c\d {brace} ipsum
+D|def|Georgia|7|3|0|0|0|2|0|-|-|-|-|10,2,100,60|-|-|wrap colon: these
+D|def|Arial|8.25|3|1|0|0|0|0|-|-|-|-|0,2,60,40|-|-|i 1 adipiscing a/b lazy  over  Mississippi elit fox 0 fox consectetur 
+D|null|Consolas|8|3|2|0|0|0|0|-|-|-|-|10,2,130,0|-|-|fly end. consectetur ok dog
+D|def|Calibri|7|3|0|0|0|2|1|-|-|-|-|10,2,260,100|-|-|incididunt wrap WAVE
+D|def|Tahoma|10|3|0|0|0|0|2|-|-|-|-|10,2,0,150|-|-|ipsum these adipiscing incididunt
+D|null|Trebuchet MS|16|3|0|0|0|0|0|-|-|-|-|2,5.25,40,40|-|-|superlongwordwithoutanybreaks dolor [bracket] words
+D|def|Tahoma|9|3|2|0|0|1|0|-|-|-|-|10,2,260,0|-|-|comma,  c\d  lines  incididunt  dog  colon:  ut  labore #tag
+D|def|Courier New|9|3|1|0|0|0|0|-|-|-|-|2,0,100,20|-|-|ut  $100
+D|typo|Verdana|11|3|0|0|0|0|0|-|-|-|-|3.5,0,200,150|-|-|dolore  superlongwordwithoutanybreaks elit $100  colon: ipsum  1 over c\d  elit
+D|def|Segoe UI|8.25|3|3|0|0|2|2|-|-|-|-|0,5.25,0,0|-|-| superlongwordwithoutanybreaks lazy these c\d c\d brown
+D|def|Trebuchet MS|7|3|0|0|0|2|2|-|-|-|-|10,0,160,0|-|-|et why? e-mail
+D|def|Arial|20|3|0|0|0|1|1|-|-|-|-|10,5.25,0,100|-|-| #tag  i  elit sed  amet
+D|null|Consolas|9|3|3|0|0|0|0|-|-|-|-|3.5,2,60,60|-|-|{brace} dolore et dolor comma,
+D|null|Segoe UI|9|3|3|0|0|0|0|-|-|-|-|3.5,2,100,60|-|-|a/b  dog c\d yes! the dolor l eiusmod
+D|typo|Georgia|16|3|0|0|0|0|2|-|-|-|-|3.5,0,60,0|-|-|c\d aliqua dolore  labore  sit  why? sit adipiscing elit [bracket]  dog
+D|def|Verdana|8|3|2|0|0|2|1|-|-|-|-|2,0,60,150|-|-|@home (paren)  quick  wrap  WAVE eiusmod
+D|def|Consolas|7|3|2|0|0|0|0|-|-|-|-|0,5.25,130,60|-|-|yes! comma, e-mail  comma,  @home Mississippi  [bracket] 
+D|def|Consolas|12|3|0|0|0|1|0|-|-|-|-|10,0,0,20|-|-| tempor ut elit
+D|def|Trebuchet MS|10|3|0|0|0|0|0|-|-|-|-|0,5.25,200,150|-|-|yes! Lorem  jumps sed  c\d  wrap  quick  quick consectetur  et
+D|def|Georgia|11|3|0|0|0|2|2|-|-|-|-|2,0,80,150|-|-|labore sed l over  words ut sit these a/b  To  {brace} 
+D|null|Times New Roman|10|3|0|0|0|0|0|-|-|-|-|2,5.25,100,100|-|-|superlongwordwithoutanybreaks lazy "quoted" 50% over brown  quick over brown fox
+D|def|Times New Roman|8.25|3|1|0|0|1|0|-|-|-|-|2,2,200,100|-|-|Lorem elit ok brown 1 jumps  lines  WAVE ok  elit  yes!  AVATAR
+D|def|Times New Roman|11|3|0|0|0|2|2|-|-|-|-|3.5,2,130,0|-|-|do  $100 end.  end.  fox sed eiusmod [bracket]  'single'
+D|null|Times New Roman|16|3|3|0|0|0|0|-|-|-|-|2,2,260,100|-|-| l  colon:  colon: dolore  sed yes!  sed well-known aliqua  labore adipiscing Mississippi
+D|def|Trebuchet MS|7|3|0|0|0|0|1|-|-|-|-|3.5,0,160,150|-|-|'single'  dolore et
+D|def|Verdana|11|3|0|0|0|0|0|-|-|-|-|10,0,60,40|-|-|quick  "quoted" colon: comma, (paren) end.  ok quick AVATAR these
+D|null|Verdana|11|3|3|0|0|0|0|-|-|-|-|2,0,160,20|-|-|et  fly quick  0 tempor [bracket]  l  end.
+D|def|Arial|11|3|0|0|0|0|1|-|-|-|-|2,5.25,260,40|-|-|dolor lines
+D|typo|Consolas|16|3|0|0|0|0|2|-|-|-|-|2,0,160,20|-|-| labore comma,
+D|def|Trebuchet MS|7|3|0|0|0|1|0|-|-|-|-|2,5.25,60,150|-|-| 0 magna dolor 
+D|def|Calibri|20|3|3|0|0|2|2|-|-|-|-|10,2,80,0|-|-|@home why?  quick  lazy  l  ut Mississippi aliqua WAVE  0
+D|def|Tahoma|10|3|2|4|8196|2|2|0|-|-|-|2,5.25,260,20|-|-| c\d why? c\d\nLorem 0 dolore lazy (paren) Lorem  colon: brown
+D|def|Courier New|16|3|0|0|0|0|2|2|-|-|-|3.5,0,260,20|-|-|why? lazy  dog 12345678901234 tempor x-ray i\nover  "quoted" well-known
+D|typo|Tahoma|9|3|0|0|0|2|2|3|-|-|-|3.5,5.25,60,20|0.8,0,0,0.9,0,0|-|why?  end.  jumps\nyes! ok\nsemi;\nover over ok
+D|def|Trebuchet MS|8|3|0|0|16384|1|2|4|-|-|-|3.5,0,100,0|0.8,0,0,0.8,0.5,0|-|Mississippi 50% lines yes! why? wrap fox 12345678901234
+D|def|Verdana|7|3|2|0|16388|2|0|4|-|-|-|3.5,5.25,100,100|-|-|words consectetur labore c\d the $100  To
+D|def|Arial|12|3|0|0|4|0|2|2|-|-|-|3.5,5.25,260,40|2.0,0,0,2.0,0,2|-|jumps  adipiscing\nover  fly  end. amet  sit adipiscing\nlazy e-mail sit amet 
+D|null|Consolas|12|3|1|0|0|0|0|4|-|-|-|0,2,60,40|-|-|1 comma, comma, why? adipiscing  these  $100
+D|null|Courier New|14|3|0|0|0|0|0|4|-|-|-|10,0,260,20|1.25,0,0,1.25,3.25,0|-|magna\nlines
+D|null|Calibri|7|3|2|4|0|0|0|0|-|-|-|10,0,80,100|-|-|do over end. Lorem ok adipiscing  i jumps  dolore quick
+D|def|Times New Roman|11|3|0|5|4096|1|1|2|-|-|-|3.5,2,100,150|-|-|ut adipiscing\ndolore  c\d  'single' 
+D|def|Times New Roman|8|3|0|0|8196|2|0|4|-|-|-|2,0,40,100|1.5,0,0,1.5,0.5,0|-|l  colon: eiusmod {brace} these i  #tag To\ndolor Lorem amet ut
+D|def|Segoe UI|8|3|3|3|0|0|0|1|-|-|-|10,5.25,160,0|-|-| eiusmod dolor aliqua\nlabore
+D|def|Times New Roman|16|3|0|0|20480|1|2|0|-|-|-|2,0,40,40|-|-|end. sed {brace}  consectetur\nelit  lines 12345678901234 labore\nwords 
+D|null|Tahoma|11|3|0|0|0|0|0|0|-|-|-|3.5,2,80,0|-|-|ut quick
+D|def|Times New Roman|9|3|0|4|8192|1|2|3|-|-|-|3.5,0,80,60|1.5,0,0,1.6,0,0|-|(paren) jumps (paren) a/b dolore {brace} labore comma,\nsemi; et et ut  brown
+D|def|Tahoma|9|3|1|4|2048|0|2|1|-|-|-|10,2,0,0|0.75,0,0,0.75,3.25,0.25|-|{brace}\nAVATAR semi;\nlazy l\nok  Mississippi magna adipiscing over
+D|typo|Tahoma|12|3|0|0|4096|1|1|2|-|-|-|10,2,60,0|-|-|lazy\n0
+D|null|Times New Roman|10|3|3|0|0|0|0|0|-|-|-|3.5,2,200,20|-|-|end.  x-ray why?  #tag\n0 lines fox elit "quoted"
+D|typo|Verdana|10|3|1|0|0|1|0|3|-|-|-|2,5.25,40,20|-|-|aliqua\nwrap @home {brace} dog superlongwordwithoutanybreaks Lorem Lorem fly 
+D|def|Times New Roman|12|3|0|5|0|1|0|3|-|-|-|0,0,100,60|0.8,0,0,0.8,0.5,0|-|c\d 'single' AVATAR over Mississippi aliqua brown
+D|def|Arial|8|3|0|5|28672|0|0|0|-|-|-|3.5,2,60,100|-|-|i #tag dog
+D|null|Microsoft Sans Serif|11|3|0|0|0|0|0|0|-|-|-|10,5.25,160,60|1.1,0,0,1.1,0.5,0.25|-|x-ray\nbrown et
+D|null|Tahoma|10|3|0|0|0|0|0|3|-|-|-|3.5,5.25,200,0|-|-|dolore colon:
+D|def|Calibri|16|3|3|0|0|2|0|0|-|-|-|3.5,5.25,80,20|-|-|semi;
+D|typo|Consolas|16|3|2|0|4100|1|1|3|-|-|-|10,5.25,60,100|-|-| aliqua labore\nfox i why? lines
+D|def|Times New Roman|8|3|0|3|16384|2|0|0|-|-|-|10,5.25,40,0|-|-|superlongwordwithoutanybreaks\n0 l over adipiscing tempor\nbrown tempor\ndo words
+D|def|Georgia|14|3|3|0|18432|1|1|1|-|-|-|3.5,5.25,160,100|-|-|ut well-known
+D|def|Segoe UI|10|3|0|5|0|2|2|3|-|-|-|0,5.25,60,100|-|-|quick  brown jumps 0 "quoted"  well-known 'single'  50% yes!  AVATAR
+D|def|Georgia|10|3|3|5|10240|2|2|3|-|-|-|3.5,2,260,0|-|-|Lorem {brace} these incididunt comma,  over semi;  #tag do over lines
+D|null|Verdana|9|3|0|0|0|0|0|0|-|-|-|2,2,60,0|-|-|superlongwordwithoutanybreaks Lorem ipsum  these comma, WAVE
+D|null|Verdana|16|3|2|5|0|0|0|4|-|-|-|3.5,5.25,40,0|-|-|12345678901234 et  aliqua
+D|def|Calibri|16|3|1|0|0|0|1|3|-|-|-|0,5.25,100,100|0.8,0,0,0.9,0,0|-| lazy over ipsum tempor ok  quick
+D|def|Courier New|20|3|0|4|8192|1|0|0|-|-|-|3.5,5.25,160,0|1.5,0,0,0.9,0,0|-|jumps  brown amet\nWAVE eiusmod elit 
+D|null|Consolas|16|3|2|0|0|0|0|3|-|-|-|3.5,5.25,0,40|-|-|'single' et c\d 50%\n[bracket] dog  x-ray\n0  AVATAR
+D|def|Calibri|11|3|2|0|16384|2|2|1|-|-|-|0,2,40,0|0.5,0,0,0.5,3.25,2|-|(paren) "quoted" @home {brace} et the lines
+D|typo|Courier New|11|3|3|3|2048|1|2|0|-|-|-|0,5.25,160,40|-|-|'single'\net\n{brace}  AVATAR eiusmod  @home  elit  dolor 12345678901234 dog end. end. 
+D|typo|Times New Roman|7|3|0|5|0|1|1|2|-|-|-|2,2,260,0|-|-|why?\ntempor  lines 0\nsuperlongwordwithoutanybreaks sit WAVE tempor\nfox yes! why? WAVE
+D|def|Calibri|10|3|0|5|14336|2|2|2|-|-|-|0,0,100,0|-|-|0\nsemi; aliqua\nthese incididunt  words brown [bracket] ipsum over l 12345678901234 "quoted" sit
+D|def|Georgia|20|3|0|4|0|2|1|3|-|-|-|10,0,100,0|1.5,0,0,0.9,0,0|-|ok consectetur  words  WAVE 50% Mississippi 1 #tag\nsemi;  fly end. fly
+D|typo|Tahoma|20|3|0|0|4100|1|2|0|-|-|-|0,2,80,20|-|-|adipiscing\n12345678901234 comma, fly superlongwordwithoutanybreaks\nsed quick  the\n0 e-mail WAVE aliqua  {brace}\nut 
+D|def|Segoe UI|20|3|2|0|16384|0|1|1|-|-|-|10,5.25,40,40|-|-|ok colon:\nAVATAR colon: 12345678901234 i dog end. labore do  superlongwordwithoutanybreaks\nend.
+D|typo|Consolas|7|3|0|0|6144|2|1|2|-|-|-|2,0,60,60|-|-|semi;  Lorem tempor why?
+D|def|Tahoma|8|3|3|0|4096|2|1|1|-|-|-|0,2,60,40|-|-|labore\nthe aliqua magna
+D|def|Courier New|11|3|0|3|14336|0|2|1|-|-|-|10,5.25,40,20|-|-|semi; et\nbrown et lazy well-known AVATAR
+D|def|Verdana|10|3|0|3|0|0|0|3|-|-|-|2,2,260,0|-|-|superlongwordwithoutanybreaks  dolor\nconsectetur lines  [bracket]  lazy\njumps 50%
+D|def|Courier New|12|3|0|0|0|2|0|3|-|-|-|3.5,2,0,100|-|-|eiusmod\n"quoted" [bracket]  yes! AVATAR
+D|def|Trebuchet MS|10|3|2|3|0|2|2|2|-|-|-|10,0,130,60|-|-|sed [bracket]\nwell-known
+D|def|Georgia|7|3|0|0|2048|2|1|4|-|-|-|0,2,60,100|0.8,0,0,1.6,0,0|-|jumps 1 l  Mississippi labore\nwell-known over quick end. amet over tempor consectetur\nover
+D|typo|Microsoft Sans Serif|14|3|0|0|4|2|0|4|-|-|-|2,0,60,150|-|-|superlongwordwithoutanybreaks\nend.\nwhy? colon:\nwhy?\nlazy magna 0 "quoted"\nwrap
+D|typo|Verdana|14|3|0|5|8196|0|1|2|-|-|-|0,2,40,0|-|-|ok  magna fox\nut  incididunt\namet adipiscing x-ray Lorem over comma,
+D|def|Georgia|9|3|1|0|0|1|0|0|-|-|-|0,2,100,100|0.9166667,0,0,0.9166667,0.5,0.25|-| et 50% AVATAR x-ray the 50% sed i i
+D|def|Arial|9|3|0|0|0|2|1|0|-|-|-|2,5.25,0,60|-|-|e-mail  superlongwordwithoutanybreaks superlongwordwithoutanybreaks\ncomma, dog  et colon: superlongwordwithoutanybreaks  end. 0\nlabore the
+D|def|Verdana|14|3|3|0|10240|1|0|3|-|-|-|0,0,160,0|0.8,0,0,0.9,0,0|-|ipsum  words $100\nx-ray c\d
+D|null|Calibri|7|3|3|0|0|0|0|3|-|-|-|0,2,130,60|-|-|WAVE elit these the 50% over @home a/b
+D|null|Verdana|11|3|1|0|0|0|0|3|-|-|-|2,5.25,160,60|-|-|12345678901234 50% fly\n"quoted"  1  @home\n{brace}
+D|null|Verdana|11|3|2|3|0|0|0|1|-|-|-|2,5.25,130,60|0.8,0,0,0.8,0.5,2|-|eiusmod a/b\nwrap WAVE\nend. i adipiscing @home  $100 Lorem lazy fly
+D|def|Verdana|8.25|3|0|0|8196|2|0|0|-|-|-|0,2,200,150|1.5,0,0,1.3,0,0|-|c\d 12345678901234 wrap  50% ok fly  fly brown  brown  et 0\na/b why? e-mail
+D|def|Calibri|8.25|3|3|3|28672|1|1|3|-|-|-|10,2,80,0|1.5,0,0,1.5,3.25,0|-| 0\nlabore {brace}\nover
+D|null|Verdana|16|3|0|0|0|0|0|1|-|-|-|3.5,2,130,0|-|-|amet ut  incididunt
+D|typo|Courier New|12|3|0|0|0|2|0|3|-|-|-|3.5,0,160,60|-|-|ipsum Mississippi\nsed
+M|typo|Courier New|12|3|1|4|4096|2|2|0|-|-|-|3.5,5.25,200,40|0.8,0,0,0.8,0.5,2|-|well-known dog x-ray 'single' end. (paren) consectetur  et
+M|def|Consolas|12|3|0|1|0|0|1|0|-|-|-|0,2,40,40|-|-|WAVE\ntempor  eiusmod\n0\nwrap AVATAR\nfox  Mississippi  "quoted" "quoted" {brace}  et
+M|typo|Trebuchet MS|7|3|0|0|2048|2|0|1|-|-|-|2,2,160,0|-|-|aliqua\nWAVE lines amet WAVE 50% 12345678901234  eiusmod Lorem 
+M|typo|Arial|11|3|1|5|0|2|1|4|-|-|-|3.5,5.25,260,60|1.1,0,0,1.1,3.25,0.25|-|50% elit sed\nlines\nut a/b adipiscing
+M|null|Verdana|7|3|0|0|0|0|0|1|-|-|-|0,0,260,150|-|-| (paren)\nlabore\nadipiscing
+M|null|Consolas|16|3|0|0|0|0|0|3|-|-|-|2,2,0,100|0.8,0,0,1.3,0,0|-|et\net #tag  lines\net well-known To et lines
+M|def|Tahoma|12|3|3|3|0|2|0|2|-|-|-|0,2,200,0|-|-| (paren)\n@home the
+M|typo|Arial|12|3|0|1|4096|2|1|4|-|-|-|0,2,200,150|2.0,0,0,2.0,0.5,0.25|-|0 eiusmod brown  amet  adipiscing adipiscing\nTo 12345678901234 [bracket] et the
+M|typo|Microsoft Sans Serif|10|3|1|0|4|2|0|4|-|-|-|2,2,260,60|1.25,0,0,1.25,3.25,2|-|WAVE comma, superlongwordwithoutanybreaks office  end.  Mississippi\nthese dolore semi;  #tag "quoted"
+M|def|Georgia|8.25|3|0|0|4096|0|2|0|-|-|-|3.5,5.25,260,100|-|-| lazy l\nover "quoted" yes! ipsum  comma, WAVE ok 1
+M|typo|Verdana|8|3|0|4|0|2|1|2|-|-|-|3.5,2,160,1000|0.5,0,0,0.5,0,2|-|ut\neiusmod  0\nipsum et consectetur
+M|def|Courier New|8|3|0|1|8192|0|2|3|-|-|-|2,5.25,160,40|0.8,0,0,1.3,0,0|-|adipiscing #tag office 50%  "quoted" AVATAR consectetur  ipsum fly $100 l 
+M|null|Consolas|20|3|1|5|0|0|0|4|-|-|-|0,0,100,100|1.25,0,0,1.25,0.5,0|-|{brace} dog tempor these
+M|null|Tahoma|16|3|0|5|0|0|0|1|-|-|-|2,2,200,0|-|-|WAVE aliqua  l  [bracket] [bracket]  Mississippi  lines  incididunt\nsed  fluffy {brace} 0
+M|def|Verdana|12|3|1|0|0|0|1|1|-|-|-|2,2,130,60|0.8,0,0,0.8,0.5,2|-| [bracket] these\ntempor  sit [bracket] office 0 over x-ray fluffy
+M|def|Georgia|9|3|1|5|4|0|0|4|-|-|-|0,2,200,0|0.9166667,0,0,0.9166667,3.25,2|-|office  e-mail WAVE wrap why?  end.
+M|null|Segoe UI|12|3|1|4|0|0|0|4|-|-|-|2,2,80,20|0.9166667,0,0,0.9166667,3.25,0|-|et brown 12345678901234 fly incididunt amet amet #tag 1 superlongwordwithoutanybreaks yes!\nover
+M|def|Calibri|10|3|3|0|16384|0|0|2|-|-|-|0,5.25,0,60|1.2,0,0,0.9,0,0|-|well-known ut\nelit\nipsum Lorem 12345678901234
+M|def|Courier New|16|3|3|4|16384|2|0|0|-|-|-|3.5,2,1000,20|-|-|'single' AVATAR consectetur  lines 
+M|typo|Microsoft Sans Serif|16|3|0|5|0|0|2|2|-|-|-|10,0,60,60|1.2,0,0,1.6,0,0|-|semi;\nTo tempor\n#tag these
+M|def|Calibri|10|3|3|0|16384|1|2|2|-|-|-|0,0,100,60|-|-|quick elit 0 {brace} these 1 adipiscing\nWAVE dolore  superlongwordwithoutanybreaks ok ut
+M|def|Tahoma|10|3|2|0|2048|1|1|3|-|-|-|3.5,0,260,20|-|-|quick sit  words 
+M|def|Microsoft Sans Serif|7|3|3|0|0|1|1|1|-|-|-|0,0,200,60|-|-|yes!\nconsectetur
+M|typo|Arial|9|3|0|0|2052|1|2|2|-|-|-|3.5,5.25,0,0|0.8,0,0,0.9,0,0|-|semi;\nMississippi wrap elit ipsum "quoted" i\n{brace} wrap jumps  over 
+M|def|Microsoft Sans Serif|14|3|1|5|4096|2|0|3|-|-|-|10,0,0,60|2.0,0,0,2.0,0.5,0.25|-| the @home  elit wrap office\nwords
+M|typo|Calibri|8.25|3|3|0|20484|2|2|0|-|-|-|3.5,0,1000,20|0.75,0,0,0.75,3.25,2|-|wrap lines fox l\nmagna 0 labore these why?  AVATAR ok  {brace} 
+M|null|Microsoft Sans Serif|7|3|0|4|0|0|0|0|-|-|-|2,5.25,160,60|-|-| (paren) lazy AVATAR 
+M|def|Georgia|8|3|3|5|2048|1|0|4|-|-|-|0,5.25,260,1000|-|-| consectetur adipiscing\n(paren)
+M|null|Verdana|8.25|3|3|5|0|0|0|0|-|-|-|10,0,60,0|-|-|yes! yes!
+M|typo|Verdana|8|3|3|1|2048|2|1|4|-|-|-|3.5,5.25,160,0|-|-| x-ray sit\nadipiscing labore\nsit  'single'
+M|def|Courier New|14|3|3|0|16388|1|0|1|-|-|-|10,0,260,20|-|-|end.  colon: $100
+M|def|Verdana|11|3|3|5|8192|0|1|3|-|-|-|2,2,260,20|-|-|l a/b  l  aliqua  tempor sed et i
+M|typo|Georgia|14|3|2|5|8192|0|1|3|-|-|-|3.5,5.25,200,1000|-|-|Mississippi fly tempor AVATAR e-mail magna Mississippi
+M|typo|Georgia|11|3|0|1|4|1|2|1|-|-|-|2,0,1000,20|-|-|i yes!  i e-mail 0  ipsum\nthe\nelit  well-known over amet
+M|def|Segoe UI|16|3|0|1|2048|2|0|3|-|-|-|3.5,5.25,40,100|0.8,0,0,1.3,0,0|-|consectetur Lorem  over
+M|null|Microsoft Sans Serif|16|3|1|5|0|0|0|0|-|-|-|3.5,0,80,150|-|-|over labore 'single'  1 tempor  l 
+M|def|Georgia|10|3|0|0|16384|0|0|1|-|-|-|10,0,100,20|-|-|fox\ndo yes!  magna jumps semi;  these fly colon: eiusmod\ndolore
+M|typo|Times New Roman|16|3|0|0|8192|2|1|3|-|-|-|2,2,60,0|0.75,0,0,0.75,0.5,0|-|jumps incididunt  jumps 50%\n(paren) fly 'single' elit lines Lorem
+M|def|Consolas|7|3|0|0|8192|0|2|3|-|-|-|2,5.25,0,0|-|-|#tag l elit  adipiscing  well-known 50% AVATAR
+M|def|Consolas|10|3|0|3|0|2|2|3|-|-|-|10,5.25,0,150|-|-|incididunt over 
+M|def|Courier New|20|3|3|1|0|1|2|1|-|-|-|0,5.25,160,100|0.9166667,0,0,0.9166667,3.25,0.25|-|dolor over ut labore\n50% magna why?\ndolor dog
+M|typo|Consolas|10|3|0|3|2052|2|2|2|-|-|-|2,5.25,260,1000|-|-|1 the lines\nadipiscing incididunt
+M|def|Georgia|9|3|1|0|4|1|1|4|-|-|-|2,2,0,0|0.9166667,0,0,0.9166667,0,2|-|fluffy 50% well-known fluffy fluffy  the\n'single' ut\nbrown over 50%
+M|null|Microsoft Sans Serif|12|3|1|0|0|0|0|3|-|-|-|10,5.25,1000,1000|2.0,0,0,2.0,0,0|-|(paren)  i\naliqua Mississippi  Lorem  dog a/b fluffy dolore
+M|def|Georgia|12|3|0|0|4096|2|0|1|-|-|-|2,5.25,200,100|1.1,0,0,1.1,0,0|-|well-known {brace} [bracket] fly brown et consectetur  WAVE lines adipiscing
+M|def|Times New Roman|20|3|3|0|2048|0|0|4|-|-|-|3.5,2,260,100|1.25,0,0,1.25,3.25,0|-|0
+M|typo|Tahoma|14|3|0|0|0|2|2|0|-|-|-|2,2,80,150|1.25,0,0,1.25,0.5,0.25|-|office amet 0 sed "quoted" 50%
+M|null|Verdana|12|3|0|5|0|0|0|2|-|-|-|3.5,0,260,100|1.1,0,0,1.1,0,0.25|-| incididunt  'single' incididunt
+M|def|Tahoma|10|3|0|0|4|1|0|2|-|-|-|0,0,160,100|0.75,0,0,0.75,0.5,2|-|AVATAR\nquick
+M|null|Microsoft Sans Serif|8.25|3|1|4|0|0|0|0|-|-|-|2,5.25,60,1000|-|-|et\ne-mail labore  tempor
+M|null|Verdana|8.25|3|0|5|0|0|0|1|-|-|-|10,5.25,200,0|1.5,0,0,1.5,3.25,2|-|fluffy incididunt amet office quick To do 'single' consectetur
+M|def|Trebuchet MS|7|3|1|5|4096|2|1|2|-|-|-|0,5.25,200,150|-|-|1 elit 0
+M|def|Trebuchet MS|11|3|0|4|4|2|0|0|-|-|-|0,2,260,150|-|-| superlongwordwithoutanybreaks  dolore aliqua
+M|def|Verdana|10|3|2|0|0|2|1|3|-|-|-|0,0,100,20|-|-|0 elit consectetur a/b Lorem lazy "quoted"\nend. dolor  over
+M|typo|Tahoma|8.25|3|3|0|0|1|2|0|-|-|-|2,5.25,80,100|-|-| dolor do superlongwordwithoutanybreaks incididunt superlongwordwithoutanybreaks
+M|def|Calibri|9|3|0|1|0|2|1|3|-|-|-|3.5,0,40,0|-|-|WAVE words comma, fox x-ray sit\nlines fly
+M|def|Arial|9|3|0|4|16384|0|2|2|-|-|-|10,2,40,0|0.5,0,0,0.5,0,2|-|well-known ut  Mississippi [bracket]  sit adipiscing "quoted" brown\nquick
+M|null|Arial|12|3|2|5|0|0|0|2|-|-|-|2,0,40,1000|0.9166667,0,0,0.9166667,0,0.25|-|jumps
+M|def|Segoe UI|12|3|3|0|16384|2|2|1|-|-|-|3.5,2,160,0|-|-|consectetur\ndolor brown  dolor
+M|def|Trebuchet MS|12|3|1|4|0|0|2|1|-|-|-|3.5,2,40,20|-|-| (paren) @home office  dolor ok\nfly e-mail fox words these 
+R|def|Georgia|16|3|0|0|8192|0|0|2|-|-|-|2,5.25,100,100|-|3:10;24:12;0:2;29:8|colon:  sit  consectetur  colon: tempor sed do incididunt\nAVATAR  end. i\nfox
+R|def|Courier New|11|3|0|4|0|0|0|3|-|-|-|2,0,0,20|0.8,0,0,0.8,3.25,0.25|43:2|amet  fly brown\nsed over brown  ok dog "quoted"
+R|def|Consolas|12|3|2|0|0|2|0|4|-|-|-|0,2,100,1000|-|3:3;11:5;12:11;8:3|'single' WAVE i\nlazy do\nmagna  ok\nsed 
+R|def|Times New Roman|11|3|0|1|2048|2|1|4|-|-|-|0,0,100,100|0.8,0,0,0.8,0,2|18:6;22:3;18:6|@home yes! superlongwordwithoutanybreaks amet l Mississippi
+R|typo|Calibri|10|3|0|1|4100|2|1|1|-|-|-|2,2,160,100|1.2,0,0,1.3,0,0|4:12;16:2;8:3|dolor ipsum brown yes!
+R|def|Times New Roman|8.25|3|2|0|0|0|0|0|-|-|-|2,5.25,160,100|-|0:7;54:1;19:8;59:3|[bracket]  (paren)\nfox\n1 {brace} lazy fly ok well-known the ut
+R|def|Microsoft Sans Serif|8|3|0|0|20480|1|1|0|-|-|-|3.5,2,260,1000|1.5,0,0,1.5,3.25,2|16:12|yes! colon: lazy why? "quoted" lines
+R|typo|Calibri|8|3|0|0|8196|2|0|1|-|-|-|0,0,1000,40|-|56:10;14:4;51:11;6:3|magna wrap office adipiscing\ndolore\na/b sit lines l\n#tag over fox 
+R|typo|Microsoft Sans Serif|8|3|2|5|0|0|1|2|-|-|-|3.5,0,100,1000|2.0,0,0,2.0,0.5,0.25|29:3| $100  over  the eiusmod\n$100  elit
+R|def|Courier New|11|3|1|3|6148|0|0|3|-|-|-|3.5,5.25,1000,0|1.2,0,0,1.6,0,0|21:9;27:3|office 0 over  a/b l sed fox jumps
+R|def|Microsoft Sans Serif|20|3|0|3|4|1|0|3|-|-|-|10,5.25,260,1000|0.8,0,0,0.8,0.5,0.25|32:5|et lines semi; eiusmod  @home dolore amet
+R|def|Consolas|14|3|0|0|0|1|2|1|-|-|-|0,2,160,100|-|0:3| brown To
+R|def|Microsoft Sans Serif|20|3|2|5|4|0|1|4|-|-|-|3.5,0,160,100|1.5,0,0,1.5,0.5,0|3:3;1:7;7:7|incididunt quick brown\n(paren)\ncomma, over #tag  labore lines  dog
+R|typo|Verdana|20|3|1|0|22528|1|1|2|-|-|-|10,5.25,130,150|1.1,0,0,1.1,3.25,0.25|3:8;48:1;34:11;32:10|lazy yes! quick Mississippi  lazy dolor  "quoted" eiusmod
+R|def|Calibri|14|3|0|5|0|1|2|4|-|-|-|3.5,2,60,60|2.0,0,0,2.0,0,0.25|0:8;10:3;17:3|quick ut yes! 50% lines 
+R|def|Segoe UI|12|3|2|5|0|2|2|2|-|-|-|0,2,160,100|-|52:11;49:8|#tag 0 [bracket]  l over AVATAR well-known sit (paren) x-ray  i
+R|typo|Consolas|7|3|2|0|10240|0|0|2|-|-|-|10,2,1000,1000|2.0,0,0,2.0,3.25,0|7:4|jumps lazy 0 dog
+R|def|Times New Roman|16|3|0|4|0|1|2|2|-|-|-|3.5,0,0,40|-|33:9;5:5;1:11;29:4|e-mail magna 12345678901234 words sed i dog 1 
+R|def|Georgia|8.25|3|0|0|16384|0|2|3|-|-|-|2,0,100,20|-|17:3;11:5;9:7;26:2|i office @home  end. Lorem\n0
+R|def|Trebuchet MS|8.25|3|3|5|0|2|1|4|-|-|-|10,2,160,1000|-|8:5;0:3;30:8;46:7|{brace} x-ray Mississippi x-ray  yes!\ncolon:  1 lazy brown these\nsed
+R|def|Tahoma|8.25|3|3|0|4|2|1|4|-|-|-|10,5.25,160,1000|-|15:5;23:9;22:8;31:11|amet et words tempor wrap incididunt x-ray 0 colon: #tag
+R|def|Trebuchet MS|9|3|3|1|16384|1|1|0|-|-|-|0,0,260,1000|0.75,0,0,0.75,0.5,2|23:11|labore eiusmod @home why? i x-ray incididunt dolor brown lines yes!
+R|def|Segoe UI|11|3|3|5|8192|2|0|3|-|-|-|3.5,5.25,1000,1000|0.8,0,0,0.9,0,0|4:4;9:1;2:2|why? brown
+R|def|Microsoft Sans Serif|7|3|3|0|4|1|1|0|-|-|-|0,2,260,1000|0.5,0,0,0.5,3.25,0.25|16:9;10:8| "quoted"  'single'  (paren) 0\n#tag #tag x-ray  Lorem  a/b
+R|def|Courier New|8|3|0|0|8192|0|1|3|-|-|-|3.5,2,260,1000|-|18:3;8:9;25:2|office To Lorem Lorem words
+R|def|Consolas|9|3|0|1|2052|2|0|1|-|-|-|3.5,5.25,0,0|1.1,0,0,1.1,3.25,0|14:6|'single' sit\nfluffy  #tag fluffy
+R|def|Times New Roman|10|3|2|1|20484|2|1|3|-|-|-|2,5.25,1000,20|1.2,0,0,1.3,0,0|34:6;37:3;15:8;13:8|end.\nmagna e-mail lines sed et\nx-ray quick
+R|def|Microsoft Sans Serif|11|3|0|5|8192|0|1|0|-|-|-|3.5,5.25,160,100|0.5,0,0,0.5,0.5,0|51:1;51:2;22:3|fluffy  jumps a/b 1  end. 0 l over over l\ncolon: $100
+R|def|Consolas|8.25|3|0|3|4100|1|0|4|-|-|-|10,2,160,100|1.5,0,0,0.9,0,0|13:3;10:5|amet office  $100
+R|typo|Microsoft Sans Serif|20|3|0|1|0|2|0|0|-|-|-|0,5.25,100,1000|2.0,0,0,2.0,0,0|60:2;46:1;4:12|ok\ntempor (paren)\noffice dolore {brace} incididunt\n'single'  AVATAR\nAVATAR yes! x-ray
+R|def|Georgia|11|3|0|0|0|0|0|0|-|-|-|2,0,160,100|2.0,0,0,2.0,3.25,0.25|0:1;10:3;4:1;18:1|ok lazy yes!  0  over
+R|def|Microsoft Sans Serif|7|3|0|5|2048|2|0|1|-|-|-|0,0,200,150|-|10:11;18:8;26:3;15:11|quick  AVATAR eiusmod over To
+R|def|Courier New|14|3|0|0|18432|2|1|3|-|-|-|0,5.25,1000,100|-|54:11;2:11;22:12|tempor consectetur office $100 {brace} brown over wrap eiusmod\nbrown
+R|def|Microsoft Sans Serif|12|3|0|3|0|0|1|1|-|-|-|10,2,1000,1000|-|43:2;65:10;38:7|ut Mississippi superlongwordwithoutanybreaks Lorem\nAVATAR tempor i colon: colon: Mississippi adipiscing 1
+R|typo|Tahoma|8.25|3|1|4|4|1|2|4|-|-|-|0,0,260,100|-|5:1;0:6|(paren)
+R|def|Segoe UI|10|3|1|0|4100|2|0|1|-|-|-|10,0,1000,1000|-|22:4;11:3;11:11|1 tempor [bracket]  fluffy
+R|def|Tahoma|12|3|0|1|0|0|1|1|-|-|-|0,0,100,100|0.75,0,0,0.75,3.25,2|28:7;35:1| ok  amet  dog words elit the fluffy
+R|def|Microsoft Sans Serif|7|3|0|0|16384|2|2|2|-|-|-|2,0,100,1000|1.5,0,0,1.6,0,0|5:1;2:4;4:2;0:6|fluffy
+R|typo|Calibri|7|3|0|1|4100|0|2|4|-|-|-|0,0,160,100|0.8,0,0,1.6,0,0|8:3;3:6|comma,  the
+R|def|Georgia|16|3|0|1|30720|1|0|2|-|-|-|3.5,0,260,100|-|10:3|comma, dolor 
+R|typo|Segoe UI|7|3|0|5|0|0|0|3|-|-|-|3.5,5.25,160,1000|0.8,0,0,0.8,3.25,2|8:8;9:2|the 1 brown\n(paren)
+R|typo|Arial|20|3|0|3|0|0|1|3|-|-|-|3.5,0,40,0|1.25,0,0,1.25,0,2|29:11;1:2;4:8|eiusmod @home magna\ncomma, fluffy  a/b  AVATAR dolore
+R|typo|Tahoma|7|3|1|1|16384|1|2|2|-|-|-|10,0,260,1000|0.8,0,0,0.9,0,0|23:4| over To ipsum\nquick sed do
+R|def|Segoe UI|16|3|1|0|10244|2|0|0|-|-|-|0,0,260,1000|1.1,0,0,1.1,3.25,0|5:2|magna 0  (paren) superlongwordwithoutanybreaks  lazy\nthese eiusmod words ok\nl
+R|def|Georgia|10|3|1|0|16384|2|2|1|-|-|-|0,0,160,100|1.25,0,0,1.25,3.25,2|12:5| sed  12345678901234  #tag  magna
+R|def|Microsoft Sans Serif|7|3|0|5|0|0|2|4|-|-|-|2,0,160,100|0.5,0,0,0.5,3.25,0.25|6:2|colon:\nMississippi ok
+R|def|Calibri|20|3|2|1|24576|2|2|2|-|-|-|3.5,0,100,100|1.5,0,0,1.3,0,0|44:9;69:2|incididunt labore i\n#tag\nWAVE words 12345678901234 over these  0 i 'single' 
+R|typo|Courier New|14|3|0|0|4096|1|1|3|-|-|-|2,0,160,1000|0.9166667,0,0,0.9166667,0,0.25|18:1;2:2;10:8| x-ray sed office\nover 
+R|typo|Verdana|11|3|0|3|20480|1|2|4|-|-|-|3.5,2,100,100|0.8,0,0,0.8,3.25,2|11:1;5:3;7:5|brown do  $100\nWAVE
+R|def|Tahoma|7|3|2|0|20480|0|1|3|-|-|-|0,2,260,100|0.75,0,0,0.75,0.5,0.25|0:8|[bracket]
+R|def|Trebuchet MS|8|3|2|1|2048|0|1|0|-|-|-|3.5,5.25,100,0|1.1,0,0,1.1,0.5,0|1:1;6:1;6:1;6:1|{brace}
+R|typo|Microsoft Sans Serif|8|3|0|0|2048|0|0|0|-|-|-|3.5,5.25,1000,100|0.9166667,0,0,0.9166667,3.25,2|17:1;17:1|labore semi; semi;
+R|def|Consolas|14|3|2|3|0|0|1|2|-|-|-|2,5.25,80,0|1.5,0,0,0.9,0,0|9:4;6:8;1:5;13:1|12345678901234
+R|typo|Tahoma|12|3|0|0|18432|0|0|0|-|-|-|3.5,5.25,0,40|-|1:2;2:9;8:2;4:10| lazy the jumps
+R|def|Trebuchet MS|10|3|0|5|0|2|2|3|-|-|-|2,5.25,160,100|-|3:1|amet 
+R|typo|Microsoft Sans Serif|14|3|0|4|2048|1|1|3|-|-|-|10,2,100,1000|-|8:1|ok\n"quoted"
+R|typo|Times New Roman|9|3|0|5|24576|2|2|3|-|-|-|10,0,1000,1000|-|24:11;10:10|e-mail $100 adipiscing lines  comma,
+R|def|Verdana|8|3|0|3|0|2|1|3|-|-|-|2,2,1000,100|-|6:2;15:5;15:1;16:1| a/b\nwell-known  wrap
+R|typo|Tahoma|12|3|0|4|2052|1|0|4|-|-|-|3.5,2,0,20|-|43:12;67:6;23:4;43:6|wrap #tag brown colon: Lorem ut dolore superlongwordwithoutanybreaks  $100
+R|def|Times New Roman|8.25|3|3|0|8196|2|0|1|-|-|-|2,0,160,1000|0.8,0,0,0.8,0,2|2:6;4:3;5:7;9:3|eiusmod\namet
+D|null|Tahoma|9|3|0|0|0|0|0|3|-|-|-|3.5,5.25,160,100|-|-| magna ok  fluffy e-mail 
+D|def|Microsoft Sans Serif|12|3|2|0|10241|1|0|2|-|-|-|10,5.25,160,60|-|-|over\nMississippi
+D|null|Calibri|7|3|3|0|0|0|0|1|-|-|-|3.5,0,200,150|-|-|amet sed superlongwordwithoutanybreaks a/b  adipiscing\nipsum  incididunt yes! labore  do\nAVATAR
+D|def|Georgia|8.25|3|0|0|16384|2|2|0|-|-|-|2,2,200,1000|-|-|dolor 1 amet fluffy $100  why?\n50% ok
+D|typo|Segoe UI|7|3|2|0|0|1|2|2|-|-|-|0,2,1000,20|-|-| labore dog To l et Lorem fly elit  quick
+D|null|Segoe UI|20|3|0|0|0|0|0|3|-|-|-|3.5,5.25,260,1000|-|-|ok fluffy AVATAR\ndolore To magna
+D|def|Trebuchet MS|10|3|3|0|16384|2|0|3|-|-|-|3.5,2,130,40|-|-|incididunt\nAVATAR lazy 50%  {brace} $100 AVATAR tempor\n$100  et comma, 
+D|null|Georgia|14|3|0|0|0|0|0|1|-|-|-|3.5,0,0,0|-|-| l e-mail
+D|null|Segoe UI|8|3|2|0|0|0|0|0|-|-|-|3.5,5.25,0,100|-|-|jumps well-known\nAVATAR 50% Lorem comma, WAVE
+D|def|Times New Roman|16|3|0|0|20484|2|1|0|-|-|-|0,5.25,260,60|-|-|i AVATAR a/b dog wrap comma,\nWAVE amet jumps  fly
+D|def|Calibri|8|3|0|0|2049|0|1|1|-|-|-|0,0,130,60|-|-|words ipsum e-mail\nipsum\nfly $100 adipiscing  comma,
+D|typo|Georgia|9|3|0|0|18432|1|0|4|-|-|-|3.5,0,200,1000|-|-| dolor consectetur labore  (paren)
+D|typo|Times New Roman|8|3|3|0|10241|1|1|0|-|-|-|10,0,200,60|-|-|{brace}
+D|null|Courier New|8.25|3|0|0|0|0|0|3|-|-|-|2,0,100,0|-|-| yes! fluffy over  quick x-ray sed ok\nelit\ncomma, 
+D|def|Verdana|20|3|1|0|8193|1|1|2|-|-|-|2,5.25,0,0|-|-|0 i ok 
+D|def|Trebuchet MS|8|3|1|0|1|2|1|0|-|-|-|10,5.25,100,100|-|-|ipsum  comma,  [bracket]\ne-mail  quick brown wrap dolor "quoted" amet  WAVE 
+D|typo|Tahoma|12|3|3|0|0|1|0|3|-|-|-|3.5,2,200,0|-|-|wrap 'single'  dog ipsum {brace}  jumps
+D|null|Tahoma|8.25|3|3|0|0|0|0|1|-|-|-|10,5.25,60,40|-|-|Lorem office\nend. semi; 12345678901234 jumps  et fluffy tempor\nsit
+D|null|Calibri|20|3|0|0|0|0|0|3|-|-|-|3.5,0,60,60|-|-|#tag\nbrown end.\nelit x-ray  l consectetur  words  brown
+D|typo|Arial|10|3|3|0|1|2|2|4|-|-|-|2,0,60,0|-|-|elit dolore AVATAR\nipsum 
+D|def|Trebuchet MS|8|3|2|0|1|2|2|0|-|-|-|10,2,80,20|-|-|office comma, why? adipiscing
+D|null|Tahoma|7|3|0|0|0|0|0|4|-|-|-|0,2,260,1000|-|-|quick over  lazy fluffy\ne-mail ok dolor 
+D|null|Courier New|8|3|3|0|0|0|0|4|-|-|-|2,0,60,1000|-|-| ipsum comma, tempor ut ipsum end. l  {brace}
+D|typo|Georgia|12|3|0|0|0|0|2|4|-|-|-|10,5.25,1000,0|-|-|#tag elit ok  e-mail  superlongwordwithoutanybreaks  labore sed  superlongwordwithoutanybreaks adipiscing\nadipiscing l
+D|def|Verdana|12|3|3|0|16388|0|0|3|-|-|-|2,5.25,260,100|-|-|0 why? over ipsum ut  WAVE 0 the
+D|def|Tahoma|10|3|0|0|0|1|2|3|-|-|-|0,0,130,0|-|-|sed  $100 tempor  50% fox quick
+D|null|Trebuchet MS|11|3|0|0|0|0|0|1|-|-|-|3.5,0,80,0|-|-|x-ray  aliqua  aliqua aliqua\n[bracket] consectetur  ut 
+D|def|Verdana|14|3|2|0|4097|1|2|2|-|-|-|2,0,60,20|-|-|over semi;\nbrown  jumps Mississippi
+D|typo|Courier New|8|3|1|0|4100|1|0|2|-|-|-|3.5,2,100,40|-|-|1 wrap\net elit 'single' magna yes!  e-mail dolore 
+D|null|Tahoma|11|3|0|0|0|0|0|4|-|-|-|3.5,5.25,100,0|-|-|[bracket]\n@home sed sed dolor Lorem
+D|typo|Trebuchet MS|8|3|2|0|1|0|1|2|-|-|-|3.5,0,260,1000|-|-|(paren) do ipsum dog To words amet  fox sit\nadipiscing
+D|null|Verdana|20|3|0|0|0|0|0|1|-|-|-|0,5.25,160,1000|-|-|dolore
+D|null|Segoe UI|14|3|1|0|0|0|0|4|-|-|-|0,0,100,60|-|-|AVATAR fox  ok Mississippi  over end. jumps\ndog 1  magna words jumps 
+D|null|Arial|11|3|2|0|0|0|0|3|-|-|-|3.5,0,40,40|-|-|WAVE words {brace} superlongwordwithoutanybreaks 0 To consectetur end. eiusmod To
+D|def|Segoe UI|20|3|0|0|4097|1|0|0|-|-|-|2,5.25,200,60|-|-|Mississippi  sit  superlongwordwithoutanybreaks
+D|null|Times New Roman|12|3|2|0|0|0|0|1|-|-|-|2,0,200,0|-|-| To words To\ntempor  well-known adipiscing why?
+D|def|Consolas|9|3|1|0|4096|0|1|3|-|-|-|0,0,260,20|-|-|a/b\net\nx-ray To\nWAVE fly  semi; adipiscing over wrap (paren)
+D|def|Verdana|11|3|2|0|0|2|2|0|-|-|-|3.5,2,40,40|-|-|comma,  these  quick  office over  sed  incididunt elit et
+D|null|Arial|20|3|0|0|0|0|0|0|-|-|-|0,2,0,1000|-|-|lazy Lorem lines elit semi;
+D|null|Trebuchet MS|8|3|0|0|0|0|0|3|-|-|-|10,2,60,0|-|-|1 semi;\nWAVE  a/b
+D|typo|Microsoft Sans Serif|16|3|3|0|16388|0|0|0|-|-|-|2,2,160,150|-|-|over AVATAR a/b\n{brace}  tempor 
+D|def|Verdana|20|3|0|0|0|0|2|0|-|-|-|2,0,40,20|-|-|these well-known adipiscing WAVE why? office wrap amet well-known
+D|null|Times New Roman|16|3|0|0|0|0|0|4|-|-|-|2,2,100,0|-|-| #tag\nthese aliqua
+D|typo|Microsoft Sans Serif|10|3|0|0|4|2|2|0|-|-|-|0,5.25,40,20|-|-|do\nsit e-mail @home  et\ncolon: ut
+D|typo|Consolas|8.25|3|3|0|6145|0|2|3|-|-|-|0,5.25,80,1000|-|-|brown\ndolor\nend. et\nx-ray x-ray\n0\nbrown  ipsum\ntempor @home
+D|def|Segoe UI|8|3|3|0|0|2|0|0|-|-|-|3.5,2,100,20|-|-| quick\neiusmod (paren) end. [bracket]  sed\ni
+D|null|Arial|20|3|3|0|0|0|0|0|-|-|-|3.5,2,80,150|-|-|'single' ipsum incididunt [bracket]\nTo
+D|typo|Calibri|20|3|2|0|2048|1|1|4|-|-|-|0,5.25,40,150|-|-|sed fox 50% dog dolore sed lines AVATAR  dolore x-ray jumps comma,
+D|def|Courier New|9|3|3|0|16384|2|1|0|-|-|-|0,2,200,60|-|-|the
+D|null|Segoe UI|14|3|1|0|0|0|0|2|-|-|-|10,0,100,60|-|-|lazy fox  et {brace} eiusmod  (paren)
+D|null|Calibri|9|3|0|0|0|0|0|0|-|-|-|10,2,0,100|-|-|"quoted" $100
+D|def|Segoe UI|7|3|3|0|8193|2|0|0|-|-|-|2,2,130,1000|-|-| eiusmod e-mail\n12345678901234\nAVATAR Lorem e-mail quick\nbrown dog
+D|def|Trebuchet MS|11|3|0|0|1|2|1|3|-|-|-|0,2,200,100|-|-|l (paren)\nthese\net $100 @home
+D|null|Microsoft Sans Serif|9|3|2|0|0|0|0|0|-|-|-|2,2,100,0|-|-|e-mail  a/b @home\net do colon: 1 (paren) #tag  e-mail well-known 
+D|typo|Microsoft Sans Serif|11|3|2|0|8193|0|2|1|-|-|-|3.5,0,200,40|-|-|Mississippi yes!  over fly
+D|typo|Arial|12|3|0|0|0|2|0|2|-|-|-|0,0,40,100|-|-|yes! ut labore elit over
+D|def|Arial|12|3|1|0|1|0|1|3|-|-|-|3.5,5.25,0,40|-|-|0\nthe end.  amet
+D|def|Segoe UI|20|3|3|0|4096|1|0|2|-|-|-|2,0,260,150|-|-|dolore over\ne-mail adipiscing e-mail et l adipiscing
+D|null|Courier New|11|3|0|0|0|0|0|1|-|-|-|3.5,0,160,40|-|-|adipiscing  brown\nLorem\nsemi;  50% the To 0 yes!
+D|typo|Consolas|8.25|3|1|0|5|2|0|0|-|-|-|10,0,200,20|-|-|fly (paren) comma, do\nadipiscing @home labore x-ray
+D|def|Times New Roman|10|3|0|0|12294|0|2|0|-|-|-|0,2,80,40|-|-|colon: 50% these incididunt  WAVE e-mail over 
+D|typo|Consolas|11|3|0|0|8196|0|2|3|-|-|-|10,0,1000,20|-|-|adipiscing 1 dolore aliqua tempor elit incididunt semi;\n12345678901234\nwords  50%
+D|null|Consolas|7|3|3|0|0|0|0|1|-|-|-|10,0,0,0|-|-|end. these incididunt incididunt superlongwordwithoutanybreaks\nAVATAR do quick superlongwordwithoutanybreaks jumps  do
+D|typo|Tahoma|8|3|1|0|10240|2|1|3|-|-|-|0,5.25,130,40|-|-|dolor labore aliqua  semi; over 1  x-ray To  brown (paren) fluffy 
+D|def|Georgia|8.25|3|0|0|16386|2|1|0|-|-|-|10,2,40,100|-|-|[bracket] #tag  ut  end. quick\nover incididunt
+D|def|Segoe UI|8|3|2|0|2|2|0|4|-|-|-|3.5,2,1000,100|-|-|elit why?
+D|def|Times New Roman|8|3|3|0|0|0|0|3|-|-|-|10,2,1000,40|-|-|To semi; adipiscing end. adipiscing  x-ray i eiusmod  $100\nend.  lines 'single' 
+D|def|Verdana|9|3|3|0|0|1|1|0|-|-|-|3.5,2,130,1000|-|-|1 "quoted" 0\net  why? aliqua  words {brace}\n{brace}
+D|def|Georgia|20|3|1|0|16386|2|0|1|-|-|-|0,0,200,0|-|-|consectetur over\ncolon:\nl\nsuperlongwordwithoutanybreaks $100 these 
+D|def|Calibri|10|3|2|0|12290|1|1|3|-|-|-|3.5,2,200,20|-|-|a/b comma, consectetur ut fly a/b why? amet semi;\n[bracket]\net  Lorem
+D|null|Georgia|20|3|0|0|0|0|0|3|-|-|-|0,0,130,60|-|-|(paren)
+D|null|Arial|9|3|2|0|0|0|0|3|-|-|-|10,2,160,1000|-|-|dolore comma, over jumps  a/b a/b Mississippi\nover lazy
+D|def|Tahoma|12|3|2|0|2|2|2|0|-|-|-|0,2,1000,40|-|-| sit AVATAR semi; 50% fly\ne-mail
+D|typo|Consolas|8.25|3|1|0|6|0|1|3|-|-|-|10,5.25,80,40|-|-|eiusmod yes!
+D|def|Courier New|11|3|2|0|2|0|2|1|-|-|-|2,5.25,200,60|-|-|fly  l do\ndolor
+D|null|Times New Roman|16|3|2|0|0|0|0|1|-|-|-|10,5.25,160,0|-|-|labore
+D|def|Trebuchet MS|11|3|0|0|8194|2|1|3|-|-|-|10,5.25,60,150|-|-|magna
+D|null|Tahoma|8|3|0|0|0|0|0|3|-|-|-|0,0,130,1000|-|-| ok semi; dolor AVATAR lazy ipsum  fox
+D|def|Microsoft Sans Serif|10|3|0|0|2|1|1|1|-|-|-|0,2,40,40|-|-|brown fox\n{brace}  the @home elit  fox 50% lines  why?
+D|null|Calibri|16|3|0|0|0|0|0|4|-|-|-|2,0,1000,0|-|-|office\na/b  office fox\na/b WAVE over  the 'single' ipsum well-known do
+D|def|Times New Roman|12|3|0|0|6146|1|0|0|-|-|-|10,2,1000,100|-|-|dolore words et  brown consectetur
+D|def|Tahoma|20|3|3|0|12290|0|0|4|-|-|-|0,5.25,160,60|-|-|comma, magna a/b consectetur ok et\nincididunt dolor  12345678901234
+D|def|Segoe UI|8|3|2|0|14340|1|2|4|-|-|-|0,0,1000,0|-|-|#tag lines amet wrap To  elit
+D|def|Georgia|10|3|2|0|2|2|2|3|-|-|-|0,2,260,100|-|-|AVATAR  l $100 12345678901234\nwords [bracket] adipiscing dolor
+D|typo|Courier New|20|3|2|0|24576|2|2|4|-|-|-|0,5.25,80,0|-|-| aliqua adipiscing #tag [bracket]\n$100 
+D|typo|Segoe UI|11|3|0|0|2|2|0|3|-|-|-|10,2,80,20|-|-|eiusmod  sed 0 over\ndog labore  AVATAR\n$100
+D|typo|Courier New|9|3|1|0|2|0|1|2|-|-|-|10,0,60,0|-|-|dolor words  a/b  fluffy  'single'
+D|def|Verdana|14|3|0|0|6146|0|1|4|-|-|-|3.5,0,200,0|-|-|adipiscing  12345678901234 To\n{brace}
+D|def|Consolas|20|3|0|0|2050|0|1|4|-|-|-|3.5,0,60,0|-|-|superlongwordwithoutanybreaks dog  ipsum dolor why?  sit\nthese  over dog
+D|def|Segoe UI|7|3|0|0|8198|0|0|2|-|-|-|3.5,0,60,150|-|-|(paren) sit quick ut yes! 0
+D|def|Microsoft Sans Serif|8|3|0|0|2|1|2|3|-|-|-|3.5,0,0,150|-|-| dolore  Lorem lines\nthese 'single'\ni WAVE comma, words
+D|null|Trebuchet MS|11|3|3|0|0|0|0|2|-|-|-|2,5.25,60,60|-|-|brown fox\n{brace} jumps\ncomma, fly
+D|def|Tahoma|7|3|3|0|0|1|0|4|-|-|-|10,5.25,0,150|-|-|fox
+D|null|Consolas|14|3|1|0|0|0|0|4|-|-|-|2,2,80,150|-|-|AVATAR
+D|def|Georgia|20|3|0|0|0|2|0|4|-|-|-|10,2,80,20|-|-|do\nwords  To\ndo superlongwordwithoutanybreaks
+D|null|Arial|20|3|3|0|0|0|0|3|-|-|-|3.5,2,40,60|-|-|i\nMississippi jumps l 12345678901234 over dolore dog eiusmod magna\nTo 
+D|typo|Microsoft Sans Serif|16|3|0|0|0|1|0|0|-|-|-|0,2,200,0|-|-|aliqua\nadipiscing {brace}\n[bracket]\nbrown sit
+D|typo|Calibri|16|3|0|0|2|1|2|1|-|-|-|10,0,160,20|-|-|1 superlongwordwithoutanybreaks yes!  over sit $100 yes! fluffy  ut fluffy
+D|def|Segoe UI|11|3|2|0|16388|2|1|0|-|-|-|2,0,100,0|-|-| end. x-ray ut the
+D|def|Courier New|9|3|2|0|8194|0|1|3|-|-|-|3.5,2,60,1000|-|-|superlongwordwithoutanybreaks\n[bracket] $100 dolore jumps dolore l WAVE WAVE  these aliqua wrap
+D|null|Segoe UI|12|3|3|0|0|0|0|2|-|-|-|3.5,5.25,0,100|-|-|dog adipiscing\nx-ray a/b sit quick sed  {brace} quick 'single' ipsum 
+D|def|Arial|12|3|0|0|0|0|1|1|-|-|-|2,2,100,1000|-|-|office sit
+D|def|Courier New|8|3|0|0|2050|2|0|1|-|-|-|0,5.25,160,20|-|-|over eiusmod
+D|def|Microsoft Sans Serif|8|3|1|0|8198|2|2|3|-|-|-|10,2,40,100|-|-|ipsum  superlongwordwithoutanybreaks\nthe  end.
+D|def|Tahoma|16|3|3|0|0|0|0|4|-|-|-|3.5,5.25,260,0|-|-|e-mail aliqua  labore tempor  i\nwrap WAVE dog
+D|def|Calibri|10|3|1|0|4102|0|1|1|-|-|-|3.5,2,40,0|-|-|'single' why?
+D|def|Times New Roman|9|3|2|0|16384|1|0|1|-|-|-|10,2,40,0|-|-|et  AVATAR
+D|typo|Trebuchet MS|16|3|0|0|2|1|2|2|-|-|-|10,5.25,40,100|-|-|end. comma, end.  the
+D|typo|Trebuchet MS|9|3|3|0|0|1|2|3|-|-|-|2,2,100,0|-|-|a/b\nyes! #tag\nWAVE wrap AVATAR elit dolor labore l well-known
+D|typo|Trebuchet MS|11|3|1|0|0|1|2|3|-|-|-|3.5,5.25,40,150|-|-|ut  tempor  colon: tempor 0 To x-ray elit  0 ut e-mail labore
+D|null|Tahoma|14|3|0|0|0|0|0|2|-|-|-|2,0,200,60|-|-| fluffy end. consectetur end. quick consectetur
+D|def|Times New Roman|8|3|1|0|2|0|2|1|-|-|-|0,2,200,20|-|-|@home
+D|def|Consolas|9|3|3|0|4098|1|0|1|-|-|-|3.5,0,40,0|-|-|colon: {brace} 50% eiusmod wrap  semi; 50% $100 fly et
+D|null|Trebuchet MS|12|3|2|0|0|0|0|4|-|-|-|3.5,5.25,200,0|-|-|dolor "quoted" 'single' yes! these ipsum  [bracket]  12345678901234 incididunt do words "quoted"
+D|def|Georgia|10|3|2|0|0|0|1|3|-|-|-|2,0,160,0|-|-|these sed dolore  colon: l comma,  comma, quick\ni
+D|null|Segoe UI|7|3|0|0|0|0|0|0|-|-|-|2,0,80,1000|-|-|why? [bracket]\naliqua words jumps fly
+D|typo|Verdana|7|3|0|0|4|0|0|3|-|-|-|0,0,160,0|-|-|incididunt  fluffy @home\nWAVE ut semi; {brace} lazy sed jumps
+D|def|Verdana|8|3|1|0|16386|2|1|3|-|-|-|3.5,5.25,130,100|-|-|magna magna eiusmod 
+D|typo|Calibri|14|3|3|0|10246|1|0|0|-|-|-|0,0,1000,40|-|-|words ipsum aliqua
+D|def|Tahoma|8.25|3|2|0|4096|0|1|2|-|-|-|10,0,80,20|-|-|over yes! {brace}\nover 'single' [bracket] ut consectetur  lazy\n(paren)
+A|def|Arial|8|3|0|0|4|1|2|1|-|-|-|0,0,0,40|-|-|lazy eiusmod incididunt 1  1
+A|typo|Consolas|16|3|0|0|16384|2|2|3|-|-|-|0,5.25,260,20|-|-|dolore\nwords fox\nover amet\n{brace} Lorem  comma, a/b lazy 
+A|def|Verdana|8.25|3|1|0|0|2|1|3|-|-|-|0,0,1000,100|-|-|Mississippi\nover\nlazy  aliqua\nipsum jumps 0 ut (paren) over 50%
+A|null|Microsoft Sans Serif|16|3|0|0|0|0|0|0|-|-|-|0,2,100,20|-|-|wrap over incididunt lazy yes! 
+A|def|Tahoma|8|3|3|0|0|1|0|4|-|-|-|0,0,60,20|-|-| labore 12345678901234 e-mail Lorem  adipiscing consectetur  et well-known  Mississippi  l
+A|def|Calibri|16|3|2|0|0|0|1|3|-|-|-|10,0,160,0|-|-|{brace} colon: consectetur\n$100 To  end.  l  over @home
+A|null|Arial|7|3|0|0|0|0|0|0|-|-|-|0,2,100,60|-|-|[bracket] l lines  incididunt x-ray Mississippi fly\nWAVE  over dolore over
+A|def|Times New Roman|20|3|0|0|6144|1|1|1|-|-|-|3.5,5.25,60,60|-|-|AVATAR yes! incididunt  words  fox dog consectetur  @home
+A|def|Consolas|20|3|2|0|0|2|1|4|-|-|-|0,2,160,20|-|-|labore sed  colon:  @home
+A|def|Tahoma|10|3|0|0|0|0|1|0|-|-|-|2,2,130,100|-|-|$100
+A|def|Courier New|7|3|0|0|18432|2|0|2|-|-|-|0,5.25,200,100|-|-|end.
+A|def|Verdana|11|3|0|0|2048|1|2|1|-|-|-|10,2,100,20|-|-|adipiscing
+D|typo|Arial|14|3|0|0|0|2|0|1|-|-|-|2,0,40,40|1.4488887394336025,0.3882285676537811,-0.3882285676537811,1.4488887394336025,100,60|-|a/b yes! ut  over
+D|null|Consolas|12|3|1|0|0|0|0|2|-|-|-|0,0,60,60|6.123233995736766e-17,1.0,-1.0,6.123233995736766e-17,150,60|-|why? Mississippi\n1 incididunt ipsum "quoted"\nincididunt well-known @home why? lazy
+D|null|Segoe UI|8|3|0|0|0|0|0|3|-|-|-|0,2,80,0|0.5000000000000001,0.8660254037844386,-0.8660254037844386,0.5000000000000001,150,60|-|#tag 12345678901234 adipiscing dog AVATAR x-ray 0 1 dog x-ray  dolor dolore
+D|def|Consolas|10|3|3|0|0|0|2|1|-|-|-|10,2,200,20|0.7071067811865476,0.7071067811865475,-0.7071067811865475,0.7071067811865476,150,60|-|[bracket]  semi; ok incididunt 12345678901234\ne-mail quick\noffice  end. tempor  amet
+D|def|Times New Roman|11|3|0|0|0|1|2|3|-|-|-|3.5,5.25,160,20|1.4488887394336025,0.3882285676537811,-0.3882285676537811,1.4488887394336025,100,60|-|brown adipiscing  Lorem\nfly tempor ok et\n(paren) "quoted"\nelit
+D|null|Calibri|7|3|0|0|0|0|0|3|-|-|-|0,2,0,1000|1.299038105676658,0.7499999999999999,-0.7499999999999999,1.299038105676658,150,100|-|sed these e-mail end. elit 
+D|def|Verdana|16|3|3|0|0|2|2|0|-|-|-|0,2,200,1000|1.4095389311788626,-0.5130302149885031,0.5130302149885031,1.4095389311788626,150,100|-|aliqua (paren)\nyes!
+D|null|Calibri|12|3|0|0|0|0|0|2|-|-|-|10,5.25,1000,0|1.4488887394336025,0.3882285676537811,-0.3882285676537811,1.4488887394336025,150,100|-| 12345678901234\ncomma,  ipsum magna aliqua\ndolor  dolore  ut
+D|typo|Trebuchet MS|16|3|0|0|0|2|0|3|-|-|-|3.5,5.25,130,100|0.5000000000000001,0.8660254037844386,-0.8660254037844386,0.5000000000000001,150,100|-|$100 eiusmod consectetur\nconsectetur yes!\n{brace} aliqua\n50%
+D|def|Times New Roman|14|3|1|0|0|1|1|2|-|-|-|3.5,2,60,100|0.8660254037844387,0.49999999999999994,-0.49999999999999994,0.8660254037844387,100,60|-|why? i
+D|def|Segoe UI|9|3|2|0|0|2|2|3|-|-|-|0,2,130,1000|0.8660254037844387,0.49999999999999994,-0.49999999999999994,0.8660254037844387,100,100|-|Lorem  elit labore
+D|null|Arial|7|3|0|0|0|0|0|2|-|-|-|0,5.25,260,0|-1.5,1.8369701987210297e-16,-1.8369701987210297e-16,-1.5,150,100|-|fox et\nWAVE  over
+D|typo|Microsoft Sans Serif|20|3|0|0|0|1|2|2|-|-|-|2,2,0,1000|-1.5,1.8369701987210297e-16,-1.8369701987210297e-16,-1.5,150,100|-|WAVE elit magna  1 50%  l
+D|typo|Microsoft Sans Serif|11|3|0|0|0|2|0|4|-|-|-|0,2,60,150|0.7500000000000002,1.299038105676658,-1.299038105676658,0.7500000000000002,100,60|-|wrap WAVE  {brace} lazy\nAVATAR i  To dolor  a/b do
+D|def|Tahoma|16|3|0|0|0|0|0|1|-|-|-|3.5,5.25,100,1000|0.9396926207859084,-0.3420201433256687,0.3420201433256687,0.9396926207859084,150,60|-|amet l over {brace} e-mail\n1 a/b eiusmod wrap\nthese 1
+D|def|Trebuchet MS|20|3|1|0|0|2|1|2|-|-|-|3.5,5.25,200,20|0.8660254037844387,0.49999999999999994,-0.49999999999999994,0.8660254037844387,100,60|-|"quoted"  et the words Lorem  eiusmod ok over\nAVATAR\nl
+D|null|Consolas|10|3|3|0|0|0|0|0|-|-|-|0,2,1000,1000|1.0606601717798214,1.0606601717798212,-1.0606601717798212,1.0606601717798214,100,100|-|lines x-ray 1  over\net\nLorem brown do sit ok
+D|typo|Segoe UI|9|3|0|0|0|0|2|1|-|-|-|3.5,2,200,0|0.5000000000000001,0.8660254037844386,-0.8660254037844386,0.5000000000000001,150,60|-|consectetur 
+D|null|Consolas|20|3|2|0|0|0|0|4|-|-|-|0,5.25,40,100|-1.8369701987210297e-16,-1.0,1.0,-1.8369701987210297e-16,100,60|-|these\n#tag dog 12345678901234 0 well-known  fluffy
+D|def|Verdana|8.25|3|0|0|0|0|1|4|-|-|-|0,0,160,60|6.123233995736766e-17,1.0,-1.0,6.123233995736766e-17,150,60|-|ut  i do WAVE  fox\n(paren) words
+D|typo|Georgia|7|3|0|0|0|0|2|4|-|-|-|3.5,5.25,160,20|-2.755455298081545e-16,-1.5,1.5,-2.755455298081545e-16,100,60|-| lazy Lorem office  tempor #tag  To e-mail #tag\naliqua
+D|typo|Segoe UI|20|3|2|0|0|2|2|0|-|-|-|0,5.25,100,60|0.5000000000000001,0.8660254037844386,-0.8660254037844386,0.5000000000000001,100,100|-| $100
+D|def|Georgia|10|3|0|0|0|2|0|1|-|-|-|0,2,40,60|1.4095389311788626,-0.5130302149885031,0.5130302149885031,1.4095389311788626,150,60|-|$100 i why? ipsum well-known 0 a/b
+D|def|Georgia|8.25|3|2|0|0|0|2|0|-|-|-|3.5,5.25,100,20|0.7500000000000002,1.299038105676658,-1.299038105676658,0.7500000000000002,100,100|-|'single' 0 the wrap\nwrap semi; well-known  the
+D|null|Consolas|14|3|3|0|0|0|0|0|-|-|-|2,2,130,20|-1.8369701987210297e-16,-1.0,1.0,-1.8369701987210297e-16,150,60|-|i over  well-known well-known fluffy  {brace}\nfluffy
+D|null|Georgia|14|3|0|0|0|0|0|4|-|-|-|0,0,60,0|0.7071067811865476,0.7071067811865475,-0.7071067811865475,0.7071067811865476,150,60|-|dolor colon:  quick do incididunt labore To ok\nyes! WAVE eiusmod
+D|null|Verdana|16|3|0|0|0|0|0|4|-|-|-|0,5.25,130,0|0.7071067811865476,0.7071067811865475,-0.7071067811865475,0.7071067811865476,150,100|-|50% amet the  elit Lorem  (paren) 
+D|null|Times New Roman|16|3|3|0|0|0|0|1|-|-|-|3.5,2,130,0|0.7071067811865476,0.7071067811865475,-0.7071067811865475,0.7071067811865476,150,100|-|[bracket] yes! sed fluffy incididunt\ndo\nconsectetur do office  over
+D|def|Tahoma|14|3|2|0|0|0|0|4|-|-|-|0,5.25,130,0|-1.8369701987210297e-16,-1.0,1.0,-1.8369701987210297e-16,150,100|-|dolore
+D|null|Courier New|16|3|0|0|0|0|0|0|-|-|-|10,5.25,0,1000|0.7500000000000002,1.299038105676658,-1.299038105676658,0.7500000000000002,100,60|-|aliqua\ndo  Lorem Lorem  0 these amet  superlongwordwithoutanybreaks colon: AVATAR\n[bracket] 0
+D|null|Times New Roman|12|3|0|0|0|0|0|2|-|-|-|10,0,160,60|0.9396926207859084,-0.3420201433256687,0.3420201433256687,0.9396926207859084,100,60|-|dog\ntempor ipsum these  et  0 well-known colon:\net\nWAVE amet consectetur
+D|def|Tahoma|11|3|0|0|0|1|2|3|-|-|-|0,5.25,200,20|0.8660254037844387,0.49999999999999994,-0.49999999999999994,0.8660254037844387,100,100|-|over\nipsum
+D|null|Trebuchet MS|14|3|0|0|0|0|0|4|-|-|-|10,0,60,0|1.4488887394336025,0.3882285676537811,-0.3882285676537811,1.4488887394336025,100,100|-| 50%\njumps end.
+D|null|Times New Roman|9|3|2|0|0|0|0|4|-|-|-|10,2,130,0|6.123233995736766e-17,1.0,-1.0,6.123233995736766e-17,100,100|-| $100
+D|typo|Georgia|8.25|3|1|0|0|2|1|4|-|-|-|2,0,60,100|0.7071067811865476,0.7071067811865475,-0.7071067811865475,0.7071067811865476,150,60|-| $100 office well-known eiusmod office ipsum dolor To
+D|null|Courier New|11|3|0|0|0|0|0|4|-|-|-|10,0,0,40|6.123233995736766e-17,1.0,-1.0,6.123233995736766e-17,150,100|-|dolor  office\naliqua words  brown\nincididunt  do fly 
+D|def|Tahoma|8.25|3|0|0|0|0|0|1|-|-|-|10,0,80,20|-1.5,1.8369701987210297e-16,-1.8369701987210297e-16,-1.5,150,100|-|l
+D|null|Calibri|8|3|2|0|0|0|0|4|-|-|-|0,5.25,40,100|-2.755455298081545e-16,-1.5,1.5,-2.755455298081545e-16,150,100|-|why? eiusmod  et\nelit semi;\ndolore jumps WAVE #tag
+D|null|Segoe UI|8|3|3|0|0|0|0|2|-|-|-|3.5,0,0,150|0.7071067811865476,0.7071067811865475,-0.7071067811865475,0.7071067811865476,100,60|-|wrap Mississippi 12345678901234\nwords
+D|null|Consolas|20|3|1|0|0|0|0|0|-|-|-|3.5,0,130,40|0.5000000000000001,0.8660254037844386,-0.8660254037844386,0.5000000000000001,100,60|-|50%  jumps  superlongwordwithoutanybreaks eiusmod  aliqua 12345678901234 lazy
+D|def|Tahoma|11|3|0|0|0|1|1|0|-|-|-|2,0,80,60|1.299038105676658,0.7499999999999999,-0.7499999999999999,1.299038105676658,150,100|-|"quoted" over l\nadipiscing fluffy [bracket]\nquick yes! @home comma,
+D|def|Trebuchet MS|20|3|2|0|0|0|0|0|-|-|-|3.5,0,160,0|6.123233995736766e-17,1.0,-1.0,6.123233995736766e-17,100,100|-|@home i
+D|null|Courier New|12|3|0|0|0|0|0|0|-|-|-|2,0,260,40|0.7071067811865476,0.7071067811865475,-0.7071067811865475,0.7071067811865476,150,100|-|Mississippi aliqua\nAVATAR why?\nsuperlongwordwithoutanybreaks dolore  $100 fox\nthese\nsit words sit
+D|def|Microsoft Sans Serif|10|3|0|0|0|2|2|1|-|-|-|0,2,0,0|9.184850993605148e-17,1.5,-1.5,9.184850993605148e-17,100,100|-|office\nwrap To labore
+D|null|Verdana|8|3|2|0|0|0|0|2|-|-|-|2,5.25,60,0|0.7071067811865476,0.7071067811865475,-0.7071067811865475,0.7071067811865476,150,100|-|dolor\ni elit  comma, 0  x-ray\net 'single'  Lorem\nlazy lazy
+D|typo|Consolas|14|3|0|0|0|0|0|3|-|-|-|10,2,200,1000|0.8660254037844387,0.49999999999999994,-0.49999999999999994,0.8660254037844387,100,100|-|1 do tempor dog\noffice  these  sit
+D|typo|Georgia|16|3|0|0|0|1|1|2|-|-|-|0,0,0,20|0.5000000000000001,0.8660254037844386,-0.8660254037844386,0.5000000000000001,100,100|-|et [bracket]\n50% 1 over 'single' end. colon:\na/b
+D|def|Courier New|10|3|0|0|0|1|1|4|-|-|-|0,5.25,130,20|6.123233995736766e-17,1.0,-1.0,6.123233995736766e-17,100,100|-|#tag x-ray\nlines the\noffice lines\nx-ray
+D|def|Times New Roman|9|3|1|0|0|2|2|4|-|-|-|3.5,5.25,260,0|9.184850993605148e-17,1.5,-1.5,9.184850993605148e-17,150,60|-|brown colon: end. sit e-mail [bracket] words
+D|null|Trebuchet MS|8|3|0|0|0|0|0|4|-|-|-|3.5,5.25,130,0|1.0606601717798214,1.0606601717798212,-1.0606601717798212,1.0606601717798214,150,100|-| "quoted"  wrap  a/b  ok over labore well-known\ncolon:\nwell-known fly
+D|null|Arial|9|3|0|0|0|0|0|1|-|-|-|10,5.25,160,0|0.8660254037844387,0.49999999999999994,-0.49999999999999994,0.8660254037844387,150,60|-|brown fox\nelit dolore yes! i
+D|null|Trebuchet MS|20|3|3|0|0|0|0|1|-|-|-|3.5,2,260,60|0.5000000000000001,0.8660254037844386,-0.8660254037844386,0.5000000000000001,100,100|-|dolore incididunt words  yes! 
+D|typo|Consolas|8.25|3|0|0|0|0|2|0|-|-|-|3.5,2,130,0|6.123233995736766e-17,1.0,-1.0,6.123233995736766e-17,150,100|-|elit\ndolor words the [bracket] well-known  aliqua
+D|null|Tahoma|8|3|1|0|0|0|0|1|-|-|-|2,0,160,0|9.184850993605148e-17,1.5,-1.5,9.184850993605148e-17,100,100|-|superlongwordwithoutanybreaks end. 'single'\nincididunt  50%
+D|typo|Verdana|7|3|0|0|0|2|1|2|-|-|-|10,0,60,40|1.4095389311788626,-0.5130302149885031,0.5130302149885031,1.4095389311788626,150,100|-|these 50% sit  superlongwordwithoutanybreaks i dog\nLorem ut\n[bracket] dolor\n50% colon:
+D|def|Consolas|9|3|0|0|0|1|1|0|-|-|-|10,5.25,60,1000|1.4095389311788626,-0.5130302149885031,0.5130302149885031,1.4095389311788626,100,60|-|superlongwordwithoutanybreaks 1\nfly brown lines wrap over\nwords x-ray\nelit
+D|null|Consolas|9|3|2|0|0|0|0|4|-|-|-|2,2,130,0|1.299038105676658,0.7499999999999999,-0.7499999999999999,1.299038105676658,150,60|-|WAVE
+D|def|Times New Roman|9|3|1|0|0|0|2|3|-|-|-|2,5.25,1000,150|0.7071067811865476,0.7071067811865475,-0.7071067811865475,0.7071067811865476,150,60|-|superlongwordwithoutanybreaks 'single' a/b\na/b  #tag over WAVE  the
+D|typo|Segoe UI|16|3|3|0|0|2|1|0|-|-|-|10,2,200,0|0.5000000000000001,0.8660254037844386,-0.8660254037844386,0.5000000000000001,100,60|-|l\nok  brown 
+D|def|Trebuchet MS|12|3|1|0|0|1|2|3|-|-|-|10,2,80,0|-1.5,1.8369701987210297e-16,-1.8369701987210297e-16,-1.5,100,60|-|fly  ipsum sed x-ray\ndolore
+D|def|Microsoft Sans Serif|10|3|1|0|0|0|0|-|-|-|-|3.5,0,40,100|-|-|ab cd ef gh
+D|def|Microsoft Sans Serif|10|3|1|0|0|1|0|-|-|-|-|3.5,0,40,100|-|-|ab cd ef gh
+D|def|Microsoft Sans Serif|10|3|1|0|0|2|0|-|-|-|-|3.5,0,40,100|-|-|ab cd ef gh
+D|def|Microsoft Sans Serif|10|3|1|0|0|0|0|-|-|-|-|3.5,0,60,100|-|-|ab cd ef gh ij kl
+D|def|Microsoft Sans Serif|10|3|1|0|0|1|0|-|-|-|-|3.5,0,60,100|-|-|ab cd ef gh ij kl
+D|def|Microsoft Sans Serif|10|3|1|0|0|0|0|-|-|-|-|3.5,0,40,100|-|-|e} fox 1 a/b
+D|def|Microsoft Sans Serif|10|3|1|0|0|1|0|-|-|-|-|3.5,0,40,100|-|-|e} fox 1 a/b
+D|def|Microsoft Sans Serif|10|3|0|0|0|1|0|-|-|-|-|3.5,0,40,100|-|-|e} fox 1 a/b
+D|def|Tahoma|10|3|1|0|0|1|0|-|-|-|-|3.5,0,40,100|-|-|e} fox 1 a/b
+D|null|Verdana|8|3|0|3|0|0|0|0|-|-|-|0,0,60,40|-|-|dolore $100\naliqua\nx-ray\nsed ut tempor amet e-mail incididunt {brace}
+D|null|Verdana|8|3|0|5|0|0|0|0|-|-|-|0,0,60,40|-|-|dolore $100\naliqua\nx-ray\nsed ut tempor amet e-mail incididunt {brace}
+D|def|Microsoft Sans Serif|10|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Microsoft Sans Serif|10|3|2|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Microsoft Sans Serif|10|3|3|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Tahoma|10|3|2|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Tahoma|10|3|3|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Arial|10|3|3|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Microsoft Sans Serif|10|3|2|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefg hij
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;2|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;3|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;1|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;0|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1054;2|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1054;3|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|1|5|1|0|0|-|-|-|1025;3|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1065;3|0,0,300,100|-|-|abc 12 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1081;3|0,0,300,100|-|-|abc 12 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1081;2|0,0,300,100|-|-|abc 12 x
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|1025;3|0,0,300,100|-|-|abc 12 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;3|0,0,300,100|-|-|ال 12 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;3|0,0,300,100|-|-|12
+M|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1025;3|0,0,300,100|-|-|abc 0123456789 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1037;3|0,0,300,100|-|-|abc 12 x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|2052;3|0,0,300,100|-|-|abc 12 x
+R|def|Segoe UI|12|3|0|5|4097|2|0|-|-|-|1;0|2,2,60,100|-|5:12;10:5;3:12|\u05e9\u05dc\u05d5\u05dd \u00a3 9 99\u00a0% 1/2
+R|def|Arial|10|3|0|5|0|0|0|-|-|-|1024;2|2,2,0,100|-|2:1;0:2;1:1|\u00a3 9
+R|def|Segoe UI|10|3|0|5|0|2|0|-|-|-|2052;2|2,2,0,100|-|4:3;19:7;1:23|50% 12,345.67 abc 1/2 12%3
+D|def|Segoe UI|8|3|0|5|1|2|0|-|-|-|1;3|2,2,300,100|-|-|12%3 [a]
+D|def|Tahoma|12|3|0|5|4096|0|0|-|-|-|1037;3|2,2,0,100|-|-|abc 12 $100 50%
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|1081;3|2,2,60,100|-|-|1 000 \u05e9\u05dc\u05d5\u05dd abc
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|1026;3|2,2,100,100|-|-|3:30
+D|def|Arial|8|3|0|5|0|2|0|-|-|-|1026;0|2,2,100,100|-|-|-3
+R|def|Segoe UI|12|3|0|5|4097|1|0|-|-|-|1033;3|2,2,60,100|-|18:4|99\u00a0% $100 \u00a3 9 ok 1 000
+D|def|Times New Roman|10|3|0|5|0|0|0|-|-|-|0;1|2,2,300,100|-|-|[a]
+R|def|Microsoft Sans Serif|10|3|0|5|0|1|0|-|-|-|1081;1|2,2,0,100|-|8:2|dog 12 1/2
+D|def|Arial|10|3|0|5|2|0|0|-|-|-|1081;2|2,2,100,100|-|-|1/2
+D|def|Arial|10|3|0|5|2|1|0|-|-|-|2048;0|2,2,0,100|-|-|dog
+D|def|Verdana|12|3|0|5|4097|0|0|-|-|-|2048;1|2,2,300,100|-|-|ok #7 2x $100
+R|def|Microsoft Sans Serif|10|3|0|5|4096|1|0|-|-|-|2052;3|2,2,60,100|-|23:3;0:25;26:1|1 000 2x (42) $100 0123456789
+R|def|Tahoma|8|3|0|5|0|1|0|-|-|-|2052;2|2,2,300,100|-|14:1;8:6;11:3|+4.5 +4.5 ok abc
+R|def|Segoe UI|12|3|0|5|0|0|0|-|-|-|1081;3|2,2,300,100|-|0:2|[a]
+D|def|Tahoma|12|3|0|5|1|1|0|-|-|-|1081;3|2,2,60,100|-|-|\u00a3 9
+R|def|Segoe UI|10|3|0|5|0|0|0|-|-|-|1056;3|2,2,0,100|-|10:1|12,345.67 fox
+R|def|Tahoma|8|3|0|5|4096|0|0|-|-|-|1033;2|2,2,60,100|-|9:1;8:1|+4.5 ok 12%3
+D|typo|Microsoft Sans Serif|7|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|7|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|8|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|8|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|9|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|9|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|10|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|10|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|11|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|12|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|12|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|16|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Microsoft Sans Serif|16|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|7|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|8|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|9|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|9|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|10|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|14|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|typo|Lucida Sans Unicode|14|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|7|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|8|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|8|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|9|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|11|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|11|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Microsoft Sans Serif|16|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|7|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|9|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|9|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|10|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|11|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|11|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|12|3|0|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|14|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|14|3|0|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|16|3|1|1|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|16|3|0|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|16|3|1|3|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Lucida Sans Unicode|16|3|1|5|0|0|0|-|-|-|-|0,0,0,0|-|-|abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 .,;:!?
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aあb
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aกขb
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aԱԲb
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aकखb
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a一丁b
+D|def|Times New Roman|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a一b
+D|def|Verdana|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a☃b❤c
+D|def|Arial|10|3|0|5|1024|0|0|-|-|-|-|2,2,300,100|-|-|aあb
+D|def|Segoe UI|10|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aあいb
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|xაბy
+D|def|Calibri|11|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|xሀሁy
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|x
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|\u007f
+M|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aあb
+D|def|Courier New|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|aあb가c
+D|def|Arial|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|אב اب
+D|def|Times New Roman|10|3|0|4|4096|0|0|-|-|-|-|2,2,60,100|-|-|\u2605\u2116\u2192 \u25a0
+R|def|Microsoft Sans Serif|16|3|0|3|1024|2|0|-|-|-|-|2,2,0,100|-|2:3|\u0531\u0d15\u2192\u0151\u2603
+D|def|Calibri|8|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-| \ue000\u1780\u1f600 \u13a0
+D|def|Tahoma|16|3|3|5|1024|0|0|-|-|-|-|2,2,60,100|-|-|\u0c15\u221e
+R|def|Arial|8|3|0|5|4|2|0|-|-|-|-|2,2,60,100|-|0:4| \u2603 \u0b95
+D|def|Tahoma|8|3|3|5|0|2|0|-|-|-|-|2,2,300,100|-|-|\u0151\uac00\uac01
+D|def|Consolas|16|3|1|5|0|1|0|-|-|-|-|2,2,60,100|-|-|\u2122
+R|def|Verdana|8|3|0|4|4|0|0|-|-|-|-|2,2,300,100|-|2:4| \u20ac \u10d0\u10d1\uac00\uac01
+D|def|Arial|12|3|0|5|0|2|0|-|-|-|-|2,2,300,100|-|-|\u0915\u0916\u03b1\u03b2\u2192
+D|def|Segoe UI|10|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|\u2764\ue000
+D|def|Tahoma|12|3|0|5|0|2|0|-|-|-|-|2,2,60,100|-|-| \ue000
+D|def|Trebuchet MS|8|3|3|5|1024|1|0|-|-|-|-|2,2,300,100|-|-|\u03b1\u03b2 \u1f600 \u2116 \ue000\u0915\u0916
+D|def|Consolas|12|3|0|1|0|2|0|-|-|-|-|2,2,0,100|-|-|fox\u4e00\u4e01
+D|def|Trebuchet MS|8|3|2|3|0|2|0|-|-|-|-|2,2,60,100|-|-| \u2764\u4e00\u4e01\uac00\uac01
+D|def|Microsoft Sans Serif|8|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-| \u2665\u03b1\u03b2
+D|def|Courier New|16|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-|\u0430\u0431\u2603\uac00\uac01\u0531
+M|def|Courier New|16|3|0|5|0|0|0|-|-|-|-|2,2,60,100|-|-| \u20ac
+M|def|Segoe UI|8|3|0|3|4096|2|0|-|-|-|-|2,2,60,100|-|-| \u0f40\u0f40\u1f600\u10d0\u10d1
+D|def|Georgia|8|3|0|5|0|1|0|-|-|-|-|2,2,0,100|-|-|\u0e01\u0e02\u0915\u0916\uac00\uac01\ue000
+M|def|Consolas|12|3|0|5|0|1|0|-|-|-|-|2,2,300,100|-|-|\u0c15 \u4e00\u4e01\u1780 \u0151 \u0531
+D|def|Tahoma|10|3|0|5|32|0|0|-|-|-|-|2,2,300,100|-|-|a\tb\rc\nd\u0001e\u001ff\u007fg
+D|def|Tahoma|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a\tb\rc\nd\u0001e\u001ff\u007fg
+M|def|Segoe UI|10|3|0|5|32|0|0|-|-|-|-|2,2,300,100|-|-|a​b‌c‍d‎e‏f﻿g
+M|def|Segoe UI|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a​b‌c‍d‎e‏f﻿g
+D|typo|Lucida Console|9|3|1|4|4096|2|0|-|-|-|-|2,2,0,100|-|-|ijl WAVE Hello
+D|typo|Lucida Console|8|3|1|5|2048|0|0|-|-|-|-|2,2,300,100|-|-|Mmm Mmm
+D|def|Segoe UI Light|20|3|1|4|2048|0|0|-|-|-|-|2,2,300,100|-|-|lazy fifty 1234 fox brown Mmm
+D|typo|Lucida Console|8|3|3|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|The The fox quick jumps
+D|typo|Lucida Sans Unicode|12|3|1|5|0|2|0|-|-|-|-|2,2,300,100|-|-|brown lazy .,; The fox
+D|typo|Microsoft Sans Serif|7|3|3|5|4096|2|0|-|-|-|-|2,2,0,100|-|-| 1234 lazy ijl .,;
+M|def|Lucida Console|12|3|1|3|0|0|0|-|-|-|-|2,2,80,100|-|-| brown fifty fox
+D|def|Microsoft Sans Serif|8|3|1|1|4096|0|0|-|-|-|-|2,2,0,100|-|-|AVATAR
+D|def|Segoe UI Light|12|3|3|4|0|0|0|-|-|-|-|2,2,0,100|-|-|.,; lazy
+D|typo|Microsoft Sans Serif|8|3|1|1|2048|1|0|-|-|-|-|2,2,0,100|-|-|.,; AVATAR dog 
+M|typo|Microsoft Sans Serif|20|3|3|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|1234 lazy Mmm The quick WAVE
+D|def|Lucida Console|12|3|1|2|0|1|0|-|-|-|-|2,2,0,100|-|-|WAVE lazy fox
+D|def|Microsoft Sans Serif|12|3|1|5|4|0|0|-|-|-|-|2,2,80,100|-|-|fifty .,;
+M|def|Microsoft Sans Serif|12|3|1|4|4|2|0|-|-|-|-|2,2,0,100|-|-| ijl fox 
+D|def|Lucida Console|10|3|1|5|2048|0|0|-|-|-|-|2,2,0,100|-|-|1234 1234 fox ijl dog
+D|def|Lucida Sans Unicode|10|3|1|5|0|2|0|-|-|-|-|2,2,80,100|-|-|1234 fifty
+D|typo|Microsoft Sans Serif|20|3|1|5|2048|2|0|-|-|-|-|2,2,0,100|-|-|.,; fox lazy fifty lazy brown
+D|typo|Lucida Console|12|3|1|5|4096|1|0|-|-|-|-|2,2,300,100|-|-|.,; dog fifty 
+D|def|Segoe UI Light|10|3|1|2|4|1|0|-|-|-|-|2,2,0,100|-|-|jumps
+D|typo|Segoe UI Light|14|3|1|1|2048|0|0|-|-|-|-|2,2,80,100|-|-|.,; 
+D|typo|Segoe UI Light|9|3|0|5|0|1|0|-|-|-|-|2,2,80,100|-|-|1234 The 1234 .,; WAVE Mmm
+M|def|Lucida Console|9|3|0|3|2048|0|0|-|-|-|-|2,2,0,100|-|-|quick dog AVATAR WAVE
+D|def|Lucida Sans Unicode|14|3|0|3|4|1|0|-|-|-|-|2,2,300,100|-|-|Mmm AVATAR .,; AVATAR
+D|typo|Gabriola|7|3|0|2|2048|0|0|-|-|-|-|2,2,300,100|-|-|ijl Hello dog
+D|typo|Lucida Console|8|3|0|5|2048|1|0|-|-|-|-|2,2,300,100|-|-|fifty 1234
+D|def|Segoe UI Light|12|3|0|4|0|1|0|-|-|-|-|2,2,0,100|-|-|.,; Hello quick jumps Mmm 1234 
+D|def|Lucida Console|12|3|0|5|2048|2|0|-|-|-|-|2,2,80,100|-|-|dog .,; fox .,; Mmm
+M|typo|Microsoft Sans Serif|9|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|ijl jumps lazy Hello
+D|typo|Segoe UI Light|7|3|0|4|0|1|0|-|-|-|-|2,2,300,100|-|-|ijl
+D|def|Microsoft Sans Serif|12|3|0|2|0|2|0|-|-|-|-|2,2,0,100|-|-|lazy
+M|def|Lucida Console|8|3|0|4|2048|0|0|-|-|-|-|2,2,0,100|-|-|fox
+D|def|Lucida Console|8|3|0|2|4096|1|0|-|-|-|-|2,2,300,100|-|-|1234 WAVE 1234
+M|def|Segoe UI Light|8|3|0|4|0|1|0|-|-|-|-|2,2,80,100|-|-|lazy .,;
+D|typo|Lucida Sans Unicode|12|3|0|2|4096|1|0|-|-|-|-|2,2,0,100|-|-|jumps fifty dog ijl Mmm 
+D|typo|Segoe UI Light|12|3|0|3|4096|2|0|-|-|-|-|2,2,80,100|-|-|WAVE lazy .,; lazy AVATAR quick
+D|typo|Microsoft Sans Serif|14|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-| quick .,; over .,;
+D|def|Segoe UI Light|8|3|0|1|4096|0|0|-|-|-|-|2,2,80,100|-|-| quick dog lazy fifty brown 
+D|typo|Microsoft Sans Serif|12|3|0|2|0|0|0|-|-|-|-|2,2,300,100|-|-|Mmm 
+D|def|Lucida Console|12|3|0|4|0|1|0|-|-|-|-|2,2,80,100|-|-|lazy 
+D|def|Microsoft Sans Serif|8|3|0|4|2048|1|0|-|-|-|-|2,2,0,100|-|-|brown
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|?
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-| a
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|a
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|abcdefghijklmnop
+D|def|Microsoft Sans Serif|10|3|1|5|4|0|0|-|-|-|-|2,2,300,100|-|-|abcdefghijklmnop
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ii
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|WW
+D|def|Microsoft Sans Serif|10|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|lll
+D|def|Microsoft Sans Serif|10|3|1|1|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|1|3|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|10|3|2|5|4|0|0|-|-|-|-|2,2,300,100|-|-|ab
+D|def|Microsoft Sans Serif|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-| é
+D|def|Microsoft Sans Serif|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-|é
+D|def|Microsoft Sans Serif|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-|e
+D|def|Segoe UI Light|20|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|0|1|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|1|1|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|1|4|4|0|0|-|-|-|-|2,2,0,100|-|-|lllll
+D|def|Segoe UI Light|20|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Segoe UI Light|20|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+D|def|Franklin Gothic Medium|20|3|1|4|4|0|0|-|-|-|-|2,2,0,100|-|-|MMMMM
+M|def|Tahoma|9|3|0|5|4096|1|0|1|1|-|-|2,2,300,100|-|-|&File
+M|typo|Verdana|8|3|1|5|4|2|0|1|1|-|-|2,2,300,100|-|-|Op&en
+D|def|Courier New|10|3|0|5|4096|1|0|1|1|-|-|2,2,300,100|-|-|&W
+D|typo|Segoe UI|10|3|0|5|0|1|0|1|1|-|-|2,2,300,100|-|-|Old Win&dow
+D|def|Tahoma|8|3|0|5|0|0|0|1|2|-|-|2,2,0,100|-|-|&W
+M|def|Segoe UI|8|3|2|5|0|1|0|1|1|-|-|2,2,300,100|-|-|Old Tools&
+D|typo|Segoe UI|8|3|0|1|4|0|0|1|2|-|-|2,2,300,100|-|-|&&Co
+D|typo|Segoe UI|9|3|0|5|0|2|0|1|1|-|-|2,2,0,100|-|-|Ab&out
+D|def|Arial|12|3|1|5|0|1|0|1|1|-|-|2,2,0,100|-|-|E&xit
+M|def|Times New Roman|10|3|1|5|0|2|0|1|2|-|-|2,2,300,100|-|-|E&xit
+D|def|Times New Roman|10|3|0|5|0|2|0|1|2|-|-|2,2,0,100|-|-|Old Save &As
+D|def|Verdana|12|3|4|5|0|1|0|1|1|-|-|2,2,0,100|-|-|Old Ab&out
+D|def|Segoe UI|10|3|0|3|0|1|0|1|2|-|-|2,2,300,100|-|-|Old Ab&out
+M|typo|Segoe UI|12|3|0|0|4|1|0|1|2|-|-|2,2,300,100|-|-|&iiii
+D|def|Times New Roman|10|3|0|5|4|0|0|1|1|-|-|2,2,300,100|-|-|Save &As
+D|typo|Microsoft Sans Serif|9|3|0|5|0|0|0|1|1|-|-|2,2,300,100|-|-|Tools&
+D|def|Verdana|9|3|0|5|0|0|0|1|1|-|-|2,2,0,100|-|-|&&Co
+D|def|Arial|10|3|1|1|4|0|0|1|2|-|-|2,2,300,100|-|-|&Help
+D|def|Microsoft Sans Serif|12|3|0|1|4096|1|0|1|1|-|-|2,2,0,100|-|-|Tools&
+D|typo|Arial|12|3|0|0|4096|0|0|1|2|-|-|2,2,0,100|-|-|Pa&ste
+D|typo|Lucida Sans Unicode|20|3|8|4|4|0|0|-|-|-|-|2,2,80,100|-|-|1234 fifty quick Mmm brown lazy
+D|def|Microsoft Sans Serif|8|3|4|4|0|0|0|-|-|-|-|2,2,300,100|-|-| 1234 WAVE Hello Mmm jumps
+M|typo|Segoe UI Light|9|3|8|1|4096|1|0|-|-|-|-|2,2,300,100|-|-|1234 jumps quick Mmm
+D|typo|Segoe UI Light|9|3|12|5|0|1|0|-|-|-|-|2,2,80,100|-|-|1234 The 1234 .,; WAVE Mmm
+D|def|Lucida Sans Unicode|9|3|12|1|0|0|0|-|-|-|-|2,2,300,100|-|-|fox jumps fifty Hello jumps over
+M|def|Lucida Sans Unicode|12|3|12|2|4|1|0|-|-|-|-|2,2,80,100|-|-|brown
+D|typo|Lucida Console|7|3|4|5|0|0|0|-|-|-|-|2,2,0,100|-|-|1234 .,; .,; jumps 1234 fifty
+D|typo|Lucida Sans Unicode|9|3|4|2|4096|2|0|-|-|-|-|2,2,0,100|-|-| fox over 1234 Mmm
+D|typo|Segoe UI Light|7|3|4|4|0|1|0|-|-|-|-|2,2,300,100|-|-|ijl
+D|def|Microsoft Sans Serif|9|3|4|5|4|0|0|-|-|-|-|2,2,80,100|-|-|Mmm WAVE lazy 
+M|typo|Lucida Console|7|3|4|3|4|1|0|-|-|-|-|2,2,80,100|-|-| ijl fifty lazy .,; over
+M|def|Lucida Sans Unicode|12|3|4|3|4096|2|0|-|-|-|-|2,2,0,100|-|-| 1234 1234 jumps WAVE dog dog
+D|typo|Microsoft Sans Serif|8|3|4|5|0|2|0|-|-|-|-|2,2,300,100|-|-|jumps
+D|def|Microsoft Sans Serif|14|3|4|5|4096|0|0|-|-|-|-|2,2,300,100|-|-|Mmm 
+D|typo|Lucida Sans Unicode|10|3|8|5|2048|0|0|-|-|-|-|2,2,0,100|-|-|brown
+D|def|Microsoft Sans Serif|14|3|4|1|4096|1|0|-|-|-|-|2,2,80,100|-|-| Mmm dog
+D|typo|Lucida Console|8|3|8|5|4|0|0|-|-|-|-|2,2,300,100|-|-|fox fifty .,; lazy fox
+M|def|Segoe UI Light|12|3|4|5|4096|2|0|-|-|-|-|2,2,80,100|-|-|WAVE The fox lazy
+D|typo|Lucida Sans Unicode|7|3|8|1|4|1|0|-|-|-|-|2,2,300,100|-|-|dog 1234
+D|typo|Lucida Console|14|3|4|2|4096|2|0|-|-|-|-|2,2,300,100|-|-| AVATAR fox
+D|typo|Lucida Sans Unicode|10|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|20|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|21|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|22|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|25|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Sans Unicode|27|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|7|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|20|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|23|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|27|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|32|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|36|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Lucida Console|40|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|9|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|10|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|18|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|23|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|24|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|27|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Courier New|28|2|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|lazy
+D|typo|Microsoft Sans Serif|9|3|0|4|2048|1|0|-|-|-|-|2,2,0,100|-|-| The 1234 Mmm 
+D|def|Lucida Sans Unicode|9|3|0|1|0|0|0|-|-|-|-|2,2,300,100|-|-|fox jumps fifty Hello jumps over
+D|def|Lucida Sans Unicode|10|3|0|5|2048|1|0|-|-|-|-|2,2,300,100|-|-|brown ijl 
+D|typo|Lucida Console|8|3|0|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|The The fox quick jumps
+D|def|Microsoft Sans Serif|9|3|0|5|0|2|0|-|-|-|-|2,2,0,100|-|-|fox jumps lazy Hello
+D|def|Gabriola|14|3|0|2|2048|2|0|-|-|-|-|2,2,0,100|-|-|Mmm fifty Mmm
+M|def|Segoe UI Light|9|3|0|3|0|2|0|-|-|-|-|2,2,80,100|-|-|Hello fifty over ijl
+D|typo|Lucida Sans Unicode|9|3|0|3|0|1|0|-|-|-|-|2,2,0,100|-|-|lazy
+M|def|Gabriola|9|3|0|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|.,; AVATAR jumps .,;
+D|def|Lucida Console|8|3|0|5|4096|2|0|-|-|-|-|2,2,300,100|-|-| ijl The AVATAR quick lazy
+D|def|Gabriola|10|3|0|2|4096|0|0|-|-|-|-|2,2,80,100|-|-|The ijl quick fox lazy Mmm
+D|def|Microsoft Sans Serif|14|3|0|1|4096|0|0|-|-|-|-|2,2,0,100|-|-|The ijl
+D|def|Lucida Console|14|3|0|1|2048|0|0|-|-|-|-|2,2,300,100|-|-|Mmm quick AVATAR 1234
+D|def|Lucida Sans Unicode|10|3|0|5|4096|1|0|-|-|-|-|2,2,300,100|-|-|Mmm dog brown jumps
+D|def|Gabriola|14|3|0|4|4096|0|0|-|-|-|-|2,2,0,100|-|-|AVATAR Mmm 
+D|typo|Lucida Sans Unicode|12|3|0|1|4|0|0|-|-|-|-|2,2,80,100|-|-|1234 ijl
+D|def|Gabriola|8|3|0|4|2048|1|0|-|-|-|-|2,2,80,100|-|-|fox Hello dog lazy lazy fox
+D|typo|Lucida Console|10|3|0|1|0|0|0|-|-|-|-|2,2,80,100|-|-|WAVE Hello The quick
+D|def|Segoe UI Light|10|3|0|2|4|1|0|-|-|-|-|2,2,0,100|-|-|jumps
+D|typo|Segoe UI Light|14|3|0|1|2048|0|0|-|-|-|-|2,2,80,100|-|-|.,; 
+D|typo|Georgia|20|3|3|0|2048|1|0|1|-|-|-|2,0,80,150|-|-|why?
+D|null|Trebuchet MS|11|3|0|0|0|0|0|0|-|-|-|0,2,100,20|-|-|ipsum office semi; 1  consectetur WAVE these fluffy 1
+D|def|Segoe UI|20|3|2|0|1|2|1|1|-|-|-|2,2,80,100|-|-|magna\nlabore\nMississippi superlongwordwithoutanybreaks\na/b
+D|typo|Segoe UI|8|3|2|0|12289|2|1|2|-|-|-|0,2,100,0|-|-|lines  Lorem 0 To words comma,  eiusmod
+D|typo|Calibri|10|3|1|0|16385|0|2|2|-|-|-|3.5,5.25,0,1000|-|-|dolor  consectetur 0 brown [bracket] the 12345678901234\noffice AVATAR quick colon:
+D|null|Arial|10|3|0|0|0|0|0|4|-|-|-|10,2,1000,20|-|-| consectetur  colon: AVATAR aliqua\n@home
+D|null|Calibri|11|3|0|0|0|0|0|4|-|-|-|2,2,40,1000|-|-|colon: dolore\nsuperlongwordwithoutanybreaks  50% Mississippi\nAVATAR magna yes! 1\ndolor\nover
+D|typo|Verdana|20|3|1|0|0|1|0|0|-|-|-|2,2,60,1000|-|-|a/b et  1 i {brace}\nok 
+D|typo|Microsoft Sans Serif|20|3|2|0|0|2|2|4|-|-|-|0,2,80,0|-|-|{brace} {brace}\noffice  words To Mississippi
+D|null|Arial|8|3|2|0|0|0|0|0|-|-|-|2,0,100,150|-|-|adipiscing [bracket]  do semi;\nWAVE quick  magna lazy
+D|def|Calibri|8.25|3|0|0|1|1|2|0|-|-|-|10,5.25,260,0|-|-|adipiscing\nsed dolor
+D|null|Calibri|8|3|0|0|0|0|0|0|-|-|-|10,2,40,0|-|-|dog
+D|def|Calibri|14|3|2|0|1|2|0|4|-|-|-|3.5,0,40,60|-|-|fox 0 end. office  sed\nconsectetur  superlongwordwithoutanybreaks\nwrap adipiscing
+D|null|Georgia|11|3|2|0|0|0|0|1|-|-|-|0,2,260,100|-|-|e-mail  $100 e-mail [bracket] over  adipiscing do
+D|def|Times New Roman|14|3|0|0|12288|2|0|0|-|-|-|10,2,130,0|-|-| et  x-ray  over\nend.
+D|null|Microsoft Sans Serif|9|3|2|0|0|0|0|-|-|-|-|3.5,5.25,130,100|-|-| aliqua Lorem sed wrap  do
+D|def|Georgia|7|3|0|0|1|0|1|-|-|-|-|10,2,60,100|-|-|12345678901234  1 amet  fly amet  quick comma, sit  fox To
+D|def|Segoe UI|8.25|3|0|0|1|0|2|-|-|-|-|0,0,200,20|-|-|Mississippi sit  l  x-ray  colon: office  et  sed  eiusmod  eiusmod comma, 
+D|def|Microsoft Sans Serif|11|3|0|0|1|1|2|-|-|-|-|0,5.25,160,0|-|-|brown dolore @home  ok  fluffy end.  #tag  brown  {brace} consectetur (paren) 
+D|def|Microsoft Sans Serif|7|3|0|0|1|2|2|-|-|-|-|3.5,5.25,80,20|-|-|sed  incididunt  lines do 1 yes! AVATAR x-ray labore colon: semi; i
+D|null|Courier New|9|3|0|0|0|0|0|-|-|-|-|3.5,5.25,80,0|-|-| incididunt  ipsum why? Mississippi over WAVE jumps
+D|def|Arial|20|3|0|0|0|2|1|-|-|-|-|2,2,260,0|-|-|@home the [bracket] "quoted" sit #tag fox aliqua 'single' incididunt
+D|def|Verdana|16|3|1|0|0|0|2|-|-|-|-|10,5.25,160,60|-|-|superlongwordwithoutanybreaks "quoted" labore  {brace} e-mail  WAVE superlongwordwithoutanybreaks e-mail office over
+D|null|Tahoma|12|3|1|0|0|0|0|-|-|-|-|3.5,5.25,1000,20|-|-|[bracket] [bracket]
+D|def|Courier New|10|3|0|0|0|2|0|-|-|-|-|0,0,1000,1000|-|-|x-ray do  @home yes! these  fox  ut AVATAR elit 12345678901234
+D|def|Consolas|16|3|3|0|0|2|1|-|-|-|-|10,2,100,0|-|-|sed 
+D|def|Consolas|10|3|1|0|0|0|0|-|-|-|-|10,2,1000,150|-|-|yes!  superlongwordwithoutanybreaks "quoted" semi; do a/b  adipiscing 50% jumps
+D|def|Times New Roman|8|3|0|0|1|1|0|-|-|-|-|0,0,130,40|-|-|office  colon: ipsum  comma,
+D|def|Trebuchet MS|11|3|1|0|0|2|1|-|-|-|-|0,2,1000,0|-|-|fly the 'single' [bracket]  i over l
+D|def|Georgia|10|3|1|0|1|0|2|-|-|-|-|3.5,5.25,160,0|-|-|jumps  #tag tempor  office  brown  adipiscing {brace} lines  #tag [bracket]
+M|def|Verdana|12|3|0|1|4|1|0|-|-|-|-|2,2,300,100|-|-|Hello\u202c word\u200dfix\u200bab\u200c
+M|typo|Calibri|10|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|wordx\u200bfix\u202a
+M|typo|Arial|12|3|1|5|0|1|0|-|-|-|-|2,2,0,100|-|-|x\ufeff word\u00ad fix\u2060
+M|typo|Verdana|10|3|2|3|32|2|0|-|-|-|-|2,2,0,100|-|-|Helloword
+M|typo|Calibri|8|3|2|5|0|2|0|-|-|-|-|2,2,0,100|-|-|word\ufe0f 
+D|typo|Consolas|8|3|1|1|4096|2|0|-|-|-|-|2,2,0,100|-|-|x\ufe0f
+M|typo|Consolas|8|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|xHello word\u200b
+D|def|Verdana|10|3|2|1|4096|1|0|-|-|-|-|2,2,60,100|-|-|fix\ufeffWAVE\ufeffWAVE\u00ad 
+D|def|Courier New|8|3|2|1|4|2|0|-|-|-|-|2,2,0,100|-|-|ab\u200bxx 
+D|typo|Times New Roman|12|3|0|3|4096|1|0|-|-|-|-|2,2,300,100|-|-|Hello
+M|def|Courier New|12|3|0|1|0|0|0|-|-|-|-|2,2,60,100|-|-|WAVE\u2060
+M|typo|Verdana|10|3|1|1|4|1|0|-|-|-|-|2,2,0,100|-|-|word\u00adHelloword\u2060
+D|def|Courier New|10|3|0|5|32|1|0|-|-|-|-|2,2,300,100|-|-|x\ufe0f 
+D|typo|Calibri|10|3|2|1|4096|2|0|-|-|-|-|2,2,300,100|-|-|word\ufe0f
+D|typo|Consolas|10|3|1|5|32|2|0|-|-|-|-|2,2,300,100|-|-|xHello\ufe0fab\u034f
+D|typo|Arial|12|3|2|5|0|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u200bwordx\u00ad
+D|def|Tahoma|12|3|0|5|4096|1|0|-|-|-|-|2,2,0,100|-|-|abHello\u200d word\u202a
+D|def|Calibri|10|3|1|3|4096|0|0|-|-|-|-|2,2,0,100|-|-|fix\u202cfix word\u200bWAVE\ufe0f 
+M|typo|Verdana|12|3|2|5|32|1|0|-|-|-|-|2,2,0,100|-|-|fix\u200d ab\u200c WAVE\u200c word\u00ad
+M|def|Consolas|10|3|0|5|32|2|0|-|-|-|-|2,2,300,100|-|-|word\ufeffHello
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a b
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a\rb
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a​b
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a\u0001b
+D|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|a b
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+D|def|Consolas|10|3|0|0|0|2|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab\r\ncd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab  \ncd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|abcd
+D|def|Consolas|10|3|0|0|0x800|2|0|-|-|-|-|2,2,200,90|-|-|ab \ncd
+M|def|Consolas|10|3|0|0|0x800|0|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+M|def|Consolas|10|3|0|0|0|0|0|-|-|-|-|2,2,200,90|-|-|ab\ncd
+M|def|Consolas|10|3|0|0|0x800|0|0|-|-|-|-|2,2,200,90|-|-|abcd
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2049|0|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|1|1|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2049|1|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|1|2|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|abcd efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|abcd    efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|א abcd  efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|א abcd   efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|abc  אב efgh
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2049|2|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2048|0|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2048|0|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|2048|0|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|2048|0|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|0|1|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2048|1|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|0|1|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2048|1|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|0|1|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|2048|1|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|0|1|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|2048|1|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|0|2|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|2048|2|0|-|-|-|-|0,0,110,200|-|-|אב  גד
+D|typo|Courier New|20|2|0|4|0|2|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|2048|2|0|-|-|-|-|0,0,110,200|-|-|אב   גד ה
+D|typo|Courier New|20|2|0|4|0|2|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|2048|2|0|-|-|-|-|0,0,110,200|-|-|abc אב  גד
+D|typo|Courier New|20|2|0|4|0|2|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|2048|2|0|-|-|-|-|0,0,110,200|-|-|abc  def
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghi jk
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghi  jk
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnopqr stu
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnopqr  stu
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnop qr stu
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|abcdefgh ijk
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|x abcdefg hij
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחט יכ
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחט  יכ
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחטאבגדהוזחט יכ
+D|typo|Courier New|20|2|0|4|1|0|0|-|-|-|-|0,0,110,200|-|-|א אבגדהוזחט י
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghi jk
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghi  jk
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnopqr stu
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnopqr  stu
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefghijklmnop qr stu
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|abcdefgh ijk
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|x abcdefg hij
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחט יכ
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחט  יכ
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|אבגדהוזחטאבגדהוזחט יכ
+D|typo|Courier New|20|2|0|4|0|0|0|-|-|-|-|0,0,110,200|-|-|א אבגדהוזחט י
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Bcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ecd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Fcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Acd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Bcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ccd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Dcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ecd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2060cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2061cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u206Acd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFEFFcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00ADcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u034Fcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFE0Fcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Bcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ecd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Fcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Acd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Bcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ccd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Dcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ecd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2060cd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2061cd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u206Acd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFEFFcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00ADcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u034Fcd
+D|typo|Times New Roman|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFE0Fcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Bcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ecd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Fcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Acd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Bcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ccd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Dcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ecd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2060cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2061cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u206Acd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFEFFcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00ADcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u034Fcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFE0Fcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Bcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ecd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Fcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Acd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Bcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ccd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Dcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u202Ecd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2060cd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2061cd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u206Acd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFEFFcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00ADcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\u034Fcd
+D|typo|Verdana|20|2|0|4|32|0|0|-|-|-|-|0,0,300,100|-|-|ab\uFE0Fcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00A0cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u00A0cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2011cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2011cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2014cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2013cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2003cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2003cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2002cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2002cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2009cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2009cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u3000cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u3000cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2029cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u200Dcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u200Ccd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00A0cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u00A0cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2014cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2014cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2013cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2013cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2003cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2003cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2002cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2002cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2009cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u2009cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u3000cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u3000cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u2029cd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Dcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u200Dcd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200Ccd
+D|typo|Verdana|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|\u200Ccd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u200D\u200Dcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab\u00AD\u00ADcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|א‏ב
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‏cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|א‎ב
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‎cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|א‪ב
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|aא‮בb
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|א‍ב
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|א‌ב
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‮cd‬ef
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‫cd‬ef
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|א‏ב
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|ab‏cd
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|א‎ב
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|ab‎cd
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|א‪ב
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|aא‮בb
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|א‍ב
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|א‌ב
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|ab‮cd‬ef
+D|typo|Times New Roman|20|2|0|4|1|0|0|-|-|-|-|0,0,300,100|-|-|ab‫cd‬ef
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‏אcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|abא‏cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‏‏cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‏
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‏‫cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|abא‪cd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‎אcd
+D|typo|Times New Roman|20|2|0|4|0|0|0|-|-|-|-|0,0,300,100|-|-|ab‫אcd
+D|def|Microsoft Sans Serif|8|3|2|0|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|0|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|1|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|1|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|2|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|2|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|3|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|3|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|4|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|4|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|5|0|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|def|Microsoft Sans Serif|8|3|2|5|1024|0|0|-|-|-|-|2,2,60,100|-|-|ab\u0430
+D|typo|Calibri|10|3|0|5|4|0|0|-|-|-|-|2,2,300,100|-|-|fix\ufeffab\ufeff
+D|def|Times New Roman|8|3|0|5|4096|1|0|-|-|-|-|2,2,300,100|-|-|abfix\u200f 
+D|def|Calibri|10|3|2|1|4|2|0|-|-|-|-|2,2,300,100|-|-|WAVE 
+M|def|Courier New|10|3|2|5|32|2|0|-|-|-|-|2,2,60,100|-|-|Hello\u200f ab\u202afix\u034ffix\u034f 
+M|def|Segoe UI|10|3|0|4|0|1|0|-|-|-|-|2,2,60,100|-|-|x\u2060 ab WAVE\u200e 
+D|def|Verdana|8|3|1|1|32|1|0|-|-|-|-|2,2,60,100|-|-|word\u2060WAVE\u200eword\u200b word\u200d
+M|def|Courier New|8|3|1|5|0|1|0|-|-|-|-|2,2,0,100|-|-|Hello\u202aab\u202a 
+M|typo|Arial|10|3|0|1|0|1|0|-|-|-|-|2,2,0,100|-|-|word\u200f ab
+M|def|Calibri|10|3|0|4|4096|0|0|-|-|-|-|2,2,300,100|-|-|fix\u202ax\ufeff
+D|def|Courier New|8|3|0|3|0|2|0|-|-|-|-|2,2,300,100|-|-|fix\u200bx\u00ad
+D|def|Consolas|12|3|1|1|0|2|0|-|-|-|-|2,2,300,100|-|-|Hello
+D|typo|Times New Roman|10|3|0|5|4|1|0|-|-|-|-|2,2,300,100|-|-|ab\ufe0fHello\u200fword\u200cWAVE 
+M|typo|Times New Roman|8|3|0|1|4096|2|0|-|-|-|-|2,2,300,100|-|-|Helloab\u00ad
+M|def|Verdana|12|3|0|1|4|1|0|-|-|-|-|2,2,300,100|-|-|Hello\u202c word\u200dfix\u200bab\u200c
+M|typo|Calibri|10|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|wordx\u200bfix\u202a
+M|typo|Arial|12|3|1|5|0|1|0|-|-|-|-|2,2,0,100|-|-|x\ufeff word\u00ad fix\u2060
+D|def|Arial|12|3|1|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|ab\u202cabab\u00ad
+M|typo|Verdana|10|3|2|3|32|2|0|-|-|-|-|2,2,0,100|-|-|Helloword
+D|typo|Verdana|10|3|0|4|0|2|0|-|-|-|-|2,2,300,100|-|-|wordWAVE\u2060Hello\u200d
+D|typo|Segoe UI|8|3|0|5|4096|0|0|-|-|-|-|2,2,0,100|-|-|word 
+M|def|Segoe UI|12|3|1|5|0|2|0|-|-|-|-|2,2,0,100|-|-|ab fix\u034f 
+M|typo|Calibri|10|3|1|1|4|0|0|-|-|-|-|2,2,300,100|-|-|WAVE\u200eHello\ufeff 
+D|def|Tahoma|8|3|0|4|0|0|0|-|-|-|-|2,2,0,100|-|-|Hello 
+D|def|Verdana|8|3|2|3|0|2|0|-|-|-|-|2,2,300,100|-|-|Hello
+D|def|Calibri|10|3|0|3|0|2|0|-|-|-|-|2,2,60,100|-|-|xx\u034f WAVE
+D|typo|Times New Roman|12|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u202a
+D|def|Calibri|12|3|1|5|0|2|0|-|-|-|-|2,2,0,100|-|-|fix
+D|typo|Consolas|8|3|0|4|4096|1|0|-|-|-|-|2,2,300,100|-|-|ab\u200d 
+M|def|Calibri|8|3|0|5|32|1|0|-|-|-|-|2,2,300,100|-|-|WAVE 
+D|typo|Tahoma|12|3|0|3|4|2|0|-|-|-|-|2,2,300,100|-|-|fixxWAVE\u200f
+M|typo|Calibri|8|3|2|5|0|2|0|-|-|-|-|2,2,0,100|-|-|word\ufe0f 
+D|def|Segoe UI|12|3|0|5|0|1|0|-|-|-|-|2,2,0,100|-|-|ab\u200c fix\u00ad
+M|def|Tahoma|8|3|2|4|0|1|0|-|-|-|-|2,2,60,100|-|-|x\u00adword\u200e ab
+D|def|Times New Roman|8|3|0|3|4|1|0|-|-|-|-|2,2,0,100|-|-|WAVE\ufeffab word\u200f WAVE
+D|def|Verdana|8|3|2|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|ab\u200e x
+M|def|Tahoma|8|3|0|5|0|2|0|-|-|-|-|2,2,300,100|-|-|fix\ufe0f abx\u200c
+D|def|Segoe UI|12|3|1|1|0|0|0|-|-|-|-|2,2,300,100|-|-|x\ufeff
+D|def|Times New Roman|10|3|0|1|4|1|0|-|-|-|-|2,2,300,100|-|-|WAVE\u200dxWAVE 
+D|def|Segoe UI|12|3|1|5|4|0|0|-|-|-|-|2,2,60,100|-|-|ab
+M|def|Tahoma|12|3|2|4|32|1|0|-|-|-|-|2,2,60,100|-|-|WAVE\u200d 
+D|def|Times New Roman|10|3|0|1|0|1|0|-|-|-|-|2,2,0,100|-|-|word\ufeff 
+D|typo|Courier New|12|3|0|5|4|2|0|-|-|-|-|2,2,0,100|-|-|wordword\ufe0fab\u200b
+D|typo|Segoe UI|12|3|1|5|4|0|0|-|-|-|-|2,2,60,100|-|-|x\u200d
+D|typo|Tahoma|10|3|1|5|32|0|0|-|-|-|-|2,2,60,100|-|-|WAVE\u200c
+D|def|Times New Roman|10|3|0|5|4096|2|0|-|-|-|-|2,2,0,100|-|-|x\u202afix\u034f ab
+D|typo|Segoe UI|10|3|0|5|32|2|0|-|-|-|-|2,2,300,100|-|-|ab
+D|typo|Times New Roman|8|3|2|5|32|2|0|-|-|-|-|2,2,0,100|-|-|fix\u2060ab\ufeff word\ufe0f word
+D|typo|Times New Roman|10|3|0|3|4096|1|0|-|-|-|-|2,2,300,100|-|-|fixx\u200d Hello\u200b ab\u202a
+D|typo|Consolas|8|3|1|1|4096|2|0|-|-|-|-|2,2,0,100|-|-|x\ufe0f
+D|typo|Arial|10|3|1|3|4096|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u202a WAVE\ufeff
+M|def|Verdana|12|3|2|3|32|1|0|-|-|-|-|2,2,60,100|-|-|fix\u202cWAVEHello
+D|def|Tahoma|10|3|1|5|32|1|0|-|-|-|-|2,2,60,100|-|-|x\u200bx
+M|def|Consolas|12|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|fixab\ufe0f
+M|typo|Tahoma|10|3|2|1|32|2|0|-|-|-|-|2,2,0,100|-|-|word\u200e 
+D|typo|Consolas|10|3|0|5|4096|2|0|-|-|-|-|2,2,60,100|-|-|x\u200cfix\u2060ab
+M|def|Courier New|8|3|0|1|0|0|0|-|-|-|-|2,2,60,100|-|-|word
+M|def|Tahoma|10|3|1|5|0|0|0|-|-|-|-|2,2,0,100|-|-|x\u200eab\u200c
+D|typo|Calibri|12|3|0|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|fix\u200f
+M|typo|Consolas|8|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|xHello word\u200b
+D|typo|Verdana|12|3|0|3|32|2|0|-|-|-|-|2,2,300,100|-|-|x\u2060x Hello\u200f x\ufe0f
+D|def|Verdana|12|3|0|5|32|1|0|-|-|-|-|2,2,60,100|-|-|word\u200d
+D|def|Tahoma|12|3|0|1|4|2|0|-|-|-|-|2,2,300,100|-|-|word\u034fHello\ufeff 
+M|def|Verdana|10|3|0|4|4|0|0|-|-|-|-|2,2,300,100|-|-|fixab\u200bHello\u2060 
+M|def|Segoe UI|12|3|1|5|4|2|0|-|-|-|-|2,2,60,100|-|-|fixHello\u2060ab fix\u202c
+M|typo|Calibri|10|3|2|1|0|0|0|-|-|-|-|2,2,0,100|-|-|ab\u200fab\ufeff
+D|def|Verdana|10|3|2|1|4096|1|0|-|-|-|-|2,2,60,100|-|-|fix\ufeffWAVE\ufeffWAVE\u00ad 
+M|typo|Consolas|12|3|1|4|32|0|0|-|-|-|-|2,2,300,100|-|-|WAVE Hello\u200ffix\u200cWAVE\ufe0f
+M|typo|Courier New|12|3|0|5|32|1|0|-|-|-|-|2,2,300,100|-|-|fix\u2060 word\u00ad fixHello\ufeff
+D|def|Times New Roman|8|3|0|3|32|1|0|-|-|-|-|2,2,300,100|-|-|word\u034fword\u00ad 
+M|def|Verdana|12|3|1|1|0|1|0|-|-|-|-|2,2,0,100|-|-|x\u2060 WAVE\u202c
+D|def|Tahoma|12|3|1|4|4|0|0|-|-|-|-|2,2,60,100|-|-|Hello\ufe0fWAVE\u200d Hello\ufeff 
+D|def|Segoe UI|12|3|0|3|32|2|0|-|-|-|-|2,2,0,100|-|-|fix\ufe0fab\u202c
+M|def|Calibri|12|3|1|3|0|1|0|-|-|-|-|2,2,60,100|-|-|ab\u200dab\u200fword\u2060
+D|typo|Calibri|12|3|0|1|4|1|0|-|-|-|-|2,2,300,100|-|-|x\u200bWAVEab
+D|typo|Segoe UI|10|3|0|3|4|0|0|-|-|-|-|2,2,60,100|-|-|WAVE\ufe0fWAVE\u200eWAVE\u00ad WAVE\ufe0f 
+D|def|Courier New|12|3|0|1|0|2|0|-|-|-|-|2,2,0,100|-|-|fixWAVE\u200dxx\u202a
+M|typo|Arial|12|3|2|3|4096|0|0|-|-|-|-|2,2,0,100|-|-|ab\ufe0f fix\u00ad
+M|typo|Segoe UI|8|3|2|4|0|0|0|-|-|-|-|2,2,60,100|-|-|Hello\u202cfix\u2060fix\u202a WAVE\u202a
+D|typo|Courier New|8|3|0|1|4|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u202cab\u2060
+D|typo|Consolas|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-|word\u200d fix\u200dWAVE\ufe0fHello\u200b
+D|typo|Calibri|12|3|2|1|32|1|0|-|-|-|-|2,2,60,100|-|-|ab\ufefffix\u2060
+M|def|Times New Roman|8|3|0|5|4096|1|0|-|-|-|-|2,2,60,100|-|-|xx\u034f
+D|def|Segoe UI|12|3|1|4|4|0|0|-|-|-|-|2,2,0,100|-|-|fixHello\u2060word
+D|typo|Calibri|12|3|0|3|0|2|0|-|-|-|-|2,2,60,100|-|-|WAVE\u202a x\u200cHello\ufe0f 
+M|def|Calibri|8|3|0|4|4|0|0|-|-|-|-|2,2,60,100|-|-|ab\u00ad Hello\u200dWAVE\u034fWAVE\u200e
+D|typo|Courier New|8|3|2|1|0|2|0|-|-|-|-|2,2,60,100|-|-|wordWAVE\ufeffWAVE\u202a
+M|typo|Tahoma|8|3|0|4|4096|1|0|-|-|-|-|2,2,0,100|-|-|word\u200e word\ufe0f fix Hello
+D|typo|Segoe UI|8|3|1|5|0|2|0|-|-|-|-|2,2,60,100|-|-|WAVE\u200fWAVE\u202aHello\ufe0f
+D|def|Courier New|8|3|2|1|4|2|0|-|-|-|-|2,2,0,100|-|-|ab\u200bxx 
+M|def|Calibri|12|3|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|ab\u2060 Hello\u202c 
+D|def|Consolas|12|3|0|1|4|0|0|-|-|-|-|2,2,300,100|-|-|WAVE WAVE fix\u200e
+D|typo|Times New Roman|10|3|0|4|4096|1|0|-|-|-|-|2,2,300,100|-|-|WAVEWAVE\u00ad 
+D|def|Segoe UI|12|3|0|3|32|1|0|-|-|-|-|2,2,0,100|-|-|x\u200efix\u00adword\u200c 
+D|def|Tahoma|8|3|0|1|32|0|0|-|-|-|-|2,2,60,100|-|-|wordx\u2060 ab\ufe0fab
+D|typo|Times New Roman|12|3|0|3|4096|1|0|-|-|-|-|2,2,300,100|-|-|Hello
+D|typo|Courier New|12|3|2|3|4|2|0|-|-|-|-|2,2,300,100|-|-|fix\u200d 
+D|typo|Segoe UI|12|3|0|5|32|2|0|-|-|-|-|2,2,60,100|-|-|Hello\u200e fix\u202a 
+D|typo|Segoe UI|8|3|0|1|0|1|0|-|-|-|-|2,2,0,100|-|-|x\u200f fix\u034f WAVE\u200e
+D|typo|Arial|8|3|1|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|WAVEHello\u00ad
+M|typo|Times New Roman|12|3|0|5|0|2|0|-|-|-|-|2,2,60,100|-|-|fix 
+D|typo|Times New Roman|8|3|1|5|0|0|0|-|-|-|-|2,2,0,100|-|-|fix\u200d WAVE\ufeffWAVE\u00adab\u202a
+D|def|Segoe UI|12|3|0|4|4096|2|0|-|-|-|-|2,2,300,100|-|-|x\u202cHello\u202c
+D|typo|Times New Roman|12|3|1|5|4|2|0|-|-|-|-|2,2,60,100|-|-|wordxx\u202c 
+M|def|Courier New|12|3|0|1|0|0|0|-|-|-|-|2,2,60,100|-|-|WAVE\u2060
+M|def|Calibri|12|3|0|5|0|0|0|-|-|-|-|2,2,60,100|-|-|x\ufeff WAVE\u2060
+D|typo|Calibri|8|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|ab\u202c
+M|typo|Times New Roman|8|3|0|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|word
+D|typo|Calibri|8|3|2|3|32|1|0|-|-|-|-|2,2,300,100|-|-|x\u202c fix\u202aWAVE\u202a 
+M|typo|Verdana|10|3|1|1|4|1|0|-|-|-|-|2,2,0,100|-|-|word\u00adHelloword\u2060
+D|def|Calibri|8|3|0|4|0|0|0|-|-|-|-|2,2,300,100|-|-|ab\u200cwordHello\ufe0fWAVE\u202c
+D|def|Consolas|8|3|0|5|32|1|0|-|-|-|-|2,2,0,100|-|-|word\ufeff
+M|typo|Calibri|8|3|1|3|0|0|0|-|-|-|-|2,2,60,100|-|-|fix\u200fword\u2060
+D|def|Consolas|12|3|1|4|0|1|0|-|-|-|-|2,2,300,100|-|-|fixWAVE\u202aHello\u202aab
+D|typo|Calibri|8|3|0|4|0|0|0|-|-|-|-|2,2,0,100|-|-|ab\u00ad 
+M|def|Times New Roman|12|3|2|5|0|1|0|-|-|-|-|2,2,0,100|-|-|WAVE\u200cHello\u200b xab\u00ad
+D|typo|Tahoma|10|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|xab\ufe0f
+D|def|Calibri|10|3|0|5|0|2|0|-|-|-|-|2,2,300,100|-|-|Hello\u202c ab\u200dab\u00ad WAVE\u200b
+D|def|Calibri|10|3|0|5|4|2|0|-|-|-|-|2,2,60,100|-|-|ab\u202aword\ufe0fWAVE\u00ad 
+D|def|Courier New|10|3|0|5|32|1|0|-|-|-|-|2,2,300,100|-|-|x\ufe0f 
+D|def|Tahoma|8|3|1|1|0|2|0|-|-|-|-|2,2,0,100|-|-|fix\u2060WAVE word\u200eWAVE\u200d 
+D|typo|Courier New|10|3|1|5|4096|2|0|-|-|-|-|2,2,300,100|-|-|fix fixHello\u202aab\u200f
+M|typo|Consolas|10|3|0|1|4|2|0|-|-|-|-|2,2,0,100|-|-|fix\u200fword\u200cx\u034f 
+D|def|Courier New|10|3|0|5|32|0|0|-|-|-|-|2,2,300,100|-|-|fix\u200ex\u202c
+D|def|Courier New|8|3|1|5|4096|2|0|-|-|-|-|2,2,0,100|-|-|ab\u200fab\u034fab\u200d
+D|typo|Times New Roman|12|3|0|1|4|2|0|-|-|-|-|2,2,300,100|-|-|x Hello 
+M|def|Arial|10|3|0|1|32|0|0|-|-|-|-|2,2,60,100|-|-|Hello\u200f
+D|typo|Calibri|10|3|2|1|4096|2|0|-|-|-|-|2,2,300,100|-|-|word\ufe0f
+D|def|Calibri|8|3|1|1|0|1|0|-|-|-|-|2,2,0,100|-|-|Helloword\u2060
+D|typo|Times New Roman|12|3|0|5|0|2|0|-|-|-|-|2,2,60,100|-|-|fix\u200b word\ufeff
+D|def|Verdana|8|3|0|5|0|1|0|-|-|-|-|2,2,60,100|-|-|Hello WAVE\u200e 
+M|def|Tahoma|10|3|2|4|0|1|0|-|-|-|-|2,2,0,100|-|-|x\ufe0fHello\u202c
+D|typo|Arial|12|3|0|3|32|1|0|-|-|-|-|2,2,0,100|-|-|Hello\ufe0fwordfix\u200f 
+D|def|Arial|8|3|0|1|4|0|0|-|-|-|-|2,2,60,100|-|-|Hello\u00adx 
+D|typo|Courier New|8|3|2|3|32|1|0|-|-|-|-|2,2,300,100|-|-|Hello\u202a
+D|typo|Verdana|10|3|2|3|4096|2|0|-|-|-|-|2,2,300,100|-|-|x\u034f
+D|typo|Verdana|8|3|2|4|0|1|0|-|-|-|-|2,2,0,100|-|-|ab\u200dword
+D|typo|Verdana|8|3|1|5|0|1|0|-|-|-|-|2,2,60,100|-|-|fix 
+D|typo|Calibri|12|3|1|1|4096|2|0|-|-|-|-|2,2,0,100|-|-|WAVE\u202aword\u200b word 
+D|typo|Consolas|10|3|1|5|32|2|0|-|-|-|-|2,2,300,100|-|-|xHello\ufe0fab\u034f
+D|def|Verdana|8|3|1|4|4|0|0|-|-|-|-|2,2,60,100|-|-|x\u202a xWAVE
+D|typo|Arial|12|3|2|5|0|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u200bwordx\u00ad
+M|def|Times New Roman|12|3|1|1|0|1|0|-|-|-|-|2,2,0,100|-|-|x\u2060 WAVE\u202cab\u202a
+D|def|Arial|8|3|2|4|0|0|0|-|-|-|-|2,2,0,100|-|-|wordword\u200dWAVE\ufeff WAVE\u00ad
+M|def|Courier New|8|3|1|5|32|1|0|-|-|-|-|2,2,300,100|-|-|x\u00ad x\u2060
+D|typo|Calibri|10|3|2|5|4|0|0|-|-|-|-|2,2,0,100|-|-|word\u200bfix\u200c x\ufe0fHello\u202a
+M|typo|Arial|12|3|0|5|4096|0|0|-|-|-|-|2,2,60,100|-|-|Hellowordx\u200b
+D|typo|Tahoma|10|3|2|5|0|1|0|-|-|-|-|2,2,60,100|-|-|fix\u202cword\u034f WAVE\u200dword\ufe0f
+D|typo|Tahoma|10|3|1|1|4096|1|0|-|-|-|-|2,2,60,100|-|-|fix\u034f fix\u202a Hello\ufeff
+D|def|Tahoma|8|3|1|5|0|2|0|-|-|-|-|2,2,300,100|-|-|Hello\u200e ab\u202c
+D|def|Consolas|12|3|0|3|4|2|0|-|-|-|-|2,2,300,100|-|-|WAVEWAVEab\u200f WAVE 
+M|def|Consolas|8|3|2|3|0|2|0|-|-|-|-|2,2,0,100|-|-|WAVEfixab\u200cab\u00ad
+D|typo|Tahoma|10|3|2|5|4|2|0|-|-|-|-|2,2,300,100|-|-|fixx\ufe0fword\u200d
+D|typo|Courier New|10|3|0|5|4|2|0|-|-|-|-|2,2,60,100|-|-|word\u202c
+D|def|Consolas|12|3|0|4|0|1|0|-|-|-|-|2,2,0,100|-|-|Hello\u034ffix\u202cWAVE\u200e 
+D|def|Segoe UI|8|3|0|1|0|1|0|-|-|-|-|2,2,0,100|-|-|WAVE\u202c
+M|typo|Consolas|8|3|0|5|0|1|0|-|-|-|-|2,2,300,100|-|-|x\u200cx\u202c word\u200e
+D|typo|Consolas|10|3|1|4|4|1|0|-|-|-|-|2,2,0,100|-|-|ab\u200fword\u202a ab\u200e
+M|def|Courier New|10|3|0|3|4|0|0|-|-|-|-|2,2,300,100|-|-|fixab\u2060 
+D|def|Arial|10|3|2|5|0|0|0|-|-|-|-|2,2,300,100|-|-|WAVE\ufeffab
+D|def|Verdana|8|3|2|5|0|2|0|-|-|-|-|2,2,60,100|-|-|fixWAVE\u200b 
+D|typo|Segoe UI|12|3|0|1|4|1|0|-|-|-|-|2,2,60,100|-|-|ab\u200e WAVE\u202c
+D|def|Verdana|10|3|0|5|0|0|0|-|-|-|-|2,2,0,100|-|-|WAVE\u200cHello fix\u200dHello\u200b 
+D|typo|Segoe UI|10|3|0|4|4|2|0|-|-|-|-|2,2,0,100|-|-|word\u200c ab\u00adxab\u200b 
+M|def|Courier New|12|3|0|5|32|0|0|-|-|-|-|2,2,60,100|-|-|WAVEfixWAVEword\u200c 
+D|def|Segoe UI|8|3|1|5|0|2|0|-|-|-|-|2,2,60,100|-|-|word\u2060
+M|def|Calibri|10|3|0|4|4|0|0|-|-|-|-|2,2,0,100|-|-|ab\u200bfix\u202cab
+D|typo|Verdana|10|3|0|3|4|0|0|-|-|-|-|2,2,60,100|-|-|fix\u034ffix\ufefffix
+D|def|Tahoma|12|3|0|5|4096|1|0|-|-|-|-|2,2,0,100|-|-|abHello\u200d word\u202a
+D|typo|Consolas|8|3|1|5|4|2|0|-|-|-|-|2,2,300,100|-|-|x\u202c 
+D|def|Consolas|10|3|1|3|4|1|0|-|-|-|-|2,2,300,100|-|-|word\u200cWAVE\ufe0f
+D|def|Arial|12|3|2|5|4096|0|0|-|-|-|-|2,2,0,100|-|-|wordWAVE 
+M|def|Consolas|12|3|1|5|0|1|0|-|-|-|-|2,2,60,100|-|-|xHello 
+M|def|Times New Roman|12|3|0|5|0|1|0|-|-|-|-|2,2,0,100|-|-|WAVE x
+D|def|Calibri|10|3|1|3|4096|0|0|-|-|-|-|2,2,0,100|-|-|fix\u202cfix word\u200bWAVE\ufe0f 
+D|def|Times New Roman|12|3|2|1|0|2|0|-|-|-|-|2,2,0,100|-|-|x\u200bword\u200b word\ufe0f
+D|def|Times New Roman|10|3|0|3|0|0|0|-|-|-|-|2,2,0,100|-|-|word\u200c
+D|typo|Tahoma|12|3|2|5|4|0|0|-|-|-|-|2,2,0,100|-|-|wordWAVE\u034fwordab
+M|typo|Verdana|12|3|2|5|32|1|0|-|-|-|-|2,2,0,100|-|-|fix\u200d ab\u200c WAVE\u200c word\u00ad
+M|def|Calibri|12|3|2|3|0|2|0|-|-|-|-|2,2,60,100|-|-|Hello\u200dWAVE\ufe0f 
+D|def|Courier New|12|3|2|4|0|1|0|-|-|-|-|2,2,0,100|-|-|Hello\ufe0f
+D|def|Verdana|12|3|2|1|4096|2|0|-|-|-|-|2,2,0,100|-|-|x\ufe0fab\ufeff WAVE
+D|typo|Calibri|8|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab\u200fx\u00ad fix\ufe0f
+M|def|Segoe UI|8|3|1|3|4096|2|0|-|-|-|-|2,2,60,100|-|-|Hello\u200c wordx
+M|def|Calibri|12|3|0|4|0|1|0|-|-|-|-|2,2,0,100|-|-|word x\ufeffWAVE
+D|typo|Courier New|10|3|0|1|0|0|0|-|-|-|-|2,2,300,100|-|-|x\u200cWAVE\u202afix 
+D|def|Verdana|8|3|1|5|0|2|0|-|-|-|-|2,2,60,100|-|-|x
+D|def|Times New Roman|8|3|2|4|4096|1|0|-|-|-|-|2,2,300,100|-|-|ab\u200b Hello\u200e
+D|typo|Consolas|10|3|0|1|4096|1|0|-|-|-|-|2,2,300,100|-|-|x\u200c WAVE\u202a 
+M|def|Consolas|10|3|0|5|32|2|0|-|-|-|-|2,2,300,100|-|-|word\ufeffHello
+D|def|Verdana|10|3|1|5|32|2|0|-|-|-|-|2,2,300,100|-|-|word\ufeffab ab fix\u200e
+D|typo|Times New Roman|12|3|0|5|0|0|0|-|-|-|-|2,2,60,100|-|-|Hello WAVE x 
+D|typo|Tahoma|12|3|2|1|4096|0|0|-|-|-|-|2,2,60,100|-|-|x WAVE\u00ad x\u202a 
+M|def|Calibri|10|3|2|4|4|1|0|-|-|-|-|2,2,300,100|-|-|fix\u200dHello\u2060 
+D|typo|Verdana|12|3|2|5|32|0|0|-|-|-|-|2,2,300,100|-|-|fix\ufe0fx\u200bHelloab\u200b 
+M|def|Times New Roman|10|3|0|5|4096|2|0|-|-|-|-|2,2,60,100|-|-|Hello\u200d fix\u200fx\u200e 
+D|def|Verdana|8|3|2|3|4096|2|0|-|-|-|-|2,2,60,100|-|-|Hello
+D|typo|Consolas|8|3|1|1|0|2|0|-|-|-|-|2,2,300,100|-|-|wordxWAVE
+D|def|Times New Roman|10|3|0|5|4096|2|0|-|-|-|-|2,2,60,100|-|-|dog 2x 99 % 3:30 [a]
+D|def|Times New Roman|10|3|0|5|4096|2|0|-|-|-|-|2,2,60,100|-|-|dog 2x 99 x 3:30 [a]
+D|def|Times New Roman|10|3|0|5|4096|2|0|-|-|-|-|2,2,60,100|-|-|dog 2x 99 
+D|def|Times New Roman|10|3|0|5|4096|0|0|1|-|-|-|2,2,60,100|-|-|dog 2x 99 % 3:30 [a]
+D|def|Times New Roman|10|3|0|5|4096|2|0|-|-|-|-|2,2,60,100|-|-|dog 2x 99x% 3:30 [a]
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|99 % ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|99 x ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|99 9 ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|99  ok
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|99 % ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|ab cd ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|ab—cd ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|ab–cd ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|ab cd ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|ab cd ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|ab cd ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|ab　cd ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|ab cd ok
+D|def|Arial|12|3|0|5|1|0|0|-|-|-|-|2,2,300,100|-|-|ab cd ok
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|של—ום ok
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|של ום ok
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab cd ok
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab 
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-| ab
+D|def|Arial|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|ab‑cd ok
+R|def|Verdana|20|3|3|0|2048|0|0|0|-|-|-|0,3.5,20,1000|-|0:1;1:1;2:1;3:1;4:1|ws \nab
+R|def|Verdana|20|3|3|0|2048|0|0|0|-|-|-|0,3.5,20,1000|-|0:1;1:1;2:1;3:1;4:1|ws\r\nab
+R|def|Verdana|20|3|3|0|2048|0|0|0|-|-|-|0,3.5,20,1000|-|0:1;1:1;2:1;3:1;4:1|w\r\nab
+R|def|Verdana|20|3|3|0|0|0|0|0|-|-|-|0,3.5,20,1000|-|0:1;1:1;2:1;3:1;4:1|ws \nab
+R|def|Verdana|20|3|3|0|0|0|0|0|-|-|-|0,3.5,40,1000|-|0:1;1:1;2:1;3:1;4:1|wsx\nab
+D|def|Verdana|20|3|3|0|2|0|2|0|-|-|-|3.5,0,1000,20|-|-|words\ncomma,  brown  tempor
+D|def|Verdana|20|3|3|0|2048|0|2|0|-|-|-|0,3.5,20,1000|-|-|words\ncomma,  brown  tempor
+D|def|Tahoma|12|3|0|5|4098|0|0|-|-|-|-|2,2,0,100|-|-|الع
+D|def|Tahoma|12|3|0|5|4098|0|0|-|-|-|-|2,2,0,100|-|-|ab שלו cd
+D|def|Arial|10|3|0|5|2|0|0|-|-|-|-|2,2,60,300|-|-|2x שלום 1
+D|def|Arial|10|3|0|5|2|0|0|-|-|-|-|2,2,60,300|-|-|2x ab 1
+M|typo|Bahnschrift Light|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Bahnschrift SemiBold Condensed|10|3|0|5|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+D|def|Bahnschrift Light|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-|Agile WAVE
+D|def|Courier New|12|3|1|5|0|0|0|-|-|-|-|2,2,300,100|-|-|一丁 ab
+D|def|Consolas|16|3|1|5|4|2|0|-|-|-|-|2,2,300,100|-|-|一丁 № é
+D|def|Microsoft Sans Serif|8|3|0|4|4096|2|0|-|-|-|-|2,2,60,100|-|-| कखあい❤
+D|def|Microsoft Sans Serif|12|3|2|0|2052|1|1|1|-|-|-|2,2,200,1000|-|-|superlongwordwithoutanybreaks 0\nLorem tempor 50% fox To
+D|def|Courier New|20|3|0|0|24578|0|1|2|-|-|-|10,5.25,100,100|-|-|lines @home these over semi;  elit  semi;  superlongwordwithoutanybreaks sed office
+D|def|Verdana|20|3|3|0|2048|0|2|0|-|-|-|3.5,2,0,60|-|-| jumps
+D|typo|Microsoft Sans Serif|11|3|1|0|0|2|2|0|-|-|-|0,2,160,100|-|-|'single' fox 
+D|def|Microsoft Sans Serif|8.25|3|3|0|16386|2|1|1|-|-|-|3.5,2,1000,0|-|-|e-mail 1  @home Lorem
+D|def|Times New Roman|20|3|3|0|2|2|0|4|-|-|-|2,0,80,0|-|-|aliqua\n12345678901234 50%
+D|def|Calibri|10|3|1|0|2050|1|0|2|-|-|-|0,0,1000,20|-|-| {brace} magna {brace} sed  eiusmod
+D|def|Verdana|8|3|3|0|4|0|2|4|-|-|-|2,5.25,80,60|-|-| fly sit  over 'single'
+D|def|Microsoft Sans Serif|8.25|3|2|0|0|0|1|3|-|-|-|10,2,260,40|-|-|incididunt
+D|typo|Segoe UI|14|3|0|0|2|1|0|4|-|-|-|0,0,160,150|-|-| fly {brace}\nfly brown eiusmod To\ncolon: labore WAVE Lorem  {brace}  dog
+D|def|Verdana|10|3|3|0|8194|0|2|0|-|-|-|10,0,1000,150|-|-|wrap 'single' a/b\ncomma, semi;
+D|null|Verdana|11|3|1|0|0|0|0|1|-|-|-|0,5.25,40,0|-|-|ipsum a/b  12345678901234  over elit
+D|def|Segoe UI|20|3|1|0|14338|1|1|0|-|-|-|0,2,60,100|-|-| consectetur fly why? fly x-ray dolore words 12345678901234 incididunt\n{brace}
+D|null|Times New Roman|11|3|0|0|0|0|0|3|-|-|-|2,2,40,100|-|-|0 12345678901234 dog  et\nbrown  colon:\n#tag dolore ipsum
+D|typo|Calibri|8.25|3|2|0|6144|1|2|3|-|-|-|10,0,40,150|-|-|end.
+D|null|Times New Roman|8|3|1|0|0|0|0|3|-|-|-|10,0,0,150|-|-|office office\n#tag semi;  12345678901234 Lorem sed\nx-ray  incididunt  quick (paren)
+D|def|Tahoma|8.25|3|2|0|18434|1|0|3|-|-|-|0,0,130,60|-|-|labore incididunt (paren)
+D|def|Trebuchet MS|16|3|2|0|2050|2|0|3|-|-|-|2,0,60,1000|-|-|ok fox over  amet l\nAVATAR well-known et WAVE adipiscing adipiscing $100
+D|def|Georgia|14|3|0|0|4098|0|0|1|-|-|-|0,0,160,40|-|-| $100 office wrap 'single'
+D|null|Georgia|9|3|1|0|0|0|0|4|-|-|-|10,2,160,100|-|-| eiusmod fox WAVE Lorem well-known well-known  lazy fox i l\n'single' dog
+D|def|Georgia|9|3|0|0|6|2|0|3|-|-|-|0,0,80,150|-|-|sit aliqua\ndog  superlongwordwithoutanybreaks why? brown\nsemi; these colon: 'single' Lorem ut
+D|typo|Courier New|12|3|2|0|4102|2|0|1|-|-|-|3.5,5.25,200,1000|-|-| 1\nbrown sit\nover ut 
+D|null|Verdana|20|3|0|0|0|0|0|3|-|-|-|3.5,0,80,100|-|-|@home
+D|typo|Segoe UI|10|3|0|0|2|2|2|4|-|-|-|0,2,1000,20|-|-|words  50% 12345678901234 ut words comma,  "quoted" fluffy
+D|def|Verdana|8|3|0|0|2054|0|2|1|-|-|-|2,5.25,1000,40|-|-| x-ray lines comma,  Mississippi aliqua colon: sed et fox aliqua
+D|typo|Arial|16|3|0|0|4096|0|2|4|-|-|-|10,2,200,0|-|-|WAVE  e-mail over magna
+D|null|Segoe UI|20|3|0|0|0|0|0|0|-|-|-|3.5,2,40,20|-|-|comma, aliqua well-known  l\n{brace} aliqua
+D|typo|Trebuchet MS|20|3|0|0|2|2|2|0|-|-|-|0,5.25,130,1000|-|-|do
+D|def|Courier New|10|3|3|0|24580|0|2|1|-|-|-|3.5,2,200,20|-|-|fluffy\n1  end. Mississippi fox jumps\nsemi; tempor  Lorem
+D|def|Verdana|16|3|0|0|4096|1|1|3|-|-|-|2,5.25,80,0|-|-|sed superlongwordwithoutanybreaks well-known semi;\ncomma,  colon: a/b\nfox 'single' sed  WAVE adipiscing
+D|def|Calibri|20|3|1|0|2|2|2|4|-|-|-|10,0,80,20|-|-|{brace}\nMississippi words x-ray\ndog
+D|def|Courier New|10|3|0|0|2|1|1|1|-|-|-|0,5.25,60,20|-|-|semi; ok e-mail  end. x-ray  lazy aliqua ipsum  comma, x-ray l
+D|def|Segoe UI|12|3|0|0|2|2|0|3|-|-|-|2,5.25,60,60|-|-|the tempor\nmagna fox
+D|def|Calibri|8.25|3|1|0|2|0|2|2|-|-|-|2,0,260,0|-|-|x-ray over\nover dog\n0 eiusmod 50% well-known sed\nthese
+D|def|Tahoma|11|3|0|0|6|2|1|3|-|-|-|0,5.25,200,60|-|-|ut AVATAR Lorem  i fox e-mail fox incididunt
+D|null|Tahoma|8|3|0|0|0|0|0|2|-|-|-|0,0,60,40|-|-|over jumps\nut l  brown l 0 office ok\nover 
+D|typo|Courier New|7|3|3|0|6|2|2|1|-|-|-|3.5,5.25,260,150|-|-|@home AVATAR  words\nTo do  [bracket]  incididunt
+D|def|Tahoma|7|3|0|0|6|2|2|2|-|-|-|0,0,160,150|-|-|$100\n"quoted"  To 'single'  0 why? superlongwordwithoutanybreaks dog
+D|null|Tahoma|14|3|2|0|0|0|0|3|-|-|-|10,5.25,80,150|-|-| To
+D|def|Microsoft Sans Serif|10|3|0|0|4098|2|1|2|-|-|-|3.5,5.25,60,1000|-|-|AVATAR 50% yes! fluffy\nwhy? 1  AVATAR\n12345678901234 @home semi; wrap lines 
+D|def|Microsoft Sans Serif|20|3|0|0|0|2|2|4|-|-|-|0,2,1000,150|-|-|comma,
+D|null|Arial|12|3|0|0|0|0|0|2|-|-|-|2,5.25,200,0|-|-|aliqua sed lazy the
+D|def|Arial|8.25|3|0|0|8194|0|1|4|-|-|-|0,0,80,0|-|-|consectetur sit
+D|typo|Segoe UI|11|3|0|0|10242|0|0|1|-|-|-|3.5,2,100,60|-|-| sit adipiscing why?  fly  AVATAR do lines
+D|def|Georgia|16|3|0|0|8194|1|0|4|-|-|-|0,0,100,60|-|-|over @home 
+D|typo|Georgia|10|3|3|0|28674|0|2|3|-|-|-|10,0,60,40|-|-|'single'  e-mail fly
+D|typo|Segoe UI|8.25|3|0|0|16386|2|2|4|-|-|-|3.5,0,200,150|-|-|AVATAR 0 sed 
+D|null|Consolas|9|3|0|0|0|0|0|4|-|-|-|0,0,80,20|-|-|over
+D|def|Microsoft Sans Serif|11|3|0|0|16384|1|2|0|-|-|-|10,2,40,0|-|-|adipiscing\ntempor a/b 1
+D|null|Courier New|8|3|0|0|0|0|0|0|-|-|-|2,2,40,20|-|-|(paren) "quoted" amet  {brace}\nadipiscing
+D|typo|Trebuchet MS|20|3|0|0|0|0|2|1|-|-|-|0,0,100,100|-|-|dog semi; AVATAR a/b 50% dolore well-known WAVE  do "quoted" eiusmod jumps 
+D|null|Trebuchet MS|14|3|2|0|0|0|0|4|-|-|-|2,0,60,100|-|-|sit jumps fluffy\nover x-ray ut\nx-ray yes! {brace}  WAVE
+D|def|Trebuchet MS|14|3|3|0|4096|0|2|3|-|-|-|10,5.25,1000,20|-|-|(paren)\nut (paren) dolore  lazy\njumps comma, words\nTo
+D|null|Courier New|10|3|3|0|0|0|0|4|-|-|-|10,5.25,130,20|-|-|over 12345678901234\nok dolor  the ok fox $100
+D|def|Calibri|12|3|2|0|2048|0|2|3|-|-|-|2,2,1000,40|-|-|comma,\n@home  sit
+D|typo|Courier New|9|3|0|0|16390|2|0|2|-|-|-|10,0,80,100|-|-|colon: l
+D|null|Trebuchet MS|11|3|0|0|0|0|0|3|-|-|-|0,5.25,100,40|-|-|ipsum\nsed lazy\nlazy why? brown\n1
+D|typo|Trebuchet MS|20|3|2|0|18434|0|2|3|-|-|-|2,0,260,40|-|-| labore sit 0
+D|def|Calibri|14|3|0|0|6146|1|2|3|-|-|-|10,2,80,100|-|-| "quoted" aliqua 
+D|def|Calibri|12|3|1|0|2050|2|1|0|-|-|-|0,5.25,160,60|-|-|AVATAR dog
+D|def|Microsoft Sans Serif|10|3|0|5|0|0|0|-|-|-|2052;1|2,2,60,100|-|-|fox 3:30 \u0627\u0644\u0639 -3
+D|def|Tahoma|12|3|0|5|2|2|0|-|-|-|1037;1|2,2,100,100|-|-|1.2.3
+R|def|Arial|10|3|0|5|0|0|0|-|-|-|1025;3|2,2,0,100|-|0:8|fox \u05e9\u05dc\u05d5\u05dd 1/2
+D|def|Microsoft Sans Serif|12|3|0|5|4098|0|0|-|-|-|1025;0|2,2,100,100|-|-|12,345.67
+R|def|Tahoma|10|3|0|5|2|0|0|-|-|-|1081;1|2,2,60,100|-|14:1;4:5|x2 dog 1.2.3 dog
+D|def|Times New Roman|8|3|0|5|0|0|0|-|-|-|1056;3|2,2,100,100|-|-|1/2 \u05e9\u05dc\u05d5\u05dd [a] (42) \u05e9\u05dc\u05d5\u05dd
+R|def|Tahoma|10|3|0|5|4098|1|0|-|-|-|1026;3|2,2,0,100|-|6:6|50% 12%3 \u0627\u0644\u0639
+D|def|Segoe UI|8|3|0|5|2|2|0|-|-|-|1081;3|2,2,0,100|-|-|12%3
+R|def|Tahoma|10|3|0|5|4098|2|0|-|-|-|1056;2|2,2,100,100|-|17:1;15:3;11:1|1.2.3 fox 1 000 ok
+D|def|Tahoma|12|3|0|5|1|0|0|-|-|-|1056;3|2,2,0,100|-|-|$100
+R|def|Times New Roman|8|3|0|5|0|0|0|-|-|-|1056;1|2,2,300,100|-|17:2;17:3|\u0627\u0644\u0639 (b) 12%3 abc \u00a3 9
+R|def|Verdana|8|3|0|5|4097|1|0|-|-|-|1065;3|2,2,100,100|-|1:2|fox
+R|def|Microsoft Sans Serif|12|3|0|5|4098|0|0|-|-|-|1024;0|2,2,100,100|-|3:1;1:1|+4.5
+D|def|Arial|8|3|0|5|1|1|0|-|-|-|2048;2|2,2,100,100|-|-|x2 2x
+D|def|Microsoft Sans Serif|12|3|0|5|4096|1|0|-|-|-|0;3|2,2,100,100|-|-|50% #7 ok [a]
+R|def|Verdana|12|3|0|5|4098|0|0|-|-|-|0;3|2,2,60,100|-|5:5;2:5|0123456789
+D|def|Microsoft Sans Serif|12|3|0|5|0|0|0|-|-|-|2052;3|2,2,300,100|-|-|0123456789 1/2 \u05e9\u05dc\u05d5\u05dd
+D|def|Tahoma|8|3|0|5|2|1|0|-|-|-|1037;2|2,2,100,100|-|-|[a] (42) 0123456789 ok
+D|def|Times New Roman|10|3|0|5|0|0|0|-|-|-|1065;2|2,2,0,100|-|-|12,345.67 dog
+R|def|Microsoft Sans Serif|8|3|0|5|1|2|0|-|-|-|1056;3|2,2,100,100|-|3:5|$100 x2 1 000
+D|def|Arial|10|3|0|5|1|1|0|-|-|-|1033;1|2,2,0,100|-|-|12,345.67
+R|def|Arial|8|3|0|5|4098|1|0|-|-|-|1054;2|2,2,100,100|-|2:3|ok 12%3 12
+R|def|Arial|12|3|0|5|4097|2|0|-|-|-|2048;0|2,2,300,100|-|0:7;13:2;11:4|1.2.3 \u0627\u0644\u0639 2x \u05e9\u05dc\u05d5\u05dd
+D|def|Segoe UI|12|3|0|5|1|1|0|-|-|-|2048;3|2,2,300,100|-|-|dog 1 000 abc
+D|def|Times New Roman|8|3|0|5|4097|0|0|-|-|-|1;3|2,2,60,100|-|-|[a] $100 ok #7
+R|def|Microsoft Sans Serif|12|3|0|5|4096|0|0|-|-|-|1024;1|2,2,0,100|-|13:1;2:10|$100 12,345.67 ok
+D|def|Microsoft Sans Serif|12|3|0|5|0|0|0|-|-|-|2048;3|2,2,0,100|-|-|\u00a3 9 \u05e9\u05dc\u05d5\u05dd [a] \u05e9\u05dc\u05d5\u05dd
+D|def|Tahoma|10|3|0|5|4098|1|0|-|-|-|1024;3|2,2,0,100|-|-|\u0627\u0644\u0639 ok
+R|def|Arial|8|3|0|5|4096|0|0|-|-|-|2052;1|2,2,100,100|-|9:3;1:3;3:6|\u00a3 9 $100 \u0627\u0644\u0639
+D|def|Times New Roman|10|3|0|5|2|2|0|-|-|-|2048;3|2,2,300,100|-|-|1 000 12 12%3 #7
+D|def|Times New Roman|8|3|0|5|4097|1|0|-|-|-|1026;2|2,2,0,100|-|-|12 12,345.67
+D|def|Times New Roman|12|3|0|5|4098|1|0|-|-|-|1;2|2,2,100,100|-|-|12,345.67 fox 2x 12%3 1 000
+R|def|Times New Roman|10|3|0|5|4097|1|0|-|-|-|1037;3|2,2,60,100|-|10:12;7:12;14:7|\u0627\u0644\u0639 3:30 1/2 +4.5 99\u00a0%
+D|def|Arial|12|3|0|5|2|0|0|-|-|-|1037;0|2,2,0,100|-|-|12%3 \u05e9\u05dc\u05d5\u05dd
+R|def|Microsoft Sans Serif|10|3|0|5|1|1|0|-|-|-|1056;1|2,2,60,100|-|6:1;0:3|\u05e9\u05dc\u05d5\u05dd #7
+D|def|Tahoma|10|3|0|5|1|0|0|-|-|-|2052;0|2,2,0,100|-|-|fox 1/2 +4.5 12
+R|def|Times New Roman|10|3|0|5|4096|1|0|-|-|-|1065;2|2,2,0,100|-|21:2;18:5|dog fox 0123456789 (42)
+R|def|Microsoft Sans Serif|8|3|0|5|4098|1|0|-|-|-|1065;0|2,2,0,100|-|3:1;2:4|abc 50%
+D|def|Times New Roman|10|3|0|5|4097|0|0|-|-|-|1037;0|2,2,100,100|-|-|dog
+D|def|Times New Roman|8|3|0|5|0|1|0|-|-|-|0;1|2,2,300,100|-|-|\u05e9\u05dc\u05d5\u05dd \u05e9\u05dc\u05d5\u05dd 3:30
+R|def|Times New Roman|12|3|0|5|0|2|0|-|-|-|2048;3|2,2,100,100|-|17:1|12 1 000 ok -3 +4.5
+R|def|Segoe UI|12|3|0|5|0|1|0|-|-|-|1054;3|2,2,300,100|-|9:1;4:3|0123456789
+D|def|Verdana|10|3|0|5|0|2|0|-|-|-|1054;1|2,2,0,100|-|-|99\u00a0% 12,345.67
+R|def|Segoe UI|12|3|0|5|4097|1|0|-|-|-|2048;0|2,2,60,100|-|11:3|abc 99\u00a0% 1.2.3 $100
+R|def|Verdana|10|3|0|5|1|2|0|-|-|-|1025;1|2,2,300,100|-|0:3;0:3;0:2|dog
+D|def|Arial|12|3|0|5|1|1|0|-|-|-|1056;1|2,2,0,100|-|-|99\u00a0% 12%3 (42) 12 ok
+D|def|Segoe UI|8|3|0|5|4096|1|0|-|-|-|2052;1|2,2,100,100|-|-|1.2.3 1.2.3 50% [a]
+R|def|Arial|12|3|0|5|1|1|0|-|-|-|1026;3|2,2,300,100|-|18:2|#7 \u00a3 9 1 000 \u0627\u0644\u0639 [a]
+D|def|Segoe UI|8|3|0|5|1|1|0|-|-|-|1065;3|2,2,0,100|-|-|\u0627\u0644\u0639 ok 1 000 ok
+R|def|Arial|8|3|0|5|0|0|0|-|-|-|1065;2|2,2,0,100|-|3:1|12 -3
+D|def|Segoe UI|8|3|0|5|2|1|0|-|-|-|0;2|2,2,0,100|-|-|dog 12,345.67 12%3 ok (b)
+D|def|Segoe UI|8|3|0|5|0|2|0|-|-|-|1054;2|2,2,300,100|-|-|dog (b) 50% -3
+D|def|Microsoft Sans Serif|10|3|0|5|2|2|0|-|-|-|1081;0|2,2,300,100|-|-|abc (b) dog abc
+R|def|Segoe UI|8|3|0|5|0|1|0|-|-|-|1;1|2,2,0,100|-|3:3;1:8;0:1|12,345.67
+D|def|Microsoft Sans Serif|12|3|0|5|0|0|0|-|-|-|1026;0|2,2,300,100|-|-|1/2 $100 3:30 1/2 \u0627\u0644\u0639
+D|def|Times New Roman|12|3|0|5|4097|1|0|-|-|-|1065;0|2,2,60,100|-|-|ok fox 1/2 0123456789 $100
+R|def|Microsoft Sans Serif|10|3|0|5|0|1|0|-|-|-|1054;0|2,2,0,100|-|7:2;1:8;1:4|2x \u00a3 9 dog
+R|def|Segoe UI|8|3|0|5|1|0|0|-|-|-|1024;0|2,2,0,100|-|7:4|\u0627\u0644\u0639 3:30 1.2.3 (42)
+R|def|Segoe UI|12|3|0|5|1|2|0|-|-|-|1024;3|2,2,300,100|-|2:1;1:2|99\u00a0%
+D|def|Times New Roman|8|3|0|5|4096|2|0|-|-|-|1;0|2,2,100,100|-|-|\u05e9\u05dc\u05d5\u05dd fox fox
+R|def|Consolas|8|3|1|4|4096|0|0|-|-|-|-|2,2,0,100|-|0:1|\u3042\u3044
+M|def|Arial|8|3|0|4|0|0|0|-|-|-|-|2,2,0,100|-|-| \uac00\uac01 \u2764\uac00\uac01\u2603 fox
+R|def|Segoe UI|16|3|1|5|0|1|0|-|-|-|-|2,2,0,100|-|1:3|\u0c15\u0b95 \u00e9
+D|def|Segoe UI|12|3|3|3|4096|2|0|-|-|-|-|2,2,0,100|-|-|\u0430\u0431
+M|def|Microsoft Sans Serif|10|3|1|5|1024|0|0|-|-|-|-|2,2,300,100|-|-| \u0b95\u0e01\u0e02
+R|def|Segoe UI|12|3|1|3|1024|2|0|-|-|-|-|2,2,60,100|-|0:7| \u2665\uac00\uac01\u3042\u3044\u0531\u1780
+D|def|Georgia|10|3|0|1|0|2|0|-|-|-|-|2,2,0,100|-|-|\u0430\u0431\u0c15\u1780\u221e
+D|def|Trebuchet MS|12|3|0|1|0|1|0|-|-|-|-|2,2,60,100|-|-| \u13a0 \u0d15\u13a0
+M|def|Courier New|16|3|2|5|0|2|0|-|-|-|-|2,2,0,100|-|-|\u0995\u2665\u221e
+R|def|Tahoma|12|3|2|4|0|1|0|-|-|-|-|2,2,60,100|-|7:1|\u0d15fox \u2122 \u0e01\u0e02\u2603
+D|def|Courier New|10|3|3|1|0|0|0|-|-|-|-|2,2,0,100|-|-|\u0430\u0431
+R|def|Courier New|10|3|0|5|0|2|0|-|-|-|-|2,2,300,100|-|0:4|\u0f40\u0995\u2665 \u0151
+D|def|Microsoft Sans Serif|8|3|2|4|1024|0|0|-|-|-|-|2,2,60,100|-|-|\u0430\u0431
+R|def|Times New Roman|12|3|3|3|0|1|0|-|-|-|-|2,2,0,100|-|0:3|\ue000abc\u2116\u1f600
+R|def|Microsoft Sans Serif|10|3|2|5|4096|2|0|-|-|-|-|2,2,300,100|-|3:3| \u0151 \u0d15\u03b1\u03b2 \u0531
+D|def|Consolas|16|3|0|3|4096|1|0|-|-|-|-|2,2,300,100|-|-|\u2122\u1000\u2122\u0995
+M|def|Microsoft Sans Serif|12|3|3|3|4|1|0|-|-|-|-|2,2,60,100|-|-|\u4e00\u4e01
+D|def|Consolas|8|3|0|5|4096|2|0|-|-|-|-|2,2,0,100|-|-|\u2122\u0531 \u2122
+M|def|Courier New|10|3|1|3|0|0|0|-|-|-|-|2,2,60,100|-|-|abc\u2605\u0430\u0431 \u1f600 \uac00\uac01
+R|def|Verdana|8|3|0|5|0|2|0|-|-|-|-|2,2,60,100|-|3:1| \u03b1\u03b2\u0995\u2605\u0f40 \u2764
+D|def|Trebuchet MS|12|3|3|5|4096|2|0|-|-|-|-|2,2,300,100|-|-| \u0b95 fox\u1780abc\u0430\u0431
+M|def|Trebuchet MS|16|3|0|5|0|0|0|-|-|-|-|2,2,60,100|-|-|\u2605
+D|def|Calibri|10|3|0|4|0|2|0|-|-|-|-|2,2,300,100|-|-|\ue000\u1000\u221e \u0531
+D|def|Consolas|8|3|0|4|0|0|0|-|-|-|-|2,2,0,100|-|-| \u2116\u4e00\u4e01\u1000
+R|def|Trebuchet MS|10|3|1|4|0|0|0|-|-|-|-|2,2,300,100|-|2:2|\u00e9\u0430\u0431\u1200
+R|def|Verdana|12|3|0|4|0|1|0|-|-|-|-|2,2,300,100|-|5:1|\u1780 \u0531\u2122\u4e00\u4e01
+D|def|Tahoma|8|3|0|5|4|1|0|-|-|-|-|2,2,300,100|-|-| \u0531\u0995
+D|def|Trebuchet MS|12|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-| \u0995
+M|def|Courier New|8|3|3|1|4096|0|0|-|-|-|-|2,2,300,100|-|-| \u20ac
+D|def|Georgia|12|3|1|5|4|0|0|-|-|-|-|2,2,300,100|-|-|\u10d0\u10d1
+D|def|Trebuchet MS|12|3|0|5|4096|0|0|-|-|-|-|2,2,60,100|-|-|\u2116 \u0b95\u0995 \u1200
+M|def|Courier New|8|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|-| \u0915\u0916\u2665
+D|def|Microsoft Sans Serif|8|3|0|4|4096|2|0|-|-|-|-|2,2,60,100|-|-| \u0915\u0916\u3042\u3044\u2764
+D|def|Calibri|12|3|0|1|0|2|0|-|-|-|-|2,2,0,100|-|-|\u2603\u2603\u00e9 \u0d15
+R|def|Segoe UI|12|3|0|3|0|2|0|-|-|-|-|2,2,60,100|-|0:1|\u0151
+M|def|Calibri|12|3|1|1|0|2|0|-|-|-|-|2,2,60,100|-|-| \u1780\ue000\uac00\uac01 \u0e01\u0e02\u0b95
+R|def|Georgia|16|3|3|5|0|1|0|-|-|-|-|2,2,0,100|-|2:1|\u0b95\u0e01\u0e02
+D|def|Arial|8|3|3|4|4096|0|0|-|-|-|-|2,2,300,100|-|-|\u20ac\u1000 \u0915\u0916\u0b95\u13a0
+D|def|Times New Roman|10|3|1|5|1024|1|0|-|-|-|-|2,2,300,100|-|-| \u0d15
+D|def|Microsoft Sans Serif|10|3|0|4|4|1|0|-|-|-|-|2,2,300,100|-|-|\u1f600 \u20ac \u2122\u0f40
+R|def|Courier New|8|3|3|4|0|0|0|-|-|-|-|2,2,300,100|-|0:1|\u25a0
+D|def|Consolas|8|3|3|5|4|1|0|-|-|-|-|2,2,0,100|-|-| \u10d0\u10d1 \u221e
+D|def|Trebuchet MS|10|3|2|4|0|0|0|-|-|-|-|2,2,300,100|-|-|\u2665 \u25a0\u2605\u2605
+D|def|Calibri|16|3|0|4|4|2|0|-|-|-|-|2,2,60,100|-|-|\u1780
+R|def|Georgia|16|3|0|5|0|2|0|-|-|-|-|2,2,0,100|-|1:2| \u0b95\u1f600
+R|def|Georgia|8|3|2|4|0|0|0|-|-|-|-|2,2,60,100|-|0:3|\u2122\u10d0\u10d1 \u4e00\u4e01\u0f40
+D|def|Verdana|8|3|0|4|0|2|0|-|-|-|-|2,2,60,100|-|-|\u0531
+D|def|Microsoft Sans Serif|8|3|1|3|0|0|0|-|-|-|-|2,2,0,100|-|-| \u00e9
+R|def|Georgia|10|3|2|5|0|2|0|-|-|-|-|2,2,0,100|-|5:1| \u00e9\u0f40\u00e9\u0f40 \u2116
+R|def|Georgia|8|3|0|5|0|1|0|-|-|-|-|2,2,60,100|-|0:1|\u25a0\u0430\u0431 \u03b1\u03b2
+R|def|Consolas|12|3|1|5|0|2|0|-|-|-|-|2,2,0,100|-|0:1|\u1000
+R|def|Segoe UI|16|3|0|5|0|0|0|-|-|-|-|2,2,300,100|-|0:1|\u4e00\u4e01\uac00\uac01
+M|def|Segoe UI|12|3|3|5|4|0|0|-|-|-|-|2,2,300,100|-|-|\u2116\u0e01\u0e02
+R|def|Microsoft Sans Serif|10|3|0|5|4096|1|0|-|-|-|-|2,2,60,100|-|5:1|\u0151 \u221efox
+R|def|Trebuchet MS|10|3|0|4|0|1|0|-|-|-|-|2,2,60,100|-|10:1|\ue000abc abcabc\ue000
+D|def|Trebuchet MS|12|3|0|1|4096|0|0|-|-|-|-|2,2,60,100|-|-| \u0f40
+D|def|Arial|12|3|3|5|1024|2|0|-|-|-|-|2,2,60,100|-|-|\u00e9\u00e9
+D|def|Tahoma|8|3|0|4|0|0|0|-|-|-|-|2,2,300,100|-|-|\u1f600\u13a0
+D|def|Segoe UI|12|3|0|5|0|1|0|-|-|-|-|2,2,300,100|-|-| \u1780
+R|def|Calibri|10|3|0|5|0|0|0|-|-|-|-|2,2,60,100|-|0:1|\u2116\u03b1\u03b2fox\u3042\u3044\u1000
+D|typo|Gabriola|12|3|1|1|2048|0|0|-|-|-|-|2,2,300,100|-|-| The Hello quick over lazy
+D|typo|Lucida Sans Unicode|20|3|1|4|4|0|0|-|-|-|-|2,2,80,100|-|-|1234 fifty quick Mmm brown lazy
+D|def|Lucida Sans Unicode|12|3|3|3|0|1|0|-|-|-|-|2,2,300,100|-|-|.,; jumps fox .,;
+M|typo|Segoe UI Light|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+D|typo|Lucida Console|10|3|1|5|4|0|0|-|-|-|-|2,2,80,100|-|-|.,; .,; over WAVE
+M|def|Lucida Console|9|3|1|3|2048|0|0|-|-|-|-|2,2,0,100|-|-|quick dog AVATAR WAVE
+D|typo|Segoe UI Light|7|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl fifty The
+M|def|Segoe UI Light|14|3|1|1|0|0|0|-|-|-|-|2,2,300,100|-|-|Hello dog .,; Hello AVATAR 
+M|def|Lucida Sans Unicode|12|3|1|2|4|1|0|-|-|-|-|2,2,80,100|-|-|brown
+M|typo|Lucida Sans Unicode|9|3|3|5|4|2|0|-|-|-|-|2,2,0,100|-|-|ijl fifty Hello dog over quick 
+D|def|Lucida Console|12|3|3|5|0|0|0|-|-|-|-|2,2,300,100|-|-|quick
+D|def|Lucida Sans Unicode|10|3|3|5|2048|1|0|-|-|-|-|2,2,300,100|-|-|brown ijl 
+D|typo|Microsoft Sans Serif|7|3|1|1|0|2|0|-|-|-|-|2,2,300,100|-|-|1234 The over
+D|typo|Lucida Console|8|3|1|5|2048|1|0|-|-|-|-|2,2,300,100|-|-|fifty 1234
+D|def|Segoe UI Light|12|3|1|4|0|1|0|-|-|-|-|2,2,0,100|-|-|.,; Hello quick jumps Mmm 1234 
+D|def|Lucida Sans Unicode|7|3|1|5|2048|0|0|-|-|-|-|2,2,80,100|-|-|fox fifty
+D|def|Microsoft Sans Serif|20|3|3|3|0|0|0|-|-|-|-|2,2,80,100|-|-| ijl
+D|typo|Gabriola|20|3|1|2|4096|0|0|-|-|-|-|2,2,0,100|-|-| 1234 
+M|def|Gabriola|8|3|1|1|0|2|0|-|-|-|-|2,2,0,100|-|-| lazy Hello brown
+M|def|Segoe UI Light|7|3|1|5|4096|2|0|-|-|-|-|2,2,0,100|-|-| brown brown fifty brown
+D|typo|Segoe UI Light|9|3|1|4|2048|2|0|-|-|-|-|2,2,0,100|-|-|jumps Mmm WAVE
+D|typo|Lucida Sans Unicode|9|3|1|2|4096|2|0|-|-|-|-|2,2,0,100|-|-| fox over 1234 Mmm
+D|typo|Microsoft Sans Serif|7|3|1|5|4|0|0|-|-|-|-|2,2,300,100|-|-|fifty quick
+M|def|Segoe UI Light|9|3|1|3|0|2|0|-|-|-|-|2,2,80,100|-|-|Hello fifty over ijl
+M|typo|Lucida Sans Unicode|7|3|1|5|0|1|0|-|-|-|-|2,2,80,100|-|-|.,; lazy
+M|def|Gabriola|9|3|3|5|2048|1|0|-|-|-|-|2,2,0,100|-|-|.,; AVATAR jumps .,;
+D|def|Lucida Console|8|3|1|5|4096|2|0|-|-|-|-|2,2,300,100|-|-| ijl The AVATAR quick lazy
+D|typo|Lucida Console|12|3|1|5|0|0|0|-|-|-|-|2,2,80,100|-|-|AVATAR
+D|def|Gabriola|8|3|1|2|0|0|0|-|-|-|-|2,2,300,100|-|-|fifty
+D|def|Gabriola|10|3|3|2|4096|0|0|-|-|-|-|2,2,80,100|-|-|The ijl quick fox lazy Mmm
+D|def|Lucida Console|20|3|3|1|2048|2|0|-|-|-|-|2,2,0,100|-|-| AVATAR over AVATAR
+D|typo|Segoe UI Light|10|3|1|5|4096|0|0|-|-|-|-|2,2,0,100|-|-|AVATAR fifty fox dog jumps
+M|typo|Microsoft Sans Serif|8|3|1|3|4|1|0|-|-|-|-|2,2,0,100|-|-|brown
+M|def|Lucida Console|8|3|1|4|2048|0|0|-|-|-|-|2,2,0,100|-|-|fox
+D|def|Segoe UI Light|10|3|1|2|4096|1|0|-|-|-|-|2,2,300,100|-|-|jumps
+M|def|Lucida Sans Unicode|12|3|1|3|4096|2|0|-|-|-|-|2,2,0,100|-|-| 1234 1234 jumps WAVE dog dog
+M|typo|Gabriola|8|3|1|1|0|2|0|-|-|-|-|2,2,300,100|-|-|1234 brown Hello
+D|typo|Gabriola|8|3|1|5|4|0|0|-|-|-|-|2,2,0,100|-|-|lazy The AVATAR ijl
+D|typo|Lucida Sans Unicode|12|3|3|2|4096|1|0|-|-|-|-|2,2,0,100|-|-|jumps fifty dog ijl Mmm 
+D|typo|Lucida Sans Unicode|14|3|3|2|2048|2|0|-|-|-|-|2,2,0,100|-|-| over .,; Hello 
+M|def|Microsoft Sans Serif|10|3|3|3|0|1|0|-|-|-|-|2,2,300,100|-|-|.,; lazy brown Mmm
+D|def|Lucida Sans Unicode|9|3|3|3|4|1|0|-|-|-|-|2,2,80,100|-|-|fifty Hello fifty 
+D|def|Lucida Console|12|3|1|2|2048|0|0|-|-|-|-|2,2,300,100|-|-|dog dog Hello
+D|def|Gabriola|8|3|3|4|2048|1|0|-|-|-|-|2,2,80,100|-|-|fox Hello dog lazy lazy fox
+D|def|Microsoft Sans Serif|14|3|1|1|0|2|0|-|-|-|-|2,2,300,100|-|-| WAVE jumps lazy lazy fox AVATAR
+D|typo|Lucida Console|20|3|1|3|0|2|0|-|-|-|-|2,2,300,100|-|-|1234 lazy The .,; quick
+M|def|Lucida Console|10|3|1|3|2048|1|0|-|-|-|-|2,2,0,100|-|-| .,; WAVE The WAVE jumps
+D|typo|Lucida Console|12|3|1|1|4|1|0|-|-|-|-|2,2,0,100|-|-|fox jumps brown
+D|typo|Lucida Console|8|3|3|1|2048|1|0|-|-|-|-|2,2,0,100|-|-|AVATAR
+D|def|Microsoft Sans Serif|14|3|1|1|4096|1|0|-|-|-|-|2,2,80,100|-|-| Mmm dog
+D|typo|Lucida Console|7|3|1|3|0|2|0|-|-|-|-|2,2,300,100|-|-|fox .,; quick The Mmm fox
+M|def|Segoe UI Light|20|3|3|3|2048|0|0|-|-|-|-|2,2,80,100|-|-| lazy .,; AVATAR fox AVATAR Hello
+D|typo|Microsoft Sans Serif|12|3|1|5|4096|1|0|-|-|-|-|2,2,0,100|-|-|over Mmm WAVE fox The 
+D|def|Lucida Sans Unicode|14|3|3|5|0|0|0|-|-|-|-|2,2,0,100|-|-| brown lazy over WAVE .,; The
+M|typo|Microsoft Sans Serif|7|3|1|1|0|0|0|-|-|-|-|2,2,300,100|-|-|over
+D|typo|Gabriola|10|3|1|4|4|0|0|-|-|-|-|2,2,0,100|-|-|Mmm Hello .,; Hello ijl 1234 
+D|def|Microsoft Sans Serif|14|3|3|5|4096|1|0|-|-|-|-|2,2,300,100|-|-|ijl Mmm over brown
+D|typo|Lucida Sans Unicode|7|3|1|1|4|1|0|-|-|-|-|2,2,300,100|-|-|dog 1234
+D|typo|Microsoft Sans Serif|8|3|3|2|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Segoe UI Light|9|3|1|5|2048|0|0|-|-|-|-|2,2,0,100|-|-|The fox 1234 ijl
+M|typo|Segoe UI Light|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Microsoft Sans Serif|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Microsoft Sans Serif|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Lucida Sans Unicode|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Lucida Sans Unicode|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Segoe UI Semilight|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Segoe UI Semilight|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Segoe UI Semibold|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Segoe UI Semibold|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Segoe UI Black|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Segoe UI Black|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Arial Black|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Arial Black|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Gabriola|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Gabriola|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Lucida Console|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Lucida Console|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Bahnschrift Light|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Franklin Gothic Medium|8|3|0|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+M|typo|Franklin Gothic Medium|8|3|1|3|4|0|0|-|-|-|-|2,2,0,100|-|-|ijl
+D|null|Consolas|14|3|0|3|0|0|0|2|-|-|-|3.5,5.25,130,100|0.75,0,0,0.75,3.25,2|-|colon: adipiscing over  1
+D|typo|Courier New|8|3|0|3|4|0|2|4|-|-|-|0,0,260,0|-|-|e-mail
+D|def|Calibri|20|3|3|5|8192|0|2|2|-|-|-|0,0,40,0|0.8,0,0,1.3,0,0|-|AVATAR e-mail @home these 50%  'single'\nbrown Mississippi\nsit
+D|null|Arial|12|3|0|4|0|0|0|1|-|-|-|10,5.25,160,0|-|-|eiusmod @home\n#tag a/b elit\nok  sit (paren)\nconsectetur brown
+D|def|Tahoma|16|3|1|4|0|1|2|3|-|-|-|2,5.25,80,150|-|-|fox fly
+D|def|Times New Roman|7|3|0|0|0|2|2|3|-|-|-|0,2,200,60|0.8,0,0,1.3,0,0|-|ok  wrap {brace} dog magna @home  50%\nwords brown\ndolore
+D|typo|Segoe UI|10|3|0|5|0|0|1|4|-|-|-|2,5.25,0,0|-|-|To  dog adipiscing AVATAR lazy wrap a/b  l  $100
+D|null|Times New Roman|8|3|0|5|0|0|0|0|-|-|-|3.5,2,0,40|-|-|i ok 
+D|def|Arial|12|3|0|5|0|0|1|0|-|-|-|2,2,40,100|-|-|50% 
+D|null|Georgia|20|3|0|0|0|0|0|4|-|-|-|0,2,200,40|-|-|adipiscing  jumps\nadipiscing brown WAVE incididunt
+D|typo|Calibri|20|3|1|4|18432|2|1|2|-|-|-|3.5,2,40,0|-|-| 50% incididunt  these x-ray\n"quoted"\ni\namet incididunt  fly  (paren)  consectetur
+D|def|Consolas|11|3|0|0|0|2|2|4|-|-|-|3.5,2,130,40|-|-|lazy the  e-mail  yes! colon:  fly\nlabore #tag superlongwordwithoutanybreaks over adipiscing c\d x-ray fox
+D|def|Microsoft Sans Serif|8|3|3|0|16384|0|1|4|-|-|-|0,0,160,100|-|-|sed yes! et AVATAR  over fox 'single'\nLorem over jumps WAVE c\d (paren)
+D|def|Trebuchet MS|8|3|0|3|8192|0|1|1|-|-|-|3.5,2,80,20|-|-| magna 0  To dolor WAVE 0 1 ok  elit WAVE
+D|typo|Trebuchet MS|20|3|2|4|0|1|1|4|-|-|-|0,0,130,60|-|-|fly dog  AVATAR 12345678901234  {brace} superlongwordwithoutanybreaks lazy  ipsum consectetur tempor  To labore
+D|null|Arial|10|3|0|3|0|0|0|1|-|-|-|0,0,200,40|1.2,0,0,1.3,0,0|-|fly\ndo @home incididunt eiusmod\ntempor\nsed ut Mississippi fly "quoted" 50%
+D|null|Segoe UI|16|3|3|0|0|0|0|2|-|-|-|10,2,260,0|-|-|dolor quick yes!\nfox\n{brace} the lazy c\d 
+D|null|Trebuchet MS|11|3|1|0|0|0|0|1|-|-|-|3.5,5.25,130,100|-|-|comma, semi; why? l magna  To incididunt dolor  magna\nl  superlongwordwithoutanybreaks sed  do  {brace} 
+D|null|Segoe UI|8|3|0|0|0|0|0|0|-|-|-|0,2,80,150|1.2,0,0,1.3,0,0|-|ok
+D|def|Arial|20|3|0|0|4|2|2|4|-|-|-|10,5.25,260,60|-|-|why? eiusmod magna superlongwordwithoutanybreaks\nsit\nconsectetur\nadipiscing ok  the tempor 
+D|typo|Calibri|20|3|1|0|0|0|1|1|-|-|-|10,0,80,40|-|-| fox magna incididunt 50% jumps yes!  AVATAR
+D|null|Calibri|12|3|0|0|0|0|0|4|-|-|-|2,2,260,100|0.8,0,0,0.8,3.25,2|-|AVATAR wrap\neiusmod\nok\nadipiscing semi;  ok end. ut elit adipiscing sed $100 
+D|null|Tahoma|12|3|3|0|0|0|0|0|-|-|-|3.5,2,260,0|0.8,0,0,1.6,0,0|-|jumps wrap\nmagna 
+D|def|Tahoma|16|3|2|0|24576|1|1|3|-|-|-|10,0,160,0|0.8,0,0,0.9,0,0|-|superlongwordwithoutanybreaks  1 50%  aliqua semi; ut over end. 
+D|def|Calibri|12|3|3|0|8192|1|2|2|-|-|-|2,0,60,0|-|-|incididunt c\d e-mail\nthe  wrap eiusmod
+D|null|Consolas|14|3|1|0|0|0|0|0|-|-|-|2,0,160,0|0.5,0,0,0.5,0.5,2|-|{brace}  et 
+D|typo|Tahoma|10|3|3|0|0|1|0|3|-|-|-|2,2,80,60|-|-|amet 
+D|null|Arial|9|3|0|0|0|0|0|2|-|-|-|10,0,60,100|1.1,0,0,1.1,0,0|-|why? lines dolor\nwords these 12345678901234 consectetur\net ut  fox
+D|def|Microsoft Sans Serif|20|3|0|5|4096|1|0|3|-|-|-|3.5,0,260,0|-|-| #tag\nWAVE comma,  12345678901234  (paren) ok
+D|def|Times New Roman|20|3|0|0|0|2|0|4|-|-|-|0,0,160,0|1.2,0,0,0.9,0,0|-|et lines  eiusmod  {brace}
+D|def|Consolas|20|3|0|5|28672|0|1|3|-|-|-|2,5.25,40,0|1.2,0,0,1.6,0,0|-|over c\d dolor $100 comma, c\d tempor
+D|def|Tahoma|11|3|0|5|4|2|2|1|-|-|-|0,2,60,0|0.8,0,0,0.9,0,0|-|x-ray dog  AVATAR over\nsit x-ray magna\nwhy?\nlines do
+D|def|Georgia|16|3|3|0|18436|2|1|1|-|-|-|3.5,0,40,20|-|-|labore why?\ncolon:  To\ne-mail @home\nTo $100  dog
+D|null|Consolas|12|3|0|0|0|0|0|3|-|-|-|0,2,160,0|-|-|a/b\nWAVE wrap  Lorem tempor\nok jumps\namet e-mail $100 @home  lines
+D|null|Arial|10|3|1|0|0|0|0|4|-|-|-|2,5.25,100,0|0.75,0,0,0.75,0,0|-|semi;\n"quoted" [bracket] sed end. fly sed consectetur the
+D|null|Arial|7|3|0|3|0|0|0|1|-|-|-|10,2,260,150|-|-|do dolore
+D|def|Arial|8.25|3|3|5|10240|1|0|1|-|-|-|10,0,160,60|-|-|labore dolore  12345678901234\nover "quoted" colon: end. over  comma,\n$100 i 
+D|def|Verdana|20|3|0|0|0|1|1|0|-|-|-|10,0,0,100|-|-|yes! eiusmod ut  amet  semi;\ncomma, wrap @home @home [bracket] tempor
+D|null|Segoe UI|14|3|2|4|0|0|0|0|-|-|-|10,5.25,60,40|-|-|To  superlongwordwithoutanybreaks  $100
+D|def|Segoe UI|8|3|2|0|4096|2|0|3|-|-|-|3.5,5.25,200,60|0.8,0,0,0.9,0,0|-| fly\n50% jumps i  quick sit\n0 dog lines
+D|def|Georgia|9|3|1|5|16384|1|1|2|-|-|-|0,0,0,150|-|-|semi; 1 x-ray\nipsum l\nsuperlongwordwithoutanybreaks\n(paren) "quoted" quick AVATAR 
+D|def|Segoe UI|9|3|0|0|16388|0|1|3|-|-|-|2,5.25,80,150|-|-|c\d $100 'single'  To
+D|typo|Consolas|9|3|0|4|10240|0|2|2|-|-|-|10,2,100,0|-|-|tempor quick  over do\nAVATAR superlongwordwithoutanybreaks semi;  aliqua
+D|def|Trebuchet MS|7|3|1|3|4|2|1|0|-|-|-|2,2,100,150|-|-|dog yes!
+D|typo|Arial|20|3|0|0|0|0|0|1|-|-|-|3.5,5.25,260,40|1.1,0,0,1.1,0,0.25|-|tempor\n12345678901234 fox  $100 comma,  Mississippi Mississippi\nl  'single' eiusmod over well-known brown lazy
+D|null|Georgia|12|3|0|5|0|0|0|3|-|-|-|10,2,260,0|0.8,0,0,0.8,0,0|-|To words $100 words dolore AVATAR  ut fly\nc\d 1 magna yes! well-known
+D|def|Consolas|16|3|1|0|24576|0|1|0|-|-|-|2,0,160,40|-|-|"quoted" magna 12345678901234 'single' Mississippi\nwrap eiusmod  yes! a/b "quoted" #tag WAVE wrap
+D|null|Microsoft Sans Serif|8.25|3|1|0|0|0|0|3|-|-|-|0,5.25,0,150|1.5,0,0,1.5,0,0|-| [bracket] 
+D|typo|Courier New|12|3|0|3|0|0|0|3|-|-|-|2,2,260,0|-|-|do x-ray labore\nelit\nc\d  colon: words ok 'single' c\d quick  these  semi;
+D|def|Calibri|10|3|0|3|8192|1|0|3|-|-|-|3.5,0,0,0|1.5,0,0,0.9,0,0|-| over\nl AVATAR ok yes! [bracket]  $100  incididunt 'single' [bracket] i 
+D|def|Trebuchet MS|20|3|0|3|0|0|2|1|-|-|-|2,2,260,100|-|-| why? lines sed tempor
+D|null|Arial|7|3|0|0|0|0|0|3|-|-|-|10,2,0,0|-|-| why? l  @home colon: colon: adipiscing semi; over over  sed
+D|def|Calibri|10|3|3|0|0|2|2|4|-|-|-|2,0,260,40|-|-|(paren) aliqua  WAVE elit
+D|def|Calibri|12|3|3|5|28672|2|0|3|-|-|-|0,5.25,260,0|-|-|a/b (paren) consectetur To 'single' WAVE\nfly lazy [bracket]  "quoted" To
+D|def|Courier New|14|3|2|4|0|0|2|1|-|-|-|2,0,200,0|1.1,0,0,1.1,3.25,0.25|-|incididunt  end. Mississippi 12345678901234 dolore fox ut
+D|null|Courier New|7|3|0|0|0|0|0|3|-|-|-|10,2,160,60|1.1,0,0,1.1,0,2|-|$100 
+D|typo|Tahoma|8|3|0|3|8192|1|2|2|-|-|-|3.5,2,260,40|-|-|over {brace} magna elit superlongwordwithoutanybreaks @home  these [bracket] amet 
+D|def|Trebuchet MS|20|3|0|0|8192|2|0|3|-|-|-|10,5.25,0,150|-|-|c\d do l {brace}
+D|null|Times New Roman|11|3|0|0|0|0|0|4|-|-|-|2,2,60,60|1.25,0,0,1.25,0,0|-|0\n$100 (paren)
+D|def|Verdana|10|3|0|4|0|1|2|1|-|-|-|0,0,100,0|1.2,0,0,0.9,0,0|-|well-known yes!\nsemi; the\ndolore 12345678901234 @home
+D|def|Calibri|8|3|0|0|0|2|0|4|-|-|-|3.5,2,160,20|-|-|e-mail\nc\d
+D|def|Arial|11|3|3|4|0|0|1|4|-|-|-|0,2,130,0|-|-|dolore brown (paren) et\nipsum  dog
+D|typo|Georgia|11|3|1|0|8192|0|0|4|-|-|-|3.5,2,40,150|-|-| c\d sed colon:\ncomma, i\nsemi;\nlazy WAVE magna
+D|typo|Consolas|9|3|0|0|16384|2|0|3|-|-|-|2,0,130,0|-|-| @home c\d
+D|typo|Trebuchet MS|14|3|0|4|0|1|0|3|-|-|-|3.5,5.25,260,150|1.5,0,0,1.3,0,0|-|e-mail\nquick\njumps  Mississippi  1
+D|null|Consolas|14|3|1|4|0|0|0|3|-|-|-|10,5.25,200,40|-|-|lines the
+D|typo|Trebuchet MS|8|3|1|4|0|0|1|0|-|-|-|10,2,200,20|-|-|(paren) over
+D|typo|Tahoma|8.25|3|0|5|4100|0|1|4|-|-|-|0,0,160,20|-|-|colon: WAVE  'single' aliqua  WAVE  comma, {brace} 12345678901234
+D|def|Courier New|8|3|0|0|8192|0|1|0|-|-|-|10,0,260,150|0.8,0,0,1.3,0,0|-|50% 'single' well-known $100 do 12345678901234 yes!\n50% semi; well-known
+D|def|Microsoft Sans Serif|9|3|0|4|4096|0|0|4|-|-|-|10,0,60,0|-|-|magna  ok To  adipiscing fly x-ray 
+D|typo|Verdana|8.25|3|1|0|10240|1|1|3|-|-|-|0,0,130,40|-|-|ut jumps
+D|typo|Verdana|7|3|0|0|0|2|2|1|-|-|-|10,5.25,160,0|-|-| eiusmod sed  superlongwordwithoutanybreaks ut lazy
+D|null|Segoe UI|8.25|3|1|3|0|0|0|4|-|-|-|3.5,0,100,0|-|-|dolore fox  fox  dolore eiusmod  {brace}  fox  comma, 1 lazy quick
+D|def|Tahoma|8.25|3|0|4|4100|2|0|3|-|-|-|0,5.25,160,100|1.5,0,0,1.3,0,0|-|e-mail e-mail\nsit fox @home Mississippi #tag words  [bracket]  50%  a/b
+D|def|Georgia|7|3|2|0|0|0|0|0|-|-|-|10,0,40,60|1.2,0,0,1.6,0,0|-|@home over these  AVATAR dolore 0 tempor over
+D|typo|Calibri|12|3|0|4|4|2|0|1|-|-|-|3.5,2,100,40|0.8,0,0,1.6,0,0|-| adipiscing lazy  1\nconsectetur fox  end.  amet\nbrown  sit fly
+D|def|Segoe UI|8.25|3|2|0|4096|2|2|3|-|-|-|10,2,160,150|-|-|why? well-known\nwell-known\n[bracket] wrap  end.\njumps  words  over dolore dog @home
+D|typo|Segoe UI|8|3|0|3|2048|0|0|1|-|-|-|3.5,5.25,260,0|1.1,0,0,1.1,0.5,0.25|-|comma, 
+D|def|Arial|16|3|3|0|2048|2|2|2|-|-|-|2,0,130,40|0.9166667,0,0,0.9166667,0.5,2|-|over\n#tag
+D|null|Arial|7|3|2|0|0|0|0|2|-|-|-|2,0,200,20|-|-|comma,  'single'  x-ray why? "quoted" dog jumps  lines\n"quoted"  magna l words why?
+R|def|Verdana|11|3|0|0|1|0|2|2|-|-|-|10,2,40,400|-|0:1;1:1;2:1;8:1;9:1;10:1;11:1|[bracket]\nTo
+R|def|Verdana|11|3|0|0|1|0|0|0|-|-|-|10,2,40,400|-|0:1;1:1;2:1;8:1;9:1;10:1;11:1|[bracket]\nTo
+R|def|Verdana|11|3|0|0|1|0|0|0|-|-|-|10,2,40,400|-|0:1;1:1;2:1;8:1|[bracket]
+R|def|Verdana|11|3|0|0|1|0|0|0|-|-|-|10,2,40,400|-|0:1;1:1;2:1;8:1|xbracketx
+D|def|Verdana|11|3|0|0|4096|1|2|2|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|4097|1|2|2|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|4097|1|2|1|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|4097|1|2|3|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|4097|1|2|2|-|-|-|10,2,40,400|-|-|bracket\nTo
+D|def|Verdana|11|3|0|0|4097|1|2|2|-|-|-|10,2,40,400|-|-|(bracket\nTo
+D|def|Verdana|11|3|0|0|4097|0|2|2|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|1|0|2|2|-|-|-|10,2,40,400|-|-|[bracket]\nTo
+D|def|Verdana|11|3|0|0|1|0|2|2|-|-|-|10,2,40,400|-|-|[bracket] it\nTo
+D|def|Trebuchet MS|16|3|1|0|1|2|1|1|-|-|-|3.5,5.25,40,60|-|-|#tag {brace} do
+D|null|Segoe UI|7|3|3|0|0|0|0|3|-|-|-|2,5.25,100,40|-|-|well-known elit\nfluffy  'single' semi;\nfluffy  aliqua\n"quoted" "quoted" lazy dolore yes!
+D|null|Arial|11|3|1|0|0|0|0|3|-|-|-|10,5.25,1000,60|-|-|consectetur  sit To\njumps comma, yes!
+D|def|Courier New|12|3|0|0|2048|2|2|2|-|-|-|3.5,0,100,20|-|-|fox 1 over quick sed incididunt\nelit  incididunt i tempor  eiusmod 1
+D|typo|Courier New|11|3|0|0|16385|1|2|4|-|-|-|3.5,2,60,1000|-|-|50% Lorem dolor office do {brace}
+D|typo|Calibri|11|3|0|0|5|0|1|2|-|-|-|0,5.25,130,150|-|-|these\nlines AVATAR elit  ok over
+D|typo|Tahoma|8.25|3|0|0|8192|2|0|1|-|-|-|10,0,100,0|-|-|eiusmod  dog #tag l brown office  semi; [bracket]
+D|def|Arial|20|3|0|0|4097|2|2|1|-|-|-|0,5.25,40,0|-|-|#tag e-mail  WAVE
+D|def|Microsoft Sans Serif|8.25|3|3|0|4101|2|2|0|-|-|-|3.5,0,260,20|-|-| why? fox well-known 
+D|null|Calibri|10|3|0|0|0|0|0|2|-|-|-|0,2,130,0|-|-|dolore x-ray AVATAR 12345678901234 12345678901234
+D|typo|Georgia|14|3|3|0|10240|2|1|2|-|-|-|2,0,260,60|-|-|incididunt
+D|def|Arial|9|3|0|0|8193|0|1|1|-|-|-|0,0,60,150|-|-| [bracket] 12345678901234
+D|def|Georgia|11|3|1|0|16385|2|2|1|-|-|-|3.5,0,130,0|-|-|50%  50%\nthese  well-known dolor over\nok lines  dog
+D|typo|Tahoma|16|3|1|0|0|0|1|2|-|-|-|2,0,260,0|-|-|brown sed\noffice
+D|def|Trebuchet MS|10|3|0|0|4|0|2|2|-|-|-|2,2,40,0|-|-|ok  do amet ok  end.\njumps\nLorem "quoted" {brace} 0 
+D|def|Courier New|10|3|3|0|1|0|1|0|-|-|-|3.5,2,1000,0|-|-|consectetur aliqua x-ray\n50% incididunt #tag do eiusmod
+D|def|Courier New|12|3|0|0|4101|0|0|3|-|-|-|3.5,5.25,1000,40|-|-|brown WAVE\nthe  $100  {brace}  tempor quick e-mail  0  over fox
+D|typo|Segoe UI|14|3|0|0|24577|2|2|0|-|-|-|3.5,2,80,0|-|-|lazy over 1 "quoted" @home\ndolore ipsum To "quoted" {brace} To\nwhy?
+D|def|Consolas|9|3|0|0|2049|2|2|1|-|-|-|10,2,260,150|-|-|12345678901234 consectetur quick 
+D|def|Arial|8|3|1|0|20481|0|0|0|-|-|-|3.5,2,260,20|-|-|AVATAR elit\nadipiscing fox et dolore @home 
+D|def|Verdana|11|3|2|0|28672|2|2|4|-|-|-|0,5.25,60,0|-|-|the
+D|def|Calibri|11|3|0|0|1|2|2|3|-|-|-|3.5,0,40,20|-|-|tempor colon: eiusmod
+D|def|Consolas|8.25|3|1|0|14341|0|1|3|-|-|-|2,5.25,160,1000|-|-| 50% elit  aliqua dolor lines dolore  well-known wrap 1 
+D|def|Trebuchet MS|8.25|3|2|0|1|0|2|4|-|-|-|3.5,0,260,60|-|-|'single' dolor e-mail aliqua @home et
+D|def|Consolas|20|3|3|0|16385|1|2|4|-|-|-|10,5.25,40,1000|-|-|labore over Mississippi jumps dolore\nLorem\ncomma,\ndo  ok quick  "quoted" 
+D|def|Segoe UI|7|3|0|0|4096|1|1|0|-|-|-|3.5,0,80,60|-|-|$100 lazy  To superlongwordwithoutanybreaks
+D|typo|Consolas|8.25|3|0|0|4|1|0|2|-|-|-|3.5,0,160,60|-|-|lines dolore  dolor wrap\n[bracket]\nlabore quick\nsit\nAVATAR fly a/b
+D|def|Calibri|16|3|0|0|0|0|2|1|-|-|-|10,2,40,0|-|-|Mississippi 'single' 
+D|typo|Georgia|11|3|2|0|6148|0|0|0|-|-|-|3.5,0,130,100|-|-|why? Mississippi\nMississippi i\nend.
+D|def|Tahoma|7|3|0|0|24577|1|0|1|-|-|-|2,2,60,100|-|-|the ipsum\nyes!\nwrap tempor [bracket] [bracket]
+D|null|Arial|10|3|2|0|0|0|0|2|-|-|-|0,2,1000,0|-|-|50%  l Lorem  @home lazy
+D|def|Consolas|14|3|3|0|14336|0|2|0|-|-|-|2,0,130,0|-|-|well-known dolor\ndo amet\nincididunt labore  magna  $100
+D|def|Calibri|10|3|1|0|26624|0|2|1|-|-|-|3.5,2,130,60|-|-|"quoted" dolore dolore
+D|def|Consolas|12|3|0|0|10241|1|1|3|-|-|-|3.5,5.25,160,0|-|-|l #tag quick  incididunt\nbrown 'single'\nWAVE wrap\ncolon: {brace} jumps 
+D|def|Times New Roman|8|3|0|0|8193|0|2|1|-|-|-|0,5.25,100,0|-|-| colon: fox do #tag  aliqua  tempor comma, fox
+D|null|Segoe UI|7|3|0|0|0|0|0|2|-|-|-|0,2,0,60|-|-|labore end.\net 50% 50% fox quick ok
+D|null|Tahoma|9|3|2|0|0|0|0|1|-|-|-|0,5.25,100,0|-|-|why?  comma, sed comma, l To
+D|def|Segoe UI|8.25|3|0|0|2048|0|0|1|-|-|-|10,2,60,0|-|-|wrap fly tempor aliqua  fly over @home ok over over eiusmod
+D|typo|Trebuchet MS|7|3|3|0|18437|2|1|0|-|-|-|3.5,5.25,160,1000|-|-|1 50% To
+D|null|Segoe UI|10|3|3|0|0|0|0|3|-|-|-|2,0,0,0|-|-|quick  well-known AVATAR  x-ray brown fox why? [bracket] end. lazy  office 'single'
+D|typo|Times New Roman|10|3|0|0|8193|0|0|3|-|-|-|2,5.25,60,1000|-|-|AVATAR ipsum et\nx-ray eiusmod aliqua tempor  over
+D|def|Courier New|16|3|1|0|14337|2|2|4|-|-|-|0,0,80,100|-|-|a/b  [bracket] well-known a/b\nsemi;
+D|def|Consolas|7|3|3|0|0|1|1|1|-|-|-|2,0,1000,0|-|-|(paren)\na/b aliqua
+D|def|Consolas|16|3|0|0|1|2|2|3|-|-|-|2,5.25,60,0|-|-|quick do
+D|def|Segoe UI|9|3|3|0|0|1|2|3|-|-|-|3.5,0,1000,150|-|-|fluffy fox #tag x-ray ipsum (paren) e-mail lines  yes!  brown\n1
+D|def|Verdana|8.25|3|2|0|4|2|2|1|-|-|-|2,0,0,150|-|-|i ut a/b
+D|typo|Georgia|12|3|0|0|5|2|1|4|-|-|-|0,2,80,100|-|-|ut
+D|def|Tahoma|10|3|3|0|16385|2|1|0|-|-|-|10,0,200,20|-|-|magna a/b [bracket] sit  0 elit "quoted"\nlazy e-mail\nWAVE  magna comma,
+D|null|Segoe UI|8.25|3|0|0|0|0|0|4|-|-|-|10,0,200,0|-|-|sed\nTo\nok
+D|def|Times New Roman|14|3|0|0|2048|0|0|3|-|-|-|3.5,5.25,200,40|-|-|Mississippi 0 adipiscing "quoted" do over
+D|def|Verdana|8.25|3|3|0|2048|1|1|4|-|-|-|0,2,1000,0|-|-|i #tag the fly amet\nx-ray
+D|def|Consolas|16|3|1|0|20481|0|2|0|-|-|-|10,0,60,100|-|-|superlongwordwithoutanybreaks
+D|null|Courier New|9|3|1|0|0|0|0|4|-|-|-|0,5.25,40,100|-|-|well-known\nyes! ut\n'single'\nWAVE 0
+D|typo|Microsoft Sans Serif|20|3|2|0|28673|1|2|2|-|-|-|3.5,2,260,100|-|-|jumps\nyes! "quoted" tempor
+D|null|Microsoft Sans Serif|7|3|2|0|0|0|0|3|-|-|-|3.5,2,1000,150|-|-|sit fox  0\nelit fluffy\nquick\nsed comma, dolor\ncomma, well-known  wrap 
+D|def|Segoe UI|9|3|2|0|5|2|0|0|-|-|-|10,2,260,60|-|-| labore  ok\nMississippi
+D|def|Tahoma|8|3|3|0|1|1|2|4|-|-|-|10,2,160,40|-|-| why? the office\n'single' a/b  'single'
+D|typo|Trebuchet MS|11|3|2|0|4097|0|0|3|-|-|-|2,0,40,60|-|-|ut dog sed these\nadipiscing
+D|typo|Microsoft Sans Serif|8.25|3|3|0|4|0|1|2|-|-|-|3.5,5.25,100,60|-|-| fox #tag\n[bracket] over
+D|null|Georgia|12|3|0|0|0|0|0|4|-|-|-|0,5.25,40,60|-|-|end. e-mail do lines lines
+D|typo|Tahoma|9|3|3|0|1|2|0|0|-|-|-|0,0,80,0|-|-|[bracket] fly labore elit words amet i\nAVATAR\na/b  why? et\nipsum
+D|def|Courier New|8|3|0|0|22529|2|2|2|-|-|-|3.5,5.25,60,150|-|-|dolor  WAVE dog Mississippi  i
+D|typo|Arial|8.25|3|3|0|5|2|0|4|-|-|-|10,0,1000,60|-|-|#tag 50%\n#tag dog\neiusmod end. quick over
+D|def|Consolas|12|3|1|0|2049|2|1|0|-|-|-|3.5,0,40,0|-|-|end.
+D|typo|Microsoft Sans Serif|20|3|0|0|1|2|1|3|-|-|-|10,0,1000,0|-|-|0 et quick well-known 12345678901234 #tag semi; 12345678901234\n1 l
+D|def|Microsoft Sans Serif|10|3|0|0|0|1|0|2|-|-|-|3.5,0,80,100|-|-| labore  wrap $100\nfluffy  i 12345678901234 [bracket]\nlabore sed brown jumps
+D|def|Georgia|9|3|0|0|0|1|0|3|-|-|-|2,5.25,60,100|-|-|labore brown fluffy dolore ipsum  semi; 
+D|def|Verdana|7|3|0|0|1|1|0|3|-|-|-|2,0,0,100|-|-|over words
+D|def|Consolas|7|3|3|0|18433|1|2|0|-|-|-|0,5.25,40,60|-|-|WAVE incididunt semi;  comma, et superlongwordwithoutanybreaks\naliqua ok Mississippi ok 12345678901234  words
+D|def|Georgia|8|3|1|0|2049|0|1|4|-|-|-|3.5,0,40,0|-|-|lines [bracket]  x-ray  quick To  the "quoted"
+D|typo|Georgia|9|3|0|0|1|0|0|2|-|-|-|3.5,5.25,80,0|-|-|[bracket] dolore
+D|typo|Verdana|8.25|3|1|0|4097|2|1|4|-|-|-|10,0,60,1000|-|-|0 semi;  consectetur  brown 12345678901234 12345678901234 
+D|def|Calibri|20|3|1|0|6145|0|2|3|-|-|-|3.5,0,160,100|-|-| brown  Lorem\n{brace} i 0
+D|def|Microsoft Sans Serif|8.25|3|0|0|1|0|2|2|-|-|-|0,2,260,40|-|-|"quoted"  Mississippi these words\namet these
+D|def|Segoe UI|14|3|0|0|10241|0|0|3|-|-|-|0,2,260,60|-|-| 1 sit dog
+D|def|Tahoma|9|3|0|0|1|1|2|2|-|-|-|10,2,100,150|-|-|fly\nlabore WAVE\nlazy WAVE\ne-mail
+D|def|Courier New|8|3|2|0|1|2|0|4|-|-|-|0,0,60,150|-|-|office end.  #tag
+D|def|Calibri|12|3|3|0|8193|0|0|0|-|-|-|2,0,0,150|-|-|brown e-mail  l  x-ray {brace} magna  To office quick wrap yes! $100
+D|def|Segoe UI|9|3|2|0|28673|0|1|2|-|-|-|3.5,0,40,100|-|-|et  50% superlongwordwithoutanybreaks colon: do office sit To
+D|def|Verdana|9|3|0|0|0|0|2|0|-|-|-|2,2,1000,60|-|-|over wrap\nfly x-ray tempor
+D|null|Times New Roman|20|3|2|0|0|0|0|1|-|-|-|3.5,0,0,60|-|-| i\nx-ray\naliqua a/b  #tag sed 12345678901234 ok ipsum words dog lines
+D|typo|Verdana|8|3|2|0|20481|0|0|4|-|-|-|2,0,260,20|-|-|brown  why?  fluffy "quoted" 0 ut  wrap words  Mississippi Lorem
+D|typo|Segoe UI|7|3|0|0|1|1|2|4|-|-|-|0,0,130,0|-|-| fluffy 'single'\nadipiscing end. 
+D|def|Arial|7|3|0|0|2049|2|2|0|-|-|-|0,0,40,100|-|-|fluffy (paren)  jumps  x-ray\nsit  (paren)\nwrap x-ray superlongwordwithoutanybreaks adipiscing Mississippi
+D|typo|Trebuchet MS|14|3|0|0|2049|1|0|0|-|-|-|2,0,160,0|-|-|adipiscing lazy elit colon:  tempor jumps AVATAR lazy wrap
+D|def|Arial|7|3|2|0|2049|0|2|3|-|-|-|3.5,2,130,1000|-|-| labore et ut 'single'\n'single'\nwhy? x-ray\nincididunt x-ray quick
+D|def|Calibri|12|3|1|0|1|2|2|1|-|-|-|2,2,130,150|-|-|[bracket]\ne-mail a/b elit ok lazy yes! the  e-mail Mississippi #tag lines
+D|typo|Arial|7|3|0|0|0|2|0|1|-|-|-|2,2,160,20|-|-|i these well-known  fluffy\n"quoted" 12345678901234 12345678901234 lazy
+D|null|Consolas|8.25|3|0|0|0|0|0|2|-|-|-|0,2,260,20|-|-|{brace}\nfox\nsuperlongwordwithoutanybreaks ok  the 
+D|def|Microsoft Sans Serif|10|3|2|0|0|2|2|0|-|-|-|3.5,5.25,80,0|-|-|magna\ntempor eiusmod jumps labore Lorem dolore  over  tempor
+D|def|Times New Roman|11|3|2|0|8193|2|2|4|-|-|-|2,5.25,260,100|-|-|comma, AVATAR i\n0  ok i Mississippi consectetur fluffy
+D|typo|Times New Roman|20|3|0|0|1|1|2|0|-|-|-|0,5.25,40,0|-|-|office fluffy aliqua
+D|def|Calibri|9|3|0|0|2048|1|0|2|-|-|-|0,2,260,0|-|-|dolor amet
+D|typo|Trebuchet MS|20|3|2|0|6144|2|0|4|-|-|-|3.5,2,60,1000|-|-|{brace} over these lines do semi; "quoted" dog semi; ut
+D|typo|Times New Roman|20|3|3|0|0|1|1|2|-|-|-|0,0,60,60|-|-| jumps 'single' words "quoted" 'single' ipsum ut sit  office  well-known 50%
+D|null|Verdana|10|3|0|0|0|0|0|0|-|-|-|0,2,1000,20|-|-|over  50% comma, $100 labore do dolor  brown lazy\nthe  wrap 'single'
+D|def|Trebuchet MS|8|3|3|0|20481|1|0|2|-|-|-|2,2,100,20|-|-|yes! lines\nyes!
+D|def|Microsoft Sans Serif|20|3|0|0|18437|2|0|0|-|-|-|3.5,2,0,60|-|-| why? dolor semi; do
+D|null|Georgia|11|3|3|0|0|0|0|1|-|-|-|10,2,260,40|-|-| eiusmod To dolor WAVE To\nWAVE aliqua  semi; e-mail ok
+D|def|Trebuchet MS|14|3|2|0|20481|1|0|1|-|-|-|10,2,0,60|-|-|over  ut  Lorem\n@home dolore  "quoted"\nMississippi 0  et
+A|typo|Segoe UI|120|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|120|2|0|5|1|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|120|2|0|5|1|0|0|-|-|-|-|-30,-20,580,180|-|-|Hamburg
+A|def|Arial|120|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+D|def|Segoe UI|12|2|0|4|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|12|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+D|def|Segoe UI|20|2|0|4|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|20|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+D|def|Segoe UI|30|2|0|4|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|30|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+D|def|Segoe UI|40|2|0|4|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|40|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+D|def|Segoe UI|50|2|0|4|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|50|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+D|def|Segoe UI|60|2|0|4|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|60|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+D|def|Segoe UI|80|2|0|4|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|80|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+D|def|Segoe UI|100|2|0|4|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|100|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+D|def|Segoe UI|120|2|0|4|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+A|def|Segoe UI|120|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|שלום
+P|def|Arial|100|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|Hg\tab
+A|def|Arial|100|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|Hg\tab
+P|def|Arial|100|2|0|5|0|0|0|-|-|-|-|10,-20,380,180|-|-|Hg\tab
+P|def|Arial|100|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|Hg ab
+P|def|Arial|100|2|0|5|0|0|0|-|-|-|-|-30,-20,580,180|-|-|Hgab
+D|def|Arial|10|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|null|Arial|10|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|typo|Arial|10|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|def|Arial|20|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|null|Arial|20|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|typo|Arial|20|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|def|Arial|40|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|null|Arial|40|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|typo|Arial|40|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|def|Arial|60|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|null|Arial|60|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|typo|Arial|60|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|def|Arial|99|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|null|Arial|99|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|typo|Arial|99|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|def|Arial|100|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|null|Arial|100|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|typo|Arial|100|2|0|4|0|0|0|-|-|-|-|-30,-20,5800,180|-|-|Hg\tab
+D|def|Arial|20|2|0|4|0|0|0|-|-|10;30;30|-|0,0,5800,180|-|-|Hg\ta\tb\tc\td\te\tf
+D|def|Arial|20|2|0|4|0|0|0|-|-|7;25|-|0,0,5800,180|-|-|H\ta\tb\tc\td\te\tf
+D|def|Arial|20|2|0|4|0|0|0|-|-|0;33|-|0,0,5800,180|-|-|Hamburg\ta\tb\tc\td
+D|def|Arial|20|2|0|4|1|0|0|-|-|5;40|-|0,0,580,180|-|-|H\ta\tb\tc
+D|def|Arial|20|2|0|4|1|0|0|-|-|-|-|0,0,580,180|-|-|H\ta\tb\tc

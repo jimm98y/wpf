@@ -9,7 +9,6 @@ namespace MS.Win32
         private ExternDll()
         { }
 
-        internal const string Gdiplus = "gdiplus.dll";
         internal const string User32 = "user32.dll";
         internal const string Shfolder = "shfolder.dll";
         internal const string Imm32 = "imm32.dll";

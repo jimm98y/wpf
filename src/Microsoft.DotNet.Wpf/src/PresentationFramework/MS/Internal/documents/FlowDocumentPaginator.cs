@@ -770,7 +770,10 @@ namespace MS.Internal.Documents
             }
 
             // Ignore this formatting request, if the element was already disposed.
-            if (_document.StructuralCache.PtsContext.Disposed)
+            // Use HasPtsContext() rather than the PtsContext getter: the getter force-creates a native
+            // PTS context, which throws off-Windows (no PresentationNative). When no context exists yet
+            // it cannot have been disposed, so fall through to formatting either way.
+            if (_document.StructuralCache.HasPtsContext() && _document.StructuralCache.PtsContext.Disposed)
             {
                 return null;
             }

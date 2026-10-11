@@ -1,0 +1,727 @@
+// Real GDI+ (Windows PowerShell 5.1 / .NET Framework System.Drawing) as the oracle for the managed
+// Image layer. Writes small sample files, then dumps how GDI+ reads each one, plus API behaviours.
+// C# 5 only (the Framework's csc).
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
+using System.IO.Compression;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class Oracle
+{
+    static StringBuilder J = new StringBuilder();
+    static string Dir;
+
+    static string Hex(byte[] b) { var s = new StringBuilder(b.Length * 2); foreach (byte x in b) s.Append(x.ToString("x2")); return s.ToString(); }
+    static string Q(string s) { return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""; }
+    static string F(float f) { return f.ToString("R", System.Globalization.CultureInfo.InvariantCulture); }
+
+    public static void Run(string dir)
+    {
+        Dir = dir;
+        Directory.CreateDirectory(Path.Combine(dir, "files"));
+        J.Append("{\n\"files\": {\n");
+        bool first = true;
+        foreach (var kv in MakeFiles())
+        {
+            File.WriteAllBytes(Path.Combine(dir, "files", kv.Key), kv.Value);
+            if (!first) J.Append(",\n");
+            first = false;
+            J.Append(Q(kv.Key)).Append(": ");
+            DumpFile(kv.Value);
+        }
+        J.Append("\n},\n\"api\": {\n");
+        Api();
+        J.Append("\n}\n}\n");
+        File.WriteAllText(Path.Combine(dir, "oracle.json"), J.ToString());
+    }
+
+    // ---------------------------------------------------------------- sample bitmaps
+
+    static Color Px(int x, int y, int w, int h, bool alpha)
+    {
+        int r = (x * 255) / Math.Max(1, w - 1), g = (y * 255) / Math.Max(1, h - 1), b = ((x + y) * 37) & 255;
+        int a = alpha ? ((x * 3 + y * 5) % 4 == 0 ? 0 : (x * 40 + y * 30 + 30) & 255) : 255;
+        if (alpha && a == 0) { r = 0; g = 0; b = 0; }
+        return Color.FromArgb(a, r, g, b);
+    }
+
+    static Bitmap Sample(int w, int h, PixelFormat f, bool alpha)
+    {
+        var b = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) b.SetPixel(x, y, Px(x, y, w, h, alpha));
+        if (f == PixelFormat.Format32bppArgb) return b;
+        var c = b.Clone(new Rectangle(0, 0, w, h), f);
+        b.Dispose();
+        return c;
+    }
+
+    static Bitmap Indexed(int w, int h, PixelFormat f)
+    {
+        var b = new Bitmap(w, h, f);
+        int bits = Image.GetPixelFormatSize(f), n = 1 << bits;
+        ColorPalette pal = b.Palette;
+        for (int i = 0; i < pal.Entries.Length; i++)
+            pal.Entries[i] = Color.FromArgb(255, (i * 67) & 255, (i * 151) & 255, (i * 29 + 40) & 255);
+        b.Palette = pal;
+        BitmapData d = b.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, f);
+        var row = new byte[d.Stride];
+        for (int y = 0; y < h; y++)
+        {
+            Array.Clear(row, 0, row.Length);
+            for (int x = 0; x < w; x++)
+            {
+                int v = (x + y * 3) % n;
+                if (bits == 8) row[x] = (byte)v;
+                else if (bits == 4) row[x >> 1] |= (byte)(v << ((x & 1) == 0 ? 4 : 0));
+                else row[x >> 3] |= (byte)(v << (7 - (x & 7)));
+            }
+            Marshal.Copy(row, 0, d.Scan0 + y * d.Stride, d.Stride);
+        }
+        b.UnlockBits(d);
+        return b;
+    }
+
+    static byte[] Save(Image img, ImageFormat f)
+    {
+        using (var ms = new MemoryStream()) { img.Save(ms, f); return ms.ToArray(); }
+    }
+
+    static byte[] Save(Image img, string mime, EncoderParameters p)
+    {
+        ImageCodecInfo codec = null;
+        foreach (var c in ImageCodecInfo.GetImageEncoders()) if (c.MimeType == mime) codec = c;
+        using (var ms = new MemoryStream()) { img.Save(ms, codec, p); return ms.ToArray(); }
+    }
+
+    // ---------------------------------------------------------------- hand-made files
+
+    static uint[] s_crc;
+    static uint Crc(byte[] d, int o, int n, uint c)
+    {
+        if (s_crc == null) { s_crc = new uint[256]; for (uint i = 0; i < 256; i++) { uint v = i; for (int k = 0; k < 8; k++) v = (v & 1) != 0 ? 0xedb88320u ^ (v >> 1) : v >> 1; s_crc[i] = v; } }
+        for (int i = 0; i < n; i++) c = s_crc[(c ^ d[o + i]) & 0xff] ^ (c >> 8);
+        return c;
+    }
+    static void Be(Stream s, uint v) { s.WriteByte((byte)(v >> 24)); s.WriteByte((byte)(v >> 16)); s.WriteByte((byte)(v >> 8)); s.WriteByte((byte)v); }
+    static void Chunk(Stream s, string type, byte[] data)
+    {
+        Be(s, (uint)data.Length);
+        var t = Encoding.ASCII.GetBytes(type);
+        s.Write(t, 0, 4); s.Write(data, 0, data.Length);
+        uint c = Crc(t, 0, 4, 0xffffffff); c = Crc(data, 0, data.Length, c) ^ 0xffffffff;
+        Be(s, c);
+    }
+    static byte[] Zlib(byte[] raw)
+    {
+        var ms = new MemoryStream();
+        ms.WriteByte(0x78); ms.WriteByte(0x9c);
+        using (var z = new DeflateStream(ms, CompressionMode.Compress, true)) z.Write(raw, 0, raw.Length);
+        uint a = 1, b = 0; foreach (byte x in raw) { a = (a + x) % 65521; b = (b + a) % 65521; }
+        Be(ms, (b << 16) | a);
+        return ms.ToArray();
+    }
+    // rows: already-packed scanlines WITHOUT filter bytes. Writes filter 0 except row 1 uses Sub, row 2 Paeth.
+    static byte[] Png(int w, int h, int depth, int ctype, byte[][] rows, byte[] plte, byte[] trns, bool phys144, bool interlace, int[] gama)
+    {
+        var s = new MemoryStream();
+        s.Write(new byte[] { 0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10 }, 0, 8);
+        var ih = new MemoryStream(); Be(ih, (uint)w); Be(ih, (uint)h); ih.WriteByte((byte)depth); ih.WriteByte((byte)ctype); ih.WriteByte(0); ih.WriteByte(0); ih.WriteByte((byte)(interlace ? 1 : 0));
+        Chunk(s, "IHDR", ih.ToArray());
+        if (gama != null) { var g = new MemoryStream(); Be(g, (uint)gama[0]); Chunk(s, "gAMA", g.ToArray()); }
+        if (plte != null) Chunk(s, "PLTE", plte);
+        if (trns != null) Chunk(s, "tRNS", trns);
+        if (phys144) { var p = new MemoryStream(); Be(p, 5669); Be(p, 5669); p.WriteByte(1); Chunk(s, "pHYs", p.ToArray()); }
+        var raw = new MemoryStream();
+        foreach (var r in rows) { raw.WriteByte(0); raw.Write(r, 0, r.Length); }
+        Chunk(s, "IDAT", Zlib(raw.ToArray()));
+        Chunk(s, "IEND", new byte[0]);
+        return s.ToArray();
+    }
+
+    // Adam7: build each pass's rows from a full picture of 'channels' bytes-per-pixel (8-bit only).
+    static byte[] PngInterlaced(int w, int h, int ctype, int bpp, Func<int, int, byte[]> pix)
+    {
+        int[] x0 = { 0, 4, 0, 2, 0, 1, 0 }, y0 = { 0, 0, 4, 0, 2, 0, 1 }, dx = { 8, 8, 4, 4, 2, 2, 1 }, dy = { 8, 8, 8, 4, 4, 2, 2 };
+        var raw = new MemoryStream();
+        for (int p = 0; p < 7; p++)
+        {
+            int pw = (w - x0[p] + dx[p] - 1) / dx[p], ph = (h - y0[p] + dy[p] - 1) / dy[p];
+            if (pw <= 0 || ph <= 0) continue;
+            for (int y = 0; y < ph; y++)
+            {
+                raw.WriteByte(0);
+                for (int x = 0; x < pw; x++) { var v = pix(x0[p] + x * dx[p], y0[p] + y * dy[p]); raw.Write(v, 0, bpp); }
+            }
+        }
+        var s = new MemoryStream();
+        s.Write(new byte[] { 0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10 }, 0, 8);
+        var ih = new MemoryStream(); Be(ih, (uint)w); Be(ih, (uint)h); ih.WriteByte(8); ih.WriteByte((byte)ctype); ih.WriteByte(0); ih.WriteByte(0); ih.WriteByte(1);
+        Chunk(s, "IHDR", ih.ToArray());
+        Chunk(s, "IDAT", Zlib(raw.ToArray()));
+        Chunk(s, "IEND", new byte[0]);
+        return s.ToArray();
+    }
+
+    // GIF with LZW written "uncompressed" (a clear code before the table grows), several frames.
+    class GifFrame { public int L, T, W, H, Delay, Disposal, Trans = -1; public byte[] Idx; public byte[] Local; public bool Interlace; }
+    static void GifLzw(Stream s, byte[] idx, int minCode)
+    {
+        int clear = 1 << minCode, end = clear + 1, size = minCode + 1;
+        var bits = new List<byte>(); int acc = 0, n = 0;
+        Action<int> put = delegate (int code) { acc |= code << n; n += size; while (n >= 8) { bits.Add((byte)acc); acc >>= 8; n -= 8; } };
+        int since = 0, limit = (1 << size) - clear - 2;
+        put(clear);
+        foreach (byte b in idx) { if (since >= limit) { put(clear); since = 0; } put(b); since++; }
+        put(end);
+        if (n > 0) bits.Add((byte)acc);
+        s.WriteByte((byte)minCode);
+        for (int i = 0; i < bits.Count; i += 255) { int c = Math.Min(255, bits.Count - i); s.WriteByte((byte)c); for (int k = 0; k < c; k++) s.WriteByte(bits[i + k]); }
+        s.WriteByte(0);
+    }
+    static byte[] Gif(int w, int h, byte[] global, int bg, int loop, GifFrame[] frames)
+    {
+        var s = new MemoryStream();
+        var hdr = Encoding.ASCII.GetBytes("GIF89a"); s.Write(hdr, 0, 6);
+        s.WriteByte((byte)w); s.WriteByte((byte)(w >> 8)); s.WriteByte((byte)h); s.WriteByte((byte)(h >> 8));
+        int gbits = global == null ? 0 : (int)Math.Log(global.Length / 3, 2) - 1;
+        s.WriteByte((byte)(global == null ? 0 : 0x80 | 0x70 | gbits)); s.WriteByte((byte)bg); s.WriteByte(0);
+        if (global != null) s.Write(global, 0, global.Length);
+        if (loop >= 0)
+        {
+            s.WriteByte(0x21); s.WriteByte(0xff); s.WriteByte(11); var ns = Encoding.ASCII.GetBytes("NETSCAPE2.0"); s.Write(ns, 0, 11);
+            s.WriteByte(3); s.WriteByte(1); s.WriteByte((byte)loop); s.WriteByte((byte)(loop >> 8)); s.WriteByte(0);
+        }
+        foreach (var f in frames)
+        {
+            s.WriteByte(0x21); s.WriteByte(0xf9); s.WriteByte(4);
+            s.WriteByte((byte)((f.Disposal << 2) | (f.Trans >= 0 ? 1 : 0))); s.WriteByte((byte)f.Delay); s.WriteByte((byte)(f.Delay >> 8)); s.WriteByte((byte)(f.Trans >= 0 ? f.Trans : 0)); s.WriteByte(0);
+            s.WriteByte(0x2c);
+            foreach (int v in new[] { f.L, f.T, f.W, f.H }) { s.WriteByte((byte)v); s.WriteByte((byte)(v >> 8)); }
+            int lbits = f.Local == null ? 0 : (int)Math.Log(f.Local.Length / 3, 2) - 1;
+            s.WriteByte((byte)((f.Local != null ? 0x80 | lbits : 0) | (f.Interlace ? 0x40 : 0)));
+            if (f.Local != null) s.Write(f.Local, 0, f.Local.Length);
+            byte[] idx = f.Idx;
+            if (f.Interlace)
+            {
+                var o = new List<byte>();
+                foreach (var pass in new[] { new[] { 0, 8 }, new[] { 4, 8 }, new[] { 2, 4 }, new[] { 1, 2 } })
+                    for (int y = pass[0]; y < f.H; y += pass[1]) for (int x = 0; x < f.W; x++) o.Add(f.Idx[y * f.W + x]);
+                idx = o.ToArray();
+            }
+            GifLzw(s, idx, Math.Max(2, f.Local != null ? lbits + 1 : gbits + 1));
+        }
+        s.WriteByte(0x3b);
+        return s.ToArray();
+    }
+    static byte[] Pal(int n, int seed) { var p = new byte[n * 3]; for (int i = 0; i < n; i++) { p[i * 3] = (byte)(i * 53 + seed); p[i * 3 + 1] = (byte)(i * 97 + seed * 3); p[i * 3 + 2] = (byte)(i * 31 + 200 - seed); } return p; }
+
+    static void Le16(Stream s, int v) { s.WriteByte((byte)v); s.WriteByte((byte)(v >> 8)); }
+    static void Le32(Stream s, int v) { s.WriteByte((byte)v); s.WriteByte((byte)(v >> 8)); s.WriteByte((byte)(v >> 16)); s.WriteByte((byte)(v >> 24)); }
+
+    // A DIB icon entry (BITMAPINFOHEADER + table + XOR + AND).
+    static byte[] IcoDib(int w, int h, int bpp, bool andMaskPattern, bool zeroAlpha)
+    {
+        var s = new MemoryStream();
+        Le32(s, 40); Le32(s, w); Le32(s, h * 2); Le16(s, 1); Le16(s, bpp); Le32(s, 0); Le32(s, 0); Le32(s, 0); Le32(s, 0); Le32(s, 0); Le32(s, 0);
+        int colors = bpp <= 8 ? 1 << bpp : 0;
+        for (int i = 0; i < colors; i++) { s.WriteByte((byte)(i * 41)); s.WriteByte((byte)(i * 83)); s.WriteByte((byte)(i * 17 + 100)); s.WriteByte(0); }
+        int stride = ((w * bpp + 31) / 32) * 4;
+        for (int y = h - 1; y >= 0; y--)
+        {
+            var row = new byte[stride];
+            for (int x = 0; x < w; x++)
+            {
+                if (bpp == 32) { Color c = Px(x, y, w, h, true); row[x * 4] = c.B; row[x * 4 + 1] = c.G; row[x * 4 + 2] = c.R; row[x * 4 + 3] = zeroAlpha ? (byte)0 : c.A; }
+                else if (bpp == 24) { Color c = Px(x, y, w, h, false); row[x * 3] = c.B; row[x * 3 + 1] = c.G; row[x * 3 + 2] = c.R; }
+                else if (bpp == 8) row[x] = (byte)((x + y) % 256);
+                else if (bpp == 4) row[x >> 1] |= (byte)(((x + y) % 16) << ((x & 1) == 0 ? 4 : 0));
+                else row[x >> 3] |= (byte)(((x + y) & 1) << (7 - (x & 7)));
+            }
+            s.Write(row, 0, stride);
+        }
+        int ms = ((w + 31) / 32) * 4;
+        for (int y = h - 1; y >= 0; y--)
+        {
+            var row = new byte[ms];
+            if (andMaskPattern) for (int x = 0; x < w; x++) if (((x / 2) + y) % 3 == 0) row[x >> 3] |= (byte)(1 << (7 - (x & 7)));
+            s.Write(row, 0, ms);
+        }
+        return s.ToArray();
+    }
+    static byte[] Ico(List<byte[]> entries, List<int[]> dims)
+    {
+        var s = new MemoryStream();
+        Le16(s, 0); Le16(s, 1); Le16(s, entries.Count);
+        int off = 6 + 16 * entries.Count;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            int[] d = dims[i];
+            s.WriteByte((byte)(d[0] >= 256 ? 0 : d[0])); s.WriteByte((byte)(d[1] >= 256 ? 0 : d[1])); s.WriteByte((byte)(d[2] <= 8 ? (1 << d[2]) & 255 : 0)); s.WriteByte(0);
+            Le16(s, 1); Le16(s, d[2]); Le32(s, entries[i].Length); Le32(s, off);
+            off += entries[i].Length;
+        }
+        foreach (var e in entries) s.Write(e, 0, e.Length);
+        return s.ToArray();
+    }
+
+    static byte[] Bmp(int w, int h, int bpp, int compression, uint[] masks, bool topDown, int headerSize, Func<int, int, uint> pix, int dpiPpm)
+    {
+        int stride = ((w * bpp + 31) / 32) * 4;
+        int maskBytes = (compression == 3 || compression == 6) && headerSize == 40 ? (compression == 6 ? 16 : 12) : 0;
+        int colors = bpp <= 8 ? 1 << bpp : 0;
+        int off = 14 + headerSize + maskBytes + colors * 4;
+        var s = new MemoryStream();
+        s.WriteByte((byte)'B'); s.WriteByte((byte)'M'); Le32(s, off + stride * h); Le32(s, 0); Le32(s, off);
+        Le32(s, headerSize); Le32(s, w); Le32(s, topDown ? -h : h); Le16(s, 1); Le16(s, bpp); Le32(s, compression); Le32(s, stride * h); Le32(s, dpiPpm); Le32(s, dpiPpm); Le32(s, 0); Le32(s, 0);
+        if (headerSize > 40) { for (int i = 0; i < 4; i++) Le32(s, masks != null && i < masks.Length ? (int)masks[i] : 0); Le32(s, 0x73524742); for (int i = 0; i < (headerSize - 40 - 20) / 4; i++) Le32(s, 0); }
+        else if (maskBytes > 0) for (int i = 0; i < maskBytes / 4; i++) Le32(s, (int)masks[i]);
+        for (int i = 0; i < colors; i++) { s.WriteByte((byte)(i * 41)); s.WriteByte((byte)(i * 83)); s.WriteByte((byte)(i * 17 + 100)); s.WriteByte(0); }
+        for (int r = 0; r < h; r++)
+        {
+            int y = topDown ? r : h - 1 - r;
+            var row = new byte[stride];
+            for (int x = 0; x < w; x++)
+            {
+                uint v = pix(x, y);
+                if (bpp == 32) { row[x * 4] = (byte)v; row[x * 4 + 1] = (byte)(v >> 8); row[x * 4 + 2] = (byte)(v >> 16); row[x * 4 + 3] = (byte)(v >> 24); }
+                else if (bpp == 24) { row[x * 3] = (byte)v; row[x * 3 + 1] = (byte)(v >> 8); row[x * 3 + 2] = (byte)(v >> 16); }
+                else if (bpp == 16) { row[x * 2] = (byte)v; row[x * 2 + 1] = (byte)(v >> 8); }
+                else if (bpp == 8) row[x] = (byte)v;
+            }
+            s.Write(row, 0, stride);
+        }
+        return s.ToArray();
+    }
+
+    static byte[] Rle8(int w, int h)
+    {
+        // Encoded runs, one per row, then a literal run, end of line; end of bitmap.
+        var px = new MemoryStream();
+        for (int y = 0; y < h; y++)
+        {
+            px.WriteByte(3); px.WriteByte((byte)(y * 7 + 1));            // run of 3
+            px.WriteByte(0); px.WriteByte(4);                             // literal of 4 (even length)
+            for (int k = 0; k < 4; k++) px.WriteByte((byte)(k * 30 + y));
+            int rest = w - 7; if (rest > 0) { px.WriteByte((byte)rest); px.WriteByte(200); }
+            px.WriteByte(0); px.WriteByte(0);                             // end of line
+        }
+        px.WriteByte(0); px.WriteByte(1);
+        byte[] data = px.ToArray();
+        int off = 14 + 40 + 256 * 4;
+        var s = new MemoryStream();
+        s.WriteByte((byte)'B'); s.WriteByte((byte)'M'); Le32(s, off + data.Length); Le32(s, 0); Le32(s, off);
+        Le32(s, 40); Le32(s, w); Le32(s, h); Le16(s, 1); Le16(s, 8); Le32(s, 1); Le32(s, data.Length); Le32(s, 2835); Le32(s, 2835); Le32(s, 0); Le32(s, 0);
+        for (int i = 0; i < 256; i++) { s.WriteByte((byte)(i * 41)); s.WriteByte((byte)(i * 83)); s.WriteByte((byte)(i * 17 + 100)); s.WriteByte(0); }
+        s.Write(data, 0, data.Length);
+        return s.ToArray();
+    }
+
+    static Dictionary<string, byte[]> MakeFiles()
+    {
+        var f = new Dictionary<string, byte[]>();
+        int W = 7, H = 5;
+        using (var b = Sample(W, H, PixelFormat.Format32bppArgb, true)) f["gdip_rgba.png"] = Save(b, ImageFormat.Png);
+        using (var b = Sample(W, H, PixelFormat.Format24bppRgb, false)) f["gdip_rgb.png"] = Save(b, ImageFormat.Png);
+        using (var b = Sample(W, H, PixelFormat.Format24bppRgb, false)) { b.SetResolution(144, 72); f["gdip_rgb_dpi.png"] = Save(b, ImageFormat.Png); }
+        using (var b = Indexed(W, H, PixelFormat.Format8bppIndexed)) f["gdip_pal8.png"] = Save(b, ImageFormat.Png);
+        using (var b = Indexed(W, H, PixelFormat.Format4bppIndexed)) f["gdip_pal4.png"] = Save(b, ImageFormat.Png);
+        using (var b = Indexed(W, H, PixelFormat.Format1bppIndexed)) f["gdip_pal1.png"] = Save(b, ImageFormat.Png);
+
+        // Hand-made PNGs for what GDI+ never writes.
+        {
+            var rows = new byte[H][]; for (int y = 0; y < H; y++) { rows[y] = new byte[W]; for (int x = 0; x < W; x++) rows[y][x] = (byte)(x * 36 + y * 10); }
+            f["hand_gray8.png"] = Png(W, H, 8, 0, rows, null, null, false, false, null);
+            f["hand_gray8_trns.png"] = Png(W, H, 8, 0, rows, null, new byte[] { 0, 46 }, false, false, null);
+            var r16 = new byte[H][]; for (int y = 0; y < H; y++) { r16[y] = new byte[W * 2]; for (int x = 0; x < W; x++) { int v = x * 9000 + y * 1000; r16[y][x * 2] = (byte)(v >> 8); r16[y][x * 2 + 1] = (byte)v; } }
+            f["hand_gray16.png"] = Png(W, H, 16, 0, r16, null, null, false, false, null);
+            var g4 = new byte[H][]; for (int y = 0; y < H; y++) { g4[y] = new byte[(W * 4 + 7) / 8]; for (int x = 0; x < W; x++) g4[y][x >> 1] |= (byte)(((x + y * 2) & 15) << ((x & 1) == 0 ? 4 : 0)); }
+            f["hand_gray4.png"] = Png(W, H, 4, 0, g4, null, null, false, false, null);
+            var ga = new byte[H][]; for (int y = 0; y < H; y++) { ga[y] = new byte[W * 2]; for (int x = 0; x < W; x++) { ga[y][x * 2] = (byte)(x * 36); ga[y][x * 2 + 1] = (byte)(y * 60); } }
+            f["hand_graya.png"] = Png(W, H, 8, 4, ga, null, null, false, false, null);
+            var rgb16 = new byte[H][]; for (int y = 0; y < H; y++) { rgb16[y] = new byte[W * 6]; for (int x = 0; x < W; x++) { int[] v = { x * 9000 + 77, y * 15000 + 300, (x + y) * 5000 + 129 }; for (int c = 0; c < 3; c++) { rgb16[y][x * 6 + c * 2] = (byte)(v[c] >> 8); rgb16[y][x * 6 + c * 2 + 1] = (byte)v[c]; } } }
+            f["hand_rgb16.png"] = Png(W, H, 16, 2, rgb16, null, null, false, false, null);
+            var rgba16 = new byte[H][]; for (int y = 0; y < H; y++) { rgba16[y] = new byte[W * 8]; for (int x = 0; x < W; x++) { int[] v = { x * 9000 + 77, y * 15000 + 300, (x + y) * 5000 + 129, (x * 7 + y * 3) * 2000 + 1000 }; for (int c = 0; c < 4; c++) { rgba16[y][x * 8 + c * 2] = (byte)(v[c] >> 8); rgba16[y][x * 8 + c * 2 + 1] = (byte)v[c]; } } }
+            f["hand_rgba16.png"] = Png(W, H, 16, 6, rgba16, null, null, false, false, null);
+            var rgb = new byte[H][]; for (int y = 0; y < H; y++) { rgb[y] = new byte[W * 3]; for (int x = 0; x < W; x++) { Color c = Px(x, y, W, H, false); rgb[y][x * 3] = c.R; rgb[y][x * 3 + 1] = c.G; rgb[y][x * 3 + 2] = c.B; } }
+            Color k = Px(2, 1, W, H, false);
+            f["hand_rgb_trns.png"] = Png(W, H, 8, 2, rgb, null, new byte[] { 0, k.R, 0, k.G, 0, k.B }, false, false, null);
+            f["hand_rgb_gama.png"] = Png(W, H, 8, 2, rgb, null, null, true, false, new[] { 45455 });
+            var p2 = new byte[H][]; for (int y = 0; y < H; y++) { p2[y] = new byte[(W * 2 + 7) / 8]; for (int x = 0; x < W; x++) p2[y][x >> 2] |= (byte)(((x + y) & 3) << (6 - (x & 3) * 2)); }
+            f["hand_pal2_trns.png"] = Png(W, H, 2, 3, p2, new byte[] { 255, 0, 0, 0, 255, 0, 0, 0, 255, 10, 20, 30 }, new byte[] { 255, 128, 0 }, false, false, null);
+            f["hand_rgba_adam7.png"] = PngInterlaced(11, 9, 6, 4, delegate (int x, int y) { Color c = Px(x, y, 11, 9, true); return new byte[] { c.R, c.G, c.B, c.A }; });
+        }
+
+        using (var b = Sample(W, H, PixelFormat.Format24bppRgb, false)) f["gdip_24.bmp"] = Save(b, ImageFormat.Bmp);
+        using (var b = Sample(W, H, PixelFormat.Format32bppArgb, true)) f["gdip_32argb.bmp"] = Save(b, ImageFormat.Bmp);
+        using (var b = Sample(W, H, PixelFormat.Format16bppRgb565, false)) f["gdip_565.bmp"] = Save(b, ImageFormat.Bmp);
+        using (var b = Sample(W, H, PixelFormat.Format16bppRgb555, false)) f["gdip_555.bmp"] = Save(b, ImageFormat.Bmp);
+        using (var b = Indexed(W, H, PixelFormat.Format8bppIndexed)) f["gdip_8.bmp"] = Save(b, ImageFormat.Bmp);
+        using (var b = Indexed(W, H, PixelFormat.Format4bppIndexed)) f["gdip_4.bmp"] = Save(b, ImageFormat.Bmp);
+        using (var b = Indexed(W, H, PixelFormat.Format1bppIndexed)) f["gdip_1.bmp"] = Save(b, ImageFormat.Bmp);
+        f["hand_32_topdown.bmp"] = Bmp(W, H, 32, 0, null, true, 40, delegate (int x, int y) { return (uint)Px(x, y, W, H, true).ToArgb(); }, 3780);
+        f["hand_32_v5alpha.bmp"] = Bmp(W, H, 32, 3, new uint[] { 0xff0000, 0xff00, 0xff, 0xff000000 }, false, 124, delegate (int x, int y) { return (uint)Px(x, y, W, H, true).ToArgb(); }, 2835);
+        f["hand_16_565bf.bmp"] = Bmp(W, H, 16, 3, new uint[] { 0xf800, 0x7e0, 0x1f }, false, 40, delegate (int x, int y) { return (uint)(x * 4000 + y * 900); }, 0);
+        f["hand_rle8.bmp"] = Rle8(10, 4);
+
+        using (var b = Indexed(W, H, PixelFormat.Format8bppIndexed)) f["gdip_8.gif"] = Save(b, ImageFormat.Gif);
+        using (var b = Sample(W, H, PixelFormat.Format32bppArgb, true)) f["gdip_32.gif"] = Save(b, ImageFormat.Gif);
+        {
+            int gw = 6, gh = 5;
+            var full0 = new byte[gw * gh]; for (int i = 0; i < full0.Length; i++) full0[i] = (byte)(i % 4);
+            var f1 = new byte[3 * 2]; for (int i = 0; i < f1.Length; i++) f1[i] = (byte)(i % 2 == 0 ? 3 : 1);
+            var f2 = new byte[4 * 3]; for (int i = 0; i < f2.Length; i++) f2[i] = (byte)(i % 3);
+            var frames = new[] {
+                new GifFrame { L = 0, T = 0, W = gw, H = gh, Delay = 10, Disposal = 1, Idx = full0 },
+                new GifFrame { L = 1, T = 1, W = 3, H = 2, Delay = 25, Disposal = 2, Trans = 1, Idx = f1 },
+                new GifFrame { L = 2, T = 2, W = 4, H = 3, Delay = 0, Disposal = 3, Idx = f2, Local = Pal(4, 9) },
+                new GifFrame { L = 0, T = 0, W = 2, H = 2, Delay = 7, Disposal = 0, Idx = new byte[] { 2, 2, 0, 1 } },
+            };
+            f["hand_anim.gif"] = Gif(gw, gh, Pal(4, 0), 0, 0, frames);
+            var il = new byte[8 * 9]; for (int i = 0; i < il.Length; i++) il[i] = (byte)((i / 8 + i) % 4);
+            f["hand_interlaced.gif"] = Gif(8, 9, Pal(4, 5), 0, -1, new[] { new GifFrame { W = 8, H = 9, Idx = il, Interlace = true, Trans = 2 } });
+            f["hand_anim_loop3.gif"] = Gif(gw, gh, Pal(4, 1), 0, 3, new[] { frames[0], frames[3] });
+        }
+
+        using (var b = Sample(16, 16, PixelFormat.Format24bppRgb, false))
+        {
+            var p = new EncoderParameters(1); p.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 90L);
+            f["gdip_q90.jpg"] = Save(b, "image/jpeg", p);
+            b.SetResolution(300, 300);
+            var orient = (PropertyItem)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(PropertyItem));
+            orient.Id = 0x0112; orient.Type = 3; orient.Len = 2; orient.Value = new byte[] { 6, 0 };
+            b.SetPropertyItem(orient);
+            f["gdip_exif.jpg"] = Save(b, "image/jpeg", p);
+        }
+        using (var b = Sample(W, H, PixelFormat.Format32bppArgb, true)) f["gdip_32.tif"] = Save(b, ImageFormat.Tiff);
+        using (var b = Sample(W, H, PixelFormat.Format24bppRgb, false))
+        {
+            var p = new EncoderParameters(1); p.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Compression, (long)EncoderValue.CompressionNone);
+            b.SetResolution(200, 100);
+            f["gdip_24_none.tif"] = Save(b, "image/tiff", p);
+        }
+        using (var a = Sample(W, H, PixelFormat.Format24bppRgb, false))
+        using (var b2 = Sample(5, 4, PixelFormat.Format32bppArgb, true))
+        using (var c = Indexed(3, 3, PixelFormat.Format8bppIndexed))
+        {
+            ImageCodecInfo tiff = null; foreach (var e in ImageCodecInfo.GetImageEncoders()) if (e.MimeType == "image/tiff") tiff = e;
+            var ms = new MemoryStream();
+            var p = new EncoderParameters(1);
+            p.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.SaveFlag, (long)EncoderValue.MultiFrame);
+            a.Save(ms, tiff, p);
+            p.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.SaveFlag, (long)EncoderValue.FrameDimensionPage);
+            a.SaveAdd(b2, p); a.SaveAdd(c, p);
+            p.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.SaveFlag, (long)EncoderValue.Flush);
+            a.SaveAdd(p);
+            f["gdip_multi.tif"] = ms.ToArray();
+        }
+
+        {
+            var e = new List<byte[]>(); var d = new List<int[]>();
+            e.Add(IcoDib(16, 16, 4, true, false)); d.Add(new[] { 16, 16, 4 });
+            e.Add(IcoDib(32, 32, 32, false, false)); d.Add(new[] { 32, 32, 32 });
+            e.Add(IcoDib(24, 24, 8, true, false)); d.Add(new[] { 24, 24, 8 });
+            e.Add(IcoDib(16, 16, 32, false, false)); d.Add(new[] { 16, 16, 32 });
+            f["hand_multi.ico"] = Ico(e, d);
+            var e2 = new List<byte[]>(); var d2 = new List<int[]>();
+            e2.Add(IcoDib(16, 16, 32, true, true)); d2.Add(new[] { 16, 16, 32 });
+            f["hand_32_zeroalpha.ico"] = Ico(e2, d2);
+            var e3 = new List<byte[]>(); var d3 = new List<int[]>();
+            e3.Add(IcoDib(8, 8, 1, true, false)); d3.Add(new[] { 8, 8, 1 });
+            e3.Add(IcoDib(12, 12, 24, true, false)); d3.Add(new[] { 12, 12, 24 });
+            f["hand_1_24.ico"] = Ico(e3, d3);
+            var e4 = new List<byte[]>(); var d4 = new List<int[]>();
+            using (var b = Sample(20, 20, PixelFormat.Format32bppArgb, true)) e4.Add(Save(b, ImageFormat.Png)); d4.Add(new[] { 20, 20, 32 });
+            e4.Add(IcoDib(16, 16, 8, true, false)); d4.Add(new[] { 16, 16, 8 });
+            f["hand_png.ico"] = Ico(e4, d4);
+        }
+        return f;
+    }
+
+    // ---------------------------------------------------------------- dumping
+
+    static void DumpImage(Image img, bool frames)
+    {
+        J.Append("{");
+        J.Append("\"type\":").Append(Q(img.GetType().Name));
+        J.Append(",\"w\":").Append(img.Width).Append(",\"h\":").Append(img.Height);
+        J.Append(",\"fmt\":").Append(Q(img.PixelFormat.ToString()));
+        J.Append(",\"raw\":").Append(Q(img.RawFormat.Guid.ToString()));
+        J.Append(",\"flags\":").Append(img.Flags);
+        J.Append(",\"dpix\":").Append(F(img.HorizontalResolution)).Append(",\"dpiy\":").Append(F(img.VerticalResolution));
+        SizeF pd = img.PhysicalDimension;
+        J.Append(",\"phys\":[").Append(F(pd.Width)).Append(",").Append(F(pd.Height)).Append("]");
+        J.Append(",\"dims\":[");
+        Guid[] dl = img.FrameDimensionsList;
+        for (int i = 0; i < dl.Length; i++) { if (i > 0) J.Append(","); J.Append(Q(dl[i].ToString())); }
+        J.Append("]");
+        J.Append(",\"palette\":");
+        try
+        {
+            ColorPalette p = img.Palette;
+            J.Append("{\"flags\":").Append(p.Flags).Append(",\"entries\":[");
+            for (int i = 0; i < p.Entries.Length; i++) { if (i > 0) J.Append(","); J.Append(Q(((uint)p.Entries[i].ToArgb()).ToString("x8"))); }
+            J.Append("]}");
+        }
+        catch (Exception e) { J.Append(Q("EX " + e.GetType().Name)); }
+        J.Append(",\"props\":[");
+        PropertyItem[] items = img.PropertyItems;
+        for (int i = 0; i < items.Length; i++)
+        {
+            if (i > 0) J.Append(",");
+            J.Append("{\"id\":").Append(items[i].Id).Append(",\"type\":").Append(items[i].Type).Append(",\"len\":").Append(items[i].Len)
+             .Append(",\"value\":").Append(Q(items[i].Value == null ? "" : Hex(items[i].Value))).Append("}");
+        }
+        J.Append("]");
+        var bmp = img as Bitmap;
+        if (bmp != null)
+        {
+            J.Append(",\"argb\":").Append(Q(Lock(bmp, PixelFormat.Format32bppArgb)));
+            if ((bmp.PixelFormat & PixelFormat.Indexed) != 0 || bmp.PixelFormat == PixelFormat.Format24bppRgb || bmp.PixelFormat == PixelFormat.Format48bppRgb
+                || bmp.PixelFormat == PixelFormat.Format64bppArgb || bmp.PixelFormat == PixelFormat.Format16bppRgb565 || bmp.PixelFormat == PixelFormat.Format16bppRgb555
+                || bmp.PixelFormat == PixelFormat.Format32bppRgb || bmp.PixelFormat == PixelFormat.Format16bppArgb1555 || bmp.PixelFormat == PixelFormat.Format16bppGrayScale)
+                J.Append(",\"native\":").Append(Q(Lock(bmp, bmp.PixelFormat)));
+        }
+        if (frames)
+        {
+            foreach (Guid g in dl)
+            {
+                var fd = new FrameDimension(g);
+                int n = img.GetFrameCount(fd);
+                J.Append(",\"count_").Append(g.ToString()).Append("\":").Append(n);
+                if (n > 1 && bmp != null)
+                {
+                    J.Append(",\"frames_").Append(g.ToString()).Append("\":[");
+                    for (int i = 0; i < n; i++)
+                    {
+                        img.SelectActiveFrame(fd, i);
+                        if (i > 0) J.Append(",");
+                        J.Append("{\"w\":").Append(img.Width).Append(",\"h\":").Append(img.Height).Append(",\"fmt\":").Append(Q(img.PixelFormat.ToString()))
+                         .Append(",\"dpix\":").Append(F(img.HorizontalResolution)).Append(",\"argb\":").Append(Q(Lock(bmp, PixelFormat.Format32bppArgb))).Append("}");
+                    }
+                    J.Append("]");
+                    img.SelectActiveFrame(fd, 0);
+                }
+            }
+        }
+        J.Append("}");
+    }
+
+    static string Lock(Bitmap b, PixelFormat f)
+    {
+        try
+        {
+            BitmapData d = b.LockBits(new Rectangle(0, 0, b.Width, b.Height), ImageLockMode.ReadOnly, f);
+            int rowBytes = (b.Width * Image.GetPixelFormatSize(f) + 7) / 8;
+            var all = new byte[rowBytes * b.Height];
+            for (int y = 0; y < b.Height; y++) Marshal.Copy(d.Scan0 + y * d.Stride, all, y * rowBytes, rowBytes);
+            string s = "stride=" + d.Stride + ":" + Hex(all);
+            b.UnlockBits(d);
+            return s;
+        }
+        catch (Exception e) { return "EX " + e.GetType().Name + " " + e.Message; }
+    }
+
+    static void DumpFile(byte[] data)
+    {
+        J.Append("{\"image\":");
+        try { using (var img = Image.FromStream(new MemoryStream(data))) DumpImage(img, true); }
+        catch (Exception e) { J.Append(Q("EX " + e.GetType().Name + " " + e.Message)); }
+        // Icon class view, for .ico files.
+        if (data.Length > 4 && data[0] == 0 && data[1] == 0 && data[2] == 1 && data[3] == 0)
+        {
+            foreach (int sz in new[] { 16, 24, 32, 48, 20, 0 })
+            {
+                J.Append(",\"icon").Append(sz).Append("\":");
+                try
+                {
+                    using (var ic = sz == 0 ? new Icon(new MemoryStream(data)) : new Icon(new MemoryStream(data), sz, sz))
+                    using (var tb = ic.ToBitmap())
+                    {
+                        J.Append("{\"size\":[").Append(ic.Width).Append(",").Append(ic.Height).Append("],\"bmp\":");
+                        DumpImage(tb, false);
+                        var ms = new MemoryStream(); ic.Save(ms);
+                        J.Append(",\"saved\":").Append(Q(Hex(ms.ToArray())));
+                        J.Append("}");
+                    }
+                }
+                catch (Exception e) { J.Append(Q("EX " + e.GetType().Name + " " + e.Message)); }
+            }
+        }
+        J.Append("}");
+    }
+
+    // ---------------------------------------------------------------- API behaviours
+
+    static bool firstApi = true;
+    static void Key(string k) { if (!firstApi) J.Append(",\n"); firstApi = false; J.Append(Q(k)).Append(": "); }
+
+    static readonly PixelFormat[] Formats = {
+        PixelFormat.Format1bppIndexed, PixelFormat.Format4bppIndexed, PixelFormat.Format8bppIndexed,
+        PixelFormat.Format16bppRgb555, PixelFormat.Format16bppRgb565, PixelFormat.Format16bppArgb1555, PixelFormat.Format16bppGrayScale,
+        PixelFormat.Format24bppRgb, PixelFormat.Format32bppRgb, PixelFormat.Format32bppArgb, PixelFormat.Format32bppPArgb,
+        PixelFormat.Format48bppRgb, PixelFormat.Format64bppArgb, PixelFormat.Format64bppPArgb };
+
+    static void Api()
+    {
+        // New bitmaps per format.
+        foreach (PixelFormat pf in Formats)
+        {
+            Key("new_" + pf);
+            try { using (var b = new Bitmap(5, 3, pf)) DumpImage(b, false); }
+            catch (Exception e) { J.Append(Q("EX " + e.GetType().Name)); }
+        }
+        // SetPixel / GetPixel round trip per format.
+        Color[] probe = { Color.FromArgb(128, 10, 130, 250), Color.FromArgb(255, 1, 2, 3), Color.FromArgb(0, 200, 100, 50), Color.FromArgb(77, 255, 255, 255), Color.FromArgb(255, 7, 135, 252), Color.FromArgb(1, 254, 128, 3) };
+        foreach (PixelFormat pf in Formats)
+        {
+            Key("setget_" + pf);
+            J.Append("[");
+            for (int i = 0; i < probe.Length; i++)
+            {
+                if (i > 0) J.Append(",");
+                try { using (var b = new Bitmap(2, 2, pf)) { b.SetPixel(1, 0, probe[i]); J.Append(Q(((uint)b.GetPixel(1, 0).ToArgb()).ToString("x8") + " " + Lock(b, pf))); } }
+                catch (Exception e) { J.Append(Q("EX " + e.GetType().Name)); }
+            }
+            J.Append("]");
+        }
+        // LockBits conversions from a 32bppArgb source, a sub-rectangle.
+        using (var src = Sample(6, 4, PixelFormat.Format32bppArgb, true))
+        {
+            Key("lock_src"); J.Append(Q(Lock(src, PixelFormat.Format32bppArgb)));
+            foreach (PixelFormat pf in Formats)
+            {
+                Key("lock_from32_" + pf);
+                try
+                {
+                    BitmapData d = src.LockBits(new Rectangle(1, 1, 3, 2), ImageLockMode.ReadOnly, pf);
+                    int rb = (3 * Image.GetPixelFormatSize(pf) + 7) / 8;
+                    var all = new byte[rb * 2];
+                    for (int y = 0; y < 2; y++) Marshal.Copy(d.Scan0 + y * d.Stride, all, y * rb, rb);
+                    J.Append(Q("stride=" + d.Stride + " w=" + d.Width + " h=" + d.Height + " fmt=" + d.PixelFormat + ":" + Hex(all)));
+                    src.UnlockBits(d);
+                }
+                catch (Exception e) { J.Append(Q("EX " + e.GetType().Name)); }
+            }
+            // Write through a converted lock: 24bpp bytes into the 32bpp image.
+            foreach (PixelFormat pf in new[] { PixelFormat.Format24bppRgb, PixelFormat.Format16bppRgb565, PixelFormat.Format32bppPArgb, PixelFormat.Format64bppArgb, PixelFormat.Format48bppRgb, PixelFormat.Format16bppArgb1555 })
+            {
+                Key("write_into32_" + pf);
+                try
+                {
+                    using (var dst = Sample(4, 3, PixelFormat.Format32bppArgb, true))
+                    {
+                        BitmapData d = dst.LockBits(new Rectangle(1, 0, 2, 2), ImageLockMode.WriteOnly, pf);
+                        int bpp = Image.GetPixelFormatSize(pf) / 8;
+                        for (int y = 0; y < 2; y++) { var row = new byte[2 * bpp]; for (int i = 0; i < row.Length; i++) row[i] = (byte)(i * 37 + y * 101 + 13); if (pf == PixelFormat.Format64bppArgb || pf == PixelFormat.Format48bppRgb) for (int i = 1; i < row.Length; i += 2) row[i] &= 0x1f; Marshal.Copy(row, 0, d.Scan0 + y * d.Stride, row.Length); }
+                        dst.UnlockBits(d);
+                        J.Append(Q(Lock(dst, PixelFormat.Format32bppArgb)));
+                    }
+                }
+                catch (Exception e) { J.Append(Q("EX " + e.GetType().Name)); }
+            }
+            // ReadWrite lock untouched round trip on PArgb (does it lose precision?)
+            Key("readwrite_parg_roundtrip");
+            using (var c = (Bitmap)src.Clone())
+            {
+                BitmapData d = c.LockBits(new Rectangle(0, 0, 6, 4), ImageLockMode.ReadWrite, PixelFormat.Format32bppPArgb);
+                c.UnlockBits(d);
+                J.Append(Q(Lock(c, PixelFormat.Format32bppArgb)));
+            }
+            // Clone to each format.
+            foreach (PixelFormat pf in Formats)
+            {
+                Key("clone_" + pf);
+                try { using (var c = src.Clone(new Rectangle(1, 0, 4, 3), pf)) DumpImage(c, false); }
+                catch (Exception e) { J.Append(Q("EX " + e.GetType().Name)); }
+            }
+            foreach (RotateFlipType rf in Enum.GetValues(typeof(RotateFlipType)))
+            {
+                Key("rotate_" + (int)rf);
+                using (var c = (Bitmap)src.Clone()) { c.RotateFlip(rf); J.Append(Q(c.Width + "x" + c.Height + " " + Lock(c, PixelFormat.Format32bppArgb))); }
+            }
+            Key("maketransparent_default");
+            using (var c = Sample(6, 4, PixelFormat.Format24bppRgb, false)) { c.MakeTransparent(); DumpImage(c, false); }
+            Key("maketransparent_color");
+            using (var c = Sample(6, 4, PixelFormat.Format32bppArgb, false)) { c.MakeTransparent(Px(2, 1, 6, 4, false)); DumpImage(c, false); }
+            Key("thumb");
+            using (var t = src.GetThumbnailImage(3, 2, null, IntPtr.Zero)) { J.Append(Q(t.Width + "x" + t.Height + " " + t.PixelFormat + " " + t.HorizontalResolution)); }
+            Key("setres");
+            using (var c = (Bitmap)src.Clone()) { c.SetResolution(150.5f, 33f); J.Append(Q(c.HorizontalResolution + " " + c.VerticalResolution + " " + F(c.PhysicalDimension.Width))); }
+            Key("bitmap_from_image");
+            using (var c = new Bitmap(src)) DumpImage(c, false);
+            Key("bitmap_24_from_image");
+            using (var s24 = Sample(5, 3, PixelFormat.Format24bppRgb, false)) using (var c = new Bitmap(s24)) DumpImage(c, false);
+            Key("bounds");
+            { GraphicsUnit u = GraphicsUnit.Display; RectangleF r = src.GetBounds(ref u); J.Append(Q(r + " " + u)); }
+        }
+        // Indexed SetPixel throws?
+        Key("indexed_setpixel");
+        try { using (var b = new Bitmap(2, 2, PixelFormat.Format8bppIndexed)) b.SetPixel(0, 0, Color.Red); J.Append(Q("ok")); }
+        catch (Exception e) { J.Append(Q("EX " + e.GetType().Name + " " + e.Message)); }
+        Key("indexed_lock_to_8");
+        using (var src = Sample(4, 2, PixelFormat.Format32bppArgb, false))
+        {
+            try { BitmapData d = src.LockBits(new Rectangle(0, 0, 4, 2), ImageLockMode.ReadOnly, PixelFormat.Format8bppIndexed); src.UnlockBits(d); J.Append(Q("ok")); }
+            catch (Exception e) { J.Append(Q("EX " + e.GetType().Name)); }
+        }
+        // Encoders list.
+        Key("encoders");
+        J.Append("[");
+        bool fe = true;
+        foreach (var c in ImageCodecInfo.GetImageEncoders())
+        {
+            if (!fe) J.Append(","); fe = false;
+            J.Append("{\"clsid\":").Append(Q(c.Clsid.ToString())).Append(",\"fmt\":").Append(Q(c.FormatID.ToString())).Append(",\"name\":").Append(Q(c.CodecName))
+             .Append(",\"dll\":").Append(Q(c.DllName ?? "")).Append(",\"desc\":").Append(Q(c.FormatDescription)).Append(",\"ext\":").Append(Q(c.FilenameExtension))
+             .Append(",\"mime\":").Append(Q(c.MimeType)).Append(",\"flags\":").Append((int)c.Flags).Append(",\"ver\":").Append(c.Version).Append("}");
+        }
+        J.Append("]");
+        Key("decoders");
+        J.Append("[");
+        fe = true;
+        foreach (var c in ImageCodecInfo.GetImageDecoders())
+        {
+            if (!fe) J.Append(","); fe = false;
+            J.Append("{\"clsid\":").Append(Q(c.Clsid.ToString())).Append(",\"fmt\":").Append(Q(c.FormatID.ToString())).Append(",\"name\":").Append(Q(c.CodecName))
+             .Append(",\"desc\":").Append(Q(c.FormatDescription)).Append(",\"ext\":").Append(Q(c.FilenameExtension))
+             .Append(",\"mime\":").Append(Q(c.MimeType)).Append(",\"flags\":").Append((int)c.Flags).Append("}");
+        }
+        J.Append("]");
+        foreach (string mime in new[] { "image/png", "image/jpeg", "image/tiff", "image/gif", "image/bmp" })
+        {
+            Key("params_" + mime);
+            try
+            {
+                ImageCodecInfo codec = null; foreach (var c in ImageCodecInfo.GetImageEncoders()) if (c.MimeType == mime) codec = c;
+                using (var b = new Bitmap(2, 2))
+                {
+                    EncoderParameters ps = b.GetEncoderParameterList(codec.Clsid);
+                    J.Append("[");
+                    for (int i = 0; i < ps.Param.Length; i++) { if (i > 0) J.Append(","); J.Append(Q(ps.Param[i].Encoder.Guid + " " + ps.Param[i].Type + " " + ps.Param[i].NumberOfValues)); }
+                    J.Append("]");
+                }
+            }
+            catch (Exception e) { J.Append(Q("EX " + e.GetType().Name)); }
+        }
+        // Saved-file properties: what GDI+ writes for 32bpp PNG round trip (format after reload).
+        foreach (PixelFormat pf in new[] { PixelFormat.Format32bppArgb, PixelFormat.Format24bppRgb, PixelFormat.Format32bppRgb, PixelFormat.Format8bppIndexed, PixelFormat.Format16bppRgb565 })
+            foreach (ImageFormat imf in new[] { ImageFormat.Png, ImageFormat.Bmp, ImageFormat.Gif, ImageFormat.Tiff, ImageFormat.Jpeg })
+            {
+                Key("resave_" + pf + "_" + imf);
+                try
+                {
+                    using (var b = pf == PixelFormat.Format8bppIndexed ? Indexed(4, 3, pf) : Sample(4, 3, pf, pf == PixelFormat.Format32bppArgb))
+                    using (var r = Image.FromStream(new MemoryStream(Save(b, imf))))
+                        J.Append(Q(r.PixelFormat + " " + r.RawFormat.Guid + " " + r.HorizontalResolution));
+                }
+                catch (Exception e) { J.Append(Q("EX " + e.GetType().Name)); }
+            }
+        // ToBitmap of a 4bpp icon vs FromHicon.
+        Key("raw_memorybmp"); using (var b = new Bitmap(2, 2)) J.Append(Q(b.RawFormat.Guid.ToString()));
+        Key("flags_new32"); using (var b = new Bitmap(2, 2)) J.Append(b.Flags);
+    }
+}

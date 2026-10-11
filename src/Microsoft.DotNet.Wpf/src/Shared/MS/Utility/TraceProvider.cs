@@ -574,6 +574,21 @@ namespace MS.Utility
             return ManifestEtw.EventWrite(_registrationHandle, ref eventDescriptor, (uint)argc, argv);
         }
 }
+
+    // ETW (both the classic and manifest providers) is a Windows-only facility - Register/EventWrite
+    // P/Invoke advapi32. On other platforms EventTrace uses this no-op provider: _enabled stays
+    // false so IsEnabled() always returns false and no trace call ever reaches native code.
+    internal sealed class NullTraceProvider : TraceProvider
+    {
+        internal override void Register(Guid providerGuid)
+        {
+        }
+
+        internal override unsafe uint EventWrite(EventTrace.Event eventID, EventTrace.Keyword keywords, EventTrace.Level level, int argc, EventData* argv)
+        {
+            return 0;
+        }
+    }
 }
 
 #endif

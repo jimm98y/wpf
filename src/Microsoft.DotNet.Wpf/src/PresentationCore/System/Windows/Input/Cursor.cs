@@ -159,6 +159,12 @@ namespace System.Windows.Input
 
         private void LoadFromFile(string fileName)
         {
+            // See LoadFromStream: LoadImageCursor is a user32.dll P/Invoke unavailable off-Windows.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             // Load a Custom Cursor
             _cursorHandle = UnsafeNativeMethods.LoadImageCursor(IntPtr.Zero,
                                                                 fileName,
@@ -266,6 +272,15 @@ namespace System.Windows.Input
 
         private void LoadFromStream(Stream cursorStream)
         {
+            // LoadImageCursor is a user32.dll P/Invoke that does not exist off-Windows. As with
+            // LoadCursorHelper, leave the native handle unset there; the per-platform windowing
+            // backend supplies the actual cursor. Without this, e.g. GridViewColumnHeader loading
+            // its resize "split" cursor from a resource stream throws DllNotFoundException.
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
             if (MS.Internal.CoreAppContextSwitches.AllowExternalProcessToBlockAccessToTemporaryFiles)
             {
                 LegacyLoadFromStream(cursorStream);
@@ -303,7 +318,10 @@ namespace System.Windows.Input
 
         private void LoadCursorHelper(CursorType cursorType)
         {
-            if (cursorType != CursorType.None)
+            // LoadCursor loads a native Win32/user32 cursor handle. Off-Windows there is no such
+            // handle; the cursor type is still tracked, and the actual cursor is applied by the
+            // (per-platform) windowing backend, so the native handle is simply left unset.
+            if (cursorType != CursorType.None && OperatingSystem.IsWindows())
             {
                 // Load a Standard Cursor
                 _cursorHandle = SafeNativeMethods.LoadCursor(new HandleRef(this,IntPtr.Zero), (IntPtr)(CursorTypes[(int)cursorType]));

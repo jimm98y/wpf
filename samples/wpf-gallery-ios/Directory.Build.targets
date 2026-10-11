@@ -1,0 +1,3 @@
+<Project>
+  <!-- See Directory.Build.props: intentionally empty so the repo-wide targets don't apply here. -->
+</Project>

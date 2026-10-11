@@ -6303,14 +6303,29 @@ Möchten Sie das Element ersetzen?</target>
         <target state="translated">Der angegebene Index befindet sich außerhalb des gültigen Bereichs, oder das untergeordnete Element beim Index ist NULL. Rufen Sie diese Methode nicht auf, wenn "VisualChildrenCount " den Wert "0" zurückgibt. Dies weist darauf hin, dass das Visual-Objekt keine untergeordneten Elemente besitzt.</target>
         <note />
       </trans-unit>
+      <trans-unit id="WebBrowserDocumentNotSupported">
+        <source>WebBrowser.Document is only available when the legacy ActiveX host is enabled on Windows. Use InvokeScript, or the WebView2 control's ExecuteScriptAsync, to work with the page instead.</source>
+        <target state="new">WebBrowser.Document is only available when the legacy ActiveX host is enabled on Windows. Use InvokeScript, or the WebView2 control's ExecuteScriptAsync, to work with the page instead.</target>
+        <note />
+      </trans-unit>
       <trans-unit id="WebBrowserNoCastToIWebBrowser2">
         <source>Cannot get IWebBrowser2 from the native ActiveX control.</source>
         <target state="translated">"IWebBrowser2" kann vom nativen ActiveX-Steuerelement nicht abgerufen werden.</target>
         <note />
       </trans-unit>
+      <trans-unit id="WebBrowserNoEngine">
+        <source>No web engine is available on this platform, so web content cannot be hosted.</source>
+        <target state="new">No web engine is available on this platform, so web content cannot be hosted.</target>
+        <note />
+      </trans-unit>
       <trans-unit id="WebBrowserOverlap">
         <source>Frames hosting HTML content cannot overlap each other in partial trust.</source>
         <target state="translated">Bei Frames, von denen HTML-Inhalt gehostet wird, darf bei Verwendung mit teilweiser Vertrauenswürdigkeit keine gegenseitige Überlappung vorhanden sein.</target>
+        <note />
+      </trans-unit>
+      <trans-unit id="WebBrowserTargetFrameNotSupported">
+        <source>Navigating a named target frame is not supported by this web engine.</source>
+        <target state="new">Navigating a named target frame is not supported by this web engine.</target>
         <note />
       </trans-unit>
       <trans-unit id="WebRequestCreationFailed">

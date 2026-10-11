@@ -1,0 +1,36 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="WpfLinuxSdkCheck.XamlWindow"
+        Title="XAML window" Width="420" Height="260">
+    <!--
+      Compiled XAML, not XamlReader.Parse: this file is what proves the markup compiler
+      (PresentationBuildTasks) runs off Windows and that the BAML it emits loads at runtime. Every
+      other sample in this repo is deliberately code-only, so without this the whole markup path (the
+      route essentially every real WPF app takes) was never exercised on Linux.
+
+      It deliberately uses the features that go through separate parts of the compiler: a resource
+      dictionary with a keyed brush and a style, a data-bound TextBlock via ElementName, a control
+      template, and an event handler wired by name (x:Class code-behind).
+    -->
+    <Window.Resources>
+        <SolidColorBrush x:Key="AccentBrush" Color="#FF3366CC" />
+        <Style x:Key="HeadingStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+        </Style>
+        <ControlTemplate x:Key="PillButton" TargetType="Button">
+            <Border Background="{StaticResource AccentBrush}" CornerRadius="10" Padding="10,4">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+        </ControlTemplate>
+    </Window.Resources>
+
+    <StackPanel Margin="16">
+        <TextBlock x:Name="Heading" Style="{StaticResource HeadingStyle}" Text="Compiled XAML" />
+        <TextBlock Margin="0,8,0,0" Text="{Binding ElementName=Input, Path=Text}" />
+        <TextBox x:Name="Input" Margin="0,8,0,0" Text="bound text" />
+        <Button x:Name="Go" Margin="0,12,0,0" Width="120" HorizontalAlignment="Left"
+                Template="{StaticResource PillButton}" Content="Click" Click="OnClick" />
+        <TextBlock x:Name="Status" Margin="0,12,0,0" Text="(not clicked)" />
+    </StackPanel>
+</Window>

@@ -193,6 +193,22 @@ namespace System.Windows.Media.Imaging
         ///
         internal override void FinalizeCreation()
         {
+            // Off-Windows there is no native WIC imaging factory to cache into; adopt the source's managed
+            // (Bgra32) pixel backing directly (it's already fully decoded), which is exactly the cache the
+            // downstream managed transforms need.
+            if (_source?._managedPixels != null)
+            {
+                _managedPixels = _source._managedPixels;
+                _managedStride = _source._managedStride;
+                _format = _source.Format;
+                _pixelWidth = _source.PixelWidth;
+                _pixelHeight = _source.PixelHeight;
+                IsSourceCached = (_cacheOption != BitmapCacheOption.None);
+                CreationCompleted = true;
+                UpdateCachedSettings();
+                return;
+            }
+
             lock (_syncObject)
             {
                 WicSourceHandle = CreateCachedBitmap(_source as BitmapFrame, _source.WicSourceHandle, _createOptions, _cacheOption, _source.Palette);
@@ -352,6 +368,34 @@ namespace System.Windows.Media.Imaging
             }
 
             _bitmapInit.BeginInit();
+
+            // Off-Windows there is no WIC. Back the bitmap with an in-memory managed pixel buffer
+            // instead of a native WICBitmap; CopyPixels reads from it and the managed composition
+            // path forwards those bytes to the WebGPU backend.
+            //
+            // Palettized formats are kept in their PACKED form -- an Indexed4 row really is two
+            // pixels to the byte -- exactly as CopyPixels must hand them back. The palette is
+            // remembered alongside so ManagedPixelConverter can resolve the indices when something
+            // asks for actual colours.
+            {
+                _palette = palette;
+                _managedPixels = new byte[bufferSize];
+                Marshal.Copy(buffer, _managedPixels, 0, bufferSize);
+                _managedStride = stride;
+
+                _format = pixelFormat;
+                _pixelWidth = pixelWidth;
+                _pixelHeight = pixelHeight;
+                _dpiX = dpiX;
+                _dpiY = dpiY;
+
+                _createOptions = BitmapCreateOptions.PreservePixelFormat;
+                _cacheOption = BitmapCacheOption.OnLoad;
+                _isSourceCached = true;
+                _syncObject = _managedPixels; // any stable non-null lock target
+                _bitmapInit.EndInit();
+                return;
+            }
 
             try
             {

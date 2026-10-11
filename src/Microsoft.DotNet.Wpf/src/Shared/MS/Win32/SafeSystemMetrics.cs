@@ -23,6 +23,17 @@ namespace MS.Win32
         {
         }
 
+        // GetSystemMetrics is a user32 call that only exists on Windows. Off-Windows this layer
+        // returns the same value Windows uses by default, so callers get sensible metrics until a
+        // cross-platform windowing backend supplies real ones. Keeping the OS gate here (the single
+        // consolidation point for system metrics) avoids scattering platform checks at every call.
+        private static int GetSystemMetric(SM index, int nonWindowsDefault)
+        {
+            return OperatingSystem.IsWindows()
+                ? UnsafeNativeMethods.GetSystemMetrics(index)
+                : nonWindowsDefault;
+        }
+
 #if !PRESENTATION_CORE
         /// <summary>
         ///     Maps to SM_CXVIRTUALSCREEN
@@ -31,8 +42,7 @@ namespace MS.Win32
         {
             get
             {
-
-                return UnsafeNativeMethods.GetSystemMetrics(SM.CXVIRTUALSCREEN);
+                return GetSystemMetric(SM.CXVIRTUALSCREEN, 0);
             }
         }
 
@@ -43,7 +53,7 @@ namespace MS.Win32
         {
             get
             {
-                return UnsafeNativeMethods.GetSystemMetrics(SM.CYVIRTUALSCREEN);
+                return GetSystemMetric(SM.CYVIRTUALSCREEN, 0);
             }
         }
 #endif //end !PRESENTATIONCORE
@@ -55,7 +65,7 @@ namespace MS.Win32
         {
             get
             {
-                return UnsafeNativeMethods.GetSystemMetrics(SM.CXDOUBLECLK);
+                return GetSystemMetric(SM.CXDOUBLECLK, 4);
             }
         }
 
@@ -66,11 +76,11 @@ namespace MS.Win32
         {
             get
             {
-                return UnsafeNativeMethods.GetSystemMetrics(SM.CYDOUBLECLK);
+                return GetSystemMetric(SM.CYDOUBLECLK, 4);
             }
         }
 
-            
+
         /// <summary>
         ///     Maps to SM_CXDRAG
         /// </summary>
@@ -78,7 +88,7 @@ namespace MS.Win32
         {
             get
             {
-                return UnsafeNativeMethods.GetSystemMetrics(SM.CXDRAG);
+                return GetSystemMetric(SM.CXDRAG, 4);
             }
         }
 
@@ -89,18 +99,19 @@ namespace MS.Win32
         {
             get
             {
-                return UnsafeNativeMethods.GetSystemMetrics(SM.CYDRAG);
+                return GetSystemMetric(SM.CYDRAG, 4);
             }
         }
 
-        ///<summary> 
+        ///<summary>
         /// Is an IMM enabled ? Maps to SM_IMMENABLED
-        ///</summary> 
+        ///</summary>
         internal static bool IsImmEnabled
         {
             get
             {
-                return  (UnsafeNativeMethods.GetSystemMetrics(SM.IMMENABLED) != 0);
+                // The Windows Input Method Manager does not exist off-Windows.
+                return OperatingSystem.IsWindows() && (UnsafeNativeMethods.GetSystemMetrics(SM.IMMENABLED) != 0);
             }
 
         }

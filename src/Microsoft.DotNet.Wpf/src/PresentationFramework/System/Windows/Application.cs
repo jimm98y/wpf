@@ -2288,6 +2288,11 @@ namespace System.Windows
         private string GetSystemSound(string soundName)
         {
             string soundFile = null;
+            // System event sounds come from the Windows registry (AppEvents scheme) and are played via
+            // winmm PlaySound; neither exists off-Windows. Skip so navigation (which plays the "Navigating"
+            // sound) doesn't throw on macOS/Linux.
+            if (!OperatingSystem.IsWindows())
+                return null;
             string regPath = $@"AppEvents\Schemes\Apps\Explorer\{soundName}\.current\";
             try
             {

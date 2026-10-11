@@ -21,8 +21,20 @@ namespace System.Windows.Interop
     {
         static HwndSource()
         {
+            // Opt the process into DPI awareness (and load the native text backend) before the first
+            // top-level HWND is created below. PresentationCore's ModuleInitializer is no longer a
+            // <Module>.cctor (mono-aot-cross/wasm cannot run one), so on Windows it must be pumped from
+            // an early pre-window path — and every WPF window funnels through HwndSource. Without this
+            // the process stays DPI-unaware and Windows bitmap-stretches the window (blurry on HiDPI).
+            global::ModuleInitializer.Initialize();
+
             _threadSlot = Thread.AllocateDataSlot();
         }
+
+        // DWM cloaking for the window's first frame (see the constructor). Windows only.
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, uint attr, ref int value, int size);
+        private const uint DWMWA_CLOAK = 13;
 
         /// <summary>
         ///    Constructs an instance of the HwndSource class that will always resize to its content size.
@@ -272,10 +284,39 @@ namespace System.Windows.Interop
             {
                 _hwndTarget.BackgroundColor = Colors.Transparent;
 
-                // Prevent this window from being themed.
-                UnsafeNativeMethods.CriticalSetWindowTheme(new HandleRef(this, _hwndWrapper.Handle), "", "");
+                // Prevent this window from being themed. (uxtheme is Windows-only; there is no visual
+                // style to opt out of off-Windows.)
+                if (OperatingSystem.IsWindows())
+                {
+                    UnsafeNativeMethods.CriticalSetWindowTheme(new HandleRef(this, _hwndWrapper.Handle), "", "");
+                }
             }
             _constructionParameters = null;
+
+            // A top-level window is shown before its first frame is rendered, and the first present
+            // compiles the pipelines -- most of a second on some GPUs -- during which DWM draws the
+            // empty swapchain: black. Cloak it until the composition sink has presented its first
+            // frame (the sink uncloaks it then); the timer only stands in for a present that never
+            // comes. Layered and per-pixel-alpha windows present by UpdateLayeredWindow, not a surface.
+            if (OperatingSystem.IsWindows()
+                && (parameters.WindowStyle & 0x40000000) == 0              // WS_CHILD
+                && (parameters.ExtendedWindowStyle & 0x00080000) == 0      // WS_EX_LAYERED
+                && !_hwndTarget.UsesPerPixelOpacity)
+            {
+                IntPtr cloaked = _hwndWrapper.Handle;
+                int on = 1;
+                if (DwmSetWindowAttribute(cloaked, DWMWA_CLOAK, ref on, sizeof(int)) == 0)
+                {
+                    var uncloak = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(3) };
+                    uncloak.Tick += (s, e) =>
+                    {
+                        uncloak.Stop();
+                        int off = 0;
+                        DwmSetWindowAttribute(cloaked, DWMWA_CLOAK, ref off, sizeof(int));
+                    };
+                    uncloak.Start();
+                }
+            }
 
             if (!parameters.HasAssignedSize)
                 _sizeToContent = SizeToContent.WidthAndHeight;
@@ -326,13 +367,41 @@ namespace System.Windows.Interop
             }
             AddSource();
 
-            // Register dropable window.
-            if (_hwndWrapper.Handle != IntPtr.Zero)
+            // A top-level source means there is now a tree worth looking at. Starts the CDP
+            // inspector when WPF_DEVTOOLS is set; does nothing at all otherwise.
+            System.Windows.Diagnostics.DevToolsBootstrap.EnsureStarted();
+
+            // Register dropable window. OLE drag/drop is COM-based and Windows-only.
+            if (_hwndWrapper.Handle != IntPtr.Zero && OperatingSystem.IsWindows())
             {
                 // This call is safe since DragDrop.RegisterDropTarget is checking the unmanged
                 // code permission.
                 DragDrop.RegisterDropTarget(_hwndWrapper.Handle);
                 _registeredDropTargetCount++;
+            }
+            else if (!OperatingSystem.IsWindows())
+            {
+                // Every other head drives the very same OleDropTarget -- from its own backend where
+                // it has a drag transport, and from ManagedDragLoop where it has none -- so there is
+                // nothing to register per window, only the seam those call into. Installing it here
+                // rather than at startup means an app that never opens a window never pays for it,
+                // and matches where the Windows registration happens.
+                PlatformDropTarget.Install();
+            }
+
+            // Touch, for every head whose backend has a digitizer to report from. Installed on the
+            // same occasion and for the same reason as the drop target above: it is a seam the
+            // backend calls into rather than a per-window registration, an app that never opens a
+            // window never pays for it, and until it exists PlatformTouch.IsAvailable is false and a
+            // backend keeps synthesizing mouse input instead. Windows keeps its own WM_POINTER path.
+            if (!OperatingSystem.IsWindows())
+            {
+                PlatformTouchSink.Install();
+
+                // Gestures, for a head with no touchscreen to report contacts from. macOS is the
+                // one that needs it; installing everywhere costs nothing, since a backend that
+                // never reports a gesture never reaches the sink.
+                PlatformGestureSink.Install();
             }
         }
 
@@ -901,8 +970,15 @@ namespace System.Windows.Interop
         private void RoundDeviceSize(ref Point size)
         {
             UIElement root = _rootVisual as UIElement;
-            if (root != null && root.SnapsToDevicePixels)
+            if (root != null && root.SnapsToDevicePixels && OperatingSystem.IsWindows())
             {
+                // Content that snaps to device pixels is already integral on Windows, so rounding to
+                // the nearest device pixel is exact. Off-Windows our text metrics differ and a menu /
+                // popup's content can measure to a FRACTIONAL device size (e.g. 110.4px). Rounding a
+                // size-to-content window to the nearest pixel then rounds it DOWN below the content
+                // (110.4 -> 110), so the content's right/bottom edge -- a menu's 1px border -- spills
+                // past the surface and is clipped. A "size to content" window must contain its content:
+                // fall through to Ceiling below so the window is never smaller than what it hosts.
                 size = new Point(DoubleUtil.DoubleToInt(size.X), DoubleUtil.DoubleToInt(size.Y));
             }
             else

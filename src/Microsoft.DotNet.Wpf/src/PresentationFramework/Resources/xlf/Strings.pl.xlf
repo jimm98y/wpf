@@ -6303,14 +6303,29 @@ Czy chcesz go zastąpić?</target>
         <target state="translated">Podany indeks jest poza zakresem lub element podrzędny w indeksie jest zerowy. Nie należy wywoływać tej metody, jeśli operacja VisualChildrenCount zwraca zero, wskazując brak elementów podrzędnych obiektu Visual.</target>
         <note />
       </trans-unit>
+      <trans-unit id="WebBrowserDocumentNotSupported">
+        <source>WebBrowser.Document is only available when the legacy ActiveX host is enabled on Windows. Use InvokeScript, or the WebView2 control's ExecuteScriptAsync, to work with the page instead.</source>
+        <target state="new">WebBrowser.Document is only available when the legacy ActiveX host is enabled on Windows. Use InvokeScript, or the WebView2 control's ExecuteScriptAsync, to work with the page instead.</target>
+        <note />
+      </trans-unit>
       <trans-unit id="WebBrowserNoCastToIWebBrowser2">
         <source>Cannot get IWebBrowser2 from the native ActiveX control.</source>
         <target state="translated">Nie można uzyskać IWebBrowser2 z macierzystego formantu ActiveX.</target>
         <note />
       </trans-unit>
+      <trans-unit id="WebBrowserNoEngine">
+        <source>No web engine is available on this platform, so web content cannot be hosted.</source>
+        <target state="new">No web engine is available on this platform, so web content cannot be hosted.</target>
+        <note />
+      </trans-unit>
       <trans-unit id="WebBrowserOverlap">
         <source>Frames hosting HTML content cannot overlap each other in partial trust.</source>
         <target state="translated">Ramki obsługujące zawartość HTML nie mogą się nakładać w częściowej relacji zaufania.</target>
+        <note />
+      </trans-unit>
+      <trans-unit id="WebBrowserTargetFrameNotSupported">
+        <source>Navigating a named target frame is not supported by this web engine.</source>
+        <target state="new">Navigating a named target frame is not supported by this web engine.</target>
         <note />
       </trans-unit>
       <trans-unit id="WebRequestCreationFailed">

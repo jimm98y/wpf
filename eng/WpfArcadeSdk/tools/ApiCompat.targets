@@ -60,9 +60,16 @@
       <ResolvedMatchingContract Remove="@(ResolvedMatchingContract)"/>
       <ResolvedMatchingContract Include="$(IntermediateOutputPath)$(AssemblyName).dll" Condition="'$(ManagedCxx)'!='true'"/>
       <ResolvedMatchingContract Include="$(OutputPath)$(AssemblyName).dll" Condition="'$(ManagedCxx)'=='true'" />
-      <!-- Work backwards to find the output for a hand-crafted ref assembly. -->
+      <!-- Work backwards to find the output for a hand-crafted ref assembly.
+           For explicit platforms (x86/x64/arm64) the output path carries a
+           $(Platform) subfolder (e.g. ...\Foo-ref\arm64\Release\net10.0\); AnyCPU/Win32
+           builds omit it. The two conditioned globs keep this deterministic so a stale
+           cross-platform output can't produce a second (ambiguous) match. -->
       <ResolvedImplementationAssembly Remove="@(ResolvedImplementationAssembly)" />
-      <ResolvedImplementationAssembly Include="$(BaseOutputPath)..\$(AssemblyName)-ref\$(Configuration)\**\$(AssemblyName).dll" />
+      <ResolvedImplementationAssembly Condition="'$(Platform)' != '' and '$(Platform)' != 'AnyCPU' and '$(Platform)' != 'Win32'"
+                                      Include="$(BaseOutputPath)..\$(AssemblyName)-ref\$(Platform)\$(Configuration)\**\$(AssemblyName).dll" />
+      <ResolvedImplementationAssembly Condition="'$(Platform)' == '' or '$(Platform)' == 'AnyCPU' or '$(Platform)' == 'Win32'"
+                                      Include="$(BaseOutputPath)..\$(AssemblyName)-ref\$(Configuration)\**\$(AssemblyName).dll" />
       <Error Condition="@(ResolvedImplementationAssembly->Count()) &gt; 1" Text="More than one reference assembly was added to ResolvedImplementationAssembly!" />
     </ItemGroup>
   </Target>
@@ -78,7 +85,17 @@
     <!-- If DotNetTool is undefined, we default to assuming 'dotnet' is on the path -->
     <DotNetTool Condition="'$(DotNetTool)' == ''">dotnet</DotNetTool>
 
-    <_ApiCompatPath Condition="'$(MSBuildRuntimeType)' == 'core'">$(NuGetPackageRoot)\microsoft.dotnet.apicompat\$(MicrosoftDotNetApiCompatVersion)\tools\netcoreapp2.1\Microsoft.DotNet.ApiCompat.dll</_ApiCompatPath>
+    <!--
+      The tool folder moved between ApiCompat package versions: older packages shipped
+      tools/netcoreapp2.1, current ones (9.0.0-beta.*) ship tools/net9.0. Hardcoding the old
+      name made every ApiCompat run invoke a .dll that does not exist, so `dotnet` exited 1 and
+      the target reported "ApiCompat failed" for projects whose API was perfectly fine, with
+      no clue why, because the Exec below hides tool output at Low importance. Probe for the
+      current layout and fall back to the old one.
+    -->
+    <_ApiCompatToolDir Condition="'$(MSBuildRuntimeType)' == 'core' and Exists('$(NuGetPackageRoot)\microsoft.dotnet.apicompat\$(MicrosoftDotNetApiCompatVersion)\tools\net9.0\Microsoft.DotNet.ApiCompat.dll')">net9.0</_ApiCompatToolDir>
+    <_ApiCompatToolDir Condition="'$(_ApiCompatToolDir)' == ''">netcoreapp2.1</_ApiCompatToolDir>
+    <_ApiCompatPath Condition="'$(MSBuildRuntimeType)' == 'core'">$(NuGetPackageRoot)\microsoft.dotnet.apicompat\$(MicrosoftDotNetApiCompatVersion)\tools\$(_ApiCompatToolDir)\Microsoft.DotNet.ApiCompat.dll</_ApiCompatPath>
     <_ApiCompatPath Condition="'$(MSBuildRuntimeType)' != 'core'">$(NuGetPackageRoot)\microsoft.dotnet.apicompat\$(MicrosoftDotNetApiCompatVersion)\tools\net472\Microsoft.DotNet.ApiCompat.exe</_ApiCompatPath>
 
     <_ApiCompatCommand Condition="'$(MSBuildRuntimeType)' == 'core'">"$(DotNetTool)" "$(_ApiCompatPath)"</_ApiCompatCommand>
@@ -160,6 +177,8 @@
     <MakeDir Directories="$(IntermediateOutputPath)" />
     <WriteLinesToFile File="$(ApiCompatResponseFile)" Lines="$(ApiCompatArgs)" Overwrite="true" />
 
+    <Error Condition="!Exists('$(_ApiCompatPath)')"
+           Text="ApiCompat tool not found at '$(_ApiCompatPath)'. The package layout may have changed; see _ApiCompatToolDir in ApiCompat.targets." />
     <Exec Command="$(_ApiCompatCommand) @&quot;$(ApiCompatResponseFile)&quot; $(ApiCompatBaselineAll)"
           CustomErrorRegularExpression="^[a-zA-Z]+ :"
           StandardOutputImportance="Low"
@@ -217,6 +236,8 @@
     <MakeDir Directories="$(IntermediateOutputPath)" />
     <WriteLinesToFile File="$(ApiCompatResponseFile)" Lines="$(ApiCompatArgs)" Overwrite="true" />
 
+    <Error Condition="!Exists('$(_ApiCompatPath)')"
+           Text="ApiCompat tool not found at '$(_ApiCompatPath)'. The package layout may have changed; see _ApiCompatToolDir in ApiCompat.targets." />
     <Exec Command="$(_ApiCompatCommand) @&quot;$(ApiCompatResponseFile)&quot; $(ApiCompatBaselineAll)"
           CustomErrorRegularExpression="^[a-zA-Z]+ :"
           StandardOutputImportance="Low"

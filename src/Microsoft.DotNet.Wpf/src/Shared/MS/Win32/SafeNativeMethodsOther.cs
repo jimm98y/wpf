@@ -25,7 +25,9 @@ namespace MS.Win32
             SND_RESOURCE = 0x00040000, /* name is resource name or atom */
         }
 
-        public static bool IsUxThemeActive() { return SafeNativeMethodsPrivate.IsThemeActive() != 0; }
+        // uxtheme.dll (Windows visual styles) does not exist off-Windows; report the theme as
+        // inactive so WPF falls back to its classic/generic theme dictionaries.
+        public static bool IsUxThemeActive() { return System.OperatingSystem.IsWindows() && SafeNativeMethodsPrivate.IsThemeActive() != 0; }
 
         public static bool SetCaretPos(int x, int y)
         {
@@ -50,9 +52,15 @@ namespace MS.Win32
         // NOTE:  CLR has this in UnsafeNativeMethodsCLR.cs.  Not sure why it is unsafe - need to follow up.
         public static int GetCaretBlinkTime()
         {
+            // user32-only; 530 ms is the Windows default caret blink interval.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return 530;
+            }
+
             // To be consistent with our other PInvoke wrappers
             // we should "throw" a Win32Exception on error here.
-            // But we don't want to introduce new "throws" w/o 
+            // But we don't want to introduce new "throws" w/o
             // time to follow up on any new problems that causes.
 
             return SafeNativeMethodsPrivate.GetCaretBlinkTime();
@@ -79,6 +87,19 @@ namespace MS.Win32
 
         public static unsafe bool GetStringTypeEx(uint locale, uint infoType, ReadOnlySpan<char> sourceString, Span<ushort> charTypes)
         {
+            // GetStringTypeEx lives in kernel32 (only on Windows). The selection word breaker calls it
+            // for every character pair, so off-Windows we classify chars managed via UnicodeCategory /
+            // code-point ranges instead of throwing DllNotFoundException (which aborts word selection).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                for (int i = 0; i < sourceString.Length; i++)
+                {
+                    charTypes[i] = ClassifyCharManaged(sourceString[i], infoType);
+                }
+
+                return true;
+            }
+
             // Since we do not use [LibraryImport], Span<T> marshallers are not available by default
             fixed (char* ptrSourceString = sourceString)
             fixed (ushort* ptrCharTypes = charTypes)
@@ -90,9 +111,122 @@ namespace MS.Win32
             return true;
         }
 
+        // Managed GetStringTypeEx classification for the char types the selection word breaker consumes.
+        // CT_CTYPE1: C1_SPACE/C1_BLANK/C1_PUNCT. CT_CTYPE3: the ideographic/kana + diacritic/kashida
+        // flags (all zero for Latin, which is what unblocks western word selection). Approximate but
+        // sufficient for word-break decisions; a full NLS table is not warranted here.
+        private static ushort ClassifyCharManaged(char ch, uint infoType)
+        {
+            if (infoType == CT_CTYPE1)
+            {
+                ushort t = 0;
+                if (char.IsWhiteSpace(ch))
+                {
+                    t |= C1_SPACE;
+                    if (ch == ' ' || ch == '\t' || ch == '\u00a0')
+                    {
+                        t |= C1_BLANK;
+                    }
+                }
+                if (char.IsPunctuation(ch) || char.IsSymbol(ch))
+                {
+                    t |= C1_PUNCT;
+                }
+                return t;
+            }
+
+            if (infoType == CT_CTYPE3)
+            {
+                ushort t = 0;
+
+                if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) == System.Globalization.UnicodeCategory.NonSpacingMark)
+                {
+                    t |= (ushort)(C3_NONSPACING | C3_DIACRITIC);
+                }
+
+                if (ch >= 0x3040 && ch <= 0x309F)            // Hiragana
+                {
+                    t |= (ushort)(C3_HIRAGANA | C3_FULLWIDTH);
+                }
+                else if (ch >= 0x30A0 && ch <= 0x30FF)       // Katakana (full-width)
+                {
+                    t |= (ushort)(C3_KATAKANA | C3_FULLWIDTH);
+                }
+                else if (ch >= 0xFF65 && ch <= 0xFF9F)       // Half-width Katakana
+                {
+                    t |= (ushort)(C3_KATAKANA | C3_HALFWIDTH);
+                }
+                else if ((ch >= 0x4E00 && ch <= 0x9FFF) ||   // CJK Unified Ideographs
+                         (ch >= 0x3400 && ch <= 0x4DBF) ||   // CJK Extension A
+                         (ch >= 0xF900 && ch <= 0xFAFF))      // CJK Compatibility Ideographs
+                {
+                    t |= (ushort)(C3_IDEOGRAPH | C3_FULLWIDTH);
+                }
+
+                if (ch == 0x0640)                            // Arabic Tatweel (Kashida)
+                {
+                    t |= C3_KASHIDA;
+                }
+
+                return t;
+            }
+
+            // CT_CTYPE2 and anything else the word breaker doesn't consult: no flags.
+            return 0;
+        }
+
         public static int GetSysColor(int nIndex)
         {
-            return SafeNativeMethodsPrivate.GetSysColor(nIndex);
+            if (System.OperatingSystem.IsWindows())
+            {
+                return SafeNativeMethodsPrivate.GetSysColor(nIndex);
+            }
+
+            return NonWindowsSysColor(nIndex);
+        }
+
+        // GetSysColor is user32-only. Off-Windows return a neutral light-theme palette so
+        // SystemColors resolves until a cross-platform theme/settings backend is wired in.
+        // Values are COLORREF (0x00BBGGRR).
+        private static int NonWindowsSysColor(int nIndex)
+        {
+            switch (nIndex)
+            {
+                // Text colors -> black (graytext -> mid gray).
+                case 7:   // COLOR_MENUTEXT
+                case 8:   // COLOR_WINDOWTEXT
+                case 9:   // COLOR_CAPTIONTEXT
+                case 18:  // COLOR_BTNTEXT
+                case 23:  // COLOR_INFOTEXT
+                    return 0x00000000;
+                case 17:  // COLOR_GRAYTEXT
+                    return 0x006D6D6D;
+
+                // Window / control backgrounds.
+                case 5:   // COLOR_WINDOW
+                case 14:  // COLOR_HIGHLIGHTTEXT
+                case 20:  // COLOR_BTNHIGHLIGHT
+                    return 0x00FFFFFF;
+                case 24:  // COLOR_INFOBK
+                    return 0x00E1FFFF;
+
+                // Highlight / accent (RGB 0,120,215).
+                case 13:  // COLOR_HIGHLIGHT
+                case 26:  // COLOR_HOTLIGHT
+                    return 0x00D77800;
+
+                // Shadows / borders.
+                case 16:  // COLOR_BTNSHADOW
+                    return 0x00A0A0A0;
+                case 21:  // COLOR_3DDKSHADOW
+                    return 0x00696969;
+                case 22:  // COLOR_3DLIGHT
+                    return 0x00E3E3E3;
+
+                // Default: the classic light control face (0xF0F0F0).
+                default:
+                    return 0x00F0F0F0;
+            }
         }
 
 #if FRAMEWORK_NATIVEMETHODS || BASE_NATIVEMETHODS 
@@ -102,6 +236,14 @@ namespace MS.Win32
 #if BASE_NATIVEMETHODS
         public static void QueryPerformanceCounter(out long lpPerformanceCount)
         {
+            // kernel32 QueryPerformanceCounter/Frequency are Windows-only; System.Diagnostics.Stopwatch
+            // is the cross-platform high-resolution timer and is used off-Windows.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                lpPerformanceCount = System.Diagnostics.Stopwatch.GetTimestamp();
+                return;
+            }
+
             if (!SafeNativeMethodsPrivate.QueryPerformanceCounter(out lpPerformanceCount))
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -110,6 +252,12 @@ namespace MS.Win32
 
         public static void QueryPerformanceFrequency(out long lpFrequency)
         {
+            if (!System.OperatingSystem.IsWindows())
+            {
+                lpFrequency = System.Diagnostics.Stopwatch.Frequency;
+                return;
+            }
+
             if (!SafeNativeMethodsPrivate.QueryPerformanceFrequency(out lpFrequency))
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -118,6 +266,14 @@ namespace MS.Win32
 
         internal static int GetMessageTime()
         {
+            // user32-only (time of the last message retrieved by GetMessage). Off-Windows there is
+            // no Win32 message queue; a monotonically increasing managed tick is an adequate stand-in
+            // (input providers use it only for relative timing / double-click intervals).
+            if (!System.OperatingSystem.IsWindows())
+            {
+                return System.Environment.TickCount;
+            }
+
             return SafeNativeMethodsPrivate.GetMessageTime();
         }
 #endif // BASE_NATIVEMETHODS

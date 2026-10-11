@@ -6303,14 +6303,29 @@ Voulez-vous le remplacer ?</target>
         <target state="translated">L'index spécifié est en dehors des limites admises ou l'enfant à l'index a la valeur null. N'appelez pas cette méthode si VisualChildrenCount renvoie la valeur zéro, ce qui signifie que le Visual n'a pas d'enfant.</target>
         <note />
       </trans-unit>
+      <trans-unit id="WebBrowserDocumentNotSupported">
+        <source>WebBrowser.Document is only available when the legacy ActiveX host is enabled on Windows. Use InvokeScript, or the WebView2 control's ExecuteScriptAsync, to work with the page instead.</source>
+        <target state="new">WebBrowser.Document is only available when the legacy ActiveX host is enabled on Windows. Use InvokeScript, or the WebView2 control's ExecuteScriptAsync, to work with the page instead.</target>
+        <note />
+      </trans-unit>
       <trans-unit id="WebBrowserNoCastToIWebBrowser2">
         <source>Cannot get IWebBrowser2 from the native ActiveX control.</source>
         <target state="translated">Impossible d'obtenir IWebBrowser2 à partir du contrôle ActiveX natif.</target>
         <note />
       </trans-unit>
+      <trans-unit id="WebBrowserNoEngine">
+        <source>No web engine is available on this platform, so web content cannot be hosted.</source>
+        <target state="new">No web engine is available on this platform, so web content cannot be hosted.</target>
+        <note />
+      </trans-unit>
       <trans-unit id="WebBrowserOverlap">
         <source>Frames hosting HTML content cannot overlap each other in partial trust.</source>
         <target state="translated">Les cadres qui hébergent un contenu HTML ne peuvent pas se chevaucher en mode confiance partielle.</target>
+        <note />
+      </trans-unit>
+      <trans-unit id="WebBrowserTargetFrameNotSupported">
+        <source>Navigating a named target frame is not supported by this web engine.</source>
+        <target state="new">Navigating a named target frame is not supported by this web engine.</target>
         <note />
       </trans-unit>
       <trans-unit id="WebRequestCreationFailed">

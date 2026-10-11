@@ -70,6 +70,17 @@ namespace System.Windows.Media.Imaging
 
         #endregion
 
+        /// <summary>
+        /// Managed encode for platforms without native WIC: 32-bit BGRA with a BITMAPV5HEADER, so alpha survives. See ManagedBmpBEncoder.
+        /// </summary>
+        internal override bool TryManagedEncode(System.IO.Stream stream)
+        {
+            BitmapFrame frame = Frames[0];
+            BitmapSource source = (frame as BitmapFrameEncode)?._source ?? (BitmapSource)frame;
+            ManagedBmpEncoder.Save(source, stream);
+            return true;
+        }
+
         #region Data Members
 
         private Guid _containerFormat = MILGuidData.GUID_ContainerFormatBmp;

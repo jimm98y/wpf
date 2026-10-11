@@ -1,0 +1,11 @@
+{
+  "//": "Standalone Phase-0/1 build. Overrides the repo-root global.json (which pins the x64 .dotnet) so the WgpuInterop binding + tests resolve a host-installed SDK. rollForward=latestMajor + a low floor keeps it working as the box's installed SDKs change.",
+  "sdk": {
+    "version": "10.0.100",
+    "rollForward": "latestMajor",
+    "allowPrerelease": true,
+    "paths": [
+      "$host$"
+    ]
+  }
+}

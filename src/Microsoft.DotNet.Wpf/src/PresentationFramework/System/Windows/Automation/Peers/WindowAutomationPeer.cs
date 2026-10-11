@@ -32,15 +32,27 @@ namespace System.Windows.Automation.Peers
 
                 if(!window.IsSourceWindowNull)
                 {
-                    try
-                    {
-                        StringBuilder sb = new StringBuilder(512);
-                        UnsafeNativeMethods.GetWindowText(new HandleRef(null, window.Handle), sb, sb.Capacity);
-                        name = sb.ToString();
-                    }
-                    catch (Win32Exception)
+                    // Off Windows the title lives only in the managed Window -- there is no window
+                    // manager to ask, and GetWindowText would be a DllNotFoundException rather than
+                    // the Win32Exception this catches. That distinction matters here: this runs from
+                    // AutomationPeer.UpdateSubtree during layout, where an unhandled exception takes
+                    // the application down the moment an assistive technology builds the tree.
+                    if (!OperatingSystem.IsWindows())
                     {
                         name = window.Title;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            StringBuilder sb = new StringBuilder(512);
+                            UnsafeNativeMethods.GetWindowText(new HandleRef(null, window.Handle), sb, sb.Capacity);
+                            name = sb.ToString();
+                        }
+                        catch (Win32Exception)
+                        {
+                            name = window.Title;
+                        }
                     }
 
                     name ??= "";
@@ -63,7 +75,16 @@ namespace System.Windows.Automation.Peers
         {
             Window window = (Window)Owner;
             Rect bounds = new Rect(0,0,0,0);
-            
+
+            // GetWindowRect reports the whole frame, decorations included. Off Windows there is no
+            // such call, so fall back to the managed route every other peer already uses: the
+            // element's rect mapped through the PresentationSource. That is the CLIENT area, which
+            // on a Wayland head is the only rectangle a client can know about at all.
+            if (!OperatingSystem.IsWindows())
+            {
+                return window.IsSourceWindowNull ? bounds : base.GetBoundingRectangleCore();
+            }
+
             if(!window.IsSourceWindowNull)
             {
                 NativeMethods.RECT rc = new NativeMethods.RECT(0,0,0,0);

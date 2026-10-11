@@ -607,8 +607,22 @@ namespace System.Windows.Controls.Primitives
                 // HwndSource.  This enables child HWNDs, other top-level
                 // non-WPF HWNDs, or even child HWNDs of other WPF top-level
                 // windows to retain focus when menus are dismissed.
-                IntPtr hwndWithFocus = MS.Win32.UnsafeNativeMethods.GetFocus();
-                HwndSource hwndSourceWithFocus = hwndWithFocus != IntPtr.Zero ? HwndSource.CriticalFromHwnd(hwndWithFocus) : null;
+                //
+                // GetFocus() is a raw user32 P/Invoke with no meaning off-Windows (there is no HWND focus
+                // concept, and the fork registers no user32 shim -- the call faults/hangs, aborting the menu
+                // click so Preferences/etc. never fire). Off-Windows, focus is always within our own WPF
+                // window (the HwndSource-equivalent), so take the HwndSource branch directly: Keyboard.Focus(null)
+                // delegates focus back through the active window to its previously focused element.
+                HwndSource hwndSourceWithFocus;
+                if (OperatingSystem.IsWindows())
+                {
+                    IntPtr hwndWithFocus = MS.Win32.UnsafeNativeMethods.GetFocus();
+                    hwndSourceWithFocus = hwndWithFocus != IntPtr.Zero ? HwndSource.CriticalFromHwnd(hwndWithFocus) : null;
+                }
+                else
+                {
+                    hwndSourceWithFocus = PresentationSource.CriticalFromVisual(this) as HwndSource;
+                }
                 if(hwndSourceWithFocus != null)
                 {
                     // We restore focus by setting focus to the parent's focus

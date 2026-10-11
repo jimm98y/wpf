@@ -56,6 +56,15 @@ namespace System.Windows.Input.StylusWisp
 
         internal override void UpdateState(UIElement element)
         {
+            // WISP (Windows Ink Services Platform) real-time stylus input is Windows-only; off-Windows the
+            // WispLogic is never created, so GetCurrentStylusLogicAs<WispLogic>() below would return null and
+            // NRE while an InkCanvas hooks up its plug-ins. There is no pen context to hook, so just unhook.
+            if (!System.OperatingSystem.IsWindows())
+            {
+                Unhook();
+                return;
+            }
+
             bool unhookPenContexts = true;
 
             // Disable processing of the queue during blocking operations to prevent unrelated reentrancy

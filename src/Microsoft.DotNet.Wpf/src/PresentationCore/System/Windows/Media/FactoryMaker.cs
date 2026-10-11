@@ -20,18 +20,12 @@ namespace System.Windows.Media
         {
             lock (s_factoryMakerLock)
             {
-                // If we haven't have a factory, create one
-
-                if (s_pFactory == IntPtr.Zero)
-                {
-                    // Create the Core MIL factory.
-                    // Note: the call below might throw exception. The caller
-                    // should catch it. We won't add ref counter here if this
-                    // happens.
-
-                    HRESULT.Check(UnsafeNativeMethods.MILFactory2.CreateFactory(out s_pFactory, MS.Internal.Composition.Version.MilSdkVersion));
-                }
-
+                // Deliberately does NOT create the MIL factory. Almost every FactoryMaker in the codebase
+                // only ever asks for ImagingFactoryPtr, which is WIC in the system's windowscodecs.dll --
+                // but creating the MIL factory up front dragged wpfgfx_cor3.dll in with it, so simply
+                // decoding a PNG referenced from XAML threw DllNotFoundException once the port stopped
+                // shipping that DLL. The MIL factory is now created on demand by FactoryPtr, whose only
+                // remaining callers are RenderTargetBitmap's native render paths.
                 s_cInstance++;
                 _fValidObject = true;
             }
@@ -68,7 +62,10 @@ namespace System.Windows.Media
 
                             if (s_cInstance == 0)
                             {
-                                UnsafeNativeMethods.MILUnknown.ReleaseInterface(ref s_pFactory);
+                                if (s_pFactory != IntPtr.Zero)
+                                {
+                                    UnsafeNativeMethods.MILUnknown.ReleaseInterface(ref s_pFactory);
+                                }
 
                                 if (s_pImagingFactory != IntPtr.Zero)
                                 {
@@ -97,6 +94,19 @@ namespace System.Windows.Media
         {
             get
             {
+                if (s_pFactory == IntPtr.Zero)
+                {
+                    lock (s_factoryMakerLock)
+                    {
+                        if (s_pFactory == IntPtr.Zero)
+                        {
+                            // Reaches into milcore. Everything else in this class is WIC and works
+                            // without it; only the native RenderTargetBitmap path gets here.
+                            HRESULT.Check(UnsafeNativeMethods.MILFactory2.CreateFactory(out s_pFactory, MS.Internal.Composition.Version.MilSdkVersion));
+                        }
+                    }
+                }
+
                 Debug.Assert(s_pFactory != IntPtr.Zero);
                 return s_pFactory;
             }

@@ -1,0 +1,10 @@
+namespace WpfMediaIos;
+
+[Register("AppDelegate")]
+public class AppDelegate : UIApplicationDelegate
+{
+    public override bool FinishedLaunching(UIApplication application, NSDictionary launchOptions) => true;
+
+    public override UISceneConfiguration GetConfiguration(UIApplication application, UISceneSession connectingSceneSession, UISceneConnectionOptions options)
+        => new UISceneConfiguration("Default Configuration", connectingSceneSession.Role);
+}
