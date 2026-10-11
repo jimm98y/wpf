@@ -81,6 +81,9 @@ namespace System.Drawing {
 		public FontFamily (string name, FontCollection fontCollection) 
 		{
 			if (name == null)
+				throw new ArgumentNullException ("name");
+			// GdipCreateFontFromName of an empty name: InvalidParameter.
+			if (name.Length == 0)
 				throw new ArgumentException ("Parameter is not valid.");
 			string canonical = null;
 			if (fontCollection != null) {
@@ -122,8 +125,14 @@ namespace System.Drawing {
 		
 		public void Dispose ()
 		{
+			_disposed = true;
 			GC.SuppressFinalize (this);
 		}
+
+		// System.Drawing never deletes a family of the installed fonts; one of a private collection
+		// is gone after Dispose, and GDI+ refuses it from then on.
+		bool _disposed;
+		internal bool IsDisposed => _disposed && collection is PrivateFontCollection;
 		
 		public override bool Equals (object obj)
 		{

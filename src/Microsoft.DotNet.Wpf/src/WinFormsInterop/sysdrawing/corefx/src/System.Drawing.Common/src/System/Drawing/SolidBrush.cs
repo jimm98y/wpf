@@ -19,7 +19,11 @@ namespace System.Drawing
             _immutable = immutable;
         }
 
-        public override object Clone() => new SolidBrush(_color);
+        public override object Clone()
+        {
+            Live();
+            return new SolidBrush(_color);
+        }
 
         protected override void Dispose(bool disposing)
         {
@@ -43,6 +47,11 @@ namespace System.Drawing
                 if (_immutable)
                 {
                     throw new ArgumentException(SR.Format(SR.CantChangeImmutableObjects, "Brush"));
+                }
+                // System.Drawing asks GDI+ only for a colour that differs (a disposed brush refuses).
+                if (_color != value)
+                {
+                    Live();
                 }
                 _color = value;
             }

@@ -92,6 +92,8 @@
     <EmbeddedResource Include="mono/Assembly/Warning.ico" LogicalName="Warning.ico" />
     <EmbeddedResource Include="mono/Assembly/Question.ico" LogicalName="Question.ico" />
     <EmbeddedResource Include="mono/Assembly/Shield.ico" LogicalName="Shield.ico" />
+    <!-- System.Drawing.Common's own default toolbox image (ToolboxBitmapAttribute). -->
+    <EmbeddedResource Include="mono/Assembly/DefaultComponent.bmp" LogicalName="System.Drawing.DefaultComponent.bmp" />
   </ItemGroup>
 
 </Project>

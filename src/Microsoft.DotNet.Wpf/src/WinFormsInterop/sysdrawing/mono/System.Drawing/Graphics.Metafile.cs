@@ -215,111 +215,219 @@ namespace System.Drawing
 		static PointF [] PointsF (Point [] p) => p == null ? null : Array.ConvertAll (p, q => (PointF) q);
 
 		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, PointsF (destPoints), null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, PointsF (destPoints), null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, destRect, null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destRect, null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, destPoints, null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoints, null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, (RectangleF) destRect, null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (RectangleF) destRect, null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point destPoint, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, (PointF) destPoint, null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (PointF) destPoint, null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF destPoint, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, destPoint, null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoint, null, GraphicsUnit.Pixel, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF destPoint, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, destPoint, null, GraphicsUnit.Pixel, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoint, null, GraphicsUnit.Pixel, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, (RectangleF) destRect, null, GraphicsUnit.Pixel, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (RectangleF) destRect, null, GraphicsUnit.Pixel, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, destPoints, null, GraphicsUnit.Pixel, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoints, null, GraphicsUnit.Pixel, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point destPoint, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, (PointF) destPoint, null, GraphicsUnit.Pixel, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (PointF) destPoint, null, GraphicsUnit.Pixel, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, PointsF (destPoints), null, GraphicsUnit.Pixel, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, PointsF (destPoints), null, GraphicsUnit.Pixel, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, destRect, null, GraphicsUnit.Pixel, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destRect, null, GraphicsUnit.Pixel, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF destPoint, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, destPoint, srcRect, srcUnit, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoint, srcRect, srcUnit, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point destPoint, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, (PointF) destPoint, srcRect, srcUnit, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (PointF) destPoint, srcRect, srcUnit, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, destPoints, srcRect, srcUnit, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoints, srcRect, srcUnit, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, PointsF (destPoints), srcRect, srcUnit, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, PointsF (destPoints), srcRect, srcUnit, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, destRect, srcRect, srcUnit, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destRect, srcRect, srcUnit, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback)
-			=> Enumerate (metafile, (RectangleF) destRect, srcRect, srcUnit, callback, IntPtr.Zero, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (RectangleF) destRect, srcRect, srcUnit, callback, IntPtr.Zero, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, destRect, null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destRect, null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point destPoint, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, (PointF) destPoint, null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (PointF) destPoint, null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF destPoint, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, destPoint, null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoint, null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, PointsF (destPoints), null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, PointsF (destPoints), null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, destPoints, null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoints, null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, (RectangleF) destRect, null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (RectangleF) destRect, null, GraphicsUnit.Pixel, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, (RectangleF) destRect, srcRect, srcUnit, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (RectangleF) destRect, srcRect, srcUnit, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, destPoints, srcRect, srcUnit, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoints, srcRect, srcUnit, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, destRect, srcRect, srcUnit, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destRect, srcRect, srcUnit, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF destPoint, RectangleF srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, destPoint, srcRect, srcUnit, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoint, srcRect, srcUnit, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point destPoint, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, (PointF) destPoint, srcRect, srcUnit, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (PointF) destPoint, srcRect, srcUnit, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, EnumerateMetafileProc callback, IntPtr callbackData)
-			=> Enumerate (metafile, PointsF (destPoints), srcRect, srcUnit, callback, callbackData, null);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, PointsF (destPoints), srcRect, srcUnit, callback, callbackData, null);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point [] destPoints, Rectangle srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, PointsF (destPoints), srcRect, unit, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, PointsF (destPoints), srcRect, unit, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Rectangle destRect, Rectangle srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, (RectangleF) destRect, srcRect, unit, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (RectangleF) destRect, srcRect, unit, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, Point destPoint, Rectangle srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, (PointF) destPoint, srcRect, unit, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, (PointF) destPoint, srcRect, unit, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, RectangleF destRect, RectangleF srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, destRect, srcRect, unit, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destRect, srcRect, unit, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF [] destPoints, RectangleF srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, destPoints, srcRect, unit, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoints, srcRect, unit, callback, callbackData, imageAttr);
+		}
 
 		public void EnumerateMetafile (Metafile metafile, PointF destPoint, RectangleF srcRect, GraphicsUnit unit, EnumerateMetafileProc callback, IntPtr callbackData, ImageAttributes imageAttr)
-			=> Enumerate (metafile, destPoint, srcRect, unit, callback, callbackData, imageAttr);
+		{
+			CheckUse (metafile);
+			Enumerate (metafile, destPoint, srcRect, unit, callback, callbackData, imageAttr);
+		}
 	}
 }

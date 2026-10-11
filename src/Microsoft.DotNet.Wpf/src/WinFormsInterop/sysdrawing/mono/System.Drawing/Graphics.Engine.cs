@@ -334,7 +334,7 @@ namespace System.Drawing
 			if (f == null) return false;
 			if (pts.Length == 0) throw new ArgumentException ("Parameter is not valid.");
 			CheckImageUnit (unit);
-			if (pts.Length == 4) throw new NotImplementedException ();
+			if (pts.Length == 4) throw new NotImplementedException (SR.GdiplusNotImplemented);
 			if (pts.Length != 3) throw new ArgumentException ("Parameter is not valid.");
 			return e.DrawImage (f, (PointF []) pts.Clone (), src ?? new RectangleF (0, 0, f.Width, f.Height), unit, EngineAttr (ia));
 		}

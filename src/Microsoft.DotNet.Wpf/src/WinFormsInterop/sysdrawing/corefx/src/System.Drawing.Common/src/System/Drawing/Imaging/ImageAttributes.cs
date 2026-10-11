@@ -46,8 +46,21 @@ namespace System.Drawing.Imaging
 
         public void Dispose()
         {
+            _disposed = true;
             GC.SuppressFinalize(this);
         }
+
+        // GDI+'s object is gone after Dispose: every call System.Drawing makes with its handle (zero)
+        // comes back InvalidParameter.
+        private bool _disposed;
+        internal bool IsDisposed => _disposed;
+
+        internal void Live()
+        {
+            if (_disposed)
+                throw new ArgumentException("Parameter is not valid.");
+        }
+
 
         ~ImageAttributes()
         {
@@ -55,6 +68,7 @@ namespace System.Drawing.Imaging
 
         public object Clone()
         {
+            Live();
             var copy = new ImageAttributes();
             copy._recolor = _recolor.Clone();
             copy._wrapMode = _wrapMode;
@@ -63,29 +77,67 @@ namespace System.Drawing.Imaging
             return copy;
         }
 
-        public void SetColorMatrix(ColorMatrix newColorMatrix) => SetColorMatrix(newColorMatrix, ColorMatrixFlag.Default, ColorAdjustType.Default);
+        public void SetColorMatrix(ColorMatrix newColorMatrix)
+        {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
+            Live();
+            SetColorMatrix(newColorMatrix, ColorMatrixFlag.Default, ColorAdjustType.Default);
+        }
 
-        public void SetColorMatrix(ColorMatrix newColorMatrix, ColorMatrixFlag flags) => SetColorMatrix(newColorMatrix, flags, ColorAdjustType.Default);
+        public void SetColorMatrix(ColorMatrix newColorMatrix, ColorMatrixFlag flags)
+        {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
+            Live();
+            SetColorMatrix(newColorMatrix, flags, ColorAdjustType.Default);
+        }
 
-        public void SetColorMatrix(ColorMatrix newColorMatrix, ColorMatrixFlag mode, ColorAdjustType type) => SetColorMatrices(newColorMatrix, null, mode, type);
+        public void SetColorMatrix(ColorMatrix newColorMatrix, ColorMatrixFlag mode, ColorAdjustType type)
+        {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
+            Live();
+            SetColorMatrices(newColorMatrix, null, mode, type);
+        }
 
-        public void ClearColorMatrix() => ClearColorMatrix(ColorAdjustType.Default);
+        public void ClearColorMatrix()
+        {
+            Live();
+            ClearColorMatrix(ColorAdjustType.Default);
+        }
 
         /// <summary>GdipSetImageAttributesColorMatrix(enable = false): flags 0x82 off.</summary>
         public void ClearColorMatrix(ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             GpRecolorObject o = _recolor.Existing(type);
             if (o != null) o.Flags &= ~0x82u;
         }
 
-        public void SetColorMatrices(ColorMatrix newColorMatrix, ColorMatrix grayMatrix) => SetColorMatrices(newColorMatrix, grayMatrix, ColorMatrixFlag.Default, ColorAdjustType.Default);
+        public void SetColorMatrices(ColorMatrix newColorMatrix, ColorMatrix grayMatrix)
+        {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
+            Live();
+            SetColorMatrices(newColorMatrix, grayMatrix, ColorMatrixFlag.Default, ColorAdjustType.Default);
+        }
 
-        public void SetColorMatrices(ColorMatrix newColorMatrix, ColorMatrix grayMatrix, ColorMatrixFlag flags) => SetColorMatrices(newColorMatrix, grayMatrix, flags, ColorAdjustType.Default);
+        public void SetColorMatrices(ColorMatrix newColorMatrix, ColorMatrix grayMatrix, ColorMatrixFlag flags)
+        {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
+            Live();
+            SetColorMatrices(newColorMatrix, grayMatrix, flags, ColorAdjustType.Default);
+        }
 
         /// <summary>GpRecolor::SetColorMatrices @180084110 / GpRecolorObject::SetColorMatrices @180084178.</summary>
         public void SetColorMatrices(ColorMatrix newColorMatrix, ColorMatrix grayMatrix, ColorMatrixFlag mode, ColorAdjustType type)
         {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
+            Live();
             // System.Drawing (net10) checks the colour matrix itself before GDI+ sees anything.
             if (newColorMatrix == null) throw new ArgumentNullException(nameof(newColorMatrix));
             CheckType(type);
@@ -116,30 +168,45 @@ namespace System.Drawing.Imaging
                     dst[r * 5 + k] = m[r, k];
         }
 
-        public void SetThreshold(float threshold) => SetThreshold(threshold, ColorAdjustType.Default);
+        public void SetThreshold(float threshold)
+        {
+            Live();
+            SetThreshold(threshold, ColorAdjustType.Default);
+        }
 
         public void SetThreshold(float threshold, ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             GpRecolorObject o = _recolor.Set(type);
             o.Threshold = threshold;
             o.Flags |= 4;
         }
 
-        public void ClearThreshold() => ClearThreshold(ColorAdjustType.Default);
+        public void ClearThreshold()
+        {
+            Live();
+            ClearThreshold(ColorAdjustType.Default);
+        }
 
         public void ClearThreshold(ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             GpRecolorObject o = _recolor.Existing(type);
             if (o != null) o.Flags &= ~4u;
         }
 
-        public void SetGamma(float gamma) => SetGamma(gamma, ColorAdjustType.Default);
+        public void SetGamma(float gamma)
+        {
+            Live();
+            SetGamma(gamma, ColorAdjustType.Default);
+        }
 
         /// <summary>GpRecolor::SetGamma @1800845e8: the object is made even when the gamma is refused.</summary>
         public void SetGamma(float gamma, ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             GpRecolorObject o = _recolor.Set(type);
             if (!(0f < gamma)) Invalid();
@@ -147,37 +214,57 @@ namespace System.Drawing.Imaging
             o.Flags |= 8;
         }
 
-        public void ClearGamma() => ClearGamma(ColorAdjustType.Default);
+        public void ClearGamma()
+        {
+            Live();
+            ClearGamma(ColorAdjustType.Default);
+        }
 
         public void ClearGamma(ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             GpRecolorObject o = _recolor.Existing(type);
             if (o != null) o.Flags &= ~8u;
         }
 
-        public void SetNoOp() => SetNoOp(ColorAdjustType.Default);
+        public void SetNoOp()
+        {
+            Live();
+            SetNoOp(ColorAdjustType.Default);
+        }
 
         public void SetNoOp(ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             _recolor.Set(type).Flags |= 1;
         }
 
-        public void ClearNoOp() => ClearNoOp(ColorAdjustType.Default);
+        public void ClearNoOp()
+        {
+            Live();
+            ClearNoOp(ColorAdjustType.Default);
+        }
 
         public void ClearNoOp(ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             GpRecolorObject o = _recolor.Existing(type);
             if (o != null) o.Flags &= ~1u;
         }
 
-        public void SetColorKey(Color colorLow, Color colorHigh) => SetColorKey(colorLow, colorHigh, ColorAdjustType.Default);
+        public void SetColorKey(Color colorLow, Color colorHigh)
+        {
+            Live();
+            SetColorKey(colorLow, colorHigh, ColorAdjustType.Default);
+        }
 
         /// <summary>GpRecolor::SetColorKey @18008f000: low must not exceed high in R, G or B.</summary>
         public void SetColorKey(Color colorLow, Color colorHigh, ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             uint lo = (uint)colorLow.ToArgb(), hi = (uint)colorHigh.ToArgb();
             if (!((lo >> 16 & 0xff) <= (hi >> 16 & 0xff) && (lo >> 8 & 0xff) <= (hi >> 8 & 0xff) && (lo & 0xff) <= (hi & 0xff))) Invalid();
@@ -187,20 +274,30 @@ namespace System.Drawing.Imaging
             o.Flags |= 0x10;
         }
 
-        public void ClearColorKey() => ClearColorKey(ColorAdjustType.Default);
+        public void ClearColorKey()
+        {
+            Live();
+            ClearColorKey(ColorAdjustType.Default);
+        }
 
         public void ClearColorKey(ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             GpRecolorObject o = _recolor.Existing(type);
             if (o != null) o.Flags &= ~0x10u;
         }
 
-        public void SetOutputChannel(ColorChannelFlag flags) => SetOutputChannel(flags, ColorAdjustType.Default);
+        public void SetOutputChannel(ColorChannelFlag flags)
+        {
+            Live();
+            SetOutputChannel(flags, ColorAdjustType.Default);
+        }
 
         /// <summary>GdipSetImageAttributesOutputChannel @1800686b0: C, M, Y or K (0..3).</summary>
         public void SetOutputChannel(ColorChannelFlag flags, ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             if ((uint)flags > 3u) Invalid();
             GpRecolorObject o = _recolor.Set(type);
@@ -208,16 +305,27 @@ namespace System.Drawing.Imaging
             o.Flags |= 0x40;
         }
 
-        public void ClearOutputChannel() => ClearOutputChannel(ColorAdjustType.Default);
+        public void ClearOutputChannel()
+        {
+            Live();
+            ClearOutputChannel(ColorAdjustType.Default);
+        }
 
         public void ClearOutputChannel(ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             GpRecolorObject o = _recolor.Existing(type);
             if (o != null) o.Flags &= ~0x40u;
         }
 
-        public void SetOutputChannelColorProfile(String colorProfileFilename) => SetOutputChannelColorProfile(colorProfileFilename, ColorAdjustType.Default);
+        public void SetOutputChannelColorProfile(String colorProfileFilename)
+        {
+            if (colorProfileFilename == null)
+                throw new ArgumentNullException ("path");
+            Live();
+            SetOutputChannelColorProfile(colorProfileFilename, ColorAdjustType.Default);
+        }
 
         /// <summary>GdipSetImageAttributesOutputChannelColorProfile @1800687c0 -> GpImageAttributes::
         /// SetOutputChannelProfile @18008f138: the type's object made, then SetupCmykSeparation
@@ -227,6 +335,9 @@ namespace System.Drawing.Imaging
         /// reports as an ExternalException; a profile the CMM refuses is status 7 (Win32Error); no ICM at all (no standard sRGB profile) is status 2.</summary>
         public void SetOutputChannelColorProfile(String colorProfileFilename, ColorAdjustType type)
         {
+            if (colorProfileFilename == null)
+                throw new ArgumentNullException ("path");
+            Live();
             // Called in order to emulate exception behavior from netfx related to invalid file paths.
             Path.GetFullPath(colorProfileFilename);
             CheckType(type);
@@ -239,24 +350,50 @@ namespace System.Drawing.Imaging
                 throw new ExternalException("An object could not be created, possibly due to a lack of memory, but most likely due to invalid input.", unchecked((int)0x8000FFFF));
         }
 
-        public void ClearOutputChannelColorProfile() => ClearOutputChannel(ColorAdjustType.Default);
+        public void ClearOutputChannelColorProfile()
+        {
+            Live();
+            ClearOutputChannel(ColorAdjustType.Default);
+        }
 
-        public void ClearOutputChannelColorProfile(ColorAdjustType type) => ClearOutputChannel(type);
+        public void ClearOutputChannelColorProfile(ColorAdjustType type)
+        {
+            Live();
+            ClearOutputChannel(type);
+        }
 
-        public void SetRemapTable(params ColorMap[] map) => SetRemapTable(map, ColorAdjustType.Default);
+        public void SetRemapTable(params ColorMap[] map)
+        {
+            if (map == null)
+                throw new ArgumentNullException ("map");
+            Live();
+            SetRemapTable(map, ColorAdjustType.Default);
+        }
 
-        public void SetRemapTable(params ReadOnlySpan<ColorMap> map) => SetRemapTable(ColorAdjustType.Default, map);
+        public void SetRemapTable(params ReadOnlySpan<ColorMap> map)
+        {
+            Live();
+            SetRemapTable(ColorAdjustType.Default, map);
+        }
 
-        public void SetRemapTable(params ReadOnlySpan<(Color OldColor, Color NewColor)> map) => SetRemapTable(ColorAdjustType.Default, map);
+        public void SetRemapTable(params ReadOnlySpan<(Color OldColor, Color NewColor)> map)
+        {
+            Live();
+            SetRemapTable(ColorAdjustType.Default, map);
+        }
 
         public void SetRemapTable(ColorMap[] map, ColorAdjustType type)
         {
+            if (map == null)
+                throw new ArgumentNullException ("map");
+            Live();
             if (map == null) throw new ArgumentNullException(nameof(map));
             SetRemapTable(type, map.AsSpan());
         }
 
         public void SetRemapTable(ColorAdjustType type, params ReadOnlySpan<ColorMap> map)
         {
+            Live();
             var pairs = new (Color, Color)[map.Length];
             for (int i = 0; i < map.Length; i++) pairs[i] = (map[i].OldColor, map[i].NewColor);
             SetRemapTable(type, (ReadOnlySpan<(Color, Color)>)pairs);
@@ -265,6 +402,7 @@ namespace System.Drawing.Imaging
         /// <summary>GpRecolorObject::SetRemapTable @18008f270: exact ARGB pairs, the first match wins.</summary>
         public void SetRemapTable(ColorAdjustType type, params ReadOnlySpan<(Color OldColor, Color NewColor)> map)
         {
+            Live();
             CheckType(type);
             if (map.Length == 0) Invalid();
             GpRecolorObject o = _recolor.Set(type);
@@ -277,29 +415,61 @@ namespace System.Drawing.Imaging
             o.Flags |= 0x20;
         }
 
-        public void ClearRemapTable() => ClearRemapTable(ColorAdjustType.Default);
+        public void ClearRemapTable()
+        {
+            Live();
+            ClearRemapTable(ColorAdjustType.Default);
+        }
 
         public void ClearRemapTable(ColorAdjustType type)
         {
+            Live();
             CheckType(type);
             GpRecolorObject o = _recolor.Existing(type);
             if (o != null) o.Flags &= ~0x20u;
         }
 
-        public void SetBrushRemapTable(params ColorMap[] map) => SetRemapTable(map, ColorAdjustType.Brush);
+        public void SetBrushRemapTable(params ColorMap[] map)
+        {
+            if (map == null)
+                throw new ArgumentNullException ("map");
+            Live();
+            SetRemapTable(map, ColorAdjustType.Brush);
+        }
 
-        public void SetBrushRemapTable(params ReadOnlySpan<ColorMap> map) => SetRemapTable(ColorAdjustType.Brush, map);
+        public void SetBrushRemapTable(params ReadOnlySpan<ColorMap> map)
+        {
+            Live();
+            SetRemapTable(ColorAdjustType.Brush, map);
+        }
 
-        public void SetBrushRemapTable(params ReadOnlySpan<(Color OldColor, Color NewColor)> map) => SetRemapTable(ColorAdjustType.Brush, map);
+        public void SetBrushRemapTable(params ReadOnlySpan<(Color OldColor, Color NewColor)> map)
+        {
+            Live();
+            SetRemapTable(ColorAdjustType.Brush, map);
+        }
 
-        public void ClearBrushRemapTable() => ClearRemapTable(ColorAdjustType.Brush);
+        public void ClearBrushRemapTable()
+        {
+            Live();
+            ClearRemapTable(ColorAdjustType.Brush);
+        }
 
-        public void SetWrapMode(WrapMode mode) => SetWrapMode(mode, new Color(), false);
+        public void SetWrapMode(WrapMode mode)
+        {
+            Live();
+            SetWrapMode(mode, new Color(), false);
+        }
 
-        public void SetWrapMode(WrapMode mode, Color color) => SetWrapMode(mode, color, false);
+        public void SetWrapMode(WrapMode mode, Color color)
+        {
+            Live();
+            SetWrapMode(mode, color, false);
+        }
 
         public void SetWrapMode(WrapMode mode, Color color, bool clamp)
         {
+            Live();
             _wrapMode = mode;
             _wrapColor = color;
             _wrapClamp = clamp;
@@ -310,6 +480,9 @@ namespace System.Drawing.Imaging
         /// comes back as it went in. Only the argument checks show.</summary>
         public void GetAdjustedPalette(ColorPalette palette, ColorAdjustType type)
         {
+            if (palette == null)
+                throw new NullReferenceException ();
+            Live();
             // System.Drawing converts the palette before it calls GDI+: a null one is a NullReferenceException.
             int count = palette.Entries.Length;
             if (count == 0 || (uint)(type - 1) >= 4u)

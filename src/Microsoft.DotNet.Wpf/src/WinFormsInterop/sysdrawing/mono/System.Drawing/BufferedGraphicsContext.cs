@@ -39,7 +39,8 @@ namespace System.Drawing
 
 		public BufferedGraphicsContext ()
 		{
-			max_buffer = Size.Empty;
+			// System.Drawing's default: buffers up to 225 x 96 are kept for reuse.
+			max_buffer = new Size (225, 96);
 		}
 
 		~BufferedGraphicsContext ()
@@ -48,18 +49,24 @@ namespace System.Drawing
 
 		public BufferedGraphics Allocate (Graphics targetGraphics, Rectangle targetRectangle)
 		{
+			// System.Drawing asks the target for its DC (Graphics.GetHdc, with the Graphics' own
+			// checks) and makes a buffer compatible with it; with no target there is no DC.
+			if (targetGraphics == null)
+				throw new ArgumentNullException ("hdc");
+			targetGraphics.CheckUsable ();
 			BufferedGraphics graphics = new BufferedGraphics (targetGraphics, targetRectangle);
-			return graphics;			
+			return graphics;
 		}
 
-		[MonoTODO ("The targetDC parameter has no equivalent in libgdiplus.")]
 		public BufferedGraphics Allocate (IntPtr targetDC, Rectangle targetRectangle)
 		{
-			throw new NotImplementedException ();
+			if (targetDC == IntPtr.Zero)
+				throw new ArgumentNullException ("hdc");
+			return new BufferedGraphics (targetDC, targetRectangle);
 		}
 
 		public void Dispose ()
-		{			
+		{
 			System.GC.SuppressFinalize (this);
 		}
 
@@ -70,9 +77,8 @@ namespace System.Drawing
 		public Size MaximumBuffer {
 			get {return max_buffer; }
 			set {
-				if (value.Width <= 0 || value.Height <= 0) {
-					throw new ArgumentException ("The height or width of the size is less than or equal to zero.");
-				}
+				if (value.Width <= 0 || value.Height <= 0)
+					throw new ArgumentException (SR.Format (SR.InvalidArgument, "MaximumBuffer", value), "value");
 
 				max_buffer = value;
 			}

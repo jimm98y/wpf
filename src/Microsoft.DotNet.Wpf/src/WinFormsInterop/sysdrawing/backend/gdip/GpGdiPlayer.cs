@@ -1545,7 +1545,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 using (var im = Image.FromBytes(f))
                     return new Bitmap(im);
             }
-            catch (Exception e) when (e is ArgumentException || e is OutOfMemoryException || e is NotSupportedException || e is IndexOutOfRangeException || e is InvalidOperationException)
+            catch (Exception e) when (e is ArgumentException || e is System.Runtime.InteropServices.ExternalException || e is OutOfMemoryException || e is NotSupportedException || e is IndexOutOfRangeException || e is InvalidOperationException)
             {
                 return null;
             }
@@ -1943,7 +1943,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                             _t.FillPolygon(pg, tri);
                         }
                     }
-                    catch (OutOfMemoryException) { }
+                    catch (Exception e) when (e is System.Runtime.InteropServices.ExternalException || e is ArgumentException || e is OutOfMemoryException) { }
                 }
                 return;
             }

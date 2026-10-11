@@ -126,96 +126,89 @@ namespace System.Drawing
 			return base.ConvertTo (context, culture, value, destinationType);
 		}
 
+		// System.Drawing.Common's parse: "name[, size[units][, style=style1[, style2...]]]" in the
+		// culture's list separator, 8.25pt Regular when only a name is given.
 		public override object ConvertFrom (ITypeDescriptorContext context, CultureInfo culture, object value)
 		{
-			FontStyle	f_style;
-			float		f_size;
-			GraphicsUnit	f_unit;
-			string		font;
-			string		units;
-			string[]	fields;
-
-			if (! (value is string)) {
+			if (!(value is string s))
 				return base.ConvertFrom (context, culture, value);
-			}
-
-			font = (string)value;
-			font = font.Trim ();
-
-			if (font.Length == 0) {
+			string text = s.Trim ();
+			if (text.Length == 0)
 				return null;
-			}
-
-			if (culture == null) {
-				culture = CultureInfo.CurrentCulture;
-			}
-
-			// Format is FontFamily, size[<units>[, style=1,2,3]]
-			// This is a bit tricky since the comma can be used for styles and fields
-			fields = font.Split(new char[] {culture.TextInfo.ListSeparator[0]});
-			if (fields.Length < 1) {
-				throw new ArgumentException("Failed to parse font format");
-			}
-
-			font = fields[0];
-			f_size = 8f;
-			units = "px";
-			f_unit = GraphicsUnit.Pixel;
-			if (fields.Length > 1) {	// We have a size
-				for (int i = 0; i < fields[1].Length; i++) {
-					if (Char.IsLetter(fields[1][i])) {
-						f_size = (float)TypeDescriptor.GetConverter(typeof(float)).ConvertFromString(context, culture, fields[1].Substring(0, i));
-						units = fields[1].Substring(i);
-						break;
+			culture ??= CultureInfo.CurrentCulture;
+			char sep = culture.TextInfo.ListSeparator [0];
+			string familyName = text;
+			string style = null;
+			float emSize = 8.25f;
+			FontStyle fontStyle = FontStyle.Regular;
+			GraphicsUnit unit = GraphicsUnit.Point;
+			int comma = text.IndexOf (sep);
+			if (comma < 0)
+				return new Font (familyName, emSize, fontStyle, unit);
+			familyName = text.Substring (0, comma);
+			if (comma < text.Length - 1) {
+				int styleAt = culture.CompareInfo.IndexOf (text, "style=", CompareOptions.IgnoreCase);
+				string size;
+				if (styleAt != -1) {
+					style = text.Substring (styleAt);
+					size = text.Substring (comma + 1, styleAt - comma - 1);
+				} else {
+					size = text.Substring (comma + 1);
+				}
+				(string sizeText, string unitText) = ParseSizeTokens (size, sep);
+				if (sizeText != null) {
+					try {
+						emSize = (float) TypeDescriptor.GetConverter (typeof (float)).ConvertFromString (context, culture, sizeText);
+					} catch {
+						throw new ArgumentException (SR.Format (SR.TextParseFailedFormat, text, $"name{sep} size[units[{sep} style=style1[{sep} style2{sep} ...]]]"), "value");
 					}
 				}
-				if (units == "display") {
-					f_unit = GraphicsUnit.Display;
-				} else if (units == "doc") {
-					f_unit = GraphicsUnit.Document;
-				} else if (units == "pt") {
-					f_unit = GraphicsUnit.Point;
-				} else if (units == "in") {
-					f_unit = GraphicsUnit.Inch;
-				} else if (units == "mm") {
-					f_unit = GraphicsUnit.Millimeter;
-				} else if (units == "px") {
-					f_unit = GraphicsUnit.Pixel;
-				} else if (units == "world") {
-					f_unit = GraphicsUnit.World;
-				}
-			}
-
-			f_style = FontStyle.Regular;
-			if (fields.Length > 2) {	// We have style
-				string		compare;
-
-				for (int i = 2; i < fields.Length; i++) {
-					compare = fields[i];
-
-					if (compare.IndexOf("Regular") != -1) {
-						f_style |= FontStyle.Regular;
-					}
-					if (compare.IndexOf("Bold") != -1) {
-						f_style |= FontStyle.Bold;
-					}
-					if (compare.IndexOf("Italic") != -1) {
-						f_style |= FontStyle.Italic;
-					}
-					if (compare.IndexOf("Strikeout") != -1) {
-						f_style |= FontStyle.Strikeout;
-					}
-					if (compare.IndexOf("Underline") != -1) {
-						f_style |= FontStyle.Underline;
+				if (unitText != null)
+					unit = ParseGraphicsUnits (unitText);
+				if (style != null) {
+					foreach (string part in style.Substring (6).Split (sep)) {
+						fontStyle |= Enum.Parse<FontStyle> (part.Trim (), ignoreCase: true);
+						const FontStyle all = FontStyle.Bold | FontStyle.Italic | FontStyle.Underline | FontStyle.Strikeout;
+						if ((fontStyle | all) != all)
+							throw new InvalidEnumArgumentException ("style", (int) fontStyle, typeof (FontStyle));
 					}
 				}
 			}
-
-			return new Font (font, f_size, f_style, f_unit);
+			return new Font (familyName, emSize, fontStyle, unit);
 		}
+
+		static (string, string) ParseSizeTokens (string text, char separator)
+		{
+			string size = null, units = null;
+			text = text.Trim ();
+			int length = text.Length;
+			if (length > 0) {
+				int i = 0;
+				while (i < length && !char.IsLetter (text [i]))
+					i++;
+				char [] trim = { separator, ' ' };
+				if (i > 0)
+					size = text.Substring (0, i).Trim (trim);
+				if (i < length)
+					units = text.Substring (i).TrimEnd (trim);
+			}
+			return (size, units);
+		}
+
+		static GraphicsUnit ParseGraphicsUnits (string units) => units switch {
+			"display" => GraphicsUnit.Display,
+			"doc" => GraphicsUnit.Document,
+			"pt" => GraphicsUnit.Point,
+			"in" => GraphicsUnit.Inch,
+			"mm" => GraphicsUnit.Millimeter,
+			"px" => GraphicsUnit.Pixel,
+			"world" => GraphicsUnit.World,
+			_ => throw new ArgumentException (SR.Format (SR.InvalidArgumentValueFontConverter, units), "units"),
+		};
 
 		public override object CreateInstance (ITypeDescriptorContext context, IDictionary propertyValues)
 		{
+			ArgumentNullException.ThrowIfNull (propertyValues);
 			Object value;
 			byte charSet = 1;
 			float size = 8;

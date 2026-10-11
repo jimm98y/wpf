@@ -94,7 +94,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			if (RawFormat.Equals (ImageFormat.Icon)) {
 				Save (ms, ImageFormat.Png);
 			} else {
-				Save (ms, RawFormat);
+				SaveWithRawFormat (ms);
 			}
 			si.AddValue ("Data", ms.ToArray ());
 		}
@@ -154,7 +154,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			return FromBytes (data);
 		} catch (ArgumentException) {
 			// GDI+ reports a file it cannot read as OutOfMemory, and System.Drawing passes that on.
-			throw new OutOfMemoryException ();
+			throw SafeNativeMethods.Gdip.OutOfMemoryException ();
 		}
 	}
 
@@ -216,6 +216,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	// non-static
 	public RectangleF GetBounds (ref GraphicsUnit pageUnit)
 	{
+		Live ();
 		if (this is Metafile mf)
 			return mf.MetafileBounds (ref pageUnit);
 		pageUnit = GraphicsUnit.Pixel;
@@ -224,6 +225,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public EncoderParameters GetEncoderParameterList(Guid encoder)
 	{
+		Live ();
 		// GpMetafile::GetEncoderParameterList asks a 1x1 32bpp bitmap.
 		if (this is Metafile mf)
 			mf.CheckPlayable ();
@@ -254,11 +256,19 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 		return new EncoderParameters (0);
 	}
 
+	// A bitmap made in memory (not decoded from a file): GDI+ has no decoder behind it, and answers
+	// one frame of any dimension and selects any frame.
+	bool IsMemoryBitmap => managed != null && managed.Frames == null && managed.RawFormat == ImageFormat.MemoryBmp.Guid;
+
 	public int GetFrameCount (FrameDimension dimension)
 	{
+		// System.Drawing reads dimension.Guid first.
+		if (dimension == null)
+			throw new NullReferenceException ();
+		Live ();
 		if (managed != null) {
-			if (dimension == null)
-				throw new ArgumentNullException ("dimension");
+			if (IsMemoryBitmap)
+				return 1;
 			return dimension.Guid == managed.FrameDimension ? managed.FrameCount : 0;
 		}
 		// GpMetafile::GetFrameCount: one, whatever the dimension.
@@ -273,6 +283,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public PropertyItem GetPropertyItem(int propid)
 	{
+		Live ();
 		if (managed != null) {
 			foreach (PropertyItem p in managed.Properties)
 				if (p.Id == propid) return CopyProperty (p);
@@ -285,11 +296,22 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public Image GetThumbnailImage (int thumbWidth, int thumbHeight, Image.GetThumbnailImageAbort callback, IntPtr callbackData)
 	{
-		if ((thumbWidth <= 0) || (thumbHeight <= 0))
-			throw new OutOfMemoryException ("Invalid thumbnail size");
-		// GpMetafile::GetThumbnail: the metafile drawn into a bitmap of that size.
-		if (this is Metafile mf)
+		Live ();
+		// GpMetafile::GetThumbnail: the metafile drawn into a bitmap of that size, its own size
+		// when either is not positive.
+		if (this is Metafile mf) {
+			if (thumbWidth <= 0 || thumbHeight <= 0) {
+				thumbWidth = Width;
+				thumbHeight = Height;
+			}
 			return mf.ToBitmap (thumbWidth, thumbHeight);
+		}
+		// GpBitmap::GetThumbnail: no size at all is GDI+'s default thumbnail, 120 x 120; one side
+		// without is OutOfMemory, and so is a bitmap whose bits are locked.
+		if (thumbWidth == 0 && thumbHeight == 0)
+			thumbWidth = thumbHeight = 120;
+		if ((thumbWidth <= 0) || (thumbHeight <= 0) || (this is Bitmap lb && lb.IsLocked))
+			throw SafeNativeMethods.Gdip.OutOfMemoryException ();
 
 		// GDI+ hands a thumbnail back premultiplied, the image drawn scaled into it.
 		Bitmap thumbnail = new Bitmap (thumbWidth, thumbHeight, PixelFormat.Format32bppPArgb);
@@ -301,10 +323,12 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public void RemovePropertyItem (int propid)
 	{
+		Live ();
 		if (managed != null) {
 			int i = managed.Properties.FindIndex (p => p.Id == propid);
+			// GdipRemovePropertyItem of an id there is not: GenericError.
 			if (i < 0)
-				throw new ArgumentException ("Property cannot be found.");
+				throw new ExternalException ("A generic error occurred in GDI+.", unchecked ((int) 0x80004005));
 			managed.Properties.RemoveAt (i);
 			return;
 		}
@@ -314,6 +338,10 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public void RotateFlip (RotateFlipType rotateFlipType)
 	{
+		Live ();
+		// GdipImageRotateFlip: a type past Rotate270FlipX (7) is InvalidParameter.
+		if ((uint) rotateFlipType > 7)
+			throw new ArgumentException ("Parameter is not valid.");
 		if (managed != null) {
 			GdipImageData d = Data;
 			d.Frame = WebGpuBackend.GdipTransform.RotateFlip (d.Frame, rotateFlipType);
@@ -326,12 +354,12 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 		throw new NotImplementedException ("Not implemented.");
 	}
 
-	internal ImageCodecInfo findEncoderForFormat (ImageFormat format)
+	internal ImageCodecInfo findEncoderForFormat (ImageFormat format, bool memoryBmpAsPng = true)
 	{
 		ImageCodecInfo[] encoders = ImageCodecInfo.GetImageEncoders();
 		ImageCodecInfo encoder = null;
 
-		if (format.Guid.Equals (ImageFormat.MemoryBmp.Guid))
+		if (memoryBmpAsPng && format.Guid.Equals (ImageFormat.MemoryBmp.Guid))
 			format = ImageFormat.Png;
 
 		/* Look for the right encoder for our format*/
@@ -347,13 +375,17 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public void Save (string filename)
 	{
+		Live ();
 		Save (filename, RawFormat);
 	}
 
 	public void Save(string filename, ImageFormat format)
 	{
+		if (filename == null)
+			throw new ArgumentNullException ("filename");
 		if (format == null)
 			throw new ArgumentNullException ("format");
+		Live ();
 		// No encoder for the format (an icon, a metafile): GDI+ writes a PNG.
 		ImageCodecInfo encoder = findEncoderForFormat (format) ?? findEncoderForFormat (ImageFormat.Png);
 		Save (filename, encoder, null);
@@ -361,17 +393,33 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public void Save(string filename, ImageCodecInfo encoder, EncoderParameters encoderParams)
 	{
+		// System.Drawing reads encoder.Clsid before anything else.
+		if (encoder == null)
+			throw new NullReferenceException ();
 		if (filename == null)
 			throw new ArgumentNullException ("filename");
-		if (encoder == null)
-			throw new ArgumentNullException ("encoder");
+		// The directory must be there (System.Drawing's own check) ...
+		string dir = Path.GetDirectoryName (filename);
+		if (!string.IsNullOrEmpty (dir) && !Directory.Exists (dir))
+			throw new DirectoryNotFoundException (SR.Format (SR.TargetDirectoryDoesNotExist, dir, filename));
+		CheckParams (encoderParams);
+		Live ();
 		if (managed != null) {
-			using (var fs = File.Create (filename))
+			// ... and a file GDI+ cannot create is GenericError.
+			FileStream fs;
+			try {
+				fs = File.Create (filename);
+			} catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is ArgumentException || e is NotSupportedException) {
+				throw new ExternalException ("A generic error occurred in GDI+.", unchecked ((int) 0x80004005));
+			}
+			using (fs)
 				SaveManaged (fs, encoder, encoderParams);
 			return;
 		}
 		// GpMetafile::SaveToFile: there is no metafile encoder; GDI+ renders the metafile into a
 		// bitmap of its size (GetBitmap) and saves that with the encoder asked for.
+		if (((Metafile) this).IsRecording)
+			throw new ExternalException ("A generic error occurred in GDI+.", unchecked ((int) 0x80004005));
 		using (Bitmap b = ((Metafile) this).ToBitmap (0, 0))
 			b.Save (filename, encoder, encoderParams);
 	}
@@ -380,8 +428,36 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	{
 		if (format == null)
 			throw new ArgumentNullException ("format");
-		ImageCodecInfo encoder = findEncoderForFormat (format) ?? findEncoderForFormat (ImageFormat.Png);
+		// To a stream there is no PNG fallback: a format with no encoder (MemoryBmp, an icon, a
+		// metafile) is no encoder.
+		ImageCodecInfo encoder = findEncoderForFormat (format, false);
+		if (stream == null)
+			throw new ArgumentNullException ("stream");
+		if (encoder == null)
+			throw new ArgumentNullException ("encoder");
 		Save (stream, encoder, null);
+	}
+
+	/// <summary>System.Drawing's internal Image.Save(Stream): the image's own format's encoder, or
+	/// PNG (serialization, ImageConverter).</summary>
+	internal void SaveWithRawFormat (Stream stream)
+	{
+		ImageCodecInfo encoder = findEncoderForFormat (RawFormat, false) ?? findEncoderForFormat (ImageFormat.Png, false);
+		Save (stream, encoder, null);
+	}
+
+	// EncoderParameters System.Drawing marshals: a disposed set has no parameters to marshal.
+	static void CheckParams (EncoderParameters ps)
+	{
+		if (ps == null)
+			return;
+		// System.Drawing marshals every parameter: a disposed set, or a null slot, is a
+		// NullReferenceException.
+		if (ps.Param == null)
+			throw new NullReferenceException ();
+		foreach (EncoderParameter p in ps.Param)
+			if (p == null)
+				throw new NullReferenceException ();
 	}
 
 	public void Save(Stream stream, ImageCodecInfo encoder, EncoderParameters encoderParams)
@@ -390,11 +466,15 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			throw new ArgumentNullException ("stream");
 		if (encoder == null)
 			throw new ArgumentNullException ("encoder");
+		CheckParams (encoderParams);
+		Live ();
 		if (managed != null) {
 			SaveManaged (stream, encoder, encoderParams);
 			return;
 		}
-		// GpMetafile::SaveToStream, as SaveToFile.
+		// GpMetafile::SaveToStream, as SaveToFile; a metafile still being recorded is GenericError.
+		if (((Metafile) this).IsRecording)
+			throw new ExternalException ("A generic error occurred in GDI+.", unchecked ((int) 0x80004005));
 		using (Bitmap b = ((Metafile) this).ToBitmap (0, 0))
 			b.Save (stream, encoder, encoderParams);
 	}
@@ -428,7 +508,16 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			WriteMulti (false);
 			return;
 		}
-		GdipCodecs.Encode (frame, encoder.Clsid, ps, stream);
+		// GDI+ writes through an IStream over the stream and does not report the stream's own
+		// failures: a stream that cannot be written (read-only, closed, too small) is left as it is
+		// and the save succeeds.
+		var buffer = new MemoryStream ();
+		GdipCodecs.Encode (frame, encoder.Clsid, ps, buffer);
+		try {
+			buffer.Position = 0;
+			buffer.CopyTo (stream);
+		} catch (Exception e) when (e is IOException || e is NotSupportedException || e is ObjectDisposedException) {
+		}
 	}
 
 	void WriteMulti (bool final)
@@ -444,9 +533,14 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public void SaveAdd (EncoderParameters encoderParams)
 	{
+		if (encoderParams == null)
+			throw new ArgumentException ("Parameter is not valid.");
+		CheckParams (encoderParams);
+		Live ();
 		if (managed != null) {
-			if (multi_stream == null)
-				throw new ArgumentException ("Parameter is not valid.");
+			// GdipSaveAdd with no multi-frame save begun (or a locked bitmap): GenericError.
+			if (multi_stream == null || (this is Bitmap lb && lb.IsLocked))
+				throw new ExternalException ("A generic error occurred in GDI+.", unchecked ((int) 0x80004005));
 			long? flag = SaveFlag (encoderParams);
 			if (flag == (long) EncoderValue.Flush) {
 				WriteMulti (true);
@@ -466,9 +560,14 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	{
 		if (image == null)
 			throw new ArgumentNullException ("image");
+		CheckParams (encoderParams);
+		Live ();
+		// GdipSaveAddImage of no parameters or a disposed image: InvalidParameter.
+		if (encoderParams == null || image.disposed)
+			throw new ArgumentException ("Parameter is not valid.");
 		if (managed != null) {
-			if (multi_stream == null)
-				throw new ArgumentException ("Parameter is not valid.");
+			if (multi_stream == null || (this is Bitmap lb && lb.IsLocked))
+				throw new ExternalException ("A generic error occurred in GDI+.", unchecked ((int) 0x80004005));
 			multi_pages.Add (image.Data.Frame.Clone ());
 			WriteMulti (false);
 			return;
@@ -480,9 +579,13 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public int SelectActiveFrame(FrameDimension dimension, int frameIndex)
 	{
+		// System.Drawing reads dimension.Guid first, and always answers 0.
+		if (dimension == null)
+			throw new NullReferenceException ();
+		Live ();
 		if (managed != null) {
-			if (dimension == null)
-				throw new ArgumentNullException ("dimension");
+			if (IsMemoryBitmap)
+				return 0;
 			GdipImageData d = Data;
 			if (dimension.Guid != d.FrameDimension || frameIndex < 0 || frameIndex >= d.FrameCount)
 				throw new ArgumentException ("Parameter is not valid.");
@@ -491,7 +594,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 				if (d.FrameProperties != null) d.Properties = d.FrameProperties [frameIndex];
 				d.ActiveFrame = frameIndex;
 			}
-			return frameIndex;
+			return 0;
 		}
 		// GpMetafile::SelectActiveFrame accepts any frame of any dimension; System.Drawing then
 		// answers 0.
@@ -503,8 +606,10 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public void SetPropertyItem(PropertyItem propitem)
 	{
+		// System.Drawing copies the item's fields into native memory before any check.
 		if (propitem == null)
-			throw new ArgumentNullException ("propitem");
+			throw new NullReferenceException ();
+		Live ();
 		if (managed != null) {
 			int i = managed.Properties.FindIndex (p => p.Id == propitem.Id);
 			PropertyItem copy = CopyProperty (propitem);
@@ -521,6 +626,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	[Browsable (false)]
 	public int Flags {
 		get {
+			Live ();
 			if (managed != null) return managed.Flags;
 			if (this is Metafile mf) return mf.MetafileFlags;
 			return 0;
@@ -530,6 +636,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	[Browsable (false)]
 	public Guid[] FrameDimensionsList {
 		get {
+			Live ();
 			if (managed != null) return new [] { managed.FrameDimension };
 			// GpMetafile::GetFrameDimensionsList: one dimension, Page.
 			if (this is Metafile mf) mf.CheckPlayable ();
@@ -542,6 +649,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 	public int Height {
 		get {
+			Live ();
 			if (managed != null) return managed.Frame.Height;
 			if (this is Metafile mf) return mf.MetafileHeight;
 			return managedHeight < 0 ? 0 : managedHeight;
@@ -550,6 +658,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public float HorizontalResolution {
 		get {
+			Live ();
 			if (managed != null) return managed.Frame.DpiX;
 			if (this is Metafile mf) return mf.MetafileDpiX;
 			return managedDpiX;
@@ -559,9 +668,14 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	[Browsable (false)]
 	public ColorPalette Palette {
 		get {
+			Live ();
 			return retrieveGDIPalette();
 		}
 		set {
+			// System.Drawing marshals the palette's entries first.
+			if (value == null)
+				throw new NullReferenceException ();
+			Live ();
 			storeGDIPalette(value);
 		}
 	}
@@ -579,15 +693,15 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	internal void storeGDIPalette(ColorPalette palette)
 	{
-		if (palette == null) {
-			throw new ArgumentNullException("palette");
-		}
+		// System.Drawing marshals the palette's entries without a check.
+		if (palette == null)
+			throw new NullReferenceException ();
 		if (managed != null) {
+			// GpBitmap::SetPalette keeps the palette whatever the format (a direct bitmap only
+			// carries it).
 			GdipFrame f = Data.Frame;
-			if (f.IsIndexed) {
-				f.Palette = (Color []) palette.Entries.Clone ();
-				f.PaletteFlags = palette.Flags;
-			}
+			f.Palette = (Color []) palette.Entries.Clone ();
+			f.PaletteFlags = palette.Flags;
 			return;
 		}
 		((Metafile) this).CheckPlayable ();
@@ -597,6 +711,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public SizeF PhysicalDimension {
 		get {
+			Live ();
 			// A bitmap's physical dimension is its size in pixels; only a metafile has another.
 			if (this is Metafile mf) return mf.MetafilePhysicalDimension;
 			return new SizeF (Width, Height);
@@ -605,6 +720,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public PixelFormat PixelFormat {
 		get {
+			if (disposed) return PixelFormat.Undefined;
 			if (managed != null) return managed.Frame.Format;
 			if (this is Metafile mf) return mf.MetafilePixelFormat;
 			return PixelFormat.Format32bppArgb;
@@ -614,6 +730,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	[Browsable (false)]
 	public int[] PropertyIdList {
 		get {
+			Live ();
 			if (managed != null) return managed.Properties.ConvertAll (p => p.Id).ToArray ();
 			// GpMetafile::GetPropertyCount is zero.
 			if (this is Metafile mf) mf.CheckPlayable ();
@@ -624,6 +741,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	[Browsable (false)]
 	public PropertyItem[] PropertyItems {
 		get {
+			Live ();
 			if (managed != null) return managed.Properties.ConvertAll (CopyProperty).ToArray ();
 			// GpMetafile::GetPropertySize is NotImplemented.
 			if (this is Metafile mf) mf.CheckPlayable ();
@@ -633,6 +751,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public ImageFormat RawFormat {
 		get {
+			Live ();
 			if (managed != null) return new ImageFormat (managed.RawFormat);
 			if (this is Metafile mf) return mf.MetafileRawFormat;
 			return ImageFormat.MemoryBmp;
@@ -641,6 +760,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public Size Size {
 		get {
+			Live ();
 			return new Size(Width, Height);
 		}
 	}
@@ -655,6 +775,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	}
 	public float VerticalResolution {
 		get {
+			Live ();
 			if (managed != null) return managed.Frame.DpiY;
 			if (this is Metafile mf) return mf.MetafileDpiY;
 			return managedDpiY;
@@ -666,6 +787,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 	public int Width {
 		get {
+			Live ();
 			if (managed != null) return managed.Frame.Width;
 			if (this is Metafile mf) return mf.MetafileWidth;
 			return managedWidth < 0 ? 0 : managedWidth;
@@ -699,10 +821,22 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 	protected virtual void Dispose (bool disposing)
 	{
 		managed = null;
+		disposed = true;
+	}
+
+	// GDI+'s image is gone after Dispose: every call System.Drawing makes with its handle (zero)
+	// comes back InvalidParameter. Tag is managed-side; PixelFormat swallows the status (Undefined).
+	internal bool disposed;
+
+	internal void Live ()
+	{
+		if (disposed)
+			throw new ArgumentException ("Parameter is not valid.");
 	}
 
 	public object Clone ()
 	{
+		Live ();
 		if (managed != null) return new Bitmap (Data.Clone ());
 		if (this is Metafile mf) return mf.CloneMetafile ();
 		return MemberwiseClone ();

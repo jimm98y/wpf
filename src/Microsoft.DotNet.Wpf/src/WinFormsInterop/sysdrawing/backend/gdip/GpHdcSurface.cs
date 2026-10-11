@@ -45,7 +45,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             _dib = CreateDIBSection (hdc, ref bi, 0, out _bits, IntPtr.Zero, 0);
             if (_memDc == IntPtr.Zero || _dib == IntPtr.Zero) {
                 Dispose ();
-                throw new OutOfMemoryException ();
+                throw SafeNativeMethods.Gdip.OutOfMemoryException ();
             }
             _oldBitmap = SelectObject (_memDc, _dib);
         }

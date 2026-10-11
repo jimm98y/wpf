@@ -179,6 +179,14 @@ namespace Wpf.WinFormsInterop.Tests
             return list;
         }
 
+        /// <summary>GDI+'s OutOfMemory status as .NET 10's System.Drawing throws it.</summary>
+        internal static void AssertGdiOutOfMemory(Action a)
+        {
+            var e = Assert.Throws<System.Runtime.InteropServices.ExternalException>(a);
+            Assert.Equal(unchecked((int)0x8000FFFF), e.ErrorCode);
+            Assert.Equal("An object could not be created, possibly due to a lack of memory, but most likely due to invalid input.", e.Message);
+        }
+
         internal static byte[] Record(string scenario, EmfType type)
         {
             var ms = new MemoryStream();
@@ -199,8 +207,9 @@ namespace Wpf.WinFormsInterop.Tests
             {
                 using (Graphics g = Graphics.FromImage(mf))
                     MetafileScenarios.All()[scenario](new GraphicsRec(g));
-                // GpMetafile::GetGraphicsContext: once per recording, and never after it ended.
-                Assert.Throws<OutOfMemoryException>(() => Graphics.FromImage(mf));
+                // GpMetafile::GetGraphicsContext: once per recording, and never after it ended
+                // (OutOfMemory, which System.Drawing throws as ExternalException E_UNEXPECTED).
+                AssertGdiOutOfMemory(() => Graphics.FromImage(mf));
             }
             return ms.ToArray();
         }
@@ -222,7 +231,7 @@ namespace Wpf.WinFormsInterop.Tests
             using var mf = new Metafile(new MemoryStream(), IntPtr.Zero, EmfType.EmfPlusOnly);
             using (Graphics g = Graphics.FromImage(mf))
             {
-                Assert.Throws<OutOfMemoryException>(() => Graphics.FromImage(mf));
+                AssertGdiOutOfMemory(() => Graphics.FromImage(mf));
                 Assert.Equal(96f, g.DpiX);
             }
             Assert.Equal(ImageFormat.Emf, mf.RawFormat);

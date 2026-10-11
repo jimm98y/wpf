@@ -67,7 +67,7 @@ namespace System.Drawing
 		private CustomLineCap _customStart, _customEnd;
 
 		static Exception Status (int s) => SafeNativeMethods.Gdip.StatusException (s);
-		static Exception ReadOnly () => new ArgumentException (Locale.GetText ("This Pen object can't be modified."));
+		static Exception ReadOnly () => new ArgumentException (SR.Format (SR.CantChangeImmutableObjects, "Pen"));
 
 		// For the managed GDI+ engine and the recorders: the pen's own objects, not copies.
 		internal Brush BrushRef => _brush;
@@ -105,12 +105,13 @@ namespace System.Drawing
 		// Properties
 		//
 		public PenAlignment Alignment {
-			get { return _alignment; }
+			get { Live (); return _alignment; }
 			set {
 				if ((value < PenAlignment.Center) || (value > PenAlignment.Right))
-					throw new InvalidEnumArgumentException ("Alignment", (int)value, typeof (PenAlignment));
+					throw new InvalidEnumArgumentException ("value", (int)value, typeof (PenAlignment));
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				// An inset pen cannot be compound.
 				if (value == PenAlignment.Inset && _compound != null && _compound.Length != 0)
 					throw Status (SafeNativeMethods.Gdip.NotImplemented);
@@ -119,12 +120,13 @@ namespace System.Drawing
 		}
 
 		public Brush Brush {
-			get { return (Brush) _brush.Clone (); }
+			get { Live (); return (Brush) _brush.Clone (); }
 			set {
 				if (value == null)
-					throw new ArgumentNullException ("Brush");
+					throw new ArgumentNullException ("value");
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				_brush = (Brush) value.Clone ();
 				color = Color.Empty;
 			}
@@ -133,6 +135,7 @@ namespace System.Drawing
 		public Color Color {
 			get {
 				if (color.Equals (Color.Empty)) {
+					Live ();
 					// GdipGetPenColor: only a solid pen has one.
 					if (!(_brush is SolidBrush sb))
 						throw Status (SafeNativeMethods.Gdip.InvalidParameter);
@@ -144,7 +147,9 @@ namespace System.Drawing
 				if (!isModifiable)
 					throw ReadOnly ();
 				if (value != color) {
+					// .NET caches the colour first, then asks GDI+ (which a disposed pen refuses).
 					color = value;
+					Live ();
 					_brush = new SolidBrush (value);
 				}
 			}
@@ -152,18 +157,23 @@ namespace System.Drawing
 
 		public float [] CompoundArray {
 			get {
+				Live ();
 				return _compound == null ? new float [0] : (float []) _compound.Clone ();
 			}
 			set {
 				if (!isModifiable)
 					throw ReadOnly ();
+				if (value == null)
+					throw new ArgumentNullException ("value");
+				Live ();
+				// GpPen::SetCompoundArray: at least two, an even count, ascending, in [0, 1]; not for
+				// an inset pen.
 				int length = value.Length;
 				if (length < 2)
-					throw new ArgumentException ("Invalid parameter.");
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				foreach (float val in value)
 					if (val < 0 || val > 1)
-						throw new ArgumentException ("Invalid parameter.");
-				// SetCompoundArray: an even count, ascending, in [0, 1]; not for an inset pen.
+						throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				if ((length & 1) != 0)
 					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				if (_alignment == PenAlignment.Inset)
@@ -177,6 +187,7 @@ namespace System.Drawing
 
 		public CustomLineCap CustomEndCap {
 						get {
+							Live ();
 				// GdipGetPenCustomEndCap hands back null, which System.Drawing turns into
 				// InvalidParameter.
 				if (_customEnd == null) throw Status (SafeNativeMethods.Gdip.InvalidParameter);
@@ -185,6 +196,7 @@ namespace System.Drawing
 			set {
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				if (value == null)
 					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				_customEnd = (CustomLineCap) value.Clone ();
@@ -194,12 +206,14 @@ namespace System.Drawing
 
 		public CustomLineCap CustomStartCap {
 						get {
+							Live ();
 				if (_customStart == null) throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				return (CustomLineCap) _customStart.Clone ();
 			}
 			set {
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				if (value == null)
 					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				_customStart = (CustomLineCap) value.Clone ();
@@ -211,27 +225,30 @@ namespace System.Drawing
 		static DashCap MapDashCap (DashCap c) => c == DashCap.Round || c == DashCap.Triangle ? c : DashCap.Flat;
 
 		public DashCap DashCap {
-			get { return _dashCap; }
+			get { Live (); return _dashCap; }
 			set {
-				if ((value < DashCap.Flat) || (value > DashCap.Triangle))
-					throw new InvalidEnumArgumentException ("DashCap", (int)value, typeof (DashCap));
+				if (value != DashCap.Flat && value != DashCap.Round && value != DashCap.Triangle)
+					throw new InvalidEnumArgumentException ("value", (int)value, typeof (DashCap));
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				_dashCap = MapDashCap (value);
 			}
 		}
 
 		public float DashOffset {
-			get { return _dashOffset; }
+			get { Live (); return _dashOffset; }
 			set {
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				_dashOffset = value;
 			}
 		}
 
 		public float [] DashPattern {
 			get {
+				Live ();
 								if (_dash != null && _dash.Length > 0)
 					return (float []) _dash.Clone ();
 				// special case (not handled inside GDI+)
@@ -243,24 +260,26 @@ namespace System.Drawing
 			set {
 				if (!isModifiable)
 					throw ReadOnly ();
-				int length = value.Length;
-				if (length == 0)
-					throw new ArgumentException ("Invalid parameter.");
+				if (value == null || value.Length == 0)
+					throw new ArgumentException (SR.InvalidDashPattern);
+				Live ();
+				// GpPen::SetDashArray: every dash longer than zero.
 				foreach (float val in value)
 					if (val <= 0)
-						throw new ArgumentException ("Invalid parameter.");
+						throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				_dash = (float []) value.Clone ();
 				_dashStyle = DashStyle.Custom;
 			}
 		}
 
 		public DashStyle DashStyle {
-			get { return _dashStyle; }
+			get { Live (); return _dashStyle; }
 			set {
 				if ((value < DashStyle.Solid) || (value > DashStyle.Custom))
-					throw new InvalidEnumArgumentException ("DashStyle", (int)value, typeof (DashStyle));
+					throw new InvalidEnumArgumentException ("value", (int)value, typeof (DashStyle));
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				SetDashStyle (value);
 			}
 		}
@@ -280,52 +299,62 @@ namespace System.Drawing
 			_dashStyle = s;
 		}
 
+		// The caps System.Drawing lets through to GDI+.
+		static bool ValidCap (LineCap c) => c is LineCap.Flat or LineCap.Square or LineCap.Round or LineCap.Triangle
+			or LineCap.NoAnchor or LineCap.SquareAnchor or LineCap.RoundAnchor or LineCap.DiamondAnchor
+			or LineCap.ArrowAnchor or LineCap.AnchorMask or LineCap.Custom;
+
 		public LineCap StartCap {
-			get { return _startCap; }
+			get { Live (); return _startCap; }
 			set {
-				if ((value < LineCap.Flat) || (value > LineCap.Custom))
-					throw new InvalidEnumArgumentException ("StartCap", (int)value, typeof (LineCap));
+				if (!ValidCap (value))
+					throw new InvalidEnumArgumentException ("value", (int)value, typeof (LineCap));
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				_startCap = value;
 				_customStart = null;
 			}
 		}
 
 		public LineCap EndCap {
-			get { return _endCap; }
+			get { Live (); return _endCap; }
 			set {
-				if ((value < LineCap.Flat) || (value > LineCap.Custom))
-					throw new InvalidEnumArgumentException ("EndCap", (int)value, typeof (LineCap));
+				if (!ValidCap (value))
+					throw new InvalidEnumArgumentException ("value", (int)value, typeof (LineCap));
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				_endCap = value;
 				_customEnd = null;
 			}
 		}
 
 		public LineJoin LineJoin {
-			get { return _lineJoin; }
+			get { Live (); return _lineJoin; }
 			set {
 				if ((value < LineJoin.Miter) || (value > LineJoin.MiterClipped))
-					throw new InvalidEnumArgumentException ("LineJoin", (int)value, typeof (LineJoin));
+					throw new InvalidEnumArgumentException ("value", (int)value, typeof (LineJoin));
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				_lineJoin = value;
 			}
 		}
 
 		public float MiterLimit {
-			get { return _miterLimit; }
+			get { Live (); return _miterLimit; }
 			set {
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				_miterLimit = 1f <= value ? value : 1f;
 			}
 		}
 
 		public PenType PenType {
 			get {
+				Live ();
 				switch (_brush) {
 				case SolidBrush _: return PenType.SolidColor;
 				case HatchBrush _: return PenType.HatchFill;
@@ -338,12 +367,16 @@ namespace System.Drawing
 		}
 
 		public Matrix Transform {
-			get { return new Matrix (_xf); }
+			get { Live (); return new Matrix (_xf); }
 			set {
 				if (value == null)
-					throw new ArgumentNullException ("Transform");
+					throw new ArgumentNullException ("value");
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
+				// A disposed matrix hands GDI+ none: InvalidParameter.
+				if (value.IsDisposed)
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				if (!value.Gp.IsInvertible)
 					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				_xf = value.Gp;
@@ -351,10 +384,11 @@ namespace System.Drawing
 		}
 
 		public float Width {
-			get { return _width; }
+			get { Live (); return _width; }
 			set {
 				if (!isModifiable)
 					throw ReadOnly ();
+				Live ();
 				_width = value;
 			}
 		}
@@ -363,6 +397,7 @@ namespace System.Drawing
 
 		public object Clone ()
 		{
+			Live ();
 			var c = (Pen) MemberwiseClone ();
 			c.isModifiable = true;
 			c._brush = (Brush) _brush.Clone ();
@@ -383,6 +418,18 @@ namespace System.Drawing
 		{
 			if (disposing && !isModifiable)
 				throw ReadOnly ();
+			_disposed = true;
+		}
+
+		// GDI+'s pen is gone after Dispose: every call System.Drawing makes with its handle (zero)
+		// comes back InvalidParameter. Only what .NET caches managed-side (the colour) still answers.
+		bool _disposed;
+		internal bool IsDisposed => _disposed;
+
+		void Live ()
+		{
+			if (_disposed)
+				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 		}
 
 		~Pen ()
@@ -398,6 +445,9 @@ namespace System.Drawing
 
 		public void MultiplyTransform (Matrix matrix)
 		{
+			if (matrix == null)
+				throw new ArgumentNullException ("matrix");
+			Live ();
 			MultiplyTransform (matrix, MatrixOrder.Prepend);
 		}
 
@@ -405,6 +455,7 @@ namespace System.Drawing
 		{
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			Live ();
 			if (!matrix.Gp.IsInvertible)
 				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 			_xf.Multiply (matrix.Gp, Append (order));
@@ -412,31 +463,37 @@ namespace System.Drawing
 
 		public void ResetTransform ()
 		{
+			Live ();
 			_xf = GpMatrix.CreateIdentity ();
 		}
 
 		public void RotateTransform (float angle)
 		{
+			Live ();
 			RotateTransform (angle, MatrixOrder.Prepend);
 		}
 
 		public void RotateTransform (float angle, MatrixOrder order)
 		{
+			Live ();
 			_xf.Rotate (angle, Append (order));
 		}
 
 		public void ScaleTransform (float sx, float sy)
 		{
+			Live ();
 			ScaleTransform (sx, sy, MatrixOrder.Prepend);
 		}
 
 		public void ScaleTransform (float sx, float sy, MatrixOrder order)
 		{
+			Live ();
 			_xf.Scale (sx, sy, Append (order));
 		}
 
 		public void SetLineCap (LineCap startCap, LineCap endCap, DashCap dashCap)
 		{
+			Live ();
 			if (!isModifiable)
 				throw ReadOnly ();
 			// GdipSetPenLineCap197819 sets the cap types (a custom cap object is left where it is).
@@ -447,11 +504,13 @@ namespace System.Drawing
 
 		public void TranslateTransform (float dx, float dy)
 		{
+			Live ();
 			TranslateTransform (dx, dy, MatrixOrder.Prepend);
 		}
 
 		public void TranslateTransform (float dx, float dy, MatrixOrder order)
 		{
+			Live ();
 			_xf.Translate (dx, dy, Append (order));
 		}
 	}

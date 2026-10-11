@@ -417,6 +417,9 @@ namespace System.Drawing.Imaging
                 case EncoderParameterValueType.ValueTypeRationalRange:
                     size = 2 * 2 * 4;
                     break;
+                case EncoderParameterValueType.ValueTypePointer:
+                    size = IntPtr.Size;
+                    break;
                 default:
                     throw SafeNativeMethods.Gdip.StatusException(SafeNativeMethods.Gdip.WrongState);
             }
@@ -428,10 +431,8 @@ namespace System.Drawing.Imaging
             if (_parameterValue == IntPtr.Zero)
                 throw SafeNativeMethods.Gdip.StatusException(SafeNativeMethods.Gdip.OutOfMemory);
 
-            for (int i = 0; i < bytes; i++)
-            {
-                Marshal.WriteByte(Add(_parameterValue, i), Marshal.ReadByte((IntPtr)(Value + i)));
-            }
+            // A plain copy, as System.Drawing makes it: no memory at the address faults like any null read.
+            unsafe { new ReadOnlySpan<byte>((void*)(IntPtr)Value, bytes).CopyTo(new Span<byte>((void*)_parameterValue, bytes)); }
 
             _parameterValueType = (EncoderParameterValueType)Type;
             _numberOfValues = NumberOfValues;
@@ -466,6 +467,9 @@ namespace System.Drawing.Imaging
                 case EncoderParameterValueType.ValueTypeRationalRange:
                     size = 2 * 2 * 4;
                     break;
+                case EncoderParameterValueType.ValueTypePointer:
+                    size = IntPtr.Size;
+                    break;
                 default:
                     throw SafeNativeMethods.Gdip.StatusException(SafeNativeMethods.Gdip.WrongState);
             }
@@ -477,10 +481,7 @@ namespace System.Drawing.Imaging
             if (_parameterValue == IntPtr.Zero)
                 throw SafeNativeMethods.Gdip.StatusException(SafeNativeMethods.Gdip.OutOfMemory);
 
-            for (int i = 0; i < bytes; i++)
-            {
-                Marshal.WriteByte(Add(_parameterValue, i), Marshal.ReadByte((IntPtr)(value + i)));
-            }
+            unsafe { new ReadOnlySpan<byte>((void*)value, bytes).CopyTo(new Span<byte>((void*)_parameterValue, bytes)); }
 
             _parameterValueType = type;
             _numberOfValues = numberValues;

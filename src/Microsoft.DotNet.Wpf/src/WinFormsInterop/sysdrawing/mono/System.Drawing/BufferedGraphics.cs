@@ -45,11 +45,20 @@ namespace System.Drawing
 
 		}
 
+		private IntPtr targetDc;
+		private bool disposed;
+
 		internal BufferedGraphics (Graphics targetGraphics, Rectangle targetRectangle)
 		{
 			size = targetRectangle;
-			target = targetGraphics;			
-			membmp = new Bitmap (size.Width, size.Height);
+			target = targetGraphics;
+			// An empty area still has a (1 x 1) buffer, as System.Drawing's DIB does.
+			membmp = new Bitmap (Math.Max (1, size.Width), Math.Max (1, size.Height));
+		}
+
+		internal BufferedGraphics (IntPtr dc, Rectangle targetRectangle) : this ((Graphics) null, targetRectangle)
+		{
+			targetDc = dc;
 		}
 
 		~BufferedGraphics ()
@@ -59,6 +68,9 @@ namespace System.Drawing
 
 	      	public Graphics Graphics {
 			get {
+				// Disposed, the buffer's Graphics is gone (null).
+				if (disposed)
+					return null;
 				if (source == null) {
 					source = Graphics.FromImage (membmp);
 				}
@@ -77,6 +89,7 @@ namespace System.Drawing
 		{
 			if (disposing == false)
 				return;
+			disposed = true;
 
 			if (membmp != null) {
 				membmp.Dispose ();
@@ -93,21 +106,31 @@ namespace System.Drawing
 
 	      	public void Render ()
 		{
-			Render (target);
+			if (target != null)
+				Render (target);
+			else
+				Render (targetDc);
 		}
 
 	      	public void Render (Graphics target)
 		{
 			if (target == null)
 				return;
-
+			// System.Drawing renders through the buffer's own Graphics, which a disposed buffer has not.
+			if (disposed)
+				throw new NullReferenceException ();
 			target.DrawImage (membmp, size);
 		}
 
-		[MonoTODO ("The targetDC parameter has no equivalent in libgdiplus.")]
+		// The buffer onto a DC: BitBlt, which does nothing to no DC.
 	      	public void Render (IntPtr targetDC)
 		{
-			throw new NotImplementedException ();
+			if (disposed)
+				throw new NullReferenceException ();
+			if (targetDC == IntPtr.Zero)
+				return;
+			using (Graphics g = Graphics.FromHdc (targetDC))
+				g.DrawImage (membmp, size);
 		}
 	}
 }

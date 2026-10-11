@@ -151,6 +151,9 @@ namespace System.Drawing.Drawing2D {
 		{
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			// A disposed path hands GDI+ none: GdipCreatePathGradientFromPath is OutOfMemory.
+			if (path.IsDisposed)
+				throw Status (SafeNativeMethods.Gdip.OutOfMemory);
 
 			// GdipCreatePathGradientFromPath: DefaultBrush (white centre and surround, clamp), the
 			// path copied, PrepareBrush (bounds and centroid of the path's points, control points
@@ -213,7 +216,9 @@ namespace System.Drawing.Drawing2D {
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if ((wrapMode < WrapMode.Tile) || (wrapMode > WrapMode.Clamp))
-				throw new InvalidEnumArgumentException ("WrapMode");
+				throw new InvalidEnumArgumentException ("wrapMode", (int) wrapMode, typeof (WrapMode));
+			if (points.Length < 2)
+				throw new ArgumentException (null, "points");
 
 			// GdipCreatePathGradient -> InitializeBrush: the centre colour is the elementary brush's
 			// default (opaque black), the surround colours white.
@@ -231,6 +236,7 @@ namespace System.Drawing.Drawing2D {
 
 		public Blend Blend {
 			get {
+				Live ();
 				// GdipGetPathGradientBlend: one entry is the factor alone; more are read back
 				// reversed and inverted.
 				int count = _count;
@@ -246,23 +252,19 @@ namespace System.Drawing.Drawing2D {
 				return new Blend { Factors = factors, Positions = positions };
 			}
 			set {
-				// no null check, MS throws a NullReferenceException here
+				// System.Drawing's own checks; GDI+'s SetBlend then wants the positions to run 0 to 1.
+				if (value == null)
+					throw new ArgumentNullException ("value");
+				if (value.Factors == null)
+					throw new ArgumentNullException ("value.Factors");
+				if (value.Positions == null || value.Positions.Length != value.Factors.Length)
+					throw new ArgumentException (SR.Format (SR.InvalidArgument, "value.Positions", value.Positions), "value");
+				Live ();
 				float [] factors = value.Factors;
 				float [] positions = value.Positions;
 				int count = factors.Length;
-
-				if (count == 0 || positions.Length == 0)
-					throw new ArgumentException ("Invalid Blend object. It should have at least 2 elements in each of the factors and positions arrays.");
-
-				if (count != positions.Length)
-					throw new ArgumentException ("Invalid Blend object. It should contain the same number of factors and positions values.");
-
-				if (positions [0] != 0.0F)
-					throw new ArgumentException ("Invalid Blend object. The positions array must have 0.0 as its first element.");
-
-				if (positions [count - 1] != 1.0F)
-					throw new ArgumentException ("Invalid Blend object. The positions array must have 1.0 as its last element.");
-
+				if (count == 0)
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				SetBlend (factors, positions, count);
 			}
 		}
@@ -311,18 +313,18 @@ namespace System.Drawing.Drawing2D {
 		}
 
 		public Color CenterColor {
-			get { return Color.FromArgb (_centerArgb); }
-			set { _centerArgb = value.ToArgb (); }
+			get { Live (); return Color.FromArgb (_centerArgb); }
+			set { Live (); _centerArgb = value.ToArgb (); }
 		}
 
 		public PointF CenterPoint {
-			get { return _center; }
-			set { _center = value; }
+			get { Live (); return _center; }
+			set { Live (); _center = value; }
 		}
 
 		public PointF FocusScales {
-			get { return new PointF (_focusX, _focusY); }
-			set { _focusX = value.X; _focusY = value.Y; }
+			get { Live (); return new PointF (_focusX, _focusY); }
+			set { Live (); _focusX = value.X; _focusY = value.Y; }
 		}
 
 		/// <summary>Whether the gradient is drawn in linear light.</summary>
@@ -333,45 +335,35 @@ namespace System.Drawing.Drawing2D {
 
 		public ColorBlend InterpolationColors {
 			get {
+				Live ();
+				// GdipGetPathGradientPresetBlendCount: none set is an empty ColorBlend.
 				int count = _preset ? _count : 0;
-				// if no failure, then the "managed" minimum is 1
-				if (count < 1)
-					count = 1;
-
+				if (count == 0)
+					return new ColorBlend ();
 				int [] intcolors = new int [count];
 				float [] positions = new float [count];
-				// GetPresetBlend would fail with a count under 2
 				if (count > 1 && _presetArgb != null && _positions != null) {
 					for (int i = 0; i < count; i++) {
 						intcolors [count - 1 - i] = _presetArgb [i];
 						positions [count - 1 - i] = 1f - _positions [i];
 					}
 				}
-
 				Color [] colors = new Color [count];
 				for (int i = 0; i < count; i++)
 					colors [i] = Color.FromArgb (intcolors [i]);
 				return new ColorBlend { Colors = colors, Positions = positions };
 			}
 			set {
-				// no null check, MS throws a NullReferenceException here
+				if (value == null)
+					throw new ArgumentNullException ("value");
+				int count = value.Colors.Length;
+				if (value.Positions == null || value.Colors.Length != value.Positions.Length)
+					throw new ArgumentException (SR.Format (SR.InvalidArgument, "value.Positions", value.Positions), "value");
+				Live ();
 				Color [] colors = value.Colors;
 				float [] positions = value.Positions;
-				int count = colors.Length;
-
-				if (count == 0 || positions.Length == 0)
-					throw new ArgumentException ("Invalid ColorBlend object. It should have at least 2 elements in each of the colors and positions arrays.");
-
-				if (count != positions.Length)
-					throw new ArgumentException ("Invalid ColorBlend object. It should contain the same number of positions and color values.");
-
-				if (positions [0] != 0.0F)
-					throw new ArgumentException ("Invalid ColorBlend object. The positions array must have 0.0 as its first element.");
-
-				if (positions [count - 1] != 1.0F)
-					throw new ArgumentException ("Invalid ColorBlend object. The positions array must have 1.0 as its last element.");
-
-				if (count < 2)
+				// GpPathGradient::SetPresetBlend: two or more, from 0 to 1.
+				if (count < 2 || !(MathF.Abs (positions [0]) <= GpGradient.Eps) || !(MathF.Abs (1f - positions [count - 1]) <= GpGradient.Eps))
 					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				_presetArgb = new int [count];
 				_positions = new float [count];
@@ -386,11 +378,12 @@ namespace System.Drawing.Drawing2D {
 		}
 
 		public RectangleF Rectangle {
-			get { return _rect; }
+			get { Live (); return _rect; }
 		}
 
 		public Color [] SurroundColors {
 			get {
+				Live ();
 				// GdipGetPathGradientSurroundColorsWithCount: every point's colour, the count cut back
 				// to just past the last change.
 				int count = _n;
@@ -408,7 +401,9 @@ namespace System.Drawing.Drawing2D {
 				return colors;
 			}
 			set {
-				// no null check, MS throws a NullReferenceException here
+				if (value == null)
+					throw new ArgumentNullException ("value");
+				Live ();
 				int count = value.Length;
 				// GdipSetPathGradientSurroundColorsWithCount: one to as many as there are points;
 				// the rest take the last one given.
@@ -443,10 +438,13 @@ namespace System.Drawing.Drawing2D {
 		}
 
 		public Matrix Transform {
-			get { return new Matrix (_xf); }
+			get { Live (); return new Matrix (_xf); }
 			set {
 				if (value == null)
-					throw new ArgumentNullException ("Transform");
+					throw new ArgumentNullException ("value");
+				Live ();
+				if (value.IsDisposed)
+					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				if (!value.Gp.IsInvertible)
 					throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 				_xf = value.Gp;
@@ -454,10 +452,11 @@ namespace System.Drawing.Drawing2D {
 		}
 
 		public WrapMode WrapMode {
-			get { return _wrap; }
+			get { Live (); return _wrap; }
 			set {
 				if ((value < WrapMode.Tile) || (value > WrapMode.Clamp))
-					throw new InvalidEnumArgumentException ("WrapMode");
+					throw new InvalidEnumArgumentException ("value", (int) value, typeof (WrapMode));
+				Live ();
 				_wrap = value;
 			}
 		}
@@ -472,6 +471,9 @@ namespace System.Drawing.Drawing2D {
 
 		public void MultiplyTransform (Matrix matrix)
 		{
+			if (matrix == null)
+				throw new ArgumentNullException ("matrix");
+			Live ();
 			MultiplyTransform (matrix, MatrixOrder.Prepend);
 		}
 
@@ -479,6 +481,7 @@ namespace System.Drawing.Drawing2D {
 		{
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			Live ();
 			if (!matrix.Gp.IsInvertible)
 				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 			_xf.Multiply (matrix.Gp, Append (order));
@@ -486,38 +489,45 @@ namespace System.Drawing.Drawing2D {
 
 		public void ResetTransform ()
 		{
+			Live ();
 			_xf = GpMatrix.CreateIdentity ();
 		}
 
 		public void RotateTransform (float angle)
 		{
+			Live ();
 			RotateTransform (angle, MatrixOrder.Prepend);
 		}
 
 		public void RotateTransform (float angle, MatrixOrder order)
 		{
+			Live ();
 			_xf.Rotate (angle, Append (order));
 		}
 
 		public void ScaleTransform (float sx, float sy)
 		{
+			Live ();
 			ScaleTransform (sx, sy, MatrixOrder.Prepend);
 		}
 
 		public void ScaleTransform (float sx, float sy, MatrixOrder order)
 		{
+			Live ();
 			_xf.Scale (sx, sy, Append (order));
 		}
 
 		public void SetBlendTriangularShape (float focus)
 		{
+			Live ();
 			SetBlendTriangularShape (focus, 1.0F);
 		}
 
 		public void SetBlendTriangularShape (float focus, float scale)
 		{
+			Live ();
 			if (focus < 0 || focus > 1 || scale < 0 || scale > 1)
-				throw new ArgumentException ("Invalid parameter passed.");
+				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 			if (!GpGradient.LinearBlendArray (focus, scale, out float[] f, out float[] p))
 				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 			SetBlend (f, p, f.Length);
@@ -525,13 +535,15 @@ namespace System.Drawing.Drawing2D {
 
 		public void SetSigmaBellShape (float focus)
 		{
+			Live ();
 			SetSigmaBellShape (focus, 1.0F);
 		}
 
 		public void SetSigmaBellShape (float focus, float scale)
 		{
+			Live ();
 			if (focus < 0 || focus > 1 || scale < 0 || scale > 1)
-				throw new ArgumentException ("Invalid parameter passed.");
+				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 			if (!GpGradient.SigmaBlendArray (focus, scale, out float[] f, out float[] p))
 				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 			SetBlend (f, p, f.Length);
@@ -539,16 +551,19 @@ namespace System.Drawing.Drawing2D {
 
 		public void TranslateTransform (float dx, float dy)
 		{
+			Live ();
 			TranslateTransform (dx, dy, MatrixOrder.Prepend);
 		}
 
 		public void TranslateTransform (float dx, float dy, MatrixOrder order)
 		{
+			Live ();
 			_xf.Translate (dx, dy, Append (order));
 		}
 
 		public override object Clone ()
 		{
+			Live ();
 			var c = (PathGradientBrush) MemberwiseClone ();
 			c._path = _path?.Clone ();
 			c._points = (PointF []) _points?.Clone ();

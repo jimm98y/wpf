@@ -72,7 +72,7 @@ namespace System.Drawing.Imaging {
 		internal GpMetafileRecorder TakeRecorder ()
 		{
 			if (state != MetafileState.Recording || recorder == null || recorder.GraphicsTaken)
-				throw new OutOfMemoryException ("Out of memory.");
+				throw SafeNativeMethods.Gdip.OutOfMemoryException ();
 			recorder.GraphicsTaken = true;
 			return recorder;
 		}
@@ -83,7 +83,7 @@ namespace System.Drawing.Imaging {
 		{
 			switch (s) {
 			case GpMetafileFormat.ReadStatus.InvalidParameter: return new ArgumentException ("Parameter is not valid.");
-			case GpMetafileFormat.ReadStatus.OutOfMemory: return new OutOfMemoryException ("Out of memory.");
+			case GpMetafileFormat.ReadStatus.OutOfMemory: return SafeNativeMethods.Gdip.OutOfMemoryException ();
 			default: return new ExternalException ("A generic error occurred in GDI+.", unchecked ((int) 0x80004005));
 			}
 		}
@@ -116,7 +116,7 @@ namespace System.Drawing.Imaging {
 		public Metafile (Stream stream)
 		{
 			if (stream == null)
-				throw new ArgumentException ("Value of 'null' is not valid for 'stream'.");
+				throw new ArgumentNullException ("stream");
 			LoadBytes (ReadAll (stream));
 		}
 
@@ -165,6 +165,9 @@ namespace System.Drawing.Imaging {
 		// anything else turns it into an EMF the way GDI+ does (GetEmfFromWmfData).
 		public Metafile (IntPtr hmetafile, WmfPlaceableFileHeader wmfHeader, bool deleteWmf)
 		{
+			// System.Drawing marshals the header first.
+			if (wmfHeader == null)
+				throw new NullReferenceException ();
 			if (!OperatingSystem.IsWindows ())
 				throw new PlatformNotSupportedException ("An HMETAFILE exists only on Windows.");
 			if (hmetafile == IntPtr.Zero)
@@ -281,7 +284,7 @@ namespace System.Drawing.Imaging {
 		public Metafile (Stream stream, IntPtr referenceHdc, EmfType type, string description)
 		{
 			if (stream == null)
-				throw new NullReferenceException ();
+				throw new ArgumentNullException ("stream");
 			Record (stream, null, referenceHdc, null, MetafileFrameUnit.GdiCompatible, type, description);
 		}
 
@@ -361,7 +364,7 @@ namespace System.Drawing.Imaging {
 			EmfType type, string description)
 		{
 			if (stream == null)
-				throw new NullReferenceException ();
+				throw new ArgumentNullException ("stream");
 			Record (stream, null, referenceHdc, frameRect.IsEmpty ? (RectangleF?) null : frameRect,
 				frameRect.IsEmpty ? MetafileFrameUnit.GdiCompatible : frameUnit, type, description);
 		}
@@ -370,7 +373,7 @@ namespace System.Drawing.Imaging {
 			EmfType type, string description)
 		{
 			if (stream == null)
-				throw new NullReferenceException ();
+				throw new ArgumentNullException ("stream");
 			Record (stream, null, referenceHdc, frameRect, frameUnit, type, description);
 		}
 
@@ -453,6 +456,7 @@ namespace System.Drawing.Imaging {
 		/// metafile is invalid.</summary>
 		public IntPtr GetHenhmetafile ()
 		{
+			Live ();
 			if (state != MetafileState.Playable)
 				throw InvalidParameter ();
 			if (!OperatingSystem.IsWindows ())
@@ -466,6 +470,7 @@ namespace System.Drawing.Imaging {
 		/// <summary>GdipGetMetafileHeaderFromMetafile: valid while recording too.</summary>
 		public MetafileHeader GetMetafileHeader ()
 		{
+			Live ();
 			if (state != MetafileState.Playable && state != MetafileState.Recording)
 				throw InvalidParameter ();
 			return new MetafileHeader (header);
@@ -488,7 +493,7 @@ namespace System.Drawing.Imaging {
 		public static MetafileHeader GetMetafileHeader (Stream stream)
 		{
 			if (stream == null)
-				throw new NullReferenceException ();
+				throw new ArgumentNullException ("stream");
 			long pos = stream.CanSeek ? stream.Position : -1;
 			byte[] bytes = ReadAll (stream);
 			if (pos >= 0)
@@ -521,9 +526,11 @@ namespace System.Drawing.Imaging {
 		// placeable)); an invalid one is InvalidParameter.
 		public static MetafileHeader GetMetafileHeader (IntPtr hmetafile, WmfPlaceableFileHeader wmfHeader)
 		{
+			if (wmfHeader == null)
+				throw new NullReferenceException ();
 			if (!OperatingSystem.IsWindows ())
 				throw new PlatformNotSupportedException ("An HMETAFILE exists only on Windows.");
-			if (hmetafile == IntPtr.Zero || wmfHeader == null)
+			if (hmetafile == IntPtr.Zero)
 				throw InvalidParameter ();
 			GpPlaceable p = GpPlaceable.FromPublic (wmfHeader);
 			if (!p.IsValid)
@@ -545,12 +552,15 @@ namespace System.Drawing.Imaging {
 		/// onto the Graphics being enumerated to.</summary>
 		public void PlayRecord (EmfPlusRecordType recordType, int flags, int dataSize, byte[] data)
 		{
+			Live ();
 			if (state != MetafileState.Playable)
 				throw InvalidParameter ();
 			GpMetafilePlayer.PlayRecord (this, recordType, flags, dataSize, data);
 		}
 
 		// ---- what Image answers for a metafile (GpMetafile's GpImage overrides) ---------------------
+
+		internal bool IsRecording => state == MetafileState.Recording;
 
 		internal void CheckPlayable ()
 		{

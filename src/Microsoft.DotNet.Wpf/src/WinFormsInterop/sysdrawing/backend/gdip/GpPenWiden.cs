@@ -120,7 +120,52 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
     internal static partial class GpPathWarp
     {
+        // GpPath::WarpAndFlattenSelf: the path flattened (through the matrix), then every point carried
+        // from the source rectangle onto the destination quadrilateral -- upper-left, upper-right,
+        // lower-left and lower-right; three points make it a parallelogram -- projectively
+        // (Perspective) or bilinearly (Bilinear). A mode GDI+ does not know leaves the path empty.
         public static partial void Warp (GpPath path, GpMatrix? matrix, PointF[] dest, RectangleF src, WarpMode mode, float flatness)
-            => throw new NotImplementedException ("GpPath::WarpAndFlattenSelf");
+        {
+            if (path.Count == 0) return;
+            if (mode != WarpMode.Perspective && mode != WarpMode.Bilinear) {
+                path.Points.Clear ();
+                path.Types.Clear ();
+                path.Revalidate ();
+                return;
+            }
+            path.Flatten (matrix, flatness);
+            if (dest.Length == 0) return;
+            PointF p0 = dest [0];
+            PointF p1 = dest.Length > 1 ? dest [1] : new PointF (p0.X + src.Width, p0.Y);
+            PointF p2 = dest.Length > 2 ? dest [2] : new PointF (p0.X, p0.Y + src.Height);
+            PointF p3 = dest.Length > 3 ? dest [3] : new PointF (p1.X + p2.X - p0.X, p1.Y + p2.Y - p0.Y);
+            bool perspective = mode == WarpMode.Perspective && dest.Length > 3;
+            double a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, g = 0, h = 0;
+            if (perspective) {
+                // The unit square onto the quadrilateral (Heckbert's square-to-quad mapping).
+                double sx = p0.X - p1.X + p3.X - p2.X, sy = p0.Y - p1.Y + p3.Y - p2.Y;
+                double dx1 = p1.X - p3.X, dx2 = p2.X - p3.X, dy1 = p1.Y - p3.Y, dy2 = p2.Y - p3.Y;
+                double den = dx1 * dy2 - dx2 * dy1;
+                g = den == 0 ? 0 : (sx * dy2 - dx2 * sy) / den;
+                h = den == 0 ? 0 : (dx1 * sy - sx * dy1) / den;
+                a = p1.X - p0.X + g * p1.X; b = p2.X - p0.X + h * p2.X; c = p0.X;
+                d = p1.Y - p0.Y + g * p1.Y; e = p2.Y - p0.Y + h * p2.Y; f = p0.Y;
+            }
+            for (int i = 0; i < path.Points.Count; i++) {
+                PointF p = path.Points [i];
+                double u = (p.X - src.X) / src.Width, v = (p.Y - src.Y) / src.Height;
+                double x, y;
+                if (perspective) {
+                    double w = g * u + h * v + 1;
+                    x = (a * u + b * v + c) / w;
+                    y = (d * u + e * v + f) / w;
+                } else {
+                    x = (1 - u) * (1 - v) * p0.X + u * (1 - v) * p1.X + (1 - u) * v * p2.X + u * v * p3.X;
+                    y = (1 - u) * (1 - v) * p0.Y + u * (1 - v) * p1.Y + (1 - u) * v * p2.Y + u * v * p3.Y;
+                }
+                path.Points [i] = new PointF ((float) x, (float) y);
+            }
+            path.Revalidate ();
+        }
     }
 }

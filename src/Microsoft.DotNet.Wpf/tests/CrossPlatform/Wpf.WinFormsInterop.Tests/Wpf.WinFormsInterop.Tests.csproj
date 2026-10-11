@@ -95,6 +95,9 @@
     <!-- Output profiles crafted for icm32's other output paths (XYZ PCS, v4 lut16 / lutBtoA /
          lutAtoB, refused ones); GpIcmTests holds GpIcm to mscms' KYMC for them. -->
     <None Include="Fixtures/Icm/*.icm" CopyToOutputDirectory="PreserveNewest" />
+    <!-- What .NET 10's System.Drawing.Common on native GDI+ throws for every DrawingExceptionCases case
+         (DrawingExceptionParityTests, which says how to regenerate it). -->
+    <None Include="Fixtures/Drawing/*.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The comparison needs a Windows to compare against; elsewhere it is not built at all. -->

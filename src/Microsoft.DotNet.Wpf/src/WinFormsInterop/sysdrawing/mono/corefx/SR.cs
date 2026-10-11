@@ -86,6 +86,8 @@ partial class SR
 	public const string PrintingPermissionAttributeInvalidPermissionLevel = "Permission level must be between PrintingPermissionLevel.NoPrinting and PrintingPermissionLevel.AllPrinting.";
 	public const string PropertyValueInvalidEntry = "IDictionary parameter contains at least one entry that is not valid. Ensure all values are consistent with the object's properties.";
 	public const string PSizeNotCustom = "PaperSize cannot be changed unless the Kind property is set to Custom.";
+	public const string InvalidArgumentValueFontConverter = "Value of '{0}' is not valid for font size unit.";
+	public const string TargetDirectoryDoesNotExist = "The directory {0} of the filename {1} does not exist.";
 	public const string ResourceNotFound = "Resource '{1}' cannot be found in class '{0}'.";
 	public const string TargetNotPrintingPermission = "Target does not have permission to print.";
 	public const string TextParseFailedFormat = "Text \"{0}\" cannot be parsed. The expected text format is \"{1}\".";

@@ -73,9 +73,15 @@ namespace System.Drawing
 			if (rgnData == null)
 				throw new ArgumentNullException ("rgnData");
 			// a NullReferenceException can be throw for rgnData.Data.Length (if rgnData.Data is null) just like MS
+			// GdipCreateRegionRgnData: no bytes is InvalidParameter; bytes that do not parse are
+			// GenericError.
 			if (rgnData.Data.Length == 0)
-				throw new ArgumentException ("rgnData");
-			gp = Deserialize (rgnData.Data);
+				throw new ArgumentException ("Parameter is not valid.");
+			try {
+				gp = Deserialize (rgnData.Data);
+			} catch (Exception e) when (e is ArgumentException || e is IndexOutOfRangeException || e is OverflowException) {
+				throw new ExternalException ("A generic error occurred in GDI+.", unchecked ((int) 0x80004005));
+			}
 		}
 
 		internal Region (GpRegion region)
@@ -98,17 +104,29 @@ namespace System.Drawing
 		{
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			Live ();
 			Combine (FromPath (path), CombineMode.Union);
 		}
 
-		public void Union (Rectangle rect) => Combine (GpRegion.FromRect (rect), CombineMode.Union);
+		public void Union (Rectangle rect)
+		{
+			Live ();
+			Combine (GpRegion.FromRect (rect), CombineMode.Union);
+		}
 
-		public void Union (RectangleF rect) => Combine (GpRegion.FromRect (rect), CombineMode.Union);
+		public void Union (RectangleF rect)
+		{
+			Live ();
+			Combine (GpRegion.FromRect (rect), CombineMode.Union);
+		}
 
 		public void Union (Region region)
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			LiveArgs (region);
+			Live ();
+			Busy (region);
 			Combine (region.gp, CombineMode.Union);
 		}
 
@@ -116,17 +134,29 @@ namespace System.Drawing
 		{
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			Live ();
 			Combine (FromPath (path), CombineMode.Intersect);
 		}
 
-		public void Intersect (Rectangle rect) => Combine (GpRegion.FromRect (rect), CombineMode.Intersect);
+		public void Intersect (Rectangle rect)
+		{
+			Live ();
+			Combine (GpRegion.FromRect (rect), CombineMode.Intersect);
+		}
 
-		public void Intersect (RectangleF rect) => Combine (GpRegion.FromRect (rect), CombineMode.Intersect);
+		public void Intersect (RectangleF rect)
+		{
+			Live ();
+			Combine (GpRegion.FromRect (rect), CombineMode.Intersect);
+		}
 
 		public void Intersect (Region region)
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			LiveArgs (region);
+			Live ();
+			Busy (region);
 			Combine (region.gp, CombineMode.Intersect);
 		}
 
@@ -134,17 +164,29 @@ namespace System.Drawing
 		{
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			Live ();
 			Combine (FromPath (path), CombineMode.Complement);
 		}
 
-		public void Complement (Rectangle rect) => Combine (GpRegion.FromRect (rect), CombineMode.Complement);
+		public void Complement (Rectangle rect)
+		{
+			Live ();
+			Combine (GpRegion.FromRect (rect), CombineMode.Complement);
+		}
 
-		public void Complement (RectangleF rect) => Combine (GpRegion.FromRect (rect), CombineMode.Complement);
+		public void Complement (RectangleF rect)
+		{
+			Live ();
+			Combine (GpRegion.FromRect (rect), CombineMode.Complement);
+		}
 
 		public void Complement (Region region)
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			LiveArgs (region);
+			Live ();
+			Busy (region);
 			Combine (region.gp, CombineMode.Complement);
 		}
 
@@ -152,17 +194,29 @@ namespace System.Drawing
 		{
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			Live ();
 			Combine (FromPath (path), CombineMode.Exclude);
 		}
 
-		public void Exclude (Rectangle rect) => Combine (GpRegion.FromRect (rect), CombineMode.Exclude);
+		public void Exclude (Rectangle rect)
+		{
+			Live ();
+			Combine (GpRegion.FromRect (rect), CombineMode.Exclude);
+		}
 
-		public void Exclude (RectangleF rect) => Combine (GpRegion.FromRect (rect), CombineMode.Exclude);
+		public void Exclude (RectangleF rect)
+		{
+			Live ();
+			Combine (GpRegion.FromRect (rect), CombineMode.Exclude);
+		}
 
 		public void Exclude (Region region)
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			LiveArgs (region);
+			Live ();
+			Busy (region);
 			Combine (region.gp, CombineMode.Exclude);
 		}
 
@@ -170,17 +224,29 @@ namespace System.Drawing
 		{
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			Live ();
 			Combine (FromPath (path), CombineMode.Xor);
 		}
 
-		public void Xor (Rectangle rect) => Combine (GpRegion.FromRect (rect), CombineMode.Xor);
+		public void Xor (Rectangle rect)
+		{
+			Live ();
+			Combine (GpRegion.FromRect (rect), CombineMode.Xor);
+		}
 
-		public void Xor (RectangleF rect) => Combine (GpRegion.FromRect (rect), CombineMode.Xor);
+		public void Xor (RectangleF rect)
+		{
+			Live ();
+			Combine (GpRegion.FromRect (rect), CombineMode.Xor);
+		}
 
 		public void Xor (Region region)
 		{
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			LiveArgs (region);
+			Live ();
+			Busy (region);
 			Combine (region.gp, CombineMode.Xor);
 		}
 
@@ -194,6 +260,8 @@ namespace System.Drawing
 		{
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			LiveArgs (g);
+			Live ();
 			return Bounds (ToDevice (g));
 		}
 
@@ -234,51 +302,116 @@ namespace System.Drawing
 			return PathBounds (p);
 		}
 
-		public void Translate (int dx, int dy) => Translate ((float) dx, (float) dy);
+		public void Translate (int dx, int dy)
+		{
+			Live ();
+			Translate ((float) dx, (float) dy);
+		}
 
-		public void Translate (float dx, float dy) => gp.Offset (dx, dy);
+		public void Translate (float dx, float dy)
+		{
+			Live ();
+			gp.Offset (dx, dy);
+		}
 
-		public bool IsVisible (int x, int y, Graphics g) => IsVisible ((float) x, (float) y, g);
+		public bool IsVisible (int x, int y, Graphics g)
+		{
+			Live ();
+			return IsVisible ((float) x, (float) y, g);
+		}
 
-		public bool IsVisible (int x, int y, int width, int height) => IsVisible ((float) x, (float) y, (float) width, (float) height, null);
+		public bool IsVisible (int x, int y, int width, int height)
+		{
+			Live ();
+			return IsVisible ((float) x, (float) y, (float) width, (float) height, null);
+		}
 
-		public bool IsVisible (int x, int y, int width, int height, Graphics g) => IsVisible ((float) x, (float) y, (float) width, (float) height, g);
+		public bool IsVisible (int x, int y, int width, int height, Graphics g)
+		{
+			Live ();
+			return IsVisible ((float) x, (float) y, (float) width, (float) height, g);
+		}
 
-		public bool IsVisible (Point point) => IsVisible ((float) point.X, (float) point.Y, null);
+		public bool IsVisible (Point point)
+		{
+			Live ();
+			return IsVisible ((float) point.X, (float) point.Y, null);
+		}
 
-		public bool IsVisible (PointF point) => IsVisible (point.X, point.Y, null);
+		public bool IsVisible (PointF point)
+		{
+			Live ();
+			return IsVisible (point.X, point.Y, null);
+		}
 
-		public bool IsVisible (Point point, Graphics g) => IsVisible ((float) point.X, (float) point.Y, g);
+		public bool IsVisible (Point point, Graphics g)
+		{
+			Live ();
+			return IsVisible ((float) point.X, (float) point.Y, g);
+		}
 
-		public bool IsVisible (PointF point, Graphics g) => IsVisible (point.X, point.Y, g);
+		public bool IsVisible (PointF point, Graphics g)
+		{
+			Live ();
+			return IsVisible (point.X, point.Y, g);
+		}
 
-		public bool IsVisible (Rectangle rect) => IsVisible ((float) rect.X, rect.Y, rect.Width, rect.Height, null);
+		public bool IsVisible (Rectangle rect)
+		{
+			Live ();
+			return IsVisible ((float) rect.X, rect.Y, rect.Width, rect.Height, null);
+		}
 
-		public bool IsVisible (RectangleF rect) => IsVisible (rect.X, rect.Y, rect.Width, rect.Height, null);
+		public bool IsVisible (RectangleF rect)
+		{
+			Live ();
+			return IsVisible (rect.X, rect.Y, rect.Width, rect.Height, null);
+		}
 
-		public bool IsVisible (Rectangle rect, Graphics g) => IsVisible ((float) rect.X, rect.Y, rect.Width, rect.Height, g);
+		public bool IsVisible (Rectangle rect, Graphics g)
+		{
+			Live ();
+			return IsVisible ((float) rect.X, rect.Y, rect.Width, rect.Height, g);
+		}
 
-		public bool IsVisible (RectangleF rect, Graphics g) => IsVisible (rect.X, rect.Y, rect.Width, rect.Height, g);
+		public bool IsVisible (RectangleF rect, Graphics g)
+		{
+			Live ();
+			return IsVisible (rect.X, rect.Y, rect.Width, rect.Height, g);
+		}
 
-		public bool IsVisible (float x, float y) => IsVisible (x, y, null);
+		public bool IsVisible (float x, float y)
+		{
+			Live ();
+			return IsVisible (x, y, null);
+		}
 
 		/// <summary>GpRegion::IsVisible(PointF): the device region, the point transformed and
 		/// truncated after adding a half.</summary>
 		public bool IsVisible (float x, float y, Graphics g)
 		{
+			Live ();
 			GpMatrix m = ToDevice (g);
 			DpRegion d = gp.Device (m);
 			m.Transform (ref x, ref y);
 			return d.Contains ((int) MathF.Floor (x + 0.5f), (int) MathF.Floor (y + 0.5f));
 		}
 
-		public bool IsVisible (float x, float y, float width, float height) => IsVisible (x, y, width, height, null);
+		public bool IsVisible (float x, float y, float width, float height)
+		{
+			Live ();
+			return IsVisible (x, y, width, height, null);
+		}
 
 		/// <summary>GpRegion::IsVisible(RectF): an axis-aligned device rectangle, its edges rounded
 		/// up (the binary's -(int)-(v) with the Misc optimisation off), tested against the device
 		/// region; under a rotation the rectangle as a region.</summary>
 		public bool IsVisible (float x, float y, float width, float height, Graphics g)
 		{
+			Live ();
+			// GpRectF::IsEmptyArea: no width or height meets nothing.
+			if (!(width > 0) || !(height > 0))
+				return false;
 			GpMatrix m = ToDevice (g);
 			DpRegion d = gp.Device (m);
 			if (m.IsTranslateScale) {
@@ -296,12 +429,19 @@ namespace System.Drawing
 
 		static int Ceil (float v) => -(int) Math.Floor (-(double) v);   // frintm of the negation
 
-		public bool IsVisible (float x, float y, float width, float height, Graphics g, bool unused) => IsVisible (x, y, width, height, g);
+		// Not System.Drawing API (an overload Mono had): kept for callers inside the fork.
+		internal bool IsVisible (float x, float y, float width, float height, Graphics g, bool unused)
+		{
+			Live ();
+			return IsVisible (x, y, width, height, g);
+		}
 
 		public bool IsEmpty (Graphics g)
 		{
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			LiveArgs (g);
+			Live ();
 			if (gp.Type == GpRegion.NodeEmpty) return true;
 			return gp.Device (ToDevice (g)).IsEmpty;
 		}
@@ -310,15 +450,25 @@ namespace System.Drawing
 		{
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			LiveArgs (g);
+			Live ();
 			if (gp.Type == GpRegion.NodeInfinite) return true;
 			return gp.Device (ToDevice (g)).IsInfinite;
 		}
 
 		internal bool IsInfiniteInternal => gp.Type == GpRegion.NodeInfinite;
 
-		public void MakeEmpty () => gp.MakeEmpty ();
+		public void MakeEmpty ()
+		{
+			Live ();
+			gp.MakeEmpty ();
+		}
 
-		public void MakeInfinite () => gp.MakeInfinite ();
+		public void MakeInfinite ()
+		{
+			Live ();
+			gp.MakeInfinite ();
+		}
 
 		public bool Equals (Region region, Graphics g)
 		{
@@ -326,6 +476,8 @@ namespace System.Drawing
 				throw new ArgumentNullException ("region");
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			LiveArgs (region, g);
+			Live ();
 			GpMatrix m = ToDevice (g);
 			return SameBands (gp.Device (m), region.gp.Device (m));
 		}
@@ -344,17 +496,19 @@ namespace System.Drawing
 		public static Region FromHrgn (IntPtr hrgn)
 		{
 			if (hrgn == IntPtr.Zero)
-				throw new ArgumentException ("hrgn");
+				throw new ArgumentException ("Parameter is not valid.");
 			if (!OperatingSystem.IsWindows ())
 				throw new PlatformNotSupportedException ("An HRGN is a Windows GDI object.");
 			// RGNDATA: a 32-byte header (dwSize, iType, nCount, nRgnSize, rcBound), then nCount RECTs --
 			// GDI+ makes a path of them (GpPath(HRGN)), one rectangle figure each.
 			int size = GetRegionData (hrgn, 0, IntPtr.Zero);
-			if (size <= 0) return new Region (GpRegion.Empty ());
+			// Not a region: GdipCreateRegionHrgn answers InvalidParameter.
+			if (size <= 0)
+				throw new ArgumentException ("Parameter is not valid.");
 			IntPtr buf = Marshal.AllocHGlobal (size);
 			try {
 				if (GetRegionData (hrgn, size, buf) == 0)
-					throw new ArgumentException ("hrgn");
+					throw new ArgumentException ("Parameter is not valid.");
 				int count = Marshal.ReadInt32 (buf, 8);
 				if (count == 0) return new Region (GpRegion.Empty ());
 				if (count == 1) {
@@ -380,10 +534,12 @@ namespace System.Drawing
 		{
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			Live ();
 			// An HRGN exists only on Windows: the OS's own region object, built from these rectangles.
 			if (!OperatingSystem.IsWindows ())
 				return IntPtr.Zero;
-			if (IsInfinite (g))
+			// (A disposed Graphics is no Graphics to GDI+ here: the world is the identity.)
+			if (gp.Type == GpRegion.NodeInfinite || gp.Device (ToDevice (g)).IsInfinite)
 				return IntPtr.Zero;   // GDI+ hands back NULL for the infinite region
 			IntPtr rgn = CreateRectRgn (0, 0, 0, 0);
 			foreach (Rectangle r in gp.Device (ToDevice (g)).Rects ()) {
@@ -404,6 +560,7 @@ namespace System.Drawing
 
 		public RegionData GetRegionData ()
 		{
+			Live ();
 			var body = new MemoryStream ();
 			var w = new BinaryWriter (body);
 			w.Write (RegionVersion);
@@ -496,7 +653,11 @@ namespace System.Drawing
 
 		public RectangleF [] GetRegionScans (Matrix matrix)
 		{
-			GpMatrix m = matrix == null ? GpMatrix.CreateIdentity () : matrix.Gp;
+			if (matrix == null)
+				throw new ArgumentNullException ("matrix");
+			LiveArgs (matrix);
+			Live ();
+			GpMatrix m = matrix.Gp;
 			var scans = new List<RectangleF> ();
 			foreach (Rectangle r in gp.Device (m).Rects ()) scans.Add (r);
 			return scans.ToArray ();
@@ -506,15 +667,50 @@ namespace System.Drawing
 		{
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			LiveArgs (matrix);
+			Live ();
 			gp.Transform (matrix.Gp);
 		}
 
-		public Region Clone () => new Region (gp.Clone ());
+		public Region Clone ()
+		{
+			Live ();
+			return new Region (gp.Clone ());
+		}
 
 		public void Dispose ()
 		{
+			_disposed = true;
 			System.GC.SuppressFinalize (this);
 		}
+
+		// GDI+'s object is gone after Dispose: every call System.Drawing makes with its handle (zero)
+		// comes back InvalidParameter.
+		bool _disposed;
+		internal bool IsDisposed => _disposed;
+
+		// GDI+ locks both objects of a combine: the region with itself is ObjectBusy.
+		void Busy (Region region)
+		{
+			if (ReferenceEquals (region, this))
+				throw new InvalidOperationException ("Object is currently in use elsewhere.");
+		}
+
+		// A disposed argument hands GDI+ no object.
+		static void LiveArgs (object a) => Graphics.CheckLive (a);
+
+		static void LiveArgs (object a, object b)
+		{
+			Graphics.CheckLive (a);
+			Graphics.CheckLive (b);
+		}
+
+		internal void Live ()
+		{
+			if (_disposed)
+				throw new ArgumentException ("Parameter is not valid.");
+		}
+
 
 		// No GDI+ object: kept for the code that still passes one around (always zero).
 		internal IntPtr NativeObject

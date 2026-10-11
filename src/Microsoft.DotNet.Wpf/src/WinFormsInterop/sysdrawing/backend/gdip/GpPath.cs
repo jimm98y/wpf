@@ -391,6 +391,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public void AddPath (GpPath other, bool connect)
         {
             if (other == null || other.Count == 0) return;
+            // A path added to itself adds what it held when the call began.
+            if (ReferenceEquals (other, this)) other = Clone ();
             int n = Points.Count;
             int start = 0;
             if (connect && SubpathActive && n > 0) {

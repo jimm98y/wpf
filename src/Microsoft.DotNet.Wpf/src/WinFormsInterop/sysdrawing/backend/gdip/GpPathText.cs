@@ -38,7 +38,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         public static partial void AddString (GpPath path, string s, FontFamily family, int style, float emSize, RectangleF layout, StringFormat format)
         {
-            if (string.IsNullOrEmpty (s) || !(emSize > 0f)) return;
+            // GDI+ lays out a zero or negative em too: the outlines scaled to nothing, or mirrored.
+            if (string.IsNullOrEmpty (s) || float.IsNaN (emSize) || float.IsInfinity (emSize)) return;
             string name = family.Name;
             if (GdipText.Face (name, style & 3) == null) return;
             GpTextFormat fmt = GpTextFormat.From (format);

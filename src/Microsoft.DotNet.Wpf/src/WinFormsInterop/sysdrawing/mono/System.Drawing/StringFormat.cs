@@ -37,21 +37,36 @@ namespace System.Drawing {
 	// A managed GpStringFormat: every property kept here (there is no GDI+ object behind it).
 	public sealed class StringFormat : MarshalByRefObject, IDisposable, ICloneable
 	{
-		private int language = GDIPlus.LANG_NEUTRAL;
+		// GpStringFormat's state. A wrapper of one of GDI+'s two generic formats shares it with every
+		// other wrapper of that format: GenericDefault and GenericTypographic hand out a new wrapper
+		// each time, and what one changes the next sees.
+		sealed class State
+		{
+			internal int language = GDIPlus.LANG_NEUTRAL;
+			internal StringAlignment _align, _lineAlign;
+			internal StringFormatFlags _flags;
+			// GpStringFormat's defaults: Trimming Character.
+			internal StringTrimming _trimming = StringTrimming.Character;
+			internal HotkeyPrefix _hotkey;
+			internal StringDigitSubstitute _digitSubstitute = StringDigitSubstitute.User;
+			internal int _digitLanguage = GDIPlus.LANG_NEUTRAL;
+			internal float _firstTabOffset;
+			internal float [] _tabStops = new float [0];
+			// GDI+ has no getter for the measurable character ranges, and Graphics.MeasureCharacterRanges
+			// lays the ranges out itself, so keep a managed copy.
+			internal CharacterRange [] _measurableRanges;
+			internal bool IsTypographic;
+			internal int TabStopCount;
+		}
 
-		private StringAlignment _align, _lineAlign;
-		private StringFormatFlags _flags;
-				// GpStringFormat's defaults: Trimming Character.
-		private StringTrimming _trimming = StringTrimming.Character;
-		private HotkeyPrefix _hotkey;
-		private StringDigitSubstitute _digitSubstitute = StringDigitSubstitute.User;
-		private int _digitLanguage = GDIPlus.LANG_NEUTRAL;
-		private float _firstTabOffset;
-		private float [] _tabStops = new float [0];
+		readonly State _s = new State ();
 
-		// GDI+ has no getter for the measurable character ranges, and Graphics.MeasureCharacterRanges
-		// lays the ranges out itself, so keep a managed copy.
-		private CharacterRange [] _measurableRanges;
+		StringFormat (State shared)
+		{
+			_s = shared;
+		}
+
+		static State s_genericDefault, s_genericTypographic;
 
 		public StringFormat() : this (0, GDIPlus.LANG_NEUTRAL)
 		{
@@ -59,8 +74,8 @@ namespace System.Drawing {
 
 		public StringFormat(StringFormatFlags options, int language)
 		{
-			this.language = language;
-			_flags = options;
+			_s.language = language;
+			_s._flags = options;
 		}
 
 		~StringFormat ()
@@ -76,104 +91,147 @@ namespace System.Drawing {
 
 		void Dispose (bool disposing)
 		{
+			_disposed = true;
 		}
+
+		// GDI+'s object is gone after Dispose: every call System.Drawing makes with its handle (zero)
+		// comes back InvalidParameter.
+		bool _disposed;
+		internal bool IsDisposed => _disposed;
+
+		internal void Live ()
+		{
+			if (_disposed)
+				throw new ArgumentException ("Parameter is not valid.");
+		}
+
 
 		public StringFormat (StringFormat format)
 		{
 			if (format == null)
 				throw new ArgumentNullException ("format");
+			format.Live ();
 
-			this.language = format.language;
-			_align = format._align; _lineAlign = format._lineAlign;
-			_flags = format._flags; _trimming = format._trimming; _hotkey = format._hotkey;
-			_digitSubstitute = format._digitSubstitute; _digitLanguage = format._digitLanguage;
-			_firstTabOffset = format._firstTabOffset; _tabStops = (float []) format._tabStops.Clone ();
+			_s.language = format._s.language;
+			_s._align = format._s._align; _s._lineAlign = format._s._lineAlign;
+			_s._flags = format._s._flags; _s._trimming = format._s._trimming; _s._hotkey = format._s._hotkey;
+			_s._digitSubstitute = format._s._digitSubstitute; _s._digitLanguage = format._s._digitLanguage;
+			_s._firstTabOffset = format._s._firstTabOffset; _s._tabStops = (float []) format._s._tabStops.Clone ();
 			// AND THE TYPOGRAPHIC FLAG, which is a field rather than one of the FormatFlags and so
 			// was not copied by a copy constructor. A caller writing
 			// new StringFormat (StringFormat.GenericTypographic) got a format that was no longer
 			// typographic, and the margin it was asking to be rid of came straight back.
 			IsTypographic = format.IsTypographic;
 			TabStopCount = format.TabStopCount;
-			_measurableRanges = (format._measurableRanges == null)
-				? null : (CharacterRange []) format._measurableRanges.Clone ();
+			_s._measurableRanges = (format._s._measurableRanges == null)
+				? null : (CharacterRange []) format._s._measurableRanges.Clone ();
 		}
 
 		public StringFormat (StringFormatFlags options)
 		{
-			_flags = options;
+			_s._flags = options;
 		}
 
 		public StringAlignment Alignment {
-			get { return _align; }
+			get { Live (); return _s._align; }
 			set {
 				if ((value < StringAlignment.Near) || (value > StringAlignment.Far))
-					throw new InvalidEnumArgumentException ("Alignment");
-				_align = value;
+					throw new InvalidEnumArgumentException ("value", (int) value, typeof (StringAlignment));
+				Live ();
+				_s._align = value;
 			}
 		}
 
 		public StringAlignment LineAlignment {
-			get { return _lineAlign; }
+			get { Live (); return _s._lineAlign; }
 			set {
 				if ((value < StringAlignment.Near) || (value > StringAlignment.Far))
-					throw new InvalidEnumArgumentException ("Alignment");
-				_lineAlign = value;
+					throw new InvalidEnumArgumentException ("value", (int) value, typeof (StringAlignment));
+				Live ();
+				_s._lineAlign = value;
 			}
 		}
 
 		public StringFormatFlags FormatFlags {
-			get { return _flags; }
-			set { _flags = value; }
+			get { Live (); return _s._flags; }
+			set { Live (); _s._flags = value; }
 		}
 
 		public HotkeyPrefix HotkeyPrefix {
-			get { return _hotkey; }
+			get { Live (); return _s._hotkey; }
 			set {
 				if ((value < HotkeyPrefix.None) || (value > HotkeyPrefix.Hide))
-					throw new InvalidEnumArgumentException ("HotkeyPrefix");
-				_hotkey = value;
+					throw new InvalidEnumArgumentException ("value", (int) value, typeof (HotkeyPrefix));
+				Live ();
+				_s._hotkey = value;
 			}
 		}
 
 		public StringTrimming Trimming {
-			get { return _trimming; }
+			get { Live (); return _s._trimming; }
 			set {
 				if ((value < StringTrimming.None) || (value > StringTrimming.EllipsisPath))
-					throw new InvalidEnumArgumentException ("Trimming");
-				_trimming = value;
+					throw new InvalidEnumArgumentException ("value", (int) value, typeof (StringTrimming));
+				Live ();
+				_s._trimming = value;
 			}
 		}
 
-		public static StringFormat GenericDefault => new StringFormat ();
+		public static StringFormat GenericDefault => new StringFormat (s_genericDefault ??= new StringFormat ()._s);
 
-		public int DigitSubstitutionLanguage => _digitLanguage;
+		public int DigitSubstitutionLanguage
+		{
+			get
+			{
+				Live ();
+				return _s._digitLanguage;
+			}
+		}
 
 		/// <summary>Whether this is the typographic format, which asks for the text to be laid
 		/// out with no margin around it -- a caller placing glyphs itself wants exactly the run
 		/// it asked for, and nothing either side of it.</summary>
-		internal bool IsTypographic;
+		internal bool IsTypographic { get => _s.IsTypographic; set => _s.IsTypographic = value; }
 
 		/// <summary>GDI+'s typographic format: FitBlackBox | LineLimit | NoClip (0x6004), no trimming,
 		/// no margins or tracking (GpStringFormat::GenericTypographic).</summary>
 		public static StringFormat GenericTypographic
-			=> new StringFormat (StringFormatFlags.FitBlackBox | StringFormatFlags.LineLimit | StringFormatFlags.NoClip) { IsTypographic = true, Trimming = StringTrimming.None };
+			=> new StringFormat (s_genericTypographic ??= new StringFormat (StringFormatFlags.FitBlackBox | StringFormatFlags.LineLimit | StringFormatFlags.NoClip) { IsTypographic = true, Trimming = StringTrimming.None }._s);
 
-		public StringDigitSubstitute DigitSubstitutionMethod => _digitSubstitute;
+		public StringDigitSubstitute DigitSubstitutionMethod
+		{
+			get
+			{
+				Live ();
+				return _s._digitSubstitute;
+			}
+		}
 
 		public void SetMeasurableCharacterRanges (CharacterRange [] ranges)
 		{
-			_measurableRanges = (ranges == null) ? null : (CharacterRange []) ranges.Clone ();
+			if (ranges == null)
+				throw new ArgumentNullException ("ranges");
+			Live ();
+			// GdipSetStringFormatMeasurableCharacterRanges: no more than 32 (ValueOverflow).
+			if (ranges.Length > 32)
+				throw new OverflowException ("Overflow error.");
+			_s._measurableRanges = (ranges == null) ? null : (CharacterRange []) ranges.Clone ();
 		}
 
 		/// <summary>The ranges last passed to <see cref="SetMeasurableCharacterRanges"/>, or null.</summary>
-		internal CharacterRange [] MeasurableCharacterRanges => _measurableRanges;
+		internal CharacterRange [] MeasurableCharacterRanges => _s._measurableRanges;
 
-		internal int GetMeasurableCharacterRangeCount () => (_measurableRanges == null) ? 0 : _measurableRanges.Length;
+		internal int GetMeasurableCharacterRangeCount () => (_s._measurableRanges == null) ? 0 : _s._measurableRanges.Length;
 
-		public object Clone () => new StringFormat (this);
+		public object Clone ()
+		{
+			Live ();
+			return new StringFormat (this);
+		}
 
 		public override string ToString()
 		{
+			Live ();
 			return "[StringFormat, FormatFlags=" + this.FormatFlags.ToString() + "]";
 		}
 
@@ -184,27 +242,36 @@ namespace System.Drawing {
 
 		/// <summary>How many tab stops were set: a format with tab stops is one GDI+'s fast text
 		/// imager refuses.</summary>
-		internal int TabStopCount;
+		internal int TabStopCount { get => _s.TabStopCount; set => _s.TabStopCount = value; }
 
 		public void SetTabStops (float firstTabOffset, float[] tabStops)
 		{
+			if (firstTabOffset < 0)
+				throw new ArgumentException (SR.Format (SR.InvalidArgument, "firstTabOffset", firstTabOffset));
 			if (tabStops == null)
 				throw new ArgumentNullException ("tabStops");
-			_firstTabOffset = firstTabOffset;
-			_tabStops = (float []) tabStops.Clone ();
+			Live ();
+			// GpStringFormat::SetTabStops refuses a negative stop (NotImplemented).
+			foreach (float t in tabStops)
+				if (t < 0)
+					throw new NotImplementedException ("Not implemented.");
+			_s._firstTabOffset = firstTabOffset;
+			_s._tabStops = (float []) tabStops.Clone ();
 			TabStopCount = tabStops.Length;
 		}
 
 		public void SetDigitSubstitution (int language, StringDigitSubstitute substitute)
 		{
-			_digitLanguage = language;
-			_digitSubstitute = substitute;
+			Live ();
+			_s._digitLanguage = language;
+			_s._digitSubstitute = substitute;
 		}
 
 		public float[] GetTabStops (out float firstTabOffset)
 		{
-			firstTabOffset = _firstTabOffset;
-			return (float []) _tabStops.Clone ();
+			Live ();
+			firstTabOffset = _s._firstTabOffset;
+			return (float []) _s._tabStops.Clone ();
 		}
 	}
 }

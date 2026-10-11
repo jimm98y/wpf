@@ -380,11 +380,19 @@ namespace System.Drawing.Imaging
         {
             get
             {
+                if (row < 0 || row > 4)
+                    throw new IndexOutOfRangeException("row");
+                if (column < 0 || column > 4)
+                    throw new IndexOutOfRangeException("column");
                 return GetMatrix()[row][column];
             }
 
             set
             {
+                if (row < 0 || row > 4)
+                    throw new IndexOutOfRangeException("row");
+                if (column < 0 || column > 4)
+                    throw new IndexOutOfRangeException("column");
                 float[][] tempMatrix = GetMatrix();
 
                 tempMatrix[row][column] = value;

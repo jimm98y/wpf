@@ -101,9 +101,16 @@ namespace Wpf.WinFormsInterop.Tests
             }
             catch (Exception e)
             {
-                return "EX " + e.GetType().Name + " " + e.Message;
+                return "EX " + ExName(e) + " " + e.Message;
             }
         }
+
+        // The oracle was written by Windows PowerShell 5.1, whose .NET Framework System.Drawing throws
+        // GDI+'s OutOfMemory status as OutOfMemoryException; .NET 10's (and ours) throws the same
+        // status as ExternalException with E_UNEXPECTED. Compared as the status's Framework name.
+        private static string ExName(Exception e)
+            => e is System.Runtime.InteropServices.ExternalException x && x.ErrorCode == unchecked((int)0x8000FFFF)
+                ? "OutOfMemoryException" : e.GetType().Name;
 
         private static float F(JsonElement e) => float.Parse(e.GetRawText(), CultureInfo.InvariantCulture);
 
@@ -325,7 +332,7 @@ namespace Wpf.WinFormsInterop.Tests
                         b.SetPixel(1, 0, probe[i]);
                         ours = ((uint)b.GetPixel(1, 0).ToArgb()).ToString("x8") + " " + Lock(b, pf);
                     }
-                    catch (Exception e) { ours = "EX " + e.GetType().Name; }
+                    catch (Exception e) { ours = "EX " + ExName(e); }
                     if (ours != o[i].GetString()) bad.Add($"{pf} {probe[i]}: ours {ours}, GDI+ {o[i].GetString()}");
                 }
             }
@@ -350,7 +357,7 @@ namespace Wpf.WinFormsInterop.Tests
                     ours = "stride=" + d.Stride + " w=" + d.Width + " h=" + d.Height + " fmt=" + d.PixelFormat + ":" + Hex(all);
                     src.UnlockBits(d);
                 }
-                catch (Exception e) { ours = "EX " + e.GetType().Name; }
+                catch (Exception e) { ours = "EX " + ExName(e); }
                 string theirs = Api.GetProperty("lock_from32_" + pf).GetString()!;
                 // The bits after a row's last 1/4bpp pixel are whatever gdiplus.dll's heap held.
                 ours = MaskTail(ours, 3, pf); theirs = MaskTail(theirs, 3, pf);
@@ -394,7 +401,7 @@ namespace Wpf.WinFormsInterop.Tests
                 {
                     string ours;
                     try { using var c = src.Clone(new Rectangle(1, 0, 4, 3), pf); ours = "ok"; }
-                    catch (Exception e) { ours = "EX " + e.GetType().Name; }
+                    catch (Exception e) { ours = "EX " + ExName(e); }
                     if (ours != o.GetString()) bad.Add($"clone {pf}: ours {ours}, GDI+ {o.GetString()}");
                     continue;
                 }

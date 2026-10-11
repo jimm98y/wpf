@@ -2708,10 +2708,9 @@ namespace System.Windows.Forms
 			// the first glyph -- a sixth of the line height, which is three pixels for the shell
 			// font -- and the caption is positioned by its rectangle at x=10. Windows puts the
 			// caption's INK at 10; ours started at 13, the width of that margin exactly.
-			// NOT Clone() and NOT new StringFormat(GenericTypographic): "typographic" is carried by
-			// an internal FIELD on the format, which neither of those copies, so the margin comes
-			// straight back. The getter hands out a fresh instance every call, so mutate that.
-			text_format = StringFormat.GenericTypographic;
+			// A copy (the copy constructor keeps "typographic"): GenericTypographic is GDI+'s shared
+			// format, and changing it would change it for every caller.
+			text_format = new StringFormat (StringFormat.GenericTypographic);
 			text_format.HotkeyPrefix = HotkeyPrefix.Show;
 			text_format.FormatFlags |= StringFormatFlags.NoWrap;
 

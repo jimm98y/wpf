@@ -57,9 +57,9 @@ namespace System.Drawing.Drawing2D
 			gp = new GpPath (FillMode.Alternate);
 		}
 
+		// GdipCreatePath keeps whatever fill mode it is given.
 		public GraphicsPath (FillMode fillMode)
 		{
-			CheckFillMode (fillMode);
 			gp = new GpPath (fillMode);
 		}
 
@@ -77,9 +77,11 @@ namespace System.Drawing.Drawing2D
 		{
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
-			if (pts.Length != types.Length)
-				throw new ArgumentException ("Invalid parameter passed. Number of points and types must be same.");
-			CheckFillMode (fillMode);
+			if (types == null)
+				throw new ArgumentNullException ("types");
+			// GdipCreatePath2: as many types as points, and at least one.
+			if (pts.Length != types.Length || pts.Length == 0)
+				throw new ArgumentException ("Parameter is not valid.");
 			gp = new GpPath (ToF (pts), types, fillMode);
 		}
 
@@ -87,16 +89,12 @@ namespace System.Drawing.Drawing2D
 		{
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
-			if (pts.Length != types.Length)
-				throw new ArgumentException ("Invalid parameter passed. Number of points and types must be same.");
-			CheckFillMode (fillMode);
+			if (types == null)
+				throw new ArgumentNullException ("types");
+			// GdipCreatePath2: as many types as points, and at least one.
+			if (pts.Length != types.Length || pts.Length == 0)
+				throw new ArgumentException ("Parameter is not valid.");
 			gp = new GpPath (pts, types, fillMode);
-		}
-
-		static void CheckFillMode (FillMode mode)
-		{
-			if (mode < FillMode.Alternate || mode > FillMode.Winding)
-				throw new InvalidEnumArgumentException ("fillMode", (int) mode, typeof (FillMode));
 		}
 
 		static PointF [] ToF (Point [] p)
@@ -106,12 +104,45 @@ namespace System.Drawing.Drawing2D
 			return r;
 		}
 
-		public object Clone () => new GraphicsPath (gp.Clone ());
+		public object Clone ()
+		{
+			Live ();
+			return new GraphicsPath (gp.Clone ());
+		}
+
+		// .NET 9's rounded rectangle: four quarter arcs of the radius's ellipse, one closed figure.
+		public void AddRoundedRectangle (Rectangle rect, Size radius)
+		{
+			AddRoundedRectangle ((RectangleF) rect, (SizeF) radius);
+		}
+
+		public void AddRoundedRectangle (RectangleF rect, SizeF radius)
+		{
+			StartFigure ();
+			AddArc (rect.Right - radius.Width, rect.Top, radius.Width, radius.Height, -90f, 90f);
+			AddArc (rect.Right - radius.Width, rect.Bottom - radius.Height, radius.Width, radius.Height, 0f, 90f);
+			AddArc (rect.Left, rect.Bottom - radius.Height, radius.Width, radius.Height, 90f, 90f);
+			AddArc (rect.Left, rect.Top, radius.Width, radius.Height, 180f, 90f);
+			CloseFigure ();
+		}
 
 		public void Dispose ()
 		{
+			_disposed = true;
 			GC.SuppressFinalize (this);
 		}
+
+		// GDI+'s object is gone after Dispose: every call System.Drawing makes with its handle (zero)
+		// comes back InvalidParameter.
+		bool _disposed;
+		internal bool IsDisposed => _disposed;
+
+		internal void Live ()
+		{
+			if (_disposed)
+				throw new ArgumentException ("Parameter is not valid.");
+		}
+
 
 		static void Invalid ()
 		{
@@ -119,15 +150,18 @@ namespace System.Drawing.Drawing2D
 		}
 
 		public FillMode FillMode {
-			get => gp.FillMode;
+			get { Live (); return gp.FillMode; }
 			set {
-				CheckFillMode (value);
+				if (value < FillMode.Alternate || value > FillMode.Winding)
+					throw new InvalidEnumArgumentException ("value", (int) value, typeof (FillMode));
+				Live ();
 				gp.FillMode = value;
 			}
 		}
 
 		public PathData PathData {
 			get {
+				Live ();
 				var pdata = new PathData ();
 				pdata.Points = gp.PointArray ();
 				pdata.Types = gp.TypeArray ();
@@ -137,6 +171,7 @@ namespace System.Drawing.Drawing2D
 
 		public PointF [] PathPoints {
 			get {
+				Live ();
 				// .NET answers an empty path with an empty array.
 				if (gp.Count == 0)
 					return Array.Empty<PointF> ();
@@ -146,13 +181,21 @@ namespace System.Drawing.Drawing2D
 
 		public byte [] PathTypes {
 			get {
+				Live ();
 				if (gp.Count == 0)
 					return Array.Empty<byte> ();
 				return gp.TypeArray ();
 			}
 		}
 
-		public int PointCount => gp.Count;
+		public int PointCount
+		{
+			get
+			{
+				Live ();
+				return gp.Count;
+			}
+		}
 
 		// No GDI+ object behind a path any more.
 		internal IntPtr NativeObject => IntPtr.Zero;
@@ -160,14 +203,27 @@ namespace System.Drawing.Drawing2D
 		//
 		// AddArc
 		//
-		public void AddArc (Rectangle rect, float startAngle, float sweepAngle) => AddArc ((float) rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
+		public void AddArc (Rectangle rect, float startAngle, float sweepAngle)
+		{
+			Live ();
+			AddArc ((float) rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
+		}
 
-		public void AddArc (RectangleF rect, float startAngle, float sweepAngle) => AddArc (rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
+		public void AddArc (RectangleF rect, float startAngle, float sweepAngle)
+		{
+			Live ();
+			AddArc (rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
+		}
 
-		public void AddArc (int x, int y, int width, int height, float startAngle, float sweepAngle) => AddArc ((float) x, y, width, height, startAngle, sweepAngle);
+		public void AddArc (int x, int y, int width, int height, float startAngle, float sweepAngle)
+		{
+			Live ();
+			AddArc ((float) x, y, width, height, startAngle, sweepAngle);
+		}
 
 		public void AddArc (float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			Live ();
 			if (!gp.AddArc (x, y, width, height, startAngle, sweepAngle)) Invalid ();
 		}
 
@@ -175,16 +231,28 @@ namespace System.Drawing.Drawing2D
 		// AddBezier
 		//
 		public void AddBezier (Point pt1, Point pt2, Point pt3, Point pt4)
-			=> gp.AddBezier (pt1.X, pt1.Y, pt2.X, pt2.Y, pt3.X, pt3.Y, pt4.X, pt4.Y);
+		{
+			Live ();
+			gp.AddBezier (pt1.X, pt1.Y, pt2.X, pt2.Y, pt3.X, pt3.Y, pt4.X, pt4.Y);
+		}
 
 		public void AddBezier (PointF pt1, PointF pt2, PointF pt3, PointF pt4)
-			=> gp.AddBezier (pt1.X, pt1.Y, pt2.X, pt2.Y, pt3.X, pt3.Y, pt4.X, pt4.Y);
+		{
+			Live ();
+			gp.AddBezier (pt1.X, pt1.Y, pt2.X, pt2.Y, pt3.X, pt3.Y, pt4.X, pt4.Y);
+		}
 
 		public void AddBezier (int x1, int y1, int x2, int y2, int x3, int y3, int x4, int y4)
-			=> gp.AddBezier (x1, y1, x2, y2, x3, y3, x4, y4);
+		{
+			Live ();
+			gp.AddBezier (x1, y1, x2, y2, x3, y3, x4, y4);
+		}
 
 		public void AddBezier (float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4)
-			=> gp.AddBezier (x1, y1, x2, y2, x3, y3, x4, y4);
+		{
+			Live ();
+			gp.AddBezier (x1, y1, x2, y2, x3, y3, x4, y4);
+		}
 
 		//
 		// AddBeziers
@@ -193,6 +261,7 @@ namespace System.Drawing.Drawing2D
 		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddBeziers (ToF (points), points.Length)) Invalid ();
 		}
 
@@ -200,30 +269,63 @@ namespace System.Drawing.Drawing2D
 		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddBeziers (points, points.Length)) Invalid ();
 		}
 
 		//
 		// AddEllipse
 		//
-		public void AddEllipse (RectangleF rect) => gp.AddEllipse (rect.X, rect.Y, rect.Width, rect.Height);
+		public void AddEllipse (RectangleF rect)
+		{
+			Live ();
+			gp.AddEllipse (rect.X, rect.Y, rect.Width, rect.Height);
+		}
 
-		public void AddEllipse (float x, float y, float width, float height) => gp.AddEllipse (x, y, width, height);
+		public void AddEllipse (float x, float y, float width, float height)
+		{
+			Live ();
+			gp.AddEllipse (x, y, width, height);
+		}
 
-		public void AddEllipse (Rectangle rect) => gp.AddEllipse (rect.X, rect.Y, rect.Width, rect.Height);
+		public void AddEllipse (Rectangle rect)
+		{
+			Live ();
+			gp.AddEllipse (rect.X, rect.Y, rect.Width, rect.Height);
+		}
 
-		public void AddEllipse (int x, int y, int width, int height) => gp.AddEllipse (x, y, width, height);
+		public void AddEllipse (int x, int y, int width, int height)
+		{
+			Live ();
+			gp.AddEllipse (x, y, width, height);
+		}
 
 		//
 		// AddLine
 		//
-		public void AddLine (Point pt1, Point pt2) => gp.AddLine (pt1.X, pt1.Y, pt2.X, pt2.Y);
+		public void AddLine (Point pt1, Point pt2)
+		{
+			Live ();
+			gp.AddLine (pt1.X, pt1.Y, pt2.X, pt2.Y);
+		}
 
-		public void AddLine (PointF pt1, PointF pt2) => gp.AddLine (pt1.X, pt1.Y, pt2.X, pt2.Y);
+		public void AddLine (PointF pt1, PointF pt2)
+		{
+			Live ();
+			gp.AddLine (pt1.X, pt1.Y, pt2.X, pt2.Y);
+		}
 
-		public void AddLine (int x1, int y1, int x2, int y2) => gp.AddLine (x1, y1, x2, y2);
+		public void AddLine (int x1, int y1, int x2, int y2)
+		{
+			Live ();
+			gp.AddLine (x1, y1, x2, y2);
+		}
 
-		public void AddLine (float x1, float y1, float x2, float y2) => gp.AddLine (x1, y1, x2, y2);
+		public void AddLine (float x1, float y1, float x2, float y2)
+		{
+			Live ();
+			gp.AddLine (x1, y1, x2, y2);
+		}
 
 		//
 		// AddLines
@@ -232,8 +334,9 @@ namespace System.Drawing.Drawing2D
 		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (points.Length == 0)
-				throw new ArgumentException ("points");
+				throw new ArgumentException (null, "points");
 			if (!gp.AddLines (ToF (points), points.Length)) Invalid ();
 		}
 
@@ -241,20 +344,30 @@ namespace System.Drawing.Drawing2D
 		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (points.Length == 0)
-				throw new ArgumentException ("points");
+				throw new ArgumentException (null, "points");
 			if (!gp.AddLines (points, points.Length)) Invalid ();
 		}
 
 		//
 		// AddPie
 		//
-		public void AddPie (Rectangle rect, float startAngle, float sweepAngle) => AddPie ((float) rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
+		public void AddPie (Rectangle rect, float startAngle, float sweepAngle)
+		{
+			Live ();
+			AddPie ((float) rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
+		}
 
-		public void AddPie (int x, int y, int width, int height, float startAngle, float sweepAngle) => AddPie ((float) x, y, width, height, startAngle, sweepAngle);
+		public void AddPie (int x, int y, int width, int height, float startAngle, float sweepAngle)
+		{
+			Live ();
+			AddPie ((float) x, y, width, height, startAngle, sweepAngle);
+		}
 
 		public void AddPie (float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			Live ();
 			if (!(width > 1.1920929e-07f) || !(height > 1.1920929e-07f)) Invalid ();
 			gp.AddPie (x, y, width, height, startAngle, sweepAngle);
 		}
@@ -266,6 +379,7 @@ namespace System.Drawing.Drawing2D
 		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddPolygon (ToF (points), points.Length)) Invalid ();
 		}
 
@@ -273,15 +387,24 @@ namespace System.Drawing.Drawing2D
 		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddPolygon (points, points.Length)) Invalid ();
 		}
 
 		//
 		// AddRectangle
 		//
-		public void AddRectangle (Rectangle rect) => gp.AddRects (new [] { new RectangleF (rect.X, rect.Y, rect.Width, rect.Height) });
+		public void AddRectangle (Rectangle rect)
+		{
+			Live ();
+			gp.AddRects (new [] { new RectangleF (rect.X, rect.Y, rect.Width, rect.Height) });
+		}
 
-		public void AddRectangle (RectangleF rect) => gp.AddRects (new [] { rect });
+		public void AddRectangle (RectangleF rect)
+		{
+			Live ();
+			gp.AddRects (new [] { rect });
+		}
 
 		//
 		// AddRectangles
@@ -290,8 +413,10 @@ namespace System.Drawing.Drawing2D
 		{
 			if (rects == null)
 				throw new ArgumentNullException ("rects");
+			Live ();
+			// GdipAddPathRectangles of none: InvalidParameter.
 			if (rects.Length == 0)
-				throw new ArgumentException ("rects");
+				Invalid ();
 			var f = new RectangleF [rects.Length];
 			for (int i = 0; i < f.Length; i++) f [i] = rects [i];
 			gp.AddRects (f);
@@ -301,8 +426,10 @@ namespace System.Drawing.Drawing2D
 		{
 			if (rects == null)
 				throw new ArgumentNullException ("rects");
+			Live ();
+			// GdipAddPathRectangles of none: InvalidParameter.
 			if (rects.Length == 0)
-				throw new ArgumentException ("rects");
+				Invalid ();
 			gp.AddRects (rects);
 		}
 
@@ -313,26 +440,44 @@ namespace System.Drawing.Drawing2D
 		{
 			if (addingPath == null)
 				throw new ArgumentNullException ("addingPath");
+			Live ();
+			// GDI+ refuses a path added to itself.
+			if (ReferenceEquals (addingPath, this) || addingPath.IsDisposed)
+				throw new ArgumentException ("Parameter is not valid.");
 			gp.AddPath (addingPath.gp, connect);
 		}
 
 		public PointF GetLastPoint ()
 		{
-			if (gp.Count == 0) Invalid ();
+			// System.Drawing ignores GdipGetPathLastPoint's status: an empty or disposed path is (0, 0).
+			if (IsDisposed || gp.Count == 0) return PointF.Empty;
 			return gp.Points [gp.Count - 1];
 		}
 
 		//
 		// AddClosedCurve
 		//
-		public void AddClosedCurve (Point [] points) => AddClosedCurve (points, 0.5f);
+		public void AddClosedCurve (Point [] points)
+		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
+			Live ();
+			AddClosedCurve (points, 0.5f);
+		}
 
-		public void AddClosedCurve (PointF [] points) => AddClosedCurve (points, 0.5f);
+		public void AddClosedCurve (PointF [] points)
+		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
+			Live ();
+			AddClosedCurve (points, 0.5f);
+		}
 
 		public void AddClosedCurve (Point [] points, float tension)
 		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddClosedCurve (ToF (points), points.Length, tension)) Invalid ();
 		}
 
@@ -340,18 +485,34 @@ namespace System.Drawing.Drawing2D
 		{
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddClosedCurve (points, points.Length, tension)) Invalid ();
 		}
 
 		//
 		// AddCurve
 		//
-		public void AddCurve (Point [] points) => AddCurve (points, 0.5f);
+		public void AddCurve (Point [] points)
+		{
+			Live ();
+			if (points == null)
+				throw new ArgumentException ("Parameter is not valid.");
+			AddCurve (points, 0.5f);
+		}
 
-		public void AddCurve (PointF [] points) => AddCurve (points, 0.5f);
+		public void AddCurve (PointF [] points)
+		{
+			Live ();
+			if (points == null)
+				throw new ArgumentException ("Parameter is not valid.");
+			AddCurve (points, 0.5f);
+		}
 
 		public void AddCurve (Point [] points, float tension)
 		{
+			Live ();
+			if (points == null)
+				throw new ArgumentException ("Parameter is not valid.");
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (!gp.AddCurve (ToF (points), points.Length, tension, 0, points.Length - 1)) Invalid ();
@@ -359,6 +520,9 @@ namespace System.Drawing.Drawing2D
 
 		public void AddCurve (PointF [] points, float tension)
 		{
+			Live ();
+			if (points == null)
+				throw new ArgumentException ("Parameter is not valid.");
 			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (!gp.AddCurve (points, points.Length, tension, 0, points.Length - 1)) Invalid ();
@@ -367,6 +531,9 @@ namespace System.Drawing.Drawing2D
 		public void AddCurve (Point [] points, int offset, int numberOfSegments, float tension)
 		{
 			if (points == null)
+				throw new NullReferenceException ();
+			Live ();
+			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (!gp.AddCurve (ToF (points), points.Length, tension, offset, numberOfSegments)) Invalid ();
 		}
@@ -374,18 +541,30 @@ namespace System.Drawing.Drawing2D
 		public void AddCurve (PointF [] points, int offset, int numberOfSegments, float tension)
 		{
 			if (points == null)
+				throw new NullReferenceException ();
+			Live ();
+			if (points == null)
 				throw new ArgumentNullException ("points");
 			if (!gp.AddCurve (points, points.Length, tension, offset, numberOfSegments)) Invalid ();
 		}
 
-		public void Reset () => gp.Reset ();
+		public void Reset ()
+		{
+			Live ();
+			gp.Reset ();
+		}
 
-		public void Reverse () => gp.Reverse ();
+		public void Reverse ()
+		{
+			Live ();
+			gp.Reverse ();
+		}
 
 		public void Transform (Matrix matrix)
 		{
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			Live ();
 			gp.Transform (matrix.Gp);
 		}
 
@@ -400,33 +579,74 @@ namespace System.Drawing.Drawing2D
 
 		public void AddString (string s, FontFamily family, int style, float emSize, RectangleF layoutRect, StringFormat format)
 		{
+			if (s == null)
+				throw new ArgumentNullException ("s");
 			if (family == null)
-				throw new ArgumentException ("family");
-			// note: the NullReferenceException on s.Length is the expected (MS) exception
+				throw new ArgumentNullException ("family");
+			// System.Drawing ignores GdipAddPathString's status: a disposed path or family adds
+			// nothing and says nothing; a disposed format is no format, the default.
+			if (IsDisposed || family.IsDisposed) return;
+			if (format != null && format.IsDisposed) format = null;
 			if (s.Length == 0) return;
 			GpPathText.AddString (gp, s, family, style, emSize, layoutRect, format);
 		}
 
-		public void ClearMarkers () => gp.ClearMarkers ();
+		public void ClearMarkers ()
+		{
+			Live ();
+			gp.ClearMarkers ();
+		}
 
-		public void CloseAllFigures () => gp.CloseFigures ();
+		public void CloseAllFigures ()
+		{
+			Live ();
+			gp.CloseFigures ();
+		}
 
-		public void CloseFigure () => gp.CloseFigure ();
+		public void CloseFigure ()
+		{
+			Live ();
+			gp.CloseFigure ();
+		}
 
-		public void Flatten () => Flatten (null, FlatnessDefault);
+		public void Flatten ()
+		{
+			Live ();
+			Flatten (null, FlatnessDefault);
+		}
 
-		public void Flatten (Matrix matrix) => Flatten (matrix, FlatnessDefault);
+		public void Flatten (Matrix matrix)
+		{
+			Live ();
+			Flatten (matrix, FlatnessDefault);
+		}
 
-		public void Flatten (Matrix matrix, float flatness) => gp.Flatten (matrix?.Gp, flatness);
+		public void Flatten (Matrix matrix, float flatness)
+		{
+			Live ();
+			gp.Flatten (matrix?.Gp, flatness);
+		}
 
-		public RectangleF GetBounds () => GetBounds (null, null);
+		public RectangleF GetBounds ()
+		{
+			Live ();
+			return GetBounds (null, null);
+		}
 
-		public RectangleF GetBounds (Matrix matrix) => GetBounds (matrix, null);
+		public RectangleF GetBounds (Matrix matrix)
+		{
+			Live ();
+			return GetBounds (matrix, null);
+		}
 
 		/// <summary>GpPath::GetBounds: the control points' bounds (transformed as a rectangle's
 		/// corners), widened by what a pen adds.</summary>
 		public RectangleF GetBounds (Matrix matrix, Pen pen)
 		{
+			Live ();
+			// A disposed matrix or pen hands GDI+ none, as null does.
+			if (matrix != null && matrix.IsDisposed) matrix = null;
+			if (pen != null && pen.IsDisposed) pen = null;
 			if (gp.Count == 0) return RectangleF.Empty;
 			if (pen != null) return GpPen.WidenedBounds (gp, pen, matrix?.Gp);
 			RectangleF b = gp.ControlBounds ();
@@ -451,19 +671,61 @@ namespace System.Drawing.Drawing2D
 			return new RectangleF (l, t, w, h);
 		}
 
-		public bool IsOutlineVisible (Point point, Pen pen) => IsOutlineVisible ((float) point.X, point.Y, pen, null);
+		public bool IsOutlineVisible (Point point, Pen pen)
+		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			Live ();
+			return IsOutlineVisible ((float) point.X, point.Y, pen, null);
+		}
 
-		public bool IsOutlineVisible (PointF point, Pen pen) => IsOutlineVisible (point.X, point.Y, pen, null);
+		public bool IsOutlineVisible (PointF point, Pen pen)
+		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			Live ();
+			return IsOutlineVisible (point.X, point.Y, pen, null);
+		}
 
-		public bool IsOutlineVisible (int x, int y, Pen pen) => IsOutlineVisible ((float) x, y, pen, null);
+		public bool IsOutlineVisible (int x, int y, Pen pen)
+		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			Live ();
+			return IsOutlineVisible ((float) x, y, pen, null);
+		}
 
-		public bool IsOutlineVisible (float x, float y, Pen pen) => IsOutlineVisible (x, y, pen, null);
+		public bool IsOutlineVisible (float x, float y, Pen pen)
+		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			Live ();
+			return IsOutlineVisible (x, y, pen, null);
+		}
 
-		public bool IsOutlineVisible (Point pt, Pen pen, Graphics graphics) => IsOutlineVisible ((float) pt.X, pt.Y, pen, graphics);
+		public bool IsOutlineVisible (Point pt, Pen pen, Graphics graphics)
+		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			Live ();
+			return IsOutlineVisible ((float) pt.X, pt.Y, pen, graphics);
+		}
 
-		public bool IsOutlineVisible (PointF pt, Pen pen, Graphics graphics) => IsOutlineVisible (pt.X, pt.Y, pen, graphics);
+		public bool IsOutlineVisible (PointF pt, Pen pen, Graphics graphics)
+		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			Live ();
+			return IsOutlineVisible (pt.X, pt.Y, pen, graphics);
+		}
 
-		public bool IsOutlineVisible (int x, int y, Pen pen, Graphics graphics) => IsOutlineVisible ((float) x, y, pen, graphics);
+		public bool IsOutlineVisible (int x, int y, Pen pen, Graphics graphics)
+		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			Live ();
+			return IsOutlineVisible ((float) x, y, pen, graphics);
+		}
 
 		/// <summary>GpPath::IsOutlineVisible: the path widened by the pen (dashes off) under the
 		/// graphics' world-to-device transform, and the point tested against that.</summary>
@@ -471,6 +733,7 @@ namespace System.Drawing.Drawing2D
 		{
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
+			Live ();
 			GpMatrix m = graphics == null ? GpMatrix.CreateIdentity () : graphics.RegionWorldToDevice ();
 			GpPath wide = GpPen.Widen (gp, pen, m, 0.25f, solid: true);
 			if (wide == null) return false;
@@ -479,61 +742,124 @@ namespace System.Drawing.Drawing2D
 			return d.Contains ((int) MathF.Floor (x + 0.5f), (int) MathF.Floor (y + 0.5f));
 		}
 
-		public bool IsVisible (Point point) => IsVisible ((float) point.X, point.Y, null);
+		public bool IsVisible (Point point)
+		{
+			Live ();
+			return IsVisible ((float) point.X, point.Y, null);
+		}
 
-		public bool IsVisible (PointF point) => IsVisible (point.X, point.Y, null);
+		public bool IsVisible (PointF point)
+		{
+			Live ();
+			return IsVisible (point.X, point.Y, null);
+		}
 
-		public bool IsVisible (int x, int y) => IsVisible ((float) x, y, null);
+		public bool IsVisible (int x, int y)
+		{
+			Live ();
+			return IsVisible ((float) x, y, null);
+		}
 
-		public bool IsVisible (float x, float y) => IsVisible (x, y, null);
+		public bool IsVisible (float x, float y)
+		{
+			Live ();
+			return IsVisible (x, y, null);
+		}
 
-		public bool IsVisible (Point pt, Graphics graphics) => IsVisible ((float) pt.X, pt.Y, graphics);
+		public bool IsVisible (Point pt, Graphics graphics)
+		{
+			Live ();
+			return IsVisible ((float) pt.X, pt.Y, graphics);
+		}
 
-		public bool IsVisible (PointF pt, Graphics graphics) => IsVisible (pt.X, pt.Y, graphics);
+		public bool IsVisible (PointF pt, Graphics graphics)
+		{
+			Live ();
+			return IsVisible (pt.X, pt.Y, graphics);
+		}
 
-		public bool IsVisible (int x, int y, Graphics graphics) => IsVisible ((float) x, y, graphics);
+		public bool IsVisible (int x, int y, Graphics graphics)
+		{
+			Live ();
+			return IsVisible ((float) x, y, graphics);
+		}
 
 		/// <summary>GpPath::IsVisible: the path as a region under the graphics' world-to-device
 		/// transform, tested as a region tests a point.</summary>
 		public bool IsVisible (float x, float y, Graphics graphics)
 		{
+			Live ();
 			GpMatrix m = graphics == null ? GpMatrix.CreateIdentity () : graphics.RegionWorldToDevice ();
 			DpRegion d = GpRegion.FromPath (gp.PointArray (), gp.TypeArray (), gp.FillMode).Device (m);
 			m.Transform (ref x, ref y);
 			return d.Contains ((int) MathF.Floor (x + 0.5f), (int) MathF.Floor (y + 0.5f));
 		}
 
-		public void SetMarkers () => gp.SetMarker ();
+		public void SetMarkers ()
+		{
+			Live ();
+			gp.SetMarker ();
+		}
 
 		public void StartFigure () => gp.StartFigure ();
 
 		public void Warp (PointF[] destPoints, RectangleF srcRect)
-			=> Warp (destPoints, srcRect, null, WarpMode.Perspective, FlatnessDefault);
+		{
+			if (destPoints == null)
+				throw new ArgumentNullException ("destPoints");
+			Live ();
+			Warp (destPoints, srcRect, null, WarpMode.Perspective, FlatnessDefault);
+		}
 
 		public void Warp (PointF[] destPoints, RectangleF srcRect, Matrix matrix)
-			=> Warp (destPoints, srcRect, matrix, WarpMode.Perspective, FlatnessDefault);
+		{
+			if (destPoints == null)
+				throw new ArgumentNullException ("destPoints");
+			Live ();
+			Warp (destPoints, srcRect, matrix, WarpMode.Perspective, FlatnessDefault);
+		}
 
 		public void Warp (PointF[] destPoints, RectangleF srcRect, Matrix matrix, WarpMode warpMode)
-			=> Warp (destPoints, srcRect, matrix, warpMode, FlatnessDefault);
+		{
+			if (destPoints == null)
+				throw new ArgumentNullException ("destPoints");
+			Live ();
+			Warp (destPoints, srcRect, matrix, warpMode, FlatnessDefault);
+		}
 
 		public void Warp (PointF[] destPoints, RectangleF srcRect, Matrix matrix, WarpMode warpMode, float flatness)
 		{
 			if (destPoints == null)
 				throw new ArgumentNullException ("destPoints");
-			GpPathWarp.Warp (gp, matrix?.Gp, destPoints, srcRect, warpMode, flatness);
+			Live ();
+			// A disposed matrix hands GDI+ none, as null does.
+			GpPathWarp.Warp (gp, matrix == null || matrix.IsDisposed ? (GpMatrix?) null : matrix.Gp, destPoints, srcRect, warpMode, flatness);
 		}
 
 		// .NET widens at 2/3 (its GraphicsPath.Flatness), not GDI+'s FlatnessDefault.
 		const float WidenFlatness = 2.0f / 3.0f;
 
-		public void Widen (Pen pen) => Widen (pen, null, WidenFlatness);
+		public void Widen (Pen pen)
+		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			Live ();
+			Widen (pen, null, WidenFlatness);
+		}
 
-		public void Widen (Pen pen, Matrix matrix) => Widen (pen, matrix, WidenFlatness);
+		public void Widen (Pen pen, Matrix matrix)
+		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			Live ();
+			Widen (pen, matrix, WidenFlatness);
+		}
 
 		public void Widen (Pen pen, Matrix matrix, float flatness)
 		{
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
+			Live ();
 			if (PointCount == 0)
 				return;
 			GpPath wide = GpPen.Widen (gp, pen, matrix?.Gp ?? GpMatrix.CreateIdentity (), flatness, solid: false);

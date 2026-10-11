@@ -68,60 +68,22 @@ namespace System.Drawing
 			return base.CanConvertTo (context, destinationType);
 		}
 		
+		// System.Drawing.Common's: "[ImageFormat: <guid>]", or a format's name in any case; anything
+		// else is a FormatException.
 		public override object ConvertFrom (ITypeDescriptorContext context, CultureInfo culture, object value)
 		{
-			// we must be able to convert from short names and long names
-			string strFormat = (value as string);
-			if (strFormat == null) {
-				// case #1, this is not a string
+			if (!(value is string text))
 				return base.ConvertFrom (context, culture, value);
-			} else if (strFormat [0] == '[') {
-				// case #2, this is probably a long format (guid)
-				if (strFormat.Equals (ImageFormat.Bmp.ToString ()))
-					return ImageFormat.Bmp;
-				else if (strFormat.Equals (ImageFormat.Emf.ToString ()))
-					return ImageFormat.Emf;
-				else if (strFormat.Equals (ImageFormat.Exif.ToString ()))
-					return ImageFormat.Exif;
-				else if (strFormat.Equals (ImageFormat.Gif.ToString ()))
-					return ImageFormat.Gif;
-				else if (strFormat.Equals (ImageFormat.Icon.ToString ()))
-					return ImageFormat.Icon;
-				else if (strFormat.Equals (ImageFormat.Jpeg.ToString ()))
-					return ImageFormat.Jpeg;
-				else if (strFormat.Equals (ImageFormat.MemoryBmp.ToString ()))
-					return ImageFormat.MemoryBmp;
-				else if (strFormat.Equals (ImageFormat.Png.ToString ()))
-					return ImageFormat.Png;
-				else if (strFormat.Equals (ImageFormat.Tiff.ToString ()))
-					return ImageFormat.Tiff;
-				else if (strFormat.Equals (ImageFormat.Wmf.ToString ()))
-					return ImageFormat.Wmf;
-			} else {
-				// case #3, this is probably a short format
-				if (String.Compare (strFormat, "Bmp", StringComparison.OrdinalIgnoreCase) == 0)
-					return ImageFormat.Bmp;
-				else if (String.Compare (strFormat, "Emf", StringComparison.OrdinalIgnoreCase) == 0)
-					return ImageFormat.Emf;
-				else if (String.Compare (strFormat, "Exif", StringComparison.OrdinalIgnoreCase) == 0)
-					return ImageFormat.Exif;
-				else if (String.Compare (strFormat, "Gif", StringComparison.OrdinalIgnoreCase) == 0)
-					return ImageFormat.Gif;
-				else if (String.Compare (strFormat, "Icon", StringComparison.OrdinalIgnoreCase) == 0)
-					return ImageFormat.Icon;
-				else if (String.Compare (strFormat, "Jpeg", StringComparison.OrdinalIgnoreCase) == 0)
-					return ImageFormat.Jpeg;
-				else if (String.Compare (strFormat, "MemoryBmp", StringComparison.OrdinalIgnoreCase) == 0)
-					return ImageFormat.MemoryBmp;
-				else if (String.Compare (strFormat, "Png", StringComparison.OrdinalIgnoreCase) == 0)
-					return ImageFormat.Png;
-				else if (String.Compare (strFormat, "Tiff", StringComparison.OrdinalIgnoreCase) == 0)
-					return ImageFormat.Tiff;
-				else if (String.Compare (strFormat, "Wmf", StringComparison.OrdinalIgnoreCase) == 0)
-					return ImageFormat.Wmf;
+			if (text [0] == '[' && text.Length >= 50 && Guid.TryParse (text.AsSpan (14, 36), out Guid guid))
+				return new ImageFormat (guid);
+			foreach (ImageFormat f in new [] { ImageFormat.Bmp, ImageFormat.Emf, ImageFormat.Exif, ImageFormat.Gif, ImageFormat.Icon,
+			                                   ImageFormat.Jpeg, ImageFormat.MemoryBmp, ImageFormat.Png, ImageFormat.Tiff, ImageFormat.Wmf,
+			                                   ImageFormat.Heif, ImageFormat.Webp }) {
+				string name = f.Guid == ImageFormat.MemoryBmp.Guid ? "MemoryBmp" : f.ToString ();
+				if (text.Equals (name, StringComparison.OrdinalIgnoreCase))
+					return f;
 			}
-			// last case, this is an unknown string
-			return base.ConvertFrom (context, culture, value);
+			throw new FormatException (SR.Format (SR.ConvertInvalidPrimitive, text, "ImageFormat"));
 		}
 
 		public override object ConvertTo (ITypeDescriptorContext context, CultureInfo culture, object value, Type destinationType )

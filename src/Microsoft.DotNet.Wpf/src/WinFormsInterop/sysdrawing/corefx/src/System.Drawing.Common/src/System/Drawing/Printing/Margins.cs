@@ -65,7 +65,7 @@ namespace System.Drawing.Printing
             get { return _left; }
             set
             {
-                CheckMargin(value, "Left");
+                CheckMargin(value, "value");
                 _left = value;
                 _doubleLeft = (double)value;
             }
@@ -79,7 +79,7 @@ namespace System.Drawing.Printing
             get { return _right; }
             set
             {
-                CheckMargin(value, "Right");
+                CheckMargin(value, "value");
                 _right = value;
                 _doubleRight = (double)value;
             }
@@ -93,7 +93,7 @@ namespace System.Drawing.Printing
             get { return _top; }
             set
             {
-                CheckMargin(value, "Top");
+                CheckMargin(value, "value");
                 _top = value;
                 _doubleTop = (double)value;
             }
@@ -107,7 +107,7 @@ namespace System.Drawing.Printing
             get { return _bottom; }
             set
             {
-                CheckMargin(value, "Bottom");
+                CheckMargin(value, "value");
                 _bottom = value;
                 _doubleBottom = (double)value;
             }
@@ -176,7 +176,7 @@ namespace System.Drawing.Printing
         private void CheckMargin(int margin, string name)
         {
             if (margin < 0)
-                throw new ArgumentException(SR.Format(SR.InvalidLowBoundArgumentEx, name, margin, "0"));
+                throw new ArgumentOutOfRangeException(name, margin, SR.Format(SR.InvalidLowBoundArgumentEx, name, margin, 0));
         }
 
         /// <summary>

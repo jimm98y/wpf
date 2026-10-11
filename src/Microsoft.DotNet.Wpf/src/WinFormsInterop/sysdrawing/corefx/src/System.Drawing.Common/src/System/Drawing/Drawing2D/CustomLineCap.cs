@@ -23,6 +23,9 @@ namespace System.Drawing.Drawing2D
         // cap's negative y axis.
         public CustomLineCap(GraphicsPath fillPath, GraphicsPath strokePath, LineCap baseCap, float baseInset)
         {
+            // A disposed path hands GDI+ none, as a null one does.
+            if (fillPath != null && fillPath.IsDisposed) fillPath = null;
+            if (strokePath != null && strokePath.IsDisposed) strokePath = null;
             if (fillPath == null && strokePath == null)
                 throw new ArgumentException("Parameter is not valid.");
             int status = GpCustomLineCap.Create(fillPath?.gp, strokePath?.gp, baseCap, baseInset, out gp);
@@ -38,48 +41,78 @@ namespace System.Drawing.Drawing2D
 
         protected virtual void Dispose(bool disposing)
         {
+            _disposed = true;
         }
+
+        // GDI+'s object is gone after Dispose: every call System.Drawing makes with its handle (zero)
+        // comes back InvalidParameter.
+        private bool _disposed;
+        internal bool IsDisposed => _disposed;
+
+        internal void Live()
+        {
+            if (_disposed)
+                throw new ArgumentException("Parameter is not valid.");
+        }
+
 
         ~CustomLineCap() => Dispose(false);
 
-        public object Clone() => CoreClone();
+        public object Clone()
+        {
+            Live();
+            return CoreClone();
+        }
 
         internal virtual object CoreClone() => new CustomLineCap(gp.Clone());
 
+        // GdipSetCustomLineCapStrokeCaps / BaseCap: an anchor or a custom cap is InvalidParameter.
+        private static bool PlainCap(LineCap c) => c is LineCap.Flat or LineCap.Square or LineCap.Round or LineCap.Triangle;
+
         public void SetStrokeCaps(LineCap startCap, LineCap endCap)
         {
+            Live();
+            if (!PlainCap(startCap) || !PlainCap(endCap))
+                throw new ArgumentException("Parameter is not valid.");
             gp.StrokeStartCap = startCap;
             gp.StrokeEndCap = endCap;
         }
 
         public void GetStrokeCaps(out LineCap startCap, out LineCap endCap)
         {
+            Live();
             startCap = gp.StrokeStartCap;
             endCap = gp.StrokeEndCap;
         }
 
         public LineJoin StrokeJoin
         {
-            get => gp.StrokeJoin;
-            set => gp.StrokeJoin = value;
+            get { Live(); return gp.StrokeJoin; }
+            set { Live(); gp.StrokeJoin = value; }
         }
 
         public LineCap BaseCap
         {
-            get => gp.BaseCap;
-            set => gp.BaseCap = value;
+            get { Live(); return gp.BaseCap; }
+            set
+            {
+                Live();
+                if (!PlainCap(value))
+                    throw new ArgumentException("Parameter is not valid.");
+                gp.BaseCap = value;
+            }
         }
 
         public float BaseInset
         {
-            get => gp.BaseInset;
-            set => gp.BaseInset = value;
+            get { Live(); return gp.BaseInset; }
+            set { Live(); gp.BaseInset = value; }
         }
 
         public float WidthScale
         {
-            get => gp.WidthScale;
-            set => gp.WidthScale = value;
+            get { Live(); return gp.WidthScale; }
+            set { Live(); gp.WidthScale = value; }
         }
     }
 }

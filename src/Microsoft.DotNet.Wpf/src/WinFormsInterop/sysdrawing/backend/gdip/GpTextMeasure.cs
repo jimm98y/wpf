@@ -152,13 +152,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int style = (int) font.Style;
             if (GdipText.Face (family, style & 3) == null || GpFontFamily.Get (family, (FontStyle) (style & 3)) == null) return null;
             GpTextFormat fmt = GpTextFormat.From (format);
-            if (fmt.Ranges.Length > count) throw new ArgumentException ("stringFormat");
+            if (fmt.Ranges.Length > count) throw new ArgumentException ("Parameter is not valid.");
             float along = fmt.IsVertical ? layout.Height : layout.Width;
-            if (!(along >= 0f) || !(emWorld > 0f)) throw new ArgumentException ("layoutRect");
+            if (!(along >= 0f) || !(emWorld > 0f)) throw new ArgumentException ("Parameter is not valid.");
             var fti = new GpFullTextImager (s, layout.Width, layout.Height, family, style, emWorld, fmt);
             if (!fti.Valid) return null;
             GpRegion[] r = fti.MeasureRanges (new MeasureTarget (w2d, hint), metafile, layout.Location, fmt.Ranges, count);
-            if (r == null) throw new ArgumentException ("stringFormat");
+            // A range outside the string: GDI+ answers InvalidParameter.
+            if (r == null) throw new ArgumentException ("Parameter is not valid.");
             return r;
         }
 

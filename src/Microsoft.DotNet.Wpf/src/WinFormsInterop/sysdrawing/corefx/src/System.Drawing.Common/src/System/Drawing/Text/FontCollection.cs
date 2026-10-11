@@ -24,10 +24,14 @@ namespace System.Drawing.Text
 
         protected virtual void Dispose(bool disposing) { }
 
+        // GDI+ refuses a private collection after Dispose; the installed one is never deleted.
+        internal virtual void Live() { }
+
         public FontFamily[] Families
         {
             get
             {
+                Live();
                 var families = new FontFamily[_families.Count];
                 for (int f = 0; f < families.Length; f++)
                     families[f] = new FontFamily(_families[f], this);
