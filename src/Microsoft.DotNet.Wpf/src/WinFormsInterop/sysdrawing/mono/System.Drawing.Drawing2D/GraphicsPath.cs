@@ -259,17 +259,17 @@ namespace System.Drawing.Drawing2D
 		//
 		public void AddBeziers (params Point [] points)
 		{
-			Live ();
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddBeziers (ToF (points), points.Length)) Invalid ();
 		}
 
 		public void AddBeziers (PointF [] points)
 		{
-			Live ();
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddBeziers (points, points.Length)) Invalid ();
 		}
 
@@ -332,9 +332,9 @@ namespace System.Drawing.Drawing2D
 		//
 		public void AddLines (Point[] points)
 		{
-			Live ();
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (points.Length == 0)
 				throw new ArgumentException (null, "points");
 			if (!gp.AddLines (ToF (points), points.Length)) Invalid ();
@@ -342,9 +342,9 @@ namespace System.Drawing.Drawing2D
 
 		public void AddLines (PointF[] points)
 		{
-			Live ();
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (points.Length == 0)
 				throw new ArgumentException (null, "points");
 			if (!gp.AddLines (points, points.Length)) Invalid ();
@@ -377,17 +377,17 @@ namespace System.Drawing.Drawing2D
 		//
 		public void AddPolygon (Point [] points)
 		{
-			Live ();
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddPolygon (ToF (points), points.Length)) Invalid ();
 		}
 
 		public void AddPolygon (PointF [] points)
 		{
-			Live ();
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddPolygon (points, points.Length)) Invalid ();
 		}
 
@@ -411,9 +411,9 @@ namespace System.Drawing.Drawing2D
 		//
 		public void AddRectangles (Rectangle [] rects)
 		{
-			Live ();
 			if (rects == null)
 				throw new ArgumentNullException ("rects");
+			Live ();
 			// GdipAddPathRectangles of none: InvalidParameter.
 			if (rects.Length == 0)
 				Invalid ();
@@ -424,9 +424,9 @@ namespace System.Drawing.Drawing2D
 
 		public void AddRectangles (RectangleF [] rects)
 		{
-			Live ();
 			if (rects == null)
 				throw new ArgumentNullException ("rects");
+			Live ();
 			// GdipAddPathRectangles of none: InvalidParameter.
 			if (rects.Length == 0)
 				Invalid ();
@@ -438,9 +438,9 @@ namespace System.Drawing.Drawing2D
 		//
 		public void AddPath (GraphicsPath addingPath, bool connect)
 		{
-			Live ();
 			if (addingPath == null)
 				throw new ArgumentNullException ("addingPath");
+			Live ();
 			// GDI+ refuses a path added to itself.
 			if (ReferenceEquals (addingPath, this) || addingPath.IsDisposed)
 				throw new ArgumentException ("Parameter is not valid.");
@@ -459,29 +459,33 @@ namespace System.Drawing.Drawing2D
 		//
 		public void AddClosedCurve (Point [] points)
 		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
 			Live ();
 			AddClosedCurve (points, 0.5f);
 		}
 
 		public void AddClosedCurve (PointF [] points)
 		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
 			Live ();
 			AddClosedCurve (points, 0.5f);
 		}
 
 		public void AddClosedCurve (Point [] points, float tension)
 		{
-			Live ();
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddClosedCurve (ToF (points), points.Length, tension)) Invalid ();
 		}
 
 		public void AddClosedCurve (PointF [] points, float tension)
 		{
-			Live ();
 			if (points == null)
 				throw new ArgumentNullException ("points");
+			Live ();
 			if (!gp.AddClosedCurve (points, points.Length, tension)) Invalid ();
 		}
 
@@ -558,9 +562,9 @@ namespace System.Drawing.Drawing2D
 
 		public void Transform (Matrix matrix)
 		{
-			Live ();
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			Live ();
 			gp.Transform (matrix.Gp);
 		}
 
@@ -669,42 +673,56 @@ namespace System.Drawing.Drawing2D
 
 		public bool IsOutlineVisible (Point point, Pen pen)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
 			Live ();
 			return IsOutlineVisible ((float) point.X, point.Y, pen, null);
 		}
 
 		public bool IsOutlineVisible (PointF point, Pen pen)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
 			Live ();
 			return IsOutlineVisible (point.X, point.Y, pen, null);
 		}
 
 		public bool IsOutlineVisible (int x, int y, Pen pen)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
 			Live ();
 			return IsOutlineVisible ((float) x, y, pen, null);
 		}
 
 		public bool IsOutlineVisible (float x, float y, Pen pen)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
 			Live ();
 			return IsOutlineVisible (x, y, pen, null);
 		}
 
 		public bool IsOutlineVisible (Point pt, Pen pen, Graphics graphics)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
 			Live ();
 			return IsOutlineVisible ((float) pt.X, pt.Y, pen, graphics);
 		}
 
 		public bool IsOutlineVisible (PointF pt, Pen pen, Graphics graphics)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
 			Live ();
 			return IsOutlineVisible (pt.X, pt.Y, pen, graphics);
 		}
 
 		public bool IsOutlineVisible (int x, int y, Pen pen, Graphics graphics)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
 			Live ();
 			return IsOutlineVisible ((float) x, y, pen, graphics);
 		}
@@ -713,9 +731,9 @@ namespace System.Drawing.Drawing2D
 		/// graphics' world-to-device transform, and the point tested against that.</summary>
 		public bool IsOutlineVisible (float x, float y, Pen pen, Graphics graphics)
 		{
-			Live ();
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
+			Live ();
 			GpMatrix m = graphics == null ? GpMatrix.CreateIdentity () : graphics.RegionWorldToDevice ();
 			GpPath wide = GpPen.Widen (gp, pen, m, 0.25f, solid: true);
 			if (wide == null) return false;
@@ -787,27 +805,33 @@ namespace System.Drawing.Drawing2D
 
 		public void Warp (PointF[] destPoints, RectangleF srcRect)
 		{
+			if (destPoints == null)
+				throw new ArgumentNullException ("destPoints");
 			Live ();
 			Warp (destPoints, srcRect, null, WarpMode.Perspective, FlatnessDefault);
 		}
 
 		public void Warp (PointF[] destPoints, RectangleF srcRect, Matrix matrix)
 		{
+			if (destPoints == null)
+				throw new ArgumentNullException ("destPoints");
 			Live ();
 			Warp (destPoints, srcRect, matrix, WarpMode.Perspective, FlatnessDefault);
 		}
 
 		public void Warp (PointF[] destPoints, RectangleF srcRect, Matrix matrix, WarpMode warpMode)
 		{
+			if (destPoints == null)
+				throw new ArgumentNullException ("destPoints");
 			Live ();
 			Warp (destPoints, srcRect, matrix, warpMode, FlatnessDefault);
 		}
 
 		public void Warp (PointF[] destPoints, RectangleF srcRect, Matrix matrix, WarpMode warpMode, float flatness)
 		{
-			Live ();
 			if (destPoints == null)
 				throw new ArgumentNullException ("destPoints");
+			Live ();
 			// A disposed matrix hands GDI+ none, as null does.
 			GpPathWarp.Warp (gp, matrix == null || matrix.IsDisposed ? (GpMatrix?) null : matrix.Gp, destPoints, srcRect, warpMode, flatness);
 		}
@@ -817,21 +841,25 @@ namespace System.Drawing.Drawing2D
 
 		public void Widen (Pen pen)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
 			Live ();
 			Widen (pen, null, WidenFlatness);
 		}
 
 		public void Widen (Pen pen, Matrix matrix)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
 			Live ();
 			Widen (pen, matrix, WidenFlatness);
 		}
 
 		public void Widen (Pen pen, Matrix matrix, float flatness)
 		{
-			Live ();
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
+			Live ();
 			if (PointCount == 0)
 				return;
 			GpPath wide = GpPen.Widen (gp, pen, matrix?.Gp ?? GpMatrix.CreateIdentity (), flatness, solid: false);

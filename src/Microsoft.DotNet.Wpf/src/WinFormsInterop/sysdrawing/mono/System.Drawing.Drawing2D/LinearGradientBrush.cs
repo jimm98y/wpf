@@ -331,9 +331,10 @@ namespace System.Drawing.Drawing2D {
 		public Color [] LinearColors {
 			get { Live (); return new Color [] { Color.FromArgb (_c1.ToArgb ()), Color.FromArgb (_c2.ToArgb ()) }; }
 			set {
+				// System.Drawing reads value [0] and value [1] before asking GDI+.
+				Color c1 = value [0], c2 = value [1];
 				Live ();
-				// no null check, MS throws a NullReferenceException here
-				_c1 = value [0]; _c2 = value [1];
+				_c1 = c1; _c2 = c2;
 			}
 		}
 
@@ -383,15 +384,17 @@ namespace System.Drawing.Drawing2D {
 
 		public void MultiplyTransform (Matrix matrix)
 		{
+			if (matrix == null)
+				throw new ArgumentNullException ("matrix");
 			Live ();
 			MultiplyTransform (matrix, MatrixOrder.Prepend);
 		}
 
 		public void MultiplyTransform (Matrix matrix, MatrixOrder order)
 		{
-			Live ();
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			Live ();
 			if (!matrix.Gp.IsInvertible)
 				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 			_xf.Multiply (matrix.Gp, Append (order));

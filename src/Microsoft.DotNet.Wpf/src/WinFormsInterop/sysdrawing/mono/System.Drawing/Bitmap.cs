@@ -575,9 +575,9 @@ namespace System.Drawing
 
 		public void UnlockBits (BitmapData bitmapdata)
 		{
-			Live ();
 			if (bitmapdata == null)
 				throw new ArgumentNullException ("bitmapdata");
+			Live ();
 			// GpBitmap::UnlockBits ends the lock there is, whatever data it is handed; with none it
 			// is GenericError.
 			LockState state = locked;

@@ -79,18 +79,24 @@ namespace System.Drawing.Imaging
 
         public void SetColorMatrix(ColorMatrix newColorMatrix)
         {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
             Live();
             SetColorMatrix(newColorMatrix, ColorMatrixFlag.Default, ColorAdjustType.Default);
         }
 
         public void SetColorMatrix(ColorMatrix newColorMatrix, ColorMatrixFlag flags)
         {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
             Live();
             SetColorMatrix(newColorMatrix, flags, ColorAdjustType.Default);
         }
 
         public void SetColorMatrix(ColorMatrix newColorMatrix, ColorMatrixFlag mode, ColorAdjustType type)
         {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
             Live();
             SetColorMatrices(newColorMatrix, null, mode, type);
         }
@@ -112,12 +118,16 @@ namespace System.Drawing.Imaging
 
         public void SetColorMatrices(ColorMatrix newColorMatrix, ColorMatrix grayMatrix)
         {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
             Live();
             SetColorMatrices(newColorMatrix, grayMatrix, ColorMatrixFlag.Default, ColorAdjustType.Default);
         }
 
         public void SetColorMatrices(ColorMatrix newColorMatrix, ColorMatrix grayMatrix, ColorMatrixFlag flags)
         {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
             Live();
             SetColorMatrices(newColorMatrix, grayMatrix, flags, ColorAdjustType.Default);
         }
@@ -125,6 +135,8 @@ namespace System.Drawing.Imaging
         /// <summary>GpRecolor::SetColorMatrices @180084110 / GpRecolorObject::SetColorMatrices @180084178.</summary>
         public void SetColorMatrices(ColorMatrix newColorMatrix, ColorMatrix grayMatrix, ColorMatrixFlag mode, ColorAdjustType type)
         {
+            if (newColorMatrix == null)
+                throw new ArgumentNullException ("newColorMatrix");
             Live();
             // System.Drawing (net10) checks the colour matrix itself before GDI+ sees anything.
             if (newColorMatrix == null) throw new ArgumentNullException(nameof(newColorMatrix));
@@ -309,6 +321,8 @@ namespace System.Drawing.Imaging
 
         public void SetOutputChannelColorProfile(String colorProfileFilename)
         {
+            if (colorProfileFilename == null)
+                throw new ArgumentNullException ("path");
             Live();
             SetOutputChannelColorProfile(colorProfileFilename, ColorAdjustType.Default);
         }
@@ -321,6 +335,8 @@ namespace System.Drawing.Imaging
         /// reports as an ExternalException; a profile the CMM refuses is status 7 (Win32Error); no ICM at all (no standard sRGB profile) is status 2.</summary>
         public void SetOutputChannelColorProfile(String colorProfileFilename, ColorAdjustType type)
         {
+            if (colorProfileFilename == null)
+                throw new ArgumentNullException ("path");
             Live();
             // Called in order to emulate exception behavior from netfx related to invalid file paths.
             Path.GetFullPath(colorProfileFilename);
@@ -348,6 +364,8 @@ namespace System.Drawing.Imaging
 
         public void SetRemapTable(params ColorMap[] map)
         {
+            if (map == null)
+                throw new ArgumentNullException ("map");
             Live();
             SetRemapTable(map, ColorAdjustType.Default);
         }
@@ -366,6 +384,8 @@ namespace System.Drawing.Imaging
 
         public void SetRemapTable(ColorMap[] map, ColorAdjustType type)
         {
+            if (map == null)
+                throw new ArgumentNullException ("map");
             Live();
             if (map == null) throw new ArgumentNullException(nameof(map));
             SetRemapTable(type, map.AsSpan());
@@ -411,6 +431,8 @@ namespace System.Drawing.Imaging
 
         public void SetBrushRemapTable(params ColorMap[] map)
         {
+            if (map == null)
+                throw new ArgumentNullException ("map");
             Live();
             SetRemapTable(map, ColorAdjustType.Brush);
         }
@@ -458,6 +480,8 @@ namespace System.Drawing.Imaging
         /// comes back as it went in. Only the argument checks show.</summary>
         public void GetAdjustedPalette(ColorPalette palette, ColorAdjustType type)
         {
+            if (palette == null)
+                throw new NullReferenceException ();
             Live();
             // System.Drawing converts the palette before it calls GDI+: a null one is a NullReferenceException.
             int count = palette.Entries.Length;

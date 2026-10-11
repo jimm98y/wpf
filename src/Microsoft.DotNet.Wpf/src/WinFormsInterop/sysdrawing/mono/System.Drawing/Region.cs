@@ -102,9 +102,9 @@ namespace System.Drawing
 
 		public void Union (GraphicsPath path)
 		{
-			Live ();
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			Live ();
 			Combine (FromPath (path), CombineMode.Union);
 		}
 
@@ -122,19 +122,19 @@ namespace System.Drawing
 
 		public void Union (Region region)
 		{
-			LiveArgs (region);
-			Live ();
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			LiveArgs (region);
+			Live ();
 			Busy (region);
 			Combine (region.gp, CombineMode.Union);
 		}
 
 		public void Intersect (GraphicsPath path)
 		{
-			Live ();
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			Live ();
 			Combine (FromPath (path), CombineMode.Intersect);
 		}
 
@@ -152,19 +152,19 @@ namespace System.Drawing
 
 		public void Intersect (Region region)
 		{
-			LiveArgs (region);
-			Live ();
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			LiveArgs (region);
+			Live ();
 			Busy (region);
 			Combine (region.gp, CombineMode.Intersect);
 		}
 
 		public void Complement (GraphicsPath path)
 		{
-			Live ();
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			Live ();
 			Combine (FromPath (path), CombineMode.Complement);
 		}
 
@@ -182,19 +182,19 @@ namespace System.Drawing
 
 		public void Complement (Region region)
 		{
-			LiveArgs (region);
-			Live ();
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			LiveArgs (region);
+			Live ();
 			Busy (region);
 			Combine (region.gp, CombineMode.Complement);
 		}
 
 		public void Exclude (GraphicsPath path)
 		{
-			Live ();
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			Live ();
 			Combine (FromPath (path), CombineMode.Exclude);
 		}
 
@@ -212,19 +212,19 @@ namespace System.Drawing
 
 		public void Exclude (Region region)
 		{
-			LiveArgs (region);
-			Live ();
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			LiveArgs (region);
+			Live ();
 			Busy (region);
 			Combine (region.gp, CombineMode.Exclude);
 		}
 
 		public void Xor (GraphicsPath path)
 		{
-			Live ();
 			if (path == null)
 				throw new ArgumentNullException ("path");
+			Live ();
 			Combine (FromPath (path), CombineMode.Xor);
 		}
 
@@ -242,10 +242,10 @@ namespace System.Drawing
 
 		public void Xor (Region region)
 		{
-			LiveArgs (region);
-			Live ();
 			if (region == null)
 				throw new ArgumentNullException ("region");
+			LiveArgs (region);
+			Live ();
 			Busy (region);
 			Combine (region.gp, CombineMode.Xor);
 		}
@@ -258,10 +258,10 @@ namespace System.Drawing
 		/// fixed answers; a combination's device bounds brought back to world space.</summary>
 		public RectangleF GetBounds (Graphics g)
 		{
-			LiveArgs (g);
-			Live ();
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			LiveArgs (g);
+			Live ();
 			return Bounds (ToDevice (g));
 		}
 
@@ -438,20 +438,20 @@ namespace System.Drawing
 
 		public bool IsEmpty (Graphics g)
 		{
-			LiveArgs (g);
-			Live ();
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			LiveArgs (g);
+			Live ();
 			if (gp.Type == GpRegion.NodeEmpty) return true;
 			return gp.Device (ToDevice (g)).IsEmpty;
 		}
 
 		public bool IsInfinite (Graphics g)
 		{
-			LiveArgs (g);
-			Live ();
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			LiveArgs (g);
+			Live ();
 			if (gp.Type == GpRegion.NodeInfinite) return true;
 			return gp.Device (ToDevice (g)).IsInfinite;
 		}
@@ -472,12 +472,12 @@ namespace System.Drawing
 
 		public bool Equals (Region region, Graphics g)
 		{
-			LiveArgs (region, g);
-			Live ();
 			if (region == null)
 				throw new ArgumentNullException ("region");
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			LiveArgs (region, g);
+			Live ();
 			GpMatrix m = ToDevice (g);
 			return SameBands (gp.Device (m), region.gp.Device (m));
 		}
@@ -532,9 +532,9 @@ namespace System.Drawing
 
 		public IntPtr GetHrgn (Graphics g)
 		{
-			Live ();
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			Live ();
 			// An HRGN exists only on Windows: the OS's own region object, built from these rectangles.
 			if (!OperatingSystem.IsWindows ())
 				return IntPtr.Zero;
@@ -665,10 +665,10 @@ namespace System.Drawing
 
 		public void Transform (Matrix matrix)
 		{
-			LiveArgs (matrix);
-			Live ();
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			LiveArgs (matrix);
+			Live ();
 			gp.Transform (matrix.Gp);
 		}
 

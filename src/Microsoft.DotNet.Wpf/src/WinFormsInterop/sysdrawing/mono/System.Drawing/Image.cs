@@ -381,9 +381,11 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 
 	public void Save(string filename, ImageFormat format)
 	{
-		Live ();
+		if (filename == null)
+			throw new ArgumentNullException ("filename");
 		if (format == null)
 			throw new ArgumentNullException ("format");
+		Live ();
 		// No encoder for the format (an icon, a metafile): GDI+ writes a PNG.
 		ImageCodecInfo encoder = findEncoderForFormat (format) ?? findEncoderForFormat (ImageFormat.Png);
 		Save (filename, encoder, null);
@@ -670,6 +672,9 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 			return retrieveGDIPalette();
 		}
 		set {
+			// System.Drawing marshals the palette's entries first.
+			if (value == null)
+				throw new NullReferenceException ();
 			Live ();
 			storeGDIPalette(value);
 		}

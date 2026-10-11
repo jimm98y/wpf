@@ -542,12 +542,20 @@ namespace Wpf.WinFormsInterop.Tests
             }
             if (make != null && typeof(IDisposable).IsAssignableFrom(t))
             {
-                Add("disposed", () =>
+                Func<object> disposed = () =>
                 {
                     object o = make();
                     ((IDisposable)o).Dispose();
                     return o;
-                }, -1, null);
+                };
+                Add("disposed", disposed, -1, null);
+                // Which comes first: System.Drawing's own argument checks or GDI+'s of the handle.
+                for (int i = 0; i < ps.Length; i++)
+                {
+                    Type pt = ps[i].ParameterType.IsByRef ? ps[i].ParameterType.GetElementType() : ps[i].ParameterType;
+                    if (!ps[i].IsOut && !pt.IsValueType)
+                        Add("dnull:" + i, disposed, i, _ => null);
+                }
             }
             if (make != null && t == typeof(Graphics))
             {

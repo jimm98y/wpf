@@ -198,15 +198,17 @@ namespace System.Drawing.Drawing2D
 
 		public void Multiply (Matrix matrix)
 		{
+			if (matrix == null)
+				throw new ArgumentNullException ("matrix");
 			Live ();
 			Multiply (matrix, MatrixOrder.Prepend);
 		}
 
 		public void Multiply (Matrix matrix, MatrixOrder order)
 		{
-			Live ();
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			Live ();
 			if (matrix.IsDisposed)
 				throw new ArgumentException ("Parameter is not valid.");
 			// GDI+ locks both matrices: one multiplied by itself is busy.
@@ -295,9 +297,9 @@ namespace System.Drawing.Drawing2D
 		// GdipTransformMatrixPointsI @18006b040: through floats, then (int)(v + 0.5) truncated.
 		public void TransformPoints (Point[] pts)
 		{
-			Live ();
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
+			Live ();
 			// GdipTransformMatrixPoints / GdipVectorTransformMatrixPoints of no points: InvalidParameter.
 			if (pts.Length == 0)
 				throw new ArgumentException ("Parameter is not valid.");
@@ -309,9 +311,9 @@ namespace System.Drawing.Drawing2D
 
 		public void TransformPoints (PointF[] pts)
 		{
-			Live ();
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
+			Live ();
 			// GdipTransformMatrixPoints / GdipVectorTransformMatrixPoints of no points: InvalidParameter.
 			if (pts.Length == 0)
 				throw new ArgumentException ("Parameter is not valid.");
@@ -320,9 +322,9 @@ namespace System.Drawing.Drawing2D
 
 		public void TransformVectors (Point[] pts)
 		{
-			Live ();
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
+			Live ();
 			// GdipTransformMatrixPoints / GdipVectorTransformMatrixPoints of no points: InvalidParameter.
 			if (pts.Length == 0)
 				throw new ArgumentException ("Parameter is not valid.");
@@ -334,9 +336,9 @@ namespace System.Drawing.Drawing2D
 
 		public void TransformVectors (PointF[] pts)
 		{
-			Live ();
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
+			Live ();
 			// GdipTransformMatrixPoints / GdipVectorTransformMatrixPoints of no points: InvalidParameter.
 			if (pts.Length == 0)
 				throw new ArgumentException ("Parameter is not valid.");
@@ -358,6 +360,8 @@ namespace System.Drawing.Drawing2D
 
 		public void VectorTransformPoints (Point[] pts)
 		{
+			if (pts == null)
+				throw new ArgumentNullException ("pts");
 			Live ();
 			TransformVectors (pts);
 		}

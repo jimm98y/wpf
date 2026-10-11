@@ -471,15 +471,17 @@ namespace System.Drawing.Drawing2D {
 
 		public void MultiplyTransform (Matrix matrix)
 		{
+			if (matrix == null)
+				throw new ArgumentNullException ("matrix");
 			Live ();
 			MultiplyTransform (matrix, MatrixOrder.Prepend);
 		}
 
 		public void MultiplyTransform (Matrix matrix, MatrixOrder order)
 		{
-			Live ();
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			Live ();
 			if (!matrix.Gp.IsInvertible)
 				throw Status (SafeNativeMethods.Gdip.InvalidParameter);
 			_xf.Multiply (matrix.Gp, Append (order));

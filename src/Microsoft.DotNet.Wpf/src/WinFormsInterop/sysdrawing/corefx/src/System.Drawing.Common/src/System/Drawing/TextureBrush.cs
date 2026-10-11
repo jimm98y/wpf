@@ -217,12 +217,16 @@ namespace System.Drawing
 
         public void MultiplyTransform(Matrix matrix)
         {
+            if (matrix == null)
+                throw new ArgumentNullException ("matrix");
             Live();
             MultiplyTransform(matrix, MatrixOrder.Prepend);
         }
 
         public void MultiplyTransform(Matrix matrix, MatrixOrder order)
         {
+            if (matrix == null)
+                throw new ArgumentNullException ("matrix");
             Live();
             if (matrix == null)
             {
