@@ -240,6 +240,15 @@ namespace Wpf.WinFormsInterop.Tests
             [typeof(CharacterRange)] = () => new CharacterRange(0, 1),
             [typeof(GraphicsState)] = () => G().Save(),
             [typeof(GraphicsContainer)] = () => G().BeginContainer(),
+            [typeof(FontConverter)] = () => new FontConverter(),
+            [typeof(IconConverter)] = () => new IconConverter(),
+            [typeof(ImageConverter)] = () => new ImageConverter(),
+            [typeof(ImageFormatConverter)] = () => new ImageFormatConverter(),
+            [typeof(MarginsConverter)] = () => new MarginsConverter(),
+            [typeof(PrintDocument)] = () => new PrintDocument(),
+            [typeof(PrintEventArgs)] = () => new PrintEventArgs(),
+            [typeof(PrintPageEventArgs)] = () => new PrintPageEventArgs(G(), new Rectangle(1, 1, 4, 4), new Rectangle(0, 0, 8, 8), new PageSettings()),
+            [typeof(QueryPageSettingsEventArgs)] = () => new QueryPageSettingsEventArgs(new PageSettings()),
         };
 
         // A valid argument of each parameter type, by parameter name where the type alone does not
@@ -299,6 +308,10 @@ namespace Wpf.WinFormsInterop.Tests
             if (t == typeof(ColorMap[])) return new[] { new ColorMap { OldColor = Color.Red, NewColor = Color.Blue } };
             if (t == typeof(object)) return new object();
             if (t == typeof(Type)) return typeof(Bitmap);
+            if (t == typeof(CultureInfo)) return CultureInfo.InvariantCulture;
+            if (t == typeof(PageSettings)) return new PageSettings();
+            if (t == typeof(PrinterSettings)) return new PrinterSettings();
+            if (t == typeof(PrintController)) return new StandardPrintController();
             if (t == typeof(Stream) || t == typeof(MemoryStream)) return new MemoryStream();
             if (t == typeof(Image) || t == typeof(Bitmap)) return new Bitmap(4, 4);
             if (t == typeof(Brush)) return new SolidBrush(Color.Blue);
@@ -356,6 +369,9 @@ namespace Wpf.WinFormsInterop.Tests
             "Image.FromHbitmap", "Bitmap.FromHicon", "Bitmap.FromResource", "Image.GetEncoderParameterList",
             "Font.FromHdc", "Font.ToLogFont", "Font.FromLogFont",
             "Region.ReleaseHrgn", "Graphics.ReleaseHdcInternal", "Bitmap.ApplyEffect",
+            // A printer: printing, and what reads the default printer's settings.
+            "PrintDocument.Print", "PrintDocument.get_DefaultPageSettings", "PrintDocument.set_DefaultPageSettings",
+            "PrintDocument.get_PrinterSettings", "PrintDocument.set_PrinterSettings",
         };
 
         private static string Sig(MethodBase m)
@@ -408,11 +424,14 @@ namespace Wpf.WinFormsInterop.Tests
             typeof(PreviewPageInfo), typeof(CharacterRange), typeof(GraphicsState), typeof(GraphicsContainer),
             typeof(Image), typeof(Brush), typeof(Brushes), typeof(Pens), typeof(SystemBrushes), typeof(SystemPens),
             typeof(SystemFonts), typeof(SystemIcons), typeof(ImageAnimator), typeof(PrinterUnitConvert),
-            typeof(ToolboxBitmapAttribute), typeof(PropertyItem),
+            typeof(ToolboxBitmapAttribute), typeof(PropertyItem), typeof(FontConverter), typeof(IconConverter),
+            typeof(ImageConverter), typeof(ImageFormatConverter), typeof(MarginsConverter), typeof(PrintDocument),
+            typeof(PrintEventArgs), typeof(PrintPageEventArgs), typeof(QueryPageSettingsEventArgs),
         };
 
         private static bool VolatileType(Type t) =>
-            t == typeof(Font) || t == typeof(FontFamily) || t == typeof(InstalledFontCollection) || t == typeof(PrivateFontCollection) || t == typeof(SystemFonts);
+            t == typeof(Font) || t == typeof(FontFamily) || t == typeof(InstalledFontCollection) || t == typeof(PrivateFontCollection) || t == typeof(SystemFonts)
+            || t == typeof(FontConverter);
 
         private static readonly string[] s_volatileMember =
         {

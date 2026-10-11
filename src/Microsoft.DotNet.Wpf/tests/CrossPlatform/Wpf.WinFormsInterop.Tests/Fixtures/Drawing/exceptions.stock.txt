@@ -724,6 +724,33 @@ Font.get_Underline()|disposed	v	OK	false
 Font.get_Underline()|ok	v	OK	false
 Font.get_Unit()|disposed	v	OK	Point
 Font.get_Unit()|ok	v	OK	Point
+FontConverter..ctor()|ok	v	OK	FontConverter
+FontConverter.CanConvertFrom(ITypeDescriptorContext,Type)|null:0	v	OK	false
+FontConverter.CanConvertFrom(ITypeDescriptorContext,Type)|null:1	v	OK	false
+FontConverter.CanConvertFrom(ITypeDescriptorContext,Type)|ok	v	OK	false
+FontConverter.CanConvertTo(ITypeDescriptorContext,Type)|null:0	v	OK	false
+FontConverter.CanConvertTo(ITypeDescriptorContext,Type)|null:1	v	OK	false
+FontConverter.CanConvertTo(ITypeDescriptorContext,Type)|ok	v	OK	false
+FontConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:0	v	System.NotSupportedException	FontConverter cannot convert from System.Object.	
+FontConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:1	v	System.NotSupportedException	FontConverter cannot convert from System.Object.	
+FontConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:2	v	System.NotSupportedException	FontConverter cannot convert from (null).	
+FontConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|ok	v	System.NotSupportedException	FontConverter cannot convert from System.Object.	
+FontConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:0	v	System.NotSupportedException	'FontConverter' is unable to convert 'System.Object' to 'System.Drawing.Bitmap'.	
+FontConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:1	v	System.NotSupportedException	'FontConverter' is unable to convert 'System.Object' to 'System.Drawing.Bitmap'.	
+FontConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:2	v	System.NotSupportedException	'FontConverter' is unable to convert '(null)' to 'System.Drawing.Bitmap'.	
+FontConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:3	v	System.ArgumentNullException	Value cannot be null. (Parameter 'destinationType')	destinationType
+FontConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|ok	v	System.NotSupportedException	'FontConverter' is unable to convert 'System.Object' to 'System.Drawing.Bitmap'.	
+FontConverter.CreateInstance(ITypeDescriptorContext,IDictionary)|null:0	v	System.ArgumentNullException	Value cannot be null. (Parameter 'propertyValues')	propertyValues
+FontConverter.CreateInstance(ITypeDescriptorContext,IDictionary)|null:1	v	System.ArgumentNullException	Value cannot be null. (Parameter 'propertyValues')	propertyValues
+FontConverter.CreateInstance(ITypeDescriptorContext,IDictionary)|ok	v	System.ArgumentNullException	Value cannot be null. (Parameter 'propertyValues')	propertyValues
+FontConverter.GetCreateInstanceSupported(ITypeDescriptorContext)|null:0	v	OK	true
+FontConverter.GetCreateInstanceSupported(ITypeDescriptorContext)|ok	v	OK	true
+FontConverter.GetProperties(ITypeDescriptorContext,Object,Attribute[])|null:0	v	OK	null
+FontConverter.GetProperties(ITypeDescriptorContext,Object,Attribute[])|null:1	v	OK	null
+FontConverter.GetProperties(ITypeDescriptorContext,Object,Attribute[])|null:2	v	OK	null
+FontConverter.GetProperties(ITypeDescriptorContext,Object,Attribute[])|ok	v	OK	null
+FontConverter.GetPropertiesSupported(ITypeDescriptorContext)|null:0	v	OK	true
+FontConverter.GetPropertiesSupported(ITypeDescriptorContext)|ok	v	OK	true
 FontFamily..ctor(GenericFontFamilies)|ok	v	OK	FontFamily
 FontFamily..ctor(String)|null:0	v	System.ArgumentNullException	Value cannot be null. (Parameter 'name')	name
 FontFamily..ctor(String)|ok	v	System.ArgumentException	Font 'x' cannot be found.	
@@ -2252,6 +2279,22 @@ Icon.get_Size()|disposed	-	OK	{Width=32, Height=32}
 Icon.get_Size()|ok	-	OK	{Width=32, Height=32}
 Icon.get_Width()|disposed	-	OK	32
 Icon.get_Width()|ok	-	OK	32
+IconConverter..ctor()|ok	-	OK	IconConverter
+IconConverter.CanConvertFrom(ITypeDescriptorContext,Type)|null:0	-	OK	false
+IconConverter.CanConvertFrom(ITypeDescriptorContext,Type)|null:1	-	OK	false
+IconConverter.CanConvertFrom(ITypeDescriptorContext,Type)|ok	-	OK	false
+IconConverter.CanConvertTo(ITypeDescriptorContext,Type)|null:0	-	OK	true
+IconConverter.CanConvertTo(ITypeDescriptorContext,Type)|null:1	-	OK	false
+IconConverter.CanConvertTo(ITypeDescriptorContext,Type)|ok	-	OK	true
+IconConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:0	-	System.NotSupportedException	IconConverter cannot convert from System.Object.	
+IconConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:1	-	System.NotSupportedException	IconConverter cannot convert from System.Object.	
+IconConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:2	-	System.NotSupportedException	IconConverter cannot convert from (null).	
+IconConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|ok	-	System.NotSupportedException	IconConverter cannot convert from System.Object.	
+IconConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:0	-	System.NotSupportedException	IconConverter cannot convert from System.Object.	
+IconConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:1	-	System.NotSupportedException	IconConverter cannot convert from System.Object.	
+IconConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:2	-	System.NotSupportedException	IconConverter cannot convert from (null).	
+IconConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:3	-	System.NotSupportedException	IconConverter cannot convert from System.Object.	
+IconConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|ok	-	System.NotSupportedException	IconConverter cannot convert from System.Object.	
 Image.FromFile(String)|null:0	-	System.ArgumentNullException	Value cannot be null. (Parameter 'path')	path
 Image.FromFile(String)|ok	-	System.IO.FileNotFoundException	<TMP>\missing.bin	
 Image.FromFile(String,Boolean)|null:0	-	System.ArgumentNullException	Value cannot be null. (Parameter 'path')	path
@@ -2414,6 +2457,28 @@ ImageCodecInfo.set_SignatureMasks(Byte[][])|ok	-	OK	null
 ImageCodecInfo.set_SignaturePatterns(Byte[][])|null:0	-	OK	null
 ImageCodecInfo.set_SignaturePatterns(Byte[][])|ok	-	OK	null
 ImageCodecInfo.set_Version(Int32)|ok	-	OK	null
+ImageConverter..ctor()|ok	-	OK	ImageConverter
+ImageConverter.CanConvertFrom(ITypeDescriptorContext,Type)|null:0	-	OK	false
+ImageConverter.CanConvertFrom(ITypeDescriptorContext,Type)|null:1	-	OK	false
+ImageConverter.CanConvertFrom(ITypeDescriptorContext,Type)|ok	-	OK	false
+ImageConverter.CanConvertTo(ITypeDescriptorContext,Type)|null:0	-	OK	false
+ImageConverter.CanConvertTo(ITypeDescriptorContext,Type)|null:1	-	OK	false
+ImageConverter.CanConvertTo(ITypeDescriptorContext,Type)|ok	-	OK	false
+ImageConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:0	-	System.NotSupportedException	ImageConverter cannot convert from System.Object.	
+ImageConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:1	-	System.NotSupportedException	ImageConverter cannot convert from System.Object.	
+ImageConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:2	-	System.NotSupportedException	ImageConverter cannot convert from (null).	
+ImageConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|ok	-	System.NotSupportedException	ImageConverter cannot convert from System.Object.	
+ImageConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:0	-	System.NotSupportedException	ImageConverter cannot convert from System.Object.	
+ImageConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:1	-	System.NotSupportedException	ImageConverter cannot convert from System.Object.	
+ImageConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:2	-	System.NotSupportedException	ImageConverter cannot convert from (null).	
+ImageConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:3	-	System.NotSupportedException	ImageConverter cannot convert from System.Object.	
+ImageConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|ok	-	System.NotSupportedException	ImageConverter cannot convert from System.Object.	
+ImageConverter.GetProperties(ITypeDescriptorContext,Object,Attribute[])|null:0	-	OK	PropertyDescriptorCollection
+ImageConverter.GetProperties(ITypeDescriptorContext,Object,Attribute[])|null:1	-	OK	PropertyDescriptorCollection
+ImageConverter.GetProperties(ITypeDescriptorContext,Object,Attribute[])|null:2	-	OK	PropertyDescriptorCollection
+ImageConverter.GetProperties(ITypeDescriptorContext,Object,Attribute[])|ok	-	OK	PropertyDescriptorCollection
+ImageConverter.GetPropertiesSupported(ITypeDescriptorContext)|null:0	-	OK	true
+ImageConverter.GetPropertiesSupported(ITypeDescriptorContext)|ok	-	OK	true
 ImageFormat..ctor(Guid)|ok	-	OK	ImageFormat
 ImageFormat.Equals(Object)|null:0	-	OK	false
 ImageFormat.Equals(Object)|ok	-	OK	false
@@ -2431,6 +2496,26 @@ ImageFormat.get_Png()|ok	-	OK	ImageFormat
 ImageFormat.get_Tiff()|ok	-	OK	ImageFormat
 ImageFormat.get_Webp()|ok	-	OK	ImageFormat
 ImageFormat.get_Wmf()|ok	-	OK	ImageFormat
+ImageFormatConverter..ctor()|ok	-	OK	ImageFormatConverter
+ImageFormatConverter.CanConvertFrom(ITypeDescriptorContext,Type)|null:0	-	OK	false
+ImageFormatConverter.CanConvertFrom(ITypeDescriptorContext,Type)|null:1	-	OK	false
+ImageFormatConverter.CanConvertFrom(ITypeDescriptorContext,Type)|ok	-	OK	false
+ImageFormatConverter.CanConvertTo(ITypeDescriptorContext,Type)|null:0	-	OK	false
+ImageFormatConverter.CanConvertTo(ITypeDescriptorContext,Type)|null:1	-	OK	false
+ImageFormatConverter.CanConvertTo(ITypeDescriptorContext,Type)|ok	-	OK	false
+ImageFormatConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:0	-	System.NotSupportedException	ImageFormatConverter cannot convert from System.Object.	
+ImageFormatConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:1	-	System.NotSupportedException	ImageFormatConverter cannot convert from System.Object.	
+ImageFormatConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:2	-	System.NotSupportedException	ImageFormatConverter cannot convert from (null).	
+ImageFormatConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|ok	-	System.NotSupportedException	ImageFormatConverter cannot convert from System.Object.	
+ImageFormatConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:0	-	System.NotSupportedException	'ImageFormatConverter' is unable to convert 'System.Object' to 'System.Drawing.Bitmap'.	
+ImageFormatConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:1	-	System.NotSupportedException	'ImageFormatConverter' is unable to convert 'System.Object' to 'System.Drawing.Bitmap'.	
+ImageFormatConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:2	-	System.NotSupportedException	'ImageFormatConverter' is unable to convert '(null)' to 'System.Drawing.Bitmap'.	
+ImageFormatConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:3	-	System.ArgumentNullException	Value cannot be null. (Parameter 'destinationType')	destinationType
+ImageFormatConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|ok	-	System.NotSupportedException	'ImageFormatConverter' is unable to convert 'System.Object' to 'System.Drawing.Bitmap'.	
+ImageFormatConverter.GetStandardValues(ITypeDescriptorContext)|null:0	-	OK	StandardValuesCollection
+ImageFormatConverter.GetStandardValues(ITypeDescriptorContext)|ok	-	OK	StandardValuesCollection
+ImageFormatConverter.GetStandardValuesSupported(ITypeDescriptorContext)|null:0	-	OK	true
+ImageFormatConverter.GetStandardValuesSupported(ITypeDescriptorContext)|ok	-	OK	true
 InstalledFontCollection..ctor()|ok	v	OK	InstalledFontCollection
 InstalledFontCollection.get_Families()|disposed	v	OK	FontFamily[261]{FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,...}
 InstalledFontCollection.get_Families()|ok	v	OK	FontFamily[261]{FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,FontFamily,...}
@@ -2521,6 +2606,27 @@ Margins.set_Bottom(Int32)|ok	-	OK	null
 Margins.set_Left(Int32)|ok	-	OK	null
 Margins.set_Right(Int32)|ok	-	OK	null
 Margins.set_Top(Int32)|ok	-	OK	null
+MarginsConverter..ctor()|ok	-	OK	MarginsConverter
+MarginsConverter.CanConvertFrom(ITypeDescriptorContext,Type)|null:0	-	OK	false
+MarginsConverter.CanConvertFrom(ITypeDescriptorContext,Type)|null:1	-	OK	false
+MarginsConverter.CanConvertFrom(ITypeDescriptorContext,Type)|ok	-	OK	false
+MarginsConverter.CanConvertTo(ITypeDescriptorContext,Type)|null:0	-	OK	false
+MarginsConverter.CanConvertTo(ITypeDescriptorContext,Type)|null:1	-	OK	false
+MarginsConverter.CanConvertTo(ITypeDescriptorContext,Type)|ok	-	OK	false
+MarginsConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:0	-	System.NotSupportedException	MarginsConverter cannot convert from System.Object.	
+MarginsConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:1	-	System.NotSupportedException	MarginsConverter cannot convert from System.Object.	
+MarginsConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|null:2	-	System.NotSupportedException	MarginsConverter cannot convert from (null).	
+MarginsConverter.ConvertFrom(ITypeDescriptorContext,CultureInfo,Object)|ok	-	System.NotSupportedException	MarginsConverter cannot convert from System.Object.	
+MarginsConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:0	-	System.NotSupportedException	'MarginsConverter' is unable to convert 'System.Object' to 'System.Drawing.Bitmap'.	
+MarginsConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:1	-	System.NotSupportedException	'MarginsConverter' is unable to convert 'System.Object' to 'System.Drawing.Bitmap'.	
+MarginsConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:2	-	System.NotSupportedException	'MarginsConverter' is unable to convert '(null)' to 'System.Drawing.Bitmap'.	
+MarginsConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|null:3	-	System.ArgumentNullException	Value cannot be null. (Parameter 'destinationType')	destinationType
+MarginsConverter.ConvertTo(ITypeDescriptorContext,CultureInfo,Object,Type)|ok	-	System.NotSupportedException	'MarginsConverter' is unable to convert 'System.Object' to 'System.Drawing.Bitmap'.	
+MarginsConverter.CreateInstance(ITypeDescriptorContext,IDictionary)|null:0	-	System.ArgumentNullException	Value cannot be null. (Parameter 'propertyValues')	propertyValues
+MarginsConverter.CreateInstance(ITypeDescriptorContext,IDictionary)|null:1	-	System.ArgumentNullException	Value cannot be null. (Parameter 'propertyValues')	propertyValues
+MarginsConverter.CreateInstance(ITypeDescriptorContext,IDictionary)|ok	-	System.ArgumentNullException	Value cannot be null. (Parameter 'propertyValues')	propertyValues
+MarginsConverter.GetCreateInstanceSupported(ITypeDescriptorContext)|null:0	-	OK	true
+MarginsConverter.GetCreateInstanceSupported(ITypeDescriptorContext)|ok	-	OK	true
 Matrix..ctor()|ok	-	OK	Matrix
 Matrix..ctor(Matrix3x2)|ok	-	OK	Matrix
 Matrix..ctor(Rectangle,Point[])|null:1	-	System.ArgumentNullException	Value cannot be null. (Parameter 'plgpts')	plgpts
@@ -3174,6 +3280,37 @@ PreviewPageInfo..ctor(Image,Size)|null:0	-	OK	PreviewPageInfo
 PreviewPageInfo..ctor(Image,Size)|ok	-	OK	PreviewPageInfo
 PreviewPageInfo.get_Image()|ok	-	OK	Bitmap 4x4 Format32bppArgb
 PreviewPageInfo.get_PhysicalSize()|ok	-	OK	{Width=4, Height=4}
+PrintDocument..ctor()|ok	-	OK	PrintDocument
+PrintDocument.ToString()|disposed	v	OK	"[PrintDocument document]"
+PrintDocument.ToString()|ok	v	OK	"[PrintDocument document]"
+PrintDocument.get_DocumentName()|disposed	-	OK	"document"
+PrintDocument.get_DocumentName()|ok	-	OK	"document"
+PrintDocument.get_OriginAtMargins()|disposed	-	OK	false
+PrintDocument.get_OriginAtMargins()|ok	-	OK	false
+PrintDocument.get_PrintController()|disposed	-	OK	StandardPrintController
+PrintDocument.get_PrintController()|ok	-	OK	StandardPrintController
+PrintDocument.set_DocumentName(String)|disposed	-	OK	null
+PrintDocument.set_DocumentName(String)|null:0	-	OK	null
+PrintDocument.set_DocumentName(String)|ok	-	OK	null
+PrintDocument.set_OriginAtMargins(Boolean)|disposed	-	OK	null
+PrintDocument.set_OriginAtMargins(Boolean)|ok	-	OK	null
+PrintDocument.set_PrintController(PrintController)|disposed	-	OK	null
+PrintDocument.set_PrintController(PrintController)|null:0	-	OK	null
+PrintDocument.set_PrintController(PrintController)|ok	-	OK	null
+PrintEventArgs..ctor()|ok	-	OK	PrintEventArgs
+PrintEventArgs.get_PrintAction()|ok	-	OK	PrintToFile
+PrintPageEventArgs..ctor(Graphics,Rectangle,Rectangle,PageSettings)|disp:0	-	OK	PrintPageEventArgs
+PrintPageEventArgs..ctor(Graphics,Rectangle,Rectangle,PageSettings)|null:0	-	OK	PrintPageEventArgs
+PrintPageEventArgs..ctor(Graphics,Rectangle,Rectangle,PageSettings)|null:3	-	OK	PrintPageEventArgs
+PrintPageEventArgs..ctor(Graphics,Rectangle,Rectangle,PageSettings)|ok	-	OK	PrintPageEventArgs
+PrintPageEventArgs.get_Cancel()|ok	-	OK	false
+PrintPageEventArgs.get_Graphics()|ok	-	OK	Graphics
+PrintPageEventArgs.get_HasMorePages()|ok	-	OK	false
+PrintPageEventArgs.get_MarginBounds()|ok	-	OK	{X=1,Y=1,Width=4,Height=4}
+PrintPageEventArgs.get_PageBounds()|ok	-	OK	{X=0,Y=0,Width=8,Height=8}
+PrintPageEventArgs.get_PageSettings()|ok	-	OK	PageSettings
+PrintPageEventArgs.set_Cancel(Boolean)|ok	-	OK	null
+PrintPageEventArgs.set_HasMorePages(Boolean)|ok	-	OK	null
 PrinterResolution..ctor()|ok	-	OK	PrinterResolution
 PrinterResolution.ToString()|ok	v	OK	"[PrinterResolution X=0 Y=0]"
 PrinterResolution.get_Kind()|ok	-	OK	Custom
@@ -3198,6 +3335,12 @@ PrivateFontCollection.AddMemoryFont(IntPtr,Int32)|neg:1	v	System.ArgumentExcepti
 PrivateFontCollection.AddMemoryFont(IntPtr,Int32)|ok	v	System.ArgumentException	Parameter is not valid.	
 PrivateFontCollection.get_Families()|disposed	v	System.ArgumentException	Parameter is not valid.	
 PrivateFontCollection.get_Families()|ok	v	OK	FontFamily[0]{}
+QueryPageSettingsEventArgs..ctor(PageSettings)|null:0	-	OK	QueryPageSettingsEventArgs
+QueryPageSettingsEventArgs..ctor(PageSettings)|ok	-	OK	QueryPageSettingsEventArgs
+QueryPageSettingsEventArgs.get_PageSettings()|ok	-	OK	PageSettings
+QueryPageSettingsEventArgs.get_PrintAction()|ok	-	OK	PrintToFile
+QueryPageSettingsEventArgs.set_PageSettings(PageSettings)|null:0	-	OK	null
+QueryPageSettingsEventArgs.set_PageSettings(PageSettings)|ok	-	OK	null
 Region..ctor()|ok	-	OK	Region
 Region..ctor(GraphicsPath)|disp:0	-	System.ArgumentException	Parameter is not valid.	
 Region..ctor(GraphicsPath)|null:0	-	System.ArgumentNullException	Value cannot be null. (Parameter 'path')	path
@@ -3735,6 +3878,13 @@ WmfPlaceableFileHeader.set_Reserved(Int32)|ok	-	OK	null
 ~Font unit World	-	OK	Font
 ~Font unit bad	-	System.ArgumentException	Parameter is not valid.	
 ~Font(prototype null)	-	System.NullReferenceException	Object reference not set to an instance of an object.	
+~FontConverter create empty	v	OK	Font
+~FontConverter from bad size	-	System.ArgumentException	Value of 'abc' is not valid for font size unit. (Parameter 'units')	units
+~FontConverter from bad style	-	System.ArgumentException	Requested value 'Nope' was not found.	
+~FontConverter from bad unit	-	System.ArgumentException	Value of 'zz' is not valid for font size unit. (Parameter 'units')	units
+~FontConverter from empty	-	OK	null
+~FontConverter from size	-	OK	12
+~FontConverter to string	v	OK	"Microsoft Sans Serif, 9pt"
 ~FontFamily GetEmHeight bad style	-	OK	2048
 ~FontFamily IsStyleAvailable bad	-	OK	true
 ~FontFamily bogus	-	System.ArgumentException	Font 'NoSuchFamilyXyz' cannot be found.	
@@ -3890,6 +4040,9 @@ WmfPlaceableFileHeader.set_Reserved(Int32)|ok	-	OK	null
 ~Icon size big	-	OK	{Width=32, Height=32}
 ~Icon size neg	-	OK	{Width=32, Height=32}
 ~Icon(Type, missing)	-	System.ArgumentException	Resource 'nope.ico' cannot be found in class 'System.Drawing.Bitmap'.	
+~IconConverter from garbage	-	System.ArgumentException	Argument 'picture' must be a picture that can be used as a Icon.	
+~IconConverter to bitmap	-	OK	Bitmap 32x32 Format32bppArgb
+~IconConverter to bytes	-	OK	true
 ~Image Tag after dispose	-	OK	"t"
 ~Image disposed dispose	-	OK	null
 ~Image.GetPixelFormatSize bogus	-	OK	48
@@ -3929,8 +4082,18 @@ WmfPlaceableFileHeader.set_Reserved(Int32)|ok	-	OK	null
 ~ImageAttributes wrap bad	-	OK	null
 ~ImageCodecInfo decoders	-	OK	String[8]{"BMP","JPEG","GIF","EMF","WMF","TIFF","PNG","ICO"}
 ~ImageCodecInfo encoders	-	OK	String[5]{"image/bmp","image/jpeg","image/gif","image/tiff","image/png"}
+~ImageConverter from empty	-	System.ArgumentException	Parameter is not valid.	
+~ImageConverter from garbage	-	System.ArgumentException	Parameter is not valid.	
+~ImageConverter from icon	-	OK	Bitmap 32x32 Format32bppArgb
+~ImageConverter from string	-	System.NotSupportedException	ImageConverter cannot convert from System.String.	
+~ImageConverter null to bytes	-	OK	Byte[0]{}
+~ImageConverter to bytes	-	OK	true
+~ImageConverter to int	-	System.NotSupportedException	ImageConverter cannot convert from System.Drawing.Bitmap.	
 ~ImageFormat ToString bogus	-	OK	"[ImageFormat: 00000000-0000-0000-0000-000000000000]"
 ~ImageFormat ToString png	-	OK	"Png"
+~ImageFormatConverter from bad	-	System.FormatException	NoSuchFormat is not a valid value for ImageFormat.	
+~ImageFormatConverter from png	-	OK	"Png"
+~ImageFormatConverter to string	-	OK	"Gif"
 ~InstalledFontCollection disposed families	-	OK	true
 ~LGB Blend 3 not ending 1	-	System.ArgumentException	Parameter is not valid.	
 ~LGB Blend bad	-	OK	null
@@ -3993,6 +4156,12 @@ WmfPlaceableFileHeader.set_Reserved(Int32)|ok	-	OK	null
 ~MakeTransparent icon bitmap	-	OK	Format32bppArgb
 ~Margins neg	-	System.ArgumentOutOfRangeException	Value of '-1' is not valid for 'left'. 'left' must be greater than or equal to 0. (Parameter 'left')\nActual value was -1.	left
 ~Margins set neg	-	System.ArgumentOutOfRangeException	Value of '-1' is not valid for 'value'. 'value' must be greater than or equal to 0. (Parameter 'value')\nActual value was -1.	value
+~MarginsConverter create bad	-	System.ArgumentException	IDictionary parameter contains at least one entry that is not valid. Ensure all values are consistent with the object's properties.	
+~MarginsConverter from 3	-	System.ArgumentException	Text "1, 2, 3" cannot be parsed. The expected text format is "left, right, top, bottom".	
+~MarginsConverter from bad	-	System.ArgumentException	a is not a valid value for Int32. (Parameter 'value')	value
+~MarginsConverter from blank	-	OK	null
+~MarginsConverter from string	-	OK	Margins
+~MarginsConverter to string	-	OK	"1, 2, 3, 4"
 ~Matrix MatrixElements set	-	OK	Single[6]{1,2,3,4,5,6}
 ~Matrix RotateAt order bad	-	System.ArgumentException	Parameter is not valid.	
 ~Matrix TransformPoints empty	-	System.ArgumentException	Parameter is not valid.	
@@ -4114,7 +4283,7 @@ WmfPlaceableFileHeader.set_Reserved(Int32)|ok	-	OK	null
 ~Path warp 2 points	-	OK	9
 ~Path warp 3 points	-	OK	PointF[9]{{X=1.25, Y=1.6666667},{X=8.75, Y=1.6666667},{X=8.75, Y=8.333333},{X=1.25, Y=8.333333},{X=6.25, Y=5.833333},{X=4.375, Y=8.333333},{X=2.5, Y=5.833333},{X=4.375, Y=3.3333335},{X=6.25, Y=5.833333}}
 ~Path warp 4 points	-	OK	PointF[10]{{X=0.989011, Y=1.5384616},{X=8.6301365, Y=1.9178082},{X=9.692307, Y=10.76923},{X=1.0843374, Y=8.433734},{X=6.081081, Y=6.621621},{X=5.615044, Y=8.722982},{X=4.1721854, Y=9.2715225},{X=2.1686747, Y=5.903614},{X=3.8650308, Y=3.435583},{X=6.081081, Y=6.621621}}
-~Path warp 4 points bilinear	-	OK	PointF[11]{{X=1.2916666, Y=1.75},{X=9.041667, Y=2.25},{X=10.208333, Y=11.25},{X=7.2135415, Y=9.635417},{X=6.9791665, Y=7.2916665},{X=7.065461, Y=8.154612},{X=7.065461, Y=8.154612},{X=6.1662726, Y=9.67468},{X=4.5001054, Y=9.619078},{X=2.7571487, Y=5.657275},{X=5.2189517, Y=NaN}}
+~Path warp 4 points bilinear	-	OK	PointF[11]{{X=1.2916666, Y=1.75},{X=9.041667, Y=2.25},{X=10.208333, Y=11.25},{X=7.2135415, Y=9.635417},{X=6.9791665, Y=7.2916665},{X=7.065461, Y=8.154612},{X=7.065461, Y=8.154612},{X=6.1662726, Y=9.67468},{X=4.5001054, Y=9.619078},{X=2.7571487, Y=5.657275},{X=5.2189517, Y=3.9857023}}
 ~Path warp 5 points	-	OK	9
 ~Path warp bad mode	-	OK	0
 ~Path warp empty	-	OK	0

@@ -1,109 +1,90 @@
-//
-// System.Drawing.ImageConverter.cs
-//
-// Author:
-//   Dennis Hayes (dennish@Raytek.com)
-//   Sanjay Gupta (gsanjay@novell.com)
-//
-// (C) 2002 Ximian, Inc
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 
-//
-// Copyright (C) 2004 Novell, Inc (http://www.novell.com)
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
+// System.Drawing.Common's ImageConverter: an image from bytes (an OLE "PBrush" embedding's bitmap, or
+// any file's) or from an icon; to a string or the image's file bytes.
 
-using System;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
-using System.Drawing.Imaging;
 
 namespace System.Drawing
 {
-	/// <summary>
-	/// Summary description for ImageConverter.
-	/// </summary>
 	public class ImageConverter : TypeConverter
-	{		
-		public ImageConverter ()
-		{
-		}
-		
+	{
 		public override bool CanConvertFrom (ITypeDescriptorContext context, Type sourceType)
-		{
-			if (sourceType == typeof (System.Byte []))
-				return true;
-			else
-				return false; 
-		}
+			=> sourceType == typeof (byte []) || sourceType == typeof (Icon);
 
 		public override bool CanConvertTo (ITypeDescriptorContext context, Type destinationType)
-		{
-			if ((destinationType == typeof (System.Byte [])) || (destinationType == typeof (System.String)))
-				return true;
-			else
-				return false;
-		}
-		
+			=> destinationType == typeof (byte []) || destinationType == typeof (string);
+
 		public override object ConvertFrom (ITypeDescriptorContext context, CultureInfo culture, object value)
 		{
-			byte [] bytes = value as byte [];
-			if (bytes == null)
-				return base.ConvertFrom (context, culture, value);
-			
-			MemoryStream ms = new MemoryStream (bytes);
-			
-			return Image.FromStream (ms);	
+			if (value is Icon icon)
+				return icon.ToBitmap ();
+			if (value is byte [] bytes)
+				return Image.FromStream (GetBitmapStream (bytes) ?? new MemoryStream (bytes));
+			return base.ConvertFrom (context, culture, value);
 		}
 
 		public override object ConvertTo (ITypeDescriptorContext context, CultureInfo culture, object value, Type destinationType)
 		{
-			if (value == null)
-				return "(none)";
-
-			if (value is System.Drawing.Image) {
-				if (destinationType == typeof (string)) {
+			if (destinationType == typeof (string)) {
+				if (value == null)
+					return SR.toStringNone;
+				if (value is Image)
 					return value.ToString ();
-				} else if (CanConvertTo (null, destinationType)) {
-					//came here means destinationType is byte array ;
-					using (MemoryStream ms = new MemoryStream ()) {
-						((Image)value).SaveWithRawFormat (ms);
+			} else if (destinationType == typeof (byte [])) {
+				if (value == null)
+					return Array.Empty<byte> ();
+				if (value is Image image) {
+					using (var ms = new MemoryStream ()) {
+						image.SaveWithRawFormat (ms);
 						return ms.ToArray ();
 					}
 				}
 			}
-
-			string msg = Locale.GetText ("ImageConverter can not convert from type '{0}'.", value.GetType ());
-			throw new NotSupportedException (msg);
+			throw GetConvertFromException (value);
 		}
 
-		public override PropertyDescriptorCollection GetProperties (ITypeDescriptorContext context, object value, Attribute[] attributes)
+		public override PropertyDescriptorCollection GetProperties (ITypeDescriptorContext context, object value, Attribute [] attributes)
+			=> TypeDescriptor.GetProperties (typeof (Image), attributes);
+
+		public override bool GetPropertiesSupported (ITypeDescriptorContext context) => true;
+
+		// An OLE 1 object header (OLEOBJHEADER) wrapping a "PBrush" embedding: the bitmap file inside.
+		static MemoryStream GetBitmapStream (byte [] d)
 		{
-			return TypeDescriptor.GetProperties (typeof (Image), attributes);
+			const int HeaderSize = 20;
+			if (d.Length < HeaderSize)
+				return null;
+			int typ = BitConverter.ToUInt16 (d, 0), cbHdr = BitConverter.ToUInt16 (d, 2);
+			uint oot = BitConverter.ToUInt32 (d, 4);
+			int cchName = BitConverter.ToUInt16 (d, 8), cchClass = BitConverter.ToUInt16 (d, 10);
+			int ibName = BitConverter.ToUInt16 (d, 12), ibClass = BitConverter.ToUInt16 (d, 14);
+			short ptx = BitConverter.ToInt16 (d, 16), pty = BitConverter.ToInt16 (d, 18);
+			if (typ != 7189 || oot != 2 || ibName != HeaderSize || ibClass != HeaderSize + cchName
+			    || cbHdr != HeaderSize + cchClass + cchName || ptx != -1 || pty != -1)
+				return null;
+			int pos = HeaderSize + cchName + cchClass;
+			if (!Read (d, ref pos, out int _) || !Read (d, ref pos, out int fmtid) || fmtid != 2 || !Read (d, ref pos, out int nameLen)
+			    || nameLen != 7 || pos + nameLen > d.Length || System.Text.Encoding.ASCII.GetString (d, pos, 7) != "PBrush\0")
+				return null;
+			pos += nameLen;
+			if (!Read (d, ref pos, out int z1) || z1 != 0 || !Read (d, ref pos, out int z2) || z2 != 0 || !Read (d, ref pos, out int size)
+			    || size < 0 || pos + size > d.Length)
+				return null;
+			return new MemoryStream (d, pos, size);
 		}
 
-		public override bool GetPropertiesSupported (ITypeDescriptorContext context )
+		static bool Read (byte [] d, ref int pos, out int v)
 		{
-			return true; 
+			v = 0;
+			if (pos + 4 > d.Length)
+				return false;
+			v = BitConverter.ToInt32 (d, pos);
+			pos += 4;
+			return true;
 		}
 	}
 }

@@ -1,137 +1,76 @@
-//
-// System.Drawing.MarginsConverter.cs
-//
-// Author:
-//   Dennis Hayes (dennish@Raytek.com)
-//   Herve Poussineau (hpoussineau@fr.st)
-//
-// (C) 2002 Ximian, Inc
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 
-//
-// Copyright (C) 2004 Novell, Inc (http://www.novell.com)
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-using System;
+// System.Drawing.Common's MarginsConverter: "left, right, top, bottom" in the culture's list separator.
+
+using System.Collections;
 using System.ComponentModel;
-using System.Globalization;
-using System.Text.RegularExpressions;
 using System.ComponentModel.Design.Serialization;
+using System.Globalization;
 using System.Reflection;
 
-namespace System.Drawing.Printing {
-	/// <summary>
-	/// Summary description for MarginsConverter.
-	/// </summary>
-	public class MarginsConverter : ExpandableObjectConverter {
-		public MarginsConverter() {
-		}
-		#region Methods
-		public override bool CanConvertFrom(ITypeDescriptorContext context,Type sourceType) {
-			if (sourceType == typeof(string))
-				return true;
-			
-			return base.CanConvertFrom(context, sourceType);
-		}
-		
-		public override bool CanConvertTo(ITypeDescriptorContext context,Type destinationType) {
-			if (destinationType == typeof(string))
-				return true;
-			
-			if (destinationType == typeof (InstanceDescriptor))
-				return true;
+namespace System.Drawing.Printing
+{
+	public class MarginsConverter : ExpandableObjectConverter
+	{
+		public override bool CanConvertFrom (ITypeDescriptorContext context, Type sourceType)
+			=> sourceType == typeof (string) || base.CanConvertFrom (context, sourceType);
 
-			return base.CanConvertTo(context, destinationType);
-		}
-		
-		public override object ConvertFrom(ITypeDescriptorContext context,CultureInfo culture,object value) {
-			if (value is string)
-			{
-				if (value == null)
-					return new Margins();
-				
-				// format [left];[right];[top];[bottom]
-				string separator = @"( |\t)*";
-				separator = separator + ";" + separator;
-				string regex = @"(?<left>\d+)" + separator + @"(?<right>\d+)" + separator + @"(?<top>\d+)" + separator + @"(?<bottom>\d+)";
-				
-				Match match = new Regex(regex).Match(value as string);
-				if (!match.Success)
-					throw new ArgumentException("value");
-				
-				int left, right, top, bottom;
-				try
-				{
-					left = int.Parse(match.Groups["left"].Value);
-					right = int.Parse(match.Groups["right"].Value);
-					top = int.Parse(match.Groups["top"].Value);
-					bottom = int.Parse(match.Groups["bottom"].Value);
-				}
-				catch (Exception e)
-				{
-					throw new ArgumentException("value", e);
-				}
-				return new Margins(left, right, top, bottom);
-			} else
-				return base.ConvertFrom(context, culture, value);
-		}
-		
-		public override object ConvertTo(ITypeDescriptorContext context,CultureInfo culture,object value,Type destinationType) {
-			if (destinationType == typeof(string) && value is Margins)
-			{
-				Margins source = value as Margins;
-				string ret = "{0}; {1}; {2}; {3}";
-				return String.Format(ret, source.Left, source.Right, source.Top, source.Bottom);
-			}
-			if (destinationType == typeof (InstanceDescriptor) && value is Margins) {
-				Margins c = (Margins) value;
-				ConstructorInfo ctor = typeof(Margins).GetTypeInfo ().GetConstructor (new Type[] {typeof(int), typeof(int), typeof(int), typeof(int)} );
-				return new InstanceDescriptor (ctor, new object[] {c.Left, c.Right, c.Top, c.Bottom});
-			}
+		public override bool CanConvertTo (ITypeDescriptorContext context, Type destinationType)
+			=> destinationType == typeof (InstanceDescriptor) || base.CanConvertTo (context, destinationType);
 
-			return base.ConvertTo(context, culture, value, destinationType);
-		}
-		
-		public override bool GetCreateInstanceSupported(ITypeDescriptorContext context)
+		public override object ConvertFrom (ITypeDescriptorContext context, CultureInfo culture, object value)
 		{
-			return true;
-		}
-		
-		public override object CreateInstance(ITypeDescriptorContext context, System.Collections.IDictionary propertyValues)
-		{
-			try
-			{
-				Margins margins = new Margins();
-				margins.Left = int.Parse(propertyValues["Left"].ToString());
-				margins.Right = int.Parse(propertyValues["Right"].ToString());
-				margins.Top = int.Parse(propertyValues["Top"].ToString());
-				margins.Bottom = int.Parse(propertyValues["Bottom"].ToString());
-				return margins;
-			}
-			catch (Exception)
-			{
-				// in case of error, return null
+			if (!(value is string s))
+				return base.ConvertFrom (context, culture, value);
+			string text = s.Trim ();
+			if (text.Length == 0)
 				return null;
-			}
+			culture ??= CultureInfo.CurrentCulture;
+			char separator = culture.TextInfo.ListSeparator [0];
+			string [] tokens = text.Split (separator);
+			var values = new int [tokens.Length];
+			TypeConverter intConverter = TypeDescriptor.GetConverter (typeof (int));
+			for (int i = 0; i < values.Length; i++)
+				values [i] = (int) intConverter.ConvertFromString (context, culture, tokens [i]);
+			if (values.Length != 4)
+				throw new ArgumentException (SR.Format (SR.TextParseFailedFormat, text, "left, right, top, bottom"));
+			return new Margins (values [0], values [1], values [2], values [3]);
 		}
-		#endregion
+
+		public override object ConvertTo (ITypeDescriptorContext context, CultureInfo culture, object value, Type destinationType)
+		{
+			ArgumentNullException.ThrowIfNull (destinationType);
+			if (value is Margins margins) {
+				if (destinationType == typeof (string)) {
+					culture ??= CultureInfo.CurrentCulture;
+					string separator = culture.TextInfo.ListSeparator + " ";
+					TypeConverter intConverter = TypeDescriptor.GetConverter (typeof (int));
+					return string.Join (separator, new [] {
+						intConverter.ConvertToString (context, culture, margins.Left),
+						intConverter.ConvertToString (context, culture, margins.Right),
+						intConverter.ConvertToString (context, culture, margins.Top),
+						intConverter.ConvertToString (context, culture, margins.Bottom),
+					});
+				}
+				if (destinationType == typeof (InstanceDescriptor)) {
+					ConstructorInfo ctor = typeof (Margins).GetConstructor (new [] { typeof (int), typeof (int), typeof (int), typeof (int) });
+					if (ctor != null)
+						return new InstanceDescriptor (ctor, new object [] { margins.Left, margins.Right, margins.Top, margins.Bottom });
+				}
+			}
+			return base.ConvertTo (context, culture, value, destinationType);
+		}
+
+		public override bool GetCreateInstanceSupported (ITypeDescriptorContext context) => true;
+
+		public override object CreateInstance (ITypeDescriptorContext context, IDictionary propertyValues)
+		{
+			ArgumentNullException.ThrowIfNull (propertyValues);
+			object left = propertyValues ["Left"], right = propertyValues ["Right"], top = propertyValues ["Top"], bottom = propertyValues ["Bottom"];
+			if (left is int l && right is int r && bottom is int b && top is int t)
+				return new Margins (l, r, t, b);
+			throw new ArgumentException (SR.PropertyValueInvalidEntry);
+		}
 	}
 }
