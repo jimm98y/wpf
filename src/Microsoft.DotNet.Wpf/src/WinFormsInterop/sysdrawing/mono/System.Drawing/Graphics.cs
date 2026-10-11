@@ -633,8 +633,12 @@ namespace System.Drawing
 		{
 			if (data == null)
 				throw new ArgumentNullException ("data");
-			// Only a Graphics recording a metafile keeps comments; any other ignores them, as GDI+ does.
-			mf_rec?.Comment (data);
+			CheckUse ();
+			// Only a Graphics recording a metafile keeps comments; GdipComment on any other is
+			// InvalidParameter.
+			if (mf_rec == null)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
+			mf_rec.Comment (data);
 		}
 
 		// GDI+'s container and state ids share one counter (DpContext's Uniqueness and depth).
@@ -642,15 +646,20 @@ namespace System.Drawing
 
 		public GraphicsContainer BeginContainer ()
 		{
+			CheckUse ();
 			int token = BeginContainerState (null, RectangleF.Empty, RectangleF.Empty, GraphicsUnit.Pixel);
 			return new GraphicsContainer ((uint) token);
 		}
 
 		public GraphicsContainer BeginContainer (Rectangle dstrect, Rectangle srcrect, GraphicsUnit unit)
-			=> BeginContainer ((RectangleF) dstrect, (RectangleF) srcrect, unit);
+		{
+			CheckUse ();
+			return BeginContainer ((RectangleF) dstrect, (RectangleF) srcrect, unit);
+		}
 
 		public GraphicsContainer BeginContainer (RectangleF dstrect, RectangleF srcrect, GraphicsUnit unit)
 		{
+			CheckUse ();
 			// GdipBeginContainer: the source unit must be a real one (not World or Display).
 			if (unit < GraphicsUnit.Pixel || unit > GraphicsUnit.Millimeter)
 				throw new ArgumentException ("Parameter is not valid.");
@@ -733,6 +742,8 @@ namespace System.Drawing
 
 		public void Clear (Color color)
 		{
+			CheckUse ();
+			CheckTarget ();
 						if (EngineClear (color)) return;
 			if (image_target != null && GpuRecorder is WebGpuBackend.SceneRecorder rec) {
 				// A bitmap's every pixel BECOMES the colour (transparent included) -- a replace, not a
@@ -759,6 +770,7 @@ namespace System.Drawing
 		[MonoLimitation ("Works on Win32 and on X11 (but not on Cocoa and Quartz)")]
 		public void CopyFromScreen (Point upperLeftSource, Point upperLeftDestination, Size blockRegionSize)
 		{
+			CheckUse ();
 			CopyFromScreen (upperLeftSource.X, upperLeftSource.Y, upperLeftDestination.X, upperLeftDestination.Y,
 				blockRegionSize, CopyPixelOperation.SourceCopy);				
 		}
@@ -766,6 +778,7 @@ namespace System.Drawing
 		[MonoLimitation ("Works on Win32 and (for CopyPixelOperation.SourceCopy only) on X11 but not on Cocoa and Quartz")]
 		public void CopyFromScreen (Point upperLeftSource, Point upperLeftDestination, Size blockRegionSize, CopyPixelOperation copyPixelOperation)
 		{
+			CheckUse ();
 			CopyFromScreen (upperLeftSource.X, upperLeftSource.Y, upperLeftDestination.X, upperLeftDestination.Y,
 				blockRegionSize, copyPixelOperation);
 		}
@@ -773,6 +786,7 @@ namespace System.Drawing
 		[MonoLimitation ("Works on Win32 and on X11 (but not on Cocoa and Quartz)")]
 		public void CopyFromScreen (int sourceX, int sourceY, int destinationX, int destinationY, Size blockRegionSize)
 		{
+			CheckUse ();
 			CopyFromScreen (sourceX, sourceY, destinationX, destinationY, blockRegionSize,
 				CopyPixelOperation.SourceCopy);
 		}
@@ -780,6 +794,7 @@ namespace System.Drawing
 		[MonoLimitation ("Works on Win32 and (for CopyPixelOperation.SourceCopy only) on X11 but not on Cocoa and Quartz")]
 		public void CopyFromScreen (int sourceX, int sourceY, int destinationX, int destinationY, Size blockRegionSize, CopyPixelOperation copyPixelOperation)
 		{
+			CheckUse ();
 			if (!Enum.IsDefined (typeof (CopyPixelOperation), copyPixelOperation))
 				throw new InvalidEnumArgumentException (Locale.GetText ("Enum argument value '{0}' is not valid for CopyPixelOperation", copyPixelOperation));
 
@@ -901,6 +916,97 @@ namespace System.Drawing
 			hook (this);
 		}
 
+		// ---- what GDI+ says before it does anything ------------------------------------------------
+		//
+		// System.Drawing hands GDI+ its Graphics' handle on every call. Disposed, there is none and GDI+
+		// answers InvalidParameter; while GetHdc's DC is out the Graphics is locked and it answers
+		// ObjectBusy. An argument that was disposed has no handle either: InvalidParameter again.
+
+		void CheckUse ()
+		{
+			if (disposed)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
+			if (deviceContextHdc != IntPtr.Zero)
+				throw new InvalidOperationException (SR.GdiplusObjectBusy);
+		}
+
+		// GDI+'s own checks of an arc's or pie's ellipse.
+		static void CheckArc (float width, float height)
+		{
+			if (!(width > 0) || !(height > 0))
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
+		}
+
+		// A bitmap whose bits are locked cannot be drawn from (WrongState); a metafile still being
+		// recorded draws nothing, without complaint.
+		static bool SkipSourceImage (Image image)
+		{
+			if (image is Bitmap b && b.IsLocked)
+				throw new InvalidOperationException (SR.GdiplusWrongState);
+			return image is Metafile m && m.IsRecording;
+		}
+
+		// A bitmap whose bits are locked cannot be drawn on: GDI+ fails the draw (GenericError).
+		void CheckTarget ()
+		{
+			if (image_target != null && image_target.IsLocked)
+				throw new ExternalException (SR.GdiplusGenericError, unchecked ((int) 0x80004005));
+		}
+
+		static void CheckCombine (CombineMode mode)
+		{
+			if ((uint) mode > (uint) CombineMode.Complement)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
+		}
+
+		/// <summary>What GDI+ checks before any call on this Graphics (disposed, HDC out).</summary>
+		internal void CheckUsable () => CheckUse ();
+
+		void CheckUse (object a)
+		{
+			CheckUse ();
+			CheckLive (a);
+		}
+
+		void CheckUse (object a, object b)
+		{
+			CheckUse ();
+			CheckLive (a);
+			CheckLive (b);
+		}
+
+		void CheckUse (object a, object b, object c)
+		{
+			CheckUse ();
+			CheckLive (a);
+			CheckLive (b);
+			CheckLive (c);
+		}
+
+		internal static bool IsDisposedArg (object o)
+		{
+			switch (o) {
+			case null: return false;
+			case Pen p: return p.IsDisposed;
+			case Brush b: return b.IsDisposed;
+			case Image i: return i.disposed;
+			case Font f: return f.IsDisposed;
+			case Region r: return r.IsDisposed;
+			case GraphicsPath gp: return gp.IsDisposed;
+			case Matrix m: return m.IsDisposed;
+			case Graphics g: return g.disposed;
+			case StringFormat sf: return sf.IsDisposed;
+			default: return false;
+			}
+		}
+
+		/// <summary>An argument System.Drawing hands GDI+ by its handle, after Dispose: InvalidParameter.</summary>
+		internal static void CheckLive (object o)
+		{
+			if (IsDisposedArg (o))
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
+		}
+
 		public void Dispose ()
 		{
 			if (disposed) return;
@@ -967,18 +1073,30 @@ namespace System.Drawing
 		
 		public void DrawArc (Pen pen, Rectangle rect, float startAngle, float sweepAngle)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (rect.Width, rect.Height);
 			DrawArc (pen, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
 		}
 
 		
 		public void DrawArc (Pen pen, RectangleF rect, float startAngle, float sweepAngle)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (rect.Width, rect.Height);
 			DrawArc (pen, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
 		}
 
 		
 		public void DrawArc (Pen pen, float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (width, height);
 			if (EngineDrawArc (pen, x, y, width, height, startAngle, sweepAngle)) return;
 			if (PrintStroke (pen, gp => gp.AddArc (x, y, width, height, startAngle, sweepAngle))) return;
 			Status status;
@@ -994,6 +1112,10 @@ namespace System.Drawing
    		// int sweepAngle. However, GdipDrawArcI uses also float for the startAngle and sweepAngle params
    		public void DrawArc (Pen pen, int x, int y, int width, int height, int startAngle, int sweepAngle)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (width, height);
 			if (EngineDrawArc (pen, x, y, width, height, startAngle, sweepAngle)) return;
 			if (PrintStroke (pen, gp => gp.AddArc (x, y, width, height, startAngle, sweepAngle))) return;
 			Status status;
@@ -1006,6 +1128,8 @@ namespace System.Drawing
 
 		public void DrawBezier (Pen pen, PointF pt1, PointF pt2, PointF pt3, PointF pt4)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawBeziers (pen, new [] { pt1, pt2, pt3, pt4 })) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBezier (pt1, pt2, pt3, pt4); DrawPath (pen, gp); } return; }
 			Status status;
@@ -1017,6 +1141,8 @@ namespace System.Drawing
 
 		public void DrawBezier (Pen pen, Point pt1, Point pt2, Point pt3, Point pt4)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawBeziers (pen, new PointF [] { pt1, pt2, pt3, pt4 })) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBezier (pt1, pt2, pt3, pt4); DrawPath (pen, gp); } return; }
 			Status status;
@@ -1028,6 +1154,8 @@ namespace System.Drawing
 
 		public void DrawBezier (Pen pen, float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawBeziers (pen, new [] { new PointF (x1, y1), new PointF (x2, y2), new PointF (x3, y3), new PointF (x4, y4) })) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBezier (x1, y1, x2, y2, x3, y3, x4, y4); DrawPath (pen, gp); } return; }
 			Status status;
@@ -1039,6 +1167,13 @@ namespace System.Drawing
 
 		public void DrawBeziers (Pen pen, Point [] points)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			CheckUse (pen);
+			CheckTarget ();
+			// GDI+ refuses fewer than 1.
+			if (points != null && points.Length < 1)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (EngineDrawBeziers (pen, ToF (points))) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBeziers (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1065,6 +1200,13 @@ namespace System.Drawing
 
 		public void DrawBeziers (Pen pen, PointF [] points)
 		{
+			if (pen == null)
+				throw new ArgumentNullException ("pen");
+			CheckUse (pen);
+			CheckTarget ();
+			// GDI+ refuses fewer than 1.
+			if (points != null && points.Length < 1)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (EngineDrawBeziers (pen, points)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBeziers (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1092,6 +1234,8 @@ namespace System.Drawing
 		
 		public void DrawClosedCurve (Pen pen, PointF [] points)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawClosedCurve (pen, points, 0.5f)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1106,6 +1250,8 @@ namespace System.Drawing
 		
 		public void DrawClosedCurve (Pen pen, Point [] points)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawClosedCurve (pen, ToF (points), 0.5f)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1122,6 +1268,8 @@ namespace System.Drawing
 		// GDI+ call doesn't support it (issue spotted using Gendarme's AvoidUnusedParametersRule)
 		public void DrawClosedCurve (Pen pen, Point [] points, float tension, FillMode fillmode)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawClosedCurve (pen, ToF (points), tension)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1138,6 +1286,8 @@ namespace System.Drawing
 		// GDI+ call doesn't support it (issue spotted using Gendarme's AvoidUnusedParametersRule)
 		public void DrawClosedCurve (Pen pen, PointF [] points, float tension, FillMode fillmode)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawClosedCurve (pen, points, tension)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddClosedCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1152,6 +1302,10 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, Point [] points)
 		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
+			CheckUse (pen);
+			CheckTarget ();
 			if (points != null && EngineDrawCurve (pen, ToF (points), 0.5f, 0, points.Length - 1)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1166,6 +1320,10 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, PointF [] points)
 		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
+			CheckUse (pen);
+			CheckTarget ();
 			if (points != null && EngineDrawCurve (pen, points, 0.5f, 0, points.Length - 1)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1180,6 +1338,10 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, PointF [] points, float tension)
 		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
+			CheckUse (pen);
+			CheckTarget ();
 			if (points != null && EngineDrawCurve (pen, points, tension, 0, points.Length - 1)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1194,6 +1356,10 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, Point [] points, float tension)
 		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
+			CheckUse (pen);
+			CheckTarget ();
 			if (points != null && EngineDrawCurve (pen, ToF (points), tension, 0, points.Length - 1)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1208,6 +1374,10 @@ namespace System.Drawing
 		
 		public void DrawCurve (Pen pen, PointF [] points, int offset, int numberOfSegments)
 		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawCurve (pen, points, 0.5f, offset, numberOfSegments)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, offset, numberOfSegments, 0.5f); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1222,6 +1392,10 @@ namespace System.Drawing
 
 		public void DrawCurve (Pen pen, Point [] points, int offset, int numberOfSegments, float tension)
 		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawCurve (pen, ToF (points), tension, offset, numberOfSegments)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, offset, numberOfSegments, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1236,6 +1410,10 @@ namespace System.Drawing
 
 		public void DrawCurve (Pen pen, PointF [] points, int offset, int numberOfSegments, float tension)
 		{
+			if (points == null)
+				throw new ArgumentNullException ("points");
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawCurve (pen, points, tension, offset, numberOfSegments)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddCurve (points, offset, numberOfSegments, tension); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1250,6 +1428,8 @@ namespace System.Drawing
 
 		public void DrawEllipse (Pen pen, Rectangle rect)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			
@@ -1258,6 +1438,8 @@ namespace System.Drawing
 
 		public void DrawEllipse (Pen pen, RectangleF rect)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			DrawEllipse (pen, rect.X, rect.Y, rect.Width, rect.Height);
@@ -1265,6 +1447,8 @@ namespace System.Drawing
 
 		public void DrawEllipse (Pen pen, int x, int y, int width, int height)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawEllipse (pen, x, y, width, height)) return;
 			if (PrintStroke (pen, gp => gp.AddEllipse (x, y, width, height))) return;
 			if (pen == null)
@@ -1281,6 +1465,8 @@ namespace System.Drawing
 
 		public void DrawEllipse (Pen pen, float x, float y, float width, float height)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawEllipse (pen, x, y, width, height)) return;
 			if (PrintStroke (pen, gp => gp.AddEllipse (x, y, width, height))) return;
 			if (pen == null)
@@ -1292,6 +1478,8 @@ namespace System.Drawing
 
 		public void DrawIcon (Icon icon, Rectangle targetRect)
 		{
+			CheckUse ();
+			CheckTarget ();
 			if (icon == null)
 				throw new ArgumentNullException ("icon");
 
@@ -1300,6 +1488,8 @@ namespace System.Drawing
 
 		public void DrawIcon (Icon icon, int x, int y)
 		{
+			CheckUse ();
+			CheckTarget ();
 			if (icon == null)
 				throw new ArgumentNullException ("icon");
 
@@ -1308,6 +1498,8 @@ namespace System.Drawing
 
 		public void DrawIconUnstretched (Icon icon, Rectangle targetRect)
 		{
+			CheckUse ();
+			CheckTarget ();
 			if (icon == null)
 				throw new ArgumentNullException ("icon");
 
@@ -1316,6 +1508,9 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, RectangleF rect)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, rect)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1326,6 +1521,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF point)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, point.X, point.Y)) return;
 			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, point.X, point.Y, ps.Width, ps.Height); return; }
 			if (image == null)
@@ -1337,6 +1535,11 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints)
 		{
+			if (destPoints != null && destPoints.Length != 3 && destPoints.Length != 4)
+				throw new ArgumentException (SR.GdiplusDestPointsInvalidLength);
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, EnginePoints (destPoints), null, GraphicsUnit.Pixel, null)) return;
 			if (RecordImagePoints (image, ToF (destPoints), null, GraphicsUnit.Pixel, null)) return;
 			if (image == null)
@@ -1350,6 +1553,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point point)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, point.X, point.Y)) return;
 			if (print_mode && image != null) { DrawImage (image, (float) point.X, (float) point.Y); return; }
 			if (image == null)
@@ -1359,6 +1565,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle rect)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, rect)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1367,6 +1576,11 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF [] destPoints)
 		{
+			if (destPoints != null && destPoints.Length != 3 && destPoints.Length != 4)
+				throw new ArgumentException (SR.GdiplusDestPointsInvalidLength);
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, destPoints, null, GraphicsUnit.Pixel, null)) return;
 			if (RecordImagePoints (image, destPoints, null, GraphicsUnit.Pixel, null)) return;
 			if (image == null)
@@ -1379,6 +1593,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, int x, int y)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, x, y)) return;
 			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, x, y, ps.Width, ps.Height); return; }
 			if (image == null)
@@ -1390,6 +1607,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, float x, float y)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, x, y)) return;
 			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, x, y, ps.Width, ps.Height); return; }
 			if (image == null)
@@ -1401,6 +1621,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, Rectangle srcRect, GraphicsUnit srcUnit)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, destRect, srcRect, srcUnit, null)) return;
 			if (RecordImage (image, destRect, srcRect, srcUnit, null)) return;
 			if (image == null)
@@ -1411,6 +1634,9 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, RectangleF destRect, RectangleF srcRect, GraphicsUnit srcUnit)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, destRect, srcRect, srcUnit, null)) return;
 			if (RecordImage (image, destRect, srcRect, srcUnit, null)) return;			
 			if (image == null)
@@ -1421,6 +1647,11 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit)
 		{
+			if (destPoints != null && destPoints.Length != 3 && destPoints.Length != 4)
+				throw new ArgumentException (SR.GdiplusDestPointsInvalidLength);
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, EnginePoints (destPoints), srcRect, srcUnit, null)) return;
 			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, null)) return;
 			if (image == null)
@@ -1434,6 +1665,11 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit)
 		{
+			if (destPoints != null && destPoints.Length != 3 && destPoints.Length != 4)
+				throw new ArgumentException (SR.GdiplusDestPointsInvalidLength);
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, destPoints, srcRect, srcUnit, null)) return;
 			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, null)) return;
 			if (image == null)
@@ -1448,6 +1684,11 @@ namespace System.Drawing
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, 
                                 ImageAttributes imageAttr)
 		{
+			if (destPoints != null && destPoints.Length != 3 && destPoints.Length != 4)
+				throw new ArgumentException (SR.GdiplusDestPointsInvalidLength);
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, EnginePoints (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
@@ -1460,6 +1701,9 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, float x, float y, float width, float height)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, new RectangleF (x, y, width, height))) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1471,6 +1715,11 @@ namespace System.Drawing
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, 
                                 ImageAttributes imageAttr)
 		{
+			if (destPoints != null && destPoints.Length != 3 && destPoints.Length != 4)
+				throw new ArgumentException (SR.GdiplusDestPointsInvalidLength);
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
@@ -1483,6 +1732,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, int x, int y, Rectangle srcRect, GraphicsUnit srcUnit)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, x, y, srcRect, srcUnit)) return;
 			if (RecordImage (image, new RectangleF (x, y, srcRect.Width, srcRect.Height), srcRect, srcUnit, null)) return;			
 			if (image == null)
@@ -1493,6 +1745,9 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, int x, int y, int width, int height)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, new RectangleF (x, y, width, height))) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -1503,6 +1758,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, float x, float y, RectangleF srcRect, GraphicsUnit srcUnit)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, x, y, srcRect, srcUnit)) return;
 			if (RecordImage (image, new RectangleF (x, y, srcRect.Width, srcRect.Height), srcRect, srcUnit, null)) return;			
 			if (image == null)
@@ -1513,6 +1771,14 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
 		{
+			if (destPoints != null && destPoints.Length != 3 && destPoints.Length != 4)
+				throw new ArgumentException (SR.GdiplusDestPointsInvalidLength);
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
+			// GDI+ asks the abort callback as it draws; one that answers true ends the call.
+			if (callback != null && callback (IntPtr.Zero))
+				throw new ExternalException (SR.GdiplusAborted, unchecked ((int) 0x80004004));
 			if (EngineDrawImage (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
@@ -1525,6 +1791,14 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
 		{
+			if (destPoints != null && destPoints.Length != 3 && destPoints.Length != 4)
+				throw new ArgumentException (SR.GdiplusDestPointsInvalidLength);
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
+			// GDI+ asks the abort callback as it draws; one that answers true ends the call.
+			if (callback != null && callback (IntPtr.Zero))
+				throw new ExternalException (SR.GdiplusAborted, unchecked ((int) 0x80004004));
 			if (EngineDrawImage (image, EnginePoints (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
@@ -1538,6 +1812,14 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Point [] destPoints, Rectangle srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback, int callbackData)
 		{
+			if (destPoints != null && destPoints.Length != 3 && destPoints.Length != 4)
+				throw new ArgumentException (SR.GdiplusDestPointsInvalidLength);
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
+			// GDI+ asks the abort callback as it draws; one that answers true ends the call.
+			if (callback != null && callback ((IntPtr) callbackData))
+				throw new ExternalException (SR.GdiplusAborted, unchecked ((int) 0x80004004));
 			if (EngineDrawImage (image, EnginePoints (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, ToF (destPoints), srcRect, srcUnit, imageAttr)) return;
 			if (image == null)
@@ -1551,6 +1833,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, null)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, null)) return;
 			if (image == null)
@@ -1561,6 +1846,18 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, PointF [] destPoints, RectangleF srcRect, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback, int callbackData)
 		{
+			if (image == null)
+				throw new ArgumentNullException ("image");
+			if (destPoints == null)
+				throw new ArgumentNullException ("destPoints");
+			if (destPoints != null && destPoints.Length != 3 && destPoints.Length != 4)
+				throw new ArgumentException (SR.GdiplusDestPointsInvalidLength);
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
+			// GDI+ asks the abort callback as it draws; one that answers true ends the call.
+			if (callback != null && callback ((IntPtr) callbackData))
+				throw new ExternalException (SR.GdiplusAborted, unchecked ((int) 0x80004004));
 			if (EngineDrawImage (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			if (RecordImagePoints (image, destPoints, srcRect, srcUnit, imageAttr)) return;
 			/*GDIP*/;
@@ -1569,6 +1866,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, null)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, null)) return;
 			if (image == null)
@@ -1579,6 +1879,9 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
@@ -1589,6 +1892,9 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttr)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttr)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttr)) return;			
 			if (image == null)
@@ -1599,6 +1905,12 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttr, DrawImageAbort callback)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
+			// GDI+ asks the abort callback as it draws; one that answers true ends the call.
+			if (callback != null && callback (IntPtr.Zero))
+				throw new ExternalException (SR.GdiplusAborted, unchecked ((int) 0x80004004));
 			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttr)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttr)) return;
 			if (image == null)
@@ -1609,6 +1921,12 @@ namespace System.Drawing
 		
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
+			// GDI+ asks the abort callback as it draws; one that answers true ends the call.
+			if (callback != null && callback (IntPtr.Zero))
+				throw new ExternalException (SR.GdiplusAborted, unchecked ((int) 0x80004004));
 			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
@@ -1619,6 +1937,12 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, float srcX, float srcY, float srcWidth, float srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback, IntPtr callbackData)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
+			// GDI+ asks the abort callback as it draws; one that answers true ends the call.
+			if (callback != null && callback (callbackData))
+				throw new ExternalException (SR.GdiplusAborted, unchecked ((int) 0x80004004));
 			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
@@ -1629,6 +1953,12 @@ namespace System.Drawing
 
 		public void DrawImage (Image image, Rectangle destRect, int srcX, int srcY, int srcWidth, int srcHeight, GraphicsUnit srcUnit, ImageAttributes imageAttrs, DrawImageAbort callback, IntPtr callbackData)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
+			// GDI+ asks the abort callback as it draws; one that answers true ends the call.
+			if (callback != null && callback (callbackData))
+				throw new ExternalException (SR.GdiplusAborted, unchecked ((int) 0x80004004));
 			if (EngineDrawImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (RecordImage (image, destRect, new RectangleF (srcX, srcY, srcWidth, srcHeight), srcUnit, imageAttrs)) return;
 			if (image == null)
@@ -1639,16 +1969,25 @@ namespace System.Drawing
 		
 		public void DrawImageUnscaled (Image image, Point point)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			DrawImageUnscaled (image, point.X, point.Y);
 		}
 		
 		public void DrawImageUnscaled (Image image, Rectangle rect)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			DrawImageUnscaled (image, rect.X, rect.Y, rect.Width, rect.Height);
 		}
 		
 		public void DrawImageUnscaled (Image image, int x, int y)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (EngineDrawImage (image, x, y)) return;
@@ -1657,6 +1996,9 @@ namespace System.Drawing
 
 		public void DrawImageUnscaled (Image image, int x, int y, int width, int height)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 			if (EngineDrawImage (image, x, y)) return;
@@ -1675,6 +2017,9 @@ namespace System.Drawing
 
 		public void DrawImageUnscaledAndClipped (Image image, Rectangle rect)
 		{
+			CheckUse (image);
+			CheckTarget ();
+			if (SkipSourceImage (image)) return;
 			if (image == null)
 				throw new ArgumentNullException ("image");
 
@@ -1687,6 +2032,8 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, PointF pt1, PointF pt2)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawLine (pen, pt1.X, pt1.Y, pt2.X, pt2.Y)) return;
 			if (GpuRecorder != null) { DrawLine (pen, pt1.X, pt1.Y, pt2.X, pt2.Y); return; }
 			if (pen == null)
@@ -1697,6 +2044,8 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, Point pt1, Point pt2)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawLine (pen, pt1.X, pt1.Y, pt2.X, pt2.Y)) return;
 			if (PrintStroke (pen, gp => gp.AddLine (pt1, pt2))) return;
 			if (pen == null)
@@ -1714,6 +2063,8 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, int x1, int y1, int x2, int y2)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawLine (pen, x1, y1, x2, y2)) return;
 			if (PrintStroke (pen, gp => gp.AddLine (x1, y1, x2, y2))) return;
 			if (pen == null)
@@ -1731,6 +2082,8 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, float x1, float y1, float x2, float y2)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawLine (pen, x1, y1, x2, y2)) return;
 			if (PrintStroke (pen, gp => gp.AddLine (x1, y1, x2, y2))) return;
 			if (pen == null)
@@ -1751,6 +2104,11 @@ namespace System.Drawing
 
 		public void DrawLines (Pen pen, PointF [] points)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GDI+ refuses fewer than 2.
+			if (points != null && points.Length < 2)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (EngineDrawLines (pen, points, false)) return;
 			if (points != null && PrintStroke (pen, gp => gp.AddLines (points))) return;
 			if (pen == null)
@@ -1769,6 +2127,11 @@ namespace System.Drawing
 
 		public void DrawLines (Pen pen, Point [] points)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GDI+ refuses fewer than 2.
+			if (points != null && points.Length < 2)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (EngineDrawLines (pen, points, false)) return;
 			if (points != null && PrintStroke (pen, gp => gp.AddLines (points))) return;
 			if (pen == null)
@@ -1787,6 +2150,8 @@ namespace System.Drawing
 
 		public void DrawPath (Pen pen, GraphicsPath path)
 		{
+			CheckUse (pen, path);
+			CheckTarget ();
 			if (mf_rec != null && pen != null && path != null) { mf_rec.DrawPath (pen, path); return; }
 			if (path != null && EngineDrawPath (pen, path.gp)) return;
 			if (path != null && PrintStroke (pen, path)) return;
@@ -1815,6 +2180,10 @@ namespace System.Drawing
 		
 		public void DrawPie (Pen pen, Rectangle rect, float startAngle, float sweepAngle)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (rect.Width, rect.Height);
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			DrawPie (pen, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
@@ -1822,6 +2191,10 @@ namespace System.Drawing
 		
 		public void DrawPie (Pen pen, RectangleF rect, float startAngle, float sweepAngle)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (rect.Width, rect.Height);
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			DrawPie (pen, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
@@ -1829,6 +2202,10 @@ namespace System.Drawing
 		
 		public void DrawPie (Pen pen, float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (width, height);
 			if (EngineDrawPie (pen, x, y, width, height, startAngle, sweepAngle)) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddPie (x, y, width, height, startAngle, sweepAngle); DrawPath (pen, gp); } return; }
 			if (pen == null)
@@ -1842,6 +2219,10 @@ namespace System.Drawing
    		// int sweepAngle. However, GdipDrawPieI uses also float for the startAngle and sweepAngle params
    		public void DrawPie (Pen pen, int x, int y, int width, int height, int startAngle, int sweepAngle)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (width, height);
 			if (EngineDrawPie (pen, x, y, width, height, startAngle, sweepAngle)) return;
 			if (GpuRecorder != null) { DrawPie (pen, (float) x, (float) y, (float) width, (float) height, (float) startAngle, (float) sweepAngle); return; }
 			if (pen == null)
@@ -1852,6 +2233,11 @@ namespace System.Drawing
 
 		public void DrawPolygon (Pen pen, Point [] points)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GDI+ refuses fewer than 2.
+			if (points != null && points.Length < 2)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (EngineDrawLines (pen, points, true)) return;
 			if (points != null && PrintStroke (pen, gp => gp.AddPolygon (points))) return;
 			if (pen == null)
@@ -1872,6 +2258,11 @@ namespace System.Drawing
 
 		public void DrawPolygon (Pen pen, PointF [] points)
 		{
+			CheckUse (pen);
+			CheckTarget ();
+			// GDI+ refuses fewer than 2.
+			if (points != null && points.Length < 2)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (EngineDrawLines (pen, points, true)) return;
 			if (points != null && PrintStroke (pen, gp => gp.AddPolygon (points))) return;
 			if (pen == null)
@@ -1890,8 +2281,46 @@ namespace System.Drawing
 			
 		}
 
+		public void DrawRectangle (Pen pen, RectangleF rect)
+		{
+			DrawRectangle (pen, rect.X, rect.Y, rect.Width, rect.Height);
+		}
+
+		public void DrawRoundedRectangle (Pen pen, Rectangle rect, Size radius)
+		{
+			DrawRoundedRectangle (pen, (RectangleF) rect, (SizeF) radius);
+		}
+
+		public void DrawRoundedRectangle (Pen pen, RectangleF rect, SizeF radius)
+		{
+			using (GraphicsPath path = new GraphicsPath ()) {
+				path.AddRoundedRectangle (rect, radius);
+				DrawPath (pen, path);
+			}
+		}
+
+		public void FillRoundedRectangle (Brush brush, Rectangle rect, Size radius)
+		{
+			FillRoundedRectangle (brush, (RectangleF) rect, (SizeF) radius);
+		}
+
+		public void FillRoundedRectangle (Brush brush, RectangleF rect, SizeF radius)
+		{
+			using (GraphicsPath path = new GraphicsPath ()) {
+				path.AddRoundedRectangle (rect, radius);
+				FillPath (brush, path);
+			}
+		}
+
+		public void FillPie (Brush brush, RectangleF rect, float startAngle, float sweepAngle)
+		{
+			FillPie (brush, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle);
+		}
+
 		public void DrawRectangle (Pen pen, Rectangle rect)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			DrawRectangle (pen, rect.Left, rect.Top, rect.Width, rect.Height);
@@ -1899,6 +2328,8 @@ namespace System.Drawing
 
 		public void DrawRectangle (Pen pen, float x, float y, float width, float height)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawRects (pen, new [] { new RectangleF (x, y, width, height) })) return;
 			if (PrintStroke (pen, gp => gp.AddRectangle (new RectangleF (x, y, width, height)))) return;
 			if (pen == null)
@@ -1924,6 +2355,8 @@ namespace System.Drawing
 
 		public void DrawRectangle (Pen pen, int x, int y, int width, int height)
 		{
+			CheckUse (pen);
+			CheckTarget ();
 			if (EngineDrawRects (pen, new [] { new RectangleF (x, y, width, height) })) return;
 			if (PrintStroke (pen, gp => gp.AddRectangle (new RectangleF (x, y, width, height)))) return;
 			if (pen == null)
@@ -1949,6 +2382,13 @@ namespace System.Drawing
 
 		public void DrawRectangles (Pen pen, RectangleF [] rects)
 		{
+			if (rects == null)
+				throw new ArgumentNullException ("rects");
+			CheckUse (pen);
+			CheckTarget ();
+			// GDI+ refuses fewer than 1.
+			if (rects != null && rects.Length < 1)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (EngineDrawRects (pen, rects)) return;
 			if (GpuRecorder != null) { foreach (RectangleF r in rects) DrawRectangle (pen, r.X, r.Y, r.Width, r.Height); return; }
 			if (pen == null)
@@ -1961,6 +2401,13 @@ namespace System.Drawing
 
 		public void DrawRectangles (Pen pen, Rectangle [] rects)
 		{
+			if (rects == null)
+				throw new ArgumentNullException ("rects");
+			CheckUse (pen);
+			CheckTarget ();
+			// GDI+ refuses fewer than 1.
+			if (rects != null && rects.Length < 1)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (rects != null && EngineDrawRects (pen, Array.ConvertAll (rects, r => (RectangleF) r))) return;
 			if (GpuRecorder != null) { foreach (Rectangle r in rects) DrawRectangle (pen, r); return; }
 			if (pen == null)
@@ -1973,26 +2420,40 @@ namespace System.Drawing
 
 		public void DrawString (string s, Font font, Brush brush, RectangleF layoutRectangle)
 		{
+			CheckUse (font, brush);
+			CheckTarget ();
 			DrawString (s, font, brush, layoutRectangle, null);
 		}
 
 		public void DrawString (string s, Font font, Brush brush, PointF point)
 		{
+			CheckUse (font, brush);
+			CheckTarget ();
 			DrawString (s, font, brush, new RectangleF (point.X, point.Y, 0, 0), null);
 		}
 
 		public void DrawString (string s, Font font, Brush brush, PointF point, StringFormat format)
 		{
+			CheckUse (font, brush);
+			CheckTarget ();
+			// A disposed format hands GDI+ none: the default format.
+			if (format != null && format.IsDisposed) format = null;
 			DrawString(s, font, brush, new RectangleF(point.X, point.Y, 0, 0), format);
 		}
 
 		public void DrawString (string s, Font font, Brush brush, float x, float y)
 		{
+			CheckUse (font, brush);
+			CheckTarget ();
 			DrawString (s, font, brush, new RectangleF (x, y, 0, 0), null);
 		}
 
 		public void DrawString (string s, Font font, Brush brush, float x, float y, StringFormat format)
 		{
+			CheckUse (font, brush);
+			CheckTarget ();
+			// A disposed format hands GDI+ none: the default format.
+			if (format != null && format.IsDisposed) format = null;
 			DrawString (s, font, brush, new RectangleF(x, y, 0, 0), format);
 		}
 
@@ -2582,6 +3043,10 @@ namespace System.Drawing
 
 		public void DrawString (string s, Font font, Brush brush, RectangleF layoutRectangle, StringFormat format)
 		{
+			CheckUse (font, brush);
+			CheckTarget ();
+			// A disposed format hands GDI+ none: the default format.
+			if (format != null && format.IsDisposed) format = null;
 			if (print_mode && font != null && brush != null && PrintDrawString (s, font, brush, layoutRectangle, format)) return;
 			if (font == null)
 				throw new ArgumentNullException ("font");
@@ -2783,6 +3248,7 @@ namespace System.Drawing
 
 		public void EndContainer (GraphicsContainer container)
 		{
+			CheckUse ();
 						if (container == null)
 				throw new ArgumentNullException ("container");
 			// GpGraphics::EndContainer: Restore with the container's id.
@@ -2793,6 +3259,7 @@ namespace System.Drawing
 
 		public void ExcludeClip (Rectangle rect)
 		{
+			CheckUse ();
 						EngineClipRect (rect, CombineMode.Exclude);
 			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, true); return; }
@@ -2801,6 +3268,7 @@ namespace System.Drawing
 
 		public void ExcludeClip (Region region)
 		{
+			CheckUse (region);
 			if (region == null)
 				throw new ArgumentNullException ("region");
 						EngineClipRegion (region, CombineMode.Exclude);
@@ -2812,6 +3280,8 @@ namespace System.Drawing
 		
 		public void FillClosedCurve (Brush brush, PointF [] points)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2827,6 +3297,8 @@ namespace System.Drawing
 		
 		public void FillClosedCurve (Brush brush, Point [] points)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2843,6 +3315,8 @@ namespace System.Drawing
 		
 		public void FillClosedCurve (Brush brush, PointF [] points, FillMode fillmode)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2852,6 +3326,8 @@ namespace System.Drawing
 		
 		public void FillClosedCurve (Brush brush, Point [] points, FillMode fillmode)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2861,6 +3337,8 @@ namespace System.Drawing
 
 		public void FillClosedCurve (Brush brush, PointF [] points, FillMode fillmode, float tension)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2876,6 +3354,8 @@ namespace System.Drawing
 
 		public void FillClosedCurve (Brush brush, Point [] points, FillMode fillmode, float tension)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -2891,6 +3371,8 @@ namespace System.Drawing
 
 		public void FillEllipse (Brush brush, Rectangle rect)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			FillEllipse (brush, rect.X, rect.Y, rect.Width, rect.Height);
@@ -2898,6 +3380,8 @@ namespace System.Drawing
 
 		public void FillEllipse (Brush brush, RectangleF rect)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			FillEllipse (brush, rect.X, rect.Y, rect.Width, rect.Height);
@@ -2905,6 +3389,8 @@ namespace System.Drawing
 
 		public void FillEllipse (Brush brush, float x, float y, float width, float height)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (EngineFillEllipse (brush, x, y, width, height)) return;
@@ -2927,6 +3413,8 @@ namespace System.Drawing
 
 		public void FillEllipse (Brush brush, int x, int y, int width, int height)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (EngineFillEllipse (brush, x, y, width, height)) return;
@@ -2941,6 +3429,8 @@ namespace System.Drawing
 
 		public void FillPath (Brush brush, GraphicsPath path)
 		{
+			CheckUse (brush, path);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (path == null)
@@ -2980,6 +3470,10 @@ namespace System.Drawing
 
 		public void FillPie (Brush brush, Rectangle rect, float startAngle, float sweepAngle)
 		{
+			CheckUse (brush);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (rect.Width, rect.Height);
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (EngineFillPie (brush, rect.X, rect.Y, rect.Width, rect.Height, startAngle, sweepAngle)) return;
@@ -2998,6 +3492,10 @@ namespace System.Drawing
 
 		public void FillPie (Brush brush, int x, int y, int width, int height, int startAngle, int sweepAngle)
 		{
+			CheckUse (brush);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (width, height);
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (EngineFillPie (brush, x, y, width, height, startAngle, sweepAngle)) return;
@@ -3013,6 +3511,10 @@ namespace System.Drawing
 
 		public void FillPie (Brush brush, float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			CheckUse (brush);
+			CheckTarget ();
+			// GpGraphics::DrawArc / DrawPie / FillPie: an empty ellipse is InvalidParameter.
+			CheckArc (width, height);
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (EngineFillPie (brush, x, y, width, height, startAngle, sweepAngle)) return;
@@ -3027,6 +3529,11 @@ namespace System.Drawing
 
 		public void FillPolygon (Brush brush, PointF [] points)
 		{
+			CheckUse (brush);
+			CheckTarget ();
+			// GDI+ refuses fewer than 1.
+			if (points != null && points.Length < 1)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -3045,6 +3552,11 @@ namespace System.Drawing
 
 		public void FillPolygon (Brush brush, Point [] points)
 		{
+			CheckUse (brush);
+			CheckTarget ();
+			// GDI+ refuses fewer than 1.
+			if (points != null && points.Length < 1)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -3063,6 +3575,11 @@ namespace System.Drawing
 
 		public void FillPolygon (Brush brush, Point [] points, FillMode fillMode)
 		{
+			CheckUse (brush);
+			CheckTarget ();
+			// GDI+ refuses fewer than 1.
+			if (points != null && points.Length < 1)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -3081,6 +3598,11 @@ namespace System.Drawing
 
 		public void FillPolygon (Brush brush, PointF [] points, FillMode fillMode)
 		{
+			CheckUse (brush);
+			CheckTarget ();
+			// GDI+ refuses fewer than 1.
+			if (points != null && points.Length < 1)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (points == null)
@@ -3099,6 +3621,8 @@ namespace System.Drawing
 
 		public void FillRectangle (Brush brush, RectangleF rect)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
                         FillRectangle (brush, rect.Left, rect.Top, rect.Width, rect.Height);
@@ -3106,6 +3630,8 @@ namespace System.Drawing
 
 		public void FillRectangle (Brush brush, Rectangle rect)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (rect == null)
@@ -3116,6 +3642,8 @@ namespace System.Drawing
 
 		public void FillRectangle (Brush brush, int x, int y, int width, int height)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (EngineFillRects (brush, new [] { new RectangleF (x, y, width, height) })) return;
@@ -3132,6 +3660,8 @@ namespace System.Drawing
 
 		public void FillRectangle (Brush brush, float x, float y, float width, float height)
 		{
+			CheckUse (brush);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (EngineFillRects (brush, new [] { new RectangleF (x, y, width, height) })) return;
@@ -3148,6 +3678,11 @@ namespace System.Drawing
 
 		public void FillRectangles (Brush brush, Rectangle [] rects)
 		{
+			CheckUse (brush);
+			CheckTarget ();
+			// GDI+ refuses fewer than 1.
+			if (rects != null && rects.Length < 1)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (rects == null)
@@ -3167,6 +3702,11 @@ namespace System.Drawing
 
 		public void FillRectangles (Brush brush, RectangleF [] rects)
 		{
+			CheckUse (brush);
+			CheckTarget ();
+			// GDI+ refuses fewer than 1.
+			if (rects != null && rects.Length < 1)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (rects == null)
@@ -3185,6 +3725,8 @@ namespace System.Drawing
 		
 		public void FillRegion (Brush brush, Region region)
 		{
+			CheckUse (brush, region);
+			CheckTarget ();
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (region == null)
@@ -3203,12 +3745,14 @@ namespace System.Drawing
 		
 		public void Flush ()
 		{
+			CheckUse ();
 			Flush (FlushIntention.Flush);
 		}
 
 		
 		public void Flush (FlushIntention intention)
 		{
+			CheckUse ();
 			mf_rec?.Flush (intention);
 			if (image_target != null) {
 				image_target.TakeDrawing (this, detach: false);
@@ -3247,10 +3791,17 @@ namespace System.Drawing
 
 		/// <summary>A Graphics drawing into a GDI DC (Windows): the managed engine on a copy of the
 		/// DC's visible area, written back on Flush and Dispose.</summary>
+		[System.Runtime.InteropServices.DllImport ("gdi32.dll")]
+		static extern uint GetObjectType (IntPtr h);
+
 		static Graphics OverDc (IntPtr hdc)
 		{
 			if (!OperatingSystem.IsWindows ())
 				throw new PlatformNotSupportedException ("A device context is a Windows GDI object.");
+			// GdipCreateFromHDC of what is not a DC: OutOfMemory.
+			uint type = GetObjectType (hdc);
+			if (type != 3 && type != 4 && type != 10 && type != 12)   // OBJ_DC, OBJ_METADC, OBJ_MEMDC, OBJ_ENHMETADC
+				throw SafeNativeMethods.Gdip.OutOfMemoryException ();
 			WebGpuBackend.Gdip.GpHdcSurface surface = WebGpuBackend.Gdip.GpHdcSurface.ForDc (hdc);
 			int w = surface?.Width ?? 1, h = surface?.Height ?? 1;
 			var bmp = new Bitmap (w, h, PixelFormat.Format32bppRgb);
@@ -3273,7 +3824,7 @@ namespace System.Drawing
 		public static Graphics FromHdc (IntPtr hdc)
 		{
 			if (hdc == IntPtr.Zero)
-				throw new OutOfMemoryException ();
+				throw new ArgumentNullException ("hdc");
 			lock (s_pseudoHdc) {
 				if (s_pseudoHdc.TryGetValue (hdc, out Graphics owner))
 					return owner.SharedForHdc ();
@@ -3284,6 +3835,9 @@ namespace System.Drawing
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public static Graphics FromHdc (IntPtr hdc, IntPtr hdevice)
 		{
+			// GdipCreateFromHDC2, with no check of its own: no DC is OutOfMemory.
+			if (hdc == IntPtr.Zero)
+				throw SafeNativeMethods.Gdip.OutOfMemoryException ();
 			return FromHdc (hdc);
 		}
 
@@ -3302,7 +3856,7 @@ namespace System.Drawing
 				return WebGpuBackend.GpuRaster.NewRecording ();
 			IntPtr dc = WebGpuBackend.Gdip.GpHdcSurface.GetDC (hwnd);
 			if (dc == IntPtr.Zero)
-				throw new OutOfMemoryException ();
+				throw SafeNativeMethods.Gdip.OutOfMemoryException ();
 			Graphics g = OverDc (dc);
 			g.hdc_window = hwnd;
 			g.hdc_owned = dc;
@@ -3324,14 +3878,18 @@ namespace System.Drawing
 			// to the recorder (GDI text) is recorded and rendered onto them before the engine's next
 			// verb, or drawn as a nested scene when the bitmap is drawn first.
 			// A metafile being recorded: its one Graphics (GpMetafile::GetGraphicsContext).
+			// A disposed image hands GDI+ none: InvalidParameter.
+			if (image.disposed)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (image is Metafile mf)
 				return ForMetafile (mf);
 			if (image is Bitmap bitmap && bitmap.managed != null) {
+				// System.Drawing's own check, before GDI+ is asked.
 				if ((bitmap.PixelFormat & PixelFormat.Indexed) != 0)
-					throw new Exception (Locale.GetText ("A Graphics object cannot be created from an image that has an indexed pixel format."));
-								// GDI+ has no graphics context for these two (GpBitmap::GetGraphicsContext: OutOfMemory).
+					throw new ArgumentException (SR.GdiplusCannotCreateGraphicsFromIndexedPixelFormat, "image");
+				// GDI+ has no graphics context for these two (GpBitmap::GetGraphicsContext: OutOfMemory).
 				if (bitmap.PixelFormat == PixelFormat.Format16bppArgb1555 || bitmap.PixelFormat == PixelFormat.Format16bppGrayScale)
-					throw new OutOfMemoryException ();
+					throw SafeNativeMethods.Gdip.OutOfMemoryException ();
 				Graphics g = WebGpuBackend.GpuRaster.NewRecording ();
 				g.image_target = bitmap;
 				GdipFrame frame = bitmap.managed.Frame;
@@ -3349,14 +3907,26 @@ namespace System.Drawing
 			return WebGpuBackend.GpuRaster.NewRecording ();
 		}
 
-		[MonoTODO]
+		// GdipCreateHalftonePalette: GDI's halftone palette for the screen, a new HPALETTE the caller
+		// deletes. A palette is a Windows GDI object; there is none elsewhere.
 		public static IntPtr GetHalftonePalette ()
 		{
-			throw new NotImplementedException ();
+			if (!OperatingSystem.IsWindows ())
+				throw new PlatformNotSupportedException ("An HPALETTE is a Windows GDI object.");
+			IntPtr dc = GDIPlus.GetDC (IntPtr.Zero);
+			try {
+				return CreateHalftonePalette (dc);
+			} finally {
+				GDIPlus.ReleaseDC (IntPtr.Zero, dc);
+			}
 		}
+
+		[System.Runtime.InteropServices.DllImport ("gdi32.dll")]
+		static extern IntPtr CreateHalftonePalette (IntPtr hdc);
 
 				public IntPtr GetHdc ()
 		{
+			CheckUse ();
 			// GDI+ hands out one DC at a time.
 			if (deviceContextHdc != IntPtr.Zero)
 				throw new InvalidOperationException ("Object is currently in use elsewhere.");
@@ -3424,6 +3994,7 @@ namespace System.Drawing
 		
 				public Color GetNearestColor (Color color)
 		{
+			CheckUse ();
 						// GpGraphics::GetNearestColor: a 16-bit surface rounds the colour down to its own levels
 			// (each channel's top bits, shifted back up); a 32-bit one keeps it.
 			uint c = (uint) color.ToArgb ();
@@ -3438,6 +4009,7 @@ namespace System.Drawing
 		
 		public void IntersectClip (Region region)
 		{
+			CheckUse (region);
 			if (region == null)
 				throw new ArgumentNullException ("region");
 						EngineClipRegion (region, CombineMode.Intersect);
@@ -3448,6 +4020,7 @@ namespace System.Drawing
 		
 				public void IntersectClip (RectangleF rect)
 		{
+			CheckUse ();
 			EngineClipRect (rect, CombineMode.Intersect);
 			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) { GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, false); return; }
@@ -3456,6 +4029,7 @@ namespace System.Drawing
 
 		public void IntersectClip (Rectangle rect)
 		{			
+			CheckUse ();
 			// The recorder too, as the RectangleF overload does: this one had no recording path, so
 			// every integer clip -- TextRenderer's, a theme part's -- was dropped under the GPU.
 						EngineClipRect (rect, CombineMode.Intersect);
@@ -3464,10 +4038,15 @@ namespace System.Drawing
 			
 		}
 
-		public bool IsVisible (Point point) => IsVisible ((PointF) point);
+		public bool IsVisible (Point point)
+		{
+			CheckUse ();
+			return IsVisible ((PointF) point);
+		}
 
 		public bool IsVisible (RectangleF rect)
 		{
+			CheckUse ();
 			// GpGraphics::IsVisible(rect): the rectangle's device bounds meet the visible clip.
 			if (gp == null) return true;
 			SyncEngine ();
@@ -3481,6 +4060,7 @@ namespace System.Drawing
 
 		public bool IsVisible (PointF point)
 		{
+			CheckUse ();
 			// GpGraphics::IsVisible(point): the device point rounded, inside the visible clip.
 			if (gp == null) return true;
 			SyncEngine ();
@@ -3488,26 +4068,39 @@ namespace System.Drawing
 			return gp.IsVisibleDevice ((int) MathF.Floor (p.X + 0.5f), (int) MathF.Floor (p.Y + 0.5f));
 		}
 
-		public bool IsVisible (Rectangle rect) => IsVisible ((RectangleF) rect);
+		public bool IsVisible (Rectangle rect)
+		{
+			CheckUse ();
+			return IsVisible ((RectangleF) rect);
+		}
 
 		public bool IsVisible (float x, float y)
 		{
+			CheckUse ();
 			return IsVisible (new PointF (x, y));
 		}
 		
 		public bool IsVisible (int x, int y)
 		{
+			CheckUse ();
 			return IsVisible (new Point (x, y));
 		}
 		
 		public bool IsVisible (float x, float y, float width, float height)
 		{
+			CheckUse ();
+			// GpRectF::IsEmptyArea: no width or height is nothing to see.
+			if (!(width > 0) || !(height > 0))
+				return false;
 			return IsVisible (new RectangleF (x, y, width, height));
 		}
 
 		
 		public bool IsVisible (int x, int y, int width, int height)
 		{
+			CheckUse ();
+			if (width <= 0 || height <= 0)
+				return false;
 			return IsVisible (new Rectangle (x, y, width, height));
 		}
 
@@ -3520,12 +4113,16 @@ namespace System.Drawing
 			if (font == null)
 				throw new ArgumentNullException ("font");
 
+			// GdipGetStringFormatMeasurableCharacterRangeCount of no format (or a disposed one) is
+			// InvalidParameter; with no ranges System.Drawing answers without asking the Graphics.
 			if (stringFormat == null)
-				throw new ArgumentException ("stringFormat");
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
+			stringFormat.Live ();
 
 			int regcount = stringFormat.GetMeasurableCharacterRangeCount ();
 			if (regcount == 0)
 				return new Region[0];
+			CheckUse (font);
 
 			Region[] gpRegions = GdiPlusCharacterRanges (text, font, layoutRect, stringFormat, regcount);
 			if (gpRegions != null)
@@ -3657,23 +4254,29 @@ namespace System.Drawing
 
 		public SizeF MeasureString (string text, Font font)
 		{
+			CheckUse (font);
 			return MeasureString (text, font, SizeF.Empty);
 		}
 
 		public SizeF MeasureString (string text, Font font, SizeF layoutArea)
 		{
+			CheckUse (font);
 			RectangleF rect = new RectangleF (0, 0, layoutArea.Width, layoutArea.Height);
 			return GdipMeasureString (nativeObject, text, font, ref rect, IntPtr.Zero);
 		}
 
 		public SizeF MeasureString (string text, Font font, int width)
 		{				
+			CheckUse (font);
 			RectangleF rect = new RectangleF (0, 0, width, Int32.MaxValue);
 			return GdipMeasureString (nativeObject, text, font, ref rect, IntPtr.Zero);
 		}
 
 		public SizeF MeasureString (string text, Font font, SizeF layoutArea, StringFormat stringFormat)
 		{
+			CheckUse (font);
+			// A disposed format hands GDI+ none: the default format.
+			if (stringFormat != null && stringFormat.IsDisposed) stringFormat = null;
 			RectangleF rect = new RectangleF (0, 0, layoutArea.Width, layoutArea.Height);
 			IntPtr format = (stringFormat == null) ? IntPtr.Zero : stringFormat.NativeObject;
 			return GdipMeasureString (nativeObject, text, font, ref rect, format, stringFormat);
@@ -3681,6 +4284,9 @@ namespace System.Drawing
 
 		public SizeF MeasureString (string text, Font font, int width, StringFormat format)
 		{
+			CheckUse (font);
+			// A disposed format hands GDI+ none: the default format.
+			if (format != null && format.IsDisposed) format = null;
 			RectangleF rect = new RectangleF (0, 0, width, Int32.MaxValue);
 			IntPtr stringFormat = (format == null) ? IntPtr.Zero : format.NativeObject;
 			return GdipMeasureString (nativeObject, text, font, ref rect, stringFormat, format);
@@ -3688,6 +4294,9 @@ namespace System.Drawing
 
 		public SizeF MeasureString (string text, Font font, PointF origin, StringFormat stringFormat)
 		{
+			CheckUse (font);
+			// A disposed format hands GDI+ none: the default format.
+			if (stringFormat != null && stringFormat.IsDisposed) stringFormat = null;
 			RectangleF rect = new RectangleF (origin.X, origin.Y, 0, 0);
 			IntPtr format = (stringFormat == null) ? IntPtr.Zero : stringFormat.NativeObject;
 			return GdipMeasureString (nativeObject, text, font, ref rect, format, stringFormat);
@@ -3696,6 +4305,9 @@ namespace System.Drawing
 		public SizeF MeasureString (string text, Font font, SizeF layoutArea, StringFormat stringFormat, 
 			out int charactersFitted, out int linesFilled)
 		{	
+			CheckUse (font);
+			// A disposed format hands GDI+ none: the default format.
+			if (stringFormat != null && stringFormat.IsDisposed) stringFormat = null;
 			charactersFitted = 0;
 			linesFilled = 0;
 
@@ -3734,6 +4346,13 @@ namespace System.Drawing
 		{
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			CheckUse ();
+			// A disposed matrix hands GDI+ no matrix, and GdipMultiplyWorldTransform does nothing.
+			if (matrix.IsDisposed)
+				return;
+			// It refuses a singular one.
+			if (!matrix.Gp.IsInvertible)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
 
 						// GpMatrix::Multiply onto the world transform, prepended or appended.
 			mf_rec?.MultiplyWorldTransform (matrix, order);
@@ -3758,7 +4377,9 @@ namespace System.Drawing
 		[EditorBrowsable (EditorBrowsableState.Never)]
 				public void ReleaseHdcInternal (IntPtr hdc)
 		{
-			if (hdc == IntPtr.Zero || hdc != deviceContextHdc)
+			// GdipReleaseDC: no DC, or none out, is InvalidParameter; otherwise the DC that is out is
+			// released whichever handle is passed.
+			if (hdc == IntPtr.Zero || deviceContextHdc == IntPtr.Zero)
 				throw new ArgumentException ("Parameter is not valid.");
 			if (mf_rec != null) {
 				mf_rec.ReleaseHdc ();
@@ -3772,6 +4393,7 @@ namespace System.Drawing
 		
 				public void ResetClip ()
 		{
+			CheckUse ();
 			EngineResetClip ();
 			if (GpuRecorder != null) {
 				if (print_mode) GpuRecorder.ResetAllClips ();
@@ -3782,6 +4404,7 @@ namespace System.Drawing
 
 		public void ResetTransform ()
 		{
+			CheckUse ();
 			mf_rec?.ResetWorldTransform ();
 			rec_world = new float [] { 1f, 0f, 0f, 1f, 0f, 0f };
 			PushRecordedTransform ();
@@ -3789,6 +4412,7 @@ namespace System.Drawing
 
 		public void Restore (GraphicsState gstate)
 		{
+			CheckUse ();
 			// the possible NRE thrown by gstate.nativeState match MS behaviour
 			int token = gstate.nativeState;
 			mf_rec?.Restore ((uint) token);
@@ -3797,11 +4421,13 @@ namespace System.Drawing
 
 		public void RotateTransform (float angle)
 		{
+			CheckUse ();
 			RotateTransform (angle, MatrixOrder.Prepend);
 		}
 
 		public void RotateTransform (float angle, MatrixOrder order)
 		{
+			CheckUse ();
 			mf_rec?.RotateWorldTransform (angle, order);
 			GpMatrix w = RecWorld;
 			w.Rotate (angle, order == MatrixOrder.Append);
@@ -3811,19 +4437,25 @@ namespace System.Drawing
 
 		public GraphicsState Save ()
 		{
+			CheckUse ();
 			return new GraphicsState (SaveState (false));
 		}
 
 		public void ScaleTransform (float sx, float sy)
 		{
+			CheckUse ();
 			ScaleTransform (sx, sy, MatrixOrder.Prepend);
 		}
 
 		public void ScaleTransform (float sx, float sy, MatrixOrder order)
 		{
-			mf_rec?.ScaleWorldTransform (sx, sy, order);
+			CheckUse ();
 			GpMatrix w = RecWorld;
 			w.Scale (sx, sy, order == MatrixOrder.Append);
+			// GdipScaleWorldTransform refuses a world transform it cannot invert.
+			if (!w.IsInvertible)
+				throw new ArgumentException (SR.GdiplusInvalidParameter);
+			mf_rec?.ScaleWorldTransform (sx, sy, order);
 			SetRecWorld (w);
 			
 		}
@@ -3831,24 +4463,28 @@ namespace System.Drawing
 		
 		public void SetClip (RectangleF rect)
 		{
+			CheckUse ();
                         SetClip (rect, CombineMode.Replace);
 		}
 
 		
 		public void SetClip (GraphicsPath path)
 		{
+			CheckUse (path);
 			SetClip (path, CombineMode.Replace);
 		}
 
 		
 		public void SetClip (Rectangle rect)
 		{
+			CheckUse ();
 			SetClip (rect, CombineMode.Replace);
 		}
 
 		
 		public void SetClip (Graphics g)
 		{
+			CheckUse (g);
 			SetClip (g, CombineMode.Replace);
 		}
 
@@ -3857,6 +4493,8 @@ namespace System.Drawing
 		{
 			if (g == null)
 				throw new ArgumentNullException ("g");
+			CheckUse (g);
+			CheckCombine (combineMode);
 			
 			// The other Graphics' clip, in device space.
 			if (mf_rec != null) mf_rec.SetClipRegion (g.Clip, combineMode);
@@ -3872,6 +4510,8 @@ namespace System.Drawing
 		
 				public void SetClip (Rectangle rect, CombineMode combineMode)
 		{
+			CheckUse ();
+			CheckCombine (combineMode);
 			EngineClipRect (rect, combineMode);
 			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) {
@@ -3885,6 +4525,8 @@ namespace System.Drawing
 		
 				public void SetClip (RectangleF rect, CombineMode combineMode)
 		{
+			CheckUse ();
+			CheckCombine (combineMode);
 			EngineClipRect (rect, combineMode);
 			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) {
@@ -3918,7 +4560,7 @@ namespace System.Drawing
 				if (exclude) GpuRecorder.SetClipRect (0, 0, 0, 0, false);
 				return;
 			}
-			RectangleF[] scans = region.GetRegionScans (null);
+			RectangleF[] scans = region.GetRegionScans (new Matrix ());
 			if (scans.Length == 1) {
 				GpuRecorder.SetClipRect (scans [0].X, scans [0].Y, scans [0].Width, scans [0].Height, exclude);
 				return;
@@ -3940,6 +4582,8 @@ namespace System.Drawing
 
 		public void SetClip (Region region, CombineMode combineMode)
 		{
+			CheckUse (region);
+			CheckCombine (combineMode);
 						if (region == null)
 				throw new ArgumentNullException ("region");
 			EngineClipRegion (region, combineMode);
@@ -3966,6 +4610,8 @@ namespace System.Drawing
 		
 		public void SetClip (GraphicsPath path, CombineMode combineMode)
 		{
+			CheckUse (path);
+			CheckCombine (combineMode);
 			if (path == null)
 				throw new ArgumentNullException ("path");
 						EngineClipPath (path, combineMode);
@@ -3977,6 +4623,7 @@ namespace System.Drawing
 		
 		public void TransformPoints (CoordinateSpace destSpace, CoordinateSpace srcSpace, PointF [] pts)
 		{
+			CheckUse ();
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
 						TransformPointsF (destSpace, srcSpace, pts);
@@ -3985,6 +4632,7 @@ namespace System.Drawing
 
 		public void TransformPoints (CoordinateSpace destSpace, CoordinateSpace srcSpace, Point [] pts)
 		{						
+			CheckUse ();
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
 						var f = new PointF [pts.Length];
@@ -3997,12 +4645,14 @@ namespace System.Drawing
 		
 				public void TranslateClip (int dx, int dy)
 		{
+			CheckUse ();
 			TranslateClip ((float) dx, (float) dy);
 		}
 
 		
 				public void TranslateClip (float dx, float dy)
 		{
+			CheckUse ();
 			// GpGraphics::OffsetClip: the app clip moved by the vector, in device space.
 			EngineOffsetClip (dx, dy);
 			if (PrintRecordClip ()) return;
@@ -4010,6 +4660,7 @@ namespace System.Drawing
 
 		public void TranslateTransform (float dx, float dy)
 		{
+			CheckUse ();
 			TranslateTransform (dx, dy, MatrixOrder.Prepend);
 		}
 
@@ -4039,6 +4690,7 @@ namespace System.Drawing
 
 		public void TranslateTransform (float dx, float dy, MatrixOrder order)
 		{			
+			CheckUse ();
 			// WinForms draws a composite control by translating to each part's bounds, drawing it at
 			// the origin and resetting -- ToolStrip does exactly this per item. The recorder ignored
 			// the transform, so every item was drawn at the same place and their labels sat on top of
@@ -4052,17 +4704,20 @@ namespace System.Drawing
 
 		public Region Clip {
 			get {
+				CheckUse ();
 				// The engine knows the clip; a recording Graphics answers infinite.
 				if (gp != null) { SyncEngine (); return new Region (gp.GetClip ()); }
 				return new Region ();
 			}
 			set {
+				CheckUse ();
 				SetClip (value, CombineMode.Replace);
 			}
 		}
 
 		public RectangleF ClipBounds {
 			get {
+				CheckUse ();
 								if (gp != null) {
 					SyncEngine ();
 					// GpGraphics::GetClipBounds: the app clip's DEVICE region bounds, back in world units.
@@ -4086,10 +4741,11 @@ namespace System.Drawing
 		private CompositingMode _compositingMode = CompositingMode.SourceOver;
 
 		public CompositingMode CompositingMode {
-			get { return _compositingMode; }
+			get { CheckUse (); return _compositingMode; }
 			set {
-				if ((uint) value > 1)
-					throw new ArgumentException ("Parameter is not valid.");
+				if (value < CompositingMode.SourceOver || value > CompositingMode.SourceCopy)
+					throw new System.ComponentModel.InvalidEnumArgumentException ("value", (int) value, typeof (CompositingMode));
+				CheckUse ();
 				_compositingMode = value;
 				mf_rec?.SetCompositingMode (value);
 				GpuRecorder?.SetCompositingMode (value == CompositingMode.SourceCopy);
@@ -4097,21 +4753,30 @@ namespace System.Drawing
 		}
 
 		public CompositingQuality CompositingQuality {
-			get { return _compositingQuality; }
-			set { _compositingQuality = value; mf_rec?.SetCompositingQuality (value); }
+			get { CheckUse (); return _compositingQuality; }
+			set {
+				if (value < CompositingQuality.Invalid || value > CompositingQuality.AssumeLinear)
+					throw new System.ComponentModel.InvalidEnumArgumentException ("value", (int) value, typeof (CompositingQuality));
+				CheckUse ();
+				_compositingQuality = value;
+				mf_rec?.SetCompositingQuality (value);
+			}
 		}
 
 		public float DpiX {
-			get { return mf_rec != null ? mf_rec.DpiX : print_mode ? print_dpi_x : image_target != null ? image_target.HorizontalResolution : 96f; }
+			get { CheckUse (); return mf_rec != null ? mf_rec.DpiX : print_mode ? print_dpi_x : image_target != null ? image_target.HorizontalResolution : 96f; }
 		}
 
 		public float DpiY {
-			get { return mf_rec != null ? mf_rec.DpiY : print_mode ? print_dpi_y : image_target != null ? image_target.VerticalResolution : 96f; }
+			get { CheckUse (); return mf_rec != null ? mf_rec.DpiY : print_mode ? print_dpi_y : image_target != null ? image_target.VerticalResolution : 96f; }
 		}
 
 		public InterpolationMode InterpolationMode {
-			get { return _interpolation; }
+			get { CheckUse (); return _interpolation; }
 			set {
+				if (value < InterpolationMode.Invalid || value > InterpolationMode.HighQualityBicubic)
+					throw new System.ComponentModel.InvalidEnumArgumentException ("value", (int) value, typeof (InterpolationMode));
+				CheckUse ();
 				// GdipSetInterpolationMode: Default and Low are Bilinear, High is HighQualityBicubic.
 				if ((uint) value >= 8)
 					throw new ArgumentException ("Parameter is not valid.");
@@ -4124,6 +4789,7 @@ namespace System.Drawing
 
 		public bool IsClipEmpty {
 			get {
+				CheckUse ();
 				if (gp == null) return false;
 				SyncEngine ();
 				GpRegion c = gp.AppClip;
@@ -4133,6 +4799,7 @@ namespace System.Drawing
 
 		public bool IsVisibleClipEmpty {
 			get {
+				CheckUse ();
 				if (gp == null) return false;
 				SyncEngine ();
 				return gp.VisibleClipEmpty;
@@ -4140,8 +4807,9 @@ namespace System.Drawing
 		}
 
 		public float PageScale {
-			get { return rec_page_scale; }
+			get { CheckUse (); return rec_page_scale; }
 			set {
+				CheckUse ();
 				// GpGraphics::SetPageTransform: 1e-9 to 1e9.
 				if ((double) value < 1e-9 || value > 1000000000f)
 					throw new ArgumentException ("Parameter is not valid.");
@@ -4152,10 +4820,11 @@ namespace System.Drawing
 		}
 
 		public GraphicsUnit PageUnit {
-			get { return rec_unit; }
+			get { CheckUse (); return rec_unit; }
 			set {
 				if (value < GraphicsUnit.World || value > GraphicsUnit.Millimeter)
 					throw new System.ComponentModel.InvalidEnumArgumentException ("value", (int) value, typeof (GraphicsUnit));
+				CheckUse ();
 				if (value == GraphicsUnit.World)
 					throw new ArgumentException ("Parameter is not valid.");
 				rec_unit = value;
@@ -4165,8 +4834,11 @@ namespace System.Drawing
 		}
 
 		public PixelOffsetMode PixelOffsetMode {
-			get { return _pixelOffset; }
+			get { CheckUse (); return _pixelOffset; }
 			set {
+				if (value < PixelOffsetMode.Invalid || value > PixelOffsetMode.Half)
+					throw new System.ComponentModel.InvalidEnumArgumentException ("value", (int) value, typeof (PixelOffsetMode));
+				CheckUse ();
 				if ((uint) value >= 5)
 					throw new ArgumentException ("Parameter is not valid.");
 				_pixelOffset = value;
@@ -4175,13 +4847,16 @@ namespace System.Drawing
 		}
 
 		public Point RenderingOrigin {
-			get { return _renderingOrigin; }
-			set { _renderingOrigin = value; mf_rec?.SetRenderingOrigin (value.X, value.Y); }
+			get { CheckUse (); return _renderingOrigin; }
+			set { CheckUse (); _renderingOrigin = value; mf_rec?.SetRenderingOrigin (value.X, value.Y); }
 		}
 
 		public SmoothingMode SmoothingMode {
-			get { return gpu_smoothing; }
+			get { CheckUse (); return gpu_smoothing; }
 			set {
+				if (value < SmoothingMode.Invalid || value > SmoothingMode.AntiAlias)
+					throw new System.ComponentModel.InvalidEnumArgumentException ("value", (int) value, typeof (SmoothingMode));
+				CheckUse ();
 				if ((uint) value >= 6)
 					throw new ArgumentException ("Parameter is not valid.");
 				// GdipSetSmoothingMode records the mode as the caller gave it.
@@ -4193,8 +4868,9 @@ namespace System.Drawing
 		}
 
 		public int TextContrast {
-			get { return recorded_text_contrast; }
+			get { CheckUse (); return recorded_text_contrast; }
 			set {
+				CheckUse ();
 				// GpGraphics::SetTextContrast: 0 to 12.
 				if ((uint) value > 12)
 					throw new ArgumentException ("Parameter is not valid.");
@@ -4204,22 +4880,37 @@ namespace System.Drawing
 		}
 
 		public TextRenderingHint TextRenderingHint {
-			get { return recorded_text_hint; }
+			get { CheckUse (); return recorded_text_hint; }
 			set {
-				if ((uint) value >= 6)
-					throw new ArgumentException ("Parameter is not valid.");
+				if (value < TextRenderingHint.SystemDefault || value > TextRenderingHint.ClearTypeGridFit)
+					throw new System.ComponentModel.InvalidEnumArgumentException ("value", (int) value, typeof (TextRenderingHint));
+				CheckUse ();
 				recorded_text_hint = value;
 				mf_rec?.SetTextRenderingHint (value);
 			}
 		}
 
+		public System.Numerics.Matrix3x2 TransformElements {
+			get {
+				CheckUse ();
+				return new System.Numerics.Matrix3x2 (rec_world [0], rec_world [1], rec_world [2], rec_world [3], rec_world [4], rec_world [5]);
+			}
+			set {
+				using (Matrix m = new Matrix (value))
+					Transform = m;
+			}
+		}
+
 		public Matrix Transform {
 			get {
+				CheckUse ();
 				return new Matrix (rec_world [0], rec_world [1], rec_world [2], rec_world [3], rec_world [4], rec_world [5]);
 			}
 			set {
+				// System.Drawing hands GDI+ value.NativeMatrix unchecked: null is a NullReferenceException.
 				if (value == null)
-					throw new ArgumentNullException ("value");
+					throw new NullReferenceException ();
+				CheckUse (value);
 				// GdipSetWorldTransform refuses a singular matrix.
 				if (!value.Gp.IsInvertible)
 					throw new ArgumentException ("Parameter is not valid.");
@@ -4230,6 +4921,7 @@ namespace System.Drawing
 
 		public RectangleF VisibleClipBounds {
 			get {
+				CheckUse ();
 				if (gp != null) {
 					// The visible clip's device bounds, back in world units.
 					SyncEngine ();

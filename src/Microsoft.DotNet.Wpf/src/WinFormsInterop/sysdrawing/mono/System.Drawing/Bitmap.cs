@@ -96,6 +96,12 @@ namespace System.Drawing
 		{
 			if (width <= 0 || height <= 0 || !GdipPixels.Creatable (format))
 				throw new ArgumentException ("Parameter is not valid.");
+			// GpMemoryBitmap computes the stride and the buffer size in 32-bit integers and refuses a
+			// bitmap whose size overflows them (InvalidParameter) before allocating anything.
+			long bits = (long) width * Image.GetPixelFormatSize (format);
+			long stride = (bits + 31) / 32 * 4;
+			if (bits > int.MaxValue || stride > int.MaxValue || stride * height > int.MaxValue)
+				throw new ArgumentException ("Parameter is not valid.");
 			managed = new GdipImageData (new GdipFrame (width, height, format)) { Flags = GdipImageData.NewFlags (format) };
 			// A new bitmap of an alpha format is transparent black: nothing to draw under a recording.
 			blank = Image.IsAlphaPixelFormat (format);
@@ -118,26 +124,33 @@ namespace System.Drawing
 
 		public Bitmap (string filename, bool useIcm)
 		{
-			if (filename == null)
-				throw new ArgumentNullException ("filename");
-			byte [] data = File.ReadAllBytes (filename);
+			// System.Drawing makes the path full (ArgumentNullException 'path' for none); GDI+'s
+			// GdipCreateBitmapFromFile answers InvalidParameter for a file it cannot open or read.
+			filename = Path.GetFullPath (filename);
+			byte [] data;
+			try {
+				data = File.ReadAllBytes (filename);
+			} catch (IOException) {
+				throw new ArgumentException ("Parameter is not valid.");
+			} catch (UnauthorizedAccessException) {
+				throw new ArgumentException ("Parameter is not valid.");
+			}
 			managed = GdipCodecs.Decode (data);
 		}
 
 		public Bitmap (Type type, string resource)
 		{
-			if (resource == null)
-				throw new ArgumentException ("resource");
-
-			// For compatibility with the .NET Framework
 			if (type == null)
-				throw new NullReferenceException();
+				throw new ArgumentNullException ("type");
+			if (resource == null)
+				throw new ArgumentNullException ("resource");
+
+			if (type == null)
+				throw new ArgumentNullException ("type");
 
 			using (Stream s = type.GetTypeInfo ().Assembly.GetManifestResourceStream (type, resource)) {
-				if (s == null) {
-					string msg = Locale.GetText ("Resource '{0}' was not found.", resource);
-					throw new FileNotFoundException (msg);
-				}
+				if (s == null)
+					throw new ArgumentException (SR.Format (SR.ResourceNotFound, type, resource));
 				managed = GdipCodecs.Decode (ReadAll (s));
 			}
 		}
@@ -263,8 +276,10 @@ namespace System.Drawing
 
 		// methods
 		public Color GetPixel (int x, int y) {
+			Live ();
 			GdipFrame f = Data.Frame;
 			CheckBounds (f, x, y);
+			CheckUnlocked ();
 			if (!GdipPixels.Convertible (f.Format))
 				throw new ArgumentException ("Parameter is not valid.");
 			var px = new uint [1];
@@ -274,10 +289,12 @@ namespace System.Drawing
 
 		public void SetPixel (int x, int y, Color color)
 		{
+			Live ();
 			GdipFrame f = Data.Frame;
 			if (f.IsIndexed)
 				throw new InvalidOperationException ("SetPixel is not supported for images with indexed pixel formats.");
 			CheckBounds (f, x, y);
+			CheckUnlocked ();
 			if (!GdipPixels.Convertible (f.Format))
 				throw new ArgumentException ("Parameter is not valid.");
 			GdipPixels.WriteArgb (f, x, y, 1, new [] { (uint) color.ToArgb () }, 0);
@@ -294,10 +311,23 @@ namespace System.Drawing
 
 		public Bitmap Clone (Rectangle rect, PixelFormat format)
 		{
+			// System.Drawing's own check, before GDI+ is asked.
+			if (rect.Width == 0 || rect.Height == 0)
+				throw new ArgumentException (SR.Format (SR.GdiplusInvalidRectangle, rect.ToString ()));
+			return CloneArea (rect, format);
+		}
+
+		// GdipCloneBitmapAreaI.
+		Bitmap CloneArea (Rectangle rect, PixelFormat format)
+		{
+			Live ();
 			GdipFrame f = Data.Frame;
+			// GDI+ reads no format as the bitmap's own.
+			if (format == PixelFormat.Undefined)
+				format = f.Format;
 			if (rect.Width <= 0 || rect.Height <= 0 || rect.X < 0 || rect.Y < 0 || rect.Right > f.Width || rect.Bottom > f.Height
 			    || !GdipPixels.Convertible (format) || !GdipPixels.Convertible (f.Format))
-				throw new OutOfMemoryException ();
+				throw SafeNativeMethods.Gdip.OutOfMemoryException ();
 			// CopyOnWriteBitmap::Clone (0x1801cc578): the rectangle is copied in the bitmap's own
 			// format first, and only that copy is converted (ConvertFormat) when the format differs.
 			// A clone of all of it in its own format keeps the bytes the source was read from (@18007dd98).
@@ -316,8 +346,14 @@ namespace System.Drawing
 
 		public Bitmap Clone (RectangleF rect, PixelFormat format)
 		{
-			// GdipCloneBitmapArea (0x1800539d0) rounds each of the four, (int)(v + 0.5).
-			return Clone (new Rectangle ((int) (rect.X + 0.5f), (int) (rect.Y + 0.5f), (int) (rect.Width + 0.5f), (int) (rect.Height + 0.5f)), format);
+			if (rect.Width == 0f || rect.Height == 0f)
+				throw new ArgumentException (SR.Format (SR.GdiplusInvalidRectangle, rect.ToString ()));
+			Live ();
+			// GdipCloneBitmapArea (0x1800539d0) refuses an area that starts outside the bitmap, then
+			// rounds each of the four, (int)(v + 0.5).
+			if (rect.X < 0 || rect.Y < 0 || !(rect.Width > 0) || !(rect.Height > 0))
+				throw SafeNativeMethods.Gdip.OutOfMemoryException ();
+			return CloneArea (new Rectangle ((int) (rect.X + 0.5f), (int) (rect.Y + 0.5f), (int) (rect.Width + 0.5f), (int) (rect.Height + 0.5f)), format);
 		}
 
 		/// <summary>Converts the bitmap to <paramref name="format"/> in place, as GDI+ 1.1's
@@ -326,11 +362,10 @@ namespace System.Drawing
 		/// <paramref name="alphaThresholdPercent"/> taking the palette's entry nearest transparent.</summary>
 		public void ConvertFormat (PixelFormat format, DitherType ditherType, PaletteType paletteType = PaletteType.Custom, ColorPalette palette = null, float alphaThresholdPercent = 0f)
 		{
+			Live ();
 			if ((uint) ditherType > (uint) DitherType.ErrorDiffusion)
 				throw new ArgumentException ("Parameter is not valid.");
-			// GpLock on the bitmap: ObjectBusy while it is locked.
-			if (locked != null)
-				throw new InvalidOperationException ("Object is currently in use elsewhere.");
+			// GDI+ converts a bitmap whose bits are locked all the same: the lock keeps its own buffer.
 			GdipImageData data = Data;
 			GdipFrame f = data.Frame;
 			GdipFrame converted = GdipHalftone.Convert (f, format, (int) ditherType, (int) paletteType, palette?.Entries, palette?.Flags ?? 0,
@@ -349,6 +384,7 @@ namespace System.Drawing
 		/// deeper, solid when it is not.</summary>
 		public void ConvertFormat (PixelFormat format)
 		{
+			Live ();
 			int target = ((int) format >> 8) & 0xff, current = ((int) PixelFormat >> 8) & 0xff;
 			if ((format & PixelFormat.Indexed) == 0) {
 				ConvertFormat (format, target <= current ? DitherType.Solid : DitherType.None);
@@ -374,23 +410,28 @@ namespace System.Drawing
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public IntPtr GetHbitmap ()
 		{
+			Live ();
 			return GetHbitmap(Color.LightGray);
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public IntPtr GetHbitmap (Color background)
 		{
+			Live ();
 			return WebGpuBackend.WindowsImaging.GetHbitmap (Data.Frame, background);
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public IntPtr GetHicon ()
 		{
+			Live ();
+			CheckUnlocked ();
 			return WebGpuBackend.WindowsImaging.GetHicon (Data.Frame);
 		}
 
 		public BitmapData LockBits (Rectangle rect, ImageLockMode flags, PixelFormat format)
 		{
+			Live ();
 			BitmapData result = new BitmapData();
 			return LockBits (rect, flags, format, result);
 		}
@@ -405,6 +446,7 @@ namespace System.Drawing
 
 		sealed class LockState
 		{
+			internal bool UserBuffer;
 			internal Rectangle Rect;
 			internal ImageLockMode Mode;
 			internal PixelFormat Format;
@@ -415,43 +457,68 @@ namespace System.Drawing
 
 		LockState locked;
 
-		public
-		BitmapData LockBits (Rectangle rect, ImageLockMode flags, PixelFormat format, BitmapData bitmapData)
+		/// <summary>LockBits is out: GDI+ will neither draw from nor onto the bitmap.</summary>
+		internal bool IsLocked => locked != null;
+
+		// GDI+ will not read or write the pixels of a bitmap whose bits are locked (WrongState).
+		internal void CheckUnlocked ()
+		{
+			if (locked != null)
+				throw new InvalidOperationException ("Bitmap region is already locked.");
+		}
+
+		public BitmapData LockBits (Rectangle rect, ImageLockMode flags, PixelFormat format, BitmapData bitmapData)
 		{
 			if (bitmapData == null)
-				throw new ArgumentException ("Parameter is not valid.");
+				throw new ArgumentNullException ("bitmapData");
+			Live ();
 			GdipFrame f = Data.Frame;
 			if (rect.Width <= 0 || rect.Height <= 0 || rect.X < 0 || rect.Y < 0 || rect.Right > f.Width || rect.Bottom > f.Height)
 				throw new ArgumentException ("Parameter is not valid.");
-			if ((flags & (ImageLockMode.ReadOnly | ImageLockMode.WriteOnly)) == 0)
-				throw new ArgumentException ("Parameter is not valid.");
 			if (locked != null)
 				throw new InvalidOperationException ("Bitmap region is already locked.");
-			bool direct = format == f.Format && (rect.X * f.BitsPerPixel) % 8 == 0;
+			// A caller's buffer (UserInputBuffer): its Scan0 and Stride, which must be there when the
+			// lock reads or writes. A lock that does neither moves no pixels.
+			bool user = (flags & ImageLockMode.UserInputBuffer) != 0;
+			bool moves = (flags & (ImageLockMode.ReadOnly | ImageLockMode.WriteOnly)) != 0;
+			int minStride = (int) (((long) rect.Width * Image.GetPixelFormatSize (format) + 7) / 8);
+			if (user && moves && (bitmapData.Scan0 == IntPtr.Zero || Math.Abs (bitmapData.Stride) < minStride))
+				throw new ArgumentException ("Parameter is not valid.");
+			bool direct = !user && format == f.Format && (rect.X * f.BitsPerPixel) % 8 == 0;
 			if (!direct && (!GdipPixels.Convertible (format) || !GdipPixels.Convertible (f.Format)))
 				throw new ArgumentException ("Parameter is not valid.");
 
-			var state = new LockState { Rect = rect, Mode = flags, Format = format };
-			if (direct) {
+			var state = new LockState { Rect = rect, Mode = flags, Format = format, UserBuffer = user };
+			if (user && !moves) {
+				state.Buffer = bitmapData.Scan0;
+				state.Stride = bitmapData.Stride;
+			} else if (direct) {
 				state.Pin = GCHandle.Alloc (f.Bits, GCHandleType.Pinned);
 				state.Stride = f.Stride;
 				state.Buffer = state.Pin.AddrOfPinnedObject () + rect.Y * f.Stride + rect.X * f.BitsPerPixel / 8;
 			} else {
 				int bpp = Image.GetPixelFormatSize (format);
-				state.Stride = ((rect.Width * bpp + 31) / 32) * 4;
-				state.Buffer = Marshal.AllocHGlobal (state.Stride * rect.Height);
-				var bytes = new byte [state.Stride];
+				if (user) {
+					state.Stride = bitmapData.Stride;
+					state.Buffer = bitmapData.Scan0;
+				} else {
+					state.Stride = ((rect.Width * bpp + 31) / 32) * 4;
+					state.Buffer = Marshal.AllocHGlobal (state.Stride * rect.Height);
+				}
+				var bytes = new byte [Math.Abs (state.Stride)];
 				var argb = new uint [rect.Width];
 				Color[] palette = GdipPixels.LockPalette (f, format);
 				if ((flags & ImageLockMode.ReadOnly) != 0 && !GdipPixels.PaletteFits (format, palette)) {
-					Marshal.FreeHGlobal (state.Buffer);
+					if (!user) Marshal.FreeHGlobal (state.Buffer);
 					throw new ArgumentException ("Parameter is not valid.");
 				}
 				var map = palette != null ? new GdipPixels.IndexMap (palette) : null;
 				for (int y = 0; y < rect.Height; y++) {
 					if ((flags & ImageLockMode.ReadOnly) != 0)
 						GdipPixels.Transfer (f.Bits, (rect.Y + y) * f.Stride, f.Format, f.Palette, rect.X, rect.Width, bytes, 0, format, palette, 0, argb, map);
-					Marshal.Copy (bytes, 0, state.Buffer + y * state.Stride, state.Stride);
+					// Into a caller's buffer only what a row holds; into ours the whole stride.
+					if (!user || (flags & ImageLockMode.ReadOnly) != 0)
+						Marshal.Copy (bytes, 0, state.Buffer + y * state.Stride, user ? minStride : state.Stride);
 				}
 			}
 			bitmapData.Width = rect.Width; bitmapData.Height = rect.Height; bitmapData.Stride = state.Stride;
@@ -464,6 +531,8 @@ namespace System.Drawing
 
 		public void MakeTransparent ()
 		{
+			Live ();
+			CheckUnlocked ();
 			// .NET's: the BOTTOM-left pixel's colour (LightGray for an empty bitmap), and nothing at all
 			// when that pixel is already translucent -- proceeding would key out some unrelated colour.
 			Color clr = Color.LightGray;
@@ -476,6 +545,8 @@ namespace System.Drawing
 
 		public void MakeTransparent (Color transparentColor)
 		{
+			Live ();
+			CheckUnlocked ();
 			// GDI+ draws the bitmap through a colour key into a new 32bppArgb one: what matches goes
 			// transparent black, and everything else takes the premultiplied round trip of a draw.
 			GdipFrame f = Data.Frame;
@@ -494,6 +565,7 @@ namespace System.Drawing
 
 		public void SetResolution (float xDpi, float yDpi)
 		{
+			Live ();
 			if (!(xDpi > 0) || !(yDpi > 0))
 				throw new ArgumentException ("Parameter is not valid.");
 			GdipFrame f = Data.Frame;
@@ -503,11 +575,14 @@ namespace System.Drawing
 
 		public void UnlockBits (BitmapData bitmapdata)
 		{
+			Live ();
 			if (bitmapdata == null)
-				throw new ArgumentException ("Parameter is not valid.");
+				throw new ArgumentNullException ("bitmapdata");
+			// GpBitmap::UnlockBits ends the lock there is, whatever data it is handed; with none it
+			// is GenericError.
 			LockState state = locked;
-			if (state == null || bitmapdata.Scan0 != state.Buffer)
-				throw new ArgumentException ("Parameter is not valid.");
+			if (state == null)
+				throw new ExternalException ("A generic error occurred in GDI+.", unchecked ((int) 0x80004005));
 			locked = null;
 			if (state.Pin.IsAllocated) {
 				state.Pin.Free ();
@@ -515,18 +590,21 @@ namespace System.Drawing
 				GdipFrame f = managed.Frame;
 				if ((state.Mode & ImageLockMode.WriteOnly) != 0) {
 					Rectangle rect = state.Rect;
-					var bytes = new byte [state.Stride];
+					var bytes = new byte [Math.Abs (state.Stride)];
 					var argb = new uint [rect.Width];
 					Color[] palette = GdipPixels.LockPalette (f, state.Format);
 					var map = f.IsIndexed ? new GdipPixels.IndexMap (f.Palette) : null;
 					for (int y = 0; y < rect.Height; y++) {
-						Marshal.Copy (state.Buffer + y * state.Stride, bytes, 0, state.Stride);
+						Marshal.Copy (state.Buffer + y * state.Stride, bytes, 0, Math.Abs (state.Stride));
 						GdipPixels.Transfer (bytes, 0, state.Format, palette, 0, rect.Width, f.Bits, (rect.Y + y) * f.Stride, f.Format, f.Palette, rect.X, argb, map);
 					}
 				}
-				Marshal.FreeHGlobal (state.Buffer);
+				// A caller's buffer stays the caller's.
+				if (!state.UserBuffer)
+					Marshal.FreeHGlobal (state.Buffer);
 			}
-			bitmapdata.Scan0 = IntPtr.Zero;
+			if (!state.UserBuffer)
+				bitmapdata.Scan0 = IntPtr.Zero;
 		}
 
 		protected override void Dispose (bool disposing)
@@ -535,9 +613,12 @@ namespace System.Drawing
 			locked = null;
 			if (state != null) {
 				if (state.Pin.IsAllocated) state.Pin.Free ();
-				else if (state.Buffer != IntPtr.Zero) Marshal.FreeHGlobal (state.Buffer);
+				else if (state.Buffer != IntPtr.Zero && !state.UserBuffer) Marshal.FreeHGlobal (state.Buffer);
 			}
-			lock (drawing) { drawing.Clear (); pending.Clear (); }
+			// A constructor that threw before the field initializers ran (its this(...) arguments) leaves
+			// them null, and the finalizer still runs.
+			if (drawing != null)
+				lock (drawing) { drawing.Clear (); pending.Clear (); }
 			base.Dispose (disposing);
 		}
 	}

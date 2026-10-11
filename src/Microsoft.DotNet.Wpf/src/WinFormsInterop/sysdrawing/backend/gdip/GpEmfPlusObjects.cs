@@ -287,8 +287,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 if (sc == LineCap.Custom)
                 {
-                    using (CustomLineCap cap = GpObjectState.PenCustomStartCap(p))
-                        if (cap != null) startCap = Serialize(cap);
+                    // The pen's own cap, not a copy: it is the pen's to dispose.
+                    CustomLineCap cap = GpObjectState.PenCustomStartCap(p);
+                    if (cap != null) startCap = Serialize(cap);
                     if (startCap != null && startCap.Length > 0) flags |= 0x802;
                 }
                 else flags |= 2;
@@ -297,8 +298,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             {
                 if (ec == LineCap.Custom)
                 {
-                    using (CustomLineCap cap = GpObjectState.PenCustomEndCap(p))
-                        if (cap != null) endCap = Serialize(cap);
+                    // The pen's own cap, not a copy: it is the pen's to dispose.
+                    CustomLineCap cap = GpObjectState.PenCustomEndCap(p);
+                    if (cap != null) endCap = Serialize(cap);
                     if (endCap != null && endCap.Length > 0) flags |= 0x1004;
                 }
                 else flags |= 4;

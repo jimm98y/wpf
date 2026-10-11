@@ -29,6 +29,18 @@ namespace System.Drawing
         protected virtual void Dispose(bool disposing)
         {
             _nativeBrush = IntPtr.Zero;
+            _disposed = true;
+        }
+
+        // GDI+'s brush is gone after Dispose: every call System.Drawing makes with its handle comes
+        // back InvalidParameter. What .NET caches managed-side (a solid brush's colour) still answers.
+        private bool _disposed;
+        internal bool IsDisposed => _disposed;
+
+        internal void Live()
+        {
+            if (_disposed)
+                throw new ArgumentException(SR.GdiplusInvalidParameter);
         }
 
         ~Brush() => Dispose(false);

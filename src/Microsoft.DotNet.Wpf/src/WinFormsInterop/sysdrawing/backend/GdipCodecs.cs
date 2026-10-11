@@ -551,6 +551,11 @@ namespace System.Drawing
                 byte[] bgra = Bgra (frame);
                 ManagedJpegEncoder.Write (stream, bgra, frame.Width, frame.Height, frame.Width * 4, frame.DpiX, frame.DpiY, Math.Max (1, quality));
             } else if (clsid == TiffClsid) {
+                // The TIFF encoder knows LZW, CCITT3, CCITT4, RLE and none (EncoderValue 2..6); any
+                // other compression is InvalidParameter.
+                long? compression = Param (ps, Imaging.Encoder.Compression.Guid);
+                if (compression.HasValue && (compression < (long) EncoderValue.CompressionLZW || compression > (long) EncoderValue.CompressionNone))
+                    throw new ArgumentException ("Parameter is not valid.");
                 var pages = new List<ManagedRaster> { TiffPage (frame) };
                 if (extra != null) foreach (GdipFrame f in extra) pages.Add (TiffPage (f));
                 ManagedTiffEncoder.Write (pages, stream);

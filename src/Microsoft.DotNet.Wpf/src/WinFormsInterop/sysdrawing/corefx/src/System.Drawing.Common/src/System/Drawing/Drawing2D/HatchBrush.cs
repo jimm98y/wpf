@@ -23,12 +23,38 @@ namespace System.Drawing.Drawing2D
             _style = hatchstyle; _foreColor = foreColor; _backColor = backColor;
         }
 
-        public override object Clone() => new HatchBrush(_style, _foreColor, _backColor);
+        public override object Clone()
+        {
+            Live();
+            return new HatchBrush(_style, _foreColor, _backColor);
+        }
 
-        public HatchStyle HatchStyle => _style;
+        public HatchStyle HatchStyle
+        {
+            get
+            {
+                Live();
+                return _style;
+            }
+        }
 
-        public Color ForegroundColor => _foreColor;
+        public Color ForegroundColor
+        {
+            get
+            {
+                Live();
+                // GdipGetHatchForegroundColor: the ARGB, not the named colour.
+                return Color.FromArgb(_foreColor.ToArgb());
+            }
+        }
 
-        public Color BackgroundColor => _backColor;
+        public Color BackgroundColor
+        {
+            get
+            {
+                Live();
+                return Color.FromArgb(_backColor.ToArgb());
+            }
+        }
     }
 }

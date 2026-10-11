@@ -57,7 +57,7 @@ namespace System.Drawing.Drawing2D
 			if (plgpts == null)
 				throw new ArgumentNullException ("plgpts");
 			if (plgpts.Length != 3)
-				throw new ArgumentException ("plgpts");
+				throw new ArgumentException ("Parameter is not valid.");
 			Init (new RectangleF (rect.X, rect.Y, rect.Width, rect.Height), new PointF [] { plgpts [0], plgpts [1], plgpts [2] });
 		}
 
@@ -66,7 +66,7 @@ namespace System.Drawing.Drawing2D
 			if (plgpts == null)
 				throw new ArgumentNullException ("plgpts");
 			if (plgpts.Length != 3)
-				throw new ArgumentException ("plgpts");
+				throw new ArgumentException ("Parameter is not valid.");
 			Init (rect, plgpts);
 		}
 
@@ -85,8 +85,9 @@ namespace System.Drawing.Drawing2D
 			float x = r.X, y = r.Y, w = r.Width, h = r.Height;
 			float nh = -h;
 			float det = ((w + x) * (y + h) - y * x) + (x * nh - y * w);
+			// GdipCreateMatrix3 of a degenerate rectangle: OutOfMemory.
 			if (!(1.1920929e-07f <= Math.Abs (det)))
-				throw new ArgumentException ("Parameter is not valid.");
+				throw SafeNativeMethods.Gdip.OutOfMemoryException ();
 			float inv = 1f / det;
 			var m = new GpMatrix ();
 			m.M11 = (h * p [1].X + nh * p [0].X) * inv;
@@ -101,27 +102,79 @@ namespace System.Drawing.Drawing2D
 			Gp = m;
 		}
 
-		public float[] Elements => new float [] { Gp.M11, Gp.M12, Gp.M21, Gp.M22, Gp.Dx, Gp.Dy };
-
-		public System.Numerics.Matrix3x2 MatrixElements {
-			get => new System.Numerics.Matrix3x2 (Gp.M11, Gp.M12, Gp.M21, Gp.M22, Gp.Dx, Gp.Dy);
-			set => Gp = new GpMatrix (value.M11, value.M12, value.M21, value.M22, value.M31, value.M32);
+		public float[] Elements
+		{
+			get
+			{
+				Live ();
+				return new float [] { Gp.M11, Gp.M12, Gp.M21, Gp.M22, Gp.Dx, Gp.Dy };
+			}
 		}
 
-		public bool IsIdentity => Gp.Complexity == 0;
+		public System.Numerics.Matrix3x2 MatrixElements {
+			get { Live (); return new System.Numerics.Matrix3x2 (Gp.M11, Gp.M12, Gp.M21, Gp.M22, Gp.Dx, Gp.Dy); }
+			set { Live (); Gp = new GpMatrix (value.M11, value.M12, value.M21, value.M22, value.M31, value.M32); }
+		}
 
-		public bool IsInvertible => Gp.IsInvertible;
+		public bool IsIdentity
+		{
+			get
+			{
+				Live ();
+				return Gp.Complexity == 0;
+			}
+		}
 
-		public float OffsetX => Gp.Dx;
+		public bool IsInvertible
+		{
+			get
+			{
+				Live ();
+				return Gp.IsInvertible;
+			}
+		}
 
-		public float OffsetY => Gp.Dy;
+		public float OffsetX
+		{
+			get
+			{
+				Live ();
+				return Gp.Dx;
+			}
+		}
 
-		public Matrix Clone () => new Matrix (Gp);
+		public float OffsetY
+		{
+			get
+			{
+				Live ();
+				return Gp.Dy;
+			}
+		}
+
+		public Matrix Clone ()
+		{
+			Live ();
+			return new Matrix (Gp);
+		}
 
 		public void Dispose ()
 		{
+			_disposed = true;
 			GC.SuppressFinalize (this);
 		}
+
+		// GDI+'s object is gone after Dispose: every call System.Drawing makes with its handle (zero)
+		// comes back InvalidParameter.
+		bool _disposed;
+		internal bool IsDisposed => _disposed;
+
+		internal void Live ()
+		{
+			if (_disposed)
+				throw new ArgumentException ("Parameter is not valid.");
+		}
+
 
 		public override bool Equals (object obj)
 		{
@@ -138,19 +191,27 @@ namespace System.Drawing.Drawing2D
 
 		public void Invert ()
 		{
+			Live ();
 			if (!Gp.Invert ())
 				throw new ArgumentException ("Parameter is not valid.");
 		}
 
 		public void Multiply (Matrix matrix)
 		{
+			Live ();
 			Multiply (matrix, MatrixOrder.Prepend);
 		}
 
 		public void Multiply (Matrix matrix, MatrixOrder order)
 		{
+			Live ();
 			if (matrix == null)
 				throw new ArgumentNullException ("matrix");
+			if (matrix.IsDisposed)
+				throw new ArgumentException ("Parameter is not valid.");
+			// GDI+ locks both matrices: one multiplied by itself is busy.
+			if (ReferenceEquals (matrix, this))
+				throw new InvalidOperationException ("Object is currently in use elsewhere.");
 			CheckOrder (order);
 			Gp.Multiply (matrix.Gp, order == MatrixOrder.Append);
 		}
@@ -163,22 +224,26 @@ namespace System.Drawing.Drawing2D
 
 		public void Reset ()
 		{
+			Live ();
 			Gp = GpMatrix.CreateIdentity ();
 		}
 
 		public void Rotate (float angle)
 		{
+			Live ();
 			Rotate (angle, MatrixOrder.Prepend);
 		}
 
 		public void Rotate (float angle, MatrixOrder order)
 		{
+			Live ();
 			CheckOrder (order);
 			Gp.Rotate (angle, order == MatrixOrder.Append);
 		}
 
 		public void RotateAt (float angle, PointF point)
 		{
+			Live ();
 			RotateAt (angle, point, MatrixOrder.Prepend);
 		}
 
@@ -186,8 +251,9 @@ namespace System.Drawing.Drawing2D
 		// verbs, in the order the operation is applied.
 		public void RotateAt (float angle, PointF point, MatrixOrder order)
 		{
+			Live ();
 			if ((order < MatrixOrder.Prepend) || (order > MatrixOrder.Append))
-				throw new ArgumentException ("order");
+				throw new ArgumentException ("Parameter is not valid.");
 			bool append = order == MatrixOrder.Append;
 			if (!append) {
 				Gp.Translate (point.X, point.Y, false);
@@ -202,22 +268,26 @@ namespace System.Drawing.Drawing2D
 
 		public void Scale (float scaleX, float scaleY)
 		{
+			Live ();
 			Scale (scaleX, scaleY, MatrixOrder.Prepend);
 		}
 
 		public void Scale (float scaleX, float scaleY, MatrixOrder order)
 		{
+			Live ();
 			CheckOrder (order);
 			Gp.Scale (scaleX, scaleY, order == MatrixOrder.Append);
 		}
 
 		public void Shear (float shearX, float shearY)
 		{
+			Live ();
 			Shear (shearX, shearY, MatrixOrder.Prepend);
 		}
 
 		public void Shear (float shearX, float shearY, MatrixOrder order)
 		{
+			Live ();
 			CheckOrder (order);
 			Gp.Shear (shearX, shearY, order == MatrixOrder.Append);
 		}
@@ -225,8 +295,12 @@ namespace System.Drawing.Drawing2D
 		// GdipTransformMatrixPointsI @18006b040: through floats, then (int)(v + 0.5) truncated.
 		public void TransformPoints (Point[] pts)
 		{
+			Live ();
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
+			// GdipTransformMatrixPoints / GdipVectorTransformMatrixPoints of no points: InvalidParameter.
+			if (pts.Length == 0)
+				throw new ArgumentException ("Parameter is not valid.");
 			for (int i = 0; i < pts.Length; i++) {
 				PointF p = Gp.Transform (new PointF (pts [i].X, pts [i].Y));
 				pts [i] = new Point ((int) MathF.Floor (p.X + 0.5f), (int) MathF.Floor (p.Y + 0.5f));
@@ -235,15 +309,23 @@ namespace System.Drawing.Drawing2D
 
 		public void TransformPoints (PointF[] pts)
 		{
+			Live ();
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
+			// GdipTransformMatrixPoints / GdipVectorTransformMatrixPoints of no points: InvalidParameter.
+			if (pts.Length == 0)
+				throw new ArgumentException ("Parameter is not valid.");
 			Gp.Transform (pts);
 		}
 
 		public void TransformVectors (Point[] pts)
 		{
+			Live ();
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
+			// GdipTransformMatrixPoints / GdipVectorTransformMatrixPoints of no points: InvalidParameter.
+			if (pts.Length == 0)
+				throw new ArgumentException ("Parameter is not valid.");
 			for (int i = 0; i < pts.Length; i++) {
 				PointF p = Gp.VectorTransform (new PointF (pts [i].X, pts [i].Y));
 				pts [i] = new Point ((int) MathF.Floor (p.X + 0.5f), (int) MathF.Floor (p.Y + 0.5f));
@@ -252,24 +334,31 @@ namespace System.Drawing.Drawing2D
 
 		public void TransformVectors (PointF[] pts)
 		{
+			Live ();
 			if (pts == null)
 				throw new ArgumentNullException ("pts");
+			// GdipTransformMatrixPoints / GdipVectorTransformMatrixPoints of no points: InvalidParameter.
+			if (pts.Length == 0)
+				throw new ArgumentException ("Parameter is not valid.");
 			for (int i = 0; i < pts.Length; i++) pts [i] = Gp.VectorTransform (pts [i]);
 		}
 
 		public void Translate (float offsetX, float offsetY)
 		{
+			Live ();
 			Translate (offsetX, offsetY, MatrixOrder.Prepend);
 		}
 
 		public void Translate (float offsetX, float offsetY, MatrixOrder order)
 		{
+			Live ();
 			CheckOrder (order);
 			Gp.Translate (offsetX, offsetY, order == MatrixOrder.Append);
 		}
 
 		public void VectorTransformPoints (Point[] pts)
 		{
+			Live ();
 			TransformVectors (pts);
 		}
 	}

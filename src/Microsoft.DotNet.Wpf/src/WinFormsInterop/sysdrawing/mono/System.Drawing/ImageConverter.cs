@@ -86,7 +86,7 @@ namespace System.Drawing
 				} else if (CanConvertTo (null, destinationType)) {
 					//came here means destinationType is byte array ;
 					using (MemoryStream ms = new MemoryStream ()) {
-						((Image)value).Save (ms, ((Image)value).RawFormat);
+						((Image)value).SaveWithRawFormat (ms);
 						return ms.ToArray ();
 					}
 				}

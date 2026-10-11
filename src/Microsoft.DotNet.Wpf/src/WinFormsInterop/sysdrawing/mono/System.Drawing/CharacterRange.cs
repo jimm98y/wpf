@@ -32,7 +32,7 @@ using System;
 
 namespace System.Drawing
 {
-	public struct CharacterRange
+	public struct CharacterRange : IEquatable<CharacterRange>
 	{
 		private int first;
 		private int length;
@@ -68,6 +68,8 @@ namespace System.Drawing
 			CharacterRange cr = (CharacterRange) obj;
 			return this == cr;
 		}
+
+		public bool Equals (CharacterRange other) => first == other.first && length == other.length;
 
 		public override int GetHashCode ()
 		{

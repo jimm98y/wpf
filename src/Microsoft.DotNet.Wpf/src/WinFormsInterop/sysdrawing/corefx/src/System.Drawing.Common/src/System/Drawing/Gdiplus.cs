@@ -250,6 +250,16 @@ namespace System.Drawing
                 }
             }
 
+            // System.Drawing.Common's own table (Windows.Win32.Graphics.GdiPlus.StatusExtensions.GetException
+            // in .NET 10, read by reflection off the shipped assembly): what every GDI+ status becomes.
+            // OutOfMemory is NOT an OutOfMemoryException: GDI+ reports most bad input that way, and
+            // .NET hands it on as an ExternalException with E_UNEXPECTED.
+            internal const int ProfileNotFound = 21;
+            internal const string OutOfMemoryMessage = "An object could not be created, possibly due to a lack of memory, but most likely due to invalid input.";
+
+            /// <summary>What System.Drawing throws for GDI+'s OutOfMemory status.</summary>
+            internal static ExternalException OutOfMemoryException() => new ExternalException(OutOfMemoryMessage, E_UNEXPECTED);
+
             internal static Exception StatusException(int status)
             {
                 Debug.Assert(status != Ok, "Throwing an exception for an 'Ok' return code");
@@ -257,56 +267,49 @@ namespace System.Drawing
                 switch (status)
                 {
                     case GenericError:
-                        return new ExternalException(SR.Format(SR.GdiplusGenericError), E_FAIL);
-                    case InvalidParameter:
-                        return new ArgumentException(SR.Format(SR.GdiplusInvalidParameter));
-                    case OutOfMemory:
-                        return new OutOfMemoryException(SR.Format(SR.GdiplusOutOfMemory));
-                    case ObjectBusy:
-                        return new InvalidOperationException(SR.Format(SR.GdiplusObjectBusy));
-                    case InsufficientBuffer:
-                        return new OutOfMemoryException(SR.Format(SR.GdiplusInsufficientBuffer));
-                    case NotImplemented:
-                        return new NotImplementedException(SR.Format(SR.GdiplusNotImplemented));
                     case Win32Error:
-                        return new ExternalException(SR.Format(SR.GdiplusGenericError), E_FAIL);
+                        return new ExternalException(SR.GdiplusGenericError, E_FAIL);
+                    case InvalidParameter:
+                        return new ArgumentException(SR.GdiplusInvalidParameter);
+                    case OutOfMemory:
+                        return OutOfMemoryException();
+                    case ObjectBusy:
+                        return new InvalidOperationException(SR.GdiplusObjectBusy);
+                    case InsufficientBuffer:
+                        return new System.OutOfMemoryException(SR.GdiplusInsufficientBuffer);
+                    case NotImplemented:
+                        return new NotImplementedException(SR.GdiplusNotImplemented);
                     case WrongState:
-                        return new InvalidOperationException(SR.Format(SR.GdiplusWrongState));
+                        return new InvalidOperationException(SR.GdiplusWrongState);
                     case Aborted:
-                        return new ExternalException(SR.Format(SR.GdiplusAborted), E_ABORT);
+                        return new ExternalException(SR.GdiplusAborted, E_ABORT);
                     case FileNotFound:
-                        return new FileNotFoundException(SR.Format(SR.GdiplusFileNotFound));
+                        return new FileNotFoundException(SR.GdiplusFileNotFound);
                     case ValueOverflow:
-                        return new OverflowException(SR.Format(SR.GdiplusOverflow));
+                        return new OverflowException(SR.GdiplusOverflow);
                     case AccessDenied:
-                        return new ExternalException(SR.Format(SR.GdiplusAccessDenied), E_ACCESSDENIED);
+                        return new ExternalException(SR.GdiplusAccessDenied, E_ACCESSDENIED);
                     case UnknownImageFormat:
-                        return new ArgumentException(SR.Format(SR.GdiplusUnknownImageFormat));
+                        return new ArgumentException(SR.GdiplusUnknownImageFormat);
                     case PropertyNotFound:
-                        return new ArgumentException(SR.Format(SR.GdiplusPropertyNotFoundError));
+                        return new ArgumentException(SR.GdiplusPropertyNotFoundError);
                     case PropertyNotSupported:
-                        return new ArgumentException(SR.Format(SR.GdiplusPropertyNotSupportedError));
-
+                        return new ArgumentException(SR.GdiplusPropertyNotSupportedError);
                     case FontFamilyNotFound:
-                        Debug.Fail("We should be special casing FontFamilyNotFound so we can provide the font name");
                         return new ArgumentException(SR.Format(SR.GdiplusFontFamilyNotFound, "?"));
-
                     case FontStyleNotFound:
-                        Debug.Fail("We should be special casing FontStyleNotFound so we can provide the font name");
                         return new ArgumentException(SR.Format(SR.GdiplusFontStyleNotFound, "?", "?"));
-
                     case NotTrueTypeFont:
-                        Debug.Fail("We should be special casing NotTrueTypeFont so we can provide the font name");
-                        return new ArgumentException(SR.Format(SR.GdiplusNotTrueTypeFont_NoName));
-
+                        return new ArgumentException(SR.GdiplusNotTrueTypeFont_NoName);
                     case UnsupportedGdiplusVersion:
-                        return new ExternalException(SR.Format(SR.GdiplusUnsupportedGdiplusVersion), E_FAIL);
-
+                        return new ExternalException(SR.GdiplusUnsupportedGdiplusVersion, E_FAIL);
                     case GdiplusNotInitialized:
-                        return new ExternalException(SR.Format(SR.GdiplusNotInitialized), E_FAIL);
+                        return new ExternalException(SR.GdiplusNotInitialized, E_FAIL);
+                    case ProfileNotFound:
+                        return new ExternalException(SR.GdiplusUnknown + " [ProfileNotFound]", E_UNEXPECTED);
                 }
 
-                return new ExternalException(SR.Format(SR.GdiplusUnknown), E_UNEXPECTED);
+                return new ExternalException(SR.GdiplusUnknown + " [" + status + "]", E_UNEXPECTED);
             }
 
             //----------------------------------------------------------------------------------------                                                           

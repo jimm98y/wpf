@@ -122,8 +122,20 @@ namespace System.Drawing
 
 		public void Dispose ()
 		{
-						fontObject = IntPtr.Zero;
+			fontObject = IntPtr.Zero;
+			_disposed = true;
 			GC.SuppressFinalize (this);
+		}
+
+		// After Dispose GDI+'s font is gone: what System.Drawing asks it (heights, the HFONT, a clone)
+		// comes back InvalidParameter. Everything Font caches managed-side still answers.
+		bool _disposed;
+		internal bool IsDisposed => _disposed;
+
+		void Live ()
+		{
+			if (_disposed)
+				throw new ArgumentException ("Parameter is not valid.");
 		}
 
 		internal void SetSystemFontName (string newSystemFontName)
@@ -187,8 +199,19 @@ namespace System.Drawing
 
 		// Managed-only property init (no FontFamily): used in GPU-raster mode where there is no native
 		// font/family. Mirrors setProperties minus family.Name (uses the requested name directly).
+		// System.Drawing's own check of the size, then GdipCreateFont's of the unit (Display and
+		// anything past Millimeter are InvalidParameter).
+		static void CheckSizeAndUnit (float emSize, GraphicsUnit unit)
+		{
+			if (float.IsNaN (emSize) || float.IsInfinity (emSize) || emSize <= 0f)
+				throw new ArgumentException (SR.Format (SR.InvalidBoundArgument, "emSize", emSize, 0, "System.Single.MaxValue"), "emSize");
+			if (unit == GraphicsUnit.Display || unit < GraphicsUnit.World || unit > GraphicsUnit.Millimeter)
+				throw new ArgumentException ("Parameter is not valid.");
+		}
+
 		void SetPropertiesManaged (string name, float emSize, FontStyle style, GraphicsUnit unit, byte charSet, bool isVertical)
 		{
+			CheckSizeAndUnit (emSize, unit);
 						// GDI+: a family that is not installed fails, and System.Drawing then uses Microsoft Sans
 			// Serif; one that is takes the name as the font declares it.
 			_name = (string.IsNullOrEmpty (name) ? null : WebGpuBackend.Gdip.GpFontFamily.Canonical (name)) ?? "Microsoft Sans Serif";
@@ -207,6 +230,7 @@ namespace System.Drawing
 
 		void setProperties (FontFamily family, float emSize, FontStyle style, GraphicsUnit unit, byte charSet, bool isVertical)
 		{
+			CheckSizeAndUnit (emSize, unit);
 			_name = family.Name;
 			_fontFamily = family;			
 			_size = emSize;
@@ -236,10 +260,8 @@ namespace System.Drawing
 
 		public static Font FromHfont (IntPtr hfont)
 		{
-			// Sanity. Should we throw an exception?
-			if (hfont == IntPtr.Zero)
-				return new Font ("Arial", (float)10.0, FontStyle.Regular);
-			if (!OperatingSystem.IsWindows ())
+			// GetObject of no HFONT leaves the LOGFONT empty, and GDI+ will not make a font of that.
+			if (hfont == IntPtr.Zero || !OperatingSystem.IsWindows ())
 				throw new ArgumentException ("Only TrueType fonts are supported. This is not a TrueType font.");
 			// An HFONT is GDI's: its LOGFONT, read back with GetObject, makes the font.
 			LOGFONT lf = new LOGFONT ();
@@ -253,14 +275,17 @@ namespace System.Drawing
 
 		public IntPtr ToHfont ()
 		{
+			Live ();
 			if (!OperatingSystem.IsWindows ())
 				throw new PlatformNotSupportedException ("An HFONT is a Windows GDI object.");
-			if (olf == null) {
-				olf = new LOGFONT ();
-				ToLogFont(olf);
-			}
-			LOGFONT lf = (LOGFONT)olf;
-			return GDIPlus.CreateFontIndirect (ref lf);
+			LOGFONT lf;
+			using (Bitmap img = new Bitmap (1, 1, Imaging.PixelFormat.Format32bppArgb))
+			using (Graphics g = Graphics.FromImage (img))
+				lf = BuildLogFont (g);
+			IntPtr h = GDIPlus.CreateFontIndirect (ref lf);
+			if (h == IntPtr.Zero)
+				throw new System.ComponentModel.Win32Exception ();
+			return h;
 		}
 
 		internal Font (IntPtr newFontObject, string familyName, FontStyle style, float size)
@@ -290,7 +315,7 @@ namespace System.Drawing
 		}
 
 		public Font (string familyName, float emSize,  GraphicsUnit unit)
-			: this (new FontFamily (familyName), emSize, FontStyle.Regular, unit, DefaultCharSet, false)
+			: this (familyName, emSize, FontStyle.Regular, unit, DefaultCharSet, false)
 		{
 		}
 
@@ -355,6 +380,7 @@ namespace System.Drawing
 		}
 		public object Clone ()
 		{
+			Live ();
 			return new Font (this, Style);
 		}
 
@@ -536,15 +562,38 @@ namespace System.Drawing
 		[MonoTODO ("The hdc parameter has no direct equivalent in libgdiplus.")]
 		public static Font FromHdc (IntPtr hdc)
 		{
-			throw new NotImplementedException ();
+			// GdipCreateFontFromDC: the font selected into the DC.
+			if (hdc == IntPtr.Zero || !OperatingSystem.IsWindows ())
+				throw new ArgumentException ("Parameter is not valid.");
+			IntPtr hfont = GetCurrentObject (hdc, 6);   // OBJ_FONT
+			if (hfont == IntPtr.Zero)
+				throw new ArgumentException ("Parameter is not valid.");
+			return FromHfont (hfont);
 		}
+
+		[DllImport ("gdi32.dll")]
+		static extern IntPtr GetCurrentObject (IntPtr hdc, uint type);
 
 		// GdipCreateFontFromLogfont: the face named, the em the LOGFONT's height asks for (a negative
 		// height IS the em, a positive one the cell, which the face's ascent and descent divide), in
 		// points at the 96-dpi screen the stack lays out on.
 		public static Font FromLogFont (object lf, IntPtr hdc)
 		{
-			LOGFONT o = (LOGFONT)lf;
+			if (lf == null)
+				throw new ArgumentNullException ("lf");
+			LOGFONT o;
+			if (lf is LOGFONT l)
+				o = l;
+			else {
+				// Any structure laid out as a LOGFONT is read as one.
+				if (Marshal.SizeOf (lf.GetType ()) != Marshal.SizeOf (typeof (LOGFONT)))
+					throw new ArgumentException (null, "lf");
+				IntPtr mem = Marshal.AllocHGlobal (Marshal.SizeOf (typeof (LOGFONT)));
+				try {
+					Marshal.StructureToPtr (lf, mem, false);
+					o = Marshal.PtrToStructure<LOGFONT> (mem);
+				} finally { Marshal.FreeHGlobal (mem); }
+			}
 			string face = string.IsNullOrEmpty (o.lfFaceName) ? "Microsoft Sans Serif" : o.lfFaceName;
 			FontStyle style = FontStyle.Regular;
 			if (o.lfWeight > 550) style |= FontStyle.Bold;
@@ -563,6 +612,7 @@ namespace System.Drawing
 
 		public float GetHeight ()
 		{
+			Live ();
 			return GetHeight (MetricsDpi (Graphics.systemDpiY));
 		}
 
@@ -594,16 +644,29 @@ namespace System.Drawing
 
 		public void ToLogFont (object logFont, Graphics graphics)
 		{
+			// System.Drawing: the structure must be a LOGFONT's size (Marshal.SizeOf throws for a type
+			// that cannot be marshalled at all), then GDI+ is asked with the Graphics.
+			if (logFont == null)
+				throw new ArgumentNullException ("logFont");
+			Type st = logFont.GetType ();
+			if (Marshal.SizeOf (st) != Marshal.SizeOf (typeof (LOGFONT)))
+				throw new ArgumentException (null, "logFont");
 			if (graphics == null)
 				throw new ArgumentNullException ("graphics");
-
-			if (logFont == null) {
-				throw new AccessViolationException ("logFont");
+			if (st.IsValueType) {
+				// A boxed structure cannot be written through; System.Drawing copies into its pinned box.
+				LOGFONT built = BuildLogFont (graphics);
+				if (built.lfCharSet == 0) built.lfCharSet = 1;
+				IntPtr mem = Marshal.AllocHGlobal (Marshal.SizeOf (typeof (LOGFONT)));
+				try {
+					Marshal.StructureToPtr (built, mem, false);
+					GCHandle h = GCHandle.Alloc (logFont, GCHandleType.Pinned);
+					try {
+						unsafe { Buffer.MemoryCopy ((void*) mem, (void*) h.AddrOfPinnedObject (), Marshal.SizeOf (typeof (LOGFONT)), Marshal.SizeOf (typeof (LOGFONT))); }
+					} finally { h.Free (); }
+				} finally { Marshal.FreeHGlobal (mem); }
+				return;
 			}
-
-			Type st = logFont.GetType ();
-			if (!st.GetTypeInfo ().IsLayoutSequential)
-				throw new ArgumentException ("logFont", Locale.GetText ("Layout must be sequential."));
 
 			// note: there is no exception if 'logFont' isn't big enough
 			Type lf = typeof (LOGFONT);
@@ -656,6 +719,16 @@ namespace System.Drawing
 		// name.
 		void LogFontInto (object logFont, Graphics graphics)
 		{
+			LOGFONT lf = BuildLogFont (graphics);
+			IntPtr mem = Marshal.AllocHGlobal (Math.Max (Marshal.SizeOf (logFont), Marshal.SizeOf (typeof (LOGFONT))));
+			try {
+				Marshal.StructureToPtr (lf, mem, false);
+				Marshal.PtrToStructure (mem, logFont);
+			} finally { Marshal.FreeHGlobal (mem); }
+		}
+
+		LOGFONT BuildLogFont (Graphics graphics)
+		{
 			float px = _sizeInPoints * 96f / 72f;
 			if (_unit == GraphicsUnit.Pixel || _unit == GraphicsUnit.World) px = _size;
 			float[] e = graphics.Transform.Elements;
@@ -673,17 +746,17 @@ namespace System.Drawing
 			lf.lfStrikeOut = (byte) (_strikeout ? 1 : 0);
 			lf.lfCharSet = _gdiCharSet;
 			lf.lfFaceName = _name;
-			IntPtr mem = Marshal.AllocHGlobal (Math.Max (Marshal.SizeOf (logFont), Marshal.SizeOf (typeof (LOGFONT))));
-			try {
-				Marshal.StructureToPtr (lf, mem, false);
-				Marshal.PtrToStructure (mem, logFont);
-			} finally { Marshal.FreeHGlobal (mem); }
+			return lf;
 		}
 
 		public float GetHeight (Graphics graphics)
 		{
 			if (graphics == null)
 				throw new ArgumentNullException ("graphics");
+			// System.Drawing's own check: a disposed Graphics has no handle to measure against.
+			if (Graphics.IsDisposedArg (graphics))
+				throw new ArgumentException (null, "graphics");
+			Live ();
 			// A printer's Graphics answers in its own units from the face's line spacing.
 			if (graphics.TryPrintFontHeight (this, out float printed))
 				return printed;
@@ -692,6 +765,7 @@ namespace System.Drawing
 
 		public float GetHeight (float dpi)
 		{
+			Live ();
 			// A managed font: GDI+'s own rule, the face's line spacing over its em, at the em in pixels
 			// (Segoe UI 9pt at 96 dpi: 2724 / 2048 * 12 = 15.96). The face's metrics come from its file.
 						int style = (_bold ? 1 : 0) | (_italic ? 2 : 0);

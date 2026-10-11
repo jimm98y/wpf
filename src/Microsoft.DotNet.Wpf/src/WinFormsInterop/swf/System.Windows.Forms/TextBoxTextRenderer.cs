@@ -58,7 +58,8 @@ namespace System.Windows.Forms
 			sf_nonprinting.FormatFlags = StringFormatFlags.DisplayFormatControl;	
 			sf_nonprinting.HotkeyPrefix = HotkeyPrefix.None;		
 
-			sf_printing = StringFormat.GenericTypographic;
+			// A copy: GenericTypographic is GDI+'s shared format, and changing it changes it for everyone.
+			sf_printing = new StringFormat (StringFormat.GenericTypographic);
 			sf_printing.HotkeyPrefix = HotkeyPrefix.None;
 			
 			measure_cache = new Hashtable ();

@@ -101,7 +101,7 @@ namespace System.Drawing
                                   (int)MathF.Floor(d.Width + 0.5f), (int)MathF.Floor(d.Height + 0.5f));
                 if (r.Width <= 0 || r.Height <= 0 || !whole.Contains(r))
                 {
-                    throw new OutOfMemoryException();
+                    throw SafeNativeMethods.Gdip.OutOfMemoryException();
                 }
             }
             if (!(image is Bitmap bmp))
@@ -151,6 +151,7 @@ namespace System.Drawing
 
         public override object Clone()
         {
+            Live();
             return new TextureBrush
             {
                 _tile = (Bitmap)_tile.Clone(),
@@ -163,6 +164,7 @@ namespace System.Drawing
         {
             get
             {
+                Live();
                 return new Matrix(_m);
             }
             set
@@ -170,6 +172,12 @@ namespace System.Drawing
                 if (value == null)
                 {
                     throw new ArgumentNullException(nameof(value));
+                }
+                Live();
+                // GpElementaryBrush::SetTransform: a disposed matrix is no matrix, a singular one is refused.
+                if (value.IsDisposed || !value.Gp.IsInvertible)
+                {
+                    throw new ArgumentException(SR.GdiplusInvalidParameter);
                 }
                 _m = value.Gp;
             }
@@ -179,11 +187,16 @@ namespace System.Drawing
         {
             get
             {
+                Live();
                 return _wrapMode;
             }
             set
             {
-                CheckWrap(value);
+                if (value < WrapMode.Tile || value > WrapMode.Clamp)
+                {
+                    throw new InvalidEnumArgumentException(nameof(value), (int)value, typeof(WrapMode));
+                }
+                Live();
                 _wrapMode = value;
             }
         }
@@ -192,18 +205,25 @@ namespace System.Drawing
         {
             get
             {
+                Live();
                 return (Image)_tile.Clone();
             }
         }
         public void ResetTransform()
         {
+            Live();
             _m = System.Drawing.WebGpuBackend.Gdip.GpMatrix.CreateIdentity();
         }
 
-        public void MultiplyTransform(Matrix matrix) => MultiplyTransform(matrix, MatrixOrder.Prepend);
+        public void MultiplyTransform(Matrix matrix)
+        {
+            Live();
+            MultiplyTransform(matrix, MatrixOrder.Prepend);
+        }
 
         public void MultiplyTransform(Matrix matrix, MatrixOrder order)
         {
+            Live();
             if (matrix == null)
             {
                 throw new ArgumentNullException(nameof(matrix));
@@ -211,20 +231,41 @@ namespace System.Drawing
             _m.Multiply(matrix.Gp, order == MatrixOrder.Append);
         }
 
-        public void TranslateTransform(float dx, float dy) => TranslateTransform(dx, dy, MatrixOrder.Prepend);
+        public void TranslateTransform(float dx, float dy)
+        {
+            Live();
+            TranslateTransform(dx, dy, MatrixOrder.Prepend);
+        }
 
         public void TranslateTransform(float dx, float dy, MatrixOrder order)
-            => _m.Translate(dx, dy, order == MatrixOrder.Append);
+        {
+            Live();
+            _m.Translate(dx, dy, order == MatrixOrder.Append);
+        }
 
-        public void ScaleTransform(float sx, float sy) => ScaleTransform(sx, sy, MatrixOrder.Prepend);
+        public void ScaleTransform(float sx, float sy)
+        {
+            Live();
+            ScaleTransform(sx, sy, MatrixOrder.Prepend);
+        }
 
         public void ScaleTransform(float sx, float sy, MatrixOrder order)
-            => _m.Scale(sx, sy, order == MatrixOrder.Append);
+        {
+            Live();
+            _m.Scale(sx, sy, order == MatrixOrder.Append);
+        }
 
-        public void RotateTransform(float angle) => RotateTransform(angle, MatrixOrder.Prepend);
+        public void RotateTransform(float angle)
+        {
+            Live();
+            RotateTransform(angle, MatrixOrder.Prepend);
+        }
 
         public void RotateTransform(float angle, MatrixOrder order)
-            => _m.Rotate(angle, order == MatrixOrder.Append);
+        {
+            Live();
+            _m.Rotate(angle, order == MatrixOrder.Append);
+        }
 
         protected override void Dispose(bool disposing)
         {

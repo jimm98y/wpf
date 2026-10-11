@@ -82,9 +82,12 @@ namespace System.Drawing
 		{
 			this.handle = handle;
 			ownHandle = false;
-			if (OperatingSystem.IsWindows () && !WebGpuBackend.WindowsImaging.IsManagedHandle (handle) && !WebGpuBackend.WindowsImaging.IsIcon (handle))
-				throw new ArgumentException (Locale.GetText ("Handle doesn't represent an ICON."));
-			iconSize = WebGpuBackend.WindowsImaging.IconSize (handle);
+			// System.Drawing takes any handle; what is not an icon has no size.
+			try {
+				iconSize = WebGpuBackend.WindowsImaging.IconSize (handle);
+			} catch (ArgumentException) {
+				iconSize = Size.Empty;
+			}
 		}
 #endif
 
@@ -122,17 +125,15 @@ namespace System.Drawing
 		public Icon (Type type, string resource)
 		{
 			if (resource == null)
-				throw new ArgumentException ("resource");
+				throw new ArgumentNullException ("resource");
 
 			// For compatibility with the .NET Framework
 			if (type == null)
 				throw new NullReferenceException();
 
 			using (Stream s = type.GetTypeInfo ().Assembly.GetManifestResourceStream (type, resource)) {
-				if (s == null) {
-					string msg = Locale.GetText ("Resource '{0}' was not found.", resource);
-					throw new FileNotFoundException (msg);
-				}
+				if (s == null)
+					throw new ArgumentException (SR.Format (SR.ResourceNotFound, type, resource));
 				InitFromStreamWithSize (s, 0, 0);
 			}
 		}
@@ -240,7 +241,7 @@ namespace System.Drawing
 		public static Icon FromHandle (IntPtr handle)
 		{
 			if (handle == IntPtr.Zero)
-				throw new ArgumentException ("handle");
+				throw new ArgumentException (null, "handle");
 
 			return new Icon (handle);
 		}
@@ -250,6 +251,12 @@ namespace System.Drawing
 		{
 			if (outputStream == null)
 				throw new ArgumentNullException ("outputStream");
+			if (disposed)
+				throw new ObjectDisposedException (nameof (Icon));
+			// System.Drawing writes through an IStream over the stream: one that cannot be written is
+			// E_NOTIMPL.
+			if (!outputStream.CanWrite)
+				throw new NotSupportedException ();
 			// The file it was read from, every entry (.NET writes its icon data back verbatim).
 			if (iconData != null) {
 				outputStream.Write (iconData, 0, iconData.Length);
@@ -293,7 +300,7 @@ namespace System.Drawing
 		public Bitmap ToBitmap ()
 		{
 			if (disposed)
-				throw new ObjectDisposedException (Locale.GetText ("Icon instance was disposed."));
+				throw new ObjectDisposedException (nameof (Icon));
 
 			if (iconData != null && hasBest) {
 				// A PNG entry is that PNG's pixels, in a plain 32bppArgb bitmap of its own.
@@ -352,7 +359,7 @@ namespace System.Drawing
 		public IntPtr Handle {
 			get {
 				if (disposed)
-					throw new ObjectDisposedException (Locale.GetText ("Icon instance was disposed."));
+					throw new ObjectDisposedException (nameof (Icon));
 				if (handle == IntPtr.Zero) {
 					if (OperatingSystem.IsWindows () && iconData != null && hasBest) {
 						// The OS reads the entry itself, as .NET hands it CreateIconFromResourceEx.
@@ -400,7 +407,7 @@ namespace System.Drawing
 		private void InitFromStreamWithSize (Stream stream, int width, int height)
 		{
 			if (stream == null)
-				throw new ArgumentException ("The argument 'stream' must be a picture that can be used as a Icon", "stream");
+				throw new ArgumentNullException ("stream");
 			iconData = Image.ReadAll (stream);
 			Initialize (width, height);
 		}
@@ -410,8 +417,9 @@ namespace System.Drawing
 		//  3. if all exceed it, the shallowest. Depths past 8bpp all count as what they say.
 		private void Initialize (int width, int height)
 		{
-			if (iconData.Length < 6 || iconData [0] != 0 || iconData [1] != 0 || iconData [2] != 1 || iconData [3] != 0)
-				throw new ArgumentException ("The argument 'picture' must be a picture that can be used as a Icon", "picture");
+			if (iconData.Length < 6 || iconData [0] != 0 || iconData [1] != 0 || iconData [2] != 1 || iconData [3] != 0
+			    || (iconData [4] | iconData [5]) == 0)
+				throw new ArgumentException (SR.Format (SR.InvalidPictureType, "picture", "Icon"));
 			// Zero asks for the system's icon size.
 			if (width == 0) width = 32;
 			if (height == 0) height = 32;
@@ -419,7 +427,7 @@ namespace System.Drawing
 			try {
 				entries = ManagedImageDecoder.ReadIcoDirectory (iconData);
 			} catch (InvalidDataException) {
-				throw new ArgumentException ("The argument 'picture' must be a picture that can be used as a Icon", "picture");
+				throw new ArgumentException (SR.Format (SR.InvalidPictureType, "picture", "Icon"));
 			}
 			hasBest = false;
 			foreach (var entry in entries) {
@@ -454,6 +462,9 @@ namespace System.Drawing
 				if (bits == 32) bestBitDepth = 32;
 				else if (bestBitDepth == 32) bestBitDepth = bits;
 			}
+			// The image must lie inside the file.
+			if ((long) best.Offset + best.Size > iconData.Length)
+				throw new ArgumentException (SR.Format (SR.InvalidPictureType, "picture", "Icon"));
 			iconSize = new Size (best.Width, best.Height);
 		}
 	}

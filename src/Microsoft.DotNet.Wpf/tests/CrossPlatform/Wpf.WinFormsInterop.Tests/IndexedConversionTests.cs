@@ -535,9 +535,19 @@ namespace Wpf.WinFormsInterop.Tests
                         }
                     }
                 } catch (Exception e) {
-                    o.Write ("throws " + op + " " + e.GetType ().Name);
+                    o.Write ("throws " + op + " " + ExName (e));
                 }
             }
+        }
+
+        // The fixtures were written with .NET Framework's System.Drawing, which throws GDI+'s
+        // OutOfMemory status as OutOfMemoryException; .NET 10's (and ours) throws the same status
+        // as ExternalException with E_UNEXPECTED. The name recorded is the status's Framework one.
+        static string ExName (Exception e)
+        {
+            if (e is System.Runtime.InteropServices.ExternalException && ((System.Runtime.InteropServices.ExternalException) e).ErrorCode == unchecked ((int) 0x8000FFFF))
+                return "OutOfMemoryException";
+            return e.GetType ().Name;
         }
 
         static byte[] Gif (PixelFormat sf, int w, int h, int kind, uint seed, Color[] pal)

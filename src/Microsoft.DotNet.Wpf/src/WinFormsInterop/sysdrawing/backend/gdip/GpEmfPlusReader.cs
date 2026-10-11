@@ -435,7 +435,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 {
                     byte[] data = r.Bytes(r.Left);
                     try { return Image.FromBytes(data); }
-                    catch (Exception e) when (e is ArgumentException || e is OutOfMemoryException) { r.Ok = false; return null; }
+                    catch (Exception e) when (e is ArgumentException || e is ExternalException || e is OutOfMemoryException) { r.Ok = false; return null; }
                 }
                 if (w <= 0 || h <= 0 || stride == 0) { r.Ok = false; return null; }
                 var bmp = new Bitmap(w, h, pf);

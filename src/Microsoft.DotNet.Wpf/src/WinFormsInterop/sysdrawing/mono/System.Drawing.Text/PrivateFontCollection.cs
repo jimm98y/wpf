@@ -56,24 +56,25 @@ namespace System.Drawing.Text {
 		{
 			if (filename == null)
 				throw new ArgumentNullException ("filename");
-
-			// this ensure the filename is valid (or throw the correct exception)
-			string fname = Path.GetFullPath (filename);
-
-			if (!File.Exists (fname))
+			// System.Drawing's own check, then GdipPrivateAddFontFile's.
+			if (!File.Exists (filename))
 				throw new FileNotFoundException ();
-
-			Add (fname);
+			Live ();
+			Add (Path.GetFullPath (filename), false);
 		}
 
-		void Add (string path)
+		void Add (string path, bool memory)
 		{
 			bool known (string n) => System.Drawing.WebGpuBackend.Gdip.GpFontFamily.Canonical (n) != null;
 			var before = new HashSet<string> (FontFiles.FamilyNames (), StringComparer.OrdinalIgnoreCase);
 			IReadOnlyList<string> names = FontFiles.RegisterPrivateFile (path);
-			// note: MS throw the same exception FileNotFoundException if the file exists but isn't a valid font file
-			if (names.Count == 0)
-				throw new FileNotFoundException ();
+			// GDI+ adds a file that holds no font without complaint (and nothing to the families); a
+			// block of memory that is not one is FileNotFound.
+			if (names.Count == 0) {
+				if (memory)
+					throw new FileNotFoundException ();
+				return;
+			}
 			foreach (string n in names) {
 				if (!before.Contains (n))
 					lock (s_privateOnly) s_privateOnly.Add (n);
@@ -84,11 +85,11 @@ namespace System.Drawing.Text {
 
 		public void AddMemoryFont (IntPtr memory, int length) 
 		{
-			if (memory == IntPtr.Zero)
+			// GdipPrivateAddMemoryFont: no memory, no length or a disposed collection is InvalidParameter;
+			// data that is not a font is FileNotFound.
+			if (memory == IntPtr.Zero || length <= 0)
 				throw new ArgumentException ("Parameter is not valid.");
-			// note: MS throw FileNotFoundException if something is bad with the data (except for a null pointer)
-			if (length <= 0)
-				throw new FileNotFoundException ();
+			Live ();
 			var data = new byte [length];
 			Marshal.Copy (memory, data, 0, length);
 			string dir = Path.Combine (Path.GetTempPath (), "System.Drawing.MemoryFonts");
@@ -96,11 +97,20 @@ namespace System.Drawing.Text {
 			string path = Path.Combine (dir, Convert.ToHexString (System.Security.Cryptography.SHA1.HashData (data)) + ".ttf");
 			if (!File.Exists (path))
 				File.WriteAllBytes (path, data);
-			Add (path);
+			Add (path, true);
+		}
+
+		bool _disposed;
+
+		internal override void Live ()
+		{
+			if (_disposed)
+				throw new ArgumentException ("Parameter is not valid.");
 		}
 
 		protected override void Dispose (bool disposing)
 		{
+			_disposed = true;
 			base.Dispose (disposing);
 		}		
 	}

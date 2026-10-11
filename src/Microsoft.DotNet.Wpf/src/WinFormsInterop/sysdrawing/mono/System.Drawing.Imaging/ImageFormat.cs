@@ -51,6 +51,8 @@ namespace System.Drawing.Imaging {
 		private const string IconGuid = "b96b3cb5-0728-11d3-9d7b-0000f81ef32e";
 		private const string JpegGuid = "b96b3cae-0728-11d3-9d7b-0000f81ef32e";
 		private const string WmfGuid = "b96b3cad-0728-11d3-9d7b-0000f81ef32e";
+		private const string HeifGuid = "b96b3cb6-0728-11d3-9d7b-0000f81ef32e";
+		private const string WebpGuid = "b96b3cb7-0728-11d3-9d7b-0000f81ef32e";
 
 		// lock(this) is bad
 		// http://msdn.microsoft.com/library/en-us/dnaskdr/html/askgui06032003.asp?frame=true
@@ -66,6 +68,8 @@ namespace System.Drawing.Imaging {
 		private static ImageFormat IconImageFormat;
 		private static ImageFormat JpegImageFormat;
 		private static ImageFormat WmfImageFormat;
+		private static ImageFormat HeifImageFormat;
+		private static ImageFormat WebpImageFormat;
 		
 
 		// constructors
@@ -113,6 +117,8 @@ namespace System.Drawing.Imaging {
 			if (guid == Tiff.Guid) return "Tiff";
 			if (guid == Exif.Guid) return "Exif";
 			if (guid == Icon.Guid) return "Icon";
+			if (guid == Heif.Guid) return "Heif";
+			if (guid == Webp.Guid) return "Webp";
 			return ("[ImageFormat: " + guid.ToString () + "]");
 		}
 
@@ -220,6 +226,27 @@ namespace System.Drawing.Imaging {
 		}
 		
 		
+		// GDI+'s ImageFormatHEIF and ImageFormatWEBP (Windows 10 1809's codecs).
+		public static ImageFormat Heif {
+			get {
+				lock (locker) {
+					if (HeifImageFormat == null)
+						HeifImageFormat = new ImageFormat ("Heif", HeifGuid);
+					return HeifImageFormat;
+				}
+			}
+		}
+
+		public static ImageFormat Webp {
+			get {
+				lock (locker) {
+					if (WebpImageFormat == null)
+						WebpImageFormat = new ImageFormat ("Webp", WebpGuid);
+					return WebpImageFormat;
+				}
+			}
+		}
+
 		public static ImageFormat Wmf {
 			get {
 				lock (locker) {
