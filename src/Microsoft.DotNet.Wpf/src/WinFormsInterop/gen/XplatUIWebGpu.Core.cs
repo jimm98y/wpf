@@ -314,12 +314,20 @@ namespace System.Windows.Forms
 			return true;
 		}
 
+		/// <summary>The form whose window the input being delivered arrived in, set by the host
+		/// around it; Zero when unknown. Hit testing then looks at what that window shows -- the
+		/// form and its popups -- and not at every window of the driver: a dialog's OK button lies
+		/// over its owner, and the click went to the owner's controls underneath instead.</summary>
+		[ThreadStatic] internal static IntPtr InputRoot;
+
 		internal IntPtr WindowAtPoint(int screenX, int screenY)
 		{
 			// Paint order decides: whatever is drawn last is what the user is pointing at, so scan
 			// the same list backwards. Depth alone could not separate two siblings that overlap --
 			// a ListView's column header sits on top of its item pane, both filling the control.
-			List<IntPtr> ordered = CollectAll(IntPtr.Zero);
+			IntPtr root = InputRoot;
+			if (root != IntPtr.Zero && Hwnd.ObjectFromHandle(root) == null) root = IntPtr.Zero;
+			List<IntPtr> ordered = CollectAll(root);
 			for (int i = ordered.Count - 1; i >= 0; i--)
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(ordered[i]);

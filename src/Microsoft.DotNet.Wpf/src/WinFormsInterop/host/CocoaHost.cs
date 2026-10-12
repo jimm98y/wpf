@@ -944,10 +944,12 @@ internal sealed class CocoaHost : IWinFormsHost
         XplatUIWebGpu.BeginWindowMove ??= MoveWindowWithPointer;
         IntPtr outerEvent = t_event;
         CocoaHost outerHost = t_eventHost;
+        IntPtr outerRoot = XplatUIWebGpu.InputRoot;
         t_event = evt;
         t_eventHost = this;
+        XplatUIWebGpu.InputRoot = _form.IsHandleCreated ? _form.Handle : IntPtr.Zero;
         try { HandleEventCore(evt); }
-        finally { t_event = outerEvent; t_eventHost = outerHost; }
+        finally { t_event = outerEvent; t_eventHost = outerHost; XplatUIWebGpu.InputRoot = outerRoot; }
     }
 
     private void HandleEventCore(IntPtr evt)
