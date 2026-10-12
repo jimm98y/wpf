@@ -757,16 +757,20 @@ namespace System.Windows.Forms
 			if (hwnd == null) return;
 			Padding frame = FrameOf(handle);
 			x += frame.Left; y += frame.Top;
-			if (width > 0) width = Math.Max(1, width - frame.Horizontal);
-			if (height > 0) height = Math.Max(1, height - frame.Vertical);
+			// A window may be made zero wide or zero high, as on Windows: libraries collapse a
+			// panel that way (DotNetBar's DockSite sets Height = 0 when every bar in it is hidden).
+			// This used to apply a size only when both were positive, so the collapse was dropped
+			// and the empty dock area kept its space.
+			width = Math.Max(0, width - frame.Horizontal);
+			height = Math.Max(0, height - frame.Vertical);
 			hwnd.x = x; hwnd.y = y;
-			if (width > 0 && height > 0 && (width != hwnd.width || height != hwnd.height))
+			if (width != hwnd.width || height != hwnd.height)
 			{
 				hwnd.width = width; hwnd.height = height;
 				if (!s_gpuRaster)
 				{
 					if (backing.TryGetValue(handle, out Bitmap old)) old?.Dispose();
-					backing[handle] = new Bitmap(width, height);
+					backing[handle] = new Bitmap(Math.Max(1, width), Math.Max(1, height));
 				}
 			}
 			_paintVersion++;   // a window moved/resized

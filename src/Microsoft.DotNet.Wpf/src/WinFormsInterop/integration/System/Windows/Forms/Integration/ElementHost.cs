@@ -278,10 +278,19 @@ namespace System.Windows.Forms.Integration
             if (!s_setWindowPosResolved)
             {
                 s_setWindowPosResolved = true;
-                Type t = typeof(HwndSource).Assembly.GetType("MS.Win32.UnsafeNativeMethods");
-                s_setWindowPos = t?.GetMethod("SetWindowPos", BindingFlags.Public | BindingFlags.Static);
+                // The seam is compiled into WindowsBase (UnsafeNativeMethodsCLR.cs); PresentationCore's
+                // UnsafeNativeMethods has no SetWindowPos, and looking only there left every move and
+                // resize of the hosted window silently undone off Windows.
+                foreach (Assembly a in new[] { typeof(HwndSource).Assembly, typeof(Dispatcher).Assembly })
+                {
+                    s_setWindowPos = a.GetType("MS.Win32.UnsafeNativeMethods")?.GetMethod("SetWindowPos", BindingFlags.Public | BindingFlags.Static, null,
+                        new[] { typeof(HandleRef), typeof(HandleRef), typeof(int), typeof(int), typeof(int), typeof(int), typeof(int) }, null);
+                    if (s_setWindowPos != null) break;
+                }
+                if (s_setWindowPos == null) Console.Error.WriteLine("ElementHost: no SetWindowPos seam; the hosted window cannot follow its control");
             }
             if (s_setWindowPos == null) return;
+            if (s_trace) Console.WriteLine($"ElementHost: move 0x{_source.Handle:x} to ({x},{y}) {w}x{h}");
             try
             {
                 s_setWindowPos.Invoke(null, new object[]
