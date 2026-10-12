@@ -81,7 +81,11 @@ namespace System.Windows.Threading
         /// </summary>
         public override int Wait(IntPtr[] waitHandles, bool waitAll, int millisecondsTimeout)
         {
-            if(_dispatcher._disableProcessingCount > 0)
+            // Off Windows the runtime's own wait pumps nothing, so there is no reentrancy to avoid,
+            // and no kernel32 to call: a lock contended while the dispatcher was suspended -- during
+            // a render, the renderer's shader cache shared with another UI thread -- took the
+            // application down with a DllNotFoundException.
+            if(_dispatcher._disableProcessingCount > 0 && OperatingSystem.IsWindows())
             {
                 // Call into native code directly in order to avoid the default
                 // CLR locking behavior which pumps messages under contention.

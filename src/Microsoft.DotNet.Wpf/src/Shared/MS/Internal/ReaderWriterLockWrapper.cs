@@ -286,6 +286,9 @@ namespace MS.Internal
 
             public override int Wait(IntPtr[] waitHandles, bool waitAll, int millisecondsTimeout)
             {
+                // Off Windows the runtime's own wait pumps nothing, and there is no kernel32 to call.
+                if (!OperatingSystem.IsWindows())
+                    return SynchronizationContext.WaitHelper(waitHandles, waitAll, millisecondsTimeout);
                 return MS.Win32.UnsafeNativeMethods.WaitForMultipleObjectsEx(waitHandles.Length, waitHandles, waitAll, millisecondsTimeout, false);
             }
 
