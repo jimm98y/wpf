@@ -211,6 +211,9 @@ internal sealed class CocoaHost : IWinFormsHost
         SendVoidPtr(win, Sel("setContentView:"), view);
 
         _window = win; _imageView = view;
+        // What the form asked for. AppKit may constrain it (below the menu bar, onto the screen);
+        // the first Pump then hands the real frame back to the form.
+        _knownBounds = new Rectangle(_form.Left, _form.Top, _form.Width, _form.Height);
         SendVoidPtr(win, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
         Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
 
@@ -389,6 +392,69 @@ internal sealed class CocoaHost : IWinFormsHost
         });
     }
 
+    // ---- the window frame and the form's bounds -----------------------------------------
+    //
+    // On Windows the form's bounds ARE the window's: the user dragging or resizing it is a WM_MOVE /
+    // WM_SIZE, and Form.Location/Size set from code moves the window. Here they are two things kept
+    // in step: a change on either side since the last agreement is applied to the other. The user
+    // side has to reach the form for anything that follows the window -- layout (a docked property
+    // grid at the right edge), Move/Resize handlers, an ElementHost's own window, screen coordinates.
+
+    private Rectangle _knownBounds;
+
+    private void SyncFrame()
+    {
+        if (_window == IntPtr.Zero || _form.IsDisposed) return;
+        // A minimized window keeps its frame; the form's restore bounds are not this.
+        if ((nint)Send(_window, Sel("isMiniaturized")) != 0) return;
+
+        Rectangle native = NativeBounds();
+        if (native.Width <= 0 || native.Height <= 0) return;
+        if (native != _knownBounds)
+        {
+            // Moved or resized by the user (or by AppKit placing it): the form follows.
+            _knownBounds = native;
+            if (_form.Bounds != native) _form.Bounds = native;
+            return;
+        }
+
+        Rectangle managed = _form.Bounds;
+        if (managed != _knownBounds && managed.Width > 0 && managed.Height > 0)
+        {
+            // Moved or resized from code: the window follows.
+            _knownBounds = managed;
+            NSRect content = CocoaRect(managed.Left, managed.Top, managed.Width, managed.Height);
+            NSRect frame = SendRectRect(_window, Sel("frameRectForContentRect:"), content);
+            SendVoidRectBool(_window, Sel("setFrame:display:"), frame, true);
+        }
+    }
+
+    /// <summary>The window's content rectangle in the form's coordinates (top-left origin, points).</summary>
+    private Rectangle NativeBounds()
+    {
+        NSRect frame = SendRectRet(_window, Sel("frame"));
+        NSRect content = SendRectRect(_window, Sel("contentRectForFrameRect:"), frame);
+        double screenHeight = PrimaryScreenHeight();
+        return new Rectangle((int)Math.Round(content.x), (int)Math.Round(screenHeight - content.y - content.h),
+                             (int)Math.Round(content.w), (int)Math.Round(content.h));
+    }
+
+    // Screen coordinates are anchored to the PRIMARY screen (the one with the menu bar), on both
+    // sides: Win32's origin is its top-left, Cocoa's its bottom-left. (NSScreen.mainScreen is the
+    // screen of the key window, which moves.)
+    private static double PrimaryScreenHeight()
+    {
+        IntPtr screens = Send(Cls("NSScreen"), Sel("screens"));
+        IntPtr primary = screens != IntPtr.Zero && (nint)Send(screens, Sel("count")) > 0
+            ? SendPtrNUInt(screens, Sel("objectAtIndex:"), 0)
+            : Send(Cls("NSScreen"), Sel("mainScreen"));
+        return primary == IntPtr.Zero ? 900 : SendRectRet(primary, Sel("frame")).h;
+    }
+
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRect(IntPtr r, IntPtr s, NSRect a);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRectBool(IntPtr r, IntPtr s, NSRect a, [MarshalAs(UnmanagedType.I1)] bool b);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNUInt(IntPtr r, IntPtr s, nuint a);
+
     /// <summary>
     /// Where the form asked to be (its Location, which StartPosition has already resolved), in
     /// Cocoa's coordinates: origin at the bottom-left of the main screen, measured to the window's
@@ -396,8 +462,7 @@ internal sealed class CocoaHost : IWinFormsHost
     /// </summary>
     private static NSRect CocoaRect(int left, int top, double w, double h)
     {
-        IntPtr screen = Send(Cls("NSScreen"), Sel("mainScreen"));
-        double screenHeight = screen == IntPtr.Zero ? 900 : SendRectRet(screen, Sel("frame")).h;
+        double screenHeight = PrimaryScreenHeight();
         return new NSRect { x = left, y = screenHeight - top - h, w = w, h = h };
     }
 
@@ -520,6 +585,8 @@ internal sealed class CocoaHost : IWinFormsHost
     {
         // Events are the main thread's to read; see _offMain.
         if (_offMain) return !_closed && _form.Visible && !_form.IsDisposed;
+
+        SyncFrame();
 
         while (true)
         {
