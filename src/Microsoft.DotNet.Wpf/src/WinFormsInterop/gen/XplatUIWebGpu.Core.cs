@@ -581,6 +581,7 @@ namespace System.Windows.Forms
 
 		internal override IntPtr CreateWindow(CreateParams cp)
 		{
+			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			var hwnd = new Hwnd();
 			// WinForms passes the WINDOW rectangle; keep the client one (see _frames).
 			Padding frame = TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null);
@@ -672,6 +673,7 @@ namespace System.Windows.Forms
 
 		internal override bool SetVisible(IntPtr handle, bool visible, bool activate)
 		{
+			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return false;
 			hwnd.visible = visible;
@@ -755,6 +757,7 @@ namespace System.Windows.Forms
 
 		internal override void SetWindowPos(IntPtr handle, int x, int y, int width, int height)
 		{
+			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return;
 			Padding frame = FrameOf(handle);
@@ -814,6 +817,7 @@ namespace System.Windows.Forms
 
 		internal override void Invalidate(IntPtr handle, Rectangle rc, bool clear)
 		{
+			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			// A rubber band is scribbled ON TOP of a window, and the caller's way of taking it back is
 			// to repaint underneath -- Splitter ends a drag with Parent.Refresh and a comment saying so.
 			// With an XOR pen on a real screen that works; a band the compositor draws over the finished
@@ -1225,6 +1229,7 @@ namespace System.Windows.Forms
 				if (TryDequeue(q, out msg))
 				{
 					if (msg.message == Msg.WM_QUIT) return false;
+					PresentationHost.PresentIfOverdue();   // a queue that never empties still shows its frames
 					return true;
 				}
 				if (q.Quit) return false;

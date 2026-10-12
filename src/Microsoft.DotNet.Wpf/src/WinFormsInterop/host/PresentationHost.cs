@@ -256,6 +256,7 @@ namespace System.Windows.Forms
         internal static bool Tick()
         {
             if (!s_enabled) return false;
+            t_lastFrame = Environment.TickCount64;
 
             AdoptNewForms();
             if (s_hosts.Count == 0) return false;
@@ -298,6 +299,31 @@ namespace System.Windows.Forms
             }
 
             return s_hosts.Count > 0;
+        }
+
+        [ThreadStatic] private static long t_lastFrame;
+
+        /// <summary>Present this thread's windows if no frame has gone out for a while, between two
+        /// messages. Tick presents only when the queue runs dry, and a thread that keeps it full
+        /// never got there: a splash screen fading in from a timer that posts every 25ms, each
+        /// update taking longer than that, showed an empty window for its whole life. Windows
+        /// shows a window's new picture whatever its thread is doing; this is the nearest thing.
+        /// Input is left to Tick -- only the picture is brought up to date.</summary>
+        internal static void PresentIfOverdue()
+        {
+            if (!s_enabled) return;
+            long now = Environment.TickCount64;
+            if (now - t_lastFrame < 33) return;
+            t_lastFrame = now;
+            IWinFormsHost[] hosts;
+            lock (s_lock) hosts = s_hosts.ToArray();
+            foreach (IWinFormsHost host in hosts)
+            {
+                Form form;
+                lock (s_lock) s_forms.TryGetValue(host, out form);
+                if (form == null || form.IsDisposed || form.InvokeRequired || !form.Visible) continue;
+                host.Present();
+            }
         }
 
         /// <summary>Give every visible top-level form that has no window one of its own. Menus,
