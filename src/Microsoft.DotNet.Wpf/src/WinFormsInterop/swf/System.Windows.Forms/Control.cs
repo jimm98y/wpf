@@ -3922,6 +3922,11 @@ namespace System.Windows.Forms
 
 		public void Invalidate (Region region, bool invalidateChildren)
 		{
+			// .NET: a null region is the whole control.
+			if (region == null) {
+				Invalidate (invalidateChildren);
+				return;
+			}
 			using (Graphics g = CreateGraphics ()){
 				RectangleF bounds = region.GetBounds (g);
 				Invalidate (new Rectangle ((int) bounds.X, (int) bounds.Y, (int) bounds.Width, (int) bounds.Height), invalidateChildren);

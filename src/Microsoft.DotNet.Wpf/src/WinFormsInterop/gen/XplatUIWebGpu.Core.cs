@@ -122,6 +122,15 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>
+		/// A child window with no parent: a control created before it was added anywhere, or taken
+		/// out of its parent. Windows keeps such a window in WinForms' hidden parking window, where
+		/// nobody sees it; as a parentless root here it was composited over the form at 0,0 (a
+		/// ribbon's off-screen template control covered the real ribbon).
+		/// </summary>
+		private static bool IsParkedChild(Hwnd h) =>
+			(h.initial_style & WindowStyles.WS_CHILD) != 0 && (h.initial_style & WindowStyles.WS_POPUP) == 0;
+
+		/// <summary>
 		/// Whether the window was created as a popup surface -- a menu, a combo drop-down, a tooltip,
 		/// an in-place editor -- rather than as an ordinary child control.
 		/// </summary>
@@ -1633,7 +1642,7 @@ namespace System.Windows.Forms
 			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(k);
-				if (h != null && h.parent == null && !roots.Contains(k)) roots.Add(k);
+				if (h != null && h.parent == null && !IsParkedChild(h) && !roots.Contains(k)) roots.Add(k);
 			}
 			roots.Sort((a, b) =>
 			{

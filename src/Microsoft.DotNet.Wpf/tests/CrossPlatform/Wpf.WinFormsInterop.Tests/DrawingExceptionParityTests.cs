@@ -49,6 +49,13 @@ namespace Wpf.WinFormsInterop.Tests
         // No single case may allocate more than this: the suite runs in CI.
         private const long AllocationLimit = 8L << 20;
 
+        // The first Font in a process builds the font catalog (about 12 MB, once). Paid here, so the
+        // limit measures each case rather than whichever one happens to create the first Font.
+        static DrawingExceptionParityTests()
+        {
+            using var warm = new System.Drawing.Font(System.Drawing.FontFamily.GenericSansSerif, 8.25f);
+        }
+
         private static Dictionary<string, string[]> s_stock;
 
         private static Dictionary<string, string[]> Stock

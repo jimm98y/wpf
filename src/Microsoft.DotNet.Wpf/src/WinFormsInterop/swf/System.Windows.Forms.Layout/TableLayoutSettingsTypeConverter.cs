@@ -123,7 +123,10 @@ namespace System.Windows.Forms.Layout
 			ParseColumnStyle (xmldoc, settings);
 			ParseRowStyle (xmldoc, settings);
 			settings.RowCount = count;
-			
+			// A deserialized settings object is a STUB, as .NET's converter makes it: the form's
+			// InitializeComponent assigns it to TableLayoutPanel.LayoutSettings (from a localized
+			// .resx), and only a stub may be assigned there -- anything else is NotSupportedException.
+			settings.isSerialized = true;
 
 			return settings;
 		}

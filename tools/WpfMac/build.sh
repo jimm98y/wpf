@@ -10,6 +10,9 @@
 # fork first (eng/build-sdk.sh). Usage:
 #   tools/WpfMac/build.sh                  for this machine's RID
 #   tools/WpfMac/build.sh -r osx-arm64     for another
+#   tools/WpfMac/build.sh --repack         first repack WpfWebGpu.Sdk from the current build outputs
+#                                          (after rebuilding one stack project, instead of all of
+#                                          eng/build-sdk.sh: the same pack step it ends with)
 
 set -euo pipefail
 
@@ -18,9 +21,11 @@ REPO="$(cd "$HERE/../.." && pwd)"
 cd "$HERE"
 
 RID=""
+REPACK=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -r|--rid) RID="$2"; shift 2 ;;
+    --repack) REPACK=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -35,6 +40,13 @@ if [ -z "$RID" ]; then
 fi
 
 OUT="$REPO/artifacts/wpfmac/$RID"
+if [ "$REPACK" = 1 ]; then
+  echo ">> repacking WpfWebGpu.Sdk from artifacts/bin"
+  rm -f "$REPO"/artifacts/local-feed/WpfWebGpu.Sdk.*.nupkg
+  dotnet pack "$REPO/sdk/WpfWebGpu.Sdk/WpfWebGpu.Sdk.csproj" -c Release -o "$REPO/artifacts/local-feed" \
+    -p:ImportDirectoryBuildProps=false -p:ImportDirectoryBuildTargets=false -p:ImportDirectoryPackagesProps=false \
+    -p:WpfWebGpuAllowPartialNative=true -nologo -v q
+fi
 if [ ! -f "$REPO/artifacts/local-feed/WpfWebGpu.Sdk.0.1.1.nupkg" ]; then
   echo "error: artifacts/local-feed has no WpfWebGpu.Sdk; run eng/build-sdk.sh first." >&2
   exit 1
