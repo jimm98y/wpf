@@ -86,7 +86,11 @@ namespace WpfMac.Bootstrap
             }
         }
 
-        private static bool IsCompatibilityFailure(Exception ex) => ex switch
+        // WPFMAC_LOG_ALL_EXCEPTIONS=1: every distinct first-chance exception, not just the
+        // compatibility kinds -- for a failure the app swallows (a paint that throws half-way).
+        private static readonly bool s_logAll = Environment.GetEnvironmentVariable("WPFMAC_LOG_ALL_EXCEPTIONS") == "1";
+
+        private static bool IsCompatibilityFailure(Exception ex) => s_logAll || ex switch
         {
             PlatformNotSupportedException => true,
             DllNotFoundException => true,

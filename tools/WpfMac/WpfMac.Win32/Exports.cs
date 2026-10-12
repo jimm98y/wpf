@@ -40,6 +40,9 @@ public static unsafe partial class Exports
 
     internal static void LogOnce(string key, string message) => s_logOnce?.Invoke(key, message);
 
+    /// <summary>Every call: through the callback the bootstrap publishes (WpfMac.Log).</summary>
+    internal static void Log(string message) => (AppContext.GetData("WpfMac.Log") as Action<string>)?.Invoke(message);
+
     // ---- helpers shared by the implementations ------------------------------------------------
 
     internal const int TRUE = 1;
