@@ -14,12 +14,13 @@ fi
 
 GEN="$OUT/.win32shim-src"
 mkdir -p "$GEN"
-dotnet run --project "$HERE/WpfMac.Win32Native.Generator.csproj" -c Release -- "$GEN"
+dotnet run --project "$HERE/WpfMac.Win32Native.Generator.csproj" -c Release -- "$GEN" "" "$HERE/extra-exports.txt"
 
 clang -arch "$ARCH" -dynamiclib -O2 -fvisibility=hidden \
   -install_name @rpath/libwin32shim.dylib \
   -o "$OUT/libwin32shim.dylib" \
   "$HERE/win32shim_runtime.c" "$GEN/win32shim_tables.c" "$GEN/win32shim_stubs.s"
 cp "$GEN/win32shim_modules.txt" "$OUT/win32shim_modules.txt"
+cp "$GEN/win32shim_exports.txt" "$OUT/win32shim_exports.txt"
 rm -rf "$GEN"
 echo "libwin32shim: $(wc -l < "$OUT/win32shim_modules.txt" | tr -d ' ') modules -> $OUT/libwin32shim.dylib"

@@ -113,7 +113,16 @@ internal static class Program
         using var resolver = new WpfMac.Audit.Resolver(set);
         var report = new WpfMac.Audit.Auditor(resolver, runner.App.Directory).Run();
         report.Notes.AddRange(prepared.Notes);
-        string md = WpfMac.Audit.Auditor.ToMarkdown(report, runner.App.Name, HostInfo.Rid);
+        // On macOS, mark each Windows P/Invoke by whether libwin32shim exports it.
+        Func<string, string, bool>? shimHas = null;
+        string manifest = Path.Combine(runner.OverlayDir, "win32shim_exports.txt");
+        if (File.Exists(manifest))
+        {
+            var exports = new HashSet<string>(File.ReadLines(manifest).Select(l => l[(l.IndexOf('\t') + 1)..]), StringComparer.Ordinal);
+            var modules = new HashSet<string>(File.ReadLines(manifest).Select(l => l[..l.IndexOf('\t')]), StringComparer.OrdinalIgnoreCase);
+            shimHas = (module, entry) => !modules.Contains(module) || exports.Contains(entry);
+        }
+        string md = WpfMac.Audit.Auditor.ToMarkdown(report, runner.App.Name, HostInfo.Rid, shimHas);
         if (output != null)
         {
             File.WriteAllText(output, md);

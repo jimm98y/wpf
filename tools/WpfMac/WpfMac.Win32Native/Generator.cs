@@ -16,6 +16,11 @@
 //   win32shim_stubs.s     the stubs, the default thunks and the slot table
 //   win32shim_tables.c    names, the module each comes from, and the failure each returns
 //   win32shim_modules.txt the DLL names covered, one per line (lower case, no .dll)
+//   win32shim_exports.txt every export, "module<TAB>name", for `wpfmac audit` to check coverage with
+//
+// Besides the SDK metadata, extra-exports.txt lists functions apps P/Invoke that it does not describe:
+// the WDK's (ntdll's RtlGetVersion), undocumented ones (SetWindowCompositionAttribute) and imports by
+// ordinal ("#135"), which .NET off Windows looks up as a symbol of that literal name.
 
 using System.Collections.Immutable;
 using System.Reflection;
@@ -60,15 +65,19 @@ internal static class Generator
             return 2;
         }
         string outDir = args[0];
-        string winmd = args.Length > 1 ? args[1] : typeof(Generator).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+        string winmd = args.Length > 1 && args[1].Length > 0 ? args[1] : typeof(Generator).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
             .First(a => a.Key == "Win32Metadata").Value!;
 
         var exports = Read(winmd);
+        string extras = Path.Combine(AppContext.BaseDirectory, "extra-exports.txt");
+        if (args.Length > 2) extras = args[2];
+        if (File.Exists(extras)) AddExtras(exports, extras);
         Directory.CreateDirectory(outDir);
         WriteStubs(Path.Combine(outDir, "win32shim_stubs.s"), exports);
         WriteTables(Path.Combine(outDir, "win32shim_tables.c"), exports);
         File.WriteAllLines(Path.Combine(outDir, "win32shim_modules.txt"),
             exports.Select(e => e.Module).Distinct().OrderBy(m => m, StringComparer.Ordinal));
+        File.WriteAllLines(Path.Combine(outDir, "win32shim_exports.txt"), exports.Select(e => e.Module + "\t" + e.Name));
         Console.WriteLine($"win32shim-gen: {exports.Count} exports from {exports.Select(e => e.Module).Distinct().Count()} modules");
         return 0;
     }
@@ -91,11 +100,12 @@ internal static class Generator
                 if (import.Module.IsNil) continue;
 
                 string entry = import.Name.IsNil ? md.GetString(method.Name) : md.GetString(import.Name);
-                // CRT functions (memcpy, strlen, _wcsicmp...) that ntdll and msvcrt also export: a
-                // definition of those here would shadow libSystem's inside this very library.
-                if (entry.Length == 0 || !char.IsUpper(entry[0]) || !entry.All(c => char.IsAsciiLetterOrDigit(c) || c == '_')) continue;
-
                 string module = Normalize(md.GetString(md.GetModuleReference(import.Module).Name));
+                if (entry.Length == 0 || !entry.All(c => char.IsAsciiLetterOrDigit(c) || c == '_')) continue;
+                // The C runtime that ntdll and the CRT DLLs also export (memcpy, strlen, _wcsicmp...): a
+                // definition of those here would shadow libSystem's inside this very library.
+                // Lower-case names elsewhere (keybd_event, sndPlaySound) are ordinary Windows API.
+                if (!char.IsUpper(entry[0]) && (module is "ntdll" or "msvcrt" or "ucrtbase" or "crtdll" || module.StartsWith("api-ms-win-crt", StringComparison.Ordinal))) continue;
                 if (byName.ContainsKey(entry)) continue;          // same name in two DLLs: one export
 
                 string ret = method.DecodeSignature(provider, null).ReturnType;
@@ -110,8 +120,44 @@ internal static class Generator
                 byName[entry] = new Export(entry, module, failure);
             }
         }
+        // The undecorated names. Windows resolves an import of "GetWindowText" with CharSet.Auto by
+        // trying GetWindowTextW; .NET on macOS looks up exactly the name it was given. So the bare name
+        // is an export too, with its own slot: its strings arrive as UTF-8 or UTF-16 depending on the
+        // import's CharSet, which the implementation (not the W one) has to sort out.
+        foreach (var w in byName.Values.Where(e => e.Name.EndsWith('W')).ToList())
+        {
+            string bare = w.Name[..^1];
+            if (!byName.ContainsKey(bare)) byName[bare] = w with { Name = bare };
+        }
         return byName.Values.OrderBy(e => e.Name, StringComparer.Ordinal).ToList();
     }
+
+    /// <summary>
+    /// extra-exports.txt: "module name failure" per line (failure: void, zero, hresult, ntstatus,
+    /// win32error, invalidhandle); '#' starts a comment unless it begins the name of an ordinal.
+    /// </summary>
+    private static void AddExtras(List<Export> exports, string path)
+    {
+        var names = exports.Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
+        foreach (string raw in File.ReadAllLines(path))
+        {
+            string line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith("//", StringComparison.Ordinal)) continue;
+            string[] parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2 || names.Contains(parts[1])) continue;
+            Failure failure = parts.Length > 2 ? parts[2].ToLowerInvariant() switch
+            {
+                "void" => Failure.Void, "hresult" => Failure.HResult, "ntstatus" => Failure.NtStatus,
+                "win32error" => Failure.Win32Error, "invalidhandle" => Failure.InvalidHandle, _ => Failure.Zero,
+            } : Failure.Zero;
+            exports.Add(new Export(parts[1], Normalize(parts[0]), failure));
+            names.Add(parts[1]);
+        }
+        exports.Sort((a, b) => StringComparer.Ordinal.Compare(a.Name, b.Name));
+    }
+
+    /// <summary>A symbol as the assembler takes it: ordinals ("#135") need quoting.</summary>
+    private static string Sym(string name) => name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_') ? "_" + name : "\"_" + name + "\"";
 
     /// <summary>USER32.dll -> user32; api-ms-win-core-com-l1-1-0.dll -> api-ms-win-core-com-l1-1-0.</summary>
     internal static string Normalize(string module)
@@ -127,8 +173,8 @@ internal static class Generator
         sb.AppendLine("\t.section __TEXT,__text,regular,pure_instructions");
         for (int i = 0; i < exports.Count; i++)
         {
-            string n = exports[i].Name;
-            sb.Append("\t.p2align 2\n\t.globl _").Append(n).Append("\n_").Append(n).Append(":\n");
+            string n = Sym(exports[i].Name);
+            sb.Append("\t.p2align 2\n\t.globl ").Append(n).Append('\n').Append(n).Append(":\n");
             sb.Append("\tadrp x16, _wpfmac_slots@PAGE\n");
             sb.Append("\tadd x16, x16, _wpfmac_slots@PAGEOFF\n");
             // The slot is at index*8; the immediate form of ldr only reaches 32760, so add the offset first.

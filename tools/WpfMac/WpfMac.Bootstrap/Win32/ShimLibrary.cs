@@ -81,7 +81,7 @@ namespace WpfMac.Bootstrap.Win32
             }
 
             setHandler(&OnUnimplemented);
-            int implemented = Implementations.RegisterAll();
+            int implemented = Implementations.RegisterAll(s_handle, m => s_modules.Contains(m));
 
             Hook(AssemblyLoadContext.Default);
             AppDomain.CurrentDomain.AssemblyLoad += (_, e) =>

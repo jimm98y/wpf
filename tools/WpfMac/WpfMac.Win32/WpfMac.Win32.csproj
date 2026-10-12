@@ -1,0 +1,24 @@
+<Project Sdk="WpfWebGpu.Sdk">
+
+  <!--
+    Managed implementations of Windows API functions, for libwin32shim on macOS.
+
+    The bootstrap loads this assembly by name and calls Exports.RegisterAll, which points each
+    implemented export's slot in libwin32shim at an [UnmanagedCallersOnly] method here. Built with the
+    WebGPU SDK because the window functions are implemented against the stack's own windows: a WPF
+    Window behind its HwndSource, a WinForms Control behind its handle.
+
+    Generic: nothing here knows about any particular app. Semantics follow the Windows documentation;
+    where macOS has the answer (screen geometry, cursor position, key state, memory) it is the real
+    one, and where it has none the result is what Windows returns for "not supported".
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>WpfMac.Win32</AssemblyName>
+    <RootNamespace>WpfMac.Win32</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CA1416;CS8500</NoWarn>
+  </PropertyGroup>
+
+</Project>

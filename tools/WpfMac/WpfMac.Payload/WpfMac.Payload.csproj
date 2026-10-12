@@ -33,6 +33,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../WpfMac.Bootstrap/WpfMac.Bootstrap.csproj" />
+    <!-- The managed half of libwin32shim (macOS); loaded by the bootstrap by name. -->
+    <ProjectReference Include="../WpfMac.Win32/WpfMac.Win32.csproj" />
   </ItemGroup>
 
   <!-- Microsoft.WindowsDesktop.App, minus what the SDK already supplies: WPF, WinForms,
