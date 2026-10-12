@@ -14,4 +14,10 @@
     <InternalsVisibleTo Include="WpfMac.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- `wpfmac reg`: the registry apps see under wpfmac is the shim's store, so it is read and
+         written through the shim itself (it wins over the framework's copy by version). -->
+    <ProjectReference Include="../../../shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" Aliases="RegistryShim" />
+  </ItemGroup>
+
 </Project>
