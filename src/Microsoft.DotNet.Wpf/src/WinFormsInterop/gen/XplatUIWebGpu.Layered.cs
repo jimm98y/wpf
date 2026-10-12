@@ -12,6 +12,20 @@ using Microsoft.Wpf.Interop.WebGpu.Composition;
 namespace System.Windows.Forms {
 	internal partial class XplatUIWebGpu {
 		private readonly Dictionary<IntPtr, SceneVisual> _layered = new Dictionary<IntPtr, SceneVisual>();
+		private readonly Dictionary<IntPtr, (byte[] Rgba, int Width, int Height)> _layeredPixels = new Dictionary<IntPtr, (byte[], int, int)>();
+
+		/// <summary>Whether the mouse goes through a window at a point of it: a layered window is
+		/// hit only where its picture is not fully transparent, and not at all if it is also
+		/// WS_EX_TRANSPARENT -- as in Win32. A drop shadow is a layered window laid over the menu it
+		/// shades, and every click on the menu went to the shadow instead.</summary>
+		private bool PassesMouseThrough(Hwnd hwnd, int x, int y)
+		{
+			if ((hwnd.initial_ex_style & WindowExStyles.WS_EX_LAYERED) == 0) return false;
+			if ((hwnd.initial_ex_style & WindowExStyles.WS_EX_TRANSPARENT) != 0) return true;
+			if (!_layeredPixels.TryGetValue(hwnd.Handle, out var px)) return false;
+			if (x < 0 || y < 0 || x >= px.Width || y >= px.Height) return true;
+			return px.Rgba[(y * px.Width + x) * 4 + 3] == 0;
+		}
 
 		/// <summary>Give a window the picture UpdateLayeredWindow hands it: <paramref name="rgba"/> is
 		/// straight (not premultiplied) RGBA, <paramref name="width"/> by <paramref name="height"/>,
@@ -23,6 +37,7 @@ namespace System.Windows.Forms {
 			var sv = new SceneVisual { Opacity = opacity };
 			sv.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(0, 0, width, height)), new ImageBrush(rgba, width, height)));
 			_layered[handle] = sv;
+			_layeredPixels[handle] = (rgba, width, height);
 			_paintVersion++;
 		}
 
@@ -35,6 +50,7 @@ namespace System.Windows.Forms {
 				return true;
 			}
 			_layered.Remove(handle);
+			_layeredPixels.Remove(handle);
 			scene = null;
 			return false;
 		}
