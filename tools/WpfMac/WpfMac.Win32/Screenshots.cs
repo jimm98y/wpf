@@ -70,7 +70,9 @@ public static class Screenshots
                 double height = MacNative.SendRect(content, MacNative.Sel("frame")).Height;
                 var point = new CGPoint { X = x, Y = height - y };
                 nint number = MacNative.Send(window, MacNative.Sel("windowNumber"));
-                foreach (nuint type in new nuint[] { 1, 2 })   // left mouse down, up
+                // Moved, down, up: a pointer arrives before it presses, and controls that track the
+                // hot item (DotNetBar's ribbon) act only on the one under it.
+                foreach (nuint type in new nuint[] { 5, 1, 2 })
                 {
                     nint evt = MacNative.MouseEvent(type, point, number);
                     MacNative.PostEvent(evt);
@@ -314,10 +316,25 @@ public static class Screenshots
             void Walk(Forms.Control c, int depth)
             {
                 if (depth > 7) return;
-                lines.Append(' ', depth * 2).Append($"{c.GetType().Name} '{c.Name}' {c.Bounds} dock={c.Dock} anchor={c.Anchor} visible={c.Visible}\n");
+                lines.Append(' ', depth * 2).Append($"{c.GetType().Name} '{c.Name}' {c.Bounds} dock={c.Dock} anchor={c.Anchor} visible={c.Visible}{(c.IsHandleCreated ? $" handle=0x{c.Handle:x}" : "")}\n");
                 foreach (Forms.Control child in c.Controls) Walk(child, depth + 1);
             }
             Walk(form, 0);
+            // Top-level controls that are not forms: popups (a menu's container) are windows of
+            // their own, outside every form's tree.
+            if (typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.Hwnd")?.GetField("windows", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) is System.Collections.Hashtable all)
+            {
+                object[] handles;
+                lock (all) { handles = all.Keys.Cast<object>().ToArray(); }
+                foreach (object h in handles)
+                {
+                    if (h is IntPtr handle && Forms.Control.FromHandle(handle) is Forms.Control c && c.Parent == null && c is not Forms.Form && c.Visible)
+                    {
+                        lines.Append($"top-level {c.GetType().FullName} at {c.Bounds}:\n");
+                        Walk(c, 1);
+                    }
+                }
+            }
             Exports.LogOnce("tree:" + stamp + form.GetHashCode(), lines.ToString().TrimEnd());
         }
         catch (Exception e)
