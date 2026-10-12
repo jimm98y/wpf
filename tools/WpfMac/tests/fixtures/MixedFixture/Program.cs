@@ -61,19 +61,25 @@ internal static partial class Program
                 Run("event logs", EventLog_);
                 Run("WMI", Wmi);
                 Run("user32", () => User32(form.Handle));
-                foreach (string f in s_failures) log.Items.Add("FAIL " + f);
-                Console.WriteLine(s_failures.Count == 0 ? "fixture: PASS" : "fixture: FAILED");
                 window.Close();
-                int i = Array.IndexOf(args, "--seconds");
-                if (i >= 0 && i + 1 < args.Length && double.TryParse(args[i + 1], out double seconds))
-                {
-                    var close = new Forms.Timer { Interval = (int)(seconds * 1000) };
-                    close.Tick += (_, _) => { close.Stop(); form.Close(); };
-                    close.Start();
-                }
+                if (OperatingSystem.IsMacOS()) MacWindowFollows(form, args, Finish);
+                else Finish();
             };
             check.Start();
         };
+
+        void Finish()
+        {
+            foreach (string f in s_failures) log.Items.Add("FAIL " + f);
+            Console.WriteLine(s_failures.Count == 0 ? "fixture: PASS" : "fixture: FAILED");
+            int i = Array.IndexOf(args, "--seconds");
+            if (i >= 0 && i + 1 < args.Length && double.TryParse(args[i + 1], out double seconds))
+            {
+                var close = new Forms.Timer { Interval = (int)(seconds * 1000) };
+                close.Tick += (_, _) => { close.Stop(); form.Close(); };
+                close.Start();
+            }
+        }
 
         Forms.Application.Run(form);
         wpfApp.Shutdown();
@@ -127,6 +133,83 @@ internal static partial class Program
         if (GetSystemMetrics(0) <= 0) return "GetSystemMetrics(SM_CXSCREEN) is 0";
         return null;
     }
+
+    // ---- macOS: the native window and the form stay in step ---------------------------------------
+    // What a user does to the window (here through AppKit, as a drag or resize would) must reach the
+    // form -- its layout and its Move/Resize handlers -- and what code does to the form must reach
+    // the window.
+
+    private static void MacWindowFollows(Forms.Form form, string[] args, Action done)
+    {
+        IntPtr window = MacWindowTitled(form.Text);
+        if (window == IntPtr.Zero)
+        {
+            Run("macOS window follows", () => "no NSWindow titled " + form.Text);
+            done();
+            return;
+        }
+        int moved = 0, resized = 0;
+        form.Move += (_, _) => moved++;
+        form.Resize += (_, _) => resized++;
+        System.Drawing.Size before = form.Size;
+        NSRect frame = SendRect(window, Sel("frame"));
+        // Narrower and shorter, and 40 points to the right (Cocoa's origin is the bottom-left).
+        SendVoidRectBool(window, Sel("setFrame:display:"), new NSRect { X = frame.X + 40, Y = frame.Y + 30, W = frame.W - 60, H = frame.H - 30 }, true);
+
+        var step = new Forms.Timer { Interval = 500 };
+        int phase = 0;
+        System.Drawing.Point requested = default;
+        step.Tick += (_, _) =>
+        {
+            if (phase == 0)
+            {
+                Run("user resize and move reach the form", () =>
+                    form.Width != before.Width - 60 || form.Height != before.Height - 30 ? $"form is {form.Size}, expected {before.Width - 60}x{before.Height - 30}"
+                    : resized == 0 ? "no Resize event" : moved == 0 ? "no Move event" : null);
+                requested = new System.Drawing.Point(form.Left + 25, form.Top + 15);
+                form.Location = requested;
+                phase = 1;
+                return;
+            }
+            step.Stop();
+            Run("form moved from code moves the window", () =>
+            {
+                NSRect now = SendRect(window, Sel("frame"));
+                NSRect content = SendRectRect(window, Sel("contentRectForFrameRect:"), now);
+                double screenHeight = SendRect(SendPtrNUInt(Send(objc_getClass("NSScreen"), Sel("screens")), Sel("objectAtIndex:"), 0), Sel("frame")).H;
+                int left = (int)Math.Round(content.X), top = (int)Math.Round(screenHeight - content.Y - content.H);
+                return left == requested.X && top == requested.Y ? null : $"window content is at {left},{top}, form asked for {requested.X},{requested.Y}";
+            });
+            done();
+        };
+        step.Start();
+    }
+
+    private static IntPtr MacWindowTitled(string title)
+    {
+        IntPtr windows = Send(Send(objc_getClass("NSApplication"), Sel("sharedApplication")), Sel("windows"));
+        nuint count = (nuint)Send(windows, Sel("count"));
+        for (nuint i = 0; i < count; i++)
+        {
+            IntPtr w = SendPtrNUInt(windows, Sel("objectAtIndex:"), i);
+            IntPtr t = Send(w, Sel("title"));
+            if (t != IntPtr.Zero && Marshal.PtrToStringUTF8(Send(t, Sel("UTF8String"))) == title) return w;
+        }
+        return IntPtr.Zero;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NSRect { public double X, Y, W, H; }
+
+    private const string ObjC = "/usr/lib/libobjc.A.dylib";
+    private static IntPtr Sel(string name) => sel_registerName(name);
+    [LibraryImport(ObjC, StringMarshalling = StringMarshalling.Utf8)] private static partial IntPtr objc_getClass(string name);
+    [LibraryImport(ObjC, StringMarshalling = StringMarshalling.Utf8)] private static partial IntPtr sel_registerName(string name);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] private static partial IntPtr Send(IntPtr r, IntPtr s);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] private static partial IntPtr SendPtrNUInt(IntPtr r, IntPtr s, nuint a);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] private static partial NSRect SendRect(IntPtr r, IntPtr s);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] private static partial NSRect SendRectRect(IntPtr r, IntPtr s, NSRect a);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] private static partial void SendVoidRectBool(IntPtr r, IntPtr s, NSRect a, [MarshalAs(UnmanagedType.U1)] bool b);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
