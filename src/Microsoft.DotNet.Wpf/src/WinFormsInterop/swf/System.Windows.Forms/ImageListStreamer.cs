@@ -102,6 +102,15 @@ namespace System.Windows.Forms {
 			if (bkcolor == 0xFFFFFFFF)
 				back_color = bmp.GetPixel (0, 0);
 
+			// A 32-bit list carries its alpha in the bitmap's fourth byte, premultiplied, as comctl32
+			// keeps it. Read as a BMP that byte is padding, so every pixel came out opaque in its
+			// premultiplied colour: the soft edge of an icon became a near-black rim.
+			Bitmap withAlpha = ReadAlpha (decoded_buffer, bmp_offset, bmp_length);
+			if (withAlpha != null) {
+				bmp.Dispose ();
+				bmp = withAlpha;
+			}
+
 			if (mask != null) {
 				int width = bmp.Width;
 				int height = bmp.Height;
@@ -137,6 +146,56 @@ namespace System.Windows.Forms {
 				images [r] = b;
 			}
 			bmp.Dispose ();
+		}
+
+		/// <summary>The bitmap of a 32-bit stream with its alpha, as straight ARGB; null when it is not
+		/// 32-bit or carries no alpha at all (an older list, whose mask says what is transparent).</summary>
+		static unsafe Bitmap ReadAlpha (byte [] buffer, int offset, int length)
+		{
+			if (length < 54 || offset + length > buffer.Length)
+				return null;
+			int bits = buffer [offset + 28] | buffer [offset + 29] << 8;
+			int compression = BitConverter.ToInt32 (buffer, offset + 30);
+			if (bits != 32 || (compression != 0 && compression != 3))   // BI_RGB, BI_BITFIELDS
+				return null;
+			int dataOffset = BitConverter.ToInt32 (buffer, offset + 10);
+			int width = BitConverter.ToInt32 (buffer, offset + 18);
+			int height = BitConverter.ToInt32 (buffer, offset + 22);
+			bool bottomUp = height > 0;
+			height = Math.Abs (height);
+			if (width <= 0 || height <= 0 || dataOffset + (long) width * height * 4 > length)
+				return null;
+
+			bool anyAlpha = false;
+			for (int i = 0; i < width * height && !anyAlpha; i++)
+				anyAlpha = buffer [offset + dataOffset + i * 4 + 3] != 0;
+			if (!anyAlpha)
+				return null;
+
+			var result = new Bitmap (width, height, PixelFormat.Format32bppArgb);
+			BitmapData data = result.LockBits (new Rectangle (0, 0, width, height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+			try {
+				for (int y = 0; y < height; y++) {
+					int src = offset + dataOffset + (bottomUp ? height - 1 - y : y) * width * 4;
+					uint* row = (uint*) ((byte*) data.Scan0 + y * data.Stride);
+					for (int x = 0; x < width; x++, src += 4) {
+						uint b = buffer [src], g = buffer [src + 1], r = buffer [src + 2], a = buffer [src + 3];
+						if (a == 0) {
+							row [x] = 0;
+							continue;
+						}
+						if (a < 255) {   // premultiplied in, straight out
+							r = Math.Min (255u, (r * 255 + a / 2) / a);
+							g = Math.Min (255u, (g * 255 + a / 2) / a);
+							b = Math.Min (255u, (b * 255 + a / 2) / a);
+						}
+						row [x] = a << 24 | r << 16 | g << 8 | b;
+					}
+				}
+			} finally {
+				result.UnlockBits (data);
+			}
+			return result;
 		}
 
 		/*
