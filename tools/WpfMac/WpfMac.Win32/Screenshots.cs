@@ -60,6 +60,10 @@ public static class Screenshots
                 }
                 foreach (var (h, form) in snapshot)
                 {
+                    if (Environment.GetEnvironmentVariable("WPFMAC_DUMP_WINDOWS") == "1" && form.IsHandleCreated)
+                    {
+                        form.BeginInvoke(() => DumpWindows(form, stamp));
+                    }
                     string path = Path.Combine(directory, $"{stamp}-winforms-{RuntimeHelpersId(form)}.png");
                     MethodInfo? save = h.GetType().GetMethod("SaveFrame", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     if (save == null || !form.IsHandleCreated) continue;
@@ -70,6 +74,29 @@ public static class Screenshots
         catch (Exception e)
         {
             Exports.LogOnce("shots:winforms", "screenshots (WinForms): " + e.Message);
+        }
+    }
+
+    /// <summary>WPFMAC_DUMP_WINDOWS=1: what the WinForms host composites for a form, to the compat log.</summary>
+    private static void DumpWindows(Forms.Form form, string stamp)
+    {
+        try
+        {
+            object driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")!
+                .GetField("driver", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+            var present = (long[])driver.GetType().GetMethod("GetPresentWindows", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(driver, new object[] { form.Handle })!;
+            var lines = new System.Text.StringBuilder($"windows of '{form.Text}' at {stamp}:\n");
+            for (int i = 0; i + 2 < present.Length; i += 3)
+            {
+                var c = Forms.Control.FromHandle((IntPtr)present[i]);
+                lines.Append($"  0x{present[i]:x} at {present[i + 1]},{present[i + 2]} {c?.GetType().FullName ?? "?"} {c?.Bounds} visible={c?.Visible} parent={c?.Parent?.GetType().Name}\n");
+            }
+            Exports.LogOnce("dump:" + stamp + form.GetHashCode(), lines.ToString().TrimEnd());
+        }
+        catch (Exception e)
+        {
+            Exports.LogOnce("dump-fail", "window dump: " + e.Message);
         }
     }
 
