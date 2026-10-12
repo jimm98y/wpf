@@ -1,0 +1,17 @@
+<Project>
+  <!--
+    Writes the public API surface of an assembly as C#, every body throwing
+    PlatformNotSupportedException, minus the APIs a shim implements by hand (their doc IDs, one per
+    line, in the shim's implemented.txt). Run through gen-surface.sh; the output is checked in as the
+    shim's Surface.g.cs, so a shim keeps exactly the surface of the assembly it stands in for.
+  -->
+  <PropertyGroup>
+    <GenApiVersion>10.0.0-beta.26319.104</GenApiVersion>
+  </PropertyGroup>
+  <UsingTask TaskName="Microsoft.DotNet.GenAPI.GenAPITask"
+             AssemblyFile="$(NuGetPackageRoot)microsoft.dotnet.genapi/$(GenApiVersion)/tools/net/Microsoft.DotNet.GenAPI.dll" />
+  <Target Name="Gen">
+    <Microsoft.DotNet.GenAPI.GenAPITask Assembly="$(In)" LibPath="$(Lib)" OutputPath="$(Out)"
+      ExcludeApiList="$(Exclude)" ExceptionMessage="$(Message)" LangVersion="latest" />
+  </Target>
+</Project>

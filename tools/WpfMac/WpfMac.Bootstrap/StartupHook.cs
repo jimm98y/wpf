@@ -24,6 +24,10 @@ internal static class StartupHook
         }
 
         CompatLog.Start(AppContext.GetData(Keys.LogPath) as string);
+        // For the replacement assemblies (System.Management, EventLog, ...), which report what they
+        // cannot do, and what is written to them, without depending on this hook.
+        AppContext.SetData(Keys.LogCallback, (Action<string>)CompatLog.Info);
+        AppContext.SetData(Keys.LogOnceCallback, (Action<string, string>)CompatLog.Once);
         VersionUnification.Install(AssemblyLoadContext.Default);
         if (AppContext.GetData(Keys.OverlayDirectory) is string overlay && overlay.Length > 0)
         {
@@ -108,5 +112,9 @@ namespace WpfMac.Bootstrap
         public const string TitlePrefix = "WpfMac.TitlePrefix";
         public const string Isolate = "WpfMac.Isolate";
         public const string ScreenshotInterval = "WpfMac.ScreenshotInterval";
+
+        // Published by the hook, not passed to it: Action<string> and Action<string, string> (key, message).
+        public const string LogCallback = "WpfMac.Log";
+        public const string LogOnceCallback = "WpfMac.LogOnce";
     }
 }

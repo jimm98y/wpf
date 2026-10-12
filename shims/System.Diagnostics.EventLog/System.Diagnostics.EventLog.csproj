@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Replacement for the System.Diagnostics.EventLog package's runtime assembly, for macOS, where
+       the package throws PlatformNotSupportedException. The Application, System and Security logs
+       exist; sources and the logs they create are registered where Windows registers them,
+       HKLM\SYSTEM\CurrentControlSet\Services\EventLog\<log>\<source>, so they persist when the
+       registry does (the Microsoft.Win32.Registry shim's file store). Entries are kept for the
+       process's lifetime (a log reads back what this process wrote) and mirrored to wpfmac's
+       compatibility log. The Eventing.Reader API stays unsupported.
+
+       Public surface: Surface.g.cs (../Surface/gen-surface.sh) less implemented.txt. Same identity
+       as the package (ECMA key), AssemblyVersion above it. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Diagnostics.EventLog</AssemblyName>
+    <RootNamespace>System.Diagnostics</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyVersion>10.0.9999.0</AssemblyVersion>
+    <FileVersion>10.0.9999.0</FileVersion>
+    <Version>10.0.9999</Version>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>ecma.publickey</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>CA1416;SYSLIB0051;CS0108;CS0114;CS0618;CS0672;CS8597;CS8625</NoWarn>
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+
+</Project>

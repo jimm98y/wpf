@@ -1,0 +1,7 @@
+T:System.Diagnostics.EntryWrittenEventArgs
+T:System.Diagnostics.EventInstance
+T:System.Diagnostics.EventLog
+T:System.Diagnostics.EventLogEntry
+T:System.Diagnostics.EventLogEntryCollection
+T:System.Diagnostics.EventLogTraceListener
+T:System.Diagnostics.EventSourceCreationData

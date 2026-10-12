@@ -46,6 +46,7 @@ namespace Microsoft.Win32
         private readonly RegistryKey _hive;
         private FileRegistryStore _store;
         private bool _loaded;
+        private bool _loading;
 
         // Windows path: a real HKEY. Predefined hives are pseudo-handles and must never be closed.
         private IntPtr _hKey;
@@ -84,12 +85,21 @@ namespace Microsoft.Win32
         {
             if (_hive._loaded || _hive._store == null) return;
             _hive._loaded = true;                 // set first: Load() calls back in through CreateSubKey
-            _hive._store.Load(_hive);
+            _hive._loading = true;
+            try
+            {
+                _hive._store.Load(_hive);
+            }
+            finally
+            {
+                _hive._loading = false;
+            }
         }
 
         private void Persist()
         {
-            if (_hive._store != null && _hive._loaded) _hive._store.Save(_hive);
+            // Not while the file is being read: that would write back the part read so far.
+            if (_hive._store != null && _hive._loaded && !_hive._loading) _hive._store.Save(_hive);
         }
 
         // Used by FileRegistryStore while loading and saving, so that reading the file does not
@@ -227,15 +237,19 @@ namespace Microsoft.Win32
 
             EnsureLoaded();
             RegistryKey k = this;
+            bool created = false;
             foreach (var part in (name ?? string.Empty).Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 if (!k._subKeys.TryGetValue(part, out var sub))
                 {
                     sub = new RegistryKey(k.Name + "\\" + part, _hive);
                     k._subKeys[part] = sub;
+                    created = true;
                 }
                 k = sub;
             }
+            // A new key exists from now on, values or not (an event source's key has none).
+            if (created) Persist();
             return k;
         }
 

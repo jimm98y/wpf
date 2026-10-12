@@ -1,0 +1,6 @@
+T:System.Diagnostics.CounterCreationData
+T:System.Diagnostics.CounterCreationDataCollection
+T:System.Diagnostics.CounterSample
+T:System.Diagnostics.CounterSampleCalculator
+T:System.Diagnostics.PerformanceCounter
+T:System.Diagnostics.PerformanceCounterCategory
