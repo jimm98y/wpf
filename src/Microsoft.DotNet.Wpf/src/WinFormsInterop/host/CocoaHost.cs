@@ -11,6 +11,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 
 internal sealed class CocoaHost : IWinFormsHost
@@ -193,6 +194,12 @@ internal sealed class CocoaHost : IWinFormsHost
                     }
                     catch (Exception e) { Console.Error.WriteLine("[CocoaHost] WebGPU surface for an off-main form failed: " + e.Message); }
                 }
+                // Commit the window and its layer now. Core Animation commits at the end of a run
+                // loop pass, and this may be running inside a busy main thread's call into the
+                // driver (DrainMainWork) with no run loop pass to come for a while: the layer was
+                // not on screen, and the form's thread waited out a second on every frame for a
+                // drawable that could not come.
+                Send(Cls("CATransaction"), Sel("flush"));
             });
             Present();
             return;
@@ -279,6 +286,7 @@ internal sealed class CocoaHost : IWinFormsHost
             var scenes = GetScenes(out int ox, out int oy);
             Rectangle? caret = GetCaretRect(ox, oy);
             _lastPresentOk = _wgpu.PresentScenes(scenes, caret, _form.Width, _form.Height);
+            if (!_lastPresentOk && _offMain) _lastPresentOk = PresentAsLayerContents(scenes, caret);
             _lastVer = ver; _lastCaretOn = caretOn;
             if (Environment.GetEnvironmentVariable("WF_TRACE") != null) Console.Error.WriteLine("[present]");
             if (wantSave)
@@ -312,6 +320,7 @@ internal sealed class CocoaHost : IWinFormsHost
             {
                 _wgpu = new WgpuPresenter(_pendingContext, _pendingSurface, _form.Width, _form.Height, _pendingScale, srgb: _gpuRaster);
                 _lastVer = -1;
+                if (Environment.GetEnvironmentVariable("WF_TRACE_SURFACE") == "1") Console.WriteLine($"[CocoaHost] off-main presenter for '{_form.Text}' {_form.Width}x{_form.Height}");
             }
             if (_wgpu != null && _gpuRaster && !_closed)
             {
@@ -319,7 +328,14 @@ internal sealed class CocoaHost : IWinFormsHost
                 bool on = CaretOn();
                 if (v == _lastVer && on == _lastCaretOn && _lastPresentOk) return;
                 var offScenes = GetScenes(out int sx, out int sy);
-                _lastPresentOk = _wgpu.PresentScenes(offScenes, GetCaretRect(sx, sy), _form.Width, _form.Height);
+                Rectangle? offCaret = GetCaretRect(sx, sy);
+                _lastPresentOk = _wgpu.PresentScenes(offScenes, offCaret, _form.Width, _form.Height);
+                // No drawable. AppKit refreshes a window's occlusion state only when the main thread
+                // handles window-server events, and wgpu hands out no drawable to a window it thinks
+                // is hidden: a form on its own thread -- a splash screen -- while the main thread is
+                // busy loading the app was on screen and stayed blank all its life. Draw the frame
+                // offscreen and give it to the layer as its contents, which needs no drawable.
+                if (!_lastPresentOk) _lastPresentOk = PresentAsLayerContents(offScenes, offCaret);
                 _lastVer = v; _lastCaretOn = on;
                 return;
             }
@@ -359,6 +375,38 @@ internal sealed class CocoaHost : IWinFormsHost
     // The off-main-thread present: composite here (System.Drawing and CoreGraphics bitmaps are thread
     // safe), then set the layer's contents on the main thread. Only when the content changed: the
     // driver's loop calls Present on every iteration, and each one would otherwise be a main-queue hop.
+    private bool PresentAsLayerContents(System.Collections.Generic.IReadOnlyList<(object, int, int)> scenes, Rectangle? caret)
+    {
+        byte[] rgba = _wgpu.RenderScenesToRgba(scenes, caret);
+        SetLayerContents(rgba, _wgpu.DeviceWidth, _wgpu.DeviceHeight);
+        if (Environment.GetEnvironmentVariable("WF_TRACE_SURFACE") == "1") Console.WriteLine($"surface: no drawable for '{_form.Text}'; presented as layer contents");
+        return true;
+    }
+
+    /// <summary>Shows <paramref name="rgba"/> (R,G,B,A rows, premultiplied) as the window's layer
+    /// contents, from any thread.</summary>
+    private unsafe void SetLayerContents(byte[] rgba, int w, int h)
+    {
+        IntPtr cg;
+        fixed (byte* p = rgba)
+        {
+            IntPtr cs = CGColorSpaceCreateDeviceRGB();
+            IntPtr ctx = CGBitmapContextCreate((IntPtr)p, (nuint)w, (nuint)h, 8, (nuint)(w * 4), cs, 1);   // premultiplied RGBA
+            cg = CGBitmapContextCreateImage(ctx);    // copies the pixels
+            CGContextRelease(ctx); CGColorSpaceRelease(cs);
+        }
+        OnMain(() =>
+        {
+            IntPtr view = _imageView;
+            if (view != IntPtr.Zero && !_closed)
+            {
+                SendVoidPtr(Send(view, Sel("layer")), Sel("setContents:"), cg);
+                Send(Cls("CATransaction"), Sel("flush"));
+            }
+            CGImageRelease(cg);
+        });
+    }
+
     private void PresentOffMain()
     {
         int ver = (int)_getVersion.Invoke(_driver, null);
@@ -537,6 +585,29 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private static IntPtr s_mainQueue;
 
+    // Work for the main thread is queued twice: to the main dispatch queue, which runs it when the
+    // main thread next services its run loop, and here, where the main thread picks it up at the
+    // next call it makes into the driver (DrainMainWork). Whichever comes first runs it. The second
+    // is for a main thread that is busy: an app that shows a splash screen from a thread of its own
+    // goes on loading on the main thread, which may not service its run loop for seconds. The
+    // splash's window and surface waited for it the whole time, and the splash was an empty window
+    // until the moment it closed.
+    private sealed class MainWork
+    {
+        private Action _action;
+        public MainWork(Action action) => _action = action;
+
+        public void Run()
+        {
+            Action action = Interlocked.Exchange(ref _action, null);
+            if (action == null) return;
+            try { action(); }
+            catch (Exception e) { Console.Error.WriteLine($"[CocoaHost] main-queue work failed: {e}"); }
+        }
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<MainWork> s_mainWork = new();
+
     /// <summary>Runs <paramref name="action"/> on the main thread: now if this is it, else queued.</summary>
     private static unsafe void OnMain(Action action)
     {
@@ -546,18 +617,27 @@ internal sealed class CocoaHost : IWinFormsHost
             // dispatch_get_main_queue() is a macro for &_dispatch_main_q.
             s_mainQueue = NativeLibrary.GetExport(NativeLibrary.Load("/usr/lib/libSystem.dylib"), "_dispatch_main_q");
         }
-        GCHandle handle = GCHandle.Alloc(action);
+        var work = new MainWork(action);
+        s_mainWork.Enqueue(work);
+        GCHandle handle = GCHandle.Alloc(work);
         dispatch_async_f(s_mainQueue, GCHandle.ToIntPtr(handle), (IntPtr)(delegate* unmanaged<IntPtr, void>)&RunQueued);
+    }
+
+    /// <summary>On the main thread, runs the work other threads have queued for it (see MainWork).
+    /// The driver calls this from the calls a busy main thread keeps making.</summary>
+    internal static void DrainMainWork()
+    {
+        if (s_mainWork.IsEmpty || pthread_main_np() == 0) return;
+        while (s_mainWork.TryDequeue(out MainWork work)) work.Run();
     }
 
     [UnmanagedCallersOnly]
     private static void RunQueued(IntPtr context)
     {
         GCHandle handle = GCHandle.FromIntPtr(context);
-        var action = (Action)handle.Target;
+        var work = (MainWork)handle.Target;
         handle.Free();
-        try { action(); }
-        catch (Exception e) { Console.Error.WriteLine($"[CocoaHost] main-queue work failed: {e}"); }
+        work.Run();
     }
 
     [DllImport("/usr/lib/libSystem.dylib")] private static extern int pthread_main_np();

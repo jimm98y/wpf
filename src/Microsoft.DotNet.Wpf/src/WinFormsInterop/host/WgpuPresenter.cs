@@ -129,7 +129,8 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             Console.Error.WriteLine($"[wgpu] GetCurrentTexture status={st.status} texture=0x{st.texture:x}");
         // On macOS the first frames (window not yet front-most) return Occluded with a NULL texture;
         // wgpuTextureCreateView(null) panics wgpu ("invalid texture", non-unwinding abort). Skip them.
-        if (st.texture == IntPtr.Zero) return false;
+        if (st.texture == IntPtr.Zero) return NoDrawable();
+        _nullAcquires = 0;
         if (st.status == WGPUSurfaceGetCurrentTextureStatus.Outdated ||
             st.status == WGPUSurfaceGetCurrentTextureStatus.Timeout)
         {
@@ -160,6 +161,24 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     private static readonly bool s_tracePresentStatus =
         Environment.GetEnvironmentVariable("WF_TRACE_SURFACE") == "1";
 
+    // A surface configured while its window was not on screen yet -- created behind another Space,
+    // before its first order-front, or by a busy main thread for a form on a thread of its own --
+    // can go on returning no drawable (Occluded) after the window shows, and a window that never
+    // gets a drawable stays the colour AppKit cleared it to. Only Outdated and Timeout reconfigure,
+    // so do it after a run of drawable-less acquires too: the swap chain re-attaches to the layer,
+    // now on screen. The WPF side does the same (WpfCompositionSink.NoDrawable).
+    private int _nullAcquires;
+
+    private bool NoDrawable()
+    {
+        if (++_nullAcquires % 30 == 0)
+        {
+            if (s_tracePresentStatus) Console.WriteLine($"surface: no drawable {_nullAcquires} times in a row; reconfiguring {_width}x{_height}");
+            Configure();
+        }
+        return false;
+    }
+
     internal bool PresentScenes(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret, int surfaceW, int surfaceH)
         => PresentScenes(scenes, caret, null, surfaceW, surfaceH);
 
@@ -172,7 +191,8 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
         WGPUSurfaceTexture st;
         wgpuSurfaceGetCurrentTexture(_surface, &st);
-        if (st.texture == IntPtr.Zero) return false;
+        if (st.texture == IntPtr.Zero) return NoDrawable();
+        _nullAcquires = 0;
         if (st.status == WGPUSurfaceGetCurrentTextureStatus.Outdated ||
             st.status == WGPUSurfaceGetCurrentTextureStatus.Timeout) { Configure(); return false; }
         if (st.status != WGPUSurfaceGetCurrentTextureStatus.SuccessOptimal &&
