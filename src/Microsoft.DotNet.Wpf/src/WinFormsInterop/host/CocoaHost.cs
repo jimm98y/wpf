@@ -404,6 +404,9 @@ internal sealed class CocoaHost : IWinFormsHost
     // grid at the right edge), Move/Resize handlers, an ElementHost's own window, screen coordinates.
 
     private Rectangle _knownBounds;
+    // A press that started in the form: the drag and release that follow are the form's too, even
+    // past its edges (WinForms captures the mouse).
+    private bool _formHasMouse;
     private static readonly bool s_traceInput = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1";
 
     // ---- live resize ---------------------------------------------------------------------
@@ -729,6 +732,21 @@ internal sealed class CocoaHost : IWinFormsHost
         if (type >= 1 && type <= 6)
         {
             NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
+            // A press, drag or release in the content is the form's alone. Handed on to AppKit as
+            // well, it ran AppKit's own tracking on it -- and a drag of a splitter inside the form
+            // resized and moved the whole window, taking an ElementHost's window off the form. The
+            // title bar and a band along the edges stay AppKit's, so the window still moves and
+            // resizes the native way; those are not the form's. Bare moves go to both (cursor).
+            const double EdgeBand = 4;
+            bool inContent = loc.y >= 0 && loc.y < _form.Height && loc.x >= 0 && loc.x < _form.Width;
+            bool atEdge = loc.x < EdgeBand || loc.x >= _form.Width - EdgeBand || loc.y < EdgeBand;
+            if (type != 5 && (!inContent || atEdge) && !_formHasMouse)
+            {
+                Send(App(), Sel("sendEvent:"), evt);
+                return;
+            }
+            if (type == 1 || type == 3) _formHasMouse = true;
+            else if (type == 2 || type == 4) _formHasMouse = false;
             // Window point (Cocoa: bottom-left origin) to the driver's screen space, where it
             // hit-tests: the form's client area is drawn at the form's location there. Window
             // coordinates alone were right only while every form sat at (0,0) -- which stopped
@@ -747,6 +765,8 @@ internal sealed class CocoaHost : IWinFormsHost
             }
             Application.DoEvents();   // let the control repaint (pressed/hover) into its backbuffer
             Present();                // show it immediately
+            if (type == 5) Send(App(), Sel("sendEvent:"), evt);
+            return;
         }
         else if (type == 10) // NSEventTypeKeyDown -> route to the focused control
         {
