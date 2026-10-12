@@ -214,6 +214,7 @@ internal sealed class CocoaHost : IWinFormsHost
         // What the form asked for. AppKit may constrain it (below the menu bar, onto the screen);
         // the first Pump then hands the real frame back to the form.
         _knownBounds = new Rectangle(_form.Left, _form.Top, _form.Width, _form.Height);
+        ObserveLiveResize();
         SendVoidPtr(win, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
         Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
 
@@ -402,6 +403,64 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private Rectangle _knownBounds;
 
+    // ---- live resize ---------------------------------------------------------------------
+    //
+    // While the user drags a window edge AppKit runs its own tracking loop and this host's Pump does
+    // not run until the mouse is released: the form kept its old layout and an ElementHost's window
+    // (a separate NSWindow) stuck out past the shrinking edge, then snapped back. AppKit does post
+    // NSWindowDidResizeNotification synchronously from inside that loop, so the frame is carried to
+    // the form there -- WinForms lays out synchronously in SetBounds -- the embedded windows follow,
+    // and a frame is presented. Events are deliberately not pumped from here: dequeuing inside
+    // AppKit's tracking loop would take the mouse-up it is waiting for.
+
+    private IntPtr _resizeBlock, _resizeObserver;
+    private GCHandle _self;
+
+    private unsafe void ObserveLiveResize()
+    {
+        if (_window == IntPtr.Zero || _resizeObserver != IntPtr.Zero) return;
+        IntPtr center = Send(Cls("NSNotificationCenter"), Sel("defaultCenter"));
+        if (center == IntPtr.Zero) return;
+        _self = GCHandle.Alloc(this);
+        _resizeBlock = MS.Internal.Interop.ObjCBlock.Create(
+            (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, void>)&OnWindowResized, GCHandle.ToIntPtr(_self));
+        if (_resizeBlock == IntPtr.Zero) return;
+        // A nil queue delivers on the posting thread, synchronously: inside the tracking loop.
+        _resizeObserver = SendObserver(center, Sel("addObserverForName:object:queue:usingBlock:"),
+                                       NSStr("NSWindowDidResizeNotification"), _window, IntPtr.Zero, _resizeBlock);
+    }
+
+    [UnmanagedCallersOnly]
+    private static void OnWindowResized(IntPtr block, IntPtr notification)
+    {
+        // Inside AppKit: nothing may unwind through its frames.
+        try
+        {
+            IntPtr context = MS.Internal.Interop.ObjCBlock.ContextOf(block);
+            if (context == IntPtr.Zero || GCHandle.FromIntPtr(context).Target is not CocoaHost host) return;
+            if (host._window == IntPtr.Zero || host._form.IsDisposed) return;
+            host.SyncFrame();
+            EmbeddedScenes.Pump();
+            host.Present();
+        }
+        catch
+        {
+        }
+    }
+
+    private void StopObservingLiveResize()
+    {
+        if (_resizeObserver != IntPtr.Zero)
+        {
+            IntPtr center = Send(Cls("NSNotificationCenter"), Sel("defaultCenter"));
+            if (center != IntPtr.Zero) SendVoidPtr(center, Sel("removeObserver:"), _resizeObserver);
+            _resizeObserver = IntPtr.Zero;
+        }
+        if (_self.IsAllocated) _self.Free();
+    }
+
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendObserver(IntPtr r, IntPtr s, IntPtr name, IntPtr obj, IntPtr queue, IntPtr block);
+
     private void SyncFrame()
     {
         if (_window == IntPtr.Zero || _form.IsDisposed) return;
@@ -576,6 +635,7 @@ internal sealed class CocoaHost : IWinFormsHost
             return;
         }
         if (_window == IntPtr.Zero) return;
+        StopObservingLiveResize();
         IntPtr win = _window;
         _window = IntPtr.Zero;
         Send(win, Sel("close"));
