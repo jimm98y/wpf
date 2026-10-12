@@ -45,12 +45,30 @@
        Cryptography.Xml, Windows.Extensions, Formats.Nrbf, Security.Permissions, Drawing.Common). -->
   <ItemGroup>
     <PackageReference Include="System.CodeDom" Version="$(WpfMacExtrasVersion)" />
-    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="$(WpfMacExtrasVersion)" />
     <PackageReference Include="System.DirectoryServices" Version="$(WpfMacExtrasVersion)" />
     <PackageReference Include="System.Resources.Extensions" Version="$(WpfMacExtrasVersion)" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="$(WpfMacExtrasVersion)" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="$(WpfMacExtrasVersion)" />
     <PackageReference Include="Microsoft.Win32.Registry.AccessControl" Version="$(WpfMacExtrasVersion)" />
+  </ItemGroup>
+
+  <!-- Windows: the real packages, so the WebGPU instance differs from the stock one in its UI stack
+       only. macOS: replacements for the Windows-only packages whose own non-Windows builds throw
+       PlatformNotSupportedException (repo shims/). Each has the package's identity and surface at a
+       higher version, so it also replaces the copy an app deploys itself (System.Management and
+       ServiceController are app-local packages, not framework members). -->
+  <PropertyGroup>
+    <_WpfMacShims>$(MSBuildThisFileDirectory)../../../shims/</_WpfMacShims>
+  </PropertyGroup>
+  <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('osx'))">
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="$(WpfMacExtrasVersion)" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="$(WpfMacExtrasVersion)" />
+  </ItemGroup>
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('osx'))">
+    <ProjectReference Include="$(_WpfMacShims)System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
+    <ProjectReference Include="$(_WpfMacShims)System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
+    <ProjectReference Include="$(_WpfMacShims)System.Management/System.Management.csproj" />
+    <ProjectReference Include="$(_WpfMacShims)System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
+    <ProjectReference Include="$(_WpfMacShims)System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />
   </ItemGroup>
 
 </Project>
