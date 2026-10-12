@@ -203,6 +203,13 @@ namespace MS.Win32
                         // chromeless come from, and used to be dropped: every window was fully
                         // resizable however the application had asked to be shown.
                         cocoa.SetResizeMode((style & WS_THICKFRAME) != 0, (style & WS_MINIMIZEBOX) != 0);
+                        // Create takes its rectangle as Cocoa's (points, bottom-left origin); a
+                        // borderless window's position arrives in Win32's (device pixels, top-left), as
+                        // every later SetWindowPos does. Place it the way those are placed.
+                        if (borderless && x != CW_USEDEFAULT && y != CW_USEDEFAULT) cocoa.SetFrameOrigin(cx, cy);
+                        // A child window moves with its parent, as on Windows (an ElementHost's WPF
+                        // tree, parented to the WinForms window it is embedded in).
+                        if ((style & WS_CHILD) != 0 && parent != IntPtr.Zero) cocoa.AttachToParentWindow(parent);
                         _handle = cocoa.ContentView;
                     }
                     // Register the handle so off-Windows SendMessage (e.g. Window.Close()'s WM_CLOSE)

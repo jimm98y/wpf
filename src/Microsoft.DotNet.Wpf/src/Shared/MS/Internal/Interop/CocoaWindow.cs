@@ -619,6 +619,35 @@ namespace MS.Internal.Interop
             SendVoidPoint(_window, Sel("setFrameTopLeftPoint:"), new NSPoint { x = xPt, y = screenH - yTopPt });
         }
 
+        /// <summary>
+        /// Makes this window a CHILD window of the window <paramref name="parentView"/> is in, the
+        /// AppKit equivalent of a Win32 WS_CHILD: AppKit moves it with its parent -- while the parent
+        /// is being dragged too, when no application code runs -- and keeps it ordered just above it.
+        /// Positions stay absolute (screen), as SetFrameOrigin takes them.
+        /// </summary>
+        public void AttachToParentWindow(IntPtr parentView)
+        {
+            if (_window == IntPtr.Zero || parentView == IntPtr.Zero) return;
+            IntPtr parent = Send(parentView, Sel("window"));
+            if (parent == IntPtr.Zero || parent == _window) return;
+            _parentWindow = parent;
+            if (SendBool(_window, Sel("isVisible"))) AddToParent();
+        }
+
+        private IntPtr _parentWindow;
+
+        // NSWindowAbove = 1. Adding a child also orders it in, so only a window meant to be on screen
+        // is added; SetVisible adds and removes it as it is shown and hidden.
+        private void AddToParent()
+        {
+            if (_parentWindow != IntPtr.Zero) SendVoidPtrNInt(_parentWindow, Sel("addChildWindow:ordered:"), _window, 1);
+        }
+
+        private void RemoveFromParent()
+        {
+            if (_parentWindow != IntPtr.Zero) SendVoidPtr(_parentWindow, Sel("removeChildWindow:"), _window);
+        }
+
         /// <summary>Current content-view size in points (device-independent units).</summary>
         public void GetContentSize(out int width, out int height)
         {
@@ -1596,6 +1625,8 @@ namespace MS.Internal.Interop
                 // window, whose Hide() would quit the app.
                 bool wasKey = SendBool(_window, Sel("isKeyWindow"));
                 _hiddenByUs = true;
+                // A hidden child must leave its parent, or ordering the parent in brings it back.
+                RemoveFromParent();
                 SendVoidPtr(_window, Sel("orderOut:"), IntPtr.Zero);
                 // orderOut: never promotes a successor, so hiding the key window strands the app
                 // without one. See PromoteKeyWindow.
@@ -1605,6 +1636,7 @@ namespace MS.Internal.Interop
 
             _hiddenByUs = false;
             SendVoidPtr(_window, Sel(activate ? "makeKeyAndOrderFront:" : "orderFront:"), IntPtr.Zero);
+            AddToParent();
 
             if (s_traceWindows)
             {
@@ -1686,6 +1718,8 @@ namespace MS.Internal.Interop
             if (_window != IntPtr.Zero)
             {
                 s_activatable.Remove(_window);
+                RemoveFromParent();
+                _parentWindow = IntPtr.Zero;
                 Send(_window, Sel("close"));
                 _window = IntPtr.Zero;
             }
@@ -2609,6 +2643,7 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidNInt(IntPtr receiver, IntPtr selector, nint arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrNInt(IntPtr receiver, IntPtr selector, IntPtr a, nint b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendObserver(IntPtr receiver, IntPtr selector, IntPtr name, IntPtr obj, IntPtr queue, IntPtr block);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrRet(IntPtr receiver, IntPtr selector, IntPtr arg);

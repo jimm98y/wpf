@@ -188,6 +188,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         // back to the main screen), mirroring CocoaWindow.GetBackingScale so the CAMetalLayer's
         // contentsScale agrees with the HwndTarget DPI scale and the device-pixel client rects.
         // WPF_MAC_FORCE_SCALE overrides it (to exercise the Retina path on a 1x display).
+        /// <summary>
+        /// The top-left of the content area of the window <paramref name="nsView"/> is in, in screen
+        /// device pixels with a top-left origin (Win32's convention, anchored to the primary screen).
+        /// 0,0 when the view is not in a window.
+        /// </summary>
+        internal static void GetWindowOrigin(IntPtr nsView, out int x, out int y)
+        {
+            x = y = 0;
+            if (nsView == IntPtr.Zero) return;
+            IntPtr window = Send(nsView, Sel("window"));
+            if (window == IntPtr.Zero) return;
+            NSRect frame = SendRect(window, Sel("frame"));
+            NSRect content = SendRectRect(window, Sel("contentRectForFrameRect:"), frame);
+            IntPtr screens = Send(objc_getClass("NSScreen"), Sel("screens"));
+            IntPtr primary = screens != IntPtr.Zero && SendNUInt(screens, Sel("count")) > 0
+                ? SendPtrNUInt(screens, Sel("objectAtIndex:"), 0)
+                : Send(objc_getClass("NSScreen"), Sel("mainScreen"));
+            double screenHeight = primary != IntPtr.Zero ? SendRect(primary, Sel("frame")).height : 0;
+            double scale = BackingScale(nsView);
+            x = (int)Math.Round(content.x * scale);
+            y = (int)Math.Round((screenHeight - content.y - content.height) * scale);
+        }
+
         internal static double BackingScale(IntPtr nsView)
         {
             string force = Environment.GetEnvironmentVariable("WPF_MAC_FORCE_SCALE");
@@ -355,6 +378,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidNUInt(IntPtr receiver, IntPtr selector, nuint arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRect(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRect(IntPtr receiver, IntPtr selector, NSRect arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRect(IntPtr receiver, IntPtr selector, NSRect arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNUInt(IntPtr receiver, IntPtr selector, nuint arg);
 
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlopen(string path, int mode);
 

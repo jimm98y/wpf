@@ -180,6 +180,7 @@ namespace MS.Internal.Interop
         public void GetWindowScreenOriginPixels(out int x, out int y) { throw null; }
         public void SetTopmost(bool topmost) { }
         public void SetResizeMode(bool canResize, bool canMinimize) { }
+        public void AttachToParentWindow(System.IntPtr parentView) { }
         public void GetResizeMode(out bool canResize, out bool canMinimize) { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }

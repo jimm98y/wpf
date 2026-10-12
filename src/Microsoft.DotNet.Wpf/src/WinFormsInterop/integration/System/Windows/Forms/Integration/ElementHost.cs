@@ -175,6 +175,16 @@ namespace System.Windows.Forms.Integration
         {
             if (EmbeddedScenes.HostWindow == IntPtr.Zero) return;   // host window not created yet
             if (_child == null) return;                             // nothing to host yet
+
+            // An overlay window is on screen exactly while this control is: Visible (which is false
+            // when any parent is hidden) in a shown form. On Windows the hosted window is a child of
+            // this control's HWND and is hidden with it; a separate window has to be told.
+            bool shown = Visible && FindForm() is Form f && f.Visible;
+            if (!CompositeIntoHostFrame && _source != null && shown != _shown)
+            {
+                _shown = shown;
+                ShowHostedWindow(shown);
+            }
             if (FindForm() == null) return;                         // not parented yet
             _scale = EmbeddedScenes.HostScale > 0 ? EmbeddedScenes.HostScale : 1f;
 
@@ -198,10 +208,11 @@ namespace System.Windows.Forms.Integration
 
             if (_source == null)
             {
+                _shown = shown || CompositeIntoHostFrame;
                 var p = new HwndSourceParameters("ElementHost")
                 {
                     ParentWindow = EmbeddedScenes.HostWindow,
-                    WindowStyle = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+                    WindowStyle = WS_CHILD | (_shown ? WS_VISIBLE : 0) | WS_CLIPSIBLINGS,
                     PositionX = px,
                     PositionY = py,
                     Width = pw,
@@ -238,6 +249,29 @@ namespace System.Windows.Forms.Integration
         // the window put rather than failing the app.
         private static MethodInfo s_setWindowPos;
         private static bool s_setWindowPosResolved;
+
+        private static MethodInfo s_showWindow;
+        private static bool s_showWindowResolved;
+        private bool _shown;
+
+        // Shows or hides the hosted window through WPF's ShowWindow seam (a forward to the platform
+        // window off Windows), like MoveHostedWindow.
+        private void ShowHostedWindow(bool show)
+        {
+            if (!s_showWindowResolved)
+            {
+                s_showWindowResolved = true;
+                foreach (Assembly a in new[] { typeof(HwndSource).Assembly, typeof(Dispatcher).Assembly })
+                {
+                    s_showWindow = a.GetType("MS.Win32.UnsafeNativeMethods")?.GetMethod("ShowWindow", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(HandleRef), typeof(int) }, null);
+                    if (s_showWindow != null) break;
+                }
+            }
+            if (s_showWindow == null) return;
+            const int SW_HIDE = 0, SW_SHOWNA = 8;
+            try { s_showWindow.Invoke(null, new object[] { new HandleRef(this, _source.Handle), show ? SW_SHOWNA : SW_HIDE }); }
+            catch (Exception ex) { Console.Error.WriteLine("ElementHost: show/hide failed: " + ex.Message); }
+        }
 
         private void MoveHostedWindow(int x, int y, int w, int h)
         {

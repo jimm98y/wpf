@@ -35,6 +35,18 @@ internal static partial class MacNative
 
     internal const int CombinedSessionState = 0;
 
+    // The Objective-C runtime, for the few AppKit questions asked directly (diagnostics).
+    private const string ObjC = "/usr/lib/libobjc.A.dylib";
+    [LibraryImport(ObjC, EntryPoint = "sel_registerName", StringMarshalling = StringMarshalling.Utf8)] internal static partial IntPtr Sel(string name);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial IntPtr Send(IntPtr receiver, IntPtr selector);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.U1)] internal static partial bool SendBool(IntPtr receiver, IntPtr selector);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] private static partial CGRect SendRectRaw(IntPtr receiver, IntPtr selector);
+    internal static (double X, double Y, double Width, double Height) SendRect(IntPtr receiver, IntPtr selector)
+    {
+        CGRect r = SendRectRaw(receiver, selector);
+        return (r.Origin.X, r.Origin.Y, r.Size.Width, r.Size.Height);
+    }
+
     public static unsafe ulong SysctlU64(string name)
     {
         ulong value = 0;
