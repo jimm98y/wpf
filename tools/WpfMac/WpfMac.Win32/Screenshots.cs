@@ -25,6 +25,7 @@ public static class Screenshots
         Directory.CreateDirectory(directory);
         int ms = Math.Max(1, intervalSeconds) * 1000;
         s_timer = new Timer(_ => CaptureAll(directory), null, ms, ms);
+        StartClickDiagnostic();
 
         // WPFMAC_DEBUG_ZOOM=<seconds> (macOS): zoom (maximize) the key window then, as its green button
         // would, so the screenshots and window dumps that follow show how the app lays itself out.
@@ -45,6 +46,53 @@ public static class Screenshots
     }
 
     private static Timer? s_zoomTimer;
+    private static Timer? s_clickTimer;
+
+    // WPFMAC_DEBUG_CLICK=x,y,seconds (macOS): post a real left click (NSEvent mouse down + up) at
+    // window point (x,y) of the app's main WinForms window -- top-left origin, points -- and log
+    // which control each mouse message reaches, so "clicks do nothing" can be traced without a user.
+    private static void StartClickDiagnostic()
+    {
+        string? spec = Environment.GetEnvironmentVariable("WPFMAC_DEBUG_CLICK");
+        if (!OperatingSystem.IsMacOS() || string.IsNullOrEmpty(spec)) return;
+        string[] p = spec.Split(',');
+        if (p.Length < 3 || !double.TryParse(p[0], out double x) || !double.TryParse(p[1], out double y) || !double.TryParse(p[2], out double at)) return;
+        s_clickTimer = new Timer(_ =>
+        {
+            Forms.Form? form = Forms.Application.OpenForms.Cast<Forms.Form>().FirstOrDefault(f => f.IsHandleCreated && f.Visible && f.TopLevel);
+            form?.BeginInvoke(() =>
+            {
+                Forms.Application.AddMessageFilter(new ClickLogger());
+                nint window = MacWindows().FirstOrDefault(w => w.Title == form.Text).Window;
+                if (window == 0) { Exports.LogOnce("click-nowin", "debug click: no window"); return; }
+                nint content = MacNative.Send(window, MacNative.Sel("contentView"));
+                double height = MacNative.SendRect(content, MacNative.Sel("frame")).Height;
+                var point = new CGPoint { X = x, Y = height - y };
+                nint number = MacNative.Send(window, MacNative.Sel("windowNumber"));
+                foreach (nuint type in new nuint[] { 1, 2 })   // left mouse down, up
+                {
+                    nint evt = MacNative.MouseEvent(type, point, number);
+                    MacNative.PostEvent(evt);
+                }
+                Exports.LogOnce("click-posted", $"debug click: posted at {x},{y} to window 0x{window:x} (form enabled={form.Enabled})");
+            });
+        }, null, (int)(at * 1000), Timeout.Infinite);
+    }
+
+    private sealed class ClickLogger : Forms.IMessageFilter
+    {
+        private int _count;
+
+        public bool PreFilterMessage(ref Forms.Message m)
+        {
+            if (m.Msg is 0x0201 or 0x0202 or 0x0021 && _count++ < 20)   // WM_LBUTTONDOWN/UP, WM_MOUSEACTIVATE
+            {
+                var c = Forms.Control.FromHandle(m.HWnd);
+                Exports.Log($"debug click: msg 0x{m.Msg:x4} to {c?.GetType().FullName} '{c?.Name}' enabled={c?.Enabled} lparam=0x{m.LParam:x}");
+            }
+            return false;
+        }
+    }
 
     /// <summary>Every NSWindow of the process (main thread only).</summary>
     private static List<(nint Window, string Title)> MacWindows()
@@ -193,7 +241,7 @@ public static class Screenshots
         {
             var forms = new System.Text.StringBuilder($"open forms at {stamp}:\n");
             foreach (Forms.Form f in Forms.Application.OpenForms.Cast<Forms.Form>().ToArray())
-                forms.Append($"  {f.GetType().FullName} '{f.Text}' {f.Bounds} visible={f.Visible} handle={f.IsHandleCreated} invokeRequired={f.InvokeRequired} topLevel={f.TopLevel} owner={f.Owner?.Name}\n");
+                forms.Append($"  {f.GetType().FullName} '{f.Text}' {f.Bounds} visible={f.Visible} enabled={f.Enabled} modal={f.Modal} handle={f.IsHandleCreated} invokeRequired={f.InvokeRequired} topLevel={f.TopLevel} owner={f.Owner?.Name}\n");
             Exports.LogOnce("forms:" + stamp, forms.ToString().TrimEnd());
         }
         catch (Exception e)

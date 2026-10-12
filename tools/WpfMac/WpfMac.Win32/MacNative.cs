@@ -41,6 +41,19 @@ internal static partial class MacNative
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial IntPtr Send(IntPtr receiver, IntPtr selector);
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial IntPtr SendPtrNInt(IntPtr receiver, IntPtr selector, nint arg);
+
+    // +[NSEvent mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:]
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")]
+    private static partial IntPtr SendMouseEvent(IntPtr cls, IntPtr sel, nuint type, CGPoint location, nuint flags, double timestamp, nint windowNumber, IntPtr context, nint eventNumber, nint clickCount, float pressure);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")]
+    private static partial void SendPostEvent(IntPtr app, IntPtr sel, IntPtr evt, [MarshalAs(UnmanagedType.U1)] bool atStart);
+
+    internal static IntPtr MouseEvent(nuint type, CGPoint location, nint windowNumber) =>
+        SendMouseEvent(Class("NSEvent"), Sel("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:"),
+                       type, location, 0, 0, windowNumber, IntPtr.Zero, 0, 1, type == 1 ? 1f : 0f);
+
+    internal static void PostEvent(IntPtr evt) =>
+        SendPostEvent(Send(Class("NSApplication"), Sel("sharedApplication")), Sel("postEvent:atStart:"), evt, false);
     [LibraryImport(ObjC, EntryPoint = "objc_getClass", StringMarshalling = StringMarshalling.Utf8)] internal static partial IntPtr Class(string name);
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.U1)] internal static partial bool SendBool(IntPtr receiver, IntPtr selector);
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] private static partial CGRect SendRectRaw(IntPtr receiver, IntPtr selector);
