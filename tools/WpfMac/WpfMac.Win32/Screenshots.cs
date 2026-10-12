@@ -86,7 +86,8 @@ public static class Screenshots
             if (p.Length < 3 || !double.TryParse(p[0], out double x) || !double.TryParse(p[1], out double y) || !double.TryParse(p[2], out double at)) continue;
             s_clickTimers.Add(new Timer(_ =>
             {
-                Forms.Form? form = Forms.Application.OpenForms.Cast<Forms.Form>().FirstOrDefault(f => f.IsHandleCreated && f.Visible && f.TopLevel);
+                // The newest form: a dialog, when one is open.
+                Forms.Form? form = Forms.Application.OpenForms.Cast<Forms.Form>().LastOrDefault(f => f.IsHandleCreated && f.Visible && f.TopLevel);
                 form?.BeginInvoke(() =>
                 {
                     if (!s_clickLogger) { s_clickLogger = true; Forms.Application.AddMessageFilter(new ClickLogger()); }
