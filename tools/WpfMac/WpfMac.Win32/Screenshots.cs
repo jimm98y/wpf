@@ -25,6 +25,42 @@ public static class Screenshots
         Directory.CreateDirectory(directory);
         int ms = Math.Max(1, intervalSeconds) * 1000;
         s_timer = new Timer(_ => CaptureAll(directory), null, ms, ms);
+
+        // WPFMAC_DEBUG_ZOOM=<seconds> (macOS): zoom (maximize) the key window then, as its green button
+        // would, so the screenshots and window dumps that follow show how the app lays itself out.
+        if (OperatingSystem.IsMacOS() && double.TryParse(Environment.GetEnvironmentVariable("WPFMAC_DEBUG_ZOOM"), out double zoomAt))
+        {
+            s_zoomTimer = new Timer(_ =>
+            {
+                Forms.Form? form = Forms.Application.OpenForms.Cast<Forms.Form>().FirstOrDefault(f => f.IsHandleCreated && f.Visible);
+                form?.BeginInvoke(() =>
+                {
+                    // By title: an app started in the background has no main or key window.
+                    nint window = MacWindows().FirstOrDefault(w => w.Title == form.Text).Window;
+                    if (window != 0) MacNative.SendVoidPtr(window, MacNative.Sel("zoom:"), 0);
+                    Exports.LogOnce("debug-zoom", $"debug: zoomed window 0x{window:x}");
+                });
+            }, null, (int)(zoomAt * 1000), Timeout.Infinite);
+        }
+    }
+
+    private static Timer? s_zoomTimer;
+
+    /// <summary>Every NSWindow of the process (main thread only).</summary>
+    private static List<(nint Window, string Title)> MacWindows()
+    {
+        var result = new List<(nint, string)>();
+        nint app = MacNative.Send(MacNative.Class("NSApplication"), MacNative.Sel("sharedApplication"));
+        nint windows = MacNative.Send(app, MacNative.Sel("windows"));
+        nint count = MacNative.Send(windows, MacNative.Sel("count"));
+        for (nint i = 0; i < count; i++)
+        {
+            nint w = MacNative.SendPtrNInt(windows, MacNative.Sel("objectAtIndex:"), i);
+            nint t = MacNative.Send(w, MacNative.Sel("title"));
+            string title = t == 0 ? "" : System.Runtime.InteropServices.Marshal.PtrToStringUTF8(MacNative.Send(t, MacNative.Sel("UTF8String"))) ?? "";
+            result.Add((w, title));
+        }
+        return result;
     }
 
     private static void CaptureAll(string directory)
@@ -46,6 +82,36 @@ public static class Screenshots
 
         if (Environment.GetEnvironmentVariable("WPFMAC_DUMP_WINDOWS") == "1")
         {
+            // Every native window WPF made, presentation source or not: whose hooks it carries says
+            // whose window it is (an HwndSource, a Window, a Popup, a hidden helper).
+            try
+            {
+                Type? wrapperType = typeof(System.Windows.Threading.Dispatcher).Assembly.GetType("MS.Win32.HwndWrapper");
+                var bf = BindingFlags.NonPublic | BindingFlags.Static;
+                if (wrapperType?.GetField("s_byHandle", bf)?.GetValue(null) is System.Collections.IDictionary byHandle)
+                {
+                    var lines = new System.Text.StringBuilder($"wpf native windows at {stamp}:\n");
+                    object gate = wrapperType.GetField("s_byHandleLock", bf)?.GetValue(null) ?? byHandle;
+                    lock (gate)
+                    {
+                        foreach (System.Collections.DictionaryEntry e in byHandle)
+                        {
+                            object w = e.Value!;
+                            var hooks = wrapperType.GetField("_hooks", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(w) as System.Collections.IEnumerable;
+                            string owners = hooks == null ? "" : string.Join(",", hooks.Cast<object>().Select(h => h is Delegate d ? d.Target?.GetType().Name + "." + d.Method.Name : h?.GetType().Name));
+                            object? platform = wrapperType.GetField("_platformWindow", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(w);
+                            nint ns = platform?.GetType().GetField("_window", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(platform) is IntPtr p ? p : 0;
+                            lines.Append($"  0x{(IntPtr)e.Key:x} nswindow=0x{ns:x} hooks=[{owners}]\n");
+                        }
+                    }
+                    Exports.LogOnce("wpfnative:" + stamp, lines.ToString().TrimEnd());
+                }
+            }
+            catch (Exception e)
+            {
+                Exports.LogOnce("wpfnative-fail", "wpf native window dump: " + e.Message);
+            }
+
             try
             {
                 foreach (PresentationSource ps in PresentationSource.CurrentSources)
@@ -73,6 +139,21 @@ public static class Screenshots
                         if (e.Value is Forms.Form f && !f.IsDisposed) snapshot.Add((e.Key, f));
                     }
                 }
+                if (Environment.GetEnvironmentVariable("WPFMAC_DUMP_WINDOWS") == "1")
+                {
+                    var lines = new System.Text.StringBuilder($"winforms hosts at {stamp}:\n");
+                    lock (gate ?? forms)
+                    {
+                        foreach (System.Collections.DictionaryEntry e in forms)
+                        {
+                            object hostObj = e.Key;
+                            nint ns = hostObj.GetType().GetField("_window", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(hostObj) is IntPtr p ? p : 0;
+                            var f = e.Value as Forms.Form;
+                            lines.Append($"  {hostObj.GetType().Name} nswindow=0x{ns:x} form={f?.GetType().FullName} '{f?.Text}' disposed={f?.IsDisposed} visible={(f is { IsDisposed: false } ? f.Visible : false)}\n");
+                        }
+                    }
+                    Exports.LogOnce("hosts:" + stamp, lines.ToString().TrimEnd());
+                }
                 foreach (var (h, form) in snapshot)
                 {
                     if (Environment.GetEnvironmentVariable("WPFMAC_DUMP_WINDOWS") == "1" && form.IsHandleCreated)
@@ -94,6 +175,51 @@ public static class Screenshots
 
     /// <summary>WPFMAC_DUMP_WINDOWS=1: what the WinForms host composites for a form, to the compat log.</summary>
     private static void DumpWindows(Forms.Form form, string stamp)
+    {
+        DumpWindowsCore(form, stamp);
+        if (OperatingSystem.IsMacOS())
+        {
+            var lines = new System.Text.StringBuilder($"NSWindows at {stamp}:\n");
+            foreach (var (w, title) in MacWindows())
+            {
+                var f = MacNative.SendRect(w, MacNative.Sel("frame"));
+                bool visible = MacNative.SendBool(w, MacNative.Sel("isVisible"));
+                nint parent = MacNative.Send(w, MacNative.Sel("parentWindow"));
+                lines.Append($"  0x{w:x} '{title}' visible={visible} frame=({f.X},{f.Y} {f.Width}x{f.Height}) parent=0x{parent:x} level={MacNative.Send(w, MacNative.Sel("level"))}\n");
+            }
+            Exports.LogOnce("nswindows:" + stamp, lines.ToString().TrimEnd());
+        }
+        try
+        {
+            var forms = new System.Text.StringBuilder($"open forms at {stamp}:\n");
+            foreach (Forms.Form f in Forms.Application.OpenForms.Cast<Forms.Form>().ToArray())
+                forms.Append($"  {f.GetType().FullName} '{f.Text}' {f.Bounds} visible={f.Visible} handle={f.IsHandleCreated} invokeRequired={f.InvokeRequired} topLevel={f.TopLevel} owner={f.Owner?.Name}\n");
+            Exports.LogOnce("forms:" + stamp, forms.ToString().TrimEnd());
+        }
+        catch (Exception e)
+        {
+            Exports.LogOnce("forms-fail", "open forms dump: " + e.Message);
+        }
+        // The control tree too: what is laid out where, hidden or not, which the composited list omits.
+        try
+        {
+            var lines = new System.Text.StringBuilder($"controls of '{form.Text}' {form.Bounds} client {form.ClientSize} at {stamp}:\n");
+            void Walk(Forms.Control c, int depth)
+            {
+                if (depth > 7) return;
+                lines.Append(' ', depth * 2).Append($"{c.GetType().Name} '{c.Name}' {c.Bounds} dock={c.Dock} anchor={c.Anchor} visible={c.Visible}\n");
+                foreach (Forms.Control child in c.Controls) Walk(child, depth + 1);
+            }
+            Walk(form, 0);
+            Exports.LogOnce("tree:" + stamp + form.GetHashCode(), lines.ToString().TrimEnd());
+        }
+        catch (Exception e)
+        {
+            Exports.LogOnce("tree-fail", "control tree dump: " + e.Message);
+        }
+    }
+
+    private static void DumpWindowsCore(Forms.Form form, string stamp)
     {
         try
         {

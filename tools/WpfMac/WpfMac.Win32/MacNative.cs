@@ -39,6 +39,9 @@ internal static partial class MacNative
     private const string ObjC = "/usr/lib/libobjc.A.dylib";
     [LibraryImport(ObjC, EntryPoint = "sel_registerName", StringMarshalling = StringMarshalling.Utf8)] internal static partial IntPtr Sel(string name);
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial IntPtr Send(IntPtr receiver, IntPtr selector);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial IntPtr SendPtrNInt(IntPtr receiver, IntPtr selector, nint arg);
+    [LibraryImport(ObjC, EntryPoint = "objc_getClass", StringMarshalling = StringMarshalling.Utf8)] internal static partial IntPtr Class(string name);
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.U1)] internal static partial bool SendBool(IntPtr receiver, IntPtr selector);
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] private static partial CGRect SendRectRaw(IntPtr receiver, IntPtr selector);
     internal static (double X, double Y, double Width, double Height) SendRect(IntPtr receiver, IntPtr selector)

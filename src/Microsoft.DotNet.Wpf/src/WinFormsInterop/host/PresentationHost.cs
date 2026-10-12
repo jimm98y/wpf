@@ -271,15 +271,19 @@ namespace System.Windows.Forms
                 IWinFormsHost host = hosts[i];
                 Form form;
                 lock (s_lock) s_forms.TryGetValue(host, out form);
-                if (form != null && form.InvokeRequired) continue;   // another thread drives this one
                 if (form == null || form.IsDisposed)
                 {
                     // The form closed itself (an OK button, not the window close box): take its
-                    // window down with it, or a dead dialog would stay on screen for ever.
+                    // window down with it, or a dead dialog would stay on screen for ever. Checked
+                    // BEFORE the thread test below: a splash screen's form is disposed on its own
+                    // thread, which then ends, so nothing on that thread is left to close the window
+                    // (an empty splash stayed on screen beside the app). Closing is the host's
+                    // business and safe from any thread.
                     host.Close();
                     Detach(host);
                     continue;
                 }
+                if (form.InvokeRequired) continue;   // another thread drives this one
 
                 // Hidden is not closed. A drop-down is hidden between uses and shown again -- the
                 // property grid keeps one and reuses it -- so destroying its window here took the whole
