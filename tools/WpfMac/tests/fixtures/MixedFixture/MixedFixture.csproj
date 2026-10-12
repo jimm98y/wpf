@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- App-local, as real apps ship it (not part of Microsoft.WindowsDesktop.App). -->
+    <PackageReference Include="System.Management" Version="10.0.10" />
+  </ItemGroup>
+</Project>
