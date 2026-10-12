@@ -647,6 +647,8 @@ namespace System.Windows.Forms
 			if (_hotWindow == handle) _hotWindow = IntPtr.Zero;
 			captions.Remove(handle);
 			_scenes.Remove(handle);
+			_layered.Remove(handle);
+			_reveals.Remove(handle);
 			_frames.Remove(handle);
 			_paintVersion++;   // a window disappeared from the composite
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
@@ -918,7 +920,7 @@ namespace System.Windows.Forms
 			if (drawn == null || (drawn.Content.Count == 0 && drawn.Children.Count == 0)) return;
 			T($"MergeIntoWindowScene h=0x{handle.ToInt64():x} hasScene={_scenes.ContainsKey(handle)}");
 
-			if (!(GetWindowScene(handle) is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual window))
+			if (!(_scenes.TryGetValue(handle, out object recorded) && recorded is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual window))
 			{
 				_scenes[handle] = ClipToWindow(drawn, handle);
 			}
@@ -984,6 +986,7 @@ namespace System.Windows.Forms
 
 		internal object GetWindowScene(IntPtr handle)
 		{
+			if (TryGetLayeredScene(handle, out object layered)) return ApplyReveal(handle, layered);
 			if (!_scenes.TryGetValue(handle, out object s)) return null;
 			// Re-clip on the way out rather than when the scene was recorded. A scene is recorded
 			// once and composited many times, so a clip baked in at record time describes wherever
@@ -995,7 +998,7 @@ namespace System.Windows.Forms
 				AddPopupShadow(sv, h);
 				ApplyWindowClip(sv, h);
 			}
-			return s;
+			return ApplyReveal(handle, s);
 		}
 
 		/// <summary>Confine a window's scene to its own bounds and to every ancestor's, brought
@@ -1039,7 +1042,11 @@ namespace System.Windows.Forms
 		// window is created/moved/shown/hidden/destroyed). The host presents only when this advances
 		// (or the caret blink toggles), instead of re-rendering every frame.
 		private int _paintVersion;
-		internal int GetPaintVersion() => _paintVersion;
+		internal int GetPaintVersion()
+		{
+			AdvanceReveals();   // an AnimateWindow in progress is a picture that changes by itself
+			return _paintVersion;
+		}
 
 		internal override void PaintEventEnd(ref Message msg, IntPtr handle, bool client, PaintEventArgs pevent)
 		{

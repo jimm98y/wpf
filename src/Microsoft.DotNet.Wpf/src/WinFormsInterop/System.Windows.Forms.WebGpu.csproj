@@ -81,6 +81,8 @@
     <Compile Include="gen/XplatUIWebGpu.Clipboard.cs" />
     <Compile Include="gen/XplatUIWebGpu.Metrics.cs" />
     <Compile Include="gen/XplatUIWebGpu.Cursors.cs" />
+    <Compile Include="gen/XplatUIWebGpu.Animate.cs" />
+    <Compile Include="gen/XplatUIWebGpu.Layered.cs" />
     <Compile Include="gen/XplatUIWebGpu.FileDialogBridge.cs" />
     <Compile Include="gen/XplatUIWebGpu.MessageBoxBridge.cs" />
     <Compile Include="shims/*.cs" />

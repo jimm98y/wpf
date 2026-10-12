@@ -507,50 +507,59 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    // A layered window's whole content is the bitmap it is updated with (a splash screen with soft
-    // edges, typically). For a WinForms window that becomes its BackgroundImage, which survives the
-    // repaints a one-off draw would not; position and size come with the update as on Windows.
-    // pptDst, psize, pptSrc: POINT*, SIZE*, POINT*; pblend: BLENDFUNCTION* (ignored: the form is opaque).
+    // A layered window's whole content is the bitmap it is updated with: a splash screen with soft
+    // edges, a drop shadow that is a window of its own. The WinForms driver composites that bitmap
+    // as the window, with its per-pixel alpha (ULW_ALPHA, premultiplied as Windows takes it) or a
+    // colour key (ULW_COLORKEY), and the blend's constant alpha on top; what the window paints is not
+    // shown. Position and size come with the update, as on Windows.
+    // pptDst, psize, pptSrc: POINT*, SIZE*, POINT*; pblend: BLENDFUNCTION*.
     [UnmanagedCallersOnly]
     private static int UpdateLayeredWindow(nint hwnd, nint hdcDst, POINT* pptDst, int* psize, nint hdcSrc, POINT* pptSrc, uint key, void* blend, uint flags)
     {
+        const uint ULW_COLORKEY = 1, ULW_ALPHA = 2;
         object? o = Resolve(hwnd);
-        if (o is not System.Windows.Forms.Form form) { LogOnce("ulw", "win32: UpdateLayeredWindow on a window that is not a WinForms form is accepted but not shown"); return TRUE; }
-        if (!s_dcs.TryGetValue(hdcSrc, out var dc) || !s_gdi.TryGetValue(dc.Bitmap, out var bmp) || bmp.Stock || bmp.Bits == null || bmp.BitsPerPixel != 32)
+        if (o is not System.Windows.Forms.Control control) { LogOnce("ulw", "win32: UpdateLayeredWindow on a window that is not a WinForms window is accepted but not shown"); return TRUE; }
+        if (pptDst != null || psize != null)
         {
-            if (pptDst != null || psize != null)
-            {
-                Place(o, pptDst != null ? pptDst->X : null, pptDst != null ? pptDst->Y : null,
-                      psize != null ? psize[0] : null, psize != null ? psize[1] : null);
-            }
-            return TRUE;
+            Place(o, pptDst != null ? pptDst->X : null, pptDst != null ? pptDst->Y : null,
+                  psize != null ? psize[0] : null, psize != null ? psize[1] : null);
         }
+        float opacity = (flags & ULW_ALPHA) != 0 && blend != null ? ((byte*)blend)[2] / 255f : 1f;   // SourceConstantAlpha
+        bool perPixel = (flags & ULW_ALPHA) != 0 && blend != null && ((byte*)blend)[3] != 0;           // AC_SRC_ALPHA
+        if (hdcSrc == 0 || !s_dcs.TryGetValue(hdcSrc, out var dc) || !s_gdi.TryGetValue(dc.Bitmap, out var bmp) || bmp.Stock || bmp.Bits == null || bmp.BitsPerPixel != 32)
+        {
+            if (hdcSrc != 0) LogOnce("ulw-nobits", "win32: UpdateLayeredWindow from a DC with no 32-bit bitmap selected: only the position, size and alpha change");
+            return TRUE;   // a move, resize or new alpha only; the last picture stays
+        }
+
         int w = psize != null ? psize[0] : bmp.Width, h = psize != null ? psize[1] : bmp.Height;
         int sx = pptSrc != null ? pptSrc->X : 0, sy = pptSrc != null ? pptSrc->Y : 0;
-        var image = new System.Drawing.Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-        var data = image.LockBits(new System.Drawing.Rectangle(0, 0, w, h), System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-        try
+        if (w <= 0 || h <= 0) return TRUE;
+        var rgba = new byte[w * h * 4];
+        for (int y = 0; y < h && sy + y < bmp.Height; y++)
         {
-            int row = bmp.Width * 4;
-            for (int y = 0; y < h && sy + y < bmp.Height; y++)
+            int srcRow = bmp.BottomUp ? bmp.Height - 1 - (sy + y) : sy + y;
+            byte* src = (byte*)bmp.Bits + (long)srcRow * bmp.Width * 4 + sx * 4;
+            for (int x = 0; x < w && sx + x < bmp.Width; x++, src += 4)
             {
-                int srcRow = bmp.BottomUp ? bmp.Height - 1 - (sy + y) : sy + y;
-                Buffer.MemoryCopy((byte*)bmp.Bits + (long)srcRow * row + sx * 4, (byte*)data.Scan0 + (long)y * data.Stride, data.Stride, Math.Min(w, bmp.Width - sx) * 4);
+                byte b = src[0], g = src[1], r = src[2], a = perPixel ? src[3] : (byte)255;
+                if ((flags & ULW_COLORKEY) != 0 && (uint)(r | g << 8 | b << 16) == (key & 0xFFFFFF)) a = 0;
+                else if (perPixel && a != 0 && a != 255)
+                {
+                    // Premultiplied in, straight out.
+                    r = (byte)Math.Min(255, r * 255 / a); g = (byte)Math.Min(255, g * 255 / a); b = (byte)Math.Min(255, b * 255 / a);
+                }
+                int i = (y * w + x) * 4;
+                rgba[i] = r; rgba[i + 1] = g; rgba[i + 2] = b; rgba[i + 3] = a;
             }
         }
-        finally
+        Ui(o, () =>
         {
-            image.UnlockBits(data);
-        }
-        Ui(form, () =>
-        {
-            if (pptDst != null) form.Location = new System.Drawing.Point(pptDst->X, pptDst->Y);
-            form.ClientSize = new System.Drawing.Size(w, h);
-            var old = form.BackgroundImage;
-            form.BackgroundImageLayout = System.Windows.Forms.ImageLayout.None;
-            form.BackgroundImage = image;
-            old?.Dispose();
-            form.Invalidate(true);
+            if (!control.IsHandleCreated) return 0;
+            object? driver = typeof(System.Windows.Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
+                ?.GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
+            driver?.GetType().GetMethod("SetLayeredImage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                ?.Invoke(driver, new object[] { control.Handle, rgba, w, h, opacity });
             return 0;
         });
         return TRUE;
