@@ -6,7 +6,10 @@ internal static class Program
         wpfmac - run an unmodified .NET 10 WPF/WinForms app on the WPF-on-WebGPU stack
 
         usage:
-          wpfmac run   [-v] [--offline] [--title-prefix <text>] <App.dll|App.exe|folder> [-- app args]
+          wpfmac run   [-v] [--offline] [--isolate] [--title-prefix <text>] [--screenshots <dir> [--every <s>]]
+                       <App.dll|App.exe|folder> [-- app args]
+          wpfmac compare [--isolate] [--screenshot <dir>] [--seconds <n>] [--close] <App.dll|App.exe|folder> [-- app args]
+                                                    Windows: the stock .exe and the WebGPU run side by side
           wpfmac prepare <App.dll|App.exe|folder>   write the generated files, print the command, do not run
           wpfmac audit [--out <file.md>] <App.dll|App.exe|folder>
                                                     what the app needs that the stack on this OS lacks
@@ -30,6 +33,7 @@ internal static class Program
                 "run" => Run(args[1..], execute: true),
                 "prepare" => Run(args[1..], execute: false),
                 "audit" => Audit(args[1..]),
+                "compare" => CompareCommand(args[1..]),
                 "clean" => Clean(args[1..]),
                 "where" => Where(),
                 _ => throw new UserError($"unknown command '{args[0]}'.\n\n{Usage}"),
@@ -44,8 +48,9 @@ internal static class Program
 
     private static int Run(string[] args, bool execute)
     {
-        bool verbose = false, offline = false;
-        string? titlePrefix = null;
+        bool verbose = false, offline = false, isolate = false;
+        string? titlePrefix = null, screenshots = null;
+        int every = 5;
         string? target = null;
         var appArgs = new List<string>();
         for (int i = 0; i < args.Length; i++)
@@ -58,6 +63,9 @@ internal static class Program
                 case "-v" or "--verbose": verbose = true; break;
                 case "--offline": offline = true; break;
                 case "--title-prefix": titlePrefix = args[++i]; break;
+                case "--isolate": isolate = true; break;
+                case "--screenshots": screenshots = args[++i]; break;
+                case "--every": every = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
                 default:
                     if (a.StartsWith('-')) throw new UserError($"unknown option '{a}'.");
                     target = a;
@@ -74,6 +82,9 @@ internal static class Program
             Verbose = verbose || !execute,
             TitlePrefix = titlePrefix,
             Offline = offline,
+            ScreenshotDirectory = screenshots,
+            Isolate = isolate ? "-wpfmac" : null,
+            ScreenshotInterval = every,
         };
 
         if (execute) return runner.Run(appArgs);
@@ -85,6 +96,39 @@ internal static class Program
         Console.WriteLine($"deps: {p.Deps}");
         Console.WriteLine($"command: {p.StartInfo.FileName} {string.Join(' ', p.StartInfo.ArgumentList)}");
         return 0;
+    }
+
+    private static int CompareCommand(string[] args)
+    {
+        string? target = null, screenshots = null;
+        int seconds = 5;
+        bool close = false, isolate = false;
+        var appArgs = new List<string>();
+        for (int i = 0; i < args.Length; i++)
+        {
+            string a = args[i];
+            if (a == "--") { appArgs.AddRange(args[(i + 1)..]); break; }
+            switch (a)
+            {
+                case "--screenshot": screenshots = args[++i]; break;
+                case "--seconds": seconds = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
+                case "--close": close = true; break;
+                case "--isolate": isolate = true; break;
+                default:
+                    if (a.StartsWith('-')) throw new UserError($"unknown option '{a}'.");
+                    target = a;
+                    break;
+            }
+        }
+        if (target == null) throw new UserError("which app? Pass its .dll, .exe or folder.");
+        var runner = new Runner
+        {
+            App = AppFiles.Resolve(target),
+            OverlayDir = Locations.FindOverlay() ?? throw new UserError("the overlay is missing; build it with tools/WpfMac/build.cmd."),
+            TitlePrefix = "[WebGPU] ",
+            Isolate = isolate ? "-wpfmac" : null,
+        };
+        return Compare.Run(runner, appArgs, screenshots, seconds, close);
     }
 
     private static int Audit(string[] args)

@@ -21,4 +21,13 @@
     <NoWarn>$(NoWarn);CA1416;CS8500</NoWarn>
   </PropertyGroup>
 
+  <!-- A library: the GPU backend is the app's (the payload's, for its RID) to deploy. Built without a
+       RID, the SDK would copy the BUILD machine's native backend in here, and from here into every
+       overlay: a macOS dylib inside the Windows one. -->
+  <Target Name="WpfMacNoNativeBackend" BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <None Remove="@(None)" Condition="$([System.String]::new('%(FullPath)').Contains('/native/')) or $([System.String]::new('%(FullPath)').Contains('\native\'))" />
+    </ItemGroup>
+  </Target>
+
 </Project>

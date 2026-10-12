@@ -16,6 +16,10 @@ internal sealed class Runner
     public bool Verbose { get; init; }
     public string? TitlePrefix { get; init; }
     public bool Offline { get; init; }
+    public string? ScreenshotDirectory { get; init; }
+    /// <summary>A suffix for every named kernel object (see WpfMac.Detours/Isolation.cs); null for none.</summary>
+    public string? Isolate { get; init; }
+    public int ScreenshotInterval { get; init; } = 5;
 
     public sealed record Prepared(string RuntimeConfig, string Deps, string LogPath, IReadOnlyList<string> Notes, IReadOnlyCollection<string> Replaced)
     {
@@ -56,6 +60,12 @@ internal sealed class Runner
         string fonts = Path.Combine(OverlayDir, "fonts");
         if (Directory.Exists(fonts)) props["WpfWebGpu.FontDirectory"] = fonts;
         if (!string.IsNullOrEmpty(TitlePrefix)) props["WpfMac.TitlePrefix"] = TitlePrefix;
+        if (!string.IsNullOrEmpty(Isolate)) props["WpfMac.Isolate"] = Isolate;
+        if (!string.IsNullOrEmpty(ScreenshotDirectory))
+        {
+            props["WpfMac.ScreenshotDirectory"] = Path.GetFullPath(ScreenshotDirectory);
+            props["WpfMac.ScreenshotInterval"] = ScreenshotInterval.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
 
         JsonObject rc = RuntimeConfigRewriter.Rewrite(DepsMerger.ReadJson(App.RuntimeConfig), payloadRc, props);
 

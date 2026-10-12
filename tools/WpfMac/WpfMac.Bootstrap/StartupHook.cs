@@ -33,8 +33,50 @@ internal static class StartupHook
         {
             InstallDetours(state);
         }
+        if (AppContext.GetData(Keys.Isolate) is string isolate && isolate.Length > 0)
+        {
+            InstallIsolation(isolate);
+        }
+        if (AppContext.GetData(Keys.TitlePrefix) is string prefix && prefix.Length > 0)
+        {
+            CallWin32("WpfMac.Win32.TitlePrefix", "Install", prefix);
+        }
+        if (AppContext.GetData(Keys.ScreenshotDirectory) is string shots && shots.Length > 0)
+        {
+            StartScreenshots(shots, int.TryParse(AppContext.GetData(Keys.ScreenshotInterval) as string, out int s) ? s : 5);
+        }
 
         CompatLog.Info($"wpfmac bootstrap: {Assembly.GetEntryAssembly()?.GetName().Name} on {System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}, base {AppContext.BaseDirectory}");
+    }
+
+    // In WpfMac.Win32, which renders through WPF and WinForms; reached by name like the others.
+    private static void StartScreenshots(string directory, int seconds) =>
+        CallWin32("WpfMac.Win32.Screenshots", "Start", directory, seconds);
+
+    private static void CallWin32(string type, string method, params object[] args)
+    {
+        try
+        {
+            Assembly.Load(new AssemblyName("WpfMac.Win32")).GetType(type)?.GetMethod(method)?.Invoke(null, args);
+        }
+        catch (Exception e)
+        {
+            CompatLog.Info($"{type}.{method}: {e.GetBaseException().Message}");
+        }
+    }
+
+    private static void InstallIsolation(string suffix)
+    {
+        try
+        {
+            var type = Assembly.Load(new AssemblyName("WpfMac.Detours")).GetType("WpfMac.Detours.Isolation");
+            object? count = type?.GetMethod("Install")?.Invoke(null, new object[] { suffix, (Action<string, string>)CompatLog.Once });
+            CompatLog.Info($"isolate: named kernel objects suffixed '{suffix}' ({count} methods)");
+        }
+        catch (Exception e)
+        {
+            CompatLog.Info($"isolate: not installed: {e.GetBaseException().Message}");
+        }
     }
 
     // WpfMac.Detours carries MonoMod; reached by name so that the hook itself stays dependency-free.
@@ -62,5 +104,9 @@ namespace WpfMac.Bootstrap
         public const string LogPath = "WpfMac.LogPath";
         public const string OverlayDirectory = "WpfMac.OverlayDirectory";
         public const string StateDirectory = "WpfMac.StateDirectory";
+        public const string ScreenshotDirectory = "WpfMac.ScreenshotDirectory";
+        public const string TitlePrefix = "WpfMac.TitlePrefix";
+        public const string Isolate = "WpfMac.Isolate";
+        public const string ScreenshotInterval = "WpfMac.ScreenshotInterval";
     }
 }
