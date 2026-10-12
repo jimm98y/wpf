@@ -269,7 +269,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
     // Offscreen readback of the composited scenes (for verification when a screenshot isn't available).
     internal byte[] RenderScenesToRgba(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret)
-        => _renderer.RenderToRgba(BuildRoot(scenes, caret), DeviceWidth, DeviceHeight, RgbaColor.FromBytes(255, 255, 255, 255), srgbOutput: _srgb);
+        => _renderer.RenderToRgba(BuildRoot(scenes, caret), DeviceWidth, DeviceHeight, ClearColor, srgbOutput: _srgb);
 
     // Offscreen readback of the same layered scene (minus the swap chain) so the GPU output can be
     // verified — screenshotting the live window needs screen-recording permission this env lacks.
@@ -333,6 +333,34 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         return rgba;
     }
 
+    // A window that is see-through where nothing is drawn: a layered window, whose picture carries
+    // its own alpha (a splash screen with soft edges). Cleared to transparent rather than white, and
+    // the surface composited with its alpha rather than as opaque.
+    private bool _transparent;
+
+    internal void SetTransparent(bool transparent)
+    {
+        if (_transparent == transparent) return;
+        _transparent = transparent;
+        ClearColor = transparent ? RgbaColor.FromBytes(0, 0, 0, 0) : RgbaColor.FromBytes(255, 255, 255, 255);
+        Configure();
+    }
+
+    // The renderer writes premultiplied colour; take the mode that says so if the surface has it.
+    private WGPUCompositeAlphaMode TransparentAlphaMode()
+    {
+        WGPUSurfaceCapabilities caps;
+        if (wgpuSurfaceGetCapabilities(_surface, _ctx.Adapter, &caps) != WGPUStatus.Success) return WGPUCompositeAlphaMode.Auto;
+        var mode = WGPUCompositeAlphaMode.Auto;
+        for (nuint i = 0; i < caps.alphaModeCount; i++)
+        {
+            if (caps.alphaModes[i] == WGPUCompositeAlphaMode.Premultiplied) { mode = WGPUCompositeAlphaMode.Premultiplied; break; }
+            if (caps.alphaModes[i] == WGPUCompositeAlphaMode.Unpremultiplied) mode = WGPUCompositeAlphaMode.Unpremultiplied;
+        }
+        wgpuSurfaceCapabilitiesFreeMembers(caps);
+        return mode;
+    }
+
     private void Configure()
     {
         var config = new WGPUSurfaceConfiguration
@@ -342,7 +370,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             usage = WGPUTextureUsage.RenderAttachment,
             width = (uint)DeviceWidth,     // the CAMetalLayer drawable is device-pixel sized
             height = (uint)DeviceHeight,
-            alphaMode = WGPUCompositeAlphaMode.Auto,
+            alphaMode = _transparent ? TransparentAlphaMode() : WGPUCompositeAlphaMode.Auto,
             presentMode = WGPUPresentMode.Fifo,
         };
         wgpuSurfaceConfigure(_surface, &config);
