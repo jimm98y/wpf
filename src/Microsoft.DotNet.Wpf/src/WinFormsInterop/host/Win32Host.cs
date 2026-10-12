@@ -323,7 +323,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         }
         // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and its
         // scale now that both exist. Inert when nothing is embedded.
-        EmbeddedScenes.PublishHostWindow(_hwnd, _scale);
+        EmbeddedScenes.PublishHostWindow(_hwnd, _scale, _form);
         // What this surface can show is what the driver calls the screen: a popup placed past its
         // edge is not on any screen at all. A popup's own host does not speak for it -- it is
         // smaller than the window it drops out of.
@@ -787,7 +787,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 0x0004 | 0x0010);                        // SWP_NOZORDER | SWP_NOACTIVATE
         }
         _wgpu?.SetScale(_scale);
-        EmbeddedScenes.PublishHostWindow(_hwnd, _scale);
+        EmbeddedScenes.PublishHostWindow(_hwnd, _scale, _form);
         _lastVer = -1;                                   // force a present at the new scale
         OnClientResized();
         Present();

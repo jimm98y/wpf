@@ -242,7 +242,7 @@ internal sealed class CocoaHost : IWinFormsHost
                 Console.Error.WriteLine($"WebGPU present path active (surface 0x{surface:x}, format {_wgpu.Format}, scale {scale})");
             // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and
             // its backing scale now that both exist. Inert when nothing is embedded.
-            EmbeddedScenes.PublishHostWindow(_imageView, (float)scale);
+            EmbeddedScenes.PublishHostWindow(_imageView, (float)scale, _form);
         }
 
         Present();
