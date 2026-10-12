@@ -142,6 +142,9 @@ What you do not get is a launcher for other platforms. The `.exe` beside the app
 was built; an executable apphost is per-RID by definition, so other platforms start the app with
 `dotnet YourApp.dll`.
 
+To run an app that has *not* been rebuilt (only its binaries), see
+[running-prebuilt-apps.md](running-prebuilt-apps.md).
+
 ## The other heads, from the same project
 
 ```
