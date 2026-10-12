@@ -79,20 +79,29 @@ public static class Screenshots
     {
         string? spec = Environment.GetEnvironmentVariable("WPFMAC_DEBUG_CLICK");
         if (!OperatingSystem.IsMacOS() || string.IsNullOrEmpty(spec)) return;
-        // Several clicks, ';'-separated: open a menu, then pick from it.
+        // Several clicks, ';'-separated: open a menu, then pick from it. Each is x,y,seconds, and
+        // optionally a part of the title of the window to click in; without one, the key window,
+        // else the newest WinForms form (a dialog, when one is open), else the WPF main window.
         foreach (string one in spec.Split(';'))
         {
             string[] p = one.Split(',');
             if (p.Length < 3 || !double.TryParse(p[0], out double x) || !double.TryParse(p[1], out double y) || !double.TryParse(p[2], out double at)) continue;
+            string? titlePart = p.Length > 3 ? string.Join(",", p.Skip(3)) : null;
             s_clickTimers.Add(new Timer(_ =>
             {
-                // The newest form: a dialog, when one is open.
                 Forms.Form? form = Forms.Application.OpenForms.Cast<Forms.Form>().LastOrDefault(f => f.IsHandleCreated && f.Visible && f.TopLevel);
-                form?.BeginInvoke(() =>
+                Window? main = null;
+                Action click = () =>
                 {
-                    if (!s_clickLogger) { s_clickLogger = true; Forms.Application.AddMessageFilter(new ClickLogger()); }
-                    nint window = MacWindows().FirstOrDefault(w => w.Title == form.Text).Window;
-                    if (window == 0) { Exports.LogOnce("click-nowin", "debug click: no window"); return; }
+                    if (form != null && !s_clickLogger) { s_clickLogger = true; Forms.Application.AddMessageFilter(new ClickLogger()); }
+                    // Visible windows only: a hidden one may carry the same title.
+                    var windows = MacWindows().Where(w => MacNative.SendBool(w.Window, MacNative.Sel("isVisible"))).ToList();
+                    nint key = MacNative.Send(MacNative.Send(MacNative.Class("NSApplication"), MacNative.Sel("sharedApplication")), MacNative.Sel("keyWindow"));
+                    nint window = titlePart != null ? windows.FirstOrDefault(w => w.Title.Contains(titlePart, StringComparison.OrdinalIgnoreCase)).Window
+                        : key != 0 ? key
+                        : form != null ? windows.FirstOrDefault(w => w.Title == form.Text).Window
+                        : windows.FirstOrDefault(w => main != null && w.Title == main.Title).Window;
+                    if (window == 0) { Exports.Log($"debug click: no window{(titlePart != null ? " titled like '" + titlePart + "'" : "")}"); return; }
                     nint content = MacNative.Send(window, MacNative.Sel("contentView"));
                     double height = MacNative.SendRect(content, MacNative.Sel("frame")).Height;
                     var point = new CGPoint { X = x, Y = height - y };
@@ -105,8 +114,12 @@ public static class Screenshots
                         nint evt = MacNative.MouseEvent(type, point, number);
                         MacNative.PostEvent(evt);
                     }
-                    Exports.Log($"debug click: posted at {x},{y} to window 0x{window:x} (form enabled={form.Enabled})");
-                });
+                    Exports.Log($"debug click: posted at {x},{y} to window 0x{window:x}");
+                };
+                if (form != null && titlePart == null) form.BeginInvoke(click);
+                else if (Application.Current is Application app)
+                    app.Dispatcher.BeginInvoke(() => { main = app.MainWindow; click(); });
+                else form?.BeginInvoke(click);
             }, null, (int)(at * 1000), Timeout.Infinite));
         }
     }
@@ -218,6 +231,9 @@ public static class Screenshots
             Exports.LogOnce("shots:wpf", "screenshots (WPF): " + e.Message);
         }
 
+        if (Environment.GetEnvironmentVariable("WPFMAC_DUMP_WINDOWS") == "1" && Application.Current?.Dispatcher is System.Windows.Threading.Dispatcher wpfMain)
+            wpfMain.BeginInvoke(() => DumpNsWindows(stamp));   // LogOnce per stamp: once, WPF or WinForms
+
         if (Environment.GetEnvironmentVariable("WPFMAC_DUMP_WINDOWS") == "1")
         {
             // Every native window WPF made, presentation source or not: whose hooks it carries says
@@ -315,33 +331,14 @@ public static class Screenshots
     private static void DumpWindows(Forms.Form form, string stamp)
     {
         DumpWindowsCore(form, stamp);
-        if (OperatingSystem.IsMacOS())
-        {
-            var lines = new System.Text.StringBuilder($"NSWindows at {stamp}:\n");
-            foreach (var (w, title) in MacWindows())
-            {
-                var f = MacNative.SendRect(w, MacNative.Sel("frame"));
-                bool visible = MacNative.SendBool(w, MacNative.Sel("isVisible"));
-                nint parent = MacNative.Send(w, MacNative.Sel("parentWindow"));
-                lines.Append($"  0x{w:x} '{title}' visible={visible} frame=({f.X},{f.Y} {f.Width}x{f.Height}) parent=0x{parent:x} level={MacNative.Send(w, MacNative.Sel("level"))} style=0x{MacNative.Send(w, MacNative.Sel("styleMask")):x} opaque={MacNative.SendBool(w, MacNative.Sel("isOpaque"))}\n");
-            }
-            // Child windows back to front: what is drawn over what.
-            foreach (var (w, title) in MacWindows())
-            {
-                nint children = MacNative.Send(w, MacNative.Sel("childWindows"));
-                nint n = children == 0 ? 0 : MacNative.Send(children, MacNative.Sel("count"));
-                if (n == 0) continue;
-                lines.Append($"  children of 0x{w:x}:");
-                for (nint i = 0; i < n; i++) lines.Append($" 0x{MacNative.SendPtrNInt(children, MacNative.Sel("objectAtIndex:"), i):x}");
-                lines.Append('\n');
-            }
-            Exports.LogOnce("nswindows:" + stamp, lines.ToString().TrimEnd());
-        }
+        DumpNsWindows(stamp);
         try
         {
             var forms = new System.Text.StringBuilder($"open forms at {stamp}:\n");
             foreach (Forms.Form f in Forms.Application.OpenForms.Cast<Forms.Form>().ToArray())
+            {
                 forms.Append($"  {f.GetType().FullName} '{f.Text}' {f.Bounds} visible={f.Visible} enabled={f.Enabled} modal={f.Modal} border={f.FormBorderStyle} handle={f.IsHandleCreated} invokeRequired={f.InvokeRequired} topLevel={f.TopLevel} owner={f.Owner?.Name}\n");
+            }
             Exports.LogOnce("forms:" + stamp, forms.ToString().TrimEnd());
         }
         catch (Exception e)
@@ -379,6 +376,33 @@ public static class Screenshots
         catch (Exception e)
         {
             Exports.LogOnce("tree-fail", "control tree dump: " + e.Message);
+        }
+    }
+
+    /// <summary>WPFMAC_DUMP_WINDOWS=1: every NSWindow, and child windows back to front (main thread).</summary>
+    private static void DumpNsWindows(string stamp)
+    {
+        if (OperatingSystem.IsMacOS())
+        {
+            var lines = new System.Text.StringBuilder($"NSWindows at {stamp}:\n");
+            foreach (var (w, title) in MacWindows())
+            {
+                var f = MacNative.SendRect(w, MacNative.Sel("frame"));
+                bool visible = MacNative.SendBool(w, MacNative.Sel("isVisible"));
+                nint parent = MacNative.Send(w, MacNative.Sel("parentWindow"));
+                lines.Append($"  0x{w:x} '{title}' visible={visible} frame=({f.X},{f.Y} {f.Width}x{f.Height}) parent=0x{parent:x} level={MacNative.Send(w, MacNative.Sel("level"))} style=0x{MacNative.Send(w, MacNative.Sel("styleMask")):x} opaque={MacNative.SendBool(w, MacNative.Sel("isOpaque"))}\n");
+            }
+            // Child windows back to front: what is drawn over what.
+            foreach (var (w, title) in MacWindows())
+            {
+                nint children = MacNative.Send(w, MacNative.Sel("childWindows"));
+                nint n = children == 0 ? 0 : MacNative.Send(children, MacNative.Sel("count"));
+                if (n == 0) continue;
+                lines.Append($"  children of 0x{w:x}:");
+                for (nint i = 0; i < n; i++) lines.Append($" 0x{MacNative.SendPtrNInt(children, MacNative.Sel("objectAtIndex:"), i):x}");
+                lines.Append('\n');
+            }
+            Exports.LogOnce("nswindows:" + stamp, lines.ToString().TrimEnd());
         }
     }
 
