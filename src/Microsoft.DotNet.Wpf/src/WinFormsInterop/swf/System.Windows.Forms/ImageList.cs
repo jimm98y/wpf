@@ -556,9 +556,14 @@ namespace System.Windows.Forms
 			/// keeps its alpha, and the 32-bit list then premultiplies that colour by the alpha again.
 			/// Drawn straight, a half-transparent pixel of a toolbar icon comes out darker than it
 			/// should -- #F6 at alpha 160 is stored as #92 and lands on #F0 as #B5, which is what the
-			/// stock property grid's toolbar shows. Measured by pushing ramps through the stock list.</summary>
-			private static unsafe void HandleRoundTrip (Bitmap bitmap)
+			/// stock property grid's toolbar shows. Measured by pushing ramps through the stock list.
+			/// A list of fewer bits keeps no alpha: a pixel that is not wholly transparent is opaque,
+			/// in its colour over LightGray (the transparent ones are masked out). It was premultiplied
+			/// all the same and then made opaque, so a soft edge came out near black instead of light
+			/// grey -- app's preference icons had a dark rim.</summary>
+			private unsafe void HandleRoundTrip (Bitmap bitmap)
 			{
+				bool keepsAlpha = this.colorDepth == ColorDepth.Depth32Bit;
 				BitmapData data = bitmap.LockBits (new Rectangle (0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
 				try {
 					for (int y = 0; y < data.Height; y++) {
@@ -571,9 +576,9 @@ namespace System.Windows.Forms
 							{
 								uint c = (p >> shift) & 0xff;
 								uint comp = (uint) (c * a / 255.0 + 211 * (1 - a / 255.0) + 0.5);
-								return ((comp * a + 127) / 255) << shift;
+								return (keepsAlpha ? (comp * a + 127) / 255 : comp) << shift;
 							}
-							row [x] = a << 24 | Channel (16) | Channel (8) | Channel (0);
+							row [x] = (keepsAlpha ? a : 255u) << 24 | Channel (16) | Channel (8) | Channel (0);
 						}
 					}
 				} finally {
