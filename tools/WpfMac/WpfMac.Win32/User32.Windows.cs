@@ -7,6 +7,7 @@
 // Each function acts on whichever of the three the handle is, on that window's own UI thread.
 
 using System.Collections.Concurrent;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -39,6 +40,7 @@ public static unsafe partial class Exports
         R((delegate* unmanaged<nint, int>)&IsIconic, "IsIconic");
         R((delegate* unmanaged<nint, int>)&IsZoomed, "IsZoomed");
         R((delegate* unmanaged<nint, int, int>)&ShowWindow, "ShowWindow", "ShowWindowAsync");
+        R((delegate* unmanaged<nint, uint, uint, int>)&AnimateWindow, "AnimateWindow");
         R((delegate* unmanaged<nint, RECT*, int>)&GetWindowRectExport, "GetWindowRect");
         R((delegate* unmanaged<nint, RECT*, int>)&GetClientRect, "GetClientRect");
         R((delegate* unmanaged<nint, POINT*, int>)&ClientToScreen, "ClientToScreen");
@@ -488,6 +490,35 @@ public static unsafe partial class Exports
     }
 
     [UnmanagedCallersOnly] private static int ShowWindow(nint hwnd, int cmd) => Show(Resolve(hwnd), cmd) ? TRUE : FALSE;
+
+    // A WinForms window animates in the driver: its composited scene is rolled, slid, grown or
+    // faded in or out (see XplatUIWebGpu.Animate.cs). The window's own state is what is shown or
+    // hidden, not Control.Visible: popups that open this way (DotNetBar's menus) are created
+    // hidden with Visible already true, and setting it again does nothing. Other windows are shown
+    // or hidden straight away.
+    [UnmanagedCallersOnly]
+    private static int AnimateWindow(nint hwnd, uint time, uint flags)
+    {
+        const uint AW_HIDE = 0x10000, AW_ACTIVATE = 0x20000;
+        object? o = Resolve(hwnd);
+        if (o == null) return FALSE;
+        if (o is Forms.Control c)
+        {
+            return Ui(o, () =>
+            {
+                if (!c.IsHandleCreated) return FALSE;
+                object? driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
+                    ?.GetField("driver", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
+                MethodInfo? animate = driver?.GetType().GetMethod("AnimateWindow", BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { typeof(IntPtr), typeof(int), typeof(int) }, null);
+                if (animate == null) return FALSE;
+                return (bool)animate.Invoke(driver, new object[] { c.Handle, (int)time, (int)flags })! ? TRUE : FALSE;
+            });
+        }
+        bool hide = (flags & AW_HIDE) != 0;
+        if (IsVisible(o) != hide) return FALSE;
+        Show(o, hide ? 0 : (flags & AW_ACTIVATE) != 0 ? 5 : 8);   // SW_HIDE, SW_SHOW, SW_SHOWNA
+        return TRUE;
+    }
 
     // ---- relationships ---------------------------------------------------------------------------
 
