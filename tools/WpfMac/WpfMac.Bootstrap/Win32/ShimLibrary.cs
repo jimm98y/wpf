@@ -37,6 +37,33 @@ namespace WpfMac.Bootstrap.Win32
 
         public static bool Loaded => s_handle != IntPtr.Zero;
 
+        /// <summary>
+        /// From now on an abort() ends the process quietly (status 134, a line in the log) instead of
+        /// as a crash macOS reports with a dialog. See wpfmac_quiet_abort in win32shim_runtime.c.
+        /// </summary>
+        public static void QuietAborts(string? logPath)
+        {
+            if (s_handle == IntPtr.Zero || !NativeLibrary.TryGetExport(s_handle, "wpfmac_quiet_abort", out IntPtr export)) return;
+            byte[]? path = logPath == null ? null : System.Text.Encoding.UTF8.GetBytes(logPath + "\0");
+            fixed (byte* p = path)
+            {
+                if (((delegate* unmanaged<byte*, int>)export)(p) == 0) CompatLog.Info("quiet aborts: sigaction failed");
+            }
+
+            // The runtime restores the default SIGABRT action before it aborts over an unhandled
+            // exception, so that case ends here instead, once the log has the exception (its handler
+            // was added first and runs first).
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            {
+                if (!e.IsTerminating) return;
+                Console.Error.WriteLine("Unhandled exception. " + e.ExceptionObject);
+                Console.Error.WriteLine("wpfmac: exiting with status 134 instead of crashing. See the compatibility log.");
+                CompatLog.Info("[exit] unhandled exception: exited with status 134 instead of crashing");
+                var exit = (delegate* unmanaged<int, void>)NativeLibrary.GetExport(NativeLibrary.Load("/usr/lib/libSystem.B.dylib"), "_exit");
+                exit(134);
+            };
+        }
+
         public static void Initialize(string overlayDir)
         {
             string path = Path.Combine(overlayDir, "libwin32shim.dylib");

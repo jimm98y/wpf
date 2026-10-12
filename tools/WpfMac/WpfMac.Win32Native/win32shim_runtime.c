@@ -53,3 +53,60 @@ __attribute__((naked)) void wpfmac_unimplemented(void)
         "mov  x0, #0\n"
         "ret\n");
 }
+
+// ---- Quiet aborts -------------------------------------------------------------------------------
+// An app that dies of abort() -- an unhandled .NET exception, an uncaught Objective-C exception, a
+// Rust panic in wgpu -- would make macOS file a crash report and queue a "quit unexpectedly" dialog,
+// one per crash. Under wpfmac the cause is already in the compatibility log (the managed half writes
+// unhandled exceptions there before the runtime aborts), so the process notes the abort in that log
+// and on stderr and exits with the status an abort gives (128 + SIGABRT). Only async-signal-safe
+// calls from here on.
+
+#include <fcntl.h>
+#include <signal.h>
+#include <unistd.h>
+
+static char wpfmac_abort_log[1024];
+
+static void wpfmac_write_all(int fd, const char *s)
+{
+    size_t n = strlen(s);
+    while (n > 0)
+    {
+        ssize_t w = write(fd, s, n);
+        if (w <= 0) return;
+        s += w;
+        n -= (size_t)w;
+    }
+}
+
+static void wpfmac_on_abort(int sig)
+{
+    const char *line = "wpfmac: the app aborted (SIGABRT); exiting without a crash report. See the compatibility log.\n";
+    wpfmac_write_all(2, line);
+    if (wpfmac_abort_log[0])
+    {
+        int fd = open(wpfmac_abort_log, O_WRONLY | O_APPEND);
+        if (fd >= 0)
+        {
+            wpfmac_write_all(fd, "[abort] the process aborted (SIGABRT); exited with status 134 instead of crashing\n");
+            close(fd);
+        }
+    }
+    _exit(128 + sig);
+}
+
+// logPath may be NULL. Replaces whatever SIGABRT handler is installed (the runtime's only re-raises).
+__attribute__((visibility("default"))) int wpfmac_quiet_abort(const char *logPath)
+{
+    if (logPath)
+    {
+        strncpy(wpfmac_abort_log, logPath, sizeof wpfmac_abort_log - 1);
+        wpfmac_abort_log[sizeof wpfmac_abort_log - 1] = 0;
+    }
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = wpfmac_on_abort;
+    sigemptyset(&sa.sa_mask);
+    return sigaction(SIGABRT, &sa, 0) == 0;
+}

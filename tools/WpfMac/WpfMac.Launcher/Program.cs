@@ -6,7 +6,7 @@ internal static class Program
         wpfmac - run an unmodified .NET 10 WPF/WinForms app on the WPF-on-WebGPU stack
 
         usage:
-          wpfmac run   [-v] [--offline] [--isolate] [--title-prefix <text>] [--screenshots <dir> [--every <s>]]
+          wpfmac run   [-v] [--offline] [--isolate] [--crash-reports] [--title-prefix <text>] [--screenshots <dir> [--every <s>]]
                        <App.dll|App.exe|folder> [-- app args]
           wpfmac compare [--isolate] [--screenshot <dir>] [--seconds <n>] [--close] <App.dll|App.exe|folder> [-- app args]
                                                     Windows: the stock .exe and the WebGPU run side by side
@@ -17,6 +17,8 @@ internal static class Program
           wpfmac where                              print every location wpfmac uses
 
         The app's folder is only ever read. Its .exe keeps starting it on stock WPF.
+        On macOS an app that aborts exits with status 134 and a note in its log instead of leaving a
+        crash report and a "quit unexpectedly" dialog; --crash-reports keeps the system's behaviour.
         """;
 
     public static int Main(string[] args)
@@ -48,7 +50,7 @@ internal static class Program
 
     private static int Run(string[] args, bool execute)
     {
-        bool verbose = false, offline = false, isolate = false;
+        bool verbose = false, offline = false, isolate = false, crashReports = false;
         string? titlePrefix = null, screenshots = null;
         int every = 5;
         string? target = null;
@@ -64,6 +66,7 @@ internal static class Program
                 case "--offline": offline = true; break;
                 case "--title-prefix": titlePrefix = args[++i]; break;
                 case "--isolate": isolate = true; break;
+                case "--crash-reports": crashReports = true; break;
                 case "--screenshots": screenshots = args[++i]; break;
                 case "--every": every = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
                 default:
@@ -84,6 +87,7 @@ internal static class Program
             Offline = offline,
             ScreenshotDirectory = screenshots,
             Isolate = isolate ? "-wpfmac" : null,
+            CrashReports = crashReports,
             ScreenshotInterval = every,
         };
 

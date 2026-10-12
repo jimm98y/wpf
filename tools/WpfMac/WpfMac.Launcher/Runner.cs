@@ -19,6 +19,8 @@ internal sealed class Runner
     public string? ScreenshotDirectory { get; init; }
     /// <summary>A suffix for every named kernel object (see WpfMac.Detours/Isolation.cs); null for none.</summary>
     public string? Isolate { get; init; }
+    /// <summary>macOS: let an abort crash as usual (crash report, dialog) instead of exiting quietly.</summary>
+    public bool CrashReports { get; init; }
     public int ScreenshotInterval { get; init; } = 5;
 
     public sealed record Prepared(string RuntimeConfig, string Deps, string LogPath, IReadOnlyList<string> Notes, IReadOnlyCollection<string> Replaced)
@@ -61,6 +63,7 @@ internal sealed class Runner
         if (Directory.Exists(fonts)) props["WpfWebGpu.FontDirectory"] = fonts;
         if (!string.IsNullOrEmpty(TitlePrefix)) props["WpfMac.TitlePrefix"] = TitlePrefix;
         if (!string.IsNullOrEmpty(Isolate)) props["WpfMac.Isolate"] = Isolate;
+        if (CrashReports) props["WpfMac.CrashReports"] = "true";
         if (!string.IsNullOrEmpty(ScreenshotDirectory))
         {
             props["WpfMac.ScreenshotDirectory"] = Path.GetFullPath(ScreenshotDirectory);

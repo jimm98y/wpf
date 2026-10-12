@@ -32,6 +32,11 @@ internal static class StartupHook
         if (AppContext.GetData(Keys.OverlayDirectory) is string overlay && overlay.Length > 0)
         {
             WpfMac.Bootstrap.Win32.ShimLibrary.Initialize(overlay);
+            // Unless asked to keep them (wpfmac run --crash-reports), no crash reports or dialogs.
+            if (AppContext.GetData(Keys.CrashReports) as string != "true")
+            {
+                WpfMac.Bootstrap.Win32.ShimLibrary.QuietAborts(AppContext.GetData(Keys.LogPath) as string);
+            }
         }
         if (!OperatingSystem.IsWindows() && AppContext.GetData(Keys.StateDirectory) is string state && state.Length > 0)
         {
@@ -112,6 +117,7 @@ namespace WpfMac.Bootstrap
         public const string TitlePrefix = "WpfMac.TitlePrefix";
         public const string Isolate = "WpfMac.Isolate";
         public const string ScreenshotInterval = "WpfMac.ScreenshotInterval";
+        public const string CrashReports = "WpfMac.CrashReports";
 
         // Published by the hook, not passed to it: Action<string> and Action<string, string> (key, message).
         public const string LogCallback = "WpfMac.Log";
