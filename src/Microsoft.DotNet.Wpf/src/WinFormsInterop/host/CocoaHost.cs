@@ -445,6 +445,7 @@ internal sealed class CocoaHost : IWinFormsHost
             // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and
             // its backing scale now that both exist. Inert when nothing is embedded.
             EmbeddedScenes.PublishHostWindow(_imageView, (float)scale, _form);
+            ReportScreen();
         }
 
         Present();
@@ -713,6 +714,18 @@ internal sealed class CocoaHost : IWinFormsHost
 
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendObserver(IntPtr r, IntPtr s, IntPtr name, IntPtr obj, IntPtr queue, IntPtr block);
 
+    // What this window can show is what the driver calls the screen: menus and drop-downs are drawn
+    // in it (the popup layer covers the same area), and one placed past its edge is not seen at all.
+    // WinForms asks before it puts a popup up -- a combo box at the foot of the window opens its list
+    // upwards when the list would cross the bottom -- and was told of a 2560x1440 desktop, so the
+    // status bar's zoom box opened its list below the window. The driver's coordinates are the
+    // screen's here, so the area ends at the window's right and bottom edges. A popup's own host
+    // does not speak for it.
+    private void ReportScreen()
+    {
+        if (_form.Owner == null && !_offMain) XplatUIWebGpu.SetScreenSize(_form.Right, _form.Bottom);
+    }
+
     private void SyncFrame()
     {
         if (_window == IntPtr.Zero || _form.IsDisposed) return;
@@ -726,6 +739,7 @@ internal sealed class CocoaHost : IWinFormsHost
             // Moved or resized by the user (or by AppKit placing it): the form follows.
             _knownBounds = native;
             if (_form.Bounds != native) _form.Bounds = native;
+            ReportScreen();
             return;
         }
 
@@ -737,6 +751,7 @@ internal sealed class CocoaHost : IWinFormsHost
             NSRect content = CocoaRect(managed.Left, managed.Top, managed.Width, managed.Height);
             NSRect frame = SendRectRect(_window, Sel("frameRectForContentRect:"), content);
             SendVoidRectBool(_window, Sel("setFrame:display:"), frame, true);
+            ReportScreen();
         }
     }
 
