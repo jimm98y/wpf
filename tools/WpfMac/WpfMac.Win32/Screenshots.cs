@@ -325,6 +325,16 @@ public static class Screenshots
                 nint parent = MacNative.Send(w, MacNative.Sel("parentWindow"));
                 lines.Append($"  0x{w:x} '{title}' visible={visible} frame=({f.X},{f.Y} {f.Width}x{f.Height}) parent=0x{parent:x} level={MacNative.Send(w, MacNative.Sel("level"))} style=0x{MacNative.Send(w, MacNative.Sel("styleMask")):x} opaque={MacNative.SendBool(w, MacNative.Sel("isOpaque"))}\n");
             }
+            // Child windows back to front: what is drawn over what.
+            foreach (var (w, title) in MacWindows())
+            {
+                nint children = MacNative.Send(w, MacNative.Sel("childWindows"));
+                nint n = children == 0 ? 0 : MacNative.Send(children, MacNative.Sel("count"));
+                if (n == 0) continue;
+                lines.Append($"  children of 0x{w:x}:");
+                for (nint i = 0; i < n; i++) lines.Append($" 0x{MacNative.SendPtrNInt(children, MacNative.Sel("objectAtIndex:"), i):x}");
+                lines.Append('\n');
+            }
             Exports.LogOnce("nswindows:" + stamp, lines.ToString().TrimEnd());
         }
         try
