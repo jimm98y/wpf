@@ -410,7 +410,7 @@ namespace System.Windows.Forms
 
         public void GoHome() => WhenReady(() => _backend.Navigate("about:blank"));
 
-        public void Refresh() => WhenReady(() => _backend.Reload(noCache: false));
+        public override void Refresh() => WhenReady(() => _backend.Reload(noCache: false));
 
         public void Refresh(WebBrowserRefreshOption opt) =>
             WhenReady(() => _backend.Reload(opt == WebBrowserRefreshOption.Completely));
@@ -693,7 +693,7 @@ namespace System.Windows.Forms
         /// </remarks>
         [Browsable(false)]
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-        public string StatusText => _statusText;
+        public virtual string StatusText => _statusText;
 
         private const string StatusMessagePrefix = "__wfStatus:";
 

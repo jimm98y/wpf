@@ -27,7 +27,7 @@
 // COMPLETE
 
 namespace System.Windows.Forms {
-	public struct BindingMemberInfo {
+	public struct BindingMemberInfo : IEquatable<BindingMemberInfo> {
 		private string		data_member;
 		private string		data_field;
 		private string		data_path;

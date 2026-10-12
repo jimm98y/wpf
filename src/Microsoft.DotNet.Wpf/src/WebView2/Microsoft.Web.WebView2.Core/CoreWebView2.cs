@@ -29,7 +29,7 @@ namespace Microsoft.Web.WebView2.Core
     /// The engine behind a WebView2 control. Obtained from the control's <c>CoreWebView2</c>
     /// property after <c>EnsureCoreWebView2Async</c> has completed.
     /// </summary>
-    public class CoreWebView2
+    public partial class CoreWebView2
     {
         private readonly IWebViewBackend _backend;
         private readonly CoreWebView2Settings _settings;

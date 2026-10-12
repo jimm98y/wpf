@@ -46,7 +46,7 @@ namespace System.Windows.Forms {
 			set { inheritedCellStyle = value; }
 		}
 
-		public int ColumnIndex {
+		public virtual int ColumnIndex {
 			get { return columnIndex; }
 		}
 
@@ -55,7 +55,7 @@ namespace System.Windows.Forms {
 			set { parsingApplied = value; }
 		}
 
-		public int RowIndex {
+		public virtual int RowIndex {
 			get { return rowIndex; }
 		}
 

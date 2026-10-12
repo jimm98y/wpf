@@ -189,6 +189,19 @@ namespace MS.Internal.Text.TextInterface.Managed
 
         private static IEnumerable<string> FontDirectories()
         {
+            foreach (string dir in PlatformFontDirectories()) yield return dir;
+
+            // Fonts that travel with the STACK rather than with the app: a launcher that runs a
+            // prebuilt app on this stack (wpfmac) keeps them beside its own copy of the stack, since
+            // it never writes into the app's folder. Probed after the app's own.
+            if (AppContext.GetData("WpfWebGpu.FontDirectory") is string extra && extra.Length > 0)
+            {
+                yield return extra;
+            }
+        }
+
+        private static IEnumerable<string> PlatformFontDirectories()
+        {
             if (OperatingSystem.IsBrowser())
             {
                 // WebAssembly: no OS fonts. The app head bundles fonts into the wasm

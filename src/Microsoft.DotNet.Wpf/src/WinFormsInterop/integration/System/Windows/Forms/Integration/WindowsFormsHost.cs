@@ -48,7 +48,7 @@ using WpfDragDropKeyStates = System.Windows.DragDropKeyStates;
 namespace System.Windows.Forms.Integration
 {
     /// <summary>Hosts a Windows Forms <see cref="SWF.Control"/> inside a WPF element tree.</summary>
-    public class WindowsFormsHost : FrameworkElement, IDisposable
+    public partial class WindowsFormsHost : FrameworkElement, IDisposable
     {
         // The driver only records scenes in GPU-raster mode; without it every hosted window paints
         // into a backing bitmap that nothing on this path ever reads, and the host renders empty.

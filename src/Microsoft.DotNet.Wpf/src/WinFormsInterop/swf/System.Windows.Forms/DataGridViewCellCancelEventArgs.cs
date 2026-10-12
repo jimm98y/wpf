@@ -39,11 +39,11 @@ namespace System.Windows.Forms {
 			this.rowIndex = rowIndex;
 		}
 
-		public int ColumnIndex {
+		public virtual int ColumnIndex {
 			get { return columnIndex; }
 		}
 
-		public int RowIndex {
+		public virtual int RowIndex {
 			get { return rowIndex; }
 		}
 

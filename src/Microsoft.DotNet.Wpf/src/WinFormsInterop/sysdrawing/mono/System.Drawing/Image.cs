@@ -758,7 +758,7 @@ public abstract class Image : MarshalByRefObject, IDisposable , ICloneable, ISer
 		}
 	}
 
-	public Size Size {
+	public virtual Size Size {
 		get {
 			Live ();
 			return new Size(Width, Height);

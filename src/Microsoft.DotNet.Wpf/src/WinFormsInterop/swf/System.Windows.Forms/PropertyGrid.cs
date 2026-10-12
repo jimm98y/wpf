@@ -438,6 +438,23 @@ namespace System.Windows.Forms
 			}
 		}
 
+		// The colours .NET Framework 4.7.1 added for high-contrast themes. Kept, so code that sets them
+		// to match its own theme runs; this PropertyGrid's painting takes its colours from the theme.
+		[DefaultValue (typeof (Color), "ControlDark")]
+		public Color HelpBorderColor { get; set; } = SystemColors.ControlDark;
+
+		[DefaultValue (typeof (Color), "ControlDark")]
+		public Color ViewBorderColor { get; set; } = SystemColors.ControlDark;
+
+		[DefaultValue (typeof (Color), "GrayText")]
+		public Color DisabledItemForeColor { get; set; } = SystemColors.GrayText;
+
+		[DefaultValue (typeof (Color), "Highlight")]
+		public Color SelectedItemWithFocusBackColor { get; set; } = SystemColors.Highlight;
+
+		[DefaultValue (typeof (Color), "HighlightText")]
+		public Color SelectedItemWithFocusForeColor { get; set; } = SystemColors.HighlightText;
+
 		[DefaultValue ("Color [Control]")]
 		public Color HelpBackColor {
 			get {

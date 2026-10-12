@@ -46,7 +46,7 @@ namespace System.Windows.Forms {
 			}
 		}
 
-		public int ColumnIndex {
+		public virtual int ColumnIndex {
 			get { return columnIndex; }
 		}
 
@@ -56,7 +56,7 @@ namespace System.Windows.Forms {
 			set { formattingApplied = value; }
 		}
 
-		public int RowIndex {
+		public virtual int RowIndex {
 			get { return rowIndex; }
 		}
 

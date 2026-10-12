@@ -16,6 +16,7 @@
 //
 
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace Microsoft.Web.WebView2.Core
@@ -37,6 +38,30 @@ namespace Microsoft.Web.WebView2.Core
             TargetCompatibleBrowserVersion = targetCompatibleBrowserVersion;
             AllowSingleSignOnUsingOSPrimaryAccount = allowSingleSignOnUsingOSPrimaryAccount;
         }
+
+        // The later overloads of the real package; their extra settings are Chromium's (custom URL
+        // schemes, release channels), kept for the Windows head and ignored by the others.
+        public CoreWebView2EnvironmentOptions(string additionalBrowserArguments, string language, string targetCompatibleBrowserVersion,
+                                              bool allowSingleSignOnUsingOSPrimaryAccount, List<CoreWebView2CustomSchemeRegistration> customSchemeRegistrations)
+            : this(additionalBrowserArguments, language, targetCompatibleBrowserVersion, allowSingleSignOnUsingOSPrimaryAccount)
+        {
+            if (customSchemeRegistrations != null) CustomSchemeRegistrations.AddRange(customSchemeRegistrations);
+        }
+
+        public CoreWebView2EnvironmentOptions(string additionalBrowserArguments, string language, string targetCompatibleBrowserVersion,
+                                              bool allowSingleSignOnUsingOSPrimaryAccount, List<CoreWebView2CustomSchemeRegistration> customSchemeRegistrations,
+                                              CoreWebView2ReleaseChannels releaseChannels, CoreWebView2ChannelSearchKind channelSearchKind)
+            : this(additionalBrowserArguments, language, targetCompatibleBrowserVersion, allowSingleSignOnUsingOSPrimaryAccount, customSchemeRegistrations)
+        {
+            ReleaseChannels = releaseChannels;
+            ChannelSearchKind = channelSearchKind;
+        }
+
+        public List<CoreWebView2CustomSchemeRegistration> CustomSchemeRegistrations { get; } = new List<CoreWebView2CustomSchemeRegistration>();
+
+        public CoreWebView2ReleaseChannels ReleaseChannels { get; set; } = CoreWebView2ReleaseChannels.Stable | CoreWebView2ReleaseChannels.Beta | CoreWebView2ReleaseChannels.Dev | CoreWebView2ReleaseChannels.Canary;
+
+        public CoreWebView2ChannelSearchKind ChannelSearchKind { get; set; }
 
         /// <summary>
         /// Command-line arguments for the browser process. Chromium-specific, and therefore read
@@ -100,6 +125,9 @@ namespace Microsoft.Web.WebView2.Core
         /// of the OS -- so this answers null, which is the same thing the real API says when nothing
         /// is available and is what a caller's "should I prompt?" check already handles.
         /// </remarks>
+        public static string GetAvailableBrowserVersionString(string browserExecutableFolder, CoreWebView2EnvironmentOptions options) =>
+            GetAvailableBrowserVersionString(browserExecutableFolder);
+
         public static string GetAvailableBrowserVersionString(string browserExecutableFolder = null)
         {
             if (!OperatingSystem.IsWindows())

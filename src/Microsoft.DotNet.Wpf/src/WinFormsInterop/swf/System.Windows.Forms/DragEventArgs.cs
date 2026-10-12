@@ -79,13 +79,13 @@ namespace System.Windows.Forms {
 			}
 		}
 
-		public int X {
+		public virtual int X {
 			get {
 				return this.x;
 			}
 		}
 
-		public int Y {
+		public virtual int Y {
 			get {
 				return this.y;
 			}

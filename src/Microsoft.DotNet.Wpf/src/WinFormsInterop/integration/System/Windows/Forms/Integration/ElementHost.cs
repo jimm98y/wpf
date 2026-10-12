@@ -42,7 +42,7 @@ using NativePlatform = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativeP
 namespace System.Windows.Forms.Integration
 {
     /// <summary>Hosts a WPF <see cref="WPF.UIElement"/> inside a Windows Forms control.</summary>
-    public class ElementHost : Control, IEmbeddedScene
+    public partial class ElementHost : Control, IEmbeddedScene
     {
         private const int WS_CHILD = 0x40000000, WS_VISIBLE = 0x10000000, WS_CLIPSIBLINGS = 0x04000000;
         private const int SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
@@ -79,7 +79,9 @@ namespace System.Windows.Forms.Integration
                 if (ReferenceEquals(_child, value)) return;
                 WPF.UIElement old = _child;
                 _child = value;
-                if (_source != null) _source.RootVisual = value;
+                // The hosted window's root is HostContainer, as on Windows, and Child is its content.
+                Container.Children.Clear();
+                if (value != null) Container.Children.Add(value);
                 OnChildChanged(new ChildChangedEventArgs(old));
             }
         }
@@ -209,7 +211,7 @@ namespace System.Windows.Forms.Integration
                 // Claim BEFORE the first render: an unclaimed frame would build a swap chain for this
                 // window and present the WPF content into it, which is both wasted and visible.
                 if (CompositeIntoHostFrame) HostedWpfContent.Claim(_source.Handle);
-                _source.RootVisual = _child;
+                _source.RootVisual = Container;
                 _source.AddHook(SourceHook);
                 _dispatcher = _source.Dispatcher;
                 _placedX = px; _placedY = py; _placedW = pw; _placedH = ph;

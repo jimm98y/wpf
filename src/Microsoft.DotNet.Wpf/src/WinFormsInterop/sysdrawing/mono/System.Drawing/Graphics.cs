@@ -4056,8 +4056,18 @@ namespace System.Drawing
 
 		static Graphics OverDc (IntPtr hdc)
 		{
-			if (!OperatingSystem.IsWindows ())
+			if (!OperatingSystem.IsWindows ()) {
+				// Off Windows a DC only exists if something emulates GDI (a launcher running a Windows
+				// app, say). It may say what the DC stands for: a Graphics to draw with as is, or an
+				// Image to draw into. Without one, a DC is what this platform does not have.
+				if (AppContext.GetData ("System.Drawing.DcSurfaceResolver") is Func<IntPtr, object> resolve) {
+					switch (resolve (hdc)) {
+					case Graphics given: return given;
+					case Image image: return FromImage (image);
+					}
+				}
 				throw new PlatformNotSupportedException ("A device context is a Windows GDI object.");
+			}
 			// GdipCreateFromHDC of what is not a DC: OutOfMemory.
 			uint type = GetObjectType (hdc);
 			if (type != 3 && type != 4 && type != 10 && type != 12)   // OBJ_DC, OBJ_METADC, OBJ_MEMDC, OBJ_ENHMETADC

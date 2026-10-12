@@ -26,6 +26,19 @@ internal sealed class CocoaHost : IWinFormsHost
     // delivers it on the main thread, to the main thread's loop), which is what a splash needs.
     private readonly bool _offMain = pthread_main_np() == 0;
     private volatile bool _closed;
+
+    // The WebGPU present path. It has to be the default: the driver records GPU scenes unless
+    // WF_GPU_RASTER/WF_WEBGPU switch it off (XplatUIWebGpu.s_gpuRaster), and then its back buffers are
+    // empty, so the CoreGraphics path would present a blank window. It was opt-in (WF_WEBGPU=1, which
+    // the gallery's run instructions set) and every WinForms window of an app started without it was
+    // white.
+    private bool UseWebGpu => _gpuRaster && Environment.GetEnvironmentVariable("WF_WEBGPU") != "0";
+
+    // Off the main thread the surface is made on the main thread and the presenter here, on the
+    // form's thread, once it exists: Metal presents from any thread, AppKit only builds on the main one.
+    private volatile IntPtr _pendingSurface;
+    private Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext _pendingContext;
+    private double _pendingScale = 1;
     private WgpuPresenter _wgpu;   // when non-null, present through WebGPU instead of CoreGraphics
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
@@ -167,6 +180,18 @@ internal sealed class CocoaHost : IWinFormsHost
                 _imageView = nv;
                 _window = nw;
                 SendVoidPtr(nw, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+                if (UseWebGpu)
+                {
+                    try
+                    {
+                        var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
+                        IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, nv);
+                        _pendingScale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(nv);
+                        _pendingContext = ctx;
+                        _pendingSurface = surface;
+                    }
+                    catch (Exception e) { Console.Error.WriteLine("[CocoaHost] WebGPU surface for an off-main form failed: " + e.Message); }
+                }
             });
             Present();
             return;
@@ -189,10 +214,10 @@ internal sealed class CocoaHost : IWinFormsHost
         SendVoidPtr(win, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
         Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
 
-        // WebGPU present path (WF_WEBGPU=1): create a wgpu context, then a CAMetalLayer surface over
+        // WebGPU present path (on unless WF_WEBGPU=0): create a wgpu context, then a CAMetalLayer surface over
         // this NSView (the mac branch of the cross-platform surface abstraction; Windows would use an
         // HWND source, the browser a canvas), then present each composite as a textured quad.
-        if (Environment.GetEnvironmentVariable("WF_WEBGPU") == "1")
+        if (UseWebGpu)
         {
             var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
             // Cross-platform surface creation: NativePlatform dispatches to the CAMetalLayer (mac),
@@ -207,7 +232,8 @@ internal sealed class CocoaHost : IWinFormsHost
             // Scene path uses an sRGB surface so the renderer's gamma-correct glyph coverage kicks in
             // (crisp, WPF-weight text); the bitmap path stays non-sRGB (pixels are already display-space).
             _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster);
-            Console.WriteLine($"WebGPU present path active (surface 0x{surface:x}, format {_wgpu.Format}, scale {scale})");
+            if (Environment.GetEnvironmentVariable("WF_TRACE") != null)
+                Console.Error.WriteLine($"WebGPU present path active (surface 0x{surface:x}, format {_wgpu.Format}, scale {scale})");
             // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and
             // its backing scale now that both exist. Inert when nothing is embedded.
             EmbeddedScenes.PublishHostWindow(_imageView, (float)scale);
@@ -276,7 +302,22 @@ internal sealed class CocoaHost : IWinFormsHost
         }
         if (_offMain)
         {
-            PresentOffMain();
+            if (_wgpu == null && _pendingSurface != IntPtr.Zero && !_closed)
+            {
+                _wgpu = new WgpuPresenter(_pendingContext, _pendingSurface, _form.Width, _form.Height, _pendingScale, srgb: _gpuRaster);
+                _lastVer = -1;
+            }
+            if (_wgpu != null && _gpuRaster && !_closed)
+            {
+                int v = (int)_getVersion.Invoke(_driver, null);
+                bool on = CaretOn();
+                if (v == _lastVer && on == _lastCaretOn && _lastPresentOk) return;
+                var offScenes = GetScenes(out int sx, out int sy);
+                _lastPresentOk = _wgpu.PresentScenes(offScenes, GetCaretRect(sx, sy), _form.Width, _form.Height);
+                _lastVer = v; _lastCaretOn = on;
+                return;
+            }
+            if (!UseWebGpu) PresentOffMain();
             return;
         }
 
@@ -437,7 +478,19 @@ internal sealed class CocoaHost : IWinFormsHost
     public void InjectClickScreen(int x, int y) => _injectClick.Invoke(_driver, new object[] { x, y });
 
     /// <summary>Save the current composited frame (what's on screen) to a PNG for verification.</summary>
-    public void SaveFrame(string path) { using Bitmap b = Composite(); b.Save(path, ImageFormat.Png); }
+    public void SaveFrame(string path)
+    {
+        if (_wgpu != null && _gpuRaster)
+        {
+            // What is on screen is the recorded scene; the back buffers are empty in this mode.
+            var scenes = GetScenes(out int ox, out int oy);
+            byte[] rgba = _wgpu.RenderScenesToRgba(scenes, GetCaretRect(ox, oy));
+            SaveRgbaPng(rgba, _wgpu.DeviceWidth, _wgpu.DeviceHeight, path);
+            return;
+        }
+        using Bitmap b = Composite();
+        b.Save(path, ImageFormat.Png);
+    }
 
     // Drain pending NSEvents; route mouse messages to the driver as SEPARATE down/up/move so
     // WinForms' pressed/hover repaints happen between frames. Non-blocking (nil-date poll).

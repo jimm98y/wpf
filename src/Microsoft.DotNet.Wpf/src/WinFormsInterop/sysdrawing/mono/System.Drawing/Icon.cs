@@ -56,7 +56,7 @@ namespace System.Drawing
 #endif
 	[TypeConverter(typeof(IconConverter))]
 
-	public sealed class Icon : MarshalByRefObject, ISerializable, ICloneable, IDisposable
+	public sealed class Icon : MarshalByRefObject, ISerializable, ICloneable, IDisposable, IHasSize
 	{
 		// What .NET compares an entry's depth against: a 32-bit display.
 		const int DisplayBitDepth = 32;
@@ -467,5 +467,16 @@ namespace System.Drawing
 				throw new ArgumentException (SR.Format (SR.InvalidPictureType, "picture", "Icon"));
 			iconSize = new Size (best.Width, best.Height);
 		}
+	}
+}
+
+namespace System.Drawing
+{
+	// System.Drawing.Common's Icon.Size implements an interface, which makes it a (sealed) virtual
+	// slot; a library compiled against it can implement its own interface with the inherited member,
+	// and that only loads if the slot exists here too.
+	internal interface IHasSize
+	{
+		Size Size { get; }
 	}
 }

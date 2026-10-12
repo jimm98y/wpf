@@ -36,7 +36,7 @@ using MS.Internal.Interop.WebView;
 namespace System.Windows.Forms
 {
     /// <summary>The document currently loaded in a <see cref="WebBrowser"/>.</summary>
-    public sealed class HtmlDocument
+    public sealed class HtmlDocument : IEquatable<HtmlDocument>
     {
         private readonly HtmlBridge _bridge;
 
@@ -127,7 +127,7 @@ namespace System.Windows.Forms
     }
 
     /// <summary>One element in an <see cref="HtmlDocument"/>.</summary>
-    public sealed class HtmlElement
+    public sealed class HtmlElement : IEquatable<HtmlElement>
     {
         private readonly HtmlBridge _bridge;
 
@@ -318,7 +318,7 @@ namespace System.Windows.Forms
     }
 
     /// <summary>A live collection of elements.</summary>
-    public sealed class HtmlElementCollection : IEnumerable
+    public sealed class HtmlElementCollection : ICollection
     {
         private readonly HtmlBridge _bridge;
         private readonly string _path;
@@ -377,6 +377,16 @@ namespace System.Windows.Forms
 
             return items.GetEnumerator();
         }
+
+        // ICollection, as .NET's collection implements it (Count is that interface's, which is what
+        // makes it a virtual slot code compiled against .NET can bind to).
+        void ICollection.CopyTo(Array array, int index)
+        {
+            foreach (object item in this) array.SetValue(item, index++);
+        }
+
+        object ICollection.SyncRoot => this;
+        bool ICollection.IsSynchronized => false;
     }
 
     /// <summary>The window an <see cref="HtmlDocument"/> is displayed in.</summary>

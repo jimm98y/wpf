@@ -25,6 +25,24 @@ namespace System.Drawing.WebGpuBackend
         private static readonly Dictionary<IntPtr, GdipFrame> s_handles = new Dictionary<IntPtr, GdipFrame> ();
         private static long s_next = 0x4D490000;   // "MI" -- managed image
 
+        static WindowsImaging ()
+        {
+            // Off Windows an HBITMAP from GetHbitmap is a handle into this table, and the only code
+            // that can make use of one is this assembly. Something that emulates GDI (a launcher
+            // running a Windows app) gets selected into a DC exactly such a handle, so it is told
+            // how to see the pixels behind it. Nothing reads this unless such a thing is present.
+            if (!OperatingSystem.IsWindows ())
+                AppContext.SetData ("System.Drawing.ManagedHbitmapImage", (Func<IntPtr, Image>) ImageOfHandle);
+        }
+
+        private static Image ImageOfHandle (IntPtr handle)
+        {
+            lock (s_handles) {
+                if (!s_handles.TryGetValue (handle, out GdipFrame f)) return null;
+                return new Bitmap (new GdipImageData (f.Clone ()));
+            }
+        }
+
         private static IntPtr Register (GdipFrame frame)
         {
             lock (s_handles) {

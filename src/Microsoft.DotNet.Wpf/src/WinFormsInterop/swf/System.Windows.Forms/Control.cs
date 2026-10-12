@@ -2678,7 +2678,7 @@ namespace System.Windows.Forms
 		[DispId(-514)]
 		[Localizable(true)]
 		[MWFCategory("Behavior")]
-		public bool Enabled {
+		public virtual bool Enabled {
 			get {
 				if (!is_enabled) {
 					return false;

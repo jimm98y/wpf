@@ -3356,7 +3356,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // picks exactly texel round(bands t) -- u is affine in t, so it interpolates per pixel.
                     bool banded = grad.Bands > 0;
                     IntPtr view = banded ? GetOrCreateBandView(grad.Stops, grad.Bands) : GetOrCreateRampView(grad.Stops, grad.Bands);
-                    bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, banded ? NearestSampler() : LinearSampler());
+                    // For the pipeline this draw will use: CompositingMode.SourceCopy is a pipeline of its
+                    // own, and an auto-layout bind group is exclusive to one (wgpu aborts the process on a
+                    // mismatch, from inside CommandEncoderFinish).
+                    bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, banded ? NearestSampler() : LinearSampler(), _srcCopy);
                     DeferReleaseBindGroup(bindGroup);
                     kind = FillKind.Textured;
 
@@ -3400,7 +3403,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     // RenderOptions.BitmapScalingMode=NearestNeighbor -> no filtering.
                     bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view,
-                        _nearestScaling ? NearestSampler() : LinearSampler());
+                        _nearestScaling ? NearestSampler() : LinearSampler(), _srcCopy);
                     DeferReleaseBindGroup(bindGroup);
                     kind = FillKind.Textured;
 

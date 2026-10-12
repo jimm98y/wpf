@@ -72,6 +72,12 @@ namespace System.Drawing.Design
 			set { SetValue ("Bitmap", value); }
 		}
 
+		// .NET Framework 4.7.2: the full-size image the (possibly scaled) Bitmap was made from.
+		public Bitmap OriginalBitmap {
+			get { return (Bitmap) properties["OriginalBitmap"]; }
+			set { SetValue ("OriginalBitmap", value); }
+		}
+
 		public string DisplayName {
 			get { return GetValue ("DisplayName"); }
 			set { SetValue ("DisplayName", value); }

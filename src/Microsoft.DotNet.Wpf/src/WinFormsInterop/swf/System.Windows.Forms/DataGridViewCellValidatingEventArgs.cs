@@ -41,7 +41,7 @@ namespace System.Windows.Forms {
 			this.formattedValue = formattedValue;
 		}
 
-		public int ColumnIndex {
+		public virtual int ColumnIndex {
 			get { return columnIndex; }
 		}
 
@@ -49,7 +49,7 @@ namespace System.Windows.Forms {
 			get { return formattedValue; }
 		}
 
-		public int RowIndex {
+		public virtual int RowIndex {
 			get { return rowIndex; }
 		}
 

@@ -1116,6 +1116,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private static Text.IFont? LoadDefaultFont(bool bold, bool oblique)
         {
             string appLocal = System.IO.Path.Combine(AppContext.BaseDirectory, "fonts");
+            // The stack's own font folder when it is not beside the app (see SystemFontCatalog).
+            string stackFonts = AppContext.GetData("WpfWebGpu.FontDirectory") as string;
             foreach (string p in new[] { "/System/Library/Fonts/Supplemental/Arial.ttf",
                                          "/System/Library/Fonts/HelveticaNeue.ttc", "/Library/Fonts/Arial.ttf",
                                          "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -1124,6 +1126,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                                          "C:\\Windows\\Fonts\\arial.ttf", "C:\\Windows\\Fonts\\segoeui.ttf",
                                          // App-local fonts, as the SDK deploys beside a desktop app.
                                          System.IO.Path.Combine(appLocal, "Selawik-Regular.ttf"),
+                                         stackFonts == null ? null : System.IO.Path.Combine(stackFonts, "Selawik-Regular.ttf"),
                                          System.IO.Path.Combine(appLocal, "LiberationSans-Regular.ttf"),
                                          System.IO.Path.Combine(appLocal, "DejaVuSans.ttf"),
                                          // Browser (wasm): fonts live in the VFS at /fonts (main.js writes them
