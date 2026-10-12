@@ -26,3 +26,9 @@ kernel32 RtlMoveMemory                 void
 kernel32 RtlZeroMemory                 void
 kernel32 RtlFillMemory                 void
 kernel32 RtlCopyMemory                 void
+// shcore's functions are filed under api-ms-win-shcore-* in the metadata; apps import "shcore".
+shcore   GetProcessDpiAwareness        hresult
+shcore   SetProcessDpiAwareness        hresult
+shcore   GetDpiForMonitor              hresult
+shcore   GetScaleFactorForMonitor      hresult
+kernelbase GetCurrentPackageFullName   win32error

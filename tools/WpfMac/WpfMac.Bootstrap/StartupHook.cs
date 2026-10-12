@@ -29,8 +29,27 @@ internal static class StartupHook
         {
             WpfMac.Bootstrap.Win32.ShimLibrary.Initialize(overlay);
         }
+        if (!OperatingSystem.IsWindows() && AppContext.GetData(Keys.StateDirectory) is string state && state.Length > 0)
+        {
+            InstallDetours(state);
+        }
 
         CompatLog.Info($"wpfmac bootstrap: {Assembly.GetEntryAssembly()?.GetName().Name} on {System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}, base {AppContext.BaseDirectory}");
+    }
+
+    // WpfMac.Detours carries MonoMod; reached by name so that the hook itself stays dependency-free.
+    private static void InstallDetours(string state)
+    {
+        try
+        {
+            var type = Assembly.Load(new AssemblyName("WpfMac.Detours")).GetType("WpfMac.Detours.Detours");
+            var installed = (string[]?)type?.GetMethod("InstallAll")?.Invoke(null, new object[] { state, (Action<string, string>)CompatLog.Once });
+            if (installed != null) CompatLog.Info("detours: " + string.Join(", ", installed));
+        }
+        catch (Exception e)
+        {
+            CompatLog.Info($"detours: not installed: {e.GetBaseException().Message}");
+        }
     }
 }
 
@@ -42,5 +61,6 @@ namespace WpfMac.Bootstrap
         public const string AppDirectory = "WpfMac.AppDirectory";
         public const string LogPath = "WpfMac.LogPath";
         public const string OverlayDirectory = "WpfMac.OverlayDirectory";
+        public const string StateDirectory = "WpfMac.StateDirectory";
     }
 }

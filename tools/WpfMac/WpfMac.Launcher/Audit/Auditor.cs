@@ -99,9 +99,14 @@ internal sealed class Auditor
             };
             if (owner == null) continue;               // reported as a missing type, or app-internal
             string ownerAsm = owner.Value.Assembly.Name;
-            if (!Supplied(ownerAsm)) continue;
-
             string memberName = md.GetString(mr.Name);
+            if (!Supplied(ownerAsm))
+            {
+                // App-local copies of Windows-only packages (System.Management, ...) still count as use.
+                Notable(report, owner.Value, memberName, "", asm.Name);
+                continue;
+            }
+
             string sig;
             try
             {

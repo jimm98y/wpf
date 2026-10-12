@@ -17,7 +17,15 @@ internal sealed class CocoaHost : IWinFormsHost
     private readonly Form _form;
     private readonly object _driver;
     private readonly MethodInfo _getBB, _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _rightDown, _rightUp;
-    private IntPtr _window, _imageView;
+    private volatile IntPtr _window, _imageView;
+    // A form shown on a UI thread other than the process's main thread -- a splash screen on its own
+    // thread, the commonest case. Windows gives every thread its own windows; AppKit aborts the process
+    // if a window is touched anywhere but the main thread. Such a host composes on its own thread and
+    // hands every AppKit call to the main queue, asynchronously, so it can neither abort the process
+    // nor deadlock a main thread that is itself waiting for the form. It takes no input (AppKit
+    // delivers it on the main thread, to the main thread's loop), which is what a splash needs.
+    private readonly bool _offMain = pthread_main_np() == 0;
+    private volatile bool _closed;
     private WgpuPresenter _wgpu;   // when non-null, present through WebGPU instead of CoreGraphics
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
@@ -141,10 +149,33 @@ internal sealed class CocoaHost : IWinFormsHost
 
     public void Show()
     {
+        if (_offMain)
+        {
+            double fw = _form.Width, fh = _form.Height;
+            int fx = _form.Left, fy = _form.Top;
+            string title = _form.Text ?? "WinForms";
+            OnMain(() =>
+            {
+                if (_closed) return;
+                EnsureApp();
+                IntPtr nw = SendInitWindow(Send(Cls("NSWindow"), Sel("alloc")), Sel("initWithContentRect:styleMask:backing:defer:"),
+                    CocoaRect(fx, fy, fw, fh), (nuint)15, (nuint)2, false);
+                SendVoidPtr(nw, Sel("setTitle:"), NSStr(title));
+                IntPtr nv = SendInitRect(Send(Cls("NSView"), Sel("alloc")), Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = fw, h = fh });
+                SendVoidBool(nv, Sel("setWantsLayer:"), true);
+                SendVoidPtr(nw, Sel("setContentView:"), nv);
+                _imageView = nv;
+                _window = nw;
+                SendVoidPtr(nw, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+            });
+            Present();
+            return;
+        }
+
         EnsureApp();
         double w = _form.Width, h = _form.Height;
         IntPtr win = Send(Cls("NSWindow"), Sel("alloc"));
-        var rect = new NSRect { x = 200, y = 200, w = w, h = h };
+        var rect = CocoaRect(_form.Left, _form.Top, w, h);
         // styleMask: Titled(1)|Closable(2)|Miniaturizable(4)|Resizable(8) = 15; backing Buffered(2).
         win = SendInitWindow(win, Sel("initWithContentRect:styleMask:backing:defer:"), rect, (nuint)15, (nuint)2, false);
         SendVoidPtr(win, Sel("setTitle:"), NSStr(_form.Text ?? "WinForms"));
@@ -243,6 +274,12 @@ internal sealed class CocoaHost : IWinFormsHost
             }
             return;
         }
+        if (_offMain)
+        {
+            PresentOffMain();
+            return;
+        }
+
         // Wrap the composite's raw premultiplied-BGRA bytes in a CGBitmapContext (a direct pixel
         // wrap -- NO ImageIO decode, which SIGBUSes under .NET's signal handler) -> CGImage ->
         // the layer-backed view's contents. A CGImage set as layer.contents displays top-down, and
@@ -271,6 +308,89 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private byte[] _scratch;
     private bool _savedGpu;
+
+    // The off-main-thread present: composite here (System.Drawing and CoreGraphics bitmaps are thread
+    // safe), then set the layer's contents on the main thread. Only when the content changed: the
+    // driver's loop calls Present on every iteration, and each one would otherwise be a main-queue hop.
+    private void PresentOffMain()
+    {
+        int ver = (int)_getVersion.Invoke(_driver, null);
+        bool caretOn = CaretOn();
+        if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk) return;
+        _lastVer = ver; _lastCaretOn = caretOn;
+        if (_imageView == IntPtr.Zero) { _lastPresentOk = false; return; }   // the window is still being made
+
+        IntPtr cg;
+        using (Bitmap composite = Composite())
+        {
+            DrawCaret(composite);
+            int w = composite.Width, h = composite.Height;
+            BitmapData bd = composite.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
+            try
+            {
+                IntPtr cs = CGColorSpaceCreateDeviceRGB();
+                IntPtr ctx = CGBitmapContextCreate(bd.Scan0, (nuint)w, (nuint)h, 8, (nuint)bd.Stride, cs, 8194);
+                cg = CGBitmapContextCreateImage(ctx);    // copies the pixels
+                CGContextRelease(ctx); CGColorSpaceRelease(cs);
+            }
+            finally { composite.UnlockBits(bd); }
+        }
+        _lastPresentOk = true;
+        OnMain(() =>
+        {
+            IntPtr view = _imageView;
+            if (view != IntPtr.Zero && !_closed)
+            {
+                SendVoidPtr(Send(view, Sel("layer")), Sel("setContents:"), cg);
+                Send(Cls("CATransaction"), Sel("flush"));
+            }
+            CGImageRelease(cg);
+        });
+    }
+
+    /// <summary>
+    /// Where the form asked to be (its Location, which StartPosition has already resolved), in
+    /// Cocoa's coordinates: origin at the bottom-left of the main screen, measured to the window's
+    /// bottom edge. Main thread only (NSScreen).
+    /// </summary>
+    private static NSRect CocoaRect(int left, int top, double w, double h)
+    {
+        IntPtr screen = Send(Cls("NSScreen"), Sel("mainScreen"));
+        double screenHeight = screen == IntPtr.Zero ? 900 : SendRectRet(screen, Sel("frame")).h;
+        return new NSRect { x = left, y = screenHeight - top - h, w = w, h = h };
+    }
+
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRet(IntPtr r, IntPtr s);
+
+    // ---- the main queue -------------------------------------------------------------
+
+    private static IntPtr s_mainQueue;
+
+    /// <summary>Runs <paramref name="action"/> on the main thread: now if this is it, else queued.</summary>
+    private static unsafe void OnMain(Action action)
+    {
+        if (pthread_main_np() != 0) { action(); return; }
+        if (s_mainQueue == IntPtr.Zero)
+        {
+            // dispatch_get_main_queue() is a macro for &_dispatch_main_q.
+            s_mainQueue = NativeLibrary.GetExport(NativeLibrary.Load("/usr/lib/libSystem.dylib"), "_dispatch_main_q");
+        }
+        GCHandle handle = GCHandle.Alloc(action);
+        dispatch_async_f(s_mainQueue, GCHandle.ToIntPtr(handle), (IntPtr)(delegate* unmanaged<IntPtr, void>)&RunQueued);
+    }
+
+    [UnmanagedCallersOnly]
+    private static void RunQueued(IntPtr context)
+    {
+        GCHandle handle = GCHandle.FromIntPtr(context);
+        var action = (Action)handle.Target;
+        handle.Free();
+        try { action(); }
+        catch (Exception e) { Console.Error.WriteLine($"[CocoaHost] main-queue work failed: {e}"); }
+    }
+
+    [DllImport("/usr/lib/libSystem.dylib")] private static extern int pthread_main_np();
+    [DllImport("/usr/lib/libSystem.dylib")] private static extern void dispatch_async_f(IntPtr queue, IntPtr context, IntPtr work);
 
     // Save an RGBA byte buffer (WgpuSceneRenderer readback layout: R,G,B,A) to a PNG via System.Drawing.
     internal static void SaveRgbaPng(byte[] rgba, int w, int h, string path)
@@ -325,6 +445,18 @@ internal sealed class CocoaHost : IWinFormsHost
     /// window close box). Idempotent.</summary>
     public void Close()
     {
+        if (_offMain)
+        {
+            _closed = true;
+            OnMain(() =>
+            {
+                IntPtr w = _window;
+                _window = IntPtr.Zero;
+                _imageView = IntPtr.Zero;
+                if (w != IntPtr.Zero) Send(w, Sel("close"));
+            });
+            return;
+        }
         if (_window == IntPtr.Zero) return;
         IntPtr win = _window;
         _window = IntPtr.Zero;
@@ -333,6 +465,9 @@ internal sealed class CocoaHost : IWinFormsHost
 
     public bool Pump()
     {
+        // Events are the main thread's to read; see _offMain.
+        if (_offMain) return !_closed && _form.Visible && !_form.IsDisposed;
+
         while (true)
         {
             IntPtr evt = SendNextEvent(App(), Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
