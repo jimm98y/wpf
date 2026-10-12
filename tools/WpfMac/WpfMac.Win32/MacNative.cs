@@ -41,6 +41,7 @@ internal static partial class MacNative
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial IntPtr Send(IntPtr receiver, IntPtr selector);
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial IntPtr SendPtrNInt(IntPtr receiver, IntPtr selector, nint arg);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")] internal static partial void SendPoint(IntPtr receiver, IntPtr selector, CGPoint arg);
 
     // +[NSEvent mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:]
     [LibraryImport(ObjC, EntryPoint = "objc_msgSend")]

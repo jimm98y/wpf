@@ -115,12 +115,24 @@ public static class Screenshots
                     for (int i = 1; i <= 12; i++) MacNative.PostEvent(MacNative.MouseEvent(6, At(i / 12.0), number));   // left mouse dragged
                     MacNative.PostEvent(MacNative.MouseEvent(2, At(1), number));
                 }
-                Drag(v[0], v[1], v[2], v[3]);
-                Exports.Log($"debug drag: posted {v[0]},{v[1]} -> {v[2]},{v[3]}");
-                Task.Delay(3000).ContinueWith(_ => form.BeginInvoke(() =>
+                // WPFMAC_DEBUG_MOVE=dx,dy: move the window first (the frame change a title-bar drag ends in).
+                double[] move = (Environment.GetEnvironmentVariable("WPFMAC_DEBUG_MOVE") ?? "").Split(',').Select(t => double.TryParse(t, out double d) ? d : double.NaN).ToArray();
+                bool moving = move.Length == 2 && !move.Any(double.IsNaN);
+                if (moving)
                 {
-                    Drag(v[2], v[3], v[2], v[3]);
-                    Exports.Log($"debug drag: posted click at {v[2]},{v[3]}");
+                    var f = MacNative.SendRect(window, MacNative.Sel("frame"));
+                    MacNative.SendPoint(window, MacNative.Sel("setFrameOrigin:"), new CGPoint { X = f.X + move[0], Y = f.Y - move[1] });
+                    Exports.Log($"debug drag: moved the window by {move[0]},{move[1]}");
+                }
+                Task.Delay(moving ? 3000 : 0).ContinueWith(_ => form.BeginInvoke(() =>
+                {
+                    Drag(v[0], v[1], v[2], v[3]);
+                    Exports.Log($"debug drag: posted {v[0]},{v[1]} -> {v[2]},{v[3]}");
+                    Task.Delay(3000).ContinueWith(_ => form.BeginInvoke(() =>
+                    {
+                        Drag(v[2], v[3], v[2], v[3]);
+                        Exports.Log($"debug drag: posted click at {v[2]},{v[3]}");
+                    }));
                 }));
             });
         }, null, (int)(v[4] * 1000), Timeout.Infinite);
