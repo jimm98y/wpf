@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Unit tests for wpfmac and the macOS shims: dotnet test tools/WpfMac/tests/WpfMac.Tests -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CA1416;CS0618</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="3.0.0" />
+    <PackageReference Include="Microsoft.Testing.Platform" Version="1.7.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../WpfMac.Launcher/WpfMac.Launcher.csproj" />
+    <ProjectReference Include="$(WpfMacRepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" Aliases="RegistryShim" />
+    <ProjectReference Include="$(WpfMacRepoRoot)shims/System.Management/System.Management.csproj" />
+    <ProjectReference Include="$(WpfMacRepoRoot)shims/System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />
+    <ProjectReference Include="$(WpfMacRepoRoot)shims/System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
+    <ProjectReference Include="$(WpfMacRepoRoot)shims/System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
+    <ProjectReference Include="$(WpfMacRepoRoot)shims/System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
+  </ItemGroup>
+
+</Project>

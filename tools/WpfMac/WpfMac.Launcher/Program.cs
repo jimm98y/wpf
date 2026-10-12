@@ -13,6 +13,8 @@ internal static class Program
           wpfmac prepare <App.dll|App.exe|folder>   write the generated files, print the command, do not run
           wpfmac audit [--out <file.md>] <App.dll|App.exe|folder>
                                                     what the app needs that the stack on this OS lacks
+          wpfmac reg import <file.reg>              macOS: load a regedit export into the registry apps see here
+          wpfmac reg export <key> <file.reg>        macOS: write a key of that registry as a regedit file
           wpfmac clean [--all]                      delete generated files (--all: also logs and shim state)
           wpfmac where                              print every location wpfmac uses
 
@@ -37,6 +39,7 @@ internal static class Program
                 "audit" => Audit(args[1..]),
                 "compare" => CompareCommand(args[1..]),
                 "clean" => Clean(args[1..]),
+                "reg" => RegFile.Run(args[1..]),
                 "where" => Where(),
                 _ => throw new UserError($"unknown command '{args[0]}'.\n\n{Usage}"),
             };
@@ -167,7 +170,10 @@ internal static class Program
         if (File.Exists(manifest))
         {
             var exports = new HashSet<string>(File.ReadLines(manifest).Select(l => l[(l.IndexOf('\t') + 1)..]), StringComparer.Ordinal);
-            var modules = new HashSet<string>(File.ReadLines(manifest).Select(l => l[..l.IndexOf('\t')]), StringComparer.OrdinalIgnoreCase);
+            // Exports are by name, whichever DLL they are imported from; the DLLs that resolve to the
+            // shim are listed separately (shcore's functions, say, are labelled with their API set).
+            string modulesFile = Path.Combine(runner.OverlayDir, "win32shim_modules.txt");
+            var modules = new HashSet<string>(File.Exists(modulesFile) ? File.ReadLines(modulesFile) : File.ReadLines(manifest).Select(l => l[..l.IndexOf('\t')]), StringComparer.OrdinalIgnoreCase);
             shimHas = (module, entry) => !modules.Contains(module) || exports.Contains(entry);
         }
         string md = WpfMac.Audit.Auditor.ToMarkdown(report, runner.App.Name, HostInfo.Rid, shimHas);
