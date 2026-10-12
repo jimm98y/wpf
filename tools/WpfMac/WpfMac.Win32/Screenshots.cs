@@ -294,7 +294,7 @@ public static class Screenshots
                 var f = MacNative.SendRect(w, MacNative.Sel("frame"));
                 bool visible = MacNative.SendBool(w, MacNative.Sel("isVisible"));
                 nint parent = MacNative.Send(w, MacNative.Sel("parentWindow"));
-                lines.Append($"  0x{w:x} '{title}' visible={visible} frame=({f.X},{f.Y} {f.Width}x{f.Height}) parent=0x{parent:x} level={MacNative.Send(w, MacNative.Sel("level"))}\n");
+                lines.Append($"  0x{w:x} '{title}' visible={visible} frame=({f.X},{f.Y} {f.Width}x{f.Height}) parent=0x{parent:x} level={MacNative.Send(w, MacNative.Sel("level"))} style=0x{MacNative.Send(w, MacNative.Sel("styleMask")):x} opaque={MacNative.SendBool(w, MacNative.Sel("isOpaque"))}\n");
             }
             Exports.LogOnce("nswindows:" + stamp, lines.ToString().TrimEnd());
         }
@@ -302,7 +302,7 @@ public static class Screenshots
         {
             var forms = new System.Text.StringBuilder($"open forms at {stamp}:\n");
             foreach (Forms.Form f in Forms.Application.OpenForms.Cast<Forms.Form>().ToArray())
-                forms.Append($"  {f.GetType().FullName} '{f.Text}' {f.Bounds} visible={f.Visible} enabled={f.Enabled} modal={f.Modal} handle={f.IsHandleCreated} invokeRequired={f.InvokeRequired} topLevel={f.TopLevel} owner={f.Owner?.Name}\n");
+                forms.Append($"  {f.GetType().FullName} '{f.Text}' {f.Bounds} visible={f.Visible} enabled={f.Enabled} modal={f.Modal} border={f.FormBorderStyle} handle={f.IsHandleCreated} invokeRequired={f.InvokeRequired} topLevel={f.TopLevel} owner={f.Owner?.Name}\n");
             Exports.LogOnce("forms:" + stamp, forms.ToString().TrimEnd());
         }
         catch (Exception e)
