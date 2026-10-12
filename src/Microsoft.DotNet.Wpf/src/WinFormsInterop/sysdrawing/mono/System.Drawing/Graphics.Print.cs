@@ -614,7 +614,7 @@ namespace System.Drawing
 			if (GpuRecorder == null) return false;
 			PointF [] pts; byte [] types;
 			try { pts = path.PathPoints; types = path.PathTypes; } catch (Exception) { return true; }
-			if (print_mode && mode == CombineMode.Replace) GpuRecorder.ResetAllClips ();
+			if (mode == CombineMode.Replace) GpuRecorder.ResetAllClips ();   // the whole clip, as GDI+'s
 			GpuRecorder.SetClipPath (ToXY (pts), types, path.FillMode == FillMode.Winding, mode == CombineMode.Exclude);
 			return true;
 		}

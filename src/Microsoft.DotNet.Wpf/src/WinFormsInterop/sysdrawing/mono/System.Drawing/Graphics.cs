@@ -4822,7 +4822,9 @@ namespace System.Drawing
 			EngineClipRect (rect, combineMode);
 			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) {
-				if (print_mode && combineMode == CombineMode.Replace) GpuRecorder.ResetAllClips ();
+				// Replace discards the whole clip, as GDI+'s does -- every clip set so far, not just
+				// the last (on screen as in print).
+				if (combineMode == CombineMode.Replace) GpuRecorder.ResetAllClips ();
 								GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude);
 				return;
 			}
@@ -4837,7 +4839,9 @@ namespace System.Drawing
 			EngineClipRect (rect, combineMode);
 			if (PrintRecordClip ()) return;
 			if (GpuRecorder != null) {
-				if (print_mode && combineMode == CombineMode.Replace) GpuRecorder.ResetAllClips ();
+				// Replace discards the whole clip, as GDI+'s does -- every clip set so far, not just
+				// the last (on screen as in print).
+				if (combineMode == CombineMode.Replace) GpuRecorder.ResetAllClips ();
 								GpuRecorder.SetClipRect (rect.X, rect.Y, rect.Width, rect.Height, combineMode == CombineMode.Exclude);
 				return;
 			}
@@ -4905,8 +4909,17 @@ namespace System.Drawing
 				// Graphics.Clip immediately before drawing its text, so the text was recorded
 				// underneath the control's own background and never appeared at all -- emitted at
 				// the right place, in the right colour, and painted over.
-				if (print_mode) GpuRecorder.ResetAllClips ();
-				else GpuRecorder.ClearClip ();
+				//
+				// Replace discards the WHOLE clip, as GDI+'s does, not just the clip set last. The
+				// usual save-and-restore -- `Region old = g.Clip; g.SetClip(path); ...; g.Clip = old`
+				// -- relies on it: a recording Graphics answers Clip with an infinite region, so the
+				// restore is a Replace with "everything", and removing only the last clip left any
+				// set in between in force. DotNetBar's ribbon sets two while painting its quick-access
+				// toolbar, and every tab after it was clipped to the toolbar's outline: gone.
+				// Intersect and Exclude narrow the clip there is; Union and Xor are approximated by
+				// replacing the last clip, as before.
+				if (print_mode || combineMode == CombineMode.Replace) GpuRecorder.ResetAllClips ();
+				else if (combineMode != CombineMode.Intersect && combineMode != CombineMode.Exclude) GpuRecorder.ClearClip ();
 				if (combineMode == CombineMode.Exclude) RecordRegionClip (region, true);
 								else if (!region.IsInfinite (this)) RecordRegionClip (region, false);
 				return;

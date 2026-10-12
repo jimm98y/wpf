@@ -835,7 +835,7 @@ namespace System.Windows.Forms
 		internal override PaintEventArgs PaintEventStart(ref Message msg, IntPtr handle, bool client)
 		{
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
-			T($"PaintEventStart h=0x{handle.ToInt64():x} client={client}");
+			T($"PaintEventStart h=0x{handle.ToInt64():x} client={client} invalid={hwnd?.Invalid} size={hwnd?.width}x{hwnd?.height}");
 			Graphics dc;
 			if (s_gpuRaster)
 			{
@@ -916,6 +916,7 @@ namespace System.Windows.Forms
 			var drawn = System.Drawing.WebGpuBackend.GpuRaster.EndScene(g)
 				as Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual;
 			if (drawn == null || (drawn.Content.Count == 0 && drawn.Children.Count == 0)) return;
+			T($"MergeIntoWindowScene h=0x{handle.ToInt64():x} hasScene={_scenes.ContainsKey(handle)}");
 
 			if (!(GetWindowScene(handle) is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual window))
 			{
@@ -1094,6 +1095,7 @@ namespace System.Windows.Forms
 				// The border goes on the scene that becomes the window's, which for a
 				// double-buffered control is the offscreen one -- PaintEventEnd only cancels here.
 				DrawWindowBorder(dest_handle, offscreen_dc);
+				T($"BlitFromOffscreen h=0x{dest_handle.ToInt64():x} r={r}");
 				_scenes[dest_handle] = ClipToWindow(System.Drawing.WebGpuBackend.GpuRaster.EndScene(offscreen_dc), dest_handle);
 				_paintedViaOffscreen.Add(dest_handle);
 				return;
