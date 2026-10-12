@@ -26,6 +26,9 @@ public static unsafe partial class Exports
         public string FontFace = "Segoe UI";
         public RECT Region;
         public bool Stock;
+        // What GDI+ draws into a 32-bit DIB section (Graphics.FromHdc of a DC it is selected into, a
+        // blit into that DC). See DrawingSurface.
+        public System.Drawing.Bitmap? Surface;
     }
 
     private sealed class DeviceContext
@@ -131,6 +134,52 @@ public static unsafe partial class Exports
     /// (so what the app draws there is shown), a bitmap over a DIB section's memory for a memory DC it
     /// is selected into, and otherwise a scratch bitmap the size of the DC.
     /// </summary>
+    /// <summary>
+    /// The one bitmap GDI+ draws into for a 32-bit DIB section, made from its memory the first time.
+    /// GDI+ draws straight into a DIB's memory; a Bitmap here copies the memory in and never writes
+    /// it back, and a bottom-up DIB got a blank bitmap of its own each time. Whatever was drawn into a
+    /// memory DC was gone by the time it was blitted out: DotNetBar draws each combo box into one
+    /// and blits it to the window, and they showed nothing but their text. All drawing into the DIB
+    /// now goes to this bitmap, and readers of the DIB take their pixels from it (SyncBits).
+    /// </summary>
+    private static System.Drawing.Bitmap DrawingSurface(GdiObject bmp)
+    {
+        if (bmp.Surface != null) return bmp.Surface;
+        var surface = new System.Drawing.Bitmap(Math.Max(1, bmp.Width), Math.Max(1, bmp.Height), System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        var data = surface.LockBits(new System.Drawing.Rectangle(0, 0, surface.Width, surface.Height),
+            System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        try
+        {
+            int row = bmp.Width * 4;
+            for (int y = 0; y < bmp.Height; y++)
+                Buffer.MemoryCopy((byte*)bmp.Bits + (long)(bmp.BottomUp ? bmp.Height - 1 - y : y) * row, (byte*)data.Scan0 + (long)y * data.Stride, data.Stride, row);
+        }
+        finally
+        {
+            surface.UnlockBits(data);
+        }
+        return bmp.Surface = surface;
+    }
+
+    /// <summary>Brings a DIB section's memory up to date with what was drawn into it, before
+    /// anything reads that memory.</summary>
+    private static void SyncBits(GdiObject bmp)
+    {
+        if (bmp.Surface == null || bmp.Bits == null) return;
+        var data = bmp.Surface.LockBits(new System.Drawing.Rectangle(0, 0, bmp.Surface.Width, bmp.Surface.Height),
+            System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        try
+        {
+            int row = bmp.Width * 4;
+            for (int y = 0; y < bmp.Height; y++)
+                Buffer.MemoryCopy((byte*)data.Scan0 + (long)y * data.Stride, (byte*)bmp.Bits + (long)(bmp.BottomUp ? bmp.Height - 1 - y : y) * row, row, row);
+        }
+        finally
+        {
+            bmp.Surface.UnlockBits(data);
+        }
+    }
+
     private static object? SurfaceOf(IntPtr hdc)
     {
         if (!s_dcs.TryGetValue(hdc, out var dc)) return null;
@@ -140,11 +189,7 @@ public static unsafe partial class Exports
         }
         if (dc.Memory && s_gdi.TryGetValue(dc.Bitmap, out var bmp) && !bmp.Stock && bmp.Bits != null)
         {
-            if (bmp.BitsPerPixel == 32 && !bmp.BottomUp)
-            {
-                return new System.Drawing.Bitmap(bmp.Width, bmp.Height, bmp.Width * 4,
-                    System.Drawing.Imaging.PixelFormat.Format32bppPArgb, (IntPtr)bmp.Bits);
-            }
+            if (bmp.BitsPerPixel == 32) return DrawingSurface(bmp);
             return new System.Drawing.Bitmap(Math.Max(1, bmp.Width), Math.Max(1, bmp.Height));
         }
         RECT r = dc.Hwnd != 0 ? WindowRect(dc.Hwnd, out _) : default;
@@ -157,11 +202,27 @@ public static unsafe partial class Exports
     [UnmanagedCallersOnly] private static nint GetDCEx(nint hwnd, nint clip, uint flags) => NewDC(new DeviceContext { Hwnd = hwnd });
     [UnmanagedCallersOnly] private static int ReleaseDC(nint hwnd, nint hdc) => s_dcs.TryRemove(hdc, out _) ? 1 : 0;
 
+    /// <summary>Tells the WinForms driver a window of its was painted (BeginPaint) or validated
+    /// (ValidateRect) by code that draws it through GDI.</summary>
+    internal static void ValidateWinFormsWindow(nint hwnd, bool repaint)
+    {
+        if (Resolve(hwnd) is not System.Windows.Forms.Control c) return;
+        Ui(c, () =>
+        {
+            object? driver = typeof(System.Windows.Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
+                ?.GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
+            driver?.GetType().GetMethod("ValidateWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                ?.Invoke(driver, new object[] { (IntPtr)hwnd, repaint });
+            return 0;
+        });
+    }
+
     // PAINTSTRUCT: hdc, fErase, RECT rcPaint, fRestore, fIncUpdate, rgbReserved[32].
     [UnmanagedCallersOnly]
     private static nint BeginPaint(nint hwnd, byte* ps)
     {
         nint hdc = NewDC(new DeviceContext { Hwnd = hwnd });
+        ValidateWinFormsWindow(hwnd, repaint: true);
         NativeMemory.Clear(ps, 72);
         *(nint*)ps = hdc;
         RECT r = WindowRect(hwnd, out _);
@@ -259,6 +320,7 @@ public static unsafe partial class Exports
         if (o.Stock) return TRUE;
         s_gdi.TryRemove(obj, out _);
         if (o.Bits != null) NativeMemory.Free(o.Bits);
+        o.Surface?.Dispose();
         return TRUE;
     }
 
@@ -427,6 +489,7 @@ public static unsafe partial class Exports
     {
         if (!s_dcs.TryGetValue(src, out var dc) || !dc.Memory) return null;
         if (!s_gdi.TryGetValue(dc.Bitmap, out var bmp) || bmp.Stock || bmp.Bits == null || bmp.BitsPerPixel != 32) return null;
+        SyncBits(bmp);
         // RGB, not ARGB: BitBlt copies colour and ignores alpha, and the DIBs GDI code fills usually leave
         // alpha at 0, which drawn as ARGB would be invisible.
         var image = new System.Drawing.Bitmap(bmp.Width, bmp.Height, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
@@ -472,7 +535,8 @@ public static unsafe partial class Exports
 
     private static int Blit(nint dst, int x, int y, int w, int h, nint src, int sx, int sy, int sw, int sh, uint rop)
     {
-        using System.Drawing.Bitmap? image = SourceImage(src);
+        // Not disposed here: a recording destination draws it later, when it is composited.
+        System.Drawing.Bitmap? image = SourceImage(src);
         if (image == null)
         {
             LogOnce("gdi:blit", "win32: a blit whose source is not a memory DC with a 32-bit DIB is accepted but not drawn");
@@ -531,6 +595,7 @@ public static unsafe partial class Exports
             if (hdcSrc != 0) LogOnce("ulw-nobits", "win32: UpdateLayeredWindow from a DC with no 32-bit bitmap selected: only the position, size and alpha change");
             return TRUE;   // a move, resize or new alpha only; the last picture stays
         }
+        SyncBits(bmp);
 
         int w = psize != null ? psize[0] : bmp.Width, h = psize != null ? psize[1] : bmp.Height;
         int sx = pptSrc != null ? pptSrc->X : 0, sy = pptSrc != null ? pptSrc->Y : 0;
