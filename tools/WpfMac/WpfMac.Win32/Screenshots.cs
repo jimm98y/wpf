@@ -26,6 +26,7 @@ public static class Screenshots
         int ms = Math.Max(1, intervalSeconds) * 1000;
         s_timer = new Timer(_ => CaptureAll(directory), null, ms, ms);
         StartClickDiagnostic();
+        StartWheelDiagnostic();
         StartDragDiagnostic();
 
         // WPFMAC_DEBUG_ZOOM=<seconds> (macOS): zoom (maximize) the key window then, as its green button
@@ -48,6 +49,27 @@ public static class Screenshots
 
     private static Timer? s_zoomTimer;
     private static readonly List<Timer> s_clickTimers = new();
+
+    // WPFMAC_DEBUG_WHEEL=x,y,notches,seconds: turn the wheel at form point (x,y), through the
+    // WinForms driver (positive scrolls up, as on Windows).
+    private static void StartWheelDiagnostic()
+    {
+        string? spec = Environment.GetEnvironmentVariable("WPFMAC_DEBUG_WHEEL");
+        if (string.IsNullOrEmpty(spec)) return;
+        double[] v = spec.Split(',').Select(t => double.TryParse(t, out double d) ? d : double.NaN).ToArray();
+        if (v.Length < 4 || v.Any(double.IsNaN)) return;
+        s_clickTimers.Add(new Timer(_ =>
+        {
+            Forms.Form? form = Forms.Application.OpenForms.Cast<Forms.Form>().FirstOrDefault(f => f.IsHandleCreated && f.Visible && f.TopLevel);
+            form?.BeginInvoke(() =>
+            {
+                object? driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")?.GetField("driver", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
+                MethodInfo? wheel = driver?.GetType().GetMethod("InjectWheel", BindingFlags.NonPublic | BindingFlags.Instance);
+                wheel?.Invoke(driver, new object[] { form.Left + (int)v[0], form.Top + (int)v[1], (int)v[2] * 120 });
+                Exports.Log($"debug wheel: {(int)v[2]} notches at {v[0]},{v[1]}");
+            });
+        }, null, (int)(v[3] * 1000), Timeout.Infinite));
+    }
     private static bool s_clickLogger;
 
     // WPFMAC_DEBUG_CLICK=x,y,seconds (macOS): post a real left click (NSEvent mouse down + up) at
