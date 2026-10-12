@@ -145,6 +145,8 @@ namespace MS.Internal.Interop
     public sealed partial class CocoaWindow : MS.Internal.Interop.IPlatformWindow
     {
         public static System.IntPtr MouseCaptureHandle;
+        public static System.Func<System.IntPtr, bool> ForeignEventHandler;
+        public static void DispatchEvent(System.IntPtr evt) { }
         public CocoaWindow() { }
         public System.IntPtr ContentView { get { throw null; } }
         public bool IsBorderless { get { throw null; } }

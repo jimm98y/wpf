@@ -27,7 +27,9 @@ internal static partial class Program
         var wpfButton = new WpfControls.Button { Content = "A WPF button inside WinForms", Padding = new Wpf.Thickness(8) };
         var host = new ElementHost { Dock = Forms.DockStyle.Top, Height = 80, Child = wpfButton };
         var log = new Forms.ListBox { Dock = Forms.DockStyle.Fill };
+        var clickMe = new Forms.Button { Text = "Click me", Dock = Forms.DockStyle.Bottom, Height = 40 };
         form.Controls.Add(log);
+        form.Controls.Add(clickMe);
         form.Controls.Add(host);
 
         form.Shown += (_, _) =>
@@ -62,7 +64,7 @@ internal static partial class Program
                 Run("WMI", Wmi);
                 Run("user32", () => User32(form.Handle));
                 window.Close();
-                if (OperatingSystem.IsMacOS()) MacWindowFollows(form, args, Finish);
+                if (OperatingSystem.IsMacOS()) MacWindowFollows(form, args, () => MacClickReachesControl(form, clickMe, Finish));
                 else Finish();
             };
             check.Start();
@@ -184,6 +186,42 @@ internal static partial class Program
         };
         step.Start();
     }
+
+    // A real click (NSEvent, through the app's event queue) on a WinForms button must raise its
+    // Click, wherever the window is on screen.
+    private static void MacClickReachesControl(Forms.Form form, Forms.Button button, Action done)
+    {
+        IntPtr window = MacWindowTitled(form.Text);
+        int clicks = 0;
+        button.Click += (_, _) => clicks++;
+        System.Drawing.Point inForm = form.PointToClient(button.PointToScreen(new System.Drawing.Point(button.Width / 2, button.Height / 2)));
+        NSRect content = SendRect(Send(window, Sel("contentView")), Sel("frame"));
+        var location = new NSPoint { X = inForm.X, Y = content.H - inForm.Y };
+        nint number = (nint)Send(window, Sel("windowNumber"));
+        IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+        foreach (nuint type in new nuint[] { 1, 2 })   // left mouse down, up
+        {
+            IntPtr evt = SendMouseEvent(objc_getClass("NSEvent"), Sel("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:"),
+                                        type, location, 0, 0, number, IntPtr.Zero, 0, 1, type == 1 ? 1f : 0f);
+            SendPostEvent(app, Sel("postEvent:atStart:"), evt, false);
+        }
+        var wait = new Forms.Timer { Interval = 700 };
+        wait.Tick += (_, _) =>
+        {
+            wait.Stop();
+            Run($"a click reaches the control under it (form at {form.Location})", () => clicks == 1 ? null : $"{clicks} Click events");
+            done();
+        };
+        wait.Start();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NSPoint { public double X, Y; }
+
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")]
+    private static partial IntPtr SendMouseEvent(IntPtr cls, IntPtr sel, nuint type, NSPoint location, nuint flags, double timestamp, nint windowNumber, IntPtr context, nint eventNumber, nint clickCount, float pressure);
+    [LibraryImport(ObjC, EntryPoint = "objc_msgSend")]
+    private static partial void SendPostEvent(IntPtr app, IntPtr sel, IntPtr evt, [MarshalAs(UnmanagedType.U1)] bool atStart);
 
     private static IntPtr MacWindowTitled(string title)
     {
