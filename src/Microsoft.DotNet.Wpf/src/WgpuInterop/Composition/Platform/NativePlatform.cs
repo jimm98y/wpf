@@ -201,15 +201,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         };
 
         /// <summary>
-        /// Where a window sits inside its owner, in device pixels. Only meaningful where popups are
-        /// child views of one host window (see <see cref="PopupsShareOwnerSurface"/>); elsewhere a
-        /// popup is its own OS window and presents itself, so this is never asked for.
+        /// Where a window sits, in device pixels. On the mobile heads, where popups are child views
+        /// of one host window (see <see cref="PopupsShareOwnerSurface"/>), that is inside its owner.
+        /// On macOS it is the window's content origin on screen (top-left origin): content embedded
+        /// in it as a window of its own -- an ElementHost's WPF tree -- is placed in screen space.
         /// </summary>
         public static void GetWindowOrigin(IntPtr windowHandle, out int x, out int y)
         {
             x = y = 0;
             if (Current == PlatformKind.Android) AndroidInterop.GetWindowOrigin(windowHandle, out x, out y);
             else if (Current == PlatformKind.IOS) IosInterop.GetWindowOrigin(windowHandle, out x, out y);
+            else if (Current == PlatformKind.MacOS) MacInterop.GetWindowOrigin(windowHandle, out x, out y);
             else if (Current == PlatformKind.Linux) LinuxInterop.OriginQuery?.Invoke(windowHandle, out x, out y);
         }
 

@@ -44,6 +44,21 @@ public static class Screenshots
             Exports.LogOnce("shots:wpf", "screenshots (WPF): " + e.Message);
         }
 
+        if (Environment.GetEnvironmentVariable("WPFMAC_DUMP_WINDOWS") == "1")
+        {
+            try
+            {
+                foreach (PresentationSource ps in PresentationSource.CurrentSources)
+                {
+                    if (ps is HwndSource source && !source.IsDisposed) source.Dispatcher.BeginInvoke(() => DumpWpf(source, stamp));
+                }
+            }
+            catch (Exception e)
+            {
+                Exports.LogOnce("dump-wpf-fail", "wpf window dump: " + e.Message);
+            }
+        }
+
         try
         {
             Type? host = typeof(Forms.Form).Assembly.GetType("System.Windows.Forms.PresentationHost");
@@ -97,6 +112,38 @@ public static class Screenshots
         catch (Exception e)
         {
             Exports.LogOnce("dump-fail", "window dump: " + e.Message);
+        }
+    }
+
+    /// <summary>WPFMAC_DUMP_WINDOWS=1: a WPF window's place on screen and what it belongs to, to the compat log.</summary>
+    private static void DumpWpf(HwndSource source, string stamp)
+    {
+        try
+        {
+            string where = source.RootVisual is FrameworkElement root && root.IsVisible
+                ? $"{root.PointToScreen(new Point(0, 0))} {root.ActualWidth}x{root.ActualHeight} {root.GetType().FullName}"
+                : $"(not visible) {source.RootVisual?.GetType().FullName}";
+            object? wrapper = typeof(HwndSource).GetField("_hwndWrapper", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(source);
+            object? platform = wrapper?.GetType().GetField("_platformWindow", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(wrapper);
+            nint owner = platform?.GetType().GetField("_ownerHandle", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(platform) is IntPtr o ? o : 0;
+            nint nsWindow = platform?.GetType().GetField("_window", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(platform) is IntPtr w ? w : 0;
+            if (nsWindow != 0 && OperatingSystem.IsMacOS())
+            {
+                bool visible = MacNative.SendBool(nsWindow, MacNative.Sel("isVisible"));
+                nint parentWindow = MacNative.Send(nsWindow, MacNative.Sel("parentWindow"));
+                var frame = MacNative.SendRect(nsWindow, MacNative.Sel("frame"));
+                where += $"; NSWindow visible={visible} frame=({frame.X},{frame.Y} {frame.Width}x{frame.Height}) parentWindow=0x{parentWindow:x}";
+            }
+            string ownerText = owner == 0 ? "none" : $"0x{owner:x}";
+            if (owner != 0 && Forms.Control.FromHandle(owner) is Forms.Control c)
+                ownerText += $" WinForms {c.GetType().FullName} '{c.Name}' at {c.PointToScreen(System.Drawing.Point.Empty)} {c.Size} in form '{c.FindForm()?.Text}' at {c.FindForm()?.Location}";
+            else if (owner != 0 && HwndSource.FromHwnd(owner) is HwndSource os)
+                ownerText += $" WPF {os.RootVisual?.GetType().FullName}";
+            Exports.LogOnce($"dumpwpf:{stamp}:{source.Handle}", $"wpf window 0x{source.Handle:x} at {stamp}: {where}; platform {platform?.GetType().Name}; owner {ownerText}");
+        }
+        catch (Exception e)
+        {
+            Exports.LogOnce("dump-wpf-fail2", "wpf window dump: " + e.Message);
         }
     }
 
