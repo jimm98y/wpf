@@ -326,6 +326,7 @@ namespace System.Windows.Forms
 				if (h == null) continue;
 				Point p = ScreenLocation(h);
 				if (screenX < p.X || screenY < p.Y || screenX >= p.X + h.width || screenY >= p.Y + h.height) continue;
+				if (PassesMouseThrough(h, screenX - p.X, screenY - p.Y)) continue;
 				return ordered[i];
 			}
 			return IntPtr.Zero;
@@ -355,6 +356,7 @@ namespace System.Windows.Forms
 				if (h == null) continue;
 				Point p = ScreenLocation(h);
 				if (screenX < p.X || screenY < p.Y || screenX >= p.X + h.width || screenY >= p.Y + h.height) continue;
+				if (PassesMouseThrough(h, screenX - p.X, screenY - p.Y)) continue;
 				return ordered[i];
 			}
 			return IntPtr.Zero;
@@ -534,7 +536,27 @@ namespace System.Windows.Forms
 				|| message == Msg.WM_MBUTTONDOWN)
 				XplatUI.RaiseMousePress(target);
 
-			SendMessage(target, message, (IntPtr)wParam, lp);
+			var m = Message.Create(target, (int)message, (IntPtr)wParam, lp);
+			if (FilteredOut(ref m)) return;
+			SendMessage(m.HWnd, (Msg)m.Msg, m.WParam, m.LParam);
+		}
+
+		/// <summary>Offers an input message to the application's message filters first, as a message
+		/// loop does with everything it takes off the queue (Application.AddMessageFilter). Input here
+		/// goes to the window directly, not through the queue, so no filter ever saw a click or a key:
+		/// DotNetBar closes its menus and drop-downs from a filter -- a click outside them, a click on
+		/// an item -- and its File menu could neither be used nor closed. True: a filter took it.</summary>
+		private static bool FilteredOut(ref Message m)
+		{
+			try
+			{
+				return Application.FilterMessage(ref m);
+			}
+			catch (Exception ex)
+			{
+				T("message filter: " + ex.Message);
+				return false;
+			}
 		}
 
 		internal void InjectMouseMove(int screenX, int screenY, bool leftDown)
@@ -649,6 +671,7 @@ namespace System.Windows.Forms
 			captions.Remove(handle);
 			_scenes.Remove(handle);
 			_layered.Remove(handle);
+			_layeredPixels.Remove(handle);
 			_reveals.Remove(handle);
 			_frames.Remove(handle);
 			_paintVersion++;   // a window disappeared from the composite
@@ -1570,6 +1593,8 @@ namespace System.Windows.Forms
 			// driver posted straight to the focused window's WndProc, so none of it ran -- Tab did
 			// nothing at all, and with nothing moving the focus no control ever showed a focus
 			// rectangle either.
+			var filtered = Message.Create(target, (int)Msg.WM_KEYDOWN, (IntPtr)vkey, IntPtr.Zero);
+			if (FilteredOut(ref filtered)) return true;
 			Control focused = Control.FromHandle(target);
 			if (focused != null)
 			{
@@ -1603,11 +1628,15 @@ namespace System.Windows.Forms
 		}
 		internal void InjectChar(char ch)
 		{
-			if (_focusHandle != IntPtr.Zero) SendMessage(_focusHandle, Msg.WM_CHAR, (IntPtr)ch, IntPtr.Zero);
+			if (_focusHandle == IntPtr.Zero) return;
+			var m = Message.Create(_focusHandle, (int)Msg.WM_CHAR, (IntPtr)ch, IntPtr.Zero);
+			if (!FilteredOut(ref m)) SendMessage(_focusHandle, Msg.WM_CHAR, (IntPtr)ch, IntPtr.Zero);
 		}
 		internal void InjectKeyUp(int vkey)
 		{
-			if (_focusHandle != IntPtr.Zero) SendMessage(_focusHandle, Msg.WM_KEYUP, (IntPtr)vkey, IntPtr.Zero);
+			if (_focusHandle == IntPtr.Zero) return;
+			var m = Message.Create(_focusHandle, (int)Msg.WM_KEYUP, (IntPtr)vkey, IntPtr.Zero);
+			if (!FilteredOut(ref m)) SendMessage(_focusHandle, Msg.WM_KEYUP, (IntPtr)vkey, IntPtr.Zero);
 		}
 		// Sibling paint order, front (topmost) first -- Win32 keeps one of these per parent and
 		// WinForms drives it through Control.UpdateZOrder. The generated stub threw it away, so
