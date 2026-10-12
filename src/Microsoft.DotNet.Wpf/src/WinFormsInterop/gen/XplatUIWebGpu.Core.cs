@@ -1343,8 +1343,28 @@ namespace System.Windows.Forms
 			});
 		}
 
+		/// <summary>Set by the host: start moving the top-level window of the given handle with the
+		/// pointer, as the button that is down now drags it (SC_MOVE).</summary>
+		internal static Action<IntPtr> BeginWindowMove;
+
 		internal override IntPtr DefWndProc(ref Message msg)
 		{
+			// The window menu's commands, which a form that draws its own caption sends itself: its
+			// caption starts a move with SC_MOVE|HTCAPTION, its buttons minimize, maximize and close.
+			// Win32's DefWindowProc carries them out; here nothing did, and such a window could not be
+			// dragged by its caption.
+			if (msg.Msg == (int)Msg.WM_SYSCOMMAND && Control.FromHandle(msg.HWnd) is Form form)
+			{
+				const int SC_MOVE = 0xF010, SC_MINIMIZE = 0xF020, SC_MAXIMIZE = 0xF030, SC_CLOSE = 0xF060, SC_RESTORE = 0xF120;
+				switch ((int)msg.WParam.ToInt64() & 0xFFF0)
+				{
+					case SC_MOVE: BeginWindowMove?.Invoke(msg.HWnd); return IntPtr.Zero;
+					case SC_MINIMIZE: form.WindowState = FormWindowState.Minimized; return IntPtr.Zero;
+					case SC_MAXIMIZE: form.WindowState = FormWindowState.Maximized; return IntPtr.Zero;
+					case SC_RESTORE: form.WindowState = FormWindowState.Normal; return IntPtr.Zero;
+					case SC_CLOSE: PostMessage(msg.HWnd, Msg.WM_CLOSE, IntPtr.Zero, IntPtr.Zero); return IntPtr.Zero;
+				}
+			}
 			// Win32 hands an unhandled wheel to the parent, and controls rely on it: Mono's ListView
 			// subscribes to MouseWheel on the LIST VIEW, while the window under the pointer is its
 			// item pane. Without this the wheel did nothing over any list or grid.

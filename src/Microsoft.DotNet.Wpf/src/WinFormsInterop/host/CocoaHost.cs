@@ -162,6 +162,82 @@ internal sealed class CocoaHost : IWinFormsHost
 
     // ---- window + present -------------------------------------------------------
 
+    // The window's frame and its see-through parts follow the form, as Win32 draws them from the
+    // window's styles. A borderless form (a splash screen) had a title bar, and a layered one --
+    // whose picture carries its own alpha -- was opaque white where the picture is transparent.
+    private bool _transparent;
+
+    private nuint StyleMask()
+    {
+        const nuint Titled = 1, Closable = 2, Miniaturizable = 4, Resizable = 8, FullSizeContentView = 1 << 15;
+        nuint buttons = (_form.ControlBox ? Closable : 0) | (_form.ControlBox && _form.MinimizeBox ? Miniaturizable : 0);
+        nuint style = _form.FormBorderStyle switch
+        {
+            FormBorderStyle.None => 0,   // borderless
+            FormBorderStyle.Sizable or FormBorderStyle.SizableToolWindow => Titled | buttons | Resizable,
+            _ => Titled | buttons,
+        };
+        // A form that draws its own caption keeps a titled window -- one that resizes, takes the
+        // keyboard and has rounded corners -- with its content under the title bar, which is hidden
+        // (HideTitleBar).
+        if (style != 0 && _ownCaption) style |= FullSizeContentView;
+        return style;
+    }
+
+    // Whether the form draws its own caption: it says the top of its client area is its caption or
+    // its sizing border, as a Win32 form does that takes the non-client area over (WM_NCCALCSIZE)
+    // and draws a caption there -- DotNetBar's ribbon form, Office-style windows. Windows then shows
+    // one caption, the form's; a native title bar above it was a second. Asked with WM_NCHITTEST.
+    private bool _ownCaption;
+
+    private bool DrawsOwnCaption()
+    {
+        if (_form.FormBorderStyle == FormBorderStyle.None || !_form.IsHandleCreated) return false;
+        // Its own caption, or its own sizing border inside the client area: both mean the form has
+        // taken the frame over.
+        int hit = HitTest(_form.Left + _form.Width / 2, _form.Top + 2);
+        return hit == HTCAPTION || hit == HTTOP || hit == HTTOPLEFT || hit == HTTOPRIGHT;
+    }
+
+    private const int HTCAPTION = 2, HTLEFT = 10, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14, HTBOTTOMRIGHT = 17;
+
+    private int HitTest(int x, int y)
+    {
+        try
+        {
+            return (int)XplatUI.SendMessage(_form.Handle, Msg.WM_NCHITTEST, IntPtr.Zero, (IntPtr)((y << 16) | (x & 0xffff)));
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private void HideTitleBar(IntPtr window)
+    {
+        if (!_ownCaption) return;
+        SendVoidBool(window, Sel("setTitlebarAppearsTransparent:"), true);
+        Send(window, Sel("setTitleVisibility:"), (IntPtr)1);   // NSWindowTitleHidden
+        for (int button = 0; button <= 2; button++)            // close, miniaturize, zoom: the form has its own
+        {
+            IntPtr b = Send(window, Sel("standardWindowButton:"), (IntPtr)button);
+            if (b != IntPtr.Zero) SendVoidBool(b, Sel("setHidden:"), true);
+        }
+    }
+
+    private bool IsLayered()
+    {
+        Hwnd hwnd = _form.IsHandleCreated ? Hwnd.ObjectFromHandle(_form.Handle) : null;
+        return hwnd != null && (hwnd.initial_ex_style & WindowExStyles.WS_EX_LAYERED) != 0;
+    }
+
+    private static void MakeTransparent(IntPtr window)
+    {
+        SendVoidBool(window, Sel("setOpaque:"), false);
+        SendVoidPtr(window, Sel("setBackgroundColor:"), Send(Cls("NSColor"), Sel("clearColor")));
+        SendVoidBool(window, Sel("setHasShadow:"), false);   // a layered window draws its own, if any
+    }
+
     public void Show()
     {
         if (_offMain)
@@ -169,12 +245,17 @@ internal sealed class CocoaHost : IWinFormsHost
             double fw = _form.Width, fh = _form.Height;
             int fx = _form.Left, fy = _form.Top;
             string title = _form.Text ?? "WinForms";
+            _ownCaption = DrawsOwnCaption();
+            nuint style = StyleMask();
+            _transparent = IsLayered();
             OnMain(() =>
             {
                 if (_closed) return;
                 EnsureApp();
                 IntPtr nw = SendInitWindow(Send(Cls("NSWindow"), Sel("alloc")), Sel("initWithContentRect:styleMask:backing:defer:"),
-                    CocoaRect(fx, fy, fw, fh), (nuint)15, (nuint)2, false);
+                    CocoaRect(fx, fy, fw, fh), style, (nuint)2, false);
+                if (_transparent) MakeTransparent(nw);
+                HideTitleBar(nw);
                 SendVoidPtr(nw, Sel("setTitle:"), NSStr(title));
                 IntPtr nv = SendInitRect(Send(Cls("NSView"), Sel("alloc")), Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = fw, h = fh });
                 SendVoidBool(nv, Sel("setWantsLayer:"), true);
@@ -189,6 +270,7 @@ internal sealed class CocoaHost : IWinFormsHost
                         var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
                         IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, nv);
                         _pendingScale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(nv);
+                        if (_transparent) SendVoidBool(Send(nv, Sel("layer")), Sel("setOpaque:"), false);
                         _pendingContext = ctx;
                         _pendingSurface = surface;
                     }
@@ -209,8 +291,11 @@ internal sealed class CocoaHost : IWinFormsHost
         double w = _form.Width, h = _form.Height;
         IntPtr win = Send(Cls("NSWindow"), Sel("alloc"));
         var rect = CocoaRect(_form.Left, _form.Top, w, h);
-        // styleMask: Titled(1)|Closable(2)|Miniaturizable(4)|Resizable(8) = 15; backing Buffered(2).
-        win = SendInitWindow(win, Sel("initWithContentRect:styleMask:backing:defer:"), rect, (nuint)15, (nuint)2, false);
+        _transparent = IsLayered();
+        _ownCaption = DrawsOwnCaption();
+        win = SendInitWindow(win, Sel("initWithContentRect:styleMask:backing:defer:"), rect, StyleMask(), (nuint)2, false);   // backing Buffered(2)
+        if (_transparent) MakeTransparent(win);
+        HideTitleBar(win);
         SendVoidPtr(win, Sel("setTitle:"), NSStr(_form.Text ?? "WinForms"));
 
         IntPtr view = Send(Cls("NSView"), Sel("alloc"));
@@ -245,6 +330,11 @@ internal sealed class CocoaHost : IWinFormsHost
             // Scene path uses an sRGB surface so the renderer's gamma-correct glyph coverage kicks in
             // (crisp, WPF-weight text); the bitmap path stays non-sRGB (pixels are already display-space).
             _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster);
+            if (_transparent)
+            {
+                SendVoidBool(Send(_imageView, Sel("layer")), Sel("setOpaque:"), false);
+                _wgpu.SetTransparent(true);
+            }
             if (Environment.GetEnvironmentVariable("WF_TRACE") != null)
                 Console.Error.WriteLine($"WebGPU present path active (surface 0x{surface:x}, format {_wgpu.Format}, scale {scale})");
             // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and
@@ -319,6 +409,7 @@ internal sealed class CocoaHost : IWinFormsHost
             if (_wgpu == null && _pendingSurface != IntPtr.Zero && !_closed)
             {
                 _wgpu = new WgpuPresenter(_pendingContext, _pendingSurface, _form.Width, _form.Height, _pendingScale, srgb: _gpuRaster);
+                _wgpu.SetTransparent(_transparent);
                 _lastVer = -1;
                 if (Environment.GetEnvironmentVariable("WF_TRACE_SURFACE") == "1") Console.WriteLine($"[CocoaHost] off-main presenter for '{_form.Text}' {_form.Width}x{_form.Height}");
             }
@@ -804,7 +895,31 @@ internal sealed class CocoaHost : IWinFormsHost
         else Send(App(), Sel("sendEvent:"), evt);
     }
 
+    // The event being handled, for a window move the form starts from inside it (SC_MOVE).
+    [ThreadStatic] private static IntPtr t_event;
+    [ThreadStatic] private static CocoaHost t_eventHost;
+
+    private static void MoveWindowWithPointer(IntPtr handle)
+    {
+        CocoaHost host = t_eventHost;
+        if (host == null || t_event == IntPtr.Zero || host._window == IntPtr.Zero) return;
+        if (!host._form.IsHandleCreated || host._form.Handle != handle) return;
+        host._formHasMouse = false;   // the window drag takes the rest of this press
+        SendVoidPtr(host._window, Sel("performWindowDragWithEvent:"), t_event);
+    }
+
     private void HandleEvent(IntPtr evt)
+    {
+        XplatUIWebGpu.BeginWindowMove ??= MoveWindowWithPointer;
+        IntPtr outerEvent = t_event;
+        CocoaHost outerHost = t_eventHost;
+        t_event = evt;
+        t_eventHost = this;
+        try { HandleEventCore(evt); }
+        finally { t_event = outerEvent; t_eventHost = outerHost; }
+    }
+
+    private void HandleEventCore(IntPtr evt)
     {
         nint type = (nint)Send(evt, Sel("type"));
         // NSEventType: LeftMouseDown=1, LeftMouseUp=2, RightMouseDown=3, RightMouseUp=4,
@@ -824,6 +939,23 @@ internal sealed class CocoaHost : IWinFormsHost
             {
                 Send(App(), Sel("sendEvent:"), evt);
                 return;
+            }
+            // A press on a caption the form draws itself moves the window, and a double click zooms
+            // it, as Windows' default handling of HTCAPTION does; a press on its border resizes it.
+            if (type == 1 && _ownCaption && !_formHasMouse)
+            {
+                int hit = HitTest((int)loc.x + _form.Left, (int)(_form.Height - loc.y) + _form.Top);
+                if (hit == HTCAPTION)
+                {
+                    if ((nint)Send(evt, Sel("clickCount")) >= 2) SendVoidPtr(_window, Sel("zoom:"), IntPtr.Zero);
+                    else SendVoidPtr(_window, Sel("performWindowDragWithEvent:"), evt);
+                    return;
+                }
+                if (hit >= HTLEFT && hit <= HTBOTTOMRIGHT)
+                {
+                    Send(App(), Sel("sendEvent:"), evt);
+                    return;
+                }
             }
             if (type == 1 || type == 3) _formHasMouse = true;
             else if (type == 2 || type == 4) _formHasMouse = false;
