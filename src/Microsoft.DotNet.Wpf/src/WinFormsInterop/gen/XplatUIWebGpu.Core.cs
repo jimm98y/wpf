@@ -802,7 +802,8 @@ namespace System.Windows.Forms
 			width = Math.Max(0, width - frame.Horizontal);
 			height = Math.Max(0, height - frame.Vertical);
 			hwnd.x = x; hwnd.y = y;
-			if (width != hwnd.width || height != hwnd.height)
+			bool resized = width != hwnd.width || height != hwnd.height;
+			if (resized)
 			{
 				hwnd.width = width; hwnd.height = height;
 				if (!s_gpuRaster)
@@ -810,6 +811,11 @@ namespace System.Windows.Forms
 					if (backing.TryGetValue(handle, out Bitmap old)) old?.Dispose();
 					backing[handle] = new Bitmap(Math.Max(1, width), Math.Max(1, height));
 				}
+				// Windows repaints a resized window -- what it uncovers, and all of it for the native
+				// controls whose class asks for that (CS_HREDRAW | CS_VREDRAW: combo box, list box,
+				// button). Here a picture recorded at the old size stayed: DotNetBar's combo boxes,
+				// painted once at the default 121 wide and then made narrower, lost their arrows.
+				if (s_gpuRaster) Invalidate(handle, Rectangle.Empty, false);
 			}
 			_paintVersion++;   // a window moved/resized
 			PerformNCCalc(hwnd);
@@ -900,6 +906,21 @@ namespace System.Windows.Forms
 			hwnd.expose_pending = false;
 			hwnd.ClearInvalidArea();
 			return pe;
+		}
+
+		/// <summary>BeginPaint (repaint: true) or ValidateRect from code that answers WM_PAINT itself,
+		/// through GDI rather than through WinForms' paint: the window is valid again, so the next
+		/// invalidation asks for a new paint, and a repaint starts the window's picture afresh. Without
+		/// it the paint was never marked done -- every later Invalidate found one still pending and
+		/// queued none, so the window kept its first picture for good (DotNetBar's combo boxes kept
+		/// the one from before they were sized) -- and each repaint was drawn over all the earlier ones.</summary>
+		internal void ValidateWindow(IntPtr handle, bool repaint)
+		{
+			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
+			if (hwnd == null) return;
+			hwnd.expose_pending = false;
+			hwnd.ClearInvalidArea();
+			if (repaint) _scenes.Remove(handle);
 		}
 
 		// GPU raster is what this stack IS: the driver records a scene per window and the host

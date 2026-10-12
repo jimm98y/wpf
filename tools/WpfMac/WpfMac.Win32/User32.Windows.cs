@@ -887,7 +887,7 @@ public static unsafe partial class Exports
     });
 
     [UnmanagedCallersOnly] private static int InvalidateRect(nint hwnd, RECT* r, int erase) { Invalidate(Resolve(hwnd)); return TRUE; }
-    [UnmanagedCallersOnly] private static int ValidateRect(nint hwnd, RECT* r) => TRUE;
+    [UnmanagedCallersOnly] private static int ValidateRect(nint hwnd, RECT* r) { ValidateWinFormsWindow(hwnd, repaint: false); return TRUE; }
     [UnmanagedCallersOnly] private static int UpdateWindow(nint hwnd) { object? o = Resolve(hwnd); Ui(o, () => { if (o is Forms.Control c) c.Update(); return 0; }); return TRUE; }
     [UnmanagedCallersOnly] private static int RedrawWindow(nint hwnd, RECT* r, nint rgn, uint flags) { Invalidate(Resolve(hwnd)); return TRUE; }
     [UnmanagedCallersOnly] private static int LockWindowUpdate(nint hwnd) => TRUE;

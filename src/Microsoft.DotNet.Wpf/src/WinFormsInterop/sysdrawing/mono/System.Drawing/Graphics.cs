@@ -4256,9 +4256,13 @@ namespace System.Drawing
 				return g;
 			}
 			Graphics r = WebGpuBackend.GpuRaster.NewRecording ();
-			// Drawn into the owner's scene when it is disposed.
+			// Drawn into the owner's scene when it is disposed, where it was drawn. DrawScene maps a
+			// source rectangle onto a destination and clips to it, so both are the whole plane: a unit
+			// square cut every blit into such a DC down to the pixel at its origin (DotNetBar's combo
+			// boxes, drawn in a memory DC and blitted to the window, showed as a single dot).
 			Graphics owner = this;
-			r.DisposeHook = gg => { object scene = gg.TakeRecordedScene (); if (scene != null) owner.GpuRecorder?.DrawScene (scene, 0, 0, 1, 1, 0, 0, 1, 1); };
+			const float Far = 1e6f;
+			r.DisposeHook = gg => { object scene = gg.TakeRecordedScene (); if (scene != null) owner.GpuRecorder?.DrawScene (scene, -Far, -Far, 2 * Far, 2 * Far, -Far, -Far, 2 * Far, 2 * Far); };
 			return r;
 		}
 		
