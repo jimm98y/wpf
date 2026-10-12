@@ -8,6 +8,11 @@
 // WinForms uses, and either fails to cast or silently draws nothing.
 //
 // GENERATED -- see GALLERY_PROBE=forwards. 180 types.
+//
+// The types .NET defines in System.Drawing.Primitives (Color, Point, Size, Rectangle and their F
+// variants, KnownColor, SystemColors, ColorTranslator) and System.ComponentModel.TypeConverter (their
+// converters) forward to THOSE, global:: below: Mono.System.Drawing no longer carries copies of them,
+// so a .NET Framework library and a .NET one agree on what a Color is.
 
 extern alias mono;
 
@@ -20,9 +25,9 @@ extern alias mono;
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.BufferedGraphicsContext))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.BufferedGraphicsManager))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.CharacterRange))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Color))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.ColorConverter))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.ColorTranslator))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.Color))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.ColorConverter))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.ColorTranslator))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.ContentAlignment))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.CopyPixelOperation))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Design.CategoryNameCollection))]
@@ -127,12 +132,12 @@ extern alias mono;
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Imaging.PlayRecordCallback))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Imaging.PropertyItem))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Imaging.WmfPlaceableFileHeader))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.KnownColor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.KnownColor))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Pen))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Pens))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Point))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.PointConverter))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.PointF))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.Point))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.PointConverter))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.PointF))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Printing.Duplex))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Printing.InvalidPrinterException))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Printing.Margins))]
@@ -161,15 +166,15 @@ extern alias mono;
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Printing.QueryPageSettingsEventArgs))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Printing.QueryPageSettingsEventHandler))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Printing.StandardPrintController))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Rectangle))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.RectangleConverter))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.RectangleF))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.Rectangle))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.RectangleConverter))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.RectangleF))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Region))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.RotateFlipType))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.Size))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.SizeConverter))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.SizeF))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.SizeFConverter))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.Size))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.SizeConverter))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.SizeF))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.SizeFConverter))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.SolidBrush))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.StringAlignment))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.StringDigitSubstitute))]
@@ -178,7 +183,7 @@ extern alias mono;
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.StringTrimming))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.StringUnit))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.SystemBrushes))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.SystemColors))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(global::System.Drawing.SystemColors))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.SystemFonts))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.SystemIcons))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(mono::System.Drawing.SystemPens))]

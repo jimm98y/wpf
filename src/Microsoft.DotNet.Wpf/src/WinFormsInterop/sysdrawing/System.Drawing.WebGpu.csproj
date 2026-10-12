@@ -64,6 +64,28 @@
          stays: it is a plain enum and part of the System.Drawing.Printing surface. -->
     <Compile Remove="corefx/src/System.Security.Permissions/src/System/Drawing/Printing/PrintingPermission.cs" />
     <Compile Remove="corefx/src/System.Security.Permissions/src/System/Drawing/Printing/PrintingPermissionAttribute.cs" />
+    <!--
+      The types .NET puts in System.Drawing.Primitives (and their converters, which it puts in
+      System.ComponentModel.TypeConverter) are the FRAMEWORK's, not copies compiled in here.
+
+      A type's identity is its name AND its assembly. Every .NET (Core) binary names
+      [System.Drawing.Primitives]System.Drawing.Color; a copy defined here is
+      [Mono.System.Drawing]System.Drawing.Color, a different type with the same name, and a prebuilt
+      library calling Control.set_BackColor(Color) then fails with MissingMethodException against a
+      WinForms compiled with the copy. Using the framework's types makes this System.Drawing, and the
+      WinForms built on it, binary-compatible with what .NET libraries were compiled against, while
+      the .NET Framework identity (System.Drawing 4.0.0.0) still reaches them through the forwarders
+      in facade/.
+    -->
+    <Compile Remove="corefx/src/System.Drawing.Primitives/**/*.cs" />
+    <Compile Remove="corefx/src/Common/src/System/Drawing/KnownColor.cs" />
+    <Compile Remove="corefx/src/Common/src/System/Drawing/KnownColorTable.cs" />
+    <Compile Remove="corefx/src/System.Drawing.Common/src/System/Drawing/SystemColors.cs" />
+    <Compile Remove="mono/System.Drawing/ColorTranslator.cs" />
+    <Compile Remove="corefx/src/System.ComponentModel.TypeConverter/**/*.cs" />
+    <Compile Remove="corefx/src/System.Drawing.Common/src/System/Drawing/PointConverter.cs" />
+    <Compile Remove="corefx/src/System.Drawing.Common/src/System/Drawing/ColorConverter.cs" />
+    <Compile Remove="mono/System.Drawing/RectangleConverter.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- The WgpuInterop GPU rasterizer: the SceneRecorder backend rerouted the Graphics draw verbs

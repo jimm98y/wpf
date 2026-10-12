@@ -75,6 +75,11 @@ namespace System.Windows.Forms {
 		#endregion	// Public Instance Properties
 
 		#region Public Instance Methods
+		// .NET Core's IEquatable-style overload, which compiled callers bind to directly.
+		public bool Equals(BindingMemberInfo other) {
+			return Equals((object)other);
+		}
+
 		public override bool Equals(object otherObject) {
 			if (otherObject is BindingMemberInfo) {
 				return ((this.data_field == ((BindingMemberInfo)otherObject).data_field) &&

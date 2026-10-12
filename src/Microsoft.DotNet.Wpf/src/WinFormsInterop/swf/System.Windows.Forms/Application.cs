@@ -44,7 +44,7 @@ using System.Windows.Forms.VisualStyles;
 
 namespace System.Windows.Forms
 {
-	public sealed class Application
+	public sealed partial class Application
 	{
 		internal class MWFThread
 		{

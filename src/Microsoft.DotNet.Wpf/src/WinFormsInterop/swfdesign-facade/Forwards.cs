@@ -1,19 +1,117 @@
-// The System.Drawing assembly IDENTITY, forwarded to the assembly that carries the types.
+// The System.Windows.Forms.Design assembly IDENTITY, forwarded to the assemblies that carry the types.
 //
-// Anything built against .NET Framework names "System.Drawing, Version=4.0.0.0, Culture=neutral,
-// PublicKeyToken=b03f5f7f11d50a3a" -- a third-party control's TypeConverter and Editor
-// attributes, a .resx naming the bitmap it holds, a designer's generated code. Without this
-// facade that identity binds to the inbox facade instead, which forwards to
-// System.Drawing.Common: the caller gets a Bitmap of a DIFFERENT type from the one this
-// WinForms uses, and either fails to cast or silently draws nothing.
+// .NET Framework kept the WinForms designer in System.Design; .NET moved it into an assembly of its
+// own, System.Windows.Forms.Design, and with it the System.ComponentModel.Design editors
+// (CollectionEditor, UndoEngine...) and the toolbox types of System.Drawing.Design. Code built
+// against either names its own, so this identity forwards each type to wherever it lives here:
+// System.Design (Mono's designer), System.Windows.Forms, or Mono.System.Drawing.
 //
-// GENERATED -- see GALLERY_PROBE=forwards. 22 types.
+// GENERATED: every public type of .NET 10's System.Windows.Forms.Design reference assembly that one of
+// those defines. Not implemented here, so not forwarded: the DataSource* designer types,
+// IMultitargetHelperService, ProjectTargetFrameworkAttribute, ITargetAwareCodeDomProvider,
+// UCOMITypeLib, AxImporter, ComponentActionsType, ImageListImageEditor and the themed-scrollbar types.
 
 extern alias design;
+extern alias swf;
+extern alias drawing;
 
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.ActiveDesignSurfaceChangedEventArgs))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.ActiveDesignSurfaceChangedEventHandler))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.ArrayEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.BinaryEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.ByteViewer))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.CollectionEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.ComponentDesigner))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DateTimeEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignSurface))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignSurfaceCollection))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignSurfaceEventArgs))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignSurfaceEventHandler))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignSurfaceManager))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionHeaderItem))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionItem))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionItemCollection))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionList))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionListCollection))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionListsChangedEventArgs))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionListsChangedEventHandler))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionListsChangedType))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionMethodItem))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionPropertyItem))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionService))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionTextItem))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionUIService))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionUIStateChangeEventArgs))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionUIStateChangeEventHandler))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerActionUIStateChangeType))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DesignerCommandSet))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.DisplayMode))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.EventBindingService))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.ExceptionCollection))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.InheritanceService))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.LoadedEventArgs))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.LoadedEventHandler))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.MenuCommandService))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.MenuCommandsChangedEventArgs))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.MenuCommandsChangedEventHandler))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.MenuCommandsChangedType))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.MultilineStringEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.ObjectSelectorEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.BasicDesignerLoader))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.CodeDomComponentSerializationService))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.CodeDomDesignerLoader))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.CodeDomLocalizationModel))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.CodeDomLocalizationProvider))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.CodeDomSerializer))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.CodeDomSerializerBase))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.CodeDomSerializerException))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.CollectionCodeDomSerializer))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.DesignerSerializationManager))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.ExpressionContext))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.ICodeDomDesignerReload))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.MemberCodeDomSerializer))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.ObjectStatementCollection))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.RootContext))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.SerializeAbsoluteContext))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.StatementContext))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.Serialization.TypeCodeDomSerializer))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.ComponentModel.Design.UndoEngine))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(swf::System.Drawing.Design.BitmapEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(swf::System.Drawing.Design.ColorEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(swf::System.Drawing.Design.ContentAlignmentEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(swf::System.Drawing.Design.CursorEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(swf::System.Drawing.Design.FontEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(swf::System.Drawing.Design.FontNameEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(drawing::System.Drawing.Design.IToolboxItemProvider))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(drawing::System.Drawing.Design.IToolboxService))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(drawing::System.Drawing.Design.IToolboxUser))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(swf::System.Drawing.Design.IconEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(swf::System.Drawing.Design.ImageEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(swf::System.Drawing.Design.MetafileEditor))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(drawing::System.Drawing.Design.ToolboxComponentsCreatedEventArgs))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(drawing::System.Drawing.Design.ToolboxComponentsCreatedEventHandler))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(drawing::System.Drawing.Design.ToolboxComponentsCreatingEventArgs))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(drawing::System.Drawing.Design.ToolboxComponentsCreatingEventHandler))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(drawing::System.Drawing.Design.ToolboxItem))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(drawing::System.Drawing.Design.ToolboxItemCollection))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(drawing::System.Drawing.Design.ToolboxItemCreatorCallback))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Resources.Tools.StronglyTypedResourceBuilder))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.AnchorEditor))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.AxParameterData))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.AxWrapperGen))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.Adorner))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.Behavior))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.BehaviorDragDropEventArgs))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.BehaviorDragDropEventHandler))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.BehaviorService))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.BehaviorServiceAdornerCollection))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.BehaviorServiceAdornerCollectionEnumerator))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.ComponentGlyph))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.ControlBodyGlyph))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.Glyph))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.GlyphCollection))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.GlyphSelectionType))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.SnapLine))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.SnapLinePriority))]
+[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.Behavior.SnapLineType))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.BorderSidesEditor))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.ComponentDocumentDesigner))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.ComponentTray))]
@@ -24,7 +122,6 @@ extern alias design;
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.EventHandlerService))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.FileNameEditor))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.FolderNameEditor))]
-[assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.IMenuEditorService))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.ImageListCodeDomSerializer))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.MaskDescriptor))]
 [assembly: System.Runtime.CompilerServices.TypeForwardedTo(typeof(design::System.Windows.Forms.Design.MenuCommands))]

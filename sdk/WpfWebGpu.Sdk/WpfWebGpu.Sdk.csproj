@@ -149,6 +149,11 @@
          System.Drawing.Common's types rather than the ones this WinForms draws with. -->
     <None Include="$(WinFormsInteropDir)sysdrawing/facade/bin/Release/net10.0/System.Drawing.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)sysdrawing/facade/bin/Release/net10.0/System.Drawing.dll')" />
     <None Include="$(WinFormsInteropDir)sysdrawing/facade-design/bin/Release/net10.0/System.Drawing.Design.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)sysdrawing/facade-design/bin/Release/net10.0/System.Drawing.Design.dll')" />
+    <!-- The .NET identities of the same: System.Drawing.Common (Bitmap, Font, Graphics...) and
+         System.Windows.Forms.Primitives (Message, Padding, HighDpiMode...), which a library built
+         against .NET names instead of System.Drawing / System.Windows.Forms. -->
+    <None Include="$(WinFormsInteropDir)sysdrawing/facade-common/bin/Release/net10.0/System.Drawing.Common.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)sysdrawing/facade-common/bin/Release/net10.0/System.Drawing.Common.dll')" />
+    <None Include="$(WinFormsInteropDir)swf-primitives-facade/bin/Release/net10.0/System.Windows.Forms.Primitives.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)swf-primitives-facade/bin/Release/net10.0/System.Windows.Forms.Primitives.dll')" />
     <!-- NOT $(WpfBin)WindowsFormsIntegration: that is the ARCADE build of the Windows-only original,
          which references the real System.Windows.Forms v10.0.0.0 and so cannot bind against the Mono
          one shipped beside it here. The WebGPU flavour under integration/ is the one built against

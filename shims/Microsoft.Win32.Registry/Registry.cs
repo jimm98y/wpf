@@ -25,6 +25,7 @@ namespace Microsoft.Win32
     public enum RegistryView { Default = 0, Registry64 = 0x100, Registry32 = 0x200 }
     public enum RegistryKeyPermissionCheck { Default = 0, ReadSubTree = 1, ReadWriteSubTree = 2 }
     [Flags] public enum RegistryOptions { None = 0, Volatile = 1 }
+    [Flags] public enum RegistryValueOptions { None = 0, DoNotExpandEnvironmentNames = 1 }
 
     public sealed class RegistryKey : IDisposable
     {
@@ -52,6 +53,9 @@ namespace Microsoft.Win32
         private bool _closed;
 
         public string Name { get; }
+
+        /// <summary>The view the key was opened with. There is one tree off Windows, so it is only recorded.</summary>
+        public RegistryView View { get; private set; } = RegistryView.Default;
 
         public Microsoft.Win32.SafeHandles.SafeRegistryHandle Handle =>
             new Microsoft.Win32.SafeHandles.SafeRegistryHandle(_hKey, ownsHandle: false);
@@ -138,6 +142,78 @@ namespace Microsoft.Win32
         public RegistryKey OpenSubKey(string name, RegistryKeyPermissionCheck c) =>
             OpenSubKey(name, c == RegistryKeyPermissionCheck.ReadWriteSubTree);
 
+        public RegistryKey OpenSubKey(string name, System.Security.AccessControl.RegistryRights rights) =>
+            OpenSubKey(name, Writes(rights));
+
+        public RegistryKey OpenSubKey(string name, RegistryKeyPermissionCheck c, System.Security.AccessControl.RegistryRights rights) =>
+            OpenSubKey(name, c == RegistryKeyPermissionCheck.ReadWriteSubTree || Writes(rights));
+
+        private static bool Writes(System.Security.AccessControl.RegistryRights rights) =>
+            (rights & (System.Security.AccessControl.RegistryRights.SetValue
+                       | System.Security.AccessControl.RegistryRights.CreateSubKey
+                       | System.Security.AccessControl.RegistryRights.Delete
+                       | System.Security.AccessControl.RegistryRights.ChangePermissions
+                       | System.Security.AccessControl.RegistryRights.TakeOwnership)) != 0;
+
+        // ---- the static entry points the real type has besides the Registry fields ----------
+        //
+        // A RegistryView selects the 32- or 64-bit half of HKLM\Software on 64-bit Windows. Off
+        // Windows there is one tree, and on Windows the views are not distinguished here (the 64-bit
+        // view is what a 64-bit process sees by default); the view is recorded on the key either way.
+
+        public static RegistryKey OpenBaseKey(RegistryHive hKey, RegistryView view)
+        {
+            RegistryKey root = hKey switch
+            {
+                RegistryHive.ClassesRoot => Registry.ClassesRoot,
+                RegistryHive.CurrentUser => Registry.CurrentUser,
+                RegistryHive.LocalMachine => Registry.LocalMachine,
+                RegistryHive.Users => Registry.Users,
+                RegistryHive.PerformanceData => Registry.PerformanceData,
+                RegistryHive.CurrentConfig => Registry.CurrentConfig,
+                _ => throw new ArgumentException("Registry HKEY was out of the legal range.", nameof(hKey)),
+            };
+            if (view != RegistryView.Default && view != RegistryView.Registry32 && view != RegistryView.Registry64)
+                throw new ArgumentException("The specified RegistryView value is not valid.", nameof(view));
+            if (view != RegistryView.Default) root.View = view;
+            return root;
+        }
+
+        public static RegistryKey OpenRemoteBaseKey(RegistryHive hKey, string machineName) =>
+            OpenRemoteBaseKey(hKey, machineName, RegistryView.Default);
+
+        public static RegistryKey OpenRemoteBaseKey(RegistryHive hKey, string machineName, RegistryView view)
+        {
+            if (machineName == null) throw new ArgumentNullException(nameof(machineName));
+            if (machineName.Length == 0
+                || string.Equals(machineName, Environment.MachineName, StringComparison.OrdinalIgnoreCase)
+                || machineName == "." || string.Equals(machineName, "localhost", StringComparison.OrdinalIgnoreCase))
+            {
+                return OpenBaseKey(hKey, view);
+            }
+            // What Windows reports when the remote registry service cannot be reached.
+            throw new System.IO.IOException("The network path was not found.");
+        }
+
+        public static RegistryKey FromHandle(Microsoft.Win32.SafeHandles.SafeRegistryHandle handle) =>
+            FromHandle(handle, RegistryView.Default);
+
+        public static RegistryKey FromHandle(Microsoft.Win32.SafeHandles.SafeRegistryHandle handle, RegistryView view)
+        {
+            if (handle == null) throw new ArgumentNullException(nameof(handle));
+            if (handle.IsInvalid) throw new ArgumentException("The specified handle is not valid.", nameof(handle));
+            return new RegistryKey(string.Empty, handle.DangerousGetHandle(), predefined: true) { View = view };
+        }
+
+        // Access control is accepted and not enforced: there is nothing to enforce it with off Windows,
+        // and on Windows the key was already opened with the rights the caller asked for.
+        public System.Security.AccessControl.RegistrySecurity GetAccessControl() => new System.Security.AccessControl.RegistrySecurity();
+        public System.Security.AccessControl.RegistrySecurity GetAccessControl(System.Security.AccessControl.AccessControlSections includeSections) => GetAccessControl();
+        public void SetAccessControl(System.Security.AccessControl.RegistrySecurity registrySecurity)
+        {
+            if (registrySecurity == null) throw new ArgumentNullException(nameof(registrySecurity));
+        }
+
         public RegistryKey CreateSubKey(string name) => CreateSubKey(name, RegistryOptions.None);
 
         public RegistryKey CreateSubKey(string name, RegistryOptions options)
@@ -164,7 +240,11 @@ namespace Microsoft.Win32
         }
 
         public RegistryKey CreateSubKey(string name, bool w) => CreateSubKey(name);
+        public RegistryKey CreateSubKey(string name, bool w, RegistryOptions options) => CreateSubKey(name, options);
         public RegistryKey CreateSubKey(string name, RegistryKeyPermissionCheck c) => CreateSubKey(name);
+        public RegistryKey CreateSubKey(string name, RegistryKeyPermissionCheck c, RegistryOptions options) => CreateSubKey(name, options);
+        public RegistryKey CreateSubKey(string name, RegistryKeyPermissionCheck c, System.Security.AccessControl.RegistrySecurity security) => CreateSubKey(name);
+        public RegistryKey CreateSubKey(string name, RegistryKeyPermissionCheck c, RegistryOptions options, System.Security.AccessControl.RegistrySecurity security) => CreateSubKey(name, options);
 
         // ---- values -------------------------------------------------------------------------
 
@@ -181,14 +261,11 @@ namespace Microsoft.Win32
             return _values.TryGetValue(name ?? string.Empty, out var value) ? value : defaultValue;
         }
 
-        public object GetValue(string name, object defaultValue, object options)
+        public object GetValue(string name, object defaultValue, RegistryValueOptions options)
         {
             if (Native)
             {
-                // RegistryValueOptions.DoNotExpandEnvironmentNames == 1, passed as the real enum by
-                // callers compiled against the real assembly; taken as `object` here because this
-                // assembly does not declare that type.
-                bool expand = Convert.ToInt32(options ?? 0) == 0;
+                bool expand = (options & RegistryValueOptions.DoNotExpandEnvironmentNames) == 0;
                 return Win32Registry.TryGetValue(_hKey, name ?? string.Empty, expand, out object v, out _)
                     ? v : defaultValue;
             }

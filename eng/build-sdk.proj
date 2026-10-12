@@ -126,6 +126,11 @@
          .NET Framework actually names. -->
     <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/facade/System.Drawing.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
     <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/facade-design/System.Drawing.Design.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <!-- ...and the identities a library built against .NET names: System.Drawing.Common and
+         System.Windows.Forms.Primitives. Without them such a library binds to the real
+         System.Drawing.Common (a Graphics this WinForms does not draw with) and finds no Message at all. -->
+    <_Proj Include="$(_Src)WinFormsInterop/sysdrawing/facade-common/System.Drawing.Common.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <_Proj Include="$(_Src)WinFormsInterop/swf-primitives-facade/System.Windows.Forms.Primitives.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
     <!-- ElementHost / WindowsFormsHost. This is the WebGPU flavour, built against the two projects
          above; the Arcade build produces a same-named assembly from the Windows-only original, and
          that one references the real System.Windows.Forms v10.0.0.0 so it cannot bind to the Mono

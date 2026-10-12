@@ -139,14 +139,16 @@
     <PackageReference Include="System.Resources.Extensions" Version="10.0.0" />
   </ItemGroup>
 
-  <!-- System.Security.Permissions transitively drags in System.Drawing.Common + System.Drawing.
-       Primitives, which duplicate every type our own System.Drawing provides (Color/Rectangle/
-       Graphics/…) → CS0433. Strip those two resolved references so our System.Drawing is the sole
-       provider of the System.Drawing.* types. -->
+  <!-- System.Security.Permissions transitively drags in System.Drawing.Common, which duplicates every
+       type our own System.Drawing provides (Graphics/Font/Image/...) → CS0433. Strip it (and the inbox
+       System.Drawing facade that forwards to it) so our System.Drawing is the sole provider of those.
+       System.Drawing.Primitives STAYS: Color/Point/Size/Rectangle are the framework's own types, which
+       is what makes this WinForms binary-compatible with libraries built against .NET's (see
+       sysdrawing/System.Drawing.WebGpu.csproj). -->
   <Target Name="StripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences">
     <ItemGroup>
       <ReferencePath Remove="@(ReferencePath)"
-                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives'" />
+                     Condition="'%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common'" />
     </ItemGroup>
   </Target>
 

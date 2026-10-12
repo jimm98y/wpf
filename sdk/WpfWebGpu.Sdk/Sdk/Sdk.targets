@@ -222,8 +222,10 @@
           Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)Mono.System.Drawing.dll')" />
   </Target>
 
-  <!-- The vendored Mono.System.Drawing is the SOLE System.Drawing.* provider; evict the framework
-       System.Drawing.* the WPF path pulls in (System.Drawing.Common package) -> CS0433.
+  <!-- The vendored Mono.System.Drawing is the System.Drawing.Common provider; evict the framework's
+       (the System.Drawing.Common package the WPF path pulls in) -> CS0433. Color/Point/Size/Rectangle
+       are NOT evicted: they are System.Drawing.Primitives' own types, shared with the framework, so
+       that a library built against .NET binds to this WinForms unchanged.
 
        NOT ours. lib/wpf-winforms/System.Drawing.dll is the assembly IDENTITY every library built
        against .NET Framework names, forwarding to Mono.System.Drawing; matching on the file name
@@ -234,7 +236,7 @@
           Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <ReferencePath Remove="@(ReferencePath)"
-                     Condition="('%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common' or '%(FileName)' == 'System.Drawing.Primitives')
+                     Condition="('%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common')
                                 and !$([System.String]::new('%(FullPath)').Contains('wpf-winforms'))" />
     </ItemGroup>
   </Target>

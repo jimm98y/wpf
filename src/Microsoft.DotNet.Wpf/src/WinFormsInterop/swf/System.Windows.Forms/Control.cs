@@ -58,7 +58,7 @@ namespace System.Windows.Forms
 	[DefaultEvent("Click")]
 	[DesignerSerializer("System.Windows.Forms.Design.ControlCodeDomSerializer, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.Serialization.CodeDomSerializer, " + Consts.AssemblySystem_Design)]
 	[ToolboxItemFilter("System.Windows.Forms")]
-	public class Control : Component, ISynchronizeInvoke, IWin32Window
+	public partial class Control : Component, ISynchronizeInvoke, IWin32Window
 		, IBindableComponent, IDropTarget, IArrangedElement, IArrangedContainer
 	{
 		#region Local Variables
@@ -1969,7 +1969,8 @@ namespace System.Windows.Forms
 
 		public static Font DefaultFont {
 			get {
-				return ThemeEngine.Current.DefaultFont;
+				// Application.SetDefaultFont (.NET Core) overrides the theme's; see NetCoreSurface.cs.
+				return Application.DefaultFontOverride ?? ThemeEngine.Current.DefaultFont;
 			}
 		}
 

@@ -32,6 +32,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../System.Design.WebGpu.csproj" Aliases="design" />
+    <ProjectReference Include="../System.Windows.Forms.WebGpu.csproj" Aliases="swf" />
+    <ProjectReference Include="../sysdrawing/System.Drawing.WebGpu.csproj" Aliases="drawing" />
   </ItemGroup>
 
 </Project>
