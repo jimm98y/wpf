@@ -47,7 +47,8 @@ public static class Screenshots
     }
 
     private static Timer? s_zoomTimer;
-    private static Timer? s_clickTimer;
+    private static readonly List<Timer> s_clickTimers = new();
+    private static bool s_clickLogger;
 
     // WPFMAC_DEBUG_CLICK=x,y,seconds (macOS): post a real left click (NSEvent mouse down + up) at
     // window point (x,y) of the app's main WinForms window -- top-left origin, points -- and log
@@ -56,30 +57,35 @@ public static class Screenshots
     {
         string? spec = Environment.GetEnvironmentVariable("WPFMAC_DEBUG_CLICK");
         if (!OperatingSystem.IsMacOS() || string.IsNullOrEmpty(spec)) return;
-        string[] p = spec.Split(',');
-        if (p.Length < 3 || !double.TryParse(p[0], out double x) || !double.TryParse(p[1], out double y) || !double.TryParse(p[2], out double at)) return;
-        s_clickTimer = new Timer(_ =>
+        // Several clicks, ';'-separated: open a menu, then pick from it.
+        foreach (string one in spec.Split(';'))
         {
-            Forms.Form? form = Forms.Application.OpenForms.Cast<Forms.Form>().FirstOrDefault(f => f.IsHandleCreated && f.Visible && f.TopLevel);
-            form?.BeginInvoke(() =>
+            string[] p = one.Split(',');
+            if (p.Length < 3 || !double.TryParse(p[0], out double x) || !double.TryParse(p[1], out double y) || !double.TryParse(p[2], out double at)) continue;
+            s_clickTimers.Add(new Timer(_ =>
             {
-                Forms.Application.AddMessageFilter(new ClickLogger());
-                nint window = MacWindows().FirstOrDefault(w => w.Title == form.Text).Window;
-                if (window == 0) { Exports.LogOnce("click-nowin", "debug click: no window"); return; }
-                nint content = MacNative.Send(window, MacNative.Sel("contentView"));
-                double height = MacNative.SendRect(content, MacNative.Sel("frame")).Height;
-                var point = new CGPoint { X = x, Y = height - y };
-                nint number = MacNative.Send(window, MacNative.Sel("windowNumber"));
-                // Moved, down, up: a pointer arrives before it presses, and controls that track the
-                // hot item (DotNetBar's ribbon) act only on the one under it.
-                foreach (nuint type in new nuint[] { 5, 1, 2 })
+                Forms.Form? form = Forms.Application.OpenForms.Cast<Forms.Form>().FirstOrDefault(f => f.IsHandleCreated && f.Visible && f.TopLevel);
+                form?.BeginInvoke(() =>
                 {
-                    nint evt = MacNative.MouseEvent(type, point, number);
-                    MacNative.PostEvent(evt);
-                }
-                Exports.LogOnce("click-posted", $"debug click: posted at {x},{y} to window 0x{window:x} (form enabled={form.Enabled})");
-            });
-        }, null, (int)(at * 1000), Timeout.Infinite);
+                    if (!s_clickLogger) { s_clickLogger = true; Forms.Application.AddMessageFilter(new ClickLogger()); }
+                    nint window = MacWindows().FirstOrDefault(w => w.Title == form.Text).Window;
+                    if (window == 0) { Exports.LogOnce("click-nowin", "debug click: no window"); return; }
+                    nint content = MacNative.Send(window, MacNative.Sel("contentView"));
+                    double height = MacNative.SendRect(content, MacNative.Sel("frame")).Height;
+                    var point = new CGPoint { X = x, Y = height - y };
+                    nint number = MacNative.Send(window, MacNative.Sel("windowNumber"));
+                    // Moved, down, up: a pointer arrives before it presses, and controls that track the
+                    // hot item (DotNetBar's ribbon) act only on the one under it.
+                    MacNative.PostEvent(MacNative.MouseEvent(5, new CGPoint { X = point.X - 3, Y = point.Y }, number));
+                    foreach (nuint type in new nuint[] { 5, 1, 2 })
+                    {
+                        nint evt = MacNative.MouseEvent(type, point, number);
+                        MacNative.PostEvent(evt);
+                    }
+                    Exports.Log($"debug click: posted at {x},{y} to window 0x{window:x} (form enabled={form.Enabled})");
+                });
+            }, null, (int)(at * 1000), Timeout.Infinite));
+        }
     }
 
     private static Timer? s_dragTimer;
