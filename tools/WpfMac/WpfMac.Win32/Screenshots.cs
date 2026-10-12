@@ -26,6 +26,7 @@ public static class Screenshots
         int ms = Math.Max(1, intervalSeconds) * 1000;
         s_timer = new Timer(_ => CaptureAll(directory), null, ms, ms);
         StartClickDiagnostic();
+        StartDragDiagnostic();
 
         // WPFMAC_DEBUG_ZOOM=<seconds> (macOS): zoom (maximize) the key window then, as its green button
         // would, so the screenshots and window dumps that follow show how the app lays itself out.
@@ -77,6 +78,52 @@ public static class Screenshots
                 Exports.LogOnce("click-posted", $"debug click: posted at {x},{y} to window 0x{window:x} (form enabled={form.Enabled})");
             });
         }, null, (int)(at * 1000), Timeout.Infinite);
+    }
+
+    private static Timer? s_dragTimer;
+
+    // WPFMAC_DEBUG_DRAG=x1,y1,x2,y2,seconds (macOS): a real left-button drag from one window point to
+    // another (down, a dozen dragged moves, up), as a user resizing a splitter would, then a click
+    // where it ended.
+    private static void StartDragDiagnostic()
+    {
+        string? spec = Environment.GetEnvironmentVariable("WPFMAC_DEBUG_DRAG");
+        if (!OperatingSystem.IsMacOS() || string.IsNullOrEmpty(spec)) return;
+        double[] v = spec.Split(',').Select(t => double.TryParse(t, out double d) ? d : double.NaN).ToArray();
+        if (v.Length < 5 || v.Any(double.IsNaN)) return;
+        s_dragTimer = new Timer(_ =>
+        {
+            Forms.Form? form = Forms.Application.OpenForms.Cast<Forms.Form>().FirstOrDefault(f => f.IsHandleCreated && f.Visible && f.TopLevel);
+            form?.BeginInvoke(() =>
+            {
+                nint window = MacWindows().FirstOrDefault(w => w.Title == form.Text).Window;
+                if (window == 0) return;
+                int changes = 0;
+                void Who(object? _, EventArgs __)
+                {
+                    if (changes++ < 6) Exports.Log($"debug drag: form bounds now {form.Bounds}\n{string.Join("\n", Environment.StackTrace.Split('\n').Skip(2).Take(25))}");
+                }
+                form.LocationChanged += Who;
+                form.SizeChanged += Who;
+                // The drag, then a click (press and release) where it ended.
+                double height = MacNative.SendRect(MacNative.Send(window, MacNative.Sel("contentView")), MacNative.Sel("frame")).Height;
+                nint number = MacNative.Send(window, MacNative.Sel("windowNumber"));
+                void Drag(double x1, double y1, double x2, double y2)
+                {
+                    CGPoint At(double t) => new CGPoint { X = x1 + (x2 - x1) * t, Y = height - (y1 + (y2 - y1) * t) };
+                    MacNative.PostEvent(MacNative.MouseEvent(1, At(0), number));
+                    for (int i = 1; i <= 12; i++) MacNative.PostEvent(MacNative.MouseEvent(6, At(i / 12.0), number));   // left mouse dragged
+                    MacNative.PostEvent(MacNative.MouseEvent(2, At(1), number));
+                }
+                Drag(v[0], v[1], v[2], v[3]);
+                Exports.Log($"debug drag: posted {v[0]},{v[1]} -> {v[2]},{v[3]}");
+                Task.Delay(3000).ContinueWith(_ => form.BeginInvoke(() =>
+                {
+                    Drag(v[2], v[3], v[2], v[3]);
+                    Exports.Log($"debug drag: posted click at {v[2]},{v[3]}");
+                }));
+            });
+        }, null, (int)(v[4] * 1000), Timeout.Infinite);
     }
 
     private sealed class ClickLogger : Forms.IMessageFilter
