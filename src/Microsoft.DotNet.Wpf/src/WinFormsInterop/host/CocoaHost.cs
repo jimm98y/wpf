@@ -169,6 +169,36 @@ internal sealed class CocoaHost : IWinFormsHost
         return (BlinkMs() / 530) % 2 == 0;
     }
 
+    // ---- the form shown and hidden --------------------------------------------------------
+    //
+    // The window follows the form off screen and back, as the Windows host's does. A dialog that is
+    // hidden rather than disposed -- ShowDialog hides it when OK is pressed, and the caller may keep
+    // it -- stayed on screen: Workbench's About box could not be dismissed.
+    private void OnFormVisibleChanged(object sender, EventArgs e)
+    {
+        if (_form.IsDisposed) return;
+        bool visible = _form.Visible;
+        OnMain(() =>
+        {
+            IntPtr window = _window;
+            if (window == IntPtr.Zero || _closed) return;
+            if (visible)
+            {
+                SendVoidPtr(window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+            }
+            else
+            {
+                HidePopupLayer();
+                SendVoidPtr(window, Sel("orderOut:"), IntPtr.Zero);
+            }
+        });
+        if (visible)
+        {
+            _lastVer = -1;   // it has no picture from while it was away
+            Present();
+        }
+    }
+
     // ---- the popup layer ----------------------------------------------------------------
     //
     // Menus and drop-downs are windows of the driver, composited into the form's surface. An
@@ -351,6 +381,7 @@ internal sealed class CocoaHost : IWinFormsHost
             int fx = _form.Left, fy = _form.Top;
             string title = _form.Text ?? "WinForms";
             _ownCaption = DrawsOwnCaption();
+            _form.VisibleChanged += OnFormVisibleChanged;
             nuint style = StyleMask();
             _transparent = IsLayered();
             OnMain(() =>
@@ -414,6 +445,7 @@ internal sealed class CocoaHost : IWinFormsHost
         _knownBounds = new Rectangle(_form.Left, _form.Top, _form.Width, _form.Height);
         ObserveLiveResize();
         s_live.Add(this);
+        _form.VisibleChanged += OnFormVisibleChanged;
         SendVoidPtr(win, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
         Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
 
@@ -921,6 +953,7 @@ internal sealed class CocoaHost : IWinFormsHost
     /// window close box). Idempotent.</summary>
     public void Close()
     {
+        _form.VisibleChanged -= OnFormVisibleChanged;
         if (_offMain)
         {
             _closed = true;
