@@ -173,8 +173,10 @@ namespace System.Windows.Forms.Integration
 
         private void EnsureSource()
         {
-            if (EmbeddedScenes.HostWindow == IntPtr.Zero) return;   // host window not created yet
             if (_child == null) return;                             // nothing to host yet
+            // This control's own form's window: not EmbeddedScenes.HostWindow, which is whichever
+            // form's host came up last (a tooltip, a drop-down) and would carry this content off.
+            if (!EmbeddedScenes.TryGetHostWindow(this, out IntPtr hostWindow, out float hostScale)) return;   // host window not created yet
 
             // An overlay window is on screen exactly while this control is: Visible (which is false
             // when any parent is hidden) in a shown form. On Windows the hosted window is a child of
@@ -186,7 +188,7 @@ namespace System.Windows.Forms.Integration
                 ShowHostedWindow(shown);
             }
             if (FindForm() == null) return;                         // not parented yet
-            _scale = EmbeddedScenes.HostScale > 0 ? EmbeddedScenes.HostScale : 1f;
+            _scale = hostScale;
 
             // Where this control is, in the hosted window's coordinate space, in device pixels. A real
             // child window is positioned in its PARENT's client space; a borderless overlay is
@@ -201,7 +203,7 @@ namespace System.Windows.Forms.Integration
             int py = (int)Math.Round((mine.Y - form.Y) * _scale);
             if (!CompositeIntoHostFrame)
             {
-                NativePlatform.GetWindowOrigin(EmbeddedScenes.HostWindow, out int hx, out int hy);
+                NativePlatform.GetWindowOrigin(hostWindow, out int hx, out int hy);
                 px += hx;
                 py += hy;
             }
@@ -211,7 +213,7 @@ namespace System.Windows.Forms.Integration
                 _shown = shown || CompositeIntoHostFrame;
                 var p = new HwndSourceParameters("ElementHost")
                 {
-                    ParentWindow = EmbeddedScenes.HostWindow,
+                    ParentWindow = hostWindow,
                     WindowStyle = WS_CHILD | (_shown ? WS_VISIBLE : 0) | WS_CLIPSIBLINGS,
                     PositionX = px,
                     PositionY = py,
@@ -227,7 +229,7 @@ namespace System.Windows.Forms.Integration
                 _dispatcher = _source.Dispatcher;
                 _placedX = px; _placedY = py; _placedW = pw; _placedH = ph;
                 if (s_trace)
-                    Console.WriteLine($"ElementHost: WPF window 0x{_source.Handle:x} in host 0x{EmbeddedScenes.HostWindow:x} " +
+                    Console.WriteLine($"ElementHost: WPF window 0x{_source.Handle:x} in host 0x{hostWindow:x} " +
                                       $"at ({px},{py}) {pw}x{ph} scale={_scale} " +
                                       (CompositeIntoHostFrame ? "composited into the host frame" : "presenting its own overlay surface"));
                 return;
@@ -333,7 +335,7 @@ namespace System.Windows.Forms.Integration
 
             var pt = new POINT { x = (int)Math.Round(c.X * _scale), y = (int)Math.Round(c.Y * _scale) };
             if (!OperatingSystem.IsWindows()
-                || !ClientToScreen(_source.Handle, ref pt) || !ScreenToClient(EmbeddedScenes.HostWindow, ref pt))
+                || !ClientToScreen(_source.Handle, ref pt) || !EmbeddedScenes.TryGetHostWindow(this, out IntPtr hostWindow, out _) || !ScreenToClient(hostWindow, ref pt))
                 return false;
             clickable = new SD.Point(pt.x, pt.y);
             return true;

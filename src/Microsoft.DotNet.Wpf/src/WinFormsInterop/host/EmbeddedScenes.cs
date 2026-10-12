@@ -44,11 +44,34 @@ namespace System.Windows.Forms
         internal static float HostScale = 1f;
         internal static event Action HostWindowReady;
 
-        internal static void PublishHostWindow(IntPtr window, float scale)
+        internal static void PublishHostWindow(IntPtr window, float scale, Control topLevel)
         {
             HostWindow = window;
             HostScale = scale;
+            if (topLevel != null) lock (s_lock) s_hosts.AddOrUpdate(topLevel, new HostInfo(window, scale));
             HostWindowReady?.Invoke();
+        }
+
+        private sealed record HostInfo(IntPtr Window, float Scale);
+
+        // Each top-level control's own host window. HostWindow is whichever host published LAST -- a
+        // tooltip or drop-down form that opens later takes it over -- so content embedded in one form
+        // has to ask for that form's window, or it is placed (and parented) relative to the popup.
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Control, HostInfo> s_hosts = new();
+
+        /// <summary>The native host window <paramref name="control"/>'s top-level control is presented
+        /// in by the driver's own host, and its scale. False until that host exists.</summary>
+        internal static bool TryGetHostWindow(Control control, out IntPtr window, out float scale)
+        {
+            window = IntPtr.Zero; scale = 1f;
+            Control top = control;
+            while (top?.Parent != null) top = top.Parent;
+            if (top == null) return false;
+            HostInfo info;
+            lock (s_lock) if (!s_hosts.TryGetValue(top, out info)) return false;
+            window = info.Window;
+            scale = info.Scale > 0 ? info.Scale : 1f;
+            return window != IntPtr.Zero;
         }
 
         // ---- where a top-level control is on screen ------------------------------------------------
