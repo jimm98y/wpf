@@ -115,6 +115,12 @@ internal sealed class CocoaHost : IWinFormsHost
     // Build the per-window RECORDED scenes (form + children + popups) in paint order, positioned in
     // form space — the GPU-raster present input (each window's WebGPU scene, composited in one pass).
     private System.Collections.Generic.List<(object, int, int)> GetScenes(out int ox, out int oy)
+        => GetScenes(out ox, out oy, null);
+
+    // With popups given, the windows that are not the form's own -- menus, drop-downs, their
+    // shadows -- go there instead of into the list (see the popup layer).
+    private System.Collections.Generic.List<(object, int, int)> GetScenes(out int ox, out int oy,
+        System.Collections.Generic.List<(object, int, int)> popups)
     {
         long[] wins = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
         ox = wins.Length >= 3 ? (int)wins[1] : 0;
@@ -123,7 +129,10 @@ internal sealed class CocoaHost : IWinFormsHost
         for (int i = 0; i + 2 < wins.Length; i += 3)
         {
             object scene = _getScene.Invoke(_driver, new object[] { (IntPtr)wins[i] });
-            if (scene != null) list.Add((scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy));
+            if (scene == null) continue;
+            var item = (scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy);
+            if (popups != null && IsPopup((IntPtr)wins[i])) popups.Add(item);
+            else list.Add(item);
         }
         // Embedded non-WinForms content LAST, so it draws over the control whose area it occupies.
         var embedded = EmbeddedScenes.Get(ox, oy);
@@ -158,6 +167,102 @@ internal sealed class CocoaHost : IWinFormsHost
         object[] a = { 0, 0, 0, 0 };
         if (!(bool)_getCaret.Invoke(_driver, a)) return false;
         return (BlinkMs() / 530) % 2 == 0;
+    }
+
+    // ---- the popup layer ----------------------------------------------------------------
+    //
+    // Menus and drop-downs are windows of the driver, composited into the form's surface. An
+    // ElementHost's WPF tree is a window of its own above that surface (a child window), so a
+    // drop-down that reached over it was drawn underneath it: GraphWorX's Controls gallery opened
+    // behind the property panes. Win32 puts a popup above every other window. While the form has
+    // popups they are presented in a transparent window of their own, ordered above the form's
+    // other child windows, and the pointer over the form goes to them through it; with none it is
+    // put away.
+    private IntPtr _popupWindow, _popupView;
+    private WgpuPresenter _popupWgpu;
+    private bool _popupShown;
+    private NSRect _popupFrame;
+
+    // Inside a popup window (WS_POPUP) -- a menu, a drop-down, a shadow -- and not the form's own.
+    // Other windows the form is composited with (a parentless helper control) stay with the form.
+    private bool IsPopup(IntPtr handle)
+    {
+        Hwnd h = Hwnd.ObjectFromHandle(handle);
+        while (h?.parent != null) h = h.parent;
+        if (h == null || (_form.IsHandleCreated && h.Handle == _form.Handle)) return false;
+        return (h.initial_style & WindowStyles.WS_POPUP) != 0 && h.width > 1 && h.height > 1;
+    }
+
+    private NSRect ContentScreenRect()
+        => SendRectRect(_window, Sel("contentRectForFrameRect:"), SendRectRet(_window, Sel("frame")));
+
+    private void PresentPopups(System.Collections.Generic.List<(object, int, int)> popups)
+    {
+        if (popups.Count == 0 || _window == IntPtr.Zero || !UseWebGpu)
+        {
+            HidePopupLayer();
+            return;
+        }
+        try
+        {
+            ShowPopupLayer();
+            if (_popupWgpu != null) _popupWgpu.PresentScenes(popups, null, _form.Width, _form.Height);
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine("[CocoaHost] popup layer failed: " + e.Message);
+            HidePopupLayer();
+        }
+    }
+
+    private void ShowPopupLayer()
+    {
+        NSRect content = ContentScreenRect();
+        if (_popupWindow == IntPtr.Zero)
+        {
+            _popupWindow = SendInitWindow(Send(Cls("NSWindow"), Sel("alloc")), Sel("initWithContentRect:styleMask:backing:defer:"),
+                content, (nuint)0, (nuint)2, false);   // borderless
+            SendVoidBool(_popupWindow, Sel("setReleasedWhenClosed:"), false);
+            MakeTransparent(_popupWindow);
+            _popupView = SendInitRect(Send(Cls("NSView"), Sel("alloc")), Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = content.w, h = content.h });
+            SendVoidBool(_popupView, Sel("setWantsLayer:"), true);
+            SendVoidPtr(_popupWindow, Sel("setContentView:"), _popupView);
+            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
+            IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _popupView);
+            SendVoidBool(Send(_popupView, Sel("layer")), Sel("setOpaque:"), false);
+            double scale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_popupView);
+            _popupWgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster);
+            _popupWgpu.SetTransparent(true);
+            _popupWgpu.Tag = " popups";
+            _popupFrame = content;
+        }
+        if (content.x != _popupFrame.x || content.y != _popupFrame.y || content.w != _popupFrame.w || content.h != _popupFrame.h)
+        {
+            SendVoidRectBool(_popupWindow, Sel("setFrame:display:"), content, false);
+            _popupFrame = content;
+        }
+        if (_popupShown) return;
+        // Added last, so it is ordered above the child windows already there.
+        SendPtrNInt(_window, Sel("addChildWindow:ordered:"), _popupWindow, 1);   // NSWindowAbove
+        SendVoidPtr(_popupWindow, Sel("orderFront:"), IntPtr.Zero);
+        _popupShown = true;
+    }
+
+    private void HidePopupLayer()
+    {
+        if (!_popupShown) return;
+        _popupShown = false;
+        SendVoidPtr(_window, Sel("removeChildWindow:"), _popupWindow);
+        SendVoidPtr(_popupWindow, Sel("orderOut:"), IntPtr.Zero);
+    }
+
+    private void ClosePopupLayer()
+    {
+        if (_popupWindow == IntPtr.Zero) return;
+        HidePopupLayer();
+        Send(_popupWindow, Sel("close"));
+        _popupWindow = _popupView = IntPtr.Zero;
+        _popupWgpu = null;
     }
 
     // ---- window + present -------------------------------------------------------
@@ -373,10 +478,12 @@ internal sealed class CocoaHost : IWinFormsHost
             if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk && !wantSave)
                 return;   // nothing changed
 
-            var scenes = GetScenes(out int ox, out int oy);
+            var popups = _offMain ? null : new System.Collections.Generic.List<(object, int, int)>();
+            var scenes = GetScenes(out int ox, out int oy, popups);
             Rectangle? caret = GetCaretRect(ox, oy);
             _lastPresentOk = _wgpu.PresentScenes(scenes, caret, _form.Width, _form.Height);
             if (!_lastPresentOk && _offMain) _lastPresentOk = PresentAsLayerContents(scenes, caret);
+            if (popups != null) PresentPopups(popups);
             _lastVer = ver; _lastCaretOn = caretOn;
             if (Environment.GetEnvironmentVariable("WF_TRACE") != null) Console.Error.WriteLine("[present]");
             if (wantSave)
@@ -814,6 +921,7 @@ internal sealed class CocoaHost : IWinFormsHost
         if (_window == IntPtr.Zero) return;
         StopObservingLiveResize();
         s_live.Remove(this);
+        ClosePopupLayer();
         IntPtr win = _window;
         _window = IntPtr.Zero;
         Send(win, Sel("close"));
@@ -875,7 +983,7 @@ internal sealed class CocoaHost : IWinFormsHost
     private static CocoaHost HostFor(IntPtr nsWindow)
     {
         if (nsWindow == IntPtr.Zero) return null;
-        foreach (CocoaHost h in s_live) if (h._window == nsWindow) return h;
+        foreach (CocoaHost h in s_live) if (h._window == nsWindow || (h._popupWindow == nsWindow && h._popupShown)) return h;
         return null;
     }
 
@@ -1087,6 +1195,7 @@ internal sealed class CocoaHost : IWinFormsHost
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendInitWindow(IntPtr r, IntPtr s, NSRect rect, nuint style, nuint backing, [MarshalAs(UnmanagedType.I1)] bool defer);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendInitRect(IntPtr r, IntPtr s, NSRect rect);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr r, IntPtr s, [MarshalAs(UnmanagedType.I1)] bool a);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendPtrNInt(IntPtr r, IntPtr s, IntPtr a, nint b);
 
     private const string CG = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
     [DllImport(CG)] private static extern IntPtr CGColorSpaceCreateDeviceRGB();

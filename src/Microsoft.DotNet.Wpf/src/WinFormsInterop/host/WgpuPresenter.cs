@@ -169,11 +169,14 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     // now on screen. The WPF side does the same (WpfCompositionSink.NoDrawable).
     private int _nullAcquires;
 
+    /// <summary>Told apart in the surface traces (" popups" for a form's popup layer).</summary>
+    internal string Tag = "";
+
     private bool NoDrawable()
     {
         if (++_nullAcquires % 30 == 0)
         {
-            if (s_tracePresentStatus) Console.WriteLine($"surface: no drawable {_nullAcquires} times in a row; reconfiguring {_width}x{_height}");
+            if (s_tracePresentStatus) Console.WriteLine($"surface{Tag}: no drawable {_nullAcquires} times in a row; reconfiguring {_width}x{_height}");
             Configure();
         }
         return false;
@@ -207,7 +210,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         // drew nothing, and it is not: the scenes can all be built and rendered correctly and still
         // never reach the glass. Say which of the two happened rather than leaving it to be guessed.
         if (s_tracePresentStatus)
-            Console.WriteLine($"surface: acquire={st.status} present={presented} "
+            Console.WriteLine($"surface{Tag}: acquire={st.status} present={presented} "
                               + $"{DeviceWidth}x{DeviceHeight} format={_format}");
         wgpuTextureViewRelease(view);
         wgpuTextureRelease(st.texture);
