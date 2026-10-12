@@ -8,6 +8,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -215,6 +216,7 @@ internal sealed class CocoaHost : IWinFormsHost
         // the first Pump then hands the real frame back to the form.
         _knownBounds = new Rectangle(_form.Left, _form.Top, _form.Width, _form.Height);
         ObserveLiveResize();
+        s_live.Add(this);
         SendVoidPtr(win, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
         Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
 
@@ -402,6 +404,7 @@ internal sealed class CocoaHost : IWinFormsHost
     // grid at the right edge), Move/Resize handlers, an ElementHost's own window, screen coordinates.
 
     private Rectangle _knownBounds;
+    private static readonly bool s_traceInput = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1";
 
     // ---- live resize ---------------------------------------------------------------------
     //
@@ -636,6 +639,7 @@ internal sealed class CocoaHost : IWinFormsHost
         }
         if (_window == IntPtr.Zero) return;
         StopObservingLiveResize();
+        s_live.Remove(this);
         IntPtr win = _window;
         _window = IntPtr.Zero;
         Send(win, Sel("close"));
@@ -646,6 +650,7 @@ internal sealed class CocoaHost : IWinFormsHost
         // Events are the main thread's to read; see _offMain.
         if (_offMain) return !_closed && _form.Visible && !_form.IsDisposed;
 
+        HookWpfIfLoaded();
         SyncFrame();
 
         while (true)
@@ -653,56 +658,123 @@ internal sealed class CocoaHost : IWinFormsHost
             IntPtr evt = SendNextEvent(App(), Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
                 unchecked((nuint)ulong.MaxValue), IntPtr.Zero, NSStr("kCFRunLoopDefaultMode"), true);
             if (evt == IntPtr.Zero) break;
-
-            nint type = (nint)Send(evt, Sel("type"));
-            // NSEventType: LeftMouseDown=1, LeftMouseUp=2, RightMouseDown=3, RightMouseUp=4,
-            // MouseMoved=5, LeftMouseDragged=6.
-            if (type >= 1 && type <= 6)
-            {
-                NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
-                int cx = (int)loc.x;
-                int cy = (int)(_form.Height - loc.y);   // Cocoa is bottom-left origin; WinForms top-left
-                switch (type)
-                {
-                    case 1: _down.Invoke(_driver, new object[] { cx, cy }); break;
-                    case 2: _up.Invoke(_driver, new object[] { cx, cy }); break;
-                    case 3: _rightDown.Invoke(_driver, new object[] { cx, cy }); break;
-                    case 4: _rightUp.Invoke(_driver, new object[] { cx, cy }); break;
-                    case 5: _move.Invoke(_driver, new object[] { cx, cy, false }); break;
-                    case 6: _move.Invoke(_driver, new object[] { cx, cy, true }); break;
-                }
-                Application.DoEvents();   // let the control repaint (pressed/hover) into its backbuffer
-                Present();                // show it immediately
-            }
-            else if (type == 10) // NSEventTypeKeyDown -> route to the focused control
-            {
-                IntPtr chars = Send(evt, Sel("characters"));
-                string s = chars == IntPtr.Zero ? "" : Marshal.PtrToStringUTF8(Send(chars, Sel("UTF8String"))) ?? "";
-                foreach (char c in s)
-                {
-                    // Arrow/function keys arrive as the 0xF700+ Unicode private range -> map to VKs;
-                    // everything else (printable, backspace 0x7F, enter 0x0D) goes as WM_CHAR.
-                    // macOS function-key private range -> Win32 VK: arrows, Home/End, PageUp/Down,
-                    // forward Delete. (VK: Left37 Up38 Right39 Down40 End35 Home36 PgUp33 PgDn34 Del46)
-                    int vk = c switch
-                    {
-                        (char)0xF700 => 38, (char)0xF701 => 40, (char)0xF702 => 37, (char)0xF703 => 39,
-                        (char)0xF729 => 36, (char)0xF72B => 35, (char)0xF72C => 33, (char)0xF72D => 34,
-                        (char)0xF728 => 46,
-                        _ => 0
-                    };
-                    if (vk != 0) _keyDown.Invoke(_driver, new object[] { vk });
-                    // macOS Delete key yields 0x7F, which WinForms treats as Ctrl+Backspace (delete
-                    // word); plain backspace is 0x08. Translate so Delete removes one character.
-                    else _char.Invoke(_driver, new object[] { c == (char)0x7F ? (char)0x08 : c });
-                }
-                Application.DoEvents();
-                Present();
-                continue;   // don't forward key events to AppKit (we've handled them)
-            }
-            Send(App(), Sel("sendEvent:"), evt);
+            Route(evt);
         }
         return (nint)Send(_window, Sel("isVisible")) != 0;
+    }
+
+    // ---- one event queue, several owners -------------------------------------------------
+    //
+    // AppKit has ONE event queue per process. Every host's Pump reads it, and so does WPF's
+    // dispatcher when the app also has WPF windows (an ElementHost, a WindowsFormsHost). Each event
+    // goes to the owner of the window it is for, whichever pump dequeued it: a WinForms host's
+    // window to that host, a WPF window to WPF, anything else to AppKit. Before, every pump treated
+    // every event as its own: a click on the form taken off the queue by WPF's pump went straight to
+    // AppKit and the app ignored the mouse, and a click on a WPF window taken by this pump was
+    // injected into WinForms at the wrong coordinates (and a second form's host did the same).
+
+    private static readonly System.Collections.Generic.List<CocoaHost> s_live = new();
+    private static Action<IntPtr> s_wpfDispatch;
+    private static volatile bool s_wpfLoaded;
+
+    static CocoaHost()
+    {
+        AppDomain.CurrentDomain.AssemblyLoad += (_, e) => { if (e.LoadedAssembly.GetName().Name == "WindowsBase") s_wpfLoaded = true; };
+        foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
+            if (a.GetName().Name == "WindowsBase") s_wpfLoaded = true;
+    }
+
+    // On the main thread (WPF's window class must not be initialised elsewhere): once WPF is in the
+    // process, take our windows' events from its pump and give it its own from ours.
+    private static void HookWpfIfLoaded()
+    {
+        if (!s_wpfLoaded || s_wpfDispatch != null) return;
+        Assembly windowsBase = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "WindowsBase");
+        Type t = windowsBase?.GetType("MS.Internal.Interop.CocoaWindow");
+        FieldInfo hook = t?.GetField("ForeignEventHandler", BindingFlags.Public | BindingFlags.Static);
+        MethodInfo dispatch = t?.GetMethod("DispatchEvent", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(IntPtr) }, null);
+        if (hook == null || dispatch == null) { s_wpfLoaded = false; return; }
+        hook.SetValue(null, (Func<IntPtr, bool>)RouteFromWpf);
+        s_wpfDispatch = (Action<IntPtr>)dispatch.CreateDelegate(typeof(Action<IntPtr>));
+    }
+
+    private static CocoaHost HostFor(IntPtr nsWindow)
+    {
+        if (nsWindow == IntPtr.Zero) return null;
+        foreach (CocoaHost h in s_live) if (h._window == nsWindow) return h;
+        return null;
+    }
+
+    private static bool RouteFromWpf(IntPtr evt)
+    {
+        CocoaHost host = HostFor(Send(evt, Sel("window")));
+        if (host == null) return false;
+        host.HandleEvent(evt);
+        return true;
+    }
+
+    private static void Route(IntPtr evt)
+    {
+        CocoaHost host = HostFor(Send(evt, Sel("window")));
+        if (host != null) host.HandleEvent(evt);
+        else if (s_wpfDispatch != null) s_wpfDispatch(evt);
+        else Send(App(), Sel("sendEvent:"), evt);
+    }
+
+    private void HandleEvent(IntPtr evt)
+    {
+        nint type = (nint)Send(evt, Sel("type"));
+        // NSEventType: LeftMouseDown=1, LeftMouseUp=2, RightMouseDown=3, RightMouseUp=4,
+        // MouseMoved=5, LeftMouseDragged=6.
+        if (type >= 1 && type <= 6)
+        {
+            NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
+            // Window point (Cocoa: bottom-left origin) to the driver's screen space, where it
+            // hit-tests: the form's client area is drawn at the form's location there. Window
+            // coordinates alone were right only while every form sat at (0,0) -- which stopped
+            // being true when the form began to report where the window really is.
+            int cx = (int)loc.x + _form.Left;
+            int cy = (int)(_form.Height - loc.y) + _form.Top;
+            if (s_traceInput) Console.WriteLine($"[cocoa input] type={type} window=({loc.x},{loc.y}) -> driver=({cx},{cy}) form={_form.Bounds}");
+            switch (type)
+            {
+                case 1: _down.Invoke(_driver, new object[] { cx, cy }); break;
+                case 2: _up.Invoke(_driver, new object[] { cx, cy }); break;
+                case 3: _rightDown.Invoke(_driver, new object[] { cx, cy }); break;
+                case 4: _rightUp.Invoke(_driver, new object[] { cx, cy }); break;
+                case 5: _move.Invoke(_driver, new object[] { cx, cy, false }); break;
+                case 6: _move.Invoke(_driver, new object[] { cx, cy, true }); break;
+            }
+            Application.DoEvents();   // let the control repaint (pressed/hover) into its backbuffer
+            Present();                // show it immediately
+        }
+        else if (type == 10) // NSEventTypeKeyDown -> route to the focused control
+        {
+            IntPtr chars = Send(evt, Sel("characters"));
+            string s = chars == IntPtr.Zero ? "" : Marshal.PtrToStringUTF8(Send(chars, Sel("UTF8String"))) ?? "";
+            foreach (char c in s)
+            {
+                // Arrow/function keys arrive as the 0xF700+ Unicode private range -> map to VKs;
+                // everything else (printable, backspace 0x7F, enter 0x0D) goes as WM_CHAR.
+                // macOS function-key private range -> Win32 VK: arrows, Home/End, PageUp/Down,
+                // forward Delete. (VK: Left37 Up38 Right39 Down40 End35 Home36 PgUp33 PgDn34 Del46)
+                int vk = c switch
+                {
+                    (char)0xF700 => 38, (char)0xF701 => 40, (char)0xF702 => 37, (char)0xF703 => 39,
+                    (char)0xF729 => 36, (char)0xF72B => 35, (char)0xF72C => 33, (char)0xF72D => 34,
+                    (char)0xF728 => 46,
+                    _ => 0
+                };
+                if (vk != 0) _keyDown.Invoke(_driver, new object[] { vk });
+                // macOS Delete key yields 0x7F, which WinForms treats as Ctrl+Backspace (delete
+                // word); plain backspace is 0x08. Translate so Delete removes one character.
+                else _char.Invoke(_driver, new object[] { c == (char)0x7F ? (char)0x08 : c });
+            }
+            Application.DoEvents();
+            Present();
+            return;   // don't forward key events to AppKit (we've handled them)
+        }
+        Send(App(), Sel("sendEvent:"), evt);
     }
 
     // ---- Objective-C runtime -----------------------------------------------------

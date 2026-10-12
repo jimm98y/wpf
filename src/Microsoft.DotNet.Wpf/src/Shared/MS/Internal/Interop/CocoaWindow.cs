@@ -1991,11 +1991,8 @@ namespace MS.Internal.Interop
             IntPtr distantPast = Send(objc_getClass("NSDate"), Sel("distantPast"));
             while (evt != IntPtr.Zero)
             {
-                // Translate mouse/scroll events into the managed input event before letting AppKit
-                // dispatch the event normally (so window dragging, etc. still work).
-                try { ReportMouseEvent(evt); } catch { /* a stray event shouldn't break the pump */ }
-                try { ReportKeyEvent(evt); } catch { /* a stray event shouldn't break the pump */ }
-                SendVoidPtr(app, Sel("sendEvent:"), evt);
+                // An event for a window another host owns (the WinForms host's) is that host's.
+                if (!DispatchToForeignHost(evt)) DispatchEvent(evt);
                 evt = SendNextEvent(app, Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
                                     ulong.MaxValue, distantPast, mode, true);
             }
@@ -2004,6 +2001,46 @@ namespace MS.Internal.Interop
             // size after draining and raise Resized so the hosting HwndTarget re-lays-out and the
             // WebGPU surface is reconfigured (rather than the CAMetalLayer stretching the old frame).
             DetectResizes();
+        }
+
+        // ---- sharing the event queue with another windowing host --------------------------------
+        //
+        // AppKit has ONE event queue per process, and when WPF and WinForms run in the same app (an
+        // ElementHost, a WindowsFormsHost) both pump it: whichever dequeues an event decides where
+        // it goes. Each used to deliver every event as if it were its own, so a click on a WinForms
+        // window taken by this pump went straight to AppKit -- which hands it to a view that does
+        // nothing with it -- and the app ignored the mouse. Now the owner of the event's window
+        // gets it, whichever pump took it off the queue.
+
+        /// <summary>
+        /// Set by another host that owns NSWindows in this process (the WinForms host): given an
+        /// event this pump dequeued, it handles the event and answers true when the event is for one
+        /// of its windows.
+        /// </summary>
+        public static Func<IntPtr, bool> ForeignEventHandler;
+
+        private static bool DispatchToForeignHost(IntPtr evt)
+        {
+            Func<IntPtr, bool> foreign = ForeignEventHandler;
+            if (foreign == null) return false;
+            try { return foreign(evt); }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Delivers an event to WPF exactly as <see cref="PumpEvents"/> does: input to the managed
+        /// side, then AppKit's own dispatch (so window dragging and the like keep working). For a
+        /// host that dequeued an event that turns out to be for a WPF window. Main thread only.
+        /// </summary>
+        public static void DispatchEvent(IntPtr evt)
+        {
+            if (evt == IntPtr.Zero) return;
+            // Translate mouse/scroll events into the managed input event before letting AppKit
+            // dispatch the event normally (so window dragging, etc. still work).
+            try { ReportMouseEvent(evt); } catch { /* a stray event shouldn't break the pump */ }
+            try { ReportKeyEvent(evt); } catch { /* a stray event shouldn't break the pump */ }
+            IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+            SendVoidPtr(app, Sel("sendEvent:"), evt);
         }
 
         /// <summary>
