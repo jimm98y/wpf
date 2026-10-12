@@ -895,6 +895,37 @@ internal sealed class CocoaHost : IWinFormsHost
         else Send(App(), Sel("sendEvent:"), evt);
     }
 
+    // ---- the wheel ----------------------------------------------------------------------
+    //
+    // Nothing turned a scroll into WM_MOUSEWHEEL here, so no list, grid or text box scrolled with
+    // the wheel or the trackpad. Windows measures the wheel in notches of 120, and controls divide
+    // by that (the property grid scrolls delta / 120 rows), so the fine-grained deltas of a trackpad
+    // or of an accelerated mouse are added up and handed on a notch at a time.
+    private const double PointsPerNotch = 30;   // a trackpad's travel for one wheel notch
+    private double _wheelUnits;
+
+    private void HandleScrollWheel(IntPtr evt)
+    {
+        double dy = SendDouble(evt, Sel("scrollingDeltaY"));
+        bool precise = Send(evt, Sel("hasPreciseScrollingDeltas")) != IntPtr.Zero;
+        // Both are what the user's scroll direction setting makes of the gesture, as Windows'
+        // delta is: positive scrolls the content up into view, as the wheel turned away does.
+        _wheelUnits += precise ? dy * 120 / PointsPerNotch : dy * 120;
+        int notches = (int)(_wheelUnits / 120);
+        if (notches == 0) return;
+        _wheelUnits -= notches * 120;
+
+        NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
+        int cx = (int)loc.x + _form.Left;
+        int cy = (int)(_form.Height - loc.y) + _form.Top;
+        _wheelInject ??= _driver.GetType().GetMethod("InjectWheel", BindingFlags.NonPublic | BindingFlags.Instance);
+        _wheelInject?.Invoke(_driver, new object[] { cx, cy, notches * 120 });
+        Application.DoEvents();
+        Present();
+    }
+
+    private MethodInfo _wheelInject;
+
     // The event being handled, for a window move the form starts from inside it (SC_MOVE).
     [ThreadStatic] private static IntPtr t_event;
     [ThreadStatic] private static CocoaHost t_eventHost;
@@ -980,6 +1011,11 @@ internal sealed class CocoaHost : IWinFormsHost
             if (type == 5) Send(App(), Sel("sendEvent:"), evt);
             return;
         }
+        else if (type == 22) // NSEventTypeScrollWheel -> WM_MOUSEWHEEL at the pointer
+        {
+            HandleScrollWheel(evt);
+            return;
+        }
         else if (type == 10) // NSEventTypeKeyDown -> route to the focused control
         {
             IntPtr chars = Send(evt, Sel("characters"));
@@ -1031,6 +1067,7 @@ internal sealed class CocoaHost : IWinFormsHost
     [StructLayout(LayoutKind.Sequential)] private struct NSRect { public double x, y, w, h; }
 
     private const string ObjC = "/usr/lib/libobjc.A.dylib";
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr r, IntPtr s);
     private static IntPtr Cls(string n) => objc_getClass(n);
     private static IntPtr Sel(string n) => sel_registerName(n);
     private static IntPtr NSStr(string s) => SendStr(Cls("NSString"), Sel("stringWithUTF8String:"), s);

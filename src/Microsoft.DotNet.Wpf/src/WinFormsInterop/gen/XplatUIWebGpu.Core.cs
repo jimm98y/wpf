@@ -402,7 +402,8 @@ namespace System.Windows.Forms
 			if (target == IntPtr.Zero) return;
 			IntPtr wParam = (IntPtr)((delta << 16) & unchecked((int)0xFFFF0000));
 			IntPtr lp = (IntPtr)((screenY << 16) | (screenX & 0xFFFF));
-			SendMessage(target, Msg.WM_MOUSEWHEEL, wParam, lp);
+			var m = Message.Create(target, (int)Msg.WM_MOUSEWHEEL, wParam, lp);
+			if (!FilteredOut(ref m)) SendMessage(m.HWnd, (Msg)m.Msg, m.WParam, m.LParam);
 		}
 
 		private IntPtr _grabHandle;   // mouse-capture target (WinForms grabs on button-down)
@@ -586,7 +587,8 @@ namespace System.Windows.Forms
 			if (target == IntPtr.Zero) return;
 			IntPtr wParam = (IntPtr)((delta << 16) & unchecked((int)0xFFFF0000));
 			IntPtr lp = (IntPtr)((screenY << 16) | (screenX & 0xFFFF));
-			SendMessage(target, Msg.WM_MOUSEWHEEL, wParam, lp);
+			var m = Message.Create(target, (int)Msg.WM_MOUSEWHEEL, wParam, lp);
+			if (!FilteredOut(ref m)) SendMessage(m.HWnd, (Msg)m.Msg, m.WParam, m.LParam);
 		}
 
 		/// <summary>Full click (down+up together) — for headless self-tests; real input uses the
@@ -1702,6 +1704,17 @@ namespace System.Windows.Forms
 			foreach (IntPtr k in kids) CollectSubtree(k, into);
 		}
 
+		/// <summary>A top-level form other than the one being composited: it has a window of its
+		/// own and is shown there, not inside another form. A dialog's window showed the application's
+		/// main window drawn over its own controls -- and the main window drew the dialog into itself
+		/// as well. Popups (menus, drop-downs, tooltips) are not forms and still go with the form.
+		/// With no form to composite for (a hit test over everything), nothing is left out.</summary>
+		private static bool IsOtherHostsForm(IntPtr handle, IntPtr firstRoot)
+		{
+			if (firstRoot == IntPtr.Zero || handle == firstRoot) return false;
+			return Control.FromHandle(handle) is Form f && f.TopLevel && f.Parent == null;
+		}
+
 		/// <summary>Every visible window, in paint order, roots ordered by z.</summary>
 		private List<IntPtr> CollectAll(IntPtr firstRoot)
 		{
@@ -1709,7 +1722,8 @@ namespace System.Windows.Forms
 			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(k);
-				if (h != null && h.parent == null && !IsParkedChild(h) && !roots.Contains(k)) roots.Add(k);
+				if (h != null && h.parent == null && !IsParkedChild(h) && !roots.Contains(k)
+					&& !IsOtherHostsForm(k, firstRoot)) roots.Add(k);
 			}
 			roots.Sort((a, b) =>
 			{
