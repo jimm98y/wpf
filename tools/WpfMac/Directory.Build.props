@@ -9,6 +9,10 @@
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <!-- The repo's .editorconfig raises analyzer suggestions to errors for the product code; like the
+         SDK pack project, these tools opt out. -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <WpfMacRepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)../..'))</WpfMacRepoRoot>
   </PropertyGroup>

@@ -50,4 +50,12 @@ dotnet publish "$HERE/WpfMac.Launcher" -c Release -o "$OUT/launcher" -nologo -v 
 echo ">> overlay ($RID) -> $OUT/overlay/wpfmac.payload"
 dotnet publish "$HERE/WpfMac.Payload" -c Release -r "$RID" --self-contained false \
   -o "$OUT/overlay/wpfmac.payload" -nologo -v q -clp:NoSummary -p:WarningLevel=0 -nowarn:MSB3277
+case "$RID" in
+  osx-*)
+    # The Win32 trampoline an app's own P/Invokes into user32, kernel32, gdi32... land in. Windows
+    # has the real DLLs, and Linux would need ELF stubs, which are not generated yet.
+    echo ">> libwin32shim ($RID) -> $OUT/overlay/wpfmac.payload"
+    "$HERE/WpfMac.Win32Native/build-shim.sh" "$OUT/overlay/wpfmac.payload" "$( [ "${RID#osx-}" = x64 ] && echo x86_64 || echo arm64 )" | tail -1
+    ;;
+esac
 echo ">> done: dotnet $OUT/launcher/wpfmac.dll run <App.dll>"

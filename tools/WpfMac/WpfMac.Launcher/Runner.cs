@@ -20,6 +20,9 @@ internal sealed class Runner
     public sealed record Prepared(string RuntimeConfig, string Deps, string LogPath, IReadOnlyList<string> Notes, IReadOnlyCollection<string> Replaced)
     {
         public required ProcessStartInfo StartInfo { get; init; }
+        public required JsonObject MergedDeps { get; init; }
+        /// <summary>The --additionalprobingpath roots, in the order the host is given them.</summary>
+        public required IReadOnlyList<string> ProbeRoots { get; init; }
     }
 
     /// <summary>Writes the generated files into the cache and builds the command that runs the app.</summary>
@@ -44,6 +47,7 @@ internal sealed class Runner
             ["STARTUP_HOOKS"] = Path.Combine(OverlayDir, "WpfMac.Bootstrap.dll"),
             ["WpfMac.AppDirectory"] = App.Directory + Path.DirectorySeparatorChar,
             ["WpfMac.LogPath"] = logPath,
+            ["WpfMac.OverlayDirectory"] = OverlayDir,
             // The WebGPU compositor; the SDK sets the same switch on the heads where it is not already
             // the default.
             ["Switch.System.Windows.Media.UseWebGpuComposition"] = "true",
@@ -68,19 +72,23 @@ internal sealed class Runner
             UseShellExecute = false,
             WorkingDirectory = App.Directory,      // as Explorer starts an .exe: in its own folder
         };
-        foreach (string a in new[]
+        string[] probeRoots =
         {
-            "exec",
-            "--runtimeconfig", rcPath,
-            "--depsfile", depsPath,
-            "--additionalprobingpath", Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(OverlayDir))!,
-            "--additionalprobingpath", Path.GetDirectoryName(App.Directory)!,
-            "--additionalprobingpath", fetcher.Root,
-            App.Dll,
-        })
+            Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(OverlayDir))!,
+            Path.GetDirectoryName(App.Directory)!,
+            fetcher.Root,
+        };
+        psi.ArgumentList.Add("exec");
+        psi.ArgumentList.Add("--runtimeconfig");
+        psi.ArgumentList.Add(rcPath);
+        psi.ArgumentList.Add("--depsfile");
+        psi.ArgumentList.Add(depsPath);
+        foreach (string root in probeRoots)
         {
-            psi.ArgumentList.Add(a);
+            psi.ArgumentList.Add("--additionalprobingpath");
+            psi.ArgumentList.Add(root);
         }
+        psi.ArgumentList.Add(App.Dll);
         foreach (string a in appArgs) psi.ArgumentList.Add(a);
 
         if (!HostInfo.IsWindows)
@@ -92,7 +100,12 @@ internal sealed class Runner
         // The app's own children must not inherit a startup hook a parent shell may have set.
         psi.Environment.Remove("DOTNET_STARTUP_HOOKS");
 
-        return new Prepared(rcPath, depsPath, logPath, merger.Notes, merger.Replaced) { StartInfo = psi };
+        return new Prepared(rcPath, depsPath, logPath, merger.Notes, merger.Replaced)
+        {
+            StartInfo = psi,
+            MergedDeps = deps,
+            ProbeRoots = probeRoots,
+        };
     }
 
     public int Run(IEnumerable<string> appArgs)

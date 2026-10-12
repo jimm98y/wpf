@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Generates libwin32shim's export stubs from the Windows API metadata. Run by build.sh; see
+       Generator.cs for what comes out and why. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>win32shim-gen</AssemblyName>
+    <RootNamespace>WpfMac.Win32Native</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Only the .winmd is wanted, and only its path: see the AssemblyMetadata below. -->
+    <PackageReference Include="Microsoft.Windows.SDK.Win32Metadata" Version="63.0.31-preview" GeneratePathProperty="true" ExcludeAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>Win32Metadata</_Parameter1>
+      <_Parameter2>$(PkgMicrosoft_Windows_SDK_Win32Metadata)/Windows.Win32.winmd</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

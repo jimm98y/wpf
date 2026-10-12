@@ -8,6 +8,8 @@ internal static class Program
         usage:
           wpfmac run   [-v] [--offline] [--title-prefix <text>] <App.dll|App.exe|folder> [-- app args]
           wpfmac prepare <App.dll|App.exe|folder>   write the generated files, print the command, do not run
+          wpfmac audit [--out <file.md>] <App.dll|App.exe|folder>
+                                                    what the app needs that the stack on this OS lacks
           wpfmac clean [--all]                      delete generated files (--all: also logs and shim state)
           wpfmac where                              print every location wpfmac uses
 
@@ -27,6 +29,7 @@ internal static class Program
             {
                 "run" => Run(args[1..], execute: true),
                 "prepare" => Run(args[1..], execute: false),
+                "audit" => Audit(args[1..]),
                 "clean" => Clean(args[1..]),
                 "where" => Where(),
                 _ => throw new UserError($"unknown command '{args[0]}'.\n\n{Usage}"),
@@ -81,6 +84,45 @@ internal static class Program
         Console.WriteLine($"runtimeconfig: {p.RuntimeConfig}");
         Console.WriteLine($"deps: {p.Deps}");
         Console.WriteLine($"command: {p.StartInfo.FileName} {string.Join(' ', p.StartInfo.ArgumentList)}");
+        return 0;
+    }
+
+    private static int Audit(string[] args)
+    {
+        string? output = null, target = null;
+        bool offline = false;
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--out": output = args[++i]; break;
+                case "--offline": offline = true; break;
+                default: target = args[i]; break;
+            }
+        }
+        if (target == null) throw new UserError("which app? Pass its .dll, .exe or folder.");
+
+        var runner = new Runner
+        {
+            App = AppFiles.Resolve(target),
+            OverlayDir = Locations.FindOverlay() ?? throw new UserError("the overlay is missing; build it with tools/WpfMac/build.sh."),
+            Offline = offline,
+        };
+        var prepared = runner.Prepare(Array.Empty<string>());
+        var set = WpfMac.Audit.LoadSet.Build(prepared.MergedDeps, prepared.ProbeRoots, HostInfo.Rid);
+        using var resolver = new WpfMac.Audit.Resolver(set);
+        var report = new WpfMac.Audit.Auditor(resolver, runner.App.Directory).Run();
+        report.Notes.AddRange(prepared.Notes);
+        string md = WpfMac.Audit.Auditor.ToMarkdown(report, runner.App.Name, HostInfo.Rid);
+        if (output != null)
+        {
+            File.WriteAllText(output, md);
+            Console.WriteLine($"wrote {output}");
+        }
+        else
+        {
+            Console.Write(md);
+        }
         return 0;
     }
 

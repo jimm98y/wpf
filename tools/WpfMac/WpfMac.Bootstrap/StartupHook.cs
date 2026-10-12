@@ -25,6 +25,10 @@ internal static class StartupHook
 
         CompatLog.Start(AppContext.GetData(Keys.LogPath) as string);
         VersionUnification.Install(AssemblyLoadContext.Default);
+        if (AppContext.GetData(Keys.OverlayDirectory) is string overlay && overlay.Length > 0)
+        {
+            WpfMac.Bootstrap.Win32.ShimLibrary.Initialize(overlay);
+        }
 
         CompatLog.Info($"wpfmac bootstrap: {Assembly.GetEntryAssembly()?.GetName().Name} on {System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}, base {AppContext.BaseDirectory}");
     }
@@ -37,5 +41,6 @@ namespace WpfMac.Bootstrap
     {
         public const string AppDirectory = "WpfMac.AppDirectory";
         public const string LogPath = "WpfMac.LogPath";
+        public const string OverlayDirectory = "WpfMac.OverlayDirectory";
     }
 }
