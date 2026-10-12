@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- wpfmac: runs an unmodified net10.0-windows WPF/WinForms app on the WebGPU stack without touching
+       its folder. See Documentation/running-prebuilt-apps.md. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>wpfmac</AssemblyName>
+    <RootNamespace>WpfMac</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WpfMac.Tests" />
+  </ItemGroup>
+
+</Project>

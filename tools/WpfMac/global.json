@@ -1,0 +1,9 @@
+{
+  "sdk": {
+    "version": "10.0.109",
+    "rollForward": "latestFeature"
+  },
+  "msbuild-sdks": {
+    "WpfWebGpu.Sdk": "0.1.1"
+  }
+}

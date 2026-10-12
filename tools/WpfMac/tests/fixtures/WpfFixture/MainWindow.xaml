@@ -1,0 +1,14 @@
+<Window x:Class="WpfFixture.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="WpfFixture" Width="480" Height="320">
+    <StackPanel Margin="16">
+        <TextBlock x:Name="Heading" FontSize="22" Text="Hello from an unmodified WPF app" />
+        <Button x:Name="Button" Margin="0,12,0,0" Content="A button" HorizontalAlignment="Left" Padding="12,4" />
+        <ListBox Margin="0,12,0,0" Height="100">
+            <ListBoxItem>One</ListBoxItem>
+            <ListBoxItem>Two</ListBoxItem>
+            <ListBoxItem>Three</ListBoxItem>
+        </ListBox>
+    </StackPanel>
+</Window>

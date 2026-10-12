@@ -1,0 +1,15 @@
+<Project>
+  <!-- The launcher is built outside the repo's Arcade build, like shims/ and samples/: this file is
+       deliberately the nearest Directory.Build.props, so the root one (and its code-style-as-error
+       analyzers and Arcade output layout) is never imported. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <WpfMacRepoRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)../..'))</WpfMacRepoRoot>
+  </PropertyGroup>
+</Project>

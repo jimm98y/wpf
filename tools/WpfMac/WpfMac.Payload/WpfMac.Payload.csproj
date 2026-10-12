@@ -1,0 +1,52 @@
+<Project Sdk="WpfWebGpu.Sdk">
+
+  <!--
+    THE OVERLAY wpfmac runs an unmodified app on.
+
+    This is a WPF + WinForms app that is never started. Publishing it for a RID produces exactly the
+    set of files WpfWebGpu.Sdk would deploy beside a rebuilt app on that head: the fork's WPF, the Mono
+    WinForms and System.Drawing, WebView2, the renderer and wgpu-native for the RID, the fonts (macOS),
+    and the SDK's per-OS choice between the cross-platform shims and the real Windows packages. Its
+    deps.json is the manifest wpfmac merges into an app's own.
+
+    Building the overlay with the SDK, instead of listing its contents a second time in the launcher,
+    is what keeps the two from drifting: whatever the SDK decides a head needs, wpfmac runs with.
+
+    On top of the SDK's payload:
+      - the members of Microsoft.WindowsDesktop.App that are not WPF or WinForms. wpfmac drops that
+        framework from an app's runtimeconfig (it is where stock WPF comes from), and these are the
+        assemblies an app then no longer gets from it. All of them have cross-platform builds.
+      - WpfMac.Bootstrap, the startup hook.
+
+    Published by tools/WpfMac/build.sh (or .cmd) into artifacts/wpfmac/<rid>/overlay/wpfmac.payload/.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>WpfMac.Payload</AssemblyName>
+    <SelfContained>false</SelfContained>
+    <WpfMacExtrasVersion>10.0.10</WpfMacExtrasVersion>
+    <!-- Nothing in this project is ever trimmed or run; the warnings about the payload's own code
+         being empty are noise. -->
+    <NoWarn>$(NoWarn);NU1603;CS7022</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WpfMac.Bootstrap/WpfMac.Bootstrap.csproj" />
+  </ItemGroup>
+
+  <!-- Microsoft.WindowsDesktop.App, minus what the SDK already supplies: WPF, WinForms,
+       Microsoft.Win32.SystemEvents (its shim on macOS, the real package on Windows), and the support
+       packages Sdk.targets references for WPF itself (ConfigurationManager, EventLog, IO.Packaging,
+       Cryptography.Xml, Windows.Extensions, Formats.Nrbf, Security.Permissions, Drawing.Common). -->
+  <ItemGroup>
+    <PackageReference Include="System.CodeDom" Version="$(WpfMacExtrasVersion)" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="$(WpfMacExtrasVersion)" />
+    <PackageReference Include="System.DirectoryServices" Version="$(WpfMacExtrasVersion)" />
+    <PackageReference Include="System.Resources.Extensions" Version="$(WpfMacExtrasVersion)" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="$(WpfMacExtrasVersion)" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="$(WpfMacExtrasVersion)" />
+    <PackageReference Include="Microsoft.Win32.Registry.AccessControl" Version="$(WpfMacExtrasVersion)" />
+  </ItemGroup>
+
+</Project>
