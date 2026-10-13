@@ -77,10 +77,12 @@ namespace System.Windows.Forms
 
 		private bool UseSystemColors => ColorTable.UseSystemColors || !ToolStripManager.VisualStylesEnabled;
 
-		// ToolStripRenderer.ShouldPaintBackground: no BackColor of the control's own, and no image.
+		// ToolStripRenderer.ShouldPaintBackground: no BackColor of the control's own (RawBackColor), and
+		// no image. Not ShouldSerializeBackColor, which compares the AMBIENT colour: a tool bar in a
+		// white property grid inherits white and lost its gradient.
 		private static bool ShouldPaintBackground (Control control)
 		{
-			return !control.ShouldSerializeBackColor () && control.BackgroundImage == null;
+			return control.background_color.IsEmpty && control.BackgroundImage == null;
 		}
 
 		#region Protected Methods

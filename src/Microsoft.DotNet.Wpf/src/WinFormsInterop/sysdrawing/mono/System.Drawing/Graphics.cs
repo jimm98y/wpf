@@ -3123,6 +3123,8 @@ namespace System.Drawing
 			GpuRecorder?.GetTranslation (out tx, out ty);
 			if (!dev.IntersectsWith (want) && !new RectangleF (dev.X + tx - m [4], dev.Y + ty - m [5], dev.Width, dev.Height).IntersectsWith (want)) return;
 			Console.Error.WriteLine ($"[gfx] {op} {what ()} sm={gpu_smoothing} po={PixelOffsetMode} xf={m [4]},{m [5]} rec=({tx},{ty}) dev={dev}");
+			// WF_TRACE_GFX_STACK=1: and who drew it.
+			if (Environment.GetEnvironmentVariable ("WF_TRACE_GFX_STACK") == "1") Console.Error.WriteLine (new System.Diagnostics.StackTrace (2, false).ToString ());
 		}
 		static RectangleF PointsBox (PointF [] p)
 		{
