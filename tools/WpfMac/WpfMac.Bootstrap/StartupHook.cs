@@ -57,6 +57,14 @@ internal static class StartupHook
             StartScreenshots(shots, int.TryParse(AppContext.GetData(Keys.ScreenshotInterval) as string, out int s) ? s : 5);
         }
 
+        // A diagnostic hook of the developer's own, run inside the app: DOTNET_STARTUP_HOOKS reaches
+        // the launcher, which clears it for the app it starts (Runner).
+        if (Environment.GetEnvironmentVariable("WPFMAC_APP_STARTUP_HOOK") is string extra && File.Exists(extra))
+        {
+            try { Assembly.LoadFrom(extra).GetType("StartupHook")?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.Invoke(null, null); }
+            catch (Exception e) { CompatLog.Info($"app startup hook {extra}: {e.GetBaseException().Message}"); }
+        }
+
         CompatLog.Info($"wpfmac bootstrap: {Assembly.GetEntryAssembly()?.GetName().Name} on {System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}, base {AppContext.BaseDirectory}");
     }
 

@@ -11,4 +11,5 @@ internal interface IWinFormsHost
     void Close();                             // destroy the native window (the form closed itself)
     void InjectClickScreen(int x, int y);     // inject a click (self-test)
     void SaveFrame(string path);              // save the current frame to a PNG (verification)
+    void SetEnabled(bool enable) { }          // the form was enabled/disabled (a modal loop): the native window follows
 }

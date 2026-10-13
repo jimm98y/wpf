@@ -185,6 +185,21 @@ namespace System.Windows.Forms
         /// consequence lives here, the same everywhere. Clicks INSIDE the application need none of
         /// this: they reach the driver, which announces them (XplatUI.MousePress), and whatever put
         /// the popup up takes it down.</para></summary>
+        /// <summary>The driver enabled or disabled a window (EnableWindow): a form on screen has
+        /// its real window follow, as a modal loop disables every other form of the thread.</summary>
+        internal static void WindowEnabledChanged(IntPtr handle, bool enable)
+        {
+            IWinFormsHost[] hosts;
+            lock (s_lock) hosts = s_hosts.ToArray();
+            foreach (IWinFormsHost host in hosts)
+            {
+                Form form;
+                lock (s_lock) s_forms.TryGetValue(host, out form);
+                if (form == null || form.IsDisposed || form.InvokeRequired || !form.IsHandleCreated || form.Handle != handle) continue;
+                host.SetEnabled(enable);
+            }
+        }
+
         internal static void ApplicationDeactivated()
         {
             Form[] forms;

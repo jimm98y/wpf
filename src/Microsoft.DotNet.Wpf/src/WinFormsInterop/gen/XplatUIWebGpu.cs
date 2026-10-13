@@ -41,9 +41,7 @@ namespace System.Windows.Forms {
 		internal override void SetWindowTransparency(IntPtr handle, double transparency, Color key) {  }
 		internal override TransparencySupport SupportsTransparency() { return default(TransparencySupport); }
 		internal override void SetMenu(IntPtr handle, Menu menu) {  }
-		internal override bool IsEnabled(IntPtr handle) { return false; }
 		internal override void Activate(IntPtr handle) {  }
-		internal override void EnableWindow(IntPtr handle, bool Enable) {  }
 		internal override void HandleException(Exception e) {  }
 		internal override Region GetClipRegion(IntPtr hwnd) { return default(Region); }
 		internal override void SetClipRegion(IntPtr hwnd, Region region) {  }
