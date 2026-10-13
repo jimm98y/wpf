@@ -136,10 +136,12 @@ namespace Wpf.WinFormsInterop.Tests
             using var path = new GraphicsPath(FillMode.Alternate);
             path.AddRectangle(new Rectangle(0, 0, 30, 30));
             path.AddRectangle(new Rectangle(10, 10, 10, 10));
-            // Antialiased: one path. GDI+'s default is aliased, which is the next test.
+            // Antialiased: GDI+'s own antialiasing (GdipAntialias.FillPath) -- the covered core as
+            // rectangles, the edge's partial pixels as images -- and the hole stays empty: the core is
+            // the bands above and below it and the columns beside it, at least four rectangles.
             var (n, kinds) = Record(g => { g.SmoothingMode = SmoothingMode.AntiAlias; g.FillPath(Brushes.Black, path); });
-            Assert.Equal(1, n);
-            Assert.Contains("PathGeometry", kinds);
+            Assert.DoesNotContain("PathGeometry", kinds);
+            Assert.True(n >= 4, $"{n} draws");
         }
 
         [Fact]

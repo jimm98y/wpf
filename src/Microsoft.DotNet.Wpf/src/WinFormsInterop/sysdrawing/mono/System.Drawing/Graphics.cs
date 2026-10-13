@@ -347,6 +347,79 @@ namespace System.Drawing
 			return true;
 		}
 
+		/// <summary>An antialiased solid fill of a whole path as GDI+ rasterizes it (GdipAntialias.FillPath),
+		/// under a world that is at most a whole-pixel translation.</summary>
+		internal bool TryFillGdipAntialiasedPath (Brush brush, GraphicsPath path)
+		{
+			if (GpuRecorder == null || nativeObject != IntPtr.Zero || print_mode || GpuAliased || !(brush is SolidBrush sb))
+				return false;
+			float [] m = rec_world;
+			if (m [0] != 1f || m [1] != 0f || m [2] != 0f || m [3] != 1f || m [4] != (int) m [4] || m [5] != (int) m [5])
+				return false;
+			GpuRecorder.GetTranslation (out float tx, out float ty);
+			if (tx != (int) tx || ty != (int) ty)
+				return false;
+			if (!WebGpuBackend.GdipAntialias.FillPath (path.PathPoints, path.PathTypes, path.FillMode == FillMode.Winding, 1, 0, 0, 1, 0, 0, out byte [] alpha, out Rectangle r))
+				return false;
+			Color c = sb.Color;
+			int argb = c.ToArgb ();
+			// The fully covered part as rectangles -- rows with the same covered span merged into one --
+			// so that what is drawn on it later (a caption) sees a solid fill to blend against, as GDI+
+			// blends against the pixels; only the edge's partial pixels go as images, in strips beside
+			// and above and below that core, so that none of them lies over the caption either.
+			int w = r.Width, h = r.Height;
+			var strips = new List<Rectangle> ();
+			// Each row's fully covered spans; rows with the same spans make one band.
+			List<(int A, int B)> Spans (int y)
+			{
+				var l = new List<(int, int)> ();
+				for (int x = 0; x < w; ) {
+					if (alpha [y * w + x] != 255) { x++; continue; }
+					int x1 = x;
+					while (x1 < w && alpha [y * w + x1] == 255) x1++;
+					l.Add ((x, x1));
+					x = x1;
+				}
+				return l;
+			}
+			static bool Same (List<(int A, int B)> u, List<(int A, int B)> v)
+			{
+				if (u.Count != v.Count) return false;
+				for (int k = 0; k < u.Count; k++) if (u [k] != v [k]) return false;
+				return true;
+			}
+			int bandStart = 0;
+			List<(int A, int B)> band = h > 0 ? Spans (0) : null;
+			for (int y = 1; y <= h; y++) {
+				List<(int A, int B)> cur = y < h ? Spans (y) : null;
+				if (y < h && Same (cur, band)) continue;
+				int n = y - bandStart, prev = 0;
+				foreach ((int A, int B) sp in band) {
+					GpuRecorder.FillRect (r.X + sp.A, r.Y + bandStart, sp.B - sp.A, n, argb);
+					if (sp.A > prev) strips.Add (new Rectangle (prev, bandStart, sp.A - prev, n));
+					prev = sp.B;
+				}
+				if (prev < w) strips.Add (new Rectangle (prev, bandStart, w - prev, n));
+				bandStart = y; band = cur;
+			}
+			foreach (Rectangle st in strips) {
+				var rgba = new byte [st.Width * st.Height * 4];
+				bool any = false;
+				for (int yy = 0; yy < st.Height; yy++)
+					for (int xx = 0; xx < st.Width; xx++) {
+						byte al = alpha [(st.Y + yy) * w + st.X + xx];
+						if (al == 0) continue;
+						any = true;
+						int d = (yy * st.Width + xx) * 4;
+						rgba [d] = c.R; rgba [d + 1] = c.G; rgba [d + 2] = c.B;
+						rgba [d + 3] = (byte) ((al * c.A + 127) / 255);
+					}
+				if (any)
+					GpuRecorder.DrawImage (rgba, st.Width, st.Height, r.X + st.X, r.Y + st.Y, st.Width, st.Height);
+			}
+			return true;
+		}
+
 		bool TryGradient (Brush b, out GradientDesc g)
 		{
 			g = default;
@@ -1106,6 +1179,7 @@ namespace System.Drawing
 		
 		public void DrawArc (Pen pen, float x, float y, float width, float height, float startAngle, float sweepAngle)
 		{
+			GfxTrace ("DrawArc", () => $"{x},{y} {width}x{height} pen={pen?.Color} w={pen?.Width}", new RectangleF (x, y, width, height));
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			CheckUse (pen);
@@ -2208,6 +2282,7 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, int x1, int y1, int x2, int y2)
 		{
+			GfxTrace ("DrawLine", () => $"{x1},{y1}-{x2},{y2} pen={pen?.Color} w={pen?.Width}", RectangleF.FromLTRB (Math.Min (x1, x2), Math.Min (y1, y2), Math.Max (x1, x2) + 1, Math.Max (y1, y2) + 1));
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			CheckUse (pen);
@@ -2229,6 +2304,7 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, float x1, float y1, float x2, float y2)
 		{
+			GfxTrace ("DrawLineF", () => $"{x1},{y1}-{x2},{y2} pen={pen?.Color} w={pen?.Width}", RectangleF.FromLTRB (Math.Min (x1, x2), Math.Min (y1, y2), Math.Max (x1, x2) + 1, Math.Max (y1, y2) + 1));
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			CheckUse (pen);
@@ -2253,6 +2329,7 @@ namespace System.Drawing
 
 		public void DrawLines (Pen pen, PointF [] points)
 		{
+			GfxTrace ("DrawLinesF", () => $"pen={pen?.Color} w={pen?.Width} n={points?.Length}", PointsBox (points));
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -2280,6 +2357,7 @@ namespace System.Drawing
 
 		public void DrawLines (Pen pen, Point [] points)
 		{
+			GfxTrace ("DrawLines", () => $"pen={pen?.Color} w={pen?.Width} n={points?.Length}", PointsBox (points == null ? null : Array.ConvertAll (points, q => (PointF) q)));
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -2307,6 +2385,7 @@ namespace System.Drawing
 
 		public void DrawPath (Pen pen, GraphicsPath path)
 		{
+			GfxTrace ("DrawPath", () => $"pen={pen?.Color} w={pen?.Width} pts={PathDesc (path)}", path?.GetBounds () ?? RectangleF.Empty);
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (path == null)
@@ -2402,6 +2481,7 @@ namespace System.Drawing
 
 		public void DrawPolygon (Pen pen, Point [] points)
 		{
+			GfxTrace ("DrawPolygon", () => $"pen={pen?.Color} w={pen?.Width} n={points?.Length}", PointsBox (points == null ? null : Array.ConvertAll (points, q => (PointF) q)));
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (points == null)
@@ -2460,6 +2540,7 @@ namespace System.Drawing
 
 		public void DrawRectangle (Pen pen, RectangleF rect)
 		{
+			GfxTrace ("DrawRectangleF", () => $"{rect} pen={pen?.Color} w={pen?.Width}", rect);
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			DrawRectangle (pen, rect.X, rect.Y, rect.Width, rect.Height);
@@ -2546,6 +2627,7 @@ namespace System.Drawing
 
 		public void DrawRectangle (Pen pen, int x, int y, int width, int height)
 		{
+			GfxTrace ("DrawRectangle", () => $"{x},{y} {width}x{height} pen={pen?.Color} w={pen?.Width}", new RectangleF (x, y, width + 1, height + 1));
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			CheckUse (pen);
@@ -3020,6 +3102,46 @@ namespace System.Drawing
 			foreach (char c in s)
 				if (c < ' ') return true;
 			return false;
+		}
+
+		// WF_TRACE_GFX="x,y,w,h": every drawing call whose device box meets that device rectangle, with
+		// what it draws and the Graphics state, to stderr. A debugging aid for parity work.
+		static readonly RectangleF? s_gfxTrace = ParseGfxTrace ();
+		static RectangleF? ParseGfxTrace ()
+		{
+			string v = Environment.GetEnvironmentVariable ("WF_TRACE_GFX");
+			if (string.IsNullOrEmpty (v)) return null;
+			string[] p = v.Split (',');
+			return p.Length == 4 ? new RectangleF (float.Parse (p [0]), float.Parse (p [1]), float.Parse (p [2]), float.Parse (p [3])) : null;
+		}
+		void GfxTrace (string op, Func<string> what, RectangleF world)
+		{
+			if (s_gfxTrace is not RectangleF want) return;
+			float [] m = rec_world;
+			RectangleF dev = new RectangleF (world.X * m [0] + m [4], world.Y * m [3] + m [5], world.Width * m [0], world.Height * m [3]);
+			float tx = 0, ty = 0;
+			GpuRecorder?.GetTranslation (out tx, out ty);
+			if (!dev.IntersectsWith (want) && !new RectangleF (dev.X + tx - m [4], dev.Y + ty - m [5], dev.Width, dev.Height).IntersectsWith (want)) return;
+			Console.Error.WriteLine ($"[gfx] {op} {what ()} sm={gpu_smoothing} po={PixelOffsetMode} xf={m [4]},{m [5]} rec=({tx},{ty}) dev={dev}");
+		}
+		static RectangleF PointsBox (PointF [] p)
+		{
+			if (p == null || p.Length == 0) return RectangleF.Empty;
+			float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+			foreach (PointF q in p) { x0 = Math.Min (x0, q.X); y0 = Math.Min (y0, q.Y); x1 = Math.Max (x1, q.X); y1 = Math.Max (y1, q.Y); }
+			return RectangleF.FromLTRB (x0, y0, x1 + 1, y1 + 1);
+		}
+		static string BrushDesc (Brush b) => b switch {
+			SolidBrush sb => "solid " + sb.Color,
+			System.Drawing.Drawing2D.LinearGradientBrush lg => $"linear {lg.Rectangle} {lg.LinearColors [0]}->{lg.LinearColors [1]} blend={(lg.InterpolationColors?.Colors?.Length ?? 0)}",
+			_ => b?.GetType ().Name };
+		static string PathDesc (GraphicsPath p)
+		{
+			if (p == null) return "-";
+			var pts = p.PathPoints; var ty = p.PathTypes;
+			var sb = new System.Text.StringBuilder ();
+			for (int i = 0; i < pts.Length && i < 40; i++) sb.Append ($"{pts [i].X},{pts [i].Y}:{ty [i]} ");
+			return sb.ToString ();
 		}
 
 		bool TryDrawGdiPlusText (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
@@ -3678,6 +3800,7 @@ namespace System.Drawing
 
 		public void FillPath (Brush brush, GraphicsPath path)
 		{
+			GfxTrace ("FillPath", () => $"brush={BrushDesc (brush)} pts={PathDesc (path)}", path?.GetBounds () ?? RectangleF.Empty);
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			if (path == null)
@@ -3714,6 +3837,8 @@ namespace System.Drawing
 				// GDI+'s default smoothing is aliased: a path filled without antialiasing covers whole pixels
 				// (DotNetBar outlines its forms with a widened path filled so; antialiased, the outline came out
 				// as a half-strength line straddling two pixels).
+				if (!GpuAliased && TryFillGdipAntialiasedPath (brush, path))
+					return;
 				if (GpuAliased && brush is SolidBrush) {
 					FillContoursAliased (contours, nonZero, ArgbOf (brush));
 					return;
@@ -3920,6 +4045,7 @@ namespace System.Drawing
 
 		public void FillRectangle (Brush brush, int x, int y, int width, int height)
 		{
+			GfxTrace ("FillRectangle", () => $"{x},{y} {width}x{height} brush={BrushDesc (brush)}", new RectangleF (x, y, width, height));
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			CheckUse (brush);
@@ -3938,6 +4064,7 @@ namespace System.Drawing
 
 		public void FillRectangle (Brush brush, float x, float y, float width, float height)
 		{
+			GfxTrace ("FillRectangleF", () => $"{x},{y} {width}x{height} brush={BrushDesc (brush)}", new RectangleF (x, y, width, height));
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
 			CheckUse (brush);

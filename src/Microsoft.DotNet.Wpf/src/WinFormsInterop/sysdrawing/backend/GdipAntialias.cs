@@ -116,6 +116,105 @@ namespace System.Drawing.WebGpuBackend
             return true;
         }
 
+        /// <summary>The same filler over a whole path -- figures of lines and Beziers (GDI+'s point
+        /// types: 0 start, 1 line, 3 Bezier, 0x80 close), filled together under the path's own rule
+        /// (alternate, or winding with <paramref name="winding"/>). A widened outline, DotNetBar's
+        /// button border, is a path of many line figures.</summary>
+        public static bool FillPath (PointF [] p, byte [] types, bool winding, float m11, float m12, float m21, float m22, float dx, float dy,
+                                     out byte [] alpha, out Rectangle bounds)
+        {
+            alpha = null;
+            bounds = Rectangle.Empty;
+            if (p == null || types == null || p.Length != types.Length || p.Length < 2)
+                return false;
+            float a = m11 * 16f, b = m12 * 16f, c = m21 * 16f, d = m22 * 16f, ex = dx * 16f, ey = dy * 16f;
+            bool axis = m12 == 0f && m21 == 0f;
+            var pts = new (int X, int Y) [p.Length];
+            for (int i = 0; i < p.Length; i++) {
+                float fx = axis ? (a * p [i].X + ex) * 16f + 0.5f : (c * p [i].Y + a * p [i].X + ex) * 16f + 0.5f;
+                float fy = axis ? (p [i].Y * d + ey) * 16f + 0.5f : (d * p [i].Y + b * p [i].X + ey) * 16f + 0.5f;
+                pts [i] = (((int) fx + 15) >> 4, ((int) fy + 15) >> 4);
+            }
+            var figures = new List<List<(int X, int Y)>> ();
+            List<(int X, int Y)> fig = null;
+            for (int i = 0; i < p.Length; i++) {
+                int t = types [i] & 7;
+                if (t == 0 || fig == null) {
+                    fig = new List<(int X, int Y)> { pts [i] };
+                    figures.Add (fig);
+                } else if (t == 1) {
+                    fig.Add (pts [i]);
+                } else if (t == 3) {
+                    if (i + 2 >= p.Length)
+                        return false;
+                    if (!Flatten (pts [i - 1], pts [i], pts [i + 1], pts [i + 2], fig))
+                        return false;
+                    i += 2;
+                } else {
+                    return false;
+                }
+            }
+            // Subsample space, edges of every figure (each closed), with their direction.
+            var edges = new List<(long X0, long Y0, long X1, long Y1, int Dir)> ();
+            long minY = long.MaxValue, maxY = long.MinValue;
+            foreach (List<(int X, int Y)> f in figures) {
+                int n = f.Count;
+                if (n < 2) continue;
+                for (int i = 0; i < n; i++) {
+                    long x0 = (f [i].X + 8L) * 8, y0 = (f [i].Y + 8L) << 2;
+                    long x1 = (f [(i + 1) % n].X + 8L) * 8, y1 = (f [(i + 1) % n].Y + 8L) << 2;
+                    minY = Math.Min (minY, y0); maxY = Math.Max (maxY, y0);
+                    if (y0 == y1) continue;
+                    int dir = 1;
+                    if (y1 < y0) { (x0, x1) = (x1, x0); (y0, y1) = (y1, y0); dir = -1; }
+                    edges.Add ((x0, y0, x1, y1, dir));
+                }
+            }
+            if (edges.Count == 0)
+                return false;
+            long k0 = CeilDiv (minY, 16), k1 = CeilDiv (maxY, 16);
+            if (k1 <= k0)
+                return false;
+            var rows = new List<(long X, int Dir)> [k1 - k0];
+            foreach (var e in edges) {
+                long dM = e.X1 - e.X0, dN = e.Y1 - e.Y0;
+                for (long k = CeilDiv (e.Y0, 16); k < CeilDiv (e.Y1, 16); k++)
+                    (rows [k - k0] ??= new List<(long, int)> ()).Add ((CeilDiv (e.X0 * dN + dM * (16 * k - e.Y0), 16 * dN), e.Dir));
+            }
+            long sMin = long.MaxValue, sMax = long.MinValue;
+            foreach (var r in rows)
+                if (r != null)
+                    foreach (var v in r) { sMin = Math.Min (sMin, v.X); sMax = Math.Max (sMax, v.X); }
+            if (sMin > sMax)
+                return false;
+            int px0 = (int) (sMin >> 3), px1 = (int) ((sMax - 1) >> 3) + 1;
+            int py0 = (int) (k0 >> 2), py1 = (int) ((k1 - 1) >> 2) + 1;
+            int w = px1 - px0, h = py1 - py0;
+            if (w <= 0 || h <= 0 || (long) w * h > 1 << 22)
+                return false;
+            var count = new int [w * h];
+            for (int ri = 0; ri < rows.Length; ri++) {
+                var r = rows [ri];
+                if (r == null)
+                    continue;
+                r.Sort ((u, v) => u.X.CompareTo (v.X));
+                int row = (int) ((k0 + ri) >> 2) - py0;
+                int wind = 0;
+                for (int j = 0; j + 1 < r.Count; j++) {
+                    wind += winding ? r [j].Dir : 1;
+                    bool inside = winding ? wind != 0 : (wind & 1) != 0;
+                    if (!inside) continue;
+                    for (long sx = r [j].X; sx < r [j + 1].X; sx++)
+                        count [row * w + (int) (sx >> 3) - px0]++;
+                }
+            }
+            alpha = new byte [w * h];
+            for (int i = 0; i < count.Length; i++)
+                alpha [i] = (byte) Math.Min (255, (int) (count [i] * 255 / 32.0 + 0.5));
+            bounds = new Rectangle (px0, py0, w, h);
+            return true;
+        }
+
         static long CeilDiv (long a, long b)
         {
             long q = a / b;
