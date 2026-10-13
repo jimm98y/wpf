@@ -88,7 +88,11 @@ namespace System.Windows.Forms
 		bool                    tab_stop; // is the control a tab stop?
 		bool                    is_disposed; // has the window already been disposed?
 		bool                    is_disposing; // is the window getting disposed?
-		Size                    client_size; // size of the client area (window excluding decorations)
+		// The size of the client area (window excluding decorations), as stock keeps it: two ints by
+		// stock's names, which apps set by reflection (DotNetBar's RibbonForm sizes its own frame and
+		// then writes the client size it computed straight into them).
+		int _clientWidth, _clientHeight;
+		Size client_size { get { return new Size (_clientWidth, _clientHeight); } set { _clientWidth = value.Width; _clientHeight = value.Height; } }
 		Rectangle               client_rect; // rectangle with the client area (window excluding decorations)
 		ControlStyles           control_style; // rather win32-specific, style bits for control
 		ImeMode                 ime_mode;
@@ -5069,8 +5073,8 @@ namespace System.Windows.Forms
 			// if needed.
 			//explicit_bounds = bounds;
 
-			client_size.Width=clientWidth;
-			client_size.Height=clientHeight;
+			_clientWidth = clientWidth;
+			_clientHeight = clientHeight;
 
 			if (moved) {
 				OnLocationChanged(EventArgs.Empty);

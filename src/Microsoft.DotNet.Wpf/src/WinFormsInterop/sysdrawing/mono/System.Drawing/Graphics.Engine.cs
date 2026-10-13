@@ -50,6 +50,11 @@ namespace System.Drawing
 		{
 			if (gp == null || image_target == null)
 				return null;
+			// Over a DC the engine draws on a copy of it: take the copy before the first stroke. Taken
+			// only when the Graphics was presented, it overwrote whatever the engine had drawn by then, and
+			// a Graphics whose drawing was all the engine's was never presented at all.
+			if (hdc_surface != null)
+				EnsureHdcCaptured ();
 			image_target.FlushDrawing ();
 			SyncEngine ();
 			return gp;

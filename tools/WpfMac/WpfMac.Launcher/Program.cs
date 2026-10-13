@@ -8,7 +8,8 @@ internal static class Program
         usage:
           wpfmac run   [-v] [--offline] [--isolate] [--crash-reports] [--title-prefix <text>] [--screenshots <dir> [--every <s>]]
                        <App.dll|App.exe|folder> [-- app args]
-          wpfmac compare [--isolate] [--screenshot <dir>] [--seconds <n>] [--close] <App.dll|App.exe|folder> [-- app args]
+          wpfmac compare [--isolate] [--screenshot <dir>] [--seconds <n>] [--tolerance <n>]
+                       [--size <w>x<h>] [--title-prefix <text>] [--close] <App.dll|App.exe|folder> [-- app args]
                                                     Windows: the stock .exe and the WebGPU run side by side
           wpfmac prepare <App.dll|App.exe|folder>   write the generated files, print the command, do not run
           wpfmac audit [--out <file.md>] <App.dll|App.exe|folder>
@@ -107,8 +108,8 @@ internal static class Program
 
     private static int CompareCommand(string[] args)
     {
-        string? target = null, screenshots = null;
-        int seconds = 5;
+        string? target = null, screenshots = null, prefix = null;
+        int seconds = 5, tolerance = 0, width = 0, height = 0;
         bool close = false, isolate = false;
         var appArgs = new List<string>();
         for (int i = 0; i < args.Length; i++)
@@ -121,6 +122,15 @@ internal static class Program
                 case "--seconds": seconds = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
                 case "--close": close = true; break;
                 case "--isolate": isolate = true; break;
+                case "--tolerance": tolerance = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
+                case "--title-prefix": prefix = args[++i]; break;
+                case "--size":
+                {
+                    string[] wh = args[++i].Split('x');
+                    width = int.Parse(wh[0], System.Globalization.CultureInfo.InvariantCulture);
+                    height = int.Parse(wh[1], System.Globalization.CultureInfo.InvariantCulture);
+                    break;
+                }
                 default:
                     if (a.StartsWith('-')) throw new UserError($"unknown option '{a}'.");
                     target = a;
@@ -132,10 +142,11 @@ internal static class Program
         {
             App = AppFiles.Resolve(target),
             OverlayDir = Locations.FindOverlay() ?? throw new UserError("the overlay is missing; build it with tools/WpfMac/build.cmd."),
-            TitlePrefix = "[WebGPU] ",
+            // No prefix unless asked: the two captions are part of what is compared.
+            TitlePrefix = prefix,
             Isolate = isolate ? "-wpfmac" : null,
         };
-        return Compare.Run(runner, appArgs, screenshots, seconds, close);
+        return Compare.Run(runner, appArgs, screenshots, seconds, close, new Compare.Options(tolerance, width, height));
     }
 
     private static int Audit(string[] args)

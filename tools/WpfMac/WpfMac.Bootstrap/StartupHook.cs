@@ -32,6 +32,8 @@ internal static class StartupHook
         if (AppContext.GetData(Keys.OverlayDirectory) is string overlay && overlay.Length > 0)
         {
             WpfMac.Bootstrap.Win32.ShimLibrary.Initialize(overlay);
+            // Windows: the app's user32 calls on the stack's own windows reach the stack.
+            WpfMac.Bootstrap.Win32.WindowsShim.Initialize(overlay, AppContext.GetData(Keys.CacheDirectory) as string);
             // Unless asked to keep them (wpfmac run --crash-reports), no crash reports or dialogs.
             if (AppContext.GetData(Keys.CrashReports) as string != "true")
             {
@@ -113,6 +115,7 @@ namespace WpfMac.Bootstrap
         public const string LogPath = "WpfMac.LogPath";
         public const string OverlayDirectory = "WpfMac.OverlayDirectory";
         public const string StateDirectory = "WpfMac.StateDirectory";
+        public const string CacheDirectory = "WpfMac.CacheDirectory";
         public const string ScreenshotDirectory = "WpfMac.ScreenshotDirectory";
         public const string TitlePrefix = "WpfMac.TitlePrefix";
         public const string Isolate = "WpfMac.Isolate";

@@ -91,13 +91,13 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		private PropertyGridTextBox grid_textbox;
 		private PropertyGrid property_grid;
 		private bool resizing_grid;
-		private PropertyGridDropDown dropdown_form;
+		private PropertyGridDropDown _dropDownHolder;
 		private Form dialog_form;
 		private ImplicitVScrollBar vbar;
 		private StringFormat string_format;
 		private Font bold_font;
 		private Brush inactive_text_brush;
-		private ListBox dropdown_list;
+		private ListBox _listBox;
 		private Point last_click;
 		private Padding dropdown_form_padding;
 		#endregion
@@ -114,10 +114,10 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			grid_textbox.DropDownButtonClicked +=new EventHandler (DropDownButtonClicked);
 			grid_textbox.DialogButtonClicked +=new EventHandler (DialogButtonClicked);
 
-			dropdown_form = new PropertyGridDropDown ();
-			dropdown_form.FormBorderStyle = FormBorderStyle.None;
-			dropdown_form.StartPosition = FormStartPosition.Manual;
-			dropdown_form.ShowInTaskbar = false;
+			_dropDownHolder = new PropertyGridDropDown ();
+			_dropDownHolder.FormBorderStyle = FormBorderStyle.None;
+			_dropDownHolder.StartPosition = FormStartPosition.Manual;
+			_dropDownHolder.ShowInTaskbar = false;
 
 			dialog_form = new Form ();
 			dialog_form.StartPosition = FormStartPosition.Manual;
@@ -347,6 +347,12 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		private string rejected_text;
 		private bool showing_error;
 
+		// Stock's PropertyGridView.InPropertySet: true while a value typed or picked in the grid is being
+		// written to the object. Apps read it by reflection to tell a change they made from one the grid
+		// is making (and not to rebuild the grid under it).
+		private int in_property_set;
+		public bool InPropertySet => in_property_set > 0;
+
 		private bool TrySetEntry (GridEntry entry, object value)
 		{
 			if (entry == null || grid_textbox.Text.Equals (entry.ValueText))
@@ -356,7 +362,13 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			    !entry.IsMerged || entry.HasMergedValue || 
 			    (!entry.HasMergedValue && grid_textbox.Text != String.Empty)) {
 				string error = null;
-				bool changed = entry.SetValue (value, out error);
+				bool changed;
+				in_property_set++;
+				try {
+					changed = entry.SetValue (value, out error);
+				} finally {
+					in_property_set--;
+				}
 				if (!changed && error != null) {
 					// Say it once for a given text. Refusing the value cancels the validation, which brings
 					// the field straight back for another go -- so answering OK put the same complaint up
@@ -924,37 +936,37 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			if (entry.HasCustomEditor) {
 				entry.EditValue ((IWindowsFormsEditorService) this);
 			} else {
-				if (dropdown_form.Visible) {
+				if (_dropDownHolder.Visible) {
 					CloseDropDown ();
 				}
 				else {
 					ICollection std_values = entry.AcceptedValues;
 					if (std_values != null) {
-						if (dropdown_list == null) {
+						if (_listBox == null) {
 							// .NET's GridViewListBox: no border of its own (the holder has the one
 							// line round it), owner drawn, on the grid's own background.
-							dropdown_list = new ListBox {
+							_listBox = new ListBox {
 								BorderStyle = BorderStyle.None,
 								IntegralHeight = false,
 								DrawMode = DrawMode.OwnerDrawFixed,
 							};
-							dropdown_list.KeyDown += new KeyEventHandler (listBox_KeyDown);
-							dropdown_list.MouseUp += new MouseEventHandler (listBox_MouseUp);
-							dropdown_list.DrawItem += listBox_DrawItem;
+							_listBox.KeyDown += new KeyEventHandler (listBox_KeyDown);
+							_listBox.MouseUp += new MouseEventHandler (listBox_MouseUp);
+							_listBox.DrawItem += listBox_DrawItem;
 						}
-						dropdown_list.BackColor = BackColor;
-						dropdown_list.Font = Font;
-						dropdown_list.Items.Clear ();
+						_listBox.BackColor = BackColor;
+						_listBox.Font = Font;
+						_listBox.Items.Clear ();
 						// A row of the list is a row of the grid's strip (RowHeight), a pixel under the
 						// grid's pitch; left to size itself from the font it came out four pixels short.
-						dropdown_list.ItemHeight = RowHeight;
+						_listBox.ItemHeight = RowHeight;
 						// Nothing selected when the value is none of the list's (a flags value such as
 						// "Cheese, Basil"): .NET's GetCurrentValueIndex answers -1 and the list keeps it.
 						int selected_index = -1;
 						int i = 0;
 						string valueText = entry.ValueText;
 						foreach (object obj in std_values) {
-							dropdown_list.Items.Add (obj);
+							_listBox.Items.Add (obj);
 							if (valueText != null && valueText.Equals (obj))
 								selected_index = i;
 							i++;
@@ -963,19 +975,19 @@ namespace System.Windows.Forms.PropertyGridInternal {
 						// the widest value plus border, padding (the widest character) and a scroll bar,
 						// and never narrower than the value column.
 						int widest = 0;
-						foreach (object item in dropdown_list.Items)
+						foreach (object item in _listBox.Items)
 							widest = Math.Max (widest, TextRenderer.MeasureText (item.ToString (), Font,
 								new Size (int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width);
 						widest += 2 + MaxCharWidth () + SystemInformation.VerticalScrollBarWidth;
 						// PreferredHeight: the rows plus the allowance ListBox makes for a border
 						// (BorderSize * 4 + 3), which .NET's list keeps -- its BorderStyle stays Fixed3D,
 						// only the window style loses the border. Stock's 2, 5 and 7 rows: 43, 97, 133.
-						int preferred = RowHeight * dropdown_list.Items.Count + SystemInformation.BorderSize.Height * 4 + 3;
-						dropdown_list.Height = Math.Max (Font.Height + 2, Math.Min (MaxListBoxHeight, preferred));
-						dropdown_list.Width = Math.Max (widest, ValueRectangle (entry).Width);
+						int preferred = RowHeight * _listBox.Items.Count + SystemInformation.BorderSize.Height * 4 + 3;
+						_listBox.Height = Math.Max (Font.Height + 2, Math.Min (MaxListBoxHeight, preferred));
+						_listBox.Width = Math.Max (widest, ValueRectangle (entry).Width);
 						if (selected_index != -1)
-							dropdown_list.SelectedIndex = selected_index;
-						DropDownControl (dropdown_list);
+							_listBox.SelectedIndex = selected_index;
+						DropDownControl (_listBox);
 					}
 				}
 			}
@@ -1164,7 +1176,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		/// clicking another row has to select that row as well as close the drop-down.</summary>
 		private void DropDownWatchClick (IntPtr window)
 		{
-			if (dropdown_form.Visible && !HwndInControl (dropdown_form, window))
+			if (_dropDownHolder.Visible && !HwndInControl (_dropDownHolder, window))
 				CloseDropDown ();
 		}
 
@@ -1174,10 +1186,10 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			// A list that snaps to whole rows (IntegralHeight) has its real height only once it has a
 			// handle: measured before that, the cursor editor's 310 made a holder 22 pixels taller
 			// than the 288 of list it holds.
-			dropdown_form.Controls.Add (control);
+			_dropDownHolder.Controls.Add (control);
 			// (Handle, not CreateControl: that skips a control that is not visible, and the holder
 			// is not shown yet.)
-			_ = dropdown_form.Handle;
+			_ = _dropDownHolder.Handle;
 			_ = control.Handle;
 			control.Dock = DockStyle.None;
 
@@ -1185,15 +1197,15 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			// resizable editor a bar the height of a scroll bar and a pixel more under it -- or over it,
 			// when the drop-down has to open upwards -- with the grip in the corner. Ours was a
 			// sizable window frame.
-			dropdown_form.FormBorderStyle = FormBorderStyle.None;
-			dropdown_form.SizeGripStyle = SizeGripStyle.Hide;
+			_dropDownHolder.FormBorderStyle = FormBorderStyle.None;
+			_dropDownHolder.SizeGripStyle = SizeGripStyle.Hide;
 			// the grid's background under the bar, as .NET's holder takes the grid view's BackColor
-			dropdown_form.BackColor = BackColor;
+			_dropDownHolder.BackColor = BackColor;
 			int bar = resizeable ? PropertyGridDropDown.ResizeBarSize : 0;
-			dropdown_form.Resizable = resizeable;
-			dropdown_form.ResizeUp = false;
-			dropdown_form.Padding = new Padding (1, 1, 1, 1 + bar);
-			dropdown_form.Size = new Size (control.Width + 2, control.Height + 2 + bar);
+			_dropDownHolder.Resizable = resizeable;
+			_dropDownHolder.ResizeUp = false;
+			_dropDownHolder.Padding = new Padding (1, 1, 1, 1 + bar);
+			_dropDownHolder.Size = new Size (control.Width + 2, control.Height + 2 + bar);
 
 			control.Dock = DockStyle.Fill;
 			// .NET's DropDownControl: at least the value cell and a pixel wide, its right edge on the
@@ -1201,30 +1213,30 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			GridEntry selected_entry = SelectedGridItem as GridEntry;
 			Rectangle value_rect = selected_entry != null ? ValueRectangle (selected_entry)
 				: new Rectangle (grid_textbox.Left, grid_textbox.Top, grid_textbox.Width, row_height);
-			dropdown_form.Width = Math.Max (value_rect.Width + 1, dropdown_form.Width);
-			Point below = PointToScreen (new Point (value_rect.Right - dropdown_form.Width, value_rect.Bottom + 1));
+			_dropDownHolder.Width = Math.Max (value_rect.Width + 1, _dropDownHolder.Width);
+			Point below = PointToScreen (new Point (value_rect.Right - _dropDownHolder.Width, value_rect.Bottom + 1));
 			Rectangle work = Screen.FromControl (this).WorkingArea;
-			if (work.Bottom < below.Y + dropdown_form.Height + grid_textbox.Height) {
+			if (work.Bottom < below.Y + _dropDownHolder.Height + grid_textbox.Height) {
 				// No room below: above the row, the bar on top.
-				below.Y = PointToScreen (new Point (0, value_rect.Top)).Y - dropdown_form.Height;
-				dropdown_form.ResizeUp = true;
+				below.Y = PointToScreen (new Point (0, value_rect.Top)).Y - _dropDownHolder.Height;
+				_dropDownHolder.ResizeUp = true;
 				if (bar > 0)
-					dropdown_form.Padding = new Padding (1, 1 + bar, 1, 1);
+					_dropDownHolder.Padding = new Padding (1, 1 + bar, 1, 1);
 			}
-			below.X = Math.Min (work.Right - dropdown_form.Width, Math.Max (work.X, below.X));
-			dropdown_form.Location = below;
-			RepositionInScreenWorkingArea (dropdown_form);
-			Point location = dropdown_form.Location;
+			below.X = Math.Min (work.Right - _dropDownHolder.Width, Math.Max (work.X, below.X));
+			_dropDownHolder.Location = below;
+			RepositionInScreenWorkingArea (_dropDownHolder);
+			Point location = _dropDownHolder.Location;
 
 			Form owner = FindForm ();
-			owner.AddOwnedForm (dropdown_form);
-			dropdown_form.Show ();
+			owner.AddOwnedForm (_dropDownHolder);
+			_dropDownHolder.Show ();
 			if (Environment.GetEnvironmentVariable ("WF_TRACE_EDITOR") == "1")
 				Console.Error.WriteLine ("[editor] dropdown control=" + control.GetType ().Name + " " +
-					       control.Size + " form=" + dropdown_form.Bounds + " visible=" +
-					       dropdown_form.Visible + " work=" + Screen.PrimaryScreen.WorkingArea);
-			if (dropdown_form.Location != location)
-				dropdown_form.Location = location;
+					       control.Size + " form=" + _dropDownHolder.Bounds + " visible=" +
+					       _dropDownHolder.Visible + " work=" + Screen.PrimaryScreen.WorkingArea);
+			if (_dropDownHolder.Location != location)
+				_dropDownHolder.Location = location;
 
 			System.Windows.Forms.MSG msg = new MSG ();
 			object queue_id = XplatUI.StartLoop (Thread.CurrentThread);
@@ -1233,7 +1245,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			grid_textbox.IgnoreDropDownButtonMouse = true;
 			XplatUI.MousePress += DropDownWatchClick;
 			control.Focus ();
-			while (dropdown_form.Visible && XplatUI.GetMessage (queue_id, ref msg, IntPtr.Zero, 0, 0)) {
+			while (_dropDownHolder.Visible && XplatUI.GetMessage (queue_id, ref msg, IntPtr.Zero, 0, 0)) {
 				switch (msg.message) {
 					case Msg.WM_NCLBUTTONDOWN:
 				    case Msg.WM_NCMBUTTONDOWN:
@@ -1245,7 +1257,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				    	// menu: clicking another row closes the drop-down AND selects that row, and eating the
 				    	// click left the grid on the row before -- so the next drop-down opened was the previous
 				    	// row's editor, a colour picker over a boolean.
-				    	if (!HwndInControl (dropdown_form, msg.hwnd))
+				    	if (!HwndInControl (_dropDownHolder, msg.hwnd))
 				    		CloseDropDown ();
 					break;
 					case Msg.WM_ACTIVATE:
@@ -1265,9 +1277,9 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			// the drop-down is finished with. CloseDropDown is only one of the ways out, and the form
 			// is reused, so a control left parented to it would still be there the next time one
 			// opened.
-			if (dropdown_form.Visible)
-				dropdown_form.Hide ();
-			dropdown_form.Controls.Clear ();
+			if (_dropDownHolder.Visible)
+				_dropDownHolder.Hide ();
+			_dropDownHolder.Controls.Clear ();
 		}
 
 		private void RepositionInScreenWorkingArea (Form form)
@@ -1306,8 +1318,8 @@ namespace System.Windows.Forms.PropertyGridInternal {
 
 		public void CloseDropDown () 
 		{
-			dropdown_form.Hide ();
-			dropdown_form.Controls.Clear ();
+			_dropDownHolder.Hide ();
+			_dropDownHolder.Controls.Clear ();
 		}
 
 		public void DropDownControl (Control control) 

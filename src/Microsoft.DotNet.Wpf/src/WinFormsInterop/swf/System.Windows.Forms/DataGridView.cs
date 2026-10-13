@@ -116,6 +116,8 @@ namespace System.Windows.Forms {
 		internal HScrollBar horizontalScrollBar;
 		internal VScrollBar verticalScrollBar;
 		private Control editingControl;
+		// Stock's name for the editing control kept for the next edit; apps reflect into it to restyle it.
+		private Control _latestEditingControl;
 		private bool is_autogenerating_columns = false;
 		private bool is_binding = false;
 		private bool new_row_editing = false;
@@ -1395,6 +1397,8 @@ namespace System.Windows.Forms {
 			set {
 				if (value == editingControl)
 					return;
+				if (value != null)
+					_latestEditingControl = value;
 
 				if (editingControl != null) {
 					// Can't use Controls.Remove (editingControls), because that method

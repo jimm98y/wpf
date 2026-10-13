@@ -1034,6 +1034,7 @@ namespace System.Drawing
 				image_target = null;
 				target.TakeDrawing (this, detach: true);
 				if (hdc_surface != null) {
+					ForgetOverDc (hdc_surface.Hdc, this);
 					// The DC's bitmap was only ever this Graphics' surface.
 					if (OperatingSystem.IsWindows ()) {
 						hdc_surface.Dispose ();
@@ -4049,6 +4050,56 @@ namespace System.Drawing
 			hdc_surface.Present (image_target.managed.Frame);
 		}
 
+		// Every live Graphics drawing into a DC, by DC. GDI+ draws into a DC as it goes, so GDI
+		// reading or writing that DC sees each drawing the moment it is made; this engine draws a copy
+		// and writes it back on Flush and Dispose. DotNetBar draws a combo box with GDI+ into a memory
+		// DC and BitBlts that DC to the window while the Graphics is still open: what it blitted was the
+		// untouched DIB, a black box. Whoever stands between an app and gdi32 (wpfmac does) calls
+		// System.Drawing.FlushHdc with each DC a GDI call is about to use.
+		static readonly Dictionary<IntPtr, List<Graphics>> s_overDc = new Dictionary<IntPtr, List<Graphics>> ();
+		static volatile int s_overDcCount;
+
+		static void RememberOverDc (IntPtr hdc, Graphics g)
+		{
+			lock (s_overDc) {
+				if (!s_overDc.TryGetValue (hdc, out var list))
+					s_overDc [hdc] = list = new List<Graphics> ();
+				list.Add (g);
+				s_overDcCount++;
+			}
+			if (AppContext.GetData ("System.Drawing.FlushHdc") == null)
+				AppContext.SetData ("System.Drawing.FlushHdc", (Action<IntPtr>)FlushHdc);
+		}
+
+		static void ForgetOverDc (IntPtr hdc, Graphics g)
+		{
+			lock (s_overDc) {
+				if (s_overDc.TryGetValue (hdc, out var list) && list.Remove (g)) {
+					s_overDcCount--;
+					if (list.Count == 0) s_overDc.Remove (hdc);
+				}
+			}
+		}
+
+		/// <summary>Before GDI uses <paramref name="hdc"/>: what each Graphics over it has drawn is
+		/// written to it, and each starts again from what the DC holds afterwards (GDI may draw on
+		/// it next).</summary>
+		static void FlushHdc (IntPtr hdc)
+		{
+			if (s_overDcCount == 0 || hdc == IntPtr.Zero) return;
+			Graphics[] over;
+			lock (s_overDc) {
+				if (!s_overDc.TryGetValue (hdc, out var list)) return;
+				over = list.ToArray ();
+			}
+			foreach (Graphics g in over) {
+				if (g.disposed || g.hdc_surface == null || g.image_target == null) continue;
+				g.image_target.TakeDrawing (g, detach: false);
+				g.PresentHdc ();
+				g.hdc_captured = false;
+			}
+		}
+
 		/// <summary>A Graphics drawing into a GDI DC (Windows): the managed engine on a copy of the
 		/// DC's visible area, written back on Flush and Dispose.</summary>
 		[System.Runtime.InteropServices.DllImport ("gdi32.dll")]
@@ -4079,6 +4130,7 @@ namespace System.Drawing
 			Graphics g = FromImage (bmp);
 			if (surface == null) return g;
 			g.hdc_surface = surface;
+			RememberOverDc (hdc, g);
 			Rectangle area = surface.Area;
 			if (area.X != 0 || area.Y != 0) {
 				// The bitmap starts at the DC's visible area: everything is drawn moved by its origin.
@@ -4120,6 +4172,12 @@ namespace System.Drawing
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public static Graphics FromHwnd (IntPtr hwnd)
 		{
+			// A window the WinForms driver made (a Control.Handle) is no GDI window on any platform,
+			// Windows included: GetDC of it fails, and FromHwnd threw where stock draws on the window.
+			// The driver says what drawing on it means (what Control.CreateGraphics gives).
+			if (hwnd != IntPtr.Zero && AppContext.GetData ("System.Drawing.HwndGraphicsResolver") is Func<IntPtr, object> resolve
+			    && resolve (hwnd) is Graphics owned)
+				return owned;
 			// A window's DC is Windows'; anywhere else a window has no surface of its own to draw on
 			// outside a paint, and the Graphics measures (and records into nothing).
 			if (!OperatingSystem.IsWindows ())
