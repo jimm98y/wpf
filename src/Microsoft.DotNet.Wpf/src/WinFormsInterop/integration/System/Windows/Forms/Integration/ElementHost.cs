@@ -46,7 +46,7 @@ namespace System.Windows.Forms.Integration
     {
         private const int WS_CHILD = 0x40000000, WS_VISIBLE = 0x10000000, WS_CLIPSIBLINGS = 0x04000000;
         private const int SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
-        private const int WM_LBUTTONDOWN = 0x0201, WM_SETFOCUS = 0x0007;
+        private const int WM_LBUTTONDOWN = 0x0201, WM_SETFOCUS = 0x0007, WM_NCHITTEST = 0x0084;
 
         private WPF.UIElement _child;
         private HwndSource _source;
@@ -60,8 +60,53 @@ namespace System.Windows.Forms.Integration
         private static readonly bool s_trace = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1";
         private bool _tracedPlacement;
 
+        // WPF pumps the thread's messages itself whenever its dispatcher waits (ElementHost.Pump runs
+        // the dispatcher every frame), and then input for the hosted tree never passes the
+        // application's message filters -- which stock WinForms offers every message it pumps.
+        // DotNetBar closes its menus from such a filter: a context menu opened over a hosted WPF
+        // canvas could not be closed by clicking elsewhere or by Esc. So input that WPF's loop takes
+        // off the queue is offered to the filters first, once per thread.
+        [ThreadStatic] private static bool t_filterHooked;
+        [ThreadStatic] private static bool t_draining;
+        private static readonly bool s_traceFilter = Environment.GetEnvironmentVariable("WF_TRACE_FILTER") == "1";
+
+        private static void HookMessageFilters()
+        {
+            if (t_filterHooked) return;
+            t_filterHooked = true;
+            System.Windows.Interop.ComponentDispatcher.ThreadFilterMessage += (ref System.Windows.Interop.MSG msg, ref bool handled) =>
+            {
+                if (handled) return;
+                int m = msg.message;
+                bool input = (m >= 0x0100 && m <= 0x0109) || (m >= 0x0200 && m <= 0x020E) || (m >= 0x00A0 && m <= 0x00AD);
+                if (!input) return;
+                try
+                {
+                    // One queue, as on Windows: what WinForms posted before this click or key (a
+                    // BeginInvoke that opens a menu) runs before it. Here those wait in the driver's
+                    // own queue while WPF's loop takes input off the system one, so a second quick
+                    // right-click reached the filters before the first menu existed -- nothing to
+                    // close -- and DotNetBar then reused that menu for the next one, leaving the first
+                    // one's popup window behind, empty, for good.
+                    bool press = m == 0x0201 || m == 0x0204 || m == 0x0207 || m == 0x020B || m == 0x00A1 || m == 0x00A4 || m == 0x00A7
+                                 || m == 0x0100 || m == 0x0104;
+                    if (press && !t_draining)
+                    {
+                        t_draining = true;
+                        try { Application.DoEvents(); }
+                        finally { t_draining = false; }
+                    }
+                    var message = Message.Create(msg.hwnd, m, msg.wParam, msg.lParam);
+                    if (Application.FilterMessage(ref message)) handled = true;
+                    if (s_traceFilter && m != 0x0200) Console.Error.WriteLine($"elementhost filter: {DateTime.Now:HH:mm:ss.fff} msg=0x{m:x} hwnd=0x{msg.hwnd.ToInt64():x} taken={handled}");
+                }
+                catch (Exception ex) { Console.Error.WriteLine("ElementHost: message filter failed: " + ex.Message); }
+            };
+        }
+
         public ElementHost()
         {
+            HookMessageFilters();
             // The WPF tree paints this area; the control's own background only shows for the frame or
             // two before WPF's first render. (Not Color.Transparent: a Control refuses that unless it
             // opts into SupportsTransparentBackColor, and the WPF root paints the whole rect anyway.)
@@ -311,7 +356,20 @@ namespace System.Windows.Forms.Integration
         private IntPtr SourceHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             if (s_trace && msg is 0x0200 or 0x0201 or 0x0202 or 0x0007 or 0x0008)
-                Console.WriteLine($"elementhost trace: msg=0x{msg:x4} w=0x{wParam:x} l=0x{lParam:x}");
+                Console.WriteLine($"elementhost trace: msg=0x{msg:x4} w=0x{wParam:x} l=0x{lParam:x} hwnd=0x{hwnd:x} thread={Environment.CurrentManagedThreadId}");
+            // Where one of WinForms' popups is drawn over this content (a context menu opened on
+            // it), the hosted window is not what the user points at: pass the mouse on to the host
+            // window, which hands it to the popup -- as the popup's own window would take it on
+            // Windows, being above this one.
+            if (msg == WM_NCHITTEST && OperatingSystem.IsWindows())
+            {
+                int sx = (short)((long)lParam & 0xFFFF), sy = (short)(((long)lParam >> 16) & 0xFFFF);
+                if (EmbeddedScenes.PopupCovers(hwnd, sx, sy))
+                {
+                    handled = true;
+                    return new IntPtr(-1);              // HTTRANSPARENT
+                }
+            }
             if (msg == WM_LBUTTONDOWN && OperatingSystem.IsWindows()) SetFocus(hwnd);
             // The hosted window has the keyboard, so this control is WinForms' focused control, as an
             // ElementHost is in .NET: the form's active chain points here and every container on the

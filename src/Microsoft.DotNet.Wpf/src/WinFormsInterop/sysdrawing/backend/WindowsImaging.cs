@@ -92,8 +92,11 @@ namespace System.Drawing.WebGpuBackend
             return new GdipImageData (frame) { Flags = 0 };
         }
 
-        /// <summary>GdipCreateHBITMAPFromBitmap: a 32-bit DIB section with every pixel composited over
-        /// <paramref name="background"/>.</summary>
+        /// <summary>GdipCreateHBITMAPFromBitmap: a 32-bit DIB section with every pixel's colour
+        /// composited over <paramref name="background"/> and its own alpha kept in the fourth byte.
+        /// Over a transparent black background that is the premultiplied ARGB UpdateLayeredWindow
+        /// takes -- how DotNetBar's drop shadow and every soft-edged layered splash get their bits;
+        /// with the alpha forced opaque the shadow was a black box.</summary>
         internal static IntPtr GetHbitmap (GdipFrame f, Color background)
         {
             if (!OperatingSystem.IsWindows ())
@@ -107,7 +110,7 @@ namespace System.Drawing.WebGpuBackend
                 int r = ((int) (c >> 16 & 0xff) * a + br * (255 - a) + 127) / 255;
                 int g = ((int) (c >> 8 & 0xff) * a + bg * (255 - a) + 127) / 255;
                 int b = ((int) (c & 0xff) * a + bb * (255 - a) + 127) / 255;
-                argb [i] = 0xff000000u | (uint) r << 16 | (uint) g << 8 | (uint) b;
+                argb [i] = (uint) a << 24 | (uint) r << 16 | (uint) g << 8 | (uint) b;
             }
             return CreateDib (argb, f.Width, f.Height);
         }

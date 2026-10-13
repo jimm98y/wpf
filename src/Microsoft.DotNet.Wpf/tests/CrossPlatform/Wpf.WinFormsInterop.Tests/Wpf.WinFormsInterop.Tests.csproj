@@ -48,7 +48,20 @@
     <!-- The WinForms halves build to their own bin/ rather than into artifacts/bin. -->
     <_Swf>$(MSBuildThisFileDirectory)../../../src/WinFormsInterop/bin/Release/net10.0</_Swf>
     <_ForkBuilt Condition="Exists('$(_Art)/WindowsBase/Release/net10.0/WindowsBase.dll') And Exists('$(_Swf)/System.Windows.Forms.dll')">true</_ForkBuilt>
+    <WgpuRid Condition="'$(WgpuRid)' == ''">$(NETCoreSdkRuntimeIdentifier)</WgpuRid>
+    <WgpuNativeDir>$(MSBuildThisFileDirectory)../../../src/WgpuInterop/native/$(WgpuRid)/lib/</WgpuNativeDir>
   </PropertyGroup>
+
+  <!-- The engine's native half: a shown form brings its host window and compositor up for real
+       (PopupOverHostedContentTests). -->
+  <ItemGroup Condition="'$(_ForkBuilt)' == 'true'">
+    <None Include="$(WgpuNativeDir)libwgpu_native.so" Condition="Exists('$(WgpuNativeDir)libwgpu_native.so')"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WgpuNativeDir)libwgpu_native.dylib" Condition="Exists('$(WgpuNativeDir)libwgpu_native.dylib')"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(WgpuNativeDir)wgpu_native.dll" Condition="Exists('$(WgpuNativeDir)wgpu_native.dll')"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="xunit.v3" Version="3.0.0" />

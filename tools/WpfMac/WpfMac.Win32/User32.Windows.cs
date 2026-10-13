@@ -346,6 +346,12 @@ public static unsafe partial class Exports
     {
         if (o is HwndSource s && WindowOf(s) is Window w) w.Topmost = topmost;
         else if (o is Forms.Form f) f.TopMost = topmost;
+        // A top-level window that is not a form (a DotNetBar popup and its shadow): the driver's
+        // topmost band, which Form.TopMost goes through too.
+        else if (o is Forms.Control c && c.IsHandleCreated && c.Parent == null)
+            typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
+                ?.GetMethod("SetTopmost", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                ?.Invoke(null, new object[] { c.Handle, topmost });
         return 0;
     });
 

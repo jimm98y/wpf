@@ -174,6 +174,16 @@ namespace System.Windows.Forms
 			return (h.initial_style & WindowStyles.WS_POPUP) != 0;
 		}
 
+		/// <summary>Whether the window is a popup surface or inside one: the controls a popup is made
+		/// of (DotNetBar's menu panel in its popup container) are ordinary children, and leaving them
+		/// out of the frame left an empty popup -- a context menu that showed only its drop shadow.</summary>
+		internal bool IsInPopupWindow(IntPtr handle)
+		{
+			for (Hwnd h = Hwnd.ObjectFromHandle(handle); h != null; h = h.parent)
+				if ((h.initial_style & WindowStyles.WS_POPUP) != 0) return true;
+			return false;
+		}
+
 		/// <summary>Paint the border a control's window style asks for. Win32 draws this in the
 		/// non-client frame, which this driver does not model -- CalculateWindowRect returns the
 		/// client rectangle unchanged, so a window and its client are one and the same. The style
@@ -343,6 +353,23 @@ namespace System.Windows.Forms
 		/// form and its popups -- and not at every window of the driver: a dialog's OK button lies
 		/// over its owner, and the click went to the owner's controls underneath instead.</summary>
 		[ThreadStatic] internal static IntPtr InputRoot;
+
+		/// <summary>Whether a popup surface (a menu, a drop-down) is what the user points at in
+		/// <paramref name="form"/>'s window at this driver point. A hosted WPF tree is a real child
+		/// window under the host's frame, and the OS gives it the mouse wherever it is -- also where
+		/// one of this driver's popups is drawn over it; its host asks this to let such input through
+		/// to the host window instead (ElementHost, WM_NCHITTEST).</summary>
+		internal bool IsUnderPopup(IntPtr form, int screenX, int screenY)
+		{
+			IntPtr saved = InputRoot;
+			InputRoot = form;
+			try
+			{
+				IntPtr h = WindowAtPoint(screenX, screenY);
+				return h != IntPtr.Zero && IsInPopupWindow(h);
+			}
+			finally { InputRoot = saved; }
+		}
 
 		internal IntPtr WindowAtPoint(int screenX, int screenY)
 		{
@@ -1970,13 +1997,26 @@ namespace System.Windows.Forms
 				// it instead and no item ever took the highlight.
 				bool pa = IsPopupWindow(a), pb = IsPopupWindow(b);
 				if (pa != pb) return pa ? 1 : -1;
+				// HWND_TOPMOST windows over the rest, as Win32 keeps its two bands: a DotNetBar menu
+				// is made topmost and its drop shadow, shown after it, NOTOPMOST -- under the menu.
+				bool ta = _topmost.Contains(a), tb = _topmost.Contains(b);
+				if (ta != tb) return ta ? 1 : -1;
 				return PaintKey(a).CompareTo(PaintKey(b));
 			});
 			var outl = new List<IntPtr>();
 			foreach (IntPtr r in roots) CollectSubtree(r, outl);
 			return outl;
 		}
-		internal override bool SetTopmost(IntPtr hWnd, bool Enabled) => true;
+		private readonly HashSet<IntPtr> _topmost = new HashSet<IntPtr>();
+
+		/// <summary>WS_EX_TOPMOST for a top-level window: it paints, and is pointed at, over every
+		/// window that is not (see CollectAll).</summary>
+		internal override bool SetTopmost(IntPtr hWnd, bool Enabled)
+		{
+			bool changed = Enabled ? _topmost.Add(hWnd) : _topmost.Remove(hWnd);
+			if (changed) _paintVersion++;
+			return true;
+		}
 		internal override bool SetOwner(IntPtr hWnd, IntPtr hWndOwner) => true;
 		internal override void GrabWindow(IntPtr hwnd, IntPtr ConfineToHwnd) { _grabHandle = hwnd; }
 		internal override void UngrabWindow(IntPtr hwnd) { if (_grabHandle == hwnd) _grabHandle = IntPtr.Zero; }
@@ -2057,6 +2097,11 @@ namespace System.Windows.Forms
 		{
 			x = _cursorX;
 			y = _cursorY;
+			// On Windows the real pointer, wherever it is: the driver only hears about it over its
+			// own windows (see Win32Host.TryRealCursor).
+			if (OperatingSystem.IsWindows() && PresentationHost.Current is Win32Host && Win32Host.TryRealCursor(out int rx, out int ry)) {
+				x = rx; y = ry;
+			}
 			if (hwnd == IntPtr.Zero) return;
 			// Asked about a window, Win32 answers in that window's client space.
 			Hwnd h = Hwnd.ObjectFromHandle(hwnd);

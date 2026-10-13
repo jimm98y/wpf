@@ -177,6 +177,11 @@ namespace System.Windows.Forms
             lock (s_lock) s_items.Remove(item);
         }
 
+        /// <summary>Whether a WinForms popup (a menu, a drop-down) is drawn over embedded content at
+        /// this real screen point, so the content's own window should let the input through.</summary>
+        internal static bool PopupCovers(IntPtr hostedWindow, int screenX, int screenY)
+            => OperatingSystem.IsWindows() && Win32Host.IsDriverPopupAt(hostedWindow, screenX, screenY);
+
         /// <summary>Let every contributor run its own frame work before the present.</summary>
         internal static void Pump()
         {
@@ -202,6 +207,26 @@ namespace System.Windows.Forms
             if (items == null) return null;
             var list = new List<(object, int, int)>(items.Length);
             foreach (IEmbeddedScene c in items) c.Collect(ox, oy, list);
+            return list.Count > 0 ? list : null;
+        }
+
+        /// <summary>The extra scenes with the top-level window each belongs to (the form or popup the
+        /// hosting control is in), so a host can put each right after that window's own scenes and
+        /// under any window above it -- a context menu opened over hosted content.</summary>
+        internal static List<(object Scene, int X, int Y, IntPtr TopLevel)> GetWithOwners(int ox, int oy)
+        {
+            IEmbeddedScene[] items = Snapshot();
+            if (items == null) return null;
+            var list = new List<(object, int, int, IntPtr)>(items.Length);
+            var one = new List<(object Scene, int X, int Y)>(1);
+            foreach (IEmbeddedScene c in items)
+            {
+                one.Clear();
+                c.Collect(ox, oy, one);
+                IntPtr top = IntPtr.Zero;
+                if (c is Control ctl && !ctl.IsDisposed && ctl.TopLevelControl is Control t && t.IsHandleCreated) top = t.Handle;
+                foreach (var e in one) list.Add((e.Scene, e.X, e.Y, top));
+            }
             return list.Count > 0 ? list : null;
         }
 

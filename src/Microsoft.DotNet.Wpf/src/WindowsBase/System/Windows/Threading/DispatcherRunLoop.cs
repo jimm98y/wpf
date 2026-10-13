@@ -265,6 +265,14 @@ namespace System.Windows.Threading
                     PostQuitMessage((int)msg.wParam);
                     break;
                 }
+                // Offered to ComponentDispatcher first, as WPF's own PushFrame does: that is how a
+                // message loop that is not WPF's -- WinForms' with its message filters, hosting this
+                // tree in an ElementHost -- sees the input WPF takes off the queue. Without it a
+                // DotNetBar menu opened over hosted WPF content never heard the click or the Esc
+                // that should close it.
+                var pub = new System.Windows.Interop.MSG(msg.hwnd, (int)msg.message, msg.wParam, msg.lParam, (int)msg.time, msg.pt_x, msg.pt_y);
+                if (System.Windows.Interop.ComponentDispatcher.RaiseThreadMessage(ref pub))
+                    continue;
                 TranslateMessage(ref msg);
                 DispatchMessageW(ref msg);
             }
