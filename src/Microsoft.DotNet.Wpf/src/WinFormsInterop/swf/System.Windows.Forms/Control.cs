@@ -2212,6 +2212,7 @@ namespace System.Windows.Forms
 
 		[DispId(-501)]
 		[MWFCategory("Appearance")]
+		internal static readonly bool s_traceFocus = Environment.GetEnvironmentVariable ("WF_TRACE_FOCUS") == "1";
 		static readonly string s_traceBackColor = Environment.GetEnvironmentVariable ("WF_TRACE_BACKCOLOR");
 
 		public virtual Color BackColor {
@@ -3743,6 +3744,8 @@ namespace System.Windows.Forms
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public bool Focus() {
+			if (s_traceFocus)
+				Console.Error.WriteLine ($"[focus-call] {GetType ().Name} '{Name}' canFocus={CanFocus} handle={IsHandleCreated} has={has_focus}{Environment.NewLine}{new System.Diagnostics.StackTrace (1, false)}");
 			return FocusInternal (false);
 		}
 
@@ -5864,6 +5867,9 @@ namespace System.Windows.Forms
 		private void WmSetFocus (ref Message m) {
 			if (!has_focus) {
 				this.has_focus = true;
+				// WF_TRACE_FOCUS=1: every control that gets the focus, and from where.
+				if (s_traceFocus)
+					Console.Error.WriteLine ($"[focus] {GetType ().Name} '{Name}'{Environment.NewLine}{new System.Diagnostics.StackTrace (1, false)}");
 				OnGotFocus (EventArgs.Empty);
 			}
 		}

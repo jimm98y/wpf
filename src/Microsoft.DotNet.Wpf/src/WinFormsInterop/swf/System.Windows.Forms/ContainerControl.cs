@@ -102,6 +102,8 @@ namespace System.Windows.Forms {
 				if (!Contains(value)) {
 					throw new ArgumentException("Cannot activate invisible or disabled control.");
 				}
+				if (s_traceFocus)
+					Console.Error.WriteLine ($"[active] {GetType ().Name} '{Name}' = {value.GetType ().Name} '{value.Name}'{Environment.NewLine}{new System.Diagnostics.StackTrace (1, false)}");
 
 				// Fire the enter and leave events if possible
 				Form form = FindForm ();
@@ -742,6 +744,8 @@ namespace System.Windows.Forms {
 					top_container.pending_validation_chain = null;
 			}
 
+			if (s_traceFocus)
+				Console.Error.WriteLine ($"[removed] from {GetType ().Name} '{Name}': {control.GetType ().Name} '{control.Name}' active={active_control?.Name}");
 			if (control == active_control || control.Contains (active_control)) {
 				SelectNextControl (this, true, true, true, true);
 				if (control == active_control || control.Contains (active_control)) {
