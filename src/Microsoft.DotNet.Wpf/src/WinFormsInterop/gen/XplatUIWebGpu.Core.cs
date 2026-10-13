@@ -649,6 +649,7 @@ namespace System.Windows.Forms
 
 			IntPtr handle = NextHandle ();
 			if (frame != Padding.Empty) _frames[handle] = frame;
+			_styles[handle] = (cp.Style, cp.ExStyle, cp.menu != null);
 			hwnd.WholeWindow = handle;
 			hwnd.ClientWindow = handle;   // registers in Hwnd's handle->object table
 			// GPU-raster mode records scenes (no per-window bitmap); keep the key as the window
@@ -677,6 +678,9 @@ namespace System.Windows.Forms
 
 			Text(handle, cp.Caption);
 			SendMessage(handle, Msg.WM_CREATE, (IntPtr)1, IntPtr.Zero);
+			// A window that draws its own frame says so in answer to WM_NCCALCSIZE (see AskFrame).
+			if (frame != Padding.Empty)
+				ApplyFrame (handle, AskFrame (handle, frame));
 			return handle;
 		}
 
@@ -705,6 +709,7 @@ namespace System.Windows.Forms
 			_layeredPixels.Remove(handle);
 			_reveals.Remove(handle);
 			_frames.Remove(handle);
+			_styles.Remove(handle);
 			_paintVersion++;   // a window disappeared from the composite
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd != null) { SendMessage(handle, Msg.WM_DESTROY, IntPtr.Zero, IntPtr.Zero); hwnd.Dispose(); }
@@ -815,6 +820,20 @@ namespace System.Windows.Forms
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return;
 			Padding frame = FrameOf(handle);
+			// Win32 asks a framed window for its frame again whenever it is sized: a form that draws
+			// its own caption answers differently maximized.
+			Padding standard = StandardFrame(handle);
+			if (standard != Padding.Empty && !_askingFrame
+			    && (width != hwnd.width + frame.Horizontal || height != hwnd.height + frame.Vertical))
+			{
+				Padding asked = AskFrame(handle, standard);
+				if (asked != frame)
+				{
+					if (asked == Padding.Empty) _frames.Remove(handle); else _frames[handle] = asked;
+					frame = asked;
+					FrameChanged?.Invoke(handle);
+				}
+			}
 			x += frame.Left; y += frame.Top;
 			// A window may be made zero wide or zero high, as on Windows: libraries collapse a
 			// panel that way (DotNetBar's DockSite sets Height = 0 when every bar in it is hidden).
@@ -1424,6 +1443,11 @@ namespace System.Windows.Forms
 
 		internal override IntPtr DefWndProc(ref Message msg)
 		{
+			if (msg.Msg == (int)Msg.WM_NCCALCSIZE)
+			{
+				DefaultNcCalcSize(ref msg);
+				return IntPtr.Zero;
+			}
 			// The window menu's commands, which a form that draws its own caption sends itself: its
 			// caption starts a move with SC_MOVE|HTCAPTION, its buttons minimize, maximize and close.
 			// Win32's DefWindowProc carries them out; here nothing did, and such a window could not be
@@ -1575,13 +1599,72 @@ namespace System.Windows.Forms
 
 		internal Padding FrameOf(IntPtr handle) => _frames.TryGetValue(handle, out Padding f) ? f : Padding.Empty;
 
-		internal override void SetWindowStyle(IntPtr handle, CreateParams cp)
+		// Each window's style, for the frame DefWindowProc gives it (WM_NCCALCSIZE).
+		private readonly Dictionary<IntPtr, (int Style, int ExStyle, bool Menu)> _styles = new Dictionary<IntPtr, (int, int, bool)>();
+
+		/// <summary>A window's frame changed (its own answer to WM_NCCALCSIZE did); the host the window
+		/// is shown in puts the window's client where the window now says it is.</summary>
+		internal static event Action<IntPtr> FrameChanged;
+
+		private Padding StandardFrame(IntPtr handle) =>
+			_styles.TryGetValue(handle, out var s) ? TopLevelFrame(s.Style, s.ExStyle, s.Menu) : Padding.Empty;
+
+		[StructLayout(LayoutKind.Sequential)]
+		private struct NcRect { public int Left, Top, Right, Bottom; }
+
+		[StructLayout(LayoutKind.Sequential)]
+		private struct NcWindowPos { public IntPtr hwnd, after; public int x, y, cx, cy; public uint flags; }
+
+		[StructLayout(LayoutKind.Sequential)]
+		private struct NcCalcSizeParams { public NcRect rgrc0, rgrc1, rgrc2; public IntPtr lppos; }
+
+		private bool _askingFrame;
+		// WF_TRACE_FRAME=1: what each framed window answers to WM_NCCALCSIZE.
+		private static readonly bool s_traceFrame = Environment.GetEnvironmentVariable("WF_TRACE_FRAME") == "1";
+
+		/// <summary>
+		/// The frame a window asks for: Win32 asks every window where its client goes with
+		/// WM_NCCALCSIZE, and DefWindowProc answers with the frame its style has (here
+		/// <paramref name="standard"/>). A form that draws its own caption answers itself, usually with
+		/// a client as large as the window (DotNetBar's RibbonForm, Office-style title bars). Nothing
+		/// asked here, so such a form got the standard frame and a Windows caption above its own.
+		/// </summary>
+		private unsafe Padding AskFrame(IntPtr handle, Padding standard)
 		{
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
-			if (hwnd == null) return;
-			Padding old = FrameOf(handle), now = TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null);
-			if (old == now) return;
-			// Win32 keeps the window rectangle across a style change; the client absorbs it.
+			if (hwnd == null || standard == Padding.Empty || _askingFrame) return standard;
+			Padding current = FrameOf(handle);
+			int x = hwnd.x - current.Left, y = hwnd.y - current.Top;
+			int w = hwnd.width + current.Horizontal, h = hwnd.height + current.Vertical;
+			var pos = new NcWindowPos { hwnd = handle, x = x, y = y, cx = w, cy = h };
+			var window = new NcRect { Left = x, Top = y, Right = x + w, Bottom = y + h };
+			var p = new NcCalcSizeParams { rgrc0 = window, rgrc1 = window, rgrc2 = window, lppos = (IntPtr)(&pos) };
+			_askingFrame = true;
+			try
+			{
+				SendMessage(handle, Msg.WM_NCCALCSIZE, (IntPtr)1, (IntPtr)(&p));
+			}
+			catch
+			{
+				return standard;
+			}
+			finally
+			{
+				_askingFrame = false;
+			}
+			NcRect c = p.rgrc0;
+			if (s_traceFrame) Console.Error.WriteLine($"[frame] 0x{handle.ToInt64():x} {Control.FromHandle(handle)?.GetType().Name} window {x},{y} {w}x{h} -> client {c.Left},{c.Top},{c.Right},{c.Bottom} (standard {standard})");
+			if (c.Right < c.Left || c.Bottom < c.Top) return standard;
+			return new Padding(Math.Max(0, c.Left - x), Math.Max(0, c.Top - y), Math.Max(0, x + w - c.Right), Math.Max(0, y + h - c.Bottom));
+		}
+
+		/// <summary>Gives a window <paramref name="now"/> as its frame, keeping its window rectangle (the
+		/// client absorbs the change, as on Win32).</summary>
+		private void ApplyFrame(IntPtr handle, Padding now)
+		{
+			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
+			Padding old = FrameOf(handle);
+			if (hwnd == null || old == now) return;
 			int ox = hwnd.x - old.Left, oy = hwnd.y - old.Top;
 			int ow = hwnd.width + old.Horizontal, oh = hwnd.height + old.Vertical;
 			if (now == Padding.Empty) _frames.Remove(handle); else _frames[handle] = now;
@@ -1589,6 +1672,53 @@ namespace System.Windows.Forms
 			hwnd.width = Math.Max(1, ow - now.Horizontal); hwnd.height = Math.Max(1, oh - now.Vertical);
 			_paintVersion++;
 			SendMessage(handle, Msg.WM_WINDOWPOSCHANGED, IntPtr.Zero, IntPtr.Zero);
+			Invalidate(handle, Rectangle.Empty, false);
+			FrameChanged?.Invoke(handle);
+		}
+
+		/// <summary>Whether the window answered WM_NCCALCSIZE with a frame of its own rather than its
+		/// style's, and that frame.</summary>
+		internal bool HasOwnFrame(IntPtr handle, out Padding frame)
+		{
+			frame = FrameOf(handle);
+			return _styles.ContainsKey(handle) && frame != StandardFrame(handle);
+		}
+
+		/// <summary>The window was sized from outside (the user dragged the edge of the window it is shown
+		/// in): its client is now <paramref name="width"/> x <paramref name="height"/>, and it learns so
+		/// the way Win32 tells it, WM_WINDOWPOSCHANGED, from which WinForms reads its bounds
+		/// (UpdateBounds). Setting Form.ClientSize instead ran the app's SetClientSizeCore, which is not
+		/// what a resize is: DotNetBar's RibbonForm takes a standard frame off the size it is given there,
+		/// so every resize shrank the form inside its own window.</summary>
+		internal void HostResized(IntPtr handle, int width, int height)
+		{
+			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
+			if (hwnd == null || (hwnd.width == width && hwnd.height == height)) return;
+			hwnd.width = width; hwnd.height = height;
+			_paintVersion++;
+			if (s_gpuRaster) Invalidate(handle, Rectangle.Empty, false);
+			SendMessage(handle, Msg.WM_WINDOWPOSCHANGED, IntPtr.Zero, IntPtr.Zero);
+		}
+
+		/// <summary>SetWindowPos(SWP_FRAMECHANGED): the window is asked for its frame again.</summary>
+		internal void RecalculateFrame(IntPtr handle) => ApplyFrame(handle, AskFrame(handle, StandardFrame(handle)));
+
+		/// <summary>DefWindowProc's WM_NCCALCSIZE: the client is the window less the frame its style has.</summary>
+		private unsafe void DefaultNcCalcSize(ref Message msg)
+		{
+			Padding f = StandardFrame(msg.HWnd);
+			if (msg.LParam == IntPtr.Zero) return;
+			NcRect* r = (NcRect*)msg.LParam;   // wParam 0: one RECT; 1: NCCALCSIZE_PARAMS, rgrc0 first
+			r->Left += f.Left; r->Top += f.Top; r->Right -= f.Right; r->Bottom -= f.Bottom;
+			msg.Result = IntPtr.Zero;
+		}
+
+		internal override void SetWindowStyle(IntPtr handle, CreateParams cp)
+		{
+			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
+			if (hwnd == null) return;
+			_styles[handle] = (cp.Style, cp.ExStyle, cp.menu != null);
+			ApplyFrame(handle, AskFrame(handle, TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null)));
 		}
 		internal override void SetBorderStyle(IntPtr handle, FormBorderStyle border_style) { }
 		internal override FormWindowState GetWindowState(IntPtr handle) => FormWindowState.Normal;

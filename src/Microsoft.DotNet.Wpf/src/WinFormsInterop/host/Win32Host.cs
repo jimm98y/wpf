@@ -288,6 +288,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _hinstance = GetModuleHandleW(null);
         EnsureWindowClass(_hinstance);
 
+        System.Windows.Forms.XplatUIWebGpu.FrameChanged += OnFrameChanged;
         IntPtr title = Marshal.StringToHGlobalUni(_form.Text ?? "WinForms");
         try
         {
@@ -460,6 +461,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     public void Close()
     {
         if (_hwnd == IntPtr.Zero) return;
+        System.Windows.Forms.XplatUIWebGpu.FrameChanged -= OnFrameChanged;
         IntPtr hwnd = _hwnd;
         _hwnd = IntPtr.Zero;
         _quit = true;
@@ -619,6 +621,19 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
                 _sysChar?.Invoke(_driver, new object[] { (char)(int)wParam });
                 Frame();
                 return IntPtr.Zero;
+            // WM_NCCALCSIZE: where the client goes. A form that draws its own caption has said so to the
+            // driver (its own answer to WM_NCCALCSIZE); the window then has that frame, not Windows' --
+            // usually none, the form painting its title bar itself, as stock WinForms shows it.
+            case 0x0083 when lParam != IntPtr.Zero && OwnFrame(out System.Windows.Forms.Padding own):
+            {
+                // wParam FALSE (the first, from CreateWindowEx): one RECT. TRUE: NCCALCSIZE_PARAMS, whose first
+                // RECT is the same one. Both answer by shrinking it.
+                RECT* r = (RECT*)lParam;
+                if (s_traceFrame) Console.Error.WriteLine($"[frame] host NCCALCSIZE window {r->left},{r->top},{r->right},{r->bottom} own {own}");
+                r->left += (int)Math.Round(own.Left * _scale); r->top += (int)Math.Round(own.Top * _scale);
+                r->right -= (int)Math.Round(own.Right * _scale); r->bottom -= (int)Math.Round(own.Bottom * _scale);
+                return IntPtr.Zero;
+            }
             case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
             // WM_PAINT: Windows wants the window's pixels again -- it has just been shown, uncovered
             // or moved, and the surface's contents were not kept (they are not, on the GL backend).
@@ -759,9 +774,35 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     // DPI -- i.e. exactly the surface the presenter configures. Any mismatch is not a cosmetic border:
     // the compositor rescales the presented frame into the client rect, which silently breaks the
     // 1:1 mapping ClientDip relies on to turn a click into a driver coordinate.
+    /// <summary>The frame the form drew for itself, in its own pixels, when it has one (see
+    /// XplatUIWebGpu.AskFrame); false for a form in an ordinary Windows frame.</summary>
+    private static readonly bool s_traceFrame = Environment.GetEnvironmentVariable("WF_TRACE_FRAME") == "1";
+
+    private bool OwnFrame(out System.Windows.Forms.Padding frame)
+    {
+        frame = System.Windows.Forms.Padding.Empty;
+        bool own = _formHandle != IntPtr.Zero && _driver is System.Windows.Forms.XplatUIWebGpu d && d.HasOwnFrame(_formHandle, out frame);
+        if (s_traceFrame) Console.Error.WriteLine($"[frame] host OwnFrame form 0x{_formHandle:x} driver {_driver?.GetType().Name} -> {own} {frame}");
+        return own;
+    }
+
+    // The form answered WM_NCCALCSIZE differently: Windows asks this window again.
+    private void OnFrameChanged(IntPtr handle)
+    {
+        if (s_traceFrame) Console.Error.WriteLine($"[frame] host frame changed 0x{handle:x} form 0x{_formHandle:x} hwnd 0x{_hwnd:x}");
+        if (handle != _formHandle || _hwnd == IntPtr.Zero) return;
+        SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020);   // NOSIZE|NOMOVE|NOZORDER|NOACTIVATE|FRAMECHANGED
+    }
+
     private void ResizeClientTo(int logicalW, int logicalH)
     {
         var r = new RECT { left = 0, top = 0, right = (int)Math.Round(logicalW * _scale), bottom = (int)Math.Round(logicalH * _scale) };
+        if (OwnFrame(out System.Windows.Forms.Padding own))
+        {
+            SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, r.right + (int)Math.Round(own.Horizontal * _scale), r.bottom + (int)Math.Round(own.Vertical * _scale),
+                         0x0002 | 0x0004 | 0x0010 | 0x0020);   // and FRAMECHANGED: the size may be the same
+            return;
+        }
         int style = (int)GetWindowLongPtrW(_hwnd, -16);     // GWL_STYLE
         int exStyle = (int)GetWindowLongPtrW(_hwnd, -20);   // GWL_EXSTYLE
         // The per-DPI variant accounts for this window's DPI rather than the process default; it only
@@ -803,7 +844,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         int lw = (int)Math.Round((r.right - r.left) / _scale), lh = (int)Math.Round((r.bottom - r.top) / _scale);
         if (lw <= 0 || lh <= 0) return;                     // minimised
         if (lw == _form.ClientSize.Width && lh == _form.ClientSize.Height) return;
-        _form.ClientSize = new Size(lw, lh);
+        // As Win32 tells a window it was sized (see XplatUIWebGpu.HostResized), not through ClientSize.
+        if (_driver is System.Windows.Forms.XplatUIWebGpu d && !FormGone) d.HostResized(_formHandle, lw, lh);
+        else _form.ClientSize = new Size(lw, lh);
         Application.DoEvents();                             // let the WinForms layout settle first
         _lastVer = -1;                                      // force a present at the new size
         Present();

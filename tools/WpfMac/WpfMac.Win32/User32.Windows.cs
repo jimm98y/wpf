@@ -313,7 +313,23 @@ public static unsafe partial class Exports
         if ((flags & 0x4) == 0 && (after == -1 || after == -2)) SetTopmost(o, after == -1);   // HWND_TOPMOST / NOTOPMOST
         if ((flags & 0x40) != 0) Show(o, 5);     // SWP_SHOWWINDOW
         if ((flags & 0x80) != 0) Show(o, 0);     // SWP_HIDEWINDOW
+        if ((flags & 0x20) != 0 && o is Forms.Control) RecalculateFrame(hwnd);   // SWP_FRAMECHANGED
         return TRUE;
+    }
+
+    /// <summary>SWP_FRAMECHANGED on a WinForms window: the driver asks it for its frame again
+    /// (WM_NCCALCSIZE), as Windows does.</summary>
+    private static void RecalculateFrame(nint hwnd)
+    {
+        if (Resolve(hwnd) is not Forms.Control c) return;
+        Ui(c, () =>
+        {
+            object? driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
+                ?.GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
+            driver?.GetType().GetMethod("RecalculateFrame", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                ?.Invoke(driver, new object[] { (IntPtr)hwnd });
+            return 0;
+        });
     }
 
     [UnmanagedCallersOnly]
