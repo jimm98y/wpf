@@ -696,6 +696,26 @@ namespace System.Drawing
 				RecordAliasedHairline ((int) x1, (int) y1, (int) x2, (int) y2, ArgbOf (pen));
 				return;
 			}
+			// Antialiased: the swept polygon (at least a pixel wide) through GDI+'s own 8x4 filler,
+			// as GpGraphics strokes it -- the recorder's quad sat half a pixel off.
+			if (!GpuAliased && (x1 != x2 || y1 != y2) && pen.Color.A == 255) {
+				float dx = x2 - x1, dy = y2 - y1, len = MathF.Sqrt (dx * dx + dy * dy);
+				float hw = Math.Max (w, 1f) * 0.5f, nx = -dy / len * hw, ny = dx / len * hw;
+				// A pen of a pixel or less is a device hairline: a pixel thick across the MINOR axis
+				// (a row per column of an x-major line), not across the line -- measured, a 45-degree
+				// stock line puts one pixel of ink in each row. (Stock's end pixels carry about a
+				// quarter more ink than this; lengthening the segment to match moves the interior.)
+				if (w <= 1.01f) {
+					if (Math.Abs (dx) >= Math.Abs (dy)) { nx = 0f; ny = 0.5f; }
+					else { nx = 0.5f; ny = 0f; }
+				}
+				using (var path = new GraphicsPath (FillMode.Winding)) {
+					path.AddPolygon (new [] { new PointF (x1 + nx, y1 + ny), new PointF (x2 + nx, y2 + ny), new PointF (x2 - nx, y2 - ny), new PointF (x1 - nx, y1 - ny) });
+					using (var b = new SolidBrush (pen.Color))
+						if (TryFillGdipAntialiasedPath (b, path))
+							return;
+				}
+			}
 			GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen), w);
 		}
 
