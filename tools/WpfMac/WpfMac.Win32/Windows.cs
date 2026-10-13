@@ -96,6 +96,9 @@ public static unsafe partial class Exports
         W((delegate* unmanaged<nint, int>)&LockWindowUpdate, A0, "LockWindowUpdate");
         W((delegate* unmanaged<nint, nint, int, int>)&SetWindowRgn, A0, "SetWindowRgn");
         W((delegate* unmanaged<nint, uint, byte, uint, int>)&SetLayeredWindowAttributes, A0, "SetLayeredWindowAttributes");
+        W((delegate* unmanaged<nint, nint, POINT*, int*, nint, POINT*, uint, void*, uint, int>)&WinUpdateLayeredWindow, A0, "UpdateLayeredWindow");
+        // A window shown by animation: DotNetBar shows its menus' popup container only this way.
+        W((delegate* unmanaged<nint, uint, uint, int>)&AnimateWindow, A0, "AnimateWindow");
 
         // What Windows hands back: the host window of a form is the form (WindowsAnswers below).
         W((delegate* unmanaged<delegate* unmanaged<nint, nint, int>, nint, int>)&WinEnumWindows, Always, "EnumWindows");

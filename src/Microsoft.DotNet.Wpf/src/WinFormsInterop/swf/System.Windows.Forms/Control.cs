@@ -2212,6 +2212,7 @@ namespace System.Windows.Forms
 
 		[DispId(-501)]
 		[MWFCategory("Appearance")]
+		static readonly string s_traceCreate = Environment.GetEnvironmentVariable ("WF_TRACE_CREATE");
 		internal static readonly bool s_traceFocus = Environment.GetEnvironmentVariable ("WF_TRACE_FOCUS") == "1";
 		static readonly string s_traceBackColor = Environment.GetEnvironmentVariable ("WF_TRACE_BACKCOLOR");
 
@@ -4386,6 +4387,9 @@ namespace System.Windows.Forms
 			if (IsDisposed) {
 				throw new ObjectDisposedException(GetType().FullName);
 			}
+			// WF_TRACE_CREATE=TypeName: when a control of that type gets its window, and from where.
+			if (s_traceCreate != null && GetType ().Name == s_traceCreate)
+				Console.Error.WriteLine ($"[create] {GetType ().Name} {DateTime.Now:HH:mm:ss.fff}{Environment.NewLine}{new System.Diagnostics.StackTrace (1, false)}");
 
 			if (IsHandleCreated && !is_recreating) {
 				return;

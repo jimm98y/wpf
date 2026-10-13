@@ -34,6 +34,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers, _sysKeyDown, _sysChar, _rightDown, _rightUp;
     private readonly MethodInfo _getRubberBands;
     private readonly MethodInfo _isPopup;
+    private readonly MethodInfo _isUnderPopup;
     private readonly MethodInfo _getCursor;
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
@@ -74,7 +75,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
         _hostActivate = M("HostActivate");
         _getRubberBands = M("GetReversibleRects");
-        _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsPopupWindow");
+        _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsInPopupWindow"); _isUnderPopup = M("IsUnderPopup");
         _getCursor = M("GetActiveCursor");
         _leaveAll = M("InjectMouseLeaveAll");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
@@ -477,10 +478,51 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         while (PeekMessageW(out MSG msg, IntPtr.Zero, 0, 0, 0x0001)) // PM_REMOVE
         {
             if (msg.message == 0x0012) { _quit = true; return false; } // WM_QUIT
+            if (OfferToMessageFilters(ref msg)) continue;
             TranslateMessage(ref msg);
             DispatchMessageW(ref msg);
         }
         return !_quit;
+    }
+
+    /// <summary>Input for a real window of this thread that is not a host window -- a hosted WPF
+    /// tree's HwndSource, above all -- offered to the application's message filters before it is
+    /// dispatched, as WinForms' own message loop offers everything it takes off the queue. Stock
+    /// WinForms pumps those windows' messages through Application's loop, so a filter sees a click
+    /// or a key in hosted WPF content; DotNetBar closes its menus from one, and a context menu
+    /// opened over a WPF canvas could not be closed by clicking elsewhere or by Esc. Host windows'
+    /// own input already reaches the filters as the driver's messages (XplatUIWebGpu.FilteredOut).
+    /// True: a filter took the message.</summary>
+    [ThreadStatic] private static bool t_draining;
+    private static readonly bool s_traceFilter = Environment.GetEnvironmentVariable("WF_TRACE_FILTER") == "1";
+    private static bool OfferToMessageFilters(ref MSG msg)
+    {
+        uint m = msg.message;
+        bool input = (m >= 0x0100 && m <= 0x0109) || (m >= 0x0200 && m <= 0x020E) || (m >= 0x00A0 && m <= 0x00AD);
+        if (!input || msg.hwnd == IntPtr.Zero) return false;
+        lock (s_byHwnd) if (s_byHwnd.ContainsKey(msg.hwnd)) return false;
+        try
+        {
+            // One queue, as on Windows: what WinForms posted before a press runs before it (see
+            // ElementHost's message-filter hook for the menu this goes wrong for).
+            bool press = m == 0x0201 || m == 0x0204 || m == 0x0207 || m == 0x020B || m == 0x00A1 || m == 0x00A4 || m == 0x00A7
+                         || m == 0x0100 || m == 0x0104;
+            if (press && !t_draining)
+            {
+                t_draining = true;
+                try { Application.DoEvents(); }
+                finally { t_draining = false; }
+            }
+            var message = Message.Create(msg.hwnd, (int)m, msg.wParam, msg.lParam);
+            bool taken = Application.FilterMessage(ref message);
+            if (s_traceFilter && m != 0x0200 && m != 0x00A0) Console.WriteLine($"win32host filter: msg=0x{m:x} hwnd=0x{msg.hwnd.ToInt64():x} taken={taken}");
+            return taken;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("win32host: message filter failed: " + ex.Message);
+            return false;
+        }
     }
 
     // WndProc routes input to the driver (client pixels -> DIPs), then repaints + presents so
@@ -957,6 +999,52 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         return true;
     }
 
+    /// <summary>Where the real pointer is, in the driver's screen space: through the host window
+    /// under it, or the top host. The driver only sees the pointer over its own windows, so over a
+    /// hosted WPF area (an ElementHost's real child HWND) its own record went stale -- and a
+    /// context menu opened from there at Control.MousePosition landed in the form's corner.</summary>
+    /// <summary>Whether one of the driver's popups is drawn at this real screen point, over a host
+    /// window's content: a hosted WPF tree uses it to pass such input on to the host (see
+    /// ElementHost's WM_NCHITTEST). Without it the canvas under a context menu took the clicks
+    /// aimed at the menu -- a second right-click opened another menu, and DotNetBar orphaned the
+    /// first one's popup window, empty, on the canvas.</summary>
+    internal static bool IsDriverPopupAt(IntPtr hostedWindow, int realX, int realY)
+    {
+        var pt = new POINT { x = realX, y = realY };
+        // From the hosted window itself, not WindowFromPoint: that hit-tests, and this is asked from
+        // inside a hit test.
+        IntPtr root = hostedWindow == IntPtr.Zero ? IntPtr.Zero : GetAncestor(hostedWindow, 2 /* GA_ROOT */);
+        Win32Host host = null;
+        lock (s_byHwnd)
+            if (root != IntPtr.Zero) s_byHwnd.TryGetValue(root, out host);
+        if (host == null || host._hwnd == IntPtr.Zero || host._isUnderPopup == null || host.FormGone) return false;
+        var c = pt;
+        if (!ScreenToClient(host._hwnd, ref c)) return false;
+        int dx = host._ox + (int)Math.Floor(c.x / host._scale), dy = host._oy + (int)Math.Floor(c.y / host._scale);
+        try { return (bool)host._isUnderPopup.Invoke(host._driver, new object[] { host._formHandle, dx, dy }); }
+        catch { return false; }
+    }
+
+    internal static bool TryRealCursor(out int x, out int y)
+    {
+        x = y = 0;
+        if (!GetCursorPos(out POINT pt)) return false;
+        Win32Host host = null;
+        IntPtr under = WindowFromPoint(pt);
+        IntPtr root = under == IntPtr.Zero ? IntPtr.Zero : GetAncestor(under, 2 /* GA_ROOT */);
+        lock (s_byHwnd)
+            if (root != IntPtr.Zero) s_byHwnd.TryGetValue(root, out host);
+        host ??= PresentationHost.Current as Win32Host;
+        if (host == null || host._hwnd == IntPtr.Zero) return false;
+        var c = pt;
+        if (!ScreenToClient(host._hwnd, ref c)) return false;
+        x = host._ox + (int)Math.Floor(c.x / host._scale);
+        y = host._oy + (int)Math.Floor(c.y / host._scale);
+        return true;
+    }
+
+    [DllImport("user32")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+
     bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryMapFromScreen(double x, double y, out Point driverPoint)
     {
         driverPoint = Point.Empty;
@@ -980,6 +1068,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
 
     // ---- shared driver-bridge helpers (mirror CocoaHost) -------------------------
 
+    private static readonly bool s_traceScenes = Environment.GetEnvironmentVariable("WF_TRACE_SCENES") == "1";
+    private string _lastSceneTrace;
+
     private System.Collections.Generic.List<(object, int, int)> GetScenes(out int ox, out int oy)
     {
         long[] wins = PresentWindows();
@@ -987,15 +1078,42 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         oy = wins.Length >= 3 ? (int)wins[2] : 0;
         _ox = ox; _oy = oy;                 // input maps through the same origin; see ClientDip
         var list = new System.Collections.Generic.List<(object, int, int)>(wins.Length / 3);
+        var tops = new System.Collections.Generic.List<IntPtr>(wins.Length / 3);
         for (int i = 0; i + 2 < wins.Length; i += 3)
         {
             object scene = _getScene.Invoke(_driver, new object[] { (IntPtr)wins[i] });
-            if (scene != null) list.Add((scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy));
+            if (scene == null) continue;
+            list.Add((scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy));
+            Control c = Control.FromHandle((IntPtr)wins[i]);
+            Control top = c?.TopLevelControl;
+            tops.Add(top != null && top.IsHandleCreated ? top.Handle : (IntPtr)wins[i]);
         }
-        // Embedded non-WinForms content LAST, so it draws over the control whose area it occupies.
-        var embedded = EmbeddedScenes.Get(ox, oy);
-        if (embedded != null) list.AddRange(embedded);
-        return list;
+        // Embedded non-WinForms content right AFTER the scenes of the window it is in, so it draws
+        // over the control whose area it occupies -- and UNDER every window above that one. Appended
+        // at the very end it covered the menus, drop-downs and tooltips the driver puts on top: a
+        // context menu opened over a hosted WPF canvas came up behind the canvas.
+        var embedded = EmbeddedScenes.GetWithOwners(ox, oy);
+        if (s_traceScenes)
+        {
+            var sb = new System.Text.StringBuilder("win32host scenes:");
+            for (int i = 0; i < tops.Count; i++) sb.Append($" {wins[i * 3]:x}/{tops[i].ToInt64():x}");
+            if (embedded != null) foreach (var e in embedded) sb.Append($" [embedded top {e.TopLevel.ToInt64():x}]");
+            string line = sb.ToString();
+            if (line != _lastSceneTrace) { _lastSceneTrace = line; Console.WriteLine(line); }
+        }
+        if (embedded == null) return list;
+        var ordered = new System.Collections.Generic.List<(object, int, int)>(list.Count + embedded.Count);
+        var placed = new bool[embedded.Count];
+        for (int i = 0; i < list.Count; i++)
+        {
+            ordered.Add(list[i]);
+            if (tops.LastIndexOf(tops[i]) != i) continue;          // not that window's last scene
+            for (int k = 0; k < embedded.Count; k++)
+                if (!placed[k] && embedded[k].TopLevel == tops[i]) { ordered.Add((embedded[k].Scene, embedded[k].X, embedded[k].Y)); placed[k] = true; }
+        }
+        for (int k = 0; k < embedded.Count; k++)
+            if (!placed[k]) ordered.Add((embedded[k].Scene, embedded[k].X, embedded[k].Y));
+        return ordered;
     }
 
     // Which of the driver's windows this host puts on screen, as {handle, screenX, screenY} triples.
