@@ -197,6 +197,18 @@ namespace Wpf.WinFormsInterop.Tests
         }
 
         [Fact]
+        public void DrawLine_DiagonalHairlineAliased_IsGdiPlusPixels()
+        {
+            // Read off a stock window: (40,10)-(60,17) at the default smoothing lights one pixel per
+            // column, both ends included, a half rounding toward the start.
+            Graphics g = GpuRaster.NewRecording();
+            g.DrawLine(Pens.Black, new Point(40, 10), new Point(60, 17));
+            var rows = new List<string>();
+            CollectRects(GpuRaster.EndScene(g), rows);
+            Assert.Equal(new[] { "40,10,2,1", "42,11,3,1", "45,12,3,1", "48,13,3,1", "51,14,2,1", "53,15,3,1", "56,16,3,1", "59,17,2,1" }, rows);
+        }
+
+        [Fact]
         public void LinearGradient_IsGdiPlusTable()
         {
             // The professional renderer's second tool strip gradient: brush over rows 12..24, filled
