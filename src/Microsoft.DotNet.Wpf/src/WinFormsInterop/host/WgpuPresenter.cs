@@ -91,6 +91,9 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     private readonly WgpuSceneRenderer.PartialTarget _partial;
 
     /// <summary>The last scene present's damage, for frame traces: "full" or "N rects, P px".</summary>
+    /// <summary>Make the next present a full one.</summary>
+    internal void InvalidateFrame() => _partial.Invalidate();
+
     internal string LastDamage => _partial.LastFull ? "full" : $"{_partial.LastRects} rects {_partial.LastPixels} px";
 
     // The face the presenter rasterizes control text with. It MUST stay in step with the one
