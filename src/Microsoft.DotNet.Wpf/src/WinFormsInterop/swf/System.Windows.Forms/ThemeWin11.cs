@@ -345,8 +345,11 @@ namespace System.Windows.Forms
 				return Color.FromArgb ((int) Win11Frames.ComboFace (ComboReadOnlyState (comboBox)));
 			if (comboBox.DropDownStyle == ComboBoxStyle.DropDownList && comboBox.DrawMode != DrawMode.Normal)
 				return comboBox.Enabled ? comboBox.BackColor : ColorControl;
+			// A disabled EDITABLE combo box keeps a white field whatever its BackColor: Windows paints
+			// the disabled edit in the window colour (measured: BackColor = Control, enabled #F0, disabled
+			// #FF; app's disabled font-size box).
 			if (!comboBox.Enabled)
-				return ColorControl;
+				return comboBox.DropDownStyle == ComboBoxStyle.DropDownList ? ColorControl : ColorWindow;
 			if (comboBox.DroppedDown || comboBox.PointerOver)
 				return ComboFieldOpenFace;
 			// A combo box you can only PICK from is a BUTTON in Windows 11, face and all: #FDFDFD,
