@@ -373,6 +373,12 @@ public static class Screenshots
                 object? v;
                 try { v = Member(c, name); }
                 catch (Exception e) { v = "!" + e.GetBaseException().GetType().Name; }
+                // An image member is also written out, to compare its pixels with stock's.
+                if (v is System.Drawing.Image img && Environment.GetEnvironmentVariable("WPFMAC_DUMP_IMAGES") is { Length: > 0 } dir)
+                {
+                    try { img.Save(Path.Combine(dir, $"{c.Name}-{string.Concat(name.Split(Path.GetInvalidFileNameChars()))}.png"), System.Drawing.Imaging.ImageFormat.Png); }
+                    catch (Exception e) { v = $"{v} (!save {e.GetType().Name})"; }
+                }
                 vals.Add($"{name}={v}");
             }
             lines.Append(' ', depth * 2 + 4).Append(string.Join(" ", vals)).Append('\n');

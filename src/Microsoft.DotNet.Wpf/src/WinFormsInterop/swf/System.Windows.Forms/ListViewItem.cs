@@ -947,7 +947,9 @@ namespace System.Windows.Forms
 					checkbox_rect.X = owner.Columns[0].Rect.X + x_offset;
 
 				icon_rect = label_rect = Rectangle.Empty;
-				icon_rect.X = checkbox_rect.Right + 2;
+				// comctl32's LVIR_ICON starts four pixels past the check box (or the column), and its
+				// LVIR_LABEL right where the icon ends (both measured against Windows).
+				icon_rect.X = checkbox_rect.Right + 4;
 				item_ht = owner.ItemSize.Height;
 
 				if (owner.SmallImageList != null)
@@ -956,7 +958,7 @@ namespace System.Windows.Forms
 				label_rect.Height = icon_rect.Height = item_ht;
 				checkbox_rect.Y = item_ht - checkbox_rect.Height;
 
-				label_rect.X = icon_rect.Width > 0 ? icon_rect.Right + 1 : icon_rect.Right;
+				label_rect.X = icon_rect.Right;
 
 				if (owner.Columns.Count > 0)
 					label_rect.Width = owner.Columns[0].Wd - label_rect.X + checkbox_rect.X;

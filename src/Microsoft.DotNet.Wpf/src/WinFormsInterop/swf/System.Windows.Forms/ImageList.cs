@@ -344,7 +344,7 @@ namespace System.Windows.Forms
 			[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
 			public Image this[int index] {
 				get {
-					return (Image)GetImage(index).Clone();
+					return ReadBack(GetImage(index));
 				}
 
 				set {
@@ -550,13 +550,11 @@ namespace System.Windows.Forms
 				return bitmap;
 			}
 
-			/// <summary>What a BITMAP (not an icon) looks like once it has been through the native image
-			/// list and back, as .NET's ImageList puts it there: AddToHandle hands comctl32 the colour
-			/// bitmap from Bitmap.GetHbitmap(), which composites each pixel over LightGray (211) and
-			/// keeps its alpha, and the 32-bit list then premultiplies that colour by the alpha again.
-			/// Drawn straight, a half-transparent pixel of a toolbar icon comes out darker than it
-			/// should -- #F6 at alpha 160 is stored as #92 and lands on #F0 as #B5, which is what the
-			/// stock property grid's toolbar shows. Measured by pushing ramps through the stock list.
+			/// <summary>What a BITMAP (not an icon) looks like once it is in the native image list, as
+			/// .NET's ImageList puts it there: AddToHandle hands comctl32 the colour bitmap from
+			/// Bitmap.GetHbitmap(), which composites each pixel over LightGray (211) and keeps its
+			/// alpha. That is what the list itself draws (ImageList_Draw, so a list or tree view's
+			/// icons); reading an image back out premultiplies it as well (see ReadBack).
 			/// A list of fewer bits keeps no alpha: a pixel that is not wholly transparent is opaque,
 			/// in its colour over LightGray (the transparent ones are masked out). It was premultiplied
 			/// all the same and then made opaque, so a soft edge came out near black instead of light
@@ -576,7 +574,7 @@ namespace System.Windows.Forms
 							{
 								uint c = (p >> shift) & 0xff;
 								uint comp = (uint) (c * a / 255.0 + 211 * (1 - a / 255.0) + 0.5);
-								return (keepsAlpha ? (comp * a + 127) / 255 : comp) << shift;
+								return comp << shift;
 							}
 							row [x] = (keepsAlpha ? a : 255u) << 24 | Channel (16) | Channel (8) | Channel (0);
 						}
@@ -584,6 +582,37 @@ namespace System.Windows.Forms
 				} finally {
 					bitmap.UnlockBits (data);
 				}
+			}
+
+			/// <summary>An image as Images[i] hands it out: .NET's GetBitmap copies a 32-bit list's bits
+			/// as they are kept, which is premultiplied by the alpha, into a bitmap that reads them as
+			/// straight ARGB. So a half-transparent pixel comes back darker than the list draws it --
+			/// a stream's #9D at alpha 83 reads #34 -- and drawn with DrawImage (a tool strip button's
+			/// image, a button's) it lands darker too: #F6 at alpha 160 is read as #92 and lands on #F0
+			/// as #B5, which is what the stock property grid's toolbar shows. Code that copies a list
+			/// into another one image by image (Images.AddRange(old.Images)) carries that darkening
+			/// along, which is what stock's copied lists draw.</summary>
+			private unsafe Image ReadBack (Image image)
+			{
+				Image copy = (Image) image.Clone ();
+				if (this.colorDepth != ColorDepth.Depth32Bit || !(copy is Bitmap bitmap) || bitmap.PixelFormat != PixelFormat.Format32bppArgb)
+					return copy;
+				BitmapData data = bitmap.LockBits (new Rectangle (0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+				try {
+					for (int y = 0; y < data.Height; y++) {
+						uint* row = (uint*) ((byte*) data.Scan0 + y * data.Stride);
+						for (int x = 0; x < data.Width; x++) {
+							uint p = row [x], a = p >> 24;
+							if (a == 255)
+								continue;
+							uint r = (((p >> 16) & 0xff) * a + 127) / 255, g = (((p >> 8) & 0xff) * a + 127) / 255, b = ((p & 0xff) * a + 127) / 255;
+							row [x] = a << 24 | r << 16 | g << 8 | b;
+						}
+					}
+				} finally {
+					bitmap.UnlockBits (data);
+				}
+				return copy;
 			}
 
 			private void RecreateHandle()
@@ -662,7 +691,16 @@ namespace System.Windows.Forms
 				}
 			}
 
-			// For use in ImageList
+			/// <summary>The image by key as the list itself draws it, or null (see GetImage).</summary>
+			internal Image GetImage(string key)
+			{
+				int index = IndexOfKey(key);
+				return index == -1 ? null : GetImage(index);
+			}
+
+			/// <summary>The image as the list itself draws it (ImageList_Draw) -- what a tree view, a list
+			/// view and a tool bar show -- rather than as Images[i] hands it out (see ReadBack). Not a
+			/// copy: callers only draw it.</summary>
 			internal Image GetImage(int index)
 			{
 				if (index < 0 || index >= this.Count)
@@ -770,7 +808,7 @@ namespace System.Windows.Forms
 					CreateHandle();
 
 					for (index = 0; index < images.Length; index++)
-						images[index] = (Image)((Image)list[index]).Clone();
+						images[index] = ReadBack((Image)list[index]);
 				}
 
 				return images.GetEnumerator();

@@ -3114,11 +3114,14 @@ namespace System.Windows.Forms
 			Rectangle full_rect = item.GetBounds (ItemBoundsPortion.Entire);
 			Rectangle text_rect = item.GetBounds (ItemBoundsPortion.Label);
 			// In Details view the first column's label is inset the same three pixels its sub-items
-			// are (see DrawListViewSubItem). Its bounds already carry two of them, so the third has to
-			// be added here: measured against a stock list, whose header and second column land on our
-			// columns exactly while the first column's caption sat one pixel to the left of Windows'.
-			if (control.View == View.Details)
-				text_rect.X += 1;
+			// are (see DrawListViewSubItem). Its bounds are comctl32's LVIR_LABEL, which starts four
+			// pixels into the column (or right where the small icon ends), so the text's rectangle
+			// starts a pixel before them and reaches a pixel past the column on the right, as the
+			// highlight below expects. Measured against a stock list, with and without an icon.
+			if (control.View == View.Details) {
+				text_rect.X -= 1;
+				text_rect.Width += 2;
+			}
 			// In List view comctl32's label starts at the cell's own edge (CLVListView::GetRects) and
 			// its text stands four pixels in and on the cell's top row; the label bounds here, plus
 			// DrawString's own margin, put it three right and one low. Measured against a stock list.

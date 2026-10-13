@@ -1153,6 +1153,36 @@ namespace System.Windows.Forms
 				if (size.Width > ret_size.Width)
 					ret_size = size;
 			}
+			else if (view == View.Details && !virtual_mode && items.Count > 0) {
+				// LVSCW_AUTOSIZE, as comctl32 sizes it (measured against Windows): the widest text's
+				// extent plus 12 for a subitem (at least 25); for the item column plus 10, plus the
+				// small icon less 2, plus the check box -- at least 27 when it has neither.
+				int widest = 0;
+				foreach (ListViewItem item in items) {
+					if (index >= item.SubItems.Count)
+						continue;
+					string text = item.SubItems [index].Text;
+					if (string.IsNullOrEmpty (text))
+						continue;
+					int w = TextRenderer.GdiExtent (text, item.SubItems [index].Font ?? Font);
+					if (index == 0 && small_image_list != null)
+						w += item.IndentCount * small_image_list.ImageSize.Width;
+					widest = Math.Max (widest, w);
+				}
+				int width;
+				if (index > 0)
+					width = Math.Max (widest + 12, 25);
+				else {
+					width = widest + 10;
+					if (small_image_list != null)
+						width += small_image_list.ImageSize.Width - 2;
+					if (check_boxes)
+						width += CheckBoxSize.Width;
+					if (small_image_list == null && !check_boxes)
+						width = Math.Max (width, 27);
+				}
+				return new Size (width, Font.Height + text_padding);
+			}
 			else { // -1 and all the values < -2 are put under one category
 				ret_size = BiggestItem (index);
 				// fall back to empty columns' width if no subitem is available for a column
@@ -1321,17 +1351,19 @@ namespace System.Windows.Forms
 			if (client_area.Height < 0 || client_area.Width < 0)
 				return;
 
+			// The layout is measured from the inside of the frame, so it is the inside's size it
+			// has to fit: against its far edge the frame's own width counted as room.
 			// making a scroll bar visible might make
 			// other scroll bar visible
-			if (layout_wd > client_area.Right) {
+			if (layout_wd > client_area.Width) {
 				h_scroll.Visible = true;
-				if ((layout_ht + h_scroll.Height) > client_area.Bottom)
+				if ((layout_ht + h_scroll.Height) > client_area.Height)
 					v_scroll.Visible = true;
 				else
 					v_scroll.Visible = false;
-			} else if (layout_ht > client_area.Bottom) {
+			} else if (layout_ht > client_area.Height) {
 				v_scroll.Visible = true;
-				if ((layout_wd + v_scroll.Width) > client_area.Right)
+				if ((layout_wd + v_scroll.Width) > client_area.Width)
 					h_scroll.Visible = true;
 				else
 					h_scroll.Visible = false;
@@ -1952,7 +1984,8 @@ namespace System.Windows.Forms
 			if (header_style == ColumnHeaderStyle.None) {
 				header_control.Visible = false;
 				header_control.Size = Size.Empty;
-				layout_wd = ClientRectangle.Width;
+				// The columns still scroll without a header: comctl32 shows the horizontal bar
+				// for an item column wider than the list, header or none.
 			} else {
 				header_control.Location = new Point (BorderInset, BorderInset);
 				header_control.Width = x;
