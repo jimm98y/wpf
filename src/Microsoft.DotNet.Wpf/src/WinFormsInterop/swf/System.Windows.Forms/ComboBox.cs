@@ -452,6 +452,12 @@ namespace System.Windows.Forms
 						Controls.AddImplicit (textbox_ctrl);
 					SetTextBoxAutoCompleteData ();
 				}
+
+				// The style is the native window's class style: stock recreates the window, and the control
+				// sees OnHandleCreated again -- now with whatever parent it has, which is where DotNetBar's
+				// combo boxes take their item height from the font.
+				if (IsHandleCreated)
+					RecreateHandle ();
 				
 				ResumeLayout ();
 				OnDropDownStyleChanged (EventArgs.Empty);
@@ -549,6 +555,12 @@ namespace System.Windows.Forms
 		[MWFCategory("Behavior")]
 		public int ItemHeight {
 			get {
+				// Owner-drawn and never set: stock answers FontHeight + 2 (its own default, which it
+				// also hands comctl32 for the selection field), not the native control's line height.
+				// DotNetBar's combo boxes size their field from it: 13 + 2 + 6 = 21, where the
+				// measured line gave 20.
+				if (!item_height_specified && DrawMode != DrawMode.Normal)
+					return FontHeight + 2;
 				if (item_height == -1) {
 					SizeF sz = TextRenderer.MeasureString ("The quick brown Fox", Font);
 					item_height = (int) sz.Height;
@@ -675,6 +687,17 @@ namespace System.Windows.Forms
 		
 		[Browsable (false)]
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
+		// Stock reads and sets the selection by sending CB_GETEDITSEL / CB_SETEDITSEL to the window, and sending
+		// a message to a control creates its handle -- parented or not. Apps depend on when that happens:
+		// DotNetBar sets SelectionStart on a combo box before it is added to anything, so its handle is
+		// created with no parent and its OnHandleCreated leaves ItemHeight at its default; here the
+		// handle came later, the item height was set, and the box came out a pixel shorter.
+		void TouchHandle ()
+		{
+			if (!IsHandleCreated && !IsDisposed && !Disposing)
+				_ = Handle;
+		}
+
 		public string SelectedText {
 			get {
 				if (dropdown_style == ComboBoxStyle.DropDownList)
@@ -695,6 +718,7 @@ namespace System.Windows.Forms
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		public int SelectionLength {
 			get {
+				TouchHandle ();
 				if (dropdown_style == ComboBoxStyle.DropDownList) 
 					return 0;
 				
@@ -702,6 +726,7 @@ namespace System.Windows.Forms
 				return result == -1 ? 0 : result;
 			}
 			set {
+				TouchHandle ();
 				if (dropdown_style == ComboBoxStyle.DropDownList) 
 					return;
 				if (textbox_ctrl.SelectionLength == value)
@@ -714,11 +739,13 @@ namespace System.Windows.Forms
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		public int SelectionStart {
 			get { 
+				TouchHandle ();
 				if (dropdown_style == ComboBoxStyle.DropDownList) 
 					return 0;
 				return textbox_ctrl.SelectionStart;
 			}
 			set {
+				TouchHandle ();
 				if (dropdown_style == ComboBoxStyle.DropDownList) 
 					return;
 				if (textbox_ctrl.SelectionStart == value)
@@ -1295,6 +1322,7 @@ namespace System.Windows.Forms
 
 		public void Select (int start, int length)
 		{
+			TouchHandle ();
 			if (start < 0)
 				throw new ArgumentException ("Start cannot be less than zero");
 				

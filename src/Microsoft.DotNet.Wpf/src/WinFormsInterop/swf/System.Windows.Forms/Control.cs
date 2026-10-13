@@ -1834,7 +1834,10 @@ namespace System.Windows.Forms
 				OnVisibleChanged(EventArgs.Empty);
 			}
 
-			if (pre_font != Font) {
+			// By value, as stock compares them: a new parent whose font is another instance of the same font
+			// changes nothing, and raising FontChanged for it ran code stock never runs there (DotNetBar's
+			// combo boxes reset their item height and came out a pixel shorter).
+			if (!Equals (pre_font, Font)) {
 				OnFontChanged(EventArgs.Empty);
 			}
 

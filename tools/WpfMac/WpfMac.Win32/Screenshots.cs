@@ -327,6 +327,52 @@ public static class Screenshots
         }
     }
 
+    /// <summary>WPFMAC_DUMP_PROPS="Type:Member,Member;Type2:Member": those members (properties or fields, any
+    /// visibility, inherited too) of every control in the dump that is a Type, by simple name.</summary>
+    private static void AppendProps(System.Text.StringBuilder lines, Forms.Control c, int depth)
+    {
+        string? spec = Environment.GetEnvironmentVariable("WPFMAC_DUMP_PROPS");
+        if (string.IsNullOrEmpty(spec)) return;
+        foreach (string part in spec.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] tm = part.Split(':');
+            if (tm.Length != 2) continue;
+            bool match = false;
+            for (Type? t = c.GetType(); t != null; t = t.BaseType) if (t.Name == tm[0]) { match = true; break; }
+            if (!match) continue;
+            var vals = new List<string>();
+            foreach (string name in tm[1].Split(','))
+            {
+                object? v = "?";
+                const BindingFlags bf = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                try
+                {
+                    for (Type? t = c.GetType(); t != null; t = t.BaseType)
+                    {
+                        if (t.GetProperty(name, bf | BindingFlags.DeclaredOnly) is PropertyInfo p && p.GetIndexParameters().Length == 0) { v = p.GetValue(c); break; }
+                        if (t.GetField(name, bf | BindingFlags.DeclaredOnly) is FieldInfo f) { v = f.GetValue(c); break; }
+                    }
+                }
+                catch (Exception e) { v = "!" + e.GetBaseException().GetType().Name; }
+                vals.Add($"{name}={v}");
+            }
+            lines.Append(' ', depth * 2 + 4).Append(string.Join(" ", vals)).Append('\n');
+        }
+    }
+
+    private static string ScreenRectOrEmpty(Forms.Control c)
+    {
+        try
+        {
+            var r = c.Parent != null ? c.Parent.RectangleToScreen(c.Bounds) : c.Bounds;
+            return $"{r.X},{r.Y} {r.Width}x{r.Height}";
+        }
+        catch
+        {
+            return "-";
+        }
+    }
+
     /// <summary>WPFMAC_DUMP_WINDOWS=1: what the WinForms host composites for a form, to the compat log.</summary>
     private static void DumpWindows(Forms.Form form, string stamp)
     {
@@ -351,8 +397,9 @@ public static class Screenshots
             var lines = new System.Text.StringBuilder($"controls of '{form.Text}' {form.Bounds} client {form.ClientSize} at {stamp}:\n");
             void Walk(Forms.Control c, int depth)
             {
-                if (depth > 7) return;
-                lines.Append(' ', depth * 2).Append($"{c.GetType().Name} '{c.Name}' {c.Bounds} dock={c.Dock} anchor={c.Anchor} visible={c.Visible}{(c.IsHandleCreated ? $" handle=0x{c.Handle:x}" : "")}\n");
+                if (depth > 12) return;
+                lines.Append(' ', depth * 2).Append($"{c.GetType().Name} '{c.Name}' {c.Bounds} dock={c.Dock} anchor={c.Anchor} visible={c.Visible} screen={ScreenRectOrEmpty(c)}{(c.IsHandleCreated ? $" handle=0x{c.Handle:x}" : "")}\n");
+                AppendProps(lines, c, depth);
                 foreach (Forms.Control child in c.Controls) Walk(child, depth + 1);
             }
             Walk(form, 0);
