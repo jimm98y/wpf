@@ -159,9 +159,26 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             case FormStartPosition.CenterScreen:
             case FormStartPosition.CenterParent:
             {
-                int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
-                if (sw <= 0 || sh <= 0) return (CW_USEDEFAULT, CW_USEDEFAULT);
-                return (Math.Max(0, (sw - _form.Width) / 2), Math.Max(0, (sh - _form.Height) / 2));
+                // .NET's CenterToScreen / CenterToParent: the WORKING AREA of the owner's monitor
+                // (the cursor's, with no owner) -- not the whole screen, which put a dialog half a
+                // taskbar lower than stock -- and for CenterParent the owner's window rectangle,
+                // kept inside that working area.
+                IntPtr ownerHwnd = (PresentationHost.HostOf(_form.Owner) as Win32Host)?._hwnd ?? IntPtr.Zero;
+                IntPtr mon;
+                if (ownerHwnd != IntPtr.Zero) mon = MonitorFromWindow(ownerHwnd, 2 /* MONITOR_DEFAULTTONEAREST */);
+                else { GetCursorPos(out POINT cur); mon = MonitorFromPoint(cur, 2); }
+                var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+                if (mon == IntPtr.Zero || !GetMonitorInfoW(mon, ref mi)) return (CW_USEDEFAULT, CW_USEDEFAULT);
+                RECT work = mi.rcWork;
+                int w = _form.Width, h = _form.Height;
+                if (_form.StartPosition == FormStartPosition.CenterParent && ownerHwnd != IntPtr.Zero && GetWindowRect(ownerHwnd, out RECT o))
+                {
+                    int x = o.left + (o.right - o.left - w) / 2, y = o.top + (o.bottom - o.top - h) / 2;
+                    x = Math.Max(work.left, Math.Min(x, work.right - w));
+                    y = Math.Max(work.top, Math.Min(y, work.bottom - h));
+                    return (x, y);
+                }
+                return (work.left + (work.right - work.left - w) / 2, work.top + (work.bottom - work.top - h) / 2);
             }
 
             default:
@@ -244,6 +261,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 && TryMapPopup(_form.Left, _form.Top, out int px, out int py))
                 SetWindowPos(_hwnd, IntPtr.Zero, px, py, 0, 0, 0x0001 | 0x0004 | 0x0010);
             ShowWindow(_hwnd, SW_SHOWNA);
+            _settleUntil = Environment.TickCount64 + 600;   // as on first showing (Show)
             _lastVer = -1;                       // it has no scene from while it was away
             Present();
             return;
@@ -298,9 +316,14 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // messages -- they arrive from inside CreateWindowExW, before it has returned a handle.
             s_creating = this;
             (uint style, uint exStyle) = WindowStyles();
+            if (_form.TopMost) exStyle |= 0x00000008;   // WS_EX_TOPMOST
             (int wx, int wy) = StartLocation();
+            // An owned form's window is OWNED by its owner's, as on Windows: it stays above it and
+            // goes with it. Created unowned, a dialog could fall behind the window it belongs to.
+            IntPtr ownerHwnd = (PresentationHost.HostOf(_form.Owner) as Win32Host)?._hwnd ?? IntPtr.Zero;
             _hwnd = CreateWindowExW(exStyle, s_classNamePtr, title, style,
-                wx, wy, _form.Width, _form.Height, IntPtr.Zero, IntPtr.Zero, _hinstance, IntPtr.Zero);
+                wx, wy, _form.Width, _form.Height, ownerHwnd, IntPtr.Zero, _hinstance, IntPtr.Zero);
+            _topmostApplied = _form.TopMost;
             if (_hwnd != IntPtr.Zero) s_byHwnd[_hwnd] = this;
             // Which WinForms window this real one shows: what an app asking Windows about its own
             // windows (EnumWindows, GetForegroundWindow, Process.MainWindowHandle) is answered with,
@@ -350,6 +373,13 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         Present();
         ShowWindow(_hwnd, SW_SHOW);
         if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: window shown");
+        // Go on presenting the whole frame for a moment now that the window is on screen. What is
+        // presented while it is hidden, or just as it appears, is not always what DWM goes on to
+        // show: now and then a window came up with its client area white -- caption drawn, content
+        // never -- and stayed so until something in it changed, which in a dialog nobody touches
+        // is never.
+        _settleUntil = Environment.TickCount64 + 600;
+        Present();
         _form.HostWindowShown();
     }
 
@@ -400,11 +430,26 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         return (style, exStyle);
     }
 
+    private bool _topmostApplied;
+    private long _settleUntil;
+
+    /// <summary>Form.TopMost on the real window: WS_EX_TOPMOST, kept in step as it changes.
+    /// Nothing carried it before, so a TopMost form went behind whatever was activated next.</summary>
+    private void SyncTopmost()
+    {
+        if (_hwnd == IntPtr.Zero || FormGone) return;
+        bool want = _form.TopMost;
+        if (want == _topmostApplied) return;
+        _topmostApplied = want;
+        SetWindowPos(_hwnd, want ? (IntPtr)(-1) : (IntPtr)(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);   // HWND_(NO)TOPMOST, NOSIZE|NOMOVE|NOACTIVATE
+    }
+
     private bool _repaintAsked;
 
     public void Present()
     {
         if (_wgpu == null) return;
+        SyncTopmost();
         // The driver's paint version covers the WinForms controls; embedded content (a hosted WPF
         // tree) changes on its own clock, so fold its version in or a WPF-only animation never
         // reaches the screen.
@@ -427,7 +472,11 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             wantSave = false;
             _repaintAsked = true;
         }
-        if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk && !wantSave && !_repaintAsked) return;
+        // Just shown: keep presenting the whole frame for a moment (see Show).
+        bool settling = _settleUntil != 0 && Environment.TickCount64 < _settleUntil;
+        if (settling) _wgpu.InvalidateFrame();
+        else _settleUntil = 0;
+        if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk && !wantSave && !_repaintAsked && !settling) return;
         _repaintAsked = false;
 
         double t0 = s_traceFrames ? SinceStart : 0;
@@ -1113,8 +1162,13 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             for (int k = 0; k < embedded.Count; k++)
                 if (!placed[k] && embedded[k].TopLevel == tops[i]) { ordered.Add((embedded[k].Scene, embedded[k].X, embedded[k].Y)); placed[k] = true; }
         }
+        // What is left sits in a window this host does not draw. Content inside ANOTHER form is that
+        // form's host's to show (or nobody's, if that form is hidden): drawn here too it was laid
+        // over everything -- a modal login dialog opened over an app with a hosted WPF canvas came
+        // up as a blank white window, the canvas covering its controls. Only content that is in no
+        // form at all is drawn last, as before.
         for (int k = 0; k < embedded.Count; k++)
-            if (!placed[k]) ordered.Add((embedded[k].Scene, embedded[k].X, embedded[k].Y));
+            if (!placed[k] && !OtherHostsWindow(embedded[k].TopLevel)) ordered.Add((embedded[k].Scene, embedded[k].X, embedded[k].Y));
         return ordered;
     }
 
@@ -1128,6 +1182,10 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     // content, positioned against its own origin. So each host takes its own subtree, and the
     // newest host additionally claims everything no other host owns, which is where the popups of
     // whichever window the user is working in live.
+    /// <summary>Whether <paramref name="topLevel"/> is some form's window other than this host's
+    /// own: another host's, or a form that is hidden or gone and so shows nothing at all.</summary>
+    private bool OtherHostsWindow(IntPtr topLevel) => topLevel != IntPtr.Zero && topLevel != _formHandle;
+
     private long[] PresentWindows()
     {
         if (FormGone) return System.Array.Empty<long>();
@@ -1287,6 +1345,11 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     [DllImport("user32")] private static extern bool AdjustWindowRectEx(ref RECT r, int style, bool menu, int exStyle);
     [DllImport("user32")] private static extern bool AdjustWindowRectExForDpi(ref RECT r, int style, bool menu, int exStyle, uint dpi);
     [DllImport("user32")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32")] private static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+    [DllImport("user32")] private static extern bool GetMonitorInfoW(IntPtr mon, ref MONITORINFO mi);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO { public int cbSize; public RECT rcMonitor, rcWork; public uint dwFlags; }
     [DllImport("user32")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
     [StructLayout(LayoutKind.Sequential)] private struct TRACKMOUSEEVENT { public uint cbSize, dwFlags; public IntPtr hwndTrack; public uint dwHoverTime; }
     [DllImport("user32")] private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT e);

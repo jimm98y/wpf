@@ -221,10 +221,17 @@ namespace System.Windows.Forms
             var one = new List<(object Scene, int X, int Y)>(1);
             foreach (IEmbeddedScene c in items)
             {
+                IntPtr top = IntPtr.Zero;
+                if (c is Control ctl)
+                {
+                    // A control in no window on screen -- disposed with its form, or not yet parented --
+                    // has nowhere to be drawn. Taken for content of no window, it was drawn last by
+                    // whichever host asked: a closed form's WPF canvas covered the next form opened.
+                    if (ctl.IsDisposed || ctl.TopLevelControl is not Control t || !t.IsHandleCreated || t.IsDisposed) continue;
+                    top = t.Handle;
+                }
                 one.Clear();
                 c.Collect(ox, oy, one);
-                IntPtr top = IntPtr.Zero;
-                if (c is Control ctl && !ctl.IsDisposed && ctl.TopLevelControl is Control t && t.IsHandleCreated) top = t.Handle;
                 foreach (var e in one) list.Add((e.Scene, e.X, e.Y, top));
             }
             return list.Count > 0 ? list : null;
