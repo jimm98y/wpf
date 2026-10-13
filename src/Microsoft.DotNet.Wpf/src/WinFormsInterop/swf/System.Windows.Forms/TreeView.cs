@@ -1513,11 +1513,11 @@ namespace System.Windows.Forms {
 		private void DrawNodeState (TreeNode node, Graphics dc, int x, int y)
 		{
 			if (node.Checked) {
-				if (StateImageList.Images[1] != null)
-					dc.DrawImage (StateImageList.Images[1], new Rectangle (x, y, 16, 16));
+				if (StateImageList.Images.Count > 1)
+					dc.DrawImage (StateImageList.Images.GetImage (1), new Rectangle (x, y, 16, 16));
 			} else {
-				if (StateImageList.Images[0] != null)
-					dc.DrawImage (StateImageList.Images[0], new Rectangle (x, y, 16, 16));
+				if (StateImageList.Images.Count > 0)
+					dc.DrawImage (StateImageList.Images.GetImage (0), new Rectangle (x, y, 16, 16));
 			}
 		}
 

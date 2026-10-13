@@ -76,10 +76,10 @@ namespace System.Windows.Forms
 
 				ImageList list = Parent.ImageList;
 				if (ImageIndex > -1 && ImageIndex < list.Images.Count)
-					return list.Images [ImageIndex];
+					return list.Images.GetImage (ImageIndex);
 
 				if (!string.IsNullOrEmpty (image_key))
-					return list.Images [image_key];
+					return list.Images.GetImage (image_key);
 
 				return null;
 			}

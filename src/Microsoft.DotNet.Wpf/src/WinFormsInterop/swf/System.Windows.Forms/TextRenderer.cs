@@ -612,6 +612,16 @@ namespace System.Windows.Forms
 			return r;
 		}
 
+		/// <summary>GetTextExtentPoint of the font over the whole string: the advance, without the
+		/// overhang adjustments DrawText's DT_CALCRECT makes (comctl32 sizes from this).</summary>
+		internal static int GdiExtent (string text, Font font)
+		{
+			if (string.IsNullOrEmpty (text))
+				return 0;
+			int sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0) | System.Drawing.WebGpuBackend.TextMetrics.NoKerning;
+			return System.Drawing.WebGpuBackend.TextMetrics.MeasureGdiRun (text, font.SizeInPoints * 96f / 72f, sims, font.FontFamily?.Name);
+		}
+
 		private static readonly Size MaxSize = new Size (int.MaxValue, int.MaxValue);
 
 		private static bool TryGraphics (IDeviceContext dc, out Graphics g)

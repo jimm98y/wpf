@@ -1052,13 +1052,13 @@ namespace System.Windows.Forms
 				if (TreeView != null) {
 					ImageList internal_list = TreeView.InternalStateImageList;
 					if (internal_list != null && state_image_index >= 0 && state_image_index + 1 < internal_list.Images.Count)
-						return internal_list.Images [state_image_index + 1];
+						return internal_list.Images.GetImage (state_image_index + 1);
 					if (TreeView.StateImageList == null)
 						return null;
 					if (state_image_index >= 0)
-						return TreeView.StateImageList.Images[state_image_index];
+						return state_image_index < TreeView.StateImageList.Images.Count ? TreeView.StateImageList.Images.GetImage (state_image_index) : null;
 					if (state_image_key != string.Empty)
-						return TreeView.StateImageList.Images[state_image_key];
+						return TreeView.StateImageList.Images.GetImage (state_image_key);
 				}
 
 				return null;
