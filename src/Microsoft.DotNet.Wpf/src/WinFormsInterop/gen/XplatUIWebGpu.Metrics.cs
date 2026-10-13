@@ -15,6 +15,16 @@ namespace System.Windows.Forms {
 		internal override int MouseButtonCount { get { return 3; } }                   // SM_CMOUSEBUTTONS
 		internal override int KeyboardSpeed { get { return 31; } }                     // SPI_GETKEYBOARDSPEED default
 		internal override int KeyboardDelay { get { return 1; } }                      // SPI_GETKEYBOARDDELAY default
+		// The caption buttons and the sizing frame, as a stock app on Windows 11 reads them. Mono's
+		// 18 x 18 buttons and 8-pixel frame put DotNetBar's ribbon-form caption buttons three rows
+		// higher than Windows' (it sizes them from CaptionButtonSize less the resize border).
+		// CaptionHeight and FrameBorderSize stay the driver's own: its forms are framed by the host.
+		internal override Size CaptionButtonSize { get { return new Size (36, 22); } }        // SM_CXSIZE/SM_CYSIZE
+		internal override Size SmallCaptionButtonSize { get { return new Size (22, 22); } }   // SM_CXSMSIZE/SM_CYSMSIZE
+		public override Size ToolWindowCaptionButtonSize { get { return new Size (22, 22); } } // SM_CXSMSIZE/SM_CYSMSIZE
+		public override Size MenuButtonSize { get { return new Size (19, 19); } }             // SM_CXMENUSIZE/SM_CYMENUSIZE
+		internal override int HorizontalResizeBorderThickness { get { return 4; } }           // SM_CXSIZEFRAME
+		internal override int VerticalResizeBorderThickness { get { return 4; } }             // SM_CYSIZEFRAME
 		// SPI_GETFONTSMOOTHINGTYPE: ClearType (2) on a Windows 11 set up as it comes, and what this
 		// stack renders text with everywhere; Windows' own answer where there is one. The base said
 		// 1 (standard antialiasing), which stock never reports on such a machine.
