@@ -171,9 +171,35 @@ namespace System.Windows.Forms
 
 		}
 
+		// A NativeWindow assigned to a handle that already has one subclasses it, as on Win32: the newest
+		// gets each message first, and its DefWndProc is the window procedure it replaced -- the older
+		// NativeWindow on the handle, down to the control's own, whose DefWndProc is the system's. Mono
+		// instead handed every message to each of them in turn, oldest first, each ending in the system
+		// DefWndProc: a subclass answered after the control and undid its answer. DotNetBar's RibbonForm
+		// answers WM_NCCALCSIZE with a client as large as the window; a NativeWindow the app hooks onto
+		// the form then ran the default frame over it again, and the form got a Windows caption.
 		public void DefWndProc(ref Message m)
 		{
+			NativeWindow previous = PreviousInChain (this);
+			if (previous != null) {
+				previous.WndProc (ref m);
+				return;
+			}
 			m.Result=XplatUI.DefWndProc(ref m);
+		}
+
+		private static NativeWindow PreviousInChain (NativeWindow window)
+		{
+			if (window.window_handle == IntPtr.Zero)
+				return null;
+			lock (window_collection) {
+				if (window_collection[window.window_handle] is ArrayList windows) {
+					int index = windows.IndexOf (window);
+					if (index > 0)
+						return (NativeWindow) windows[index - 1];
+				}
+			}
+			return null;
 		}
 
 		public virtual void DestroyHandle()
@@ -242,15 +268,14 @@ namespace System.Windows.Forms
 			} else if (current is ArrayList) {
 				ArrayList windows = (ArrayList) current;
 				lock (windows) {
-					if (windows.Count > 0) {
-						window = EnsureCreated ((NativeWindow)windows[0], hWnd);
-						window.WndProc (ref m);
-						// the first one is the control's one. all others are synthetic,
-						// so we want only the result from the control
-						result = m.Result;
-						for (int i=1; i < windows.Count; i++)
-							((NativeWindow)windows[i]).WndProc (ref m);
-					}
+					if (windows.Count > 0)
+						window = (NativeWindow)windows[windows.Count - 1];
+				}
+				// The newest subclass first; each reaches the one before it through DefWndProc.
+				if (window != null) {
+					window = EnsureCreated (window, hWnd);
+					window.WndProc (ref m);
+					result = m.Result;
 				}
 			} else {
 				result = XplatUI.DefWndProc (ref m);
