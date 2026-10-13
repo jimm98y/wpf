@@ -164,11 +164,11 @@ namespace System.Windows.Forms
 			ContextMenu context_menu = new ContextMenu();
 			context_menu_default_location = Point.Empty;
 
-			// .NET's own icons for the three buttons (SortByCategoryImage, SortByPropertyImage,
-			// ShowPropertyPageImage), at the small icon size.
-			categorized_image = ScaleHelper.GetIconResourceAsDefaultSizeBitmap (typeof (PropertyGrid), "PBCategory");
-			alphabetical_image = ScaleHelper.GetIconResourceAsDefaultSizeBitmap (typeof (PropertyGrid), "PBAlpha");
-			propertypages_image = ScaleHelper.GetIconResourceAsDefaultSizeBitmap (typeof (PropertyGrid), "PBPPage");
+			// The three buttons' images, from the overridable properties as .NET takes them: a grid that
+			// brings its own art (app's does) shows it.
+			categorized_image = SortByCategoryImage;
+			alphabetical_image = SortByPropertyImage;
+			propertypages_image = ShowPropertyPageImage;
 			// .NET's AddImage: a bitmap that is not an icon -- ToBitmap's are not -- has the colour of
 			// its bottom-left pixel made transparent, which clears these icons' opaque light backing.
 			((Bitmap) categorized_image).MakeTransparent ();
@@ -288,8 +288,10 @@ namespace System.Windows.Forms
 			}
 
 			set {
+				// The tool bar is not given the colour: it inherits it, so its renderer still paints
+				// its own background (a professional renderer's gradient paints only under a tool bar
+				// with no colour of its own). Stock's tool bar keeps an empty BackColor here.
 				base.BackColor = value;
-				toolbar.BackColor = value;
 				Refresh ();
 			}
 		}
@@ -808,6 +810,15 @@ namespace System.Windows.Forms
 		protected virtual Type DefaultTabType {
 			get { return typeof(PropertiesTab); }
 		}
+
+		/// <summary>The image of the Categorized button: .NET's own icon at the small icon size.</summary>
+		protected virtual Bitmap SortByCategoryImage => ScaleHelper.GetIconResourceAsDefaultSizeBitmap (typeof (PropertyGrid), "PBCategory");
+
+		/// <summary>The image of the Alphabetical button.</summary>
+		protected virtual Bitmap SortByPropertyImage => ScaleHelper.GetIconResourceAsDefaultSizeBitmap (typeof (PropertyGrid), "PBAlpha");
+
+		/// <summary>The image of the Property Pages button.</summary>
+		protected virtual Bitmap ShowPropertyPageImage => ScaleHelper.GetIconResourceAsDefaultSizeBitmap (typeof (PropertyGrid), "PBPPage");
 		
 		protected bool DrawFlatToolbar {
 			get { return (toolbar.Appearance == ToolBarAppearance.Flat); }			
