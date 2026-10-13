@@ -440,6 +440,15 @@ namespace System.Drawing
 		static float[] Flatten (PointF[] p) { var a = new float[p.Length * 2]; for (int i = 0; i < p.Length; i++) { a[i*2] = p[i].X; a[i*2+1] = p[i].Y; } return a; }
 		static float[] Flatten (Point[] p) { var a = new float[p.Length * 2]; for (int i = 0; i < p.Length; i++) { a[i*2] = p[i].X; a[i*2+1] = p[i].Y; } return a; }
 
+		/// <summary>DrawImage at a point: GDI+ draws the image at its PHYSICAL size (GetImageDestPageSize),
+		/// its pixels at its own resolution through the surface's -- a 300 dpi resource icon drawn at a
+		/// point on a 96 dpi screen is five pixels wide, not sixteen.</summary>
+		bool RecordImageAtPoint (Image image, float x, float y)
+		{
+			SizeF size = PrintImageSize (image);
+			return RecordImage (image, x, y, size.Width, size.Height);
+		}
+
 		// Record a Bitmap draw as an image quad (whole image -> dest rect). Returns false (fall through
 		// to libgdiplus) when not in GPU-raster mode or the image isn't a Bitmap we can read pixels from.
 		bool RecordImage (Image image, float dx, float dy, float dw, float dh)
@@ -449,14 +458,46 @@ namespace System.Drawing
 				return true;
 			}
 			if (GpuRecorder == null || !(image is Bitmap bmp) || bmp.managed == null) return false;
+			GfxTrace ("DrawImage", () => $"{bmp.Width}x{bmp.Height} dpi={bmp.HorizontalResolution} -> {dx},{dy} {dw}x{dh} im={InterpolationMode}", new RectangleF (dx, dy, dw, dh));
 			int w = bmp.Width, h = bmp.Height;
 			if (RecordBitmapScenes (bmp, 0, 0, w, h, dx, dy, dw, dh)) return true;
 			if (print_mode && PrintImageBands (bmp, new RectangleF (0, 0, w, h), new RectangleF (dx, dy, dw, dh), null)) return true;
 			GdipFrame frame = bmp.Data.Frame;
 			byte[] px = GdipPixels.ToRgba (frame, new Rectangle (0, 0, w, h));
 			if (image_target != null) px = IntoBitmap (px);
+			px = AntialiasedImageEdges (px, w, h, dx, dy, dw, dh);
 			GpuRecorder.DrawImage (px, w, h, dx, dy, dw, dh);
 			return true;
+		}
+
+		/// <summary>GDI+'s antialiased DrawImage at PixelOffsetMode.None: the destination rectangle's
+		/// coverage is taken with pixel centres on the integer coordinates, so an image drawn 1:1 at a
+		/// whole position covers its first column and its first row by half (the corner by a quarter),
+		/// and the half column past its right and bottom edges samples nothing. DotNetBar draws its
+		/// ribbon icons at SmoothingMode.AntiAlias; stock's left edge of every icon is half-strength
+		/// (#73 over white lands on #B9), ours was solid. Measured on stock; only the 1:1 case is modelled
+		/// (a scaled image's edges are left to the renderer).</summary>
+		byte [] AntialiasedImageEdges (byte [] rgba, int w, int h, float dx, float dy, float dw, float dh)
+		{
+			if (GpuAliased || w <= 0 || h <= 0 || dw != w || dh != h)
+				return rgba;
+			if (_pixelOffset == PixelOffsetMode.Half || _pixelOffset == PixelOffsetMode.HighQuality)
+				return rgba;
+			float [] m = RecordingMatrix ();
+			if (m [0] != 1f || m [1] != 0f || m [2] != 0f || m [3] != 1f)
+				return rgba;
+			float ox = dx + m [4], oy = dy + m [5];
+			if (ox != MathF.Floor (ox) || oy != MathF.Floor (oy))
+				return rgba;
+			byte [] o = (byte []) rgba.Clone ();
+			for (int y = 0; y < h; y++)
+				for (int x = 0; x < w; x++) {
+					if (x != 0 && y != 0) break;
+					int cov = x == 0 && y == 0 ? 64 : 128;
+					int i = (y * w + x) * 4;
+					o [i + 3] = (byte) ((o [i + 3] * cov + 127) / 255);
+				}
+			return o;
 		}
 
 		// An image drawn INTO a bitmap goes through GDI+'s premultiplied blend on the way: a
@@ -552,6 +593,7 @@ namespace System.Drawing
 				src = new RectangleF (src.X * ux, src.Y * uy, src.Width * ux, src.Height * uy);
 			}
 			if (src.Width <= 0 || src.Height <= 0 || dest.Width == 0 || dest.Height == 0) return true;
+			GfxTrace ("DrawImageRect", () => $"{bmp.Width}x{bmp.Height} dpi={bmp.HorizontalResolution} src={src} -> {dest} attrs={attrs != null} im={InterpolationMode}", dest);
 			// Attributes recolour pixels, so a recorded bitmap is rendered first; without them it
 			// can be drawn as its recording.
 			if (attrs == null && RecordBitmapScenes (bmp, src.X, src.Y, src.Width, src.Height, dest.X, dest.Y, dest.Width, dest.Height))
@@ -568,6 +610,7 @@ namespace System.Drawing
 			byte[] rgba = GdipPixels.ToRgba (frame, new Rectangle (x0, y0, w, h));
 			attrs?.Apply (rgba, Imaging.ColorAdjustType.Bitmap);
 			if (image_target != null) rgba = IntoBitmap (rgba);
+			rgba = AntialiasedImageEdges (rgba, w, h, d.X, d.Y, d.Width, d.Height);
 			GpuRecorder.DrawImage (rgba, w, h, d.X, d.Y, d.Width, d.Height);
 			return true;
 		}
@@ -1685,7 +1728,7 @@ namespace System.Drawing
 			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, point.X, point.Y, ps.Width, ps.Height); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
-			if (RecordImage (image, point.X, point.Y, image.Width, image.Height)) return;
+			if (RecordImageAtPoint (image, point.X, point.Y)) return;
 			/*GDIP*/;
 			
 		}
@@ -1771,7 +1814,7 @@ namespace System.Drawing
 			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, x, y, ps.Width, ps.Height); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
-			if (RecordImage (image, x, y, image.Width, image.Height)) return;
+			if (RecordImageAtPoint (image, x, y)) return;
 			/*GDIP*/;
 			
 		}
@@ -1787,7 +1830,7 @@ namespace System.Drawing
 			if (print_mode && image != null) { SizeF ps = PrintImageSize (image); DrawImage (image, x, y, ps.Width, ps.Height); return; }
 			if (image == null)
 				throw new ArgumentNullException ("image");
-			if (RecordImage (image, x, y, image.Width, image.Height)) return;
+			if (RecordImageAtPoint (image, x, y)) return;
 			/*GDIP*/;
 			
 		}
@@ -2224,7 +2267,8 @@ namespace System.Drawing
 			CheckTarget ();
 			if (SkipSourceImage (image)) return;
 			if (EngineDrawImage (image, x, y)) return;
-			DrawImage (image, x, y, image.Width, image.Height);
+			// GDI+'s DrawImageUnscaled is DrawImage at a point: the image's physical size.
+			DrawImage (image, x, y);
 		}
 
 		public void DrawImageUnscaled (Image image, int x, int y, int width, int height)
