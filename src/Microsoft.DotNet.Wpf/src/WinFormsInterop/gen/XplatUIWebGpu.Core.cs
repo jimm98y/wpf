@@ -605,6 +605,16 @@ namespace System.Windows.Forms
 			if (message == Msg.WM_MOUSEMOVE) TrackHover(target);
 			Hwnd h = Hwnd.ObjectFromHandle(target);
 			if (h == null) return;
+			// Windows gives a disabled window no mouse input: a disabled control's message goes to
+			// its parent (WindowFromPoint passes it over), and inside a disabled top-level window --
+			// the owner of a modal dialog -- nothing gets it at all. Delivered regardless, the buttons
+			// behind a login dialog could be clicked, and so could a button whose Enabled is false.
+			if (!h.Enabled)
+			{
+				while (h != null && !h.enabled && h.parent != null) h = h.parent;
+				if (h == null || !h.Enabled) return;
+				target = h.Handle;
+			}
 			Point p = ScreenLocation(h);
 			int cx = screenX - p.X, cy = screenY - p.Y;
 			IntPtr lp = (IntPtr)((cy << 16) | (cx & 0xFFFF));
@@ -1870,6 +1880,7 @@ namespace System.Windows.Forms
 				if (active != null && active.IsHandleCreated) target = active.Handle;
 			}
 			if (target == IntPtr.Zero) return false;
+			if (!(Hwnd.ObjectFromHandle(target)?.Enabled ?? true)) return false;   // a disabled window takes no keys
 
 			// A real message loop offers a key to the control's pre-processing before dispatching
 			// it, and that is where WinForms handles the keys that navigate rather than type: Tab
@@ -1910,15 +1921,32 @@ namespace System.Windows.Forms
 			if (ch != 0) SendMessage(target, Msg.WM_CHAR, (IntPtr)ch, IntPtr.Zero);
 			return false;
 		}
+		/// <summary>Win32 EnableWindow: a disabled window takes no input (DispatchMouse, the key
+		/// injectors). For a form shown in a real window that window is disabled too, so the OS
+		/// refuses clicks on it while a modal dialog is up -- and points the user at the dialog.</summary>
+		internal override void EnableWindow(IntPtr handle, bool Enable)
+		{
+			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
+			if (hwnd == null) return;
+			hwnd.Enabled = Enable;
+			PresentationHost.WindowEnabledChanged(handle, Enable);
+		}
+
+		internal override bool IsEnabled(IntPtr handle) => Hwnd.ObjectFromHandle(handle)?.Enabled ?? false;
+
+		/// <summary>Whether keyboard input may go to the focused window: not when it, or a window
+		/// it is in, is disabled.</summary>
+		private bool FocusTakesInput() => _focusHandle != IntPtr.Zero && (Hwnd.ObjectFromHandle(_focusHandle)?.Enabled ?? true);
+
 		internal void InjectChar(char ch)
 		{
-			if (_focusHandle == IntPtr.Zero) return;
+			if (!FocusTakesInput()) return;
 			var m = Message.Create(_focusHandle, (int)Msg.WM_CHAR, (IntPtr)ch, IntPtr.Zero);
 			if (!FilteredOut(ref m)) SendMessage(_focusHandle, Msg.WM_CHAR, (IntPtr)ch, IntPtr.Zero);
 		}
 		internal void InjectKeyUp(int vkey)
 		{
-			if (_focusHandle == IntPtr.Zero) return;
+			if (!FocusTakesInput()) return;
 			var m = Message.Create(_focusHandle, (int)Msg.WM_KEYUP, (IntPtr)vkey, IntPtr.Zero);
 			if (!FilteredOut(ref m)) SendMessage(_focusHandle, Msg.WM_KEYUP, (IntPtr)vkey, IntPtr.Zero);
 		}

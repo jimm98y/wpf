@@ -363,6 +363,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (_form.Owner == null)
             XplatUIWebGpu.SetScreenSize(_form.ClientSize.Width, _form.ClientSize.Height);
         _form.LocationChanged += OnFormMoved;
+        _form.SizeChanged += OnFormResized;
         _form.VisibleChanged += OnFormVisibleChanged;
         if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: window + surface ready");
         // The first frame is drawn BEFORE the window is shown. It takes the UI thread a second or
@@ -429,6 +430,15 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (!_form.ShowIcon) exStyle |= 0x00000001;   // WS_EX_DLGMODALFRAME
         return (style, exStyle);
     }
+
+    /// <summary>EnableWindow on the real window, as Windows does to every other window of the thread
+    /// while a modal dialog runs: the OS then refuses input to it and points at the dialog.</summary>
+    public void SetEnabled(bool enable)
+    {
+        if (_hwnd != IntPtr.Zero) EnableWindowReal(_hwnd, enable);
+    }
+
+    [DllImport("user32", EntryPoint = "EnableWindow")] private static extern bool EnableWindowReal(IntPtr hwnd, bool enable);
 
     private bool _topmostApplied;
     private long _settleUntil;
@@ -932,6 +942,19 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         _lastVer = -1;                                   // force a present at the new scale
         OnClientResized();
         Present();
+    }
+
+    /// <summary>The application resized its form (Size, ClientSize, a new MinimumSize): the window
+    /// follows. Only the user's resizing reached the window before, so a dialog that grows to show
+    /// more -- a login dialog's "Advanced" -- kept its old window, the rest of it cut off.</summary>
+    private void OnFormResized(object sender, EventArgs e)
+    {
+        if (_hwnd == IntPtr.Zero || FormGone || _form.WindowState != FormWindowState.Normal) return;
+        GetClientRect(_hwnd, out RECT r);
+        int lw = (int)Math.Round((r.right - r.left) / _scale), lh = (int)Math.Round((r.bottom - r.top) / _scale);
+        Size want = _form.ClientSize;
+        if (want.Width <= 0 || want.Height <= 0 || (lw == want.Width && lh == want.Height)) return;
+        ResizeClientTo(want.Width, want.Height);
     }
 
     private void OnClientResized()

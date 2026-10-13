@@ -838,11 +838,13 @@ namespace System.Windows.Forms {
 				if (maximum_size != value) {
 					maximum_size = value;
 
-					// If this is smaller than the min, adjust the min
-					if (!minimum_size.IsEmpty) {
-						if (maximum_size.Width <= minimum_size.Width)
+					// If this is smaller than the min, adjust the min -- as .NET does, only for a real
+					// maximum: (0, 0) means "no maximum", and taking it for one reset the minimum to
+					// nothing (a login dialog's advanced mode sets its minimum, then clears its maximum).
+					if (!minimum_size.IsEmpty && !maximum_size.IsEmpty) {
+						if (minimum_size.Width > maximum_size.Width)
 							minimum_size.Width = maximum_size.Width;
-						if (maximum_size.Height <= minimum_size.Height)
+						if (minimum_size.Height > maximum_size.Height)
 							minimum_size.Height = maximum_size.Height;
 					}
 						
@@ -1021,10 +1023,10 @@ namespace System.Windows.Forms {
 					minimum_size = value;
 
 					// If this is bigger than the max, adjust the max
-					if (!maximum_size.IsEmpty) {
-						if (minimum_size.Width >= maximum_size.Width)
+					if (!maximum_size.IsEmpty && !minimum_size.IsEmpty) {
+						if (minimum_size.Width > maximum_size.Width)
 							maximum_size.Width = minimum_size.Width;
-						if (minimum_size.Height >= maximum_size.Height)
+						if (minimum_size.Height > maximum_size.Height)
 							maximum_size.Height = minimum_size.Height;
 					}
 					
