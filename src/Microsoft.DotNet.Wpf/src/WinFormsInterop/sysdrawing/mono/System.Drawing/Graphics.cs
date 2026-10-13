@@ -3015,6 +3015,13 @@ namespace System.Drawing
 		/// simulated italic under the antialiased hints; underline/strikeout): those keep being
 		/// drawn the way they always were, below. The antialiased hints are GDI+'s too: 4x4 glyphs
 		/// through its text gamma table.</summary>
+		static bool HasControlChar (string s)
+		{
+			foreach (char c in s)
+				if (c < ' ') return true;
+			return false;
+		}
+
 		bool TryDrawGdiPlusText (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
 		{
 			if (!s_gdiPlusText)
@@ -3062,8 +3069,11 @@ namespace System.Drawing
 				biLevel: axis, sx: sx, sy: sy, wrapWidth: wrap);
 			if (layout == null && asPath)
 				return FillGdiPlusTextOutlines (s, font, brush, rect, format, sx, sy);
+			// What the fast imager refuses goes to the full imager in GDI+ (a hot-key prefix, a control
+			// character): this port's engine lays such a string out as GDI+ does. Left to the recorder's
+			// approximation, DotNetBar's "&File" ribbon tabs sat a pixel high and a pixel narrow.
 			if (layout == null)
-				return !identity && DrawGdiPlusThroughEngine (s, font, brush, rect, format);
+				return (!identity || hotkey && s.IndexOf ('&') >= 0 && !HasControlChar (s)) && DrawGdiPlusThroughEngine (s, font, brush, rect, format);
 			if (!empty)
 				GpuRecorder.DrawGdiPlusText (layout, s, ArgbOf (brush), style, family);
 			return true;

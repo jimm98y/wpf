@@ -296,6 +296,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public float OrigTX, OrigTY;       // world translation when rendered (full-target layers)
             // Non-zero: BlurTex belongs to _shadowCache under this silhouette, not to this layer.
             public long ShadowKey;
+            // A clip-geometry layer's content as paper (see PaperUnder): each draw's kind and box,
+            // measured when the layer was rendered, and the clip in device space.
+            public List<(FillKind Kind, PaperInfo Info)>? PaperSnapshot;
+            public PathGeometry? ClipDevice;
         }
         private readonly Dictionary<long, CachedLayer> _layerCache = new();
 
@@ -933,7 +937,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             d.DrawInfo.Clear();
             // Keyed by draw index, so they belong to this pass's draws and go with them.
             d.GradientPaper?.Clear(); d.ClearDraws?.Clear();
-            d.Culled?.Clear(); d.CullConflict = false;
+            d.Culled?.Clear(); d.CullConflict = false; d.ClipLayers?.Clear();
             d.VbOffset = d.IbOffset = -1;
             _inUseDrawData.Add(d);
             return d;
@@ -1013,6 +1017,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// <see cref="CullConflict"/>, and the frame is collected again without culling.</summary>
             public List<Scissor>? Culled;
             public bool CullConflict;
+            /// <summary>Per clip-layer composite (by index into <see cref="Draws"/>), the layer it
+            /// composites, so a paper question can look under the clip into the layer's own draws.</summary>
+            public Dictionary<int, CachedLayer>? ClipLayers;
             // Byte offsets of this pass's vertices/indices inside the frame's shared batched geometry
             // buffers (BuildBatchedGeometry). -1 = no geometry / not yet assigned this frame.
             public int VbOffset = -1, IbOffset = -1;
@@ -1832,6 +1839,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     (cl.MaskTex, cl.MaskView) = CreateR8Texture(maskBytes, rw, rh);
                 }
                 cl.Mode = 3;
+                // What the layer holds, as paper for the text drawn over it later: measured now, while
+                // the layer's draws exist (the layer is reused on later frames without them).
+                var snap = new List<(FillKind, PaperInfo)>(subData.Draws.Count);
+                for (int i = 0; i < subData.Draws.Count; i++)
+                    snap.Add((subData.Draws[i].Kind, MeasureDraw(subData, i, subData.Draws[i],
+                        nd => new Vector2((nd.X + 1f) * 0.5f * rw + rx, (1f - nd.Y) * 0.5f * rh + ry))));
+                cl.PaperSnapshot = snap;
+                cl.ClipDevice = TransformGeometry(clipGeom, world);
             }
             else if (v.OpacityMask is { } opacityMask)
             {
@@ -2156,6 +2171,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 // Geometry-clip / opacity-mask: modulate the (region-sized) layer by the cached R8 mask.
                 EmitClipQuad(outData, outFormat, cl.SubView, cl.MaskView, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, clip, width, height);
+                if (cl.Mode == 3 && cl.PaperSnapshot is not null && groupOpacity >= 0.999f && outData.Draws.Count > 0
+                    && outData.Draws[^1].Kind == FillKind.Clip)
+                    (outData.ClipLayers ??= new())[outData.Draws.Count - 1] = cl;
             }
             else if (cl.Mode == 1)
             {
@@ -4907,6 +4925,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (kind is FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) continue;
                 PaperInfo b = info[i];
                 if (!b.Touches(x0, y0, x1, y1)) continue;
+                // A layer composited through a clip geometry: where the clip lets all of the box
+                // through, the paper is whatever the layer's own draws leave there. DotNetBar paints
+                // its ribbon under a clip path, and every caption on it lost its paper.
+                if (kind == FillKind.Clip && same is null && data.ClipLayers is { } layers && layers.TryGetValue(i, out CachedLayer? clipLayer))
+                {
+                    RgbaColor? layerPaper = ClipLayerPaper(clipLayer, x0, y0, x1, y1, out bool layerClear);
+                    if (layerClear) continue;                       // nothing of the layer's there: look under it
+                    if (layerPaper is { } lp) return TracePaper("clip-layer", lp);
+                }
                 if (s_paperAt is not null) s_paperChain += $" [{kind} ({b.X0},{b.Y0},{b.X1},{b.Y1}) {(b.Solid is { } sc ? $"{ToByte(sc.R)},{ToByte(sc.G)},{ToByte(sc.B)}" : "-")} covers={b.Covers(x0, y0, x1, y1)}]";
                 if (b.Solid is null && b.Gradient is { } banding && same is null && b.Covers(x0, y0, x1, y1)
                     && banding(x0, y0, x1, y1) is null)
@@ -4970,6 +4997,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (same is { } s1)
                 return data.ClearPaper is { } cp && SameColour(cp, s1) ? TracePaper("clear", cp) : TracePaper("solid-partial", null);
             return TracePaper(data.ClearPaper is null ? "clear-unknown" : "clear", data.ClearPaper);
+        }
+
+        /// <summary>The paper a clip layer's content leaves over a device box, when the clip lets the
+        /// whole box through and the topmost draw there is one opaque colour covering it; else null.</summary>
+        private static RgbaColor? ClipLayerPaper(CachedLayer cl, float x0, float y0, float x1, float y1, out bool clear)
+        {
+            clear = false;
+            if (cl.PaperSnapshot is not { } snap || cl.ClipDevice is not { } clipGeo) return null;
+            // Nothing in the layer touches the box: it leaves the paper under it as it was.
+            bool any = false;
+            foreach ((FillKind k, PaperInfo pi) in snap)
+                if (k is not (FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) && pi.Touches(x0, y0, x1, y1)) { any = true; break; }
+            if (!any) { clear = true; return null; }
+            int bx0 = (int)MathF.Floor(x0), by0 = (int)MathF.Floor(y0), bx1 = (int)MathF.Ceiling(x1), by1 = (int)MathF.Ceiling(y1);
+            if (bx1 <= bx0 || by1 <= by0 || bx0 < cl.Rx || by0 < cl.Ry || bx1 > cl.Rx + cl.Rw || by1 > cl.Ry + cl.Rh) return null;
+            byte[] mask = PathRasterizer.RasterizeInto(clipGeo, bx1 - bx0, by1 - by0, bx0, by0);
+            foreach (byte m in mask) if (m != 255) return null;
+            for (int i = snap.Count - 1; i >= 0; i--)
+            {
+                (FillKind kind, PaperInfo b) = snap[i];
+                if (kind is FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) continue;
+                if (!b.Touches(x0, y0, x1, y1)) continue;
+                return b.Solid is { } solid && b.Gradient is null && b.Covers(x0, y0, x1, y1) ? solid : null;
+            }
+            return null;
         }
 
         private static bool SameColour(RgbaColor a, RgbaColor b)
