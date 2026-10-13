@@ -79,12 +79,56 @@ namespace System.Drawing {
 			get { return new Font (ShellFamily, ShellSize, "CaptionFont"); }
 		}
 
-		public static Font DefaultFont  { 
-			get { return new Font (ShellFamily, ShellSize, "DefaultFont"); }
+		// Two that are not the shell's: stock's DefaultFont is GDI's DEFAULT_GUI_FONT (MS Shell Dlg,
+		// so Microsoft Sans Serif 8.25 -- in the charset of the system's locale), and its DialogFont
+		// is MS Shell Dlg 2, Tahoma 8. Apps lay out against these: a DotNetBar ribbon draws its tab
+		// and group captions in DefaultFont, and in Segoe UI they came out a different shape and width.
+		public static Font DefaultFont  {
+			get {
+				if (OperatingSystem.IsWindows () && DefaultGuiFont (out string face, out float points, out byte charSet))
+					return new Font (face, points, charSet, "DefaultFont");
+				return new Font (ShellFamily, ShellSize, "DefaultFont");
+			}
 		}
 
-		public static Font DialogFont  { 
-			get { return new Font (ShellFamily, ShellSize, "DialogFont"); }
+		public static Font DialogFont  {
+			get { return OperatingSystem.IsWindows () ? new Font ("Tahoma", 8f, "DialogFont") : new Font (ShellFamily, ShellSize, "DialogFont"); }
+		}
+
+		[System.Runtime.InteropServices.StructLayout (System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+		struct LOGFONTW
+		{
+			public int lfHeight, lfWidth, lfEscapement, lfOrientation, lfWeight;
+			public byte lfItalic, lfUnderline, lfStrikeOut, lfCharSet, lfOutPrecision, lfClipPrecision, lfQuality, lfPitchAndFamily;
+			[System.Runtime.InteropServices.MarshalAs (System.Runtime.InteropServices.UnmanagedType.ByValTStr, SizeConst = 32)]
+			public string lfFaceName;
+		}
+
+		[System.Runtime.InteropServices.DllImport ("gdi32.dll")]
+		static extern IntPtr GetStockObject (int index);
+
+		[System.Runtime.InteropServices.DllImport ("gdi32.dll", EntryPoint = "GetObjectW", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+		static extern int GetObject (IntPtr handle, int size, ref LOGFONTW font);
+
+		/// <summary>DEFAULT_GUI_FONT's face, size in points (its height in pixels at 96 dpi, as stock
+		/// converts it) and charset.</summary>
+		static bool DefaultGuiFont (out string face, out float points, out byte charSet)
+		{
+			face = null; points = 0; charSet = 1;
+			try {
+				var lf = new LOGFONTW ();
+				if (GetObject (GetStockObject (17 /* DEFAULT_GUI_FONT */), System.Runtime.InteropServices.Marshal.SizeOf<LOGFONTW> (), ref lf) == 0)
+					return false;
+				// MS Shell Dlg is a substitute name; GDI+ resolves it to Microsoft Sans Serif, as stock reports.
+				face = string.Equals (lf.lfFaceName, "MS Shell Dlg", StringComparison.OrdinalIgnoreCase) ? "Microsoft Sans Serif" : lf.lfFaceName;
+				points = Math.Abs (lf.lfHeight) * 72f / 96f;
+				charSet = lf.lfCharSet;
+				return !string.IsNullOrEmpty (face) && points > 0;
+			} catch (DllNotFoundException) {
+				return false;
+			} catch (EntryPointNotFoundException) {
+				return false;
+			}
 		}
 
 		public static Font IconTitleFont  { 

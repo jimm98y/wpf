@@ -446,8 +446,10 @@ namespace System.Windows.Forms
 			set { ColorControlText = value; }
 		}
 
+		// Control.DefaultFont: stock's is SystemFonts.MessageBoxFont (Segoe UI 9); SystemFonts.DefaultFont is
+		// GDI's DEFAULT_GUI_FONT, a different font, which apps also read.
 		public virtual Font DefaultFont {
-			get { return default_font ?? (default_font = SystemFonts.DefaultFont); }
+			get { return default_font ?? (default_font = SystemFonts.MessageBoxFont); }
 		}
 
 		public virtual Color DefaultWindowBackColor {
@@ -612,7 +614,7 @@ namespace System.Windows.Forms
 
 		public virtual Font MenuFont {
 			get {
-				return default_font ?? (default_font = SystemFonts.DefaultFont);
+				return default_font ?? (default_font = SystemFonts.MessageBoxFont);
 			}
 		}
 

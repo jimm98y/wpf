@@ -378,6 +378,11 @@ namespace System.Drawing
 		{
 			systemFontName = systemName;
 		}
+		internal Font (string familyName, float emSize, byte gdiCharSet, string systemName)
+			: this (familyName, emSize, FontStyle.Regular, GraphicsUnit.Point, gdiCharSet, false)
+		{
+			systemFontName = systemName;
+		}
 		public object Clone ()
 		{
 			Live ();
