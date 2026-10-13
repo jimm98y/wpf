@@ -26,7 +26,8 @@
 // reaches the real user32, so nothing about it changes.
 //
 // The app's assemblies get the generated DLL through their resolver; the stack's own assemblies (the
-// overlay) and the runtime's do not, because they call user32 on real handles only. An assembly that
+// overlay) and the runtime's do not, because they call user32 on real handles only (but for
+// System.Diagnostics.Process, whose MainWindowHandle asks about the app's own windows). An assembly that
 // installs a resolver of its own is left alone (a second SetDllImportResolver would throw in it).
 //
 // No native toolchain: the image is written here, from the real DLL's export table, so it follows the
@@ -188,7 +189,11 @@ namespace WpfMac.Bootstrap.Win32
             try { location = a.Location; } catch { return; }
             if (string.IsNullOrEmpty(location)) return;
             if (s_stackDir != null && location.StartsWith(s_stackDir, StringComparison.OrdinalIgnoreCase)) return;
-            if (s_runtimeDir != null && location.StartsWith(s_runtimeDir, StringComparison.OrdinalIgnoreCase)) return;
+            // The runtime calls user32 on real handles only -- except where it answers a question
+            // about the app's own windows: Process.MainWindowHandle and MainWindowTitle enumerate the
+            // process's windows, which are the stack's forms (see WpfMac.Win32, WindowsAnswers.cs).
+            if (s_runtimeDir != null && location.StartsWith(s_runtimeDir, StringComparison.OrdinalIgnoreCase)
+                && a.GetName().Name != "System.Diagnostics.Process") return;
             if (!ImportsCoveredModule(location, out bool ownResolver)) return;
             if (ownResolver)
             {

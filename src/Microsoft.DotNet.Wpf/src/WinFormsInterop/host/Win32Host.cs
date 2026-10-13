@@ -300,6 +300,10 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
             _hwnd = CreateWindowExW(exStyle, s_classNamePtr, title, style,
                 wx, wy, _form.Width, _form.Height, IntPtr.Zero, IntPtr.Zero, _hinstance, IntPtr.Zero);
             if (_hwnd != IntPtr.Zero) s_byHwnd[_hwnd] = this;
+            // Which WinForms window this real one shows: what an app asking Windows about its own
+            // windows (EnumWindows, GetForegroundWindow, Process.MainWindowHandle) is answered with,
+            // since the form's Handle is the stack's and not this HWND (WpfMac.Win32, Windows.cs).
+            if (_hwnd != IntPtr.Zero && _form.IsHandleCreated) SetPropW(_hwnd, StackHandleProperty, _form.Handle);
         }
         finally { s_creating = null; Marshal.FreeHGlobal(title); }
         if (_hwnd == IntPtr.Zero)
@@ -1129,6 +1133,9 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     private struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public int ptX, ptY; }
 
     [DllImport("kernel32", SetLastError = true)] private static extern IntPtr GetModuleHandleW(string lpModuleName);
+    /// <summary>The window property naming the form a host window shows (see CreateWindow).</summary>
+    internal const string StackHandleProperty = "WinFormsWebGpu.Handle";
+    [DllImport("user32", CharSet = CharSet.Unicode)] private static extern bool SetPropW(IntPtr h, string name, IntPtr value);
     [DllImport("user32", SetLastError = true)] private static extern IntPtr LoadCursorW(IntPtr h, int id);
     [DllImport("user32")] private static extern IntPtr SetCursor(IntPtr cursor);
     [DllImport("user32")] private static extern IntPtr SetTimer(IntPtr h, int id, uint ms, IntPtr proc);

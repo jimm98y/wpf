@@ -24,6 +24,10 @@ public static unsafe partial class Exports
 
     // Masks: bit k says argument k is a window handle; bit 16+k that it is a device context.
     private const int A0 = 1, A1 = 2;
+    // Bit 15: the managed implementation always runs. For the functions that take no window but hand
+    // one back (EnumWindows, GetForegroundWindow): it calls the real one and answers with the stack's
+    // window where Windows names the host window a form is shown in.
+    private const int Always = 1 << 15;
 
     /// <summary>
     /// Windows: hands the bootstrap each user32 export that has an implementation for the stack's
@@ -92,6 +96,14 @@ public static unsafe partial class Exports
         W((delegate* unmanaged<nint, int>)&LockWindowUpdate, A0, "LockWindowUpdate");
         W((delegate* unmanaged<nint, nint, int, int>)&SetWindowRgn, A0, "SetWindowRgn");
         W((delegate* unmanaged<nint, uint, byte, uint, int>)&SetLayeredWindowAttributes, A0, "SetLayeredWindowAttributes");
+
+        // What Windows hands back: the host window of a form is the form (WindowsAnswers below).
+        W((delegate* unmanaged<delegate* unmanaged<nint, nint, int>, nint, int>)&WinEnumWindows, Always, "EnumWindows");
+        W((delegate* unmanaged<uint, delegate* unmanaged<nint, nint, int>, nint, int>)&WinEnumThreadWindows, Always, "EnumThreadWindows");
+        W((delegate* unmanaged<nint>)&WinGetForegroundWindow, Always, "GetForegroundWindow");
+        W((delegate* unmanaged<nint>)&WinGetActiveWindow, Always, "GetActiveWindow");
+        W((delegate* unmanaged<nint>)&WinGetFocus, Always, "GetFocus");
+        W((delegate* unmanaged<POINT, nint>)&WinWindowFromPoint, Always, "WindowFromPoint");
 
         // Messages, timers and properties.
         W((delegate* unmanaged<nint, uint, nint, nint, nint>)&SendMessageExport, A0, "SendMessageW", "SendMessageA");
@@ -166,7 +178,8 @@ public static unsafe partial class Exports
                 }
             }
             if (managed == 0) return real;
-            for (int k = 0; k < 16; k++)
+            if ((mask & Always) != 0) return managed;
+            for (int k = 0; k < 15; k++)
             {
                 if ((mask & (1 << k)) == 0) continue;
                 nint h = *(nint*)((byte*)saved + ArgumentOffset(k));
