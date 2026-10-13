@@ -691,7 +691,36 @@ namespace System.Drawing
 				FillPolygonAliased (new [] { x1 + nx, y1 + ny, x2 + nx, y2 + ny, x2 - nx, y2 - ny, x1 - nx, y1 - ny }, false, ArgbOf (pen));
 				return;
 			}
+			if (GpuAliased && w <= 1.01f && x1 != x2 && y1 != y2 && x1 == MathF.Floor (x1) && y1 == MathF.Floor (y1)
+			    && x2 == MathF.Floor (x2) && y2 == MathF.Floor (y2)) {
+				RecordAliasedHairline ((int) x1, (int) y1, (int) x2, (int) y2, ArgbOf (pen));
+				return;
+			}
 			GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen), w);
+		}
+
+		/// <summary>GDI+'s aliased one-pixel line between whole points: one pixel per step of the
+		/// major axis, both ends included, walked from the end with the smaller major coordinate; the
+		/// minor coordinate rounds a half toward where the walk started (measured on stock: eight
+		/// segments, every pixel). The recorder's diagonal is an antialiased quad, which turned
+		/// DotNetBar's crisp two-pixel close cross into a grey smudge.</summary>
+		private void RecordAliasedHairline (int x0, int y0, int x1, int y1, int argb)
+		{
+			bool xMajor = Math.Abs (x1 - x0) >= Math.Abs (y1 - y0);
+			if (xMajor ? x1 < x0 : y1 < y0) { (x0, x1) = (x1, x0); (y0, y1) = (y1, y0); }
+			int n = xMajor ? x1 - x0 : y1 - y0;
+			int dm = xMajor ? y1 - y0 : x1 - x0, sign = Math.Sign (dm), adm = Math.Abs (dm);
+			int runStart = 0, runMinor = 0;
+			for (int i = 0; i <= n + 1; i++) {
+				int minor = i <= n ? (xMajor ? y0 : x0) + sign * (int) Math.Ceiling ((double) adm * i / n - 0.5) : int.MinValue;
+				if (i == 0) { runMinor = minor; continue; }
+				if (minor != runMinor) {
+					int len = i - runStart;
+					if (xMajor) GpuRecorder.FillRect (x0 + runStart, runMinor, len, 1, argb);
+					else GpuRecorder.FillRect (runMinor, y0 + runStart, 1, len, argb);
+					runStart = i; runMinor = minor;
+				}
+			}
 		}
 
 		private void RecordFillPolygon (float [] xy, bool winding, int argb)
