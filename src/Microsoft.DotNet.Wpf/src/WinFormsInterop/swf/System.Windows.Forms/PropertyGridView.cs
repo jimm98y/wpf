@@ -118,6 +118,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			_dropDownHolder.FormBorderStyle = FormBorderStyle.None;
 			_dropDownHolder.StartPosition = FormStartPosition.Manual;
 			_dropDownHolder.ShowInTaskbar = false;
+			_dropDownHolder.dismiss_on_deactivate = true;
 
 			dialog_form = new Form ();
 			dialog_form.StartPosition = FormStartPosition.Manual;

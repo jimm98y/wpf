@@ -41,6 +41,26 @@ namespace System.Windows.Forms {
 			_paintVersion++;
 		}
 
+		private readonly Dictionary<IntPtr, (byte[] Bgra, int Width, int Height, byte Alpha)> _layeredBits = new Dictionary<IntPtr, (byte[], int, int, byte)>();
+
+		/// <summary>The same picture exactly as the app handed it to UpdateLayeredWindow (premultiplied
+		/// BGRA, the blend's constant alpha), for a host that can put it on screen through the real
+		/// UpdateLayeredWindow: rendering the straight copy again cost a level on partly transparent
+		/// edges.</summary>
+		internal void SetLayeredBits(IntPtr handle, byte[] bgra, int width, int height, byte alpha)
+		{
+			if (Hwnd.ObjectFromHandle(handle) == null || bgra == null) return;
+			_layeredBits[handle] = (bgra, width, height, alpha);
+		}
+
+		/// <summary>The window's UpdateLayeredWindow bits, or null.</summary>
+		internal object GetLayeredBits(IntPtr handle)
+			=> _layered.ContainsKey(handle) && _layeredBits.TryGetValue(handle, out var b) ? b : null;
+
+		/// <summary>Whether UpdateLayeredWindow has given the window a picture (a host shows such a
+		/// window see-through, Win32Host.Layered).</summary>
+		internal bool HasLayeredImage(IntPtr handle) => _layered.ContainsKey(handle) && Hwnd.ObjectFromHandle(handle) != null;
+
 		/// <summary>The window's layered picture, if it has one.</summary>
 		private bool TryGetLayeredScene(IntPtr handle, out object scene)
 		{

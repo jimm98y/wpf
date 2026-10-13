@@ -196,7 +196,7 @@ namespace System.Windows.Forms
             foreach (Form form in forms)
             {
                 if (form == null || form.IsDisposed || !form.Visible) continue;
-                if (form.FormBorderStyle != FormBorderStyle.None) continue;   // not a popup
+                if (!form.dismiss_on_deactivate) continue;                   // not one of our drop-downs: a splash screen stays
                 if (form.InvokeRequired) continue;                            // another thread's to close
                 try { form.Hide(); } catch (Exception) { }
             }
@@ -258,7 +258,12 @@ namespace System.Windows.Forms
             if (!s_enabled) return false;
             t_lastFrame = Environment.TickCount64;
 
-            AdoptNewForms();
+            if (!t_adopting)
+            {
+                t_adopting = true;
+                try { AdoptNewForms(); }
+                finally { t_adopting = false; }
+            }
             if (s_hosts.Count == 0) return false;
 
             EmbeddedScenes.Pump();      // embedded frameworks (a hosted WPF tree) run their frame first
@@ -302,6 +307,7 @@ namespace System.Windows.Forms
         }
 
         [ThreadStatic] private static long t_lastFrame;
+        [ThreadStatic] private static bool t_adopting;
 
         /// <summary>Present this thread's windows if no frame has gone out for a while, between two
         /// messages. Tick presents only when the queue runs dry, and a thread that keeps it full
@@ -315,6 +321,16 @@ namespace System.Windows.Forms
             long now = Environment.TickCount64;
             if (now - t_lastFrame < 33) return;
             t_lastFrame = now;
+            // A form shown on such a thread needs its window too: Show() puts a window on screen
+            // straight away on Windows, but here the window was made only in Tick, so a splash
+            // screen whose timer kept the queue full never appeared at all (or only once its thread
+            // let up). AdoptNewForms pumps paints, which can bring us back here: once at a time.
+            if (!t_adopting)
+            {
+                t_adopting = true;
+                try { AdoptNewForms(); }
+                finally { t_adopting = false; }
+            }
             IWinFormsHost[] hosts;
             lock (s_lock) hosts = s_hosts.ToArray();
             foreach (IWinFormsHost host in hosts)
