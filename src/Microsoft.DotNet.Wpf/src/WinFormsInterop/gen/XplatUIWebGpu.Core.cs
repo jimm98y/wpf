@@ -958,6 +958,42 @@ namespace System.Windows.Forms
 		/// it the paint was never marked done -- every later Invalidate found one still pending and
 		/// queued none, so the window kept its first picture for good (DotNetBar's combo boxes kept
 		/// the one from before they were sized) -- and each repaint was drawn over all the earlier ones.</summary>
+		/// <summary>How far a child window's frame reaches into it: this stack draws the frame
+		/// Windows would put in the non-client area inside the window (DrawWindowBorder), so the area
+		/// Windows calls the client is this much in from every edge.</summary>
+		internal int NonClientInset(IntPtr handle)
+		{
+			Hwnd h = Hwnd.ObjectFromHandle(handle);
+			if (h == null || Control.FromHandle(handle) is Form) return 0;
+			if ((h.initial_ex_style & WindowExStyles.WS_EX_CLIENTEDGE) != 0) return 2;
+			if ((h.initial_style & WindowStyles.WS_BORDER) != 0 || (h.initial_ex_style & WindowExStyles.WS_EX_STATICEDGE) != 0) return 1;
+			return 0;
+		}
+
+		/// <summary>The window's frame drawn over its picture again, after code that paints the window
+		/// through GDI (BeginPaint ... EndPaint) has put its client there: Windows keeps the frame out of
+		/// the client, so such code never paints over it.</summary>
+		internal void RedrawNonClient(IntPtr handle)
+		{
+			if (NonClientInset(handle) == 0) return;
+			Graphics g = GetHwndGraphics(handle);
+			try { DrawWindowBorder(handle, g); }
+			finally { g.Dispose(); }
+		}
+
+		/// <summary>DefWindowProc's WM_PRINTCLIENT: the control draws what its window procedure draws
+		/// -- its own look, not the app's OnPaint -- into the DC it is given.</summary>
+		private void DefaultPrintClient(ref Message msg)
+		{
+			if (msg.WParam == IntPtr.Zero || !(Control.FromHandle(msg.HWnd) is Control c)) return;
+			using (Graphics g = Graphics.FromHdc(msg.WParam))
+			{
+				int inset = NonClientInset(msg.HWnd);   // the DC's origin is the client's, inside the frame
+				if (inset > 0) g.TranslateTransform(-inset, -inset);
+				c.PrintClientNative(g);
+			}
+		}
+
 		internal void ValidateWindow(IntPtr handle, bool repaint)
 		{
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
@@ -1460,6 +1496,11 @@ namespace System.Windows.Forms
 			if (msg.Msg == (int)Msg.WM_NCCALCSIZE)
 			{
 				DefaultNcCalcSize(ref msg);
+				return IntPtr.Zero;
+			}
+			if (msg.Msg == (int)Msg.WM_PRINTCLIENT)
+			{
+				DefaultPrintClient(ref msg);
 				return IntPtr.Zero;
 			}
 			// The window menu's commands, which a form that draws its own caption sends itself: its

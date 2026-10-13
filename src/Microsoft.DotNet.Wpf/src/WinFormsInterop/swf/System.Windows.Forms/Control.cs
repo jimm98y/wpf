@@ -6368,6 +6368,20 @@ namespace System.Windows.Forms
 			// Override me
 		}
 
+		/// <summary>What the control's window procedure draws for WM_PRINTCLIENT: the control's own look
+		/// (its background and what this stack draws in place of the native control), without the
+		/// app's OnPaint, which stock never runs from the native control's procedure. An app that
+		/// paints its tree flicker-free asks for exactly this, then adds its own OnPaint on top.</summary>
+		internal void PrintClientNative (Graphics g)
+		{
+			using (var pea = new PaintEventArgs (g, ClientRectangle)) {
+				if (!GetStyle (ControlStyles.Opaque))
+					OnPaintBackground (pea);
+				OnPaintBackgroundInternal (pea);
+				OnPaintInternal (pea);
+			}
+		}
+
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
 		protected virtual void OnPaintBackground(PaintEventArgs pevent) {
 			PaintControlBackground (pevent);

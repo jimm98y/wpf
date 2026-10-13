@@ -43,6 +43,14 @@ public static unsafe partial class Exports
         (int w, int h, int ox, int oy) = Ui(c, () =>
         {
             System.Drawing.Size client = c.IsHandleCreated ? c.ClientSize : c.Size;
+            // The stack draws a child's frame inside the window (see XplatUIWebGpu.NonClientInset);
+            // Windows' client, and with it a client DC, starts inside that frame.
+            int inset = DriverInt("NonClientInset", hwnd);
+            if (inset > 0 && c is not Forms.Form)
+            {
+                if (!window) return (client.Width - 2 * inset, client.Height - 2 * inset, inset, inset);
+                return (client.Width, client.Height, 0, 0);
+            }
             if (!window) return (client.Width, client.Height, 0, 0);
             // The window rectangle: the client plus whatever frame the window has.
             var screen = c.RectangleToScreen(new System.Drawing.Rectangle(0, 0, client.Width, client.Height));
@@ -109,6 +117,8 @@ public static unsafe partial class Exports
                 g.DrawImageUnscaled(bmp, minX + wdc.OffsetX, minY + wdc.OffsetY);
                 return 0;
             });
+            // The frame is Windows' to draw, outside what the app painted: over it again.
+            if (wdc.OffsetX > 0 || wdc.OffsetY > 0) Ui(c, () => DriverInt("RedrawNonClient", wdc.Hwnd));
         }
         finally
         {
@@ -116,6 +126,16 @@ public static unsafe partial class Exports
             GdiDeleteObject(wdc.Dib);
             GdiDeleteDC(wdc.Dc);
         }
+    }
+
+    /// <summary>A WinForms driver method taking a window handle, by name (internal to the stack).</summary>
+    private static int DriverInt(string method, nint hwnd)
+    {
+        object? driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
+            ?.GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
+        object? r = driver?.GetType().GetMethod(method, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?.Invoke(driver, new object[] { (IntPtr)hwnd });
+        return r is int i ? i : 0;
     }
 
     [UnmanagedCallersOnly] private static nint WinGetDC(nint hwnd) => NewWindowDC(hwnd, window: false)?.Dc ?? 0;

@@ -231,7 +231,8 @@ public static unsafe partial class Exports
         {
             HwndSource s when WindowOf(s) is Window w && w.Content is FrameworkElement content => RectOf(0, 0, content.ActualWidth, content.ActualHeight),
             HwndSource s when s.RootVisual is FrameworkElement fe => RectOf(0, 0, fe.ActualWidth, fe.ActualHeight),
-            Forms.Control c => RectOf(0, 0, c.ClientSize.Width, c.ClientSize.Height),
+            // Inside the frame the stack draws within the window, as Windows keeps it out of the client.
+            Forms.Control c => RectOf(0, 0, c.ClientSize.Width - 2 * DriverInt("NonClientInset", hwnd), c.ClientSize.Height - 2 * DriverInt("NonClientInset", hwnd)),
             AppWindow a => RectOf(0, 0, a.Rect.Right - a.Rect.Left, a.Rect.Bottom - a.Rect.Top),
             _ => default,
         });
