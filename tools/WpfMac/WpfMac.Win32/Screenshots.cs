@@ -326,6 +326,33 @@ public static class Screenshots
             Exports.LogOnce("shots:winforms", "screenshots (WinForms): " + e.Message);
         }
     }
+    /// <summary>A member path: a.b.c, each a property or field of any visibility (inherited too), or
+    /// [i] of a list.</summary>
+    static object? MemberPathResolve(object? o, string path)
+    {
+        const BindingFlags bf = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+        foreach (string part0 in path.Split('.'))
+        {
+            if (o == null) return null;
+            string part = part0; int index = -1;
+            int br = part.IndexOf('[');
+            if (br >= 0) { index = int.Parse(part[(br + 1)..^1]); part = part[..br]; }
+            if (part.Length > 0)
+            {
+                object? next = "?";
+                for (Type? t = o.GetType(); t != null; t = t.BaseType)
+                {
+                    if (t.GetProperty(part, bf) is PropertyInfo p && p.GetIndexParameters().Length == 0) { next = p.GetValue(o); break; }
+                    if (t.GetField(part, bf) is FieldInfo f) { next = f.GetValue(o); break; }
+                }
+                o = next;
+            }
+            if (index >= 0) o = o is System.Collections.IList l && index < l.Count ? l[index] : null;
+        }
+        return o;
+    }
+    static object? Member(object o, string path) => MemberPathResolve(o, path);
+
 
     /// <summary>WPFMAC_DUMP_PROPS="Type:Member,Member;Type2:Member": those members (properties or fields, any
     /// visibility, inherited too) of every control in the dump that is a Type, by simple name.</summary>
@@ -343,16 +370,8 @@ public static class Screenshots
             var vals = new List<string>();
             foreach (string name in tm[1].Split(','))
             {
-                object? v = "?";
-                const BindingFlags bf = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-                try
-                {
-                    for (Type? t = c.GetType(); t != null; t = t.BaseType)
-                    {
-                        if (t.GetProperty(name, bf | BindingFlags.DeclaredOnly) is PropertyInfo p && p.GetIndexParameters().Length == 0) { v = p.GetValue(c); break; }
-                        if (t.GetField(name, bf | BindingFlags.DeclaredOnly) is FieldInfo f) { v = f.GetValue(c); break; }
-                    }
-                }
+                object? v;
+                try { v = Member(c, name); }
                 catch (Exception e) { v = "!" + e.GetBaseException().GetType().Name; }
                 vals.Add($"{name}={v}");
             }

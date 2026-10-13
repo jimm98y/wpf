@@ -130,6 +130,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 ? PaperUnder(data, px0, py0, px0 + mw, py0 + mh,
                     nd => new Vector2((nd.X + 1f) * 0.5f * width + _devOX, (1f - nd.Y) * 0.5f * height + _devOY), out field)
                 : null;
+            if (s_paperAt is { } at && at.X >= px0 && at.X < px0 + mw && at.Y >= py0 && at.Y < py0 + mh)
+                Console.Error.WriteLine($"[paperat] gdi+ box=({px0},{py0},{mw}x{mh}) paper={(paper is { } pq ? $"{ToByte(pq.R)},{ToByte(pq.G)},{ToByte(pq.B)}" : "none")} field={(field != null)} last={s_lastPaperWhy} chain={s_paperChain}");
 
             long key = 23;
             unchecked
