@@ -15,7 +15,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibility.IA11yHostSite
+internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibility.IA11yHostSite
 {
     private readonly Form _form;
 
@@ -35,6 +35,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     private readonly MethodInfo _getRubberBands;
     private readonly MethodInfo _isPopup;
     private readonly MethodInfo _isUnderPopup;
+    private readonly MethodInfo _hasLayeredImage, _getLayeredBits;
     private readonly MethodInfo _getCursor;
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
@@ -75,7 +76,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
         _hostActivate = M("HostActivate");
         _getRubberBands = M("GetReversibleRects");
-        _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsInPopupWindow"); _isUnderPopup = M("IsUnderPopup");
+        _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsInPopupWindow"); _isUnderPopup = M("IsUnderPopup"); _hasLayeredImage = M("HasLayeredImage"); _getLayeredBits = M("GetLayeredBits");
         _getCursor = M("GetActiveCursor");
         _leaveAll = M("InjectMouseLeaveAll");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
@@ -223,7 +224,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     /// input.</para></summary>
     private void DismissPopup(string why)
     {
-        if (FormGone || _form.FormBorderStyle != FormBorderStyle.None || !_form.Visible)
+        if (FormGone || !_form.dismiss_on_deactivate || !_form.Visible)
             return;
         if (s_tracePresent)
             Console.Error.WriteLine($"popup dismissed by {why}");
@@ -283,7 +284,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
 
     public void Show()
     {
-        if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: Show");
+        if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: Show ({DateTime.Now:HH:mm:ss.fff}, {_form.GetType().Name})");
         EnsureFineTimer();
         SetProcessDpiAwarenessContext((IntPtr)(-4)); // PER_MONITOR_AWARE_V2 -> real DPI, crisp text
         _hinstance = GetModuleHandleW(null);
@@ -433,7 +434,8 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         var scenes = GetScenes(out int ox, out int oy);
         Rectangle? caret = GetCaretRect(ox, oy);
         double t1 = s_traceFrames ? SinceStart : 0;
-        _lastPresentOk = _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.ClientSize.Width, _form.ClientSize.Height);
+        _lastPresentOk = WantsLayeredHost() && PresentLayered(scenes, caret)
+            || _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.ClientSize.Width, _form.ClientSize.Height);
         if (s_traceFrames && _framesTraced++ < 4000)
             Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms (paint {t1 - t0:0}, gpu {SinceStart - t1:0}) damage {_wgpu.LastDamage}");
         _lastVer = ver; _lastCaretOn = caretOn;
@@ -1295,4 +1297,7 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
     [DllImport("user32")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int index);
+    [DllImport("user32", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtrW(IntPtr hWnd, int index, IntPtr value);
+    [DllImport("user32")] private static extern IntPtr GetDC(IntPtr hWnd);
+    [DllImport("user32")] private static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
 }

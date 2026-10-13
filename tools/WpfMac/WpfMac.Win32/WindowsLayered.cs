@@ -24,6 +24,8 @@ public static unsafe partial class Exports
             Place(o, pptDst != null ? pptDst->X : null, pptDst != null ? pptDst->Y : null,
                   psize != null ? psize[0] : null, psize != null ? psize[1] : null);
         float opacity = (flags & ULW_ALPHA) != 0 && blend != null ? ((byte*)blend)[2] / 255f : 1f;
+        if (Environment.GetEnvironmentVariable("WF_TRACE_ULW") == "1")
+            Console.Error.WriteLine($"[ulw] {DateTime.Now:HH:mm:ss.fff} hwnd=0x{hwnd:x} flags={flags} alpha={(blend != null ? ((byte*)blend)[2] : -1)} fmt={(blend != null ? ((byte*)blend)[3] : -1)} src={(hdcSrc != 0)}");
         bool perPixel = (flags & ULW_ALPHA) != 0 && blend != null && ((byte*)blend)[3] != 0;
         if (hdcSrc == 0) return TRUE;                                   // a move, resize or new alpha only
 
@@ -50,6 +52,7 @@ public static unsafe partial class Exports
         int sx = pptSrc != null ? pptSrc->X : 0, sy = pptSrc != null ? pptSrc->Y : 0;
         if (w <= 0 || h <= 0) return TRUE;
         var rgba = new byte[w * h * 4];
+        var raw = new byte[w * h * 4];   // the picture as handed over: premultiplied BGRA, for a host that shows it as is
         for (int y = 0; y < h && sy + y < bh; y++)
         {
             for (int x = 0; x < w && sx + x < bw; x++)
@@ -63,6 +66,7 @@ public static unsafe partial class Exports
                 }
                 int i = (y * w + x) * 4;
                 rgba[i] = r; rgba[i + 1] = g; rgba[i + 2] = b; rgba[i + 3] = a;
+                if (a != 0) { raw[i] = (byte)c; raw[i + 1] = (byte)(c >> 8); raw[i + 2] = (byte)(c >> 16); raw[i + 3] = a; }
             }
         }
         Ui(o, () =>
@@ -72,6 +76,8 @@ public static unsafe partial class Exports
                 ?.GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
             driver?.GetType().GetMethod("SetLayeredImage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
                 ?.Invoke(driver, new object[] { control.Handle, rgba, w, h, opacity });
+            driver?.GetType().GetMethod("SetLayeredBits", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                ?.Invoke(driver, new object[] { control.Handle, raw, w, h, (byte)Math.Round(opacity * 255) });
             return 0;
         });
         return TRUE;

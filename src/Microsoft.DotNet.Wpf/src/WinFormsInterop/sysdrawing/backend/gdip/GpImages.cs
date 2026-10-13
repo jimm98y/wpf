@@ -364,7 +364,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         static void AdjustRectFromInternalPoint (ref RectangleF r, PointF p, PointF a, PointF b, PointF c, ref bool changed)
         {
-            const float Eps = 1.1920929e-07f;
+            const float Eps = -1.1920929e-07f;   // negative (@1800113f0): a corner level with p does not count as above or below it
             float py = p.Y, top = r.Y;
             if (!(top < py && py < r.Height + top)) return;
             float nh;
@@ -457,7 +457,33 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             float dw = right - left; if (dw <= 0.00059604645f) dw = 0f;
             float dh = bottom - top; if (dh <= 0.00059604645f) dh = 0f;
+            float devW = MathF.Abs ((dw + left) - left);
             float devH = MathF.Abs ((dh + top) - top);
+            // A large image drawn smaller is first averaged down to about its device size (the
+            // decoder pipe's GpBitmapScaler, InterpolationHintAveraging) and only then sampled.
+            int imgW = bmp.Width, imgH = bmp.Height;
+            bool decimate = false;
+            {
+                const float Eps = 1.1920929e-07f;
+                float aw = MathF.Abs (w), ah = MathF.Abs (h);
+                bool shrink = (m.Complexity & ~3) == 0 && (m.M11 - 1f < -Eps || m.M22 - 1f < -Eps) && interp != 5;
+                if (shrink && aw < 420f && ah < 420f) shrink = false;
+                if (shrink && interp != 6 && interp != 7) {
+                    float tw = devW, th = devH;
+                    if (interp == 4) { tw += tw; th += th; }
+                    float fw = tw <= aw ? tw : aw, fh = th <= ah ? th : ah;
+                    if (!(aw <= fw + Eps && ah <= fh + Eps)) {
+                        float fx = fw / aw, fy = fh / ah;
+                        int nw = (int) (bmp.Width * fx + 0.5f);
+                        if (255f < bmp.Width / (float) nw) { fx = 0.003921568859368563f; nw = (int) MathF.Ceiling (bmp.Width * fx); }
+                        int nh = (int) (bmp.Height * fy + 0.5f);
+                        if (255f < bmp.Height / (float) nh) { fy = 0.003921568859368563f; nh = (int) MathF.Ceiling (bmp.Height * fy); }
+                        w = fx * w; h = fy * h; x0 = fx * x0; y0 = fy * y0;
+                        imgW = nw; imgH = nh;
+                        decimate = true;
+                    }
+                }
+            }
             float yScale = devH / MathF.Abs (h);
             int iy0 = Floor (y0), iy1 = Ceil (MathF.Abs (h) + y0);
             float mg = 0f;
@@ -469,7 +495,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             int im = Ceil (mg);
             int r0 = iy0 - im, r1 = im + iy1;
-            int H = bmp.Height;
+            int H = imgH;
             int wrap = ia?.Dp.Wrap ?? 4;
             if (wrap == 4) {
                 if (H < r0 || r1 < 0) { r0 = 0; r1 = 0; }
@@ -485,6 +511,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 f = ia.Recolor.Apply (bmp, ColorAdjustType.Bitmap);
             }
             int n = Math.Max (0, r1 - r0);
+            if (decimate) {
+                GdipFrame full = f.Format == PixelFormat.Format32bppPArgb ? f : GdipPixels.Convert (f, new Rectangle (0, 0, f.Width, f.Height), PixelFormat.Format32bppPArgb, false);
+                return new DpBitmapSrc (imgW, n, GpBitmapScaler.Averaging (full, imgW, imgH, r0, r0 + n));
+            }
             var px = new uint [bmp.Width * n];
             if (n > 0) {
                 GdipFrame c = f.Format == PixelFormat.Format32bppPArgb ? f : GdipPixels.Convert (f, new Rectangle (0, r0, f.Width, n), PixelFormat.Format32bppPArgb, false);

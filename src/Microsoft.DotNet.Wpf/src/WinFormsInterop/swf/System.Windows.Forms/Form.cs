@@ -48,6 +48,11 @@ namespace System.Windows.Forms {
 	public class Form : ContainerControl {
 		#region Local Variables
 		internal bool			closing;
+		/// <summary>A drop-down of this stack's own (the property grid's editor holder): Windows closes
+		/// it when you look away, through hooks this stack does not have, so its window does it on
+		/// deactivation (Win32Host.DismissPopup). Any other borderless form -- a splash screen, an
+		/// app's own chrome -- stays where it is when another window is activated, as on Windows.</summary>
+		internal bool			dismiss_on_deactivate;
 		private bool			closed;
 		FormBorderStyle			form_border_style;
 		private bool			is_active;

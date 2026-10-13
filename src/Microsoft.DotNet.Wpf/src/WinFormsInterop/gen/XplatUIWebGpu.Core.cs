@@ -272,7 +272,26 @@ namespace System.Windows.Forms
 		// window opened downwards and was cut off by the window's own edge, where Windows would
 		// have flipped it above the pointer. The host says how big its surface is; until one
 		// does, a large desktop, so geometry still has real bounds to work with.
-		private static Size s_screen = new Size(2560, 1440);
+		private static Size s_screen = InitialScreen();
+
+		/// <summary>Until a host reports its surface: on Windows the primary monitor's work area (a
+		/// splash screen centres itself on it before any host exists -- on an imaginary 2560x1440
+		/// desktop it came up off centre); elsewhere a large desktop.</summary>
+		private static Size InitialScreen()
+		{
+			if (OperatingSystem.IsWindows())
+			{
+				var r = new WorkArea();
+				if (SystemParametersInfoW(0x0030 /* SPI_GETWORKAREA */, 0, ref r, 0) && r.Right > r.Left && r.Bottom > r.Top)
+					return new Size(r.Right - r.Left, r.Bottom - r.Top);
+			}
+			return new Size(2560, 1440);
+		}
+
+		[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+		private struct WorkArea { public int Left, Top, Right, Bottom; }
+		[System.Runtime.InteropServices.DllImport("user32")]
+		private static extern bool SystemParametersInfoW(uint action, uint param, ref WorkArea r, uint winIni);
 
 		/// <summary>The area a window can actually be seen in, in this driver's own units.
 		/// Called by the host that owns the presentation surface, whenever it changes size.
@@ -737,6 +756,7 @@ namespace System.Windows.Forms
 			_scenes.Remove(handle);
 			_layered.Remove(handle);
 			_layeredPixels.Remove(handle);
+			_layeredBits.Remove(handle);
 			_reveals.Remove(handle);
 			_frames.Remove(handle);
 			_styles.Remove(handle);
