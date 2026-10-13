@@ -1000,6 +1000,16 @@ namespace System.Windows.Forms
 
 			if (textbox_ctrl != null)
 				textbox_ctrl.BackColor = BackColor;
+			if (!Enabled)
+				UpdateFieldBackColor ();
+		}
+
+		protected override void OnEnabledChanged (EventArgs e)
+		{
+			base.OnEnabledChanged (e);
+			// The field's colour follows the state (ComboBoxFieldBackColor): a disabled editable box
+			// is white in Windows whatever its BackColor.
+			UpdateFieldBackColor ();
 		}
 
 		protected override void OnDataSourceChanged (EventArgs e)
@@ -1475,18 +1485,19 @@ namespace System.Windows.Forms
 				Invalidate (button_area);
 			}
 
-			if (textbox_ctrl != null && VisualStyles.VisualStyleRenderer.IsSupported
-			    && FlatStyle != FlatStyle.Flat && FlatStyle != FlatStyle.Popup) {
+			if (textbox_ctrl != null && VisualStyles.VisualStyleRenderer.IsSupported) {
 				// comctl32's ComboBox_CalcControlRects: the edit stands inside the themed border's
-				// three-pixel margins, as tall as a line of the font plus SM_CYEDGE, and stops a
-				// scroll bar's width short of the right margin, where the button goes. The text
-				// sits on the edit's top row.
+				// three-pixel margins top and bottom and stops a scroll bar's width short of the
+				// right margin, where the button goes. The text sits on the edit's top row. A flat
+				// or popup box is the same native control under .NET's own painting, so its edit is
+				// where comctl32 puts it too (COMBOBOXINFO.rcItem of stock boxes 45x20, 64x21 and
+				// 261x21: 3,3 and 22x14, 41x15, 238x15).
 				const int Margin = 3;
 				textbox_ctrl.TopMargin = 0;
 				textbox_ctrl.AutoSize = false;
 				textbox_ctrl.Location = new Point (text_area.X + Margin, text_area.Y + Margin);
 				textbox_ctrl.Width = Math.Max (0, text_area.Width - 2 * Margin - (dropdown_style == ComboBoxStyle.Simple ? 0 : SystemInformation.VerticalScrollBarWidth));
-				textbox_ctrl.Height = TextRenderer.GdiLineHeight (Font) + 2;
+				textbox_ctrl.Height = Math.Max (0, text_area.Height - 2 * Margin);
 			} else if (textbox_ctrl != null) {
 				int text_border = border + 1;
 				// A row HIGHER than the side inset. Windows draws an editable combo box's text one row
