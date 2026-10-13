@@ -67,7 +67,15 @@ namespace System.Windows.Forms {
 			#region DockPaddingEdges Public Instance Properties
 			[RefreshProperties (RefreshProperties.All)]
 			public int All {
-				get { return owner.Padding.All; }
+				// Padding.All is -1 when the sides differ; DockPadding.All is 0 then, as in stock
+				// WinForms (which remaps it for compatibility). DotNetBar's ribbon panels test
+				// DockPadding.All == 0 to inset their bars, and with -1 the bars sat 3px too high.
+				get {
+					Padding p = owner.Padding;
+					if (p.All == -1 && (p.Left != -1 || p.Top != -1 || p.Right != -1 || p.Bottom != -1))
+						return 0;
+					return p.All;
+				}
 				set { owner.Padding = new Padding (value); }
 			}
 

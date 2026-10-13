@@ -45,7 +45,7 @@ namespace System.Windows.Forms
 		{
 			while (true)
 			{
-				IntPtr h = (IntPtr)(next_handle++);
+				IntPtr h = (IntPtr)(System.Threading.Interlocked.Increment(ref next_handle) - 1);
 				if (!OperatingSystem.IsWindows () || IsRealWindow (h) == 0) return h;
 			}
 		}
@@ -60,7 +60,10 @@ namespace System.Windows.Forms
 		internal override bool CursorBitmapsUsed { get { return false; } }
 
 		private int next_handle = 1;
-		private readonly Dictionary<IntPtr, Bitmap> backing = new Dictionary<IntPtr, Bitmap>();
+		// Concurrent: every UI thread (a splash screen on its own thread, say) creates and composites windows
+		// while the others do, and copying the keys of a plain Dictionary another thread was adding to
+		// threw IndexOutOfRangeException in the present (GwxConfigApp died at its splash screen).
+		private readonly System.Collections.Concurrent.ConcurrentDictionary<IntPtr, Bitmap> backing = new System.Collections.Concurrent.ConcurrentDictionary<IntPtr, Bitmap>();
 		private readonly Dictionary<IntPtr, string> captions = new Dictionary<IntPtr, string>();
 		// One message queue per UI thread, the way Win32 has one. A posted message belongs to the
 		// queue of the thread that CREATED the target window, and a message loop only ever pumps its
@@ -700,7 +703,7 @@ namespace System.Windows.Forms
 			// was shown and was empty every time after, once it had been swapped away and back.
 			foreach (IntPtr child in ChildHandles(handle)) DestroyWindow(child);
 
-			if (backing.TryGetValue(handle, out Bitmap b)) { b?.Dispose(); backing.Remove(handle); }
+			if (backing.TryGetValue(handle, out Bitmap b)) { b?.Dispose(); backing.TryRemove(handle, out _); }
 			lock (window_queue) window_queue.Remove(handle);
 			if (_hotWindow == handle) _hotWindow = IntPtr.Zero;
 			captions.Remove(handle);
