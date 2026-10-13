@@ -633,6 +633,24 @@ namespace System.Drawing
 			}
 		}
 
+		/// <summary>A solid pen's line. GDI+ strokes a pen wider than a pixel as the polygon the pen
+		/// sweeps (flat caps: from the first point to the second, half the width either side), and
+		/// with the default aliased smoothing that polygon covers whole pixels by the centre rule
+		/// (FillPolygonAliased). The recorder's stroke is antialiased, so a two-pixel rule at a whole
+		/// coordinate came out as three soft rows a column too long where Windows draws two solid
+		/// ones (DotNetBar's selected dock tab). A one-pixel pen keeps the recorder's exact rectangle.</summary>
+		private void RecordSolidLine (Pen pen, float x1, float y1, float x2, float y2)
+		{
+			float w = pen.Width;
+			if (GpuAliased && w > 1.01f && (x1 != x2 || y1 != y2)) {
+				float dx = x2 - x1, dy = y2 - y1, len = MathF.Sqrt (dx * dx + dy * dy);
+				float nx = -dy / len * w * 0.5f, ny = dx / len * w * 0.5f;
+				FillPolygonAliased (new [] { x1 + nx, y1 + ny, x2 + nx, y2 + ny, x2 - nx, y2 - ny, x1 - nx, y1 - ny }, false, ArgbOf (pen));
+				return;
+			}
+			GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen), w);
+		}
+
 		private void RecordFillPolygon (float [] xy, bool winding, int argb)
 		{
 			if (GpuAliased) { FillPolygonAliased (xy, winding, argb); return; }
@@ -2273,7 +2291,7 @@ namespace System.Drawing
 				if (RecordDash (pen, out float [] dash))
 					GpuRecorder.DrawDashedLine (pt1.X, pt1.Y, pt2.X, pt2.Y, ArgbOf (pen), pen.Width, dash);
 				else
-					GpuRecorder.DrawLine (pt1.X, pt1.Y, pt2.X, pt2.Y, ArgbOf (pen), pen.Width);
+					RecordSolidLine (pen, pt1.X, pt1.Y, pt2.X, pt2.Y);
 				return;
 			}
                         /*GDIP*/;
@@ -2295,7 +2313,7 @@ namespace System.Drawing
 				if (RecordDash (pen, out float [] dash))
 					GpuRecorder.DrawDashedLine (x1, y1, x2, y2, ArgbOf (pen), pen.Width, dash);
 				else
-					GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen), pen.Width);
+					RecordSolidLine (pen, x1, y1, x2, y2);
 				return;
 			}
 			/*GDIP*/;
@@ -2319,7 +2337,7 @@ namespace System.Drawing
 					if (RecordDash (pen, out float [] dash))
 						GpuRecorder.DrawDashedLine (x1, y1, x2, y2, ArgbOf (pen), pen.Width, dash);
 					else
-						GpuRecorder.DrawLine (x1, y1, x2, y2, ArgbOf (pen), pen.Width);
+						RecordSolidLine (pen, x1, y1, x2, y2);
 					return;
 				}
 				/*GDIP*/;

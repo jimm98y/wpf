@@ -183,6 +183,20 @@ namespace Wpf.WinFormsInterop.Tests
         }
 
         [Fact]
+        public void DrawLine_WidePenAliased_IsTheSweptPolygonByPixelCentres()
+        {
+            // DotNetBar's selected dock tab: DrawLine(new Pen(c, 2), (163, 18), (226, 18)) at the
+            // default smoothing. Windows lights rows 17 and 18, columns 163..225 -- the polygon the pen
+            // sweeps, filled by GDI+'s centre rule -- not three soft rows one column longer.
+            Graphics g = GpuRaster.NewRecording();
+            using (var pen = new Pen(Color.Black, 2f))
+                g.DrawLine(pen, new Point(163, 18), new Point(226, 18));
+            var rows = new List<string>();
+            CollectRects(GpuRaster.EndScene(g), rows);
+            Assert.Equal(new[] { "163,17,63,1", "163,18,63,1" }, rows);
+        }
+
+        [Fact]
         public void LinearGradient_IsGdiPlusTable()
         {
             // The professional renderer's second tool strip gradient: brush over rows 12..24, filled
