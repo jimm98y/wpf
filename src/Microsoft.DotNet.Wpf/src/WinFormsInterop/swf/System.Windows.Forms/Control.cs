@@ -2212,6 +2212,8 @@ namespace System.Windows.Forms
 
 		[DispId(-501)]
 		[MWFCategory("Appearance")]
+		static readonly string s_traceBackColor = Environment.GetEnvironmentVariable ("WF_TRACE_BACKCOLOR");
+
 		public virtual Color BackColor {
 			get {
 				if (background_color.IsEmpty) {
@@ -2231,6 +2233,9 @@ namespace System.Windows.Forms
 				}
 
 				if (background_color != value) {
+					// WF_TRACE_BACKCOLOR=TypeName: who gives a control of that type its colour.
+					if (s_traceBackColor != null && GetType ().Name == s_traceBackColor)
+						Console.Error.WriteLine ($"[backcolor] {GetType ().Name} '{Name}' = {value}{Environment.NewLine}{new System.Diagnostics.StackTrace (1, false)}");
 					background_color=value;
 					SetChildColor(this);
 					OnBackColorChanged(EventArgs.Empty);
