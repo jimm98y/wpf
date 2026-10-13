@@ -65,7 +65,10 @@ internal sealed unsafe class Win32Host : IWinFormsHost, WinFormsWebGpu.Accessibi
         _move = M("InjectMouseMove"); _char = M("InjectChar"); _keyDown = M("InjectKeyDown");
         _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
         _keyUp = M("InjectKeyUp"); _setModifiers = M("SetModifierKeys");
-        _wheel = M("InjectWheel"); _tickTimers = M("TickTimers");
+        _wheel = M("InjectWheel");
+        // TickTimers() and TickTimers(bool) both exist: by name alone the lookup is ambiguous and threw,
+        // so no WinForms window could open on Windows.
+        _tickTimers = dt.GetMethod("TickTimers", BindingFlags.NonPublic | BindingFlags.Instance, Type.EmptyTypes);
         _rightDown = M("InjectRightDown"); _rightUp = M("InjectRightUp");
         _sysKeyDown = M("InjectSysKeyDown"); _sysChar = M("InjectSysChar");
         _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");

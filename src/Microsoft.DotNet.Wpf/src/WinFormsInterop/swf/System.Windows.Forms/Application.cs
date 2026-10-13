@@ -167,40 +167,10 @@ namespace System.Windows.Forms
 
 		private static void InitializeUIAutomation ()
 		{
-			// Initialize the UIAutomationWinforms Global class,
-			// which create some listeners which subscribe to internal
-			// MWF events so that it can provide a11y support for MWF
-			const string UIA_WINFORMS_ASSEMBLY = 
-			  "UIAutomationWinforms, Version=1.0.0.0, Culture=neutral, PublicKeyToken=f4ceacb585d99812";
-			MethodInfo init_method;
-			Assembly mwf_providers = null;
-			try {
-				mwf_providers = Assembly.Load (UIA_WINFORMS_ASSEMBLY);
-			} catch { }
-			
-			if (mwf_providers == null)
-				return;
+			// Mono loaded its UIAutomationWinforms provider bridge by name here. This stack never ships it: its
+			// accessibility is the host's (host/UiaBridge.cs on Windows, Accessibility.cs elsewhere). The probe
+			// only ever failed, with a FileNotFoundException in every app's first call into WinForms.
 
-			const string UIA_WINFORMS_TYPE     = "Mono.UIAutomation.Winforms.Global";
-			const string UIA_WINFORMS_METHOD   = "Initialize";
-			try {
-				Type global_type = mwf_providers.GetType (UIA_WINFORMS_TYPE, false);
-				if (global_type != null) {
-					init_method = global_type.GetMethod (UIA_WINFORMS_METHOD, 
-					                                     BindingFlags.Static | 
-					                                     BindingFlags.Public);
-					if (init_method != null)
-						init_method.Invoke (null, new object [] {});
-					else
-						throw new Exception (String.Format ("Method {0} not found in type {1}.",
-						                                    UIA_WINFORMS_METHOD, UIA_WINFORMS_TYPE));
-				}
-				else
-					throw new Exception (String.Format ("Type {0} not found in assembly {1}.",
-					                                    UIA_WINFORMS_TYPE, UIA_WINFORMS_ASSEMBLY));
-			} catch (Exception ex) {
-				Console.Error.WriteLine ("Error setting up UIA: " + ex);
-			}
 		}
 		
 		internal static void CloseForms (Thread thread)

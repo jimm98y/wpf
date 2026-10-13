@@ -30,7 +30,28 @@ namespace System.Windows.Forms
 			}
 		}
 		private static readonly object s_instanceLock = new object();
-		private XplatUIWebGpu() { }
+		private XplatUIWebGpu()
+		{
+			// Graphics.FromHwnd(control.Handle): this driver's windows are not GDI windows anywhere, so
+			// System.Drawing asks here what drawing on one means -- CreateGraphics' answer.
+			AppContext.SetData ("System.Drawing.HwndGraphicsResolver",
+				(Func<IntPtr, object>)(h => Hwnd.ObjectFromHandle (h) != null ? GetHwndGraphics (h) : null));
+		}
+
+		/// <summary>The next window handle. On Windows a handle is skipped while it names a real
+		/// window: an app passes Control.Handle to user32 as well, and wpfmac routes a call to the
+		/// stack only when the handle is not Windows' own, so the two must never be equal.</summary>
+		private IntPtr NextHandle ()
+		{
+			while (true)
+			{
+				IntPtr h = (IntPtr)(next_handle++);
+				if (!OperatingSystem.IsWindows () || IsRealWindow (h) == 0) return h;
+			}
+		}
+
+		[System.Runtime.InteropServices.DllImport ("user32", EntryPoint = "IsWindow")]
+		private static extern int IsRealWindow (IntPtr hwnd);
 
 		// Cursors belong to the OS compositor on every head this driver serves (Wayland sets them by
 		// shape, macOS by NSCursor, the browser by CSS), so DefineCursor ignores its bitmaps. Saying so
@@ -626,7 +647,7 @@ namespace System.Windows.Forms
 			if (cp.Parent != IntPtr.Zero)
 				hwnd.parent = Hwnd.ObjectFromHandle(cp.Parent);
 
-			IntPtr handle = (IntPtr)(next_handle++);
+			IntPtr handle = NextHandle ();
 			if (frame != Padding.Empty) _frames[handle] = frame;
 			hwnd.WholeWindow = handle;
 			hwnd.ClientWindow = handle;   // registers in Hwnd's handle->object table

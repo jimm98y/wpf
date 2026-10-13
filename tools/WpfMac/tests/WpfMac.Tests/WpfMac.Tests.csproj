@@ -17,6 +17,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../WpfMac.Launcher/WpfMac.Launcher.csproj" />
+    <!-- The generated stand-in DLL for user32 (Windows), tested by loading what it writes. -->
+    <Compile Include="../../WpfMac.Bootstrap/Win32/ShimImage.cs" Link="Bootstrap/ShimImage.cs" />
     <ProjectReference Include="$(WpfMacRepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" Aliases="RegistryShim" />
     <ProjectReference Include="$(WpfMacRepoRoot)shims/System.Management/System.Management.csproj" />
     <ProjectReference Include="$(WpfMacRepoRoot)shims/System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />

@@ -5,7 +5,8 @@ rem   launcher\                  wpfmac itself: dotnet launcher\wpfmac.dll run|c
 rem   overlay\wpfmac.payload\    the WebGPU stack an app runs on (the published WpfMac.Payload)
 rem
 rem That folder is all of wpfmac. Removing it plus `wpfmac clean --all` leaves nothing behind. There is
-rem no libwin32shim on Windows: the app's P/Invokes reach the real DLLs.
+rem no libwin32shim on Windows: the app's P/Invokes reach the real DLLs, except calls on the stack's own
+rem windows, which a DLL generated at run time routes to the stack (WpfMac.Bootstrap/Win32/WindowsShim.cs).
 rem
 rem The overlay is built against the WpfWebGpu.Sdk package in artifacts\local-feed, so build and pack
 rem the fork first (eng\build-sdk.cmd). Usage:

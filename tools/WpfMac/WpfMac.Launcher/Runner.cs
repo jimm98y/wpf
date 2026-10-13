@@ -55,6 +55,8 @@ internal sealed class Runner
             ["WpfMac.LogPath"] = logPath,
             ["WpfMac.OverlayDirectory"] = OverlayDir,
             ["WpfMac.StateDirectory"] = Locations.StateRoot,
+            // Files generated for this app at run time (Windows: the user32 dispatch DLL).
+            ["WpfMac.CacheDirectory"] = cacheDir,
             // The WebGPU compositor; the SDK sets the same switch on the heads where it is not already
             // the default.
             ["Switch.System.Windows.Media.UseWebGpuComposition"] = "true",

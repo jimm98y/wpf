@@ -176,21 +176,47 @@ Pass `--crash-reports` to keep the system's behaviour, for the native backtraces
 ## Windows: side by side
 
 ```
-dotnet artifacts\wpfmac\win-x64\launcher\wpfmac.dll compare --isolate --screenshot shots C:\Apps\Contoso\Contoso.exe
+dotnet artifacts\wpfmac\win-arm64\launcher\wpfmac.dll compare --screenshot shots --size 1900x1150 C:\Apps\Contoso\Contoso.exe
 ```
 
-This starts `Contoso.exe` as usual (stock WPF) and the same folder through wpfmac (WebGPU, with a
-`[WebGPU] ` title prefix), and tiles the two main windows at the same size.
+This starts `Contoso.exe` as usual (stock WPF and WinForms) and the same folder through wpfmac
+(WebGPU), and places the two main windows side by side at the same size.
 
-- `--screenshot` captures both windows and writes a pixel diff.
+- `--screenshot <dir>` waits `--seconds`, brings each window to the front, makes both inactive and
+  parks the cursor off them, and captures each from the screen (window and client area), then writes
+  `diff.png` and `diff-client.png` and reports how many pixels differ in any channel.
+  `--tolerance <n>` also reports how many differ by more than n.
+- `--size <w>x<h>` sets the windows' size; otherwise each gets half the work area.
+- `--title-prefix <text>` prefixes the WebGPU window's caption. There is none by default, because the
+  captions are compared too.
 - `--isolate` lets a single-instance app start twice. An app that searches for its own window by
   title can still refuse the second instance.
 
 On Windows the WebGPU instance uses the real registry, event log, WMI and Win32. The two differ only
 in the UI stack.
 
-> The Windows side has been built but not yet run on a Windows machine.
+### The app's own Win32 calls on Windows
 
+On Windows the stack's WinForms controls are not Windows windows: `Control.Handle` is a handle the
+stack made up. An app that passes one to user32 (`GetWindowDC(control.Handle)`, `SendMessage`,
+`BeginPaint`, `SetWindowPos`, ...) would reach a Windows that has never heard of it. So wpfmac gives
+each of the app's assemblies that P/Invokes user32, gdi32, uxtheme or msimg32 its own copy of that DLL
+(`NativeLibrary.SetDllImportResolver`, from the startup hook):
+
+- the copy is generated at run time from the real DLL's export table (`WpfMac.Bootstrap/Win32/
+  ShimImage.cs`, no native toolchain), with every export at the same name and ordinal, and cached in
+  the app's cache folder;
+- an export without a managed implementation jumps straight to the real function;
+- an export with one (`WpfMac.Win32/Windows*.cs`) runs it when a handle argument is one of the
+  stack's windows, and the real function for every other handle: WPF windows, the windows forms are
+  shown in, windows the app created itself;
+- a device context for one of the stack's windows is a real memory DC; what the app draws into it
+  reaches the window when it is released (`ReleaseDC`, `EndPaint`);
+- GDI calls on a DC that a `Graphics` is drawing into first write that `Graphics`' drawing to the DC,
+  as GDI+ does by drawing as it goes.
+
+The stack's own assemblies and the runtime's are not given the copy. An assembly that installs its
+own resolver is left alone (the log says so).
 ## Removing wpfmac
 
 wpfmac installs nothing: no shared framework, no persisted environment variables, no file

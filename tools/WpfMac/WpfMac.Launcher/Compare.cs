@@ -1,8 +1,15 @@
 // `wpfmac compare <App.dll>` (Windows): the app twice, side by side -- its own .exe on stock WPF, and
-// the same folder through `wpfmac run` on the WebGPU stack -- tiled left and right in the work area at
-// the same size, the WebGPU one titled "[WebGPU] ...". With --screenshot, both windows are captured
-// after --seconds (PrintWindow with PW_RENDERFULLCONTENT, which includes GPU swap-chain content) and a
-// diff image and score are written beside them.
+// the same folder through `wpfmac run` on the WebGPU stack -- placed left and right at the same size
+// (--size, or half the work area each). The captions are left alone unless --title-prefix asks:
+// they are part of what is compared.
+//
+// With --screenshot, after --seconds each window is brought to the front, then both are made inactive
+// (the taskbar is activated) and the cursor is parked off them, so that neither shows focus, hover or
+// an active caption; then each is captured FROM THE SCREEN, by its visible frame (DWM's extended frame
+// bounds), from a per-monitor DPI aware thread so the pixels are the physical ones. PrintWindow is not
+// used: it renders the window again rather than showing what is on screen, and gives nothing for a GPU
+// swap chain on some drivers. The diff counts every pixel whose colour differs in any channel, for the
+// whole window and for its client area; --tolerance <n> also reports the count beyond n per channel.
 //
 // --isolate gives the WebGPU instance its own names for kernel objects, for apps that allow one
 // instance only (see WpfMac.Detours/Isolation.cs).
@@ -15,12 +22,15 @@ namespace WpfMac;
 
 internal static partial class Compare
 {
-    public static int Run(Runner webgpu, IReadOnlyList<string> appArgs, string? screenshotDir, int seconds, bool close)
+    public readonly record struct Options(int Tolerance, int Width, int Height);
+
+    public static int Run(Runner webgpu, IReadOnlyList<string> appArgs, string? screenshotDir, int seconds, bool close, Options options)
     {
         if (!OperatingSystem.IsWindows())
         {
             throw new UserError("compare runs on Windows, where the app's own .exe can start it on stock WPF beside the WebGPU run. On macOS use `wpfmac run`.");
         }
+        SetThreadDpiAwarenessContext(-4);    // PER_MONITOR_AWARE_V2: physical pixels everywhere
         AppFiles app = webgpu.App;
         if (!File.Exists(app.Exe)) throw new UserError($"{app.Exe} does not exist; compare needs the app's apphost to start the stock instance.");
 
@@ -33,29 +43,41 @@ internal static partial class Compare
         using Process gpu = Process.Start(prepared.StartInfo) ?? throw new UserError("could not start the WebGPU instance");
         Console.WriteLine($"wpfmac: WebGPU  pid {gpu.Id}  log {prepared.LogPath}");
 
-        IntPtr stockWindow = WaitForWindow(stock, TimeSpan.FromSeconds(90));
-        IntPtr gpuWindow = WaitForWindow(gpu, TimeSpan.FromSeconds(90));
+        IntPtr stockWindow = WaitForWindow(stock, TimeSpan.FromSeconds(180));
+        IntPtr gpuWindow = WaitForWindow(gpu, TimeSpan.FromSeconds(180));
         if (stockWindow == IntPtr.Zero || gpuWindow == IntPtr.Zero)
         {
-            Console.Error.WriteLine($"wpfmac: no main window from {(stockWindow == IntPtr.Zero ? "the stock" : "the WebGPU")} instance within 90 s");
+            Console.Error.WriteLine($"wpfmac: no main window from {(stockWindow == IntPtr.Zero ? "the stock" : "the WebGPU")} instance within 180 s");
         }
-        Tile(stockWindow, gpuWindow);
+        Tile(stockWindow, gpuWindow, options);
 
         if (screenshotDir != null)
         {
             Thread.Sleep(TimeSpan.FromSeconds(Math.Max(1, seconds)));
+            // The main window then, not the first one: a splash screen is gone by now.
+            stockWindow = CurrentWindow(stock, stockWindow);
+            gpuWindow = CurrentWindow(gpu, gpuWindow);
+            Tile(stockWindow, gpuWindow, options);   // an app may have moved itself while it started
             Directory.CreateDirectory(screenshotDir);
+            BringToFront(stockWindow);
+            BringToFront(gpuWindow);
+            Deactivate();
+            Thread.Sleep(1500);
             var a = Capture(stockWindow);
             var b = Capture(gpuWindow);
-            if (a != null) Png.Write(Path.Combine(screenshotDir, "stock.png"), a.Value.W, a.Value.H, a.Value.Bgra);
-            if (b != null) Png.Write(Path.Combine(screenshotDir, "webgpu.png"), b.Value.W, b.Value.H, b.Value.Bgra);
+            foreach (var (shot, name) in new[] { (a, "stock"), (b, "webgpu") })
+            {
+                if (shot == null) continue;
+                Png.Write(Path.Combine(screenshotDir, name + ".png"), shot.Value.Window.W, shot.Value.Window.H, shot.Value.Window.Bgra);
+                Png.Write(Path.Combine(screenshotDir, name + "-client.png"), shot.Value.Client.W, shot.Value.Client.H, shot.Value.Client.Bgra);
+            }
             if (a != null && b != null)
             {
-                double same = Diff(a.Value, b.Value, Path.Combine(screenshotDir, "diff.png"));
-                Console.WriteLine($"wpfmac: {same:P1} of pixels match (|delta| <= 16 per channel); images in {screenshotDir}");
+                Report("window", Diff(a.Value.Window, b.Value.Window, Path.Combine(screenshotDir, "diff.png"), options.Tolerance), options.Tolerance);
+                Report("client", Diff(a.Value.Client, b.Value.Client, Path.Combine(screenshotDir, "diff-client.png"), options.Tolerance), options.Tolerance);
+                Console.WriteLine($"wpfmac: images in {screenshotDir}");
             }
         }
-
         if (close)
         {
             stock.CloseMainWindow();
@@ -70,6 +92,12 @@ internal static partial class Compare
         return gpu.ExitCode;
     }
 
+    private static IntPtr CurrentWindow(Process p, IntPtr previous)
+    {
+        p.Refresh();
+        return !p.HasExited && p.MainWindowHandle != IntPtr.Zero ? p.MainWindowHandle : previous;
+    }
+
     private static IntPtr WaitForWindow(Process p, TimeSpan timeout)
     {
         var clock = Stopwatch.StartNew();
@@ -82,25 +110,65 @@ internal static partial class Compare
         return IntPtr.Zero;
     }
 
-    private static void Tile(IntPtr left, IntPtr right)
+    /// <summary>Both windows restored and at the same size: --size, or half the work area each,
+    /// left and right on the primary monitor.</summary>
+    private static void Tile(IntPtr left, IntPtr right, Options options)
     {
         RECT work = default;
         SystemParametersInfoW(0x0030 /* SPI_GETWORKAREA */, 0, ref work, 0);
-        int w = (work.Right - work.Left) / 2, h = work.Bottom - work.Top;
-        foreach (var (hwnd, x) in new[] { (left, work.Left), (right, work.Left + w) })
+        int half = (work.Right - work.Left) / 2;
+        int w = options.Width > 0 ? options.Width : half, h = options.Height > 0 ? options.Height : work.Bottom - work.Top;
+        foreach (var (hwnd, x) in new[] { (left, work.Left), (right, work.Left + Math.Max(half, w + 20)) })
         {
             if (hwnd == IntPtr.Zero) continue;
-            ShowWindow(hwnd, 9 /* SW_RESTORE */);
+            if (IsZoomed(hwnd) || IsIconic(hwnd)) ShowWindow(hwnd, 9 /* SW_RESTORE */);
             MoveWindow(hwnd, x, work.Top, w, h, true);
         }
     }
 
-    private readonly record struct Image(int W, int H, byte[] Bgra);
-
-    private static unsafe Image? Capture(IntPtr hwnd)
+    /// <summary>To the front of the z-order and active. Windows lets a background process take the
+    /// foreground only while it handles input, so the thread joins the foreground thread's input.</summary>
+    private static void BringToFront(IntPtr hwnd)
     {
-        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out RECT r)) return null;
-        int w = r.Right - r.Left, h = r.Bottom - r.Top;
+        if (hwnd == IntPtr.Zero) return;
+        uint me = GetCurrentThreadId(), fg = GetWindowThreadProcessId(GetForegroundWindow(), out _);
+        AttachThreadInput(me, fg, true);
+        SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040);   // NOSIZE | NOMOVE | SHOWWINDOW
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        AttachThreadInput(me, fg, false);
+        Thread.Sleep(300);
+    }
+
+    /// <summary>Neither window active (the taskbar is), the cursor off both: an active caption, a
+    /// focus rectangle, a hover or a blinking caret is state, not rendering, and only one window could
+    /// have it.</summary>
+    private static void Deactivate()
+    {
+        BringToFront(FindWindowW("Shell_TrayWnd", null));
+        RECT work = default;
+        SystemParametersInfoW(0x0030, 0, ref work, 0);
+        SetCursorPos(work.Right - 1, work.Bottom + 8);
+    }
+
+    private readonly record struct Image(int W, int H, byte[] Bgra);
+    private readonly record struct Shot(Image Window, Image Client);
+
+    private static Shot? Capture(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return null;
+        if (DwmGetWindowAttribute(hwnd, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, out RECT r, 16) != 0 && !GetWindowRect(hwnd, out r)) return null;
+        GetClientRect(hwnd, out RECT c);
+        POINT origin = default;
+        ClientToScreen(hwnd, ref origin);
+        Image? window = Grab(r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+        Image? client = Grab(origin.X, origin.Y, c.Right - c.Left, c.Bottom - c.Top);
+        return window == null || client == null ? null : new Shot(window.Value, client.Value);
+    }
+
+    /// <summary>What the screen shows in a rectangle.</summary>
+    private static Image? Grab(int x, int y, int w, int h)
+    {
         if (w <= 0 || h <= 0) return null;
         IntPtr screen = GetDC(IntPtr.Zero);
         IntPtr mem = CreateCompatibleDC(screen);
@@ -109,7 +177,7 @@ internal static partial class Compare
         IntPtr old = SelectObject(mem, dib);
         try
         {
-            PrintWindow(hwnd, mem, 2 /* PW_RENDERFULLCONTENT */);
+            BitBlt(mem, 0, 0, w, h, screen, x, y, 0x00CC0020 | 0x40000000 /* SRCCOPY | CAPTUREBLT */);
             byte[] pixels = new byte[w * h * 4];
             Marshal.Copy(bits, pixels, 0, pixels.Length);
             for (int i = 3; i < pixels.Length; i += 4) pixels[i] = 255;   // GDI leaves alpha undefined
@@ -124,34 +192,63 @@ internal static partial class Compare
         }
     }
 
-    /// <summary>Writes a diff image (differing pixels red over a faded copy of the stock one) and returns the share that match.</summary>
-    private static double Diff(Image a, Image b, string path)
+    private readonly record struct DiffResult(long Pixels, long Differing, long BeyondTolerance, bool SameSize);
+
+    private static void Report(string what, DiffResult d, int tolerance)
+    {
+        string size = d.SameSize ? "" : " (the two differ in size; compared over the smaller)";
+        string beyond = tolerance > 0 ? $", {d.BeyondTolerance} by more than {tolerance}" : "";
+        Console.WriteLine($"wpfmac: {what}: {d.Differing} of {d.Pixels} pixels differ{beyond}{size}");
+    }
+
+    /// <summary>Writes a diff image (differing pixels red over a faded copy of the stock one) and
+    /// counts the pixels that differ at all, and by more than <paramref name="tolerance"/>.</summary>
+    private static DiffResult Diff(Image a, Image b, string path, int tolerance)
     {
         int w = Math.Min(a.W, b.W), h = Math.Min(a.H, b.H);
         var diff = new byte[w * h * 4];
-        long same = 0;
+        long differing = 0, beyond = 0;
         for (int y = 0; y < h; y++)
         {
             for (int x = 0; x < w; x++)
             {
                 int ia = (y * a.W + x) * 4, ib = (y * b.W + x) * 4, id = (y * w + x) * 4;
-                bool match = Math.Abs(a.Bgra[ia] - b.Bgra[ib]) <= 16 && Math.Abs(a.Bgra[ia + 1] - b.Bgra[ib + 1]) <= 16 && Math.Abs(a.Bgra[ia + 2] - b.Bgra[ib + 2]) <= 16;
-                if (match)
+                int m = Math.Max(Math.Abs(a.Bgra[ia] - b.Bgra[ib]), Math.Max(Math.Abs(a.Bgra[ia + 1] - b.Bgra[ib + 1]), Math.Abs(a.Bgra[ia + 2] - b.Bgra[ib + 2])));
+                if (m == 0)
                 {
-                    same++;
                     byte g = (byte)(160 + (a.Bgra[ia] + a.Bgra[ia + 1] + a.Bgra[ia + 2]) / 3 * 95 / 255);
                     diff[id] = g; diff[id + 1] = g; diff[id + 2] = g;
                 }
                 else
                 {
+                    differing++;
+                    if (m > tolerance) beyond++;
                     diff[id] = 0; diff[id + 1] = 0; diff[id + 2] = 255;
                 }
                 diff[id + 3] = 255;
             }
         }
         Png.Write(path, w, h, diff);
-        return w * h == 0 ? 0 : (double)same / (w * h);
+        return new DiffResult((long)w * h, differing, beyond, a.W == b.W && a.H == b.H);
     }
+
+    [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
+    [LibraryImport("user32.dll")] private static partial IntPtr SetThreadDpiAwarenessContext(nint context);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool IsZoomed(IntPtr hwnd);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool IsIconic(IntPtr hwnd);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool GetClientRect(IntPtr hwnd, out RECT rect);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool ClientToScreen(IntPtr hwnd, ref POINT p);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool SetForegroundWindow(IntPtr hwnd);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool BringWindowToTop(IntPtr hwnd);
+    [LibraryImport("user32.dll")] private static partial IntPtr GetForegroundWindow();
+    [LibraryImport("user32.dll")] private static partial uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool AttachThreadInput(uint a, uint b, [MarshalAs(UnmanagedType.Bool)] bool attach);
+    [LibraryImport("kernel32.dll")] private static partial uint GetCurrentThreadId();
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool SetCursorPos(int x, int y);
+    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)] private static partial IntPtr FindWindowW(string? cls, string? title);
+    [LibraryImport("dwmapi.dll")] private static partial int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out RECT value, int size);
+    [LibraryImport("gdi32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool BitBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, uint rop);
 
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
 
@@ -167,7 +264,6 @@ internal static partial class Compare
     [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool MoveWindow(IntPtr hwnd, int x, int y, int w, int h, [MarshalAs(UnmanagedType.Bool)] bool repaint);
     [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool GetWindowRect(IntPtr hwnd, out RECT rect);
     [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool SystemParametersInfoW(uint action, uint param, ref RECT rect, uint ini);
-    [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
     [LibraryImport("user32.dll")] private static partial IntPtr GetDC(IntPtr hwnd);
     [LibraryImport("user32.dll")] private static partial int ReleaseDC(IntPtr hwnd, IntPtr hdc);
     [LibraryImport("gdi32.dll")] private static partial IntPtr CreateCompatibleDC(IntPtr hdc);

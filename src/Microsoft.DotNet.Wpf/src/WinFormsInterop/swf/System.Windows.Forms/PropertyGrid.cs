@@ -81,7 +81,7 @@ namespace System.Windows.Forms
 
 		private PropertyToolBar toolbar;
 
-		private PropertyGridView property_grid_view;
+		private PropertyGridView _gridView;
 		private Splitter splitter;
 		private Panel help_panel;
 		private Label help_title_label;
@@ -109,7 +109,7 @@ namespace System.Windows.Forms
 			commands_visible = false;
 			commands_visible_if_available = false;
 			property_sort = PropertySort.CategorizedAlphabetical;
-			property_grid_view = new PropertyGridView(this);
+			_gridView = new PropertyGridView(this);
 
 			splitter = new Splitter();
 			splitter.Dock = DockStyle.Bottom;
@@ -232,7 +232,7 @@ namespace System.Windows.Forms
 			
 			BorderHelperControl helper = new BorderHelperControl ();
 			helper.Dock = DockStyle.Fill;
-			helper.Controls.Add (property_grid_view);
+			helper.Controls.Add (_gridView);
 			
 			this.Controls.Add(helper);
 			this.Controls.Add(toolbar);
@@ -515,7 +515,7 @@ namespace System.Windows.Forms
 				if (category_splitter_color == value)
 					return;
 				category_splitter_color = value;
-				property_grid_view?.Invalidate ();
+				_gridView?.Invalidate ();
 			}
 		}
 
@@ -570,7 +570,7 @@ namespace System.Windows.Forms
 						else
 							SelectItemCore (null, selected_grid_item);
 					}
-					property_grid_view.UpdateView ();
+					_gridView.UpdateView ();
 
 					EventHandler eh = (EventHandler)(Events [PropertySortChangedEvent]);
 					if (eh != null)
@@ -609,7 +609,7 @@ namespace System.Windows.Forms
 
 		/// <summary>The list of rows itself, which is where a row's position is measured.</summary>
 		internal PropertyGridView GridView {
-			get { return property_grid_view; }
+			get { return _gridView; }
 		}
 
 		private void UpdateHelp (GridItem item)
@@ -628,24 +628,24 @@ namespace System.Windows.Forms
 		{
 			UpdateHelp (item);
 			selected_grid_item = item;
-			property_grid_view.SelectItem (oldItem, item);
+			_gridView.SelectItem (oldItem, item);
 		}
 
 		internal void OnPropertyValueChangedInternal (GridItem item, object property_value) 
 		{
-			property_grid_view.UpdateView ();
+			_gridView.UpdateView ();
 			OnPropertyValueChanged (new PropertyValueChangedEventArgs (item, property_value));
 		}
 
 		internal void OnExpandItem (GridEntry item)
 		{
-			property_grid_view.ExpandItem (item);
+			_gridView.ExpandItem (item);
 			OnExpandedItemChanged (EventArgs.Empty);
 		}
 
 		internal void OnCollapseItem (GridEntry item)
 		{
-			property_grid_view.CollapseItem (item);
+			_gridView.CollapseItem (item);
 			OnExpandedItemChanged (EventArgs.Empty);
 		}
 
@@ -706,7 +706,7 @@ namespace System.Windows.Forms
 				RefreshTabs(PropertyTabScope.Component);
 				if (root_grid_item != null)
 					SelectItemCore (null, GetDefaultPropertyItem (root_grid_item, selected_tab));
-				property_grid_view.UpdateView ();
+				_gridView.UpdateView ();
 				OnSelectedObjectsChanged (EventArgs.Empty);
 			}
 		}
@@ -758,25 +758,25 @@ namespace System.Windows.Forms
 
 		[DefaultValue ("Color [Window]")]
 		public Color ViewBackColor {
-			get { return property_grid_view.BackColor; }
+			get { return _gridView.BackColor; }
 			set {
-				if (property_grid_view.BackColor == value) {
+				if (_gridView.BackColor == value) {
 					return;
 				}
 
-				property_grid_view.BackColor = value;
+				_gridView.BackColor = value;
 			}
 		}
 
 		[DefaultValue ("Color [WindowText]")]
 		public Color ViewForeColor {
-			get { return property_grid_view.ForeColor; }
+			get { return _gridView.ForeColor; }
 			set {
-				if (property_grid_view.ForeColor == value) {
+				if (_gridView.ForeColor == value) {
 					return;
 				}
 
-				property_grid_view.ForeColor = value;
+				_gridView.ForeColor = value;
 			}
 		}
 
@@ -837,7 +837,7 @@ namespace System.Windows.Forms
 			if (category != null)
 				SelectedGridItem = category;
 			CollapseItemRecursive (root_grid_item);
-			property_grid_view.UpdateView ();
+			_gridView.UpdateView ();
 		}
 
 		private void CollapseItemRecursive (GridItem item)
@@ -876,7 +876,7 @@ namespace System.Windows.Forms
 		public void ExpandAllGridItems () 
 		{
 			ExpandItemRecursive (root_grid_item);
-			property_grid_view.UpdateView ();
+			_gridView.UpdateView ();
 		}
 
 		private void ExpandItemRecursive (GridItem item)
@@ -937,7 +937,7 @@ namespace System.Windows.Forms
 				selected_tab = propertyTab;
 				PopulateGrid (selected_objects);
 				SelectItemCore (null, GetDefaultPropertyItem (root_grid_item, selected_tab));
-				property_grid_view.UpdateView ();
+				_gridView.UpdateView ();
 			}
 		}
 
@@ -1145,7 +1145,7 @@ namespace System.Windows.Forms
 		
 		protected void OnNotifyPropertyValueUIItemsChanged(object sender, EventArgs e) 
 		{
-			property_grid_view.UpdateView ();
+			_gridView.UpdateView ();
 		}
 
 		protected override void OnPaint (PaintEventArgs pevent) {

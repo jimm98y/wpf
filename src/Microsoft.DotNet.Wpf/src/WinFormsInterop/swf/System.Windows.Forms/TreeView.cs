@@ -69,6 +69,12 @@ namespace System.Windows.Forms {
 		private string selected_image_key;
 		private bool show_node_tool_tips;
 		private ImageList state_image_list;
+		// What stock WinForms hands the native tree as its TVSIL_STATE list, and so what state images
+		// are drawn from: comctl32 takes state index 0 to mean "no image", so stock keeps a copy of
+		// StateImageList with a blank in front. Apps reflect into it by this name to put a list of
+		// their own there (of images that are not 16x16); StateImageIndex i is entry i+1 of it.
+		private ImageList _internalStateImageList;
+		internal ImageList InternalStateImageList => _internalStateImageList;
 		private TreeNode tooltip_currently_showing;
 		private ToolTip tooltip_window;
 		// WF_TRACE_INPUT=1: what the tree decides to draw behind a selected node.
