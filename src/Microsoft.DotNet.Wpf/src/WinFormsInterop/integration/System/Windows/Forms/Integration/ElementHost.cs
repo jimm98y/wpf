@@ -46,7 +46,7 @@ namespace System.Windows.Forms.Integration
     {
         private const int WS_CHILD = 0x40000000, WS_VISIBLE = 0x10000000, WS_CLIPSIBLINGS = 0x04000000;
         private const int SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
-        private const int WM_LBUTTONDOWN = 0x0201;
+        private const int WM_LBUTTONDOWN = 0x0201, WM_SETFOCUS = 0x0007;
 
         private WPF.UIElement _child;
         private HwndSource _source;
@@ -313,6 +313,11 @@ namespace System.Windows.Forms.Integration
             if (s_trace && msg is 0x0200 or 0x0201 or 0x0202 or 0x0007 or 0x0008)
                 Console.WriteLine($"elementhost trace: msg=0x{msg:x4} w=0x{wParam:x} l=0x{lParam:x}");
             if (msg == WM_LBUTTONDOWN && OperatingSystem.IsWindows()) SetFocus(hwnd);
+            // The hosted window has the keyboard, so this control is WinForms' focused control, as an
+            // ElementHost is in .NET: the form's active chain points here and every container on the
+            // way (a DotNetBar dock bar's caption) shows itself inactive. Without it the focus stayed
+            // on whatever WinForms control had it before the WPF content was clicked or focused.
+            if (msg == WM_SETFOCUS && !Focused && CanFocus) Focus();
             return IntPtr.Zero;
         }
 
