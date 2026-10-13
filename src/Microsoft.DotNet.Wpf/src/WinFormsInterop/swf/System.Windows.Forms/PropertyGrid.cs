@@ -111,7 +111,7 @@ namespace System.Windows.Forms
 			property_sort = PropertySort.CategorizedAlphabetical;
 			_gridView = new PropertyGridView(this);
 
-			splitter = new Splitter();
+			splitter = new HelpSplitter();
 			splitter.Dock = DockStyle.Bottom;
 
 			// The margin round the description pane's contents, and the line the title sits on. Both are
@@ -1728,6 +1728,19 @@ namespace System.Windows.Forms
 					control.Height = ClientRectangle.Height - 2;
 				}
 				base.OnSizeChanged (e);
+			}
+		}
+
+		/// <summary>The gap above the description pane. Windows' grid has no control there -- it is the
+		/// grid's own background, which the grid resizes the pane from -- so the gap is the grid's
+		/// colour whatever is done to the grid's children: an app that recolours every child
+		/// (app's ThemeUtil gives each one SystemColors.Control) left a grey band here that
+		/// Windows does not have.</summary>
+		private sealed class HelpSplitter : Splitter
+		{
+			public override Color BackColor {
+				get { return Parent != null ? Parent.BackColor : base.BackColor; }
+				set { }
 			}
 		}
 
