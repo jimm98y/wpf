@@ -78,9 +78,27 @@ namespace System.Drawing
 		/// coordinates of the transform current when they are made.</summary>
 		GpGraphics EngineState ()
 		{
-			if (gp == null) return PrintClipState ();
+			if (gp == null) return PrintClipState () ?? RecordingClipState ();
 			SyncEngine ();
 			return gp;
+		}
+
+		/// <summary>A screen recording's clip, kept by an engine of its own so that Graphics.Clip can
+		/// answer with it. It answered "infinite", so the everyday save-and-restore -- `Region old =
+		/// g.Clip; ...; g.Clip = old` -- threw the clip away in the middle of a paint: DotNetBar's
+		/// ribbon form clips its caption parts inside its one-pixel border, its button painter
+		/// restores the clip it read, and the File button's background covered the border.</summary>
+		internal WebGpuBackend.Gdip.GpGraphics rec_clip;
+
+		WebGpuBackend.Gdip.GpGraphics RecordingClipState ()
+		{
+			if (GpuRecorder == null || print_mode) return null;
+			rec_clip ??= new WebGpuBackend.Gdip.GpGraphics (new Rectangle (0, 0, 1 << 15, 1 << 15), 96f, 96f);
+			float [] m = RecordingMatrix ();
+			rec_clip.SetPage (GraphicsUnit.Pixel, 1f);
+			rec_clip.SetPixelOffset (_pixelOffset);
+			rec_clip.SetWorld (new WebGpuBackend.Gdip.GpMatrix (m [0], m [1], m [2], m [3], m [4], m [5]));
+			return rec_clip;
 		}
 
 		/// <summary>World to device, as a region or path is rasterized against this Graphics.</summary>
@@ -460,6 +478,7 @@ namespace System.Drawing
 			mf_rec?.ResetClip ();
 			gp?.ResetClip ();
 			print_clip?.ResetClip ();
+			rec_clip?.ResetClip ();
 		}
 
 		void EngineOffsetClip (float dx, float dy)

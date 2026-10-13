@@ -889,6 +889,7 @@ namespace System.Drawing
 				else gp.BeginContainer (token);
 			}
 			print_clip?.PushClipContainer (token);
+			rec_clip?.PushClipContainer (token);
 			// The recorder: the container's transform becomes the base every world transform is
 			// composed onto, and the quality settings start over.
 			rec_container = new float [] { container.M11, container.M12, container.M21, container.M22, container.Dx, container.Dy };
@@ -920,6 +921,7 @@ namespace System.Drawing
 				if (!container) gp.Save (token);
 			}
 			if (!container) print_clip?.Save (token);
+			if (!container) rec_clip?.Save (token);
 			return token;
 		}
 
@@ -929,6 +931,7 @@ namespace System.Drawing
 			RecordedRestore (token);
 			gp?.Restore (token);
 			print_clip?.Restore (token);
+			rec_clip?.Restore (token);
 		}
 
 		public void Clear (Color color)
@@ -5394,6 +5397,7 @@ namespace System.Drawing
 				CheckUse ();
 				// The engine knows the clip; a recording Graphics answers infinite.
 				if (gp != null) { SyncEngine (); return new Region (gp.GetClip ()); }
+				if (RecordingClipState () is WebGpuBackend.Gdip.GpGraphics rc && rc.AppClip != null) return new Region (rc.GetClip ());
 				return new Region ();
 			}
 			set {
