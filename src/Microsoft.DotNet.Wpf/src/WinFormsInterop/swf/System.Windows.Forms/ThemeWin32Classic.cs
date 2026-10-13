@@ -3145,26 +3145,6 @@ namespace System.Windows.Forms
 				}
 			}
 
-			ImageList image_list = control.View == View.LargeIcon || control.View == View.Tile ? control.LargeImageList : control.SmallImageList;
-			if (image_list != null) {
-				int idx;
-
-				if (item.ImageKey != String.Empty)
-					idx = image_list.Images.IndexOfKey (item.ImageKey);
-				else
-					idx = item.ImageIndex;
-
-				if (idx > -1 && idx < image_list.Images.Count) {
-					// Draw a thumbnail image if it exists for a FileViewListViewItem, otherwise draw
-					// the standard icon.  See https://bugzilla.xamarin.com/show_bug.cgi?id=28025.
-					var fi = item as System.Windows.Forms.FileViewListViewItem;
-					if (fi != null && fi.FSEntry != null && fi.FSEntry.Image != null)
-						dc.DrawImage(fi.FSEntry.Image, icon_rect);
-					else
-						image_list.Draw(dc, icon_rect.Location, idx);
-				}
-			}
-
 			// draw the item text			
 			// format for the item text
 			StringFormat format = new StringFormat ();
@@ -3220,6 +3200,30 @@ namespace System.Windows.Forms
 				// Not the moved text rectangle in List view: that reaches a row up, over the bottom
 				// of the band of a selected item above.
 				dc.FillRectangle (ResPool.GetSolidBrush (item.BackColor), control.View == View.List ? highlight_rect : text_rect);
+			
+			// The icon after the label's background, as comctl32 paints it: drawn first, the background
+			// covered it -- all of it in List view (whose band starts at the cell's edge), the last
+			// column in Details (whose label is filled from a pixel before the icon ends).
+			ImageList image_list = control.View == View.LargeIcon || control.View == View.Tile ? control.LargeImageList : control.SmallImageList;
+			if (image_list != null) {
+				int idx;
+
+				if (item.ImageKey != String.Empty)
+					idx = image_list.Images.IndexOfKey (item.ImageKey);
+				else
+					idx = item.ImageIndex;
+
+				if (idx > -1 && idx < image_list.Images.Count) {
+					// Draw a thumbnail image if it exists for a FileViewListViewItem, otherwise draw
+					// the standard icon.  See https://bugzilla.xamarin.com/show_bug.cgi?id=28025.
+					var fi = item as System.Windows.Forms.FileViewListViewItem;
+					if (fi != null && fi.FSEntry != null && fi.FSEntry.Image != null)
+						dc.DrawImage(fi.FSEntry.Image, icon_rect);
+					else
+						image_list.Draw(dc, icon_rect.Location, idx);
+				}
+			}
+
 			
 			Brush textBrush =
 				!control.Enabled ? SystemBrushes.ControlLight :
