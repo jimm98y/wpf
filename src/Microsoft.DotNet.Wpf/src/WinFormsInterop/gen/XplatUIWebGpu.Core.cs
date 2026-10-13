@@ -929,6 +929,7 @@ namespace System.Windows.Forms
 			{
 				if (!backing.ContainsKey(handle)) backing[handle] = null;      // keep the window registry
 				dc = System.Drawing.WebGpuBackend.GpuRaster.NewRecording();    // records; NO libgdiplus backing
+				dc.RecordingSurface = new Size(hwnd.width, hwnd.height);        // what GetHdc's DC covers
 			}
 			else
 			{
@@ -1180,9 +1181,12 @@ namespace System.Windows.Forms
 		// into a recording-only Graphics whose scene is captured at BlitFromOffscreen.
 		internal override void CreateOffscreenDrawable(IntPtr handle, int width, int height, out object offscreen_drawable)
 		{
-			if (s_gpuRaster) { offscreen_drawable = new object(); return; }
+			if (s_gpuRaster) { offscreen_drawable = new OffscreenMarker { Size = new Size(width, height) }; return; }
 			base.CreateOffscreenDrawable(handle, width, height, out offscreen_drawable);
 		}
+
+		/// <summary>A double-buffered control's offscreen surface in GPU-raster mode: nothing but its size.</summary>
+		private sealed class OffscreenMarker { public Size Size; }
 
 		internal override void DestroyOffscreenDrawable(object offscreen_drawable)
 		{
@@ -1192,7 +1196,11 @@ namespace System.Windows.Forms
 		internal override Graphics GetOffscreenGraphics(object offscreen_drawable)
 		{
 			if (s_gpuRaster)
-				return System.Drawing.WebGpuBackend.GpuRaster.NewRecording();   // records; no libgdiplus
+			{
+				Graphics g = System.Drawing.WebGpuBackend.GpuRaster.NewRecording();   // records; no libgdiplus
+				if (offscreen_drawable is OffscreenMarker m) g.RecordingSurface = m.Size;   // what GetHdc's DC covers
+				return g;
+			}
 			return Graphics.FromImage((Bitmap)offscreen_drawable);
 		}
 
@@ -1236,8 +1244,11 @@ namespace System.Windows.Forms
 				// scene instead -- the nearest thing this stack has to drawing straight at the
 				// screen, and it survives until the window next repaints. The forms designer paints
 				// its grid and selection handles exactly this way, on top of the control's own paint.
-				return System.Drawing.WebGpuBackend.GpuRaster.NewRecording(
+				Hwnd target = Hwnd.ObjectFromHandle(handle);
+				Graphics recording = System.Drawing.WebGpuBackend.GpuRaster.NewRecording(
 					g => MergeIntoWindowScene(handle, g));
+				if (target != null) recording.RecordingSurface = new Size(target.width, target.height);
+				return recording;
 			}
 			if (!backing.TryGetValue(handle, out Bitmap b))
 			{

@@ -136,9 +136,23 @@ namespace Wpf.WinFormsInterop.Tests
             using var path = new GraphicsPath(FillMode.Alternate);
             path.AddRectangle(new Rectangle(0, 0, 30, 30));
             path.AddRectangle(new Rectangle(10, 10, 10, 10));
-            var (n, kinds) = Record(g => g.FillPath(Brushes.Black, path));
+            // Antialiased: one path. GDI+'s default is aliased, which is the next test.
+            var (n, kinds) = Record(g => { g.SmoothingMode = SmoothingMode.AntiAlias; g.FillPath(Brushes.Black, path); });
             Assert.Equal(1, n);
             Assert.Contains("PathGeometry", kinds);
+        }
+
+        [Fact]
+        public void FillPath_Aliased_FillsWholePixelsAndKeepsTheHole()
+        {
+            // At GDI+'s default smoothing a path covers whole pixels (runs), not an antialiased geometry,
+            // and the hole stays one: 30 rows of the outer square, 10 of which are split by the inner one.
+            using var path = new GraphicsPath(FillMode.Alternate);
+            path.AddRectangle(new Rectangle(0, 0, 30, 30));
+            path.AddRectangle(new Rectangle(10, 10, 10, 10));
+            var (n, kinds) = Record(g => g.FillPath(Brushes.Black, path));
+            Assert.DoesNotContain("PathGeometry", kinds);
+            Assert.Equal(40, n);
         }
 
         [Fact]

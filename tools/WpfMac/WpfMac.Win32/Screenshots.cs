@@ -403,6 +403,16 @@ public static class Screenshots
                 foreach (Forms.Control child in c.Controls) Walk(child, depth + 1);
             }
             Walk(form, 0);
+            // WPFMAC_DUMP_STATICS="Type, Assembly:Member;...": static members, for state an app keeps there.
+            foreach (string st in (Environment.GetEnvironmentVariable("WPFMAC_DUMP_STATICS") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                int colon = st.LastIndexOf(':');
+                if (colon < 0) continue;
+                const BindingFlags sf = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+                Type? ty = Type.GetType(st[..colon]);
+                object? v = ty?.GetField(st[(colon + 1)..], sf) is FieldInfo fi ? fi.GetValue(null) : ty?.GetProperty(st[(colon + 1)..], sf)?.GetValue(null);
+                lines.Append($"[static] {st} = {v}\n");
+            }
             // Top-level controls that are not forms: popups (a menu's container) are windows of
             // their own, outside every form's tree.
             if (typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.Hwnd")?.GetField("windows", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) is System.Collections.Hashtable all)

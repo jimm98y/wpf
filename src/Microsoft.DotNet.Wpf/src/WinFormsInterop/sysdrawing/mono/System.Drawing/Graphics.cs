@@ -522,15 +522,22 @@ namespace System.Drawing
 		/// <summary>GDI+'s aliased fill at PixelOffsetMode.None: pixel (i, j) is filled when the
 		/// point (i, j) -- a pixel's centre sits on the integer coordinate -- is inside, with left and
 		/// top edges in and right and bottom edges out. Recorded as one rectangle per run.</summary>
-		private void FillPolygonAliased (float [] xy, bool winding, int argb)
+		private void FillPolygonAliased (float [] xy, bool winding, int argb) => FillContoursAliased (new [] { xy }, winding, argb);
+
+		/// <summary>The same over several contours filled together (a widened outline: a figure and the
+		/// hole inside it), under one winding rule.</summary>
+		private void FillContoursAliased (IList<float []> contours, bool winding, int argb)
 		{
-			int n = xy.Length / 2;
-			if (n < 3) return;
 			float ymin = float.MaxValue, ymax = float.MinValue;
-			for (int i = 0; i < n; i++) { ymin = Math.Min (ymin, xy [i * 2 + 1]); ymax = Math.Max (ymax, xy [i * 2 + 1]); }
+			foreach (float [] c in contours)
+				for (int i = 0; i < c.Length / 2; i++) { ymin = Math.Min (ymin, c [i * 2 + 1]); ymax = Math.Max (ymax, c [i * 2 + 1]); }
+			if (ymin > ymax) return;
 			var xs = new List<(float X, int Dir)> ();
 			for (int y = (int) Math.Ceiling (ymin); y < ymax; y++) {
 				xs.Clear ();
+				foreach (float [] xy in contours) {
+				int n = xy.Length / 2;
+				if (n < 3) continue;
 				for (int i = 0; i < n; i++) {
 					float x0 = xy [i * 2], y0 = xy [i * 2 + 1];
 					float x1 = xy [(i + 1) % n * 2], y1 = xy [(i + 1) % n * 2 + 1];
@@ -539,6 +546,7 @@ namespace System.Drawing
 					if (dir < 0) { (x0, x1) = (x1, x0); (y0, y1) = (y1, y0); }
 					if (y < y0 || y >= y1) continue;   // half-open: the top row in, the bottom row out
 					xs.Add ((x0 + (y - y0) * (x1 - x0) / (y1 - y0), dir));
+				}
 				}
 				xs.Sort ((a, b) => a.X.CompareTo (b.X));
 				int wind = 0;
@@ -3693,6 +3701,13 @@ namespace System.Drawing
 					GpuRecorder.FillContoursGradient (contours.ToArray (), nonZero, gd);
 					return;
 				}
+				// GDI+'s default smoothing is aliased: a path filled without antialiasing covers whole pixels
+				// (DotNetBar outlines its forms with a widened path filled so; antialiased, the outline came out
+				// as a half-strength line straddling two pixels).
+				if (GpuAliased && brush is SolidBrush) {
+					FillContoursAliased (contours, nonZero, ArgbOf (brush));
+					return;
+				}
 				GpuRecorder.FillContours (contours.ToArray (), nonZero, ArgbOf (brush));
 				return;
 			}
@@ -4283,6 +4298,15 @@ namespace System.Drawing
 				deviceContextHdc = gethdc_surface.MemoryDc;
 				return deviceContextHdc;
 			}
+			if (OperatingSystem.IsWindows () && GpuRecorder != null && image_target == null && !print_mode
+			    && RecordingSurface.Width > 0 && RecordingSurface.Height > 0) {
+				// A window's picture: a real DC GDI can draw into (see GpRecordingDc).
+				recording_dc = WebGpuBackend.Gdip.GpRecordingDc.Create (RecordingSurface);
+				if (recording_dc != null) {
+					deviceContextHdc = recording_dc.Hdc;
+					return deviceContextHdc;
+				}
+			}
 			lock (s_pseudoHdc) {
 				deviceContextHdc = (IntPtr) (++s_pseudoNext);
 				s_pseudoHdc [deviceContextHdc] = this;
@@ -4290,8 +4314,39 @@ namespace System.Drawing
 			return deviceContextHdc;
 		}
 
+		/// <summary>The device size of what a recording Graphics draws (a window's client area), when
+		/// whoever made it knows: what GetHdc's DC covers.</summary>
+		internal Size RecordingSurface;
+		WebGpuBackend.Gdip.GpRecordingDc recording_dc;
+
+		/// <summary>ReleaseHdc of a recording's DC: what GDI drew there goes into the recording, at the
+		/// device position it was drawn at.</summary>
+		void EndRecordingDc ()
+		{
+			var dc = recording_dc;
+			recording_dc = null;
+			deviceContextHdc = IntPtr.Zero;   // drawing again: the DC is no longer out
+			try {
+				FlushHdc (dc.Hdc);
+				using Bitmap drawn = dc.TakeDrawn (out Point at);
+				if (drawn == null) return;
+				var pts = new [] { new PointF (at.X, at.Y), new PointF (at.X + drawn.Width, at.Y), new PointF (at.X, at.Y + drawn.Height) };
+				RecordedTransformPoints (CoordinateSpace.World, CoordinateSpace.Device, pts);
+				InterpolationMode mode = InterpolationMode;
+				InterpolationMode = InterpolationMode.NearestNeighbor;
+				DrawImage (drawn, pts);
+				InterpolationMode = mode;
+			} finally {
+				dc.Dispose ();
+			}
+		}
+
 		void EndHdc ()
 		{
+			if (recording_dc != null) {
+				EndRecordingDc ();
+				return;
+			}
 			if (gethdc_surface != null) {
 				if (OperatingSystem.IsWindows ()) {
 					gethdc_surface.CopyBack (image_target.managed.Frame);

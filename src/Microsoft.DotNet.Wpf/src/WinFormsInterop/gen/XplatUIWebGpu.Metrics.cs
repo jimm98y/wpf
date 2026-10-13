@@ -15,5 +15,20 @@ namespace System.Windows.Forms {
 		internal override int MouseButtonCount { get { return 3; } }                   // SM_CMOUSEBUTTONS
 		internal override int KeyboardSpeed { get { return 31; } }                     // SPI_GETKEYBOARDSPEED default
 		internal override int KeyboardDelay { get { return 1; } }                      // SPI_GETKEYBOARDDELAY default
+		// SPI_GETFONTSMOOTHINGTYPE: ClearType (2) on a Windows 11 set up as it comes, and what this
+		// stack renders text with everywhere; Windows' own answer where there is one. The base said
+		// 1 (standard antialiasing), which stock never reports on such a machine.
+		internal override int FontSmoothingType {
+			get {
+				if (OperatingSystem.IsWindows ()) {
+					uint type = 0;
+					if (SystemParametersInfoW (0x200A, 0, ref type, 0)) return (int) type;
+				}
+				return 2;
+			}
+		}
+
+		[System.Runtime.InteropServices.DllImport ("user32", EntryPoint = "SystemParametersInfoW")]
+		static extern bool SystemParametersInfoW (uint action, uint param, ref uint value, uint winIni);
 	}
 }
