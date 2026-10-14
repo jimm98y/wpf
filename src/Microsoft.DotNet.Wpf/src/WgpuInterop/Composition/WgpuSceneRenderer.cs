@@ -278,6 +278,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             public IntPtr SubTex, SubView;     // sharp content layer (owned)
             public IntPtr BlurTex, BlurView;   // blurred layer for blur/shadow (owned; Zero if none)
+            // An opacity layer holding ClearType text: each channel's own coverage (see
+            // CoverageDrawData), so it composites per channel. Zero if none.
+            public IntPtr CovTex, CovView;
+            // The paper its text asked for under the layer (DrawData.BackdropAsks), each box with
+            // the answer: the bake is good only while the same questions get the same answers.
+            public List<(float X0, float Y0, float X1, float Y1, RgbaColor? Paper)>? BackdropAsks;
             public IntPtr MaskTex, MaskView;   // R8 mask for clip-geometry/opacity-mask (owned; Zero if none)
             // Whether MaskTex came from the pool, and so may go back to it. Same trap as
             // CachedMask.Pooled: the CPU fallbacks here upload a sampling-only texture.
@@ -343,6 +349,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (deadC != null) foreach (long k in deadC) _linearChurn.Remove(k);
             }
 
+            foreach (CachedLayer retired in _retiredLayers) ReleaseCachedLayer(retired);
+            _retiredLayers.Clear();
             if (_layerCache.Count > 0)
             {
                 List<long>? deadL = null;
@@ -353,6 +361,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     CachedLayer c = kv.Value;
                     // Return the (same-size, reusable) RGBA layer textures to the pool; release the R8 mask.
                     ReturnLayerTexture(c.SubTex, c.SubView, c.Rw, c.Rh);
+                    if (c.CovTex != IntPtr.Zero) ReturnLayerTexture(c.CovTex, c.CovView, c.Rw, c.Rh);
                     if (c.BlurTex != IntPtr.Zero && c.ShadowKey == 0) ReturnLayerTexture(c.BlurTex, c.BlurView, c.Rw, c.Rh);
                     if (c.MaskTex != IntPtr.Zero)
                     {
@@ -533,7 +542,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // visual. A shared 1x1 white coverage texture is bound for solid/bounds quads.
         private static string IdShaderWgsl => ShaderSource.Get("IdShader");
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd, LayerStretchAnd, LayerWindowFade, LayerWindowAdd, LayerPoint }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd, LayerStretchAnd, LayerWindowFade, LayerWindowAdd, LayerPoint, LayerSubpixelMultiply, LayerSubpixelAdd }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind, bool SourceCopy), IntPtr> _pipelines = new();
@@ -941,6 +950,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // Keyed by draw index, so they belong to this pass's draws and go with them.
             d.GradientPaper?.Clear(); d.ClearDraws?.Clear();
             d.Culled?.Clear(); d.CullConflict = false; d.ClipLayers?.Clear();
+            d.Backdrop = null; d.BackdropFromNdc = null; d.BackdropAsks = null;
             d.VbOffset = d.IbOffset = -1;
             _inUseDrawData.Add(d);
             return d;
@@ -1023,6 +1033,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// <summary>Per clip-layer composite (by index into <see cref="Draws"/>), the layer it
             /// composites, so a paper question can look under the clip into the layer's own draws.</summary>
             public Dictionary<int, CachedLayer>? ClipLayers;
+            /// <summary>An opacity layer's: the pass it will be composited into, and that pass's
+            /// device mapping. Text in the layer whose box nothing in the layer touches is blended
+            /// against the paper there (see <see cref="PaperUnder"/>); each such question and its
+            /// answer is kept in <see cref="BackdropAsks"/>.</summary>
+            public DrawData? Backdrop;
+            public Func<Vector2, Vector2>? BackdropFromNdc;
+            public List<(float X0, float Y0, float X1, float Y1, RgbaColor? Paper)>? BackdropAsks;
             // Byte offsets of this pass's vertices/indices inside the frame's shared batched geometry
             // buffers (BuildBatchedGeometry). -1 = no geometry / not yet assigned this frame.
             public int VbOffset = -1, IbOffset = -1;
@@ -1636,6 +1653,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                 }
                 PerfHashTicks += System.Diagnostics.Stopwatch.GetTimestamp() - h0;
+                if (cacheHit && !fullTarget && cl!.BackdropAsks is not null
+                    && !BackdropHolds(cl, outData, BackdropMapping(width, height)))
+                {
+                    // Its text was blended against a paper that is no longer there.
+                    // Its textures may already be drawn from this frame: they go back to the pool when it ends.
+                    _layerCache.Remove(key);
+                    _retiredLayers.Add(cl);
+                    cl = null;
+                    cacheHit = false;
+                }
                 if (!cacheHit)
                 {
                     PerfLayerMiss++;
@@ -1646,7 +1673,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // the composite scissors to the live clip.
                     Scissor bakeClip = fullTarget ? new Scissor((int)_devOX, (int)_devOY, width, height)
                         : stableRegion ? region : clip;
-                    _layerCache[key] = cl = RenderLayerToCache(v, world, region, bakeClip, plan, width, height);
+                    _layerCache[key] = cl = RenderLayerToCache(v, world, region, bakeClip, plan, width, height,
+                        backdrop: fullTarget ? null : outData);
                     cl.FullTarget = fullTarget;
                     cl.OrigTX = world.M31; cl.OrigTY = world.M32;
                     if (fullTarget)
@@ -1815,11 +1843,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         // Render a cacheable region layer (subtree + optional blur) into OWNED textures.
-        private CachedLayer RenderLayerToCache(SceneVisual v, Matrix3x2 world, Scissor region, Scissor clip, List<LayerPass> plan, int width, int height)
+        private CachedLayer RenderLayerToCache(SceneVisual v, Matrix3x2 world, Scissor region, Scissor clip, List<LayerPass> plan, int width, int height,
+            DrawData? backdrop = null)
         {
             int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
             (IntPtr subTex, IntPtr subView) = CreateOwnedLayerTexture(rw, rh);
             DrawData subData = RentDrawData();
+            if (backdrop is not null && PlainOpacityLayer(v))
+            {
+                subData.Backdrop = backdrop;
+                subData.BackdropFromNdc = BackdropMapping(width, height);
+            }
             float sOX = _devOX, sOY = _devOY;
             _devOX = rx; _devOY = ry;
             EmitSubtree(v, world, 1.0, clip, subData, plan, rw, rh, ReadbackFormat);
@@ -1827,6 +1861,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             plan.Add(new LayerPass(subView, true, default, subData, ReadbackFormat) { OriginX = rx, OriginY = ry, TexW = rw, TexH = rh });
 
             var cl = new CachedLayer { SubTex = subTex, SubView = subView, Rx = rx, Ry = ry, Rw = rw, Rh = rh };
+            if (subData.BackdropAsks is { } asks) cl.BackdropAsks = new(asks);
+            if (s_layerSubpixel && PlainOpacityLayer(v) && CoverageDrawData(subData) is { } covData)
+            {
+                (cl.CovTex, cl.CovView) = CreateOwnedLayerTexture(rw, rh);
+                plan.Add(new LayerPass(cl.CovView, true, default, covData, ReadbackFormat) { OriginX = rx, OriginY = ry, TexW = rw, TexH = rh });
+            }
             if (v.ClipGeometry is { } clipGeom)
             {
                 // Region-sized geometry-clip mask (rasterized once, cached with the layer) --
@@ -2190,10 +2230,112 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     cl.Rx + cl.OffX, cl.Ry + cl.OffY, cl.Rw, cl.Rh, region, width, height);
                 EmitLayerQuad(outData, outFormat, FillKind.Layer, cl.SubView, 1f, 1f, 1f, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, clip, width, height);
             }
+            else if (cl.CovView != IntPtr.Zero)
+            {
+                // Per channel: dst = dst (1 - o A_c) + o L_c -- what wpfgfx gets by drawing the group
+                // over a copy of what is under it and blending that copy back at 1 - o.
+                EmitLayerQuad(outData, outFormat, FillKind.LayerSubpixelMultiply, cl.CovView, 1f, 1f, 1f, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, clip, width, height);
+                EmitLayerQuad(outData, outFormat, FillKind.LayerSubpixelAdd, cl.SubView, 1f, 1f, 1f, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, clip, width, height);
+            }
             else
             {
                 EmitLayerQuad(outData, outFormat, FillKind.Layer, cl.SubView, 1f, 1f, 1f, groupOpacity, cl.Rx, cl.Ry, cl.Rw, cl.Rh, clip, width, height);
             }
+        }
+
+        /// <summary>WPF_LAYER_SUBPIXEL=0 composites an opacity layer's ClearType text by its mean
+        /// coverage, as every other layer.</summary>
+        private static readonly bool s_layerSubpixel = Environment.GetEnvironmentVariable("WPF_LAYER_SUBPIXEL") != "0";
+
+        /// <summary>A layer made only for its opacity: no clip geometry, opacity mask or effect.</summary>
+        private static bool PlainOpacityLayer(SceneVisual v) => v.ClipGeometry is null && v.OpacityMask is null && v.Effect is null;
+
+        /// <summary>The current pass's NDC-to-device mapping, as PaperUnder measures its draws.</summary>
+        private Func<Vector2, Vector2> BackdropMapping(int width, int height)
+        {
+            float ox = _devOX, oy = _devOY;
+            return nd => new Vector2((nd.X + 1f) * 0.5f * width + ox, (1f - nd.Y) * 0.5f * height + oy);
+        }
+
+        /// <summary>Whether every paper question a cached layer's text asked of what is under it
+        /// still gets the same answer in <paramref name="backdrop"/>.</summary>
+        private static bool BackdropHolds(CachedLayer cl, DrawData backdrop, Func<Vector2, Vector2> fromNdc)
+        {
+            if (cl.BackdropAsks is not { } asks) return true;
+            foreach ((float x0, float y0, float x1, float y1, RgbaColor? was) in asks)
+            {
+                RgbaColor? now = PaperUnder(backdrop, x0, y0, x1, y1, fromNdc, out Func<int, int, RgbaColor?>? field);
+                if (field is not null) now = null;
+                if (now.HasValue != was.HasValue || (now is { } n && was is { } w && !SameColour(n, w))) return false;
+            }
+            return true;
+        }
+
+        private readonly List<CachedLayer> _retiredLayers = new();
+
+        private void ReleaseCachedLayer(CachedLayer c)
+        {
+            ReturnLayerTexture(c.SubTex, c.SubView, c.Rw, c.Rh);
+            if (c.CovTex != IntPtr.Zero) ReturnLayerTexture(c.CovTex, c.CovView, c.Rw, c.Rh);
+            if (c.BlurTex != IntPtr.Zero && c.ShadowKey == 0) ReturnLayerTexture(c.BlurTex, c.BlurView, c.Rw, c.Rh);
+            if (c.MaskTex != IntPtr.Zero)
+            {
+                if (c.MaskPooled) ReturnMaskTexture(c.MaskTex, c.MaskView, c.Rw, c.Rh);
+                else { wgpuTextureViewRelease(c.MaskView); wgpuTextureRelease(c.MaskTex); }
+            }
+        }
+
+        /// <summary>
+        /// The draws of an opacity layer holding ClearType text, recoloured so that each channel of
+        /// the target ends up with that channel's own coverage; null when the layer has no subpixel
+        /// text or draws something this cannot recolour.
+        /// <para>A layer is one RGBA texture: its colour per channel is right (the text's two passes
+        /// write it per channel), but its alpha is one number -- the mean of the three coverages --
+        /// so compositing it at an opacity took the paper out by that mean in every channel: white
+        /// text grew blue and orange fringes darker than the paper, black text went grey. wpfgfx
+        /// draws the group over a copy of what is under it and lerps that copy back in, which is
+        /// dst (1 - o A_c) + o L_c per channel. A_c is the over-composite of each draw's coverage of
+        /// channel c: drawing the same draws with every colour replaced by its own alpha (and the
+        /// text's ink by white) computes exactly that.</para>
+        /// </summary>
+        private DrawData? CoverageDrawData(DrawData src)
+        {
+            bool subpixel = false;
+            foreach (DrawItem d in src.Draws)
+                if (d.Kind == FillKind.TextSubpixelAdd) { subpixel = true; break; }
+            if (!subpixel) return null;
+            int nv = src.Verts.Count / FloatsPerVertex;
+            var cls = new byte[nv];          // 1: premultiplied colour, 2: straight colour (text)
+            foreach (DrawItem d in src.Draws)
+            {
+                if (d.SourceCopy) return null;
+                byte c = d.Kind switch
+                {
+                    FillKind.Solid or FillKind.Shape or FillKind.StrokeDraw => 1,
+                    FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd => 2,
+                    _ => 0,
+                };
+                if (c == 0) return null;     // an image, a gradient, a nested layer: its colour is not in its vertices
+                for (uint i = d.FirstIndex, e = d.FirstIndex + d.IndexCount; i < e; i++)
+                {
+                    uint vi = src.Indices[(int)i];
+                    if (vi >= (uint)nv || (cls[vi] != 0 && cls[vi] != c)) return null;
+                    cls[vi] = c;
+                }
+            }
+            DrawData cov = RentDrawData();
+            cov.Verts.AddRange(src.Verts);
+            cov.Indices.AddRange(src.Indices);
+            cov.Draws.AddRange(src.Draws);
+            cov.HasText = src.HasText;
+            for (int vtx = 0; vtx < nv; vtx++)
+            {
+                if (cls[vtx] == 0) continue;
+                int o = vtx * FloatsPerVertex + 2;
+                float rgb = cls[vtx] == 1 ? cov.Verts[o + 3] : 1f;
+                cov.Verts[o] = rgb; cov.Verts[o + 1] = rgb; cov.Verts[o + 2] = rgb;
+            }
+            return cov;
         }
 
         // Latest transient (partially-visible) full-target bake per stable key, for
@@ -2614,7 +2756,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             float r, float g, float b, float a, int devX, int devY, int texW, int texH, Scissor clip, int width, int height)
         {
             if (clip.IsEmpty) return;
-            IntPtr sampler = kind is FillKind.Layer or FillKind.LayerStretchAnd or FillKind.LayerWindowFade or FillKind.LayerWindowAdd or FillKind.LayerPoint ? NearestSampler() : LinearSampler();
+            IntPtr sampler = kind is FillKind.Layer or FillKind.LayerStretchAnd or FillKind.LayerWindowFade or FillKind.LayerWindowAdd or FillKind.LayerPoint
+                or FillKind.LayerSubpixelMultiply or FillKind.LayerSubpixelAdd ? NearestSampler() : LinearSampler();
             IntPtr bindGroup = CreateSampledBindGroup(format, kind, view, sampler);
             DeferReleaseBindGroup(bindGroup);
 
@@ -5001,6 +5144,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             if (same is { } s1)
                 return data.ClearPaper is { } cp && SameColour(cp, s1) ? TracePaper("clear", cp) : TracePaper("solid-partial", null);
+            if (data.ClearPaper is null && data.Backdrop is { } under && data.BackdropFromNdc is { } underNdc)
+            {
+                // An opacity layer that leaves the box alone: wpfgfx draws the group over a copy of
+                // what is under it, so its text blends against that paper.
+                RgbaColor? below = PaperUnder(under, x0, y0, x1, y1, underNdc, out Func<int, int, RgbaColor?>? belowField);
+                if (belowField is not null) below = null;            // one colour or nothing: a bake is checked by its answers
+                (data.BackdropAsks ??= new()).Add((x0, y0, x1, y1, below));
+                return TracePaper("under-layer", below);
+            }
             return TracePaper(data.ClearPaper is null ? "clear-unknown" : "clear", data.ClearPaper);
         }
 
@@ -6695,7 +6847,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             FillKind.BrushAlpha or FillKind.Id or FillKind.Stroke or
             FillKind.StrokeDraw or
             FillKind.ShaderEffect or      // group 0 = constants uniform (optional) + input texture + sampler
-            FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd
+            FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd or
+            FillKind.LayerSubpixelMultiply or FillKind.LayerSubpixelAdd
                 => d.BindGroup,
 
             // Glyph runs share the atlas bind group; path masks carry their own.
@@ -7088,8 +7241,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 FillKind.Textured => "fs_textured",
                 FillKind.Text => "fs_text",
-                FillKind.TextSubpixelMultiply => "fs_text_subpixel_multiply",
-                FillKind.TextSubpixelAdd => "fs_text_subpixel_add",
+                FillKind.TextSubpixelMultiply or FillKind.LayerSubpixelMultiply => "fs_text_subpixel_multiply",
+                FillKind.TextSubpixelAdd or FillKind.LayerSubpixelAdd => "fs_text_subpixel_add",
                 FillKind.Layer => "fs_layer",
                 FillKind.LayerStretchAnd => "fs_layer_and",
                 FillKind.LayerWindowFade => "fs_window_fade",
@@ -7143,7 +7296,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // The two halves of subpixel text. Together they are the ordinary source-over blend
                 // written out per channel, which is the one thing a single blend state cannot say:
                 // its destination factor is one number and here each lamp needs its own.
-                if (kind == FillKind.TextSubpixelMultiply)
+                if (kind is FillKind.TextSubpixelMultiply or FillKind.LayerSubpixelMultiply)
                 {
                     // dst *= (1 - coverage), per channel.
                     blend.color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.OneMinusSrc };
@@ -7161,7 +7314,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     blend.color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.One };
                     blend.alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.One };
                 }
-                else if (kind == FillKind.TextSubpixelAdd)
+                else if (kind is FillKind.TextSubpixelAdd or FillKind.LayerSubpixelAdd)
                 {
                     // dst += colour * coverage, per channel.
                     blend.color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.One };
