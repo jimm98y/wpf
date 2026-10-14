@@ -1,4 +1,4 @@
-// The seam that lets content which is NOT a WinForms control contribute to the frame — today a WPF
+﻿// The seam that lets content which is NOT a WinForms control contribute to the frame — today a WPF
 // element tree hosted by ElementHost (System.Windows.Forms.Integration). The per-OS hosts ask this
 // for extra scenes on every present and append them AFTER the driver's own window scenes, so the
 // hosted content draws over the control it occupies and the whole window is still ONE WebGPU render
@@ -151,6 +151,9 @@ namespace System.Windows.Forms
             }
 
             if (HostWindow == IntPtr.Zero) return false;
+            // A control in no form is on no window yet: an embedded scene in it (a WebView2 asked to
+            // initialise in its owner's constructor) waits until it is placed.
+            if (top is not Form) return false;
 
             // The driver's own top-level host: the form fills the host window from its origin.
             Point origin = Point.Empty;
