@@ -549,6 +549,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public void CreateOrAddRef(uint handle, MilResourceTypeId type)
         {
             Note($"res:{(uint)type}");
+            if (s_tracePath is not null) _resourceType[handle] = type;
             _refCounts[handle] = _refCounts.TryGetValue(handle, out int rc) ? rc + 1 : 1;
             switch (type)
             {
@@ -582,6 +583,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 return false;
             }
             _refCounts.Remove(handle);
+            if (_renderData.TryGetValue(handle, out byte[]? shown))
+                KeepShownContent(handle, shown);
+            if (_visualContent.Remove(handle, out uint keptKey) && (keptKey & 0x80000000u) != 0)
+                _renderData.Remove(keptKey);
             _visuals.Remove(handle);
             _renderData.Remove(handle);
             _solidBrushes.Remove(handle);
@@ -938,7 +943,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // Record the link only; the render data is parsed lazily in Realize() so
                     // brushes/pens/geometries updated after this command are resolved correctly.
                     uint vh = r.U32();
-                    _visualContent[vh] = r.U32();
+                    uint content = r.U32();
+                    if (_visualContent.TryGetValue(vh, out uint was) && (was & 0x80000000u) != 0 && was != content)
+                        _renderData.Remove(was);
+                    _visualContent[vh] = content;
                     break;
                 }
                 case Mil.VisualInsertChildAt:
@@ -1608,6 +1616,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             foreach (KeyValuePair<uint, uint> kv in _visualContent)
             {
                 if (!_visuals.TryGetValue(kv.Key, out SceneVisual? v)) continue;
+                if (s_tracePath is not null && kv.Value != 0 && (!_renderData.TryGetValue(kv.Value, out byte[]? probe) || probe.Length == 0))
+                    Trace($"visual 0x{kv.Key:x} content 0x{kv.Value:x} has no render data (type {(_resourceType.TryGetValue(kv.Value, out MilResourceTypeId ct) ? ct.ToString() : "?")})");
                 if (kv.Value != 0 && _renderData.TryGetValue(kv.Value, out byte[]? data))
                 {
                     // Skip re-parsing visuals whose render-data buffer is unchanged since last frame.
@@ -1625,6 +1635,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _parseResourceRefs.Clear();
                     _parseGuidesX.Clear(); _parseGuidesY.Clear();
                     ParseRenderData(data, v.Content);
+                    if (s_tracePath is not null && data.Length > 0)
+                        Trace($"visual 0x{kv.Key:x} render data {data.Length} bytes -> {v.Content.Count} primitives, ops {RenderDataOps(data)}");
                     ApplyParsedGuides(kv.Key, v);
                     if (_parseTouchedContentBrush) _contentBrushConsumers.Add(kv.Key); else _contentBrushConsumers.Remove(kv.Key);
                     RecordResourceDeps(kv.Key);
@@ -1671,6 +1683,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     }
                 }
             }
+
+            if (s_tracePath is not null) TraceReachability();
 
             Realize3D();   // flatten any Viewport3D scene graphs into Viewport3DDraw content
 
@@ -2871,7 +2885,84 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 _parseResourceRefs.Add(ib.ImageHandle);   // the pixels are baked in too
                 return new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height, ib.Tile, bounds.Width, bounds.Height, (float)ib.Opacity);
             }
+            Trace($"brush 0x{handle:x} unresolved (type {(_resourceType.TryGetValue(handle, out MilResourceTypeId t) ? t.ToString() : "?")})");
             return null;
+        }
+
+        /// <summary>WPF_ENGINE_TRACE names a file: each distinct line written once (a content
+        /// diagnostic -- unresolved brushes, visuals whose content never arrives).</summary>
+        private static readonly string? s_tracePath = Environment.GetEnvironmentVariable("WPF_ENGINE_TRACE");
+        private static readonly HashSet<string> s_traced = new();
+        private readonly Dictionary<uint, MilResourceTypeId> _resourceType = new();
+        /// <summary>
+        /// A render data leaving the channel while a visual still shows it. A milcore visual holds
+        /// its own reference to its content, so the content stays on screen until the visual is
+        /// given other content -- the channel handle is free, and may be reused for something else.
+        /// Each visual showing it keeps the bytes under a key of its own (the high bit marks the
+        /// key as not a channel handle). Telerik's ribbon window releases its title bar's content
+        /// this way, and the whole caption and frame went blank.
+        /// </summary>
+        private void KeepShownContent(uint handle, byte[] data)
+        {
+            List<uint>? showing = null;
+            foreach (KeyValuePair<uint, uint> vc in _visualContent)
+                if (vc.Value == handle && _visuals.ContainsKey(vc.Key)) (showing ??= new()).Add(vc.Key);
+            if (showing is null) return;
+            foreach (uint visual in showing)
+            {
+                uint key = 0x80000000u | visual;
+                _renderData[key] = data;
+                _visualContent[visual] = key;
+            }
+        }
+
+        /// <summary>Trace: visuals whose content was parsed but that no target's tree reaches.</summary>
+        private void TraceReachability()
+        {
+            var reached = new HashSet<SceneVisual>(ReferenceEqualityComparer.Instance);
+            var stack = new Stack<SceneVisual>();
+            foreach (MilTarget t in _targets.Values)
+                if (_visuals.TryGetValue(t.RootHandle, out SceneVisual? root)) stack.Push(root);
+            while (stack.Count > 0)
+            {
+                SceneVisual v = stack.Pop();
+                if (!reached.Add(v)) continue;
+                foreach (SceneVisual c in v.Children) stack.Push(c);
+            }
+            int withContent = 0, orphans = 0;
+            var sample = new System.Text.StringBuilder();
+            foreach (KeyValuePair<uint, SceneVisual> kv in _visuals)
+            {
+                if (kv.Value.Content.Count == 0) continue;
+                withContent++;
+                if (!reached.Contains(kv.Value)) { orphans++; if (orphans <= 8) sample.Append($" 0x{kv.Key:x}"); }
+            }
+            Trace($"reach: {_visuals.Count} visuals, {reached.Count} reached, {withContent} with content, {orphans} of them unreached:{sample}");
+        }
+
+        private static string RenderDataOps(byte[] data)
+        {
+            var sb = new System.Text.StringBuilder();
+            int pos = 0;
+            while (pos + 8 <= data.Length)
+            {
+                int size = BitConverter.ToInt32(data, pos);
+                uint op = BitConverter.ToUInt32(data, pos + 4);
+                sb.Append($"{op:x2} ");
+                if (size < 8) break;
+                pos += size;
+            }
+            return sb.ToString();
+        }
+
+        private static void Trace(string line)
+        {
+            if (s_tracePath is null) return;
+            lock (s_traced)
+            {
+                if (!s_traced.Add(line)) return;
+                try { System.IO.File.AppendAllText(s_tracePath, line + Environment.NewLine); } catch (System.IO.IOException) { }
+            }
         }
 
         /// <summary>Resolve a pen handle to its stroke brush + style.</summary>

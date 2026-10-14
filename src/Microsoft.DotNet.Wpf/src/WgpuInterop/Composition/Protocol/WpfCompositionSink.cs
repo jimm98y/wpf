@@ -843,6 +843,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // WPF_WEBGPU_SINK_DUMP; fires once around frame 90 so animation has settled.
             if (s_dumpPath != null && AcquiredFrames == 40)
                 VerifyOffscreen(EmbeddedContent.Compose(root, ts.Hwnd), t, AcquiredFrames);
+            // On demand: a file named <dump>.now makes the next frame dump its picture and its scene
+            // tree (<dump>_<frame>.tree.txt), then is deleted -- for an app that has gone idle long
+            // before frame 40.
+            if (s_dumpPath != null && System.IO.File.Exists(s_dumpPath + ".now"))
+            {
+                try { System.IO.File.Delete(s_dumpPath + ".now"); } catch (System.IO.IOException) { }
+                SceneVisual composed = EmbeddedContent.Compose(root, ts.Hwnd);
+                DumpTree(composed, System.IO.Path.Combine(System.IO.Path.GetDirectoryName(s_dumpPath) ?? ".",
+                    System.IO.Path.GetFileNameWithoutExtension(s_dumpPath) + "_" + AcquiredFrames.ToString("000") + ".tree.txt"));
+                VerifyOffscreen(composed, t, AcquiredFrames);
+            }
 
             long tp = System.Diagnostics.Stopwatch.GetTimestamp();
             WGPUStatus pres = wgpuSurfacePresent(ts.Surface);
@@ -1059,6 +1070,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             int n = v.Content.Count;
             foreach (SceneVisual c in v.Children) n += CountDrawables(c);
             return n;
+        }
+
+        /// <summary>The scene tree as text: per visual its depth, id, offset, opacity, clip and
+        /// effect, then its content -- each primitive's kind and brush.</summary>
+        private static void DumpTree(SceneVisual root, string path)
+        {
+            var sb = new System.Text.StringBuilder();
+            static string B(Brush? b) => b switch
+            {
+                null => "-",
+                SolidColorBrush sc => $"solid({sc.Color.R:0.##},{sc.Color.G:0.##},{sc.Color.B:0.##},{sc.Color.A:0.##})",
+                _ => b.GetType().Name,
+            };
+            void Walk(SceneVisual v, int depth)
+            {
+                string pad = new string(' ', 2 * depth);
+                sb.Append(pad).Append($"#{v.Id} off=({v.Offset.X:0.#},{v.Offset.Y:0.#})");
+                if (!v.Transform.IsIdentity) sb.Append($" xf=[{v.Transform.M11:0.###} {v.Transform.M12:0.###} {v.Transform.M21:0.###} {v.Transform.M22:0.###} {v.Transform.M31:0.#} {v.Transform.M32:0.#}]");
+                if (v.Opacity < 1) sb.Append($" op={v.Opacity:0.###}");
+                if (v.Clip is { } c) sb.Append($" clip=({c.X:0.#},{c.Y:0.#},{c.Width:0.#},{c.Height:0.#})");
+                if (v.ClipGeometry is { } cg) sb.Append($" clipgeo[{cg.Figures.Count} fig{(cg.Figures.Count > 0 ? $" start=({cg.Figures[0].Start.X:0.#},{cg.Figures[0].Start.Y:0.#}) segs={cg.Figures[0].Segments.Count} {string.Join(",", System.Linq.Enumerable.Select(System.Linq.Enumerable.Take(cg.Figures[0].Segments, 6), sg => sg.GetType().Name))}" : "")}]");
+                if (v.OpacityMask is not null) sb.Append($" mask={B(v.OpacityMask)}");
+                if (v.Effect is not null) sb.Append($" fx={v.Effect.GetType().Name}");
+                sb.Append($" content={v.Content.Count} children={v.Children.Count}").Append('\n');
+                foreach (DrawingPrimitive p in v.Content)
+                {
+                    sb.Append(pad).Append("  - ").Append(p switch
+                    {
+                        GeometryFill f => $"fill {f.Geometry.GetType().Name} {B(f.Brush)}",
+                        GeometryDrawing d => $"draw {d.Geometry.GetType().Name} fill={B(d.Fill)} stroke={B(d.Stroke)}",
+                        _ => p.GetType().Name,
+                    }).Append('\n');
+                }
+                foreach (SceneVisual ch in v.Children) Walk(ch, depth + 1);
+            }
+            Walk(root, 0);
+            try { System.IO.File.WriteAllText(path, sb.ToString()); Log($"wrote tree {path}"); } catch (System.IO.IOException) { }
         }
 
         private static void Log(string message)
