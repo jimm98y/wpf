@@ -2253,19 +2253,25 @@ namespace System.Windows.Forms
 			// whatever the style, so a marquee bar sat still showing a partial fill that meant nothing.
 			// The control already runs a timer and invalidates for this; only the drawing was missing.
 			if (ctrl.Style == ProgressBarStyle.Marquee) {
-				Rectangle track = Rectangle.Inflate (bounds, -1, -1);
-				if (track.Width <= 0 || track.Height <= 0)
+				// The chunk (see ProgressBar.marquee_pos) spans the bar's full width -- over the side
+				// border too -- and sits inside its top and bottom lines. Along the foot the pulse
+				// overlay fades in and out over one crossing, by the highlight sweep's own rule with
+				// the whole bar as its span: comctl32 lightens the trough's foot as well as the chunk's.
+				int pos = ctrl.marquee_pos;
+				if (pos < 0 || bounds.Height <= 2)
 					return;
-				int speed = Math.Max (1, ctrl.MarqueeAnimationSpeed);
-				// The same clock and scaling the classic theme marquees on, so the two agree about speed.
-				double ms = (DateTime.Now - ctrl.start).TotalMilliseconds;
-				double phase = ms / ThemeWin32Classic.ProgressBarMarqueeSpeedScaling % speed / speed;
-				int seg = Math.Max (1, (int) Math.Round (track.Width * MarqueeSegment));
-				int x = track.X - seg + (int) Math.Round (phase * (track.Width + seg));
-				int left = Math.Max (track.X, x);
-				int right = Math.Min (track.Right, x + seg);
+				const int Cy = 18;
+				int left = Math.Max (bounds.X, bounds.X + pos - (ProgressBar.MarqueeChunk - 1));
+				int right = Math.Min (bounds.Right, bounds.X + pos + 1);
 				if (right > left)
-					dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), left, track.Y, right - left, track.Height);
+					dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), left, bounds.Y + 1, right - left, bounds.Height - 2);
+				int span = bounds.Width + ProgressBar.MarqueeChunk;
+				if (pos < span) {
+					int a = MulDiv (pos, 511, span);
+					if (a > 255)
+						a = (byte) (255 - a);
+					Win11Frames.DrawFaded (dc, Win11Frames.ProgressPulseOverlay (), new Rectangle (bounds.X, bounds.Bottom - Cy, bounds.Width, Cy), a);
+				}
 				return;
 			}
 
