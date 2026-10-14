@@ -104,6 +104,12 @@ namespace System.Windows.Forms.Integration
             };
         }
 
+        private readonly System.Threading.Thread _ownerThread = System.Threading.Thread.CurrentThread;
+
+        /// <summary>Whether this is the thread the hosted WPF tree belongs to -- asked without making
+        /// the tree (Container is created on first use, and made on the wrong thread it is lost).</summary>
+        private bool OnTreeThread => _container != null ? _container.Dispatcher.CheckAccess() : _ownerThread == System.Threading.Thread.CurrentThread;
+
         public ElementHost()
         {
             HookMessageFilters();
@@ -147,6 +153,10 @@ namespace System.Windows.Forms.Integration
         void IEmbeddedScene.Pump()
         {
             if (_failed || IsDisposed) return;
+            // Every UI thread's frame pumps every embedded scene. Another thread's (a splash screen's)
+            // must leave this one alone: invoking onto this tree's dispatcher from there deadlocked
+            // the moment this thread was itself waiting on that one.
+            if (!OnTreeThread) return;
             try
             {
                 EnsureSource();
@@ -219,9 +229,32 @@ namespace System.Windows.Forms.Integration
         private void EnsureSource()
         {
             if (_child == null) return;                             // nothing to host yet
+            // Another UI thread's frame (a splash screen's) pumps every embedded scene; this one is
+            // only ever made and moved on the thread its WPF tree belongs to.
+            if (!OnTreeThread) return;
             // This control's own form's window: not EmbeddedScenes.HostWindow, which is whichever
             // form's host came up last (a tooltip, a drop-down) and would carry this content off.
-            if (!EmbeddedScenes.TryGetHostWindow(this, out IntPtr hostWindow, out float hostScale)) return;   // host window not created yet
+            if (!EmbeddedScenes.TryGetHostWindow(this, out IntPtr hostWindow, out float hostScale))
+            {
+                // No window to put it in yet -- the form's own appears only once it is shown. .NET's
+                // ElementHost has its HwndSource from handle creation, and apps rely on it: a WPF
+                // Focus() made while the form is coming up (GraphWorX focuses its main view as it
+                // becomes visible) found no source, did nothing, and the form's activation then gave
+                // the keyboard to the first control in tab order instead. So on Windows the source is
+                // made at once, in a hidden parking window, and moved into the form's window when
+                // there is one.
+                if (!CompositeIntoHostFrame || _source != null || FindForm() == null) return;
+                hostWindow = ParkingWindow();
+                if (hostWindow == IntPtr.Zero) return;
+                hostScale = 1f;
+                _parked = true;
+            }
+            else if (_parked && _source != null)
+            {
+                _parked = false;
+                if (!ReparentHostedWindow(hostWindow)) { _failed = true; return; }
+                _placedX = _placedY = int.MinValue;                 // place it again, in its real parent
+            }
 
             // An overlay window is on screen exactly while this control is: Visible (which is false
             // when any parent is hidden) in a shown form. On Windows the hosted window is a child of
@@ -294,6 +327,49 @@ namespace System.Windows.Forms.Integration
         // Windows and a forward to the platform window (Cocoa/Wayland/browser) everywhere else. It is
         // internal to PresentationCore, hence the reflection; a head that somehow lacks it just leaves
         // the window put rather than failing the app.
+        private bool _parked;
+        [ThreadStatic] private static HwndSource t_parking;
+
+        /// <summary>A hidden window of this thread to make hosted windows in before their form has
+        /// a window of its own (see EnsureSource). Claimed, so it never gets a surface.</summary>
+        private static IntPtr ParkingWindow()
+        {
+            if (t_parking == null || t_parking.IsDisposed)
+            {
+                const int WS_POPUP = unchecked((int)0x80000000);
+                t_parking = new HwndSource(new HwndSourceParameters("ElementHostParking") { WindowStyle = WS_POPUP, Width = 1, Height = 1 });
+                HostedWpfContent.Claim(t_parking.Handle);
+            }
+            return t_parking.Handle;
+        }
+
+        private static MethodInfo s_setParent;
+
+        private bool ReparentHostedWindow(IntPtr parent)
+        {
+            if (s_setParent == null)
+                foreach (Assembly a in new[] { typeof(HwndSource).Assembly, typeof(Dispatcher).Assembly })
+                {
+                    s_setParent = a.GetType("MS.Win32.UnsafeNativeMethods")?.GetMethod("SetParent", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(HandleRef), typeof(HandleRef) }, null);
+                    if (s_setParent != null) break;
+                }
+            if (s_setParent == null) return false;
+            try { s_setParent.Invoke(null, new object[] { new HandleRef(this, _source.Handle), new HandleRef(null, parent) }); return true; }
+            catch (Exception ex) { Console.Error.WriteLine("ElementHost: reparent failed: " + ex.Message); return false; }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            // Only on the thread the WPF tree belongs to (a control can be created on one thread and
+            // get its handle on another).
+            if (CompositeIntoHostFrame && _source == null && !_failed && OnTreeThread)
+            {
+                try { EnsureSource(); }
+                catch (Exception ex) { _failed = true; Console.Error.WriteLine("ElementHost: hosting failed: " + ex); }
+            }
+        }
+
         private static MethodInfo s_setWindowPos;
         private static bool s_setWindowPosResolved;
 
