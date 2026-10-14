@@ -148,10 +148,26 @@ namespace System.Windows.Forms {
 					gr.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (ThemeEngine.Current.ColorControl), rect);
 				}
 				if (enabled) {
-					ControlPaint.DrawSizeGrip (gr, BackColor, rect);
+					if (is_virtual && destination is Form && Application.RenderWithVisualStyles)
+						DrawThemedGripper (gr, rect);
+					else
+						ControlPaint.DrawSizeGrip (gr, BackColor, rect);
 				}
 				last_painted_area = rect;
 			}
+		}
+
+		/// <summary>A form's own grip with visual styles (.NET's Form.OnPaint: the Status Gripper part
+		/// in the client's bottom-right corner): Windows 11 draws six two-pixel #BFBFBF dots, a
+		/// three-two-one triangle on a three-pixel lattice, the nearest dot four pixels in from the
+		/// right and the bottom. Read off a stock dialog. The classic grip's diagonal lines are what
+		/// a form showed instead.</summary>
+		static void DrawThemedGripper (Graphics g, Rectangle rect)
+		{
+			Brush dot = ThemeEngine.Current.ResPool.GetSolidBrush (Color.FromArgb (191, 191, 191));
+			for (int row = 0; row < 3; row++)
+				for (int col = 0; col <= row; col++)
+					g.FillRectangle (dot, rect.Right - 4 - 3 * col, rect.Bottom - 10 + 3 * row, 2, 2);
 		}
 
 		private void HandleMouseCaptureChanged (object sender, EventArgs e)

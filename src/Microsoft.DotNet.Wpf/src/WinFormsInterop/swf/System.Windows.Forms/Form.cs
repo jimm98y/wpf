@@ -271,7 +271,7 @@ namespace System.Windows.Forms {
 			}
 		}
 		
-		private new void UpdateSizeGripVisible ()
+		internal new void UpdateSizeGripVisible ()
 		{
 			// Following link explains when to show size grip:
 			// http://forums.microsoft.com/MSDN/ShowPost.aspx?PostID=138687&SiteID=1

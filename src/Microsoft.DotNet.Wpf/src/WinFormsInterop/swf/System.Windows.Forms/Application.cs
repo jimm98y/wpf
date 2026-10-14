@@ -771,6 +771,7 @@ namespace System.Windows.Forms
 
 			if (context.MainForm != null) {
 				context.MainForm.is_modal = Modal;
+				context.MainForm.UpdateSizeGripVisible ();   // SizeGripStyle.Auto: a sizable form shown modally has one
 				context.MainForm.context = context;
 				context.MainForm.closing = false;
 				context.MainForm.Visible = true;	// Cannot use Show() or scaling gets confused by menus
@@ -941,6 +942,7 @@ namespace System.Windows.Forms
 				#endif
 				old.RaiseCloseEvents (true, false);
 				old.is_modal = false;
+				if (!old.IsDisposed) old.UpdateSizeGripVisible ();
 			}
 
 			#if DebugRunLoop
