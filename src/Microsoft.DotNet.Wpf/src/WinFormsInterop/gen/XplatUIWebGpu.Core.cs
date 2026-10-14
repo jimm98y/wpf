@@ -78,10 +78,37 @@ namespace System.Windows.Forms
 		{
 			internal readonly Queue<MSG> Messages = new Queue<MSG>();
 			internal bool Quit;
+			internal readonly System.Threading.Thread Owner = System.Threading.Thread.CurrentThread;
+			internal int DrainPosted;
 		}
 
 		[ThreadStatic] private static MsgQueue t_queue;
 		private static MsgQueue CurrentQueue => t_queue ??= new MsgQueue();
+
+		// A thread whose loop is WPF's Dispatcher, not Application.Run: what WinForms posts there (a
+		// Control.BeginInvoke, a WindowsFormsSynchronizationContext.Post) is in this driver's queue,
+		// which only WinForms' own loop reads. On Windows it is a window message, and WPF's loop
+		// dispatches it like any other. So the owner thread's Dispatcher is asked to drain the queue
+		// -- once per batch -- whenever something is posted to it outside a WinForms loop.
+		private static readonly Type s_dispatcherType = Type.GetType("System.Windows.Threading.Dispatcher, WindowsBase", throwOnError: false);
+		private static readonly System.Reflection.MethodInfo s_fromThread = s_dispatcherType?.GetMethod("FromThread", new[] { typeof(System.Threading.Thread) });
+		private static readonly System.Reflection.MethodInfo s_beginInvoke = s_dispatcherType?.GetMethod("BeginInvoke", new[] { typeof(Delegate), typeof(object[]) });
+
+		private static void WakeWpfLoop(MsgQueue q)
+		{
+			if (s_fromThread == null || s_beginInvoke == null || q.Owner == System.Threading.Thread.CurrentThread && Application.MessageLoop) return;
+			object dispatcher;
+			try { dispatcher = s_fromThread.Invoke(null, new object[] { q.Owner }); }
+			catch (System.Reflection.TargetInvocationException) { return; }
+			if (dispatcher == null || System.Threading.Interlocked.Exchange(ref q.DrainPosted, 1) == 1) return;
+			Action drain = () =>
+			{
+				System.Threading.Volatile.Write(ref q.DrainPosted, 0);
+				if (!Application.MessageLoop) Application.DoEvents();   // inside Application.Run its own loop reads the queue
+			};
+			try { s_beginInvoke.Invoke(dispatcher, new object[] { drain, Array.Empty<object>() }); }
+			catch (System.Reflection.TargetInvocationException) { System.Threading.Volatile.Write(ref q.DrainPosted, 0); }
+		}
 
 		// Which thread's queue each window belongs to, recorded when the window is created.
 		private readonly Dictionary<IntPtr, MsgQueue> window_queue = new Dictionary<IntPtr, MsgQueue>();
@@ -102,6 +129,7 @@ namespace System.Windows.Forms
 		{
 			MsgQueue q = QueueFor(handle);
 			lock (q.Messages) q.Messages.Enqueue(msg);
+			WakeWpfLoop(q);
 		}
 
 		private static bool TryDequeue(MsgQueue q, out MSG msg)

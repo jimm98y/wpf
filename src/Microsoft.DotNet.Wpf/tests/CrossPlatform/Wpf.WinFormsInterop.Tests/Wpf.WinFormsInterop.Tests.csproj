@@ -133,6 +133,8 @@
     <Reference Include="PresentationFramework.Aero2"><HintPath>$(_Art)/PresentationFramework.Aero2/Release/net10.0/PresentationFramework.Aero2.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="System.Windows.Forms"><HintPath>$(_Swf)/System.Windows.Forms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Web.WebView2.WinForms"><HintPath>$(_Art)/Microsoft.Web.WebView2.WinForms/Release/net10.0/Microsoft.Web.WebView2.WinForms.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Web.WebView2.Core"><HintPath>$(_Art)/Microsoft.Web.WebView2.Core/Release/net10.0/Microsoft.Web.WebView2.Core.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="WindowsFormsIntegration"><HintPath>$(_Swf)/../../../integration/bin/Release/net10.0/WindowsFormsIntegration.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Mono.System.Drawing"><HintPath>$(_Swf)/Mono.System.Drawing.dll</HintPath><Private>true</Private></Reference>
     <!-- The System.Drawing.Design identity an app gets from the SDK: it forwards the file editors to
