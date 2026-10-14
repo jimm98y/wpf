@@ -1166,7 +1166,6 @@ namespace System.Windows.Forms
 			if (textbox_ctrl != null) {
 				textbox_ctrl.SetSelectable (true);
 				textbox_ctrl.ActivateCaret (false);
-				textbox_ctrl.ShowSelection = false;
 				textbox_ctrl.SelectionLength = 0;
 				textbox_ctrl.HideAutoCompleteList ();
 			}
@@ -1228,6 +1227,14 @@ namespace System.Windows.Forms
 			LayoutComboBox ();
 			if (listbox_ctrl != null)
 				listbox_ctrl.CalcListBoxArea ();
+			// A native combo box that changes size while its edit shows the current item selects
+			// all of it, focused or not (stock: a 120-pixel box showing "100%" made 130 wide reads
+			// SelectionStart 0, SelectionLength 4). Other text, a box only moved, or a simple box
+			// (its list always shown) keeps its selection.
+			if (textbox_ctrl != null && IsHandleCreated && dropdown_style == ComboBoxStyle.DropDown
+			    && selected_index >= 0 && selected_index < Items.Count
+			    && string.Equals (textbox_ctrl.Text, GetItemText (Items [selected_index]), StringComparison.OrdinalIgnoreCase))
+				textbox_ctrl.SelectAll ();
 		}
 
 		protected override void OnSelectedIndexChanged (EventArgs e)
@@ -2029,7 +2036,12 @@ namespace System.Windows.Forms
 				process_texchanged_autoscroll = false;
 				
 			textbox_ctrl.Text = s;
-			textbox_ctrl.SelectAll ();
+			// CBUpdateEditWindow selects the new text only while the box has the focus; an
+			// unfocused box keeps its caret at the start.
+			if (Focused || textbox_ctrl.Focused)
+				textbox_ctrl.SelectAll ();
+			else
+				textbox_ctrl.Select (0, 0);
 			process_textchanged_event = true;
 			process_texchanged_autoscroll = true;
 		}
@@ -2371,14 +2383,16 @@ namespace System.Windows.Forms
 			public ComboTextBox (ComboBox owner)
 			{
 				this.owner = owner;
-				ShowSelection = false;
+				// The native combo's edit is ES_NOHIDESEL: its selection shows when it does not
+				// have the focus too.
+				ShowSelection = owner.Enabled;
 				owner.EnabledChanged += OwnerEnabledChangedHandler;
 				owner.LostFocus += OwnerLostFocusHandler;
 			}
 
 			void OwnerEnabledChangedHandler (object o, EventArgs args)
 			{
-				ShowSelection = owner.Focused && owner.Enabled;
+				ShowSelection = owner.Enabled;
 			}
 
 			void OwnerLostFocusHandler (object o, EventArgs args)

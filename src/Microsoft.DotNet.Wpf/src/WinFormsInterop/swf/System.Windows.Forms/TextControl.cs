@@ -1856,14 +1856,19 @@ namespace System.Windows.Forms {
 				Console.WriteLine ("E: {0}", GetLine (end).text);
 			#endif
 
-			// Non multiline selection can be handled outside of the loop
+			// Non multiline selection can be handled outside of the loop. A single-line edit's
+			// highlight runs one pixel past the selection's last character (stock Segoe UI 9: "1"
+			// is 6 wide and highlights 7 columns, "100%" 28 and 29, a selection inside the text
+			// too); a rich edit's does not.
 			if (!multiline && selection_visible && owner.ShowSelection) {
+				float x0 = selection_start.line.X + selection_start.line.widths [selection_start.pos];
+				float x1 = selection_end.line.X + selection_end.line.widths [selection_end.pos];
+				if (x1 > x0 && !(owner is RichTextBox))
+					x1 += 1;
 				g.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (ThemeEngine.Current.ColorHighlight),
-						offset_x + selection_start.line.widths [selection_start.pos] +
-						selection_start.line.X - viewport_x, 
+						offset_x + x0 - viewport_x,
 				        offset_y + selection_start.line.Y,
-						(selection_end.line.X + selection_end.line.widths [selection_end.pos]) -
-						(selection_start.line.X + selection_start.line.widths [selection_start.pos]), 
+						x1 - x0,
 				        selection_start.line.height);
 			}
 
