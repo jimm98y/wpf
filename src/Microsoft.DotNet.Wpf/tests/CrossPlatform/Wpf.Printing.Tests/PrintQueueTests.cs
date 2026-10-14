@@ -53,6 +53,22 @@ namespace Wpf.Printing.Tests
         }
 
         [Fact]
+        public void MergeAndValidateLaysTheDeltaOverTheBase()
+        {
+            // Telerik's diagram printing calls it; the member was written but never compiled in.
+            PrintQueue queue = new LocalPrintServer().DefaultPrintQueue;
+            var baseTicket = new PrintTicket { PageOrientation = PageOrientation.Portrait, CopyCount = 3 };
+            var delta = new PrintTicket { PageOrientation = PageOrientation.Landscape };
+
+            System.Printing.ValidationResult result = queue.MergeAndValidatePrintTicket(baseTicket, delta);
+
+            Assert.Equal(ConflictStatus.NoConflict, result.ConflictStatus);
+            Assert.Equal(PageOrientation.Landscape, result.ValidatedPrintTicket.PageOrientation);
+            Assert.Equal(3, result.ValidatedPrintTicket.CopyCount);
+            Assert.Equal(PageOrientation.Portrait, baseTicket.PageOrientation);     // the base is not changed
+        }
+
+        [Fact]
         public void TheDefaultQueueIsTheOneThePlatformMarks()
         {
             PrintQueue queue = new LocalPrintServer().DefaultPrintQueue;
