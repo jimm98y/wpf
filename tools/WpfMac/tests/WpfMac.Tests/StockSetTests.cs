@@ -15,6 +15,13 @@ public class StockSetTests
         return AppFiles.Resolve(Path.Combine(dir, "App.dll"));
     }
 
+    private static LoadSet OverlayOf(params string[] names)
+    {
+        var load = new LoadSet();
+        foreach (string n in names) load.Add(new LoadSet.Entry(n, n + ".dll", new Version(10, 0), "overlay"));
+        return load;
+    }
+
     private static string Temp() => Directory.CreateTempSubdirectory("wpfmac-stockset-").FullName;
 
     [Fact]
@@ -23,7 +30,7 @@ public class StockSetTests
         string dir = Temp();
         try
         {
-            var set = StockSet.Build(MakeApp(dir, $$"""[ { "name": "Microsoft.NETCore.App", "version": "{{Environment.Version.Major}}.0.0" } ]"""));
+            var set = StockSet.Build(MakeApp(dir, $$"""[ { "name": "Microsoft.NETCore.App", "version": "{{Environment.Version.Major}}.0.0" } ]"""), OverlayOf());
             Assert.True(set.Known);
             Assert.True(set.Contains("Local"));
             Assert.True(set.Contains("Nested"));
@@ -38,12 +45,33 @@ public class StockSetTests
     }
 
     [Fact]
+    public void WindowsDesktop_is_never_read_the_overlay_stands_in_for_it()
+    {
+        string dir = Temp();
+        try
+        {
+            var set = StockSet.Build(MakeApp(dir, $$"""[ { "name": "Microsoft.NETCore.App", "version": "{{Environment.Version.Major}}.0.0" }, { "name": "Microsoft.WindowsDesktop.App", "version": "{{Environment.Version.Major}}.0.0" } ]"""),
+                                     OverlayOf("PresentationFramework", "System.Windows.Forms"));
+            Assert.True(set.Known);                              // on every OS, Windows included
+            Assert.True(set.Contains("PresentationFramework"));  // from the overlay
+            Assert.True(set.Contains("System.Windows.Forms"));
+            // A member of the real framework the overlay was not given is not taken from the machine.
+            Assert.False(set.Contains("PresentationCore"));
+            Assert.Contains($"Microsoft.WindowsDesktop.App {Environment.Version.Major}.0.0 (as the overlay)", set.Frameworks);
+        }
+        finally
+        {
+            Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
     public void A_framework_not_installed_here_makes_stock_unknown()
     {
         string dir = Temp();
         try
         {
-            var set = StockSet.Build(MakeApp(dir, """[ { "name": "Microsoft.NETCore.App", "version": "10.0.0" }, { "name": "Contoso.NotInstalled.App", "version": "99.0.0" } ]"""));
+            var set = StockSet.Build(MakeApp(dir, """[ { "name": "Microsoft.NETCore.App", "version": "10.0.0" }, { "name": "Contoso.NotInstalled.App", "version": "99.0.0" } ]"""), OverlayOf());
             Assert.False(set.Known);
             Assert.Contains("Contoso.NotInstalled.App 99.0.0 (not installed here)", set.Frameworks);
         }

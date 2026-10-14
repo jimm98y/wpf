@@ -173,7 +173,7 @@ internal static class Program
         var prepared = runner.Prepare(Array.Empty<string>());
         var set = WpfMac.Audit.LoadSet.Build(prepared.MergedDeps, prepared.ProbeRoots, HostInfo.Rid);
         using var resolver = new WpfMac.Audit.Resolver(set);
-        var report = new WpfMac.Audit.Auditor(resolver, runner.App.Directory, WpfMac.Audit.StockSet.Build(runner.App)).Run();
+        var report = new WpfMac.Audit.Auditor(resolver, runner.App.Directory, WpfMac.Audit.StockSet.Build(runner.App, set)).Run();
         report.Notes.AddRange(prepared.Notes);
         // On macOS, mark each Windows P/Invoke by whether libwin32shim exports it.
         Func<string, string, bool>? shimHas = null;
