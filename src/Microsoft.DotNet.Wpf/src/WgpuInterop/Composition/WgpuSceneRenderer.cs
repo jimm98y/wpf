@@ -299,6 +299,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // A clip-geometry layer's content as paper (see PaperUnder): each draw's kind and box,
             // measured when the layer was rendered, and the clip in device space.
             public List<(FillKind Kind, PaperInfo Info)>? PaperSnapshot;
+            // The clip layers nested in it, by the index of their composite in PaperSnapshot: a
+            // ribbon strip's background sits in a clip inside the ribbon's own clip.
+            public Dictionary<int, CachedLayer>? NestedClipLayers;
             public PathGeometry? ClipDevice;
         }
         private readonly Dictionary<long, CachedLayer> _layerCache = new();
@@ -1846,6 +1849,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     snap.Add((subData.Draws[i].Kind, MeasureDraw(subData, i, subData.Draws[i],
                         nd => new Vector2((nd.X + 1f) * 0.5f * rw + rx, (1f - nd.Y) * 0.5f * rh + ry))));
                 cl.PaperSnapshot = snap;
+                cl.NestedClipLayers = subData.ClipLayers is { Count: > 0 } nested ? new Dictionary<int, CachedLayer>(nested) : null;
                 cl.ClipDevice = TransformGeometry(clipGeom, world);
             }
             else if (v.OpacityMask is { } opacityMask)
@@ -4928,6 +4932,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // A layer composited through a clip geometry: where the clip lets all of the box
                 // through, the paper is whatever the layer's own draws leave there. DotNetBar paints
                 // its ribbon under a clip path, and every caption on it lost its paper.
+                if (kind == FillKind.Clip && s_paperAt is not null) s_paperChain += $" clip#{i}(same={same is not null} layers={data.ClipLayers?.Count ?? -1} has={data.ClipLayers?.ContainsKey(i)})";
                 if (kind == FillKind.Clip && same is null && data.ClipLayers is { } layers && layers.TryGetValue(i, out CachedLayer? clipLayer))
                 {
                     RgbaColor? layerPaper = ClipLayerPaper(clipLayer, x0, y0, x1, y1, out bool layerClear);
@@ -5001,26 +5006,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         /// <summary>The paper a clip layer's content leaves over a device box, when the clip lets the
         /// whole box through and the topmost draw there is one opaque colour covering it; else null.</summary>
-        private static RgbaColor? ClipLayerPaper(CachedLayer cl, float x0, float y0, float x1, float y1, out bool clear)
+        private static RgbaColor? ClipLayerPaper(CachedLayer cl, float x0, float y0, float x1, float y1, out bool clear, int depth = 0)
         {
             clear = false;
-            if (cl.PaperSnapshot is not { } snap || cl.ClipDevice is not { } clipGeo) return null;
+            if (cl.PaperSnapshot is not { } snap || cl.ClipDevice is not { } clipGeo)
+            {
+                if (s_paperAt is not null) s_paperChain += $" layer(depth {depth}: no snapshot, mode {cl.Mode})";
+                return null;
+            }
             // Nothing in the layer touches the box: it leaves the paper under it as it was.
             bool any = false;
             foreach ((FillKind k, PaperInfo pi) in snap)
                 if (k is not (FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) && pi.Touches(x0, y0, x1, y1)) { any = true; break; }
             if (!any) { clear = true; return null; }
             int bx0 = (int)MathF.Floor(x0), by0 = (int)MathF.Floor(y0), bx1 = (int)MathF.Ceiling(x1), by1 = (int)MathF.Ceiling(y1);
-            if (bx1 <= bx0 || by1 <= by0 || bx0 < cl.Rx || by0 < cl.Ry || bx1 > cl.Rx + cl.Rw || by1 > cl.Ry + cl.Rh) return null;
+            if (bx1 <= bx0 || by1 <= by0 || bx0 < cl.Rx || by0 < cl.Ry || bx1 > cl.Rx + cl.Rw || by1 > cl.Ry + cl.Rh)
+            {
+                if (s_paperAt is not null) s_paperChain += $" layer(depth {depth}: box outside region {cl.Rx},{cl.Ry},{cl.Rw},{cl.Rh})";
+                return null;
+            }
             byte[] mask = PathRasterizer.RasterizeInto(clipGeo, bx1 - bx0, by1 - by0, bx0, by0);
-            foreach (byte m in mask) if (m != 255) return null;
+            foreach (byte m in mask) if (m != 255) { if (s_paperAt is not null) s_paperChain += $" layer(depth {depth}: clip mask partial)"; return null; }
             for (int i = snap.Count - 1; i >= 0; i--)
             {
                 (FillKind kind, PaperInfo b) = snap[i];
                 if (kind is FillKind.Text or FillKind.TextSubpixelMultiply or FillKind.TextSubpixelAdd) continue;
                 if (!b.Touches(x0, y0, x1, y1)) continue;
+                if (kind == FillKind.Clip && cl.NestedClipLayers is { } nestedLayers && nestedLayers.TryGetValue(i, out CachedLayer? inner) && depth < 8)
+                {
+                    if (s_paperAt is not null) s_paperChain += $" nested#{i}(depth {depth + 1})";
+                    RgbaColor? innerPaper = ClipLayerPaper(inner, x0, y0, x1, y1, out bool innerClear, depth + 1);
+                    if (s_paperAt is not null) s_paperChain += $" ->{(innerClear ? "clear" : innerPaper is null ? "none" : "paper")}";
+                    if (innerClear) continue;
+                    return innerPaper;
+                }
+                if (s_paperAt is not null) s_paperChain += $" layer[{kind} ({b.X0},{b.Y0},{b.X1},{b.Y1}) solid={(b.Solid is { } bs2 ? $"{ToByte(bs2.R)},{ToByte(bs2.G)},{ToByte(bs2.B)}" : "-")} covers={b.Covers(x0, y0, x1, y1)}]";
                 return b.Solid is { } solid && b.Gradient is null && b.Covers(x0, y0, x1, y1) ? solid : null;
             }
+            // Everything in the layer that reached the box turned out to leave it alone (nested
+            // layers with nothing there): the layer leaves the paper under it as it was.
+            if (s_paperAt is not null) s_paperChain += $" layer(depth {depth}: nothing touched, {snap.Count} draws)";
+            clear = true;
             return null;
         }
 
