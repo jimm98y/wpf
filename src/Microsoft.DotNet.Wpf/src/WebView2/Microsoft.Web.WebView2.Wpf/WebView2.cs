@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -50,6 +50,10 @@ namespace Microsoft.Web.WebView2.Wpf
         private IntPtr _hostWindow;
         private CoreWebView2 _coreWebView2;
         private Task _ready;
+        // EnsureCoreWebView2Async's answer: completes when the engine is built and initialised,
+        // whenever that is -- the control may not even be in a tree yet when it is asked.
+        private readonly TaskCompletionSource<object> _initialized =
+            new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
         private Action _pending;
         private bool _disposed;
 
@@ -137,8 +141,7 @@ namespace Microsoft.Web.WebView2.Wpf
 
             if (_backend is null)
             {
-                throw new PlatformNotSupportedException(
-                    "No web engine is available on this platform, so web content cannot be hosted.");
+                throw Unavailable();
             }
 
             _hostWindow = WebViewHostWindow.Create(hwndParent.Handle,
@@ -149,8 +152,7 @@ namespace Microsoft.Web.WebView2.Wpf
             {
                 _backend.Dispose();
                 _backend = null;
-                throw new PlatformNotSupportedException(
-                    "No web engine is available on this platform, so web content cannot be hosted.");
+                throw Unavailable();
             }
 
             _ready = _backend.AttachAsync(_hostWindow);
@@ -174,8 +176,10 @@ namespace Microsoft.Web.WebView2.Wpf
 
                 if (t.IsFaulted)
                 {
+                    _initialized.TrySetException(t.Exception!.GetBaseException());
                     return;
                 }
+                _initialized.TrySetResult(null);
 
                 Action pending = _pending;
                 _pending = null;
@@ -183,6 +187,14 @@ namespace Microsoft.Web.WebView2.Wpf
             })), TaskScheduler.Default);
 
             return new HandleRef(this, _hostWindow);
+        }
+
+        private PlatformNotSupportedException Unavailable()
+        {
+            var e = new PlatformNotSupportedException(
+                "No web engine is available on this platform, so web content cannot be hosted.");
+            _initialized.TrySetException(e);
+            return e;
         }
 
         protected override void DestroyWindowCore(HandleRef hwnd)
@@ -234,27 +246,13 @@ namespace Microsoft.Web.WebView2.Wpf
         /// Ensure the engine exists. Completes immediately if it already does.
         /// </summary>
         /// <remarks>
-        /// The engine cannot be built before the control has a parent window, and HwndHost only
-        /// builds one when the control is first shown. Calling this on a control that is not in a
-        /// visual tree therefore cannot succeed, and says so rather than hanging.
+        /// The engine cannot be built before the control has a parent window, which HwndHost
+        /// builds when the control is first shown. Like Microsoft's control, a call made before
+        /// that -- in a constructor, before the control is in any tree -- is not an error: the
+        /// engine is created when the window is, and the task completes then. (Throwing here
+        /// stopped Workbench's main window half way through its construction.)
         /// </remarks>
-        public Task EnsureCoreWebView2Async(CoreWebView2Environment environment = null)
-        {
-            if (_ready is not null)
-            {
-                return _ready;
-            }
-
-            if (!IsLoaded && PresentationSource.FromVisual(this) is null)
-            {
-                return Task.FromException(new InvalidOperationException(
-                    "The control must be in a visual tree before its engine can be created; " +
-                    "await this after the control has loaded."));
-            }
-
-            // Being in a tree but not yet built means the window is coming on a later layout pass.
-            return _ready ?? Task.CompletedTask;
-        }
+        public Task EnsureCoreWebView2Async(CoreWebView2Environment environment = null) => _initialized.Task;
 
         private void WhenReady(Action action)
         {
