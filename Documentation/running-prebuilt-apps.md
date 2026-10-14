@@ -157,6 +157,10 @@ Every run writes a compatibility log, `~/Library/Logs/WpfMac/<App>.log` (Windows
 `wpfmac audit` gives the same picture statically before the app runs: missing assemblies, types and
 members, P/Invokes (marked ✓/✗ by whether libwin32shim exports them), non-AnyCPU and C++/CLI
 assemblies, named kernel objects, hard-coded paths, and Windows-only APIs such as WMI and DPAPI.
+A referenced assembly that stock cannot load either (it is neither in the app's folder nor in the
+frameworks the app's own runtimeconfig.json names, `Microsoft.WindowsDesktop.App` included) is listed
+separately under "Absent for stock too": the app ships without it, so it is not a gap in the stack.
+That split needs those frameworks installed, so off Windows every miss is still counted as a gap.
 
 On macOS, `WPFMAC_DUMP_WINDOWS=1` with `--screenshots` also logs which WinForms windows the host
 composites for each form.
