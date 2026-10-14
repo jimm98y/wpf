@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -16,12 +16,18 @@
 //     compatible with 1.0 is a correct answer: this driver returns 2.1, which wgpu rejects
 //     ("Returned GL context is 2.1, when 3.3+ is needed"). Asked for 3.3 or 4.1 it grants them.
 //
-// Neither is ours to fix in the binary, so until wgpu passes a version (sent upstream), this makes
-// one throwaway context before wgpu looks, and points wgpu_native.dll's import of
-// opengl32!wglGetProcAddress at a wrapper that hands out a wglCreateContextAttribsARB which adds a
-// version when none was asked for: 4.3, else 4.1, else 3.3, else the request as it was. A request
-// that names its version is passed through untouched, so nothing changes once wgpu is fixed.
-// Windows only; WPF_WEBGPU_WGL_SHIM=0 turns it off.
+// Neither is ours to fix in the binary, so until wgpu passes a version (sent upstream), this points
+// wgpu_native.dll's import of opengl32!wglCreateContext at a wrapper that asks once more when the
+// driver refuses, and its import of opengl32!wglGetProcAddress at a wrapper that hands out a
+// wglCreateContextAttribsARB which adds a version when none was asked for: 4.3, else 4.1, else
+// 3.3, else the request as it was. A request that names its version is passed through untouched,
+// so nothing changes once wgpu is fixed. Windows only; WPF_WEBGPU_WGL_SHIM=0 turns it off.
+//
+// The first quirk used to be met by making one throwaway context (a hidden window, a pixel format,
+// wglCreateContext and wglDeleteContext) before wgpu looked. Started while another instance was
+// tearing its GL down, that priming ended the process now and then, with exit code 127 and no
+// exception: Workbench quit before its splash in 4 of 30 overlapping starts, and in none of 15
+// without it. WPF_WEBGPU_WGL_PRIME=1 still primes.
 //
 
 using System;
@@ -35,6 +41,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         private static bool s_installed;
         private static IntPtr s_realGetProcAddress;
         private static IntPtr s_realCreateAttribs;
+        private static IntPtr s_realCreateContext;
 
         private const int WGL_CONTEXT_MAJOR_VERSION_ARB = 0x2091, WGL_CONTEXT_MINOR_VERSION_ARB = 0x2092;
 
@@ -46,7 +53,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             if (Environment.GetEnvironmentVariable("WPF_WEBGPU_WGL_SHIM") == "0") return;
             try
             {
-                PrimeFirstContext();
+                if (Environment.GetEnvironmentVariable("WPF_WEBGPU_WGL_PRIME") == "1") PrimeFirstContext();
                 // The module the bindings themselves load (through NativeLoad's resolver): binding one
                 // of their P/Invokes loads it without calling anything.
                 Marshal.Prelink(typeof(Wgpu).GetMethod(nameof(Wgpu.wgpuSetLogLevel),
@@ -55,12 +62,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
                 if (wgpu == IntPtr.Zero) return;
                 IntPtr opengl = NativeLibrary.Load("opengl32.dll");
                 s_realGetProcAddress = NativeLibrary.GetExport(opengl, "wglGetProcAddress");
+                s_realCreateContext = NativeLibrary.GetExport(opengl, "wglCreateContext");
+                delegate* unmanaged[Stdcall]<IntPtr, IntPtr> create = &CreateContextHook;
+                PatchImport(wgpu, "opengl32.dll", "wglCreateContext", (IntPtr)create);
                 delegate* unmanaged[Stdcall]<byte*, IntPtr> hook = &GetProcAddressHook;
                 PatchImport(wgpu, "opengl32.dll", "wglGetProcAddress", (IntPtr)hook);
             }
             catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
             {
             }
+        }
+
+        /// <summary>wglCreateContext, asked once more when the driver refuses (its first context).</summary>
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+        private static IntPtr CreateContextHook(IntPtr dc)
+        {
+            var real = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr>)s_realCreateContext;
+            IntPtr context = real(dc);
+            return context != IntPtr.Zero ? context : real(dc);
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]

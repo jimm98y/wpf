@@ -1,4 +1,4 @@
-// `wpfmac run`: generate, then `dotnet exec` the app's own .dll in place.
+﻿// `wpfmac run`: generate, then `dotnet exec` the app's own .dll in place.
 
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -153,6 +153,9 @@ internal sealed class Runner
         }
         process.WaitForExit();
         foreach (var r in forward) r.Dispose();
+        // The whole code: a shell keeps only its low byte (0xC000007F and 127 look alike there).
+        if (process.ExitCode != 0)
+            Console.Error.WriteLine($"wpfmac: the app exited with code 0x{process.ExitCode:X8} ({process.ExitCode})");
         return process.ExitCode;
     }
 
