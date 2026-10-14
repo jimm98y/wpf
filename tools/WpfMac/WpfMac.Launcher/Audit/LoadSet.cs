@@ -60,7 +60,7 @@ internal sealed class LoadSet
         return set;
     }
 
-    private void Add(Entry e)
+    internal void Add(Entry e)
     {
         if (!_byName.TryGetValue(e.Name, out var existing) || existing.Version < e.Version) _byName[e.Name] = e;
     }

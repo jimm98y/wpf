@@ -1,8 +1,12 @@
-// The assembly names the app can bind to when it runs the stock way: its own .exe, its own folder and
-// the shared frameworks its own runtimeconfig.json asks for (Microsoft.WindowsDesktop.App included).
-// A reference that does not resolve there either is not something the WebGPU stack is missing: the app
-// ships without it, and stock reaches the same FileNotFoundException on that code path. The audit
-// lists those apart from the real gaps.
+// The assembly names the app can bind to when it runs the stock way: its own folder and the shared
+// frameworks its own runtimeconfig.json asks for. A reference that does not resolve there either is not
+// something the WebGPU stack is missing: the app ships without it, and stock reaches the same
+// FileNotFoundException on that code path. The audit lists those apart from the real gaps.
+//
+// Microsoft.WindowsDesktop.App is never read, on any OS: the stack must not depend on it, not even to
+// list its files. The overlay stands in for it -- it is built to carry every member of that framework
+// (WPF, WinForms, and the rest, see WpfMac.Payload.csproj) -- so the overlay's assemblies are what
+// "stock's desktop framework" means here. Every other framework is read from this machine's dotnet.
 
 using System.Text.Json.Nodes;
 
@@ -12,15 +16,15 @@ internal sealed class StockSet
 {
     private readonly HashSet<string> _names = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>False when a framework the app asks for is not installed here (WindowsDesktop.App off
-    /// Windows): then nothing can be said about what stock would find, and every miss stays a gap.</summary>
+    /// <summary>False when a framework the app asks for (other than WindowsDesktop.App) is not installed
+    /// here: then nothing can be said about what stock would find, and every miss stays a gap.</summary>
     public bool Known { get; private set; } = true;
 
     public List<string> Frameworks { get; } = new();
 
     public bool Contains(string assemblyName) => _names.Contains(assemblyName);
 
-    public static StockSet Build(AppFiles app)
+    public static StockSet Build(AppFiles app, LoadSet load)
     {
         var set = new StockSet();
         foreach (string f in Directory.EnumerateFiles(app.Directory, "*.dll", SearchOption.AllDirectories)
@@ -38,6 +42,15 @@ internal sealed class StockSet
             string? name = node?["name"]?.GetValue<string>();
             string? version = node?["version"]?.GetValue<string>();
             if (name == null || version == null) continue;
+            if (string.Equals(name, RuntimeConfigRewriter.WindowsDesktop, StringComparison.OrdinalIgnoreCase))
+            {
+                set.Frameworks.Add($"{name} {version} (as the overlay)");
+                foreach (var e in load.ByName.Values)
+                {
+                    if (e.Origin == "overlay") set._names.Add(e.Name);
+                }
+                continue;
+            }
             string? dir = shared == null ? null : Pick(Path.Combine(shared, name), version);
             if (dir == null)
             {
