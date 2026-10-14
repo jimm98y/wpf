@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -539,7 +539,7 @@ namespace MS.Internal.TextFormatting
                             // the next line. Backtrack to the last real break opportunity already on the line
                             // (which also returns the runs after it to the next line); only if the line
                             // holds no opportunity at all does it end at the run boundary.
-                            BackTrackToBreak(cb, ploc, line, ref cp, ref penX);
+                            BackTrackToBreak(cb, ploc, line, ref cp, ref penX, runText.Length > 0 ? runText[0] : '\0');
                             break;
                         }
                     }
@@ -860,8 +860,53 @@ namespace MS.Internal.TextFormatting
                     return i;
                 if (CanBreakBetween(text, i))
                     return i;
+                if (CanBreakAfterHyphen(text, i))
+                    return i;
             }
             return 0;
+        }
+
+        // UAX #14's hyphens and dashes: a line may end just after "event-" in "event-driven", as
+        // WPF's own line breaking does (a Workbench caption wrapped "event-" / "driven" there and
+        // ours carried the whole word down). Not before a digit (LB25: "-5" stays whole), not
+        // after a hyphen that starts a word or follows a space, and not at the end of the text.
+        private static bool CanBreakAfterHyphen(char[] text, int i)
+        {
+            if (i < 2 || i >= text.Length) return false;
+            char h = text[i - 1];
+            if (h is not ('-' or '‐' or '–' or '—')) return false;
+            char before = text[i - 2], after = text[i];
+            if (IsBreakableSpace(before) || char.IsWhiteSpace(before)) return false;
+            if (char.IsDigit(after) || char.IsWhiteSpace(after)) return false;
+            return char.IsLetterOrDigit(before) && char.IsLetter(after) || h == '—';
+        }
+
+        /// <summary>Whether the line may break at the end of run <paramref name="index"/> because the
+        /// run ends with a hyphen between a letter or digit and a letter (see CanBreakAfterHyphen).</summary>
+        private static bool HyphenEndsRun(ManagedLsLine line, int index, char following)
+        {
+            ManagedLsRun r = line.Runs[index];
+            int n = Math.Min(r.CchText, r.Text.Length);
+            if (n == 0) return false;
+            // What follows the run: the next run on the line, else the run that did not fit.
+            char after;
+            if (index + 1 < line.Runs.Count)
+            {
+                ManagedLsRun next = line.Runs[index + 1];
+                if (!next.IsText || next.Text == null || next.CchText == 0) return false;
+                after = next.Text[0];
+            }
+            else if (following != '\0') after = following;
+            else return false;
+            char before;
+            if (n >= 2) before = r.Text[n - 2];
+            else
+            {
+                ManagedLsRun prev = index > 0 ? line.Runs[index - 1] : null;
+                if (prev == null || !prev.IsText || prev.Text == null || prev.CchText == 0) return false;
+                before = prev.Text[Math.Min(prev.CchText, prev.Text.Length) - 1];
+            }
+            return CanBreakAfterHyphen(new[] { before, r.Text[n - 1], after }, 2);
         }
 
         // A space that a line may break after. U+00A0 (no-break space) deliberately is NOT one --
@@ -964,14 +1009,16 @@ namespace MS.Internal.TextFormatting
         // the line holds no break opportunity at all, in which case the caller's run-boundary break
         // stands as the last resort.
         private static unsafe bool BackTrackToBreak(
-            LineServicesCallbacks cb, IntPtr ploc, ManagedLsLine line, ref int cp, ref int penX)
+            LineServicesCallbacks cb, IntPtr ploc, ManagedLsLine line, ref int cp, ref int penX, char following = '\0')
         {
             for (int i = line.Runs.Count - 1; i >= 0; i--)
             {
                 ManagedLsRun r = line.Runs[i];
                 if (!r.IsText || r.Text == null) continue;
 
-                int brk = FindBreak(r.Text, r.CchText);
+                // A hyphen is a dnode of its own (wchHyphen), so the break after "event-" in
+                // "event-driven" is at the END of a one-character run: decided across the runs.
+                int brk = HyphenEndsRun(line, i, following) ? r.CchText : FindBreak(r.Text, r.CchText);
                 if (brk <= 0) continue;                       // no opportunity in this run
 
                 bool nextJoined = i + 1 < line.Runs.Count && line.Runs[i + 1].JoinsPrevious;

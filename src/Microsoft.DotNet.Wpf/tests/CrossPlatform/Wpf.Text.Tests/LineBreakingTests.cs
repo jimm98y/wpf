@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -62,6 +62,33 @@ namespace Wpf.Text.Tests
             {
                 Assert.True(width <= Column, $"line \"{text}\" is {width}px wide in a {Column}px column");
             }
+        }
+
+        /// <summary>
+        /// A hyphenated word may end a line at its hyphen, as WPF's own line breaking (and UAX #14)
+        /// allows: "event-driven" wraps as "event-" / "driven". Ours carried the whole word down.
+        /// </summary>
+        [Fact]
+        public void AHyphenatedWordMayBreakAtItsHyphen()
+        {
+            const string paragraph = "routine workflows and event-driven actions";
+            // Wide enough for "routine workflows and event-" but not for "...event-driven".
+            double full = TextHarness.Wrap("routine workflows and event-", "Segoe UI", EmSize, 10000)[0].Width;
+            List<(string Text, double Width)> lines = TextHarness.Wrap(paragraph, "Segoe UI", EmSize, full + 2);
+
+            Assert.True(lines.Count > 1);
+            Assert.Equal("routine workflows and event-", lines[0].Text.TrimEnd());
+            Assert.StartsWith("driven", lines[1].Text);
+        }
+
+        [Fact]
+        public void AHyphenBeforeADigitDoesNotBreak()
+        {
+            const string paragraph = "values range from minus-5 upward";
+            double full = TextHarness.Wrap("values range from minus-", "Segoe UI", EmSize, 10000)[0].Width;
+            List<(string Text, double Width)> lines = TextHarness.Wrap(paragraph, "Segoe UI", EmSize, full + 2);
+
+            Assert.DoesNotContain(lines, l => l.Text.TrimEnd().EndsWith("minus-"));
         }
 
         [Fact]
