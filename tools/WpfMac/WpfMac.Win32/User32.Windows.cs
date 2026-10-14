@@ -577,11 +577,30 @@ public static unsafe partial class Exports
         object? o = Resolve(hwnd);
         return cmd switch
         {
-            4 => OwnerOrParent(o),                                                                    // GW_OWNER
+            4 => OwnerOrParent(o) is nint owner && owner != 0 ? owner : TaskbarlessOwner(o),             // GW_OWNER
             5 => Ui(o, () => o is Forms.Control c && c.Controls.Count > 0 && c.Controls[0].IsHandleCreated ? c.Controls[0].Handle : 0),   // GW_CHILD
             _ => 0,
         };
     }
+
+    /// <summary>.NET gives a form with ShowInTaskbar false and no owner a hidden owner window of
+    /// its own (that is how it keeps it off the taskbar), so Windows answers GW_OWNER for it --
+    /// and Process.MainWindowHandle, which takes the first visible UNOWNED window, passes it by.
+    /// A splash screen answered "unowned" here and became the main window: app's view then
+    /// decided it was not in the main window and showed no licence notice.</summary>
+    private static nint TaskbarlessOwner(object? o)
+    {
+        bool owned = Ui(o, () => o is Forms.Form { TopLevel: true, Owner: null, ShowInTaskbar: false } f && f.Parent == null);
+        if (!owned) return 0;
+        if (s_parkingOwner == 0)
+            s_parkingOwner = CreateWindowExW(0, "Static", "WinFormsParkingOwner", 0x80000000 /* WS_POPUP, hidden */, 0, 0, 0, 0, 0, 0, 0, 0);
+        return s_parkingOwner;
+    }
+
+    private static nint s_parkingOwner;
+
+    [DllImport("user32", CharSet = CharSet.Unicode)]
+    private static extern nint CreateWindowExW(uint exStyle, string className, string title, uint style, int x, int y, int w, int h, nint parent, nint menu, nint instance, nint param);
 
     [UnmanagedCallersOnly]
     private static nint SetParent(nint child, nint parent)

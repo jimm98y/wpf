@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Windows.Input;
 using WPF = System.Windows;
 using WpfControls = System.Windows.Controls;
+using WpfDocuments = System.Windows.Documents;
 
 namespace System.Windows.Forms.Integration
 {
@@ -17,7 +18,27 @@ namespace System.Windows.Forms.Integration
         private AvalonAdapter _container;
         private PropertyMap _propertyMap;
 
-        internal AvalonAdapter Container => _container ??= new AvalonAdapter(this);
+        private WpfDocuments.AdornerDecorator _decorator;
+
+        /// <summary>The panel the child sits in; made with the AdornerDecorator .NET puts above it, so
+        /// HostContainer has the parent apps look for (app names it "gwxMainViewHostDecorator")
+        /// and adorners on the hosted tree have a layer -- without it AdornerLayer.GetAdornerLayer
+        /// answered null and app's licence notice was never shown.</summary>
+        internal AvalonAdapter Container
+        {
+            get
+            {
+                if (_container == null)
+                {
+                    _container = new AvalonAdapter(this);
+                    _decorator = new WpfDocuments.AdornerDecorator { Child = _container };
+                }
+                return _container;
+            }
+        }
+
+        /// <summary>The hosted window's root visual: the decorator over the container.</summary>
+        internal WPF.UIElement RootElement { get { _ = Container; return _decorator; } }
 
         /// <summary>The panel the hosted WPF element is placed in: the root of the hosted tree.</summary>
         [System.ComponentModel.Browsable(false)]

@@ -232,6 +232,11 @@ namespace System.Windows.Forms.Integration
             // Another UI thread's frame (a splash screen's) pumps every embedded scene; this one is
             // only ever made and moved on the thread its WPF tree belongs to.
             if (!OnTreeThread) return;
+            // Not while hidden: .NET's ElementHost gets its window (and so its HwndSource) only once it
+            // is shown, as every WinForms control does, and apps count on hidden hosts' WPF trees not
+            // having loaded -- app's licence model belongs to the first view to load, and a
+            // hidden pane's view loading first took it from the main one (no licence notice).
+            if (_source == null && !ShownInItsForm()) return;
             // This control's own form's window: not EmbeddedScenes.HostWindow, which is whichever
             // form's host came up last (a tooltip, a drop-down) and would carry this content off.
             if (!EmbeddedScenes.TryGetHostWindow(this, out IntPtr hostWindow, out float hostScale))
@@ -253,6 +258,11 @@ namespace System.Windows.Forms.Integration
             {
                 _parked = false;
                 if (!ReparentHostedWindow(hostWindow)) { _failed = true; return; }
+                // Shown again in its real parent: WPF tracks visibility from the window's
+                // WM_SHOWWINDOW, and in the hidden parking window the tree came up not visible --
+                // content that appears only once it is (app's licence notice) never did.
+                ShowHostedWindow(false);
+                ShowHostedWindow(true);
                 _placedX = _placedY = int.MinValue;                 // place it again, in its real parent
             }
 
@@ -302,7 +312,7 @@ namespace System.Windows.Forms.Integration
                 // Claim BEFORE the first render: an unclaimed frame would build a swap chain for this
                 // window and present the WPF content into it, which is both wasted and visible.
                 if (CompositeIntoHostFrame) HostedWpfContent.Claim(_source.Handle);
-                _source.RootVisual = Container;
+                _source.RootVisual = RootElement;
                 _source.AddHook(SourceHook);
                 _dispatcher = _source.Dispatcher;
                 _placedX = px; _placedY = py; _placedW = pw; _placedH = ph;
@@ -356,6 +366,25 @@ namespace System.Windows.Forms.Integration
             if (s_setParent == null) return false;
             try { s_setParent.Invoke(null, new object[] { new HandleRef(this, _source.Handle), new HandleRef(null, parent) }); return true; }
             catch (Exception ex) { Console.Error.WriteLine("ElementHost: reparent failed: " + ex.Message); return false; }
+        }
+
+        /// <summary>Whether this control, and every container up to its form, is meant to be shown --
+        /// the form itself may still be coming up. That is when .NET creates a control's window.</summary>
+        private bool ShownInItsForm()
+        {
+            for (Control c = this; c != null && c is not Form; c = c.Parent)
+                if (!c.is_visible) return false;
+            return true;
+        }
+
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (ShownInItsForm() && CompositeIntoHostFrame && _source == null && !_failed && IsHandleCreated && OnTreeThread)
+            {
+                try { EnsureSource(); }
+                catch (Exception ex) { _failed = true; Console.Error.WriteLine("ElementHost: hosting failed: " + ex); }
+            }
         }
 
         protected override void OnHandleCreated(EventArgs e)
