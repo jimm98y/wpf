@@ -17,6 +17,9 @@ internal sealed class Auditor
         public List<string> Assemblies { get; } = new();
         public List<(string Assembly, string Kind)> NotAnyCpu { get; } = new();
         public SortedDictionary<string, SortedSet<string>> MissingAssemblies { get; } = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>References stock cannot resolve either: not in the app's folder nor in the frameworks it runs on.</summary>
+        public SortedDictionary<string, SortedSet<string>> AbsentForStock { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<string> StockFrameworks { get; } = new();
         public SortedDictionary<string, SortedSet<string>> UnifiedAssemblies { get; } = new(StringComparer.OrdinalIgnoreCase);
         public SortedDictionary<string, SortedSet<string>> MissingTypes { get; } = new(StringComparer.Ordinal);
         public SortedDictionary<string, SortedSet<string>> MissingMembers { get; } = new(StringComparer.Ordinal);
@@ -29,11 +32,13 @@ internal sealed class Auditor
     private readonly Resolver _resolver;
     private readonly string _appDir;
     private readonly HashSet<string> _appNativeFiles;
+    private readonly StockSet? _stock;
 
-    public Auditor(Resolver resolver, string appDir)
+    public Auditor(Resolver resolver, string appDir, StockSet? stock = null)
     {
         _resolver = resolver;
         _appDir = appDir;
+        _stock = stock is { Known: true } ? stock : null;
         _appNativeFiles = Directory.EnumerateFiles(appDir, "*", SearchOption.AllDirectories)
             .Select(f => Path.GetFileName(f)).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
@@ -41,6 +46,7 @@ internal sealed class Auditor
     public Report Run()
     {
         var report = new Report();
+        if (_stock != null) report.StockFrameworks.AddRange(_stock.Frameworks);
         foreach (string file in Directory.EnumerateFiles(_appDir, "*.dll").Concat(Directory.EnumerateFiles(_appDir, "*.exe")).OrderBy(f => f, StringComparer.OrdinalIgnoreCase))
         {
             using var asm = AssemblyIndex.TryOpen(file);
@@ -67,7 +73,7 @@ internal sealed class Auditor
             string name = md.GetString(r.Name);
             if (!_resolver.Set.ByName.TryGetValue(name, out var e))
             {
-                Add(report.MissingAssemblies, $"{name} {r.Version}", asm.Name);
+                Add(_stock != null && !_stock.Contains(name) ? report.AbsentForStock : report.MissingAssemblies, $"{name} {r.Version}", asm.Name);
             }
             else if (e.Version < r.Version)
             {
@@ -222,6 +228,7 @@ internal sealed class Auditor
         sb.AppendLine("| | count |");
         sb.AppendLine("|---|---|");
         sb.AppendLine($"| missing assemblies | {r.MissingAssemblies.Count} |");
+        if (r.AbsentForStock.Count > 0) sb.AppendLine($"| absent for stock too (not gaps) | {r.AbsentForStock.Count} |");
         sb.AppendLine($"| missing types | {r.MissingTypes.Count} |");
         sb.AppendLine($"| missing members | {r.MissingMembers.Count} |");
         sb.AppendLine($"| Windows DLLs P/Invoked | {r.PInvokes.Count} ({r.PInvokes.Sum(p => p.Value.Count)} entry points) |");
@@ -229,6 +236,14 @@ internal sealed class Auditor
         sb.AppendLine();
 
         Section(sb, "Missing assemblies", r.MissingAssemblies);
+        if (r.AbsentForStock.Count > 0)
+        {
+            sb.AppendLine($"## Absent for stock too ({r.AbsentForStock.Count})");
+            sb.AppendLine($"Referenced but shipped neither in the app's folder nor in the frameworks its runtimeconfig.json runs on ({string.Join(", ", r.StockFrameworks)}), so stock fails the same way on those code paths. Not stack gaps.");
+            sb.AppendLine();
+            foreach (var (key, users) in r.AbsentForStock) sb.AppendLine($"- `{key}` — {Users(users)}");
+            sb.AppendLine();
+        }
         Section(sb, "Missing types", r.MissingTypes);
         Section(sb, "Missing members", r.MissingMembers);
         Section(sb, "Windows-only APIs used", r.NotableApis);
