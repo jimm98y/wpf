@@ -2634,21 +2634,44 @@ namespace System.Windows.Forms
 						typeof (DockStyle));
 				}
 
-				dock_style = value;
-				anchor_style = AnchorStyles.Top | AnchorStyles.Left;
-				if (!explicit_bounds_valid) {
-					explicit_bounds = bounds;
-					explicit_bounds_valid = true;
+				// .NET (Control.Dock + DefaultLayout.SetDock): inside a layout transaction on the
+				// parent, a docked control is given its specified bounds again (BoundsSpecified.All),
+				// and an undocked one gets them back (None) and re-reads its anchors.
+				SuspendLayout ();
+				try {
+					bool was_docked = dock_style != DockStyle.None;
+					if (!explicit_bounds_valid) {
+						explicit_bounds = bounds;
+						explicit_bounds_valid = true;
+					}
+					dock_style = value;
+					anchor_style = AnchorStyles.Top | AnchorStyles.Left;
+
+					Control container = parent;
+					if (container != null) {
+						container.cached_preferred_size = Size.Empty;
+						container.SuspendLayout ();
+						container.PerformLayout (this, "Dock");
+					}
+					try {
+						IArrangedElement element = this;
+						Rectangle specified = explicit_bounds;
+						if (value == DockStyle.None) {
+							if (was_docked) {
+								element.SetBounds (specified.X, specified.Y, specified.Width, specified.Height, BoundsSpecified.None);
+								container?.LayoutEngine.InitLayout (this, BoundsSpecified.All);
+							}
+						} else {
+							element.SetBounds (specified.X, specified.Y, specified.Width, specified.Height, BoundsSpecified.All);
+						}
+					} finally {
+						container?.ResumeLayout (true);
+					}
+
+					OnDockChanged (EventArgs.Empty);
+				} finally {
+					ResumeLayout ();
 				}
-				bounds = explicit_bounds;
-
-				if (parent != null) {
-					parent.LayoutEngine.InitLayout (this, BoundsSpecified.All);
-					parent.PerformLayout (this, "Dock");
-				} else if (Controls.Count > 0)
-					PerformLayout ();
-
-				OnDockChanged (EventArgs.Empty);
 			}
 		}
 
@@ -3703,11 +3726,12 @@ namespace System.Windows.Forms
 				return;
 			}
 
-			if (!is_visible) {
-				return;
-			}
-			
-			if (parent != null && !parent.Created) {
+			// .NET: a control is created once it is Visible (its parents included), whether or not
+			// its parent is: a child made visible under a parent without a handle gets its own
+			// handle at once (parked, and adopted when the parent's is created). DotNetBar's
+			// RibbonTabItem shows its panel during InitializeComponent, so the panel and its bars
+			// get handles -- and lay themselves out -- before the form is scaled and shown.
+			if (!Visible) {
 				return;
 			}
 
@@ -3722,9 +3746,18 @@ namespace System.Windows.Forms
 				// The child should fire it's OnLoad before the parents, however
 				// if the child checks Parent.Created in it's OnCreateControl, the
 				// parent is already created.
-				foreach (Control c in Controls.GetAllControls ())
+				foreach (Control c in Controls.GetAllControls ()) {
+					// .NET (SetParentHandle): a child that got its handle while we had none was
+					// parked; moving it under our window shows it there, and it raises
+					// VisibleChanged as Windows' WM_SHOWWINDOW tells it so.
+					if (c.parked && c.IsHandleCreated) {
+						c.parked = false;
+						if (c.Visible && !c.AnyDisposingInHierarchy ())
+							c.OnVisibleChanged (EventArgs.Empty);
+					}
 					if (!c.Created && !c.IsDisposed)
 						c.CreateControl ();
+				}
 						
 				OnCreateControl();
 			}
@@ -4038,7 +4071,7 @@ namespace System.Windows.Forms
 				if (s_traceLayout != null && GetType ().Name == s_traceLayout) {
 					var kids = new System.Text.StringBuilder ();
 					foreach (Control k in Controls) if (k.is_visible) kids.Append ($" {k.Name}:{k.Width}{(k.IsHandleCreated ? "h" : "")}");
-					Console.Error.WriteLine ($"[layout] {Environment.TickCount64} {GetType ().Name} '{Name}' {Bounds} handle={IsHandleCreated} by={affectedProperty} kids:{kids}");
+					Console.Error.WriteLine ($"[layout] {Environment.TickCount64} {GetType ().Name} '{Name}' {Bounds} handle={IsHandleCreated} by={affectedProperty} kids:{kids}{TraceStack ()}");
 				}
 				OnLayout(levent);
 			}
@@ -4338,12 +4371,15 @@ namespace System.Windows.Forms
 			if ((specified & BoundsSpecified.Height) == 0)
 				height = Height;
 		
-			bool bounds_changed = bounds.X != x || bounds.Y != y || bounds.Width != width || bounds.Height != height;
-			
-			SetBoundsCore (x, y, width, height, specified);
-
-			if (parent != null && bounds_changed)
-				parent.PerformLayout(this, "Bounds");
+			// .NET: SetBoundsCore only runs when the bounds change; otherwise the values still count
+			// as given for scaling.
+			if (bounds.X != x || bounds.Y != y || bounds.Width != width || bounds.Height != height) {
+				SetBoundsCore (x, y, width, height, specified);
+				if (parent != null)
+					parent.PerformLayout(this, "Bounds");
+			} else {
+				InitScaling (specified);
+			}
 		}
 
 		void IArrangedElement.SetBounds (int x, int y, int width, int height, BoundsSpecified specified)
@@ -4432,6 +4468,8 @@ namespace System.Windows.Forms
 				if ((parent != null) && (parent.IsHandleCreated)) {
 					XplatUI.SetParent(window.Handle, parent.Handle);
 				}
+				// .NET parks a child whose parent has no window yet.
+				parked = parent != null && !parent.IsHandleCreated;
 
 				// ...and adopt any child that already had one. A control added to us BEFORE we had
 				// a handle could not be parented at the time -- ChangeParent only re-parents to an
@@ -4982,7 +5020,11 @@ namespace System.Windows.Forms
 			height = OverrideHeight (height);
 
 			Rectangle new_bounds = new Rectangle (x, y, width, height);
-				
+
+			// .NET: unchanged bounds are not recorded as specified and need no scaling.
+			if (new_bounds.Equals(bounds))
+				return;
+
 			// BoundsSpecified tells us which variables were programatic (user-set).
 			// We need to store those in the explicit bounds
 			if ((specified & BoundsSpecified.X) == BoundsSpecified.X)
@@ -4998,9 +5040,6 @@ namespace System.Windows.Forms
 
 			// .NET: the bounds given still need scaling, until a container scales them.
 			InitScaling (specified);
-
-			if (new_bounds.Equals(bounds))
-				return;
 
 			// Prevent the parent from doing layout as part of the callbacks from WM_WINDOWPOSCHANGED
 			// window message. Make sure it is postponed at least until the InitLayout call below is
@@ -6633,11 +6672,26 @@ namespace System.Windows.Forms
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
 		static readonly string s_traceResize = Environment.GetEnvironmentVariable ("WF_TRACE_RESIZE");
 		static readonly string s_traceLayout = Environment.GetEnvironmentVariable ("WF_TRACE_LAYOUT");
+		// WF_TRACE_STACK=N: the resize and layout traces also name the N callers that led there.
+		static readonly int s_traceStack = int.TryParse (Environment.GetEnvironmentVariable ("WF_TRACE_STACK"), out int n) ? n : 0;
+
+		static string TraceStack ()
+		{
+			if (s_traceStack <= 0)
+				return "";
+			var frames = new System.Diagnostics.StackTrace (2, false).GetFrames ();
+			var sb = new System.Text.StringBuilder (" <-");
+			for (int i = 0; i < frames.Length && i < s_traceStack; i++) {
+				var m = frames [i].GetMethod ();
+				sb.Append (' ').Append (m?.DeclaringType?.Name).Append ('.').Append (m?.Name);
+			}
+			return sb.ToString ();
+		}
 
 		protected virtual void OnSizeChanged(EventArgs e) {
 			// WF_TRACE_RESIZE=TypeName: every size a control of that type goes through, with its form's.
 			if (s_traceResize != null && GetType ().Name == s_traceResize)
-				Console.Error.WriteLine ($"[resize] {Environment.TickCount64} {GetType ().Name} '{Name}' {Bounds} visible={Visible} handle={IsHandleCreated} form={FindForm ()?.Bounds} formVisible={FindForm ()?.Visible} state={FindForm ()?.WindowState}");
+				Console.Error.WriteLine ($"[resize] {Environment.TickCount64} {GetType ().Name} '{Name}' {Bounds} visible={Visible} handle={IsHandleCreated} form={FindForm ()?.Bounds} formVisible={FindForm ()?.Visible} state={FindForm ()?.WindowState}{TraceStack ()}");
 			DisposeBackBuffer ();
 			OnResize(e);
 			EventHandler eh = (EventHandler)(Events [SizeChangedEvent]);
@@ -6696,8 +6750,19 @@ namespace System.Windows.Forms
 		}
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
+		// The handle was created while the parent had none (.NET's parking window).
+		bool parked;
+
+		internal bool AnyDisposingInHierarchy ()
+		{
+			for (Control c = this; c != null; c = c.parent)
+				if (c.Disposing)
+					return true;
+			return false;
+		}
+
 		protected virtual void OnVisibleChanged(EventArgs e) {
-			if (parent != null && Visible)
+			if (parent != null && Visible && !is_created && !AnyDisposingInHierarchy ())
 				CreateControl ();
 				
 			EventHandler eh = (EventHandler)(Events [VisibleChangedEvent]);
