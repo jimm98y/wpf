@@ -46,17 +46,16 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		#region Private Members
 		private const char PASSWORD_PAINT_CHAR = '\u25cf'; // the dot char
 		private const char PASSWORD_TEXT_CHAR = '*';
-		private const int V_INDENT = 16;
-		private const int ENTRY_SPACING = 2;
+		// .NET's _offset2Units: two pixels at the grid's DPI.
+		private int ENTRY_SPACING => LogicalToDeviceUnits (2);
 		/// <summary>How far a row's caption starts past the outline column, measured off a stock
 		/// grid.</summary>
 		private const int LABEL_PAD = 5;
 		/// <summary>The cell the expander is drawn in.</summary>
-		private const int PLUS_MINUS_SIZE = 8;
+		private int PLUS_MINUS_SIZE => LogicalToDeviceUnits (8);
 		private const int RESIZE_WIDTH = 3;
 		private const int BUTTON_WIDTH = 25;
-		private const int VALUE_PAINT_WIDTH = 19;
-		private const int VALUE_PAINT_INDENT = 27;
+
 		private double splitter_percent = .5;
 		private int row_height;
 
@@ -248,7 +247,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				return;
 
 			if (resizing_grid) {
-				int loc = Math.Max (e.X,2*V_INDENT);
+				int loc = Math.Max (e.X, 2 * OutlineIconSize);
 				SplitterPercent = 1.0*loc/Width;
 			}
 			if (e.X > SplitterLocation - RESIZE_WIDTH && e.X < SplitterLocation + RESIZE_WIDTH) 
@@ -497,7 +496,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			switch (e.KeyData & Keys.KeyCode) {
 			case Keys.Left:
 				if (e.Control) {
-					if (SplitterLocation > 2 * V_INDENT)
+					if (SplitterLocation > 2 * OutlineIconSize)
 						SplitterPercent -= 0.01;
 
 					e.Handled = true;
@@ -683,7 +682,12 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		// view draws its own, so everything here is .NET's position less (1, 1). Row k's label and
 		// value rectangles start at 1 + k * (RowHeight + 1) and are RowHeight tall; the rule above
 		// each row is drawn at the row's top less one; the divider at the label width.
-		private const int OutlineIconSize = 16, OutlineIconPadding = 5, ValuePaintIndent = 26, ValuePaintWidth = 20;
+		// .NET's RescaleConstants: the explorer-style outline cell, its padding and the value swatch, at
+		// the grid's DPI (16, 5, 26 and 20 at 96).
+		private int OutlineIconSize => LogicalToDeviceUnits (16);
+		private int OutlineIconPadding => LogicalToDeviceUnits (5);
+		private int ValuePaintIndent => LogicalToDeviceUnits (26);
+		private int ValuePaintWidth => LogicalToDeviceUnits (20);
 
 		private void DrawGridItems (GridItemCollection grid_items, PaintEventArgs pevent, int depth, ref int yLoc) {
 			foreach (GridItem grid_item in grid_items) {
@@ -699,7 +703,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 			return Math.Max (0, depth - 1);
 		}
 
-		private static int LabelIndent (GridEntry item, int depth)
+		private int LabelIndent (GridEntry item, int depth)
 		{
 			int icon = OutlineIconSize + OutlineIconPadding;
 			return item.GridItemType == GridItemType.Category
@@ -826,11 +830,11 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		private void PaintOutlineWithExplorerTreeStyle (Graphics g, Rectangle outline, bool expanded)
 		{
 			if (expanded) {
-				VisualStyles.Win11Frames.Draw (g, VisualStyles.Win11Frames.ExplorerTreeGlyph (true), outline);
+				VisualStyles.Win11Frames.Draw (g, VisualStyles.Win11Frames.ExplorerTreeGlyph (true, DeviceDpi), outline);
 				return;
 			}
 			Color line = property_grid.LineColor;
-			int [] px = VisualStyles.Win11Frames.Composite (VisualStyles.Win11Frames.ExplorerTreeGlyph (false),
+			int [] px = VisualStyles.Win11Frames.Composite (VisualStyles.Win11Frames.ExplorerTreeGlyph (false, DeviceDpi),
 									 outline.Width, outline.Height, line);
 			ControlPaint.InvertForeColorIfNeeded (px, line);
 			using (var bmp = new Bitmap (outline.Width, outline.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb)) {
@@ -860,7 +864,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		#endregion
 
 		/// <summary>.NET's LogicalMaxListBoxHeight: a list of standard values stops growing here.</summary>
-		private const int MaxListBoxHeight = 200;
+		private int MaxListBoxHeight => LogicalToDeviceUnits (200);
 
 		/// <summary>tmMaxCharWidth of the grid's font, which .NET adds to a list's width as padding.</summary>
 		private int MaxCharWidth ()
@@ -1102,7 +1106,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 
 			int y = TopMargin - vbar.Value*row_height;
 			CalculateItemY (entry, this.RootGridItem.GridItems, ref y);
-			int x = SplitterLocation + ENTRY_SPACING + (entry.PaintValueSupported ? VALUE_PAINT_INDENT : 0);
+			int x = SplitterLocation + ENTRY_SPACING + (entry.PaintValueSupported ? ValuePaintIndent + 1 : 0);
 			grid_textbox.SetBounds (x + ENTRY_SPACING, y + ENTRY_SPACING,
 						ClientRectangle.Width - ENTRY_SPACING - x - (vbar.Visible ? vbar.Width : 0),
 						row_height - ENTRY_SPACING);

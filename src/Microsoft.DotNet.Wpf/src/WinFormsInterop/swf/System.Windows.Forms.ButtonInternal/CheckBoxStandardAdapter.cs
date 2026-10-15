@@ -104,7 +104,7 @@ internal sealed class CheckBoxStandardAdapter : CheckBoxBaseAdapter
 		{
 			using ScreenDcCache.ScreenDcScope scope = GdiCache.GetScreenHdc();
 			// The glyph at the window's DPI, as uxtheme sizes it for the HWND .NET passes.
-			layoutOptions.CheckSize = Control.LogicalToDeviceUnits (CheckBoxRenderer.GetGlyphSize(scope, ButtonAdapterRenderers.CheckBoxStateFrom(GetState(), isMixed: true, Control.MouseIsOver)).Width);
+			layoutOptions.CheckSize = CheckBoxRenderer.GetGlyphSize(ButtonAdapterRenderers.CheckBoxStateFrom(GetState(), isMixed: true, Control.MouseIsOver), Control.DeviceDpi).Width;
 		}
 		else
 		{

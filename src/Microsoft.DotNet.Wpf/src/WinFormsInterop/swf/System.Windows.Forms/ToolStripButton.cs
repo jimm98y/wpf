@@ -143,8 +143,10 @@ namespace System.Windows.Forms
 		{
 			Size retval = base.GetPreferredSize (constrainingSize);
 			
-			if (retval.Width < 23)
-				retval.Width = 23;
+			// .NET's _standardButtonWidth: 23 at the item's DPI.
+			int standard = ScaleHelper.ScaleToDpi (23, DeviceDpi);
+			if (retval.Width < standard)
+				retval.Width = standard;
 				
 			return retval;
 		}

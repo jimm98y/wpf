@@ -340,15 +340,42 @@ namespace System.Windows.Forms
 		{
 			if (dpi == OneHundredPercentLogicalDpi || logicalBitmap == null)
 				return logicalBitmap;
-			Size size = ScaleToDpi (logicalBitmap.Size, dpi);
-			var scaled = new Bitmap (size.Width, size.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+			return ScaleToSize (logicalBitmap, ScaleToDpi (logicalBitmap.Size, dpi), disposeBitmap);
+		}
+
+		/// <summary>.NET's CopyAndScaleToSize: always a new bitmap, at the size.</summary>
+		internal static Bitmap CopyAndScaleToSize (Bitmap bitmap, Size desiredSize)
+			=> ScaleToSize (bitmap, desiredSize, disposeBitmap: false, alwaysCopy: true);
+
+		/// <summary>.NET's ScaleToSize: nearest neighbour for a whole multiple (a 16-pixel icon doubled
+		/// stays crisp), high-quality bilinear to shrink, high-quality bicubic otherwise, the source
+		/// rectangle offset half a pixel as .NET offsets it.</summary>
+		internal static Bitmap ScaleToSize (Bitmap bitmap, Size desiredSize, bool disposeBitmap = false, bool alwaysCopy = false)
+		{
+			Size size = bitmap.Size;
+			if (size == desiredSize) {
+				if (alwaysCopy) {
+					var copy = new Bitmap (bitmap);
+					if (disposeBitmap)
+						bitmap.Dispose ();
+					bitmap = copy;
+				}
+				return bitmap;
+			}
+			InterpolationMode mode = InterpolationMode.HighQualityBicubic;
+			if (desiredSize.Width % size.Width == 0 && desiredSize.Height % size.Height == 0)
+				mode = InterpolationMode.NearestNeighbor;
+			else if (desiredSize.Width < size.Width && desiredSize.Height < size.Height)
+				mode = InterpolationMode.HighQualityBilinear;
+			var scaled = new Bitmap (desiredSize.Width, desiredSize.Height, bitmap.PixelFormat);
 			using (Graphics g = Graphics.FromImage (scaled)) {
-				g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-				g.DrawImage (logicalBitmap, new Rectangle (0, 0, size.Width, size.Height),
-					new Rectangle (0, 0, logicalBitmap.Width, logicalBitmap.Height), GraphicsUnit.Pixel);
+				g.InterpolationMode = mode;
+				var src = new RectangleF (0, 0, size.Width, size.Height);
+				src.Offset (-0.5f, -0.5f);
+				g.DrawImage (bitmap, new RectangleF (0, 0, desiredSize.Width, desiredSize.Height), src, GraphicsUnit.Pixel);
 			}
 			if (disposeBitmap)
-				logicalBitmap.Dispose ();
+				bitmap.Dispose ();
 			return scaled;
 		}
 

@@ -611,12 +611,18 @@ namespace System.Windows.Forms
 		/// <summary>A check box: the theme's frame for the state, true size, at the box. The box is
 		/// given as a DrawRectangle rectangle (its span one short of the glyph).</summary>
 		private void DrawModernCheck (Graphics g, Rectangle box, bool ticked, bool mixed,
-					      bool enabled, bool hot, bool pressed = false)
+					      bool enabled, bool hot, bool pressed = false, int dpi = 96)
+		{
+			Win11Frames.Draw (g, CheckFrame (ticked, mixed, enabled, hot, pressed, dpi),
+					  new Rectangle (box.X, box.Y, box.Width + 1, box.Height + 1));
+		}
+
+		/// <summary>BP_CHECKBOX for a window at <paramref name="dpi"/>.</summary>
+		private static Win11Frames.Frame CheckFrame (bool ticked, bool mixed, bool enabled, bool hot, bool pressed, int dpi)
 		{
 			int mark = mixed ? 2 : ticked ? 1 : 0;
 			int look = !enabled ? 3 : pressed ? 2 : hot ? 1 : 0;
-			Win11Frames.Draw (g, Win11Frames.CheckBox (mark * 4 + look + 1),
-					  new Rectangle (box.X, box.Y, box.Width + 1, box.Height + 1));
+			return Win11Frames.Get ("BUTTON", 3, mark * 4 + look + 1, dpi);
 		}
 
 		/// <summary>Where the caption goes beside the glyph. The classic rule is kept and the result
@@ -641,8 +647,11 @@ namespace System.Windows.Forms
 				return;
 			}
 
-			Rectangle box = CentredGlyph (glyphArea);
-			// One row higher than centring in the control puts it: Windows lines a check box up with
+			int dpi = cb.DeviceDpi;
+			Win11Frames.Frame frame = CheckFrame (cb.CheckState == CheckState.Checked, cb.CheckState == CheckState.Indeterminate,
+							      cb.Enabled, cb.Entered, cb.Pressed, dpi);
+			Rectangle box = CentredGlyph (glyphArea, frame.Width);
+			// One row higherthan centring in the control puts it: Windows lines a check box up with
 			// the line of text beside it, which sits a pixel above the middle of the control. The
 			// radio button, which comes through the same helper, already lands where Windows draws it,
 			// so this belongs to the check box and not to the centring.
@@ -653,14 +662,14 @@ namespace System.Windows.Forms
 				return;
 			// The same drawing the primitive uses, so a CheckedListBox and a CheckBox cannot drift.
 			DrawModernCheck (g, box, cb.CheckState == CheckState.Checked,
-					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered, cb.Pressed);
+					 cb.CheckState == CheckState.Indeterminate, cb.Enabled, cb.Entered, cb.Pressed, dpi);
 		}
 
-		/// <summary>The 13x13 cell Windows draws a check box or radio button in, centred in
-		/// whatever space the layout gave us.</summary>
-		private static Rectangle CentredGlyph (Rectangle glyphArea)
+		/// <summary>The cell Windows draws a check box or radio button in (13x13 at 96 dpi, the
+		/// glyph's size at others), centred in whatever space the layout gave us.</summary>
+		private static Rectangle CentredGlyph (Rectangle glyphArea, int glyph = 13)
 		{
-			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
+			int size = Math.Min (glyph, Math.Min (glyphArea.Width, glyphArea.Height));
 			return new Rectangle (glyphArea.X + (glyphArea.Width - size) / 2,
 					      glyphArea.Y + (glyphArea.Height - size) / 2, size, size);
 		}
@@ -672,13 +681,13 @@ namespace System.Windows.Forms
 				return;
 			}
 
-			int size = Math.Min (13, Math.Min (glyphArea.Width, glyphArea.Height));
+			int look = !rb.Enabled ? 3 : rb.Pressed ? 2 : rb.Entered ? 1 : 0;
+			Win11Frames.Frame frame = Win11Frames.Get ("BUTTON", 2, (rb.Checked ? 4 : 0) + look + 1, rb.DeviceDpi);
+			int size = Math.Min (frame.Width, Math.Min (glyphArea.Width, glyphArea.Height));
 			var circle = new Rectangle (glyphArea.X + (glyphArea.Width - size) / 2,
 						    glyphArea.Y + (glyphArea.Height - size) / 2,
 						    size, size);
-
-			int look = !rb.Enabled ? 3 : rb.Pressed ? 2 : rb.Entered ? 1 : 0;
-			Win11Frames.Draw (g, Win11Frames.RadioButton ((rb.Checked ? 4 : 0) + look + 1), circle);
+			Win11Frames.Draw (g, frame, circle);
 		}
 
 		/// <summary>The drop-down button belongs to the field, not to a button of its own: fill it
@@ -2361,8 +2370,10 @@ namespace System.Windows.Forms
 				return;
 
 			// Two pixels at rest, seven when open, and rounded at both ends either way.
-			int thickness = (int) Math.Round (ScrollRestThickness
-				 + (ScrollOpenThickness - ScrollRestThickness) * open);
+			// (At the bar's DPI: the theme's thumbs are five and thirteen pixels at 200%.)
+			double rest = bar.DeviceDpi >= 192 ? ScrollRestThickness * 2.5 : ScrollRestThickness;
+			double opened = ScaleHelper.ScaleToDpi (ScrollOpenThickness, bar.DeviceDpi);
+			int thickness = (int) Math.Round (rest + (opened - rest) * open);
 			Rectangle slim = thumb;
 			// Centred by INSET AND WIDTH separately, and the inset rounds UP. Taking the width as
 			// "the bar less twice the inset" makes it one too wide whenever the bar's own width and
@@ -2384,8 +2395,10 @@ namespace System.Windows.Forms
 		private static void DrawThemedScrollBar (Graphics dc, ScrollBar bar, Rectangle client,
 							 Rectangle first, Rectangle second, Rectangle thumb, bool hover)
 		{
+			// The theme opened for the bar's window: its DPI picks the thumb's image.
+			int dpi = bar.DeviceDpi;
 			// SBP_LOWERTRACK* / UPPERTRACK*: the same tile either side of the thumb.
-			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", bar.vert ? 6 : 4, 1), client);
+			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", bar.vert ? 6 : 4, 1, dpi), client);
 			// SBP_ARROWBTN: up/down/left/right in fours (normal, hot, pressed, disabled), then the
 			// four hover states.
 			int d1 = bar.vert ? 0 : 2, d2 = bar.vert ? 1 : 3;
@@ -2394,12 +2407,12 @@ namespace System.Windows.Forms
 			// out in the smaller, lighter look.
 			int ArrowState (int dir, bool entered, bool pressed) => !bar.Enabled ? dir * 4 + 4
 				: pressed ? dir * 4 + 3 : entered ? dir * 4 + 2 : hover ? 17 + dir : dir * 4 + 1;
-			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", 1, ArrowState (d1, bar.FirstButtonEntered, bar.firstbutton_state == ButtonState.Pushed)), first);
-			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", 1, ArrowState (d2, bar.SecondButtonEntered, bar.secondbutton_state == ButtonState.Pushed)), second);
+			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", 1, ArrowState (d1, bar.FirstButtonEntered, bar.firstbutton_state == ButtonState.Pushed), dpi), first);
+			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", 1, ArrowState (d2, bar.SecondButtonEntered, bar.secondbutton_state == ButtonState.Pushed), dpi), second);
 			if (!bar.Enabled || thumb.Width <= 0 || thumb.Height <= 0)
 				return;
 			// SBP_THUMBBTNVERT / HORZ: normal, or SCRBS_HOVER.
-			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", bar.vert ? 3 : 2, hover ? 5 : 1), thumb);
+			Win11Frames.Draw (dc, Win11Frames.Get ("SCROLLBAR", bar.vert ? 3 : 2, hover ? 5 : 1, dpi), thumb);
 		}
 
 		private const int ScrollRestThickness = 2;
@@ -2733,7 +2746,9 @@ namespace System.Windows.Forms
 			Color back = selected ? ColorHighlight : e.BackColor;
 			Color fore = selected ? ColorHighlightText : e.ForeColor;
 
-			int size = Math.Min (13, Math.Max (0, item.Height - 2));
+			// The glyph at the list's DPI (CheckBoxRenderer.GetGlyphSize for its HWND).
+			int glyph = CheckFrame (false, false, true, false, false, ctrl.DeviceDpi).Width;
+			int size = Math.Min (glyph, Math.Max (0, item.Height - 2));
 			var box = new Rectangle (item.X + Indent, item.Y + (item.Height - size) / 2,
 						 Math.Max (size - 1, 0), Math.Max (size - 1, 0));
 
@@ -2751,7 +2766,7 @@ namespace System.Windows.Forms
 			if (box.Width > 0 && box.Height > 0)
 				DrawModernCheck (e.Graphics, box,
 						 (e.State & DrawItemState.Checked) == DrawItemState.Checked, false,
-						 (e.State & DrawItemState.Inactive) != DrawItemState.Inactive, false);
+						 (e.State & DrawItemState.Inactive) != DrawItemState.Inactive, false, false, ctrl.DeviceDpi);
 
 			if (text.Width > 0)
 				e.Graphics.DrawStringMono (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
