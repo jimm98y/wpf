@@ -55,10 +55,11 @@
   <!-- The engine's native half: a shown form brings its host window and compositor up for real
        (PopupOverHostedContentTests). -->
   <!-- WindowsBase uses System.Private.Windows.Core at run time (its DWM and OS-version helpers; a WPF
-       window that resizes at a scale other than 100% reaches it), as the product payload ships it.
+       window that resizes at a scale other than 100% reaches it), as the product payload ships it: the
+       fork's source build (see sdk/WpfWebGpu.Sdk/Sdk/WindowsCore.targets).
        Copied, not referenced: naming it at compile time would clash with this stack's own types. -->
   <ItemGroup Condition="'$(_ForkBuilt)' == 'true'">
-    <None Include="$(NuGetPackageRoot)microsoft.private.winforms/*/lib/net10.0/System.Private.Windows.Core.dll"
+    <None Include="$(WpfWindowsCoreDll)"
           Link="System.Private.Windows.Core.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
     <None Include="$(_Art)/System.Windows.Primitives/Release/net10.0/System.Windows.Primitives.dll"
           Link="System.Windows.Primitives.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />

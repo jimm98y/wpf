@@ -7,4 +7,14 @@
           Project="Sdk.targets"
           Condition="!Exists('$(WpfArcadeSdkProps)') Or !Exists('$(WpfArcadeSdkTargets)')"/>
   <Import Project="eng/Testing.targets"/>
+  <!-- System.Private.Windows.Core is the fork's source build, never a package binary: see the
+       comment in the imported file. (Projects built with WpfWebGpu.Sdk import it from the SDK,
+       which points it at the SDK's own lib/wpf copy.) -->
+  <PropertyGroup Condition="'$(WpfWebGpuSdkRoot)' == ''">
+    <_WpfWindowsCoreBin>$(MSBuildThisFileDirectory)artifacts/bin/System.Private.Windows.Core/</_WpfWindowsCoreBin>
+    <WpfWindowsCoreDll Condition="'$(WpfWindowsCoreDll)' == '' And '$(Platform)' != '' And '$(Platform)' != 'AnyCPU' And Exists('$(_WpfWindowsCoreBin)$(Platform)/$(Configuration)/net10.0/System.Private.Windows.Core.dll')">$(_WpfWindowsCoreBin)$(Platform)/$(Configuration)/net10.0/System.Private.Windows.Core.dll</WpfWindowsCoreDll>
+    <WpfWindowsCoreDll Condition="'$(WpfWindowsCoreDll)' == '' And Exists('$(_WpfWindowsCoreBin)$(Configuration)/net10.0/System.Private.Windows.Core.dll')">$(_WpfWindowsCoreBin)$(Configuration)/net10.0/System.Private.Windows.Core.dll</WpfWindowsCoreDll>
+    <WpfWindowsCoreDll Condition="'$(WpfWindowsCoreDll)' == ''">$(_WpfWindowsCoreBin)Release/net10.0/System.Private.Windows.Core.dll</WpfWindowsCoreDll>
+  </PropertyGroup>
+  <Import Project="$(MSBuildThisFileDirectory)sdk/WpfWebGpu.Sdk/Sdk/WindowsCore.targets" Condition="'$(WpfWebGpuSdkRoot)' == ''" />
 </Project>

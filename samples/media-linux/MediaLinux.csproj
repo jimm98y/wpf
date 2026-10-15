@@ -88,7 +88,8 @@
     <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
     <!-- FrameworkCompatibilityPreferences reads app.config switches during theme loading. -->
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
-    <!-- Brings System.Private.Windows.Core, which PresentationCore's DataObject needs at runtime.
+    <!-- Brings System.Private.Windows.Core (swapped for the fork's own build by
+         sdk/WpfWebGpu.Sdk/Sdk/WindowsCore.targets), which PresentationCore's DataObject needs at runtime.
          Without it Clipboard and DragDrop throw FileNotFoundException the moment they are used. The
          packaged SDK already adds this (sdk/WpfWebGpu.Sdk/Sdk/Sdk.targets); samples that reference
          the fork by path have to say so themselves. -->

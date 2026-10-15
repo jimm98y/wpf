@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    System.Private.Windows.Core, built from source.
+
+    The sources are dotnet/winforms' src/System.Private.Windows.Core/src at tag v10.0.10 (the
+    version of the Microsoft.Private.Winforms 10.0.10-servicing package this replaces), unchanged
+    except where the port's rules require (see the notes in the files). WindowsBase, PresentationCore,
+    PresentationFramework, System.Windows.Primitives and UIAutomationClientSideProviders compile
+    against it - BinaryFormat and the clipboard / OLE helpers back DataObject - and every head
+    ships it, so nothing takes the WindowsDesktop framework's copy or the transport package's.
+
+    Identity is the upstream one: ECMA-signed (b77a5c561934e089), version 10.0.0.0.
+  -->
+  <PropertyGroup>
+    <AssemblyName>System.Private.Windows.Core</AssemblyName>
+    <AssemblyVersion>10.0.0.0</AssemblyVersion>
+    <StrongNameKeyId>ECMA</StrongNameKeyId>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>preview</LangVersion>
+    <!-- Upstream's warnings, and the generated interop's, which the port's build would otherwise
+         treat as errors. -->
+    <NoWarn>$(NoWarn);CS8981;CS3016;SYSLIB5005;CS1591;CS1573;CS1574;CS1584;CS1658;CA1416;CA1069;CS0618;IDE0005;CS9191;CS9192</NoWarn>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+    <RootNamespace />
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <EnableXlfLocalization>false</EnableXlfLocalization>
+    <Platforms>AnyCPU;x86;x64;arm64</Platforms>
+    <!-- Upstream's resource class: Arcade's generated SR with its own GetResourceString and Format
+         (the WPF projects supply theirs and omit it). -->
+    <GenerateResxSourceOmitGetResourceString>false</GenerateResxSourceOmitGetResourceString>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Upstream pins 0.3.151, which this repo's feeds do not carry; 0.3.162 is the nearest, and
+         the generated surface is the same (the API diff against the package binary is empty). -->
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.162" PrivateAssets="all" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="NativeMethods.txt" />
+    <AdditionalFiles Include="NativeMethods.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Resources\SR.resx">
+      <WithCulture>false</WithCulture>
+      <ManifestResourceName>System.Private.Windows.Core.Resources.SR</ManifestResourceName>
+      <GenerateSource>true</GenerateSource>
+      <ClassName>System.Private.Windows.Core.Resources.SR</ClassName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

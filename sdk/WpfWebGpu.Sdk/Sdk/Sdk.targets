@@ -772,6 +772,14 @@
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk.WebAssembly" Condition="'$(_WpfWebGpuBrowser)' == 'true'" />
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" Condition="'$(_WpfWebGpuBrowser)' != 'true'" />
 
+  <!-- System.Private.Windows.Core is the fork's source build in lib/wpf: a package's copy of it
+       (System.Drawing.Common carries one) is swapped for it, and a build that deploys a package
+       binary anyway fails. See WindowsCore.targets. -->
+  <PropertyGroup>
+    <WpfWindowsCoreDll Condition="'$(WpfWindowsCoreDll)' == ''">$(WpfWebGpuSdkRoot)lib/wpf/System.Private.Windows.Core.dll</WpfWindowsCoreDll>
+  </PropertyGroup>
+  <Import Project="$(MSBuildThisFileDirectory)WindowsCore.targets" />
+
   <!-- XAML markup compilation (after the base targets, mirroring where the WindowsDesktop SDK
        imports it). Every WPF flavor now uses the fork's compiler — the windows head no longer
        falls back to the stock WindowsDesktop SDK. -->

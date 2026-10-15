@@ -1,0 +1,73 @@
+<Project>
+  <!--
+    System.Private.Windows.Core is built from source in the fork (src/Microsoft.DotNet.Wpf/src/
+    System.Private.Windows.Core): WindowsBase, PresentationCore, PresentationFramework,
+    System.Windows.Primitives and UIAutomationClientSideProviders compile against it, and every head
+    ships it.
+
+    Two NuGet packages carry a binary of the same assembly: the Microsoft.Private.Winforms transport
+    package, and System.Drawing.Common, whose lib folder holds it beside System.Drawing.Common.dll.
+    Left alone, whichever of the two copies a project pulls in would be compiled against and deployed
+    beside ours or instead of it (they share the identity, so only file versions decide). So:
+
+      1. Each package copy of the assembly that a project resolves, for compiling or for copying to
+         the output, is replaced by ours ($(WpfWindowsCoreDll)), keeping its package metadata so the
+         deps.json entry still points at the file that is actually deployed.
+      2. After the build (last, so a project's own copy steps are covered) and after a publish,
+         the deployed file is compared with every package copy in the NuGet cache. If it is one of
+         them, the build fails: something brought the package binary in by another route (a None
+         item, a HintPath, a vendored lib/ folder).
+
+    Shared by the SDK (Sdk.targets, which points WpfWindowsCoreDll at lib/wpf) and the fork's own
+    build (Directory.Build.targets, which points it at artifacts/bin).
+  -->
+
+  <Target Name="WpfUseSourceBuiltWindowsCore" AfterTargets="ResolvePackageAssets"
+          Condition="'$(MSBuildProjectName)' != 'System.Private.Windows.Core'">
+    <ItemGroup>
+      <_WpfPackageWindowsCore Include="@(RuntimeCopyLocalItems)" Condition="'%(Filename)%(Extension)' == 'System.Private.Windows.Core.dll'" />
+      <_WpfPackageWindowsCoreRef Include="@(ResolvedCompileFileDefinitions)" Condition="'%(Filename)%(Extension)' == 'System.Private.Windows.Core.dll'" />
+    </ItemGroup>
+    <Error Condition="('@(_WpfPackageWindowsCore)' != '' Or '@(_WpfPackageWindowsCoreRef)' != '') And ('$(WpfWindowsCoreDll)' == '' Or !Exists('$(WpfWindowsCoreDll)'))"
+           Text="A package brings System.Private.Windows.Core into $(MSBuildProjectName) (@(_WpfPackageWindowsCore->'%(NuGetPackageId)')@(_WpfPackageWindowsCoreRef->'%(NuGetPackageId)')), and the source-built one that replaces it is missing: '$(WpfWindowsCoreDll)'. Build src/Microsoft.DotNet.Wpf/src/System.Private.Windows.Core first." />
+    <ItemGroup Condition="'@(_WpfPackageWindowsCore)' != ''">
+      <RuntimeCopyLocalItems Remove="@(_WpfPackageWindowsCore)" />
+      <RuntimeCopyLocalItems Include="@(_WpfPackageWindowsCore->'$(WpfWindowsCoreDll)')" />
+    </ItemGroup>
+    <ItemGroup Condition="'@(_WpfPackageWindowsCoreRef)' != ''">
+      <ResolvedCompileFileDefinitions Remove="@(_WpfPackageWindowsCoreRef)" />
+      <!-- HintPath too: the SDK turns these into References by it. -->
+      <ResolvedCompileFileDefinitions Include="@(_WpfPackageWindowsCoreRef->'$(WpfWindowsCoreDll)')" HintPath="$(WpfWindowsCoreDll)" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="_WpfPackageWindowsCoreHashes">
+    <ItemGroup>
+      <_WpfPackageWindowsCoreBinary Include="$(NuGetPackageRoot)microsoft.private.winforms/*/lib/*/System.Private.Windows.Core.dll" />
+      <_WpfPackageWindowsCoreBinary Include="$(NuGetPackageRoot)system.drawing.common/*/lib/*/System.Private.Windows.Core.dll" />
+    </ItemGroup>
+    <GetFileHash Files="@(_WpfPackageWindowsCoreBinary)" Condition="'@(_WpfPackageWindowsCoreBinary)' != ''">
+      <Output TaskParameter="Items" ItemName="_WpfPackageWindowsCoreHash" />
+    </GetFileHash>
+  </Target>
+
+  <Target Name="WpfCheckNoPackageWindowsCore" AfterTargets="Build"
+          DependsOnTargets="_WpfPackageWindowsCoreHashes"
+          Condition="'$(MSBuildProjectName)' != 'System.Private.Windows.Core' And Exists('$(TargetDir)System.Private.Windows.Core.dll')">
+    <GetFileHash Files="$(TargetDir)System.Private.Windows.Core.dll">
+      <Output TaskParameter="Hash" PropertyName="_WpfDeployedWindowsCoreHash" />
+    </GetFileHash>
+    <Error Condition="'@(_WpfPackageWindowsCoreHash->WithMetadataValue('FileHash', '$(_WpfDeployedWindowsCoreHash)'))' != ''"
+           Text="$(TargetDir)System.Private.Windows.Core.dll is the NuGet package's binary (@(_WpfPackageWindowsCoreHash->WithMetadataValue('FileHash', '$(_WpfDeployedWindowsCoreHash)'))), not the one built from source in the fork." />
+  </Target>
+
+  <Target Name="WpfCheckNoPackageWindowsCorePublished" AfterTargets="Publish"
+          DependsOnTargets="_WpfPackageWindowsCoreHashes"
+          Condition="'$(MSBuildProjectName)' != 'System.Private.Windows.Core' And Exists('$(PublishDir)System.Private.Windows.Core.dll')">
+    <GetFileHash Files="$(PublishDir)System.Private.Windows.Core.dll">
+      <Output TaskParameter="Hash" PropertyName="_WpfPublishedWindowsCoreHash" />
+    </GetFileHash>
+    <Error Condition="'@(_WpfPackageWindowsCoreHash->WithMetadataValue('FileHash', '$(_WpfPublishedWindowsCoreHash)'))' != ''"
+           Text="$(PublishDir)System.Private.Windows.Core.dll is the NuGet package's binary, not the one built from source in the fork." />
+  </Target>
+</Project>
