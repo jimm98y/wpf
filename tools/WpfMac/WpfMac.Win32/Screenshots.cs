@@ -547,7 +547,11 @@ public static class Screenshots
     private static void SaveWpf(HwndSource source, string path)
     {
         if (source.IsDisposed || source.RootVisual is not FrameworkElement root || root.ActualWidth < 1 || root.ActualHeight < 1) return;
-        var rtb = new RenderTargetBitmap((int)Math.Ceiling(root.ActualWidth), (int)Math.Ceiling(root.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+        // At the window's own DPI, so the picture is the window's physical pixels (a 200% display
+        // got a half-size picture of a window that is drawn 1:1).
+        DpiScale dpi = VisualTreeHelper.GetDpi(root);
+        var rtb = new RenderTargetBitmap((int)Math.Ceiling(root.ActualWidth * dpi.DpiScaleX), (int)Math.Ceiling(root.ActualHeight * dpi.DpiScaleY),
+            dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
         rtb.Render(root);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(rtb));

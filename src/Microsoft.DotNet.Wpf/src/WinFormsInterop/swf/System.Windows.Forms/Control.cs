@@ -6625,7 +6625,12 @@ namespace System.Windows.Forms
 		}
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
+		static readonly string s_traceResize = Environment.GetEnvironmentVariable ("WF_TRACE_RESIZE");
+
 		protected virtual void OnSizeChanged(EventArgs e) {
+			// WF_TRACE_RESIZE=TypeName: every size a control of that type goes through, with its form's.
+			if (s_traceResize != null && GetType ().Name == s_traceResize)
+				Console.Error.WriteLine ($"[resize] {Environment.TickCount64} {GetType ().Name} '{Name}' {Bounds} visible={Visible} handle={IsHandleCreated} form={FindForm ()?.Bounds} formVisible={FindForm ()?.Visible} state={FindForm ()?.WindowState}");
 			DisposeBackBuffer ();
 			OnResize(e);
 			EventHandler eh = (EventHandler)(Events [SizeChangedEvent]);
