@@ -279,7 +279,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 long tB = System.Diagnostics.Stopwatch.GetTimestamp ();
                 if (half) { src.X -= 0.5f; src.Y -= 0.5f; }
                 long f0 = GpSpan.s_fillTicks, b0 = GpScan.s_blendTicks;
-                DriverDrawImage (band, drawBounds, ia?.Dp ?? DpImageAttr.Default, pts, src);
+                try {
+                    DriverDrawImage (band, drawBounds, ia?.Dp ?? DpImageAttr.Default, pts, src);
+                } finally {
+                    if (band.Pooled) { band.Pooled = false; System.Buffers.ArrayPool<uint>.Shared.Return (band.Px); band.Px = null; }
+                }
                 if (s_traceImage)
                     Console.Error.WriteLine ($"[gdip-img]   fill {(GpSpan.s_fillTicks - f0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} ms blend {(GpScan.s_blendTicks - b0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} ms");
                 if (s_traceImage)
@@ -520,13 +524,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 f = ia.Recolor.Apply (bmp, ColorAdjustType.Bitmap);
             }
             int n = Math.Max (0, r1 - r0);
+            // The band is drawn and given back (see DrvDrawImage): a splash redrawn every 25 ms
+            // allocated a window-sized array a frame, on the large-object heap, and the gen-2
+            // collections that brought on stalled every thread of the application.
             if (decimate) {
-                GdipFrame full = f.Format == PixelFormat.Format32bppPArgb ? f
-                    : f.Format == PixelFormat.Format32bppArgb ? PremultipliedCopy (f)
+                bool argb = f.Format == PixelFormat.Format32bppArgb;
+                GdipFrame full = f.Format == PixelFormat.Format32bppPArgb || argb ? f
                     : GdipPixels.Convert (f, new Rectangle (0, 0, f.Width, f.Height), PixelFormat.Format32bppPArgb, false);
-                return new DpBitmapSrc (imgW, n, GpBitmapScaler.Averaging (full, imgW, imgH, r0, r0 + n));
+                uint[] outPx = System.Buffers.ArrayPool<uint>.Shared.Rent (Math.Max (1, imgW * n));
+                Array.Clear (outPx, 0, imgW * n);
+                GpBitmapScaler.Averaging (full, imgW, imgH, r0, r0 + n, argb, outPx);
+                return new DpBitmapSrc (imgW, n, outPx) { Pooled = true };
             }
-            var px = new uint [bmp.Width * n];
+            var px = System.Buffers.ArrayPool<uint>.Shared.Rent (Math.Max (1, bmp.Width * n));
             if (n > 0 && (f.Format == PixelFormat.Format32bppPArgb || f.Format == PixelFormat.Format32bppArgb) && f.Width == bmp.Width) {
                 // The band straight out of the bits, word by word: what the conversion to PARGB below
                 // makes of a 32-bit ARGB or PARGB bitmap (ReadArgb, then WriteArgb's PremultiplyArgb),
@@ -552,25 +562,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                         px [yy * bmp.Width + xx] = (uint) (c.Bits [o] | c.Bits [o + 1] << 8 | c.Bits [o + 2] << 16 | c.Bits [o + 3] << 24);
                 }
             }
-            return new DpBitmapSrc (bmp.Width, n, px);
-        }
-
-        /// <summary>A 32bpp ARGB frame as PARGB, word by word: what GdipPixels.Convert makes of it
-        /// (ReadArgb, then WriteArgb's PremultiplyArgb) without going a byte at a time. A splash
-        /// screen shrunk to a 96-dpi window every fade step spent most of its 10 ms there.</summary>
-        static GdipFrame PremultipliedCopy (GdipFrame f)
-        {
-            var c = new GdipFrame (f.Width, f.Height, PixelFormat.Format32bppPArgb) { DpiX = f.DpiX, DpiY = f.DpiY };
-            int w = f.Width;
-            for (int y = 0; y < f.Height; y++) {
-                ReadOnlySpan<uint> row = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint> (f.Bits.AsSpan (y * f.Stride, w * 4));
-                Span<uint> dst = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint> (c.Bits.AsSpan (y * c.Stride, w * 4));
-                for (int x = 0; x < w; x++) {
-                    uint v = row [x];
-                    dst [x] = v >= 0xff000000u ? v : GdipPixels.PremultiplyArgb (v);
-                }
-            }
-            return c;
+            return new DpBitmapSrc (bmp.Width, n, px) { Pooled = true };
         }
 
         // ---- DpDriver::DrawImage @180030730 ----------------------------------------------------------

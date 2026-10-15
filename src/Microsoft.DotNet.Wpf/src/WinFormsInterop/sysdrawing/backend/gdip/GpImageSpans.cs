@@ -35,6 +35,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
     {
         public int Width, Height;
         public uint[] Px;
+        /// <summary>Px is rented (ArrayPool) and longer than Width x Height; given back after the draw.</summary>
+        public bool Pooled;
 
         public DpBitmapSrc (int w, int h, uint[] px) { Width = w; Height = h; Px = px; }
     }
