@@ -137,10 +137,14 @@ namespace System.Windows.Forms
 
 		protected virtual void OnRenderArrow (ToolStripArrowRenderEventArgs e)
 		{
-			// .NET's RenderArrowCore at 96 dpi: a filled triangle about the rectangle's centre.
+			// .NET's RenderArrowCore: a filled triangle about the rectangle's centre, its offsets
+			// (Offset2X/Y, s_offset4X/Y) at the item's DPI for a per-monitor application, else at
+			// the system's.
 			Rectangle r = e.ArrowRectangle;
 			Point c = new Point (r.Left + r.Width / 2, r.Top + r.Height / 2);
-			const int offset2X = 2, offset2Y = 2, offset4Y = 4, tip = 2;
+			int dpi = e.Item != null && ScaleHelper.IsThreadPerMonitorV2Aware ? e.Item.DeviceDpi : ScaleHelper.InitialSystemDpi;
+			int offset2X = ScaleHelper.ScaleToDpi (2, dpi), offset2Y = offset2X, offset4X = ScaleHelper.ScaleToDpi (4, dpi), offset4Y = offset4X;
+			int tip = dpi != ScaleHelper.OneHundredPercentLogicalDpi ? offset4X - offset2X : offset2X;
 			Point[] arrow;
 			switch (e.Direction) {
 				case ArrowDirection.Up:

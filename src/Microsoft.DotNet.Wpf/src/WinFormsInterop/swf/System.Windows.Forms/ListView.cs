@@ -326,7 +326,8 @@ namespace System.Windows.Forms
 					if (this.state_image_list != null)
 						return this.state_image_list.ImageSize;
 					else
-						return ThemeEngine.Current.ListViewCheckBoxSize;
+						// The state images' cell, at the list's DPI (SM_CXSMICON for it).
+						return ScaleHelper.ScaleToDpi (ThemeEngine.Current.ListViewCheckBoxSize, DeviceDpi);
 				}
 				return Size.Empty;
 			}

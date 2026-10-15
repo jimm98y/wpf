@@ -1283,13 +1283,13 @@ namespace System.Windows.Forms {
 		private bool IsCheckboxArea (TreeNode node, int x)
 		{
 			int l = CheckBoxCellLeft (node);
-			return (x >= l && x < l + TreeNode.CheckBoxWidth);
+			return (x >= l && x < l + CheckBoxCellWidth);
 		}
 
 		/// <summary>Where a check-box tree draws a node's box: the cell just before its text.</summary>
 		private int CheckBoxCellLeft (TreeNode node)
 		{
-			int l = node.Bounds.Left - TreeNode.CheckBoxWidth;
+			int l = node.Bounds.Left - CheckBoxCellWidth;
 			if (ImageList != null)
 				l -= ImageList.ImageSize.Width + 3;
 			return l;
@@ -1523,10 +1523,18 @@ namespace System.Windows.Forms {
 			// (unchecked or checked, normal) at its own size, and draws a node's on its row -- so
 			// the box is the same one a CheckBox control shows -- composited as an image list
 			// composites it (Win11Frames.DrawStateImage), at the cell's top-left.
-			var cell = new Rectangle (x, middle - 7, TreeNode.CheckBoxWidth, 13);
+			// The image list is the size uxtheme gives the part for the tree's DPI
+			// (CreateCheckBoxImagelistEx: GetThemePartSize, TS_DRAW, of a theme opened for it).
+			int size = CheckBoxCellWidth;
+			var cell = new Rectangle (x, middle - (size + 1) / 2, size, size);
 			System.Windows.Forms.VisualStyles.Win11Frames.DrawStateImage (dc,
-				System.Windows.Forms.VisualStyles.Win11Frames.CheckBox (node.Checked ? 5 : 1), cell);
+				System.Windows.Forms.VisualStyles.Win11Frames.Get ("BUTTON", 3, node.Checked ? 5 : 1, DeviceDpi), cell);
 		}
+
+		/// <summary>The state image list's cell: the theme's check box at the tree's DPI, 13 pixels
+		/// at 96, 26 at 200%.</summary>
+		internal int CheckBoxCellWidth => DeviceDpi == ScaleHelper.OneHundredPercentLogicalDpi ? TreeNode.CheckBoxWidth
+			: System.Windows.Forms.VisualStyles.Win11Frames.Get ("BUTTON", 3, 1, DeviceDpi)?.Width ?? TreeNode.CheckBoxWidth;
 
 		private void DrawNodeLines (TreeNode node, Graphics dc, Rectangle clip, Pen dash, int x, int y,	int middle)
 		{
@@ -1706,7 +1714,8 @@ namespace System.Windows.Forms {
 			// Measured against a stock tree: its node rectangle is three pixels narrower than the
 			// measurement, and starts three pixels further in (see TreeNode.GetX) -- the same three
 			// pixels at each end of the padding GDI leaves around a run.
-			return Math.Max (0, (int)TextRenderer.MeasureString (node.Text, font, 0, string_format).Width - 3);
+			// (The padding is the font's, so what comes off it scales with the tree's DPI.)
+			return Math.Max (0, (int)TextRenderer.MeasureString (node.Text, font, 0, string_format).Width - LogicalToDeviceUnits (3));
 		}
 
 		private void DrawSelectionAndFocus(TreeNode node, Graphics dc, Rectangle r)

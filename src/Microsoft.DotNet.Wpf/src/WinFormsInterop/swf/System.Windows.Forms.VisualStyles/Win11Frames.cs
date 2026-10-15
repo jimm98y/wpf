@@ -1054,6 +1054,7 @@ namespace System.Windows.Forms.VisualStyles
 				Button when part == 3 => CheckBox (state, tier),
 				Button when part == 2 => RadioButton (state, tier),
 				ScrollBar when part == 2 || part == 3 => HighDpiScrollThumb (part == 3, state, tier >= 240),
+				TreeView when part == 2 => HighDpiTreeGlyph (state == 2, tier >= 240),
 				_ => null,
 			};
 		}
@@ -1062,6 +1063,32 @@ namespace System.Windows.Forms.VisualStyles
 		/// leading edge, and the line -- five pixels at rest at 192 (six at 240), thirteen in the hover
 		/// state (sixteen) -- fitted to the theme's images. Nine-grid margins are the 96-dpi image's
 		/// scaled.</summary>
+		/// <summary>TVP_GLYPH for 192 and 240 dpi: a one-pixel #919191 square with rounded corners
+		/// round a face that darkens evenly from top to bottom (#FC to #E4 at 192), and a two-pixel
+		/// minus (#4B63A7), crossed for the closed glyph by a two-pixel bar (#294272), each four
+		/// pixels in from the border at 192.</summary>
+		static Frame HighDpiTreeGlyph (bool open, bool at240)
+		{
+			int n = at240 ? 22 : 18;
+			float r = at240 ? 2f : 1.5f;
+			float top = 252f, bottom = 228f;
+			// The face's grey at y: linear from the first face row's centre to the last's.
+			Paint face = (x, y) => {
+				float t = Math.Clamp ((y - 1.5f) / (n - 3), 0, 1);
+				uint v = (uint) Math.Round (top + (bottom - top) * t);
+				return 0xff000000u | v << 16 | v << 8 | v;
+			};
+			float c = n / 2f, half = at240 ? 6f : 5f;
+			var layers = new List<Layer> {
+				new Layer (RoundRect (0, 0, n, n, r), 0xff919191u),
+				new Layer (Box (1, 1, n - 1, n - 1), face),
+				new Layer (Box (c - half, c - 1, c + half, c + 1), 0xff4b63a7u),
+			};
+			if (!open)
+				layers.Insert (2, new Layer (Box (c - 1, c - half, c + 1, c + half), 0xff294272u));
+			return Render (n, n, layers.ToArray ());
+		}
+
 		static Frame HighDpiScrollThumb (bool vertical, int state, bool at240)
 		{
 			int w = vertical ? (at240 ? 43 : 34) : (at240 ? 50 : 40);

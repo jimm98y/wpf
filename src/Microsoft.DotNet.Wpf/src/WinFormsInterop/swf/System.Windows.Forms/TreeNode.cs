@@ -257,7 +257,7 @@ namespace System.Windows.Forms
 			int roots = (TreeView.ShowRootLines ? 1 : 0);
 			// A check-box tree's state images are the theme's check box at its own size, 13
 			// pixels, and the text follows the box directly.
-			int cb = (TreeView.CheckBoxes ? CheckBoxWidth : 0);
+			int cb = (TreeView.CheckBoxes ? TreeView.CheckBoxCellWidth : 0);
 			if (!TreeView.CheckBoxes && StateImage != null)
 				cb = 19;
 			int imgs = (TreeView.ImageList != null ?  TreeView.ImageList.ImageSize.Width + 3 : 0);
