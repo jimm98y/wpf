@@ -267,6 +267,110 @@ namespace Wpf.WinFormsInterop.Tests
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
+        /// <summary>Minimizing a window and restoring it puts the form back where the window is.
+        /// Windows parks a minimized window at (-32000, -32000) and, on the way back, moves it before it
+        /// says it is restored -- so the move came while the form was still minimized and was ignored.
+        /// The form stayed at (-32000, -32000): everything in it was composited that far away, the
+        /// window showed only its background (GraphWorX's whole WinForms UI went white), and the
+        /// application saved the parking place as the window's position.</summary>
+        [Fact]
+        public void AMinimizedWindow_IsRestoredWhereItWas()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "a Win32 window minimized by the OS");
+            Exception? failure = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new SWF.Form
+                    {
+                        Text = "MinimizeRestoreTest", StartPosition = SWF.FormStartPosition.Manual,
+                        Location = new Point(8000, 80), Size = new Size(300, 200), ShowInTaskbar = false,
+                    };
+                    form.Show();
+                    IntPtr host = IntPtr.Zero;
+                    for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && host == IntPtr.Zero;) { Pump(100); host = HostOf("MinimizeRestoreTest"); }
+                    Assert.NotEqual(IntPtr.Zero, host);
+                    Pump(200);
+                    Point before = form.Location;
+                    GetWindowRect(host, out RECT r0);
+
+                    ShowWindow(host, 7);   // SW_SHOWMINNOACTIVE
+                    Pump(300);
+                    Assert.True(IsIconic(host));
+                    Assert.Equal(SWF.FormWindowState.Minimized, form.WindowState);
+
+                    ShowWindow(host, 4);   // SW_SHOWNOACTIVATE: restores without activating
+                    Pump(300);
+                    Assert.False(IsIconic(host));
+                    Assert.Equal(SWF.FormWindowState.Normal, form.WindowState);
+                    GetWindowRect(host, out RECT r1);
+                    Assert.Equal((r0.left, r0.top), (r1.left, r1.top));
+                    Assert.Equal(before, form.Location);
+                    form.Close();
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        /// <summary>After its window is resized the host presents the frame again for a while, with
+        /// nothing in it changing. The first frames after a swap chain grows do not always reach the
+        /// screen (GraphWorX maximized on a 240-dpi display stayed black), and an idle application
+        /// presented nothing more.</summary>
+        [Fact]
+        public void AResizedWindow_IsPresentedAgainWhileItSettles()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "a Win32 window sized by the OS");
+            Exception? failure = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new SWF.Form
+                    {
+                        Text = "ResizeRepresentTest", StartPosition = SWF.FormStartPosition.Manual,
+                        Location = new Point(8000, 80), Size = new Size(300, 200), ShowInTaskbar = false,
+                    };
+                    form.Show();
+                    IntPtr host = IntPtr.Zero;
+                    for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && host == IntPtr.Zero;) { Pump(100); host = HostOf("ResizeRepresentTest"); }
+                    Assert.NotEqual(IntPtr.Zero, host);
+                    Pump(2500);   // past the settling that follows a first show
+
+                    object hostObj = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.PresentationHost")!
+                        .GetMethod("HostOf", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, new object[] { form })!;
+                    var count = hostObj.GetType().GetProperty("PresentCount", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+                    int idle0 = (int)count.GetValue(hostObj)!;
+                    Pump(800);
+                    Assert.Equal(idle0, (int)count.GetValue(hostObj)!);   // idle: nothing presented
+
+                    SetWindowPos(host, IntPtr.Zero, 0, 0, 500, 360, 0x0002 | 0x0004 | 0x0010);   // NOMOVE | NOZORDER | NOACTIVATE
+                    Pump(150);
+                    int afterResize = (int)count.GetValue(hostObj)!;
+                    Pump(1200);
+                    Assert.True((int)count.GetValue(hostObj)! >= afterResize + 2,
+                        $"presents: {afterResize} after the resize, {(int)count.GetValue(hostObj)!} a second later");
+                    Pump(1500);
+                    int settled = (int)count.GetValue(hostObj)!;
+                    Pump(800);
+                    Assert.Equal(settled, (int)count.GetValue(hostObj)!);   // and it stops again
+                    form.Close();
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        [DllImport("user32")] private static extern bool ShowWindow(IntPtr h, int cmd);
+        [DllImport("user32")] private static extern bool IsIconic(IntPtr h);
+
         [DllImport("user32")] private static extern bool IsZoomed(IntPtr h);
 
         /// <summary>A message to the form through the stack, as the app's own SendMessage is routed.</summary>
