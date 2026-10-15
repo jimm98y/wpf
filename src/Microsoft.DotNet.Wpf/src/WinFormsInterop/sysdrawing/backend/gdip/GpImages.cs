@@ -521,7 +521,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
             int n = Math.Max (0, r1 - r0);
             if (decimate) {
-                GdipFrame full = f.Format == PixelFormat.Format32bppPArgb ? f : GdipPixels.Convert (f, new Rectangle (0, 0, f.Width, f.Height), PixelFormat.Format32bppPArgb, false);
+                GdipFrame full = f.Format == PixelFormat.Format32bppPArgb ? f
+                    : f.Format == PixelFormat.Format32bppArgb ? PremultipliedCopy (f)
+                    : GdipPixels.Convert (f, new Rectangle (0, 0, f.Width, f.Height), PixelFormat.Format32bppPArgb, false);
                 return new DpBitmapSrc (imgW, n, GpBitmapScaler.Averaging (full, imgW, imgH, r0, r0 + n));
             }
             var px = new uint [bmp.Width * n];
@@ -551,6 +553,24 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
             }
             return new DpBitmapSrc (bmp.Width, n, px);
+        }
+
+        /// <summary>A 32bpp ARGB frame as PARGB, word by word: what GdipPixels.Convert makes of it
+        /// (ReadArgb, then WriteArgb's PremultiplyArgb) without going a byte at a time. A splash
+        /// screen shrunk to a 96-dpi window every fade step spent most of its 10 ms there.</summary>
+        static GdipFrame PremultipliedCopy (GdipFrame f)
+        {
+            var c = new GdipFrame (f.Width, f.Height, PixelFormat.Format32bppPArgb) { DpiX = f.DpiX, DpiY = f.DpiY };
+            int w = f.Width;
+            for (int y = 0; y < f.Height; y++) {
+                ReadOnlySpan<uint> row = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint> (f.Bits.AsSpan (y * f.Stride, w * 4));
+                Span<uint> dst = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint> (c.Bits.AsSpan (y * c.Stride, w * 4));
+                for (int x = 0; x < w; x++) {
+                    uint v = row [x];
+                    dst [x] = v >= 0xff000000u ? v : GdipPixels.PremultiplyArgb (v);
+                }
+            }
+            return c;
         }
 
         // ---- DpDriver::DrawImage @180030730 ----------------------------------------------------------

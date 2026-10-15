@@ -58,23 +58,29 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 discard = true;
             }
             int lastSrc = Math.Min (srcH, (int) -MathF.Floor (-(bottom * (float) (srcH / (float) dstH))));
-            for (int sy = srcRow; sy < lastSrc && row < bottom; sy++) {
-                ScaleLine (bits, sy * stride, srcW, dstW, stepX, invX, line);
-                if (rem <= 0x10000) {
-                    uint r = (uint) rem;
-                    for (int i = 0; i < dstW * 4; i++) {
-                        uint v = line [i];
-                        uint t = acc [i] + v * r;
-                        acc [i] = v * 0x10000 - v * r;
-                        line [i] = Round (t, invY);
+            int count = dstW * 4;
+            unsafe {
+                fixed (byte* pl = line)
+                fixed (uint* pa = acc) {
+                    for (int sy = srcRow; sy < lastSrc && row < bottom; sy++) {
+                        ScaleLine (bits, sy * stride, srcW, dstW, stepX, invX, line);
+                        if (rem <= 0x10000) {
+                            uint r = (uint) rem, keep = 0x10000 - (uint) rem;
+                            for (int i = 0; i < count; i++) {
+                                uint v = pl [i];
+                                uint t = pa [i] + v * r;
+                                pa [i] = v * keep;
+                                pl [i] = Round (t, invY);
+                            }
+                            if (!discard) Pack (line, output, (row - top) * dstW, dstW);
+                            discard = false;
+                            row++;
+                            rem += stepY - 0x10000;
+                        } else {
+                            for (int i = 0; i < count; i++) pa [i] += (uint) pl [i] << 16;
+                            rem -= 0x10000;
+                        }
                     }
-                    if (!discard) Pack (line, output, (row - top) * dstW, dstW);
-                    discard = false;
-                    row++;
-                    rem += stepY - 0x10000;
-                } else {
-                    for (int i = 0; i < dstW * 4; i++) acc [i] += (uint) line [i] * 0x10000;
-                    rem -= 0x10000;
                 }
             }
             return output;
@@ -83,28 +89,33 @@ namespace System.Drawing.WebGpuBackend.Gdip
         static byte Round (uint sum, uint inv) => (byte) ((uint) ((int) ((ulong) sum * inv >> 16) + 0x8000) >> 16);
 
         /// <summary>ScaleLineAveraging (or CopyLine for equal widths) of one PARGB row.</summary>
-        static void ScaleLine (byte[] bits, int o, int srcW, int dstW, uint step, uint inv, byte[] dst)
+        static unsafe void ScaleLine (byte[] bits, int o, int srcW, int dstW, uint step, uint inv, byte[] dst)
         {
             if (srcW == dstW) { Buffer.BlockCopy (bits, o, dst, 0, dstW * 4); return; }
             uint a0 = 0, a1 = 0, a2 = 0, a3 = 0;
             uint rem = step;
-            int d = 0;
-            for (int x = 0; x < srcW; x++, o += 4) {
-                uint v0 = bits [o], v1 = bits [o + 1], v2 = bits [o + 2], v3 = bits [o + 3];
-                if (rem <= 0x10000) {
-                    dst [d] = Round (a0 + v0 * rem, inv);
-                    dst [d + 1] = Round (a1 + v1 * rem, inv);
-                    dst [d + 2] = Round (a2 + v2 * rem, inv);
-                    dst [d + 3] = Round (a3 + v3 * rem, inv);
-                    a0 = v0 * 0x10000 - v0 * rem; a1 = v1 * 0x10000 - v1 * rem;
-                    a2 = v2 * 0x10000 - v2 * rem; a3 = v3 * 0x10000 - v3 * rem;
-                    d += 4;
-                    if (d == dstW * 4) return;
-                    rem += step;
-                } else {
-                    a0 += v0 * 0x10000; a1 += v1 * 0x10000; a2 += v2 * 0x10000; a3 += v3 * 0x10000;
+            int end = dstW * 4;
+            fixed (byte* pb = bits)
+            fixed (byte* pd = dst) {
+                byte* s = pb + o;
+                int d = 0;
+                for (int x = 0; x < srcW; x++, s += 4) {
+                    uint v0 = s [0], v1 = s [1], v2 = s [2], v3 = s [3];
+                    if (rem <= 0x10000) {
+                        uint keep = 0x10000 - rem;
+                        pd [d] = Round (a0 + v0 * rem, inv);
+                        pd [d + 1] = Round (a1 + v1 * rem, inv);
+                        pd [d + 2] = Round (a2 + v2 * rem, inv);
+                        pd [d + 3] = Round (a3 + v3 * rem, inv);
+                        a0 = v0 * keep; a1 = v1 * keep; a2 = v2 * keep; a3 = v3 * keep;
+                        d += 4;
+                        if (d == end) return;
+                        rem += step;
+                    } else {
+                        a0 += v0 << 16; a1 += v1 << 16; a2 += v2 << 16; a3 += v3 << 16;
+                    }
+                    rem -= 0x10000;
                 }
-                rem -= 0x10000;
             }
         }
 
