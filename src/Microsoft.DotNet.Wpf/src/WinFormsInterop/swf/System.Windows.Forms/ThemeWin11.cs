@@ -1058,11 +1058,11 @@ namespace System.Windows.Forms
 			// Square, not rounded. A list, a grid and a spin box are plain rectangles in Windows;
 			// dropping their corner pixels made them look softened at every corner.
 			dc.DrawRectangle (ResPool.GetPen (edge), frame.X, frame.Y, frame.Width, frame.Height);
-			// A list view's client edge is two pixels and the line is only the outer one: the inner
-			// is the list's own background (stock's is the white of the rows). The list paints
-			// nothing there itself -- its rows sit inside the frame (ListView.BorderInset) -- so
-			// what showed was the parent's grey.
-			if (sunken && control is ListView && frame.Width > 2 && frame.Height > 2)
+			// A themed client edge is two pixels and the line is only the outer one: the inner is the
+			// control's own background (the white of a list's rows). It lies outside the client, in
+			// the non-client area (XplatUIWebGpu.ChildFrame), where the control paints nothing -- so
+			// unless the frame fills it, what shows is the parent's grey.
+			if (sunken && control != null && frame.Width > 2 && frame.Height > 2)
 				dc.DrawRectangle (ResPool.GetPen (control.BackColor), frame.X + 1, frame.Y + 1, frame.Width - 2, frame.Height - 2);
 		}
 

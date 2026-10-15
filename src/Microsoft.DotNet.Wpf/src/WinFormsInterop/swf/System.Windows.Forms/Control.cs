@@ -2672,9 +2672,17 @@ namespace System.Windows.Forms
 				g.IntersectClip (targetBounds);
 				g.TranslateTransform (targetBounds.X, targetBounds.Y);
 				g.IntersectClip (new Rectangle (Point.Empty, Size));
-			
+
+				// The window, as WM_PRINT (PRF_NONCLIENT | PRF_CLIENT) prints it in .NET: the frame,
+				// which is non-client, then the client inside it.
+				Padding frame = IsHandleCreated ? XplatUIWebGpu.GetInstance ().PrintNonClient (Handle, g) : Padding.Empty;
+				if (frame != Padding.Empty) {
+					g.TranslateTransform (frame.Left, frame.Top);
+					g.IntersectClip (new Rectangle (Point.Empty, ClientSize));
+				}
+
 				// Logic copied from WmPaint
-				using (PaintEventArgs pea = new PaintEventArgs (g, new Rectangle(Point.Empty, targetBounds.Size))) {
+				using (PaintEventArgs pea = new PaintEventArgs (g, new Rectangle(Point.Empty, frame == Padding.Empty ? targetBounds.Size : ClientSize))) {
 					if (!GetStyle (ControlStyles.Opaque))
 						OnPaintBackground (pea);
 					OnPaintBackgroundInternal (pea);
@@ -2685,7 +2693,10 @@ namespace System.Windows.Forms
 
 				// Call DrawToBitmap for all children of the control
 				for (int i=0; i < child_controls.Count; i++) {
-					Rectangle childRect = child_controls[i].ClientRectangle;
+					// The child's whole window, its frame with it.
+					Rectangle childRect = new Rectangle (Point.Empty, child_controls[i].Size);
+					if (childRect.Width <= 0 || childRect.Height <= 0)
+						continue;
 					Bitmap childBitmap = new Bitmap (childRect.Width, childRect.Height);
 					child_controls[i].DrawToBitmap (childBitmap, childRect);
 					g.DrawImage (childBitmap, new Rectangle (child_controls[i].Location, child_controls[i].Size));

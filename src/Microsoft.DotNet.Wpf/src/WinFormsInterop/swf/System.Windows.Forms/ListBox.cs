@@ -1328,22 +1328,10 @@ namespace System.Windows.Forms
 		}
 
 		// Converts a GetItemRectangle to a one that we can display
-		/// <summary>How far the rows and the scroll bars sit inside the control, so the frame drawn
-		/// around it stays visible.
-		/// <para>A sunken frame is two pixels thick, as CPDrawBorder3D draws it and as Windows
-		/// measures it; a single line is one. Calling every frame one pixel put the first row on
-		/// top of the inner line, which is why there used to be a separate top margin here
-		/// making up the difference -- and only at the top, so the rows sat a pixel too far in
-		/// from the left and the last row overhung the bottom of the list.</para></summary>
-		internal int BorderInset {
-			get {
-				switch (border_style) {
-				case BorderStyle.None: return 0;
-				case BorderStyle.FixedSingle: return 1;
-				default: return 2;
-				}
-			}
-		}
+		/// <summary>How far the rows and the scroll bars sit inside the client area: nowhere, the
+		/// frame being in the non-client area (XplatUIWebGpu.ChildFrame), outside ClientRectangle,
+		/// as on Windows.</summary>
+		internal int BorderInset => 0;
 
 		/// <summary>How far a row's content sits in from the item area, on top of the margin the
 		/// text itself is laid out with. Between the frame and that margin there is already as
@@ -1996,11 +1984,8 @@ namespace System.Windows.Forms
 
 		internal void RepositionScrollBars ()
 		{
-			// The bars are laid out against the list's OUTER edge (items_area is inset by the border).
-			// A single-line border is WS_BORDER, and the driver starts a WS_BORDER window's children
-			// inside it, as Windows starts its client area there -- so they are placed a pixel back
-			// out, or they land one row and one column in and cover the right-hand border.
-			int origin = border_style == BorderStyle.FixedSingle ? 1 : 0;
+			// Against the item area, which is the client less the bars; the frame is outside the client.
+			const int origin = 0;
 			if (vscrollbar.is_visible) {
 				vscrollbar.Size = new Size (vscrollbar.Width, items_area.Height);
 				vscrollbar.Location = new Point (items_area.Right - origin, items_area.Y - origin);
@@ -2205,10 +2190,6 @@ namespace System.Windows.Forms
 
 		private void UpdateScrollBars ()
 		{
-			// Inside the frame, not on it. This driver models no non-client area, so the border is
-			// painted on the control's own outer edge and a scroll bar laid out against the client
-			// rectangle covers it -- the right-hand side of the frame went missing whenever the list
-			// had one.
 			items_area = Rectangle.Inflate (ClientRectangle, -BorderInset, -BorderInset);
 			if (UpdateHorizontalScrollBar ()) {
 				items_area.Height -= hscrollbar.Height;

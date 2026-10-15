@@ -212,12 +212,10 @@ namespace System.Windows.Forms
 			return false;
 		}
 
-		/// <summary>Paint the border a control's window style asks for. Win32 draws this in the
-		/// non-client frame, which this driver does not model -- CalculateWindowRect returns the
-		/// client rectangle unchanged, so a window and its client are one and the same. The style
-		/// was therefore recorded at CreateWindow and never drawn, and every TextBox, ListBox and
-		/// TreeView on this stack came up with no border at all. Draw it over the window's own
-		/// outer edge instead, after the control has finished painting.</summary>
+		/// <summary>Paint the border a control's window style asks for over the window's own outer
+		/// edge, after the control has finished painting -- for the windows whose frame is not
+		/// modelled. A child's border (ChildFrame) is non-client, as in Win32, and drawn outside
+		/// its client by AddChildFrame instead; a top-level window's belongs to the host.</summary>
 		private void DrawWindowBorder(IntPtr handle, Graphics dc)
 		{
 			if (dc == null) return;
@@ -229,9 +227,20 @@ namespace System.Windows.Forms
 			bool staticEdge = (h.initial_ex_style & WindowExStyles.WS_EX_STATICEDGE) != 0;
 			if (!sunken && !plain && !staticEdge) return;
 
-			// A top-level window's frame belongs to the host, which draws a real one around it.
+			// A top-level window's frame belongs to the host, which draws a real one around it; a
+			// child's modelled frame is drawn outside its client (AddChildFrame).
+			if (Control.FromHandle(handle) is Form || HasChildFrame(handle, h)) return;
+			DrawFrame(handle, h, dc, h.width, h.height);
+		}
+
+		/// <summary>The border a window's style asks for, over a window <paramref name="width"/> x
+		/// <paramref name="height"/> drawn from 0,0.</summary>
+		private void DrawFrame(IntPtr handle, Hwnd h, Graphics dc, int width, int height)
+		{
+			bool sunken = (h.initial_ex_style & WindowExStyles.WS_EX_CLIENTEDGE) != 0;
+			bool plain = (h.initial_style & WindowStyles.WS_BORDER) != 0;
+			bool staticEdge = (h.initial_ex_style & WindowExStyles.WS_EX_STATICEDGE) != 0;
 			Control c = Control.FromHandle(handle);
-			if (c is Form) return;
 
 			if (staticEdge && !sunken && !plain)
 			{
@@ -242,17 +251,17 @@ namespace System.Windows.Forms
 					using (var dark = new SolidBrush(SystemColors.ControlDark))
 					using (var light = new SolidBrush(SystemColors.ControlLightLight))
 					{
-						dc.FillRectangle(dark, 0, 0, h.width - 1, 1);
-						dc.FillRectangle(dark, 0, 0, 1, h.height - 1);
-						dc.FillRectangle(light, 0, h.height - 1, h.width, 1);
-						dc.FillRectangle(light, h.width - 1, 0, 1, h.height);
+						dc.FillRectangle(dark, 0, 0, width - 1, 1);
+						dc.FillRectangle(dark, 0, 0, 1, height - 1);
+						dc.FillRectangle(light, 0, height - 1, width, 1);
+						dc.FillRectangle(light, width - 1, 0, 1, height);
 					}
 				}
 				catch (Exception ex) { T("DrawWindowBorder: " + ex.Message); }
 				return;
 			}
 
-			try { ThemeEngine.Current.DrawControlBorder(dc, new Rectangle(0, 0, h.width, h.height), c, sunken); }
+			try { ThemeEngine.Current.DrawControlBorder(dc, new Rectangle(0, 0, width, height), c, sunken); }
 			catch (Exception ex) { T("DrawWindowBorder: " + ex.Message); }
 		}
 
@@ -355,22 +364,21 @@ namespace System.Windows.Forms
 				x += h.x; y += h.y;
 				if (h.parent != null)
 				{
-					Size inset = ClientOrigin(h.parent);
+					Size inset = ClientOrigin(h.parent, FrameOf(h.parent.Handle));
 					x += inset.Width; y += inset.Height;
 				}
 			}
 			return new Point(x, y);
 		}
 
-		/// <summary>How far a window's client area starts in from its own top-left.</summary>
-		/// <remarks>
-		/// Only the plain WS_BORDER counts. WS_EX_CLIENTEDGE is deliberately excluded even though
-		/// Windows draws that outside the client too: the controls that ask for it (ComboBox,
-		/// UpDownBase, TextBoxBase, ...) already place their own internal children against the outer
-		/// edge, and insetting here as well would move every one of them twice.
-		/// </remarks>
-		private static Size ClientOrigin(Hwnd h)
+		/// <summary>How far a window's client area starts in from its own top-left, for a window
+		/// whose frame is not modelled: a plain WS_BORDER's pixel. A modelled frame (ChildFrame) is
+		/// already in hwnd.x/y, which are the client's.</summary>
+		private static Size ClientOrigin(Hwnd h, Padding frame)
 		{
+			// A modelled child frame (ChildFrame) already put the client inside the border: hwnd.x is
+			// the client's own position, so nothing is added back.
+			if (frame != Padding.Empty) return Size.Empty;
 			if (h == null || (h.initial_style & WindowStyles.WS_BORDER) == 0) return Size.Empty;
 			// A top-level window's frame belongs to the host, as in DrawWindowBorder.
 			return Control.FromHandle(h.Handle) is Form ? Size.Empty : new Size(1, 1);
@@ -1043,13 +1051,13 @@ namespace System.Windows.Forms
 		/// it the paint was never marked done -- every later Invalidate found one still pending and
 		/// queued none, so the window kept its first picture for good (DotNetBar's combo boxes kept
 		/// the one from before they were sized) -- and each repaint was drawn over all the earlier ones.</summary>
-		/// <summary>How far a child window's frame reaches into it: this stack draws the frame
-		/// Windows would put in the non-client area inside the window (DrawWindowBorder), so the area
-		/// Windows calls the client is this much in from every edge.</summary>
+		/// <summary>How far a child window's frame reaches into it: none when the frame is modelled
+		/// (ChildFrame) and kept outside the client, as in Win32; otherwise the frame DrawWindowBorder
+		/// paints inside the window, so the area Windows calls the client is this much in.</summary>
 		internal int NonClientInset(IntPtr handle)
 		{
 			Hwnd h = Hwnd.ObjectFromHandle(handle);
-			if (h == null || Control.FromHandle(handle) is Form) return 0;
+			if (h == null || Control.FromHandle(handle) is Form || HasChildFrame(handle, h)) return 0;
 			if ((h.initial_ex_style & WindowExStyles.WS_EX_CLIENTEDGE) != 0) return 2;
 			if ((h.initial_style & WindowStyles.WS_BORDER) != 0 || (h.initial_ex_style & WindowExStyles.WS_EX_STATICEDGE) != 0) return 1;
 			return 0;
@@ -1170,6 +1178,38 @@ namespace System.Windows.Forms
 		private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object>
 			_shadowed = new System.Runtime.CompilerServices.ConditionalWeakTable<object, object>();
 
+		private sealed class ChildFrameVisual { public Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual Visual; public int W, H; public Padding Frame; }
+		private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, ChildFrameVisual>
+			_childFrames = new System.Runtime.CompilerServices.ConditionalWeakTable<object, ChildFrameVisual>();
+
+		/// <summary>A child window's frame (ChildFrame) in its scene: what DrawWindowBorder draws for
+		/// the window rectangle, placed round the client -- the scene's origin is the client's -- so
+		/// the control's own painting never covers it, as Windows keeps the non-client area apart.</summary>
+		private void AddChildFrame(Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv, IntPtr handle, Hwnd hwnd, Padding frame)
+		{
+			if (sv == null || hwnd == null || hwnd.width < 0 || hwnd.height < 0) return;
+			int w = hwnd.width + frame.Horizontal, h = hwnd.height + frame.Vertical;
+			if (_childFrames.TryGetValue(sv, out ChildFrameVisual existing))
+			{
+				if (existing.W == w && existing.H == h && existing.Frame == frame) return;
+				sv.Children.Remove(existing.Visual);
+				_childFrames.Remove(sv);
+			}
+			Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual drawn = null;
+			try
+			{
+				using (Graphics g = System.Drawing.WebGpuBackend.GpuRaster.NewRecording(
+					gg => drawn = System.Drawing.WebGpuBackend.GpuRaster.EndScene(gg)
+						as Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual))
+					DrawFrame(handle, hwnd, g, w, h);
+			}
+			catch (Exception ex) { T("AddChildFrame: " + ex.Message); return; }
+			if (drawn == null) return;
+			drawn.Offset = new System.Numerics.Vector2(-frame.Left, -frame.Top);
+			sv.Children.Add(drawn);
+			_childFrames.Add(sv, new ChildFrameVisual { Visual = drawn, W = w, H = h, Frame = frame });
+		}
+
 		/// <summary>Give a popup the drop shadow Windows gives it at the window-class level, so
 		/// menus, combo lists, tooltips and drop-down calendars all get one without any of them
 		/// having to know. Drawn in the window's own coordinates, past its right and bottom edges,
@@ -1219,7 +1259,9 @@ namespace System.Windows.Forms
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(handle);
 				AddPopupShadow(sv, h);
-				ApplyWindowClip(sv, h);
+				Padding frame = HasChildFrame(handle, h) ? FrameOf(handle) : Padding.Empty;
+				if (frame != Padding.Empty) AddChildFrame(sv, handle, h, frame);
+				ApplyWindowClip(sv, h, frame);
 			}
 			return ApplyReveal(handle, s);
 		}
@@ -1228,11 +1270,12 @@ namespace System.Windows.Forms
 		/// into its coordinates. A child is clipped by its parent in Windows and nothing here did
 		/// that, so a control scrolled out of a panel went on drawing over whatever lay below the
 		/// panel -- the status bar most visibly, which looked transparent as a result.</summary>
-		private static void ApplyWindowClip(Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv, Hwnd hwnd)
+		private static void ApplyWindowClip(Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv, Hwnd hwnd, Padding frame = default)
 		{
 			if (sv == null || hwnd == null) return;
-			float left = 0, top = 0;
-			float right = Math.Max(0, hwnd.width), bottom = Math.Max(0, hwnd.height);
+			// A child's frame lies outside its client, on its parent's client.
+			float left = -frame.Left, top = -frame.Top;
+			float right = Math.Max(0, hwnd.width) + frame.Right, bottom = Math.Max(0, hwnd.height) + frame.Bottom;
 			// A popup is not confined by whatever it hangs off: a menu, a combo box's list and a
 			// tooltip all stand outside their owner on purpose. It also needs room past its own
 			// edges for the shadow underneath it.
@@ -1728,10 +1771,47 @@ namespace System.Windows.Forms
 		internal static Padding TopLevelFrame(int style, int exStyle, bool menu)
 		{
 			var ws = (WindowStyles)style;
-			if ((ws & WindowStyles.WS_CHILD) != 0) return Padding.Empty;
+			if ((ws & WindowStyles.WS_CHILD) != 0) return ChildFrame(style, exStyle);
 			if ((ws & (WindowStyles.WS_CAPTION | WindowStyles.WS_THICKFRAME)) == 0) return Padding.Empty;
 			return FrameProvider?.Invoke(style, exStyle, menu) ?? Padding.Empty;
 		}
+
+		/// <summary>
+		/// A child window's non-client frame, as AdjustWindowRectEx gives it: WS_BORDER one pixel,
+		/// WS_EX_STATICEDGE one, WS_EX_CLIENTEDGE two (the two add). The client is what is left, so a
+		/// bordered Panel 100 wide is 98 wide inside and a ListBox 96, as on Windows -- this stack used
+		/// to give every child its whole window as client and draw the border over its edge, and
+		/// ClientSize, DisplayRectangle and everything laid out from them were the frame too large.
+		/// A child with a caption (an MDI child form) keeps no frame here, as before.
+		/// </summary>
+		internal static Padding ChildFrame(int style, int exStyle)
+		{
+			var ws = (WindowStyles)style;
+			var ex = (WindowExStyles)exStyle;
+			if ((ws & WindowStyles.WS_CAPTION) == WindowStyles.WS_CAPTION || (ws & WindowStyles.WS_THICKFRAME) != 0) return Padding.Empty;
+			int edge = 0;
+			if ((ws & WindowStyles.WS_BORDER) != 0) edge += 1;
+			if ((ex & WindowExStyles.WS_EX_STATICEDGE) != 0) edge += 1;
+			if ((ex & WindowExStyles.WS_EX_CLIENTEDGE) != 0) edge += 2;
+			return edge == 0 ? Padding.Empty : new Padding(edge);
+		}
+
+		/// <summary>WM_PRINT's PRF_NONCLIENT: draw a child's modelled frame (ChildFrame) into
+		/// <paramref name="g"/> over the window rectangle from 0,0, and say how far in the client
+		/// starts. Empty, and nothing drawn, for a window without one.</summary>
+		internal Padding PrintNonClient(IntPtr handle, Graphics g)
+		{
+			Hwnd h = Hwnd.ObjectFromHandle(handle);
+			if (g == null || !HasChildFrame(handle, h)) return Padding.Empty;
+			Padding frame = FrameOf(handle);
+			try { DrawFrame(handle, h, g, h.width + frame.Horizontal, h.height + frame.Vertical); }
+			catch (Exception ex) { T("PrintNonClient: " + ex.Message); }
+			return frame;
+		}
+
+		/// <summary>Whether the window is a child whose frame is modelled (see ChildFrame).</summary>
+		private bool HasChildFrame(IntPtr handle, Hwnd h) =>
+			h != null && (h.initial_style & WindowStyles.WS_CHILD) != 0 && FrameOf(handle) != Padding.Empty;
 
 		// The frame each framed window was given; the Hwnd itself stores the CLIENT rectangle
 		// (client origin in screen, client size), which is what painting and the hosts work in.

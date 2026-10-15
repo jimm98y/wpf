@@ -2701,15 +2701,14 @@ namespace System.Windows.Forms
 				textarea_drawable = new Rectangle (ClientRectangle.Location,
 					new Size (width - borderAdjustment.Width, height));
 				// A simple combo's list keeps a sunken two-pixel frame (a line and a row of the
-				// window colour) that this driver paints over the list's own edge, so the items start
-				// inside it, as they do in a stock one.
+				// window colour), its WS_EX_CLIENTEDGE: in the non-client area, so the items start at
+				// the client's origin and the client is the frame smaller each way.
 				if (dropdown_style == ComboBoxStyle.Simple)
-					textarea_drawable = Rectangle.Inflate (textarea_drawable, -2, -2);
+					textarea_drawable = new Rectangle (0, 0, Math.Max (0, textarea_drawable.Width - 4), Math.Max (0, textarea_drawable.Height - 4));
 
 				if (vscrollbar_ctrl != null && show_scrollbar) {
 					textarea_drawable.Width -= vscrollbar_ctrl.Width;
-					// Inside that frame too, as comctl32's list keeps its bar in its client area:
-					// docked, it covered the frame's right and bottom edges.
+					// Beside the items, as comctl32's list keeps its bar in its client area.
 					if (dropdown_style == ComboBoxStyle.Simple) {
 						vscrollbar_ctrl.Dock = DockStyle.None;
 						vscrollbar_ctrl.Bounds = new Rectangle (textarea_drawable.Right, textarea_drawable.Y,

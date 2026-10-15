@@ -387,13 +387,12 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>The width of the frame Windows puts round a Static window: WS_BORDER for
-		/// FixedSingle and the static edge SS_SUNKEN turns into for Fixed3D are both one pixel.
-		/// Win32 keeps it out of the client area; this driver draws it over the window's own edge
-		/// (XplatUIWebGpu.DrawWindowBorder), so the label leaves it out of its own layout.</summary>
+		/// FixedSingle and the static edge SS_SUNKEN turns into for Fixed3D are both one pixel,
+		/// in the non-client area (XplatUIWebGpu.ChildFrame).</summary>
 		private int BorderInset => border_style == BorderStyle.None ? 0 : 1;
 
-		/// <summary>The client rectangle as Windows gives it to the label: inside the border.</summary>
-		private Rectangle StaticClientRectangle => Rectangle.Inflate (ClientRectangle, -BorderInset, -BorderInset);
+		/// <summary>The client rectangle as Windows gives it to the label; the border is outside it.</summary>
+		private Rectangle StaticClientRectangle => ClientRectangle;
 
 		// .NET's Label.GetBordersAndPadding. SizeFromClientSize is the frame on both sides; Fixed3D
 		// asks for two pixels more on top of it.
