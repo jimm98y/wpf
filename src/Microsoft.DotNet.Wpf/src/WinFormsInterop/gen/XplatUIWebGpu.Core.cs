@@ -448,12 +448,40 @@ namespace System.Windows.Forms
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(ordered[i]);
 				if (h == null) continue;
-				Point p = ScreenLocation(h);
-				if (screenX < p.X || screenY < p.Y || screenX >= p.X + h.width || screenY >= p.Y + h.height) continue;
-				if (PassesMouseThrough(h, screenX - p.X, screenY - p.Y)) continue;
+				if (!Hits(ordered[i], h, screenX, screenY)) continue;
 				return ordered[i];
 			}
 			return IntPtr.Zero;
+		}
+
+		/// <summary>Whether a point is over a window: its client area (unless a layered window
+		/// lets it through there), or the frame round it a child keeps (ChildFrame) -- the border
+		/// and scroll-bar bands Windows hit-tests as the child's non-client area, not as whatever
+		/// is behind.</summary>
+		private bool Hits(IntPtr handle, Hwnd h, int screenX, int screenY)
+		{
+			Point p = ScreenLocation(h);
+			if (screenX >= p.X && screenY >= p.Y && screenX < p.X + h.width && screenY < p.Y + h.height)
+				return !PassesMouseThrough(h, screenX - p.X, screenY - p.Y);
+			return InChildFrame(handle, h, screenX - p.X, screenY - p.Y);
+		}
+
+		/// <summary>A client-relative point in the frame a child window keeps round its client.</summary>
+		private bool InChildFrame(IntPtr handle, Hwnd h, int cx, int cy)
+		{
+			if (!HasChildFrame(handle, h)) return false;
+			Padding f = FrameOf(handle);
+			if (!(cx >= -f.Left && cy >= -f.Top && cx < h.width + f.Right && cy < h.height + f.Bottom
+				&& (cx < 0 || cy < 0 || cx >= h.width || cy >= h.height)))
+				return false;
+			// A child is clipped to its parent's client: a frame standing outside it is not there.
+			if (h.parent != null)
+			{
+				Point me = ScreenLocation(h), pp = ScreenLocation(h.parent);
+				int px = me.X + cx - pp.X, py = me.Y + cy - pp.Y;
+				if (px < 0 || py < 0 || px >= h.parent.width || py >= h.parent.height) return false;
+			}
+			return true;
 		}
 
 		/// <summary>
@@ -478,9 +506,7 @@ namespace System.Windows.Forms
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(ordered[i]);
 				if (h == null) continue;
-				Point p = ScreenLocation(h);
-				if (screenX < p.X || screenY < p.Y || screenX >= p.X + h.width || screenY >= p.Y + h.height) continue;
-				if (PassesMouseThrough(h, screenX - p.X, screenY - p.Y)) continue;
+				if (!Hits(ordered[i], h, screenX, screenY)) continue;
 				return ordered[i];
 			}
 			return IntPtr.Zero;
@@ -671,12 +697,37 @@ namespace System.Windows.Forms
 				|| message == Msg.WM_MBUTTONDOWN)
 				XplatUI.RaiseMousePress(target);
 
+			// On a child's border, not its client: the non-client message, as Windows sends it --
+			// WM_NC* with the hit-test code (HTBORDER) and the point in screen coordinates. The click
+			// is the child's, and none of it reaches the window behind.
+			if (_grabHandle == IntPtr.Zero && InChildFrame(target, h, cx, cy) && NonClientMessage(message) is int nc)
+			{
+				var n = Message.Create(target, nc, (IntPtr)HTBORDER, (IntPtr)((screenY << 16) | (screenX & 0xFFFF)));
+				if (FilteredOut(ref n)) return;
+				SendMessage(n.HWnd, (Msg)n.Msg, n.WParam, n.LParam);
+				return;
+			}
+
 			var m = Message.Create(target, (int)message, (IntPtr)wParam, lp);
 			if (FilteredOut(ref m)) return;
 			SendMessage(m.HWnd, (Msg)m.Msg, m.WParam, m.LParam);
 		}
 
-		/// <summary>Offers an input message to the application's message filters first, as a message
+		private const int HTBORDER = 18;
+
+		/// <summary>WM_NCMOUSEMOVE, WM_NCLBUTTONDOWN... for a client mouse message.</summary>
+		private static int? NonClientMessage(Msg message) => message switch {
+			Msg.WM_MOUSEMOVE => 0x00A0,
+			Msg.WM_LBUTTONDOWN => 0x00A1,
+			Msg.WM_LBUTTONUP => 0x00A2,
+			Msg.WM_RBUTTONDOWN => 0x00A4,
+			Msg.WM_RBUTTONUP => 0x00A5,
+			Msg.WM_MBUTTONDOWN => 0x00A7,
+			Msg.WM_MBUTTONUP => 0x00A8,
+			_ => null,
+		};
+
+		/// <summary>Offers an input message to the application's message filters first,as a message
 		/// loop does with everything it takes off the queue (Application.AddMessageFilter). Input here
 		/// goes to the window directly, not through the queue, so no filter ever saw a click or a key:
 		/// DotNetBar closes its menus and drop-downs from a filter -- a click outside them, a click on

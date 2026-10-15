@@ -225,7 +225,8 @@ namespace System.Windows.Forms {
 			if (DataGridView == null)
 				return Rectangle.Empty;
 
-			return new Rectangle ((Size.Width - 13) / 2, (Size.Height - 13) / 2, 13, 13);
+			Size glyph = GlyphSize (CheckBoxState.UncheckedNormal);
+			return new Rectangle ((Size.Width - glyph.Width) / 2, (Size.Height - glyph.Height) / 2, glyph.Width, glyph.Height);
 		}
 
 		protected override Rectangle GetErrorIconBounds (Graphics graphics, DataGridViewCellStyle cellStyle, int rowIndex)
@@ -413,7 +414,7 @@ namespace System.Windows.Forms {
 			Padding pad = cellStyle.Padding;
 			r = new Rectangle (r.X + pad.Left, r.Y + pad.Top, r.Width - pad.Horizontal, r.Height - pad.Vertical);
 			r.Inflate (-2, -2);
-			Size glyph = new Size (13, 13);
+			Size glyph = GlyphSize (state);
 			int a = (int) cellStyle.Alignment;
 			int x = (a & 0x444) != 0 ? r.Right - glyph.Width
 				: (a & 0x222) != 0 ? r.Left + (r.Width - glyph.Width) / 2 : r.Left;
@@ -422,6 +423,12 @@ namespace System.Windows.Forms {
 			CheckBoxRenderer.DrawCheckBox (graphics, new Point (x, y), state);
 		}
 		
+		/// <summary>.NET's CheckBoxRenderer.GetGlyphSize for the grid's HWND: the glyph at the
+		/// grid's DPI (13 at 96, 26 at 200%).</summary>
+		private Size GlyphSize (CheckBoxState state)
+			=> VisualStyles.VisualStyleRenderer.IsSupported && DataGridView != null
+				? CheckBoxRenderer.GetGlyphSize (state, DataGridView.DeviceDpi) : new Size (13, 13);
+
 		private CheckState GetCurrentValue ()
 		{
 			CheckState cs = CheckState.Indeterminate;
