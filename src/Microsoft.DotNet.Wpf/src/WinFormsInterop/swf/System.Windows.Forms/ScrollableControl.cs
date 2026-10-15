@@ -36,6 +36,11 @@ namespace System.Windows.Forms {
 	public class ScrollableControl : Control {
 		#region Local Variables
 		private bool			force_hscroll_visible;
+		// The scroll bars standing in the non-client area now (WS_HSCROLL / WS_VSCROLL), outside
+		// ClientSize, as Windows keeps them (BarsInNonClient).
+		private bool			nc_hscroll;
+		private bool			nc_vscroll;
+		private bool			recalculating;
 		private bool			force_vscroll_visible;
 		private bool			auto_scroll;
 		private Size			auto_scroll_margin;
@@ -346,9 +351,10 @@ namespace System.Windows.Forms {
 					int		width;
 					int		height;
 
+					// Bars in the non-client area are already outside the client.
 					if (canvas_size.Width <= base.DisplayRectangle.Width) {
 						width = base.DisplayRectangle.Width;
-						if (vscrollbar.VisibleInternal) {
+						if (vscrollbar.VisibleInternal && !nc_vscroll) {
 							width -= vscrollbar.Width;
 						}
 					} else {
@@ -357,7 +363,7 @@ namespace System.Windows.Forms {
 
 					if (canvas_size.Height <= base.DisplayRectangle.Height) {
 						height = base.DisplayRectangle.Height;
-						if (hscrollbar.VisibleInternal) {
+						if (hscrollbar.VisibleInternal && !nc_hscroll) {
 							height -= hscrollbar.Height;
 						}
 					} else {
@@ -418,9 +424,20 @@ namespace System.Windows.Forms {
 		#region Protected Instance Methods
 		protected override CreateParams CreateParams {
 			get {
-				return base.CreateParams;
+				CreateParams cp = base.CreateParams;
+				if (nc_hscroll)
+					cp.Style |= (int) WindowStyles.WS_HSCROLL;
+				if (nc_vscroll)
+					cp.Style |= (int) WindowStyles.WS_VSCROLL;
+				return cp;
 			}
 		}
+
+		/// <summary>Whether the scroll bars go in the non-client area, beside the client, as Windows
+		/// puts a child window's WS_HSCROLL / WS_VSCROLL bars (XplatUIWebGpu.ChildFrame): a 100-pixel
+		/// bordered panel scrolling both ways has an 81x81 client. A top-level window's frame
+		/// belongs to the host, so a form keeps its bars inside its client.</summary>
+		private bool BarsInNonClient => !(this is Form) && !GetTopLevel ();
 
 		protected bool HScroll {
 			get {
@@ -796,16 +813,34 @@ namespace System.Windows.Forms {
 			Recalculate (true);
 		}
 				
-		/// <summary>Where the scroll bars go: the whole client, the frame being in the non-client
-		/// area (XplatUIWebGpu.ChildFrame).</summary>
+		/// <summary>The room the client and the scroll bars share: the client, with the bands of
+		/// bars that stand in the non-client area now added back (the frame's border is outside).</summary>
 		private Rectangle ScrollBarArea {
-			get { return new Rectangle (Point.Empty, ClientSize); }
+			get {
+				Size size = ClientSize;
+				if (nc_vscroll) size.Width += SystemInformation.VerticalScrollBarWidth;
+				if (nc_hscroll) size.Height += SystemInformation.HorizontalScrollBarHeight;
+				return new Rectangle (Point.Empty, size);
+			}
 		}
 
 		private void Recalculate (bool doLayout) {
 			if (!IsHandleCreated) {
 				return;
 			}
+			// Moving a bar into or out of the non-client area resizes the client, and the resize
+			// comes back here; the outer pass finishes the job.
+			if (recalculating)
+				return;
+			recalculating = true;
+			try {
+				RecalculateCore (doLayout);
+			} finally {
+				recalculating = false;
+			}
+		}
+
+		private void RecalculateCore (bool doLayout) {
 
 			Size canvas = canvas_size;
 			Rectangle area = ScrollBarArea;
@@ -846,6 +881,15 @@ namespace System.Windows.Forms {
 
 			if (right_edge < 0) right_edge = 0;
 			if (bottom_edge < 0) bottom_edge = 0;
+
+			// The bars into the non-client area or out of it: the window's frame grows or shrinks by
+			// them and the client is what is left -- right_edge x bottom_edge.
+			bool nc = BarsInNonClient;
+			if (nc && (hscroll_visible != nc_hscroll || vscroll_visible != nc_vscroll)) {
+				nc_hscroll = hscroll_visible;
+				nc_vscroll = vscroll_visible;
+				UpdateStyles ();
+			}
 
 			Rectangle hscroll_bounds;
 			Rectangle vscroll_bounds;
@@ -925,6 +969,15 @@ namespace System.Windows.Forms {
 
 			UpdateSizeGripVisible ();
 
+			// In the non-client area the bars stand beside the client, in the client's coordinates:
+			// the vertical one at x = the client's width. The driver clips them to those bands.
+			if (nc) {
+				var driver = XplatUIWebGpu.GetInstance ();
+				foreach (Control bar in new Control [] { hscrollbar, vscrollbar, sizegrip })
+					if (bar.IsHandleCreated)
+						driver.SetNonClientChild (bar.Handle, true);
+			}
+
 			ResumeLayout (doLayout);
 			
 			// We should now scroll the active control into view, 
@@ -979,6 +1032,9 @@ namespace System.Windows.Forms {
 		{
 			Controls.AddRangeImplicit (new Control[] {hscrollbar, vscrollbar, sizegrip});
 			HandleCreated -= new EventHandler (AddScrollbars);
+			// What was asked before the window existed (AutoScrollMinSize, a child past the edge)
+			// takes effect now, as the window is created with the scroll bars it needs.
+			Recalculate (false);
 		}
 
 		private void CreateScrollbars ()

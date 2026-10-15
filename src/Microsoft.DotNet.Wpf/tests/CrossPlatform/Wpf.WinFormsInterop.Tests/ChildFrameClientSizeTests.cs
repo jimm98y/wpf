@@ -28,6 +28,10 @@ namespace Wpf.WinFormsInterop.Tests
             yield return Case("Panel None", () => new Panel { BorderStyle = BorderStyle.None, Size = new Size(100, 100) }, 100, 100, 0, new Rectangle(0, 0, 100, 100));
             yield return Case("Panel FixedSingle", () => new Panel { BorderStyle = BorderStyle.FixedSingle, Size = new Size(100, 100) }, 98, 98, 1, new Rectangle(0, 0, 98, 98));
             yield return Case("Panel Fixed3D", () => new Panel { BorderStyle = BorderStyle.Fixed3D, Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
+            // Scroll bars are non-client too (WS_HSCROLL / WS_VSCROLL), inside the border.
+            yield return Case("Panel AutoScroll both", () => new Panel { BorderStyle = BorderStyle.FixedSingle, AutoScroll = true, AutoScrollMinSize = new Size(300, 300), Size = new Size(100, 100) }, 81, 81, 1, new Rectangle(0, 0, 300, 300));
+            yield return Case("Panel AutoScroll horizontal", () => new Panel { BorderStyle = BorderStyle.FixedSingle, AutoScroll = true, AutoScrollMinSize = new Size(300, 50), Size = new Size(100, 100) }, 98, 81, 1, new Rectangle(0, 0, 300, 81));
+            yield return Case("Panel AutoScroll vertical", () => new Panel { BorderStyle = BorderStyle.Fixed3D, AutoScroll = true, AutoScrollMinSize = new Size(50, 300), Size = new Size(100, 100) }, 79, 96, 2, new Rectangle(0, 0, 79, 300));
             yield return Case("UserControl FixedSingle", () => new UserControl { BorderStyle = BorderStyle.FixedSingle, Size = new Size(100, 100) }, 98, 98, 1, new Rectangle(0, 0, 98, 98));
             yield return Case("UserControl Fixed3D", () => new UserControl { BorderStyle = BorderStyle.Fixed3D, Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
             yield return Case("ListBox Fixed3D", () => new ListBox { IntegralHeight = false, Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
@@ -115,6 +119,23 @@ namespace Wpf.WinFormsInterop.Tests
             Point at = b.PointToScreen(Point.Empty);
             Assert.Equal(new Point(10 + 2 + 5, 10 + 2 + 30), new Point(at.X - parent.X, at.Y - parent.Y));
             Assert.Equal(new Rectangle(0, 0, 196, 20), d.Bounds);
+        }
+
+        [Fact]
+        public void ChangingTheBorderStyle_ChangesTheFrame()
+        {
+            using var f = new Form { ClientSize = new Size(300, 300) };
+            var p = new Panel { Size = new Size(100, 100) };
+            f.Controls.Add(p);
+            Create(f, p);
+            Assert.Equal(new Size(100, 100), p.ClientSize);
+            p.BorderStyle = BorderStyle.Fixed3D;
+            Assert.Equal(new Size(96, 96), p.ClientSize);
+            Assert.Equal(new Size(100, 100), p.Size);
+            p.BorderStyle = BorderStyle.FixedSingle;
+            Assert.Equal(new Size(98, 98), p.ClientSize);
+            p.BorderStyle = BorderStyle.None;
+            Assert.Equal(new Size(100, 100), p.ClientSize);
         }
 
         /// <summary>Handles parent first, as showing the form would make them: CreateControl does

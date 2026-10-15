@@ -241,6 +241,7 @@ namespace System.Windows.Forms
 			bool plain = (h.initial_style & WindowStyles.WS_BORDER) != 0;
 			bool staticEdge = (h.initial_ex_style & WindowExStyles.WS_EX_STATICEDGE) != 0;
 			Control c = Control.FromHandle(handle);
+			if (!sunken && !plain && !staticEdge) return;   // a frame of scroll bars alone
 
 			if (staticEdge && !sunken && !plain)
 			{
@@ -806,6 +807,7 @@ namespace System.Windows.Forms
 			_reveals.Remove(handle);
 			_frames.Remove(handle);
 			_styles.Remove(handle);
+			SetNonClientChild(handle, false);
 			_paintVersion++;   // a window disappeared from the composite
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd != null) { SendMessage(handle, Msg.WM_DESTROY, IntPtr.Zero, IntPtr.Zero); hwnd.Dispose(); }
@@ -1292,10 +1294,19 @@ namespace System.Windows.Forms
 				{
 					offX -= child.x;
 					offY -= child.y;
+					// A non-client child (a scroll bar) may stand in the parent's scroll-bar bands, which
+					// are its frame less its border.
+					int bandRight = 0, bandBottom = 0;
+					if (IsNonClientChild(child.Handle))
+					{
+						Padding pf = GetInstance().FrameOf(parent.Handle);
+						bandRight = Math.Max(0, pf.Right - pf.Left);
+						bandBottom = Math.Max(0, pf.Bottom - pf.Top);
+					}
 					left = Math.Max(left, offX);
 					top = Math.Max(top, offY);
-					right = Math.Min(right, offX + parent.width);
-					bottom = Math.Min(bottom, offY + parent.height);
+					right = Math.Min(right, offX + parent.width + bandRight);
+					bottom = Math.Min(bottom, offY + parent.height + bandBottom);
 					if ((parent.initial_style & WindowStyles.WS_POPUP) != 0)
 						break;
 				}
@@ -1789,11 +1800,45 @@ namespace System.Windows.Forms
 			var ws = (WindowStyles)style;
 			var ex = (WindowExStyles)exStyle;
 			if ((ws & WindowStyles.WS_CAPTION) == WindowStyles.WS_CAPTION || (ws & WindowStyles.WS_THICKFRAME) != 0) return Padding.Empty;
+			int edge = BorderEdge(style, exStyle);
+			// The scroll bars WS_VSCROLL and WS_HSCROLL ask for sit inside the border, also outside the
+			// client (Windows' non-client scroll bars); their windows are this window's non-client
+			// children (SetNonClientChild).
+			int right = (ws & WindowStyles.WS_VSCROLL) != 0 ? SystemInformation.VerticalScrollBarWidth : 0;
+			int bottom = (ws & WindowStyles.WS_HSCROLL) != 0 ? SystemInformation.HorizontalScrollBarHeight : 0;
+			if (edge == 0 && right == 0 && bottom == 0) return Padding.Empty;
+			return new Padding(edge, edge, edge + right, edge + bottom);
+		}
+
+		/// <summary>How thick a child's border is: WS_BORDER one pixel, WS_EX_STATICEDGE one,
+		/// WS_EX_CLIENTEDGE two (the two add).</summary>
+		private static int BorderEdge(int style, int exStyle)
+		{
 			int edge = 0;
-			if ((ws & WindowStyles.WS_BORDER) != 0) edge += 1;
-			if ((ex & WindowExStyles.WS_EX_STATICEDGE) != 0) edge += 1;
-			if ((ex & WindowExStyles.WS_EX_CLIENTEDGE) != 0) edge += 2;
-			return edge == 0 ? Padding.Empty : new Padding(edge);
+			if (((WindowStyles)style & WindowStyles.WS_BORDER) != 0) edge += 1;
+			if (((WindowExStyles)exStyle & WindowExStyles.WS_EX_STATICEDGE) != 0) edge += 1;
+			if (((WindowExStyles)exStyle & WindowExStyles.WS_EX_CLIENTEDGE) != 0) edge += 2;
+			return edge;
+		}
+
+		// Windows that live in their parent's non-client area: the scroll bars a window's
+		// WS_VSCROLL / WS_HSCROLL ask for, which this stack makes child windows.
+		private static readonly HashSet<IntPtr> _nonClientChildren = new HashSet<IntPtr>();
+
+		/// <summary>Mark a child window as standing in its parent's non-client area (a scroll bar
+		/// beside the client): it is then clipped to the parent's client and scroll-bar bands
+		/// rather than to the client alone.</summary>
+		internal void SetNonClientChild(IntPtr handle, bool on)
+		{
+			lock (_nonClientChildren)
+			{
+				if (on) _nonClientChildren.Add(handle); else _nonClientChildren.Remove(handle);
+			}
+		}
+
+		private static bool IsNonClientChild(IntPtr handle)
+		{
+			lock (_nonClientChildren) return _nonClientChildren.Contains(handle);
 		}
 
 		/// <summary>WM_PRINT's PRF_NONCLIENT: draw a child's modelled frame (ChildFrame) into
@@ -1938,6 +1983,10 @@ namespace System.Windows.Forms
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return;
 			_styles[handle] = (cp.Style, cp.ExStyle, cp.menu != null);
+			// What the window's style is now, as GetWindowLong answers after SetWindowLong: the frame
+			// is drawn from these, and a border style changed after creation kept drawing the old one.
+			hwnd.initial_style = cp.WindowStyle;
+			hwnd.initial_ex_style = cp.WindowExStyle;
 			ApplyFrame(handle, AskFrame(handle, TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null)));
 		}
 		internal override void SetBorderStyle(IntPtr handle, FormBorderStyle border_style) { }
