@@ -83,7 +83,8 @@ namespace System.Windows.Forms
 			} finally {
 				ResumeLayout (false);
 			}
-			parent?.PerformLayout (this, "Bounds");
+			// .NET: LayoutTransaction.DoLayout (this, this, Bounds) -- the control lays itself out.
+			PerformLayout (this, "Bounds");
 		}
 
 		internal void ScaleChildControls (SizeF includedFactor, SizeF excludedFactor, Control requestingControl, bool causedByFontChanged = false)

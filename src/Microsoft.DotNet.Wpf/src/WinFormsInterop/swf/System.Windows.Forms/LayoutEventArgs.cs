@@ -31,14 +31,15 @@ using System.ComponentModel;
 
 namespace System.Windows.Forms {
 	public sealed class LayoutEventArgs : EventArgs {
-		private Control	affected_control;
 		private string	affected_property;
 		private IComponent affected_component;
 
 		#region Public Constructors
-		public LayoutEventArgs(Control affectedControl, string affectedProperty) {
-			this.affected_control = affectedControl;
-			this.affected_property = affectedProperty;
+		// .NET: both constructors keep the component, and AffectedControl is that component as a
+		// Control, so a layout raised with an IComponent still names the control that caused it.
+		public LayoutEventArgs(Control affectedControl, string affectedProperty)
+			: this ((IComponent) affectedControl, affectedProperty)
+		{
 		}
 
 		public LayoutEventArgs (IComponent affectedComponent, string affectedProperty)
@@ -54,9 +55,7 @@ namespace System.Windows.Forms {
 		}
 
 		public Control AffectedControl {
-			get {
-				return this.affected_control;
-			}
+			get { return this.affected_component as Control; }
 		}
 
 		public string AffectedProperty {

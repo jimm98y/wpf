@@ -30,6 +30,7 @@
 using System;
 using System.Drawing;
 using System.Collections;
+using System.Collections.Generic;
 
 namespace System.Windows.Forms.Layout
 {
@@ -123,7 +124,12 @@ namespace System.Windows.Forms.Layout
 		{
 			Rectangle space = parent.DisplayRectangle;
 
-			foreach (IArrangedElement child in controls) {
+			// .NET (LayoutAnchoredControls + ApplyCachedBounds): every anchored child's destination
+			// is worked out first, last child to first, and only the ones that move are given
+			// their new bounds afterwards -- a child whose bounds do not change sees no SetBoundsCore.
+			List<(IArrangedElement child, Rectangle bounds)> moved = null;
+			for (int i = controls.Count - 1; i >= 0; i--) {
+				IArrangedElement child = (IArrangedElement) controls[i];
 				if (!child.Visible || child.Dock != DockStyle.None)
 					continue;
 
@@ -184,11 +190,18 @@ namespace System.Windows.Forms.Layout
 					else
 						top += height - preferred_size.Height;
 
-					child.SetBounds (left, top, preferred_size.Width, preferred_size.Height, BoundsSpecified.None);
-				} else {
-					child.SetBounds (left, top, width, height, BoundsSpecified.None);
+					width = preferred_size.Width;
+					height = preferred_size.Height;
 				}
+
+				Rectangle destination = new Rectangle (left, top, width, height);
+				if (destination != child.Bounds)
+					(moved ??= new ()).Add ((child, destination));
 			}
+
+			if (moved != null)
+				foreach (var (child, b) in moved)
+					child.SetBounds (b.X, b.Y, b.Width, b.Height, BoundsSpecified.None);
 		}
 
 		public override bool Layout (object container, LayoutEventArgs args)
