@@ -148,13 +148,13 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (_form.FormBorderStyle == FormBorderStyle.None)
         {
             if (TryMapPopup(_form.Left, _form.Top, out int px, out int py)) return (px, py);
-            return (_form.Left, _form.Top);
+            return ToPhysical(_form.Left, _form.Top);
         }
 
         switch (_form.StartPosition)
         {
             case FormStartPosition.Manual:
-                return (_form.Left, _form.Top);
+                return ToPhysical(_form.Left, _form.Top);
 
             case FormStartPosition.CenterScreen:
             case FormStartPosition.CenterParent:
@@ -170,7 +170,10 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
                 if (mon == IntPtr.Zero || !GetMonitorInfoW(mon, ref mi)) return (CW_USEDEFAULT, CW_USEDEFAULT);
                 RECT work = mi.rcWork;
-                int w = _form.Width, h = _form.Height;
+                // The window's size on screen: an application that is not per-monitor aware is
+                // laid out in 96-dpi pixels and shown at the monitor's scale.
+                float k = System.Windows.Forms.ScaleHelper.IsDeviceScaled ? 1f : MonitorDpi(mon) / 96f;
+                int w = (int)Math.Round(_form.Width * k), h = (int)Math.Round(_form.Height * k);
                 if (_form.StartPosition == FormStartPosition.CenterParent && ownerHwnd != IntPtr.Zero && GetWindowRect(ownerHwnd, out RECT o))
                 {
                     int x = o.left + (o.right - o.left - w) / 2, y = o.top + (o.bottom - o.top - h) / 2;
@@ -185,6 +188,45 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 return (CW_USEDEFAULT, CW_USEDEFAULT);
         }
     }
+
+    /// <summary>
+    /// A screen point of an application that is not per-monitor aware, where Windows' DPI
+    /// virtualisation puts it: such an application sees each monitor at 96 dpi, so its coordinates
+    /// are the monitor's physical ones divided by the monitor's scale, and are multiplied back
+    /// here (stock GwxConfigApp's splash, centred at (555, 332) in its own units on a 200% display,
+    /// is at (1110, 665) on screen). A per-monitor-aware application's points are physical already.
+    /// </summary>
+    private static (int, int) ToPhysical(int x, int y)
+    {
+        if (System.Windows.Forms.ScaleHelper.IsDeviceScaled || x == CW_USEDEFAULT)
+            return (x, y);
+        foreach (var (mon, r) in Monitors())
+        {
+            float k = MonitorDpi(mon) / 96f;
+            // The monitor as the application sees it: its origin and size over the scale.
+            int lx = (int)Math.Round(r.left / k), ly = (int)Math.Round(r.top / k);
+            int lw = (int)Math.Round((r.right - r.left) / k), lh = (int)Math.Round((r.bottom - r.top) / k);
+            if (x >= lx && x < lx + lw && y >= ly && y < ly + lh)
+                return (r.left + (int)Math.Round((x - lx) * k), r.top + (int)Math.Round((y - ly) * k));
+        }
+        // Off every monitor (a window parked off screen): the primary monitor's scale.
+        float kp = MonitorDpi(MonitorFromPoint(new POINT { x = 0, y = 0 }, 1 /* MONITOR_DEFAULTTOPRIMARY */)) / 96f;
+        return ((int)Math.Round(x * kp), (int)Math.Round(y * kp));
+    }
+
+    private static int MonitorDpi(IntPtr mon)
+        => mon != IntPtr.Zero && GetDpiForMonitor(mon, 0 /* MDT_EFFECTIVE_DPI */, out uint dx, out _) == 0 && dx > 0 ? (int)dx : 96;
+
+    private static System.Collections.Generic.List<(IntPtr, RECT)> Monitors()
+    {
+        var list = new System.Collections.Generic.List<(IntPtr, RECT)>();
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr m, IntPtr dc, ref RECT r, IntPtr l) => { list.Add((m, r)); return true; }, IntPtr.Zero);
+        return list;
+    }
+
+    private delegate bool MonitorEnumProc(IntPtr monitor, IntPtr dc, ref RECT rect, IntPtr data);
+    [DllImport("user32")] private static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorEnumProc proc, IntPtr data);
+    [DllImport("shcore")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
 
     /// <summary>Turn a point in the driver's screen space into a real screen point, using the
     /// host that owns the window this popup drops out of. Its client area is where the driver's
@@ -210,8 +252,10 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     {
         if (_hwnd == IntPtr.Zero || _movingSelf || _form.FormBorderStyle != FormBorderStyle.None)
             return;
+        // A popup goes where its anchor's window says; a borderless window of its own (a splash
+        // screen that UpdateLayeredWindow moves) goes where the application put it.
         if (!TryMapPopup(_form.Left, _form.Top, out int px, out int py))
-            return;
+            (px, py) = ToPhysical(_form.Left, _form.Top);
         _movingSelf = true;
         try
         {

@@ -41,7 +41,18 @@ internal sealed unsafe partial class Win32Host
         // draws nothing else of it (not its children either): hand the app's own premultiplied bits
         // on as they are, with its constant alpha.
         if (_getLayeredBits?.Invoke(_driver, new object[] { _formHandle }) is ValueTuple<byte[], int, int, byte> lb && lb.Item2 > 0 && lb.Item3 > 0)
+        {
+            // An application that is not per-monitor aware hands over bits in its own (96-dpi or
+            // system-dpi) pixels, and Windows' DPI virtualisation shows them stretched to the
+            // monitor's scale, nearest neighbour: measured at 200%, a 64x48 picture becomes 128x96
+            // with every pixel doubled. The host is per-monitor aware, so it stretches them itself.
+            if (Math.Abs(_scale - 1f) > 0.001f)
+            {
+                var (sb, sw, sh) = StretchBits(lb.Item1, lb.Item2, lb.Item3, _scale);
+                return PresentBits(sb, sw, sh, lb.Item4, null, true);
+            }
             return PresentBits(lb.Item1, lb.Item2, lb.Item3, lb.Item4, null, true);
+        }
         byte[] rgba = _wgpu.RenderScenesToRgba(scenes, caret);
         int w = _wgpu.DeviceWidth, h = _wgpu.DeviceHeight;
         if (rgba == null || w <= 0 || h <= 0 || rgba.Length < w * h * 4) return false;
@@ -49,6 +60,28 @@ internal sealed unsafe partial class Win32Host
         System.Drawing.Color key = _form.TransparencyKey;
         byte opacity = (byte)Math.Round(Math.Clamp(_form.Opacity, 0.0, 1.0) * 255);
         return PresentBits(rgba, w, h, opacity, key.IsEmpty ? null : key, false);
+    }
+
+    /// <summary>32-bit pixels stretched by <paramref name="scale"/>, each destination pixel taking
+    /// the source pixel under its centre.</summary>
+    internal static (byte[] Bits, int Width, int Height) StretchBits(byte[] src, int w, int h, float scale)
+    {
+        int dw = Math.Max(1, (int)Math.Round(w * scale)), dh = Math.Max(1, (int)Math.Round(h * scale));
+        var dst = new byte[dw * dh * 4];
+        fixed (byte* s = src, d = dst)
+        {
+            uint* sp = (uint*)s, dp = (uint*)d;
+            for (int y = 0; y < dh; y++)
+            {
+                int sy = Math.Min((int)((y + 0.5) * h / dh), h - 1);
+                for (int x = 0; x < dw; x++)
+                {
+                    int sx = Math.Min((int)((x + 0.5) * w / dw), w - 1);
+                    dp[y * dw + x] = sp[sy * w + sx];
+                }
+            }
+        }
+        return (dst, dw, dh);
     }
 
     /// <summary>UpdateLayeredWindow with <paramref name="px"/> as the picture: the app's premultiplied
