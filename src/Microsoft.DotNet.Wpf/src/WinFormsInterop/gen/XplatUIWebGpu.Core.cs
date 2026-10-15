@@ -241,6 +241,15 @@ namespace System.Windows.Forms
 			bool plain = (h.initial_style & WindowStyles.WS_BORDER) != 0;
 			bool staticEdge = (h.initial_ex_style & WindowExStyles.WS_EX_STATICEDGE) != 0;
 			Control c = Control.FromHandle(handle);
+			// The square between two non-client scroll bars, which Windows' frame paints.
+			var ws = (WindowStyles)h.initial_style;
+			if ((ws & WindowStyles.WS_HSCROLL) != 0 && (ws & WindowStyles.WS_VSCROLL) != 0)
+			{
+				int edge = BorderEdge((int)h.initial_style, (int)h.initial_ex_style);
+				int vw = SystemInformation.VerticalScrollBarWidth, hh = SystemInformation.HorizontalScrollBarHeight;
+				try { ThemeEngine.Current.DrawScrollBarCorner(dc, new Rectangle(width - edge - vw, height - edge - hh, vw, hh)); }
+				catch (Exception ex) { T("DrawFrame corner: " + ex.Message); }
+			}
 			if (!sunken && !plain && !staticEdge) return;   // a frame of scroll bars alone
 
 			if (staticEdge && !sunken && !plain)
@@ -746,6 +755,10 @@ namespace System.Windows.Forms
 			IntPtr handle = NextHandle ();
 			if (frame != Padding.Empty) _frames[handle] = frame;
 			_styles[handle] = (cp.Style, cp.ExStyle, cp.menu != null);
+			// A control's own scroll bars and size box are the windows that stand in its non-client
+			// scroll-bar bands when it has them (WS_HSCROLL / WS_VSCROLL).
+			if (cp.control is ImplicitHScrollBar || cp.control is ImplicitVScrollBar || cp.control is SizeGrip)
+				SetNonClientChild(handle, true);
 			hwnd.WholeWindow = handle;
 			hwnd.ClientWindow = handle;   // registers in Hwnd's handle->object table
 			// GPU-raster mode records scenes (no per-window bitmap); keep the key as the window
@@ -1825,9 +1838,9 @@ namespace System.Windows.Forms
 		// WS_VSCROLL / WS_HSCROLL ask for, which this stack makes child windows.
 		private static readonly HashSet<IntPtr> _nonClientChildren = new HashSet<IntPtr>();
 
-		/// <summary>Mark a child window as standing in its parent's non-client area (a scroll bar
-		/// beside the client): it is then clipped to the parent's client and scroll-bar bands
-		/// rather than to the client alone.</summary>
+		/// <summary>Mark a child window as one that may stand in its parent's non-client area (a
+		/// scroll bar beside the client): it is then clipped to the parent's client and scroll-bar
+		/// bands rather than to the client alone.</summary>
 		internal void SetNonClientChild(IntPtr handle, bool on)
 		{
 			lock (_nonClientChildren)

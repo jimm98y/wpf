@@ -969,15 +969,6 @@ namespace System.Windows.Forms {
 
 			UpdateSizeGripVisible ();
 
-			// In the non-client area the bars stand beside the client, in the client's coordinates:
-			// the vertical one at x = the client's width. The driver clips them to those bands.
-			if (nc) {
-				var driver = XplatUIWebGpu.GetInstance ();
-				foreach (Control bar in new Control [] { hscrollbar, vscrollbar, sizegrip })
-					if (bar.IsHandleCreated)
-						driver.SetNonClientChild (bar.Handle, true);
-			}
-
 			ResumeLayout (doLayout);
 			
 			// We should now scroll the active control into view, 
