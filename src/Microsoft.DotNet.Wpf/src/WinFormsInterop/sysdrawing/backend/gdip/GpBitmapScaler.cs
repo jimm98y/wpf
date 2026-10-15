@@ -18,15 +18,27 @@ namespace System.Drawing.WebGpuBackend.Gdip
 {
     internal static class GpBitmapScaler
     {
+        [ThreadStatic] static byte[] s_row;
         /// <summary>Rows <paramref name="top"/>..<paramref name="bottom"/> of <paramref name="src"/>
         /// (32bpp PARGB) averaged down to <paramref name="dstW"/> x <paramref name="dstH"/>, as packed
         /// PARGB pixels.</summary>
         public static uint[] Averaging (GdipFrame src, int dstW, int dstH, int top, int bottom)
         {
-            int srcW = src.Width, srcH = src.Height;
             int n = Math.Max (0, bottom - top);
             var output = new uint [dstW * n];
-            if (n == 0 || dstW <= 0 || dstH <= 0) return output;
+            Averaging (src, dstW, dstH, top, bottom, false, output);
+            return output;
+        }
+
+        /// <summary><see cref="Averaging(GdipFrame,int,int,int,int)"/> into <paramref name="output"/>
+        /// (at least dstW x the band's rows, cleared). With <paramref name="premultiply"/> the source
+        /// is 32bpp ARGB and each pixel is premultiplied as it is read -- what converting the whole
+        /// bitmap to PARGB first gives, without the copy.</summary>
+        public static void Averaging (GdipFrame src, int dstW, int dstH, int top, int bottom, bool premultiply, uint[] output)
+        {
+            int srcW = src.Width, srcH = src.Height;
+            int n = Math.Max (0, bottom - top);
+            if (n == 0 || dstW <= 0 || dstH <= 0) return;
             uint stepX = (uint) (int) (srcW * 65536.0 / dstW), invX = (uint) (int) (dstW * 65536.0 / srcW);
             int stepY = (int) (srcH * 65536.0 / dstH);
             uint invY = (uint) (int) (dstH * 65536.0 / srcH);
@@ -37,10 +49,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (srcH == dstH) {
                 // InitScalerState: equal heights take the nearest-neighbour (copy) row path.
                 for (int y = top; y < bottom; y++) {
-                    ScaleLine (bits, y * stride, srcW, dstW, stepX, invX, line);
+                    ScaleLine (bits, y * stride, srcW, dstW, stepX, invX, line, premultiply);
                     Pack (line, output, (y - top) * dstW, dstW);
                 }
-                return output;
+                return;
             }
 
             var acc = new uint [dstW * 4];
@@ -63,7 +75,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 fixed (byte* pl = line)
                 fixed (uint* pa = acc) {
                     for (int sy = srcRow; sy < lastSrc && row < bottom; sy++) {
-                        ScaleLine (bits, sy * stride, srcW, dstW, stepX, invX, line);
+                        ScaleLine (bits, sy * stride, srcW, dstW, stepX, invX, line, premultiply);
                         if (rem <= 0x10000) {
                             uint r = (uint) rem, keep = 0x10000 - (uint) rem;
                             for (int i = 0; i < count; i++) {
@@ -83,14 +95,24 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     }
                 }
             }
-            return output;
         }
 
         static byte Round (uint sum, uint inv) => (byte) ((uint) ((int) ((ulong) sum * inv >> 16) + 0x8000) >> 16);
 
         /// <summary>ScaleLineAveraging (or CopyLine for equal widths) of one PARGB row.</summary>
-        static unsafe void ScaleLine (byte[] bits, int o, int srcW, int dstW, uint step, uint inv, byte[] dst)
+        static unsafe void ScaleLine (byte[] bits, int o, int srcW, int dstW, uint step, uint inv, byte[] dst, bool premultiply)
         {
+            if (premultiply) {
+                // Premultiply the row into scratch first (bits + o -> words), then scale those.
+                if (s_row == null || s_row.Length < srcW * 4) s_row = new byte [srcW * 4];
+                var src = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint> (bits.AsSpan (o, srcW * 4));
+                var to = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint> (s_row.AsSpan (0, srcW * 4));
+                for (int x = 0; x < srcW; x++) {
+                    uint v = src [x];
+                    to [x] = v >= 0xff000000u ? v : GdipPixels.PremultiplyArgb (v);
+                }
+                bits = s_row; o = 0;
+            }
             if (srcW == dstW) { Buffer.BlockCopy (bits, o, dst, 0, dstW * 4); return; }
             uint a0 = 0, a1 = 0, a2 = 0, a3 = 0;
             uint rem = step;
