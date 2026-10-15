@@ -19,7 +19,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
     {
         public IntPtr Instance { get; private set; }
         public IntPtr Adapter { get; private set; }
-        public string? AdapterDescription { get; private set; }
+        public string? AdapterDescription
+        {
+            get => _adapterDescription;
+            private set { _adapterDescription = value; LogAdapter(value); }
+        }
+        private string? _adapterDescription;
+
+        // Which adapter and backend a process got goes to the host's compatibility log (wpfmac), once
+        // per distinct adapter, in every run -- not only into the sink log when that is asked for: a
+        // silent fall back to a software adapter (WARP) is otherwise invisible.
+        private static readonly System.Collections.Generic.HashSet<string> s_loggedAdapters = new();
+        private static void LogAdapter(string? description)
+        {
+            if (string.IsNullOrEmpty(description)) return;
+            lock (s_loggedAdapters) if (!s_loggedAdapters.Add(description)) return;
+            try { (AppContext.GetData("WpfMac.Log") as Action<string>)?.Invoke("wgpu adapter: " + description); }
+            catch { /* logging only */ }
+        }
 
         /// <summary>
         /// True when wgpu selected the OpenGL/GLES backend (Android without a usable Vulkan, ANGLE,
