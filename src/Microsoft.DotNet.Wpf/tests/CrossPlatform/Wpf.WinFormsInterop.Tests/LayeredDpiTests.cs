@@ -31,7 +31,15 @@ namespace Wpf.WinFormsInterop.Tests
         }
 
         [Fact]
-        public void UnawareAppsLayeredBits_AreStretchedToTheMonitorsScale()
+        public void UnawareAppsLayeredBits_AreStretchedToTheMonitorsScale() => RunIn(SWF.HighDpiMode.DpiUnaware);
+
+        /// <summary>A system-aware application's pixels are the system DPI's: shown 1:1 on a display
+        /// at that DPI (GwxConfigApp's splash, drawn by the app at 1200x720 for 192 dpi), stretched
+        /// only on a display at another.</summary>
+        [Fact]
+        public void SystemAwareAppsLayeredBits_AreShownAtTheSystemDpi() => RunIn(SWF.HighDpiMode.SystemAware);
+
+        private static void RunIn(SWF.HighDpiMode mode)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows' layered windows");
             Exception? failure = null;
@@ -39,8 +47,7 @@ namespace Wpf.WinFormsInterop.Tests
             {
                 try
                 {
-                    // The default for an application that declares nothing: DPI unaware.
-                    using (SWF.ScaleHelper.OverrideForTests(SWF.HighDpiMode.DpiUnaware, 96)) Run();
+                    using (SWF.ScaleHelper.OverrideForTests(mode, (int)GetDpiForSystem())) Run();
                 }
                 catch (Exception ex) { failure = ex; }
             });
@@ -86,18 +93,20 @@ namespace Wpf.WinFormsInterop.Tests
                 if (host == IntPtr.Zero) continue;
                 dpi = (int)GetDpiForWindow(host);
                 GetWindowRect(host, out r);
-                if ((GetWindowLongPtrW(host, -20).ToInt64() & 0x00080000) != 0 && r.right - r.left == (int)Math.Round(W * dpi / 96.0)) break;
+                if ((GetWindowLongPtrW(host, -20).ToInt64() & 0x00080000) != 0 && r.right - r.left == (int)Math.Round(W * dpi / (double)SWF.ScaleHelper.HostSourceDpi)) break;
             }
             // A few more frames: the size the host's own window had before the first layered
             // present is the scaled one already, so read it after the bits have been put up.
             Pump(600);
             GetWindowRect(host, out r);
+            // The application's pixels' DPI: 96 for an unaware one, the system DPI for a system-aware one.
+            double source = SWF.ScaleHelper.HostSourceDpi;
             Assert.NotEqual(IntPtr.Zero, host);
-            Assert.Equal((int)Math.Round(W * dpi / 96.0), r.right - r.left);
-            Assert.Equal((int)Math.Round(H * dpi / 96.0), r.bottom - r.top);
-            // And where it is: the application's point in its 96-dpi units, at the monitor's scale.
-            Assert.Equal((int)Math.Round(8000 * dpi / 96.0), r.left);
-            Assert.Equal((int)Math.Round(80 * dpi / 96.0), r.top);
+            Assert.Equal((int)Math.Round(W * dpi / source), r.right - r.left);
+            Assert.Equal((int)Math.Round(H * dpi / source), r.bottom - r.top);
+            // And where it is: the application's point in its own units, at the monitor's scale.
+            Assert.Equal((int)Math.Round(8000 * dpi / source), r.left);
+            Assert.Equal((int)Math.Round(80 * dpi / source), r.top);
             form.Close();
         }
 
@@ -137,6 +146,7 @@ namespace Wpf.WinFormsInterop.Tests
         [DllImport("user32")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
         [DllImport("user32")] private static extern bool GetWindowRect(IntPtr h, out RECT r);
         [DllImport("user32")] private static extern uint GetDpiForWindow(IntPtr h);
+        [DllImport("user32")] private static extern uint GetDpiForSystem();
         [DllImport("user32")] private static extern IntPtr GetWindowLongPtrW(IntPtr h, int i);
         [DllImport("user32", CharSet = CharSet.Unicode)] private static extern int InternalGetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
     }
