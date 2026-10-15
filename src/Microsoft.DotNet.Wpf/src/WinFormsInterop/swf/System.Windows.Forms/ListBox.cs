@@ -307,7 +307,30 @@ namespace System.Windows.Forms
 		}
 
 		protected override CreateParams CreateParams {
-			get { return base.CreateParams;}
+			get {
+				CreateParams cp = base.CreateParams;
+				if (nc_hscroll)
+					cp.Style |= (int) WindowStyles.WS_HSCROLL;
+				if (nc_vscroll)
+					cp.Style |= (int) WindowStyles.WS_VSCROLL;
+				return cp;
+			}
+		}
+
+		// The scroll bars standing in the non-client area now (WS_HSCROLL / WS_VSCROLL), beside the
+		// client, as the list box control keeps them: a 100-pixel list with a vertical bar has a
+		// 79-pixel client.
+		private bool nc_hscroll, nc_vscroll, updating_nc;
+
+		/// <summary>The room the items and the scroll bars share: the client, with the bands of
+		/// bars standing in the non-client area now added back.</summary>
+		private Rectangle FullClient {
+			get {
+				Rectangle r = ClientRectangle;
+				if (nc_vscroll) r.Width += vscrollbar.Width;
+				if (nc_hscroll) r.Height += hscrollbar.Height;
+				return r;
+			}
 		}
 
 		[Browsable (false)]
@@ -1267,13 +1290,14 @@ namespace System.Windows.Forms
 
 		private void LayoutMultiColumn ()
 		{
-			int usable_height = ClientRectangle.Height - (ScrollAlwaysVisible ? hscrollbar.Height : 0);
+			Rectangle full = FullClient;
+			int usable_height = full.Height - (ScrollAlwaysVisible ? hscrollbar.Height : 0);
 			row_count = Math.Max (1, usable_height / ItemHeight);
 
 			int cols = (int) Math.Ceiling ((float)Items.Count / (float) row_count);
 			Size sz = new Size (cols * ColumnWidthInternal, row_count * ItemHeight);
-			if (!ScrollAlwaysVisible && sz.Width > ClientRectangle.Width && row_count > 1) {
-				usable_height = ClientRectangle.Height - hscrollbar.Height;
+			if (!ScrollAlwaysVisible && sz.Width > full.Width && row_count > 1) {
+				usable_height = full.Height - hscrollbar.Height;
 				row_count = Math.Max (1, usable_height / ItemHeight);
 				cols = (int) Math.Ceiling ((float)Items.Count / (float) row_count);
 				sz = new Size (cols * ColumnWidthInternal, row_count * ItemHeight);
@@ -1285,8 +1309,9 @@ namespace System.Windows.Forms
 		{
 			Theme theme = ThemeEngine.Current;
 
-			if (hscrollbar.Visible && vscrollbar.Visible) {
-				// Paint the dead space in the bottom right corner
+			if (hscrollbar.Visible && vscrollbar.Visible && !(nc_hscroll && nc_vscroll)) {
+				// Paint the dead space in the bottom right corner (the frame paints it when the bars
+				// are non-client)
 				Rectangle rect = new Rectangle (hscrollbar.Right, vscrollbar.Bottom, vscrollbar.Width, hscrollbar.Height);
 				if (rect.IntersectsWith (clip))
 					dc.FillRectangle (theme.ResPool.GetSolidBrush (theme.ColorControl), rect);
@@ -2190,7 +2215,7 @@ namespace System.Windows.Forms
 
 		private void UpdateScrollBars ()
 		{
-			items_area = Rectangle.Inflate (ClientRectangle, -BorderInset, -BorderInset);
+			items_area = Rectangle.Inflate (FullClient, -BorderInset, -BorderInset);
 			if (UpdateHorizontalScrollBar ()) {
 				items_area.Height -= hscrollbar.Height;
 				if (UpdateVerticalScrollBar ()) {
@@ -2202,6 +2227,21 @@ namespace System.Windows.Forms
 				if (UpdateHorizontalScrollBar ()) {
 					items_area.Height -= hscrollbar.Height;
 					UpdateVerticalScrollBar ();
+				}
+			}
+
+			// The bars into the non-client area or out of it: the frame grows or shrinks by them and
+			// the client is the item area. The resize that follows comes back here; this pass finishes.
+			bool nc = IsHandleCreated;
+			bool want_h = nc && hscrollbar.is_visible, want_v = nc && vscrollbar.is_visible;
+			if (!updating_nc && (want_h != nc_hscroll || want_v != nc_vscroll)) {
+				nc_hscroll = want_h;
+				nc_vscroll = want_v;
+				updating_nc = true;
+				try {
+					UpdateStyles ();
+				} finally {
+					updating_nc = false;
 				}
 			}
 
@@ -2223,7 +2263,7 @@ namespace System.Windows.Forms
 					show = true;
 					hscrollbar.Maximum  = 0;
 				}
-			} else if (canvas_size.Width > ClientRectangle.Width && HorizontalScrollbar) {
+			} else if (canvas_size.Width > FullClient.Width && HorizontalScrollbar) {
 				show = true;
 				hscrollbar.Maximum = canvas_size.Width;
 				hscrollbar.LargeChange = Math.Max (0, items_area.Width);

@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -534,7 +534,7 @@ namespace System.Windows.Forms {
 
 		internal void UpdateMargins ()
 		{
-			switch (owner.actual_border_style) {
+			switch (owner.ShownBorderStyle) {
 				case BorderStyle.None:
 					left_margin = 0;
 					top_margin = 0;
@@ -1824,7 +1824,7 @@ namespace System.Windows.Forms {
 			///
 			/// We draw the single border ourself
 			///
-			if (owner.actual_border_style == BorderStyle.FixedSingle) {
+			if (owner.ShownBorderStyle == BorderStyle.FixedSingle) {
 				// In the window-frame colour -- #646464 on Windows 10 and 11 -- not black.
 				ControlPaint.DrawBorder (g, owner.ClientRectangle, ThemeEngine.Current.ColorWindowFrame, ButtonBorderStyle.Solid);
 			}

@@ -942,6 +942,7 @@ namespace System.Windows.Forms
 				switch (t.Name) {
 					case "TextBoxBase":
 					case "ComboBox":
+					case "ComboListBox":   // a simple combo's list, comctl32's ComboLBox
 					case "ListBox":
 					case "ListView":
 					case "TreeView":
@@ -956,7 +957,9 @@ namespace System.Windows.Forms
 						return false;
 				}
 			}
-			return true;
+			// Anything else is a window of WinForms' own class, whose WS_EX_CLIENTEDGE DefWindowProc
+			// draws as the carved bevel: a stock UserControl with Fixed3D measures #A0A0A0 / #696969.
+			return false;
 		}
 
 		/// <summary>COLOR_WINDOWFRAME is #646464 on Windows 10 and 11 -- a plain WS_BORDER round a
