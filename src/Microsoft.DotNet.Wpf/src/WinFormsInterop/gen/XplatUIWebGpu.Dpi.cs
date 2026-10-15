@@ -157,6 +157,37 @@ namespace System.Windows.Forms {
 		[StructLayout(LayoutKind.Sequential)]
 		internal struct DpiRect { public int Left, Top, Right, Bottom; }
 
+		/// <summary>The DPI of the display a window at this rectangle (device pixels) opens on, or 0
+		/// when the head cannot say. Windows answers MonitorFromRect's monitor's DPI.</summary>
+		internal static Func<Rectangle, int> DisplayDpiAt = OperatingSystem.IsWindows () ? WindowsDisplayDpiAt : null;
+
+		static int WindowsDisplayDpiAt (Rectangle r)
+		{
+			try {
+				var rc = new DpiRect { Left = r.Left, Top = r.Top, Right = r.Right, Bottom = r.Bottom };
+				IntPtr mon = MonitorFromRect (ref rc, 2 /* MONITOR_DEFAULTTONEAREST */);
+				return mon != IntPtr.Zero && GetDpiForMonitor (mon, 0, out uint x, out _) == 0 ? (int) x : 0;
+			} catch (EntryPointNotFoundException) { return 0; }
+			catch (DllNotFoundException) { return 0; }
+		}
+
+		/// <summary>CreateWindow: a per-monitor-aware top-level window lays out at the DPI of the display
+		/// it opens on from the start, as Windows creates it there: the control sees that DPI in its
+		/// OnHandleCreated (HandleHighDpi), before Load. It used to see the system DPI until its host
+		/// window was up, and was rescaled only after Load.</summary>
+		void AdoptDisplayDpi (IntPtr handle, CreateParams cp)
+		{
+			if (!ScaleHelper.IsThreadPerMonitorV2Aware || ScaleHelper.IsOverriddenForTests || DisplayDpiAt == null || cp.Parent != IntPtr.Zero
+			    || (cp.Style & (int) WindowStyles.WS_CHILD) != 0 || cp.X == int.MinValue || cp.Y == int.MinValue)
+				return;
+			int dpi = DisplayDpiAt (new Rectangle (cp.X, cp.Y, Math.Max (1, cp.Width), Math.Max (1, cp.Height)));
+			if (dpi > 0)
+				lock (_windowDpi) _windowDpi [handle] = dpi;
+		}
+
+		[DllImport ("user32.dll")] static extern IntPtr MonitorFromRect (ref DpiRect rc, uint flags);
+		[DllImport ("shcore.dll")] static extern int GetDpiForMonitor (IntPtr mon, int type, out uint x, out uint y);
+
 		[DllImport("user32.dll")] private static extern IntPtr SetProcessDpiAwarenessContext(IntPtr ctx);
 		[DllImport("user32.dll")] private static extern IntPtr GetThreadDpiAwarenessContext();
 		[DllImport("user32.dll")] private static extern int GetAwarenessFromDpiAwarenessContext(IntPtr ctx);
