@@ -43,6 +43,10 @@ namespace Wpf.WinFormsInterop.Tests
             "ToolStripComboBoxControl ", "tool ",
         };
 
+        // After a simulated move only: uxtheme sizes a check or radio glyph for the HWND's DPI, which
+        // the stock recording's messages never changed -- stock keeps the 192-dpi glyph at 96 and 240.
+        private static readonly string[] KnownAfterMoves = { "check ", "radio " };
+
         public static IEnumerable<object[]> Modes()
         {
             yield return new object[] { SWF.AutoScaleMode.Font };
@@ -64,11 +68,13 @@ namespace Wpf.WinFormsInterop.Tests
 
             var mismatches = new List<string>();
             string[] mine = ours.Replace("\r\n", "\n").Split('\n');
+            bool moved = false;
             for (int i = 0, j = 0; i < stock.Length; i++, j++)
             {
                 string s = Normalize(stock[i]);
                 string o = j < mine.Length ? Normalize(mine[j]) : "<missing>";
-                if (s == o || IsKnown(s)) continue;
+                if (s.StartsWith("[dpi", StringComparison.Ordinal)) moved = true;
+                if (s == o || IsKnown(s) || moved && StartsWithAny(s, KnownAfterMoves)) continue;
                 mismatches.Add($"stock: {s}\n ours: {o}");
             }
             Assert.True(mismatches.Count == 0, $"{mismatches.Count} lines differ from stock:\n" + string.Join("\n", mismatches));
@@ -102,6 +108,13 @@ namespace Wpf.WinFormsInterop.Tests
             // As Windows fixes a process's awareness at its first window: too late after that.
             _ = new SWF.Button();
             Assert.False(SWF.Application.SetHighDpiMode(SWF.HighDpiMode.PerMonitorV2));
+        }
+
+        private static bool StartsWithAny(string line, string[] keys)
+        {
+            foreach (string k in keys)
+                if (line.StartsWith(k, StringComparison.Ordinal)) return true;
+            return false;
         }
 
         private static bool IsKnown(string line)

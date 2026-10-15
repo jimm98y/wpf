@@ -3310,7 +3310,7 @@ namespace System.Drawing
 				rect.X, rect.Y, rect.Width, rect.Height, flags, typographic, align, lineAlign, hotkey,
 				(int) recorded_text_hint, recorded_text_contrast, out bool empty, out bool asPath,
 				// The renderer draws the bi-level realizations under an axis scale.
-				biLevel: axis, sx: sx, sy: sy, wrapWidth: wrap);
+				biLevel: axis, sx: sx, sy: sy, wrapWidth: wrap, dpi: EmDpiY);
 			if (layout == null && asPath)
 				return FillGdiPlusTextOutlines (s, font, brush, rect, format, sx, sy);
 			// What the fast imager refuses goes to the full imager in GDI+ (a hot-key prefix, a control

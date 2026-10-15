@@ -281,7 +281,9 @@ namespace System.Windows.Forms.VisualStyles
 		/// image for that DPI: twice the 96-dpi size on a 200% screen.</summary>
 		private static Size ScaleForDc (Size at96, IDeviceContext dc)
 		{
-			if (at96.IsEmpty)
+			// The shared measuring context stands for a screen DC without a window: 96-dpi parts,
+			// which the caller scales to its window's DPI (stock passes the HWND).
+			if (at96.IsEmpty || dc is Graphics sg && ReferenceEquals (sg, Hwnd.GraphicsContext))
 				return at96;
 			float dpi = dc is Graphics g ? g.DpiX : System.Drawing.WebGpuBackend.DisplayDpi.X;
 			int d = (int) Math.Round (dpi);

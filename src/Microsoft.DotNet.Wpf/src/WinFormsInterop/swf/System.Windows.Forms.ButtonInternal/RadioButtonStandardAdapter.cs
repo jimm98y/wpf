@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 // From .NET's System.Windows.Forms (dotnet/winforms), adapted to the port where noted.
 
@@ -67,7 +67,8 @@ internal class RadioButtonStandardAdapter : RadioButtonBaseAdapter
 		{
 			ButtonBase control = Control;
 			using ScreenDcCache.ScreenDcScope scope = GdiCache.GetScreenHdc();
-			layoutOptions.CheckSize = RadioButtonRenderer.GetGlyphSize(scope, ButtonAdapterRenderers.RadioButtonStateFrom(GetState(), control.MouseIsOver)).Width;
+			// The glyph at the window's DPI, as uxtheme sizes it for the HWND .NET passes.
+			layoutOptions.CheckSize = control.LogicalToDeviceUnits (RadioButtonRenderer.GetGlyphSize(scope, ButtonAdapterRenderers.RadioButtonStateFrom(GetState(), control.MouseIsOver)).Width);
 		}
 		else
 		{

@@ -171,14 +171,15 @@ namespace System.Drawing.WebGpuBackend
                                              float x, float y, float width, float height, int formatFlags,
                                              bool typographic, int align, int lineAlign, bool hotkeyPrefix,
                                              int hint, int contrast, out bool empty, out bool asPath, bool biLevel = true,
-                                             float sx = 1f, float sy = 1f, float wrapWidth = float.NaN)
+                                             float sx = 1f, float sy = 1f, float wrapWidth = float.NaN, float dpi = 96f)
         {
             empty = false;
             asPath = false;
             TrueTypeFont face = GdiPlusText.Face(family, style);
             if (face is null) return null;
+            // The em is the point size at the surface's resolution (GDI+: the Graphics' DpiY).
             GdiPlusText.Run run = GdiPlusText.Layout(face, family, sizePt, text, x, y, width, height, formatFlags,
-                                                     typographic, align, lineAlign, hotkeyPrefix, hint, biLevel: biLevel,
+                                                     typographic, align, lineAlign, hotkeyPrefix, hint, dpi: dpi, biLevel: biLevel,
                                                      sx: sx, sy: sy, wrapWidth: wrapWidth);
             if (run is null) { asPath = GdiPlusText.LastPath; return null; }
             run.Contrast = contrast;
