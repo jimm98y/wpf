@@ -99,6 +99,9 @@
     purely so the AOT compiler can resolve everything WindowsBase names - nothing loads it.
   -->
   <PropertyGroup>
+    <!-- This folder stops the walk into the repo's Directory.Build.targets, so name the fork's
+         source-built System.Private.Windows.Core here. -->
+    <WpfWindowsCoreDll Condition="'$(WpfWindowsCoreDll)' == ''">$(MSBuildThisFileDirectory)../../../../../../artifacts/bin/System.Private.Windows.Core/Release/net10.0/System.Private.Windows.Core.dll</WpfWindowsCoreDll>
     <_WinDesktopRef>$(NuGetPackageRoot)microsoft.windowsdesktop.app.ref/10.0.10/ref/net10.0</_WinDesktopRef>
   </PropertyGroup>
   <ItemGroup>
@@ -107,7 +110,7 @@
          assemblies are enough: the runtime never loads them. -->
     <Reference Include="Accessibility">              <HintPath>$(_Art)/Accessibility/Release/net10.0/Accessibility.dll</HintPath></Reference>
     <Reference Include="System.Windows.Primitives">  <HintPath>$(_Art)/System.Windows.Primitives/Release/net10.0/System.Windows.Primitives.dll</HintPath></Reference>
-    <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
+    <Reference Include="System.Private.Windows.Core"><HintPath>$(WpfWindowsCoreDll)</HintPath></Reference>
     <Reference Include="PresentationFramework.Fluent"><HintPath>$(_Art)/PresentationFramework.Fluent/Release/net10.0/PresentationFramework.Fluent.dll</HintPath></Reference>
     <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath></Reference>
     <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath></Reference>

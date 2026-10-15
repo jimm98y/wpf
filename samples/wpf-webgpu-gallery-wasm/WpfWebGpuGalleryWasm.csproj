@@ -137,7 +137,7 @@
           Condition="'$(UseAot)' == 'true'">
     <ItemGroup>
       <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(FileName)' == 'System.Private.Windows.Core'" />
-      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)\lib\System.Private.Windows.Core.dll">
+      <ResolvedFileToPublish Include="$(WpfWindowsCoreDll)">
         <RelativePath>System.Private.Windows.Core.dll</RelativePath>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
         <AssetType>runtime</AssetType>
@@ -313,7 +313,7 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(BundlePrivateWin32Asms)' == 'true'">
-    <Reference Include="System.Private.Windows.Core"><HintPath>lib\System.Private.Windows.Core.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Private.Windows.Core"><HintPath>$(WpfWindowsCoreDll)</HintPath><Private>true</Private></Reference>
     <Reference Include="System.Private.Windows.GdiPlus"><HintPath>lib\System.Private.Windows.GdiPlus.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="System.Formats.Nrbf"><HintPath>lib\System.Formats.Nrbf.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>

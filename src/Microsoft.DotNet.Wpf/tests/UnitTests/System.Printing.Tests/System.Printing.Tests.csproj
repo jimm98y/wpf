@@ -18,7 +18,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <MicrosoftPrivateWinFormsReference Include="System.Private.Windows.Core" />
+    <!-- Built from source in this repo (src/System.Private.Windows.Core), not taken from the
+         Microsoft.Private.Winforms transport package or the WindowsDesktop framework. -->
+    <ProjectReference Include="$(WpfSourceDir)System.Private.Windows.Core\System.Private.Windows.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -164,7 +164,7 @@
          executes. The REFERENCE assemblies are enough: the runtime never loads them. -->
     <Reference Include="Accessibility">              <HintPath>$(_WinDesktopRef)/Accessibility.dll</HintPath></Reference>
     <Reference Include="System.Windows.Primitives">  <HintPath>$(_WinDesktopRef)/System.Windows.Primitives.dll</HintPath></Reference>
-    <Reference Include="System.Private.Windows.Core"><HintPath>$(_WinDesktopRef)/System.Private.Windows.Core.dll</HintPath></Reference>
+    <Reference Include="System.Private.Windows.Core"><HintPath>$(WpfWindowsCoreDll)</HintPath></Reference>
   </ItemGroup>
 
   <!--

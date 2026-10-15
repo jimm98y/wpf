@@ -97,7 +97,7 @@
        ordinary managed assemblies that build for net10.0 like the rest, and an app that uses a Ribbon
        or drives itself through a UIA client should not stop working because it was built for Linux. -->
   <ItemGroup>
-    <_WpfShared Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;ReachFramework;PresentationUI;Accessibility;System.Windows.Input.Manipulations;System.Windows.Primitives;System.Windows.Presentation;System.Windows.Controls.Ribbon;UIAutomationTypes;UIAutomationProvider;UIAutomationClient;UIAutomationClientSideProviders;PresentationFramework.Fluent;PresentationFramework.Aero;PresentationFramework.Aero2;PresentationFramework.AeroLite;PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale" />
+    <_WpfShared Include="PresentationFramework;PresentationCore;WindowsBase;System.Xaml;ReachFramework;PresentationUI;Accessibility;System.Private.Windows.Core;System.Windows.Input.Manipulations;System.Windows.Primitives;System.Windows.Presentation;System.Windows.Controls.Ribbon;UIAutomationTypes;UIAutomationProvider;UIAutomationClient;UIAutomationClientSideProviders;PresentationFramework.Fluent;PresentationFramework.Aero;PresentationFramework.Aero2;PresentationFramework.AeroLite;PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale" />
     <None Include="@(_WpfShared->'$(WpfBin)%(Identity)/Release/net10.0/%(Identity).dll')" Pack="true" PackagePath="lib/wpf/" />
     <!-- Two whose project name differs from their assembly name. -->
     <None Include="$(WpfBin)DirectWriteForwarderStub/Release/net10.0/DirectWriteForwarder.dll" Pack="true" PackagePath="lib/wpf/" />
