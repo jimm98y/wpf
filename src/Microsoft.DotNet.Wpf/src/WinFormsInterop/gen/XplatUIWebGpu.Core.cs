@@ -80,6 +80,9 @@ namespace System.Windows.Forms
 			internal bool Quit;
 			internal readonly System.Threading.Thread Owner = System.Threading.Thread.CurrentThread;
 			internal int DrainPosted;
+			/// <summary>Set when something is posted, so an idle loop wakes for it at once rather than
+			/// at its next poll.</summary>
+			internal readonly System.Threading.AutoResetEvent Posted = new System.Threading.AutoResetEvent(false);
 		}
 
 		[ThreadStatic] private static MsgQueue t_queue;
@@ -129,6 +132,7 @@ namespace System.Windows.Forms
 		{
 			MsgQueue q = QueueFor(handle);
 			lock (q.Messages) q.Messages.Enqueue(msg);
+			q.Posted.Set();
 			WakeWpfLoop(q);
 		}
 
@@ -1614,10 +1618,10 @@ namespace System.Windows.Forms
 
 					// Headless: there is never a host, so a pending timer is the one reason to stay.
 					if (nextTimer < 0) return false;
-					PresentationHost.Idle(nextTimer);
+					PresentationHost.Idle(nextTimer, q.Posted);
 					continue;
 				}
-				PresentationHost.Idle(nextTimer);
+				PresentationHost.Idle(nextTimer, q.Posted);
 
 				// Hand the loop a heartbeat rather than going straight round again. A message loop only
 				// re-checks whether its form wants to close AFTER it has processed a message -- but on

@@ -410,11 +410,34 @@ namespace System.Windows.Forms
         /// <summary>Yield when nothing happened, so an idle app costs ~nothing. The hosts poll the OS
         /// queue rather than blocking on it, so the loop has to sleep somewhere -- but never past the
         /// next due timer, and never so long that input feels laggy.</summary>
-        internal static void Idle(int nextTimerMs)
+        internal static void Idle(int nextTimerMs) => Idle(nextTimerMs, null);
+
+        /// <summary>Wait for the next frame, the next timer, a posted message (<paramref name="posted"/>)
+        /// or, on Windows, input for one of this thread's windows -- whichever comes first. A plain
+        /// sleep made everything posted from another thread wait for the poll: a splash screen's
+        /// 25-ms fade timer (System.Timers with a SynchronizingObject, so a BeginInvoke per tick)
+        /// stepped every 31-47 ms and faded in for 2.6 s where stock takes about one.</summary>
+        internal static void Idle(int nextTimerMs, WaitHandle posted)
         {
             const int MaxIdle = 8;      // ~120Hz polling: input stays responsive, idle CPU stays low
             int ms = nextTimerMs < 0 ? MaxIdle : Math.Min(nextTimerMs, MaxIdle);
-            if (ms > 0) Thread.Sleep(ms);
+            if (ms <= 0) return;
+            if (posted == null) { Thread.Sleep(ms); return; }
+            if (OperatingSystem.IsWindows())
+            {
+                IntPtr h = posted.SafeWaitHandle.DangerousGetHandle();
+                try
+                {
+                    MsgWaitForMultipleObjectsEx(1, ref h, (uint)ms, 0x04FF /* QS_ALLINPUT */, 0x0004 /* MWMO_INPUTAVAILABLE */);
+                    return;
+                }
+                catch (EntryPointNotFoundException) { }
+                catch (DllNotFoundException) { }
+            }
+            posted.WaitOne(ms);
         }
+
+        [System.Runtime.InteropServices.DllImport("user32")]
+        private static extern uint MsgWaitForMultipleObjectsEx(uint count, ref IntPtr handles, uint ms, uint wakeMask, uint flags);
     }
 }
