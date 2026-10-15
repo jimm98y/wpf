@@ -76,6 +76,46 @@ namespace Wpf.WinFormsInterop.Tests
             form.Close();
         }
 
+        /// <summary>On Windows the screen is the desktop: the real monitors, primary first, through
+        /// the same mapping as window positions. It was the main window's client size at the origin,
+        /// so a popup dropped from a window placed anywhere else was pushed back into that imaginary
+        /// screen (app's property-grid drop-downs opened to the left, away from their cells).</summary>
+        [Fact]
+        public void TheScreens_AreTheDesktopsMonitors()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Win32 monitors");
+            Exception? failure = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new SWF.Form { Text = "ScreensTest", StartPosition = SWF.FormStartPosition.Manual, Location = new Point(8000, 80), Size = new Size(200, 120), ShowInTaskbar = false };
+                    form.Show();
+                    Pump(300);
+                    var monitors = new System.Collections.Generic.List<RECT>();
+                    EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr m, IntPtr dc, ref RECT r, IntPtr l) => { monitors.Add(r); return true; }, IntPtr.Zero);
+                    SWF.Screen[] screens = SWF.Screen.AllScreens;
+                    Assert.Equal(monitors.Count, screens.Length);
+                    Assert.True(screens[0].Primary);
+                    double k = SWF.ScaleHelper.HostSourceDpi == 0 ? 1 : GetDpiForSystem() / (double)SWF.ScaleHelper.HostSourceDpi;
+                    foreach (RECT m in monitors)
+                    {
+                        var expect = Rectangle.FromLTRB((int)Math.Round(m.left / k), (int)Math.Round(m.top / k), (int)Math.Round(m.right / k), (int)Math.Round(m.bottom / k));
+                        Assert.Contains(screens, s => s.Bounds == expect);
+                    }
+                    form.Close();
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        private delegate bool MonitorProc(IntPtr m, IntPtr dc, ref RECT r, IntPtr l);
+        [DllImport("user32")] private static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorProc p, IntPtr l);
+
         /// <summary>A form that draws its own frame says where its caption and edges are.</summary>
         private sealed class ChromeForm : SWF.Form
         {

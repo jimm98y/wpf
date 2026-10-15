@@ -373,11 +373,43 @@ namespace System.Windows.Forms
 			Screen.Rescan();
 		}
 
-		internal override Rectangle VirtualScreen { get { return new Rectangle(Point.Empty, s_screen); } }
-		internal override Rectangle WorkingArea { get { return new Rectangle(Point.Empty, s_screen); } }
+		/// <summary>Set by a host whose windows are real windows on a real desktop (Win32Host): the
+		/// monitors, in the application's coordinates. There a popup is a window of its own, not
+		/// something drawn inside one surface, and the main window is wherever the user put it -- so
+		/// "the screen" is the desktop. Measured against the main window's client size instead, a
+		/// property grid's drop-down in a window moved off the origin was pushed back inside that
+		/// imaginary screen: it opened to the left, away from its cell.</summary>
+		internal static Func<Screen[]> ScreensProvider;
+
+		internal override Rectangle VirtualScreen
+		{
+			get
+			{
+				if (ScreensProvider?.Invoke() is { Length: > 0 } all)
+				{
+					Rectangle u = all[0].Bounds;
+					foreach (Screen sc in all) u = Rectangle.Union(u, sc.Bounds);
+					return u;
+				}
+				return new Rectangle(Point.Empty, s_screen);
+			}
+		}
+		internal override Rectangle WorkingArea
+		{
+			get
+			{
+				if (ScreensProvider?.Invoke() is { Length: > 0 } all)
+					foreach (Screen sc in all) if (sc.Primary) return sc.WorkingArea;
+				return new Rectangle(Point.Empty, s_screen);
+			}
+		}
 		internal override Screen[] AllScreens
 		{
-			get { return new[] { new Screen(true, "WebGpu Primary Display", VirtualScreen, WorkingArea) }; }
+			get
+			{
+				if (ScreensProvider?.Invoke() is { Length: > 0 } all) return all;
+				return new[] { new Screen(true, "WebGpu Primary Display", VirtualScreen, WorkingArea) };
+			}
 		}
 
 		/// <summary>Absolute (screen) top-left of a window, walking up the parent chain.</summary>
