@@ -667,6 +667,10 @@ namespace System.Windows.Forms {
 		protected override CreateParams CreateParams {
 			get {
 				CreateParams cp = base.CreateParams;
+				if (nc_hscroll)
+					cp.Style |= (int) WindowStyles.WS_HSCROLL;
+				if (nc_vscroll)
+					cp.Style |= (int) WindowStyles.WS_VSCROLL;
 				return cp;
 			}
 		}
@@ -1211,9 +1215,10 @@ namespace System.Windows.Forms {
 			get {
 				Rectangle res = ClientRectangle;
 
-				if (vbar != null && vbar.Visible)
+				// Bars in the non-client area are already outside the client.
+				if (vbar != null && vbar.Visible && !nc_vscroll)
 					res.Width -= vbar.Width;
-				if (hbar != null && hbar.Visible)
+				if (hbar != null && hbar.Visible && !nc_hscroll)
 					res.Height -= hbar.Height;
 				return res;
 			}
@@ -1490,7 +1495,8 @@ namespace System.Windows.Forms {
 			if (inset > 0)
 				dc.ResetTransform ();
 
-			if (hbar.Visible && vbar.Visible) {
+			if (hbar.Visible && vbar.Visible && !(nc_hscroll && nc_vscroll)) {
+				// (between non-client bars the frame paints the corner)
 				Rectangle corner = new Rectangle (hbar.Right, vbar.Bottom, vbar.Width, hbar.Height);
 				if (original_clip.IntersectsWith (corner))
 					dc.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (ThemeEngine.Current.ColorControl),
@@ -1842,9 +1848,14 @@ namespace System.Windows.Forms {
 
 		internal void UpdateScrollBars (bool force)
 		{
-			if (!force && (IsDisposed || update_stack > 0 || !IsHandleCreated || !Visible))
+			// Its own visibility, not its form's: comctl32 sizes a tree's bars whether or not the
+			// window it is on has been shown, and its ClientSize says so.
+			if (!force && (IsDisposed || update_stack > 0 || !IsHandleCreated || !VisibleInternal))
 				return;
 
+			// The room the rows and the bars share: the client with the bands of bars standing
+			// outside it now added back.
+			Rectangle full = FullClient;
 			bool vert = false;
 			bool horz = false;
 			int height = 0;
@@ -1855,7 +1866,10 @@ namespace System.Windows.Forms {
 				OpenTreeNodeEnumerator walk = new OpenTreeNodeEnumerator (root_node);
 				
 				while (walk.MoveNext ()) {
-					int r = walk.CurrentNode.Bounds.Right;
+					// Not the hidden root's: it is never drawn, and its own caption ("ROOT NODE") is
+					// wider than many a tree's rows -- a short list got a horizontal bar Windows does
+					// not give it.
+					int r = walk.CurrentNode == root_node ? -1 : walk.CurrentNode.Bounds.Right;
 					if (r > width)
 						width = r;
 
@@ -1865,30 +1879,30 @@ namespace System.Windows.Forms {
 				height -= item_height; // root_node adjustment
 				width += hbar_offset;
 
-				if (height > ClientRectangle.Height) {
+				if (height > full.Height) {
 					vert = true;
 
-					if (width > ClientRectangle.Width - SystemInformation.VerticalScrollBarWidth)
+					if (width > full.Width - SystemInformation.VerticalScrollBarWidth)
 						horz = true;
-				} else if (width > ClientRectangle.Width) {
+				} else if (width > full.Width) {
 					horz = true;
 				}
 
-				if (!vert && horz && height > ClientRectangle.Height - SystemInformation.HorizontalScrollBarHeight)
+				if (!vert && horz && height > full.Height - SystemInformation.HorizontalScrollBarHeight)
 					vert = true;
 			}
 
 			if (vert) {
-				int visible_height = horz ? ClientRectangle.Height - hbar.Height : ClientRectangle.Height;
+				int visible_height = horz ? full.Height - hbar.Height : full.Height;
 				vbar.SetValues (Math.Max (0, max_visible_order - 2), visible_height / ActualItemHeight);
 				/*
 				vbar.Maximum = max_visible_order;
-				vbar.LargeChange = ClientRectangle.Height / ItemHeight;
+				vbar.LargeChange = full.Height / ItemHeight;
 				*/
 
 				if (!vbar_bounds_set) {
-					vbar.Bounds = new Rectangle (ClientRectangle.Width - vbar.Width, 0, vbar.Width,
-							ClientRectangle.Height -
+					vbar.Bounds = new Rectangle (full.Width - vbar.Width, 0, vbar.Width,
+							full.Height -
 							(horz ? SystemInformation.VerticalScrollBarWidth : 0));
 					vbar_bounds_set = true;
 
@@ -1913,15 +1927,15 @@ namespace System.Windows.Forms {
 			}
 
 			if (horz) {
-				hbar.SetValues (width + 1, ClientRectangle.Width - (vert ? SystemInformation.VerticalScrollBarWidth : 0));
+				hbar.SetValues (width + 1, full.Width - (vert ? SystemInformation.VerticalScrollBarWidth : 0));
 				/*
-				hbar.LargeChange = ClientRectangle.Width;
+				hbar.LargeChange = full.Width;
 				hbar.Maximum = width + 1;
 				*/
 
 				if (!hbar_bounds_set) {
-					hbar.Bounds = new Rectangle (0, ClientRectangle.Height - hbar.Height,
-							ClientRectangle.Width - (vert ? SystemInformation.VerticalScrollBarWidth : 0),
+					hbar.Bounds = new Rectangle (0, full.Height - hbar.Height,
+							full.Width - (vert ? SystemInformation.VerticalScrollBarWidth : 0),
 							hbar.Height);
 					hbar_bounds_set = true;
 				}
@@ -1931,6 +1945,21 @@ namespace System.Windows.Forms {
 				hbar.Visible = false;
 				hbar_bounds_set = false;
 			}
+
+			// The bars into the non-client area or out of it (WS_HSCROLL / WS_VSCROLL), as comctl32's
+			// tree keeps them: the frame grows or shrinks by them and the client is what is left.
+			// The resize that follows comes back here; this pass finishes.
+			if (!updating_nc && IsHandleCreated && (horz != nc_hscroll || vert != nc_vscroll)) {
+				nc_hscroll = horz;
+				nc_vscroll = vert;
+				updating_nc = true;
+				try {
+					UpdateStyles ();
+				} finally {
+					updating_nc = false;
+				}
+			}
+			PositionBars ();
 		}
 
 		private void SizeChangedHandler (object sender, EventArgs e)
@@ -1941,14 +1970,43 @@ namespace System.Windows.Forms {
 				UpdateScrollBars (false);
 			}
 
+			PositionBars ();
+		}
+
+		/// <summary>Stand the bars where they go: beside the client in the non-client area when
+		/// they are there (the driver clips them to its bands), else along its inside edges.</summary>
+		private void PositionBars ()
+		{
+			Rectangle client = ClientRectangle;
+			if (nc_hscroll || nc_vscroll) {
+				if (vbar.VisibleInternal)
+					vbar.Bounds = new Rectangle (client.Width, 0, vbar.Width, client.Height);
+				if (hbar.VisibleInternal)
+					hbar.Bounds = new Rectangle (0, client.Height, client.Width, hbar.Height);
+				return;
+			}
+
 			if (vbar.Visible) {
-				vbar.Bounds = new Rectangle (ClientRectangle.Width - vbar.Width, 0, vbar.Width,
-						ClientRectangle.Height - (hbar.Visible ? SystemInformation.HorizontalScrollBarHeight : 0));
+				vbar.Bounds = new Rectangle (client.Width - vbar.Width, 0, vbar.Width,
+						client.Height - (hbar.Visible ? SystemInformation.HorizontalScrollBarHeight : 0));
 			}
 
 			if (hbar.Visible) {
-				hbar.Bounds = new Rectangle (0, ClientRectangle.Height - hbar.Height,
-						ClientRectangle.Width - (vbar.Visible ? SystemInformation.VerticalScrollBarWidth : 0), hbar.Height);
+				hbar.Bounds = new Rectangle (0, client.Height - hbar.Height,
+						client.Width - (vbar.Visible ? SystemInformation.VerticalScrollBarWidth : 0), hbar.Height);
+			}
+		}
+
+		// The scroll bars standing in the non-client area now (WS_HSCROLL / WS_VSCROLL).
+		private bool nc_hscroll, nc_vscroll, updating_nc;
+
+		/// <summary>The client, with the bands of bars standing outside it now added back.</summary>
+		private Rectangle FullClient {
+			get {
+				Rectangle r = ClientRectangle;
+				if (nc_vscroll) r.Width += vbar.Width;
+				if (nc_hscroll) r.Height += hbar.Height;
+				return r;
 			}
 		}
 
