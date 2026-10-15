@@ -653,6 +653,10 @@ namespace System.Windows.Forms
 		public static int GetHorizontalScrollBarArrowWidthForDpi (int dpi)
 			=> ScaleHelper.IsThreadPerMonitorV2Aware ? MetricForDpi (21, ThemeEngine.Current.HorizontalScrollBarArrowWidth, dpi) : HorizontalScrollBarArrowWidth;
 
+		/// <summary>.NET's GetVerticalScrollBarArrowHeightForDpi: SM_CYVSCROLL at a DPI.</summary>
+		public static int GetVerticalScrollBarArrowHeightForDpi (int dpi)
+			=> ScaleHelper.IsThreadPerMonitorV2Aware ? MetricForDpi (20, ThemeEngine.Current.VerticalScrollBarArrowHeight, dpi) : VerticalScrollBarArrowHeight;
+
 		/// <summary>.NET's GetHorizontalScrollBarHeightForDpi.</summary>
 		public static int GetHorizontalScrollBarHeightForDpi (int dpi)
 			=> ScaleHelper.IsThreadPerMonitorV2Aware ? MetricForDpi (3, ThemeEngine.Current.HorizontalScrollBarHeight, dpi) : HorizontalScrollBarHeight;
