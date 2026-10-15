@@ -319,7 +319,8 @@ namespace System.Windows.Forms
 		// window opened downwards and was cut off by the window's own edge, where Windows would
 		// have flipped it above the pointer. The host says how big its surface is; until one
 		// does, a large desktop, so geometry still has real bounds to work with.
-		private static Size s_screen = InitialScreen();
+		private static Size s_screenSet;
+		private static Size s_screen { get => s_screenSet.IsEmpty ? InitialScreen() : s_screenSet; set => s_screenSet = value; }
 
 		/// <summary>Until a host reports its surface: on Windows the primary monitor's work area (a
 		/// splash screen centres itself on it before any host exists -- on an imaginary 2560x1440
@@ -328,9 +329,23 @@ namespace System.Windows.Forms
 		{
 			if (OperatingSystem.IsWindows())
 			{
-				var r = new WorkArea();
-				if (SystemParametersInfoW(0x0030 /* SPI_GETWORKAREA */, 0, ref r, 0) && r.Right > r.Left && r.Bottom > r.Top)
-					return new Size(r.Right - r.Left, r.Bottom - r.Top);
+				// In the application's own pixels: the work area as a per-monitor or system-aware
+				// application sees it (device pixels) or as an unaware one does (96 dpi). Asked in
+				// whatever context the calling thread happens to be in, a system-aware splash centred
+				// itself on a half-size screen.
+				IntPtr old = IntPtr.Zero;
+				try { old = SetThreadDpiAwarenessContext(ScaleHelper.IsDeviceScaled ? (IntPtr)(-4) : (IntPtr)(-1)); }
+				catch (EntryPointNotFoundException) { }
+				try
+				{
+					var r = new WorkArea();
+					if (SystemParametersInfoW(0x0030 /* SPI_GETWORKAREA */, 0, ref r, 0) && r.Right > r.Left && r.Bottom > r.Top)
+						return new Size(r.Right - r.Left, r.Bottom - r.Top);
+				}
+				finally
+				{
+					if (old != IntPtr.Zero) SetThreadDpiAwarenessContext(old);
+				}
 			}
 			return new Size(2560, 1440);
 		}
@@ -339,6 +354,8 @@ namespace System.Windows.Forms
 		private struct WorkArea { public int Left, Top, Right, Bottom; }
 		[System.Runtime.InteropServices.DllImport("user32")]
 		private static extern bool SystemParametersInfoW(uint action, uint param, ref WorkArea r, uint winIni);
+		[System.Runtime.InteropServices.DllImport("user32")]
+		private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
 
 		/// <summary>The area a window can actually be seen in, in this driver's own units.
 		/// Called by the host that owns the presentation surface, whenever it changes size.

@@ -300,6 +300,8 @@ namespace System.Windows.Forms.Integration
             get
             {
                 if (!SWF.ScaleHelper.IsDeviceScaled) return 1;
+                // System-aware WinForms is at the system DPI wherever the host is.
+                if (SWF.ScaleHelper.IsSystemAware) return SWF.ScaleHelper.InitialSystemDpi / 96.0;
                 double s = VisualTreeHelper.GetDpi(this).DpiScaleX;
                 return s > 0 ? s : 1;
             }
@@ -309,7 +311,7 @@ namespace System.Windows.Forms.Integration
         /// changes as a child window is.</summary>
         private void SyncDpi()
         {
-            if (_driver == null || !SWF.ScaleHelper.IsDeviceScaled) return;
+            if (_driver == null || !SWF.ScaleHelper.IsDeviceScaled || SWF.ScaleHelper.IsSystemAware) return;
             int dpi = (int)Math.Round(VisualTreeHelper.GetDpi(this).PixelsPerInchX);
             if (dpi <= 0) return;
             if (_container.DeviceDpi == dpi) { _driver.SetWindowDpi(_container.Handle, dpi); return; }

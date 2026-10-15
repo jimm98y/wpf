@@ -1063,7 +1063,9 @@ namespace System.Windows.Forms
 		/// <summary>.NET's s_normalButtonSize and the tool strip's height (the button and
 		/// _toolStripButtonPaddingY), at the grid's DPI.</summary>
 		private Size NormalButtonSize => new Size (LogicalToDeviceUnits (16), LogicalToDeviceUnits (16));
-		private int ToolbarHeight => NormalButtonSize.Height + LogicalToDeviceUnits (9);
+		// The padding is scaled only by RescaleConstants, which .NET runs for a per-monitor
+		// application alone: a system-aware grid keeps nine pixels under its scaled buttons.
+		private int ToolbarHeight => NormalButtonSize.Height + (ScaleHelper.IsThreadPerMonitorV2Aware ? LogicalToDeviceUnits (9) : 9);
 
 		/// <summary>.NET's RescaleConstants, and the tool strip rebuilt (SetupToolbar(fullRebuild)) and
 		/// the description pane resized, for a DPI change.</summary>

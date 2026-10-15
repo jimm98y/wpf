@@ -389,6 +389,9 @@ namespace System.Windows.Forms
                 // paints BEFORE the window exists, so its very first present already has content.
                 InvalidateTree(form);
                 Application.DoEvents();
+                // Those events may have closed it: a splash screen the main thread dismissed the
+                // moment it was up was disposed here, and creating its window threw on its thread.
+                if (form.IsDisposed || form.Disposing || !form.Visible) continue;
 
                 IWinFormsHost host;
                 if (OperatingSystem.IsWindows()) host = new Win32Host(form);

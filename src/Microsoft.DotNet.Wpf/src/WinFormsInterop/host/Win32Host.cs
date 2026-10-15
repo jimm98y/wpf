@@ -171,8 +171,8 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 if (mon == IntPtr.Zero || !GetMonitorInfoW(mon, ref mi)) return (CW_USEDEFAULT, CW_USEDEFAULT);
                 RECT work = mi.rcWork;
                 // The window's size on screen: an application that is not per-monitor aware is
-                // laid out in 96-dpi pixels and shown at the monitor's scale.
-                float k = System.Windows.Forms.ScaleHelper.IsDeviceScaled ? 1f : MonitorDpi(mon) / 96f;
+                // laid out at 96 dpi (or, system-aware, the system DPI) and shown at the monitor's.
+                float k = HostFactor(mon);
                 int w = (int)Math.Round(_form.Width * k), h = (int)Math.Round(_form.Height * k);
                 if (_form.StartPosition == FormStartPosition.CenterParent && ownerHwnd != IntPtr.Zero && GetWindowRect(ownerHwnd, out RECT o))
                 {
@@ -198,11 +198,11 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     /// </summary>
     private static (int, int) ToPhysical(int x, int y)
     {
-        if (System.Windows.Forms.ScaleHelper.IsDeviceScaled || x == CW_USEDEFAULT)
+        if (System.Windows.Forms.ScaleHelper.HostSourceDpi == 0 || x == CW_USEDEFAULT)
             return (x, y);
         foreach (var (mon, r) in Monitors())
         {
-            float k = MonitorDpi(mon) / 96f;
+            float k = HostFactor(mon);
             // The monitor as the application sees it: its origin and size over the scale.
             int lx = (int)Math.Round(r.left / k), ly = (int)Math.Round(r.top / k);
             int lw = (int)Math.Round((r.right - r.left) / k), lh = (int)Math.Round((r.bottom - r.top) / k);
@@ -210,8 +210,17 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 return (r.left + (int)Math.Round((x - lx) * k), r.top + (int)Math.Round((y - ly) * k));
         }
         // Off every monitor (a window parked off screen): the primary monitor's scale.
-        float kp = MonitorDpi(MonitorFromPoint(new POINT { x = 0, y = 0 }, 1 /* MONITOR_DEFAULTTOPRIMARY */)) / 96f;
+        float kp = HostFactor(MonitorFromPoint(new POINT { x = 0, y = 0 }, 1 /* MONITOR_DEFAULTTOPRIMARY */));
         return ((int)Math.Round(x * kp), (int)Math.Round(y * kp));
+    }
+
+    /// <summary>Device pixels per application pixel on a monitor: one for a per-monitor-aware
+    /// application, the monitor's DPI over 96 for an unaware one and over the system DPI for a
+    /// system-aware one -- Windows' DPI virtualisation.</summary>
+    private static float HostFactor(IntPtr mon)
+    {
+        int src = System.Windows.Forms.ScaleHelper.HostSourceDpi;
+        return src == 0 ? 1f : MonitorDpi(mon) / (float)src;
     }
 
     private static int MonitorDpi(IntPtr mon)
@@ -382,12 +391,15 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         // its window renders 1:1 and the driver learns the display's DPI; any other has its 96-dpi
         // layout scaled to device pixels here (crisp either way).
         int windowDpi = (int)GetDpiForWindow(_hwnd);
-        if (System.Windows.Forms.ScaleHelper.IsDeviceScaled)
+        // A system-aware application stays at the system DPI (the driver's default for its windows)
+        // and is stretched on a display at another, as an unaware one is from 96.
+        int sourceDpi = System.Windows.Forms.ScaleHelper.HostSourceDpi;
+        if (sourceDpi == 0)
         {
             _scale = 1f;
             if (_driver is System.Windows.Forms.XplatUIWebGpu dpiDriver) dpiDriver.SetWindowDpi(_formHandle, windowDpi);
         }
-        else _scale = windowDpi / 96f;
+        else _scale = windowDpi / (float)sourceDpi;
 
         // CreateWindowEx sizes the WHOLE window, caption and borders included, but the surface we
         // present is the form-sized CLIENT area. Left as it was, the client area came out smaller than
@@ -993,7 +1005,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     {
         if (_hwnd == IntPtr.Zero)
             return;
-        if (System.Windows.Forms.ScaleHelper.IsDeviceScaled)
+        if (System.Windows.Forms.ScaleHelper.HostSourceDpi == 0)
         {
             // The application rescales itself, as on Windows: the form and its children are told
             // (WM_DPICHANGED_BEFOREPARENT, WM_DPICHANGED, ..._AFTERPARENT) and the form takes the
@@ -1011,7 +1023,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             Present();
             return;
         }
-        _scale = GetDpiForWindow(_hwnd) / 96f;
+        _scale = GetDpiForWindow(_hwnd) / (float)System.Windows.Forms.ScaleHelper.HostSourceDpi;
         if (suggested != IntPtr.Zero)
         {
             RECT r = Marshal.PtrToStructure<RECT>(suggested);

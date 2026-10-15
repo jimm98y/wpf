@@ -193,8 +193,20 @@ namespace System.Windows.Forms
 		/// <summary>The mode the application runs in.</summary>
 		internal static HighDpiMode Mode { get { Resolve (); return s_mode; } }
 
-		/// <summary>Whether layout is in device pixels at the system DPI (a per-monitor-aware application).</summary>
+		/// <summary>Whether layout is in device pixels (a per-monitor-aware or system-aware
+		/// application): at the window's DPI, or for a system-aware one at the system DPI.</summary>
 		internal static bool IsDeviceScaled { get { Resolve (); return s_scaled; } }
+
+		/// <summary>A system-aware application: laid out at the system DPI (the primary display's
+		/// at startup) and never told of DPI changes. Windows shows its windows 1:1 on displays at
+		/// that DPI and bitmap-stretches them by display DPI over system DPI on the others; the
+		/// host does the same.</summary>
+		internal static bool IsSystemAware { get { Resolve (); return s_scaled && s_mode == HighDpiMode.SystemAware; } }
+
+		/// <summary>The DPI the application's own pixels are at, as far as a host putting them on a
+		/// display is concerned: 96 for an unaware application, the system DPI for a system-aware
+		/// one; a per-monitor one's are the display's (0: nothing to scale).</summary>
+		internal static int HostSourceDpi { get { Resolve (); return !s_scaled ? OneHundredPercentLogicalDpi : s_mode == HighDpiMode.SystemAware ? s_systemDpi : 0; } }
 
 		/// <summary>The primary display's DPI at startup for a scaled application, 96 for any other.</summary>
 		internal static int InitialSystemDpi { get { Resolve (); return s_systemDpi; } }
@@ -218,7 +230,10 @@ namespace System.Windows.Forms
 				s_defaulted = chosen == null;
 				HighDpiMode mode = chosen ?? HighDpiMode.DpiUnaware;
 				s_mode = mode;
-				if (mode == HighDpiMode.PerMonitor || mode == HighDpiMode.PerMonitorV2) {
+				if (mode == HighDpiMode.PerMonitor || mode == HighDpiMode.PerMonitorV2 || mode == HighDpiMode.SystemAware) {
+					// SystemAware is per-monitor machinery with the DPI fixed at startup: the process
+					// is made per-monitor so the host can render 1:1, and the layout stays at the
+					// system DPI (DeviceDpi, AutoScale) because DPI changes are not processed.
 					// The OS decides what the process can be: an application that already made itself
 					// unaware (or a host that did) stays on the scaled 96-dpi surface.
 					int awareness = XplatUIWebGpu.EnterPerMonitorAwareness (out int systemDpi);
@@ -239,7 +254,7 @@ namespace System.Windows.Forms
 		{
 			Resolve ();
 			var saved = (s_mode, s_scaled, s_perMonitorV2, s_systemDpi);
-			bool scaled = mode == HighDpiMode.PerMonitor || mode == HighDpiMode.PerMonitorV2;
+			bool scaled = mode == HighDpiMode.PerMonitor || mode == HighDpiMode.PerMonitorV2 || mode == HighDpiMode.SystemAware;
 			s_mode = mode;
 			s_scaled = scaled;
 			s_perMonitorV2 = mode == HighDpiMode.PerMonitorV2;
