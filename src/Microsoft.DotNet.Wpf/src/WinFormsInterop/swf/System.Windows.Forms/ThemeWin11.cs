@@ -467,8 +467,12 @@ namespace System.Windows.Forms
 				: comboBox.DropDownButtonEntered ? 2 : 1;
 			// The themed button stands one pixel in from the control's edge, not a 3D border's two:
 			// that is where Windows' chevron lands.
+			// comctl32's rcButton: from four past the item to a pixel short of the right edge -- a
+			// scroll bar's width less two (15 at 96 dpi, 32 at 192), where the glyph is centred. A
+			// pixel wider put the chevron a pixel left of stock's at 200%.
 			Rectangle client = comboBox.TextArea;
-			var button = new Rectangle (client.Right - 1 - area.Width, client.Y + 1, area.Width, client.Height - 2);
+			int bw = Math.Max (0, area.Width - 1);
+			var button = new Rectangle (client.Right - 1 - bw, client.Y + 1, bw, client.Height - 2);
 			Win11Frames.Draw (g, Win11Frames.DropDownButtonSide (6, st, comboBox.DeviceDpi), button);
 		}
 
