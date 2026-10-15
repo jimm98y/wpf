@@ -254,6 +254,8 @@ namespace System.Windows.Forms
 		{
 			Resolve ();
 			var saved = (s_mode, s_scaled, s_perMonitorV2, s_systemDpi);
+			bool wasOverridden = IsOverriddenForTests;
+			IsOverriddenForTests = true;
 			bool scaled = mode == HighDpiMode.PerMonitor || mode == HighDpiMode.PerMonitorV2 || mode == HighDpiMode.SystemAware;
 			s_mode = mode;
 			s_scaled = scaled;
@@ -262,9 +264,14 @@ namespace System.Windows.Forms
 			System.Drawing.WebGpuBackend.DisplayDpi.Set (s_systemDpi);
 			return new Restore (() => {
 				(s_mode, s_scaled, s_perMonitorV2, s_systemDpi) = saved;
+				IsOverriddenForTests = wasOverridden;
 				System.Drawing.WebGpuBackend.DisplayDpi.Set (s_systemDpi);
 			});
 		}
+
+		/// <summary>A test has said what the display is (<see cref="OverrideForTests"/>): the real
+		/// monitors are not asked.</summary>
+		internal static bool IsOverriddenForTests { get; private set; }
 
 		private sealed class Restore : IDisposable
 		{

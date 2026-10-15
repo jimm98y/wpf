@@ -858,6 +858,7 @@ namespace System.Windows.Forms
 			}
 
 			Text(handle, cp.Caption);
+			AdoptDisplayDpi(handle, cp);
 			SendMessage(handle, Msg.WM_CREATE, (IntPtr)1, IntPtr.Zero);
 			// A window that draws its own frame says so in answer to WM_NCCALCSIZE (see AskFrame).
 			if (frame != Padding.Empty)
