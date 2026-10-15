@@ -45,7 +45,7 @@ namespace Wpf.WinFormsInterop.Tests
             for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && c.ToArgb() != Color.Red.ToArgb();)
             {
                 Pump(100);
-                c = ScreenPixel(240, 215);
+                c = DialogCentre();
             }
             string wins = Windows();
             dialog.Close();
@@ -66,6 +66,25 @@ namespace Wpf.WinFormsInterop.Tests
 
         private static readonly System.Reflection.MethodInfo? s_tick = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.PresentationHost")
             ?.GetMethod("Tick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        /// <summary>The screen pixel at the middle of the dialog's window, wherever the host put it
+        /// (an application that is not per-monitor aware is placed at the display's scale).</summary>
+        private static Color DialogCentre()
+        {
+            IntPtr dlg = IntPtr.Zero;
+            uint me = (uint)Environment.ProcessId;
+            EnumWindows((h, l) =>
+            {
+                GetWindowThreadProcessId(h, out uint pid);
+                if (pid != me || !IsWindowVisible(h)) return true;
+                var t = new System.Text.StringBuilder(64); InternalGetWindowText(h, t, 64);
+                if (t.ToString() != "Dialog") return true;
+                dlg = h;
+                return false;
+            }, IntPtr.Zero);
+            if (dlg == IntPtr.Zero || !GetWindowRect(dlg, out RECT r)) return Color.Empty;
+            return ScreenPixel((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+        }
 
         private static Color ScreenPixel(int x, int y)
         {
@@ -99,5 +118,6 @@ namespace Wpf.WinFormsInterop.Tests
         [DllImport("user32")] private static extern IntPtr GetDC(IntPtr h);
         [DllImport("user32")] private static extern int ReleaseDC(IntPtr h, IntPtr dc);
         [DllImport("gdi32")] private static extern uint GetPixel(IntPtr dc, int x, int y);
+        [DllImport("user32", CharSet = CharSet.Unicode)] private static extern int InternalGetWindowText(IntPtr h, System.Text.StringBuilder s, int n);
     }
 }

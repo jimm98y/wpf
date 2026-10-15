@@ -72,6 +72,8 @@ namespace System.Windows.Forms
 			get { return vert ? scrollbutton_height : scrollbutton_width; }
 		}
 		private const int thumb_notshown_size = 40;
+		/// <summary>Below this length the bar has no thumb: forty 96-dpi pixels at the bar's DPI.</summary>
+		private int ThumbNotShownSize => MulDiv (thumb_notshown_size, DeviceDpi, 96);
 		internal bool use_manual_thumb_size;
 		internal int manual_thumb_size;
 		internal bool vert;
@@ -736,17 +738,23 @@ namespace System.Windows.Forms
 
 		private void CalcButtonSizes ()
     		{
-    			if (vert) {
-				if (Height < ThemeEngine.Current.ScrollBarButtonSize * 2)
+			// The arrow buttons at the bar's DPI (SM_CYVSCROLL / SM_CXHSCROLL), which is where
+			// win32k's track starts and ends: at 200% with the 96-dpi size the track came out two
+			// buttons' worth too long -- a longer, earlier thumb, and one shown on bars too short
+			// for Windows to fit a thumb in at all.
+			if (vert) {
+				int button = SystemInformation.GetVerticalScrollBarArrowHeightForDpi (DeviceDpi);
+				if (Height < button * 2)
 					scrollbutton_height = Height /2;
 				else
-					scrollbutton_height = ThemeEngine.Current.ScrollBarButtonSize;
+					scrollbutton_height = button;
 
 			} else {
-				if (Width < ThemeEngine.Current.ScrollBarButtonSize * 2)
+				int button = SystemInformation.GetHorizontalScrollBarArrowWidthForDpi (DeviceDpi);
+				if (Width < button * 2)
 					scrollbutton_width = Width /2;
 				else
-					scrollbutton_width = ThemeEngine.Current.ScrollBarButtonSize;
+					scrollbutton_width = button;
 			}
 		}
 
@@ -786,7 +794,7 @@ namespace System.Windows.Forms
 				thumb_area.Y = scrollbutton_height;
 				thumb_area.Width = Width;
 
-				if (Height < thumb_notshown_size)
+				if (Height < ThumbNotShownSize)
 					thumb_size = 0;
 				else {
 					// win32k's CalcSBStuff2: MulDiv(track, page, range), ROUNDED -- neither the ceiling
@@ -810,7 +818,7 @@ namespace System.Windows.Forms
 				thumb_area.Height = Height;
 				thumb_area.Width = Width - scrollbutton_width -  scrollbutton_width;
 
-				if (Width < thumb_notshown_size)
+				if (Width < ThumbNotShownSize)
 					thumb_size = 0;
 				else {
 					thumb_size = MulDiv (thumb_area.Width, lchange, 1 + maximum - minimum);
