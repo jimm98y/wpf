@@ -916,9 +916,11 @@ namespace System.Windows.Forms {
 			get {
 				// The glyph, centred in comctl32's check box rectangle as DrawThemeBackground centres a
 				// true-size part.
+				// The glyph's size is the theme's for the picker's DPI (26 at 200%).
 				Rectangle box = ThemeWin32Classic.DateTimePickerCheckBoxBox (this);
-				return new Rectangle (box.X + (box.Width - check_box_size) / 2, box.Y + (box.Height - check_box_size) / 2,
-						check_box_size, check_box_size);
+				int size = VisualStyles.VisualStyleRenderer.IsSupported
+					? CheckBoxRenderer.GetGlyphSize (VisualStyles.CheckBoxState.UncheckedNormal, DeviceDpi).Width : check_box_size;
+				return new Rectangle (box.X + (box.Width - size) / 2, box.Y + (box.Height - size) / 2, size, size);
 			}
 		}
 		

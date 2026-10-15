@@ -234,8 +234,10 @@ namespace System.Windows.Forms
 		{
 			Size preferred_size = base.CalculatePreferredSize (constrainingSize);
 
+			// The arrow and its padding either side (5 + 2 * 2 at 96), at the item's DPI as the
+			// layout's own.
 			if (this.ShowDropDownArrow)
-				preferred_size.Width += 9;
+				preferred_size.Width += ScaleHelper.ScaleToDpi (5, DeviceDpi) + 2 * ScaleHelper.ScaleToDpi (2, DeviceDpi);
 
 			return preferred_size;
 		}

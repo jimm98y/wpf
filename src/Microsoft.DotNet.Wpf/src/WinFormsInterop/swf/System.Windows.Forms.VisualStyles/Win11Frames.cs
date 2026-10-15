@@ -370,6 +370,26 @@ namespace System.Windows.Forms.VisualStyles
 		/// from column 8, part 10 (next) right from column 7, seven rows from row 4, solid runs of
 		/// 1, 2, 3, 4, 3, 2, 1 pixels. At rest and pressed each row is one grey, darkening down the
 		/// glyph; hot it is #0066CC throughout; disabled the rest greys at alpha 0x66.</summary>
+		/// <summary>The arrows at a DPI: the theme has them at 16, 32 and 40 pixels (96, 192, 240
+		/// dpi); the solid runs double with the art, so the larger are the small one scaled (as
+		/// uxtheme scales between its images).</summary>
+		internal static Frame MonthCalArrow (bool previous, int state, int dpi)
+		{
+			int tier = dpi >= 240 ? 240 : dpi >= 192 ? 192 : 96;
+			int size = tier == 240 ? 40 : tier == 192 ? 32 : 16;
+			if (dpi * 2 >= tier * 3)
+				size = (int) Math.Round (size * (double) dpi / tier, MidpointRounding.AwayFromZero);
+			Frame f = MonthCalArrow (previous, state);
+			if (size == f.Width)
+				return f;
+			lock (s_dpiCache) {
+				var key = (-5, previous ? 1 : 0, state, size);
+				if (!s_dpiCache.TryGetValue (key, out Frame scaled))
+					s_dpiCache [key] = scaled = Scaled (f, size, size);
+				return scaled;
+			}
+		}
+
 		internal static Frame MonthCalArrow (bool previous, int state)
 		{
 			uint [] ramp = { 0x3b, 0x3a, 0x38, 0x31, 0x26, 0x19, 0x0b };

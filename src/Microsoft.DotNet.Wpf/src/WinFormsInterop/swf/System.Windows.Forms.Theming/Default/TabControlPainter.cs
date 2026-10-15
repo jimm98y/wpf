@@ -201,11 +201,24 @@ namespace System.Windows.Forms.Theming.Default
 			borderThickness = new Rectangle (1, 1, 2, 2);
 		}
 
+		/// <summary>comctl32's Tab_UpdateArrows: the up-down control is two squares of the text's
+		/// height and two scaled edges (tmHeight + 2 * g_cyEdge for the DPI) side by side at the right
+		/// of the client, its foot on the foot of the row of tabs.</summary>
+		internal static Rectangle Comctl32Arrows (System.Windows.Forms.TabControl tab)
+		{
+			int a = tab.TextLineHeight + 2 * tab.LogicalToDeviceUnits (2);
+			Rectangle client = tab.ClientRectangle;
+			int foot = client.Top + tab.ItemSize.Height;
+			return new Rectangle (client.Right - 2 * a, foot - a, 2 * a, a);
+		}
+
 		public virtual Rectangle GetLeftScrollRect (System.Windows.Forms.TabControl tab)
 		{
 			switch (tab.Alignment) {
-				case TabAlignment.Top:
-					return new Rectangle (tab.ClientRectangle.Right - (scrollerWidth * 2), tab.ClientRectangle.Top + 1, scrollerWidth, scrollerWidth);
+				case TabAlignment.Top: {
+					Rectangle r = Comctl32Arrows (tab);
+					return new Rectangle (r.X, r.Y, r.Width / 2, r.Height);
+				}
 				default:
 					Rectangle panel_rect = GetTabPanelRect (tab);
 					return new Rectangle (tab.ClientRectangle.Right - (scrollerWidth * 2), panel_rect.Bottom + 2, scrollerWidth, scrollerWidth);
@@ -215,8 +228,10 @@ namespace System.Windows.Forms.Theming.Default
 		public virtual Rectangle GetRightScrollRect (System.Windows.Forms.TabControl tab)
 		{
 			switch (tab.Alignment) {
-				case TabAlignment.Top:
-					return new Rectangle (tab.ClientRectangle.Right - (scrollerWidth), tab.ClientRectangle.Top + 1, scrollerWidth, scrollerWidth);
+				case TabAlignment.Top: {
+					Rectangle r = Comctl32Arrows (tab);
+					return new Rectangle (r.X + r.Width / 2, r.Y, r.Width - r.Width / 2, r.Height);
+				}
 				default:
 					Rectangle panel_rect = GetTabPanelRect (tab);
 					return new Rectangle (tab.ClientRectangle.Right - (scrollerWidth), panel_rect.Bottom + 2, scrollerWidth, scrollerWidth);
