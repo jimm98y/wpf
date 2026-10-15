@@ -245,6 +245,35 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         return list;
     }
 
+    /// <summary>The monitors as the application sees them: bounds and work areas, through the same
+    /// mapping as window positions (FromPhysical), the primary first.</summary>
+    private static Screen[] DesktopScreens()
+    {
+        var list = new System.Collections.Generic.List<Screen>();
+        int n = 0;
+        foreach (var (mon, r) in Monitors())
+        {
+            var mi = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
+            if (!GetMonitorInfoW(mon, ref mi)) continue;
+            (int bl, int bt) = FromPhysical(mi.rcMonitor.left, mi.rcMonitor.top);
+            (int br, int bb) = FromPhysical(mi.rcMonitor.right, mi.rcMonitor.bottom);
+            (int wl, int wt) = FromPhysical(mi.rcWork.left, mi.rcWork.top);
+            (int wr, int wb) = FromPhysical(mi.rcWork.right, mi.rcWork.bottom);
+            bool primary = (mi.dwFlags & 1) != 0;
+            var sc = new Screen(primary, mi.szDevice ?? $"DISPLAY{++n}", Rectangle.FromLTRB(bl, bt, br, bb), Rectangle.FromLTRB(wl, wt, wr, wb));
+            if (primary) list.Insert(0, sc); else list.Add(sc);
+        }
+        return list.ToArray();
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MONITORINFOEX
+    {
+        public int cbSize; public RECT rcMonitor; public RECT rcWork; public int dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
+    }
+    [DllImport("user32", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfoW(IntPtr mon, ref MONITORINFOEX mi);
+
     private delegate bool MonitorEnumProc(IntPtr monitor, IntPtr dc, ref RECT rect, IntPtr data);
     [DllImport("user32")] private static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorEnumProc proc, IntPtr data);
     [DllImport("shcore")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
@@ -306,6 +335,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     }
 
     [DllImport("user32")] private static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32", CharSet = CharSet.Unicode)] private static extern bool SetWindowTextW(IntPtr hwnd, string text);
 
     /// <summary>WM_MOVE: the window moved -- the user dragged it, the system placed it, another
     /// program moved it. On Windows the form's Location IS the window's, so it follows; nothing
@@ -491,9 +521,17 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         // What this surface can show is what the driver calls the screen: a popup placed past its
         // edge is not on any screen at all. A popup's own host does not speak for it -- it is
         // smaller than the window it drops out of.
-        if (_form.Owner == null)
-            XplatUIWebGpu.SetScreenSize(_form.ClientSize.Width, _form.ClientSize.Height);
+        // The screen is the real desktop's monitors (see XplatUIWebGpu.ScreensProvider).
+        if (System.Windows.Forms.XplatUIWebGpu.ScreensProvider == null)
+        {
+            System.Windows.Forms.XplatUIWebGpu.ScreensProvider = DesktopScreens;
+            Screen.Rescan();
+        }
         _form.LocationChanged += OnFormMoved;
+        // The window's title is the form's Text, now and later: it was set once, at creation, so a
+        // title the application gave the form afterwards (a document name) never reached the
+        // caption, the taskbar or anything asking Windows about the window.
+        _form.TextChanged += (_, _) => { if (_hwnd != IntPtr.Zero && !FormGone) SetWindowTextW(_hwnd, _form.Text ?? ""); };
         _form.SizeChanged += OnFormResized;
         _form.VisibleChanged += OnFormVisibleChanged;
         if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: window + surface ready");
@@ -887,6 +925,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 int ht = hd.HostHitTest(_ox + (int)Math.Floor(pt.x / _scale), _oy + (int)Math.Floor(pt.y / _scale));
                 return (IntPtr)(ht != 0 ? ht : 1);                                  // HTCLIENT
             }
+            case 0x007E:                                                          // WM_DISPLAYCHANGE: monitors added, removed or rearranged
+                Screen.Rescan();
+                return DefWindowProcW(hwnd, msg, wParam, lParam);
             case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
             case 0x0003: OnWindowMoved(); return IntPtr.Zero;                    // WM_MOVE
             // WM_PAINT: Windows wants the window's pixels again -- it has just been shown, uncovered
