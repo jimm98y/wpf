@@ -465,7 +465,7 @@ namespace System.Windows.Forms
 			// that is where Windows' chevron lands.
 			Rectangle client = comboBox.TextArea;
 			var button = new Rectangle (client.Right - 1 - area.Width, client.Y + 1, area.Width, client.Height - 2);
-			Win11Frames.Draw (g, Win11Frames.DropDownButtonSide (6, st), button);
+			Win11Frames.Draw (g, Win11Frames.DropDownButtonSide (6, st, comboBox.DeviceDpi), button);
 		}
 
 		/// <summary>
@@ -1397,10 +1397,18 @@ namespace System.Windows.Forms
 			bool noTicks = tb.TickStyle == TickStyle.None;
 			int thumbPart = vert ? (both ? 6 : top ? 7 : 8) : (both ? 3 : top ? 5 : 4);
 
+			// comctl32 opens the theme for the window's DPI: the pointed thumb's true size is that
+			// DPI's image (11x19 at 96, 22x38 at 200%), the plain thumb four thirds of the scroll bar
+			// height for the DPI, the channel MulDiv (4, dpi, 96). SM_CXEDGE is the process's (the
+			// system DPI's); the tick strip and the two-pixel insets are not scaled.
+			int dpi = tb.DeviceDpi;
+			int EdgeMetric = SystemInformation.Border3DSize.Width;
 			int w, h;
 			if (!both) {
-				// The pointed thumb's true size (11x19), shrunk to what the control can hold.
-				w = 11; h = 19;
+				// The pointed thumb's true size, shrunk to what the control can hold.
+				Win11Frames.Frame pointed = Win11Frames.Get ("TRACKBAR", thumbPart, 1, dpi);
+				w = pointed != null ? (vert ? pointed.Height : pointed.Width) : 11;
+				h = pointed != null ? (vert ? pointed.Width : pointed.Height) : 19;
 				int avail = H - (noTicks ? 4 : 7);
 				if (2 * EdgeMetric <= avail && avail < h) {
 					w = w * avail / h;
@@ -1408,11 +1416,11 @@ namespace System.Windows.Forms
 				}
 			} else {
 				// No theme size for the plain thumb: four thirds of a scroll bar's height.
-				h = 4 * HScrollHeight / 3;
-				ValidateThumbHeight (ref h, out w);
+				h = 4 * SystemInformation.GetHorizontalScrollBarHeightForDpi (dpi) / 3;
+				ValidateThumbHeight (ref h, out w, EdgeMetric);
 				if (!(h <= 2 * EdgeMetric || h <= H)) {
 					h = H - 3 * EdgeMetric;
-					ValidateThumbHeight (ref h, out w);
+					ValidateThumbHeight (ref h, out w, EdgeMetric);
 				}
 			}
 
@@ -1434,6 +1442,7 @@ namespace System.Windows.Forms
 
 			int channelLeft = left - w / 2;
 			int channelRight = length + w + channelLeft - 1;
+			int ChannelThickness = MulDiv (4, dpi, 96);
 			int channelTop = (thumbBottom + thumbTop - ChannelThickness) / 2;
 			if (!both)
 				channelTop += top ? 1 : -1;
@@ -1450,14 +1459,10 @@ namespace System.Windows.Forms
 						   Rectangle.FromLTRB (left, thumbTop, right, thumbBottom));
 		}
 
-		private const int EdgeMetric = 2;         // SM_CXEDGE
-		private const int HScrollHeight = 17;     // SM_CYHSCROLL
-		private const int ChannelThickness = 4;   // MulDiv (4, dpi, 96)
-
-		private static void ValidateThumbHeight (ref int h, out int w)
+		private static void ValidateThumbHeight (ref int h, out int w, int edge)
 		{
-			if (h < 2 * EdgeMetric)
-				h = 2 * EdgeMetric;
+			if (h < 2 * edge)
+				h = 2 * edge;
 			w = h / 2 | 1;
 		}
 
@@ -1486,7 +1491,7 @@ namespace System.Windows.Forms
 			if (s_trackBar is TrackBar tb) {
 				TrackBarLayout l = Comctl32TrackBar (tb);
 				DrawComctl32Tics (dc, tb, l);
-				Win11Frames.Draw (dc, Win11Frames.Get ("TRACKBAR", l.ChannelPart, 1), l.Channel);
+				Win11Frames.Draw (dc, Win11Frames.Get ("TRACKBAR", l.ChannelPart, 1, tb.DeviceDpi), l.Channel);
 			}
 		}
 
@@ -1534,7 +1539,7 @@ namespace System.Windows.Forms
 		private static void DrawComctl32Thumb (Graphics dc, TrackBar tb)
 		{
 			TrackBarLayout l = Comctl32TrackBar (tb);
-			Win11Frames.Draw (dc, Win11Frames.Get ("TRACKBAR", l.ThumbPart, TrackBarThumbState (tb)), l.Thumb);
+			Win11Frames.Draw (dc, Win11Frames.Get ("TRACKBAR", l.ThumbPart, TrackBarThumbState (tb), tb.DeviceDpi), l.Thumb);
 		}
 
 		protected override void TrackBarDrawHorizontalTrack (Graphics dc, Rectangle thumb_area,
@@ -2716,7 +2721,7 @@ namespace System.Windows.Forms
 					                                       TextFormatFlags.NoPadding).Width + tab.LayoutPadding.X * 2;
 					// From the tab's BASE left edge: the selected one is drawn standing proud, two pixels
 					// wider to the left, and its caption does not move with the decoration.
-					int capX = bounds.X + (selected ? TabControlSelectedDelta.X : 0);
+					int capX = bounds.X + (selected ? tab.SelectedDelta.X : 0);
 					dc.DrawStringMono (page.Text, tab.Font, ResPool.GetSolidBrush (fore),
 						       new Rectangle (capX, row.Y + (selected ? -1 : 1),
 						                      Math.Min (capBox, bounds.Width), row.Height),
@@ -2826,8 +2831,27 @@ namespace System.Windows.Forms
 			get { return true; }
 		}
 
+		/// <summary>comctl32's CDatePicker::GetThemeIds: the calendar button (DATEPICKER
+		/// DP_SHOWCALENDARBUTTONRIGHT, two scroll bars wide) only while the date's fields end short of
+		/// the field less two scroll bar widths -- otherwise the combo box's drop-down button, one
+		/// scroll bar wide, with its chevron. At 200% a standard picker's date no longer leaves that
+		/// room, and Windows shows the chevron.</summary>
+		private static bool DateTimePickerShowsCalendar (DateTimePicker dtp)
+		{
+			int vs = SystemInformation.GetVerticalScrollBarWidthForDpi (dtp.DeviceDpi);
+			Rectangle client = dtp.ClientRectangle;
+			int fieldsEnd = client.X + 2 + TextRenderer.MeasureText (dtp.Text, dtp.Font, Size.Empty, TextFormatFlags.NoPadding).Width;
+			return fieldsEnd < client.Width - 2 * vs;
+		}
+
 		public override Rectangle DateTimePickerGetDropDownButtonArea (DateTimePicker dateTimePicker)
 		{
+			if (dateTimePicker.DeviceDpi != ScaleHelper.OneHundredPercentLogicalDpi && !DateTimePickerShowsCalendar (dateTimePicker)) {
+				// CP_DROPDOWNBUTTONRIGHT across the field's height, a scroll bar wide, at its right.
+				Rectangle field = dateTimePicker.ClientRectangle;
+				int vs = SystemInformation.GetVerticalScrollBarWidthForDpi (dateTimePicker.DeviceDpi);
+				return new Rectangle (field.Right - vs, field.Y, Math.Min (vs, field.Width), field.Height);
+			}
 			Win11Frames.Frame glyph = CalendarGlyph;
 			Rectangle rect = dateTimePicker.ClientRectangle;
 			int want = glyph.Width + 8;
@@ -2860,6 +2884,11 @@ namespace System.Windows.Forms
 						 Math.Max (0, r.Width - 1), Math.Max (0, r.Height - 1));
 			}
 
+			if (dateTimePicker.DeviceDpi != ScaleHelper.OneHundredPercentLogicalDpi && !DateTimePickerShowsCalendar (dateTimePicker)) {
+				int st = !dateTimePicker.Enabled ? 4 : dateTimePicker.is_drop_down_visible ? 3 : dateTimePicker.DropDownButtonEntered ? 2 : 1;
+				Win11Frames.Draw (g, Win11Frames.DropDownButtonSide (6, st, dateTimePicker.DeviceDpi), r);
+				return;
+			}
 			Win11Frames.Frame glyph = CalendarGlyph;
 			int x = r.X + (r.Width - glyph.Width) / 2;
 			// Rounded up, not down: the button is an even number of pixels taller than the glyph only

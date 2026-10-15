@@ -1106,29 +1106,22 @@ namespace System.Windows.Forms {
 			}
 		}
 
-		// comctl32 scales its own metrics to the window's DPI: the default padding (WinForms sends
-		// TCM_SETPADDING only for one that is not the default), the minimum tab width, the frame.
+		// comctl32's Tab_CalcTabHeight: the floor is (cxPad + 3 * tmAveCharWidth) * 2 -- 48 for
+		// Segoe UI 9pt at 96 dpi (ave 6), 90 at 200% (ave 13), the padding not scaled.
 		private int MinimumTabWidth {
 			get {
 				if (DeviceDpi == ScaleHelper.OneHundredPercentLogicalDpi)
 					return ThemeEngine.Current.TabControlMinimumTabWidth;
-				// comctl32's floor is six average characters and a padding: 48 for 9pt at 96 dpi,
-				// 90 at 200% (Windows', measured).
-				return 6 * (int) ContainerControl.GetFontAutoScaleDimensions (Font).Width + LayoutPadding.X;
+				float emPx = Font.SizeInPoints * DeviceDpi / 72f;
+				if (!System.Drawing.WebGpuBackend.TextMetrics.TryGetAverageCharWidth (Font.FontFamily.Name, Font.Bold, Font.Italic, emPx, out int ave) || ave <= 0)
+					ave = (int) ContainerControl.GetFontAutoScaleDimensions (Font).Width;
+				return (LayoutPadding.X + 3 * ave) * 2;
 			}
 		}
 
-		/// <summary>The padding the tabs are laid out with: the one set, or comctl32's default at
-		/// the window's DPI.</summary>
-		internal Point LayoutPadding {
-			get {
-				Point def = ThemeEngine.Current.TabControlDefaultPadding;
-				if (padding != def || DeviceDpi == ScaleHelper.OneHundredPercentLogicalDpi)
-					return padding;
-				// The horizontal padding scales; the row height comes from the text (CalculateItemSize).
-				return new Point (ScaleHelper.ScaleToDpi (def.X, DeviceDpi), def.Y);
-			}
-		}
+		/// <summary>The padding the tabs are laid out with: TCM_SETPADDING's, which comctl32 uses as
+		/// it is at every DPI (Tab_CalcPaintMetrics adds it to each side of the text unscaled).</summary>
+		internal Point LayoutPadding => padding;
 
 		private Size TabSpacing {
 			get {
@@ -1253,10 +1246,21 @@ namespace System.Windows.Forms {
 				return ThemeEngine.Current.TabControlGetPanelRect (this).Bottom;
 
 			if (Appearance == TabAppearance.Normal)
-				return this.ClientRectangle.Y + ThemeEngine.Current.TabControlSelectedDelta.Y;
+				return this.ClientRectangle.Y + SelectedDelta.Y;
 
 			return this.ClientRectangle.Y;
 
+		}
+
+		/// <summary>How far the selected tab stands out of the row, and the row in from the edge:
+		/// comctl32's g_cxEdge / g_cyEdge, which it scales to the window's DPI (DPISCALEINFO::
+		/// GetScaledEdgeWidth) -- two pixels at 96 dpi, four at 200%.</summary>
+		internal Rectangle SelectedDelta {
+			get {
+				Rectangle d = ThemeEngine.Current.TabControlSelectedDelta;
+				return DeviceDpi == ScaleHelper.OneHundredPercentLogicalDpi ? d
+					: new Rectangle (LogicalToDeviceUnits (d.X), LogicalToDeviceUnits (d.Y), LogicalToDeviceUnits (d.Width), LogicalToDeviceUnits (d.Height));
+			}
 		}
 
 		private int CalcXPos ()
@@ -1265,7 +1269,7 @@ namespace System.Windows.Forms {
 				return ThemeEngine.Current.TabControlGetPanelRect (this).Right;
 
 			if (Appearance == TabAppearance.Normal)
-				return this.ClientRectangle.X + ThemeEngine.Current.TabControlSelectedDelta.X;
+				return this.ClientRectangle.X + SelectedDelta.X;
 
 			return this.ClientRectangle.X;
 		}
@@ -1502,11 +1506,11 @@ namespace System.Windows.Forms {
 				return;
 
 			Rectangle r = page.TabBounds;
-			r.Y -= ThemeEngine.Current.TabControlSelectedDelta.Y;
-			r.X -= ThemeEngine.Current.TabControlSelectedDelta.X;
+			r.Y -= SelectedDelta.Y;
+			r.X -= SelectedDelta.X;
 
-			r.Width += ThemeEngine.Current.TabControlSelectedDelta.Width;
-			r.Height += ThemeEngine.Current.TabControlSelectedDelta.Height;
+			r.Width += SelectedDelta.Width;
+			r.Height += SelectedDelta.Height;
 			if (r.Left < left_edge)
 				r.X = left_edge;
 			// Adjustment can't be used for right alignment, since it is

@@ -72,7 +72,9 @@ namespace System.Windows.Forms
 		private Rectangle text_area;
 		private Rectangle button_area;
 		private Rectangle listbox_area;
-		private const int button_width = 16;
+		// The drop-down button: a scroll bar's width at the control's DPI, less the border pixel
+		// it stands inside (16 at 96 dpi, as comctl32 sizes it from SM_CXVSCROLL).
+		private int button_width => SystemInformation.GetVerticalScrollBarWidthForDpi (DeviceDpi) - 1;
 		bool drop_down_button_entered;
 		private AutoCompleteStringCollection auto_complete_custom_source = null;
 		private AutoCompleteMode auto_complete_mode = AutoCompleteMode.None;
@@ -1507,7 +1509,7 @@ namespace System.Windows.Forms
 				textbox_ctrl.TopMargin = 0;
 				textbox_ctrl.AutoSize = false;
 				textbox_ctrl.Location = new Point (text_area.X + Margin, text_area.Y + Margin);
-				textbox_ctrl.Width = Math.Max (0, text_area.Width - 2 * Margin - (dropdown_style == ComboBoxStyle.Simple ? 0 : SystemInformation.VerticalScrollBarWidth));
+				textbox_ctrl.Width = Math.Max (0, text_area.Width - 2 * Margin - (dropdown_style == ComboBoxStyle.Simple ? 0 : SystemInformation.GetVerticalScrollBarWidthForDpi (DeviceDpi)));
 				textbox_ctrl.Height = Math.Max (0, text_area.Height - 2 * Margin);
 			} else if (textbox_ctrl != null) {
 				int text_border = border + 1;

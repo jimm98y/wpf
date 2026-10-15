@@ -1653,7 +1653,13 @@ namespace System.Windows.Forms
 			int small_image_height = SmallImageList == null ? 0 : SmallImageList.ImageSize.Height;
 			item_height = Math.Max (checkbox_height, text_size.Height);
 			item_height = Math.Max (item_height, small_image_height);
-			return item_height + ThemeEngine.Current.ListViewDetailsRowGap;
+			item_height += ThemeEngine.Current.ListViewDetailsRowGap;
+			// comctl32's CLVView::ComputeCYItemSize: a details row is never less than the label's
+			// TEXTMETRIC height and twice the top margin of the edit that renames an item -- a pixel at
+			// 96 dpi, two at 200% (36 for Segoe UI 9pt there, where the measured text gives 35).
+			if (view == View.Details)
+				item_height = Math.Max (item_height, TextLineHeight + 2 * LogicalToDeviceUnits (1));
+			return item_height;
 		}
 
 		void SetItemLocation (int index, int x, int y, int row, int col)
