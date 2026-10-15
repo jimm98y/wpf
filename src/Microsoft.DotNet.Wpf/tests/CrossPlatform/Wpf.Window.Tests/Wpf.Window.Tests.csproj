@@ -18,6 +18,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <RollForward>Major</RollForward>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>disable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <OutputType>Exe</OutputType>
