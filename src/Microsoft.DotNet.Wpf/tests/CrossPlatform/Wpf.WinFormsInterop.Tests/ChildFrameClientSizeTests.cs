@@ -44,6 +44,11 @@ namespace Wpf.WinFormsInterop.Tests
             yield return Case("TextBox Multiline both bars no wrap", () => new TextBox { Multiline = true, WordWrap = false, ScrollBars = ScrollBars.Both, Size = new Size(100, 100) }, 79, 79, 2, new Rectangle(0, 0, 79, 79));
             yield return Case("TextBox Multiline", () => new TextBox { Multiline = true, Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
             yield return Case("RichTextBox Fixed3D", () => new RichTextBox { Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
+            // A rich edit's single line is the window's two-pixel client edge.
+            yield return Case("RichTextBox FixedSingle", () => new RichTextBox { BorderStyle = BorderStyle.FixedSingle, Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
+            yield return Case("RichTextBox long text", () => new RichTextBox { Text = string.Join(Environment.NewLine, System.Linq.Enumerable.Range(0, 30)), Size = new Size(100, 100) }, 79, 96, 2, new Rectangle(0, 0, 79, 96));
+            yield return Case("ListBox many items", () => Filled(new ListBox { IntegralHeight = false, Size = new Size(100, 100) }, "item "), 79, 96, 2, new Rectangle(0, 0, 79, 96));
+            yield return Case("ListBox wide items", () => Filled(new ListBox { IntegralHeight = false, HorizontalScrollbar = true, Size = new Size(100, 100) }, "a much longer item that is wide "), 79, 79, 2, new Rectangle(0, 0, 79, 79));
             yield return Case("TreeView Fixed3D", () => new TreeView { Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
             yield return Case("TreeView FixedSingle", () => new TreeView { BorderStyle = BorderStyle.FixedSingle, Size = new Size(100, 100) }, 98, 98, 1, new Rectangle(0, 0, 98, 98));
             yield return Case("ListView", () => new ListView { Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
@@ -64,6 +69,12 @@ namespace Wpf.WinFormsInterop.Tests
             yield return Case("PictureBox FixedSingle", () => new PictureBox { BorderStyle = BorderStyle.FixedSingle, Size = new Size(100, 100) }, 98, 98, 1, new Rectangle(0, 0, 98, 98));
             yield return Case("PictureBox Fixed3D", () => new PictureBox { BorderStyle = BorderStyle.Fixed3D, Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
             yield return Case("ComboBox", () => new ComboBox { Size = new Size(100, 23) }, 100, 23, 0, new Rectangle(0, 0, 100, 23));
+        }
+
+        private static Control Filled(ListBox l, string text)
+        {
+            for (int i = 0; i < 30; i++) l.Items.Add(text + i);
+            return l;
         }
 
         private static object[] Case(string name, Func<Control> make, int w, int h, int origin, Rectangle display)

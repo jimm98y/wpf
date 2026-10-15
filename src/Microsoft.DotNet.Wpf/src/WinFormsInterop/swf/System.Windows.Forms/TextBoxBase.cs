@@ -306,7 +306,12 @@ namespace System.Windows.Forms
 				actual_border_style = value;
 				document.UpdateMargins ();
 
-				if (value != BorderStyle.Fixed3D)
+				// An edit control draws a single line itself, inside its client. A rich edit does not:
+				// its single-line border is the window's two-pixel client edge, carved (a stock
+				// FixedSingle RichTextBox has a 96x96 client in 100x100, #A0A0A0 / #696969).
+				if (value == BorderStyle.FixedSingle && this is RichTextBox)
+					value = BorderStyle.Fixed3D;
+				else if (value != BorderStyle.Fixed3D)
 					value = BorderStyle.None;
 
 				InternalBorderStyle = value; 
@@ -1845,6 +1850,11 @@ namespace System.Windows.Forms
 			pevent.Handled = true;
 		}
 
+		/// <summary>The border the box shows: its BorderStyle, except that a rich edit's single line
+		/// is the window's client edge (see BorderStyle), and lays out and draws as one.</summary>
+		internal BorderStyle ShownBorderStyle =>
+			actual_border_style == BorderStyle.FixedSingle && this is RichTextBox ? BorderStyle.Fixed3D : actual_border_style;
+
 		/// <summary>How far the text sits in from the client's edge: the border the box shows, less
 		/// what of it the window's own frame already holds. A sunken frame is the window's
 		/// WS_EX_CLIENTEDGE, in the non-client area (XplatUIWebGpu.ChildFrame), so nothing; a single
@@ -1853,8 +1863,9 @@ namespace System.Windows.Forms
 		/// still shows one (a tool strip's, which draws it itself) keeps the whole width.</summary>
 		internal int TextFrameWidth {
 			get {
-				int shown = actual_border_style == BorderStyle.None ? 0
-					: actual_border_style == BorderStyle.FixedSingle ? 1 : ThemeEngine.Current.Border3DSize.Width;
+				BorderStyle style = ShownBorderStyle;
+				int shown = style == BorderStyle.None ? 0
+					: style == BorderStyle.FixedSingle ? 1 : ThemeEngine.Current.Border3DSize.Width;
 				int window = InternalBorderStyle == BorderStyle.None ? 0
 					: InternalBorderStyle == BorderStyle.FixedSingle ? 1 : ThemeEngine.Current.Border3DSize.Width;
 				return Math.Max (0, shown - window);
