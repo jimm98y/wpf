@@ -681,6 +681,11 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>WF_SYNTHETIC_CURSOR=1 (diagnostics): the pointer is where the last injected mouse
+		/// message put it, never the real one -- so input injected into an instance running off
+		/// screen behaves as if the pointer were there.</summary>
+		private static readonly bool s_syntheticCursor = Environment.GetEnvironmentVariable("WF_SYNTHETIC_CURSOR") == "1";
+
 		/// <summary>Where the pointer is, in this driver's screen space.</summary>
 		private int _cursorX, _cursorY;
 
@@ -1716,6 +1721,33 @@ namespace System.Windows.Forms
 		/// pointer, as the button that is down now drags it (SC_MOVE).</summary>
 		internal static Action<IntPtr> BeginWindowMove;
 
+		/// <summary>Set by the host: start sizing the top-level window of the given handle from the
+		/// edge a WMSZ_* code names (SC_SIZE), with the pointer.</summary>
+		internal static Action<IntPtr, int> BeginWindowSize;
+
+		private const int HTCAPTION = 2, HTLEFT = 10, HTBOTTOMRIGHT = 17, HTTRANSPARENT = -1;
+
+		/// <summary>
+		/// What a window that draws its own frame says is under a screen point (WM_NCHITTEST), as
+		/// Windows asks it: the deepest window there first, and its parent when it answers
+		/// HTTRANSPARENT. Only a caption or a sizing edge is returned -- anything else is the client's
+		/// (0). A host asks this so the system can drag, size, snap and maximize such a window.
+		/// </summary>
+		internal int HostHitTest(int screenX, int screenY)
+		{
+			IntPtr h = WindowAtPoint(screenX, screenY);
+			IntPtr lp = (IntPtr)((screenY << 16) | (screenX & 0xFFFF));
+			for (int depth = 0; h != IntPtr.Zero && depth < 64; depth++)
+			{
+				int ht = (int)SendMessage(h, Msg.WM_NCHITTEST, IntPtr.Zero, lp).ToInt64();
+				if (ht == HTCAPTION || (ht >= HTLEFT && ht <= HTBOTTOMRIGHT)) return ht;
+				if (ht != HTTRANSPARENT) return 0;
+				Hwnd w = Hwnd.ObjectFromHandle(h);
+				h = w?.parent?.Handle ?? IntPtr.Zero;
+			}
+			return 0;
+		}
+
 		internal override IntPtr DefWndProc(ref Message msg)
 		{
 			if (msg.Msg == (int)Msg.WM_NCCALCSIZE)
@@ -1738,11 +1770,27 @@ namespace System.Windows.Forms
 				switch ((int)msg.WParam.ToInt64() & 0xFFF0)
 				{
 					case SC_MOVE: BeginWindowMove?.Invoke(msg.HWnd); return IntPtr.Zero;
+					case 0xF000 /* SC_SIZE */: BeginWindowSize?.Invoke(msg.HWnd, (int)msg.WParam.ToInt64() & 0xF); return IntPtr.Zero;
 					case SC_MINIMIZE: form.WindowState = FormWindowState.Minimized; return IntPtr.Zero;
 					case SC_MAXIMIZE: form.WindowState = FormWindowState.Maximized; return IntPtr.Zero;
 					case SC_RESTORE: form.WindowState = FormWindowState.Normal; return IntPtr.Zero;
 					case SC_CLOSE: PostMessage(msg.HWnd, Msg.WM_CLOSE, IntPtr.Zero, IntPtr.Zero); return IntPtr.Zero;
 				}
+			}
+			// WM_NCLBUTTONDOWN on a caption or a sizing edge -- what a form that draws its own frame
+			// sends itself (ReleaseCapture; SendMessage(WM_NCLBUTTONDOWN, HTCAPTION)), and what its own
+			// hit test produces -- starts the system's move or size, as DefWindowProc does; a double
+			// click on the caption maximizes or restores.
+			if ((msg.Msg == 0x00A1 || msg.Msg == 0x00A3) && Control.FromHandle(msg.HWnd) is Form ncForm && ncForm.TopLevel)
+			{
+				int ht = (int)msg.WParam.ToInt64();
+				if (msg.Msg == 0x00A3 && ht == HTCAPTION && ncForm.MaximizeBox)
+				{
+					ncForm.WindowState = ncForm.WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
+					return IntPtr.Zero;
+				}
+				if (msg.Msg == 0x00A1 && ht == HTCAPTION) { BeginWindowMove?.Invoke(msg.HWnd); return IntPtr.Zero; }
+				if (msg.Msg == 0x00A1 && ht >= HTLEFT && ht <= HTBOTTOMRIGHT) { BeginWindowSize?.Invoke(msg.HWnd, ht - 9); return IntPtr.Zero; }
 			}
 			// Win32 hands an unhandled wheel to the parent, and controls rely on it: Mono's ListView
 			// subscribes to MouseWheel on the LIST VIEW, while the window under the pointer is its
@@ -2185,6 +2233,23 @@ namespace System.Windows.Forms
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return;
 			hwnd.Enabled = Enable;
+			// Windows: disabling a window that holds the mouse capture -- or whose child does --
+			// releases it (and sends WM_CANCELMODE). A modal dialog opened from a click handler runs
+			// while the clicked control still holds the capture, and its owner is disabled: the
+			// capture kept every mouse message of the dialog going to that disabled control, so no
+			// button in the dialog could be clicked or even hovered, while the keyboard still worked.
+			if (!Enable && _grabHandle != IntPtr.Zero)
+			{
+				for (Hwnd g = Hwnd.ObjectFromHandle(_grabHandle); g != null; g = g.parent)
+				{
+					if (g != hwnd) continue;
+					IntPtr was = _grabHandle;
+					_grabHandle = IntPtr.Zero;
+					SendMessage(was, Msg.WM_CANCELMODE, IntPtr.Zero, IntPtr.Zero);
+					SendMessage(was, Msg.WM_CAPTURECHANGED, IntPtr.Zero, IntPtr.Zero);
+					break;
+				}
+			}
 			PresentationHost.WindowEnabledChanged(handle, Enable);
 		}
 
@@ -2324,6 +2389,12 @@ namespace System.Windows.Forms
 		internal override bool SetOwner(IntPtr hWnd, IntPtr hWndOwner) => true;
 		internal override void GrabWindow(IntPtr hwnd, IntPtr ConfineToHwnd) { _grabHandle = hwnd; }
 		internal override void UngrabWindow(IntPtr hwnd) { if (_grabHandle == hwnd) _grabHandle = IntPtr.Zero; }
+		/// <summary>Which window holds the mouse (GetCapture). ShowDialog asks, to release it before
+		/// the dialog runs.</summary>
+		internal override void GrabInfo(out IntPtr hwnd, out bool GrabConfined, out Rectangle GrabArea)
+		{
+			hwnd = _grabHandle; GrabConfined = false; GrabArea = Rectangle.Empty;
+		}
 		// ---- cursors -------------------------------------------------------------
 		//
 		// Nothing here set a cursor, so the pointer stayed an arrow everywhere: no I-beam over
@@ -2403,7 +2474,7 @@ namespace System.Windows.Forms
 			y = _cursorY;
 			// On Windows the real pointer, wherever it is: the driver only hears about it over its
 			// own windows (see Win32Host.TryRealCursor).
-			if (OperatingSystem.IsWindows() && PresentationHost.Current is Win32Host && Win32Host.TryRealCursor(out int rx, out int ry)) {
+			if (OperatingSystem.IsWindows() && !s_syntheticCursor && PresentationHost.Current is Win32Host && Win32Host.TryRealCursor(out int rx, out int ry)) {
 				x = rx; y = ry;
 			}
 			if (hwnd == IntPtr.Zero) return;

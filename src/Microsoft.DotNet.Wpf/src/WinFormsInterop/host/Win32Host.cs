@@ -288,6 +288,25 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
     private bool _movingSelf;
 
+    /// <summary>A form asked to be moved (SC_MOVE, WM_NCLBUTTONDOWN on HTCAPTION) or sized from an
+    /// edge (SC_SIZE + WMSZ_*): the system does it to this window, with the pointer, after the
+    /// capture this window holds for the press is let go -- what DefWindowProc does for a window
+    /// that draws its own caption. Nothing did it on Windows: a DotNetBar ribbon form (whose caption
+    /// sends WM_SYSCOMMAND SC_MOVE|HTCAPTION from its MouseMove) could not be dragged.</summary>
+    private static void BeginSystemCommand(IntPtr formHandle, int command)
+    {
+        Win32Host host = null;
+        lock (s_byHwnd)
+            foreach (Win32Host h in s_byHwnd.Values)
+                if (!h.FormGone && h._form.IsHandleCreated && h._form.Handle == formHandle) { host = h; break; }
+        if (host == null || host._hwnd == IntPtr.Zero) return;
+        ReleaseCapture();
+        GetCursorPos(out POINT p);
+        SendMessageW(host._hwnd, 0x0112 /* WM_SYSCOMMAND */, (IntPtr)command, (IntPtr)((p.y << 16) | (p.x & 0xFFFF)));
+    }
+
+    [DllImport("user32")] private static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
+
     /// <summary>WM_MOVE: the window moved -- the user dragged it, the system placed it, another
     /// program moved it. On Windows the form's Location IS the window's, so it follows; nothing
     /// carried it before, and Location (and Bounds, DesktopLocation, a saved window position)
@@ -393,6 +412,8 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         EnsureWindowClass(_hinstance);
 
         System.Windows.Forms.XplatUIWebGpu.FrameChanged += OnFrameChanged;
+        System.Windows.Forms.XplatUIWebGpu.BeginWindowMove ??= h => BeginSystemCommand(h, 0xF012);     // SC_MOVE | HTCAPTION
+        System.Windows.Forms.XplatUIWebGpu.BeginWindowSize ??= (h, edge) => BeginSystemCommand(h, 0xF000 | edge);   // SC_SIZE | WMSZ_*
         IntPtr title = Marshal.StringToHGlobalUni(_form.Text ?? "WinForms");
         try
         {
@@ -851,6 +872,21 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 r->right -= (int)Math.Round(own.Right * _scale); r->bottom -= (int)Math.Round(own.Bottom * _scale);
                 return IntPtr.Zero;
             }
+            // WM_NCHITTEST: a form that draws its own frame (or none) says where its caption and its
+            // sizing edges are, as it would to Windows; the system then drags, sizes, snaps and
+            // maximizes this window itself. The host answered for it, so such a window could be
+            // neither moved nor sized.
+            case 0x0084 when _driver is System.Windows.Forms.XplatUIWebGpu hd && !FormGone
+                             && (_form.FormBorderStyle == FormBorderStyle.None || OwnFrame(out _)):
+            {
+                var pt = new POINT { x = (short)((long)lParam & 0xFFFF), y = (short)(((long)lParam >> 16) & 0xFFFF) };
+                ScreenToClient(hwnd, ref pt);
+                GetClientRect(hwnd, out RECT cr);
+                if (pt.x < 0 || pt.y < 0 || pt.x >= cr.right || pt.y >= cr.bottom)
+                    return DefWindowProcW(hwnd, msg, wParam, lParam);
+                int ht = hd.HostHitTest(_ox + (int)Math.Floor(pt.x / _scale), _oy + (int)Math.Floor(pt.y / _scale));
+                return (IntPtr)(ht != 0 ? ht : 1);                                  // HTCLIENT
+            }
             case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
             case 0x0003: OnWindowMoved(); return IntPtr.Zero;                    // WM_MOVE
             // WM_PAINT: Windows wants the window's pixels again -- it has just been shown, uncovered
@@ -1024,7 +1060,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
     private void ResizeClientTo(int logicalW, int logicalH)
     {
-        var r = new RECT { left = 0, top = 0, right = (int)Math.Round(logicalW * _scale), bottom = (int)Math.Round(logicalH * _scale) };
+        var r = new RECT { left = 0, top = 0,
+            right = Math.Min(WgpuPresenter.MaxDeviceDimension, (int)Math.Round(logicalW * _scale)),
+            bottom = Math.Min(WgpuPresenter.MaxDeviceDimension, (int)Math.Round(logicalH * _scale)) };
         if (OwnFrame(out System.Windows.Forms.Padding own))
         {
             SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, r.right + (int)Math.Round(own.Horizontal * _scale), r.bottom + (int)Math.Round(own.Vertical * _scale),

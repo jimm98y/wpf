@@ -97,6 +97,49 @@ namespace Wpf.WinFormsInterop.Tests
             });
         }
 
+        /// <summary>A dialog opened from a button's Click runs while that button still holds the
+        /// mouse capture (WinForms releases it after OnClick), and its owner is then disabled.
+        /// Windows releases a disabled window's capture; ours kept it, so every mouse message of the
+        /// dialog went to the disabled button: nothing in the dialog could be hovered or clicked,
+        /// while the keyboard still worked (GraphWorX's Security Login, opened from the status bar).</summary>
+        [Fact]
+        public void ADialogOpenedFromAClick_TakesTheMouse()
+        {
+            OnSta(() =>
+            {
+                using var owner = new SWF.Form { StartPosition = SWF.FormStartPosition.Manual, Location = new Point(40, 40), ClientSize = new Size(300, 200), ShowInTaskbar = false };
+                // A plain control (DotNetBar's status bar is one): its Click comes before it lets go
+                // of the capture, unlike a Button's.
+                var opener = new SWF.Panel { Bounds = new Rectangle(10, 10, 80, 30), BackColor = Color.Gray };
+                owner.Controls.Add(opener);
+                using var dialog = new SWF.Form { StartPosition = SWF.FormStartPosition.Manual, Location = new Point(80, 80), ClientSize = new Size(160, 80), ShowInTaskbar = false };
+                var inner = new SWF.Button { Bounds = new Rectangle(10, 10, 80, 30), Text = "Keypad" };
+                dialog.Controls.Add(inner);
+                int innerClicks = 0, entered = 0;
+                IntPtr grabAtShown = IntPtr.Zero;
+                inner.Click += (s, e) => innerClicks++;
+                inner.MouseEnter += (s, e) => entered++;
+                dialog.Shown += (s, e) =>
+                {
+                    object d = Driver();
+                    grabAtShown = (IntPtr)d.GetType().GetProperty("GrabHandle", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(d)!;
+                    Point p = inner.PointToScreen(new Point(inner.Width / 2, inner.Height / 2));
+                    d.GetType().GetMethod("InjectMouseMoveIn", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(d, new object[] { dialog.Handle, p.X, p.Y, false });
+                    SWF.Application.DoEvents();
+                    Click(dialog, inner);
+                    dialog.Close();
+                };
+                opener.Click += (s, e) => dialog.ShowDialog(owner);
+                owner.Show();
+                SWF.Application.DoEvents();
+                IntPtr openerHandle = opener.Handle;
+                Click(owner, opener);
+                owner.Close();
+                Assert.True(entered > 0, $"the dialog's button was never hovered (capture at Shown: 0x{grabAtShown:x}, opener 0x{openerHandle:x})");
+                Assert.Equal(1, innerClicks);
+            });
+        }
+
         private static bool IsEnabled(IntPtr h)
             => (bool)typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.XplatUI")!
                 .GetMethod("IsEnabled", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)!.Invoke(null, new object[] { h })!;

@@ -7682,6 +7682,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             oy = (int)MathF.Floor(minY) - 1;
             w = (int)MathF.Ceiling(maxX) + 1 - ox;
             h = (int)MathF.Ceiling(maxY) + 1 - oy;
+            // No target is larger than a texture can be, so a mask need not be either: a path past
+            // that (a stroke round a 9,600-pixel-wide window) is rasterized only where a target can
+            // show it. The pass is per-pixel against every segment, so any sub-rectangle is exact.
+            int lim = (int)MaxTextureDimension2D;
+            if (w > lim || h > lim)
+            {
+                int x0 = Math.Max(ox, -1), y0 = Math.Max(oy, -1);
+                int x1 = Math.Min(ox + w, x0 + lim), y1 = Math.Min(oy + h, y0 + lim);
+                ox = x0; oy = y0; w = x1 - x0; h = y1 - y0;
+            }
             if (w <= 0 || h <= 0) return false;
             (tex, view) = GpuCoveragePass(segCount, ox, oy, w, h, path.FillRule, gamma, textBlend);
             return true;
