@@ -1075,6 +1075,13 @@ namespace System.Windows.Forms.VisualStyles
 				Button when part == 2 => RadioButton (state, tier),
 				ScrollBar when part == 2 || part == 3 => HighDpiScrollThumb (part == 3, state, tier >= 240),
 				TreeView when part == 2 => HighDpiTreeGlyph (state == 2, tier >= 240),
+				// The theme's 22x38 (192) and 28x48 (240) pointed thumbs: the 96-dpi shape at the
+				// tier's size, its edge pixels three quarters covered (0xC0) instead of half -- except
+				// the 240-dpi top and right thumbs, whose edges are the 96-dpi image's (measured; the
+				// theme's images differ there, there is no rule behind it).
+				TrackBar when part >= 4 && part <= 8 && part != 6 && TierSize (c, part, tier) is Size ts
+					=> PointedThumb (ts.Width, ts.Height, part == 7 ? -1 : part == 8 ? 1 : 0, part == 4 ? 1 : part == 5 ? -1 : 0, state,
+						tier >= 240 && (part == 5 || part == 8) ? -1 : 192),
 				_ => null,
 			};
 		}
@@ -2048,7 +2055,7 @@ namespace System.Windows.Forms.VisualStyles
 		/// (<paramref name="dx"/>, <paramref name="dy"/> the way it points) whose edge pixels are
 		/// half covered. A half is 127.5, which the theme rounds down on an edge facing up and up on
 		/// one facing down.</summary>
-		static Frame PointedThumb (int w, int h, int dx, int dy, int state)
+		static Frame PointedThumb (int w, int h, int dx, int dy, int state, int edgeAlpha = -1)
 		{
 			uint c = Thumb (state, false);
 			var f = new Frame (w, h);
@@ -2066,7 +2073,7 @@ namespace System.Windows.Forms.VisualStyles
 						// The edge faces up when the point itself is up, or when the point runs
 						// sideways and this is its upper edge.
 						bool facesUp = dy < 0 || (dy == 0 && j < across / 2);
-						a = facesUp ? 127u : 128u;
+						a = edgeAlpha >= 0 ? (uint) edgeAlpha : facesUp ? 127u : 128u;
 					}
 					int x = dy != 0 ? j : (dx > 0 ? i : w - 1 - i);
 					int y = dy != 0 ? (dy > 0 ? i : h - 1 - i) : j;
@@ -2137,7 +2144,7 @@ namespace System.Windows.Forms.VisualStyles
 				glyph = Stroke (d [0], d [1], d [2], d [3], d [4]);
 				alpha = d [5];
 			} else {
-				float w = at240 ? 1.3462f : 1.5f, a = at240 ? 10.4615f : 8.4375f, b = at240 ? 21.5385f : 17.5625f;
+				float w = 1.5f, a = at240 ? 10.5f : 8.4375f, b = at240 ? 21.5f : 17.5625f;
 				Shape one = Stroke (w, a, a, b, b), two = Stroke (w, b, a, a, b);
 				glyph = (x, y) => one (x, y) || two (x, y);
 			}
@@ -2160,16 +2167,19 @@ namespace System.Windows.Forms.VisualStyles
 					layers.Add (new Layer (Circle (c, c, at240 ? 4.7597f : 4f), 0xffffffffu));
 				return RenderArt (n, n, layers.ToArray ());
 			}
-			// ring radius, ring alpha top and bottom, the rows the ring darkens over, dot radius
+			// ring radius, ring alpha top and bottom, the rows the ring darkens over, dot radius.
+			// Where the theme's image allows it (no pixel more than a level further off) these are
+			// whole and half pixels; the rest are fitted, and no simple rule explains them (the
+			// half-pixel values put dozens more pixels off: uxdpi snaps.sh).
 			(float rs, float top, float bottom, float y0, float y1, float dot) = (at240, look) switch {
-				(false, 1) => (8f, 0.0537f, 0.1561f, 13.0156f, 18.5156f, 6.5f),
+				(false, 1) => (8f, 0.0537f, 0.1561f, 13f, 18.5f, 6.5f),
 				(false, 2) => (5.5003f, 0.0556f, 0.2147f, 12.1172f, 20.125f, 4.0002f),
 				(false, 3) => (0f, 0f, 0f, 0f, 0f, 5.25f),
 				(false, _) => (6.7526f, 0.0538f, 0.1602f, 12.54f, 17.7016f, 5.2448f),
-				(true, 1) => (9.5042f, 0.0537f, 0.1561f, 15.5f, 23.0384f, 8.0121f),
+				(true, 1) => (9.5f, 0.0537f, 0.1561f, 15.5f, 23f, 8f),
 				(true, 2) => (6.2527f, 0.0556f, 0.2186f, 15.0481f, 24.7115f, 4.7586f),
-				(true, 3) => (0f, 0f, 0f, 0f, 0f, 6.4891f),
-				(true, _) => (8.0092f, 0.0538f, 0.1602f, 15.7464f, 21.8875f, 6.4983f),
+				(true, 3) => (0f, 0f, 0f, 0f, 0f, 6.5f),
+				(true, _) => (8f, 0.0538f, 0.1602f, 16f, 21.5f, 6.5f),
 			};
 			layers.Add (new Layer (Circle (c, c, outer), Marked (look)));
 			if (rs > 0)
