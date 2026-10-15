@@ -191,28 +191,40 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
     /// <summary>
     /// A screen point of an application that is not per-monitor aware, where Windows' DPI
-    /// virtualisation puts it: such an application sees each monitor at 96 dpi, so its coordinates
-    /// are the monitor's physical ones divided by the monitor's scale, and are multiplied back
-    /// here (stock GwxConfigApp's splash, centred at (555, 332) in its own units on a 200% display,
-    /// is at (1110, 665) on screen). A per-monitor-aware application's points are physical already.
+    /// virtualisation puts it. Such an application's coordinate space is the desktop scaled by the
+    /// SYSTEM DPI over its own (two for an unaware one at 192; one for a system-aware one), the same
+    /// on every monitor: a window on a display at another DPI keeps its top-left there and is only
+    /// stretched about it. (Stock GwxConfigApp's splash, centred at (555, 332) on a 200% system, is
+    /// at (1110, 665) on screen; a system-aware form at (-1800, 500) on a 240-dpi display beside a
+    /// 96-dpi primary is at (-1800, 500).) A per-monitor-aware application's points are physical.
     /// </summary>
     private static (int, int) ToPhysical(int x, int y)
     {
         if (System.Windows.Forms.ScaleHelper.HostSourceDpi == 0 || x == CW_USEDEFAULT)
             return (x, y);
-        foreach (var (mon, r) in Monitors())
-        {
-            float k = HostFactor(mon);
-            // The monitor as the application sees it: its origin and size over the scale.
-            int lx = (int)Math.Round(r.left / k), ly = (int)Math.Round(r.top / k);
-            int lw = (int)Math.Round((r.right - r.left) / k), lh = (int)Math.Round((r.bottom - r.top) / k);
-            if (x >= lx && x < lx + lw && y >= ly && y < ly + lh)
-                return (r.left + (int)Math.Round((x - lx) * k), r.top + (int)Math.Round((y - ly) * k));
-        }
-        // Off every monitor (a window parked off screen): the primary monitor's scale.
-        float kp = HostFactor(MonitorFromPoint(new POINT { x = 0, y = 0 }, 1 /* MONITOR_DEFAULTTOPRIMARY */));
-        return ((int)Math.Round(x * kp), (int)Math.Round(y * kp));
+        float k = SystemFactor();
+        return ((int)Math.Round(x * k), (int)Math.Round(y * k));
     }
+
+    /// <summary>The inverse of <see cref="ToPhysical"/>.</summary>
+    private static (int, int) FromPhysical(int px, int py)
+    {
+        if (System.Windows.Forms.ScaleHelper.HostSourceDpi == 0)
+            return (px, py);
+        float k = SystemFactor();
+        return ((int)Math.Round(px / k), (int)Math.Round(py / k));
+    }
+
+    /// <summary>Device pixels per application pixel in a virtualised application's coordinates.</summary>
+    private static float SystemFactor()
+    {
+        int src = System.Windows.Forms.ScaleHelper.HostSourceDpi;
+        uint sys = 0;
+        try { sys = GetDpiForSystem(); } catch (EntryPointNotFoundException) { }
+        return src == 0 || sys == 0 ? 1f : sys / (float)src;
+    }
+
+    [DllImport("user32")] private static extern uint GetDpiForSystem();
 
     /// <summary>Device pixels per application pixel on a monitor: one for a per-monitor-aware
     /// application, the monitor's DPI over 96 for an unaware one and over the system DPI for a
@@ -275,6 +287,25 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     }
 
     private bool _movingSelf;
+
+    /// <summary>WM_MOVE: the window moved -- the user dragged it, the system placed it, another
+    /// program moved it. On Windows the form's Location IS the window's, so it follows; nothing
+    /// carried it before, and Location (and Bounds, DesktopLocation, a saved window position)
+    /// went on reporting where the window had been created.</summary>
+    private void OnWindowMoved()
+    {
+        // A borderless window is the application's to place (a popup goes where its anchor's window
+        // maps it; see OnFormMoved), and nothing but the application moves it.
+        if (_hwnd == IntPtr.Zero || _movingSelf || FormGone || _form.WindowState != FormWindowState.Normal
+            || _form.FormBorderStyle == FormBorderStyle.None) return;
+        if (!GetWindowRect(_hwnd, out RECT r)) return;
+        (int lx, int ly) = FromPhysical(r.left, r.top);
+        if (lx == _form.Left && ly == _form.Top) return;
+        _movingSelf = true;
+        try { _form.Location = new Point(lx, ly); }
+        finally { _movingSelf = false; }
+    }
+
 
     /// <summary>Follow the form on and off screen. A form that is hidden rather than closed -- a
     /// drop-down between uses -- kept its window: it stayed on screen holding the keyboard, so
@@ -397,7 +428,21 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (sourceDpi == 0)
         {
             _scale = 1f;
-            if (_driver is System.Windows.Forms.XplatUIWebGpu dpiDriver) dpiDriver.SetWindowDpi(_formHandle, windowDpi);
+            if (_driver is System.Windows.Forms.XplatUIWebGpu dpiDriver)
+            {
+                // The form was laid out at the DPI its handle was created at (the system's). A window
+                // that comes up on a display at another DPI is told so, as Windows tells a window
+                // created there, and rescales: a per-monitor form placed on a 240-dpi display came up
+                // at 96 -- quarter-size controls in a window of the right size.
+                int laidOut = dpiDriver.WindowDpi(_formHandle);
+                if (laidOut != windowDpi && laidOut > 0 && System.Windows.Forms.ScaleHelper.IsThreadPerMonitorV2Aware && !FormGone)
+                {
+                    if (!_form.GetDpiScaledSizeForHost(windowDpi, out Size size))
+                        size = new Size((int)Math.Round(_form.Width * windowDpi / (double)laidOut), (int)Math.Round(_form.Height * windowDpi / (double)laidOut));
+                    dpiDriver.HostDpiChanged(_formHandle, windowDpi, new Rectangle(_form.Location, size));
+                }
+                else dpiDriver.SetWindowDpi(_formHandle, windowDpi);
+            }
         }
         else _scale = windowDpi / (float)sourceDpi;
 
@@ -807,6 +852,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 return IntPtr.Zero;
             }
             case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
+            case 0x0003: OnWindowMoved(); return IntPtr.Zero;                    // WM_MOVE
             // WM_PAINT: Windows wants the window's pixels again -- it has just been shown, uncovered
             // or moved, and the surface's contents were not kept (they are not, on the GL backend).
             // Nothing answered it: DefWindowProc validated the window and drew nothing, and the
@@ -1024,12 +1070,18 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             return;
         }
         _scale = GetDpiForWindow(_hwnd) / (float)System.Windows.Forms.ScaleHelper.HostSourceDpi;
+        // Windows virtualises an unaware or system-aware window: it keeps its logical size at every
+        // DPI and is stretched. Its suggested rectangle is the PHYSICAL window scaled, which rounds
+        // (a 400x240 client came back 397x236 after one move), so take only its position and size
+        // the window from the form's client at the new scale.
         if (suggested != IntPtr.Zero)
         {
             RECT r = Marshal.PtrToStructure<RECT>(suggested);
-            SetWindowPos(_hwnd, IntPtr.Zero, r.left, r.top, r.right - r.left, r.bottom - r.top,
-                0x0004 | 0x0010);                        // SWP_NOZORDER | SWP_NOACTIVATE
+            SetWindowPos(_hwnd, IntPtr.Zero, r.left, r.top, 0, 0,
+                0x0001 | 0x0004 | 0x0010);               // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
         }
+        if (!FormGone && _form.WindowState == FormWindowState.Normal)
+            ResizeClientTo(_form.ClientSize.Width, _form.ClientSize.Height);
         _wgpu?.SetScale(_scale);
         EmbeddedScenes.PublishHostWindow(_hwnd, _scale, _form);
         _lastVer = -1;                                   // force a present at the new scale

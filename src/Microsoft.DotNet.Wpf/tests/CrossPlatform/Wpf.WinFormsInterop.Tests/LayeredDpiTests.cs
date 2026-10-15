@@ -104,9 +104,12 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.NotEqual(IntPtr.Zero, host);
             Assert.Equal((int)Math.Round(W * dpi / source), r.right - r.left);
             Assert.Equal((int)Math.Round(H * dpi / source), r.bottom - r.top);
-            // And where it is: the application's point in its own units, at the monitor's scale.
-            Assert.Equal((int)Math.Round(8000 * dpi / source), r.left);
-            Assert.Equal((int)Math.Round(80 * dpi / source), r.top);
+            // And where it is: the application's point in its own units, at the SYSTEM's scale --
+            // a virtualised application's coordinates are the desktop's over the system DPI, on
+            // every monitor (only the window's size follows the monitor it is on).
+            double sys = GetDpiForSystem();
+            Assert.Equal((int)Math.Round(8000 * sys / source), r.left);
+            Assert.Equal((int)Math.Round(80 * sys / source), r.top);
             form.Close();
         }
 
