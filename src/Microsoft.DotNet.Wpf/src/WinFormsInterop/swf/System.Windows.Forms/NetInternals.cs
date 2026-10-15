@@ -123,6 +123,56 @@ namespace System.Windows.Forms
 		private static bool s_scaled, s_perMonitorV2;
 		private static int s_systemDpi = OneHundredPercentLogicalDpi;
 		internal static HighDpiMode? s_requested;
+
+		// The awareness WinForms takes from the thread it is hosted on, when nothing chose a mode:
+		// .NET's WinForms reads its mode from the thread's DPI awareness, so controls hosted in a
+		// WPF application -- per-monitor aware unless it opts out -- are per-monitor too.
+		private static HighDpiMode? s_adopted;
+
+		/// <summary>
+		/// WinForms in a WPF application takes the thread's awareness, as .NET's does (it reads its
+		/// mode from the thread's DPI awareness when nothing chose one) -- per-monitor, unless the
+		/// WPF application opted out. Only for a WPF application: a WinForms application's process
+		/// is made per-monitor by this stack's own host, which is not the application's choice.
+		/// </summary>
+		private static HighDpiMode? WpfApplicationMode ()
+		{
+			try {
+				Type app = Type.GetType ("System.Windows.Application, PresentationFramework", throwOnError: false);
+				if (app?.GetProperty ("Current", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue (null) == null)
+					return null;
+			} catch {
+				return null;
+			}
+			int awareness = XplatUIWebGpu.CurrentThreadAwareness ();
+			return awareness == 2 ? HighDpiMode.PerMonitorV2 : awareness == 1 ? HighDpiMode.SystemAware : (HighDpiMode?) null;
+		}
+
+		/// <summary>A host (WindowsFormsHost) is putting WinForms on this thread: if the mode is not
+		/// settled yet, take the thread's awareness as .NET does.</summary>
+		internal static void AdoptHostAwareness ()
+		{
+			lock (s_lock) {
+				if (s_adopted != null)
+					return;
+				// Settled already, but only by default and before any window exists (the application
+				// touched WinForms before it put up its WPF host): .NET reads the awareness when it is
+				// first needed, which is no earlier than this, so the mode is taken again.
+				if (s_resolved && !(s_defaulted && !XplatUIWebGpu.HasCreatedWindows))
+					return;
+				int awareness = XplatUIWebGpu.CurrentThreadAwareness ();
+				s_adopted = awareness == 2 ? HighDpiMode.PerMonitorV2 : awareness == 1 ? HighDpiMode.SystemAware : HighDpiMode.DpiUnaware;
+				if (s_resolved && s_adopted != s_mode) {
+					s_resolved = false;
+					s_scaled = s_perMonitorV2 = false;
+					s_systemDpi = OneHundredPercentLogicalDpi;
+				}
+			}
+			Resolve ();
+		}
+
+		// Whether the mode came from the fallback (nothing chose it).
+		private static bool s_defaulted;
 		private static HighDpiMode? s_manifest;
 		private static bool s_manifestRead;
 
@@ -164,7 +214,9 @@ namespace System.Windows.Forms
 			lock (s_lock) {
 				if (s_resolved)
 					return;
-				HighDpiMode mode = ManifestMode ?? s_requested ?? EnvironmentMode () ?? HighDpiMode.DpiUnaware;
+				HighDpiMode? chosen = ManifestMode ?? s_requested ?? EnvironmentMode () ?? s_adopted ?? WpfApplicationMode ();
+				s_defaulted = chosen == null;
+				HighDpiMode mode = chosen ?? HighDpiMode.DpiUnaware;
 				s_mode = mode;
 				if (mode == HighDpiMode.PerMonitor || mode == HighDpiMode.PerMonitorV2) {
 					// The OS decides what the process can be: an application that already made itself

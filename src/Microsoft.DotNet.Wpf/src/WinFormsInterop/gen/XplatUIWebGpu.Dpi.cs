@@ -1,4 +1,4 @@
-// Per-monitor DPI for a per-monitor-aware application (ScaleHelper.IsDeviceScaled): each top-level
+﻿// Per-monitor DPI for a per-monitor-aware application (ScaleHelper.IsDeviceScaled): each top-level
 // window has the DPI of the display it is on, its children share it, and a change arrives the way
 // Windows delivers one -- WM_DPICHANGED_BEFOREPARENT to the children, top down, WM_DPICHANGED to the
 // window, WM_DPICHANGED_AFTERPARENT to the children -- so .NET's own handling of those messages
@@ -39,6 +39,45 @@ namespace System.Windows.Forms {
 			}
 			catch (EntryPointNotFoundException) { return 0; }
 			catch (DllNotFoundException) { return 0; }
+		}
+
+		/// <summary>The calling thread's DPI awareness, without changing anything: 2 per-monitor, 1
+		/// system-aware, 0 not aware (or no notion of it on this platform).</summary>
+		/// <summary>Whether any window has been created yet.</summary>
+		internal static bool HasCreatedWindows => System.Threading.Volatile.Read(ref instance) is XplatUIWebGpu i && i.next_handle > 1;
+
+		internal static int CurrentThreadAwareness()
+		{
+			if (PlatformAwareness != null)
+				return PlatformAwareness(out _);
+			if (!OperatingSystem.IsWindows())
+				return 0;
+			try { return GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()); }
+			catch (EntryPointNotFoundException) { return 0; }
+			catch (DllNotFoundException) { return 0; }
+		}
+
+		/// <summary>
+		/// A hosted window tree (a WindowsFormsHost's container) moved to another DPI: it and every
+		/// window in it are told as Windows tells a child HWND -- WM_DPICHANGED_BEFOREPARENT top down,
+		/// WM_DPICHANGED_AFTERPARENT bottom up. There is no WM_DPICHANGED: the host, not the
+		/// container, is the window that moved, and it decides the size.
+		/// </summary>
+		internal void HostedDpiChanged(IntPtr handle, int dpi)
+		{
+			if (!ScaleHelper.IsThreadPerMonitorV2Aware || dpi <= 0) return;
+			lock (_windowDpi)
+			{
+				if (_windowDpi.TryGetValue(handle, out int old) && old == dpi) return;
+				_windowDpi[handle] = dpi;
+			}
+			var all = new List<IntPtr> { handle };
+			CollectDescendants(handle, all);
+			foreach (IntPtr c in all)
+				SendMessage(c, (Msg)WM_DPICHANGED_BEFOREPARENT, (IntPtr)dpi, IntPtr.Zero);
+			for (int i = all.Count - 1; i >= 0; i--)
+				SendMessage(all[i], (Msg)WM_DPICHANGED_AFTERPARENT, IntPtr.Zero, IntPtr.Zero);
+			_paintVersion++;
 		}
 
 		internal delegate int AwarenessProvider(out int systemDpi);
@@ -95,15 +134,23 @@ namespace System.Windows.Forms {
 			_paintVersion++;
 		}
 
+		// Every child window under a window, visible or not, top down. Hwnd.children is not kept by
+		// this driver; a window's children are the windows whose parent it is (as CollectSubtree).
 		private void CollectDescendants(IntPtr handle, List<IntPtr> into)
 		{
 			Hwnd h = Hwnd.ObjectFromHandle(handle);
 			if (h == null) return;
-			foreach (Hwnd c in h.children)
+			var kids = new List<IntPtr>();
+			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
 			{
-				if (c == null || (c.initial_style & WindowStyles.WS_CHILD) == 0) continue;
-				into.Add(c.Handle);
-				CollectDescendants(c.Handle, into);
+				Hwnd c = Hwnd.ObjectFromHandle(k);
+				if (c != null && c != h && c.parent == h && (c.initial_style & WindowStyles.WS_CHILD) != 0) kids.Add(k);
+			}
+			kids.Sort((a, b) => PaintKey(a).CompareTo(PaintKey(b)));
+			foreach (IntPtr k in kids)
+			{
+				into.Add(k);
+				CollectDescendants(k, into);
 			}
 		}
 

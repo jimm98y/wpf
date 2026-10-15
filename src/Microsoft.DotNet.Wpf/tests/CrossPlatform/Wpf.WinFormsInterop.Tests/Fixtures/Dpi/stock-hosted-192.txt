@@ -1,0 +1,12 @@
+== wfh
+wfh actual=300x150 dpi=192
+panel bounds={X=0,Y=0,Width=600,Height=300} font=9pt/32 dpi=192
+  button bounds={X=10,Y=10,Width=96,Height=42} font=9pt/32 dpi=192
+  label bounds={X=10,Y=50,Width=117,Height=32} font=9pt/32 dpi=192
+  textbox bounds={X=10,Y=80,Width=150,Height=39} font=9pt/32 dpi=192
+  check bounds={X=170,Y=10,Width=111,Height=36} font=9pt/32 dpi=192
+== elementhost
+elementhost bounds={X=10,Y=10,Width=300,Height=150} dpi=192
+root actual=150x75 wpfdpi=192
+  TextBlock actual=150x15.96
+  Button actual=150x19.96
