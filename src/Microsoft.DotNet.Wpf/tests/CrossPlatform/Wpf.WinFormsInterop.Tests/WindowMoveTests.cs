@@ -368,6 +368,70 @@ namespace Wpf.WinFormsInterop.Tests
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
+        /// <summary>A system-aware form on a monitor at a higher DPI than the system's keeps its size,
+        /// however large the stretched window gets: the stock window is capped at the virtual screen in
+        /// the application's own units. Ours was capped in device pixels, so a 1150-tall GraphWorX
+        /// window on a 240-dpi display came up 2166 pixels tall and the form stayed 866 high for good.</summary>
+        [Fact]
+        public void ASystemAwareForm_OnAHighDpiMonitor_IsNotCappedInDevicePixels()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "a Win32 window sized by the OS");
+            uint system = GetDpiForSystem();
+            RECT? high = null;
+            uint highDpi = 96;
+            // Ask as a per-monitor-aware thread: an unaware one is told every monitor is at 96 and
+            // given its rectangles scaled (another test may have left this thread so).
+            IntPtr was = SetThreadDpiAwarenessContext((IntPtr)(-4));
+            try
+            {
+                EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr m, IntPtr dc, ref RECT r, IntPtr l) =>
+                {
+                    if (GetDpiForMonitor(m, 0, out uint dx, out _) == 0 && dx > system) { high = r; highDpi = dx; }
+                    return true;
+                }, IntPtr.Zero);
+            }
+            finally { SetThreadDpiAwarenessContext(was); }
+            Assert.SkipUnless(high.HasValue, "needs a monitor at a higher DPI than the system's");
+            Exception? failure = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    using (SWF.ScaleHelper.OverrideForTests(SWF.HighDpiMode.SystemAware, (int)system))
+                    {
+                        RECT m = high!.Value;
+                        // Far off the monitor's free side, so nothing shows; its nearest monitor -- the
+                        // one whose DPI the window takes -- is still the high-DPI one.
+                        bool leftOfPrimary = m.right <= 0;
+                        int x = leftOfPrimary ? m.left - 9000 : m.right + 9000;
+                        int tall = (int)Math.Round((m.bottom - m.top) * system / (double)highDpi * 1.4);   // taller than the monitor, in device pixels once stretched
+                        using var form = new SWF.Form
+                        {
+                            Text = "MaxTrackTest", StartPosition = SWF.FormStartPosition.Manual,
+                            Location = new Point(x, m.top + 20), Size = new Size(600, tall), ShowInTaskbar = false,
+                        };
+                        form.Show();
+                        IntPtr host = IntPtr.Zero;
+                        for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && host == IntPtr.Zero;) { Pump(100); host = HostOf("MaxTrackTest"); }
+                        Assert.NotEqual(IntPtr.Zero, host);
+                        Pump(300);
+                        Assert.Equal(tall, form.Height);
+                        GetWindowRect(host, out RECT r);
+                        Assert.True(r.bottom - r.top > (m.bottom - m.top), $"window {r.bottom - r.top} px tall on a {m.bottom - m.top} px monitor");
+                        form.Close();
+                    }
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        [DllImport("shcore")] private static extern int GetDpiForMonitor(IntPtr m, int type, out uint dx, out uint dy);
+        [DllImport("user32")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+
         [DllImport("user32")] private static extern bool ShowWindow(IntPtr h, int cmd);
         [DllImport("user32")] private static extern bool IsIconic(IntPtr h);
 

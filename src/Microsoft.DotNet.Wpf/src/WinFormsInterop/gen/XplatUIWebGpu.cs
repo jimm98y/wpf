@@ -31,7 +31,6 @@ namespace System.Windows.Forms {
 		// DataGridView's cells draw with -- fell back to the classic bevels. The theme on every
 		// head is the managed Windows 11 one, and it is always on.
 		internal override bool ThemesEnabled { get { return true; } }
-		internal override event EventHandler Idle;
 		internal override void AudibleAlert(AlertType alert) {  }
 		internal override void BeginMoveResize(IntPtr handle) {  }
 		internal override void EnableThemes() {  }
@@ -104,6 +103,5 @@ namespace System.Windows.Forms {
 		internal override SizeF GetAutoScaleSize(Font font) { return default(SizeF); }
 		internal override int SendInput(IntPtr hwnd, System.Collections.Queue keys) { return 0; }
 		internal override void ResetMouseHover(IntPtr hwnd) {  }
-		internal override void RaiseIdle(EventArgs e) {  }
 	}
 }
