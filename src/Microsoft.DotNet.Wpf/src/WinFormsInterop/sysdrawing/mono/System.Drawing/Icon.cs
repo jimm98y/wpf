@@ -421,8 +421,9 @@ namespace System.Drawing
 			    || (iconData [4] | iconData [5]) == 0)
 				throw new ArgumentException (SR.Format (SR.InvalidPictureType, "picture", "Icon"));
 			// Zero asks for the system's icon size.
-			if (width == 0) width = 32;
-			if (height == 0) height = 32;
+			// (SM_CXICON: 32 at 96 dpi, at the DPI the application sees the screen at.)
+			if (width == 0) width = (int) (32 * System.Drawing.WebGpuBackend.DisplayDpi.X / 96f);
+			if (height == 0) height = (int) (32 * System.Drawing.WebGpuBackend.DisplayDpi.Y / 96f);
 			ManagedImageDecoder.IcoEntry [] entries;
 			try {
 				entries = ManagedImageDecoder.ReadIcoDirectory (iconData);

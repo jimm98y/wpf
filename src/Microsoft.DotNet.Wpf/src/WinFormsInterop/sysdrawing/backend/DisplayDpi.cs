@@ -2,6 +2,7 @@
 // Graphics.DpiX and a new Bitmap's resolution are measured at.
 
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 
 namespace System.Drawing.WebGpuBackend
 {
@@ -29,5 +30,36 @@ namespace System.Drawing.WebGpuBackend
             if (!(dpi > 0)) dpi = 96f;
             s_x = s_y = dpi;
         }
+
+        /// <summary>
+        /// Run the native calls whose answers depend on the thread's DPI awareness (a screen DC's
+        /// LOGPIXELS and size, the system icon size LoadImage and CreateIconFromResourceEx default
+        /// to) as the application is: an application shown at 96 dpi asks as a DPI-unaware one
+        /// does, and Windows answers it at 96 -- the process itself is per-monitor aware so that
+        /// its host window renders 1:1, which is not what the application sees.
+        /// </summary>
+        internal static AwarenessScope AsApplication() => new AwarenessScope(s_x == 96f);
+
+        internal readonly struct AwarenessScope : IDisposable
+        {
+            private readonly IntPtr _old;
+
+            internal AwarenessScope(bool unaware)
+            {
+                _old = IntPtr.Zero;
+                if (!unaware || !OperatingSystem.IsWindows() || s_noThreadContext) return;
+                try { _old = SetThreadDpiAwarenessContext((IntPtr)(-1)); }   // DPI_AWARENESS_CONTEXT_UNAWARE
+                catch (EntryPointNotFoundException) { s_noThreadContext = true; }
+            }
+
+            public void Dispose()
+            {
+                if (_old != IntPtr.Zero) SetThreadDpiAwarenessContext(_old);
+            }
+        }
+
+        private static bool s_noThreadContext;
+
+        [DllImport("user32.dll")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     }
 }

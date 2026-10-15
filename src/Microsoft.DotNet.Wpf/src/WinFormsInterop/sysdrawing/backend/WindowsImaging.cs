@@ -296,8 +296,15 @@ namespace System.Drawing.WebGpuBackend
         private static extern IntPtr GetDC (IntPtr hwnd);
         [DllImport ("user32.dll")]
         private static extern int ReleaseDC (IntPtr hwnd, IntPtr dc);
-        [DllImport ("user32.dll")]
-        private static extern bool GetIconInfo (IntPtr hicon, out ICONINFO info);
+        // An icon is read as the application sees it: asked from a per-monitor-aware thread, Windows
+        // hands back an icon made at 96 dpi scaled to the display (a 32-pixel icon's bitmaps at 64).
+        private static bool GetIconInfo (IntPtr hicon, out ICONINFO info)
+        {
+            using var asApp = DisplayDpi.AsApplication ();
+            return NativeGetIconInfo (hicon, out info);
+        }
+        [DllImport ("user32.dll", EntryPoint = "GetIconInfo")]
+        private static extern bool NativeGetIconInfo (IntPtr hicon, out ICONINFO info);
         [DllImport ("user32.dll")]
         private static extern IntPtr CreateIconIndirect (ref ICONINFO info);
         [DllImport ("user32.dll", EntryPoint = "DestroyIcon")]

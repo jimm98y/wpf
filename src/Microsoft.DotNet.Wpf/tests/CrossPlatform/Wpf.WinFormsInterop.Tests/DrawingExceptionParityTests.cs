@@ -99,7 +99,46 @@ namespace Wpf.WinFormsInterop.Tests
             return null;
         }
 
-        // What only Windows has: GDI handles (HBITMAP, HICON, HFONT, HRGN, HPALETTE, HDC, HENHMETAFILE).
+        // A metafile recorded against a screen-compatible DC takes its resolution from that DC's
+        // PHYSICAL size (HORZRES * 25.4 / HORZSIZE, in a DPI-unaware process's units), so its value
+        // is the attached display's, not GDI+'s: on the 96-dpi monitor the fixture was recorded on it
+        // was 93.78 x 95.25, on a 13" 3420x2146 panel at 200% stock gives 135.73 x 136.27. Its
+        // resolution is held to that formula on this machine's display (verified against stock on
+        // two displays) and the values derived from it only for success.
+        private static readonly string[] s_displayDependent =
+        {
+            "Metafile.get_HorizontalResolution()|ok", "Metafile.get_VerticalResolution()|ok",
+            "Metafile.get_PhysicalDimension()|ok", "Metafile.GetBounds(GraphicsUnit&)|ok",
+        };
+
+        private static string DisplayResolution(string name)
+        {
+            if (!OperatingSystem.IsWindows()) return null;
+            bool x = name == "Metafile.get_HorizontalResolution()|ok";
+            if (!x && name != "Metafile.get_VerticalResolution()|ok") return null;
+            IntPtr old = SetThreadDpiAwarenessContext((IntPtr)(-1));   // as the 96-dpi application sees it
+            try
+            {
+                IntPtr screen = GetDC(IntPtr.Zero);
+                IntPtr mem = CreateCompatibleDC(screen);
+                try
+                {
+                    float res = GetDeviceCaps(mem, x ? 8 : 10) * 25.4f / GetDeviceCaps(mem, x ? 4 : 6);
+                    return "OK\t" + res.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                }
+                finally { DeleteDC(mem); ReleaseDC(IntPtr.Zero, screen); }
+            }
+            finally { if (old != IntPtr.Zero) SetThreadDpiAwarenessContext(old); }
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr c);
+        [System.Runtime.InteropServices.DllImport("user32")] private static extern IntPtr GetDC(IntPtr h);
+        [System.Runtime.InteropServices.DllImport("user32")] private static extern int ReleaseDC(IntPtr h, IntPtr dc);
+        [System.Runtime.InteropServices.DllImport("gdi32")] private static extern IntPtr CreateCompatibleDC(IntPtr dc);
+        [System.Runtime.InteropServices.DllImport("gdi32")] private static extern bool DeleteDC(IntPtr dc);
+        [System.Runtime.InteropServices.DllImport("gdi32")] private static extern int GetDeviceCaps(IntPtr dc, int i);
+
+        // What only Windows has: GDI handles(HBITMAP, HICON, HFONT, HRGN, HPALETTE, HDC, HENHMETAFILE).
         private static bool WindowsOnly(string name)
         {
             string[] words =
@@ -142,6 +181,12 @@ namespace Wpf.WinFormsInterop.Tests
 
             string w = string.Join("\t", want.Skip(2)), g = string.Join("\t", got.Skip(2));
             if (want[2] == "OK" && got[2] == "OK" && c.VolatileResult) return;
+            if (Array.IndexOf(s_displayDependent, name) >= 0 && want[2] == "OK")
+            {
+                Assert.Equal("OK", got[2]);
+                if (DisplayResolution(name) is string display) Assert.Equal(display, g);
+                return;
+            }
             Assert.Equal(w, g);
         }
 

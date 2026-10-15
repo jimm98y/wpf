@@ -61,6 +61,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <summary>A memory DC over a copy of <paramref name="frame"/>'s pixels (a bitmap's GetHdc).</summary>
         public static GpHdcSurface ForFrame (GdipFrame frame)
         {
+            // A bitmap's DC is compatible with the screen as the application sees it: its size and
+            // resolution are what a metafile recorded against it takes.
+            using var asApp = DisplayDpi.AsApplication ();
             IntPtr screen = GetDC (IntPtr.Zero);
             try {
                 var s = new GpHdcSurface (screen, new Rectangle (0, 0, frame.Width, frame.Height));
@@ -73,7 +76,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         public IntPtr MemoryDc => _memDc;
 
-        public static float DpiOf (IntPtr hdc, bool y) => GetDeviceCaps (hdc, y ? 90 : 88);
+        public static float DpiOf (IntPtr hdc, bool y)
+        {
+            using var asApp = DisplayDpi.AsApplication ();
+            return GetDeviceCaps (hdc, y ? 90 : 88);
+        }
 
         /// <summary>The DC's pixels into the frame (alpha opaque).</summary>
         public void Capture (GdipFrame frame)

@@ -91,6 +91,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// the desktop's logical dpi, which is what a metafile's Graphics reports.</summary>
         public static GpRefDevice Device(IntPtr hdc)
         {
+            using var asApp = DisplayDpi.AsApplication();
             var d = new GpRefDevice
             {
                 HorzSize = GetDeviceCaps(hdc, 4), VertSize = GetDeviceCaps(hdc, 6),
