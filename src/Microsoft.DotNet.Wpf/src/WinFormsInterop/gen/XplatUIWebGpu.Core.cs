@@ -721,6 +721,36 @@ namespace System.Windows.Forms
 		/// <summary>Where the pointer is, in this driver's screen space.</summary>
 		private int _cursorX, _cursorY;
 
+		// The last press, for double clicks: which window, which button, when and where.
+		private IntPtr _pressTarget;
+		private Msg _pressMessage;
+		private long _pressTime;
+		private int _pressX, _pressY;
+
+		/// <summary>A press as Windows reports it: WM_xBUTTONDBLCLK when it is the second of a pair
+		/// (same window and button, within GetDoubleClickTime and SM_CXDOUBLECLK x SM_CYDOUBLECLK of
+		/// the first); the press itself otherwise. A third press starts a new pair, as on Windows.</summary>
+		private Msg DoubleClickOf(IntPtr target, int screenX, int screenY, Msg message)
+		{
+			Msg dbl = message switch {
+				Msg.WM_LBUTTONDOWN => Msg.WM_LBUTTONDBLCLK,
+				Msg.WM_RBUTTONDOWN => Msg.WM_RBUTTONDBLCLK,
+				Msg.WM_MBUTTONDOWN => Msg.WM_MBUTTONDBLCLK,
+				_ => 0,
+			};
+			if (dbl == 0) return message;
+			long now = Environment.TickCount64;
+			Size area = SystemInformation.DoubleClickSize;
+			if (target == _pressTarget && message == _pressMessage && now - _pressTime <= SystemInformation.DoubleClickTime
+				&& Math.Abs(screenX - _pressX) <= area.Width / 2 && Math.Abs(screenY - _pressY) <= area.Height / 2)
+			{
+				_pressTarget = IntPtr.Zero;
+				return dbl;
+			}
+			_pressTarget = target; _pressMessage = message; _pressTime = now; _pressX = screenX; _pressY = screenY;
+			return message;
+		}
+
 		/// <summary>Deliver one mouse message to <paramref name="target"/>, in its client coords.</summary>
 		private void DispatchMouse(IntPtr target, int screenX, int screenY, Msg message, int wParam)
 		{
@@ -748,6 +778,12 @@ namespace System.Windows.Forms
 			Point p = ScreenLocation(h);
 			int cx = screenX - p.X, cy = screenY - p.Y;
 			IntPtr lp = (IntPtr)((cy << 16) | (cx & 0xFFFF));
+
+			// Windows turns a second press of the same button on the same window, soon enough and near
+			// enough to the first, into WM_xBUTTONDBLCLK (every WinForms window class has CS_DBLCLKS).
+			// Nothing here did, so no control ever saw a double click: not a list item opening, not a
+			// ribbon caption maximizing its window.
+			message = DoubleClickOf(target, screenX, screenY, message);
 
 			// Announce a press before delivering it, so a control holding a drop-down open hears about
 			// clicks that are none of its business -- the one thing it needs in order to close.
@@ -2169,8 +2205,31 @@ namespace System.Windows.Forms
 			ApplyFrame(handle, AskFrame(handle, TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null, WindowDpi(handle))));
 		}
 		internal override void SetBorderStyle(IntPtr handle, FormBorderStyle border_style) { }
-		internal override FormWindowState GetWindowState(IntPtr handle) => FormWindowState.Normal;
-		internal override void SetWindowState(IntPtr handle, FormWindowState state) { }
+		// A top-level window's state, as the host's real window has it. The generated stubs said Normal
+		// and did nothing: Form.WindowState = Maximized (an application restoring its window, a
+		// caption double click sending SC_MAXIMIZE) changed nothing on screen, and a window the user
+		// maximized still reported Normal.
+		private readonly Dictionary<IntPtr, FormWindowState> _windowStates = new Dictionary<IntPtr, FormWindowState>();
+
+		/// <summary>Set by a host: make its real window maximized, minimized or restored.</summary>
+		internal static Action<IntPtr, FormWindowState> WindowStateRequested;
+
+		internal override FormWindowState GetWindowState(IntPtr handle)
+		{
+			lock (_windowStates) return _windowStates.TryGetValue(handle, out FormWindowState s) ? s : FormWindowState.Normal;
+		}
+
+		internal override void SetWindowState(IntPtr handle, FormWindowState state)
+		{
+			lock (_windowStates) _windowStates[handle] = state;
+			WindowStateRequested?.Invoke(handle, state);
+		}
+
+		/// <summary>The host's window was maximized, minimized or restored (its WM_SIZE).</summary>
+		internal void HostWindowState(IntPtr handle, FormWindowState state)
+		{
+			lock (_windowStates) _windowStates[handle] = state;
+		}
 		internal override void SetModal(IntPtr handle, bool Modal) { }
 
 		private IntPtr _focusHandle;   // window with keyboard focus (WM_CHAR/KEYDOWN target)

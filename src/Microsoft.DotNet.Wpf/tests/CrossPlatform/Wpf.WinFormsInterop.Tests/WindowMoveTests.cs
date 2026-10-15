@@ -189,6 +189,86 @@ namespace Wpf.WinFormsInterop.Tests
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
+        /// <summary>A double click on a form's own caption (a control that maximizes or restores its form
+        /// with WM_SYSCOMMAND from OnDoubleClick, as DotNetBar's ribbon caption does) reaches it and
+        /// maximizes the window, then restores it. No double click was ever delivered: a second press
+        /// was just another WM_LBUTTONDOWN.</summary>
+        [Fact]
+        public void ADoubleClickOnADrawnCaption_MaximizesAndRestores()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "a Win32 window maximized by the OS");
+            Exception? failure = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new SWF.Form
+                    {
+                        Text = "CaptionDblClickTest", StartPosition = SWF.FormStartPosition.Manual,
+                        Location = new Point(8000, 80), Size = new Size(300, 200), ShowInTaskbar = false,
+                    };
+                    var caption = new SWF.Panel { Dock = SWF.DockStyle.Top, Height = 30 };
+                    int doubles = 0;
+                    caption.DoubleClick += (s, e) =>
+                    {
+                        doubles++;
+                        int cmd = form.WindowState == SWF.FormWindowState.Normal ? 0xF030 : 0xF120;   // SC_MAXIMIZE / SC_RESTORE
+                        SendStack(form, 0x0112, (IntPtr)cmd, IntPtr.Zero);
+                    };
+                    form.Controls.Add(caption);
+                    form.Show();
+                    IntPtr host = IntPtr.Zero;
+                    for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && host == IntPtr.Zero;) { Pump(100); host = HostOf("CaptionDblClickTest"); }
+                    Assert.NotEqual(IntPtr.Zero, host);
+                    Pump(200);
+
+                    void DoubleClickCaption()
+                    {
+                        var d = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.XplatUI")!
+                            .GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+                        Point p = caption.PointToScreen(new Point(caption.Width / 2, caption.Height / 2));
+                        var dt = d.GetType();
+                        var down = dt.GetMethod("InjectMouseDownIn", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+                        var up = dt.GetMethod("InjectMouseUpIn", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+                        for (int i = 0; i < 2; i++)
+                        {
+                            down.Invoke(d, new object[] { form.Handle, p.X, p.Y });
+                            up.Invoke(d, new object[] { form.Handle, p.X, p.Y });
+                        }
+                        Pump(400);
+                    }
+
+                    // What reaches the real window is recorded rather than done: a test window
+                    // maximized would cover the desktop.
+                    var driver = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.XplatUIWebGpu")!;
+                    var hook = driver.GetField("WindowStateRequested", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+                    var real = hook.GetValue(null);
+                    Assert.NotNull(real);   // the Windows host makes the window follow
+                    var requested = new System.Collections.Generic.List<SWF.FormWindowState>();
+                    hook.SetValue(null, new Action<IntPtr, SWF.FormWindowState>((h, st) => { if (h == form.Handle) requested.Add(st); }));
+                    try
+                    {
+                        DoubleClickCaption();
+                        Assert.Equal(1, doubles);
+                        Assert.Equal(SWF.FormWindowState.Maximized, form.WindowState);
+                        DoubleClickCaption();
+                        Assert.Equal(2, doubles);
+                        Assert.Equal(SWF.FormWindowState.Normal, form.WindowState);
+                    }
+                    finally { hook.SetValue(null, real); }
+                    Assert.Equal(new[] { SWF.FormWindowState.Maximized, SWF.FormWindowState.Normal }, requested);
+                    form.Close();
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        [DllImport("user32")] private static extern bool IsZoomed(IntPtr h);
+
         /// <summary>A message to the form through the stack, as the app's own SendMessage is routed.</summary>
         private static void SendStack(SWF.Control c, int msg, IntPtr w, IntPtr l)
         {

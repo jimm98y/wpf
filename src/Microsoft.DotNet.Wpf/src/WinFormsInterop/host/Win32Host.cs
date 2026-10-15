@@ -334,6 +334,22 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         SendMessageW(host._hwnd, 0x0112 /* WM_SYSCOMMAND */, (IntPtr)command, (IntPtr)((p.y << 16) | (p.x & 0xFFFF)));
     }
 
+    /// <summary>Form.WindowState was set: the real window follows, as ShowWindow does it for stock.</summary>
+    private static void ApplyWindowState(IntPtr formHandle, FormWindowState state)
+    {
+        Win32Host host = null;
+        lock (s_byHwnd)
+            foreach (Win32Host h in s_byHwnd.Values)
+                if (!h.FormGone && h._form.IsHandleCreated && h._form.Handle == formHandle) { host = h; break; }
+        if (host == null || host._hwnd == IntPtr.Zero) return;
+        bool zoomed = IsZoomed(host._hwnd), iconic = IsIconic(host._hwnd);
+        if (state == FormWindowState.Maximized && !zoomed) ShowWindow(host._hwnd, 3);          // SW_MAXIMIZE
+        else if (state == FormWindowState.Minimized && !iconic) ShowWindow(host._hwnd, 6);     // SW_MINIMIZE
+        else if (state == FormWindowState.Normal && (zoomed || iconic)) ShowWindow(host._hwnd, 9);   // SW_RESTORE
+    }
+
+    [DllImport("user32")] private static extern bool IsZoomed(IntPtr hwnd);
+    [DllImport("user32")] private static extern bool IsIconic(IntPtr hwnd);
     [DllImport("user32")] private static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32", CharSet = CharSet.Unicode)] private static extern bool SetWindowTextW(IntPtr hwnd, string text);
 
@@ -443,6 +459,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
         System.Windows.Forms.XplatUIWebGpu.FrameChanged += OnFrameChanged;
         System.Windows.Forms.XplatUIWebGpu.BeginWindowMove ??= h => BeginSystemCommand(h, 0xF012);     // SC_MOVE | HTCAPTION
+        System.Windows.Forms.XplatUIWebGpu.WindowStateRequested ??= ApplyWindowState;
         System.Windows.Forms.XplatUIWebGpu.BeginWindowSize ??= (h, edge) => BeginSystemCommand(h, 0xF000 | edge);   // SC_SIZE | WMSZ_*
         IntPtr title = Marshal.StringToHGlobalUni(_form.Text ?? "WinForms");
         try
@@ -928,7 +945,11 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             case 0x007E:                                                          // WM_DISPLAYCHANGE: monitors added, removed or rearranged
                 Screen.Rescan();
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
-            case 0x0005: OnClientResized(); return IntPtr.Zero;                  // WM_SIZE
+            case 0x0005:                                                          // WM_SIZE
+                // SIZE_RESTORED / SIZE_MINIMIZED / SIZE_MAXIMIZED: the form's WindowState is the window's.
+                if (_driver is System.Windows.Forms.XplatUIWebGpu sd && !FormGone && (long)wParam <= 2)
+                    sd.HostWindowState(_formHandle, (long)wParam == 2 ? FormWindowState.Maximized : (long)wParam == 1 ? FormWindowState.Minimized : FormWindowState.Normal);
+                OnClientResized(); return IntPtr.Zero;
             case 0x0003: OnWindowMoved(); return IntPtr.Zero;                    // WM_MOVE
             // WM_PAINT: Windows wants the window's pixels again -- it has just been shown, uncovered
             // or moved, and the surface's contents were not kept (they are not, on the GL backend).
