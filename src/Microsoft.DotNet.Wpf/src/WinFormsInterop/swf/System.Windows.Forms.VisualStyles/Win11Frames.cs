@@ -985,8 +985,20 @@ namespace System.Windows.Forms.VisualStyles
 			int c = ClassId (cls);
 			if (c == 0)
 				return null;
-			if (dpi <= 0 || TierSize (c, part, 192) is not Size)
+			if (dpi <= 0 || TierSize (c, part, 192) is not Size) {
+				// One background image, but a glyph drawn for the DPI (the combo box's chevron, the
+				// spin buttons' arrows).
+				if (dpi * 2 >= 96 * 3 && Get (cls, part, state) is Frame plain && plain.Glyph != null
+				    && GlyphForDpi (c, part, state, dpi) is Frame glyph) {
+					lock (s_dpiCache) {
+						var key = (c, part, state, -dpi);
+						if (!s_dpiCache.TryGetValue (key, out Frame withGlyph))
+							s_dpiCache [key] = withGlyph = WithGlyph (plain, glyph);
+						return withGlyph;
+					}
+				}
 				return Get (cls, part, state);
+			}
 			int tier = dpi >= 240 ? 240 : dpi >= 192 ? 192 : 96;
 			Size? want = tier == 96 ? null : TierSize (c, part, tier);
 			if (dpi * 2 >= tier * 3) {
@@ -1356,6 +1368,109 @@ namespace System.Windows.Forms.VisualStyles
 			4 => (1.9378f, 0.93f, 1f),
 			_ => (1.9378f, 0.93f, 1.1563f),
 		};
+
+		/// <summary>CP_DROPDOWNBUTTONRIGHT/LEFT for a window at <paramref name="dpi"/>: the same
+		/// face (one image at every DPI), the chevron the theme's for that DPI.</summary>
+		internal static Frame DropDownButtonSide (int part, int state, int dpi)
+		{
+			Frame f = DropDownButtonSide (part, state);
+			return dpi * 2 < 96 * 3 ? f : WithGlyph (f, Chevron (state, dpi));
+		}
+
+		/// <summary>CP_DROPDOWNBUTTON for a window at <paramref name="dpi"/>.</summary>
+		internal static Frame DropDownButton (int state, int dpi)
+		{
+			Frame f = DropDownButton (state);
+			return dpi * 2 < 96 * 3 ? f : WithGlyph (f, Chevron (state, dpi));
+		}
+
+		/// <summary>The glyph a part draws over its background at a DPI, where it has one per DPI.</summary>
+		static Frame GlyphForDpi (int c, int part, int state, int dpi) => c switch {
+			ComboBox when part == 1 || part == 6 || part == 7 => Chevron (state, dpi),
+			Spin when part >= 1 && part <= 4 => SpinGlyph (part, state, dpi),
+			_ => null,
+		};
+
+		/// <summary>The spin buttons' arrows at a DPI: at 192 and 240 dpi the theme's own images --
+		/// the 96-dpi arrow drawn twice as large (14x12 at 192, each a pixel nearer its outer edge
+		/// than doubling puts it; 16x13 and a little smaller than 2.5x at 240), fitted in uxdpi
+		/// `spin` -- and nearest-neighbour scaled from the 96-dpi image from half again its DPI.</summary>
+		static Frame SpinGlyph (int part, int state, int dpi)
+		{
+			int tier = dpi >= 240 ? 240 : dpi >= 192 ? 192 : 96;
+			lock (s_dpiCache) {
+				var key = (-4, part, state, dpi);
+				if (s_dpiCache.TryGetValue (key, out Frame f))
+					return f;
+				Frame at;
+				if (tier == 96) {
+					at = Get ("SPIN", part, state)?.Glyph;
+				} else {
+					bool hi = tier == 240;
+					int gw = hi ? 16 : 14, gh = hi ? 13 : 12;
+					// cx, the apex and the base of the up (part 1) and down (part 2) arrows, their half
+					// width and where their corners are cut, in the frame
+					bool down = part == 2 || part == 4;
+					float cx = gw / 2f;
+					(float apex, float bse, float hw, float cut) = (hi, down) switch {
+						(false, false) => (1.7734f, 9f, 6.5125f, 5.1088f),
+						(false, true) => (10.1813f, 3f, 6.6688f, 5.1088f),
+						(true, false) => (2.1563f, 10f, 7.0375f, 5.4391f),
+						(true, true) => (10.8438f, 3f, 7.0375f, 5.4391f),
+					};
+					var tri = new List<PointF> { new PointF (cx, apex), new PointF (cx + hw, bse), new PointF (cx - hw, bse) };
+					tri = ClipEdge (tri, q => q.X >= cx - cut, (a, b) => new PointF (cx - cut, a.Y + (b.Y - a.Y) * (cx - cut - a.X) / (b.X - a.X)));
+					tri = ClipEdge (tri, q => q.X <= cx + cut, (a, b) => new PointF (cx + cut, a.Y + (b.Y - a.Y) * (cx + cut - a.X) / (b.X - a.X)));
+					bool across = part == 3 || part == 4;
+					if (across)
+						for (int i = 0; i < tri.Count; i++)
+							tri [i] = new PointF (tri [i].Y, tri [i].X);
+					uint alpha = state switch { 3 => 0x9bu, 4 => 0x5cu, _ => 0xe4u };
+					at = RenderExactArea (across ? gh : gw, across ? gw : gh, tri, 0);
+					for (int i = 0; i < at.Pixels.Length; i++)
+						at.Pixels [i] = (uint) ((at.Pixels [i] >> 24) * alpha / 255.0 + 0.5) << 24;
+				}
+				f = at == null ? null : dpi * 2 >= tier * 3
+					? Scaled (at, (int) Math.Round (at.Width * (double) dpi / tier, MidpointRounding.AwayFromZero),
+						 (int) Math.Round (at.Height * (double) dpi / tier, MidpointRounding.AwayFromZero))
+					: at;
+				s_dpiCache [key] = f;
+				return f;
+			}
+		}
+
+		/// <summary>A copy of a frame with another glyph over it.</summary>
+		static Frame WithGlyph (Frame f, Frame glyph)
+		{
+			var c = new Frame (f.Width, f.Height) { Stretch = f.Stretch, Margins = f.Margins, Tile = f.Tile, Glyph = glyph };
+			Array.Copy (f.Pixels, c.Pixels, f.Pixels.Length);
+			return c;
+		}
+
+		/// <summary>The combo box chevron at a DPI. The theme has it at 96, 192 and 240 dpi (a glyph
+		/// image per DPI, drawn alone with DTBG_OMITBORDER and fitted, uxdpi `chev`); between them the
+		/// smaller is scaled nearest neighbour from half again its DPI, as uxtheme scales images.
+		/// Frame sizes carry the image's parity, which is what centring it in a button depends on:
+		/// 20x37 at 192, 25x46 at 240.</summary>
+		internal static Frame Chevron (int state, int dpi)
+		{
+			int tier = dpi >= 240 ? 240 : dpi >= 192 ? 192 : 96;
+			lock (s_dpiCache) {
+				var key = (-3, state, 0, dpi);
+				if (s_dpiCache.TryGetValue (key, out Frame f))
+					return f;
+				uint ink = state switch { 2 => 0x1f1f1fu, 4 => 0xa8a8a8u, _ => 0x3f3f3fu };
+				Frame at = tier == 96 ? Chevron (state)
+					: tier == 192 ? RenderExactArea (20, 37, RoundJoinChevron (3.2719f, 15.2f, 10.5f, 22.3969f, 17.7281f, 15.1844f, 1.1506f, -1.1789f, 1.0242f), ink)
+					: RenderExactArea (25, 46, RoundJoinChevron (3.6291f, 18.5f, 12.5004f, 27.375f, 21.3719f, 18.5f, 1.4615f, -1.0071f, 1.0241f), ink);
+				f = dpi * 2 >= tier * 3
+					? Scaled (at, (int) Math.Round (at.Width * (double) dpi / tier, MidpointRounding.AwayFromZero),
+						 (int) Math.Round (at.Height * (double) dpi / tier, MidpointRounding.AwayFromZero))
+					: at;
+				s_dpiCache [key] = f;
+				return f;
+			}
+		}
 
 		/// <summary>CP_DROPDOWNBUTTONRIGHT/LEFT, the button inside an editable combo box: nothing
 		/// but the chevron until the pointer is on it, then an accent-framed face.</summary>
