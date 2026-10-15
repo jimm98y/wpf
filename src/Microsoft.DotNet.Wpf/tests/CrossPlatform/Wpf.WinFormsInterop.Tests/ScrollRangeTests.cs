@@ -100,5 +100,46 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(15 - 1, v.Maximum);
             Assert.Equal(1, v.SmallChange);
         }
+
+        /// <summary>
+        /// A list view scrolls sideways only: comctl32 lays its items out in columns as tall as the
+        /// view and never gives it a vertical bar, however many items there are or however short the
+        /// view -- not even when the horizontal bar takes away the room for a whole row. Ours showed
+        /// both bars (and the item area a bar narrower), and making it show only the one hung: the
+        /// bar into the frame shrank the client, the shrunken client changed the layout, and the
+        /// layout took the bar out again.
+        /// </summary>
+        [Theory]
+        [InlineData(60)]
+        [InlineData(36)]
+        [InlineData(20)]
+        public void AListView_ScrollsSidewaysOnly(int height)
+        {
+            var done = new System.Threading.ManualResetEventSlim();
+            Exception? failure = null;
+            bool hShown = false, vShown = true;
+            var t = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    using var f = new Form { ClientSize = new Size(400, 300) };
+                    var list = new ListView { Location = new Point(0, 0), Size = new Size(200, height), View = View.List };
+                    for (int i = 1; i <= 40; i++) list.Items.Add("List item " + i);
+                    f.Controls.Add(list);
+                    f.CreateControl(); list.CreateControl();
+                    list.Size = new Size(190, height + 1);       // a resize goes through the bars again
+                    hShown = Shown(Field<ScrollBar>(list, "h_scroll"));
+                    vShown = Shown(Field<ScrollBar>(list, "v_scroll"));
+                }
+                catch (Exception ex) { failure = ex; }
+                finally { done.Set(); }
+            }) { IsBackground = true };
+            t.SetApartmentState(System.Threading.ApartmentState.STA);
+            t.Start();
+            Assert.True(done.Wait(TimeSpan.FromSeconds(20)), "laying the list view out never finished");
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            Assert.True(hShown);
+            Assert.False(vShown);
+        }
     }
 }
