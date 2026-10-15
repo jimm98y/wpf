@@ -160,10 +160,10 @@ namespace System.Windows.Forms
 		[Browsable (false)]
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		[EditorBrowsable (EditorBrowsableState.Never)]
-		// A row holds a check box as well as a line of text; Windows gives it two pixels more
-		// than a plain list's row.
-		// A stock checked row is 18 where a plain one is 15.
-		internal override int ExtraItemHeight => 3;
+		// A row holds a check box as well as a line of text: .NET's ItemHeight is the font's height
+		// and two _listItemBordersHeight pixels at the list's DPI (18 for Segoe UI 9pt at 96, where
+		// a plain row is the 15 of its TEXTMETRIC; 36 at 200%).
+		internal override int ExtraItemHeight => Font.Height + 2 * LogicalToDeviceUnits (1) - TextLineHeight;
 
 		// The check box is already drawn at its own indent, so the row needs no further inset.
 		internal override int ItemLeftMargin => 0;

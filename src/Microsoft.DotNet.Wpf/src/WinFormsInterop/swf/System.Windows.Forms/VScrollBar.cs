@@ -68,7 +68,14 @@ namespace System.Windows.Forms
 		}
 
 		protected override Size DefaultSize {
-			get { return ThemeEngine.Current.VScrollBarDefaultSize; }
+			// .NET: the scroll bar width for the control's DPI, and its length scaled, once scaling is
+			// in play.
+			get {
+				Size d = ThemeEngine.Current.VScrollBarDefaultSize;
+				return ScaleHelper.IsDeviceScaled
+					? new Size (SystemInformation.GetVerticalScrollBarWidthForDpi (DeviceDpi), LogicalToDeviceUnits (d.Height))
+					: new Size (SystemInformation.VerticalScrollBarWidth, d.Height);
+			}
 		}	
 
 		protected override CreateParams CreateParams {

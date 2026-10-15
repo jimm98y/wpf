@@ -42,7 +42,8 @@ namespace System.Windows.Forms
 		}
 
 		protected override  Size DefaultSize {
-			get { return ThemeEngine.Current.HScrollBarDefaultSize;}
+			// .NET: the system's scroll bar height (at the system DPI for a per-monitor application).
+			get { return new Size (ThemeEngine.Current.HScrollBarDefaultSize.Width, SystemInformation.HorizontalScrollBarHeight); }
 		}
 
 		protected override CreateParams CreateParams {
