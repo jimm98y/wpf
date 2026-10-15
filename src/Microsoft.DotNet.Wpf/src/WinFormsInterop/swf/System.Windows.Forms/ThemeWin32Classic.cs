@@ -4839,14 +4839,7 @@ namespace System.Windows.Forms
 		public override void DrawPictureBox (Graphics dc, Rectangle clip, PictureBox pb) {
 			Rectangle client = pb.ClientRectangle;
 
-			// Inside the frame. This driver models no non-client band, so a control's frame is
-			// drawn within its own client area and anything placed at the client's origin ends up
-			// underneath it -- two pixels of a picture disappeared under a sunken border, and the
-			// same picture in Windows, whose client already excludes the frame, showed whole.
-			int frame = pb.InternalBorderStyle == BorderStyle.None ? 0
-				: pb.InternalBorderStyle == BorderStyle.FixedSingle ? 1 : 2;
-			client.Inflate (-frame, -frame);
-
+			// The frame is in the non-client area (XplatUIWebGpu.ChildFrame), outside the client.
 			client = new Rectangle (client.Left + pb.Padding.Left, client.Top + pb.Padding.Top, client.Width - pb.Padding.Horizontal, client.Height - pb.Padding.Vertical);
 
 			// FIXME - instead of drawing the whole picturebox every time

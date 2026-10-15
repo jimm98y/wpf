@@ -1203,21 +1203,9 @@ namespace System.Windows.Forms {
 			return null;
 		}
 
-		/// <summary>How far the rows sit inside the control, so the frame drawn around it stays
-		/// visible. This stack paints a control's border into its own client area -- there is no
-		/// non-client area to put it in -- so a control that ignores it draws its first row over
-		/// the frame: measured against a stock tree, every row came out two pixels high and two
-		/// pixels to the left. A sunken frame is two pixels thick, a single line one. The list view
-		/// has the same property for the same reason.</summary>
-		internal int BorderInset {
-			get {
-				switch (InternalBorderStyle) {
-				case BorderStyle.None: return 0;
-				case BorderStyle.FixedSingle: return 1;
-				default: return 2;
-				}
-			}
-		}
+		/// <summary>How far the rows sit inside the client area: nowhere, the frame being in the
+		/// non-client area (XplatUIWebGpu.ChildFrame), as on Windows.</summary>
+		internal int BorderInset => 0;
 
 	        internal Rectangle ViewportRectangle {
 			get {

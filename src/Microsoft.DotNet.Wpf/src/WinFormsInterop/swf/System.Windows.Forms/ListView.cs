@@ -1605,22 +1605,9 @@ namespace System.Windows.Forms
 			}
 		}
 
-		/// <summary>How far the header and item areas sit inside the control, so the frame drawn
-		/// around it stays visible. This driver models no non-client area -- a window and its client
-		/// are the same rectangle -- so the border is painted on the control's own outer edge, and
-		/// children laid out at the origin composite straight over it. That is why the list view was
-		/// the one control with no frame at all.</summary>
-		/// <summary>How far the header and the rows sit inside the control, so the frame drawn
-		/// around it stays visible. A sunken frame is two pixels thick, a single line one.</summary>
-		internal int BorderInset {
-			get {
-				switch (InternalBorderStyle) {
-				case BorderStyle.None: return 0;
-				case BorderStyle.FixedSingle: return 1;
-				default: return 2;
-				}
-			}
-		}
+		/// <summary>How far the header and the rows sit inside the client area: nowhere, the frame
+		/// being in the non-client area (XplatUIWebGpu.ChildFrame), as on Windows.</summary>
+		internal int BorderInset => 0;
 
 		int GetDetailsItemHeight ()
 		{

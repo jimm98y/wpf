@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -373,23 +373,8 @@ namespace System.Windows.Forms {
 					display_rectangle = base.DisplayRectangle;
 				}
 
-				// Inside the frame. A border eats room a docked child cannot have, so the size comes off
-				// here whichever kind it is. The ORIGIN only moves for a 3D edge: this driver models no
-				// non-client area, and it puts the plain border's pixel back when it places a child
-				// (XplatUIWebGpu.ScreenLocation), so moving the origin here too would move it twice.
-				// Shifting it here reached a docked child and no other -- one positioned by Location sat
-				// on the frame regardless, which is what put every control in a bordered Panel a pixel
-				// up and left of Windows'.
-				if (border_style != BorderStyle.None) {
-					int edge = border_style == BorderStyle.FixedSingle
-						? 1 : ThemeEngine.Current.Border3DSize.Width;
-					if (border_style != BorderStyle.FixedSingle) {
-						display_rectangle.X += edge;
-						display_rectangle.Y += edge;
-					}
-					display_rectangle.Width = Math.Max (0, display_rectangle.Width - edge * 2);
-					display_rectangle.Height = Math.Max (0, display_rectangle.Height - edge * 2);
-				}
+				// The border is in the non-client area (XplatUIWebGpu.ChildFrame), outside ClientSize,
+				// as on Windows -- nothing comes off for it here.
 
 				// DockPadding is the same as Padding (according to documentation) but is
 				// calculated lazily, so we use Padding here instead.
@@ -811,20 +796,10 @@ namespace System.Windows.Forms {
 			Recalculate (true);
 		}
 				
-		/// <summary>Where Windows puts the scroll bars: inside the window's frame, which it keeps in
-		/// the non-client area. This driver has none, so the frame is inside ClientRectangle here --
-		/// and a plain border's children are already put back a pixel (XplatUIWebGpu.ClientOrigin),
-		/// so only a 3D edge moves the origin, as in DisplayRectangle. Laid out against the whole
-		/// client, the bars sat on the frame's right and bottom edges and hid them.</summary>
+		/// <summary>Where the scroll bars go: the whole client, the frame being in the non-client
+		/// area (XplatUIWebGpu.ChildFrame).</summary>
 		private Rectangle ScrollBarArea {
-			get {
-				Size size = ClientSize;
-				if (border_style == BorderStyle.None)
-					return new Rectangle (Point.Empty, size);
-				int edge = border_style == BorderStyle.FixedSingle ? 1 : ThemeEngine.Current.Border3DSize.Width;
-				int origin = border_style == BorderStyle.FixedSingle ? 0 : edge;
-				return new Rectangle (origin, origin, Math.Max (0, size.Width - 2 * edge), Math.Max (0, size.Height - 2 * edge));
-			}
+			get { return new Rectangle (Point.Empty, ClientSize); }
 		}
 
 		private void Recalculate (bool doLayout) {

@@ -1830,17 +1830,19 @@ namespace System.Windows.Forms
 			pevent.Handled = true;
 		}
 
-		/// <summary>How far the text sits in from the control's own edge. This driver models no
-		/// non-client frame -- a window and its client are the same rectangle -- so the border is
-		/// painted over the control's outer edge and the document, which starts at zero, ran
-		/// underneath it: the first character came out sliced in half.</summary>
+		/// <summary>How far the text sits in from the client's edge: the border the box shows, less
+		/// what of it the window's own frame already holds. A sunken frame is the window's
+		/// WS_EX_CLIENTEDGE, in the non-client area (XplatUIWebGpu.ChildFrame), so nothing; a single
+		/// line is the edit control's own border, which Windows draws inside the client (it takes
+		/// WS_BORDER off the window), so one; and a box whose window has no frame at all while it
+		/// still shows one (a tool strip's, which draws it itself) keeps the whole width.</summary>
 		internal int TextFrameWidth {
 			get {
-				switch (actual_border_style) {
-					case BorderStyle.None: return 0;
-					case BorderStyle.FixedSingle: return 1;
-					default: return ThemeEngine.Current.Border3DSize.Width;
-				}
+				int shown = actual_border_style == BorderStyle.None ? 0
+					: actual_border_style == BorderStyle.FixedSingle ? 1 : ThemeEngine.Current.Border3DSize.Width;
+				int window = InternalBorderStyle == BorderStyle.None ? 0
+					: InternalBorderStyle == BorderStyle.FixedSingle ? 1 : ThemeEngine.Current.Border3DSize.Width;
+				return Math.Max (0, shown - window);
 			}
 		}
 
@@ -2032,10 +2034,7 @@ namespace System.Windows.Forms
 			int hmod = vscroll.Visible ? vscroll.Width : 0;
 			int vmod = hscroll.Visible ? hscroll.Height : 0;
 
-			// Inside the frame. Windows puts a text box's scroll bars in its non-client area, within
-			// the border; this driver draws that border over the control's own edge, so bars laid
-			// against the edge had it painted across them and stood two pixels further out than a
-			// stock box's.
+			// Inside the edit's own single-line border, when it has one (TextFrameWidth).
 			Rectangle inner = Rectangle.Inflate (ClientRectangle, -TextFrameWidth, -TextFrameWidth);
 
 			if (GetInheritedRtoL () == RightToLeft.Yes) {

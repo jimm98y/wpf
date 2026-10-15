@@ -155,34 +155,9 @@ namespace WinFormsWebGpu.Accessibility
             return driverRect.Width <= 0 || driverRect.Height <= 0 ? Rectangle.Empty : driverRect;
         }
 
-        /// <summary>Where a control's client area begins, in driver space.
-        /// <para>This driver models no non-client area -- a window and its client are the same
-        /// rectangle -- so a control's border is painted inside its own bounds and the client really
-        /// starts a border in from the corner. Everything positioned against the client, which is
-        /// every item a control holds, is otherwise a border out.</para></summary>
-        internal static Point ClientOrigin(Control c)
-        {
-            Point p = c.PointToScreen(Point.Empty);
-            int inset = BorderInset(c);
-            return inset == 0 ? p : new Point(p.X + inset, p.Y + inset);
-        }
-
-        internal static int BorderInset(Control c)
-        {
-            try
-            {
-                switch (c.InternalBorderStyle)
-                {
-                    case BorderStyle.FixedSingle: return 1;
-                    case BorderStyle.Fixed3D: return 2;
-                    default: return 0;
-                }
-            }
-            catch (Exception)
-            {
-                return 0;
-            }
-        }
+        /// <summary>Where a control's client area begins, in driver space. The frame is in the
+        /// non-client area (XplatUIWebGpu.ChildFrame), so this is the client's own origin.</summary>
+        internal static Point ClientOrigin(Control c) => c.PointToScreen(Point.Empty);
 
         /// <summary>The deepest visible control containing a point given in driver space.</summary>
         internal static Control HitTest(Control root, Point driverPoint)

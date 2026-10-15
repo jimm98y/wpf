@@ -714,11 +714,26 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>.NET's UpDownBase.CreateParams: with visual styles the window has no frame at
+		/// all -- the control paints a themed one inside its client (OnPaint), so a 23-pixel spin
+		/// box's ClientSize is 23 high -- and only without them does the border style become
+		/// WS_EX_CLIENTEDGE or WS_BORDER.</summary>
 		protected override CreateParams CreateParams {
 			get {
-				return base.CreateParams;
+				CreateParams cp = base.CreateParams;
+				if (FrameInClient) {
+					cp.Style &= ~(int) WindowStyles.WS_BORDER;
+					cp.ExStyle &= ~(int) WindowExStyles.WS_EX_CLIENTEDGE;
+				}
+				return cp;
 			}
 		}
+
+		/// <summary>Whether the control draws its own frame inside its client (CreateParams).</summary>
+		private bool FrameInClient => Application.RenderWithVisualStyles && BorderStyle != BorderStyle.None;
+
+		/// <summary>The width of the frame drawn inside the client: what the window frame would be.</summary>
+		private int ClientFrameWidth => !FrameInClient ? 0 : BorderStyle == BorderStyle.FixedSingle ? 1 : 2;
 
 		protected override Size DefaultSize {
 			get {
@@ -780,6 +795,15 @@ namespace System.Windows.Forms
 				int w = spnSpinner.Width;
 				spnSpinner.SetBounds (ClientSize.Width - 1 - w, 1, w, ClientSize.Height - 2);
 			}
+			// The edit fills what is inside the frame, beside the spin button. With the frame in the
+			// client (CreateParams) the docking, which works from the client, does not leave it.
+			int edge = ClientFrameWidth;
+			if (txtView != null && spnSpinner != null && edge > 0) {
+				Rectangle inner = Rectangle.Inflate (ClientRectangle, -edge, -edge);
+				int w = spnSpinner.Width;
+				int x = UpDownAlign == LeftRightAlignment.Left ? inner.X + w : inner.X;
+				txtView.SetBounds (x, inner.Y, Math.Max (0, inner.Width - w), Math.Max (0, inner.Height));
+			}
 		}
 
 		protected override void OnMouseDown (MouseEventArgs e)
@@ -807,6 +831,9 @@ namespace System.Windows.Forms
 		protected override void OnPaint (PaintEventArgs e)
 		{
 			base.OnPaint (e);
+			// The themed frame, inside the client (CreateParams): TextBox.TextEdit.Normal in .NET.
+			if (FrameInClient)
+				ThemeEngine.Current.DrawControlBorder (e.Graphics, ClientRectangle, this, BorderStyle == BorderStyle.Fixed3D);
 			if (txtView == null || BorderStyle == BorderStyle.None)
 				return;
 			Rectangle edit = txtView.Bounds;

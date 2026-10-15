@@ -96,12 +96,18 @@ namespace Wpf.WinFormsInterop.Tests
             // Exact-area arrows: ink 2166 -> 2162.
             ["numericupdown"] = (2158, 282),
 
-            // Our text-input frames are drawn on WM_NCPAINT, and DrawToBitmap renders the CLIENT area
-            // only, so our border is absent from every one of these. Windows' native edit control
-            // prints its own frame into the bitmap, so its border is present. Visible only where the
-            // field is the control colour: a white field makes the border ink on both sides and the
-            // difference lands in shade instead.
-            ["textbox-readonly"] = (794, 197),
+            // RE-MEASURED 2026-10-15 when a child's border became non-client (XplatUIWebGpu.ChildFrame)
+            // and DrawToBitmap began printing it, as WM_PRINT's PRF_NONCLIENT does. The edit frame
+            // Windows prints for a window that was never shown is the old #ABADB3 one, not the
+            // Windows 11 field its live window draws (#ECECEC sides, a #838383 underline) -- which is
+            // what ours prints, and on the live window (the off-screen parity "default" and "all"
+            // windows) these boxes are exact. The ink here is that frame; the text has not moved.
+            ["textbox-readonly"] = (260, 380),
+
+            // Windows prints no border for a panel on a form that was never shown (DefWindowProc
+            // draws no frame for a window that is not visible); ours prints the WS_BORDER it shows
+            // on the live window, where the two match. The ink is exactly that one-pixel ring.
+            ["panel-border"] = (356, 0),
 
             ["button"] = (13, 345),
             // RAISED, and only ever on the live window's authority. Windows 11 does not emboss disabled
@@ -193,10 +199,10 @@ namespace Wpf.WinFormsInterop.Tests
             // geometry does and is not a quality signal; the SHADE figure is the one to read.
             // Tabs drawn from the TAB parts as Tab_Paint picks them: ink 11981 -> 11940.
             ["tabcontrol"] = (11970, 295),
-            ["textbox"] = (39, 764),
+            ["textbox"] = (221, 512),         // the frame, see textbox-readonly
             // The remaining shade is the dots being antialiased differently, not drawn differently:
             // Windows renders text with ClearType and we render it grey. See the glyph parity suite.
-            ["textbox-password"] = (16, 602),
+            ["textbox-password"] = (198, 382),   // and the frame, see textbox-readonly
             // The slider is nineteen rows and the channel one row up, both measured on the live window,
             // and the ticks now snap to a column instead of being spread over two by a fractional x.
             ["trackbar"] = (0, 10),
