@@ -53,9 +53,9 @@ namespace Wpf.WinFormsInterop.Tests
                     IntPtr[] windows = PublishedWindows();
                     return windows.Contains(ha) && windows.Contains(hb);
                 }, 10000);
-                Assert.Null(unhandled);
+                Assert.True(unhandled == null, $"run {run}: {unhandled}{Environment.NewLine}A threw:{Environment.NewLine}{a.Thrown}{Environment.NewLine}B threw:{Environment.NewLine}{b.Thrown}");
                 Assert.True(both, $"run {run}: published windows [{string.Join(", ", PublishedWindows())}], " +
-                                  $"expected both 0x{ha:x} and 0x{hb:x}");
+                                  $"expected both 0x{ha:x} and 0x{hb:x}{Environment.NewLine}A threw:{Environment.NewLine}{a.Thrown}{Environment.NewLine}B threw:{Environment.NewLine}{b.Thrown}");
 
                 // Still both, a few ticks later (a shared set would flip between them).
                 Thread.Sleep(300);
@@ -130,7 +130,16 @@ namespace Wpf.WinFormsInterop.Tests
             {
                 Dispatcher? d = null;
                 using var ready = new ManualResetEventSlim();
-                _thread = new Thread(() => { d = Dispatcher.CurrentDispatcher; ready.Set(); Dispatcher.Run(); })
+                _thread = new Thread(() =>
+                {
+                    AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+                    {
+                        if (Thread.CurrentThread == _thread) _thrown.Enqueue(e.Exception.ToString());
+                    };
+                    d = Dispatcher.CurrentDispatcher;
+                    ready.Set();
+                    Dispatcher.Run();
+                })
                 {
                     IsBackground = true,
                     Name = name,
@@ -141,15 +150,26 @@ namespace Wpf.WinFormsInterop.Tests
                 Dispatcher = d!;
             }
 
+            // Every exception thrown on this UI thread, caught or not: a hang here has always been an
+            // exception swallowed somewhere on one of the two threads, and without them in the
+            // failure there was nothing to go on.
+            private readonly System.Collections.Concurrent.ConcurrentQueue<string> _thrown = new System.Collections.Concurrent.ConcurrentQueue<string>();
+
+            public string Thrown => string.Join(Environment.NewLine + "--" + Environment.NewLine, _thrown);
+
             public T Invoke<T>(Func<T> body)
             {
                 T result = default!;
                 Exception? failure = null;
-                Dispatcher.Invoke(() =>
+                // Bounded: a UI thread that never comes back fails the test with what it threw, rather
+                // than hanging the run.
+                var op = Dispatcher.BeginInvoke(new Action(() =>
                 {
                     try { result = body(); }
                     catch (Exception e) { failure = e; }
-                });
+                }));
+                if (op.Wait(TimeSpan.FromSeconds(30)) != DispatcherOperationStatus.Completed)
+                    throw new TimeoutException($"{_thread.Name} did not run the call within 30 s ({op.Status}); its thread threw:{Environment.NewLine}{Thrown}");
                 if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
                 return result;
             }
@@ -159,7 +179,8 @@ namespace Wpf.WinFormsInterop.Tests
             public void Dispose()
             {
                 Dispatcher.InvokeShutdown();
-                _thread.Join(30000);
+                if (!_thread.Join(30000))
+                    throw new TimeoutException($"{_thread.Name} did not shut down within 30 s; its thread threw:{Environment.NewLine}{Thrown}");
             }
         }
     }
