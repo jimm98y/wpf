@@ -303,11 +303,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 int row = sy * w;
                 int k = Math.Min (w - sx, n);
                 int rest = n - k;
-                for (int i = 0; i < k; i++) buf [o++] = px [row + sx + i];
+                Array.Copy (px, row + sx, buf, o, k); o += k;
                 while (rest > 0) {
                     int c = Math.Min (w, rest);
                     rest -= c;
-                    for (int i = 0; i < c; i++) buf [o++] = px [row + i];
+                    Array.Copy (px, row, buf, o, c); o += c;
                 }
                 return;
             }
@@ -319,7 +319,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
                 int avail = w - from;
                 int c = Math.Min (cnt, avail);
-                for (int i = 0; i < c; i++) buf [o++] = px [row + from + i];
+                if (c > 0) { Array.Copy (px, row + from, buf, o, c); o += c; }
                 for (int i = c; i < cnt; i++) buf [o++] = _clamp;
             } else {
                 for (int i = 0; i < n; i++) buf [i] = _clamp;

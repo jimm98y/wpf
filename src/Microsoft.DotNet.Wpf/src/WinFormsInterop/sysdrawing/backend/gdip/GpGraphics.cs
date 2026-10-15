@@ -377,6 +377,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         // ---- Clear ----------------------------------------------------------------------------------
 
+        static readonly bool s_traceClear = Environment.GetEnvironmentVariable ("WF_TRACE_GDIP_IMAGE") == "1";
+
         public void Clear (Color color)
         {
             GpClip clip = Clip;
@@ -385,8 +387,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
             var span = new SolidSpan (scan, (uint) color.ToArgb ());
             ISpanSink sink = clip.Wrap (span);
             Rectangle r = _surface;
+            long t2 = System.Diagnostics.Stopwatch.GetTimestamp (), bl0 = GpScan.s_blendTicks, fl0 = GpSpan.s_fillTicks;
             for (int y = r.Top; y < r.Bottom; y++) sink.OutputSpan (y, r.Left, r.Right);
+            long t3 = System.Diagnostics.Stopwatch.GetTimestamp ();
             scan.End ();
+            if (s_traceClear)
+                Console.Error.WriteLine ($"[gdip-clear] rows {(t3 - t2) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} ms end {(System.Diagnostics.Stopwatch.GetTimestamp () - t3) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} ms sink={sink.GetType ().Name} {r} blend {(GpScan.s_blendTicks - bl0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} fill {(GpSpan.s_fillTicks - fl0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} fmt={Frame.Format}");
         }
 
         // ---- fills ----------------------------------------------------------------------------------

@@ -85,11 +85,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
             if (Buffer.Length < n) Array.Resize (ref Buffer, Math.Max (n, Buffer.Length * 2));
         }
 
+        internal static long s_blendTicks, s_blendPixels;
+
         public void Flush ()
         {
             if (!_pending || _n <= 0) { _pending = false; return; }
             _pending = false;
+            if (!GpGraphicsTrace.On) { Blend (_x, _y, _n); return; }
+            long t = System.Diagnostics.Stopwatch.GetTimestamp ();
             Blend (_x, _y, _n);
+            s_blendTicks += System.Diagnostics.Stopwatch.GetTimestamp () - t; s_blendPixels += _n;
         }
 
         public void End ()
@@ -119,38 +124,46 @@ namespace System.Drawing.WebGpuBackend.Gdip
             case PixelFormat.Format32bppPArgb:
             case PixelFormat.Format32bppRgb:
                 if (_sourceCopy) {
-                    for (int i = 0; i < n; i++) {
-                        uint c = s [i];
-                        // 32RGB too: the premultiplied colour as it is, alpha byte and all (the oracle
-                        // reads it back raw: a Clear to 80FF8040 leaves 80804020).
-                        // 32RGB is blended as ARGB with no conversion back (BuildPipeline 0x22009): the alpha is stored.
-                        Put32 (bits, row + (x + i) * 4, c);
-                    }
+                    // 32RGB too: the premultiplied colour as it is, alpha byte and all (the oracle
+                    // reads it back raw: a Clear to 80FF8040 leaves 80804020).
+                    // 32RGB is blended as ARGB with no conversion back (BuildPipeline 0x22009): the alpha is stored.
+                    s.AsSpan (0, n).CopyTo (System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint> (bits.AsSpan (row + x * 4, n * 4)));
                 } else {
+                    Span<uint> dst = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint> (bits.AsSpan (row + x * 4, n * 4));
                     for (int i = 0; i < n; i++) {
-                        int o = row + (x + i) * 4;
                         uint c = s [i];
                         uint a = c >> 24;
                         if (a == 0) continue;
-                        if (a != 255) c = Over (c, Get32 (bits, o));
-                        Put32 (bits, o, c);
+                        dst [i] = a == 255 ? c : Over (c, dst [i]);
                     }
                 }
                 break;
             case PixelFormat.Format32bppArgb: {
                 if (_divide.Length < n) _divide = new uint [Math.Max (n, _divide.Length * 2)];
                 uint[] t = _divide;
-                for (int i = 0; i < n; i++) {
-                    uint c = s [i];
-                    if (_sourceCopy) { t [i] = c; continue; }
-                    uint d = GdipPixels.PremultiplyArgb (Get32 (bits, row + (x + i) * 4));
-                    uint a = c >> 24;
-                    if (a == 255) d = c;
-                    else if (a != 0) d = Over (c, d);
-                    t [i] = d;
+                // The row as words (little-endian: the bytes Get32/Put32 read and write).
+                Span<uint> dst = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint> (bits.AsSpan (row + x * 4, n * 4));
+                // In AlphaDivideFast's groups of eight: a group whose source pixels are all opaque is
+                // the source as it is (the blend gives the source, and the divide leaves an all-opaque
+                // group alone), so it is copied straight; the rest go the long way.
+                int i0 = 0;
+                for (; i0 + 8 <= n; i0 += 8) {
+                    // (SourceCopy: an all-opaque or all-clear group, which the divide leaves alone.)
+                    // A run of such groups goes over in one copy.
+                    int j0 = i0;
+                    while (j0 + 8 <= n && (_sourceCopy ? AllOpaqueOrClear (s, j0) : AllOpaque (s, j0))) j0 += 8;
+                    if (j0 > i0) {
+                        s.AsSpan (i0, j0 - i0).CopyTo (dst.Slice (i0, j0 - i0));
+                        i0 = j0 - 8;
+                        continue;
+                    }
+                    for (int i = i0; i < i0 + 8; i++)
+                        t [i] = BlendArgbPixel (s [i], dst [i]);
+                    AlphaDivideFast (t.AsSpan (i0, 8));
+                    t.AsSpan (i0, 8).CopyTo (dst.Slice (i0, 8));
                 }
-                AlphaDivideFast (t, n);
-                for (int i = 0; i < n; i++) Put32 (bits, row + (x + i) * 4, t [i]);
+                for (int i = i0; i < n; i++)
+                    dst [i] = GdipPixels.UnpremultiplyArgb (BlendArgbPixel (s [i], dst [i]));
                 break;
             }
             case PixelFormat.Format24bppRgb:
@@ -395,6 +408,52 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// scalar tail, like AlphaDivide_sRGB_Original, keeps every alpha-0 and alpha-255 pixel.
         /// The colour of an alpha-0 pixel survives a blend only when the brush is not premultiplied
         /// (a translucent clamp colour, say).</summary>
+        /// <summary>One pixel of the ARGB blend: the source's premultiplied colour over the destination
+        /// premultiplied (or the source as it is, for SourceCopy), before the divide.</summary>
+        uint BlendArgbPixel (uint c, uint d)
+        {
+            if (_sourceCopy) return c;
+            uint a = c >> 24;
+            return a == 255 ? c : a == 0 ? GdipPixels.PremultiplyArgb (d) : Over (c, GdipPixels.PremultiplyArgb (d));
+        }
+
+        static bool AllOpaqueOrClear (uint[] s, int i)
+        {
+            bool opaque = true, clear = true;
+            for (int k = 0; k < 8; k++) {
+                uint a = s [i + k] >> 24;
+                if (a != 255) opaque = false;
+                if (a != 0) clear = false;
+            }
+            return opaque || clear;
+        }
+
+        static bool AllOpaque (uint[] s, int i)
+        {
+            for (int k = 0; k < 8; k++)
+                if (s [i + k] < 0xff000000u) return false;
+            return true;
+        }
+
+        /// <summary>AlphaDivideFast on one group of eight.</summary>
+        static void AlphaDivideFast (Span<uint> p)
+        {
+            bool all0 = true, all255 = true;
+            for (int k = 0; k < 8; k++) {
+                uint a = p [k] >> 24;
+                if (a != 0) all0 = false;
+                if (a != 255) all255 = false;
+            }
+            if (all0 || all255) return;
+            for (int k = 0; k < 8; k++) {
+                uint c = p [k];
+                int a = (int) (c >> 24);
+                if (a == 0) { p [k] = 0; continue; }
+                p [k] = (uint) (a << 24 | GdipPixels.Unpremultiply ((int) (c >> 16) & 0xff, a) << 16
+                    | GdipPixels.Unpremultiply ((int) (c >> 8) & 0xff, a) << 8 | GdipPixels.Unpremultiply ((int) c & 0xff, a));
+            }
+        }
+
         internal static void AlphaDivideFast (uint[] p, int n)
         {
             int i = 0;

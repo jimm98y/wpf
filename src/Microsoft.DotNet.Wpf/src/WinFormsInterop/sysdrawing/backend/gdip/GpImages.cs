@@ -278,7 +278,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 DpBitmapSrc band = PipeLockBits (bmp, ref src, m, ia);
                 long tB = System.Diagnostics.Stopwatch.GetTimestamp ();
                 if (half) { src.X -= 0.5f; src.Y -= 0.5f; }
+                long f0 = GpSpan.s_fillTicks, b0 = GpScan.s_blendTicks;
                 DriverDrawImage (band, drawBounds, ia?.Dp ?? DpImageAttr.Default, pts, src);
+                if (s_traceImage)
+                    Console.Error.WriteLine ($"[gdip-img]   fill {(GpSpan.s_fillTicks - f0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} ms blend {(GpScan.s_blendTicks - b0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} ms");
                 if (s_traceImage)
                     Console.Error.WriteLine ($"[gdip-img] {bmp.Width}x{bmp.Height} -> {drawBounds} lock {(tB - tA) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} ms draw {(System.Diagnostics.Stopwatch.GetTimestamp () - tB) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} ms interp={_ctx.Interpolation} m={m.M11},{m.M22},{m.Dx},{m.Dy} cx={m.Complexity}");
             } finally {
@@ -522,7 +525,23 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 return new DpBitmapSrc (imgW, n, GpBitmapScaler.Averaging (full, imgW, imgH, r0, r0 + n));
             }
             var px = new uint [bmp.Width * n];
-            if (n > 0) {
+            if (n > 0 && (f.Format == PixelFormat.Format32bppPArgb || f.Format == PixelFormat.Format32bppArgb) && f.Width == bmp.Width) {
+                // The band straight out of the bits, word by word: what the conversion to PARGB below
+                // makes of a 32-bit ARGB or PARGB bitmap (ReadArgb, then WriteArgb's PremultiplyArgb),
+                // without the intermediate bitmap or the byte-at-a-time copy. A full-size splash drawn
+                // every 25 ms spent 11 ms here.
+                bool premultiply = f.Format == PixelFormat.Format32bppArgb;
+                int bw = bmp.Width;
+                for (int yy = 0; yy < n; yy++) {
+                    ReadOnlySpan<uint> row = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, uint> (f.Bits.AsSpan ((r0 + yy) * f.Stride, bw * 4));
+                    Span<uint> dst = px.AsSpan (yy * bw, bw);
+                    if (!premultiply) { row.CopyTo (dst); continue; }
+                    for (int xx = 0; xx < bw; xx++) {
+                        uint v = row [xx];
+                        dst [xx] = v >= 0xff000000u ? v : GdipPixels.PremultiplyArgb (v);
+                    }
+                }
+            } else if (n > 0) {
                 GdipFrame c = f.Format == PixelFormat.Format32bppPArgb ? f : GdipPixels.Convert (f, new Rectangle (0, r0, f.Width, n), PixelFormat.Format32bppPArgb, false);
                 int baseRow = f.Format == PixelFormat.Format32bppPArgb ? r0 : 0;
                 for (int yy = 0; yy < n; yy++) {
