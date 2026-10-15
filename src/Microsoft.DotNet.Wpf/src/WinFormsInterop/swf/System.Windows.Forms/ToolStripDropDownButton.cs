@@ -41,8 +41,9 @@ namespace System.Windows.Forms
 		private protected class ToolStripDropDownButtonInternalLayout : ToolStripItemInternalLayout
 		{
 			private readonly ToolStripDropDownButton _ownerItem;
-			private static readonly Size s_dropDownArrowSize = new Size (5, 3);
-			private readonly Padding _dropDownArrowPadding = new Padding (2);
+			// (At the item's DPI, as .NET scales them in the layout's constructor.)
+			private readonly Size s_dropDownArrowSize;
+			private readonly Padding _dropDownArrowPadding;
 			private Rectangle _dropDownArrowRect = Rectangle.Empty;
 
 			public Rectangle DropDownArrowRect => _dropDownArrowRect;
@@ -51,6 +52,9 @@ namespace System.Windows.Forms
 				: base (ownerItem)
 			{
 				_ownerItem = ownerItem;
+				int dpi = ownerItem.DeviceDpi;
+				s_dropDownArrowSize = ScaleHelper.ScaleToDpi (new Size (5, 3), dpi);
+				_dropDownArrowPadding = new Padding (ScaleHelper.ScaleToDpi (2, dpi));
 			}
 
 			public override Size GetPreferredSize (Size constrainingSize)

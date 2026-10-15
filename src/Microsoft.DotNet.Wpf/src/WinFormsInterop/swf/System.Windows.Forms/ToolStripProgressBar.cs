@@ -125,7 +125,8 @@ namespace System.Windows.Forms
 
 		#region Protected Properties
 		protected internal override Padding DefaultMargin {
-			get { return Owner is StatusStrip ? new Padding (1, 3, 1, 3) : new Padding (1, 2, 1, 1); }
+			// (At the system DPI, as .NET's _defaultMargin / _defaultStatusStripMargin.)
+			get { return ScaleHelper.ScaleToDpi (Owner is StatusStrip ? new Padding (1, 3, 1, 3) : new Padding (1, 2, 1, 1), ScaleHelper.InitialSystemDpi); }
 		}
 		protected override Size DefaultSize { get { return new Size (100, 15); } }
 		#endregion

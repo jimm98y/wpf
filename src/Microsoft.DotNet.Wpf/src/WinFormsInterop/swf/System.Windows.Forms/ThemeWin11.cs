@@ -381,7 +381,7 @@ namespace System.Windows.Forms
 			// the labels already agree, so only the box moves).
 			rect_checkrect.Offset (3, -1);
 			// Composited as the image list composites it (Win11Frames.DrawStateImage).
-			Win11Frames.Frame box = Win11Frames.CheckBox (item.Checked ? 5 : 1);
+			Win11Frames.Frame box = Win11Frames.Get ("BUTTON", 3, item.Checked ? 5 : 1, control.DeviceDpi);
 			Win11Frames.DrawStateImage (dc, box, new Rectangle (rect_checkrect.X + (rect_checkrect.Width - box.Width) / 2,
 				rect_checkrect.Y + (rect_checkrect.Height - box.Height) / 2, box.Width, box.Height));
 		}
@@ -719,15 +719,19 @@ namespace System.Windows.Forms
 		public override void TreeViewDrawNodePlusMinus (TreeView treeView, TreeNode node, Graphics dc,
 					        int x, int middle)
 		{
-			const int Side = 9;
 			// x arrives five pixels into the indent cell (see TreeView.DrawTreeNode), so the cell's
 			// right edge is that far back plus the indent.
 			int right = x - 5 + treeView.Indent;
-			var box = new Rectangle (right - Side - 2, middle - 3, Side - 1, Side - 1);
+			// comctl32's TV_RealDrawPlusMinus: TVP_GLYPH in a square of its TS_DRAW size for the tree's
+			// DPI (9 at 96, 18 at 200%), no larger than a row, centred on the button's point -- s / 2
+			// to its left and above, the rest to its right and below.
+			Win11Frames.Frame glyph = Win11Frames.Get ("TREEVIEW", 2, node.IsExpanded ? 2 : 1, treeView.DeviceDpi);
+			int Side = Math.Min (glyph?.Width ?? 9, Math.Max (1, treeView.ItemHeight));
+			int cx = right - 7, cy = middle + 1;
+			var box = new Rectangle (cx - Side / 2, cy - Side / 2, Side - 1, Side - 1);
 
 			// TVP_GLYPH, closed or opened, at its own size.
-			Win11Frames.Draw (dc, Win11Frames.Get ("TREEVIEW", 2, node.IsExpanded ? 2 : 1),
-					  new Rectangle (box.X, box.Y, Side, Side));
+			Win11Frames.Draw (dc, glyph, new Rectangle (box.X, box.Y, Side, Side));
 		}
 
 		/// <summary>A chevron, which is how Windows expands a tree. The boxed +/- belongs to a much

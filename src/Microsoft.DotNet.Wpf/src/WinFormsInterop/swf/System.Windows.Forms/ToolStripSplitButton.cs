@@ -226,7 +226,8 @@ namespace System.Windows.Forms
 		[EditorBrowsable (EditorBrowsableState.Never)]
 		public virtual void ResetDropDownButtonWidth ()
 		{
-			this.DropDownButtonWidth = 11;
+			// .NET's DefaultDropDownButtonWidth: 11 at the system DPI.
+			this.DropDownButtonWidth = ScaleHelper.ScaleToInitialSystemDpi (11);
 		}
 		#endregion
 
