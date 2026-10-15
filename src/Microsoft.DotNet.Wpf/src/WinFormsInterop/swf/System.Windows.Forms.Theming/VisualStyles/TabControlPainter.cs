@@ -58,8 +58,8 @@ namespace System.Windows.Forms.Theming.VisualStyles
 				return base.DrawTab (dc, page, tab, bounds, is_selected);
 			new VisualStyleRenderer (element).DrawBackground (dc, bounds);
 			bounds.Inflate (
-				-(tab.Padding.X),
-				-(tab.Padding.Y));
+				-(tab.LayoutPadding.X),
+				-(tab.LayoutPadding.Y));
 			Rectangle text_area = bounds;
 			if (tab.ImageList != null && page.ImageIndex >= 0 && page.ImageIndex < tab.ImageList.Images.Count) {
 				int image_y = bounds.Y + (bounds.Height - tab.ImageList.ImageSize.Height) / 2;

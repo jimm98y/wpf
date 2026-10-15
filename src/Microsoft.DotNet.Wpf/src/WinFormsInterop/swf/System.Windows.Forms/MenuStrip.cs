@@ -1,4 +1,4 @@
-//
+﻿//
 // MenuStrip.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -88,10 +88,15 @@ namespace System.Windows.Forms
 		#endregion
 
 		#region Protected Properties
-		protected override Padding DefaultGripMargin { get { return new Padding (2, 2, 0, 2); } }
-		protected override Padding DefaultPadding { get { return new Padding (6, 2, 0, 2); } }
+		protected override Padding DefaultGripMargin { get { return ScaleHelper.IsThreadPerMonitorV2Aware ? ScaleHelper.ScaleToDpi (new Padding (2, 2, 0, 2), DeviceDpi) : new Padding (2, 2, 0, 2); } }
+		protected override Padding DefaultPadding {
+			get {
+				Padding p = GripStyle == ToolStripGripStyle.Visible ? new Padding (3, 2, 0, 2) : new Padding (6, 2, 0, 2);
+				return ScaleHelper.IsThreadPerMonitorV2Aware ? ScaleHelper.ScaleToDpi (p, DeviceDpi) : p;
+			}
+		}
 		protected override bool DefaultShowItemToolTips { get { return false; } }
-		protected override Size DefaultSize { get { return new Size (200, 24); } }
+		protected override Size DefaultSize { get { return ScaleHelper.IsThreadPerMonitorV2Aware ? ScaleHelper.ScaleToDpi (new Size (200, 24), DeviceDpi) : new Size (200, 24); } }
 		#endregion
 
 		#region Protected Methods

@@ -186,7 +186,7 @@ namespace System.Windows.Forms {
 			columnHeadersDefaultCellStyle.Font = this.Font;
 			columnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
 			columnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.True;
-			columnHeadersHeight = 23;
+			columnHeadersHeight = LogicalToDeviceUnits (23);   // .NET: at the DPI the grid is created at
 			columnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.EnableResizing;
 			columnHeadersVisible = true;
 			columns = CreateColumnsInstance();
@@ -209,7 +209,7 @@ namespace System.Windows.Forms {
 			rowHeadersBorderStyle = DataGridViewHeaderBorderStyle.Raised;
 			rowHeadersDefaultCellStyle = (DataGridViewCellStyle) columnHeadersDefaultCellStyle.Clone ();
 			rowHeadersVisible = true;
-			rowHeadersWidth = 41;
+			rowHeadersWidth = LogicalToDeviceUnits (41);
 			rowHeadersWidthSizeMode = DataGridViewRowHeadersWidthSizeMode.EnableResizing;
 			rows = CreateRowsInstance();
 			rowsDefaultCellStyle = new DataGridViewCellStyle();

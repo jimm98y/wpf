@@ -2700,7 +2700,7 @@ namespace System.Windows.Forms
 					// pixels from the tab's left edge, where centring it in the widened tab put it thirteen.
 					int capBox = TextRenderer.MeasureText (page.Text, tab.Font,
 					                                       new Size (int.MaxValue, int.MaxValue),
-					                                       TextFormatFlags.NoPadding).Width + tab.Padding.X * 2;
+					                                       TextFormatFlags.NoPadding).Width + tab.LayoutPadding.X * 2;
 					// From the tab's BASE left edge: the selected one is drawn standing proud, two pixels
 					// wider to the left, and its caption does not move with the decoration.
 					int capX = bounds.X + (selected ? TabControlSelectedDelta.X : 0);

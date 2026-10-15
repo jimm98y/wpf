@@ -606,7 +606,14 @@ namespace System.Windows.Forms
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		protected override void ScaleControl (SizeF factor, BoundsSpecified specified)
 		{
+			// .NET: the splitter and its distance are as much larger as the split direction is scaled.
+			float scale = Orientation == Orientation.Vertical ? factor.Width : factor.Height;
+			int distance = SplitterDistance;
 			base.ScaleControl (factor, specified);
+			if (scale != 1F) {
+				SplitterWidth = Math.Max (1, (int) Math.Round (SplitterWidth * scale));
+				SplitterDistance = (int) Math.Round (distance * scale);
+			}
 		}
 		
 		protected override void Select (bool directed, bool forward)

@@ -770,6 +770,9 @@ namespace System.Windows.Forms
 		{
 			txtView.Font = this.Font;
 			Height = PreferredHeight;
+			// .NET calls the base last: the container's auto-scaling for the new font (a DPI
+			// change scales a spin box this way), and the event.
+			base.OnFontChanged (e);
 		}
 
 		protected override void OnHandleCreated (EventArgs e)

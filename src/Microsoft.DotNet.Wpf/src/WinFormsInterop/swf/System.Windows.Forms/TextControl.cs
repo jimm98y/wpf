@@ -576,7 +576,7 @@ namespace System.Windows.Forms {
 			if (!multiline || owner is RichTextBox)
 				return;
 			Font font = owner.Font;
-			float emPx = font.SizeInPoints * 96f / 72f;
+			float emPx = font.SizeInPoints * System.Drawing.WebGpuBackend.DisplayDpi.Y / 72f;
 			if (!System.Drawing.WebGpuBackend.TextMetrics.TryGetAverageCharWidth (font.FontFamily.Name, font.Bold, font.Italic, emPx, out int ave)
 			    || !System.Drawing.WebGpuBackend.TextMetrics.TryGetMaxNegativeBearings (font.FontFamily.Name, font.Bold, font.Italic, emPx, out int negA, out int negC))
 				return;

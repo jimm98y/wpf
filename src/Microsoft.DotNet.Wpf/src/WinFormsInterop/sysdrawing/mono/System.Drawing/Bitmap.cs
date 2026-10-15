@@ -1,4 +1,4 @@
-//
+﻿//
 // System.Drawing.Bitmap.cs
 //
 // Copyright (C) 2002 Ximian, Inc.  http://www.ximian.com
@@ -103,6 +103,9 @@ namespace System.Drawing
 			if (bits > int.MaxValue || stride > int.MaxValue || stride * height > int.MaxValue)
 				throw new ArgumentException ("Parameter is not valid.");
 			managed = new GdipImageData (new GdipFrame (width, height, format)) { Flags = GdipImageData.NewFlags (format) };
+			// GdipCreateBitmapFromScan0: a new bitmap has the screen's resolution (WebGpuBackend.DisplayDpi).
+			managed.Frame.DpiX = WebGpuBackend.DisplayDpi.X;
+			managed.Frame.DpiY = WebGpuBackend.DisplayDpi.Y;
 			// A new bitmap of an alpha format is transparent black: nothing to draw under a recording.
 			blank = Image.IsAlphaPixelFormat (format);
 		}

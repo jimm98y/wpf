@@ -1,4 +1,4 @@
-//
+﻿//
 // StatusStrip.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -108,7 +108,7 @@ namespace System.Windows.Forms
 
 		#region Protected Properties
 		protected internal override Padding DefaultMargin {
-			get { return new Padding (0, 3, 0, 2); }
+			get { return ScaleHelper.ScaleToDpi (new Padding (0, 3, 0, 2), ScaleHelper.InitialSystemDpi); }
 		}
 		#endregion
 

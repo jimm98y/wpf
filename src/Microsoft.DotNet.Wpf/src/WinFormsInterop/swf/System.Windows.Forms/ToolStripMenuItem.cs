@@ -1,4 +1,4 @@
-//
+﻿//
 // ToolStripMenuItem.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -195,12 +195,13 @@ namespace System.Windows.Forms
 			get { return new Padding (0); }
 		}
 
+		// .NET: at the item's DPI (dropdown items are padded (0, 1, 0, 1) there).
 		protected override Padding DefaultPadding {
-			get { return new Padding (4, 0, 4, 0); }
+			get { return ScaleHelper.ScaleToDpi (new Padding (4, 0, 4, 0), DeviceDpi); }
 		}
 
 		protected override Size DefaultSize {
-			get { return new Size (32, 19); }
+			get { return ScaleHelper.IsThreadPerMonitorV2Aware ? ScaleHelper.ScaleToDpi (new Size (32, 19), DeviceDpi) : new Size (32, 19); }
 		}
 		#endregion
 

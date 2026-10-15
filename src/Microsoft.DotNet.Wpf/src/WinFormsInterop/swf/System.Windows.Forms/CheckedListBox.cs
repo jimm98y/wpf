@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -163,7 +163,7 @@ namespace System.Windows.Forms
 		// A row holds a check box as well as a line of text; Windows gives it two pixels more
 		// than a plain list's row.
 		// A stock checked row is 18 where a plain one is 15.
-		internal override int ExtraItemHeight => 2;
+		internal override int ExtraItemHeight => 3;
 
 		// The check box is already drawn at its own indent, so the row needs no further inset.
 		internal override int ItemLeftMargin => 0;

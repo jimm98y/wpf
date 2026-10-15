@@ -1,4 +1,4 @@
-//
+﻿//
 // ToolStripItem.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -860,11 +860,22 @@ namespace System.Windows.Forms
 		#region Protected Properties
 		protected virtual bool DefaultAutoToolTip { get { return false; } }
 		protected virtual ToolStripItemDisplayStyle DefaultDisplayStyle { get { return ToolStripItemDisplayStyle.ImageAndText; } }
+		// .NET: margins at the DPI the item was created at (DeviceDpi), the size too when the
+		// application is per-monitor aware.
 		protected internal virtual Padding DefaultMargin {
-			get { return owner is StatusStrip ? new Padding (0, 2, 0, 0) : new Padding (0, 1, 0, 2); }
+			get { return ScaleHelper.ScaleToDpi (owner is StatusStrip ? new Padding (0, 2, 0, 0) : new Padding (0, 1, 0, 2), DeviceDpi); }
 		}
 		protected virtual Padding DefaultPadding { get { return new Padding (); } }
-		protected virtual Size DefaultSize { get { return new Size (23, 23); } }
+		protected virtual Size DefaultSize { get { return ScaleHelper.IsThreadPerMonitorV2Aware ? ScaleHelper.ScaleToDpi (new Size (23, 23), DeviceDpi) : new Size (23, 23); } }
+
+		private int _deviceDpi;
+
+		/// <summary>.NET's ToolStripItem.DeviceDpi: the DPI of the strip it was last on (the system
+		/// DPI until then).</summary>
+		internal virtual int DeviceDpi {
+			get => _deviceDpi == 0 ? ScaleHelper.InitialSystemDpi : _deviceDpi;
+			set => _deviceDpi = value;
+		}
 		protected internal virtual bool DismissWhenClicked { get { return true; } }
 		[Browsable (false)]
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]

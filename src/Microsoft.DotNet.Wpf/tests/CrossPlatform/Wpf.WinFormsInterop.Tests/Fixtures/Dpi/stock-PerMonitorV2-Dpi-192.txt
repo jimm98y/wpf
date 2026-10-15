@@ -1,0 +1,244 @@
+HighDpiMode=PerMonitorV2 AutoScaleMode=Dpi
+[shown] DeviceDpi=192 hwnd=1026x1011 client=1000x940
+Form Size=1026x1011 ClientSize=1000x940 Font=Segoe UI 9pt/32 ASD={Width=192, Height=192} CASD={Width=192, Height=192} MinSize={Width=0, Height=0}
+SysInfo VSB=34 HSB=34 VSBdpi=34 Menu=39 Border3D={Width=2, Height=2} DefaultFont=Segoe UI 9pt/32
+button     Button         B=24,24,150x46 C=150x46 dpi=192 font=Segoe UI 9pt/32
+label      Label          B=200,32,117x32 C=117x32 dpi=192 font=Segoe UI 9pt/32
+text       TextBox        B=24,88,236x39 C=232x35 dpi=192 font=Segoe UI 9pt/32
+combo      ComboBox       B=280,88,238x40 C=238x40 dpi=192 font=Segoe UI 9pt/32 itemH=32 ddW=238
+check      CheckBox       B=540,92,111x36 C=111x36 dpi=192 font=Segoe UI 9pt/32
+list       ListBox        B=24,152,236x164 C=232x160 dpi=192 font=Segoe UI 9pt/32 itemH=32
+nud        NumericUpDown  B=280,152,240x39 C=240x39 dpi=192 font=Segoe UI 9pt/32
+panel      Panel          B=540,152,238x186 C=236x184 dpi=192 font=Segoe UI 9pt/32
+inner      Button         B=16,16,120x46 C=120x46 dpi=192 font=Segoe UI 9pt/32
+group      GroupBox       B=24,360,360x160 C=360x160 dpi=192 font=Segoe UI 9pt/32
+radio      RadioButton    B=20,44,210x72 C=210x72 dpi=192 font=Segoe UI 9pt/32
+tree       TreeView       B=400,360,236x156 C=232x152 dpi=192 font=Segoe UI 9pt/32 itemH=34 indent=19
+lv         ListView       B=660,360,316x156 C=312x152 dpi=192 font=Segoe UI 9pt/32 col=80 col=60
+grid       DataGridView   B=24,540,480x200 C=480x200 dpi=192 font=Segoe UI 9pt/32 rowH=41 hdrW=82 colHdrH=46 col=200 col=200
+tabs       TabControl     B=520,540,460x200 C=460x200 dpi=192 font=Segoe UI 9pt/32 itemSize={Width=90, Height=38} disp={X=8,Y=46,Width=444,Height=146}
+           TabPage        B=8,46,444x146 C=444x146 dpi=192 font=Segoe UI 9pt/32
+           TabPage        B=8,46,444x146 C=444x146 dpi=192 font=Segoe UI 9pt/32
+progress   ProgressBar    B=24,760,400x46 C=400x46 dpi=192 font=Segoe UI 9pt/32
+track      TrackBar       B=440,760,300x90 C=300x90 dpi=192 font=Segoe UI 9pt/32
+split      SplitContainer B=760,760,220x120 C=220x120 dpi=192 font=Segoe UI 9pt/32 splitter=99/8
+           SplitterPanel  B=0,0,99x120 C=99x120 dpi=192 font=Segoe UI 9pt/32
+           SplitterPanel  B=107,0,113x120 C=113x120 dpi=192 font=Segoe UI 9pt/32
+tool       ToolStrip      B=0,52,1000x50 C=1000x50 dpi=192 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=0,Top=0,Right=4,Bottom=0} [Btn:18,2,54x44 m={Left=0,Top=2,Right=0,Bottom=4} p={Left=0,Top=0,Right=0,Bottom=0}] [:72,0,6x50 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=0,Top=0,Right=0,Bottom=0}] [:80,0,80x50 m={Left=2,Top=0,Right=2,Bottom=0} p={Left=0,Top=0,Right=0,Bottom=0}]
+           ToolStripComboBoxControl B=80,5,80x40 C=80x40 dpi=192 font=Segoe UI 9pt/32 itemH=32 ddW=80
+menu       MenuStrip      B=0,0,1000x52 C=1000x52 dpi=192 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=24,Top=8,Right=0,Bottom=8} [File:24,8,71x36 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=8,Top=0,Right=8,Bottom=0}] [Edit:95,8,74x36 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=8,Top=0,Right=8,Bottom=0}]
+status     StatusStrip    B=0,898,1000x42 C=1000x42 dpi=192 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=2,Top=0,Right=28,Bottom=0} [Ready:2,6,78x32 m={Left=0,Top=6,Right=0,Bottom=4} p={Left=0,Top=0,Right=0,Bottom=0}]
+[dpi96] DeviceDpi=96 hwnd=516x509 client=490x438
+Form Size=516x509 ClientSize=490x438 Font=Segoe UI 4.5pt/16 ASD={Width=96, Height=96} CASD={Width=96, Height=96} MinSize={Width=0, Height=0}
+SysInfo VSB=34 HSB=34 VSBdpi=17 Menu=39 Border3D={Width=2, Height=2} DefaultFont=Segoe UI 9pt/32
+button     Button         B=12,12,75x23 C=75x23 dpi=96 font=Segoe UI 4.5pt/16
+label      Label          B=100,16,57x15 C=57x15 dpi=96 font=Segoe UI 4.5pt/16
+text       TextBox        B=12,44,120x23 C=116x19 dpi=96 font=Segoe UI 4.5pt/16
+combo      ComboBox       B=140,44,121x23 C=121x23 dpi=96 font=Segoe UI 4.5pt/16 itemH=15 ddW=121
+check      CheckBox       B=270,46,72x27 C=72x27 dpi=96 font=Segoe UI 4.5pt/16
+list       ListBox        B=12,76,120x94 C=116x90 dpi=96 font=Segoe UI 4.5pt/16 itemH=15
+nud        NumericUpDown  B=140,76,120x23 C=120x23 dpi=96 font=Segoe UI 4.5pt/16
+panel      Panel          B=270,76,120x94 C=118x92 dpi=96 font=Segoe UI 4.5pt/16
+inner      Button         B=8,8,60x23 C=60x23 dpi=96 font=Segoe UI 4.5pt/16
+group      GroupBox       B=12,180,180x80 C=180x80 dpi=96 font=Segoe UI 4.5pt/16
+radio      RadioButton    B=10,22,68x26 C=68x26 dpi=96 font=Segoe UI 4.5pt/16
+tree       TreeView       B=200,180,120x80 C=116x76 dpi=96 font=Segoe UI 4.5pt/16 itemH=18 indent=19
+lv         ListView       B=330,180,160x80 C=156x76 dpi=96 font=Segoe UI 4.5pt/16 col=80 col=60
+grid       DataGridView   B=12,270,240x100 C=240x100 dpi=96 font=Segoe UI 4.5pt/16 rowH=41 hdrW=82 colHdrH=46 col=200 col=200
+tabs       TabControl     B=260,270,230x100 C=230x100 dpi=96 font=Segoe UI 4.5pt/16 itemSize={Width=48, Height=21} disp={X=8,Y=29,Width=214,Height=63}
+           TabPage        B=8,29,214x63 C=214x63 dpi=96 font=Segoe UI 4.5pt/16
+           TabPage        B=8,46,214x46 C=214x46 dpi=192 font=Segoe UI 4.5pt/16
+progress   ProgressBar    B=12,380,200x23 C=200x23 dpi=96 font=Segoe UI 4.5pt/16
+track      TrackBar       B=220,380,150x90 C=150x90 dpi=96 font=Segoe UI 4.5pt/16
+split      SplitContainer B=380,380,110x60 C=110x60 dpi=96 font=Segoe UI 4.5pt/16 splitter=49/4
+           SplitterPanel  B=0,0,49x60 C=49x60 dpi=96 font=Segoe UI 4.5pt/16
+           SplitterPanel  B=53,0,57x60 C=57x60 dpi=96 font=Segoe UI 4.5pt/16
+tool       ToolStrip      B=0,44,490x42 C=490x42 dpi=96 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=0,Top=0,Right=2,Bottom=0} [Btn:18,2,54x36 m={Left=0,Top=2,Right=0,Bottom=4} p={Left=0,Top=0,Right=0,Bottom=0}] [:72,0,6x42 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=0,Top=0,Right=0,Bottom=0}] [:80,0,75x42 m={Left=2,Top=0,Right=2,Bottom=0} p={Left=0,Top=0,Right=0,Bottom=0}]
+           ToolStripComboBoxControl B=80,9,75x23 C=75x23 dpi=96 font=Segoe UI 4.5pt/16 itemH=15 ddW=75
+menu       MenuStrip      B=0,0,490x44 C=490x44 dpi=96 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=12,Top=4,Right=0,Bottom=4} [File:12,4,71x36 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=8,Top=0,Right=8,Bottom=0}] [Edit:83,4,74x36 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=8,Top=0,Right=8,Bottom=0}]
+status     StatusStrip    B=0,396,490x42 C=490x42 dpi=96 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=1,Top=0,Right=14,Bottom=0} [Ready:1,6,78x32 m={Left=0,Top=6,Right=0,Bottom=4} p={Left=0,Top=0,Right=0,Bottom=0}]
+[dpi240] DeviceDpi=240 hwnd=1257x1183 client=1231x1112
+Form Size=1257x1183 ClientSize=1231x1112 Font=Segoe UI 11.25pt/40 ASD={Width=240, Height=240} CASD={Width=240, Height=240} MinSize={Width=0, Height=0}
+SysInfo VSB=34 HSB=34 VSBdpi=43 Menu=39 Border3D={Width=2, Height=2} DefaultFont=Segoe UI 9pt/32
+button     Button         B=30,30,188x58 C=188x58 dpi=240 font=Segoe UI 11.25pt/40
+label      Label          B=250,40,146x41 C=146x41 dpi=240 font=Segoe UI 11.25pt/40
+text       TextBox        B=30,110,294x47 C=290x43 dpi=240 font=Segoe UI 11.25pt/40
+combo      ComboBox       B=350,110,296x49 C=296x49 dpi=240 font=Segoe UI 11.25pt/40 itemH=41 ddW=296
+check      CheckBox       B=675,115,131x45 C=131x45 dpi=240 font=Segoe UI 11.25pt/40
+list       ListBox        B=30,190,294x209 C=290x205 dpi=240 font=Segoe UI 11.25pt/40 itemH=41
+nud        NumericUpDown  B=350,190,300x47 C=300x47 dpi=240 font=Segoe UI 11.25pt/40
+panel      Panel          B=675,190,297x232 C=295x230 dpi=240 font=Segoe UI 11.25pt/40
+inner      Button         B=20,20,150x58 C=150x58 dpi=240 font=Segoe UI 11.25pt/40
+group      GroupBox       B=30,450,450x200 C=450x200 dpi=240 font=Segoe UI 11.25pt/40
+radio      RadioButton    B=25,55,125x45 C=125x45 dpi=240 font=Segoe UI 11.25pt/40
+tree       TreeView       B=500,450,294x194 C=290x190 dpi=240 font=Segoe UI 11.25pt/40 itemH=44 indent=19
+lv         ListView       B=825,450,394x194 C=390x190 dpi=240 font=Segoe UI 11.25pt/40 col=80 col=60
+grid       DataGridView   B=30,675,600x250 C=600x250 dpi=240 font=Segoe UI 11.25pt/40 rowH=41 hdrW=82 colHdrH=46 col=200 col=200
+tabs       TabControl     B=650,675,575x250 C=575x250 dpi=240 font=Segoe UI 11.25pt/40 itemSize={Width=108, Height=47} disp={X=8,Y=55,Width=559,Height=187}
+           TabPage        B=8,55,559x187 C=559x187 dpi=240 font=Segoe UI 11.25pt/40
+           TabPage        B=8,29,559x213 C=559x213 dpi=192 font=Segoe UI 11.25pt/40
+progress   ProgressBar    B=30,950,500x58 C=500x58 dpi=240 font=Segoe UI 11.25pt/40
+track      TrackBar       B=550,950,375x90 C=375x90 dpi=240 font=Segoe UI 11.25pt/40
+split      SplitContainer B=950,950,275x150 C=275x150 dpi=240 font=Segoe UI 11.25pt/40 splitter=124/10
+           SplitterPanel  B=0,0,124x150 C=124x150 dpi=240 font=Segoe UI 11.25pt/40
+           SplitterPanel  B=134,0,141x150 C=141x150 dpi=240 font=Segoe UI 11.25pt/40
+tool       ToolStrip      B=0,60,1231x62 C=1231x62 dpi=240 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=0,Top=0,Right=5,Bottom=0} [Btn:18,2,54x56 m={Left=0,Top=2,Right=0,Bottom=4} p={Left=0,Top=0,Right=0,Bottom=0}] [:72,0,6x62 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=0,Top=0,Right=0,Bottom=0}] [:80,0,182x62 m={Left=2,Top=0,Right=2,Bottom=0} p={Left=0,Top=0,Right=0,Bottom=0}]
+           ToolStripComboBoxControl B=80,6,182x49 C=182x49 dpi=240 font=Segoe UI 11.25pt/40 itemH=41 ddW=182
+menu       MenuStrip      B=0,0,1231x60 C=1231x60 dpi=240 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=30,Top=10,Right=0,Bottom=10} [File:30,10,71x40 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=8,Top=0,Right=8,Bottom=0}] [Edit:101,10,74x40 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=8,Top=0,Right=8,Bottom=0}]
+status     StatusStrip    B=0,1070,1231x42 C=1231x42 dpi=240 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=2,Top=0,Right=35,Bottom=0} [Ready:2,6,78x32 m={Left=0,Top=6,Right=0,Bottom=4} p={Left=0,Top=0,Right=0,Bottom=0}]
+[dpi192] DeviceDpi=192 hwnd=1011x961 client=985x890
+Form Size=1011x961 ClientSize=985x890 Font=Segoe UI 9pt/32 ASD={Width=192, Height=192} CASD={Width=192, Height=192} MinSize={Width=0, Height=0}
+SysInfo VSB=34 HSB=34 VSBdpi=34 Menu=39 Border3D={Width=2, Height=2} DefaultFont=Segoe UI 9pt/32
+button     Button         B=24,24,150x46 C=150x46 dpi=192 font=Segoe UI 9pt/32
+label      Label          B=200,32,117x32 C=117x32 dpi=192 font=Segoe UI 9pt/32
+text       TextBox        B=24,88,236x39 C=232x35 dpi=192 font=Segoe UI 9pt/32
+combo      ComboBox       B=280,88,238x40 C=238x40 dpi=192 font=Segoe UI 9pt/32 itemH=32 ddW=238
+check      CheckBox       B=540,92,111x36 C=111x36 dpi=192 font=Segoe UI 9pt/32
+list       ListBox        B=24,152,236x164 C=232x160 dpi=192 font=Segoe UI 9pt/32 itemH=32
+nud        NumericUpDown  B=280,152,240x39 C=240x39 dpi=192 font=Segoe UI 9pt/32
+panel      Panel          B=540,152,238x186 C=236x184 dpi=192 font=Segoe UI 9pt/32
+inner      Button         B=16,16,120x46 C=120x46 dpi=192 font=Segoe UI 9pt/32
+group      GroupBox       B=24,360,360x160 C=360x160 dpi=192 font=Segoe UI 9pt/32
+radio      RadioButton    B=20,44,105x36 C=105x36 dpi=192 font=Segoe UI 9pt/32
+tree       TreeView       B=400,360,236x156 C=232x152 dpi=192 font=Segoe UI 9pt/32 itemH=34 indent=19
+lv         ListView       B=660,360,316x156 C=312x152 dpi=192 font=Segoe UI 9pt/32 col=80 col=60
+grid       DataGridView   B=24,540,480x200 C=480x200 dpi=192 font=Segoe UI 9pt/32 rowH=41 hdrW=82 colHdrH=46 col=200 col=200
+tabs       TabControl     B=520,540,460x200 C=460x200 dpi=192 font=Segoe UI 9pt/32 itemSize={Width=90, Height=38} disp={X=8,Y=46,Width=444,Height=146}
+           TabPage        B=8,46,444x146 C=444x146 dpi=192 font=Segoe UI 9pt/32
+           TabPage        B=8,55,444x137 C=444x137 dpi=192 font=Segoe UI 9pt/32
+progress   ProgressBar    B=24,760,400x46 C=400x46 dpi=192 font=Segoe UI 9pt/32
+track      TrackBar       B=440,760,300x90 C=300x90 dpi=192 font=Segoe UI 9pt/32
+split      SplitContainer B=760,760,220x120 C=220x120 dpi=192 font=Segoe UI 9pt/32 splitter=99/8
+           SplitterPanel  B=0,0,99x120 C=99x120 dpi=192 font=Segoe UI 9pt/32
+           SplitterPanel  B=107,0,113x120 C=113x120 dpi=192 font=Segoe UI 9pt/32
+tool       ToolStrip      B=0,52,985x50 C=985x50 dpi=192 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=0,Top=0,Right=4,Bottom=0} [Btn:18,2,54x44 m={Left=0,Top=2,Right=0,Bottom=4} p={Left=0,Top=0,Right=0,Bottom=0}] [:72,0,6x50 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=0,Top=0,Right=0,Bottom=0}] [:80,0,146x50 m={Left=2,Top=0,Right=2,Bottom=0} p={Left=0,Top=0,Right=0,Bottom=0}]
+           ToolStripComboBoxControl B=80,5,146x40 C=146x40 dpi=192 font=Segoe UI 9pt/32 itemH=32 ddW=146
+menu       MenuStrip      B=0,0,985x52 C=985x52 dpi=192 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=24,Top=8,Right=0,Bottom=8} [File:24,8,71x36 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=8,Top=0,Right=8,Bottom=0}] [Edit:95,8,74x36 m={Left=0,Top=0,Right=0,Bottom=0} p={Left=8,Top=0,Right=8,Bottom=0}]
+status     StatusStrip    B=0,848,985x42 C=985x42 dpi=192 font=Segoe UI 9pt/32 ISS=32x32 pad={Left=2,Top=0,Right=28,Bottom=0} [Ready:2,6,78x32 m={Left=0,Top=6,Right=0,Bottom=4} p={Left=0,Top=0,Right=0,Bottom=0}]
+events:
+--- move to 96
+suggested size {Width=516, Height=509} (asked=False)
+button.DpiChangedBeforeParent dpi=96
+label.DpiChangedBeforeParent dpi=96
+text.DpiChangedBeforeParent dpi=96
+combo.DpiChangedBeforeParent dpi=96
+check.DpiChangedBeforeParent dpi=96
+list.DpiChangedBeforeParent dpi=96
+nud.DpiChangedBeforeParent dpi=96
+panel.DpiChangedBeforeParent dpi=96
+group.DpiChangedBeforeParent dpi=96
+tree.DpiChangedBeforeParent dpi=96
+lv.DpiChangedBeforeParent dpi=96
+grid.DpiChangedBeforeParent dpi=96
+tabs.DpiChangedBeforeParent dpi=96
+progress.DpiChangedBeforeParent dpi=96
+track.DpiChangedBeforeParent dpi=96
+split.DpiChangedBeforeParent dpi=96
+tool.DpiChangedBeforeParent dpi=96
+menu.DpiChangedBeforeParent dpi=96
+status.DpiChangedBeforeParent dpi=96
+Form.OnDpiChanged 192->96
+Form.DpiChanged 192->96 suggested={X=8000,Y=100,Width=516,Height=509}
+status.DpiChangedAfterParent dpi=96
+menu.DpiChangedAfterParent dpi=96
+tool.DpiChangedAfterParent dpi=96
+split.DpiChangedAfterParent dpi=96
+track.DpiChangedAfterParent dpi=96
+progress.DpiChangedAfterParent dpi=96
+tabs.DpiChangedAfterParent dpi=96
+grid.DpiChangedAfterParent dpi=96
+lv.DpiChangedAfterParent dpi=96
+tree.DpiChangedAfterParent dpi=96
+group.DpiChangedAfterParent dpi=96
+panel.DpiChangedAfterParent dpi=96
+nud.DpiChangedAfterParent dpi=96
+list.DpiChangedAfterParent dpi=96
+check.DpiChangedAfterParent dpi=96
+combo.DpiChangedAfterParent dpi=96
+text.DpiChangedAfterParent dpi=96
+label.DpiChangedAfterParent dpi=96
+button.DpiChangedAfterParent dpi=96
+--- move to 240
+suggested size {Width=1257, Height=1183} (asked=False)
+button.DpiChangedBeforeParent dpi=240
+label.DpiChangedBeforeParent dpi=240
+text.DpiChangedBeforeParent dpi=240
+combo.DpiChangedBeforeParent dpi=240
+check.DpiChangedBeforeParent dpi=240
+list.DpiChangedBeforeParent dpi=240
+nud.DpiChangedBeforeParent dpi=240
+panel.DpiChangedBeforeParent dpi=240
+group.DpiChangedBeforeParent dpi=240
+tree.DpiChangedBeforeParent dpi=240
+lv.DpiChangedBeforeParent dpi=240
+grid.DpiChangedBeforeParent dpi=240
+tabs.DpiChangedBeforeParent dpi=240
+progress.DpiChangedBeforeParent dpi=240
+track.DpiChangedBeforeParent dpi=240
+split.DpiChangedBeforeParent dpi=240
+tool.DpiChangedBeforeParent dpi=240
+menu.DpiChangedBeforeParent dpi=240
+status.DpiChangedBeforeParent dpi=240
+Form.OnDpiChanged 96->240
+Form.DpiChanged 96->240 suggested={X=8000,Y=100,Width=1257,Height=1183}
+status.DpiChangedAfterParent dpi=240
+menu.DpiChangedAfterParent dpi=240
+tool.DpiChangedAfterParent dpi=240
+split.DpiChangedAfterParent dpi=240
+track.DpiChangedAfterParent dpi=240
+progress.DpiChangedAfterParent dpi=240
+tabs.DpiChangedAfterParent dpi=240
+grid.DpiChangedAfterParent dpi=240
+lv.DpiChangedAfterParent dpi=240
+tree.DpiChangedAfterParent dpi=240
+group.DpiChangedAfterParent dpi=240
+panel.DpiChangedAfterParent dpi=240
+nud.DpiChangedAfterParent dpi=240
+list.DpiChangedAfterParent dpi=240
+check.DpiChangedAfterParent dpi=240
+combo.DpiChangedAfterParent dpi=240
+text.DpiChangedAfterParent dpi=240
+label.DpiChangedAfterParent dpi=240
+button.DpiChangedAfterParent dpi=240
+--- move to 192
+suggested size {Width=1011, Height=961} (asked=False)
+button.DpiChangedBeforeParent dpi=192
+label.DpiChangedBeforeParent dpi=192
+text.DpiChangedBeforeParent dpi=192
+combo.DpiChangedBeforeParent dpi=192
+check.DpiChangedBeforeParent dpi=192
+list.DpiChangedBeforeParent dpi=192
+nud.DpiChangedBeforeParent dpi=192
+panel.DpiChangedBeforeParent dpi=192
+group.DpiChangedBeforeParent dpi=192
+tree.DpiChangedBeforeParent dpi=192
+lv.DpiChangedBeforeParent dpi=192
+grid.DpiChangedBeforeParent dpi=192
+tabs.DpiChangedBeforeParent dpi=192
+progress.DpiChangedBeforeParent dpi=192
+track.DpiChangedBeforeParent dpi=192
+split.DpiChangedBeforeParent dpi=192
+tool.DpiChangedBeforeParent dpi=192
+menu.DpiChangedBeforeParent dpi=192
+status.DpiChangedBeforeParent dpi=192
+Form.OnDpiChanged 240->192
+Form.DpiChanged 240->192 suggested={X=8000,Y=100,Width=1011,Height=961}
+status.DpiChangedAfterParent dpi=192
+menu.DpiChangedAfterParent dpi=192
+tool.DpiChangedAfterParent dpi=192
+split.DpiChangedAfterParent dpi=192
+track.DpiChangedAfterParent dpi=192
+progress.DpiChangedAfterParent dpi=192
+tabs.DpiChangedAfterParent dpi=192
+grid.DpiChangedAfterParent dpi=192
+lv.DpiChangedAfterParent dpi=192
+tree.DpiChangedAfterParent dpi=192
+group.DpiChangedAfterParent dpi=192
+panel.DpiChangedAfterParent dpi=192
+nud.DpiChangedAfterParent dpi=192
+list.DpiChangedAfterParent dpi=192
+check.DpiChangedAfterParent dpi=192
+combo.DpiChangedAfterParent dpi=192
+text.DpiChangedAfterParent dpi=192
+label.DpiChangedAfterParent dpi=192
+button.DpiChangedAfterParent dpi=192

@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -226,9 +226,11 @@ namespace System.Windows.Forms.Theming.Default
 		public Rectangle GetDisplayRectangle (System.Windows.Forms.TabControl tab)
 		{
 			Rectangle ext = GetTabPanelRect (tab);
-			// Account for border size
-			return new Rectangle (ext.Left + tabPageSpacing.X, ext.Top + tabPageSpacing.Y, 
-				ext.Width - tabPageSpacing.X - tabPageSpacing.Width, ext.Height - tabPageSpacing.Y - tabPageSpacing.Height);
+			// Account for border size, which comctl32 scales to the window's DPI.
+			int dpi = tab.DeviceDpi;
+			int sx = ScaleHelper.ScaleToDpi (tabPageSpacing.X, dpi), sy = ScaleHelper.ScaleToDpi (tabPageSpacing.Y, dpi);
+			int sw = ScaleHelper.ScaleToDpi (tabPageSpacing.Width, dpi), sh = ScaleHelper.ScaleToDpi (tabPageSpacing.Height, dpi);
+			return new Rectangle (ext.Left + sx, ext.Top + sy, ext.Width - sx - sw, ext.Height - sy - sh);
 		}
 		
 		public Rectangle GetTabPanelRect (System.Windows.Forms.TabControl tab)
@@ -244,7 +246,8 @@ namespace System.Windows.Forms.Theming.Default
 			// selected tab's extra height off here as well used to make up for tab heights that had
 			// already had it removed; they no longer do, and subtracting it twice put the page three
 			// rows above Windows'.
-			int tabOffset = (tab.ItemSize.Height + spacing) * tab.RowCount + selectedTabDelta.Y;
+			int tabOffset = (tab.ItemSize.Height + ScaleHelper.ScaleToDpi (spacing, tab.DeviceDpi)) * tab.RowCount
+				+ ScaleHelper.ScaleToDpi (selectedTabDelta.Y, tab.DeviceDpi);
 			switch (tab.Alignment) {
 				case TabAlignment.Top:
 					res.Y += tabOffset;
@@ -426,7 +429,7 @@ namespace System.Windows.Forms.Theming.Default
 				}
 			}
 
-			Point padding = tab.Padding;
+			Point padding = tab.LayoutPadding;
 			interior = new Rectangle (bounds.Left + padding.X - 1, // substract a little offset
 				bounds.Top + padding.Y,
 				bounds.Width - (padding.X * 2), 
@@ -438,8 +441,8 @@ namespace System.Windows.Forms.Theming.Default
 					dc.RotateTransform (-90);
 					dc.DrawStringMono (page.Text, tab.Font,
 						SystemBrushes.ControlText, 
-						tab.Padding.X - 2, // drawstring adds some extra unwanted leading spaces, so trimming
-						tab.Padding.Y,
+						tab.LayoutPadding.X - 2, // drawstring adds some extra unwanted leading spaces, so trimming
+						tab.LayoutPadding.Y,
 						defaultFormatting);
 					dc.ResetTransform ();
 				} else if (tab.Alignment == TabAlignment.Right) {
@@ -447,8 +450,8 @@ namespace System.Windows.Forms.Theming.Default
 					dc.RotateTransform (90);
 					dc.DrawStringMono (page.Text, tab.Font,
 						SystemBrushes.ControlText, 
-						tab.Padding.X - 2, // drawstring adds some extra unwanted leading spaces, so trimming
-						tab.Padding.Y,
+						tab.LayoutPadding.X - 2, // drawstring adds some extra unwanted leading spaces, so trimming
+						tab.LayoutPadding.Y,
 						defaultFormatting);
 					dc.ResetTransform ();
 				} else {

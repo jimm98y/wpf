@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 // From .NET's System.Windows.Forms (dotnet/winforms), adapted to the port where noted.
 
@@ -71,6 +71,6 @@ internal abstract class CheckableControlBaseAdapter : ButtonBaseAdapter
 
 	internal static double GetDpiScaleRatio(Control? control)
 	{
-		return (double)((control != null && control.IsHandleCreated) ? ScaleHelper.InitialSystemDpi : ScaleHelper.InitialSystemDpi) / 96.0;
+		return (double)((control != null && control.IsHandleCreated) ? control.DeviceDpi : ScaleHelper.InitialSystemDpi) / 96.0;
 	}
 }

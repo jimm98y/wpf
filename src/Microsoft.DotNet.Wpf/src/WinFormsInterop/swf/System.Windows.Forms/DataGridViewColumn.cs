@@ -46,7 +46,8 @@ namespace System.Windows.Forms {
 		private bool frozen;
 		private DataGridViewColumnHeaderCell headerCell;
 		private bool isDataBound;
-		private int minimumWidth = 5;
+		// .NET: scaled to the system DPI when the application scales (ScaleToCurrentDpi).
+		private int minimumWidth = ScaleHelper.IsScalingRequirementMet ? ScaleHelper.ScaleToInitialSystemDpi (5) : 5;
 		private string name = "";
 		private bool readOnly;
 		private ISite site;
@@ -54,7 +55,7 @@ namespace System.Windows.Forms {
 		private string toolTipText;
 		private Type valueType;
 		private bool visible = true;
-		private int width = 100;
+		private int width = ScaleHelper.IsScalingRequirementMet ? ScaleHelper.ScaleToInitialSystemDpi (100) : 100;
 		private int dataColumnIndex;
 
 		private bool headerTextSet = false;

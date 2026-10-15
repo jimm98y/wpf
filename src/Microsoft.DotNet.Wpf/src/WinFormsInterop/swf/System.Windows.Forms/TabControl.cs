@@ -232,8 +232,8 @@ namespace System.Windows.Forms {
 
 				Size size = item_size;
 				if (SizeMode != TabSizeMode.Fixed) {
-					size.Width += padding.X * 2;
-					size.Height += padding.Y * 2;
+					size.Width += LayoutPadding.X * 2;
+					size.Height += LayoutPadding.Y * 2;
 				}
 
 				if (tab_pages.Count == 0)
@@ -1106,9 +1106,27 @@ namespace System.Windows.Forms {
 			}
 		}
 
+		// comctl32 scales its own metrics to the window's DPI: the default padding (WinForms sends
+		// TCM_SETPADDING only for one that is not the default), the minimum tab width, the frame.
 		private int MinimumTabWidth {
 			get {
-				return ThemeEngine.Current.TabControlMinimumTabWidth;
+				if (DeviceDpi == ScaleHelper.OneHundredPercentLogicalDpi)
+					return ThemeEngine.Current.TabControlMinimumTabWidth;
+				// comctl32's floor is six average characters and a padding: 48 for 9pt at 96 dpi,
+				// 90 at 200% (Windows', measured).
+				return 6 * (int) ContainerControl.GetFontAutoScaleDimensions (Font).Width + LayoutPadding.X;
+			}
+		}
+
+		/// <summary>The padding the tabs are laid out with: the one set, or comctl32's default at
+		/// the window's DPI.</summary>
+		internal Point LayoutPadding {
+			get {
+				Point def = ThemeEngine.Current.TabControlDefaultPadding;
+				if (padding != def || DeviceDpi == ScaleHelper.OneHundredPercentLogicalDpi)
+					return padding;
+				// The horizontal padding scales; the row height comes from the text (CalculateItemSize).
+				return new Point (ScaleHelper.ScaleToDpi (def.X, DeviceDpi), def.Y);
 			}
 		}
 
@@ -1179,10 +1197,12 @@ namespace System.Windows.Forms {
 				size.Width = 96;
 			// The floor is on the tab a reader sees, which is the caption plus its padding -- and the
 			// padding is added by the ItemSize property, not stored here.
-			if (size.Width + Padding.X * 2 < MinimumTabWidth)
-				size.Width = MinimumTabWidth - Padding.X * 2;
+			if (size.Width + LayoutPadding.X * 2 < MinimumTabWidth)
+				size.Width = MinimumTabWidth - LayoutPadding.X * 2;
 			if (image_list != null && image_list.ImageSize.Height > size.Height)
 				size.Height = image_list.ImageSize.Height;
+			// A row a pixel taller per 100% over 100% (38 for 9pt at 200%, 20 at 96 dpi; Windows').
+			size.Height += ScaleHelper.ScaleToDpi (1, DeviceDpi) - 1;
 
 			item_size = size;
 		}
@@ -1323,7 +1343,7 @@ namespace System.Windows.Forms {
 				// padded width made every tab seven pixels wide of the one beside it. Nothing is
 				// added on top of the padding -- the two extra pixels that used to be here are not
 				// in Windows' arithmetic.
-				width = TabCaptionSize (page.Text).Width + Padding.X * 2;
+				width = TabCaptionSize (page.Text).Width + LayoutPadding.X * 2;
 
 				if (ImageList != null && page.ImageIndex >= 0) {
 					width += ImageList.ImageSize.Width + ThemeEngine.Current.TabControlImagePadding.X;

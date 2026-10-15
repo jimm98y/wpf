@@ -334,7 +334,16 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (_hwnd == IntPtr.Zero)
             throw new InvalidOperationException($"CreateWindowExW failed (0x{Marshal.GetLastWin32Error():x})");
 
-        _scale = GetDpiForWindow(_hwnd) / 96f;   // DPI scale: render at device pixels (crisp)
+        // DPI: a per-monitor-aware application lays out in device pixels itself (ScaleHelper), so
+        // its window renders 1:1 and the driver learns the display's DPI; any other has its 96-dpi
+        // layout scaled to device pixels here (crisp either way).
+        int windowDpi = (int)GetDpiForWindow(_hwnd);
+        if (System.Windows.Forms.ScaleHelper.IsDeviceScaled)
+        {
+            _scale = 1f;
+            if (_driver is System.Windows.Forms.XplatUIWebGpu dpiDriver) dpiDriver.SetWindowDpi(_formHandle, windowDpi);
+        }
+        else _scale = windowDpi / 96f;
 
         // CreateWindowEx sizes the WHOLE window, caption and borders included, but the surface we
         // present is the form-sized CLIENT area. Left as it was, the client area came out smaller than
@@ -772,7 +781,17 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // on it, so _scale kept the DPI the window was created at while the client area
             // changed underneath it -- OnClientResized then read the new pixels through the old
             // scale, grew the form to match, and every control drew at half the size it should.
-            case 0x02E0: OnDpiChanged(lParam); return IntPtr.Zero;
+            case 0x02E0: OnDpiChanged(wParam, lParam); return IntPtr.Zero;
+            // WM_GETDPISCALEDSIZE: a per-monitor-aware form says which size it wants at the new
+            // DPI (AutoScaleMode.Font's, or the one it had there) instead of the linear one.
+            case 0x02E4:
+                if (System.Windows.Forms.ScaleHelper.IsThreadPerMonitorV2Aware && !FormGone && _form.GetDpiScaledSizeForHost((int)((long)wParam & 0xFFFF), out Size wanted))
+                {
+                    Marshal.WriteInt32(lParam, 0, wanted.Width);
+                    Marshal.WriteInt32(lParam, 4, wanted.Height);
+                    return (IntPtr)1;
+                }
+                return IntPtr.Zero;
             // WM_GETOBJECT: the controls in this window have no handles of their own, so the
             // automation tree Windows builds out of handles stopped here and everything below
             // was invisible to a screen reader. Answer for the tree ourselves.
@@ -926,10 +945,28 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     // Windows suggests where the window should go at the new DPI -- honouring it is what keeps
     // the window the same apparent size across the move. The presenter needs the new scale too,
     // or the swap chain stays at the old device-pixel size.
-    private void OnDpiChanged(IntPtr suggested)
+    private void OnDpiChanged(IntPtr wParam, IntPtr suggested)
     {
         if (_hwnd == IntPtr.Zero)
             return;
+        if (System.Windows.Forms.ScaleHelper.IsDeviceScaled)
+        {
+            // The application rescales itself, as on Windows: the form and its children are told
+            // (WM_DPICHANGED_BEFOREPARENT, WM_DPICHANGED, ..._AFTERPARENT) and the form takes the
+            // suggested rectangle, which moves and sizes this window through the driver.
+            int dpi = (int)((long)wParam & 0xFFFF);
+            Rectangle rect = default;
+            if (suggested != IntPtr.Zero)
+            {
+                RECT r = Marshal.PtrToStructure<RECT>(suggested);
+                rect = Rectangle.FromLTRB(r.left, r.top, r.right, r.bottom);
+            }
+            if (System.Windows.Forms.ScaleHelper.IsThreadPerMonitorV2Aware && _driver is System.Windows.Forms.XplatUIWebGpu d && !FormGone)
+                d.HostDpiChanged(_formHandle, dpi, rect);
+            _lastVer = -1;
+            Present();
+            return;
+        }
         _scale = GetDpiForWindow(_hwnd) / 96f;
         if (suggested != IntPtr.Zero)
         {

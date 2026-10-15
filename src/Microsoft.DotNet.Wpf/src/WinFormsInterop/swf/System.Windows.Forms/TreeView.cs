@@ -292,8 +292,10 @@ namespace System.Windows.Forms {
 
 		public int ItemHeight {
 			get {
+				// comctl32's default: the text height plus three, made even (TVS_NONEVENHEIGHT
+				// is never set) -- 18 for 9pt at 96 dpi, 34 at 200%.
 				if (item_height == -1)
-					return TextLineHeight + 3;
+					return (TextLineHeight + 3) & ~1;
 				return item_height;
 			}
 			set {
