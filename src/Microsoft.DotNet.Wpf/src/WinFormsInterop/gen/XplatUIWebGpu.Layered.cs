@@ -32,7 +32,7 @@ namespace System.Windows.Forms {
 		/// shown at the window's origin with <paramref name="opacity"/> on top of its own alpha.</summary>
 		internal void SetLayeredImage(IntPtr handle, byte[] rgba, int width, int height, float opacity)
 		{
-			T($"SetLayeredImage h=0x{handle.ToInt64():x} {width}x{height} opacity={opacity}");
+			T($"SetLayeredImage h=0x{handle.ToInt64():x} {width}x{height} opacity={opacity} t={Environment.TickCount64}");
 			if (Hwnd.ObjectFromHandle(handle) == null || rgba == null || width <= 0 || height <= 0) return;
 			var sv = new SceneVisual { Opacity = opacity };
 			sv.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(0, 0, width, height)), new ImageBrush(rgba, width, height)));

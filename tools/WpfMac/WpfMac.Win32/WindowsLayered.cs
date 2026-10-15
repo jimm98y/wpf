@@ -29,6 +29,8 @@ public static unsafe partial class Exports
         bool perPixel = (flags & ULW_ALPHA) != 0 && blend != null && ((byte*)blend)[3] != 0;
         if (hdcSrc == 0) return TRUE;                                   // a move, resize or new alpha only
 
+        bool timing = Environment.GetEnvironmentVariable("WF_TRACE_ULW") == "1";
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         (AppContext.GetData("System.Drawing.FlushHdc") as Action<IntPtr>)?.Invoke(hdcSrc);
         GdiFlushW();
         nint hbm = RealGetCurrentObject(hdcSrc, 7 /* OBJ_BITMAP */);
@@ -48,6 +50,7 @@ public static unsafe partial class Exports
         *(BITMAPINFOHEADER*)info = bi;
         fixed (uint* p = bits)
             if (RealGetDIBits(hdcSrc, hbm, 0, (uint)bh, p, info, 0) == 0) return TRUE;
+        long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
         int w = psize != null ? psize[0] : bw, h = psize != null ? psize[1] : bh;
         int sx = pptSrc != null ? pptSrc->X : 0, sy = pptSrc != null ? pptSrc->Y : 0;
         if (w <= 0 || h <= 0) return TRUE;
@@ -69,6 +72,7 @@ public static unsafe partial class Exports
                 if (a != 0) { raw[i] = (byte)c; raw[i + 1] = (byte)(c >> 8); raw[i + 2] = (byte)(c >> 16); raw[i + 3] = a; }
             }
         }
+        long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
         Ui(o, () =>
         {
             if (!control.IsHandleCreated) return 0;
@@ -80,6 +84,11 @@ public static unsafe partial class Exports
                 ?.Invoke(driver, new object[] { control.Handle, raw, w, h, (byte)Math.Round(opacity * 255) });
             return 0;
         });
+        if (timing)
+        {
+            double ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            Console.Error.WriteLine($"[ulw] flush+bits {ms(t0, t1):0.0} ms, convert {ms(t1, t2):0.0} ms, driver {ms(t2, System.Diagnostics.Stopwatch.GetTimestamp()):0.0} ms");
+        }
         return TRUE;
     }
 

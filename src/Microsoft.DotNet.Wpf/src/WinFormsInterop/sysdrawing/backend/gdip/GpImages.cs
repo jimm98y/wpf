@@ -241,6 +241,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         // ---- GpGraphics::DrvDrawImage -------------------------------------------------------------------
 
+        static readonly bool s_traceImage = Environment.GetEnvironmentVariable ("WF_TRACE_GDIP_IMAGE") == "1";
+
         void DrvDrawImage (Rectangle drawBounds, GdipFrame bmp, PointF[] pts, RectangleF src, GpImageAttr ia)
         {
             PointF p0 = pts [0], p1 = pts [1], p2 = pts [2];
@@ -271,10 +273,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
                     m.Dy = (m.M22 * -0.5f - m.M12 * 0.5f) + m.Dy + 0.5f;
                     m.Complexity |= 1;
                 }
+                long tA = System.Diagnostics.Stopwatch.GetTimestamp ();
                 if (bmp == Frame || bmp.Bits == Frame.Bits) bmp = bmp.Clone ();
                 DpBitmapSrc band = PipeLockBits (bmp, ref src, m, ia);
+                long tB = System.Diagnostics.Stopwatch.GetTimestamp ();
                 if (half) { src.X -= 0.5f; src.Y -= 0.5f; }
                 DriverDrawImage (band, drawBounds, ia?.Dp ?? DpImageAttr.Default, pts, src);
+                if (s_traceImage)
+                    Console.Error.WriteLine ($"[gdip-img] {bmp.Width}x{bmp.Height} -> {drawBounds} lock {(tB - tA) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} ms draw {(System.Diagnostics.Stopwatch.GetTimestamp () - tB) * 1000.0 / System.Diagnostics.Stopwatch.Frequency:0.0} ms interp={_ctx.Interpolation} m={m.M11},{m.M22},{m.Dx},{m.Dy} cx={m.Complexity}");
             } finally {
                 WorldToDevice = savedW2D;
             }
