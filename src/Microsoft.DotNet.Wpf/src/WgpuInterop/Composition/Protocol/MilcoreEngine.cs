@@ -1771,11 +1771,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 byte[]? px = VisualRasterizerKeyed is not null
                     ? VisualRasterizerKeyed(kv.Key, wrapper, pw, ph)
                     : VisualRasterizer!(wrapper, pw, ph);
-                if (px is not null) { _bitmaps[kv.Value.Source] = new MilBitmap(px, pw, ph); _brushHash[kv.Value.Source] = hash; }
+                if (px is not null) { _bitmaps[kv.Value.Source] = new MilBitmap(px, pw, ph); _brushHash[kv.Value.Source] = hash; _brushSourceBounds[kv.Value.Source] = b; }
             }
         }
 
         private readonly Dictionary<uint, long> _brushHash = new();
+        // The source-space rectangle each rasterized brush source's bitmap covers (an ABSOLUTE Viewbox
+        // is expressed in that space).
+        private readonly Dictionary<uint, Rect> _brushSourceBounds = new();
         private long _bh;
         private void BMix(long x) => _bh = (_bh ^ x) * 1099511628211L;
         private void BMixF(float f) => BMix(BitConverter.SingleToInt32Bits(f));
@@ -2633,7 +2636,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (bw <= 0 || bh <= 0 || bmp.Width <= 0 || bmp.Height <= 0) return false;
 
             // 1) Viewbox: select the source sub-region (relative units, non-default).
-            (byte[] pixels, int iw, int ih) = ViewboxCrop(ib, bmp);
+            (byte[] pixels, int iw, int ih) = isContent && _contentBrushes.TryGetValue(hBrush, out var cbs) && _brushSourceBounds.TryGetValue(cbs.Source, out Rect srcBounds)
+                ? ViewboxCrop(ib, bmp, srcBounds)
+                : ViewboxCrop(ib, bmp);
 
             // 2) Viewport: the destination tile rect (relative -> bounds; absolute -> as-is; default = bounds).
             Rect vp = ViewportRect(ib, bounds);
@@ -2714,15 +2719,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             };
             wrapper.Children.Add(source);
 
-            float u0 = 0, v0 = 0, u1 = 1, v1 = 1;   // Viewbox (RelativeToBoundingBox) -> UV sub-rect.
-            if (ib.ViewboxUnits == 1 && !IsUnitRect(ib.Viewbox))
-            {
-                u0 = (float)ib.Viewbox.X; v0 = (float)ib.Viewbox.Y;
-                u1 = u0 + (float)ib.Viewbox.Width; v1 = v0 + (float)ib.Viewbox.Height;
-            }
+            (float u0, float v0, float u1, float v1) = ViewboxUv(ib, b);
 
             fill = new ImageBrush(wrapper, cb.Source, pw, ph, u0, v0, u1, v1, 0f, 0f, opacity);
             return true;
+        }
+
+        /// <summary>
+        /// A content brush's Viewbox as a UV sub-rectangle of its source rendered over
+        /// <paramref name="sourceBounds"/>. Relative (RelativeToBoundingBox) is taken as it is; an
+        /// ABSOLUTE one is in the source's own coordinates and is mapped onto those bounds. Only the
+        /// relative kind was understood, so an absolute Viewbox -- the ghost app's editor draws
+        /// of an element being moved -- showed the whole of the source's (much larger) subtree, the
+        /// element itself in a corner at a fraction of its size.
+        /// </summary>
+        private static (float, float, float, float) ViewboxUv(MilImageBrush ib, Rect sourceBounds)
+        {
+            if (ib.ViewboxUnits == 1)
+                return IsUnitRect(ib.Viewbox) ? (0f, 0f, 1f, 1f)
+                    : ((float)ib.Viewbox.X, (float)ib.Viewbox.Y, (float)(ib.Viewbox.X + ib.Viewbox.Width), (float)(ib.Viewbox.Y + ib.Viewbox.Height));
+            if (ib.Viewbox.Width <= 0 || ib.Viewbox.Height <= 0 || sourceBounds.Width <= 0 || sourceBounds.Height <= 0)
+                return (0f, 0f, 1f, 1f);
+            float u0 = (float)((ib.Viewbox.X - sourceBounds.X) / sourceBounds.Width);
+            float v0 = (float)((ib.Viewbox.Y - sourceBounds.Y) / sourceBounds.Height);
+            float u1 = (float)((ib.Viewbox.X + ib.Viewbox.Width - sourceBounds.X) / sourceBounds.Width);
+            float v1 = (float)((ib.Viewbox.Y + ib.Viewbox.Height - sourceBounds.Y) / sourceBounds.Height);
+            return (u0, v0, u1, v1);
+        }
+
+        /// <summary><see cref="ViewboxCrop(MilImageBrush, MilBitmap)"/> for a content brush whose bitmap
+        /// covers <paramref name="sourceBounds"/>: an absolute Viewbox crops too.</summary>
+        private static (byte[], int, int) ViewboxCrop(MilImageBrush ib, MilBitmap bmp, Rect sourceBounds)
+        {
+            if (ib.ViewboxUnits == 1) return ViewboxCrop(ib, bmp);
+            (float u0, float v0, float u1, float v1) = ViewboxUv(ib, sourceBounds);
+            if (u0 <= 0 && v0 <= 0 && u1 >= 1 && v1 >= 1) return (bmp.Rgba, bmp.Width, bmp.Height);
+            int iw = bmp.Width, ih = bmp.Height;
+            int cx = Math.Clamp((int)MathF.Round(Math.Max(0, u0) * iw), 0, iw - 1);
+            int cy = Math.Clamp((int)MathF.Round(Math.Max(0, v0) * ih), 0, ih - 1);
+            int cw = Math.Clamp((int)MathF.Round(Math.Min(1, u1) * iw) - cx, 1, iw - cx);
+            int ch = Math.Clamp((int)MathF.Round(Math.Min(1, v1) * ih) - cy, 1, ih - cy);
+            return (CropRgba(bmp.Rgba, iw, cx, cy, cw, ch), cw, ch);
         }
 
         private static (byte[], int, int) ViewboxCrop(MilImageBrush ib, MilBitmap bmp)
