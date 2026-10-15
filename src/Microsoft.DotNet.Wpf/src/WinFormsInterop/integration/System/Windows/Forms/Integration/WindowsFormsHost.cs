@@ -181,6 +181,9 @@ namespace System.Windows.Forms.Integration
 
         public WindowsFormsHost()
         {
+            // .NET's WinForms takes its DPI mode from the thread when nothing chose one, so hosted in
+            // a per-monitor WPF application it lays out at the monitor's DPI.
+            SWF.ScaleHelper.AdoptHostAwareness();
             // Borderless and never shown: the driver registers the window tree and paints it, but
             // with no per-OS host attached to this form it never reaches a screen of its own. Its
             // pixels only exist as the scene this element composites.
@@ -278,17 +281,57 @@ namespace System.Windows.Forms.Integration
             try { pref = _child.GetPreferredSize(SD.Size.Empty); }
             catch { pref = _child.Size; }
 
-            double w = double.IsInfinity(availableSize.Width) ? pref.Width : availableSize.Width;
-            double h = double.IsInfinity(availableSize.Height) ? pref.Height : availableSize.Height;
+            // The child measures in its own pixels; DIPs are those over the scale (.NET's
+            // Convert.ToSystemWindowsSize with the host's DpiScale).
+            double k = PixelsPerDip;
+            double w = double.IsInfinity(availableSize.Width) ? pref.Width / k : availableSize.Width;
+            double h = double.IsInfinity(availableSize.Height) ? pref.Height / k : availableSize.Height;
             return new Size(Math.Max(0, w), Math.Max(0, h));
+        }
+
+        /// <summary>
+        /// How many of the hosted controls' pixels make one of WPF's DIPs. One for DPI-unaware
+        /// WinForms, which lays out in 96-dpi points and is scaled when composited; the host's DPI
+        /// scale for per-monitor WinForms, which lays out at the monitor's DPI as .NET's does
+        /// (WindowsFormsHost: ConstraintToSystemDrawingSize with GetDpi()).
+        /// </summary>
+        private double PixelsPerDip
+        {
+            get
+            {
+                if (!SWF.ScaleHelper.IsDeviceScaled) return 1;
+                double s = VisualTreeHelper.GetDpi(this).DpiScaleX;
+                return s > 0 ? s : 1;
+            }
+        }
+
+        /// <summary>The hosted window tree takes the host's DPI (the monitor's), and is told when it
+        /// changes as a child window is.</summary>
+        private void SyncDpi()
+        {
+            if (_driver == null || !SWF.ScaleHelper.IsDeviceScaled) return;
+            int dpi = (int)Math.Round(VisualTreeHelper.GetDpi(this).PixelsPerInchX);
+            if (dpi <= 0) return;
+            if (_container.DeviceDpi == dpi) { _driver.SetWindowDpi(_container.Handle, dpi); return; }
+            _driver.HostedDpiChanged(_container.Handle, dpi);
+            InvalidateMeasure();
+        }
+
+        protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+        {
+            base.OnDpiChanged(oldDpi, newDpi);
+            SyncDpi();
         }
 
         protected override Size ArrangeOverride(Size finalSize)
         {
             // Push WPF's arranged size into the hosted window. DIPs and the driver's points are both
             // 96dpi, so this is a straight round -- the DPI scale enters only at composition time.
-            int w = Math.Max(1, (int)Math.Round(finalSize.Width));
-            int h = Math.Max(1, (int)Math.Round(finalSize.Height));
+            // (In the hosted controls' pixels: DIPs times the scale, as .NET's ArrangeOverride.)
+            SyncDpi();
+            double k = PixelsPerDip;
+            int w = Math.Max(1, (int)Math.Round(finalSize.Width * k));
+            int h = Math.Max(1, (int)Math.Round(finalSize.Height * k));
             if (_container.ClientSize.Width != w || _container.ClientSize.Height != h)
             {
                 _container.ClientSize = new SD.Size(w, h);
@@ -309,7 +352,10 @@ namespace System.Windows.Forms.Integration
         // screen coordinates by adding the container's origin.
 
         private (int X, int Y) ToDriver(Point p)
-            => (_formOx + (int)Math.Round(p.X), _formOy + (int)Math.Round(p.Y));
+        {
+            double k = PixelsPerDip;
+            return (_formOx + (int)Math.Round(p.X * k), _formOy + (int)Math.Round(p.Y * k));
+        }
 
         protected override void OnMouseMove(WpfMouseEventArgs e)
         {
@@ -874,6 +920,7 @@ namespace System.Windows.Forms.Integration
             WpfColorDialogBridge.Install();
 
             _container.CreateControl();
+            SyncDpi();
             _container.Show();          // registers the window tree with the driver and paints it
             SWF.EmbeddedScenes.SetPlacement(_container, () =>
                 (_placeWindow, (float)_lastDevX, (float)_lastDevY, _formOx, _formOy, _placeScale, _placeShown));
@@ -982,6 +1029,9 @@ namespace System.Windows.Forms.Integration
             catch { return false; }                 // transient, during layout or teardown
 
             float hostDevX = (float)(origin.X * dpi), hostDevY = (float)(origin.Y * dpi);
+            // Device pixels per hosted pixel: the DPI scale for 96-dpi WinForms, one for WinForms
+            // laid out at the monitor's DPI.
+            float s = (float)(dpi / PixelsPerDip);
 
             // This host's own windows, and the popups (drop-downs, menus, tooltips) when it is the
             // host they belong to. GetPresentWindows hands back EVERY visible window in the
@@ -1004,11 +1054,11 @@ namespace System.Windows.Forms.Integration
                 var item = new EmbeddedItem
                 {
                     Scene = scene,
-                    DeviceX = hostDevX + ((int)wins[i + 1] - ox) * (float)dpi,
-                    DeviceY = hostDevY + ((int)wins[i + 2] - oy) * (float)dpi,
-                    DeviceW = w * (float)dpi,
-                    DeviceH = ht * (float)dpi,
-                    Scale = (float)dpi,
+                    DeviceX = hostDevX + ((int)wins[i + 1] - ox) * s,
+                    DeviceY = hostDevY + ((int)wins[i + 2] - oy) * s,
+                    DeviceW = w * s,
+                    DeviceH = ht * s,
+                    Scale = s,
                     // Tag the window: the registry is process-wide, and without this every WPF
                     // window composited every other one's hosted content.
                     Window = (src as HwndSource)?.Handle ?? IntPtr.Zero,
@@ -1034,9 +1084,9 @@ namespace System.Windows.Forms.Integration
             _lastDevW = RenderSize.Width; _lastDevH = RenderSize.Height;
 
             IntPtr window = (src as HwndSource)?.Handle ?? IntPtr.Zero;
-            if (moved || window != _placeWindow || !_placeShown || _placeScale != (float)dpi)
+            if (moved || window != _placeWindow || !_placeShown || _placeScale != s)
             {
-                _placeWindow = window; _placeScale = (float)dpi; _placeShown = true;
+                _placeWindow = window; _placeScale = s; _placeShown = true;
                 SWF.EmbeddedScenes.RaisePlacementChanged(_container);
             }
             return moved;
@@ -1076,10 +1126,11 @@ namespace System.Windows.Forms.Integration
 
             if (_driver.GetCaret(out int cx, out int cy, out int cw, out int ch))
             {
+                float s = (float)(dpi / PixelsPerDip);
                 EmbeddedContent.SetCaret(owner, (src as HwndSource)?.Handle ?? IntPtr.Zero,
-                    (float)(origin.X * dpi) + (cx - _formOx) * (float)dpi,
-                    (float)(origin.Y * dpi) + (cy - _formOy) * (float)dpi,
-                    Math.Max(1, cw) * (float)dpi, ch * (float)dpi, true);
+                    (float)(origin.X * dpi) + (cx - _formOx) * s,
+                    (float)(origin.Y * dpi) + (cy - _formOy) * s,
+                    Math.Max(1, cw) * s, ch * s, true);
             }
             else EmbeddedContent.SetCaret(owner, IntPtr.Zero, 0, 0, 0, 0, false);
         }
