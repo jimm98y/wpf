@@ -717,9 +717,24 @@ namespace System.Windows.Forms
 
 		protected override CreateParams CreateParams {
 			get {
-				return base.CreateParams;
+				CreateParams cp = base.CreateParams;
+				if (nc_hscroll)
+					cp.Style |= (int) WindowStyles.WS_HSCROLL;
+				if (nc_vscroll)
+					cp.Style |= (int) WindowStyles.WS_VSCROLL;
+				return cp;
 			}
 		}
+
+		// The scroll bars standing in the non-client area now (WS_HSCROLL / WS_VSCROLL), beside the
+		// client, as an edit control keeps them: a 100-pixel multiline box with a vertical bar has
+		// a 79-pixel client.
+		private bool nc_hscroll, nc_vscroll, updating_nc;
+
+		/// <summary>Whether the bars go in the non-client area (XplatUIWebGpu.ChildFrame). A box
+		/// that draws its border inside its client (FixedSingle, a tool strip's) and a right-to-left
+		/// one keep them inside.</summary>
+		private bool BarsInNonClient => TextFrameWidth == 0 && GetInheritedRtoL () != RightToLeft.Yes;
 
 		protected override System.Drawing.Size DefaultSize {
 			get {
@@ -1853,7 +1868,8 @@ namespace System.Windows.Forms
 			// Draw the viewable document
 			document.Draw(g, clippingArea);
 
-			Rectangle corner = ScrollBarCorner;
+			// Between non-client bars the corner is non-client too, and the frame paints it.
+			Rectangle corner = nc_hscroll && nc_vscroll ? Rectangle.Empty : ScrollBarCorner;
 			if (!corner.IsEmpty && corner.IntersectsWith (clippingArea))
 				ThemeEngine.Current.DrawScrollBarCorner (g, corner);
 		}
@@ -1994,14 +2010,15 @@ namespace System.Windows.Forms
 
 		private void SizeControls ()
 		{
-			if (hscroll.Visible) {
+			// Bars in the non-client area are already outside the client.
+			if (hscroll.Visible && !nc_hscroll) {
 				//vscroll.Maximum += hscroll.Height;
 				canvas_height = ClientSize.Height - hscroll.Height;
 			} else {
 				canvas_height = ClientSize.Height;
 			}
 
-			if (vscroll.Visible) {
+			if (vscroll.Visible && !nc_vscroll) {
 				//hscroll.Maximum += vscroll.Width;
 				canvas_width = ClientSize.Width - vscroll.Width;
 
@@ -2030,6 +2047,15 @@ namespace System.Windows.Forms
 		{
 			if (canvas_height < 1 || canvas_width < 1)
 				return;
+
+			if (nc_hscroll || nc_vscroll) {
+				// Beside the client, in the non-client area; the driver clips them to its bands.
+				Size client = ClientSize;
+				int h_w = client.Width;
+				hscroll.Bounds = new Rectangle (0, client.Height, h_w, hscroll.Height);
+				vscroll.Bounds = new Rectangle (client.Width, 0, vscroll.Width, client.Height);
+				return;
+			}
 
 			int hmod = vscroll.Visible ? vscroll.Width : 0;
 			int vmod = hscroll.Visible ? hscroll.Height : 0;
@@ -2225,6 +2251,21 @@ namespace System.Windows.Forms
 			default:
 				vscroll.Visible = false;
 				break;
+			}
+
+			// The bars into the non-client area or out of it: the frame grows or shrinks by them and
+			// the client is what is left. The resize that follows comes back here; this pass finishes.
+			bool nc = BarsInNonClient && IsHandleCreated;
+			bool want_h = nc && hscroll.VisibleInternal, want_v = nc && vscroll.VisibleInternal;
+			if (!updating_nc && (want_h != nc_hscroll || want_v != nc_vscroll)) {
+				nc_hscroll = want_h;
+				nc_vscroll = want_v;
+				updating_nc = true;
+				try {
+					UpdateStyles ();
+				} finally {
+					updating_nc = false;
+				}
 			}
 
 			PositionControls ();

@@ -39,6 +39,9 @@ namespace Wpf.WinFormsInterop.Tests
             yield return Case("TextBox Fixed3D", () => new TextBox { Size = new Size(100, 23) }, 96, 19, 2, new Rectangle(0, 0, 96, 19));
             // The edit control takes WS_BORDER off its window and draws the line in its client.
             yield return Case("TextBox FixedSingle", () => new TextBox { BorderStyle = BorderStyle.FixedSingle, Size = new Size(100, 23) }, 100, 23, 0, new Rectangle(0, 0, 100, 23));
+            yield return Case("TextBox Multiline both bars", () => new TextBox { Multiline = true, ScrollBars = ScrollBars.Both, Size = new Size(100, 100) }, 79, 96, 2, new Rectangle(0, 0, 79, 96));
+            yield return Case("TextBox Multiline vertical bar", () => new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Size = new Size(100, 100) }, 79, 96, 2, new Rectangle(0, 0, 79, 96));
+            yield return Case("TextBox Multiline both bars no wrap", () => new TextBox { Multiline = true, WordWrap = false, ScrollBars = ScrollBars.Both, Size = new Size(100, 100) }, 79, 79, 2, new Rectangle(0, 0, 79, 79));
             yield return Case("TextBox Multiline", () => new TextBox { Multiline = true, Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
             yield return Case("RichTextBox Fixed3D", () => new RichTextBox { Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
             yield return Case("TreeView Fixed3D", () => new TreeView { Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
