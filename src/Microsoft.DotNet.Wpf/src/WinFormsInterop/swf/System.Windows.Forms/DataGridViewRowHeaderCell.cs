@@ -264,7 +264,10 @@ namespace System.Windows.Forms {
 		// header's text colour.
 		private static Bitmap s_rightArrowBmp;
 		private static Bitmap RightArrowBitmap => s_rightArrowBmp ??= ScaleHelper.GetIconResourceAsBitmap (typeof (DataGridViewHeaderCell), "DataGridViewRow.right", new Size (IconsWidth, IconsHeight));
-		private const int IconsWidth = 12, IconsHeight = 11;
+		// At the system DPI, as .NET's s_iconsWidth/Height (ScaleToInitialSystemDpi): 24 x 22 at 200%,
+		// which a narrow row header has no room for, so it shows no glyph there.
+		private static int IconsWidth => ScaleHelper.ScaleToInitialSystemDpi (12);
+		private static int IconsHeight => ScaleHelper.ScaleToInitialSystemDpi (11);
 
 		// PaintPrivate's rectangle for the glyph: the value rectangle (less borders and padding),
 		// less the header theme's margins -- Aero's, which .NET hard-codes as 2 top, 1 left, 2 right.

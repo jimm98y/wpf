@@ -72,7 +72,9 @@ namespace System.Windows.Forms
 			get { return vert ? scrollbutton_height : scrollbutton_width; }
 		}
 		private const int thumb_notshown_size = 40;
-		/// <summary>Below this length the bar has no thumb: forty 96-dpi pixels at the bar's DPI.</summary>
+		/// <summary>Below this length the bar has no thumb: forty 96-dpi pixels at the bar's DPI. Nor
+		/// has a bar whose track, between its arrow buttons, is shorter than the smallest thumb
+		/// (win32k's CalcSBStuff2): a short grid at 200% shows its bar without one.</summary>
 		private int ThumbNotShownSize => MulDiv (thumb_notshown_size, DeviceDpi, 96);
 		internal bool use_manual_thumb_size;
 		internal int manual_thumb_size;
@@ -794,7 +796,7 @@ namespace System.Windows.Forms
 				thumb_area.Y = scrollbutton_height;
 				thumb_area.Width = Width;
 
-				if (Height < ThumbNotShownSize)
+				if (Height < ThumbNotShownSize || thumb_area.Height < ThumbMinSize)
 					thumb_size = 0;
 				else {
 					// win32k's CalcSBStuff2: MulDiv(track, page, range), ROUNDED -- neither the ceiling
@@ -818,7 +820,7 @@ namespace System.Windows.Forms
 				thumb_area.Height = Height;
 				thumb_area.Width = Width - scrollbutton_width -  scrollbutton_width;
 
-				if (Width < ThumbNotShownSize)
+				if (Width < ThumbNotShownSize || thumb_area.Width < ThumbMinSize)
 					thumb_size = 0;
 				else {
 					thumb_size = MulDiv (thumb_area.Width, lchange, 1 + maximum - minimum);
