@@ -21,6 +21,8 @@ namespace Wpf.WinFormsInterop.Tests
         private static readonly System.Reflection.MethodInfo? s_tick = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.PresentationHost")
             ?.GetMethod("Tick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
 
+        // The real window's client area in the application's units: an application that is not
+        // per-monitor aware is laid out at 96 dpi and its host window is that scaled to the display.
         private static Size RealClient(string title)
         {
             Size found = Size.Empty;
@@ -33,6 +35,9 @@ namespace Wpf.WinFormsInterop.Tests
                 if (sb.ToString() != title) return true;
                 GetClientRect(h, out RECT r);
                 found = new Size(r.right - r.left, r.bottom - r.top);
+                int dpi = (int)GetDpiForWindow(h);
+                if (!SWF.ScaleHelper.IsDeviceScaled && dpi > 0 && dpi != 96)
+                    found = new Size((int)Math.Round(found.Width * 96.0 / dpi), (int)Math.Round(found.Height * 96.0 / dpi));
                 return false;
             }, IntPtr.Zero);
             return found;
@@ -44,6 +49,7 @@ namespace Wpf.WinFormsInterop.Tests
         [System.Runtime.InteropServices.DllImport("user32", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
         [System.Runtime.InteropServices.DllImport("user32")] private static extern bool GetClientRect(IntPtr h, out RECT r);
         [System.Runtime.InteropServices.DllImport("user32")] private static extern bool IsWindowVisible(IntPtr h);
+        [System.Runtime.InteropServices.DllImport("user32")] private static extern uint GetDpiForWindow(IntPtr h);
         [Fact]
         public void ClearingTheMaximum_KeepsTheMinimum()
         {

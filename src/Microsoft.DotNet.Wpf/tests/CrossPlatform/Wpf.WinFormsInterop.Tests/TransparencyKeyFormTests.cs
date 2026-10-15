@@ -22,6 +22,7 @@ namespace Wpf.WinFormsInterop.Tests
         public void KeyColouredPixelsShowTheWindowBehind()
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "reads the real screen");
+            Assert.SkipWhen(IsSessionLocked(), "reads the real screen, and a locked session's screen is the lock screen");
             Exception? failure = null;
             var t = new Thread(() => { try { Run(); } catch (Exception ex) { failure = ex; } });
             t.SetApartmentState(ApartmentState.STA);
@@ -74,8 +75,28 @@ namespace Wpf.WinFormsInterop.Tests
         private static readonly System.Reflection.MethodInfo? s_tick = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.PresentationHost")
             ?.GetMethod("Tick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
 
+        // A point of the forms (at, in the application's units) on the real screen: where the host
+        // put the window behind, scaled as it scaled it -- an application that is not per-monitor
+        // aware is laid out at 96 dpi and shown at the display's.
         private static Color ScreenPixel(int x, int y)
         {
+            IntPtr back = IntPtr.Zero;
+            uint me = (uint)Environment.ProcessId;
+            EnumWindows((h, l) =>
+            {
+                GetWindowThreadProcessId(h, out uint pid);
+                if (pid != me || !IsWindowVisible(h)) return true;
+                var t = new System.Text.StringBuilder(64); GetWindowTextW(h, t, 64);
+                if (t.ToString() != "KeyBack") return true;
+                back = h;
+                return false;
+            }, IntPtr.Zero);
+            if (back != IntPtr.Zero && GetWindowRect(back, out RECT r) && r.right > r.left)
+            {
+                double scale = (r.right - r.left) / 300.0;
+                x = r.left + (int)Math.Round((x - 60) * scale);
+                y = r.top + (int)Math.Round((y - 60) * scale);
+            }
             IntPtr dc = GetDC(IntPtr.Zero);
             try { uint c = GetPixel(dc, x, y); return Color.FromArgb((int)(c & 0xff), (int)(c >> 8 & 0xff), (int)(c >> 16 & 0xff)); }
             finally { ReleaseDC(IntPtr.Zero, dc); }
@@ -106,5 +127,22 @@ namespace Wpf.WinFormsInterop.Tests
         [DllImport("user32")] private static extern IntPtr GetDC(IntPtr h);
         [DllImport("user32")] private static extern int ReleaseDC(IntPtr h, IntPtr dc);
         [DllImport("gdi32")] private static extern uint GetPixel(IntPtr dc, int x, int y);
+        [DllImport("user32", CharSet = CharSet.Unicode)] private static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
+        [DllImport("user32")] private static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
+        [DllImport("user32")] private static extern bool CloseDesktop(IntPtr desktop);
+        [DllImport("user32", CharSet = CharSet.Unicode)] private static extern bool GetUserObjectInformationW(IntPtr obj, int index, System.Text.StringBuilder info, int length, out int needed);
+
+        // Locked: the input desktop is Winlogon's, which this session cannot open (or is not "Default").
+        private static bool IsSessionLocked()
+        {
+            IntPtr d = OpenInputDesktop(0, false, 0x0001 /* DESKTOP_READOBJECTS */);
+            if (d == IntPtr.Zero) return true;
+            try
+            {
+                var name = new System.Text.StringBuilder(64);
+                return GetUserObjectInformationW(d, 2 /* UOI_NAME */, name, 128, out _) && !string.Equals(name.ToString(), "Default", StringComparison.OrdinalIgnoreCase);
+            }
+            finally { CloseDesktop(d); }
+        }
     }
 }

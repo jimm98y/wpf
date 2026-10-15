@@ -65,7 +65,7 @@ namespace System.Drawing {
 				TryLoadShared (Asterisk_Information, IDI_INFORMATION);
 				TryLoadShared (Exclamation_Warning, IDI_WARNING);
 				TryLoadShared (Question_, IDI_QUESTION);
-				TryLoadShared (Application_Winlogo, IDI_APPLICATION);
+				TryLoadApplication ();
 			}
 		}
 
@@ -91,7 +91,8 @@ namespace System.Drawing {
 			// letting the dialog scale it down is what puts the same picture on the screen.
 			const uint IMAGE_ICON = 1, LR_SHARED = 0x8000;
 			try {
-				IntPtr h = LoadImage (IntPtr.Zero, id, IMAGE_ICON, 256, 256, LR_SHARED);
+				using var asApp = System.Drawing.WebGpuBackend.DisplayDpi.AsApplication ();
+				IntPtr h = LoadImage(IntPtr.Zero, id, IMAGE_ICON, 256, 256, LR_SHARED);
 				if (h == IntPtr.Zero)
 					h = LoadImage (IntPtr.Zero, id, IMAGE_ICON, 0, 0, LR_SHARED | 0x0040);
 				if (h != IntPtr.Zero)
@@ -100,6 +101,29 @@ namespace System.Drawing {
 				// keep the bundled icon
 			}
 		}
+
+		/// <summary>The application icon as .NET's LoadIcon gives it: the system's icon size
+		/// (SM_CXICON) at the DPI the application sees. Its shared copy is whatever size the first
+		/// window in the process asked for -- the host's, per-monitor, is twice that on a 200%
+		/// display -- so it is copied from the resource at the size wanted.</summary>
+		private static void TryLoadApplication ()
+		{
+			const uint IMAGE_ICON = 1, LR_SHARED = 0x8000, LR_COPYFROMRESOURCE = 0x4000;
+			try {
+				using var asApp = System.Drawing.WebGpuBackend.DisplayDpi.AsApplication ();
+				IntPtr shared = LoadImage (IntPtr.Zero, IDI_APPLICATION, IMAGE_ICON, 0, 0, LR_SHARED | 0x0040);
+				if (shared == IntPtr.Zero)
+					return;
+				int size = (int) (32 * System.Drawing.WebGpuBackend.DisplayDpi.X / 96f);
+				IntPtr h = CopyImage (shared, IMAGE_ICON, size, size, LR_COPYFROMRESOURCE);
+				icons [Application_Winlogo] = Icon.FromHandle (h != IntPtr.Zero ? h : shared);
+			} catch {
+				// keep the bundled icon
+			}
+		}
+
+		[System.Runtime.InteropServices.DllImport ("user32.dll")]
+		private static extern IntPtr CopyImage (IntPtr image, uint type, int cx, int cy, uint flags);
 
 		private SystemIcons ()
 		{

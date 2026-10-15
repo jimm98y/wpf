@@ -29,6 +29,14 @@ namespace Wpf.WinFormsInterop.Tests
 {
     public class PerMonitorDpiTests
     {
+        // What a process loads once, at the DPI it first runs at (the system icons, as stock caches
+        // them too), is loaded before the simulated display: filled under the override, the rest of
+        // the suite -- a 96-dpi application -- would get 200% icons.
+        static PerMonitorDpiTests()
+        {
+            _ = SystemIcons.Application;
+        }
+
         // Lines (by their first words) whose values cannot match, and why.
         private static readonly string[] KnownDifferences =
         {
