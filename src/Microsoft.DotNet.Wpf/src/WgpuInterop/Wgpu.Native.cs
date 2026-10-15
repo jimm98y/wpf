@@ -51,8 +51,34 @@ namespace Microsoft.Wpf.Interop.WebGpu
 
         // ---- Resource creation -------------------------------------------------
 
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr wgpuDeviceCreateTexture(IntPtr device, WGPUTextureDescriptor* descriptor);
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "wgpuDeviceCreateTexture")]
+        private static extern IntPtr wgpuDeviceCreateTextureNative(IntPtr device, WGPUTextureDescriptor* descriptor);
+
+        /// <summary>WebGPU's default (and every adapter's minimum) maxTextureDimension2D.</summary>
+        internal const uint MaxTextureDimension2D = 8192;
+
+        /// <summary>wgpuDeviceCreateTexture, never past the 2D size limit. A texture over it is a
+        /// validation error, and an uncaptured one aborts the process (wgpu-native panics in a
+        /// function that cannot unwind): a system-aware window 3,843 pixels wide at 96 dpi, moved to a
+        /// 240-dpi display, is 9,607 device pixels wide. Past the limit the texture is cut to it (the
+        /// content beyond is not drawn) and the first time is logged with where it came from.</summary>
+        internal static IntPtr wgpuDeviceCreateTexture(IntPtr device, WGPUTextureDescriptor* descriptor)
+        {
+            if (descriptor != null && descriptor->dimension == WGPUTextureDimension._2D
+                && (descriptor->size.width > MaxTextureDimension2D || descriptor->size.height > MaxTextureDimension2D))
+            {
+                if (!s_loggedOversize)
+                {
+                    s_loggedOversize = true;
+                    Console.Error.WriteLine($"wgpu: a {descriptor->size.width}x{descriptor->size.height} texture is past the {MaxTextureDimension2D} limit; cut to it{Environment.NewLine}{Environment.StackTrace}");
+                }
+                descriptor->size.width = Math.Min(descriptor->size.width, MaxTextureDimension2D);
+                descriptor->size.height = Math.Min(descriptor->size.height, MaxTextureDimension2D);
+            }
+            return wgpuDeviceCreateTextureNative(device, descriptor);
+        }
+
+        private static bool s_loggedOversize;
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr wgpuDeviceCreateBuffer(IntPtr device, WGPUBufferDescriptor* descriptor);

@@ -52,8 +52,12 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     }
 
     // Device (physical) pixel dimensions the surface is configured to.
-    internal int DeviceWidth => (int)System.Math.Round(_width * _scale);
-    internal int DeviceHeight => (int)System.Math.Round(_height * _scale);
+    // Never past the GPU's largest texture (WebGPU's default limit, which every adapter meets): a
+    // system-aware window as wide as a 4K display at 96 dpi is 9,600 pixels wide on a 240-dpi one,
+    // and configuring a surface that size aborted the process inside wgpu.
+    internal const int MaxDeviceDimension = 8192;
+    internal int DeviceWidth => System.Math.Min(MaxDeviceDimension, (int)System.Math.Round(_width * _scale));
+    internal int DeviceHeight => System.Math.Min(MaxDeviceDimension, (int)System.Math.Round(_height * _scale));
 
     internal WgpuPresenter(WgpuContext ctx, IntPtr surface, int width, int height, double scale = 1.0, bool srgb = false)
     {

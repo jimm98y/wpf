@@ -76,6 +76,90 @@ namespace Wpf.WinFormsInterop.Tests
             form.Close();
         }
 
+        /// <summary>A form that draws its own frame says where its caption and edges are.</summary>
+        private sealed class ChromeForm : SWF.Form
+        {
+            protected override void WndProc(ref SWF.Message m)
+            {
+                if (m.Msg == 0x0084)   // WM_NCHITTEST
+                {
+                    Point p = PointToClient(new Point((short)(m.LParam.ToInt64() & 0xFFFF), (short)((m.LParam.ToInt64() >> 16) & 0xFFFF)));
+                    if (p.X >= ClientSize.Width - 8 && p.Y >= ClientSize.Height - 8) { m.Result = (IntPtr)17; return; }   // HTBOTTOMRIGHT
+                    if (p.Y < 30) { m.Result = (IntPtr)2; return; }                                                       // HTCAPTION
+                }
+                base.WndProc(ref m);
+            }
+        }
+
+        /// <summary>The DotNetBar way: a press on a drawn caption sends the form WM_SYSCOMMAND SC_MOVE |
+        /// HTCAPTION, or ReleaseCapture + WM_NCLBUTTONDOWN(HTCAPTION). Either must start the system's
+        /// move of the window; nothing did on Windows, and app's window could not be dragged.</summary>
+        [Fact]
+        public void ACustomChromeForm_IsDraggedAndSizedByTheSystem()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "a Win32 window moved by the OS");
+            Exception? failure = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new ChromeForm
+                    {
+                        Text = "ChromeFormTest", FormBorderStyle = SWF.FormBorderStyle.None, StartPosition = SWF.FormStartPosition.Manual,
+                        Location = new Point(8000, 80), Size = new Size(300, 200), ShowInTaskbar = false,
+                    };
+                    form.Show();
+                    IntPtr host = IntPtr.Zero;
+                    for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && host == IntPtr.Zero;) { Pump(100); host = HostOf("ChromeFormTest"); }
+                    Assert.NotEqual(IntPtr.Zero, host);
+                    Pump(200);
+                    GetWindowRect(host, out RECT r);
+                    // The system asks the window what is under a point: the form's own answers.
+                    Assert.Equal(2, (int)SendMessage(host, 0x0084, IntPtr.Zero, Pack(r.left + 100, r.top + 10)));
+                    Assert.Equal(17, (int)SendMessage(host, 0x0084, IntPtr.Zero, Pack(r.right - 3, r.bottom - 3)));
+                    Assert.Equal(1, (int)SendMessage(host, 0x0084, IntPtr.Zero, Pack(r.left + 100, r.top + 100)));   // HTCLIENT
+
+                    // And the form's own requests reach the system as a move / a size of the window.
+                    var driver = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.XplatUIWebGpu")!;
+                    var move = driver.GetField("BeginWindowMove", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+                    var size = driver.GetField("BeginWindowSize", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+                    var realMove = move.GetValue(null); var realSize = size.GetValue(null);
+                    Assert.NotNull(realMove);   // the Windows host provides it
+                    int moves = 0, sizes = 0, edge = 0;
+                    move.SetValue(null, new Action<IntPtr>(h => { if (h == form.Handle) moves++; }));
+                    size.SetValue(null, new Action<IntPtr, int>((h, e) => { if (h == form.Handle) { sizes++; edge = e; } }));
+                    try
+                    {
+                        SWF.Control fc = form;
+                        SendStack(fc, 0x0112, (IntPtr)0xF012, IntPtr.Zero);   // WM_SYSCOMMAND SC_MOVE|HTCAPTION
+                        SendStack(fc, 0x00A1, (IntPtr)2, IntPtr.Zero);        // WM_NCLBUTTONDOWN HTCAPTION
+                        SendStack(fc, 0x00A1, (IntPtr)17, IntPtr.Zero);       // WM_NCLBUTTONDOWN HTBOTTOMRIGHT
+                    }
+                    finally { move.SetValue(null, realMove); size.SetValue(null, realSize); }
+                    Assert.Equal(2, moves);
+                    Assert.Equal(1, sizes);
+                    Assert.Equal(8, edge);   // WMSZ_BOTTOMRIGHT
+                    form.Close();
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        /// <summary>A message to the form through the stack, as the app's own SendMessage is routed.</summary>
+        private static void SendStack(SWF.Control c, int msg, IntPtr w, IntPtr l)
+        {
+            object m = SWF.Message.Create(c.Handle, msg, w, l);
+            c.GetType().GetMethod("WndProc", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null, new[] { typeof(SWF.Message).MakeByRefType() }, null)!.Invoke(c, new object[] { m });
+        }
+
+        private static IntPtr Pack(int x, int y) => (IntPtr)((y << 16) | (x & 0xFFFF));
+
+        [DllImport("user32", EntryPoint = "SendMessageW")] private static extern IntPtr SendMessage(IntPtr h, int m, IntPtr w, IntPtr l);
+
         private static void Pump(int ms)
         {
             var end = DateTime.UtcNow.AddMilliseconds(ms);
