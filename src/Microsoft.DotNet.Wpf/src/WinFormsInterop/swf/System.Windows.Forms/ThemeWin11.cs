@@ -2734,12 +2734,14 @@ namespace System.Windows.Forms
 			// and leaves a gap after it.
 			// Measured against a stock list: the box sits one pixel in from the row, and the row
 			// itself already begins inside the frame.
-			const int Indent = 1;
+			// (.NET's _listItemStartPosition: a pixel at the list's DPI.)
+			int Indent = ctrl.LogicalToDeviceUnits (1);
 			// The text is laid out with a margin of its own -- see Graphics.Overhang -- so the gap
 			// asked for here is only what is wanted beyond that. Three, not two: measured against a
 			// stock list, whose check box lands on exactly the same columns as ours and whose caption
 			// then starts one further in.
-			const int Gap = 3;
+			// At other DPIs .NET's caption starts _listItemStartPosition past the box as well.
+			int Gap = ctrl.LogicalToDeviceUnits (1) + 2;
 
 			Rectangle item = e.Bounds;
 			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;

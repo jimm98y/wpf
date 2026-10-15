@@ -396,7 +396,8 @@ namespace System.Windows.Forms
 			txtView.Location = new System.Drawing.Point(17, 17);
 			txtView.TabIndex = TabIndex;
 
-			spnSpinner.Width = 16;
+			// .NET's _defaultButtonsWidth: 16 at the control's DPI.
+			spnSpinner.Width = LogicalToDeviceUnits (16);
 			spnSpinner.Dock = DockStyle.Right;
 			
 			txtView.Dock = DockStyle.Fill;
@@ -778,6 +779,13 @@ namespace System.Windows.Forms
 		protected override void OnHandleCreated (EventArgs e)
 		{
 			base.OnHandleCreated (e);
+		}
+
+		protected override void RescaleConstantsForDpi (int deviceDpiOld, int deviceDpiNew)
+		{
+			base.RescaleConstantsForDpi (deviceDpiOld, deviceDpiNew);
+			if (spnSpinner != null)
+				spnSpinner.Width = LogicalToDeviceUnits (16);
 		}
 
 		protected override void OnHandleDestroyed (EventArgs e)
