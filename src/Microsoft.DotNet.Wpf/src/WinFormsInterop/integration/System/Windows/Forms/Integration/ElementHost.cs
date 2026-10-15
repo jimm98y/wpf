@@ -160,15 +160,38 @@ namespace System.Windows.Forms.Integration
             try
             {
                 EnsureSource();
+            }
+            catch (Exception ex)
+            {
+                _failed = true;
+                Console.Error.WriteLine("ElementHost: hosting failed: " + ex);
+                return;
+            }
+            try
+            {
                 // Everything at a HIGHER priority than Background runs first -- which includes Render,
                 // where WPF's MediaContext commits the frame the sink then publishes. WPF's DoEvents.
                 _dispatcher?.Invoke(() => { }, DispatcherPriority.Background);
             }
             catch (Exception ex)
             {
-                _failed = true;
-                Console.Error.WriteLine("ElementHost: hosting failed: " + ex);
+                // The APPLICATION's code threw: a WPF event handler, run by this pump. WPF has
+                // already offered it to Dispatcher.UnhandledException and nobody handled it. It is
+                // not a hosting failure. This used to switch the host off for good (app's
+                // NullReferenceException after its component editor closed), when on Windows the
+                // exception goes on to the WinForms message loop that dispatched the WPF window's
+                // message: Application.ThreadException, the application's own handler or the
+                // exception dialog, and the host carries on.
+                ReportAppException(ex);
             }
+        }
+
+        /// <summary>An exception from application code run by this host: handled as WinForms' message
+        /// loop handles one from a window procedure.</summary>
+        private static void ReportAppException(Exception ex)
+        {
+            if (ex is TargetInvocationException { InnerException: Exception inner }) ex = inner;
+            Application.OnThreadException(ex);
         }
 
         int IEmbeddedScene.Version => Version;
@@ -422,6 +445,7 @@ namespace System.Windows.Forms.Integration
             if (s_showWindow == null) return;
             const int SW_HIDE = 0, SW_SHOWNA = 8;
             try { s_showWindow.Invoke(null, new object[] { new HandleRef(this, _source.Handle), show ? SW_SHOWNA : SW_HIDE }); }
+            catch (TargetInvocationException ex) when (ex.InnerException != null) { ReportAppException(ex); }   // a handler of the tree's (IsVisibleChanged ...)
             catch (Exception ex) { Console.Error.WriteLine("ElementHost: show/hide failed: " + ex.Message); }
         }
 
@@ -451,6 +475,7 @@ namespace System.Windows.Forms.Integration
                     x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE,
                 });
             }
+            catch (TargetInvocationException ex) when (ex.InnerException != null) { ReportAppException(ex); }   // a handler of the tree's (SizeChanged ...)
             catch (Exception ex) { Console.Error.WriteLine("ElementHost: move failed: " + ex.Message); }
         }
 
