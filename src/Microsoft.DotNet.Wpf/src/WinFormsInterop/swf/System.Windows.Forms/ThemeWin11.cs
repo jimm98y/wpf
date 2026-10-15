@@ -319,7 +319,11 @@ namespace System.Windows.Forms
 				// this one a column LEFT of stock's.
 				// A list item's text starts the same column in: comctl32's list box draws it at the
 				// row's edge plus its margin, which DrawString's own margin overshoots by one.
-				caption.X -= 1;
+				// DrawString's margin is a sixth of the em, so at 200% it is twice as wide: take the
+				// difference off too, or the caption sits three pixels right of stock's there.
+				int dsMargin = (int) Math.Round (e.Font.SizeInPoints * ctrl.DeviceDpi / 72f / 6f);
+				int dsMargin96 = (int) Math.Round (e.Font.SizeInPoints * 96 / 72f / 6f);
+				caption.X -= 1 + dsMargin - dsMargin96;
 				e.Graphics.DrawStringMono (ctrl.GetItemText (ctrl.Items[e.Index]), e.Font,
 						       ResPool.GetSolidBrush (fore), caption, format);
 				format.Dispose ();
