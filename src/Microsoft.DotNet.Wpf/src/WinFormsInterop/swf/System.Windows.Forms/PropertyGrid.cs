@@ -98,6 +98,11 @@ namespace System.Windows.Forms
 		#region Contructors
 		public PropertyGrid ()
 		{
+			// .NET's: the grid sizes its own parts at its DPI (toolbar, description pane), so a form
+			// that scales for its DPI or font scales the grid and leaves its children alone. Scaled
+			// again, a grid on a form auto-scaling at 200% had a toolbar and help pane twice stock's.
+			AutoScaleMode = AutoScaleMode.Inherit;
+			_doNotScaleChildren = true;
 			selected_objects = new object[0];
 			property_tabs = new PropertyTabCollection(this);
 

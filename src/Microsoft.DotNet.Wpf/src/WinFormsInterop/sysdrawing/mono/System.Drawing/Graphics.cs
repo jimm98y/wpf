@@ -3303,6 +3303,12 @@ namespace System.Drawing
 				hotkey = format.HotkeyPrefix != Text.HotkeyPrefix.None;
 			}
 			float sx = wm [0], sy = wm [3];
+			// A string wider than its rectangle under a trimming is the full imager's: it trims it
+			// (DotNetBar's dock tabs at 200%, "Explo..."). The fast layout below does not, and drew
+			// the whole caption over its neighbours.
+			if (format != null && format.Trimming != StringTrimming.None && rect.Width > 0
+			    && MeasureString (s, font, PointF.Empty, format).Width > rect.Width + 0.5f)
+				return DrawGdiPlusThroughEngine (s, font, brush, rect, format);
 			// FastTextImager::Initialize +0xd0: no width to fit for NoWrap without trimming.
 			float wrap = format != null && (format.FormatFlags & StringFormatFlags.NoWrap) != 0
 				     && format.Trimming == StringTrimming.None ? 0f : rect.Width;

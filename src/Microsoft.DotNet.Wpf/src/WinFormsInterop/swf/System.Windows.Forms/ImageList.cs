@@ -1111,7 +1111,11 @@ namespace System.Windows.Forms
 
 		public void Draw(Graphics g, int x, int y, int index)
 		{
-			g.DrawImage(images.GetImage(index), x, y);
+			// .NET's: Draw(g, x, y, ImageSize.Width, ImageSize.Height, index) -- ImageList_Draw puts the
+			// image down pixel for pixel. DrawImage(image, x, y) honours the bitmap's resolution, and
+			// a list made at 192 dpi (its bitmaps carrying the display's) drew every image half size.
+			Size size = ImageSize;
+			this.Draw(g, x, y, size.Width, size.Height, index);
 		}
 
 		public void Draw(Graphics g, int x, int y, int width, int height, int index)
