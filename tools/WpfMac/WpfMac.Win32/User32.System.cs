@@ -1,4 +1,4 @@
-// user32, the parts that describe the system rather than a window: metrics, parameters, monitors,
+﻿// user32, the parts that describe the system rather than a window: metrics, parameters, monitors,
 // DPI, the cursor and keyboard, registered messages, hooks, system colours.
 //
 // Coordinates are the stack's: macOS points, origin at the top-left of the main display, which is
@@ -7,6 +7,7 @@
 
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using Forms = System.Windows.Forms;
 
 namespace WpfMac.Win32;
 
@@ -306,17 +307,56 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly] private static uint GetDpiForWindow(nint hwnd) => 96;
-    [UnmanagedCallersOnly] private static uint GetDpiForSystem() => 96;
-    [UnmanagedCallersOnly] private static int GetDpiForMonitor(nint monitor, int type, uint* x, uint* y) { *x = 96; *y = 96; return S_OK; }
-    [UnmanagedCallersOnly] private static int GetProcessDpiAwareness(nint process, int* value) { *value = 2; return S_OK; }   // PROCESS_PER_MONITOR_DPI_AWARE
-    [UnmanagedCallersOnly] private static int IsProcessDPIAware() => TRUE;
-    [UnmanagedCallersOnly] private static int SetProcessDpiAwareness(int value) => S_OK;
-    [UnmanagedCallersOnly] private static int SetProcessDpiAwarenessContext(nint ctx) => TRUE;
-    // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is the pseudo-handle -4.
-    [UnmanagedCallersOnly] private static nint SetThreadDpiAwarenessContext(nint ctx) => -4;
-    [UnmanagedCallersOnly] private static nint GetThreadDpiAwarenessContext() => -4;
-    [UnmanagedCallersOnly] private static int GetAwarenessFromDpiAwarenessContext(nint ctx) => ctx switch { -1 => 0, -2 => 1, _ => 2 };
+    // DPI as the application sees it: its high-DPI mode is WinForms' (Application.HighDpiMode, which
+    // a SetProcessDpiAwareness* call below sets as Windows would), and the DPI is the one it lays
+    // out at -- the display's for a per-monitor-aware application, 96 on the surface the host
+    // scales for any other.
+    private static Forms.HighDpiMode Mode => Forms.Application.HighDpiMode;
+    private static uint SystemDpi => (uint)(s_systemDpi ??= (int)(typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.ScaleHelper")
+        ?.GetProperty("InitialSystemDpi", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null) ?? 96));
+    private static int? s_systemDpi;
+
+    [UnmanagedCallersOnly] private static uint GetDpiForWindow(nint hwnd)
+    {
+        int dpi = Resolve(hwnd) is Forms.Control ? DriverInt("GetDpiForWindow", hwnd) : 0;
+        return dpi > 0 ? (uint)dpi : SystemDpi;
+    }
+    [UnmanagedCallersOnly] private static uint GetDpiForSystem() => SystemDpi;
+    [UnmanagedCallersOnly] private static int GetDpiForMonitor(nint monitor, int type, uint* x, uint* y) { *x = SystemDpi; *y = SystemDpi; return S_OK; }
+    [UnmanagedCallersOnly] private static int GetProcessDpiAwareness(nint process, int* value) { *value = Awareness(); return S_OK; }
+    [UnmanagedCallersOnly] private static int IsProcessDPIAware() => Awareness() > 0 ? TRUE : FALSE;
+    // The application asks for an awareness: it is its high-DPI mode (fails, as on Windows, once set).
+    [UnmanagedCallersOnly] private static int SetProcessDpiAwareness(int value) =>
+        Request(value switch { 0 => Forms.HighDpiMode.DpiUnaware, 1 => Forms.HighDpiMode.SystemAware, _ => Forms.HighDpiMode.PerMonitor }) ? S_OK : unchecked((int)0x80070005);
+    [UnmanagedCallersOnly] private static int SetProcessDpiAwarenessContext(nint ctx) =>
+        Request(ctx switch { -1 => Forms.HighDpiMode.DpiUnaware, -2 => Forms.HighDpiMode.SystemAware, -3 => Forms.HighDpiMode.PerMonitor, -5 => Forms.HighDpiMode.DpiUnawareGdiScaled, _ => Forms.HighDpiMode.PerMonitorV2 }) ? TRUE : FALSE;
+    [UnmanagedCallersOnly] private static nint SetThreadDpiAwarenessContext(nint ctx) => Context();
+    [UnmanagedCallersOnly] private static nint GetThreadDpiAwarenessContext() => Context();
+
+    private static bool Request(Forms.HighDpiMode mode)
+    {
+        try { return Forms.Application.SetHighDpiMode(mode); }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>PROCESS_DPI_AWARENESS for the mode.</summary>
+    private static int Awareness() => Mode switch
+    {
+        Forms.HighDpiMode.SystemAware => 1,
+        Forms.HighDpiMode.PerMonitor or Forms.HighDpiMode.PerMonitorV2 => 2,
+        _ => 0,
+    };
+
+    /// <summary>The DPI_AWARENESS_CONTEXT pseudo-handle for the mode.</summary>
+    private static nint Context() => Mode switch
+    {
+        Forms.HighDpiMode.SystemAware => -2,
+        Forms.HighDpiMode.PerMonitor => -3,
+        Forms.HighDpiMode.PerMonitorV2 => -4,
+        Forms.HighDpiMode.DpiUnawareGdiScaled => -5,
+        _ => -1,
+    };
+    [UnmanagedCallersOnly] private static int GetAwarenessFromDpiAwarenessContext(nint ctx) => ctx switch { -1 or -5 => 0, -2 => 1, _ => 2 };
     [UnmanagedCallersOnly] private static int AreDpiAwarenessContextsEqual(nint a, nint b) => a == b ? TRUE : FALSE;
 
     // ---- cursor and keyboard -----------------------------------------------------------------------

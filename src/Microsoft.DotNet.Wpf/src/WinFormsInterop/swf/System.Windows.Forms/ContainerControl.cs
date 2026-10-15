@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -34,7 +34,7 @@ using System.Runtime.InteropServices;
 namespace System.Windows.Forms {
 	[ClassInterface (ClassInterfaceType.AutoDispatch)]
 	[ComVisible (true)]
-	public class ContainerControl : ScrollableControl, IContainerControl {
+	public partial class ContainerControl : ScrollableControl, IContainerControl {
 		private Control		active_control;
 		private Control		unvalidated_control;
 		private ArrayList	pending_validation_chain;
@@ -42,11 +42,6 @@ namespace System.Windows.Forms {
 		// This is an internal hack that allows some container controls
 		// to not auto select their child when they are activated
 		internal bool 		auto_select_child = true;
-		private SizeF		auto_scale_dimensions;
-		private AutoScaleMode	auto_scale_mode;
-		private bool		auto_scale_mode_set;
-		private bool		auto_scale_pending;
-		private bool		is_auto_scaling;
 
 		internal bool validation_failed; //track whether validation was cancelled by a validating control
 
@@ -55,8 +50,6 @@ namespace System.Windows.Forms {
 			active_control = null;
 			unvalidated_control = null;
 			ControlRemoved += new ControlEventHandler(OnControlRemoved);
-			auto_scale_dimensions = SizeF.Empty;
-			auto_scale_mode = AutoScaleMode.Inherit;
 			can_cache_preferred_size = true;
 		}
 		#endregion	// Public Constructors
@@ -361,59 +354,6 @@ namespace System.Windows.Forms {
 		}
 
 		[Browsable (false)]
-		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
-		[EditorBrowsable (EditorBrowsableState.Advanced)]
-		[Localizable (true)]
-		public SizeF AutoScaleDimensions {
-			get {
-				return auto_scale_dimensions;
-			}
-
-			set {
-				if (auto_scale_dimensions != value) {
-					auto_scale_dimensions = value;
-					
-					PerformAutoScale ();
-				}
-			}
-		}
-
-		protected SizeF AutoScaleFactor {
-			get {
-				if (auto_scale_dimensions.IsEmpty)
-					return new SizeF (1f, 1f);
-
-				return new SizeF(CurrentAutoScaleDimensions.Width / auto_scale_dimensions.Width,
-					CurrentAutoScaleDimensions.Height / auto_scale_dimensions.Height);
-			}
-		}
-
-
-		[Browsable (false)]
-		[EditorBrowsable (EditorBrowsableState.Advanced)]
-		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
-		public AutoScaleMode AutoScaleMode {
-			get {
-				return auto_scale_mode;
-			}
-			set {
-				if (this is Form)
-					(this as Form).AutoScale = false;
-
-				if (auto_scale_mode != value) {
-					auto_scale_mode = value;
-
-					if (auto_scale_mode_set)
-						auto_scale_dimensions = SizeF.Empty;
-
-					auto_scale_mode_set = true;
-
-					PerformAutoScale ();
-				}
-			}
-		}
-
-		[Browsable (false)]
 		public override BindingContext BindingContext {
 			get {
 				if (base.BindingContext == null) {
@@ -424,25 +364,6 @@ namespace System.Windows.Forms {
 
 			set {
 				base.BindingContext = value;
-			}
-		}
-
-		[Browsable (false)]
-		[EditorBrowsable (EditorBrowsableState.Advanced)]
-		public SizeF CurrentAutoScaleDimensions {
-			get {
-				switch(auto_scale_mode) {
-					case AutoScaleMode.Dpi:
-						return TextRenderer.GetDpi ();
-
-					case AutoScaleMode.Font:
-						Size s = TextRenderer.MeasureText ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890", Font);
-						int width = (int)Math.Round ((float)s.Width / 62f);
-						
-						return new SizeF (width, s.Height);
-				}
-
-				return auto_scale_dimensions;
 			}
 		}
 
@@ -478,51 +399,6 @@ namespace System.Windows.Forms {
 		#endregion	// Public Instance Methods
 
 		#region Public Instance Methods
-		internal void PerformAutoScale (bool called_by_scale)
-		{
-			if ((AutoScaleMode == AutoScaleMode.Inherit) && !called_by_scale)
-				return;
-
-			if ((layout_suspended > 0) && !called_by_scale) {
-				auto_scale_pending = true;
-				return;
-			}
-			// Set this first so we don't get called again from
-			// PerformDelayedAutoScale after ResumeLayout
-			auto_scale_pending = false;
-
-			SizeF factor = AutoScaleFactor;
-			if (AutoScaleMode == AutoScaleMode.Inherit) {
-				ContainerControl cc = FindContainer (this.Parent);
-				if (cc != null)
-					factor = cc.AutoScaleFactor;
-			}
-			if (factor != new SizeF (1F, 1F)) {
-				is_auto_scaling = true;
-				SuspendLayout ();
-				Scale (factor);
-				ResumeLayout (false);
-				is_auto_scaling = false;
-			}
-
-			auto_scale_dimensions = CurrentAutoScaleDimensions;
-		}
-
-		public void PerformAutoScale ()
-		{
-			PerformAutoScale (false);
-		}
-
-		internal void PerformDelayedAutoScale ()
-		{
-			if (auto_scale_pending)
-				PerformAutoScale ();
-		}
-
-		internal bool IsAutoScaling {
-			get { return is_auto_scaling; }
-		}
-
 		[MonoTODO ("Stub, not implemented")]
 		static bool ValidateWarned;
 		public bool Validate() {
@@ -824,25 +700,6 @@ namespace System.Windows.Forms {
 			return true;
 		}
 		#endregion	// Internal Methods
-
-		protected override void OnParentChanged (EventArgs e)
-		{
-			base.OnParentChanged (e);
-		}
-
-		[EditorBrowsable (EditorBrowsableState.Advanced)]
-		protected override void OnFontChanged (EventArgs e)
-		{
-			base.OnFontChanged (e);
-			
-			if (AutoScaleMode == AutoScaleMode.Font)
-				PerformAutoScale ();
-		}
-
-		protected override void OnLayout (LayoutEventArgs e)
-		{
-			base.OnLayout (e);
-		}
 
 		internal override Size GetPreferredSizeCore (Size proposedSize)
 		{

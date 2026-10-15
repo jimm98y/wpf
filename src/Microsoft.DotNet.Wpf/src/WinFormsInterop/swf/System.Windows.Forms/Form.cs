@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -45,7 +45,7 @@ namespace System.Windows.Forms {
 	[ComVisible (true)]
 	[ToolboxItemFilter ("System.Windows.Forms.Control.TopLevel")]
 	[ToolboxItem(false)]
-	public class Form : ContainerControl {
+	public partial class Form : ContainerControl {
 		#region Local Variables
 		internal bool			closing;
 		/// <summary>A drop-down of this stack's own (the property grid's editor holder): Windows closes
@@ -190,16 +190,10 @@ namespace System.Windows.Forms {
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		protected override Rectangle GetScaledBounds (Rectangle bounds, SizeF factor, BoundsSpecified specified)
 		{
-			if ((specified & BoundsSpecified.Width) == BoundsSpecified.Width) {
-				int border = Size.Width - ClientSize.Width;
-				bounds.Width = (int)Math.Round ((bounds.Width - border) * factor.Width) + border;
-			}
-			if ((specified & BoundsSpecified.Height) == BoundsSpecified.Height) {
-				int border = Size.Height - ClientSize.Height;
-				bounds.Height = (int)Math.Round ((bounds.Height - border) * factor.Height) + border;
-			}
-
-			return bounds;
+			// .NET: a maximized or minimized form scales its restored bounds.
+			if (WindowState != FormWindowState.Normal)
+				bounds = RestoreBounds;
+			return base.GetScaledBounds (bounds, factor, specified);
 		}
 
 		protected override bool ProcessMnemonic (char charCode)
@@ -210,7 +204,33 @@ namespace System.Windows.Forms {
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		protected override void ScaleControl (SizeF factor, BoundsSpecified specified)
 		{
+			// .NET: an MDI child keeps its location.
+			if (MdiParent != null)
+				specified &= ~BoundsSpecified.Location;
 			base.ScaleControl (factor, specified);
+		}
+
+		private protected override void OnAutoScaleModeChanged ()
+		{
+			base.OnAutoScaleModeChanged ();
+			// The obsolete model gives way to the one AutoScaleMode chose.
+			AutoScale = false;
+		}
+
+		[EditorBrowsable (EditorBrowsableState.Advanced)]
+		protected override void ScaleMinMaxSize (float xScaleFactor, float yScaleFactor, bool updateContainerSize = true)
+		{
+			base.ScaleMinMaxSize (xScaleFactor, yScaleFactor, updateContainerSize);
+			if (WindowState != FormWindowState.Normal)
+				return;
+			Size minSize = MinimumSize;
+			Size maxSize = MaximumSize;
+			if (!minSize.IsEmpty)
+				minimum_size = ScaleSize (minSize, xScaleFactor, yScaleFactor);
+			if (!maxSize.IsEmpty)
+				maximum_size = ScaleSize (maxSize, xScaleFactor, yScaleFactor);
+			if (updateContainerSize && IsHandleCreated)
+				UpdateMinMax ();
 		}
 
 		internal void OnActivatedInternal ()
@@ -2136,6 +2156,8 @@ namespace System.Windows.Forms {
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
 		protected override void OnResize(EventArgs e) {
+			// A resize that is not a DPI change forgets the sizes kept per DPI.
+			ClearDpiFormSizes ();
 			base.OnResize(e);
 
 		}
@@ -2496,6 +2518,24 @@ namespace System.Windows.Forms {
 			switch ((Msg)m.Msg) {
 			case Msg.WM_DESTROY: {
 				WmDestroy (ref m);
+				return;
+			}
+
+			case (Msg) XplatUIWebGpu.WM_DPICHANGED: {
+				WmDpiChanged (ref m);
+				m.Result = IntPtr.Zero;
+				return;
+			}
+
+			case (Msg) XplatUIWebGpu.WM_GETDPISCALEDSIZE: {
+				// The size the form wants at the new DPI, if not the linear one (LPARAM: SIZE*).
+				if (GetDpiScaledSize ((short) ((long) m.WParam & 0xFFFF), out Size wanted)) {
+					System.Runtime.InteropServices.Marshal.WriteInt32 (m.LParam, 0, wanted.Width);
+					System.Runtime.InteropServices.Marshal.WriteInt32 (m.LParam, 4, wanted.Height);
+					m.Result = (IntPtr) 1;
+				} else {
+					m.Result = IntPtr.Zero;
+				}
 				return;
 			}
 

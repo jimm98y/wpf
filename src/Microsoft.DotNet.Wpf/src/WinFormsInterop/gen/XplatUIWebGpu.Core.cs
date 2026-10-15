@@ -742,7 +742,7 @@ namespace System.Windows.Forms
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			var hwnd = new Hwnd();
 			// WinForms passes the WINDOW rectangle; keep the client one (see _frames).
-			Padding frame = TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null);
+			Padding frame = TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null, CreateDpi(cp));
 			int w = Math.Max(1, cp.Width - frame.Horizontal), h = Math.Max(1, cp.Height - frame.Vertical);
 			hwnd.x = (cp.X == int.MinValue ? 0 : cp.X) + frame.Left;
 			hwnd.y = (cp.Y == int.MinValue ? 0 : cp.Y) + frame.Top;
@@ -1757,7 +1757,7 @@ namespace System.Windows.Forms
 		{
 			// Only a top-level window's frame is modelled (see TopLevelFrame); a child's border is
 			// drawn over its own edge (DrawWindowBorder), so a child's window and client are one.
-			Padding f = TopLevelFrame(cp.Style, cp.ExStyle, menu != null);
+			Padding f = TopLevelFrame(cp.Style, cp.ExStyle, menu != null, CreateDpi(cp));
 			WindowRect = new Rectangle(ClientRect.X - f.Left, ClientRect.Y - f.Top,
 			                           ClientRect.Width + f.Horizontal, ClientRect.Height + f.Vertical);
 			return true;
@@ -1767,15 +1767,25 @@ namespace System.Windows.Forms
 		/// host (the native title bar and borders belong to it), and on Windows, where Win32Host puts
 		/// the window in a real Windows 11 frame, Windows 11's own at 96 dpi by default. Elsewhere it
 		/// defaults to none -- a browser page has no frame round its canvas.</summary>
-		internal static Func<int, int, bool, Padding> FrameProvider = OperatingSystem.IsWindows() ? Windows11Frame : null;
+		internal static Func<int, int, bool, int, Padding> FrameProvider = OperatingSystem.IsWindows() ? Windows11Frame : null;
+
+		/// <summary>The DPI a window being created lays out for: its control's (DeviceDpi), which a
+		/// child takes from its parent and a top-level window from the display it opens on.</summary>
+		private static int CreateDpi(CreateParams cp) =>
+			!ScaleHelper.IsDeviceScaled ? ScaleHelper.OneHundredPercentLogicalDpi
+			: cp.control != null ? cp.control.DeviceDpi : ScaleHelper.InitialSystemDpi;
 
 		/// <summary>AdjustWindowRectExForDpi at 96 dpi on Windows 11, for the styles a Form uses:
 		/// a caption (with or without a sizing frame) is 8 on three sides and 31 on top; a sizing
 		/// frame alone 7; a dialog frame alone 3; a plain border 1; WS_EX_CLIENTEDGE two more all
 		/// round; a menu bar another SM_CYMENU (20) on top. Read off the API for every combination
 		/// FormBorderStyle produces.</summary>
-		internal static Padding Windows11Frame(int style, int exStyle, bool menu)
+		internal static Padding Windows11Frame(int style, int exStyle, bool menu, int dpi)
 		{
+			// At another DPI, Windows' own answer (AdjustWindowRectExForDpi) -- a per-monitor-aware
+			// form at 200% has a 13-pixel border and a 58-pixel top.
+			if (dpi != ScaleHelper.OneHundredPercentLogicalDpi && NativeFrameForDpi(style, exStyle, menu, dpi) is Padding native)
+				return native;
 			var ws = (WindowStyles)style;
 			int edge;
 			if ((ws & WindowStyles.WS_CAPTION) == WindowStyles.WS_CAPTION) edge = 8;
@@ -1792,12 +1802,12 @@ namespace System.Windows.Forms
 		/// <summary>The frame of a window with this style, if it is a top-level window with a
 		/// caption or sizing frame (a Form); zero for a child, and for a popup (a drop-down list),
 		/// whose border the driver draws itself.</summary>
-		internal static Padding TopLevelFrame(int style, int exStyle, bool menu)
+		internal static Padding TopLevelFrame(int style, int exStyle, bool menu, int dpi = ScaleHelper.OneHundredPercentLogicalDpi)
 		{
 			var ws = (WindowStyles)style;
-			if ((ws & WindowStyles.WS_CHILD) != 0) return ChildFrame(style, exStyle);
+			if ((ws & WindowStyles.WS_CHILD) != 0) return ChildFrame(style, exStyle, dpi);
 			if ((ws & (WindowStyles.WS_CAPTION | WindowStyles.WS_THICKFRAME)) == 0) return Padding.Empty;
-			return FrameProvider?.Invoke(style, exStyle, menu) ?? Padding.Empty;
+			return FrameProvider?.Invoke(style, exStyle, menu, dpi) ?? Padding.Empty;
 		}
 
 		/// <summary>
@@ -1808,7 +1818,7 @@ namespace System.Windows.Forms
 		/// ClientSize, DisplayRectangle and everything laid out from them were the frame too large.
 		/// A child with a caption (an MDI child form) keeps no frame here, as before.
 		/// </summary>
-		internal static Padding ChildFrame(int style, int exStyle)
+		internal static Padding ChildFrame(int style, int exStyle, int dpi = ScaleHelper.OneHundredPercentLogicalDpi)
 		{
 			var ws = (WindowStyles)style;
 			var ex = (WindowExStyles)exStyle;
@@ -1817,11 +1827,14 @@ namespace System.Windows.Forms
 			// The scroll bars WS_VSCROLL and WS_HSCROLL ask for sit inside the border, also outside the
 			// client (Windows' non-client scroll bars); their windows are this window's non-client
 			// children (SetNonClientChild).
-			int right = (ws & WindowStyles.WS_VSCROLL) != 0 ? SystemInformation.VerticalScrollBarWidth : 0;
-			int bottom = (ws & WindowStyles.WS_HSCROLL) != 0 ? SystemInformation.HorizontalScrollBarHeight : 0;
+			// GetSystemMetricsForDpi(SM_CXVSCROLL / SM_CYHSCROLL): 17 at 96 dpi, scaled with it.
+			int right = (ws & WindowStyles.WS_VSCROLL) != 0 ? ScaleHelper.ScaleToDpi(SystemInformation.VerticalScrollBarWidthAt96, dpi) : 0;
+			int bottom = (ws & WindowStyles.WS_HSCROLL) != 0 ? ScaleHelper.ScaleToDpi(SystemInformation.HorizontalScrollBarHeightAt96, dpi) : 0;
 			if (edge == 0 && right == 0 && bottom == 0) return Padding.Empty;
 			return new Padding(edge, edge, edge + right, edge + bottom);
 		}
+
+		internal static int BorderEdgeOf(int style, int exStyle) => BorderEdge(style, exStyle);
 
 		/// <summary>How thick a child's border is: WS_BORDER one pixel, WS_EX_STATICEDGE one,
 		/// WS_EX_CLIENTEDGE two (the two add).</summary>
@@ -1885,7 +1898,7 @@ namespace System.Windows.Forms
 		internal static event Action<IntPtr> FrameChanged;
 
 		private Padding StandardFrame(IntPtr handle) =>
-			_styles.TryGetValue(handle, out var s) ? TopLevelFrame(s.Style, s.ExStyle, s.Menu) : Padding.Empty;
+			_styles.TryGetValue(handle, out var s) ? TopLevelFrame(s.Style, s.ExStyle, s.Menu, WindowDpi(handle)) : Padding.Empty;
 
 		[StructLayout(LayoutKind.Sequential)]
 		private struct NcRect { public int Left, Top, Right, Bottom; }
@@ -2000,7 +2013,7 @@ namespace System.Windows.Forms
 			// is drawn from these, and a border style changed after creation kept drawing the old one.
 			hwnd.initial_style = cp.WindowStyle;
 			hwnd.initial_ex_style = cp.WindowExStyle;
-			ApplyFrame(handle, AskFrame(handle, TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null)));
+			ApplyFrame(handle, AskFrame(handle, TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null, WindowDpi(handle))));
 		}
 		internal override void SetBorderStyle(IntPtr handle, FormBorderStyle border_style) { }
 		internal override FormWindowState GetWindowState(IntPtr handle) => FormWindowState.Normal;

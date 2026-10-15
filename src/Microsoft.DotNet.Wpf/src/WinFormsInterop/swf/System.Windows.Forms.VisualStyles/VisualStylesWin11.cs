@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -273,13 +273,24 @@ namespace System.Windows.Forms.VisualStyles
 		/// the 17-pixel scroll arrow and drop-down button, the tree view's 16-pixel glyph.</summary>
 		public int UxThemeGetThemePartSize (IntPtr hTheme, IDeviceContext dc, int iPartId, int iStateId, ThemeSizeType type, out Size result)
 		{
-			result = PartSize (ClassOf (hTheme), iPartId);
+			result = ScaleForDc (PartSize (ClassOf (hTheme), iPartId), dc);
 			return result.IsEmpty ? E_NOTIMPL : S_OK;
+		}
+
+		/// <summary>A part's size at the DPI of the DC it is asked for on, as uxtheme picks the part's
+		/// image for that DPI: twice the 96-dpi size on a 200% screen.</summary>
+		private static Size ScaleForDc (Size at96, IDeviceContext dc)
+		{
+			if (at96.IsEmpty)
+				return at96;
+			float dpi = dc is Graphics g ? g.DpiX : System.Drawing.WebGpuBackend.DisplayDpi.X;
+			int d = (int) Math.Round (dpi);
+			return d == 96 ? at96 : ScaleHelper.ScaleToDpi (at96, d);
 		}
 
 		public int UxThemeGetThemePartSize (IntPtr hTheme, IDeviceContext dc, int iPartId, int iStateId, Rectangle bounds, ThemeSizeType type, out Size result)
 		{
-			result = PartSize (ClassOf (hTheme), iPartId);
+			result = ScaleForDc (PartSize (ClassOf (hTheme), iPartId), dc);
 			if (result.IsEmpty && type == ThemeSizeType.Draw)
 				result = bounds.Size;
 			return result.IsEmpty ? E_NOTIMPL : S_OK;

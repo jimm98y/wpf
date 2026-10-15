@@ -438,13 +438,13 @@ namespace System.Windows.Forms
 		/// box: its rows are 15 pixels for Segoe UI 9pt where MeasureString reports 16, so a list
 		/// given 64 pixels fits four rows there and only three here. A checked list adds its own.
 		/// </summary>
-		internal virtual int ExtraItemHeight => -1;
+		internal virtual int ExtraItemHeight => 0;
 
 		public virtual int ItemHeight {
 			get {
 				if (item_height == -1) {
-					SizeF sz = TextRenderer.MeasureString ("The quick brown Fox", Font);
-					item_height = (int) sz.Height + ExtraItemHeight;
+					// The list box control's: the font's TEXTMETRIC height (32 for 9pt at 200%).
+					item_height = TextLineHeight + ExtraItemHeight;
 				}
 				return item_height;
 			}
@@ -995,8 +995,7 @@ namespace System.Windows.Forms
 			if (explicit_item_height) {
 				base.Refresh ();
 			} else {
-				SizeF sz = TextRenderer.MeasureString ("The quick brown Fox", Font);
-				item_height = (int) sz.Height + ExtraItemHeight;
+				item_height = TextLineHeight + ExtraItemHeight;
 				if (IntegralHeight)
 					UpdateListBoxBounds ();
 				LayoutListBox ();

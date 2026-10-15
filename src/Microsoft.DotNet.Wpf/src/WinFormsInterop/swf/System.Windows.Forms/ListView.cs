@@ -1613,7 +1613,7 @@ namespace System.Windows.Forms
 				int image_h = SmallImageList == null ? 0 : SmallImageList.ImageSize.Height;
 				int state_w = check_boxes ? CheckBoxSize.Width : 0;
 				int state_h = check_boxes ? CheckBoxSize.Height : 0;
-				float emPx = Font.SizeInPoints * 96f / 72f;
+				float emPx = Font.SizeInPoints * System.Drawing.WebGpuBackend.DisplayDpi.Y / 72f;
 				int ave;
 				if (!System.Drawing.WebGpuBackend.TextMetrics.TryGetAverageCharWidth (Font.FontFamily.Name, Font.Bold, Font.Italic, emPx, out ave) || ave <= 0)
 					ave = Math.Max (1, (int) Math.Round (emPx / 2));

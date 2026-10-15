@@ -70,7 +70,9 @@ namespace System.Windows.Forms
 		private bool is_moving_right; // which way the thumb should move when mouse is down (right=up, left=down) 
 		internal int mouse_down_x_offset; // how far from left side of thumb was the mouse clicked.
 		internal bool mouse_moved; // has the mouse moved since it was clicked?
-		private const int size_of_autosize = 45;
+		private const int size_of_autosize_at96 = 45;
+		// comctl32 sizes the bar for the window's DPI: 45 at 96 dpi, 90 at 200%.
+		private int size_of_autosize => ScaleHelper.ScaleToDpi (size_of_autosize_at96, DeviceDpi);
 		private bool right_to_left_layout;
 		bool thumb_entered;
 	

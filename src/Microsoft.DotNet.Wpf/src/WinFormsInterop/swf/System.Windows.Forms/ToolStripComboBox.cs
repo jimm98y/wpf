@@ -219,7 +219,7 @@ namespace System.Windows.Forms
 		#endregion
 
 		#region Protected Properties
-		protected internal override Padding DefaultMargin { get { return new Padding (1, 0, 1, 0); } }
+		protected internal override Padding DefaultMargin { get { return ScaleHelper.ScaleToDpi (new Padding (1, 0, 1, 0), ScaleHelper.InitialSystemDpi); } }
 		protected override Size DefaultSize { get { return new Size (100, 22); } }
 		#endregion
 

@@ -1,4 +1,4 @@
-//
+﻿//
 // System.Drawing.Fonts.cs
 //
 // Authors:
@@ -612,7 +612,7 @@ namespace System.Drawing
 				px = m is WebGpuBackend.Gdip.GpFontFamily.Metrics fm && fm.Ascent + fm.Descent > 0
 					? o.lfHeight * (float) fm.Em / (fm.Ascent + fm.Descent) : o.lfHeight;
 			} else px = 12f;
-			return new Font (face, px * 72f / 96f, style, GraphicsUnit.Point, o.lfCharSet, face.StartsWith ("@"));
+			return new Font (face, px * 72f / WebGpuBackend.DisplayDpi.Y, style, GraphicsUnit.Point, o.lfCharSet, face.StartsWith ("@"));
 		}
 
 		public float GetHeight ()
@@ -632,7 +632,7 @@ namespace System.Drawing
 		/// </remarks>
 		static float MetricsDpi (float actual)
 		{
-			return s_gpuRasterMode ? 96f : actual;
+			return s_gpuRasterMode ? WebGpuBackend.DisplayDpi.Y : actual;
 		}
 
 				public static Font FromLogFont (object lf) => FromLogFont (lf, IntPtr.Zero);
@@ -734,7 +734,7 @@ namespace System.Drawing
 
 		LOGFONT BuildLogFont (Graphics graphics)
 		{
-			float px = _sizeInPoints * 96f / 72f;
+			float px = _sizeInPoints * graphics.DpiY / 72f;
 			if (_unit == GraphicsUnit.Pixel || _unit == GraphicsUnit.World) px = _size;
 			float[] e = graphics.Transform.Elements;
 			float sy = (float) Math.Sqrt (e[2] * e[2] + e[3] * e[3]);

@@ -260,7 +260,7 @@ namespace System.Windows.Forms
 				int em = family.GetEmHeight (font.Style);
 				if (em <= 0)
 					return 0;
-				float emPx = font.SizeInPoints * 96f / 72f;
+				float emPx = font.SizeInPoints * System.Drawing.WebGpuBackend.DisplayDpi.Y / 72f;
 
 				if (System.Drawing.WebGpuBackend.TextMetrics.TryGetGdiLineMetrics (
 						family.Name, font.Bold, font.Italic, emPx, out int a, out int d)
@@ -481,8 +481,11 @@ namespace System.Windows.Forms
 			// device pixels, more than its window could be given, so the frame was squeezed to fit.
 			// That squeeze breaks the 1:1 mapping a click relies on -- clicking the tab strip landed
 			// on the picture above it, and no tab could ever be selected.
+			// The screen's DPI as the application sees it (ScaleHelper): 96 on the virtual surface
+			// the host scales, the system DPI for a per-monitor-aware application, which lays out
+			// in device pixels itself.
 			if (XplatUI.RunningWebGpuDriver)
-				return new SizeF (96f, 96f);
+				return new SizeF (System.Drawing.WebGpuBackend.DisplayDpi.X, System.Drawing.WebGpuBackend.DisplayDpi.Y);
 
 			return new SizeF (Hwnd.GraphicsContext.DpiX, Hwnd.GraphicsContext.DpiY);
 		}
@@ -619,7 +622,7 @@ namespace System.Windows.Forms
 			if (string.IsNullOrEmpty (text))
 				return 0;
 			int sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0) | System.Drawing.WebGpuBackend.TextMetrics.NoKerning;
-			return System.Drawing.WebGpuBackend.TextMetrics.MeasureGdiRun (text, font.SizeInPoints * 96f / 72f, sims, font.FontFamily?.Name);
+			return System.Drawing.WebGpuBackend.TextMetrics.MeasureGdiRun (text, font.SizeInPoints * System.Drawing.WebGpuBackend.DisplayDpi.Y / 72f, sims, font.FontFamily?.Name);
 		}
 
 		private static readonly Size MaxSize = new Size (int.MaxValue, int.MaxValue);
@@ -646,7 +649,7 @@ namespace System.Windows.Forms
 			{
 				this.g = g;
 				this.font = font;
-				emPx = font.SizeInPoints * 96f / 72f;
+				emPx = font.SizeInPoints * System.Drawing.WebGpuBackend.DisplayDpi.Y / 72f;
 				sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0)
 				     | (g != null && g.no_kerning ? System.Drawing.WebGpuBackend.TextMetrics.NoKerning : 0);
 				family = font.FontFamily?.Name;

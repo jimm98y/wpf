@@ -1,4 +1,4 @@
-// Permission is hereby granted, free of charge, to any person obtaining
+﻿// Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
 // "Software"), to deal in the Software without restriction, including
 // without limitation the rights to use, copy, modify, merge, publish,
@@ -61,7 +61,7 @@ namespace System.Windows.Forms
 
 		public static Size Border3DSize {
 			get {
-				return ThemeEngine.Current.Border3DSize;
+				return Metric (45, 46, ThemeEngine.Current.Border3DSize);
 			}
 		}
 		
@@ -70,19 +70,19 @@ namespace System.Windows.Forms
 
 		public static Size BorderSize {
 			get {
-				return ThemeEngine.Current.BorderSize;
+				return Metric (5, 6, ThemeEngine.Current.BorderSize);
 			}
 		}
 
 		public static Size CaptionButtonSize {
 			get {
-				return ThemeEngine.Current.CaptionButtonSize;
+				return Metric (30, 31, ThemeEngine.Current.CaptionButtonSize);
 			}
 		}
 
 		public static int CaptionHeight {
 			get {
-				return ThemeEngine.Current.CaptionHeight;
+				return Metric (4, ThemeEngine.Current.CaptionHeight);
 			}
 		}
 
@@ -99,7 +99,7 @@ namespace System.Windows.Forms
 
 		public static Size CursorSize {
 			get {
-				return XplatUI.CursorSize;
+				return Metric (13, 14, XplatUI.CursorSize);
 			}
 		}
 
@@ -117,7 +117,7 @@ namespace System.Windows.Forms
 
 		public static Size DoubleClickSize {
 			get {
-				return ThemeEngine.Current.DoubleClickSize;
+				return Metric (36, 37, ThemeEngine.Current.DoubleClickSize);
 			}
 		}
 
@@ -135,13 +135,13 @@ namespace System.Windows.Forms
 
 		public static Size DragSize {
 			get {
-				return XplatUI.DragSize;
+				return Metric (68, 69, XplatUI.DragSize);
 			}
 		}
 
 		public static Size FixedFrameBorderSize {
 			get {
-				return ThemeEngine.Current.FixedFrameBorderSize;
+				return Metric (7, 8, ThemeEngine.Current.FixedFrameBorderSize);
 			}
 		}
 
@@ -152,7 +152,7 @@ namespace System.Windows.Forms
 
 		public static Size FrameBorderSize {
 			get {
-				return ThemeEngine.Current.FrameBorderSize;
+				return Metric (32, 33, ThemeEngine.Current.FrameBorderSize);
 			}
 		}
 
@@ -163,31 +163,31 @@ namespace System.Windows.Forms
 		}
 
 		[MonoInternalNote ("Determine if we need an X11 implementation or if defaults are good.")]
-		public static int HorizontalFocusThickness { get { return ThemeEngine.Current.HorizontalFocusThickness; } }
+		public static int HorizontalFocusThickness { get { return Metric (83, ThemeEngine.Current.HorizontalFocusThickness); } }
 		[MonoInternalNote ("Determine if we need an X11 implementation or if defaults are good.")]
-		public static int HorizontalResizeBorderThickness { get { return XplatUI.HorizontalResizeBorderThickness; } }
+		public static int HorizontalResizeBorderThickness { get { return Metric (32, XplatUI.HorizontalResizeBorderThickness); } }
 
 		public static int HorizontalScrollBarArrowWidth {
 			get {
-				return ThemeEngine.Current.HorizontalScrollBarArrowWidth;
+				return Metric (21, ThemeEngine.Current.HorizontalScrollBarArrowWidth);
 			}
 		}
 
 		public static int HorizontalScrollBarHeight {
 			get {
-				return ThemeEngine.Current.HorizontalScrollBarHeight;
+				return Metric (3, ThemeEngine.Current.HorizontalScrollBarHeight);
 			}
 		}
 
 		public static int HorizontalScrollBarThumbWidth {
 			get {
-				return ThemeEngine.Current.HorizontalScrollBarThumbWidth;
+				return Metric (10, ThemeEngine.Current.HorizontalScrollBarThumbWidth);
 			}
 		}
 
 		public static Size IconSize {
 			get {
-				return XplatUI.IconSize;
+				return Metric (11, 12, XplatUI.IconSize);
 			}
 		}
 
@@ -205,7 +205,7 @@ namespace System.Windows.Forms
 
 		public static Size IconSpacingSize {
 			get {
-				return ThemeEngine.Current.IconSpacingSize;
+				return Metric (38, 39, ThemeEngine.Current.IconSpacingSize);
 			}
 		}
 
@@ -320,18 +320,18 @@ namespace System.Windows.Forms
 
 		[MonoInternalNote ("Determine if we need an X11 implementation or if defaults are good.")]
 		public static Size MenuBarButtonSize {
-			get { return ThemeEngine.Current.MenuBarButtonSize; }
+			get { return Metric (54, 55, ThemeEngine.Current.MenuBarButtonSize); }
 		}
 
 		public static Size MenuButtonSize {
 			get {
-				return ThemeEngine.Current.MenuButtonSize;
+				return Metric (54, 55, ThemeEngine.Current.MenuButtonSize);
 			}
 		}
 
 		public static Size MenuCheckSize {
 			get {
-				return ThemeEngine.Current.MenuCheckSize;
+				return Metric (71, 72, ThemeEngine.Current.MenuCheckSize);
 			}
 		}
 
@@ -346,7 +346,7 @@ namespace System.Windows.Forms
 
 		public static int MenuHeight {
 			get {
-				return ThemeEngine.Current.MenuHeight;
+				return Metric (15, ThemeEngine.Current.MenuHeight);
 			}
 		}
 
@@ -373,13 +373,13 @@ namespace System.Windows.Forms
 
 		public static Size MinimumWindowSize {
 			get {
-				return XplatUI.MinimumWindowSize;
+				return Metric (28, 29, XplatUI.MinimumWindowSize);
 			}
 		}
 
 		public static Size MinWindowTrackSize {
 			get {
-				return XplatUI.MinWindowTrackSize;
+				return Metric (34, 35, XplatUI.MinWindowTrackSize);
 			}
 		}
 
@@ -520,12 +520,12 @@ namespace System.Windows.Forms
 
 		[MonoInternalNote ("Determine if we need an X11 implementation or if defaults are good.")]
 		public static Size SmallCaptionButtonSize {
-			get { return XplatUI.SmallCaptionButtonSize; }
+			get { return Metric (52, 53, XplatUI.SmallCaptionButtonSize); }
 		}
 
 		public static Size SmallIconSize {
 			get {
-				return XplatUI.SmallIconSize;
+				return Metric (49, 50, XplatUI.SmallIconSize);
 			}
 		}
 
@@ -537,13 +537,13 @@ namespace System.Windows.Forms
 
 		public static Size ToolWindowCaptionButtonSize {
 			get {
-				return ThemeEngine.Current.ToolWindowCaptionButtonSize;
+				return Metric (52, 53, ThemeEngine.Current.ToolWindowCaptionButtonSize);
 			}
 		}
 
 		public static int ToolWindowCaptionHeight {
 			get {
-				return ThemeEngine.Current.ToolWindowCaptionHeight;
+				return Metric (51, ThemeEngine.Current.ToolWindowCaptionHeight);
 			}
 		}
 
@@ -571,25 +571,25 @@ namespace System.Windows.Forms
 		}
 
 		[MonoInternalNote ("Determine if we need an X11 implementation or if defaults are good.")]
-		public static int VerticalFocusThickness { get { return ThemeEngine.Current.VerticalFocusThickness; } }
+		public static int VerticalFocusThickness { get { return Metric (84, ThemeEngine.Current.VerticalFocusThickness); } }
 		[MonoInternalNote ("Determine if we need an X11 implementation or if defaults are good.")]
-		public static int VerticalResizeBorderThickness { get { return XplatUI.VerticalResizeBorderThickness; } }
+		public static int VerticalResizeBorderThickness { get { return Metric (33, XplatUI.VerticalResizeBorderThickness); } }
 
 		public static int VerticalScrollBarArrowHeight {
 			get {
-				return ThemeEngine.Current.VerticalScrollBarArrowHeight;
+				return Metric (20, ThemeEngine.Current.VerticalScrollBarArrowHeight);
 			}
 		}
 
 		public static int VerticalScrollBarThumbHeight {
 			get {
-				return ThemeEngine.Current.VerticalScrollBarThumbHeight;
+				return Metric (9, ThemeEngine.Current.VerticalScrollBarThumbHeight);
 			}
 		}
 
 		public static int VerticalScrollBarWidth {
 			get {
-				return ThemeEngine.Current.VerticalScrollBarWidth;
+				return Metric (2, ThemeEngine.Current.VerticalScrollBarWidth);
 			}
 		}
 
@@ -607,5 +607,58 @@ namespace System.Windows.Forms
 				return Screen.PrimaryScreen.WorkingArea;
 			}
 		}
+	
+		// A per-monitor-aware application sees Windows' metrics at the system DPI, as stock does
+		// (GetSystemMetrics in a DPI-aware process): Windows' own where it can be asked
+		// (GetSystemMetricsForDpi), the 96-dpi value scaled elsewhere. Any other application
+		// stays on the 96-dpi surface the host scales.
+		static int Metric (int index, int at96)
+			=> ScaleHelper.IsDeviceScaled ? MetricForDpi (index, at96, ScaleHelper.InitialSystemDpi) : at96;
+
+		static Size Metric (int indexX, int indexY, Size at96)
+			=> ScaleHelper.IsDeviceScaled
+				? new Size (MetricForDpi (indexX, at96.Width, ScaleHelper.InitialSystemDpi), MetricForDpi (indexY, at96.Height, ScaleHelper.InitialSystemDpi))
+				: at96;
+
+		internal static int MetricForDpi (int index, int at96, int dpi)
+		{
+			if (dpi == ScaleHelper.OneHundredPercentLogicalDpi)
+				return at96;
+			if (OperatingSystem.IsWindows ()) {
+				try {
+					int v = GetSystemMetricsForDpi (index, (uint) dpi);
+					if (v > 0)
+						return v;
+				} catch (EntryPointNotFoundException) {
+				} catch (DllNotFoundException) {
+				}
+			}
+			return ScaleHelper.ScaleToDpi (at96, dpi);
+		}
+
+		[System.Runtime.InteropServices.DllImport ("user32.dll")]
+		static extern int GetSystemMetricsForDpi (int index, uint dpi);
+
+		/// <summary>The 96-dpi widths the theme states, for scaling to a window's DPI.</summary>
+		internal static int VerticalScrollBarWidthAt96 => ThemeEngine.Current.VerticalScrollBarWidth;
+		internal static int HorizontalScrollBarHeightAt96 => ThemeEngine.Current.HorizontalScrollBarHeight;
+
+		/// <summary>.NET's GetBorderSizeForDpi: SM_CXBORDER / SM_CYBORDER at a DPI.</summary>
+		public static Size GetBorderSizeForDpi (int dpi)
+			=> ScaleHelper.IsThreadPerMonitorV2Aware
+				? new Size (MetricForDpi (5, ThemeEngine.Current.BorderSize.Width, dpi), MetricForDpi (6, ThemeEngine.Current.BorderSize.Height, dpi))
+				: BorderSize;
+
+		/// <summary>.NET's GetHorizontalScrollBarArrowWidthForDpi.</summary>
+		public static int GetHorizontalScrollBarArrowWidthForDpi (int dpi)
+			=> ScaleHelper.IsThreadPerMonitorV2Aware ? MetricForDpi (21, ThemeEngine.Current.HorizontalScrollBarArrowWidth, dpi) : HorizontalScrollBarArrowWidth;
+
+		/// <summary>.NET's GetHorizontalScrollBarHeightForDpi.</summary>
+		public static int GetHorizontalScrollBarHeightForDpi (int dpi)
+			=> ScaleHelper.IsThreadPerMonitorV2Aware ? MetricForDpi (3, ThemeEngine.Current.HorizontalScrollBarHeight, dpi) : HorizontalScrollBarHeight;
+
+		/// <summary>.NET's GetVerticalScrollBarWidthForDpi.</summary>
+		public static int GetVerticalScrollBarWidthForDpi (int dpi)
+			=> ScaleHelper.IsThreadPerMonitorV2Aware ? MetricForDpi (2, ThemeEngine.Current.VerticalScrollBarWidth, dpi) : VerticalScrollBarWidth;
 	}
 }

@@ -1850,7 +1850,18 @@ namespace System.Windows.Forms
 			pevent.Handled = true;
 		}
 
-		/// <summary>The border the box shows: its BorderStyle, except that a rich edit's single line
+		/// <summary>.NET's edit window: WS_BORDER for FixedSingle (the edit control takes it off,
+		/// but the window was created with it), WS_EX_CLIENTEDGE for Fixed3D.</summary>
+		internal override Size AdornmentsAt (int dpi)
+		{
+			switch (actual_border_style) {
+			case BorderStyle.FixedSingle: return new Size (2, 2);
+			case BorderStyle.Fixed3D: return new Size (4, 4);
+			default: return Size.Empty;
+			}
+		}
+
+		/// <summary>The border the box shows: its BorderStyle,except that a rich edit's single line
 		/// is the window's client edge (see BorderStyle), and lays out and draws as one.</summary>
 		internal BorderStyle ShownBorderStyle =>
 			actual_border_style == BorderStyle.FixedSingle && this is RichTextBox ? BorderStyle.Fixed3D : actual_border_style;

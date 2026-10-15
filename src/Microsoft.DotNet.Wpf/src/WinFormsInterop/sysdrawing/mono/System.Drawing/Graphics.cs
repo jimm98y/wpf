@@ -793,15 +793,21 @@ namespace System.Drawing
 		{
 		}
 
+		/// <summary>The resolution a point-sized font's em is taken at on this surface (its DpiY,
+		/// as GDI+ converts): the screen's for a window, a bitmap's own for a bitmap.</summary>
+		float EmDpiY => mf_rec != null ? mf_rec.DpiY : print_mode ? print_dpi_y
+			: image_target != null ? image_target.VerticalResolution : WebGpuBackend.DisplayDpi.Y;
+
 		~Graphics ()
 		{
 			Dispose ();			
 		}		
 
-		// A bitmap made for measuring has the screen's resolution: 96 dpi, as the stack lays out.
-		static internal float systemDpiX => 96f;
+		// A bitmap made for measuring has the screen's resolution (WebGpuBackend.DisplayDpi): 96 dpi
+		// for an application that is not DPI-aware, the system DPI for one that is.
+		static internal float systemDpiX => WebGpuBackend.DisplayDpi.X;
 
-		static internal float systemDpiY => 96f;
+		static internal float systemDpiY => WebGpuBackend.DisplayDpi.Y;
 
 		// For CoreFX compatibility
 		internal IntPtr NativeGraphics {
@@ -3179,7 +3185,7 @@ namespace System.Drawing
 			try {
 				if (font.FontFamily is FontFamily fam
 				    && WebGpuBackend.TextMetrics.TryGetGdiLineMetrics (
-					    fam.Name, font.Bold, font.Italic, font.SizeInPoints * 96f / 72f,
+					    fam.Name, font.Bold, font.Italic, font.SizeInPoints * WebGpuBackend.DisplayDpi.Y / 72f,
 					    out int gdiAsc, out int gdiDesc)
 				    && gdiAsc + gdiDesc > 0)
 					return (float) Math.Ceiling ((gdiAsc + gdiDesc) / 6f);
@@ -3557,7 +3563,7 @@ namespace System.Drawing
 				// Honour the StringFormat alignment (buttons/labels centre text in a rect) by measuring
 				// the run and offsetting within the layout rectangle. MeasureString uses libgdiplus for
 				// MEASUREMENT only — the glyphs are still rasterized by WGSL at present time.
-				float emPx = font.SizeInPoints * 96f / 72f;
+				float emPx = font.SizeInPoints * EmDpiY / 72f;
 				// The style the caller asked for, in the terms the renderer states them
 				// (WPF's StyleSimulations: 1 = bold, 2 = italic). Without carrying this the run
 				// arrives with nothing but a size and a colour, and every piece of bold text in
@@ -4794,7 +4800,7 @@ namespace System.Drawing
 		{
 			CharacterRange[] ranges = stringFormat.MeasurableCharacterRanges;
 			Region[] regions = new Region [regcount];
-			float em = font.SizeInPoints * 96f / 72f;
+			float em = font.SizeInPoints * EmDpiY / 72f;
 
 			for (int i = 0; i < regcount; i++) {
 				CharacterRange range = (ranges != null && i < ranges.Length)
@@ -4850,7 +4856,7 @@ namespace System.Drawing
 				// A layout width means "wrap here", and the caller wants the height that wrapping
 				// produces -- SharpDevelop's About box measures its credits exactly this way, to know
 				// how far it has to scroll them.
-				float em = font.SizeInPoints * 96f / 72f;
+				float em = font.SizeInPoints * EmDpiY / 72f;
 				int simulations = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
 				// Measured in the family it will be DRAWN in: a run measured with one face and drawn
 				// with another does not fit where the caller was told it would.
@@ -5457,11 +5463,11 @@ namespace System.Drawing
 		}
 
 		public float DpiX {
-			get { CheckUse (); return mf_rec != null ? mf_rec.DpiX : print_mode ? print_dpi_x : image_target != null ? image_target.HorizontalResolution : 96f; }
+			get { CheckUse (); return mf_rec != null ? mf_rec.DpiX : print_mode ? print_dpi_x : image_target != null ? image_target.HorizontalResolution : WebGpuBackend.DisplayDpi.X; }
 		}
 
 		public float DpiY {
-			get { CheckUse (); return mf_rec != null ? mf_rec.DpiY : print_mode ? print_dpi_y : image_target != null ? image_target.VerticalResolution : 96f; }
+			get { CheckUse (); return mf_rec != null ? mf_rec.DpiY : print_mode ? print_dpi_y : image_target != null ? image_target.VerticalResolution : WebGpuBackend.DisplayDpi.Y; }
 		}
 
 		public InterpolationMode InterpolationMode {

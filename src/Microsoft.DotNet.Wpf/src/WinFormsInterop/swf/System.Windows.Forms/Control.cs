@@ -1811,6 +1811,10 @@ namespace System.Windows.Forms
 			pre_rtl = RightToLeft;
 			// MS doesn't seem to send a CursorChangedEvent
 
+			// .NET's AssignParent: adopt the parent's required-scaling bit.
+			if (new_parent != null)
+				RequiredScalingEnabled = new_parent.RequiredScalingEnabled;
+
 			parent = new_parent;
 
 			Form frm = this as Form;
@@ -2761,12 +2765,16 @@ namespace System.Windows.Forms
 		public virtual Font Font {
 			[return: MarshalAs (UnmanagedType.CustomMarshaler, MarshalTypeRef = typeof (Font))]
 			get {
+				// .NET: the font scaled for a DPI change first, then the control's own, then the parent's.
+				if (_scaledControlFont != null)
+					return _scaledControlFont;
+
 				if (font != null)
 					return font;
 
 				if (parent != null) {
 					Font f = parent.Font;
-					
+
 					if (f != null)
 						return f;
 				}
@@ -2781,6 +2789,11 @@ namespace System.Windows.Forms
 				}
 
 				font = value;
+				if (ScaleHelper.IsThreadPerMonitorV2Aware) {
+					// A font the application sets replaces the one scaled for the DPI.
+					ScaledControlFont = null;
+					ClearDpiFonts ();
+				}
 				Invalidate();
 				// Layout is performed inside OnFontChanged
 				OnFontChanged (EventArgs.Empty);
@@ -3008,14 +3021,19 @@ namespace System.Windows.Forms
 
 		[Localizable(true)]
 		[MWFCategory("Layout")]
+		// .NET: until a padding is set the control's is its DefaultPadding, asked each time -- a
+		// tool strip's follows the DPI it is at.
+		bool padding_set;
+
 		public Padding Padding {
 			get {
-				return padding;
+				return padding_set ? padding : DefaultPadding;
 			}
 
 			set {
-				if (padding != value) {
+				if (Padding != value) {
 					padding = value;
+					padding_set = true;
 					OnPaddingChanged (EventArgs.Empty);
 					
 					// Changing padding generally requires a new size
@@ -4186,13 +4204,21 @@ namespace System.Windows.Forms
 
 		public void ResumeLayout(bool performLayout) {
 			if (layout_suspended > 0) {
+				// .NET: the last resume tells the parent, still suspended, so a container scales
+				// its children before their layout engines see them (OnChildLayoutResuming).
+				if (layout_suspended == 1) {
+					layout_suspended++;
+					try {
+						OnLayoutResuming (performLayout);
+					} finally {
+						layout_suspended--;
+					}
+				}
 				layout_suspended--;
 			}
 
 			layout_pending_after_resume = true;
 			if (layout_suspended == 0) {
-				if (this is ContainerControl)
-					(this as ContainerControl).PerformDelayedAutoScale();
 
 				if (performLayout) {
 					if (layout_pending) {
@@ -4226,45 +4252,17 @@ namespace System.Windows.Forms
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public void Scale (SizeF factor)
 		{
-			BoundsSpecified bounds_spec = BoundsSpecified.All;
-
+			// .NET: scale this control and every child by the factor -- a zoom, not auto-scaling.
 			SuspendLayout ();
-
-			if (this is ContainerControl) {
-				if ((this as ContainerControl).IsAutoScaling)
-					bounds_spec = BoundsSpecified.Size;
-				else if (IsContainerAutoScaling (this.Parent))
-					bounds_spec = BoundsSpecified.Location;
+			try {
+				ScaleControl (factor, factor);
+				if (ScaleChildren)
+					foreach (Control c in Controls.GetAllControls ())
+						c.Scale (factor);
+			} finally {
+				ResumeLayout (false);
 			}
-
-			ScaleControl (factor, bounds_spec);
-
-			// Scale children
-			if ((bounds_spec != BoundsSpecified.Location) && ScaleChildren) {
-				foreach (Control c in Controls.GetAllControls ()) {
-					c.Scale (factor);
-					if (c is ContainerControl) {
-						ContainerControl cc = c as ContainerControl;
-						if ((cc.AutoScaleMode == AutoScaleMode.Inherit) && IsContainerAutoScaling (this))
-							cc.PerformAutoScale (true);
-					}
-				}
-			}
-
-			ResumeLayout ();
-		}
-
-		internal ContainerControl FindContainer (Control c)
-		{
-			while ((c != null) && !(c is ContainerControl))
-				c = c.Parent;
-			return c as ContainerControl;
-		}
-
-		private bool IsContainerAutoScaling (Control c)
-		{
-			ContainerControl cc = FindContainer (c);
-			return (cc != null) && cc.IsAutoScaling;
+			PerformLayout (this, "Bounds");
 		}
 
 		public void Select() {
@@ -4489,26 +4487,33 @@ namespace System.Windows.Forms
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		protected virtual Rectangle GetScaledBounds (Rectangle bounds, SizeF factor, BoundsSpecified specified)
 		{
-			// Top level controls do not scale location
-			if (!is_toplevel) {
-				if ((specified & BoundsSpecified.X) == BoundsSpecified.X)
-					bounds.X = (int)Math.Round (bounds.X * factor.Width);
-				if ((specified & BoundsSpecified.Y) == BoundsSpecified.Y)
-					bounds.Y = (int)Math.Round (bounds.Y * factor.Height);
+			float dx = factor.Width;
+			float dy = factor.Height;
+			int sx = bounds.X;
+			int sy = bounds.Y;
+
+			// A top-level window keeps its position, and a designer's root component too.
+			if (!is_toplevel && !(Site != null && Site.DesignMode && Site.GetService (typeof (System.ComponentModel.Design.IDesignerHost)) is System.ComponentModel.Design.IDesignerHost host && host.RootComponent == this)) {
+				if ((specified & BoundsSpecified.X) != 0)
+					sx = (int) Math.Round (bounds.X * dx);
+				if ((specified & BoundsSpecified.Y) != 0)
+					sy = (int) Math.Round (bounds.Y * dy);
 			}
 
-			if ((specified & BoundsSpecified.Width) == BoundsSpecified.Width && !GetStyle (ControlStyles.FixedWidth)) {
-				int border = (this is ComboBox) ? (ThemeEngine.Current.Border3DSize.Width * 2) :
-					(this.bounds.Width - this.client_size.Width);
-				bounds.Width = (int)Math.Round ((bounds.Width - border) * factor.Width + border);
-			}
-			if ((specified & BoundsSpecified.Height) == BoundsSpecified.Height && !GetStyle (ControlStyles.FixedHeight)) {
-				int border = (this is ComboBox) ? (ThemeEngine.Current.Border3DSize.Height * 2) :
-					(this.bounds.Height - this.client_size.Height);
-				bounds.Height = (int)Math.Round ((bounds.Height - border) * factor.Height + border);
-			}
+			int sw = bounds.Width;
+			int sh = bounds.Height;
 
-			return bounds;
+			// The window's frame is not scaled: Windows sizes it, at the DPI before and after a change.
+			Size after = AdornmentsAt (DeviceDpiInternal);
+			Size before = OriginalDeviceDpiInternal != DeviceDpiInternal ? AdornmentsAt (OriginalDeviceDpiInternal) : after;
+
+			// Even for auto-sized controls: they snap back, but an anchored one needs its size.
+			if (!GetStyle (ControlStyles.FixedWidth) && (specified & BoundsSpecified.Width) != 0)
+				sw = (int) Math.Round ((bounds.Width - before.Width) * dx) + after.Width;
+			if (!GetStyle (ControlStyles.FixedHeight) && (specified & BoundsSpecified.Height) != 0)
+				sh = (int) Math.Round ((bounds.Height - before.Height) * dy) + after.Height;
+
+			return new Rectangle (sx, sy, sw, sh);
 		}
 
 		private Rectangle GetScaledBoundsOld (Rectangle bounds, SizeF factor, BoundsSpecified specified)
@@ -4873,25 +4878,76 @@ namespace System.Windows.Forms
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		protected virtual void ScaleControl (SizeF factor, BoundsSpecified specified)
 		{
-			Rectangle new_bounds = GetScaledBounds (bounds, factor, specified);
+			Size adornmentSize = AdornmentsAt (DeviceDpiInternal);
+			Size minSize = MinimumSize;
+			Size maxSize = MaximumSize;
 
-			SetBounds (new_bounds.X, new_bounds.Y, new_bounds.Width, new_bounds.Height, specified);
+			// Cleared, or they would constrain the scaled bounds.
+			MinimumSize = Size.Empty;
+			MaximumSize = Size.Empty;
+
+			Rectangle rawScaledBounds = GetScaledBounds (Bounds, factor, specified);
+
+			float dx = factor.Width;
+			float dy = factor.Height;
+			Padding padding = Padding;
+			Padding margins = Margin;
+			if (dx != 1.0F) {
+				padding.Left = (int) Math.Round (padding.Left * dx);
+				padding.Right = (int) Math.Round (padding.Right * dx);
+				margins.Left = (int) Math.Round (margins.Left * dx);
+				margins.Right = (int) Math.Round (margins.Right * dx);
+			}
+			if (dy != 1.0F) {
+				padding.Top = (int) Math.Round (padding.Top * dy);
+				padding.Bottom = (int) Math.Round (padding.Bottom * dy);
+				margins.Top = (int) Math.Round (margins.Top * dy);
+				margins.Bottom = (int) Math.Round (margins.Bottom * dy);
+			}
+			Padding = padding;
+			Margin = margins;
+
+			// The frame is fixed: scale what is inside it.
+			if (!minSize.IsEmpty) {
+				minSize -= adornmentSize;
+				minSize = ScaleSize (LayoutUtils.UnionSizes (Size.Empty, minSize), factor.Width, factor.Height) + adornmentSize;
+			}
+			if (!maxSize.IsEmpty) {
+				maxSize -= adornmentSize;
+				maxSize = ScaleSize (LayoutUtils.UnionSizes (Size.Empty, maxSize), factor.Width, factor.Height) + adornmentSize;
+			}
+
+			Size maximumSize = LayoutUtils.ConvertZeroToUnbounded (maxSize);
+			Size scaledSize = LayoutUtils.IntersectSizes (rawScaledBounds.Size, maximumSize);
+			scaledSize = LayoutUtils.UnionSizes (scaledSize, minSize);
+
+			SetBoundsCore (rawScaledBounds.X, rawScaledBounds.Y, scaledSize.Width, scaledSize.Height, BoundsSpecified.All);
+
+			MaximumSize = maxSize;
+			MinimumSize = minSize;
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Never)]
 		protected virtual void ScaleCore (float dx, float dy)
 		{
-			Rectangle new_bounds = GetScaledBoundsOld (bounds, new SizeF (dx, dy), BoundsSpecified.All);
-
 			SuspendLayout ();
-
-			SetBounds (new_bounds.X, new_bounds.Y, new_bounds.Width, new_bounds.Height, BoundsSpecified.All);
-
-			if (ScaleChildrenInternal)
+			try {
+				int sx = (int) Math.Round (bounds.X * dx);
+				int sy = (int) Math.Round (bounds.Y * dy);
+				int sw = bounds.Width;
+				if (!GetStyle (ControlStyles.FixedWidth))
+					sw = (int) Math.Round ((bounds.X + bounds.Width) * dx) - sx;
+				int sh = bounds.Height;
+				if (!GetStyle (ControlStyles.FixedHeight))
+					sh = (int) Math.Round ((bounds.Y + bounds.Height) * dy) - sy;
+				SetBounds (sx, sy, sw, sh, BoundsSpecified.All);
 				foreach (Control c in Controls.GetAllControls ())
+#pragma warning disable 618
 					c.Scale (dx, dy);
-
-			ResumeLayout ();
+#pragma warning restore 618
+			} finally {
+				ResumeLayout ();
+			}
 		}
 
 		protected virtual void Select(bool directed, bool forward) {
@@ -4933,6 +4989,9 @@ namespace System.Windows.Forms
 				explicit_bounds.Height = new_bounds.Height;
 			if (specified != BoundsSpecified.None)
 				explicit_bounds_valid = true;
+
+			// .NET: the bounds given still need scaling, until a container scales them.
+			InitScaling (specified);
 
 			if (new_bounds.Equals(bounds))
 				return;
@@ -5228,6 +5287,18 @@ namespace System.Windows.Forms
 			switch((Msg)m.Msg) {
 				case Msg.WM_DESTROY: {
 					WmDestroy(ref m);
+					return;
+				}
+
+				case (Msg) XplatUIWebGpu.WM_DPICHANGED_BEFOREPARENT: {
+					WmDpiChangedBeforeParent (ref m);
+					m.Result = IntPtr.Zero;
+					return;
+				}
+
+				case (Msg) XplatUIWebGpu.WM_DPICHANGED_AFTERPARENT: {
+					WmDpiChangedAfterParent (ref m);
+					m.Result = IntPtr.Zero;
 					return;
 				}
 
@@ -5725,6 +5796,8 @@ namespace System.Windows.Forms
 		}
 
 		private void WmCreate (ref Message m) {
+			// .NET's HandleHighDpi, in OnHandleCreated: the window takes its display's DPI first.
+			HandleHighDpi ();
 			OnHandleCreated(EventArgs.Empty);
 		}
 
@@ -6462,9 +6535,16 @@ namespace System.Windows.Forms
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
 		protected virtual void OnParentFontChanged(EventArgs e) {
-			if (font==null) {
-				Invalidate();
-				OnFontChanged(e);
+			// .NET: a container a DPI change marked rescales whether its font is its own or not.
+			var container = this as ContainerControl;
+			try {
+				if (font == null || (container != null && container.IsDpiChangeScalingRequired)) {
+					Invalidate();
+					OnFontChanged(e);
+				}
+			} finally {
+				if (container != null)
+					container.IsDpiChangeScalingRequired = false;
 			}
 		}
 

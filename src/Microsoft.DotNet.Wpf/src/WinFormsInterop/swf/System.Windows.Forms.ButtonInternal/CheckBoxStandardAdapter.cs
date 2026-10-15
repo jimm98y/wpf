@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 // From .NET's System.Windows.Forms (dotnet/winforms), adapted to the port where noted.
 
@@ -107,7 +107,7 @@ internal sealed class CheckBoxStandardAdapter : CheckBoxBaseAdapter
 		}
 		else
 		{
-			layoutOptions.CheckSize = (ScaleHelper.IsThreadPerMonitorV2Aware ? layoutOptions.CheckSize : ((int)((double)layoutOptions.CheckSize * GetDpiScaleRatio())));
+			layoutOptions.CheckSize = (ScaleHelper.IsThreadPerMonitorV2Aware ? Control.LogicalToDeviceUnits (layoutOptions.CheckSize) : ((int)((double)layoutOptions.CheckSize * GetDpiScaleRatio())));
 		}
 		return layoutOptions;
 	}

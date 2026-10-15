@@ -1450,6 +1450,10 @@ namespace System.Windows.Forms
 			set {}
 		}
 		
+		/// <summary>.NET's combo box window has WS_EX_CLIENTEDGE (the native control draws its own
+		/// frame): two pixels each side that scaling leaves alone.</summary>
+		internal override Size AdornmentsAt (int dpi) => new Size (4, 4);
+
 		void LayoutComboBox ()
 		{
 			int border = ThemeEngine.Current.Border3DSize.Width;

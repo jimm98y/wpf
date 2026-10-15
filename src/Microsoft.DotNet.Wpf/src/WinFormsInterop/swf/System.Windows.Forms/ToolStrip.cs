@@ -1,4 +1,4 @@
-//
+﻿//
 // ToolStrip.cs
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -111,11 +111,14 @@ namespace System.Windows.Forms
 			this.default_drop_down_direction = ToolStripDropDownDirection.BelowRight;
 			this.displayed_items = new ToolStripItemCollection (this, null, true);
 			this.Dock = this.DefaultDock;
-			base.Font = ToolStripManager.DefaultFont;
+			// No font of its own: the getter answers ToolStripManager.DefaultFont, as .NET (a font set here
+			// would be scaled by a DPI change, which .NET's default font is not).
 			this.fore_color = Control.DefaultForeColor;
 			this.grip_margin = this.DefaultGripMargin;
 			this.grip_style = ToolStripGripStyle.Visible;
-			this.image_scaling_size = new Size (16, 16);
+			// .NET: the icon size at the DPI the strip is created at.
+			int iconSize = ScaleHelper.ScaleToDpi (16, DeviceDpi);
+			this.image_scaling_size = new Size (iconSize, iconSize);
 			this.layout_style = ToolStripLayoutStyle.HorizontalStackWithOverflow;
 			this.orientation = Orientation.Horizontal;
 			if (!(this is ToolStripDropDown))
@@ -267,7 +270,7 @@ namespace System.Windows.Forms
 		}
 
 		// ToolStripGrip.GripThickness: five pixels under visual styles, three without.
-		internal static int GripThickness => ToolStripManager.VisualStylesEnabled ? 5 : 3;
+		internal int GripThickness => ScaleHelper.ScaleToDpi (ToolStripManager.VisualStylesEnabled ? 5 : 3, ScaleHelper.InitialSystemDpi);
 
 		[DefaultValue (DockStyle.Top)]
 		public override DockStyle Dock {
@@ -292,7 +295,9 @@ namespace System.Windows.Forms
 		}
 
 		public override Font Font {
-			get { return base.Font; }
+			// .NET: a strip does not take its parent's font; unless it is given one it has the
+			// default menu font (ToolStripManager.DefaultFont).
+			get { return font != null ? base.Font : ToolStripManager.DefaultFont; }
 			set { 
 				if (base.Font != value) {
 					base.Font = value;
@@ -574,11 +579,13 @@ namespace System.Windows.Forms
 
 		#region Protected Properties
 		protected virtual DockStyle DefaultDock { get { return DockStyle.Top; } }
-		protected virtual Padding DefaultGripMargin { get { return new Padding (2); } }
+		// .NET scales these to the DPI the strip is created at (and a form's auto-scaling then
+		// scales the padding again, as there).
+		protected virtual Padding DefaultGripMargin { get { return ScaleHelper.ScaleToDpi (new Padding (2), ScaleHelper.InitialSystemDpi); } }
 		protected override Padding DefaultMargin { get { return Padding.Empty; } }
-		protected override Padding DefaultPadding { get { return new Padding (0, 0, 1, 0); } }
+		protected override Padding DefaultPadding { get { return ScaleHelper.ScaleToDpi (new Padding (0, 0, 1, 0), ScaleHelper.InitialSystemDpi); } }
 		protected virtual bool DefaultShowItemToolTips { get { return true; } }
-		protected override Size DefaultSize { get { return new Size (100, 25); } }
+		protected override Size DefaultSize { get { return ScaleHelper.IsThreadPerMonitorV2Aware ? ScaleHelper.ScaleToDpi (new Size (100, 25), DeviceDpi) : new Size (100, 25); } }
 		/// <summary>The size this kind of strip is by default, for the layout engine to floor its
 		/// height at. A strip never shrinks below it however small its items are.</summary>
 		internal Size DefaultSizeInternal { get { return DefaultSize; } }
