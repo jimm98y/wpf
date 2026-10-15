@@ -43,8 +43,10 @@ namespace System.Windows.Forms
 
 			public FlatComboAdapter (ComboBox comboBox, bool smallButton)
 			{
+				// At the control's DPI, as .NET's: the arrow's half width and the button's width.
+				s_offsetPixels = comboBox.LogicalToDeviceUnits (2);
 				_clientRect = comboBox.ClientRectangle;
-				int arrowWidth = SystemInformation.HorizontalScrollBarArrowWidth;
+				int arrowWidth = SystemInformation.GetHorizontalScrollBarArrowWidthForDpi (comboBox.DeviceDpi);
 				_outerBorder = new Rectangle (_clientRect.Location, new Size (_clientRect.Width - 1, _clientRect.Height - 1));
 				_innerBorder = new Rectangle (_outerBorder.X + 1, _outerBorder.Y + 1, _outerBorder.Width - arrowWidth - 2, _outerBorder.Height - 2);
 				_innerInnerBorder = new Rectangle (_innerBorder.X + 1, _innerBorder.Y + 1, _innerBorder.Width - 2, _innerBorder.Height - 2);
