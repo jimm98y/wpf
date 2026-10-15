@@ -184,7 +184,13 @@ namespace System.Windows.Forms {
 			if ((paintParts & DataGridViewPaintParts.ContentForeground) == DataGridViewPaintParts.ContentForeground) {
 				Color color = Selected ? cellStyle.SelectionForeColor : cellStyle.ForeColor;
 
-				TextFormatFlags flags = TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter | TextFormatFlags.TextBoxControl;
+				// .NET's flags: the style's alignment and wrap mode, and an ellipsis only on a single
+				// line. A header wraps by default, so a caption too wide for its column is cut off
+				// ("Che"), not shortened ("C...").
+				TextFormatFlags flags = DataGridViewUtilities.ComputeTextFormatFlagsForCellStyleAlignment (
+					DataGridView != null && DataGridView.RightToLeft == RightToLeft.Yes, cellStyle.Alignment, cellStyle.WrapMode);
+				if ((flags & TextFormatFlags.SingleLine) != 0)
+					flags |= TextFormatFlags.EndEllipsis;
 				// Windows' own margins for a column header: the caption starts six pixels in from the
 				// cell's left edge and sits two pixels lower than a plain vertical centring puts it.
 				// Drawing it flush left and centred instead left every header caption six pixels wide
