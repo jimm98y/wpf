@@ -52,6 +52,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     // translates that key into is not also delivered.
     private bool _swallowChar;
     private const int FrameTimerId = 1;
+    // Re-presents the frame for a while after the window was resized; see RepresentAfterResize.
+    private const int RepresentTimerId = 2;
+    private long _representUntil;
     // WF_TRACE_CURSOR=1 prints what shape the pointer is being asked for, which is the only way
     // to tell "the control never asked" from "the shape never arrived".
     private static readonly bool s_traceCursor = Environment.GetEnvironmentVariable("WF_TRACE_CURSOR") == "1";
@@ -341,6 +344,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         lock (s_byHwnd)
             foreach (Win32Host h in s_byHwnd.Values)
                 if (!h.FormGone && h._form.IsHandleCreated && h._form.Handle == formHandle) { host = h; break; }
+        if (s_traceState) Console.Error.WriteLine($"[state] {DateTime.Now:HH:mm:ss.fff} request {state} for 0x{formHandle:x} host={(host != null)}{Environment.NewLine}{Environment.StackTrace}");
         if (host == null || host._hwnd == IntPtr.Zero) return;
         bool zoomed = IsZoomed(host._hwnd), iconic = IsIconic(host._hwnd);
         if (state == FormWindowState.Maximized && !zoomed) ShowWindow(host._hwnd, 3);          // SW_MAXIMIZE
@@ -348,6 +352,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         else if (state == FormWindowState.Normal && (zoomed || iconic)) ShowWindow(host._hwnd, 9);   // SW_RESTORE
     }
 
+    private static readonly bool s_traceState = Environment.GetEnvironmentVariable("WF_TRACE_STATE") == "1";
     [DllImport("user32")] private static extern bool IsZoomed(IntPtr hwnd);
     [DllImport("user32")] private static extern bool IsIconic(IntPtr hwnd);
     [DllImport("user32")] private static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
@@ -431,6 +436,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     private static readonly bool s_traceFrames = Environment.GetEnvironmentVariable("WF_TRACE_FRAMES") == "1";
     private static double SinceStart => (DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime).TotalMilliseconds;
     private int _framesTraced;
+
+    /// <summary>Frames presented to the window so far (for tests).</summary>
+    internal int PresentCount { get; private set; }
 
     /// <summary>The loop polls the OS queue and sleeps between frames (PresentationHost.Idle), and a
     /// sleep lasts until the system tick: 15.6 ms unless the process asks for better. So every frame
@@ -684,6 +692,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (s_traceFrames && _framesTraced++ < 4000)
             Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms (paint {t1 - t0:0}, gpu {SinceStart - t1:0}) damage {_wgpu.LastDamage}");
         _lastVer = ver; _lastCaretOn = caretOn;
+        PresentCount++;
         if (wantSave)
         {
             _savedGpu = true;
@@ -947,8 +956,15 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
             case 0x0005:                                                          // WM_SIZE
                 // SIZE_RESTORED / SIZE_MINIMIZED / SIZE_MAXIMIZED: the form's WindowState is the window's.
+                if (s_traceState) Console.Error.WriteLine($"[state] {DateTime.Now:HH:mm:ss.fff} WM_SIZE {(long)wParam} {(long)lParam & 0xFFFF}x{((long)lParam >> 16) & 0xFFFF} form 0x{_formHandle:x} '{_form.Text}'");
                 if (_driver is System.Windows.Forms.XplatUIWebGpu sd && !FormGone && (long)wParam <= 2)
                     sd.HostWindowState(_formHandle, (long)wParam == 2 ? FormWindowState.Maximized : (long)wParam == 1 ? FormWindowState.Minimized : FormWindowState.Normal);
+                // Restoring a window sends WM_MOVE BEFORE this WM_SIZE, so the move arrived while the
+                // form was still minimized (or maximized) and OnWindowMoved left it alone. The form kept
+                // the place Windows parks a minimized window, (-32000, -32000): every scene was
+                // composited that far away, the window showed nothing but its background, and the
+                // application saved that place as the window's position for its next start.
+                if ((long)wParam == 0) OnWindowMoved();
                 OnClientResized(); return IntPtr.Zero;
             case 0x0003: OnWindowMoved(); return IntPtr.Zero;                    // WM_MOVE
             // WM_PAINT: Windows wants the window's pixels again -- it has just been shown, uncovered
@@ -976,6 +992,12 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
             case 0x0113:                                                          // WM_TIMER
                 if ((int)wParam == FrameTimerId) { Frame(); return IntPtr.Zero; }
+                if ((int)wParam == RepresentTimerId)
+                {
+                    if (Environment.TickCount64 >= _representUntil) KillTimer(hwnd, RepresentTimerId);
+                    else { _repaintAsked = true; Present(); }
+                    return IntPtr.Zero;
+                }
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
             // WM_DPICHANGED: the window moved to a display with a different DPI. Nothing acted
             // on it, so _scale kept the DPI the window was created at while the client area
@@ -1215,6 +1237,22 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         Application.DoEvents();                             // let the WinForms layout settle first
         _lastVer = -1;                                      // force a present at the new size
         Present();
+        RepresentAfterResize();
+    }
+
+    /// <summary>
+    /// Present the frame again, a few times a second for two seconds, after the window was resized.
+    /// The frames presented right after a swap chain grows do not always reach the screen: maximizing
+    /// app on a 240-dpi display (3452x2058) left the window black although both presents that
+    /// followed succeeded, and an application that then sat idle presented nothing more, so it stayed
+    /// black until something in it changed. The same frame presented about a second later showed.
+    /// An unchanged frame costs only the copy to the swap chain.
+    /// </summary>
+    private void RepresentAfterResize()
+    {
+        if (_hwnd == IntPtr.Zero) return;
+        _representUntil = Environment.TickCount64 + 2000;
+        SetTimer(_hwnd, RepresentTimerId, 250, IntPtr.Zero);
     }
 
     private void MouseAt(IntPtr lParam, MethodInfo inject)
