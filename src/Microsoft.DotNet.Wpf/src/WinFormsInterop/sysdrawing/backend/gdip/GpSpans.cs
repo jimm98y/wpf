@@ -13,6 +13,9 @@ using System.Drawing.Drawing2D;
 
 namespace System.Drawing.WebGpuBackend.Gdip
 {
+    /// <summary>WF_TRACE_GDIP_IMAGE=1: the image and clear paths time their stages.</summary>
+    internal static class GpGraphicsTrace { internal static readonly bool On = Environment.GetEnvironmentVariable ("WF_TRACE_GDIP_IMAGE") == "1"; }
+
     internal abstract class GpSpan : IAaTarget
     {
         protected readonly GpScan Scan;
@@ -25,8 +28,12 @@ namespace System.Drawing.WebGpuBackend.Gdip
             int n = right - left;
             if (n <= 0) return;
             _buf = Scan.Next (left, y, n);
+            if (!GpGraphicsTrace.On) { Fill (_buf, y, left, n); return; }
+            long t = System.Diagnostics.Stopwatch.GetTimestamp ();
             Fill (_buf, y, left, n);
+            s_fillTicks += System.Diagnostics.Stopwatch.GetTimestamp () - t;
         }
+        internal static long s_fillTicks;
 
         /// <summary>For a span that asks the scan for a part of [left, right) only (or none of it):
         /// the scan buffer for [x, x + n), at least <paramref name="reserve"/> long because the
@@ -58,7 +65,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public SolidSpan (GpScan scan, uint argb) : base (scan) { _c = Premultiply (argb); }
         protected override void Fill (uint[] buf, int y, int x, int n)
         {
-            for (int i = 0; i < n; i++) buf [i] = _c;
+            buf.AsSpan (0, n).Fill (_c);
         }
 
         /// <summary>GpColor::ConvertToPremultiplied.</summary>
