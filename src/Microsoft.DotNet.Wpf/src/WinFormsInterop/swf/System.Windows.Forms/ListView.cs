@@ -384,7 +384,30 @@ namespace System.Windows.Forms
 
 		#region	 Protected Properties
 		protected override CreateParams CreateParams {
-			get { return base.CreateParams; }
+			get {
+				CreateParams cp = base.CreateParams;
+				if (nc_hscroll)
+					cp.Style |= (int) WindowStyles.WS_HSCROLL;
+				if (nc_vscroll)
+					cp.Style |= (int) WindowStyles.WS_VSCROLL;
+				return cp;
+			}
+		}
+
+		// The scroll bars standing in the non-client area now (WS_HSCROLL / WS_VSCROLL), beside the
+		// client, as comctl32's list view keeps them.
+		private bool nc_hscroll, nc_vscroll, updating_nc;
+
+		/// <summary>The room the header, the items and the bars share: the client with the bands of
+		/// bars standing outside it now added back. The layout works from this, and the bars and
+		/// the item pane are placed in it -- which puts non-client bars beside the client.</summary>
+		private Rectangle FullClient {
+			get {
+				Rectangle r = ClientRectangle;
+				if (nc_vscroll && v_scroll != null) r.Width += v_scroll.Width;
+				if (nc_hscroll && h_scroll != null) r.Height += h_scroll.Height;
+				return r;
+			}
 		}
 
 		protected override Size DefaultSize {
@@ -1334,7 +1357,7 @@ namespace System.Windows.Forms
 			// Inside the frame, not on it. The scroll bars are children like the header and the item
 			// area, and laid out against the client rectangle they covered the border along the
 			// bottom and the right.
-			Rectangle client_area = Rectangle.Inflate (ClientRectangle, -BorderInset, -BorderInset);
+			Rectangle client_area = Rectangle.Inflate (FullClient, -BorderInset, -BorderInset);
 			int height = client_area.Height;
 			int width = client_area.Width;
 			Size item_size;
@@ -1370,6 +1393,20 @@ namespace System.Windows.Forms
 			} else {
 				h_scroll.Visible = false;
 				v_scroll.Visible = false;
+			}
+
+			// The bars into the non-client area or out of it: the frame grows or shrinks by them and
+			// the client is what is left; client_area, the full room, does not change. The resize
+			// that follows comes back here; this pass finishes.
+			if (!updating_nc && IsHandleCreated && (h_scroll.is_visible != nc_hscroll || v_scroll.is_visible != nc_vscroll)) {
+				nc_hscroll = h_scroll.is_visible;
+				nc_vscroll = v_scroll.is_visible;
+				updating_nc = true;
+				try {
+					UpdateStyles ();
+				} finally {
+					updating_nc = false;
+				}
 			}
 
 
@@ -1739,7 +1776,7 @@ namespace System.Windows.Forms
 
 		void CalculateRowsAndCols (Size item_size, bool left_aligned, int x_spacing, int y_spacing)
 		{
-			Rectangle area = ClientRectangle;
+			Rectangle area = FullClient;
 
 			if (UseCustomColumnWidth)
 				CalculateCustomColumnWidth ();
@@ -1924,7 +1961,7 @@ namespace System.Windows.Forms
 			// Inside the frame, not on it. The scroll bars are children like the header and the item
 			// area, and laid out against the client rectangle they covered the border along the
 			// bottom and the right.
-			Rectangle client_area = Rectangle.Inflate (ClientRectangle, -BorderInset, -BorderInset);
+			Rectangle client_area = Rectangle.Inflate (FullClient, -BorderInset, -BorderInset);
 			int header_height = Font.Height + 15; // one line height + some padding
 
 			group.HeaderBounds = new Rectangle (0, y_origin, client_area.Width - v_scroll.Width, header_height);
@@ -1965,8 +2002,8 @@ namespace System.Windows.Forms
 
 			layout_wd = x;
 
-			if (x < ClientRectangle.Width)
-				x = ClientRectangle.Width;
+			if (x < FullClient.Width)
+				x = FullClient.Width;
 
 			if (header_style == ColumnHeaderStyle.None) {
 				header_control.Visible = false;
@@ -1987,14 +2024,14 @@ namespace System.Windows.Forms
 
 			if (columns.Count == 0) {
 				item_control.Visible = false;
-				layout_wd = ClientRectangle.Width;
-				layout_ht = ClientRectangle.Height;
+				layout_wd = FullClient.Width;
+				layout_ht = FullClient.Height;
 				return;
 			}
 
 			item_control.Visible = true;
 			item_control.Location = new Point (BorderInset, BorderInset);
-			item_control.Width = Math.Max (0, ClientRectangle.Width - BorderInset * 2);
+			item_control.Width = Math.Max (0, FullClient.Width - BorderInset * 2);
 			AdjustChildrenZOrder ();
 
 			int item_height = GetDetailsItemHeight ();
@@ -3325,7 +3362,8 @@ namespace System.Windows.Forms
 			// Windows fills the square where the two scroll bars meet. Nothing painted it here, so
 			// it stayed whatever lay underneath -- which on this stack is the item pane's own
 			// pixels, and a cell's text showed through in the corner of the list.
-			if (h_scroll.Visible && v_scroll.Visible)
+			// (Between non-client bars the corner is non-client too, and the frame paints it.)
+			if (h_scroll.Visible && v_scroll.Visible && !(nc_hscroll && nc_vscroll))
 				ThemeEngine.Current.DrawScrollBarCorner (pe.Graphics,
 					new Rectangle (v_scroll.Left, h_scroll.Top, v_scroll.Width, h_scroll.Height));
 		}

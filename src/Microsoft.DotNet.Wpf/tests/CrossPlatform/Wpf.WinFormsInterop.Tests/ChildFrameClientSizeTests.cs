@@ -51,6 +51,20 @@ namespace Wpf.WinFormsInterop.Tests
             yield return Case("ListBox wide items", () => Filled(new ListBox { IntegralHeight = false, HorizontalScrollbar = true, Size = new Size(100, 100) }, "a much longer item that is wide "), 79, 79, 2, new Rectangle(0, 0, 79, 79));
             yield return Case("TreeView Fixed3D", () => new TreeView { Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
             yield return Case("TreeView FixedSingle", () => new TreeView { BorderStyle = BorderStyle.FixedSingle, Size = new Size(100, 100) }, 98, 98, 1, new Rectangle(0, 0, 98, 98));
+            yield return Case("TreeView many nodes", () =>
+            {
+                var t = new TreeView { Size = new Size(100, 100) };
+                for (int i = 0; i < 30; i++) t.Nodes.Add("node " + i);
+                return t;
+            }, 79, 96, 2, new Rectangle(0, 0, 79, 96));
+            yield return Case("ListView Details many rows", () =>
+            {
+                var v = new ListView { View = View.Details, Size = new Size(100, 100) };
+                v.Columns.Add("A", 60);
+                v.Columns.Add("B", 90);
+                for (int i = 0; i < 30; i++) v.Items.Add("row " + i);
+                return v;
+            }, 79, 79, 2, new Rectangle(0, 0, 79, 79));
             yield return Case("ListView", () => new ListView { Size = new Size(100, 100) }, 96, 96, 2, new Rectangle(0, 0, 96, 96));
             yield return Case("ListView Details", () =>
             {
