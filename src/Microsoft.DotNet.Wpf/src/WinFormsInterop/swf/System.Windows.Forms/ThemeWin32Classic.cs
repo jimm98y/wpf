@@ -2536,8 +2536,10 @@ namespace System.Windows.Forms
 			int buttonLeft;
 			if (dtp.ShowUpDown)
 				buttonLeft = client.Right - 2 - SystemInformation.VerticalScrollBarWidth;
-			else // the themed calendar button: DP_SHOWCALENDARBUTTONRIGHT is two SM_CXVSCROLLs wide
-				buttonLeft = client.Right - 2 * SystemInformation.VerticalScrollBarWidth;
+			else // the themed calendar button: DP_SHOWCALENDARBUTTONRIGHT is two SM_CXVSCROLLs wide,
+			     // the drop-down button that stands in for it in a crowded field one
+				buttonLeft = client.Right - (DateTimePickerShowsCalendar (dtp) ? 2 : 1)
+					* SystemInformation.GetVerticalScrollBarWidthForDpi (dtp.DeviceDpi);
 			buttonLeft = Math.Max (buttonLeft, boxRight);
 			return Rectangle.FromLTRB (boxRight + 1, client.Top, buttonLeft - 1, client.Bottom);
 		}
@@ -2547,12 +2549,28 @@ namespace System.Windows.Forms
 		internal static Rectangle DateTimePickerCheckBoxBox (DateTimePicker dtp)
 		{
 			Rectangle client = dtp.ClientRectangle;
-			Rectangle box = Rectangle.Inflate (client, -2, -2);
+			Size edge = SystemInformation.Border3DSize;
+			Rectangle box = Rectangle.Inflate (client, -edge.Width, -edge.Height);
 			box.Width = Math.Min (box.Height, client.X + client.Width / 2 - box.X);
 			return box;
 		}
 
-		private const TextFormatFlags DateFieldFlags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
+		/// <summary>comctl32's CDatePicker::GetThemeIds: the calendar button (DATEPICKER
+		/// DP_SHOWCALENDARBUTTONRIGHT, two scroll bars wide) only while the date's fields end short of
+		/// the field less two scroll bar widths -- otherwise the combo box's drop-down button, one
+		/// scroll bar wide. At 200% a standard picker's date no longer leaves that room, and Windows
+		/// shows the chevron. Always the calendar at 96 dpi, as measured there.</summary>
+		internal static bool DateTimePickerShowsCalendar (DateTimePicker dtp)
+		{
+			if (dtp.DeviceDpi == ScaleHelper.OneHundredPercentLogicalDpi)
+				return true;
+			int vs = SystemInformation.GetVerticalScrollBarWidthForDpi (dtp.DeviceDpi);
+			Rectangle client = dtp.ClientRectangle;
+			int fieldsEnd = client.X + 2 + TextRenderer.MeasureText (dtp.Text, dtp.Font, Size.Empty, TextFormatFlags.NoPadding).Width;
+			return fieldsEnd < client.Width - 2 * vs;
+		}
+
+		private const TextFormatFlags DateFieldFlags =TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
 
 		// The subedit's DrawText alignment: DT_RIGHT for a number, DT_CENTER for a name, an AM/PM
 		// designator, an era or a literal.

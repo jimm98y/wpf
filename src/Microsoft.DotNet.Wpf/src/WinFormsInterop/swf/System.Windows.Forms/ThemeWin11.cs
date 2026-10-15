@@ -2047,7 +2047,8 @@ namespace System.Windows.Forms
 		}
 
 		// Five pixels between the frame and the grid, on every side.
-		public override int MonthCalendarMargin (MonthCalendar mc) => 5;
+		// (comctl32's four-pixel inset and the control's one-pixel frame, which is two at 200%.)
+		public override int MonthCalendarMargin (MonthCalendar mc) => 4 + mc.LogicalToDeviceUnits (1);
 
 		protected override void MonthCalendarDrawDayNameDivider (Graphics dc, MonthCalendar mc,
 					     int x1, int x2, int y)
@@ -2069,12 +2070,18 @@ namespace System.Windows.Forms
 			// calendar, whose arrow sits in a smaller button nearer the edge than the one the
 			// classic layout hands us -- twenty-two wide and five in, which put the arrow eight
 			// pixels further into the header than Windows puts it.
-			const int Side = 16, Inset = 0;
+			// MONTHCAL_PREVBTN / NEXTBTN at the calendar's DPI (16, 32 at 200%).
+			int state0 = !mc.Enabled ? 4 : clicked ? 3 : (is_previous ? mc.HoverPrevious : mc.HoverNext) ? 2 : 1;
+			Win11Frames.Frame arrow = Win11Frames.MonthCalArrow (is_previous, state0, mc.DeviceDpi);
+			int Side = arrow.Width;
+			const int Inset = 0;
 			// And a little above the middle of the heading, which is where Windows puts it: level
 			// with the month's name rather than with the strip the name sits in.
 			// (The theme's glyph starts four rows into this 16x16 button; the old hand-drawn arrow's
 			// placement had the rect a row higher.)
-			int top = rectangle.Y + ((title_size.Height - Side) / 2) - 1;
+			// CCalendar::_CalcOnSizeChange: centred in the heading's height (the title less the pixel
+			// it shares with the day names).
+			int top = rectangle.Y + (title_size.Height - 1 - Side) / 2;
 			Rectangle button = is_previous
 				? new Rectangle (rectangle.X + Inset, top, Side, Side)
 				: new Rectangle (rectangle.Right - Inset - Side, top, Side, Side);
@@ -2120,7 +2127,7 @@ namespace System.Windows.Forms
 			// CCalendar::_PaintArrowBtn: MONTHCAL part 11 / 10 in the button, disabled (4) when there is
 			// nowhere to go, pressed (3), hot (2), else normal.
 			int state = !mc.Enabled ? 4 : clicked ? 3 : hovered ? 2 : 1;
-			Win11Frames.Draw (dc, Win11Frames.MonthCalArrow (is_previous, state), button);
+			Win11Frames.Draw (dc, arrow, button);
 			dc.SmoothingMode = old;
 		}
 
@@ -2732,6 +2739,18 @@ namespace System.Windows.Forms
 						       format);
 				}
 			}
+
+			// Too many tabs for the row: comctl32's up-down control over its right end, the SPIN
+			// parts across, the left-pointing one first.
+			if (tab.ShowSlider) {
+				Rectangle left = System.Windows.Forms.Theming.ThemeElements.CurrentTheme.TabControlPainter.GetLeftScrollRect (tab);
+				Rectangle right = System.Windows.Forms.Theming.ThemeElements.CurrentTheme.TabControlPainter.GetRightScrollRect (tab);
+				int SpinState (VisualStyles.PushButtonState s) => !tab.Enabled ? 4
+					: s == VisualStyles.PushButtonState.Pressed ? 3 : s == VisualStyles.PushButtonState.Hot ? 2 : 1;
+				dc.FillRectangle (ResPool.GetSolidBrush (tab.Parent?.BackColor ?? tab.BackColor), Rectangle.Union (left, right));
+				new VisualStyles.VisualStyleRenderer ("SPIN", 3, SpinState (tab.LeftSliderState)).DrawBackground (dc, left);
+				new VisualStyles.VisualStyleRenderer ("SPIN", 4, SpinState (tab.RightSliderState)).DrawBackground (dc, right);
+			}
 		}
 
 		// ---- checked list box --------------------------------------------------------
@@ -2841,12 +2860,7 @@ namespace System.Windows.Forms
 		/// scroll bar wide, with its chevron. At 200% a standard picker's date no longer leaves that
 		/// room, and Windows shows the chevron.</summary>
 		private static bool DateTimePickerShowsCalendar (DateTimePicker dtp)
-		{
-			int vs = SystemInformation.GetVerticalScrollBarWidthForDpi (dtp.DeviceDpi);
-			Rectangle client = dtp.ClientRectangle;
-			int fieldsEnd = client.X + 2 + TextRenderer.MeasureText (dtp.Text, dtp.Font, Size.Empty, TextFormatFlags.NoPadding).Width;
-			return fieldsEnd < client.Width - 2 * vs;
-		}
+			=> ThemeWin32Classic.DateTimePickerShowsCalendar (dtp);
 
 		public override Rectangle DateTimePickerGetDropDownButtonArea (DateTimePicker dateTimePicker)
 		{

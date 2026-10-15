@@ -716,6 +716,24 @@ namespace System.Windows.Forms {
 				int column_count = (ShowWeekNumbers) ? 8 : 7;
 				int row_count = 7;		// not including the today date
 
+				if (DeviceDpi != ScaleHelper.OneHundredPercentLogicalDpi && VisualStyles.VisualStyleRenderer.IsSupported) {
+					// comctl32's CCalendar::_CalcOnStyleChange, themed: a cell is the widest day number or
+					// day name and six pixels, as tall as the text; the heading is its bold text and
+					// fourteen, the day-name row its text and one. Measured in pixels, not scaled -- the
+					// font carries the DPI. (At 96 dpi this is the model below, measured there.)
+					int cellText = 0;
+					foreach (string name in System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.AbbreviatedDayNames)
+						cellText = Math.Max (cellText, TextRenderer.MeasureText (name, Font, Size.Empty, TextFormatFlags.NoPadding).Width);
+					for (int d = 1; d <= 31; d++)
+						cellText = Math.Max (cellText, TextRenderer.MeasureText (d.ToString (), Font, Size.Empty, TextFormatFlags.NoPadding).Width);
+					int textH = TextLineHeight;
+					int boldH = TextRenderer.GdiLineHeight (bold_font);
+					if (boldH <= 0)
+						boldH = textH;
+					date_cell_size = new Size (cellText + 6, textH);
+					// The heading and the day-name row together, as the title the layout below keeps.
+					title_size = new Size (date_cell_size.Width * column_count, boldH + 14 + 1);
+				} else {
 				// set the date_cell_size and the title_size
 				date_cell_size = ThemeEngine.Current.MonthCalendarCellSize (this,
 						    new Size ((int) Math.Ceiling (1.8 * multiplier), multiplier));
@@ -723,6 +741,7 @@ namespace System.Windows.Forms {
 				// adjusts the title with it, and taking the font height here left the calendar two
 				// pixels taller than a stock one.
 				title_size = new Size ((date_cell_size.Width * column_count), 2 * date_cell_size.Height);
+				}
 
 				return new Size (column_count * date_cell_size.Width, row_count * date_cell_size.Height + title_size.Height);
 			}
