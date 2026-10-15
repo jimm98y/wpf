@@ -148,6 +148,16 @@ namespace System.Windows.Forms
 
 			return vsr.GetPartSize (g, ThemeSizeType.Draw);
 		}
+
+		/// <summary>The glyph's size for a window at <paramref name="dpi"/>: what uxtheme reports
+		/// (TS_DRAW) for the HWND .NET passes -- 13 pixels to 143 dpi, then the theme's larger images.</summary>
+		internal static Size GetGlyphSize (CheckBoxState state, int dpi)
+		{
+			if (!VisualStyleRenderer.IsSupported)
+				return new Size (13, 13);
+			Win11Frames.Frame f = Win11Frames.Get ("BUTTON", 3, (int) state, dpi);
+			return f != null ? new Size (f.Width, f.Height) : new Size (13, 13);
+		}
 		#endregion
 
 		#region Private Static Methods

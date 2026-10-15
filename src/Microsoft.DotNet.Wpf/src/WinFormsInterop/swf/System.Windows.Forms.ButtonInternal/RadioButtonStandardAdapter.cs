@@ -68,7 +68,7 @@ internal class RadioButtonStandardAdapter : RadioButtonBaseAdapter
 			ButtonBase control = Control;
 			using ScreenDcCache.ScreenDcScope scope = GdiCache.GetScreenHdc();
 			// The glyph at the window's DPI, as uxtheme sizes it for the HWND .NET passes.
-			layoutOptions.CheckSize = control.LogicalToDeviceUnits (RadioButtonRenderer.GetGlyphSize(scope, ButtonAdapterRenderers.RadioButtonStateFrom(GetState(), control.MouseIsOver)).Width);
+			layoutOptions.CheckSize = RadioButtonRenderer.GetGlyphSize(ButtonAdapterRenderers.RadioButtonStateFrom(GetState(), control.MouseIsOver), control.DeviceDpi).Width;
 		}
 		else
 		{

@@ -115,9 +115,10 @@ namespace System.Windows.Forms
 			splitter.Dock = DockStyle.Bottom;
 
 			// The margin round the description pane's contents, and the line the title sits on. Both are
-			// Windows' own numbers, and the pane's height depends on them.
-			int HelpBorder = 3;
-			int HelpLineHeight = Font.Height + 2;
+			// Windows' own numbers, and the pane's height depends on them (.NET's HelpPane, scaled to
+			// the grid's DPI).
+			int HelpBorder = LogicalToDeviceUnits (3);
+			int HelpLineHeight = Font.Height + LogicalToDeviceUnits (2);
 
 			help_panel = new Panel();
 			help_panel.Dock = DockStyle.Bottom;
@@ -125,7 +126,7 @@ namespace System.Windows.Forms
 			// Fifty-nine: room for a title line and two lines of text, and the number Windows uses
 			// outright rather than deriving. At fifty it was a line short, and that is the whole of
 			// why a stock grid had more space under its rows than ours did.
-			help_panel.Height = 59;
+			help_panel.Height = LogicalToDeviceUnits (59);
 			help_panel.BackColor = SystemColors.Control;
 
 
@@ -148,7 +149,7 @@ namespace System.Windows.Forms
 			// remained, so the two blocks sat at different heights from a stock grid's.
 			help_description_label.Location = new Point (HelpBorder, HelpBorder + HelpLineHeight);
 			help_description_label.Width = help_panel.Width - HelpBorder * 2;
-			help_description_label.Height = Math.Max (0, help_panel.Height - HelpBorder * 2 - HelpLineHeight - 1);
+			help_description_label.Height = Math.Max (0, help_panel.Height - HelpBorder * 2 - HelpLineHeight - LogicalToDeviceUnits (1));
 
 			help_panel.Controls.Add(help_description_label);
 			help_panel.Controls.Add(help_title_label);
@@ -177,7 +178,8 @@ namespace System.Windows.Forms
 
 			toolbar_imagelist = new ImageList();
 			toolbar_imagelist.ColorDepth = ColorDepth.Depth32Bit;
-			toolbar_imagelist.ImageSize = new System.Drawing.Size(16, 16);
+			// .NET's s_normalButtonSize: 16 square at the grid's DPI.
+			toolbar_imagelist.ImageSize = NormalButtonSize;
 			toolbar_imagelist.TransparentColor = System.Drawing.Color.Transparent;
 
 			// DrawFlatToolbar is false by default in .NET, which draws the tool bar with the system
@@ -188,8 +190,10 @@ namespace System.Windows.Forms
 			toolbar.ImageList = toolbar_imagelist;
 			toolbar.Location = new System.Drawing.Point(0, 0);
 			toolbar.ShowToolTips = true;
-			// Twenty-five, measured across a stock grid's button row.
-			toolbar.Size = new System.Drawing.Size(256, 25);
+			// .NET's button height and padding: twenty-five at 96 dpi, measured across a stock grid's
+			// button row.
+			toolbar.ImageScalingSize = NormalButtonSize;
+			toolbar.Size = new System.Drawing.Size(256, ToolbarHeight);
 			// The buttons start two pixels in, as they do in Windows.
 			toolbar.Padding = new Padding (2, 0, 0, 0);
 			toolbar.TabIndex = 0;
@@ -1010,14 +1014,15 @@ namespace System.Windows.Forms
 			toolbar.SuspendLayout ();
 			toolbar.Items.Clear ();
 			toolbar_imagelist.Images.Clear ();
+			toolbar_imagelist.ImageSize = NormalButtonSize;
 
 			int imageIndex = 0;
 			toolbar.Items.Add (categorized_toolbarbutton);
-			toolbar_imagelist.Images.Add (categorized_image);
+			AddToolbarImage (categorized_image);
 			categorized_toolbarbutton.ImageIndex = imageIndex;
 			imageIndex++;
 			toolbar.Items.Add (alphabetic_toolbarbutton);
-			toolbar_imagelist.Images.Add (alphabetical_image);
+			AddToolbarImage (alphabetical_image);
 			alphabetic_toolbarbutton.ImageIndex = imageIndex;
 			imageIndex++;
 			toolbar.Items.Add (separator_toolbarbutton);
@@ -1029,7 +1034,7 @@ namespace System.Windows.Forms
 					toolbar.Items.Add (button);
 					if (tab.Bitmap != null) {
 						tab.Bitmap.MakeTransparent ();
-						toolbar_imagelist.Images.Add (tab.Bitmap);
+						AddToolbarImage (tab.Bitmap);
 						button.ImageIndex = imageIndex;
 						imageIndex++;
 					}
@@ -1040,10 +1045,40 @@ namespace System.Windows.Forms
 			}
 
 			toolbar.Items.Add (propertypages_toolbarbutton);
-			toolbar_imagelist.Images.Add (propertypages_image);
+			AddToolbarImage (propertypages_image);
 			propertypages_toolbarbutton.ImageIndex = imageIndex;
-			
+
 			toolbar.ResumeLayout ();
+		}
+
+		/// <summary>.NET's AddImage: the image scaled to the button size first (CopyAndScaleToSize --
+		/// a 16-pixel icon doubled nearest neighbour at 200%), so the list does not resample it.</summary>
+		private void AddToolbarImage (Image image)
+		{
+			if (image is Bitmap bitmap && bitmap.Size != NormalButtonSize)
+				image = ScaleHelper.CopyAndScaleToSize (bitmap, NormalButtonSize);
+			toolbar_imagelist.Images.Add (image);
+		}
+
+		/// <summary>.NET's s_normalButtonSize and the tool strip's height (the button and
+		/// _toolStripButtonPaddingY), at the grid's DPI.</summary>
+		private Size NormalButtonSize => new Size (LogicalToDeviceUnits (16), LogicalToDeviceUnits (16));
+		private int ToolbarHeight => NormalButtonSize.Height + LogicalToDeviceUnits (9);
+
+		/// <summary>.NET's RescaleConstants, and the tool strip rebuilt (SetupToolbar(fullRebuild)) and
+		/// the description pane resized, for a DPI change.</summary>
+		protected override void RescaleConstantsForDpi (int deviceDpiOld, int deviceDpiNew)
+		{
+			base.RescaleConstantsForDpi (deviceDpiOld, deviceDpiNew);
+			toolbar.ImageScalingSize = NormalButtonSize;
+			toolbar.Height = ToolbarHeight;
+			int border = LogicalToDeviceUnits (3), line = Font.Height + LogicalToDeviceUnits (2);
+			help_panel.Height = LogicalToDeviceUnits (59);
+			help_title_label.Location = new Point (border, border);
+			help_title_label.Height = line;
+			help_description_label.Location = new Point (border, border + line);
+			help_description_label.Height = Math.Max (0, help_panel.Height - border * 2 - line - LogicalToDeviceUnits (1));
+			RefreshToolbar (property_tabs);
 		}
 
 		private void EnsurePropertiesTab ()

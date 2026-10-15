@@ -207,6 +207,51 @@ namespace System.Windows.Forms.VisualStyles
 
 		static readonly Frame [] s_explorerGlyphs = new Frame [2];
 
+		/// <summary>TVP_GLYPH of Explorer::TreeView at a DPI: the theme's 16-, 32- and 40-pixel images
+		/// (96, 192, 240 dpi), scaled nearest neighbour when the DPI is half again the image's (24
+		/// pixels at 144). The larger images are the same chevron drawn larger and a little lighter
+		/// in stroke than twice the small one, fitted to them (uxdpi).</summary>
+		internal static Frame ExplorerTreeGlyph (bool open, int dpi)
+		{
+			int tier = dpi >= 240 ? 240 : dpi >= 192 ? 192 : 96;
+			Frame at = tier == 96 ? ExplorerTreeGlyph (open) : HighDpiExplorerGlyph (open, tier);
+			if (dpi * 2 < tier * 3)
+				return at;
+			lock (s_dpiCache) {
+				var key = (-1, open ? 1 : 0, 0, dpi);
+				if (!s_dpiCache.TryGetValue (key, out Frame f)) {
+					int n = (int) Math.Round (at.Width * (double) dpi / tier, MidpointRounding.AwayFromZero);
+					s_dpiCache [key] = f = Scaled (at, n, n);
+				}
+				return f;
+			}
+		}
+
+		static Frame HighDpiExplorerGlyph (bool open, int tier)
+		{
+			lock (s_dpiCache) {
+				var key = (-2, open ? 1 : 0, 0, tier);
+				if (s_dpiCache.TryGetValue (key, out Frame f))
+					return f;
+				bool at240 = tier >= 240;
+				int n = at240 ? 40 : 32;
+				float k = n / 16f;
+				// x0, y0, the corner, x2, y2, the stroke's width, how far its ends run on, their rounding
+				float [] p = (at240, open) switch {
+					(false, false) => new [] { 11.5313f, 7.625f, 19.9063f, 16f, 11.4688f, 24.4375f, 3.098f, -1.125f, 1.9375f },
+					(false, true) => new [] { 11.5508f, 9.6406f, 19.9023f, 18f, 11.5508f, 26.3594f, 3.1f, -0.8828f, 2.1875f },
+					(true, false) => new [] { 13.9961f, 8.9024f, 25.0938f, 20f, 13.9825f, 31.1114f, 3.0991f, -0.7012f, 2.0996f },
+					(true, true) => new [] { 14.2666f, 11.6758f, 25.0927f, 22.5f, 14.2666f, 33.3243f, 3.1016f, -0.2676f, 2.1563f },
+				};
+				List<PointF> poly = RoundJoinChevron (p [0], p [1], p [2], p [3], p [4], p [5], p [6], p [7], p [8]);
+				if (open)
+					for (int i = 0; i < poly.Count; i++)
+						poly [i] = new PointF (poly [i].Y - k, poly [i].X);
+				s_dpiCache [key] = f = RenderExactArea (n, n, poly, open ? 0x1b1b1bu : 0x8b8b8bu);
+				return f;
+			}
+		}
+
 		/// <summary>The outline of a two-segment stroke of width <paramref name="w"/>: butt ends moved
 		/// <paramref name="ext"/> along the stroke, their corners rounded by <paramref name="cap"/>, a
 		/// mitred inner corner and a round outer one.</summary>
@@ -917,15 +962,144 @@ namespace System.Windows.Forms.VisualStyles
 		// ---- the parts -----------------------------------------------------------------------
 
 		static readonly Dictionary<(int cls, int part, int state), Frame> s_cache = new ();
+		static readonly Dictionary<(int cls, int part, int state, int dpi), Frame> s_dpiCache = new ();
 
 		const int Button = 1, ComboBox = 2, Edit = 3, Tab = 4, TrackBar = 5, TreeView = 6, ScrollBar = 7,
 			Header = 8, Progress = 9, Spin = 10, Toolbar = 11, Status = 12, MonthCal = 13, Rebar = 14;
+
+		/// <summary>
+		/// The frame uxtheme draws for a part and state at <paramref name="dpi"/> (a theme opened
+		/// for that DPI, OpenThemeDataForDpi).
+		/// <para>Most parts have one image, and uxtheme draws it as it is at every DPI: a push button
+		/// or an edit border is the same pixels at 200%. A few have images drawn for higher DPIs --
+		/// the check box and radio button at 13, 26 and 32 pixels (96, 192 and 240 dpi), the track bar
+		/// thumbs, the scroll bar thumbs, the tree view glyph, the size grip -- and for those uxtheme
+		/// takes the largest image for a DPI at or below the one asked, and scales it, nearest
+		/// neighbour, when the DPI is at least half again the image's: 13 pixels at 96 to 143 dpi, 20
+		/// at 144, 23 at 168, 26 at 192 to 239, 32 at 240 to 359. Measured over 96..480 dpi.</para>
+		/// <para>Where only the 96-dpi art is drawn here, a higher tier is that art scaled to the
+		/// tier's size, so layout and sizes are Windows' and only the drawing is coarser.</para>
+		/// </summary>
+		internal static Frame Get (string cls, int part, int state, int dpi)
+		{
+			int c = ClassId (cls);
+			if (c == 0)
+				return null;
+			if (dpi <= 0 || TierSize (c, part, 192) is not Size)
+				return Get (cls, part, state);
+			int tier = dpi >= 240 ? 240 : dpi >= 192 ? 192 : 96;
+			Size? want = tier == 96 ? null : TierSize (c, part, tier);
+			if (dpi * 2 >= tier * 3) {
+				// Scaled from the tier's image by dpi / tier.
+				Frame at = Get (cls, part, state, tier);
+				if (at == null)
+					return null;
+				want = new Size ((int) Math.Round (at.Width * (double) dpi / tier, MidpointRounding.AwayFromZero),
+						 (int) Math.Round (at.Height * (double) dpi / tier, MidpointRounding.AwayFromZero));
+				tier = dpi;
+			}
+			if (tier == 96)
+				return Get (cls, part, state);
+			lock (s_dpiCache) {
+				if (s_dpiCache.TryGetValue ((c, part, state, tier), out Frame f))
+					return f;
+				f = HighDpiArt (c, part, state, tier);
+				if (f == null && want is Size size && Get (cls, part, state) is Frame lo)
+					f = Scaled (lo, size.Width, size.Height);
+				s_dpiCache [(c, part, state, tier)] = f;
+				return f;
+			}
+		}
+
+		static int ClassId (string cls) => cls switch {
+			"BUTTON" => Button, "COMBOBOX" => ComboBox, "EDIT" => Edit, "TAB" => Tab, "TRACKBAR" => TrackBar, "TREEVIEW" => TreeView, "SCROLLBAR" => ScrollBar,
+			"HEADER" => Header, "PROGRESS" => Progress, "SPIN" => Spin, "TOOLBAR" => Toolbar, "STATUS" => Status, "MONTHCAL" => MonthCal, "REBAR" => Rebar, _ => 0 };
+
+		/// <summary>The size of a part's image for 192 or 240 dpi, for the parts the theme has such
+		/// images for (aero.msstyles, as uxtheme reports them); null for a part with one image.</summary>
+		static Size? TierSize (int c, int part, int tier)
+		{
+			bool hi = tier >= 240;
+			return c switch {
+				Button when part == 2 || part == 3 => hi ? new Size (32, 32) : new Size (26, 26),
+				TrackBar when part == 4 || part == 5 => hi ? new Size (28, 48) : new Size (22, 38),
+				TrackBar when part == 7 || part == 8 => hi ? new Size (48, 28) : new Size (38, 22),
+				TreeView when part == 2 => hi ? new Size (22, 22) : new Size (18, 18),
+				ScrollBar when part == 2 => hi ? new Size (50, 43) : new Size (40, 34),
+				ScrollBar when part == 3 => hi ? new Size (43, 28) : new Size (34, 22),
+				ScrollBar when part == 10 => hi ? new Size (40, 40) : new Size (32, 32),
+				Status when part == 3 => hi ? new Size (40, 40) : new Size (32, 32),
+				_ => null,
+			};
+		}
+
+		/// <summary>The theme's own image for a higher DPI, where it is drawn here.</summary>
+		static Frame HighDpiArt (int c, int part, int state, int tier)
+		{
+			if (tier != 192 && tier != 240)
+				return null;
+			return c switch {
+				Button when part == 3 => CheckBox (state, tier),
+				Button when part == 2 => RadioButton (state, tier),
+				ScrollBar when part == 2 || part == 3 => HighDpiScrollThumb (part == 3, state, tier >= 240),
+				_ => null,
+			};
+		}
+
+		/// <summary>SBP_THUMBBTNVERT / HORZ for 192 and 240 dpi: the track's face with its white
+		/// leading edge, and the line -- five pixels at rest at 192 (six at 240), thirteen in the hover
+		/// state (sixteen) -- fitted to the theme's images. Nine-grid margins are the 96-dpi image's
+		/// scaled.</summary>
+		static Frame HighDpiScrollThumb (bool vertical, int state, bool at240)
+		{
+			int w = vertical ? (at240 ? 43 : 34) : (at240 ? 50 : 40);
+			int h = vertical ? (at240 ? 28 : 22) : (at240 ? 43 : 34);
+			var layers = new List<Layer> {
+				new Layer (Box (0, 0, w, h), ScrollFace),
+				new Layer (vertical ? Box (0, 0, 1, h) : Box (0, 0, w, 1), 0xffffffffu),
+			};
+			if (state != 4) {
+				(float a0, float a1, float r) = (state == 1, at240) switch {
+					(true, false) => (15f, 20f, 2.4375f),
+					(true, true) => (19f, 25f, 3f),
+					(false, false) => (11f, 24f, 5f),
+					(false, true) => (14f, 30f, 8f),
+				};
+				layers.Add (new Layer (vertical ? RoundRect (a0, 0, a1, h, r) : RoundRect (0, a0, w, a1, r), 0xff858585u));
+			}
+			float k = at240 ? 2.5f : 2f;
+			int M (int v) => (int) Math.Round (v * k, MidpointRounding.AwayFromZero);
+			return vertical ? Stretched (Render (w, h, layers.ToArray ()), M (8), M (8), M (5), M (5))
+				: Stretched (Render (w, h, layers.ToArray ()), M (11), M (8), M (8), M (8));
+		}
+
+		/// <summary>A frame scaled nearest neighbour, as uxtheme scales an image for a DPI: each
+		/// destination pixel takes the source pixel under its centre. Margins scale with it.</summary>
+		static Frame Scaled (Frame src, int w, int h)
+		{
+			var f = new Frame (w, h) { Stretch = src.Stretch, Tile = src.Tile };
+			for (int y = 0; y < h; y++) {
+				int sy = Math.Min ((int) ((y + 0.5) * src.Height / h), src.Height - 1);
+				for (int x = 0; x < w; x++) {
+					int sx = Math.Min ((int) ((x + 0.5) * src.Width / w), src.Width - 1);
+					f.Pixels [y * w + x] = src.Pixels [sy * src.Width + sx];
+				}
+			}
+			if (src.Stretch) {
+				int Sx (int v) => (int) Math.Round (v * (double) w / src.Width, MidpointRounding.AwayFromZero);
+				int Sy (int v) => (int) Math.Round (v * (double) h / src.Height, MidpointRounding.AwayFromZero);
+				f.Margins = (Sx (src.Margins.L), Sx (src.Margins.R), Sy (src.Margins.T), Sy (src.Margins.B));
+			}
+			if (src.Glyph != null)
+				f.Glyph = Scaled (src.Glyph, (int) Math.Round (src.Glyph.Width * (double) w / src.Width), (int) Math.Round (src.Glyph.Height * (double) h / src.Height));
+			return f;
+		}
 
 		/// <summary>The frame uxtheme would take for a part and state at 96 DPI, or null for a part
 		/// that is not drawn from a frame.</summary>
 		internal static Frame Get (string cls, int part, int state)
 		{
-			int c = cls switch { "BUTTON" => Button, "COMBOBOX" => ComboBox, "EDIT" => Edit, "TAB" => Tab, "TRACKBAR" => TrackBar, "TREEVIEW" => TreeView, "SCROLLBAR" => ScrollBar,
+			int c = cls switch {"BUTTON" => Button, "COMBOBOX" => ComboBox, "EDIT" => Edit, "TAB" => Tab, "TRACKBAR" => TrackBar, "TREEVIEW" => TreeView, "SCROLLBAR" => ScrollBar,
 				"HEADER" => Header, "PROGRESS" => Progress, "SPIN" => Spin, "TOOLBAR" => Toolbar, "STATUS" => Status, "MONTHCAL" => MonthCal, "REBAR" => Rebar, _ => 0 };
 			if (c == 0)
 				return null;
@@ -1041,8 +1215,14 @@ namespace System.Windows.Forms.VisualStyles
 
 		/// <summary>BP_CHECKBOX, 13x13, true size: a rounded box, and on the marked states the box
 		/// filled with the accent under a white tick, dash or cross.</summary>
-		internal static Frame CheckBox (int state)
+		internal static Frame CheckBox (int state) => CheckBox (state, 96);
+
+		/// <summary>BP_CHECKBOX at a DPI the theme has an image for: 13 pixels at 96, 26 at 192,
+		/// 32 at 240.</summary>
+		internal static Frame CheckBox (int state, int tier)
 		{
+			if (tier >= 192)
+				return HighDpiCheckBox (state, tier >= 240);
 			int mark = (state - 1) / 4;     // unchecked, checked, mixed, implicit, excluded
 			int look = (state - 1) % 4;     // normal, hot, pressed, disabled
 			if (mark == 3)
@@ -1080,8 +1260,13 @@ namespace System.Windows.Forms.VisualStyles
 		/// <summary>BP_RADIOBUTTON, 13x13, true size: a ring, or the accent disc under a white dot
 		/// that grows on hover and shrinks while pressed. Pressing an unchecked one shows the dot
 		/// it is about to get.</summary>
-		internal static Frame RadioButton (int state)
+		internal static Frame RadioButton (int state) => RadioButton (state, 96);
+
+		/// <summary>BP_RADIOBUTTON at a DPI the theme has an image for (13, 26 or 32 pixels).</summary>
+		internal static Frame RadioButton (int state, int tier)
 		{
+			if (tier >= 192)
+				return HighDpiRadioButton (state, tier >= 240);
 			bool check = state > 4;
 			int look = (state - 1) % 4;
 			var layers = new List<Layer> ();
@@ -1741,6 +1926,97 @@ namespace System.Windows.Forms.VisualStyles
 		{
 			uint ink = state switch { 2 => 0x1f1f1fu, 4 => 0xa8a8a8u, _ => 0x3f3f3fu };
 			return RenderExactArea (10, 19, RoundJoinChevron (1.0547f, 7.8672f, 5f, 11.8125f, 8.9453f, 7.8672f, 0.7555f, 0.0984f, 0.3516f), ink);
+		}
+
+		// ---- check box and radio button for 192 and 240 dpi -----------------------------------
+		//
+		// The same rasterizer as the 96-dpi art (RenderArt) and the same shapes, their geometry fitted
+		// to the theme's 26- and 32-pixel images state by state (scratch tool uxdpi: uxtheme's image,
+		// drawn by OpenThemeDataForDpi into a 32-bit DIB, against these). The border is 1.5 pixels at
+		// both sizes, not twice the 96-dpi pixel; marks are thinner than a scaled 96-dpi mark.
+
+		static Frame HighDpiCheckBox (int state, bool at240)
+		{
+			int n = at240 ? 32 : 26;
+			int mark = (state - 1) / 4, look = (state - 1) % 4;
+			if (mark == 3)
+				mark = 1;
+			float r0 = at240 ? 6.5f : 5.5f;
+			if (mark == 0) {
+				(uint border, uint face) = Unmarked (look);
+				return RenderArt (n, n,
+					new Layer (RoundRect (0, 0, n, n, r0), border),
+					new Layer (RoundRect (1.5f, 1.5f, n - 1.5f, n - 1.5f, at240 ? 5f : 4f), face));
+			}
+			Shape glyph;
+			float alpha = 1;
+			if (mark == 1) {
+				// width, then the tick's three points
+				float [] t = (at240, look == 2) switch {
+					(false, false) => new [] { 1.2109f, 7.0314f, 13.5939f, 10.9766f, 17.5859f, 19.0704f, 9.5f },
+					(false, true) => new [] { 1.0937f, 7f, 13.4689f, 10.9374f, 17.5781f, 19.2657f, 9.3282f },
+					(true, false) => new [] { 1.5961f, 8.904f, 16.8174f, 13.6347f, 21.572f, 23.4713f, 11.6923f },
+					(true, true) => new [] { 1.2163f, 8.7139f, 16.6012f, 13.6874f, 21.6658f, 23.7453f, 11.5434f },
+				};
+				glyph = Stroke (t [0], t [1], t [2], t [3], t [4], t [5], t [6]);
+				if (look == 2)
+					alpha = at240 ? 0.7961f : 0.7532f;
+			} else if (mark == 2) {
+				// width, x0, y0, x1, y1, alpha
+				float [] d = at240
+					? look switch {
+						2 => new [] { 1.7644f, 10.4675f, 16.0289f, 21.4423f, 15.941f, 0.5968f },
+						1 or 3 => new [] { 1.5096f, 10.3965f, 16.0001f, 21.4952f, 16.0481f, 1f },
+						_ => new [] { 1.4471f, 10.3653f, 16.0001f, 21.6202f, 15.9856f, 1f } }
+					: look switch {
+						1 => new [] { 1.7187f, 8.4843f, 12.9532f, 17.5156f, 13.0313f, 0.7188f },
+						2 => new [] { 1.0312f, 8.1406f, 12.9532f, 17.875f, 13.0468f, 0.8703f },
+						_ => new [] { 1.2812f, 8.2968f, 12.9532f, 17.7656f, 12.9688f, 1f } };
+				glyph = Stroke (d [0], d [1], d [2], d [3], d [4]);
+				alpha = d [5];
+			} else {
+				float w = at240 ? 1.3462f : 1.5f, a = at240 ? 10.4615f : 8.4375f, b = at240 ? 21.5385f : 17.5625f;
+				Shape one = Stroke (w, a, a, b, b), two = Stroke (w, b, a, a, b);
+				glyph = (x, y) => one (x, y) || two (x, y);
+			}
+			uint ink = (uint) Math.Round (alpha * 255) << 24 | 0xffffffu;
+			return RenderArt (n, n, new Layer (RoundRect (0, 0, n, n, r0), Marked (look)), new Layer (glyph, ink));
+		}
+
+		static Frame HighDpiRadioButton (int state, bool at240)
+		{
+			int n = at240 ? 32 : 26;
+			float c = n / 2f, outer = c;
+			bool check = state > 4;
+			int look = (state - 1) % 4;
+			var layers = new List<Layer> ();
+			if (!check) {
+				(uint border, uint face) = Unmarked (look);
+				layers.Add (new Layer (Circle (c, c, outer), border));
+				layers.Add (new Layer (Circle (c, c, outer - 1.5f), face));
+				if (look == 2)
+					layers.Add (new Layer (Circle (c, c, at240 ? 4.7597f : 4f), 0xffffffffu));
+				return RenderArt (n, n, layers.ToArray ());
+			}
+			// ring radius, ring alpha top and bottom, the rows the ring darkens over, dot radius
+			(float rs, float top, float bottom, float y0, float y1, float dot) = (at240, look) switch {
+				(false, 1) => (8f, 0.0537f, 0.1561f, 13.0156f, 18.5156f, 6.5f),
+				(false, 2) => (5.5003f, 0.0556f, 0.2147f, 12.1172f, 20.125f, 4.0002f),
+				(false, 3) => (0f, 0f, 0f, 0f, 0f, 5.25f),
+				(false, _) => (6.7526f, 0.0538f, 0.1602f, 12.54f, 17.7016f, 5.2448f),
+				(true, 1) => (9.5042f, 0.0537f, 0.1561f, 15.5f, 23.0384f, 8.0121f),
+				(true, 2) => (6.2527f, 0.0556f, 0.2186f, 15.0481f, 24.7115f, 4.7586f),
+				(true, 3) => (0f, 0f, 0f, 0f, 0f, 6.4891f),
+				(true, _) => (8.0092f, 0.0538f, 0.1602f, 15.7464f, 21.8875f, 6.4983f),
+			};
+			layers.Add (new Layer (Circle (c, c, outer), Marked (look)));
+			if (rs > 0)
+				layers.Add (new Layer (Circle (c, c, rs), (x, y) => {
+					float t = Math.Clamp ((y - y0) / (y1 - y0), 0, 1);
+					return (uint) Math.Clamp (Math.Round ((top + (bottom - top) * t) * 255), 0, 255) << 24;
+				}));
+			layers.Add (new Layer (Circle (c, c, dot), 0xffffffffu));
+			return RenderArt (n, n, layers.ToArray ());
 		}
 
 		/// <summary>The border and face of an unmarked check box or radio button.</summary>

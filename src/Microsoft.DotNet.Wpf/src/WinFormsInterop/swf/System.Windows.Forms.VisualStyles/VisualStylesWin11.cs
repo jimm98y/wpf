@@ -122,17 +122,17 @@ namespace System.Windows.Forms.VisualStyles
 				g.IntersectClip (c);
 			}
 			try {
-				return DrawPart (g, cls, part, state, bounds) ? S_OK : E_NOTIMPL;
+				return DrawPart (g, cls, part, state, bounds, DpiOf (dc)) ? S_OK : E_NOTIMPL;
 			} finally {
 				if (saved != null)
 					g.Restore (saved);
 			}
 		}
 
-		private static bool DrawPart (Graphics g, string cls, int part, int state, Rectangle r)
+		private static bool DrawPart (Graphics g, string cls, int part, int state, Rectangle r, int dpi)
 		{
 			// An image part is its frame, blitted the way uxtheme blits it.
-			if (Win11Frames.Get (cls, cls == "BUTTON" && part == 5 ? 1 : part, state) is Win11Frames.Frame frame) {
+			if (Win11Frames.Get (cls, cls == "BUTTON" && part == 5 ? 1 : part, state, dpi) is Win11Frames.Frame frame) {
 				Win11Frames.Draw (g, frame, r);
 				return true;
 			}
@@ -273,7 +273,7 @@ namespace System.Windows.Forms.VisualStyles
 		/// the 17-pixel scroll arrow and drop-down button, the tree view's 16-pixel glyph.</summary>
 		public int UxThemeGetThemePartSize (IntPtr hTheme, IDeviceContext dc, int iPartId, int iStateId, ThemeSizeType type, out Size result)
 		{
-			result = ScaleForDc (PartSize (ClassOf (hTheme), iPartId), dc);
+			result = PartSizeFor (ClassOf (hTheme), iPartId, iStateId, dc);
 			return result.IsEmpty ? E_NOTIMPL : S_OK;
 		}
 
@@ -281,18 +281,33 @@ namespace System.Windows.Forms.VisualStyles
 		/// image for that DPI: twice the 96-dpi size on a 200% screen.</summary>
 		private static Size ScaleForDc (Size at96, IDeviceContext dc)
 		{
-			// The shared measuring context stands for a screen DC without a window: 96-dpi parts,
-			// which the caller scales to its window's DPI (stock passes the HWND).
-			if (at96.IsEmpty || dc is Graphics sg && ReferenceEquals (sg, Hwnd.GraphicsContext))
-				return at96;
+			int d = DpiOf (dc);
+			return at96.IsEmpty || d == 96 ? at96 : ScaleHelper.ScaleToDpi (at96, d);
+		}
+
+		/// <summary>The DPI a part is drawn and measured at for a DC: its own resolution. The shared
+		/// measuring context stands for a screen DC without a window: 96 dpi.</summary>
+		private static int DpiOf (IDeviceContext dc)
+		{
+			if (dc is Graphics sg && ReferenceEquals (sg, Hwnd.GraphicsContext))
+				return 96;
 			float dpi = dc is Graphics g ? g.DpiX : System.Drawing.WebGpuBackend.DisplayDpi.X;
-			int d = (int) Math.Round (dpi);
-			return d == 96 ? at96 : ScaleHelper.ScaleToDpi (at96, d);
+			return (int) Math.Round (dpi);
+		}
+
+		/// <summary>A part's size as uxtheme reports it at a DC's DPI: an image part with images for
+		/// higher DPIs is that image's size (Win11Frames.Get), the rest the 96-dpi size scaled.</summary>
+		private static Size PartSizeFor (string cls, int part, int state, IDeviceContext dc)
+		{
+			int d = DpiOf (dc);
+			if (d != 96 && (cls == "BUTTON" && (part == 2 || part == 3)) && Win11Frames.Get (cls, part, Math.Max (state, 1), d) is Win11Frames.Frame f)
+				return new Size (f.Width, f.Height);
+			return ScaleForDc (PartSize (cls, part), dc);
 		}
 
 		public int UxThemeGetThemePartSize (IntPtr hTheme, IDeviceContext dc, int iPartId, int iStateId, Rectangle bounds, ThemeSizeType type, out Size result)
 		{
-			result = ScaleForDc (PartSize (ClassOf (hTheme), iPartId), dc);
+			result = PartSizeFor (ClassOf (hTheme), iPartId, iStateId, dc);
 			if (result.IsEmpty && type == ThemeSizeType.Draw)
 				result = bounds.Size;
 			return result.IsEmpty ? E_NOTIMPL : S_OK;
