@@ -647,6 +647,7 @@ namespace System.Windows.Forms
 			if (target == _hotWindow) return;
 			IntPtr previous = _hotWindow;
 			_hotWindow = target;
+			if (InputTrace.On) InputTrace.Log($"hover #{InputTrace.Seq} leave {InputTrace.Describe(previous)} enter {InputTrace.Describe(target)}");
 			if (previous != IntPtr.Zero && Hwnd.ObjectFromHandle(previous) != null)
 				SendMessage(previous, Msg.WM_MOUSELEAVE, IntPtr.Zero, IntPtr.Zero);
 			if (target != IntPtr.Zero)
@@ -803,8 +804,10 @@ namespace System.Windows.Forms
 			}
 
 			var m = Message.Create(target, (int)message, (IntPtr)wParam, lp);
-			if (FilteredOut(ref m)) return;
+			if (FilteredOut(ref m)) { if (InputTrace.On) InputTrace.Log($"disp #{InputTrace.Seq} {message} taken by a message filter"); return; }
+			double t0 = InputTrace.On ? InputTrace.Now : 0;
 			SendMessage(m.HWnd, (Msg)m.Msg, m.WParam, m.LParam);
+			if (InputTrace.On) InputTrace.Log($"disp #{InputTrace.Seq} {message} -> {InputTrace.Describe(target)} at ({cx},{cy}) handled in {InputTrace.Now - t0:0.00} ms");
 		}
 
 		private const int HTBORDER = 18;
@@ -1164,6 +1167,7 @@ namespace System.Windows.Forms
 			T($"Invalidate h=0x{handle.ToInt64():x} visible={hwnd?.visible} rc={rc}");
 			if (hwnd == null || !hwnd.visible) return;
 			if (rc.Width <= 0 || rc.Height <= 0) rc = new Rectangle(0, 0, hwnd.width, hwnd.height);
+			if (InputTrace.On) InputTrace.Log($"inval #{InputTrace.Seq} {InputTrace.Describe(handle)} {rc.X},{rc.Y} {rc.Width}x{rc.Height}{(hwnd.expose_pending ? " (paint already pending)" : "")}");
 			hwnd.AddInvalidArea(rc);
 			if (!hwnd.expose_pending)
 			{
@@ -1178,6 +1182,7 @@ namespace System.Windows.Forms
 		{
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			T($"PaintEventStart h=0x{handle.ToInt64():x} client={client} invalid={hwnd?.Invalid} size={hwnd?.width}x{hwnd?.height}");
+			if (InputTrace.On) { _paintStarted[handle] = InputTrace.Now; }
 			Graphics dc;
 			if (s_gpuRaster)
 			{
@@ -1484,8 +1489,13 @@ namespace System.Windows.Forms
 			return _paintVersion;
 		}
 
+		// WF_TRACE_INPUT: when each window's paint began, to time it.
+		private readonly Dictionary<IntPtr, double> _paintStarted = new Dictionary<IntPtr, double>();
+
 		internal override void PaintEventEnd(ref Message msg, IntPtr handle, bool client, PaintEventArgs pevent)
 		{
+			if (InputTrace.On && _paintStarted.Remove(handle, out double began))
+				InputTrace.Log($"paint #{InputTrace.Seq} {InputTrace.Describe(handle)} {InputTrace.Now - began:0.00} ms");
 			if (s_gpuRaster)
 			{
 				if (_paintedViaOffscreen.Remove(handle))
@@ -1653,11 +1663,39 @@ namespace System.Windows.Forms
 			}
 			for (int i = 0; i < count; i++)
 			{
+				t_idleOwed = true;   // a WM_TIMER, on Windows: Application.Idle follows it
 				try { due[i].FireTick(); }
 				catch (Exception ex) { Console.Error.WriteLine("Timer.Tick: " + ex); }
 			}
 			return next;
 		}
+
+		// ---- Application.Idle ---------------------------------------------------------
+		// Raised when a thread's message loop has handled what there was and is about to wait, as
+		// WinForms does: once per batch of messages, never repeatedly while nothing happens. It was
+		// never raised at all, so anything an application did "when the UI is idle" -- refreshing
+		// command states, finishing deferred work -- waited for ever. Handlers belong to the thread
+		// that added them, as Application.Idle's do (one per ThreadContext).
+		private readonly Dictionary<int, EventHandler> _idleHandlers = new Dictionary<int, EventHandler>();
+
+		internal override event EventHandler Idle
+		{
+			add { lock (_idleHandlers) { _idleHandlers.TryGetValue(Environment.CurrentManagedThreadId, out EventHandler h); _idleHandlers[Environment.CurrentManagedThreadId] = h + value; } }
+			remove { lock (_idleHandlers) { if (_idleHandlers.TryGetValue(Environment.CurrentManagedThreadId, out EventHandler h)) { h -= value; if (h == null) _idleHandlers.Remove(Environment.CurrentManagedThreadId); else _idleHandlers[Environment.CurrentManagedThreadId] = h; } } }
+		}
+
+		internal override void RaiseIdle(EventArgs e)
+		{
+			EventHandler h;
+			lock (_idleHandlers) _idleHandlers.TryGetValue(Environment.CurrentManagedThreadId, out h);
+			h?.Invoke(null, e);
+		}
+
+		// Whether this thread's loop has handled a message since it last raised Idle.
+		[ThreadStatic] private static bool t_idleOwed;
+
+		/// <summary>A message for this thread was handled (one of the driver's, or the OS's input).</summary>
+		internal static void NoteMessageHandled() => t_idleOwed = true;
 
 		internal override bool GetMessage(object queue_id, ref MSG msg, IntPtr hWnd, int wFilterMin, int wFilterMax)
 		{
@@ -1672,9 +1710,19 @@ namespace System.Windows.Forms
 				{
 					if (msg.message == Msg.WM_QUIT) return false;
 					PresentationHost.PresentIfOverdue();   // a queue that never empties still shows its frames
+					t_idleOwed = true;
 					return true;
 				}
 				if (q.Quit) return false;
+				if (t_idleOwed)
+				{
+					// Everything queued has been handled: the loop is idle, so say so -- then look
+					// again, because an Idle handler can post (or quit).
+					t_idleOwed = false;
+					try { RaiseIdle(EventArgs.Empty); }
+					catch (Exception ex) { Application.OnThreadException(ex); }
+					continue;
+				}
 				// No queued messages. With a window on screen this is simply an idle frame: present
 				// whatever changed, let the OS hand us input (which refills the queue), and go round
 				// again -- that is what makes Application.Run(form) behave like real WinForms. With no
@@ -2478,8 +2526,16 @@ namespace System.Windows.Forms
 			return true;
 		}
 		internal override bool SetOwner(IntPtr hWnd, IntPtr hWndOwner) => true;
-		internal override void GrabWindow(IntPtr hwnd, IntPtr ConfineToHwnd) { _grabHandle = hwnd; }
-		internal override void UngrabWindow(IntPtr hwnd) { if (_grabHandle == hwnd) _grabHandle = IntPtr.Zero; }
+		internal override void GrabWindow(IntPtr hwnd, IntPtr ConfineToHwnd)
+		{
+			if (InputTrace.On) InputTrace.Log($"capture #{InputTrace.Seq} -> {InputTrace.Describe(hwnd)} (was {InputTrace.Describe(_grabHandle)})");
+			_grabHandle = hwnd;
+		}
+		internal override void UngrabWindow(IntPtr hwnd)
+		{
+			if (InputTrace.On) InputTrace.Log($"capture #{InputTrace.Seq} released by {InputTrace.Describe(hwnd)} (held by {InputTrace.Describe(_grabHandle)})");
+			if (_grabHandle == hwnd) _grabHandle = IntPtr.Zero;
+		}
 		/// <summary>Which window holds the mouse (GetCapture). ShowDialog asks, to release it before
 		/// the dialog runs.</summary>
 		internal override void GrabInfo(out IntPtr hwnd, out bool GrabConfined, out Rectangle GrabArea)
@@ -2568,6 +2624,7 @@ namespace System.Windows.Forms
 			if (OperatingSystem.IsWindows() && !s_syntheticCursor && PresentationHost.Current is Win32Host && Win32Host.TryRealCursor(out int rx, out int ry)) {
 				x = rx; y = ry;
 			}
+			if (InputTrace.On) InputTrace.Log($"cursor #{InputTrace.Seq} asked: real ({x},{y}), last message ({_cursorX},{_cursorY})");
 			if (hwnd == IntPtr.Zero) return;
 			// Asked about a window, Win32 answers in that window's client space.
 			Hwnd h = Hwnd.ObjectFromHandle(hwnd);

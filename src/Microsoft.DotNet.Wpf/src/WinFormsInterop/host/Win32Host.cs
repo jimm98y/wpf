@@ -334,7 +334,10 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (host == null || host._hwnd == IntPtr.Zero) return;
         ReleaseCapture();
         GetCursorPos(out POINT p);
+        double t0 = InputTrace.On ? InputTrace.Now : 0;
+        if (InputTrace.On) InputTrace.Log($"syscmd 0x{command:x} begin at screen ({p.x},{p.y}) lbutton={((GetKeyState(0x01) & 0x8000) != 0 ? "down" : "up")} async={((GetAsyncKeyState(0x01) & 0x8000) != 0 ? "down" : "up")} foreground={(GetForegroundWindow() == host._hwnd ? "this" : "other")}");
         SendMessageW(host._hwnd, 0x0112 /* WM_SYSCOMMAND */, (IntPtr)command, (IntPtr)((p.y << 16) | (p.x & 0xFFFF)));
+        if (InputTrace.On) InputTrace.Log($"syscmd 0x{command:x} end after {InputTrace.Now - t0:0.0} ms");
     }
 
     /// <summary>Form.WindowState was set: the real window follows, as ShowWindow does it for stock.</summary>
@@ -353,7 +356,20 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     }
 
     private static readonly bool s_traceState = Environment.GetEnvironmentVariable("WF_TRACE_STATE") == "1";
+
+    [ThreadStatic] private static bool t_tracedEntry;
+
+    /// <summary>The messages WF_TRACE_INPUT follows: input, activation, capture, moving and sizing.</summary>
+    private static bool TracedMessage(uint msg) =>
+        (msg >= 0x0200 && msg <= 0x020E) || (msg >= 0x00A0 && msg <= 0x00AD) || (msg >= 0x0100 && msg <= 0x0109)
+        || msg == 0x0112 || msg == 0x0231 || msg == 0x0232 || msg == 0x0003 || msg == 0x0005 || msg == 0x02A3
+        || msg == 0x0021 || msg == 0x0006 || msg == 0x0215;
+
+    [DllImport("user32")] private static extern int GetMessageTime();
+    [DllImport("user32")] private static extern IntPtr GetCapture();
     [DllImport("user32")] private static extern bool IsZoomed(IntPtr hwnd);
+    [DllImport("user32")] private static extern short GetAsyncKeyState(int key);
+    [DllImport("user32")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32")] private static extern bool IsIconic(IntPtr hwnd);
     [DllImport("user32")] private static extern IntPtr SendMessageW(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32", CharSet = CharSet.Unicode)] private static extern bool SetWindowTextW(IntPtr hwnd, string text);
@@ -684,13 +700,22 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         _repaintAsked = false;
 
         double t0 = s_traceFrames ? SinceStart : 0;
+        double tc0 = InputTrace.On ? InputTrace.Now : 0;
         var scenes = GetScenes(out int ox, out int oy);
         Rectangle? caret = GetCaretRect(ox, oy);
         double t1 = s_traceFrames ? SinceStart : 0;
+        double tc1 = InputTrace.On ? InputTrace.Now : 0;
         _lastPresentOk = WantsLayeredHost() && PresentLayered(scenes, caret)
             || _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.ClientSize.Width, _form.ClientSize.Height);
         if (s_traceFrames && _framesTraced++ < 4000)
             Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms (paint {t1 - t0:0}, gpu {SinceStart - t1:0}) damage {_wgpu.LastDamage}");
+        if (InputTrace.On)
+        {
+            int upTo = InputTrace.Seq;
+            InputTrace.Log($"present v{ver} '{_form.Text}' {(upTo > InputTrace.Presented ? $"first with #{InputTrace.Presented + 1}..#{upTo}" : "no new input")}"
+                           + $" collect {tc1 - tc0:0.00} ms render+submit+present {InputTrace.Now - tc1:0.00} ms damage {_wgpu.LastDamage} ok={_lastPresentOk}");
+            InputTrace.Presented = upTo;
+        }
         _lastVer = ver; _lastCaretOn = caretOn;
         PresentCount++;
         if (wantSave)
@@ -734,6 +759,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         while (PeekMessageW(out MSG msg, IntPtr.Zero, 0, 0, 0x0001)) // PM_REMOVE
         {
             if (msg.message == 0x0012) { _quit = true; return false; } // WM_QUIT
+            System.Windows.Forms.XplatUIWebGpu.NoteMessageHandled();   // Application.Idle follows a batch of them
             if (OfferToMessageFilters(ref msg)) continue;
             TranslateMessage(ref msg);
             DispatchMessageW(ref msg);
@@ -785,6 +811,24 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     // pressed/hover animation and caret updates show immediately (like the Cocoa pump).
     private IntPtr WindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
+        // WF_TRACE_INPUT=1: number every input message and time its handling (see InputTrace).
+        if (InputTrace.On && TracedMessage(msg))
+        {
+            if (t_tracedEntry) t_tracedEntry = false;
+            else
+            {
+                int n = ++InputTrace.Seq;
+                bool mouse = (msg >= 0x0200 && msg <= 0x020E) || (msg >= 0x00A0 && msg <= 0x00AD);
+                string at = mouse ? $" at ({(short)((long)lParam & 0xFFFF)},{(short)(((long)lParam >> 16) & 0xFFFF)})" : "";
+                InputTrace.Log($"in   #{n} msg 0x{msg:x4} w=0x{(long)wParam:x}{at}{(mouse || (msg >= 0x0100 && msg <= 0x0109) ? $" queued {unchecked(Environment.TickCount - GetMessageTime())} ms" : "")}"
+                               + $" capture={(GetCapture() == hwnd ? "host" : GetCapture() == IntPtr.Zero ? "none" : $"0x{GetCapture():x}")} lbutton={((GetKeyState(0x01) & 0x8000) != 0 ? "down" : "up")}");
+                double t0 = InputTrace.Now;
+                t_tracedEntry = true;
+                IntPtr r = WindowProc(hwnd, msg, wParam, lParam);
+                InputTrace.Log($"done #{n} msg 0x{msg:x4} in {InputTrace.Now - t0:0.00} ms");
+                return r;
+            }
+        }
         // WF_TRACE_WINDOWS=1 shows what a POPUP window is actually told, which is the only way to
         // know why one is not dismissing itself.
         if (s_tracePresent && !FormGone && _form.FormBorderStyle == FormBorderStyle.None
@@ -950,6 +994,29 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                     return DefWindowProcW(hwnd, msg, wParam, lParam);
                 int ht = hd.HostHitTest(_ox + (int)Math.Floor(pt.x / _scale), _oy + (int)Math.Floor(pt.y / _scale));
                 return (IntPtr)(ht != 0 ? ht : 1);                                  // HTCLIENT
+            }
+            // WM_GETMINMAXINFO: how large the window may be. Windows caps a window at the virtual
+            // screen's size in the window's own pixels. A system-aware or unaware application is
+            // measured in ITS pixels, which on a monitor at a higher DPI than the system's are
+            // stretched -- so the stock window of a 1900x1150 form on a 240-dpi display is 2875
+            // device pixels tall, more than the display. This host is per-monitor aware and was
+            // capped in device pixels instead: the window came up 2166 tall, and the form, told
+            // its new size, kept the shorter height (866) when it went back to a 96-dpi monitor.
+            // Give such a form the cap the stock window has, in its own units, stretched.
+            case 0x0024 when lParam != IntPtr.Zero && !System.Windows.Forms.ScaleHelper.IsThreadPerMonitorV2Aware && _scale > 1.001f:
+            {
+                MINMAXINFO* mmi = (MINMAXINFO*)lParam;
+                Rectangle all = Rectangle.Empty;
+                foreach (Screen sc in DesktopScreens()) all = all.IsEmpty ? sc.Bounds : Rectangle.Union(all, sc.Bounds);
+                if (!all.IsEmpty)
+                {
+                    // The virtual screen in the application's units plus the frame, as SM_CXMAXTRACK has it.
+                    int frame = 2 * (GetSystemMetrics(32 /* SM_CXFRAME */) + GetSystemMetrics(92 /* SM_CXPADDEDBORDER */));
+                    int w = (int)Math.Ceiling((all.Width + frame) * _scale), h = (int)Math.Ceiling((all.Height + frame) * _scale);
+                    if (w > mmi->ptMaxTrackSize.x) mmi->ptMaxTrackSize.x = w;
+                    if (h > mmi->ptMaxTrackSize.y) mmi->ptMaxTrackSize.y = h;
+                }
+                return IntPtr.Zero;
             }
             case 0x007E:                                                          // WM_DISPLAYCHANGE: monitors added, removed or rearranged
                 Screen.Rescan();
@@ -1642,6 +1709,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     [DllImport("user32")] private static extern bool ScreenToClient(IntPtr hwnd, ref POINT pt);
     [DllImport("user32")] private static extern bool ClientToScreen(IntPtr hwnd, ref POINT pt);
     private struct POINT { public int x, y; }
+    [StructLayout(LayoutKind.Sequential)] private struct MINMAXINFO { public POINT ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize, ptMaxTrackSize; }
     [DllImport("user32")] private static extern IntPtr SetFocus(IntPtr hWnd);
 
     [StructLayout(LayoutKind.Sequential)]
