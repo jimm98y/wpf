@@ -130,6 +130,10 @@ namespace System.Windows.Interop
         // not we want to sync during resize to provide a better looking resize.
         private bool _userInputResize = false;
 
+        // DoPaint: inside BeginPaint, and whether the frame was repainted there (PrintWindow).
+        private bool _inBeginPaint;
+        private bool _framePaintedInBeginPaint;
+
         // This bool is set by a private window message sent to us from the render thread,
         // indicating that the present has failed with S_PRESENT_OCCLUDED (usually due to the
         // monitor being asleep or locked) and that we need to invalidate the entire window for
@@ -996,6 +1000,74 @@ namespace System.Windows.Interop
         /// The HwndTarget needs to see all windows messages so that
         /// it can appropriately react to them.
         /// </summary>
+        /// <summary>
+        /// Managed composition: WM_PRINTCLIENT. Renders this target's current scene off screen and
+        /// copies it into <paramref name="hdc"/> at the client origin. False when there is nothing to
+        /// draw (no channel, no root yet, no GPU readback).
+        /// </summary>
+        [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+        private bool PrintClientManaged(IntPtr hdc)
+        {
+            if (hdc == IntPtr.Zero || (IntPtr)_hWnd == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            DUCE.Channel channel = MediaContext.From(Dispatcher).GetChannels().Channel;
+            if (channel == null || !_compositionTarget.IsOnChannel(channel))
+            {
+                return false;
+            }
+
+            byte[] pixels = channel.ReadbackTarget(_compositionTarget.GetHandle(channel));
+            NativeMethods.RECT rc = SafeNativeMethods.GetClientRect(_hWnd.MakeHandleRef(this));
+            int width = rc.right - rc.left;
+            if (pixels == null || width <= 0 || pixels.Length < width * 4)
+            {
+                return false;
+            }
+            int height = pixels.Length / (width * 4);
+
+            // Premultiplied BGRA, top-down: a negative height in the header says so.
+            var header = new PrintBitmapInfoHeader
+            {
+                biSize = Marshal.SizeOf<PrintBitmapInfoHeader>(),
+                biWidth = width,
+                biHeight = -height,
+                biPlanes = 1,
+                biBitCount = 32,
+            };
+            unsafe
+            {
+                fixed (byte* bits = pixels)
+                {
+                    SetDIBitsToDevice(hdc, 0, 0, (uint)width, (uint)height, 0, 0, 0, (uint)height, bits, ref header, 0 /* DIB_RGB_COLORS */);
+                }
+            }
+            return true;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PrintBitmapInfoHeader
+        {
+            public int biSize;
+            public int biWidth;
+            public int biHeight;
+            public short biPlanes;
+            public short biBitCount;
+            public int biCompression;
+            public int biSizeImage;
+            public int biXPelsPerMeter;
+            public int biYPelsPerMeter;
+            public int biClrUsed;
+            public int biClrImportant;
+        }
+
+
+        [DllImport("gdi32.dll", ExactSpelling = true)]
+        private static extern unsafe int SetDIBitsToDevice(IntPtr hdc, int xDest, int yDest, uint w, uint h, int xSrc, int ySrc,
+            uint startScan, uint cLines, byte* bits, ref PrintBitmapInfoHeader bmi, uint colorUse);
+
         internal IntPtr HandleMessage(WindowMessage msg, IntPtr wparam, IntPtr lparam)
         {
             IntPtr result = Unhandled;
@@ -1098,6 +1170,25 @@ namespace System.Windows.Interop
                     result = Handled; // Indicates that this message is handled.
                     break;
 
+                case WindowMessage.WM_NCPAINT:
+                    // See DoPaint: a frame repaint inside BeginPaint marks a PrintWindow paint.
+                    if (_inBeginPaint)
+                    {
+                        _framePaintedInBeginPaint = true;
+                    }
+                    break;
+
+                case WindowMessage.WM_PRINTCLIENT:
+                    // WM_PRINT (through DefWindowProc) asks the window to draw its client area into a
+                    // DC. A managed-composition window presents through a GPU swap chain GDI cannot
+                    // read, so it drew nothing there. Draw the composed frame. (PrintWindow itself
+                    // paints through WM_PAINT; see DoPaint.)
+                    if (DUCE.ManagedComposition.IsEnabled && OperatingSystem.IsWindows() && PrintClientManaged(wparam))
+                    {
+                        result = Handled;
+                    }
+                    break;
+
                 case WindowMessage.WM_PAINT:
                     // If the current Window Station is non-interactive (i.e., NOT WinSta0)
                     // then we will never find usable display devices. Normally,
@@ -1108,7 +1199,11 @@ namespace System.Windows.Interop
                     // in a non-interactive Window Station, we will try to keep on rendering as best
                     // as we can, ignoring the fact that actual display devices aren't
                     // available in this configuration.
-                    if (_displayDevicesAvailable || MediaContext.ShouldRenderEvenWhenNoDisplayDevicesAreAvailable)
+                    //
+                    // Under managed composition the display set is not milcore's to report: nothing
+                    // ever sends s_DisplayDevicesAvailabilityChanged, so _displayDevicesAvailable
+                    // stayed false and every WM_PAINT was deferred to DefWindowProc for good.
+                    if (_displayDevicesAvailable || MediaContext.ShouldRenderEvenWhenNoDisplayDevicesAreAvailable || DUCE.ManagedComposition.IsEnabled)
                     {
                         _wasWmPaintProcessingDeferred = false;
                         DoPaint();
@@ -1439,7 +1534,17 @@ namespace System.Windows.Interop
             NativeMethods.HDC hdc;
 
             HandleRef handleRef = new HandleRef(this, _hWnd);
-            hdc.h = UnsafeNativeMethods.BeginPaint(handleRef, ref ps);
+            _framePaintedInBeginPaint = false;
+            _inBeginPaint = true;
+            try
+            {
+                hdc.h = UnsafeNativeMethods.BeginPaint(handleRef, ref ps);
+            }
+            finally
+            {
+                _inBeginPaint = false;
+            }
+
             int retval = UnsafeNativeMethods.GetWindowLong(handleRef, NativeMethods.GWL_EXSTYLE);
 
             NativeMethods.RECT rcPaint = new NativeMethods.RECT(ps.rcPaint_left, ps.rcPaint_top, ps.rcPaint_right, ps.rcPaint_bottom);
@@ -1471,6 +1576,17 @@ namespace System.Windows.Interop
             if (!rcPaint.IsEmpty)
             {
                 InvalidateRect(rcPaint);
+
+                // Managed composition presents through a GPU swap chain, and nothing here draws
+                // through GDI -- so the window's GDI surface, which is what PrintWindow copies,
+                // stayed blank (white, or black). PrintWindow invalidates the window FRAME as well
+                // as its client, so its paint is the one whose BeginPaint repaints the frame
+                // (WM_NCPAINT inside BeginPaint); an ordinary paint does not. Only that paint
+                // draws the composed frame -- a full readback, too slow for every paint.
+                if (DUCE.ManagedComposition.IsEnabled && _framePaintedInBeginPaint && hdc.h != IntPtr.Zero)
+                {
+                    PrintClientManaged(hdc.h);
+                }
             }
 
             UnsafeNativeMethods.EndPaint(_hWnd.MakeHandleRef(this), ref ps);
