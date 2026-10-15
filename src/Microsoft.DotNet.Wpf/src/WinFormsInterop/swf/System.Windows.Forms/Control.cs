@@ -4034,6 +4034,12 @@ namespace System.Windows.Forms
 
 			// Perform all Dock and Anchor calculations
 			try {
+				// WF_TRACE_LAYOUT=TypeName: each layout of a control of that type, and its visible children.
+				if (s_traceLayout != null && GetType ().Name == s_traceLayout) {
+					var kids = new System.Text.StringBuilder ();
+					foreach (Control k in Controls) if (k.is_visible) kids.Append ($" {k.Name}:{k.Width}{(k.IsHandleCreated ? "h" : "")}");
+					Console.Error.WriteLine ($"[layout] {Environment.TickCount64} {GetType ().Name} '{Name}' {Bounds} handle={IsHandleCreated} by={affectedProperty} kids:{kids}");
+				}
 				OnLayout(levent);
 			}
 			// Need to make sure we decremend layout_suspended
@@ -6626,6 +6632,7 @@ namespace System.Windows.Forms
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
 		static readonly string s_traceResize = Environment.GetEnvironmentVariable ("WF_TRACE_RESIZE");
+		static readonly string s_traceLayout = Environment.GetEnvironmentVariable ("WF_TRACE_LAYOUT");
 
 		protected virtual void OnSizeChanged(EventArgs e) {
 			// WF_TRACE_RESIZE=TypeName: every size a control of that type goes through, with its form's.
