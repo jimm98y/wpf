@@ -1379,7 +1379,13 @@ namespace System.Windows.Forms
 			// has to fit: against its far edge the frame's own width counted as room.
 			// making a scroll bar visible might make
 			// other scroll bar visible
-			if (layout_wd > client_area.Width) {
+			if (view == View.List) {
+				// comctl32's list view scrolls sideways only (ListView_LUpdateScrollBars sets SB_HORZ
+				// and nothing else): its columns are as tall as the view, and however short the view
+				// there is no vertical bar.
+				h_scroll.Visible = layout_wd > client_area.Width;
+				v_scroll.Visible = false;
+			} else if (layout_wd > client_area.Width) {
 				h_scroll.Visible = true;
 				if ((layout_ht + h_scroll.Height) > client_area.Height)
 					v_scroll.Visible = true;
