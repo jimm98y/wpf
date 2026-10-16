@@ -234,6 +234,34 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         return ok;
     }
 
+    /// <summary>
+    /// The window has just been given another size: show the last frame in it straight away, at its
+    /// top left, before the new one is made. A resized GL swap chain shows nothing -- black -- until
+    /// something is presented to it, and the new frame is the application's layout and repaint first:
+    /// every step of a live resize of app was black for the 100 ms and more that took. False
+    /// when there is no last frame to show.
+    /// </summary>
+    internal bool PresentLastAtSize(int width, int height)
+    {
+        if (width <= 0 || height <= 0) return false;
+        if (width != _width || height != _height) { _width = width; _height = height; Configure(); }
+        WGPUSurfaceTexture st;
+        wgpuSurfaceGetCurrentTexture(_surface, &st);
+        if (st.texture == IntPtr.Zero) return false;
+        if (st.status != WGPUSurfaceGetCurrentTextureStatus.SuccessOptimal &&
+            st.status != WGPUSurfaceGetCurrentTextureStatus.SuccessSuboptimal)
+        {
+            wgpuTextureRelease(st.texture);
+            return false;
+        }
+        IntPtr view = wgpuTextureCreateView(st.texture, IntPtr.Zero);
+        bool drawn = _partial.PresentLast(view, _format, DeviceWidth, DeviceHeight, ClearColor);
+        if (drawn) wgpuSurfacePresent(_surface);
+        wgpuTextureViewRelease(view);
+        wgpuTextureRelease(st.texture);
+        return drawn;
+    }
+
     private SceneVisual BuildRoot(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret)
         => BuildRoot(scenes, caret, null);
 

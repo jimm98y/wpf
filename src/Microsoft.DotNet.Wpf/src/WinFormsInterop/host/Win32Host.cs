@@ -458,6 +458,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     private static double SinceStart => (DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime).TotalMilliseconds;
     private int _framesTraced;
 
+    /// <summary>Times the last frame was shown at a new size before the new one was made (for tests).</summary>
+    internal int ResizePreviews { get; private set; }
+
     /// <summary>Frames presented to the window so far (for tests).</summary>
     internal int PresentCount { get; private set; }
 
@@ -1353,6 +1356,8 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         ResizeClientTo(want.Width, want.Height);
     }
 
+    private static readonly bool s_resizePreview = Environment.GetEnvironmentVariable("WF_RESIZE_PREVIEW") != "0";
+
     private void OnClientResized()
     {
         if (_wgpu == null) return;
@@ -1360,6 +1365,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         int lw = (int)Math.Round((r.right - r.left) / _scale), lh = (int)Math.Round((r.bottom - r.top) / _scale);
         if (lw <= 0 || lh <= 0) return;                     // minimised
         if (lw == _form.ClientSize.Width && lh == _form.ClientSize.Height) return;
+        // The last frame first, at the new size, so the window is never black while the application
+        // lays itself out and repaints (see WgpuPresenter.PresentLastAtSize). WF_RESIZE_PREVIEW=0: not.
+        if (s_resizePreview && !WantsLayeredHost() && _wgpu.PresentLastAtSize(lw, lh)) ResizePreviews++;
         // As Win32 tells a window it was sized (see XplatUIWebGpu.HostResized), not through ClientSize.
         if (_driver is System.Windows.Forms.XplatUIWebGpu d && !FormGone) d.HostResized(_formHandle, lw, lh);
         else _form.ClientSize = new Size(lw, lh);

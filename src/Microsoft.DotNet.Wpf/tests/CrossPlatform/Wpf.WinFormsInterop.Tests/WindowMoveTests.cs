@@ -489,6 +489,53 @@ namespace Wpf.WinFormsInterop.Tests
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
+        /// <summary>A resized window shows its last frame at the new size before the application lays
+        /// itself out: by the time the form hears about its new size, a frame of that size is on screen.
+        /// A resized GL swap chain shows black until something is presented to it, and app's layout
+        /// takes 100 ms and more, so every step of a live resize was black.</summary>
+        [Fact]
+        public void AResizedWindow_ShowsItsLastFrameBeforeTheLayout()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "a Win32 window sized by the OS");
+            Exception? failure = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new SWF.Form
+                    {
+                        Text = "ResizePreviewTest", StartPosition = SWF.FormStartPosition.Manual,
+                        Location = new Point(8000, 80), Size = new Size(300, 200), ShowInTaskbar = false, BackColor = Color.Gold,
+                    };
+                    form.Show();
+                    IntPtr host = IntPtr.Zero;
+                    for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && host == IntPtr.Zero;) { Pump(100); host = HostOf("ResizePreviewTest"); }
+                    Assert.NotEqual(IntPtr.Zero, host);
+                    Pump(500);
+                    object hostObj = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.PresentationHost")!
+                        .GetMethod("HostOf", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, new object[] { form })!;
+                    var previews = hostObj.GetType().GetProperty("ResizePreviews", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+                    var seen = new System.Collections.Generic.List<int>();
+                    form.Resize += (s, e) => seen.Add((int)previews.GetValue(hostObj)!);
+                    for (int i = 1; i <= 5; i++)
+                    {
+                        SetWindowPos(host, IntPtr.Zero, 0, 0, 300 + i * 40, 200 + i * 30, 0x0002 | 0x0004 | 0x0010);   // NOMOVE | NOZORDER | NOACTIVATE
+                        Pump(100);
+                    }
+                    Assert.True(seen.Count >= 5, $"only {seen.Count} resizes were seen");
+                    // Each size change had shown a frame of the new size before the form was laid out for it.
+                    for (int i = 0; i < seen.Count; i++)
+                        Assert.True(seen[i] >= i + 1, $"resize {i + 1}: {seen[i]} previews when the form was resized");
+                    form.Close();
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
         [DllImport("user32", EntryPoint = "PostMessageW")] private static extern bool PostMessage(IntPtr h, int m, IntPtr w, IntPtr l);
 
         [DllImport("user32")] private static extern bool ShowWindow(IntPtr h, int cmd);
