@@ -755,6 +755,18 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>The innermost message loop on this thread has a form and that form is gone --
+		/// disposed, its window destroyed, or (a modal loop) hidden. That loop is finished whether or not
+		/// anything still tells it so; a loop with no form, or whose form is merely hidden, is not, and
+		/// runs until ExitThread or Application.Exit, as in .NET.</summary>
+		internal static bool CurrentLoopFormGone ()
+		{
+			Form form = MWFThread.Current.Context?.MainForm;
+			if (form == null)
+				return false;
+			return form.IsDisposed || !form.IsHandleCreated || (form.is_modal && !form.Visible);
+		}
+
 		private static void RunLoopCore (bool Modal, ApplicationContext context)
 		{
 			// The message loop is starting, so there is now a form tree to inspect. Starts the

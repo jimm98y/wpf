@@ -762,11 +762,38 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         DestroyWindow(hwnd);
     }
 
+    /// <summary>This thread's OS queue when it has no host to pump it -- a message loop with no form on
+    /// screen (a tray app, a hidden form, Application.Run with no form): its real windows (a hosted WPF
+    /// tree, a NotifyIcon's, the app's own) still get their messages. False: WM_QUIT came out of it.</summary>
+    [ThreadStatic] private static bool t_quitSeen;
+
+    /// <summary>A host took WM_QUIT off this thread's queue since the last call: the loop it was meant
+    /// for is over.</summary>
+    internal static bool TakeQuit()
+    {
+        bool seen = t_quitSeen;
+        t_quitSeen = false;
+        return seen;
+    }
+
+    internal static bool PumpThread()
+    {
+        while (PeekMessageW(out MSG msg, IntPtr.Zero, 0, 0, 0x0001)) // PM_REMOVE
+        {
+            if (msg.message == 0x0012) return false; // WM_QUIT
+            System.Windows.Forms.XplatUIWebGpu.NoteMessageHandled();
+            if (OfferToMessageFilters(ref msg)) continue;
+            TranslateMessage(ref msg);
+            DispatchMessageW(ref msg);
+        }
+        return true;
+    }
+
     public bool Pump()
     {
         while (PeekMessageW(out MSG msg, IntPtr.Zero, 0, 0, 0x0001)) // PM_REMOVE
         {
-            if (msg.message == 0x0012) { _quit = true; return false; } // WM_QUIT
+            if (msg.message == 0x0012) { _quit = true; t_quitSeen = true; return false; } // WM_QUIT
             System.Windows.Forms.XplatUIWebGpu.NoteMessageHandled();   // Application.Idle follows a batch of them
             if (OfferToMessageFilters(ref msg)) continue;
             TranslateMessage(ref msg);
