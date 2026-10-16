@@ -30,9 +30,13 @@ namespace Wpf.WinFormsInterop.Tests
             var tree = new SWF.TreeView { Width = 200, Height = 120, HideSelection = hideSelection };
             var root = tree.Nodes.Add("Alarm Viewer");
             root.Nodes.Add("Tab");
+            var elsewhere = new SWF.TextBox { Top = 130 };   // the focus is here, not on the tree
             form.Controls.Add(tree);
+            form.Controls.Add(elsewhere);
             form.Show();
             tree.SelectedNode = root;
+            elsewhere.Focus();
+            Assert.False(tree.Focused);
             if (appColoured)
             {
                 root.BackColor = SystemColors.Highlight;
