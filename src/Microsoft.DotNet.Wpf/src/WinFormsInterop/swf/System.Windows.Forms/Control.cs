@@ -4440,7 +4440,18 @@ namespace System.Windows.Forms
 		}
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
+		// .NET creates every handle inside its ThemingScope (Control.CreateHandle), so what an app does
+		// there -- OnHandleCreated, a CreateHandle override -- runs with comctl32 v6 active.
 		protected virtual void CreateHandle() {
+			IntPtr theming = Win32ThemingScope.Enter ();
+			try {
+				CreateHandleCore ();
+			} finally {
+				Win32ThemingScope.Leave (theming);
+			}
+		}
+
+		private void CreateHandleCore () {
 			if (IsDisposed) {
 				throw new ObjectDisposedException(GetType().FullName);
 			}
