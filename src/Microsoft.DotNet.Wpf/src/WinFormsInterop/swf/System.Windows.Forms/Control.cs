@@ -5646,9 +5646,20 @@ namespace System.Windows.Forms
 				LowOrder ((int) m.LParam.ToInt32 ()), HighOrder ((int) m.LParam.ToInt32 ()), 
 				0);
 
-			HandleClick(mouse_clicks, me);
-			OnMouseUp (me);
+			try {
+				HandleClick(mouse_clicks, me);
+				OnMouseUp (me);
+			} finally {
+				EndMouseUp ();
+			}
+		}
 
+		// A button's release lets go of the mouse even when the click or mouse-up handler threw.
+		// The exception is reported (Application.ThreadException) and the app may carry on, but a
+		// control left holding the capture took every later click in its window: after AlarmWorX's
+		// column configurator threw from a TreeView mouse-up, nothing in the dialog could be clicked.
+		private void EndMouseUp ()
+		{
 			if (InternalCapture) {
 				InternalCapture = false;
 			}
@@ -5704,13 +5715,11 @@ namespace System.Windows.Forms
 				LowOrder ((int) m.LParam.ToInt32 ()), HighOrder ((int) m.LParam.ToInt32 ()), 
 				0);
 
-			HandleClick(mouse_clicks, me);
-			OnMouseUp (me);
-			if (InternalCapture) {
-				InternalCapture = false;
-			}
-			if (mouse_clicks > 1) {
-				mouse_clicks = 1;
+			try {
+				HandleClick(mouse_clicks, me);
+				OnMouseUp (me);
+			} finally {
+				EndMouseUp ();
 			}
 		}
 
@@ -5754,17 +5763,13 @@ namespace System.Windows.Forms
 				LowOrder ((int) m.LParam.ToInt32 ()), HighOrder ((int) m.LParam.ToInt32 ()), 
 				0);
 
-			HandleClick(mouse_clicks, me);
+			try {
+				HandleClick(mouse_clicks, me);
 
-			XplatUI.SendMessage(m.HWnd, Msg.WM_CONTEXTMENU, m.HWnd, (IntPtr)(pt.X + (pt.Y << 16)));
-			OnMouseUp (me);
-
-			if (InternalCapture) {
-				InternalCapture = false;
-			}
-
-			if (mouse_clicks > 1) {
-				mouse_clicks = 1;
+				XplatUI.SendMessage(m.HWnd, Msg.WM_CONTEXTMENU, m.HWnd, (IntPtr)(pt.X + (pt.Y << 16)));
+				OnMouseUp (me);
+			} finally {
+				EndMouseUp ();
 			}
 		}
 
