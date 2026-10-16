@@ -1,5 +1,5 @@
-// .NET's ThemingScope for the common dialogs Windows draws (the file dialogs): comctl32 v6 active on
-// the thread while one runs, as CommonDialog.ShowDialog does. Platform-gated DllImports; no COM.
+// .NET's ThemingScope: comctl32 v6 active on the thread while a message loop runs (Application.RunLoop,
+// as ThreadContext.RunMessageLoop) and while a common dialog Windows draws runs (CommonDialog.ShowDialog). Platform-gated DllImports; no COM.
 
 using System.Runtime.InteropServices;
 
@@ -67,10 +67,17 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>Application.EnableVisualStyles: makes the context, as .NET does there.</summary>
+		internal static void Create ()
+		{
+			if (OperatingSystem.IsWindows ())
+				Context ();
+		}
+
 		/// <summary>A cookie for Leave, or zero when nothing was activated.</summary>
 		internal static IntPtr Enter ()
 		{
-			if (!Application.VisualStylesEnabled)
+			if (!OperatingSystem.IsWindows () || !Application.VisualStylesEnabled)
 				return IntPtr.Zero;
 			IntPtr context = Context ();
 			if (context == IntPtr.Zero || !ActivateActCtx (context, out IntPtr cookie))

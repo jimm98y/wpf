@@ -455,6 +455,7 @@ namespace System.Windows.Forms
 		{
 			visual_styles_enabled = true;
 			XplatUI.EnableThemes ();
+			Win32ThemingScope.Create ();   // as .NET: the context exists from here on (Windows only)
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
@@ -739,7 +740,22 @@ namespace System.Windows.Forms
 #endif
 		}
 
+		// .NET runs every message loop inside its ThemingScope (Application.ThreadContext.RunMessageLoop):
+		// with EnableVisualStyles, comctl32 v6 is the active context on the thread for everything the
+		// loop runs, so an app's own [DllImport("comctl32.dll")] -- TaskDialogIndirect, which v5 lacks --
+		// binds to v6. An app started by dotnet.exe, or by an apphost whose manifest names no
+		// Common-Controls, has no other way to get it.
 		internal static void RunLoop (bool Modal, ApplicationContext context)
+		{
+			IntPtr theming = Win32ThemingScope.Enter ();
+			try {
+				RunLoopCore (Modal, context);
+			} finally {
+				Win32ThemingScope.Leave (theming);
+			}
+		}
+
+		private static void RunLoopCore (bool Modal, ApplicationContext context)
 		{
 			// The message loop is starting, so there is now a form tree to inspect. Starts the
 			// CDP inspector when WPF_DEVTOOLS is set; does nothing at all otherwise.
