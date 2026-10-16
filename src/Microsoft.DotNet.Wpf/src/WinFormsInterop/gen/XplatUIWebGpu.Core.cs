@@ -2460,18 +2460,36 @@ namespace System.Windows.Forms
 		/// window itself, then its children back-to-front, depth first.</summary>
 		private void CollectSubtree(IntPtr root, List<IntPtr> into)
 		{
+			// Every window's children, found in ONE pass over the windows. Each window of the subtree
+			// used to look through all of them for its own children -- quadratic, and it runs for every
+			// frame and every pointer move (hit testing walks this list): with app's ~500 windows
+			// half of a hover frame went here.
+			Dictionary<Hwnd, List<IntPtr>> children = ChildrenByParent();
+			CollectSubtree(root, into, children);
+		}
+
+		private void CollectSubtree(IntPtr root, List<IntPtr> into, Dictionary<Hwnd, List<IntPtr>> children)
+		{
 			Hwnd h = Hwnd.ObjectFromHandle(root);
 			if (h == null || !h.visible) return;                 // a hidden window hides its children
 			into.Add(root);
+			if (!children.TryGetValue(h, out List<IntPtr> kids)) return;
+			if (kids.Count > 1) kids.Sort((a, b) => PaintKey(a).CompareTo(PaintKey(b)));
+			foreach (IntPtr k in kids) CollectSubtree(k, into, children);
+		}
 
-			var kids = new List<IntPtr>();
+		/// <summary>The windows' children, by parent (unsorted), from one pass over every window.</summary>
+		private Dictionary<Hwnd, List<IntPtr>> ChildrenByParent()
+		{
+			var children = new Dictionary<Hwnd, List<IntPtr>>();
 			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
 			{
 				Hwnd c = Hwnd.ObjectFromHandle(k);
-				if (c != null && c != h && c.parent == h) kids.Add(k);
+				if (c?.parent == null || c.parent == c) continue;
+				if (!children.TryGetValue(c.parent, out List<IntPtr> l)) children[c.parent] = l = new List<IntPtr>();
+				l.Add(k);
 			}
-			kids.Sort((a, b) => PaintKey(a).CompareTo(PaintKey(b)));
-			foreach (IntPtr k in kids) CollectSubtree(k, into);
+			return children;
 		}
 
 		/// <summary>A top-level form other than the one being composited: it has a window of its
@@ -2489,10 +2507,11 @@ namespace System.Windows.Forms
 		private List<IntPtr> CollectAll(IntPtr firstRoot)
 		{
 			var roots = new List<IntPtr>();
+			var seenRoots = new HashSet<IntPtr>();
 			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(k);
-				if (h != null && h.parent == null && !IsParkedChild(h) && !roots.Contains(k)
+				if (h != null && h.parent == null && !IsParkedChild(h) && seenRoots.Add(k)
 					&& !IsOtherHostsForm(k, firstRoot)) roots.Add(k);
 			}
 			roots.Sort((a, b) =>
@@ -2512,7 +2531,8 @@ namespace System.Windows.Forms
 				return PaintKey(a).CompareTo(PaintKey(b));
 			});
 			var outl = new List<IntPtr>();
-			foreach (IntPtr r in roots) CollectSubtree(r, outl);
+			Dictionary<Hwnd, List<IntPtr>> children = ChildrenByParent();
+			foreach (IntPtr r in roots) CollectSubtree(r, outl, children);
 			return outl;
 		}
 		private readonly HashSet<IntPtr> _topmost = new HashSet<IntPtr>();

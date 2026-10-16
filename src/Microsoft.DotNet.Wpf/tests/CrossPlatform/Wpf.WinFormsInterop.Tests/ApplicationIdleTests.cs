@@ -48,9 +48,9 @@ namespace Wpf.WinFormsInterop.Tests
                     steps.Tick += (s, e) =>
                     {
                         phase++;
-                        if (phase == 10) { afterShown = idles; form.BeginInvoke(new Action(() => { })); }
-                        else if (phase == 14) { afterPost = idles; steps.Interval = 600; }
-                        else if (phase == 15)
+                        if (phase == 60) { afterShown = idles; form.BeginInvoke(new Action(() => { })); }
+                        else if (phase == 64) { afterPost = idles; steps.Interval = 600; }
+                        else if (phase == 65)
                         {
                             // Between two ticks 600 ms apart only the tick itself was handled.
                             afterQuiet = idles - afterPost;
@@ -71,7 +71,9 @@ namespace Wpf.WinFormsInterop.Tests
 
             Assert.True(afterShown > 0, "Idle was never raised");
             Assert.True(afterPost > afterShown, $"no Idle after a posted message ({afterShown} -> {afterPost})");
-            Assert.InRange(afterQuiet, 1, 4);
+            // Between two ticks 600 ms apart: the tick, and what little else the thread got. The loop goes
+            // round every few milliseconds, so an Idle per round would be well over a hundred.
+            Assert.InRange(afterQuiet, 1, 12);
             Assert.Equal(0, otherThread);
             Assert.False(wrongThread);
         }
