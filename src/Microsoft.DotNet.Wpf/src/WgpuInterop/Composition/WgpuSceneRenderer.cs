@@ -351,6 +351,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             foreach (CachedLayer retired in _retiredLayers) ReleaseCachedLayer(retired);
             _retiredLayers.Clear();
+            foreach (ContentSourceTexture retired in _retiredContentSources) ReturnLayerTexture(retired.Tex, retired.View, retired.W, retired.H);
+            _retiredContentSources.Clear();
+            if (_contentTexCache.Count > 0)
+            {
+                List<uint>? deadC2 = null;
+                foreach (KeyValuePair<uint, ContentSourceTexture> kv in _contentTexCache)
+                    if (kv.Value.LastFrame < _frameId - 2) (deadC2 ??= new List<uint>()).Add(kv.Key);
+                if (deadC2 != null)
+                    foreach (uint k in deadC2)
+                    {
+                        ContentSourceTexture c = _contentTexCache[k];
+                        ReturnLayerTexture(c.Tex, c.View, c.W, c.H);
+                        _contentTexCache.Remove(k);
+                    }
+            }
             if (_layerCache.Count > 0)
             {
                 List<long>? deadL = null;
@@ -2790,9 +2805,61 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (img.SourceVisual is null) return IntPtr.Zero;
             if (_contentTexFrame.TryGetValue(img.SourceId, out IntPtr view)) return view;
+            if (s_cacheContentSources && _liveBrushDepth == 0)
+            {
+                // Kept across frames while what it is rendered FROM is unchanged. It was rendered again
+                // every frame: app's move ghost is a VisualBrush of the element being dragged,
+                // and every frame of the drag re-drew the whole element -- an app grid, text and
+                // all -- into its texture, for a picture that never changed. The key is the source
+                // subtree's hash, the same one a cached layer holding the brush is keyed on.
+                int w = Math.Clamp(img.SourceTexW, 1, 2048), h = Math.Clamp(img.SourceTexH, 1, 2048);
+                long key = ContentSourceKey(img, w, h);
+                if (_contentTexCache.TryGetValue(img.SourceId, out ContentSourceTexture? c) && c.Key == key && c.W == w && c.H == h)
+                {
+                    c.LastFrame = _frameId;
+                    ContentSourceHits++;
+                }
+                else
+                {
+                    if (c != null) _retiredContentSources.Add(c);
+                    (IntPtr tex, IntPtr v) = RentLayerTexture(w, h);
+                    RenderVisualInto(img.SourceVisual, v, w, h, plan);
+                    _contentTexCache[img.SourceId] = c = new ContentSourceTexture { Key = key, W = w, H = h, Tex = tex, View = v, LastFrame = _frameId };
+                    ContentSourceMisses++;
+                }
+                _contentTexFrame[img.SourceId] = c.View;
+                return c.View;
+            }
             view = RenderVisualToTexture(img.SourceVisual, img.SourceTexW, img.SourceTexH, plan);
             _contentTexFrame[img.SourceId] = view;
             return view;
+        }
+
+        private sealed class ContentSourceTexture
+        {
+            public long Key, LastFrame;
+            public int W, H;
+            public IntPtr Tex, View;
+        }
+
+        // WPF_CACHE_BRUSH_SOURCES=0: render every live brush source every frame, as before.
+        private static readonly bool s_cacheContentSources =
+            Environment.GetEnvironmentVariable("WPF_CACHE_BRUSH_SOURCES") != "0";
+        private readonly Dictionary<uint, ContentSourceTexture> _contentTexCache = new();
+        // Replaced this frame: still sampled by passes already planned, so released after the frame.
+        private readonly List<ContentSourceTexture> _retiredContentSources = new();
+
+        /// <summary>Live brush sources reused from an earlier frame / rendered afresh (tests, traces).</summary>
+        internal long ContentSourceHits, ContentSourceMisses;
+
+        private long ContentSourceKey(ImageBrush img, int w, int h)
+        {
+            _hash = unchecked((long)1469598103934665603UL);
+            HV(0xC0B5); HV(w); HV(h);
+            _liveBrushDepth++;
+            try { HashVisual(img.SourceVisual!, Matrix3x2.Identity, 0f, 0f); }
+            finally { _liveBrushDepth--; }
+            return _hash == 0 ? 1 : _hash;
         }
 
         private void EmitSubtree(SceneVisual v, Matrix3x2 world, double accOpacity, Scissor clip,

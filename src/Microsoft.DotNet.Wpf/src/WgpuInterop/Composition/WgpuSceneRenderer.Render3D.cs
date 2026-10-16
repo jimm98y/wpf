@@ -440,6 +440,13 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             w = Math.Clamp(w, 1, 2048);
             h = Math.Clamp(h, 1, 2048);
             (IntPtr _, IntPtr view) = CreateLayerTexture(w, h);   // pooled; returned after the frame
+            RenderVisualInto(v, view, w, h, plan);
+            return view;
+        }
+
+        /// <summary>Plan a pass rendering <paramref name="v"/> into <paramref name="view"/> (w x h).</summary>
+        private void RenderVisualInto(SceneVisual v, IntPtr view, int w, int h, List<LayerPass> plan)
+        {
             DrawData d = RentDrawData();
             float sOX = _devOX, sOY = _devOY;
             _devOX = 0; _devOY = 0;
@@ -458,7 +465,6 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             if (Dbg3DTex && _dbg3DTexOnce++ == 30)
                 Console.WriteLine($"3D-TEXRND {w}x{h} draws={d.Draws.Count} planIdx={plan.Count}");
             plan.Add(new LayerPass(view, true, default, d, ReadbackFormat) { OriginX = 0, OriginY = 0, TexW = w, TexH = h });
-            return view;
         }
 
         /// <summary>The texture size that puts two texels on each device pixel of the mesh as
