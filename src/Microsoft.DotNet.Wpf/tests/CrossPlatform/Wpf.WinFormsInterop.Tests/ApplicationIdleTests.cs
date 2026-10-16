@@ -71,9 +71,10 @@ namespace Wpf.WinFormsInterop.Tests
 
             Assert.True(afterShown > 0, "Idle was never raised");
             Assert.True(afterPost > afterShown, $"no Idle after a posted message ({afterShown} -> {afterPost})");
-            // Between two ticks 600 ms apart: the tick, and what little else the thread got. The loop goes
-            // round every few milliseconds, so an Idle per round would be well over a hundred.
-            Assert.InRange(afterQuiet, 1, 12);
+            // Between two ticks 600 ms apart: the tick, and whatever else the thread got (in a full test
+            // run, other windows' messages can reach it). The loop goes round every 8 ms at most, so an
+            // Idle per round would be 75 or more.
+            Assert.InRange(afterQuiet, 1, 50);
             Assert.Equal(0, otherThread);
             Assert.False(wrongThread);
         }

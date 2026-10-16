@@ -359,14 +359,62 @@ namespace System.Drawing
 			GpuRecorder.GetTranslation (out float tx, out float ty);
 			if (tx != (int) tx || ty != (int) ty)
 				return false;
-			if (!WebGpuBackend.GdipAntialias.FillPath (path.PathPoints, path.PathTypes, path.FillMode == FillMode.Winding, 1, 0, 0, 1, 0, 0, out byte [] alpha, out Rectangle r))
-				return false;
 			Color c = sb.Color;
 			int argb = c.ToArgb ();
-			// The fully covered part as rectangles -- rows with the same covered span merged into one --
-			// so that what is drawn on it later (a caption) sees a solid fill to blend against, as GDI+
-			// blends against the pixels; only the edge's partial pixels go as images, in strips beside
-			// and above and below that core, so that none of them lies over the caption either.
+			PointF [] pts = path.PathPoints;
+			byte [] types = path.PathTypes;
+			bool winding = path.FillMode == FillMode.Winding;
+			// The same shape in the same colour, anywhere at a whole-pixel offset, is the same raster:
+			// kept, keyed by its points relative to the shape's whole-pixel origin. Rasterizing on the CPU
+			// and uploading every edge strip as a new texture, on every paint, was most of a DotNetBar
+			// repaint -- its buttons and panels are rounded, antialiased paths.
+			float ox = float.MaxValue, oy = float.MaxValue;
+			foreach (PointF q in pts) { if (q.X < ox) ox = q.X; if (q.Y < oy) oy = q.Y; }
+			if (pts.Length == 0) return false;
+			ox = MathF.Floor (ox); oy = MathF.Floor (oy);
+			ulong key = 1469598103934665603UL;
+			void Mix (ulong v) { key = (key ^ v) * 1099511628211UL; }
+			Mix ((uint) argb); Mix (winding ? 1UL : 2UL);
+			for (int i = 0; i < pts.Length; i++) {
+				Mix ((uint) BitConverter.SingleToInt32Bits (pts [i].X - ox));
+				Mix ((uint) BitConverter.SingleToInt32Bits (pts [i].Y - oy));
+				Mix (types [i]);
+			}
+			AaFill fill;
+			lock (s_aaFills) s_aaFills.TryGetValue (key, out fill);
+			if (fill == null) {
+				var local = new PointF [pts.Length];
+				for (int i = 0; i < pts.Length; i++) local [i] = new PointF (pts [i].X - ox, pts [i].Y - oy);
+				fill = RasterizeAaFill (local, types, winding, c);
+				if (fill == null) return false;
+				lock (s_aaFills) {
+					if (s_aaFills.Count > 8192) s_aaFills.Clear ();
+					s_aaFills [key] = fill;
+				}
+			}
+			int bx = (int) ox, by = (int) oy;
+			foreach (Rectangle q in fill.Rects) GpuRecorder.FillRect (bx + q.X, by + q.Y, q.Width, q.Height, argb);
+			foreach ((byte [] rgba, Rectangle q) in fill.Images) GpuRecorder.DrawImage (rgba, q.Width, q.Height, bx + q.X, by + q.Y, q.Width, q.Height);
+			return true;
+		}
+
+		sealed class AaFill
+		{
+			public readonly List<Rectangle> Rects = new List<Rectangle> ();
+			public readonly List<(byte [], Rectangle)> Images = new List<(byte [], Rectangle)> ();
+		}
+		static readonly Dictionary<ulong, AaFill> s_aaFills = new Dictionary<ulong, AaFill> ();
+
+		/// <summary>GDI+'s antialiased fill of a path (in pixels relative to its own origin): the fully
+		/// covered part as rectangles -- rows with the same covered span merged into one -- so that what
+		/// is drawn on it later (a caption) sees a solid fill to blend against, as GDI+ blends against the
+		/// pixels; only the edge's partial pixels go as images, in strips beside and above and below that
+		/// core, so that none of them lies over the caption either.</summary>
+		static AaFill RasterizeAaFill (PointF [] pts, byte [] types, bool winding, Color c)
+		{
+			if (!WebGpuBackend.GdipAntialias.FillPath (pts, types, winding, 1, 0, 0, 1, 0, 0, out byte [] alpha, out Rectangle r))
+				return null;
+			var fill = new AaFill ();
 			int w = r.Width, h = r.Height;
 			var strips = new List<Rectangle> ();
 			// Each row's fully covered spans; rows with the same spans make one band.
@@ -395,7 +443,7 @@ namespace System.Drawing
 				if (y < h && Same (cur, band)) continue;
 				int n = y - bandStart, prev = 0;
 				foreach ((int A, int B) sp in band) {
-					GpuRecorder.FillRect (r.X + sp.A, r.Y + bandStart, sp.B - sp.A, n, argb);
+					fill.Rects.Add (new Rectangle (r.X + sp.A, r.Y + bandStart, sp.B - sp.A, n));
 					if (sp.A > prev) strips.Add (new Rectangle (prev, bandStart, sp.A - prev, n));
 					prev = sp.B;
 				}
@@ -415,9 +463,9 @@ namespace System.Drawing
 						rgba [d + 3] = (byte) ((al * c.A + 127) / 255);
 					}
 				if (any)
-					GpuRecorder.DrawImage (rgba, st.Width, st.Height, r.X + st.X, r.Y + st.Y, st.Width, st.Height);
+					fill.Images.Add ((rgba, new Rectangle (r.X + st.X, r.Y + st.Y, st.Width, st.Height)));
 			}
-			return true;
+			return fill;
 		}
 
 		bool TryGradient (Brush b, out GradientDesc g)
@@ -463,11 +511,44 @@ namespace System.Drawing
 			if (RecordBitmapScenes (bmp, 0, 0, w, h, dx, dy, dw, dh)) return true;
 			if (print_mode && PrintImageBands (bmp, new RectangleF (0, 0, w, h), new RectangleF (dx, dy, dw, dh), null)) return true;
 			GdipFrame frame = bmp.Data.Frame;
-			byte[] px = GdipPixels.ToRgba (frame, new Rectangle (0, 0, w, h));
+			byte[] px = CachedRgba (frame, new Rectangle (0, 0, w, h));
 			if (image_target != null) px = IntoBitmap (px);
 			px = AntialiasedImageEdges (px, w, h, dx, dy, dw, dh);
 			GpuRecorder.DrawImage (px, w, h, dx, dy, dw, dh);
 			return true;
+		}
+
+		// A frame's RGBA as last converted, with what it was converted from. A bitmap drawn again
+		// unchanged hands the renderer the SAME array, which is what the renderer keys its texture on:
+		// DotNetBar paints its buffered non-client bitmap (a window-sized one) on every repaint, and each
+		// conversion was a fresh 8 MB array and a fresh texture upload -- most of a resize frame.
+		sealed class RgbaCache { public ulong Hash; public Rectangle Rect; public PixelFormat Format; public byte[] Rgba; }
+		static readonly System.Runtime.CompilerServices.ConditionalWeakTable<GdipFrame, RgbaCache> s_rgbaCache = new ();
+
+		static byte[] CachedRgba (GdipFrame frame, Rectangle rect)
+		{
+			ulong hash = ContentHash (frame.Bits);
+			if (s_rgbaCache.TryGetValue (frame, out RgbaCache c) && c.Hash == hash && c.Rect == rect && c.Format == frame.Format)
+				return c.Rgba;
+			byte[] rgba = GdipPixels.ToRgba (frame, rect);
+			s_rgbaCache.AddOrUpdate (frame, new RgbaCache { Hash = hash, Rect = rect, Format = frame.Format, Rgba = rgba });
+			return rgba;
+		}
+
+		/// <summary>A 64-bit hash of every byte (8 at a time): a few hundred microseconds for a
+		/// window-sized bitmap, against a conversion and an upload.</summary>
+		static ulong ContentHash (byte[] bits)
+		{
+			ReadOnlySpan<ulong> words = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, ulong> (bits);
+			ulong h0 = 0x9E3779B97F4A7C15UL, h1 = 0xC2B2AE3D27D4EB4FUL;
+			int i = 0;
+			for (; i + 1 < words.Length; i += 2) {
+				h0 = (h0 ^ words [i]) * 0x100000001B3UL;
+				h1 = (h1 ^ words [i + 1]) * 0x100000001B3UL;
+			}
+			if (i < words.Length) h0 = (h0 ^ words [i]) * 0x100000001B3UL;
+			for (int b = words.Length * 8; b < bits.Length; b++) h1 = (h1 ^ bits [b]) * 0x100000001B3UL;
+			return h0 ^ (h1 * 31) ^ (ulong) bits.Length;
 		}
 
 		/// <summary>GDI+'s antialiased DrawImage at PixelOffsetMode.None: the destination rectangle's

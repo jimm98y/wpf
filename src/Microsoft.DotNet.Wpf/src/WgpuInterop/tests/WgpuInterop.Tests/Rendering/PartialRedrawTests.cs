@@ -144,6 +144,7 @@ namespace WgpuInterop.Tests.Rendering
                 var mover = new SceneVisual { Offset = new Vector2(30, 30) };
                 mover.Content.Add(Box(0, 0, 25, 17, 200, 30, 30, 200));
                 root.Children.Add(mover);
+                int partial = 0;
                 foreach ((int w, int h) in new[] { (320, 240), (200, 150), (300, 220), (310, 230), (420, 300), (100, 80) })
                 {
                     (IntPtr tex, IntPtr view) = r.CreatePersistentTarget(w, h, WGPUTextureFormat.RGBA8Unorm);
@@ -153,6 +154,7 @@ namespace WgpuInterop.Tests.Rendering
                         r.BeginFrame();
                         target.Render(root, view, WGPUTextureFormat.RGBA8Unorm, w, h, White, false);
                         r.EndFrame();
+                        if (!target.LastFull) partial++;
                         byte[] got = r.ReadTexture(tex, w, h);
                         WgpuSceneRenderer reference = NewRenderer();
                         byte[] want = reference.RenderToRgba(root, w, h, White, transparentTarget: false);
@@ -164,6 +166,9 @@ namespace WgpuInterop.Tests.Rendering
                     }
                     finally { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); }
                 }
+                // Only what moved, and what a larger size uncovered, is drawn: the frames that fit the
+                // kept target are partial ones.
+                Assert.True(partial >= 3, $"only {partial} of the resized frames were partial");
             }
             finally { target.Dispose(); r.Dispose(); }
         }

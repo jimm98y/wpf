@@ -404,6 +404,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// <summary>Forget the previous frame: the next Compute reports full damage.</summary>
             public void Reset() => _root = null;
 
+            /// <summary>The previous frame stays valid when the size changes (its target is kept,
+            /// top-left anchored, at its largest size).</summary>
+            internal bool AcrossSizes;
+
             /// <summary>Records <paramref name="root"/> as the current frame and returns whether the
             /// whole target must be redrawn. Otherwise <paramref name="rects"/> holds the disjoint
             /// device rectangles that changed (possibly none).</summary>
@@ -422,8 +426,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 Shift = null;
                 _scrollRec = null;
                 _scrollInner.Clear();
-                Rec? old = (width == _w && height == _h) ? _root : null;
+                // Another size: what was drawn is still where it was in a target kept at its high-water
+                // size (PartialTarget), so the frame is diffed as usual, plus the strips the larger size
+                // uncovers -- nothing was ever drawn there. A window growing or shrinking redrew all of
+                // itself on every step before, however little of it had moved.
+                bool resized = width != _w || height != _h;
+                Rec? old = !resized || AcrossSizes ? _root : null;
+                int oldW = _w, oldH = _h;
                 _w = width; _h = height;
+                if (old != null && resized)
+                {
+                    if (width > oldW) _raw.Add(new Scissor(oldW, 0, width - oldW, height));
+                    if (height > oldH) _raw.Add(new Scissor(0, oldH, width, height - oldH));
+                }
                 _root = Visit(old, root, Matrix3x2.Identity, new Scissor(0, 0, width, height), fresh: false, inSnapshot: false,
                     shiftOk: s_scroll && _allowShift);
                 if (_sources.Count > _sourcesSeen.Count)
@@ -1790,6 +1805,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // WGPU_GROW_ONLY=0: a new persistent target for every size, as before.
             private static readonly bool s_growOnly = Environment.GetEnvironmentVariable("WGPU_GROW_ONLY") != "0" && !Verify;
             private static int RoundUp(int v) => (v + 255) & ~255;
+            // WGPU_DAMAGE_RESIZE=0: a frame of another size is drawn in full.
+            private static readonly bool s_damageAcrossSizes = s_growOnly && Environment.GetEnvironmentVariable("WGPU_DAMAGE_RESIZE") != "0";
             private bool _transparent, _valid;
             private readonly string _name;
             private long _frames, _verified, _mismatched;
@@ -1800,6 +1817,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             internal long LastPixels { get; private set; }
             /// <summary>The pixels the last frame shifted instead of redrawing (a scroll), or null.</summary>
             internal ScrollShift? LastShift { get; private set; }
+            /// <summary>Where the last frame's time went: damage tracking, collect, encode, submit (traces).</summary>
+            internal string LastSplit { get; private set; } = "";
 
             /// <summary>Per-thread totals since the last reset, for the PERF logs: frames, how many of them were
             /// full or shifted, and the pixels drawn against the pixels a full frame would have drawn.</summary>
@@ -1874,9 +1893,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 else if (width != _w || height != _h)
                 {
+                    // Same target, another size: the damage tracker diffs across it (DamageTracker.
+                    // AcrossSizes) and adds the uncovered strips.
                     _w = width; _h = height;
-                    _valid = false;
+                    if (!s_damageAcrossSizes) _valid = false;
                 }
+                _tracker.AcrossSizes = s_damageAcrossSizes;
                 if (_blitBg == IntPtr.Zero || _blitFmt != viewFormat)
                 {
                     if (_blitBg != IntPtr.Zero) wgpuBindGroupRelease(_blitBg);
@@ -1930,6 +1952,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 PerfRenderTicks += System.Diagnostics.Stopwatch.GetTimestamp() - r0;
                 PerfSplitCollect += PerfCollectTicks - c0; PerfSplitEncode += PerfEncodeTicks - e0; PerfSplitSubmit += PerfSubmitTicks - su0;
                 PerfSplitDraws += PerfDrawCalls - d0;
+                static double Ms(long t) => t * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                LastSplit = $"track {Ms(r0 - tc0):0.0} collect {Ms(PerfCollectTicks - c0):0.0} encode {Ms(PerfEncodeTicks - e0):0.0} submit {Ms(PerfSubmitTicks - su0):0.0} draws {PerfDrawCalls - d0}";
             }
 
 #if WGPU_BROWSER
