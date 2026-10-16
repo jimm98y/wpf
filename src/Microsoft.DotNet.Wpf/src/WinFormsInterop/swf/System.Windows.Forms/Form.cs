@@ -2366,6 +2366,18 @@ namespace System.Windows.Forms {
 				width = Math.Max (width, min_size.Width);
 			if ((specified & BoundsSpecified.Height) == BoundsSpecified.Height)
 				height = Math.Max (height, min_size.Height);
+
+			// MinimumSize and MaximumSize bound the WINDOW, as .NET's ApplyBoundsConstraints does --
+			// whether the size comes from Size or from ClientSize (which arrives here as the window
+			// size its client needs).
+			if ((specified & BoundsSpecified.Width) == BoundsSpecified.Width) {
+				if (maximum_size.Width > 0) width = Math.Min (width, maximum_size.Width);
+				if (minimum_size.Width > 0) width = Math.Max (width, minimum_size.Width);
+			}
+			if ((specified & BoundsSpecified.Height) == BoundsSpecified.Height) {
+				if (maximum_size.Height > 0) height = Math.Min (height, maximum_size.Height);
+				if (minimum_size.Height > 0) height = Math.Max (height, minimum_size.Height);
+			}
 				
 			base.SetBoundsCore (x, y, width, height, specified);
 
@@ -2378,18 +2390,10 @@ namespace System.Windows.Forms {
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
 		protected override void SetClientSizeCore(int x, int y) {
-			if ((minimum_size.Width != 0) && (x < minimum_size.Width)) {
-				x = minimum_size.Width;
-			} else if ((maximum_size.Width != 0) && (x > maximum_size.Width)) {
-				x = maximum_size.Width;
-			}
-
-			if ((minimum_size.Height != 0) && (y < minimum_size.Height)) {
-				y = minimum_size.Height;
-			} else if ((maximum_size.Height != 0) && (y > maximum_size.Height)) {
-				y = maximum_size.Height;
-			}
-
+			// No clamp here: MinimumSize/MaximumSize are WINDOW sizes, applied in SetBoundsCore to the
+			// window this client needs. Clamping the client to them made a dialog whose MinimumSize
+			// was its designed window size a frame larger than stock in each direction (app's
+			// "Configure your Control": 686x677 where stock is 670x639).
 			Rectangle ClientRect = new Rectangle(0, 0, x, y);
 			Rectangle WindowRect;
 			CreateParams cp = this.CreateParams;
