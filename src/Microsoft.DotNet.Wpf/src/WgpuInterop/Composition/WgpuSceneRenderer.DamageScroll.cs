@@ -67,6 +67,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 Matrix3x2 world = v.LocalToParent * parentWorld;
                 if (!IsTranslation(world)) return null;
                 _oldRecords.Clear();
+                _byKeyValid = false;
                 if (!Flatten(old, parentWorld, parentClip, _oldRecords) || _oldRecords.Count < 8) return Why($"old not flat ({_oldRecords.Count})");
 
                 Rec rec = Visit(null, v, parentWorld, parentClip, fresh: true, inSnapshot: false, keepNudge: true);
@@ -262,23 +263,48 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 _whyCount = 0;
                 for (int j = 0; j < _newRecords.Count; j++) { DrawRecord q = _newRecords[j]; q.Match = -1; q.Moved = false; _newRecords[j] = q; }
-                var byKey = new Dictionary<long, List<int>>();
-                for (int i = 0; i < _oldRecords.Count; i++)
+                // The old records by signature AND position, built once per comparison rather than once
+                // per candidate offset: a new record can only match an old one with its signature at its
+                // own position, or at its position less the offset. Matches are made in draw order (each
+                // after the last), and both candidate lists are walked from where they were left. Every
+                // old record of the signature was scanned, from the start, for every new record before:
+                // a repaint of a big form -- thousands of records, many sharing a signature (the same
+                // glyph, the same border) -- was quadratic, and 90 ms of a app window move went here.
+                if (!_byKeyValid)
                 {
-                    long k = _oldRecords[i].Key;
-                    if (k == 0) continue;
-                    if (!byKey.TryGetValue(k, out List<int>? l)) byKey[k] = l = new List<int>(1);
-                    l.Add(i);
+                    _byKeyAt.Clear();
+                    for (int i = 0; i < _oldRecords.Count; i++)
+                    {
+                        DrawRecord o0 = _oldRecords[i];
+                        if (o0.Key == 0) continue;
+                        var k = (o0.Key, Q(o0.Anchor.X), Q(o0.Anchor.Y));
+                        if (!_byKeyAt.TryGetValue(k, out List<int>? l)) _byKeyAt[k] = l = new List<int>(1);
+                        l.Add(i);
+                    }
+                    _byKeyValid = true;
                 }
+                _byKeyStart.Clear();
                 var d = new Vector2(dx, dy);
                 int last = -1, moved = 0;
                 for (int j = 0; j < _newRecords.Count; j++)
                 {
                     DrawRecord n = _newRecords[j];
-                    if (n.Key == 0 || !byKey.TryGetValue(n.Key, out List<int>? l)) continue;
-                    foreach (int i in l)
+                    if (n.Key == 0) continue;
+                    var kMoved = (n.Key, Q(n.Anchor.X - dx), Q(n.Anchor.Y - dy));
+                    var kStill = (n.Key, Q(n.Anchor.X), Q(n.Anchor.Y));
+                    _byKeyAt.TryGetValue(kMoved, out List<int>? lm);
+                    List<int>? ls = (dx == 0 && dy == 0) ? null : (_byKeyAt.TryGetValue(kStill, out List<int>? l2) ? l2 : null);
+                    if (lm == null && ls == null) continue;
+                    int am = Skip(lm, kMoved, last), asl = Skip(ls, kStill, last);
+                    while (true)
                     {
-                        if (i <= last) continue;
+                        // The next candidate in draw order from either list.
+                        int i;
+                        bool fromMoved;
+                        if (lm != null && am < lm.Count && (ls == null || asl >= ls.Count || lm[am] < ls[asl])) { i = lm[am++]; fromMoved = true; }
+                        else if (ls != null && asl < ls.Count) { i = ls[asl++]; fromMoved = false; }
+                        else break;
+                        _ = fromMoved;
                         DrawRecord o = _oldRecords[i];
                         bool isMoved;
                         if (Near(n.Anchor, o.Anchor + d)) isMoved = true;
@@ -306,6 +332,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                 }
                 return moved;
+            }
+
+            private readonly Dictionary<(long, int, int), List<int>> _byKeyAt = new();
+            private readonly Dictionary<(long, int, int), int> _byKeyStart = new();
+            private bool _byKeyValid;
+
+            /// <summary>A coordinate on a 1/64 grid: Near points (1e-3 apart) share a cell but at a
+            /// cell's edge, where a match is missed and only costs a little more damage.</summary>
+            private static int Q(float v) => (int)MathF.Round(v * 64f);
+
+            /// <summary>Where to resume in a candidate list: past every index at or before the last match.</summary>
+            private int Skip(List<int>? l, (long, int, int) key, int last)
+            {
+                if (l == null) return 0;
+                _byKeyStart.TryGetValue(key, out int from);
+                while (from < l.Count && l[from] <= last) from++;
+                _byKeyStart[key] = from;
+                return from;
             }
 
             private static bool Near(Vector2 a, Vector2 b) => MathF.Abs(a.X - b.X) <= 1e-3f && MathF.Abs(a.Y - b.Y) <= 1e-3f;
