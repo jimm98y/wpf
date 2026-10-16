@@ -1736,13 +1736,27 @@ namespace System.Windows.Forms
 					// after ShowDialog returns, so the loop and the dialog waited on each other:
 					// closing SharpDevelop's About box (whose scrolling picture runs a timer) hung
 					// the application, because this loop never returned to the WPF dispatcher.
-					if (PresentationHost.Enabled) return false;
+					//
+					// Only for a loop whose form is gone, though. A loop with no form at all -- a tray app,
+					// an ApplicationContext, Application.Run() -- or whose form is merely hidden runs, as
+					// in .NET, until ExitThread or Application.Exit: timers, BeginInvoke and the thread's
+					// real windows keep working, and the heartbeat below hands the loop its exit check.
+					if (PresentationHost.Enabled)
+					{
+						if (Application.CurrentLoopFormGone()) return false;
+						if (OperatingSystem.IsWindows() && Win32Host.TakeQuit()) return false;   // the OS's WM_QUIT, taken by the last host
+						if (OperatingSystem.IsWindows() && !Win32Host.PumpThread()) return false;
+						PresentationHost.Idle(nextTimer, q.Posted);
+						msg = new MSG { hwnd = IntPtr.Zero, message = Msg.WM_NULL };
+						return true;
+					}
 
 					// Headless: there is never a host, so a pending timer is the one reason to stay.
 					if (nextTimer < 0) return false;
 					PresentationHost.Idle(nextTimer, q.Posted);
 					continue;
 				}
+				if (OperatingSystem.IsWindows()) Win32Host.TakeQuit();   // hosts remain: that WM_QUIT ended nothing here
 				PresentationHost.Idle(nextTimer, q.Posted);
 
 				// Hand the loop a heartbeat rather than going straight round again. A message loop only
