@@ -223,6 +223,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private readonly Dictionary<uint, MilPen> _pens = new();
         private readonly Dictionary<uint, (double Offset, double[] Dashes)> _dashStyles = new();  // thickness-relative
         private readonly Dictionary<uint, Geometry> _geometries = new();
+        // A geometry whose own Transform is a resource: the untransformed geometry and that handle, so
+        // a later change to the transform re-bakes it (and re-parses the content that drew it).
+        private readonly Dictionary<uint, (Geometry Raw, uint Transform)> _geometryTransforms = new();
         // GuidelineSet resources (MILCMD_GUIDELINESET), in the guideline set's own coordinates.
         private readonly Dictionary<uint, (float[] X, float[] Y)> _guidelineSets = new();
         // Live animated values, refreshed every tick by the MilCmd*Resource commands. An animate
@@ -606,6 +609,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _bitmapCaches.Remove(handle);
             _implicitInputBrushes.Remove(handle);
             _geometries.Remove(handle);
+            _geometryTransforms.Remove(handle);
             _gradients.Remove(handle);
             _glyphRuns.Remove(handle);
             _effects.Remove(handle);
@@ -900,7 +904,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     var children = new List<Geometry>();
                     for (uint i = 0; i + 4 <= childrenBytes && r.Remaining >= 4; i += 4)
                         if (_geometries.TryGetValue(r.U32(), out Geometry? child)) children.Add(child);
-                    _geometries[gh] = ApplyGeometryTransform(new GeometryGroup(fillRule, children), hTransform);
+                    StoreGeometry(gh, new GeometryGroup(fillRule, children), hTransform);
                     break;
                 }
                 case Mil.CombinedGeometry:
@@ -921,7 +925,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         (null, not null) => g2,
                         _ => null,
                     };
-                    if (combined is not null) _geometries[gh] = ApplyGeometryTransform(combined, hTransform);
+                    if (combined is not null) StoreGeometry(gh, combined, hTransform);
                     break;
                 }
                 case Mil.PathGeometry:
@@ -929,13 +933,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // MILCMD_PATHGEOMETRY: Handle@4, hTransform@8, FillRule@12, FiguresSize@16,
                     // then the serialized path blob (MIL_PATHGEOMETRY + MIL_PATHFIGURE/segments).
                     uint gh = r.U32();
-                    _ = r.U32();                       // hTransform
+                    uint hTransform = r.U32();
                     var fillRule = (FillRule)r.U32();
                     uint figuresSize = r.U32();
                     List<PathFigure> figures;
                     try { figures = ParsePathBlob(command, 20, figuresSize); }
                     catch { figures = new List<PathFigure>(); }
-                    _geometries[gh] = new PathGeometry(fillRule, figures);
+                    // Its own Transform, like every other geometry kind. A StreamGeometry arrives here too,
+                    // and a Shape with Stretch draws its geometry with the stretch as that transform: a
+                    // Path Width=12 Stretch=Uniform over 2000-unit data drew at 2000 px.
+                    StoreGeometry(gh, new PathGeometry(fillRule, figures), hTransform);
                     break;
                 }
                 case Mil.VisualSetContent:
@@ -1575,6 +1582,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// visual/render-data transform, and the Scene layer has no per-geometry transform slot,
         /// so it is applied here where the handle is still resolvable.
         /// </summary>
+        private void StoreGeometry(uint handle, Geometry raw, uint hTransform)
+        {
+            if (hTransform != 0) _geometryTransforms[handle] = (raw, hTransform);
+            else _geometryTransforms.Remove(handle);
+            _geometries[handle] = ApplyGeometryTransform(raw, hTransform);
+        }
+
+        /// <summary>For the parse in progress: content that draws geometry <paramref name="handle"/>
+        /// depends on that geometry's own transform resource too.</summary>
+        private void NoteGeometryDeps(uint handle)
+        {
+            if (_geometryTransforms.TryGetValue(handle, out (Geometry Raw, uint Transform) gt))
+                _parseResourceRefs.Add(gt.Transform);
+        }
+
         private Geometry ApplyGeometryTransform(Geometry g, uint hTransform)
             => hTransform != 0 && _transforms.TryGetValue(hTransform, out Matrix3x2 m) && !m.IsIdentity
                 ? TransformGeometry(g, m)
@@ -1949,6 +1971,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             _transforms[handle] = m;
             BumpResource(handle);   // for content that bakes it via PushTransform
+            foreach (KeyValuePair<uint, (Geometry Raw, uint Transform)> gt in _geometryTransforms)
+                if (gt.Value.Transform == handle)
+                    _geometries[gt.Key] = ApplyGeometryTransform(gt.Value.Raw, handle);
             foreach (KeyValuePair<uint, uint> kv in _visualTransform)
                 if (kv.Value == handle && _visuals.TryGetValue(kv.Key, out SceneVisual? v))
                     v.Transform = m;
@@ -2234,6 +2259,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     {
                         // hBrush@0, hPen@4, hGeometry@8.
                         uint hBrush = r.U32(), hPen = r.U32(), hGeom = r.U32();
+                        NoteGeometryDeps(hGeom);
                         if (_geometries.TryGetValue(hGeom, out Geometry? g))
                             EmitDrawing(output, g, hBrush, hPen, state);
                         break;
@@ -2277,6 +2303,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     {
                         stack.Push(state);
                         uint hClip = r.U32();
+                        NoteGeometryDeps(hClip);
                         if (_geometries.TryGetValue(hClip, out Geometry? clip))
                         {
                             Geometry clipLocal = TransformGeometry(clip, state.Transform);
