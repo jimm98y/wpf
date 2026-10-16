@@ -2708,6 +2708,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 : (_visuals.TryGetValue(cb.Source, out SceneVisual? v) ? v : null);
             if (source is null) return false;
             Rect b = VisualSubtreeBounds(source, source.LocalToParent);
+            // An ABSOLUTE Viewbox names the part of the source's own space to show, whatever the source
+            // happens to draw there: render exactly that rect. Rendered over the source's content
+            // bounds instead, a source that draws less than its Viewbox -- an element being created by
+            // dragging out its rectangle, 4x4 at the start of the gesture and growing, with the
+            // Viewbox already at its final size -- had its few pixels stretched across a texture that
+            // the Viewbox then took a sliver of: GraphWorX showed a dot until the mouse was released.
+            // The Viewbox is in the source's OWN space (a VisualBrush draws its visual without the
+            // visual's offset and transform), so the source is drawn through the inverse of those.
+            Matrix3x2 own = Matrix3x2.Identity;
+            if (ib.ViewboxUnits != 1 && ib.Viewbox.Width > 0 && ib.Viewbox.Height > 0
+                && Matrix3x2.Invert(source.LocalToParent, out Matrix3x2 inverse))
+            {
+                b = new Rect((float)ib.Viewbox.X, (float)ib.Viewbox.Y, (float)ib.Viewbox.Width, (float)ib.Viewbox.Height);
+                own = inverse;
+            }
             if (b.Width <= 0.01f || b.Height <= 0.01f) return false;
 
             const int supersample = 2;
@@ -2715,7 +2730,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             int ph = Math.Clamp((int)MathF.Ceiling(b.Height * supersample), 1, 1024);
             var wrapper = new SceneVisual
             {
-                Transform = Matrix3x2.CreateTranslation(-b.X, -b.Y) * Matrix3x2.CreateScale(pw / b.Width, ph / b.Height),
+                Transform = own * Matrix3x2.CreateTranslation(-b.X, -b.Y) * Matrix3x2.CreateScale(pw / b.Width, ph / b.Height),
             };
             wrapper.Children.Add(source);
 
