@@ -25,8 +25,9 @@ using System.Collections.Generic;
 namespace System.Windows.Forms
 {
     /// <summary>
-    /// The system clipboard, as the driver needs it. Installed by WindowsFormsHost, which can reach
-    /// WPF's Clipboard; null when nothing is hosting, and then only the in-process store is used.
+    /// The system clipboard, as the driver needs it. On Windows, user32's (Win32ClipboardBridge, from
+    /// the start); elsewhere installed by WindowsFormsHost, which can reach WPF's Clipboard -- null
+    /// when nothing is hosting, and then only the in-process store is used.
     /// </summary>
     internal interface IClipboardBridge
     {

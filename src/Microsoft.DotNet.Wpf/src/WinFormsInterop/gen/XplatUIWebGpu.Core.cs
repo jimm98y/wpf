@@ -36,6 +36,9 @@ namespace System.Windows.Forms
 			// System.Drawing asks here what drawing on one means -- CreateGraphics' answer.
 			AppContext.SetData ("System.Drawing.HwndGraphicsResolver",
 				(Func<IntPtr, object>)(h => Hwnd.ObjectFromHandle (h) != null ? GetHwndGraphics (h) : null));
+			// Windows: the system clipboard is user32's, whether or not a WPF host lends its own.
+			if (OperatingSystem.IsWindows ())
+				ClipboardBridge ??= new Win32ClipboardBridge ();
 		}
 
 		/// <summary>The next window handle. On Windows a handle is skipped while it names a real
