@@ -2707,7 +2707,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 ? BuildDrawingVisual(cb.Source)
                 : (_visuals.TryGetValue(cb.Source, out SceneVisual? v) ? v : null);
             if (source is null) return false;
-            Rect b = VisualSubtreeBounds(source, source.LocalToParent);
+            bool absolute = ib.ViewboxUnits != 1 && ib.Viewbox.Width > 0 && ib.Viewbox.Height > 0;
+            // (An absolute Viewbox does not need the source's bounds at all; see below. Walking the
+            // whole source subtree for them, every frame, was most of a drag's garbage.)
+            Rect b = absolute ? default : VisualSubtreeBounds(source, source.LocalToParent);
             // An ABSOLUTE Viewbox names the part of the source's own space to show, whatever the source
             // happens to draw there: render exactly that rect. Rendered over the source's content
             // bounds instead, a source that draws less than its Viewbox -- an element being created by
@@ -2717,12 +2720,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // The Viewbox is in the source's OWN space (a VisualBrush draws its visual without the
             // visual's offset and transform), so the source is drawn through the inverse of those.
             Matrix3x2 own = Matrix3x2.Identity;
-            if (ib.ViewboxUnits != 1 && ib.Viewbox.Width > 0 && ib.Viewbox.Height > 0
-                && Matrix3x2.Invert(source.LocalToParent, out Matrix3x2 inverse))
+            if (absolute && Matrix3x2.Invert(source.LocalToParent, out Matrix3x2 inverse))
             {
                 b = new Rect((float)ib.Viewbox.X, (float)ib.Viewbox.Y, (float)ib.Viewbox.Width, (float)ib.Viewbox.Height);
                 own = inverse;
             }
+            else if (absolute) b = VisualSubtreeBounds(source, source.LocalToParent);   // a transform with no inverse
             if (b.Width <= 0.01f || b.Height <= 0.01f) return false;
 
             const int supersample = 2;
@@ -3332,19 +3335,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         private static Rect PathBounds(PathGeometry path)
         {
-            var pts = new List<Vector2>();
+            // The box of every point, accumulated as it goes. The points were gathered into a list
+            // first: a brush source's bounds are asked for every frame, and for an AlarmWorX grid's
+            // ghost that list was 60 MB a second of garbage.
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            bool any = false;
+            void Add(Vector2 p)
+            {
+                any = true;
+                if (p.X < minX) minX = p.X; if (p.Y < minY) minY = p.Y;
+                if (p.X > maxX) maxX = p.X; if (p.Y > maxY) maxY = p.Y;
+            }
             foreach (PathFigure f in path.Figures)
             {
-                pts.Add(f.Start);
+                Add(f.Start);
                 foreach (PathSegment s in f.Segments)
                     switch (s)
                     {
-                        case LineSegment l: pts.Add(l.Point); break;
-                        case QuadraticBezierSegment q: pts.Add(q.Control); pts.Add(q.Point); break;
-                        case CubicBezierSegment c: pts.Add(c.Control1); pts.Add(c.Control2); pts.Add(c.Point); break;
+                        case LineSegment l: Add(l.Point); break;
+                        case QuadraticBezierSegment q: Add(q.Control); Add(q.Point); break;
+                        case CubicBezierSegment c: Add(c.Control1); Add(c.Control2); Add(c.Point); break;
                     }
             }
-            return PointsBounds(pts);
+            return any ? new Rect(minX, minY, maxX - minX, maxY - minY) : new Rect(0, 0, 0, 0);
         }
 
         private static Rect PointsBounds(IReadOnlyList<Vector2> pts)
