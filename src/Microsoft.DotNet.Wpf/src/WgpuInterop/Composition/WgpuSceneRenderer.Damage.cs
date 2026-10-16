@@ -1407,7 +1407,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     foreach (LayerPass lp in plan) ExecutePass(encoder, lp, atlasView);
                     _damagePassW = width; _damagePassH = height;
                     ExecutePass(encoder, new LayerPass(targetView, false, background, mainData, format)
-                        { LoadPreserve = partial, Damage = damage }, atlasView);
+                        { LoadPreserve = partial, Damage = damage, ViewportW = width, ViewportH = height }, atlasView);
                     PerfExecAlloc += GC.GetAllocatedBytesForCurrentThread() - ca1;
                     PerfEncodeTicks += System.Diagnostics.Stopwatch.GetTimestamp() - e0;
                 }
@@ -1784,8 +1784,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             private readonly List<Scissor> _rects = new();
             private IntPtr _tex, _view, _blitBg, _vTex, _vView, _sTex, _sView;
             private WGPUTextureFormat _fmt, _blitFmt;
-            private int _w, _h;
+            private int _w, _h, _capW, _capH;
             private RgbaColor _bg;
+
+            // WGPU_GROW_ONLY=0: a new persistent target for every size, as before.
+            private static readonly bool s_growOnly = Environment.GetEnvironmentVariable("WGPU_GROW_ONLY") != "0" && !Verify;
+            private static int RoundUp(int v) => (v + 255) & ~255;
             private bool _transparent, _valid;
             private readonly string _name;
             private long _frames, _verified, _mismatched;
@@ -1855,11 +1859,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     WGPUTextureFormat.BGRA8UnormSrgb => WGPUTextureFormat.RGBA8UnormSrgb,
                     _ => viewFormat,
                 };
-                if (_tex == IntPtr.Zero || width != _w || height != _h || fmt != _fmt)
+                // The target is kept at its high-water size, the frame drawing into its top-left corner,
+                // so a window being resized does not get a new one (and a new scroll scratch) for every
+                // step -- each a full-window texture created on the GL backend, which was most of a
+                // app resize frame. A frame of another size is still drawn in full.
+                if (_tex == IntPtr.Zero || width > _capW || height > _capH || fmt != _fmt)
                 {
                     ReleaseTextures();
-                    (_tex, _view) = _r.CreatePersistentTarget(width, height, fmt);
+                    _capW = s_growOnly ? RoundUp(width) : width;
+                    _capH = s_growOnly ? RoundUp(height) : height;
+                    (_tex, _view) = _r.CreatePersistentTarget(_capW, _capH, fmt);
                     _w = width; _h = height; _fmt = fmt;
+                    _valid = false;
+                }
+                else if (width != _w || height != _h)
+                {
+                    _w = width; _h = height;
                     _valid = false;
                 }
                 if (_blitBg == IntPtr.Zero || _blitFmt != viewFormat)
@@ -1883,7 +1898,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 List<Scissor>? damage = full ? null : _rects;
                 ScrollShift? shift = full ? null : _tracker.Shift;
                 LastShift = shift;
-                if (shift != null && _sTex == IntPtr.Zero) (_sTex, _sView) = _r.CreatePersistentTarget(width, height, fmt);
+                if (shift != null && _sTex == IntPtr.Zero) (_sTex, _sView) = _r.CreatePersistentTarget(_capW, _capH, fmt);
                 LastFull = full;
                 LastRects = full ? 1 : _rects.Count;
                 LastPixels = 0;

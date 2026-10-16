@@ -24,7 +24,20 @@ namespace System.Drawing
     {
         internal int Width, Height, Stride;
         internal PixelFormat Format;
-        internal byte[] Bits;
+
+        /// <summary>The pixels, allocated the first time anything looks at them. A Graphics over a
+        /// window's DC (Graphics.FromHwnd) gets a bitmap the window's size, and code that makes one
+        /// only to read DpiX -- app did, on every size change of its canvas -- allocated and
+        /// dropped 8 MB each time: 96 MB per frame of a window resize.</summary>
+        internal byte[] Bits
+        {
+            get => _bits ??= new byte[checked((long)Stride * Height)];
+            set => _bits = value;
+        }
+        private byte[] _bits;
+
+        /// <summary>Whether the pixels have been allocated (anything drawn or read).</summary>
+        internal bool HasBits => _bits != null;
         /// <summary>The palette of an indexed frame (null otherwise). Setting it makes it the frame's
         /// OWN palette (see <see cref="PaletteIsDefault"/>).</summary>
         internal Color[] Palette
@@ -46,7 +59,6 @@ namespace System.Drawing
             Height = height;
             Format = format;
             Stride = StrideFor(width, format);
-            Bits = new byte[checked((long)Stride * height)];
             if ((format & PixelFormat.Indexed) != 0)
             {
                 _palette = GdipPixels.DefaultPalette(format, out PaletteFlags);

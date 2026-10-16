@@ -129,6 +129,45 @@ namespace WgpuInterop.Tests.Rendering
             Assert.Equal(0, h.Target.LastPixels);
         }
 
+        /// <summary>A window being resized: the persistent target is kept at its largest size and each
+        /// frame is drawn into its top-left corner, smaller, larger, then larger than it has ever been.
+        /// Every frame equals the scene rendered in full at that size.</summary>
+        [Fact]
+        public void FramesOfChangingSize_DrawIntoTheKeptTargetExactly()
+        {
+            WgpuSceneRenderer r = NewRenderer();
+            var target = new WgpuSceneRenderer.PartialTarget(r);
+            try
+            {
+                var root = new SceneVisual();
+                root.Children.Add(Tiles());
+                var mover = new SceneVisual { Offset = new Vector2(30, 30) };
+                mover.Content.Add(Box(0, 0, 25, 17, 200, 30, 30, 200));
+                root.Children.Add(mover);
+                foreach ((int w, int h) in new[] { (320, 240), (200, 150), (300, 220), (310, 230), (420, 300), (100, 80) })
+                {
+                    (IntPtr tex, IntPtr view) = r.CreatePersistentTarget(w, h, WGPUTextureFormat.RGBA8Unorm);
+                    try
+                    {
+                        mover.Offset = new Vector2(30 + w / 10, 30 + h / 10);
+                        r.BeginFrame();
+                        target.Render(root, view, WGPUTextureFormat.RGBA8Unorm, w, h, White, false);
+                        r.EndFrame();
+                        byte[] got = r.ReadTexture(tex, w, h);
+                        WgpuSceneRenderer reference = NewRenderer();
+                        byte[] want = reference.RenderToRgba(root, w, h, White, transparentTarget: false);
+                        reference.Dispose();
+                        Assert.Equal(want.Length, got.Length);
+                        int diff = 0;
+                        for (int i = 0; i < want.Length; i++) if (want[i] != got[i]) diff++;
+                        Assert.True(diff == 0, $"{w}x{h}: {diff} bytes differ from the full render");
+                    }
+                    finally { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); }
+                }
+            }
+            finally { target.Dispose(); r.Dispose(); }
+        }
+
         [Fact]
         public void ACaretBlinkingOnAndOffIsExact()
         {
