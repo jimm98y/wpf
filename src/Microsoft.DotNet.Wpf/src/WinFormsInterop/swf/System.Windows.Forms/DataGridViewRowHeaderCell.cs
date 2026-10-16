@@ -29,7 +29,7 @@ namespace System.Windows.Forms {
 
 	public class DataGridViewRowHeaderCell : DataGridViewHeaderCell {
 
-		private string headerText;
+		private object headerText;   // any object, as in .NET: an app may store a row number
 		
 		public DataGridViewRowHeaderCell ()
 		{
@@ -86,7 +86,7 @@ namespace System.Windows.Forms {
 			if (rowIndex < 0 || rowIndex >= DataGridView.RowCount)
 				throw new ArgumentOutOfRangeException ("rowIndex");
 				
-			value = GetValue (rowIndex) as string;
+			value = GetValue (rowIndex)?.ToString ();
 
 			string table_prefix = string.Empty, cell_prefix = string.Empty, row_prefix = string.Empty;
 			string table_suffix = string.Empty, cell_suffix = string.Empty, row_suffix = string.Empty;
@@ -323,7 +323,7 @@ namespace System.Windows.Forms {
 		
 		protected override bool SetValue (int rowIndex, object value)
 		{
-			headerText = (string) value;
+			headerText = value;
 			return true;
 		}
 

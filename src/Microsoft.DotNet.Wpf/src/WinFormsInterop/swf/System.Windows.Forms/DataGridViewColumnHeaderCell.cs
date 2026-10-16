@@ -85,7 +85,7 @@ namespace System.Windows.Forms {
 			if (rowIndex != -1)
 				throw new ArgumentOutOfRangeException ("rowIndex");
 			
-			value = GetValue (rowIndex) as string;
+			value = GetValue (rowIndex)?.ToString ();
 
 			string table_prefix = string.Empty, cell_prefix = string.Empty, row_prefix = string.Empty;
 			string table_suffix = string.Empty, cell_suffix = string.Empty, row_suffix = string.Empty;
