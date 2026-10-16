@@ -98,6 +98,9 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     /// <summary>Make the next present a full one.</summary>
     internal void InvalidateFrame() => _partial.Invalidate();
 
+    /// <summary>Where the last scene present's time went (frame traces).</summary>
+    internal string LastTiming { get; private set; } = "";
+
     internal string LastDamage => _partial.LastFull ? "full" : $"{_partial.LastRects} rects {_partial.LastPixels} px";
 
     // The face the presenter rasterizes control text with. It MUST stay in step with the one
@@ -197,10 +200,13 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     {
         if (surfaceW != _width || surfaceH != _height) { _width = surfaceW; _height = surfaceH; Configure(); }
 
+        long p0 = System.Diagnostics.Stopwatch.GetTimestamp();
         SceneVisual root = BuildRoot(scenes, caret, rubberBands);
 
+        long p1 = System.Diagnostics.Stopwatch.GetTimestamp();
         WGPUSurfaceTexture st;
         wgpuSurfaceGetCurrentTexture(_surface, &st);
+        long p2 = System.Diagnostics.Stopwatch.GetTimestamp();
         if (st.texture == IntPtr.Zero) return NoDrawable();
         _nullAcquires = 0;
         if (st.status == WGPUSurfaceGetCurrentTextureStatus.Outdated ||
@@ -211,7 +217,11 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
         IntPtr view = wgpuTextureCreateView(st.texture, IntPtr.Zero);
         _partial.Render(root, view, _format, DeviceWidth, DeviceHeight, ClearColor, false);
+        long p3 = System.Diagnostics.Stopwatch.GetTimestamp();
         WGPUStatus presented = wgpuSurfacePresent(_surface);
+        long p4 = System.Diagnostics.Stopwatch.GetTimestamp();
+        double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        LastTiming = $"build {Ms(p0, p1):0.0} acquire {Ms(p1, p2):0.0} render+submit {Ms(p2, p3):0.0} present {Ms(p3, p4):0.0} ms at {DeviceWidth}x{DeviceHeight} {PresentMode}";
         bool ok = presented == WGPUStatus.Success;
         // A window that shows the CLEAR COLOUR and nothing else looks exactly like a renderer that
         // drew nothing, and it is not: the scenes can all be built and rendered correctly and still
@@ -381,10 +391,48 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             width = (uint)DeviceWidth,     // the CAMetalLayer drawable is device-pixel sized
             height = (uint)DeviceHeight,
             alphaMode = _transparent ? TransparentAlphaMode() : WGPUCompositeAlphaMode.Auto,
-            presentMode = WGPUPresentMode.Fifo,
+            presentMode = _presentMode ??= ChoosePresentMode(),
         };
         wgpuSurfaceConfigure(_surface, &config);
     }
+
+    private WGPUPresentMode? _presentMode;
+
+    /// <summary>
+    /// How frames reach the screen. FIFO makes every present wait for the display, and the present is
+    /// made on the UI thread: each frame put up to a refresh interval of waiting in front of the
+    /// next input message. A windowed swap chain on Windows is composed by DWM, which shows the newest
+    /// frame at its own vsync -- a present that does not wait cannot tear there -- so on Windows the
+    /// host asks for MAILBOX, else IMMEDIATE, else FIFO. Frames are made on demand (input, a timer, an
+    /// animation's own clock), so not waiting does not mean presenting more. WF_PRESENT=fifo |
+    /// mailbox | immediate chooses.
+    /// </summary>
+    private WGPUPresentMode ChoosePresentMode()
+    {
+        string want = Environment.GetEnvironmentVariable("WF_PRESENT")?.ToLowerInvariant();
+        WGPUPresentMode[] order = want switch
+        {
+            "fifo" => new[] { WGPUPresentMode.Fifo },
+            "mailbox" => new[] { WGPUPresentMode.Mailbox, WGPUPresentMode.Fifo },
+            "immediate" => new[] { WGPUPresentMode.Immediate, WGPUPresentMode.Fifo },
+            _ => OperatingSystem.IsWindows()
+                ? new[] { WGPUPresentMode.Mailbox, WGPUPresentMode.Immediate, WGPUPresentMode.Fifo }
+                : new[] { WGPUPresentMode.Fifo },
+        };
+        WGPUSurfaceCapabilities caps;
+        if (wgpuSurfaceGetCapabilities(_surface, _ctx.Adapter, &caps) != WGPUStatus.Success) return WGPUPresentMode.Fifo;
+        try
+        {
+            foreach (WGPUPresentMode m in order)
+                for (nuint i = 0; i < caps.presentModeCount; i++)
+                    if (caps.presentModes[i] == m) return m;
+            return WGPUPresentMode.Fifo;
+        }
+        finally { wgpuSurfaceCapabilitiesFreeMembers(caps); }
+    }
+
+    /// <summary>The present mode the surface was configured with (traces, tests).</summary>
+    internal string PresentMode => (_presentMode ?? WGPUPresentMode.Fifo).ToString();
 
     private static WGPUTextureFormat ChooseFormat(IntPtr surface, IntPtr adapter, bool srgb)
     {

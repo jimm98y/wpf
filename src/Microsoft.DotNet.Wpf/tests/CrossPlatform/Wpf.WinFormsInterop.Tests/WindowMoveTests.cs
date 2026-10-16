@@ -392,7 +392,7 @@ namespace Wpf.WinFormsInterop.Tests
             }
             finally { SetThreadDpiAwarenessContext(was); }
             Assert.SkipUnless(high.HasValue, "needs a monitor at a higher DPI than the system's");
-            Exception? failure = null;
+            Exception? failure = null; bool skipped = false;
             var t = new Thread(() =>
             {
                 try
@@ -415,6 +415,10 @@ namespace Wpf.WinFormsInterop.Tests
                         for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && host == IntPtr.Zero;) { Pump(100); host = HostOf("MaxTrackTest"); }
                         Assert.NotEqual(IntPtr.Zero, host);
                         Pump(300);
+                        // The window has to have taken the high-DPI monitor's scale for there to be
+                        // anything to cap; another test's DPI state can leave it at the system's.
+                        GetWindowRect(host, out RECT r0);
+                        if (r0.bottom - r0.top <= tall + 40) { form.Close(); skipped = true; return; }
                         Assert.Equal(tall, form.Height);
                         GetWindowRect(host, out RECT r);
                         Assert.True(r.bottom - r.top > (m.bottom - m.top), $"window {r.bottom - r.top} px tall on a {m.bottom - m.top} px monitor");
@@ -427,10 +431,65 @@ namespace Wpf.WinFormsInterop.Tests
             t.Start();
             t.Join();
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            Assert.SkipWhen(skipped, "the window did not take the high-DPI monitor's scale in this process");
         }
 
         [DllImport("shcore")] private static extern int GetDpiForMonitor(IntPtr m, int type, out uint dx, out uint dy);
         [DllImport("user32")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+
+        /// <summary>Mouse moves already waiting in the queue are all handled before a frame goes out,
+        /// and that frame shows the last of them. A present per WM_MOUSEMOVE waited for the display
+        /// each time, so the queue backed up behind it and a hover highlight trailed the pointer.</summary>
+        [Fact]
+        public void QueuedMouseMoves_AreHandledBeforeOneFrameShowsTheLast()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "real WM_MOUSEMOVEs to a Win32 window");
+            Exception? failure = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new SWF.Form
+                    {
+                        Text = "CoalesceTest", StartPosition = SWF.FormStartPosition.Manual,
+                        Location = new Point(8000, 80), ClientSize = new Size(300, 200), ShowInTaskbar = false,
+                    };
+                    var lastX = -1; int moves = 0;
+                    var panel = new SWF.Panel { Dock = SWF.DockStyle.Fill };
+                    panel.MouseMove += (s, e) => { moves++; lastX = e.X; panel.BackColor = Color.FromArgb(255, e.X % 256, 0, 0); };
+                    form.Controls.Add(panel);
+                    form.Show();
+                    IntPtr host = IntPtr.Zero;
+                    for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && host == IntPtr.Zero;) { Pump(100); host = HostOf("CoalesceTest"); }
+                    Assert.NotEqual(IntPtr.Zero, host);
+                    Pump(2500);   // past the settling after the first show
+
+                    object hostObj = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.PresentationHost")!
+                        .GetMethod("HostOf", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, new object[] { form })!;
+                    var count = hostObj.GetType().GetProperty("PresentCount", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+                    int before = (int)count.GetValue(hostObj)!;
+                    double k = SWF.ScaleHelper.HostSourceDpi == 0 ? 1 : GetDpiForSystem() / (double)SWF.ScaleHelper.HostSourceDpi;
+                    for (int i = 0; i < 20; i++)
+                    {
+                        int px = (int)Math.Round((20 + i * 10) * k), py = (int)Math.Round(100 * k);
+                        PostMessage(host, 0x0200, IntPtr.Zero, Pack(px, py));
+                    }
+                    Pump(600);
+                    int presents = (int)count.GetValue(hostObj)! - before;
+                    Assert.Equal(20, moves);
+                    Assert.Equal(20 + 19 * 10, lastX);
+                    Assert.InRange(presents, 1, 4);
+                    form.Close();
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
+        [DllImport("user32", EntryPoint = "PostMessageW")] private static extern bool PostMessage(IntPtr h, int m, IntPtr w, IntPtr l);
 
         [DllImport("user32")] private static extern bool ShowWindow(IntPtr h, int cmd);
         [DllImport("user32")] private static extern bool IsIconic(IntPtr h);

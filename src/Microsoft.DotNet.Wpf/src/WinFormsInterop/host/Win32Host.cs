@@ -359,6 +359,11 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
     [ThreadStatic] private static bool t_tracedEntry;
 
+    private static bool IsHostWindow(IntPtr hwnd)
+    {
+        lock (s_byHwnd) return s_byHwnd.ContainsKey(hwnd);
+    }
+
     /// <summary>The messages WF_TRACE_INPUT follows: input, activation, capture, moving and sizing.</summary>
     private static bool TracedMessage(uint msg) =>
         (msg >= 0x0200 && msg <= 0x020E) || (msg >= 0x00A0 && msg <= 0x00AD) || (msg >= 0x0100 && msg <= 0x0109)
@@ -554,7 +559,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _hwnd);
             if (surface == IntPtr.Zero) throw new InvalidOperationException("NativePlatform.CreateWindowSurface returned null");
             _wgpu = new WgpuPresenter(ctx, surface, _form.ClientSize.Width, _form.ClientSize.Height, _scale, srgb: true);
-            Console.WriteLine($"WebGPU present path active (HWND 0x{_hwnd:x}, format {_wgpu.Format}, scale {_scale}, client {ClientSize()})");
+            Console.WriteLine($"WebGPU present path active (HWND 0x{_hwnd:x}, format {_wgpu.Format}, present {_wgpu.PresentMode}, scale {_scale}, client {ClientSize()})");
         }
         // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and its
         // scale now that both exist. Inert when nothing is embedded.
@@ -708,12 +713,12 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         _lastPresentOk = WantsLayeredHost() && PresentLayered(scenes, caret)
             || _wgpu.PresentScenes(scenes, caret, RubberBands(ox, oy), _form.ClientSize.Width, _form.ClientSize.Height);
         if (s_traceFrames && _framesTraced++ < 4000)
-            Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms (paint {t1 - t0:0}, gpu {SinceStart - t1:0}) damage {_wgpu.LastDamage}");
+            Console.WriteLine($"[frames] {t0:0} ms: present v{ver} scenes={scenes.Count} ok={_lastPresentOk} took {SinceStart - t0:0} ms (paint {t1 - t0:0}, gpu {SinceStart - t1:0}: {_wgpu.LastTiming}) damage {_wgpu.LastDamage}");
         if (InputTrace.On)
         {
             int upTo = InputTrace.Seq;
             InputTrace.Log($"present v{ver} '{_form.Text}' {(upTo > InputTrace.Presented ? $"first with #{InputTrace.Presented + 1}..#{upTo}" : "no new input")}"
-                           + $" collect {tc1 - tc0:0.00} ms render+submit+present {InputTrace.Now - tc1:0.00} ms damage {_wgpu.LastDamage} ok={_lastPresentOk}");
+                           + $" collect {tc1 - tc0:0.00} ms render+submit+present {InputTrace.Now - tc1:0.00} ms ({_wgpu.LastTiming}) damage {_wgpu.LastDamage} ok={_lastPresentOk}");
             InputTrace.Presented = upTo;
         }
         _lastVer = ver; _lastCaretOn = caretOn;
@@ -762,8 +767,27 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             System.Windows.Forms.XplatUIWebGpu.NoteMessageHandled();   // Application.Idle follows a batch of them
             if (OfferToMessageFilters(ref msg)) continue;
             TranslateMessage(ref msg);
-            DispatchMessageW(ref msg);
+            int outer = t_pumpDepth;
+            t_pumpDepth = t_wndProcDepth + 1;   // the depth its handler runs at
+            // WF_TRACE_INPUT: input for a window that is not a host -- a hosted WPF tree's -- is
+            // numbered and timed here, since its handler is not this class's.
+            bool foreign = InputTrace.On && TracedMessage(msg.message) && msg.message >= 0x0100 && !IsHostWindow(msg.hwnd);
+            int n = foreign ? ++InputTrace.Seq : 0;
+            double t0 = foreign ? InputTrace.Now : 0;
+            if (foreign) InputTrace.Log($"in   #{n} msg 0x{msg.message:x4} to 0x{msg.hwnd:x} (not a host: hosted WPF?) at ({(short)((long)msg.lParam & 0xFFFF)},{(short)(((long)msg.lParam >> 16) & 0xFFFF)}) queued {unchecked(Environment.TickCount - (int)msg.time)} ms");
+            try { DispatchMessageW(ref msg); }
+            finally { t_pumpDepth = outer; }
+            if (foreign) InputTrace.Log($"done #{n} msg 0x{msg.message:x4} in {InputTrace.Now - t0:0.00} ms");
         }
+        // The batch is handled: the frames the input in it asked for (see InputFrame), this host's
+        // and any other window's of this thread that the batch reached.
+        Win32Host[] owed = null;
+        lock (s_byHwnd)
+            foreach (Win32Host h in s_byHwnd.Values)
+                if (h._presentOwed) (owed ??= new Win32Host[s_byHwnd.Count])[Array.IndexOf(owed, null)] = h;
+        if (owed != null)
+            foreach (Win32Host h in owed)
+                if (h != null && h._presentOwed) { h._presentOwed = false; if (!h.FormGone && h._form.Visible) h.Present(); }
         return !_quit;
     }
 
@@ -811,6 +835,13 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     // pressed/hover animation and caret updates show immediately (like the Cocoa pump).
     private IntPtr WindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
+        t_wndProcDepth++;
+        try { return WindowProcCore(hwnd, msg, wParam, lParam); }
+        finally { t_wndProcDepth--; }
+    }
+
+    private IntPtr WindowProcCore(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
         // WF_TRACE_INPUT=1: number every input message and time its handling (see InputTrace).
         if (InputTrace.On && TracedMessage(msg))
         {
@@ -824,7 +855,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                                + $" capture={(GetCapture() == hwnd ? "host" : GetCapture() == IntPtr.Zero ? "none" : $"0x{GetCapture():x}")} lbutton={((GetKeyState(0x01) & 0x8000) != 0 ? "down" : "up")}");
                 double t0 = InputTrace.Now;
                 t_tracedEntry = true;
-                IntPtr r = WindowProc(hwnd, msg, wParam, lParam);
+                IntPtr r = WindowProcCore(hwnd, msg, wParam, lParam);
                 InputTrace.Log($"done #{n} msg 0x{msg:x4} in {InputTrace.Now - t0:0.00} ms");
                 return r;
             }
@@ -845,16 +876,16 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // that goes outside simply stopped being reported: dragging a ListView column edge past
             // the dialog's edge could not widen the column beyond the dialog.
             case 0x0201: Trace("WM_LBUTTONDOWN", lParam); SetFocus(hwnd); SetCapture(hwnd);
-                MouseAt(lParam, _down); Frame(); return IntPtr.Zero;                // WM_LBUTTONDOWN
+                MouseAt(lParam, _down); InputFrame(); return IntPtr.Zero;                // WM_LBUTTONDOWN
             case 0x0202: Trace("WM_LBUTTONUP", lParam); ReleaseCapture();
-                MouseAt(lParam, _up); Frame(); return IntPtr.Zero;                  // WM_LBUTTONUP
+                MouseAt(lParam, _up); InputFrame(); return IntPtr.Zero;                  // WM_LBUTTONUP
             // The right button. Focus follows it, as it does in Windows -- the menu it raises
             // acts on the control that has the keyboard -- but no capture: the menu takes its
             // own. WinForms turns the release into WM_CONTEXTMENU itself.
             case 0x0204: Trace("WM_RBUTTONDOWN", lParam); SetFocus(hwnd);
-                MouseAt(lParam, _rightDown); Frame(); return IntPtr.Zero;           // WM_RBUTTONDOWN
+                MouseAt(lParam, _rightDown); InputFrame(); return IntPtr.Zero;           // WM_RBUTTONDOWN
             case 0x0205: Trace("WM_RBUTTONUP", lParam);
-                MouseAt(lParam, _rightUp); Frame(); return IntPtr.Zero;             // WM_RBUTTONUP
+                MouseAt(lParam, _rightUp); InputFrame(); return IntPtr.Zero;             // WM_RBUTTONUP
             // WM_ACTIVATE. A popup is dismissed by looking away from it: clicking the window it dropped
             // out of, or another application altogether. Nothing told it so -- it is a window of its own,
             // and a click elsewhere is not a message the driver ever sees -- so a colour picker that was
@@ -884,7 +915,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                     var pt = new POINT { x = (short)((long)lParam & 0xFFFF), y = (short)(((long)lParam >> 16) & 0xFFFF) };
                     ScreenToClient(hwnd, ref pt);
                     _wheel.Invoke(_driver, new object[] { _ox + (int)(pt.x / _scale), _oy + (int)(pt.y / _scale), delta });
-                    Frame();
+                    InputFrame();
                 }
                 return IntPtr.Zero;
             // WM_MOUSEMOVE: deliver the move, then set the cursor. Doing it here rather than
@@ -900,7 +931,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                     var tme = new TRACKMOUSEEVENT { cbSize = (uint)Marshal.SizeOf<TRACKMOUSEEVENT>(), dwFlags = 0x2 /* TME_LEAVE */, hwndTrack = hwnd };
                     _trackingLeave = TrackMouseEvent(ref tme);
                 }
-                MouseMove(lParam); ApplyCursor(); Frame(); return IntPtr.Zero;
+                MouseMove(lParam); ApplyCursor(); InputFrame(); return IntPtr.Zero;
             case 0x02A3:        // WM_MOUSELEAVE
                 _trackingLeave = false;
                 // Not always a leave: Windows cancels the tracking -- and posts this -- around a
@@ -931,7 +962,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 // a key-down. The key-down is the one a control acts on; inserting the code too put
                 // a stray character in the text box.
                 if (typed < ' ' && (ModifierState() & Keys.Control) != 0) return IntPtr.Zero;
-                _char.Invoke(_driver, new object[] { typed }); Frame(); return IntPtr.Zero;
+                _char.Invoke(_driver, new object[] { typed }); InputFrame(); return IntPtr.Zero;
             case 0x0100:                                                          // WM_KEYDOWN
                 int vk = (int)wParam;
                 PublishModifiers();
@@ -950,7 +981,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                     Frame();
                 }
                 else if (vk != 8 && vk != 13 && vk != 27)
-                { _keyDown.Invoke(_driver, new object[] { vk }); Frame(); }
+                { _keyDown.Invoke(_driver, new object[] { vk }); InputFrame(); }
                 return IntPtr.Zero;
             case 0x0101:                                                          // WM_KEYUP
                 PublishModifiers();
@@ -1131,6 +1162,37 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         Application.DoEvents();
         Present();
     }
+
+    /// <summary>
+    /// The frame after an input message. Presenting waits for the display -- the swap chain is FIFO
+    /// -- and it used to happen inside every input message's handler: app's ribbon took 20-50
+    /// ms per mouse move that changed a hover, the next move waited behind the vsync, and what was on
+    /// screen trailed the pointer by an item. Windows does it the other way round: input is handled
+    /// as it comes, and painting waits until the queue is empty. So does this, when the message came
+    /// from this host's own pump (Pump): the input is handled, its paints recorded, and the frame
+    /// goes out from the loop once there is nothing left to handle (PresentationHost.Tick). A message
+    /// dispatched by anyone else's loop -- Windows' own move/size and menu loops, a modal dialog of
+    /// the application's, WPF's dispatcher -- is presented at once, as before: nothing else would.
+    /// </summary>
+    private void InputFrame()
+    {
+        if (t_pumpDepth != 0 && t_wndProcDepth == t_pumpDepth)
+        {
+            if (InputTrace.On) InputTrace.Log($"defer #{InputTrace.Seq} present to the end of the message batch");
+            _tickTimers?.Invoke(_driver, null);
+            Application.DoEvents();
+            _presentOwed = true;
+            return;
+        }
+        Frame();
+    }
+
+    private bool _presentOwed;
+
+    // How deep the thread is in WindowProc calls, and how deep it was when this host's own pump
+    // dispatched the message being handled (see InputFrame).
+    [ThreadStatic] private static int t_wndProcDepth;
+    [ThreadStatic] private static int t_pumpDepth;
 
     private static readonly bool s_trace = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1";
     private void Trace(string what, IntPtr lParam)
