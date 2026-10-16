@@ -1103,6 +1103,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // Partial redraw: the disjoint device rectangles this (main) pass may write. Every draw's
             // scissor is intersected with each of them; null = the whole target.
             public List<Scissor>? Damage;
+            // The part of the target the pass draws, when the target is larger than the frame (a
+            // persistent target kept at its high-water size while its window is resized); 0 = all of it.
+            public int ViewportW, ViewportH;
 
             public LayerPass(IntPtr targetView, bool clearTransparent, RgbaColor clearColor, DrawData data, WGPUTextureFormat format)
             {
@@ -1479,6 +1482,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             BuildGeometryBuffers(lp.Data, out IntPtr vbuf, out IntPtr ibuf, out bool hasGeometry);
             RgbaColor clear = lp.ClearTransparent ? new RgbaColor(0, 0, 0, 0) : lp.ClearColor;
             IntPtr pass = lp.LoadPreserve ? BeginLoadPass(encoder, lp.TargetView) : BeginClearPass(encoder, lp.TargetView, clear);
+#if !WGPU_BROWSER
+            if (lp.ViewportW > 0 && lp.ViewportH > 0)
+                wgpuRenderPassEncoderSetViewport(pass, 0f, 0f, lp.ViewportW, lp.ViewportH, 0f, 1f);
+#endif
             if (hasGeometry)
             {
                 IntPtr atlasBindGroup = IntPtr.Zero;
@@ -5117,6 +5124,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static RgbaColor? PaperUnder(DrawData data, float x0, float y0, float x1, float y1,
                                              Func<Vector2, Vector2> fromNdc, out Func<int, int, RgbaColor?>? field)
         {
+            // Asked for every glyph run of GDI+ text, so its scratch list is reused (it can nest,
+            // through a clip layer, hence the stack) rather than allocated per question.
+            List<PaperInfo> partial = t_partialPool is { Count: > 0 } pool ? pool.Pop() : new List<PaperInfo>();
+            partial.Clear();
+            try { return PaperUnder(data, x0, y0, x1, y1, fromNdc, out field, partial); }
+            finally { partial.Clear(); (t_partialPool ??= new Stack<List<PaperInfo>>()).Push(partial); }
+        }
+
+        [ThreadStatic] private static Stack<List<PaperInfo>>? t_partialPool;
+
+        private static RgbaColor? PaperUnder(DrawData data, float x0, float y0, float x1, float y1,
+                                             Func<Vector2, Vector2> fromNdc, out Func<int, int, RgbaColor?>? field,
+                                             List<PaperInfo> partial)
+        {
             field = null;
             if (data.Culled is { Count: > 0 } culled && !data.CullConflict)
             {
@@ -5130,7 +5151,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             List<DrawItem> draws = data.Draws;
             List<PaperInfo> info = data.DrawInfo;
             RgbaColor? same = null;
-            var partial = new List<PaperInfo>();     // the partial fills met so far, newest first
+            // partial: the partial fills met so far, newest first (the caller's, empty)
             List<PaperInfo>? stack = null;           // set once they disagree in colour
             for (int i = info.Count; i < draws.Count; i++) info.Add(MeasureDraw(data, i, draws[i], fromNdc));
             for (int i = draws.Count - 1; i >= 0; i--)
@@ -5411,6 +5432,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        [ThreadStatic] private static HashSet<(float, float)>? t_corners;
+
         private static PaperInfo MeasureDraw(DrawData data, int index, DrawItem d, Func<Vector2, Vector2> fromNdc)
         {
             float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
@@ -5418,7 +5441,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             List<float> v = data.Verts;
             bool uniform = true;
             float r = 0, g = 0, bl = 0, a = 0;
-            var corners = new HashSet<(float, float)>();
+            HashSet<(float, float)> corners = t_corners ??= new HashSet<(float, float)>();
+            corners.Clear();
             for (uint k = d.FirstIndex; k < d.FirstIndex + d.IndexCount && k < idx.Count; k++)
             {
                 int at = (int) idx[(int) k] * FloatsPerVertex;

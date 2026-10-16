@@ -178,6 +178,9 @@ namespace Microsoft.Wpf.Interop.WebGpu
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void wgpuRenderPassEncoderSetScissorRect(IntPtr renderPassEncoder, uint x, uint y, uint width, uint height);
 
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuRenderPassEncoderSetViewport(IntPtr renderPassEncoder, float x, float y, float width, float height, float minDepth, float maxDepth);
+
         // ---- Surface (swap chain) -----------------------------------------------
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
