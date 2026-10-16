@@ -1707,6 +1707,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             DeferReleasePass(pass);
         }
 
+        /// <summary>Copy the top-left <paramref name="w"/> x <paramref name="h"/> of a persistent target to a
+        /// presentable view, the rest cleared to <paramref name="background"/>, and submit.</summary>
+        internal void BlitToViewClipped(IntPtr view, WGPUTextureFormat format, IntPtr bindGroup, RgbaColor background, int w, int h)
+        {
+            try
+            {
+                IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
+                IntPtr pass = BeginClearPass(encoder, view, background);
+                if (w > 0 && h > 0)
+                {
+                    wgpuRenderPassEncoderSetPipeline(pass, BlitPipeline(format));
+                    wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+                    if (_blitIndices == IntPtr.Zero)
+                    {
+                        ReadOnlySpan<uint> idx = stackalloc uint[] { 0, 1, 2, 0 };
+                        _blitIndices = _ctx.CreateBufferMapped(System.Runtime.InteropServices.MemoryMarshal.AsBytes(idx), WGPUBufferUsage.Index);
+                    }
+                    wgpuRenderPassEncoderSetScissorRect(pass, 0, 0, (uint)w, (uint)h);
+                    wgpuRenderPassEncoderSetIndexBuffer(pass, _blitIndices, WGPUIndexFormat.Uint32, 0, 16);
+                    wgpuRenderPassEncoderDrawIndexed(pass, 3, 1, 0, 0, 0);
+                }
+                wgpuRenderPassEncoderEnd(pass);
+                DeferReleasePass(pass);
+                IntPtr commandBuffer = wgpuCommandEncoderFinish(encoder, IntPtr.Zero);
+                IntPtr* cmds = stackalloc IntPtr[1];
+                cmds[0] = commandBuffer;
+                wgpuQueueSubmit(_ctx.Queue, 1, cmds);
+                DeferReleaseEncoder(encoder);
+                DeferReleaseCmdBuffer(commandBuffer);
+            }
+            finally { FlushFrameReleases(); }
+        }
+
         /// <summary>Copy a persistent target to a presentable view and submit.</summary>
         internal void BlitToView(IntPtr view, WGPUTextureFormat format, IntPtr bindGroup)
         {
@@ -1855,6 +1888,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             /// <summary>The tracker's clock, for tests.</summary>
             internal Func<long> Clock { get => _tracker.Clock; set => _tracker.Clock = value; }
+
+            /// <summary>Put the last frame drawn into <paramref name="view"/> as it was, at the top left of a
+            /// view of another size, the rest <paramref name="background"/> -- for a window that has just
+            /// been resized and whose new frame is not made yet. False when there is no last frame.</summary>
+            internal bool PresentLast(IntPtr view, WGPUTextureFormat viewFormat, int width, int height, RgbaColor background)
+            {
+                if (!Enabled || _tex == IntPtr.Zero || !_valid || _blitBg == IntPtr.Zero || _blitFmt != viewFormat) return false;
+                _r.BlitToViewClipped(view, viewFormat, _blitBg, background, Math.Min(_w, width), Math.Min(_h, height));
+                return true;
+            }
 
             /// <summary>The next frame is drawn in full (contents lost, surface recreated, ...).</summary>
             internal void Invalidate() => _valid = false;
