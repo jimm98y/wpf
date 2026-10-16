@@ -51,7 +51,7 @@ namespace System.Windows.Forms {
 		private object tag;
 		private string toolTipText;
 		private object valuex;
-		private Type valueType;
+		internal Type valueType;
 
 		protected DataGridViewCell ()
 		{
@@ -901,7 +901,8 @@ namespace System.Windows.Forms {
 			if (DataGridView == null)
 				return null;
 				
-			if (rowIndex < 0 || rowIndex >= DataGridView.RowCount)
+			// A column header (and the top-left cell) is formatted at row -1, as in .NET.
+			if (rowIndex < (this is DataGridViewHeaderCell ? -1 : 0) || rowIndex >= DataGridView.RowCount)
 				throw new ArgumentOutOfRangeException ("rowIndex");
 
 			// Give the user a chance to custom format

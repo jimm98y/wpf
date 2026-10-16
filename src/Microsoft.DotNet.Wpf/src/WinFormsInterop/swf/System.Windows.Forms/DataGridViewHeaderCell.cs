@@ -69,8 +69,9 @@ namespace System.Windows.Forms {
 			set { base.Selected = value; }
 		}
 
+		// .NET: a header cell's value is any object unless told otherwise.
 		public override Type ValueType {
-			get { return base.ValueType; }
+			get { return valueType ?? typeof (object); }   // not the owning column's
 			set { base.ValueType = value; }
 		}
 
