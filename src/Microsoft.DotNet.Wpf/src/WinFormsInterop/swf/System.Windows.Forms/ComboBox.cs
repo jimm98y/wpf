@@ -1577,7 +1577,7 @@ namespace System.Windows.Forms
 
 			if (show_dropdown_button) {
 				ButtonState current_state;
-				if (is_enabled)
+				if (Enabled)   // the effective state: a disabled container disables its combo box too
 					current_state = button_state;
 				else
 					current_state = ButtonState.Inactive;

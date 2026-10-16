@@ -299,8 +299,10 @@ namespace System.Windows.Forms
 			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
 			Color back = inField ? ComboBoxFieldBackColor (ctrl) : selected ? ComboListSelection : e.BackColor;
 			Color fore = inField ? ColorControlText : selected ? ColorHighlightText : e.ForeColor;
+			// Disabled: GrayText, as comctl32 draws a disabled drop-down list's caption (measured on
+			// stock: #6D6D6D on the #FAFAFA face, whether the combo or its container is disabled).
 			if (!ctrl.Enabled)
-				fore = ColorInactiveCaptionText;
+				fore = SystemColors.GrayText;
 
 			e.Graphics.FillRectangle (ResPool.GetSolidBrush (back), e.Bounds);
 			if (e.Index != -1) {
