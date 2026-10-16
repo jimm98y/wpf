@@ -192,27 +192,60 @@ namespace System.Drawing.WebGpuBackend
             int w = px1 - px0, h = py1 - py0;
             if (w <= 0 || h <= 0 || (long) w * h > 1 << 22)
                 return false;
+            // Each span adds, to every pixel it crosses, the subsamples of it that pixel holds: the
+            // ragged first and last pixels directly, the whole pixels between them (8 each) through a
+            // difference row summed once per pixel row. Counting the span one subsample at a time is
+            // the same sum, eight to a pixel, and was most of a big panel's fill.
             var count = new int [w * h];
+            var diff = new int [w + 1];
+            int diffRow = -1;
+            void FlushDiff ()
+            {
+                if (diffRow < 0) return;
+                int acc = 0, at = diffRow * w;
+                for (int x = 0; x < w; x++) { acc += diff [x]; count [at + x] += acc; diff [x] = 0; }
+                diff [w] = 0;
+                diffRow = -1;
+            }
             for (int ri = 0; ri < rows.Length; ri++) {
                 var r = rows [ri];
                 if (r == null)
                     continue;
                 r.Sort ((u, v) => u.X.CompareTo (v.X));
                 int row = (int) ((k0 + ri) >> 2) - py0;
+                if (row != diffRow) { FlushDiff (); diffRow = row; }
+                int at = row * w;
                 int wind = 0;
                 for (int j = 0; j + 1 < r.Count; j++) {
                     wind += winding ? r [j].Dir : 1;
                     bool inside = winding ? wind != 0 : (wind & 1) != 0;
                     if (!inside) continue;
-                    for (long sx = r [j].X; sx < r [j + 1].X; sx++)
-                        count [row * w + (int) (sx >> 3) - px0]++;
+                    long s0 = r [j].X, s1 = r [j + 1].X;
+                    if (s1 <= s0) continue;
+                    int p0 = (int) (s0 >> 3) - px0, p1 = (int) ((s1 - 1) >> 3) - px0;
+                    if (p0 == p1) { count [at + p0] += (int) (s1 - s0); continue; }
+                    count [at + p0] += (int) (((long) (p0 + px0 + 1) << 3) - s0);
+                    count [at + p1] += (int) (s1 - ((long) (p1 + px0) << 3));
+                    if (p1 > p0 + 1) { diff [p0 + 1] += 8; diff [p1] -= 8; }
                 }
             }
+            FlushDiff ();
             alpha = new byte [w * h];
-            for (int i = 0; i < count.Length; i++)
-                alpha [i] = (byte) Math.Min (255, (int) (count [i] * 255 / 32.0 + 0.5));
+            for (int i = 0; i < count.Length; i++) {
+                int cnt = count [i];
+                alpha [i] = cnt < s_alphaOf.Length ? s_alphaOf [cnt] : (byte) Math.Min (255, (int) (cnt * 255 / 32.0 + 0.5));
+            }
             bounds = new Rectangle (px0, py0, w, h);
             return true;
+        }
+
+        /// <summary>round(count * 255 / 32), for the counts a pixel can have.</summary>
+        static readonly byte [] s_alphaOf = BuildAlphaTable ();
+        static byte [] BuildAlphaTable ()
+        {
+            var t = new byte [65];
+            for (int i = 0; i < t.Length; i++) t [i] = (byte) Math.Min (255, (int) (i * 255 / 32.0 + 0.5));
+            return t;
         }
 
         static long CeilDiv (long a, long b)

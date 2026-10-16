@@ -17,6 +17,7 @@
 // 0x10000000 Rect, 0x10000001 Path, 0x10000002 Empty, 0x10000003 Infinite.
 //
 
+using System.Collections.Generic;
 using System.Drawing.Drawing2D;
 
 namespace System.Drawing.WebGpuBackend.Gdip
@@ -136,6 +137,50 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
         }
 
+        // A path clip's device region, kept for the exact same points, types, rule and matrix. A control
+        // that clips to the same rounded path on every paint (DotNetBar's buttons and panels do, and a
+        // window move repaints all of them) rasterized it again each time.
+        static readonly Dictionary<PathKey, DpRegion> s_pathRegions = new Dictionary<PathKey, DpRegion> ();
+
+        readonly struct PathKey : IEquatable<PathKey>
+        {
+            readonly PointF[] _pts; readonly byte[] _types; readonly FillMode _fill; readonly GpMatrix _m; readonly int _hash;
+            public PathKey (PointF[] pts, byte[] types, FillMode fill, in GpMatrix m)
+            {
+                _pts = (PointF[]) pts.Clone (); _types = (byte[]) types.Clone (); _fill = fill; _m = m;
+                var h = new HashCode ();
+                h.Add (fill); h.Add (m.M11); h.Add (m.M12); h.Add (m.M21); h.Add (m.M22); h.Add (m.Dx); h.Add (m.Dy);
+                foreach (PointF q in pts) { h.Add (q.X); h.Add (q.Y); }
+                foreach (byte t in types) h.Add (t);
+                _hash = h.ToHashCode ();
+            }
+            public bool Equals (PathKey o)
+            {
+                if (_hash != o._hash || _fill != o._fill || _pts.Length != o._pts.Length || _types.Length != o._types.Length) return false;
+                if (_m.M11 != o._m.M11 || _m.M12 != o._m.M12 || _m.M21 != o._m.M21 || _m.M22 != o._m.M22 || _m.Dx != o._m.Dx || _m.Dy != o._m.Dy) return false;
+                for (int i = 0; i < _pts.Length; i++) if (_pts [i] != o._pts [i]) return false;
+                for (int i = 0; i < _types.Length; i++) if (_types [i] != o._types [i]) return false;
+                return true;
+            }
+            public override bool Equals (object o) => o is PathKey k && Equals (k);
+            public override int GetHashCode () => _hash;
+        }
+
+        static DpRegion PathDevice (PointF[] pts, byte[] types, FillMode fill, in GpMatrix m)
+        {
+            if (pts == null || types == null || pts.Length != types.Length || pts.Length > 4096)
+                return GpRegionRaster.FromPath (pts, types, fill, m);
+            var key = new PathKey (pts, types, fill, m);
+            lock (s_pathRegions)
+                if (s_pathRegions.TryGetValue (key, out DpRegion cached)) return cached.Clone ();
+            DpRegion r = GpRegionRaster.FromPath (pts, types, fill, m);
+            lock (s_pathRegions) {
+                if (s_pathRegions.Count > 4096) s_pathRegions.Clear ();
+                s_pathRegions [key] = r.Clone ();
+            }
+            return r;
+        }
+
         /// <summary>The device region under <paramref name="m"/> (UpdateDeviceRegion).</summary>
         public DpRegion Device (in GpMatrix m)
         {
@@ -158,7 +203,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 return GpRegionRaster.FromPath (p, new byte [] { 0, 1, 1, 0x81 }, FillMode.Alternate, m);
             }
             case NodePath:
-                return GpRegionRaster.FromPath (Points, Types, Fill, m);
+                return PathDevice (Points, Types, Fill, m);
             default: {
                 DpRegion a = Left.Device (m), b = Right.Device (m);
                 DpRegion.Op op = Type switch {
