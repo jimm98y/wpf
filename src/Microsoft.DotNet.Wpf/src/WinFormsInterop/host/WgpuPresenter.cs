@@ -221,7 +221,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         WGPUStatus presented = wgpuSurfacePresent(_surface);
         long p4 = System.Diagnostics.Stopwatch.GetTimestamp();
         double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-        LastTiming = $"build {Ms(p0, p1):0.0} acquire {Ms(p1, p2):0.0} render+submit {Ms(p2, p3):0.0} present {Ms(p3, p4):0.0} ms at {DeviceWidth}x{DeviceHeight} {PresentMode}";
+        LastTiming = $"build {Ms(p0, p1):0.0} acquire {Ms(p1, p2):0.0} render+submit {Ms(p2, p3):0.0} present {Ms(p3, p4):0.0} ms at {DeviceWidth}x{DeviceHeight} {PresentMode} [{_partial.LastSplit}]";
         bool ok = presented == WGPUStatus.Success;
         // A window that shows the CLEAR COLOUR and nothing else looks exactly like a renderer that
         // drew nothing, and it is not: the scenes can all be built and rendered correctly and still
