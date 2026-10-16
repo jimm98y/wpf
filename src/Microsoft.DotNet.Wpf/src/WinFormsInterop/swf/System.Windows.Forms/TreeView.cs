@@ -1758,8 +1758,12 @@ namespace System.Windows.Forms {
 			} else if (!hide_selection && node == highlighted_node) {
 				dc.FillRectangle (SystemBrushes.Control, r);
 			} else {
-				// If selected_node is not the current highlighted one, use the color of the TreeView
-				Color back_color = node == selected_node ? BackColor : node.BackColor;
+				// Not drawn as selected: the node's own colours, as stock's custom draw hands
+				// comctl32 node.BackColor/ForeColor whenever the item is not shown highlighted. The
+				// selected node is no exception -- AlarmWorX's TreeViewEx marks its selection by
+				// setting BackColor = Highlight and ForeColor = HighlightText, and filling the
+				// TreeView's own white under that white text made the selected node vanish.
+				Color back_color = node.BackColor.IsEmpty ? BackColor : node.BackColor;
 				dc.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (back_color), r);
 			}
 		}
