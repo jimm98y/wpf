@@ -102,6 +102,8 @@ public static unsafe partial class Exports
         W((delegate* unmanaged<nint, uint, int>)&RegisterTouchWindow, A0, "RegisterTouchWindow");
         W((delegate* unmanaged<nint, int>)&UnregisterTouchWindow, A0, "UnregisterTouchWindow");
         W((delegate* unmanaged<nint, uint*, int>)&IsTouchWindow, A0, "IsTouchWindow");
+        W((delegate* unmanaged<nint, uint, uint, GESTURECONFIG*, uint, int>)&SetGestureConfig, A0, "SetGestureConfig");
+        W((delegate* unmanaged<nint, uint, uint, uint*, GESTURECONFIG*, uint, int>)&GetGestureConfig, A0, "GetGestureConfig");
 
         // What Windows hands back: the host window of a form is the form (WindowsAnswers below).
         W((delegate* unmanaged<delegate* unmanaged<nint, nint, int>, nint, int>)&WinEnumWindows, Always, "EnumWindows");

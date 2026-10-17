@@ -44,6 +44,8 @@ public static unsafe partial class Exports
         R((delegate* unmanaged<nint, uint, int>)&RegisterTouchWindow, "RegisterTouchWindow");
         R((delegate* unmanaged<nint, int>)&UnregisterTouchWindow, "UnregisterTouchWindow");
         R((delegate* unmanaged<nint, uint*, int>)&IsTouchWindow, "IsTouchWindow");
+        R((delegate* unmanaged<nint, uint, uint, GESTURECONFIG*, uint, int>)&SetGestureConfig, "SetGestureConfig");
+        R((delegate* unmanaged<nint, uint, uint, uint*, GESTURECONFIG*, uint, int>)&GetGestureConfig, "GetGestureConfig");
         R((delegate* unmanaged<nint, RECT*, int>)&GetWindowRectExport, "GetWindowRect");
         R((delegate* unmanaged<nint, RECT*, int>)&GetClientRect, "GetClientRect");
         R((delegate* unmanaged<nint, POINT*, int>)&ClientToScreen, "ClientToScreen");
@@ -476,6 +478,51 @@ public static unsafe partial class Exports
         bool on = s_touchWindows.TryGetValue(hwnd, out uint f);
         if (flags != null) *flags = on ? f : 0;
         return on ? TRUE : FALSE;
+    }
+
+    // Gesture configuration on the stack's windows, for the same reason: DotNetBar's ItemPanel asks
+    // for gestures (SetGestureConfig) rather than raw touch, user32 refused the window, and the panel's
+    // OnHandleCreated threw "Cannot register window" on any machine with a digitizer. The configuration
+    // is kept per window and handed back by GetGestureConfig; the gestures themselves are not
+    // synthesised (touch arrives as pointer input through the host window).
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct GESTURECONFIG { public uint dwID, dwWant, dwBlock; }
+
+    private static readonly ConcurrentDictionary<nint, GESTURECONFIG[]> s_gestureConfigs = new();
+
+    [UnmanagedCallersOnly]
+    private static int SetGestureConfig(nint hwnd, uint reserved, uint count, GESTURECONFIG* configs, uint cbSize)
+    {
+        if (Resolve(hwnd) == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
+        if (reserved != 0 || (count != 0 && configs == null) || cbSize != (uint)sizeof(GESTURECONFIG))
+        {
+            SetLastError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        var copy = new GESTURECONFIG[count];
+        for (int i = 0; i < count; i++) copy[i] = configs[i];
+        s_gestureConfigs[hwnd] = copy;
+        return TRUE;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int GetGestureConfig(nint hwnd, uint reserved, uint flags, uint* count, GESTURECONFIG* configs, uint cbSize)
+    {
+        if (Resolve(hwnd) == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
+        if (count == null || cbSize != (uint)sizeof(GESTURECONFIG)) { SetLastError(ERROR_INVALID_PARAMETER); return FALSE; }
+        // Asked by gesture ID, as Windows does: each requested ID gets what was set for it, or the
+        // default (every gesture wanted, nothing blocked) when it was never configured.
+        s_gestureConfigs.TryGetValue(hwnd, out GESTURECONFIG[] set);
+        for (int i = 0; i < *count; i++)
+        {
+            uint id = configs[i].dwID;
+            GESTURECONFIG found = new GESTURECONFIG { dwID = id, dwWant = 1, dwBlock = 0 };
+            if (set != null)
+                foreach (GESTURECONFIG g in set)
+                    if (g.dwID == id || g.dwID == 0) { found = new GESTURECONFIG { dwID = id, dwWant = g.dwWant, dwBlock = g.dwBlock }; if (g.dwID == id) break; }
+            configs[i] = found;
+        }
+        return TRUE;
     }
 
     [UnmanagedCallersOnly]
