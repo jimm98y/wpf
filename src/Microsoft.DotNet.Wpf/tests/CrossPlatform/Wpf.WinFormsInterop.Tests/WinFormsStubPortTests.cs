@@ -214,6 +214,31 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(grid.EditingPanel.Width, editing.Width);
         }
 
+        [Fact]
+        public void DataGridViewCellStyleConverter_SerializesTheParameterlessConstructor()
+        {
+            var converter = new SWF.DataGridViewCellStyleConverter();
+            Type descriptorType = typeof(System.ComponentModel.Design.Serialization.InstanceDescriptor);
+            Assert.True(converter.CanConvertTo(null, descriptorType));
+            var descriptor = (System.ComponentModel.Design.Serialization.InstanceDescriptor)converter.ConvertTo(null, null, new SWF.DataGridViewCellStyle(), descriptorType)!;
+            Assert.Equal(typeof(SWF.DataGridViewCellStyle).GetConstructor(Type.EmptyTypes), descriptor.MemberInfo);
+            Assert.Empty(descriptor.Arguments);
+            Assert.False(descriptor.IsComplete);
+        }
+
+        [Fact]
+        public void TheResXTypeResolution_LooksInTheListedAssemblies()
+        {
+            Type t = typeof(SWF.Form).Assembly.GetType("System.Resources.AssemblyNamesTypeResolutionService")!;
+            var names = new[] { typeof(WinFormsStubPortTests).Assembly.GetName() };
+            var svc = (System.ComponentModel.Design.ITypeResolutionService)Activator.CreateInstance(t, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public, null, new object[] { names }, null)!;
+            Assert.Same(typeof(Order), svc.GetType(typeof(Order).FullName + ", SomeOtherAssembly", false));
+            Assert.Same(typeof(WinFormsStubPortTests).Assembly, svc.GetAssembly(names[0]));
+            Assert.Null(svc.GetType("No.Such.Type", false));
+            Assert.Throws<ArgumentException>(() => svc.GetType("No.Such.Type", true));
+            Assert.Throws<NotSupportedException>(() => svc.ReferenceAssembly(names[0]));
+        }
+
         private sealed class RtbWithCallback : SWF.RichTextBox
         {
             public object Callback() => CreateRichEditOleCallback();
