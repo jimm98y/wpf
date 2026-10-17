@@ -184,7 +184,7 @@ namespace System.ComponentModel.Design
 				foreach (object component in components) {
 					if (component is IComponent && !_selection.Contains (component)) {
 						_selection.Add (component);
-						_primarySelection = (IComponent) component;
+						_primarySelection = component as IComponent;
 					}
 				}
 			}
@@ -217,7 +217,7 @@ namespace System.ComponentModel.Design
 						}
 						else {
 							_selection.Add (component);
-							_primarySelection = (IComponent) component;
+							_primarySelection = component as IComponent;
 						}
 					}
 				}
@@ -234,7 +234,7 @@ namespace System.ComponentModel.Design
 				if (!this.GetComponentSelected (primarySelection))
 					_selection.Add (primarySelection);
 
-				_primarySelection = (IComponent) primarySelection;
+				_primarySelection = primarySelection as IComponent;
 			}				
 						
 			OnSelectionChanged ();

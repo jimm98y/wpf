@@ -121,6 +121,16 @@ namespace System.ComponentModel.Design
 			}
 		}
 
+		// What .NET's UndoEngine names a change by (GetName): the site's name for a sited component,
+		// otherwise the object's type. An application may raise a change for an object that is no
+		// component at all -- ICONICS raises ComponentChanged for a WPF control when its configurator
+		// closes -- and .NET records nothing for it; the hard cast here threw InvalidCastException.
+		private static string NameOf (object component)
+			=> component is IComponent c && c.Site != null ? c.Site.Name : component?.GetType ().Name ?? string.Empty;
+
+		/// <summary>Whether undo can record a change of <paramref name="component"/>: a sited component.</summary>
+		internal static bool Undoable (object component) => component is IComponent c && c.Site != null;
+
 		private void OnComponentAdding (object sender, ComponentEventArgs args)
 		{
 			if (_currentUnit == null)
@@ -131,7 +141,7 @@ namespace System.ComponentModel.Design
 		private void OnComponentAdded (object sender, ComponentEventArgs args)
 		{
 			if (_currentUnit == null)
-				_currentUnit = CreateUndoUnit ("Add " + args.Component.Site.Name, true);
+				_currentUnit = CreateUndoUnit ("Add " + NameOf (args.Component), true);
 			_currentUnit.ComponentAdded (args);
 
 			IDesignerHost host = GetRequiredService (typeof (IDesignerHost)) as IDesignerHost;
@@ -145,7 +155,7 @@ namespace System.ComponentModel.Design
 		private void OnComponentRemoving (object sender, ComponentEventArgs args)
 		{
 			if (_currentUnit == null)
-				_currentUnit = CreateUndoUnit ("Remove " + args.Component.Site.Name, true);
+				_currentUnit = CreateUndoUnit ("Remove " + NameOf (args.Component), true);
 			_currentUnit.ComponentRemoving (args);
 		}
 
@@ -166,7 +176,7 @@ namespace System.ComponentModel.Design
 		private void OnComponentChanging (object sender, ComponentChangingEventArgs args)
 		{
 			if (_currentUnit == null)
-				_currentUnit = CreateUndoUnit ("Modify " + ((IComponent)args.Component).Site.Name + 
+				_currentUnit = CreateUndoUnit ("Modify " + NameOf (args.Component) +
 							       (args.Member != null ? "." + args.Member.Name : ""), 
 							       true);
 			_currentUnit.ComponentChanging (args);
@@ -175,7 +185,7 @@ namespace System.ComponentModel.Design
 		private void OnComponentChanged (object sender, ComponentChangedEventArgs args)
 		{
 			if (_currentUnit == null)
-				_currentUnit = CreateUndoUnit ("Modify " + ((IComponent)args.Component).Site.Name + "." + 
+				_currentUnit = CreateUndoUnit ("Modify " + NameOf (args.Component) + "." + 
 							       (args.Member != null ? "." + args.Member.Name : ""), 
 							       true);
 			_currentUnit.ComponentChanged (args);
@@ -191,7 +201,7 @@ namespace System.ComponentModel.Design
 		private void OnComponentRename (object sender, ComponentRenameEventArgs args)
 		{
 			if (_currentUnit == null)
-				_currentUnit = CreateUndoUnit ("Rename " + ((IComponent)args.Component).Site.Name, true);
+				_currentUnit = CreateUndoUnit ("Rename " + NameOf (args.Component), true);
 			_currentUnit.ComponentRename (args);
 
 			IDesignerHost host = GetRequiredService (typeof (IDesignerHost)) as IDesignerHost;
@@ -498,8 +508,7 @@ namespace System.ComponentModel.Design
 
 			public virtual void ComponentAdded (ComponentEventArgs e)
 			{
-				if (!_closed) {
-					// Console.WriteLine ("New Action: Component*Add*RemoveAction (" + ((IComponent)e.Component).Site.Name + ")");
+				if (!_closed && UndoEngine.Undoable (e.Component)) {
 					_actions.Add (new ComponentAddRemoveAction (_engine, (IComponent) e.Component, true));
 				}
 			}
@@ -510,7 +519,7 @@ namespace System.ComponentModel.Design
 
 			public virtual void ComponentChanged (ComponentChangedEventArgs e)
 			{
-				if (_closed)
+				if (_closed || !UndoEngine.Undoable (e.Component))
 					return;
 
 				// A component starts getting removed. 
@@ -536,7 +545,7 @@ namespace System.ComponentModel.Design
 
 			public virtual void ComponentChanging (ComponentChangingEventArgs e)
 			{
-				if (_closed)
+				if (_closed || !UndoEngine.Undoable (e.Component))
 					return;
 
 				// Console.WriteLine ("New Action: ComponentChangeAction (" + ((IComponent)e.Component).Site.Name + ")");
@@ -551,8 +560,7 @@ namespace System.ComponentModel.Design
 
 			public virtual void ComponentRemoving (ComponentEventArgs e)
 			{
-				if (!_closed) {
-					// Console.WriteLine ("New Action: ComponentAdd*Remove*Action (" + ((IComponent)e.Component).Site.Name + ")");
+				if (!_closed && UndoEngine.Undoable (e.Component)) {
 					_actions.Add (new ComponentAddRemoveAction (_engine, e.Component, false));
 				}
 			}
