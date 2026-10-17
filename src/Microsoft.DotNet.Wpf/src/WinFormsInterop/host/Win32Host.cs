@@ -737,7 +737,10 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
         double t0 = s_traceFrames ? SinceStart : 0;
         double tc0 = InputTrace.On ? InputTrace.Now : 0;
-        var scenes = GetScenes(out int ox, out int oy);
+        var owners = new System.Collections.Generic.List<IntPtr>();
+        var scenes = GetScenes(out int ox, out int oy, owners);
+        // A popup reaching past this window is presented by a window of its own (Win32Host.Popups).
+        scenes = PresentOverflowingPopups(scenes, owners);
         Rectangle? caret = GetCaretRect(ox, oy);
         double t1 = s_traceFrames ? SinceStart : 0;
         double tc1 = InputTrace.On ? InputTrace.Now : 0;
@@ -784,6 +787,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     public void Close()
     {
         if (_hwnd == IntPtr.Zero) return;
+        DestroyPopupWindows();
         System.Windows.Forms.XplatUIWebGpu.FrameChanged -= OnFrameChanged;
         IntPtr hwnd = _hwnd;
         _hwnd = IntPtr.Zero;
@@ -1008,7 +1012,8 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 // capture change as well, so a click on a list's scroll track "left" the window with
                 // the pointer still on the bar, and the bar shut under it. Only a pointer that is
                 // really over another window has left.
-                if (GetCursorPos(out POINT at) && WindowFromPoint(at) == hwnd)
+                // (Over one of this host's popup windows is over this window too: their mouse is this window's.)
+                if (GetCursorPos(out POINT at) && (WindowFromPoint(at) == hwnd || IsMyPopupWindow(WindowFromPoint(at))))
                 {
                     var again = new TRACKMOUSEEVENT { cbSize = (uint)Marshal.SizeOf<TRACKMOUSEEVENT>(), dwFlags = 0x2 /* TME_LEAVE */, hwndTrack = hwnd };
                     _trackingLeave = TrackMouseEvent(ref again);
@@ -1679,6 +1684,11 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     private string _lastSceneTrace;
 
     private System.Collections.Generic.List<(object, int, int)> GetScenes(out int ox, out int oy)
+        => GetScenes(out ox, out oy, null);
+
+    /// <summary>The frame's scenes; with <paramref name="owners"/>, also the top-level window each one belongs to
+    /// (the form's, or a popup's), in step with the list.</summary>
+    private System.Collections.Generic.List<(object, int, int)> GetScenes(out int ox, out int oy, System.Collections.Generic.List<IntPtr> owners)
     {
         long[] wins = PresentWindows();
         ox = wins.Length >= 3 ? (int)wins[1] : 0;
@@ -1708,15 +1718,15 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             string line = sb.ToString();
             if (line != _lastSceneTrace) { _lastSceneTrace = line; Console.WriteLine(line); }
         }
-        if (embedded == null) return list;
+        if (embedded == null) { owners?.AddRange(tops); return list; }
         var ordered = new System.Collections.Generic.List<(object, int, int)>(list.Count + embedded.Count);
         var placed = new bool[embedded.Count];
         for (int i = 0; i < list.Count; i++)
         {
-            ordered.Add(list[i]);
+            ordered.Add(list[i]); owners?.Add(tops[i]);
             if (tops.LastIndexOf(tops[i]) != i) continue;          // not that window's last scene
             for (int k = 0; k < embedded.Count; k++)
-                if (!placed[k] && embedded[k].TopLevel == tops[i]) { ordered.Add((embedded[k].Scene, embedded[k].X, embedded[k].Y)); placed[k] = true; }
+                if (!placed[k] && embedded[k].TopLevel == tops[i]) { ordered.Add((embedded[k].Scene, embedded[k].X, embedded[k].Y)); owners?.Add(tops[i]); placed[k] = true; }
         }
         // What is left sits in a window this host does not draw. Content inside ANOTHER form is that
         // form's host's to show (or nobody's, if that form is hidden): drawn here too it was laid
@@ -1724,7 +1734,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         // up as a blank white window, the canvas covering its controls. Only content that is in no
         // form at all is drawn last, as before.
         for (int k = 0; k < embedded.Count; k++)
-            if (!placed[k] && !OtherHostsWindow(embedded[k].TopLevel)) ordered.Add((embedded[k].Scene, embedded[k].X, embedded[k].Y));
+            if (!placed[k] && !OtherHostsWindow(embedded[k].TopLevel)) { ordered.Add((embedded[k].Scene, embedded[k].X, embedded[k].Y)); owners?.Add(IntPtr.Zero); }
         return ordered;
     }
 

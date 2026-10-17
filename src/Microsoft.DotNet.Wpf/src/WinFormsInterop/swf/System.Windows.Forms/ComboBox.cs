@@ -2642,7 +2642,13 @@ namespace System.Windows.Forms
 				else { // DropDown or DropDownList
 					
 					width = owner.DropDownWidth;
-					int visible_items_count = (owner.Items.Count <= owner.MaxDropDownItems) ? owner.Items.Count : owner.MaxDropDownItems;
+					// comctl32 v6 (visual styles) sizes an integral-height list by its own CB_SETMINVISIBLE count,
+					// 30 by default, and .NET never sends MaxDropDownItems there: measured against stock .NET 10,
+					// a list of 20 shows all 20 and one of 40 shows 30 whatever MaxDropDownItems says. Without
+					// visual styles (comctl32 v5), or without IntegralHeight, MaxDropDownItems holds.
+					int max_items = Application.RenderWithVisualStyles && owner.IntegralHeight && owner.DropDownHeight == default_drop_down_height
+						? 30 : owner.MaxDropDownItems;
+					int visible_items_count = (owner.Items.Count <= max_items) ? owner.Items.Count : max_items;
 					
 					if (owner.DrawMode == DrawMode.OwnerDrawVariable) {
 						height = 0;
@@ -2650,12 +2656,12 @@ namespace System.Windows.Forms
 							height += owner.GetItemHeight (i);
 						}
 
-						show_scrollbar = owner.Items.Count > owner.MaxDropDownItems;
+						show_scrollbar = owner.Items.Count > max_items;
 						
 					} else	{
 						if (owner.DropDownHeight == default_drop_down_height) { // ignore DropDownHeight
 							height = owner.ItemHeight * visible_items_count;
-							show_scrollbar = owner.Items.Count > owner.MaxDropDownItems;
+							show_scrollbar = owner.Items.Count > max_items;
 						} else {
 							// ignore visible items count, and use manual height instead
 							height = owner.DropDownHeight;
@@ -2939,6 +2945,16 @@ namespace System.Windows.Forms
 				Draw (pevent.ClipRectangle,pevent.Graphics);
 			}
 
+			/// <summary>Where the drop-down list goes: at <paramref name="below"/> (under the combo) when
+			/// it fits above the work area's bottom, otherwise directly above the combo -- comctl32's
+			/// "(rect.bottom + height) >= rcWork.bottom" test.</summary>
+			internal static Point DropDownLocation (Rectangle combo, Point below, int listHeight, Rectangle workArea)
+			{
+				if (below.Y + listHeight >= workArea.Bottom)
+					return new Point (below.X, combo.Top - listHeight);
+				return below;
+			}
+
 			public bool ShowWindow ()
 			{
 				if (owner.DropDownStyle == ComboBoxStyle.Simple && owner.Items.Count == 0)
@@ -2947,10 +2963,13 @@ namespace System.Windows.Forms
 				HighlightedIndex = owner.SelectedIndex;
 
 				CalcListBoxArea ();
-				// If the listbox would extend below the screen, move it above the textbox.
-				Rectangle scrn_rect = Screen.FromControl (owner).Bounds;
-				if (this.Location.Y + this.Height >= scrn_rect.Bottom)
-					this.Location = new Point (this.Location.X, this.Location.Y - (this.Height + owner.TextArea.Height));
+				// comctl32's rule (CBDropDown): below the combo, unless it would reach the bottom of the
+				// monitor's WORK AREA -- then above it. Mono measured against the whole screen, taskbar
+				// included, so a combo just above the taskbar (GraphWorX's zoom box in its status bar)
+				// opened its list downwards, over the taskbar and off the window.
+				Rectangle combo = owner.RectangleToScreen (new Rectangle (Point.Empty, owner.Size));
+				Rectangle work = Screen.FromRectangle (combo).WorkingArea;
+				this.Location = DropDownLocation (combo, this.Location, this.Height, work);
 				Show ();
 				XplatUI.SetOwner (Handle, owner.Handle);
 
