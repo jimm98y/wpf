@@ -21,9 +21,12 @@ namespace Wpf.WinFormsInterop.Tests
     public class ElementHostPopupPlacementTests
     {
         [Theory]
-        [InlineData(WPF.Controls.Primitives.PlacementMode.Bottom)]
-        [InlineData(WPF.Controls.Primitives.PlacementMode.Relative)]
-        public void APopupInAnElementHost_OpensAtItsTarget(WPF.Controls.Primitives.PlacementMode mode)
+        [InlineData(WPF.Controls.Primitives.PlacementMode.Bottom, false)]
+        [InlineData(WPF.Controls.Primitives.PlacementMode.Relative, false)]
+        // ...also with a control over part of the host, which is cut out of what the hosted window takes:
+        // a window region did that, and its WM_WINDOWPOSCHANGED left WPF placing popups by a stale rectangle.
+        [InlineData(WPF.Controls.Primitives.PlacementMode.Bottom, true)]
+        public void APopupInAnElementHost_OpensAtItsTarget(WPF.Controls.Primitives.PlacementMode mode, bool partlyCovered)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "real popup windows");
             Exception? failure = null;
@@ -46,6 +49,12 @@ namespace Wpf.WinFormsInterop.Tests
                     grid.Children.Add(target);
                     var host = new ElementHost { Bounds = new Rectangle(20, 30, 360, 240), Child = grid };
                     form.Controls.Add(host);
+                    if (partlyCovered)
+                    {
+                        var over = new SWF.Button { Bounds = new Rectangle(300, 200, 60, 40) };
+                        form.Controls.Add(over);
+                        over.BringToFront();
+                    }
                     form.Show();
                     Pump(() => host.IsChildLive, 10);
 

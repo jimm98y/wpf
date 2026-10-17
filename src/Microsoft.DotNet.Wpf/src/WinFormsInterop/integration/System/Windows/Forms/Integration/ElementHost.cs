@@ -172,6 +172,8 @@ namespace System.Windows.Forms.Integration
                 Console.Error.WriteLine("ElementHost: hosting failed: " + ex);
                 return;
             }
+            try { SyncHostedWindow(); }
+            catch (Exception ex) { Console.Error.WriteLine("ElementHost: visibility sync failed: " + ex.Message); }
             try
             {
                 // Everything at a HIGHER priority than Background runs first -- which includes Render,
@@ -217,16 +219,11 @@ namespace System.Windows.Forms.Integration
             object scene = HostedWpfContent.GetScene(_source.Handle, out int w, out int h, out _);
             if (scene is not SceneVisual sv) return;              // WPF has not rendered a frame yet
 
-            // WPF's scene is in ITS device pixels; the presenter scales the whole frame by the same
-            // factor, so undo it here to land 1:1. The clip is evaluated in this node's LOCAL
-            // (pre-transform) space, so it is expressed in those same device pixels -- see
-            // EmbeddedContent, which gets this the other way round for the same reason.
-            var wrap = new SceneVisual
-            {
-                Transform = Matrix3x2.CreateScale(1f / _scale),
-                Clip = new WgpuRect(0, 0, w, h),
-            };
-            wrap.Children.Add(sv);
+            // Drawn where it shows: cut to its ancestors' client areas, and not at all while hidden (a tab
+            // not selected, a pane taken off the form) -- the same rule its real window follows.
+            // ...and not over a control above it in z-order: one piece per uncovered rectangle.
+            List<SD.Rectangle> pieces = VisiblePieces();
+            if (pieces.Count == 0 || !_shown) return;
 
             SD.Point s = PointToScreen(SD.Point.Empty);
             if (s_trace && !_tracedPlacement)
@@ -234,7 +231,21 @@ namespace System.Windows.Forms.Integration
                 _tracedPlacement = true;
                 Console.WriteLine($"elementhost placement: scene=({s.X - ox},{s.Y - oy}) window=({_placedX / _scale},{_placedY / _scale})");
             }
-            into.Add((wrap, s.X - ox, s.Y - oy));
+            foreach (SD.Rectangle piece in pieces)
+            {
+                // WPF's scene is in ITS device pixels; the presenter scales the whole frame by the same
+                // factor, so undo it here to land 1:1. The clip is evaluated in this node's LOCAL
+                // (pre-transform) space, so it is expressed in those same device pixels -- see
+                // EmbeddedContent, which gets this the other way round for the same reason.
+                var wrap = new SceneVisual
+                {
+                    Transform = Matrix3x2.CreateScale(1f / _scale),
+                    Clip = Intersect(new WgpuRect(0, 0, w, h),
+                        new WgpuRect(piece.X * _scale, piece.Y * _scale, piece.Width * _scale, piece.Height * _scale)),
+                };
+                wrap.Children.Add(sv);
+                into.Add((wrap, s.X - ox, s.Y - oy));
+            }
         }
 
         // ---- the hosted window -------------------------------------------------------------------
@@ -292,6 +303,11 @@ namespace System.Windows.Forms.Integration
                 ShowHostedWindow(false);
                 ShowHostedWindow(true);
                 _placedX = _placedY = int.MinValue;                 // place it again, in its real parent
+                // ...and make that a real MOVE: in the parking window it sat at the same offset, so moving it
+                // to the same coordinates in the new parent changes nothing Windows reports, and WPF's
+                // HwndTarget kept the parking window's screen rectangle. The next WM_WINDOWPOSCHANGED without
+                // a move (a SetWindowRgn) then placed popups by that stale rectangle.
+                _nudgeMove = true;
             }
 
             // An overlay window is on screen exactly while this control is: Visible (which is false
@@ -357,6 +373,7 @@ namespace System.Windows.Forms.Integration
             if (px != _placedX || py != _placedY || pw != _placedW || ph != _placedH)
             {
                 _placedX = px; _placedY = py; _placedW = pw; _placedH = ph;
+                if (_nudgeMove) { _nudgeMove = false; MoveHostedWindow(px + 1, py, pw, ph); }
                 MoveHostedWindow(px, py, pw, ph);
             }
         }
@@ -367,6 +384,7 @@ namespace System.Windows.Forms.Integration
         // internal to PresentationCore, hence the reflection; a head that somehow lacks it just leaves
         // the window put rather than failing the app.
         private bool _parked;
+        private bool _nudgeMove;
         [ThreadStatic] private static HwndSource t_parking;
 
         /// <summary>A hidden window of this thread to make hosted windows in before their form has
@@ -409,6 +427,7 @@ namespace System.Windows.Forms.Integration
         protected override void OnVisibleChanged(EventArgs e)
         {
             base.OnVisibleChanged(e);
+            SyncHostedWindow();
             if (ShownInItsForm() && CompositeIntoHostFrame && _source == null && !_failed && IsHandleCreated && OnTreeThread)
             {
                 try { EnsureSource(); }
@@ -501,6 +520,12 @@ namespace System.Windows.Forms.Integration
             {
                 int sx = (short)((long)lParam & 0xFFFF), sy = (short)(((long)lParam >> 16) & 0xFFFF);
                 if (EmbeddedScenes.PopupCovers(hwnd, sx, sy))
+                {
+                    handled = true;
+                    return new IntPtr(-1);              // HTTRANSPARENT
+                }
+                // ...and where a WinForms control above this one covers it, or an ancestor cuts it away.
+                if (CoveredAt(sx, sy))
                 {
                     handled = true;
                     return new IntPtr(-1);              // HTTRANSPARENT
