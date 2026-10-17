@@ -506,11 +506,11 @@ namespace WgpuInterop.Tests.Harness
             return b.ToArray();
         }
 
-        /// <summary>MILCMD_ELLIPSEGEOMETRY: Handle@4, RadiusX@8, RadiusY@16, Center@24.</summary>
+        /// <summary>MILCMD_ELLIPSEGEOMETRY: Handle@4, RadiusX@8, RadiusY@16, Center@24, hTransform@40.</summary>
         public static byte[] EllipseGeometry(uint handle, double rx, double ry, double cx, double cy)
         {
             var b = new Buf(); b.U32(0x7a); b.U32(handle);
-            b.F64(rx); b.F64(ry); b.F64(cx); b.F64(cy); return b.ToArray();
+            b.F64(rx); b.F64(ry); b.F64(cx); b.F64(cy); b.U32(0); return b.ToArray();   // hTransform@40: none
         }
 
         /// <summary>

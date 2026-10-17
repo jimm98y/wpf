@@ -65,9 +65,14 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     internal int DeviceWidth => System.Math.Min(MaxDeviceDimension, (int)System.Math.Round(_width * _scale));
     internal int DeviceHeight => System.Math.Min(MaxDeviceDimension, (int)System.Math.Round(_height * _scale));
 
-    internal WgpuPresenter(WgpuContext ctx, IntPtr surface, int width, int height, double scale = 1.0, bool srgb = false)
+    /// <summary>The native window the surface was made on (an HWND on Windows): every configure and
+    /// frame checks it is still there. Zero when the host does not say.</summary>
+    internal IntPtr NativeWindow { get; }
+
+    internal WgpuPresenter(WgpuContext ctx, IntPtr surface, int width, int height, double scale = 1.0, bool srgb = false, IntPtr nativeWindow = default)
     {
         _ctx = ctx;
+        NativeWindow = nativeWindow;
         _surface = surface;
         _width = width;
         _height = height;
@@ -128,13 +133,13 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
     // Present the driver's windows as positioned GPU quads (form + children + popups), plus the
     // blinking caret as a solid quad. surfaceW/H = the form's size (the presentation origin).
-    internal bool PresentLayers(IReadOnlyList<WgpuLayer> layers, Rectangle? caret, int surfaceW, int surfaceH)
+    private bool PresentLayersCore(IReadOnlyList<WgpuLayer> layers, Rectangle? caret, int surfaceW, int surfaceH)
     {
         if (surfaceW != _width || surfaceH != _height)
         {
             _width = surfaceW;
             _height = surfaceH;
-            Configure(); // window resized -> resize the swap chain
+            ConfigureNow(); // window resized -> resize the swap chain
         }
 
         SceneVisual root = BuildScene(layers, caret);
@@ -150,7 +155,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         if (st.status == WGPUSurfaceGetCurrentTextureStatus.Outdated ||
             st.status == WGPUSurfaceGetCurrentTextureStatus.Timeout)
         {
-            Configure();
+            ConfigureNow();
             return false;
         }
         if (st.status != WGPUSurfaceGetCurrentTextureStatus.SuccessOptimal &&
@@ -168,10 +173,9 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             _renderer.RenderSceneToView(root, view, _format, _width, _height, RgbaColor.FromBytes(255, 255, 255, 255));
         }
         finally { _renderer.EndFrame(); }   // lets the caches let go (see the note at _renderer)
-        bool ok = wgpuSurfacePresent(_surface) == WGPUStatus.Success;
+        bool ok = PresentAndRelease(_surface, st.texture) == WGPUStatus.Success;   // releases the texture
 
         wgpuTextureViewRelease(view);
-        wgpuTextureRelease(st.texture);
         return ok;
     }
 
@@ -198,7 +202,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         if (++_nullAcquires % 30 == 0)
         {
             if (s_tracePresentStatus) Console.WriteLine($"surface{Tag}: no drawable {_nullAcquires} times in a row; reconfiguring {_width}x{_height}");
-            Configure();
+            ConfigureNow();
         }
         return false;
     }
@@ -206,10 +210,10 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     internal bool PresentScenes(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret, int surfaceW, int surfaceH)
         => PresentScenes(scenes, caret, null, surfaceW, surfaceH);
 
-    internal bool PresentScenes(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret,
+    private bool PresentScenesCore(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret,
                                 IReadOnlyList<(Rectangle Rect, int Width)> rubberBands, int surfaceW, int surfaceH)
     {
-        if (surfaceW != _width || surfaceH != _height) { _width = surfaceW; _height = surfaceH; Configure(); }
+        if (surfaceW != _width || surfaceH != _height) { _width = surfaceW; _height = surfaceH; ConfigureNow(); }
 
         long p0 = System.Diagnostics.Stopwatch.GetTimestamp();
         SceneVisual root = BuildRoot(scenes, caret, rubberBands);
@@ -221,7 +225,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         if (st.texture == IntPtr.Zero) return NoDrawable();
         _nullAcquires = 0;
         if (st.status == WGPUSurfaceGetCurrentTextureStatus.Outdated ||
-            st.status == WGPUSurfaceGetCurrentTextureStatus.Timeout) { Configure(); return false; }
+            st.status == WGPUSurfaceGetCurrentTextureStatus.Timeout) { ConfigureNow(); return false; }
         if (st.status != WGPUSurfaceGetCurrentTextureStatus.SuccessOptimal &&
             st.status != WGPUSurfaceGetCurrentTextureStatus.SuccessSuboptimal &&
             st.status != WGPUSurfaceGetCurrentTextureStatus.Occluded) return false;
@@ -234,7 +238,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         }
         finally { _renderer.EndFrame(); }   // lets the caches let go (see the note at _renderer)
         long p3 = System.Diagnostics.Stopwatch.GetTimestamp();
-        WGPUStatus presented = wgpuSurfacePresent(_surface);
+        WGPUStatus presented = PresentAndRelease(_surface, st.texture);   // releases the texture
         long p4 = System.Diagnostics.Stopwatch.GetTimestamp();
         double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         LastTiming = $"build {Ms(p0, p1):0.0} acquire {Ms(p1, p2):0.0} render+submit {Ms(p2, p3):0.0} present {Ms(p3, p4):0.0} ms at {DeviceWidth}x{DeviceHeight} {PresentMode} [{_partial.LastSplit}]";
@@ -246,7 +250,6 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             Console.WriteLine($"surface{Tag}: acquire={st.status} present={presented} "
                               + $"{DeviceWidth}x{DeviceHeight} format={_format}");
         wgpuTextureViewRelease(view);
-        wgpuTextureRelease(st.texture);
         return ok;
     }
 
@@ -257,10 +260,10 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     /// every step of a live resize of app was black for the 100 ms and more that took. False
     /// when there is no last frame to show.
     /// </summary>
-    internal bool PresentLastAtSize(int width, int height)
+    private bool PresentLastAtSizeCore(int width, int height)
     {
         if (width <= 0 || height <= 0) return false;
-        if (width != _width || height != _height) { _width = width; _height = height; Configure(); }
+        if (width != _width || height != _height) { _width = width; _height = height; ConfigureNow(); }
         WGPUSurfaceTexture st;
         wgpuSurfaceGetCurrentTexture(_surface, &st);
         if (st.texture == IntPtr.Zero) return false;
@@ -272,9 +275,9 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         }
         IntPtr view = wgpuTextureCreateView(st.texture, IntPtr.Zero);
         bool drawn = _partial.PresentLast(view, _format, DeviceWidth, DeviceHeight, ClearColor);
-        if (drawn) wgpuSurfacePresent(_surface);
+        if (drawn) drawn = PresentAndRelease(_surface, st.texture) == WGPUStatus.Success;   // releases the texture
+        else wgpuTextureRelease(st.texture);   // never presented: the release discards the acquired image
         wgpuTextureViewRelease(view);
-        wgpuTextureRelease(st.texture);
         return drawn;
     }
 
@@ -425,15 +428,74 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         return mode;
     }
 
+    // ONE FRAME AT A TIME. A surface holds at most one acquired image, and wgpu-native aborts the
+    // process -- a panic that cannot unwind -- on anything that assumes otherwise: a second acquire
+    // ("already acquired"), a configure while an image is out ("previous output exists"), a release
+    // of a texture whose image has gone. So every frame of this surface runs under one guard: a frame
+    // asked for from inside another (a message pumped during the present, a resize arriving in the
+    // middle of one) is refused -- the caller sees false and presents again -- and a reconfigure
+    // asked for then waits for the frame to finish. Another thread waits its turn.
+    private readonly object _frameLock = new object();
+    private bool _inFrame;
+    private bool _configurePending;
+
+    /// <summary>Frames refused because another frame of the surface was in progress (tests, traces).</summary>
+    internal int RefusedNestedFrames { get; private set; }
+
+    private bool Frame(Func<bool> body)
+    {
+        lock (_frameLock)
+        {
+            if (_inFrame) { RefusedNestedFrames++; return false; }
+            // Nothing to present to once the window has gone (and a present to it would fail).
+            if (!Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.IsWindowAlive(NativeWindow)) return false;
+            _inFrame = true;
+            try
+            {
+                if (_configurePending) { _configurePending = false; ConfigureNow(); }
+                return body();
+            }
+            finally
+            {
+                _inFrame = false;
+                if (_configurePending) { _configurePending = false; ConfigureNow(); }
+            }
+        }
+    }
+
+    internal bool PresentLayers(IReadOnlyList<WgpuLayer> layers, Rectangle? caret, int surfaceW, int surfaceH)
+        => Frame(() => PresentLayersCore(layers, caret, surfaceW, surfaceH));
+
+    internal bool PresentScenes(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret,
+                                IReadOnlyList<(Rectangle Rect, int Width)> rubberBands, int surfaceW, int surfaceH)
+        => Frame(() => PresentScenesCore(scenes, caret, rubberBands, surfaceW, surfaceH));
+
+    internal bool PresentLastAtSize(int width, int height)
+        => Frame(() => PresentLastAtSizeCore(width, height));
+
+    /// <summary>Reconfigure now, or -- in the middle of a frame -- as soon as it is over.</summary>
     private void Configure()
     {
+        lock (_frameLock)
+        {
+            if (_inFrame) { _configurePending = true; return; }
+            ConfigureNow();
+        }
+    }
+
+    private void ConfigureNow()
+    {
+        // The window has gone: its surface cannot be configured (wgpu-native aborts, "Invalid surface").
+        if (!Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.IsWindowAlive(NativeWindow)) return;
         var config = new WGPUSurfaceConfiguration
         {
             device = _ctx.Device,
             format = _format,
             usage = WGPUTextureUsage.RenderAttachment,
-            width = (uint)DeviceWidth,     // the CAMetalLayer drawable is device-pixel sized
-            height = (uint)DeviceHeight,
+            // Never zero: configuring a zero-area surface is fatal in wgpu-native, and a window can
+            // be sized to nothing (a collapsed panel, a minimised form) at any time.
+            width = (uint)System.Math.Max(1, DeviceWidth),     // the CAMetalLayer drawable is device-pixel sized
+            height = (uint)System.Math.Max(1, DeviceHeight),
             alphaMode = _transparent ? TransparentAlphaMode() : WGPUCompositeAlphaMode.Auto,
             presentMode = _presentMode ??= ChoosePresentMode(),
         };
