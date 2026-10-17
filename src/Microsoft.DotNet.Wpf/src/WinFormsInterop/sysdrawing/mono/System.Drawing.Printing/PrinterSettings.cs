@@ -298,28 +298,44 @@ namespace System.Drawing.Printing
 			return ps;
 		}
 
-		[MonoTODO("PrinterSettings.CreateMeasurementGraphics")]
+		// A Graphics that measures as the printer's page does (.NET: a Graphics over the printer's device context):
+		// a printed page's Graphics -- hundredths of an inch, the printer's resolution, its printable area -- for the
+		// page settings, which nothing is ever printed from. The overloads with honorOriginAtMargins move the origin
+		// from the printable area's corner to the margins, as .NET's do.
 		public Graphics CreateMeasurementGraphics()
 		{
-			throw new NotImplementedException();
+			return CreateMeasurementGraphics (DefaultPageSettings);
 		}
-		[MonoTODO("PrinterSettings.CreateMeasurementGraphics")]
-		public Graphics CreateMeasurementGraphics(bool honorOriginAtMargins)		
+
+		public Graphics CreateMeasurementGraphics(bool honorOriginAtMargins)
 		{
-			throw new NotImplementedException();
+			Graphics g = CreateMeasurementGraphics ();
+			if (honorOriginAtMargins) {
+				PageSettings page = DefaultPageSettings;
+				g.TranslateTransform (-page.HardMarginX, -page.HardMarginY);
+				g.TranslateTransform (page.Margins.Left, page.Margins.Top);
+			}
+			return g;
 		}
-		
-		[MonoTODO("PrinterSettings.CreateMeasurementGraphics")]
-		public Graphics CreateMeasurementGraphics(PageSettings pageSettings)		
+
+		public Graphics CreateMeasurementGraphics(PageSettings pageSettings)
 		{
-			throw new NotImplementedException();
+			if (pageSettings == null)
+				throw new ArgumentNullException (nameof (pageSettings));
+			PrintPageGeometry.Device (pageSettings, out float dpiX, out float dpiY, out RectangleF printable);
+			return Graphics.NewPrintRecording (dpiX, dpiY, new RectangleF (0, 0, printable.Width, printable.Height));
 		}
-		
-		[MonoTODO("PrinterSettings.CreateMeasurementGraphics")]
-		public Graphics CreateMeasurementGraphics (PageSettings pageSettings, bool honorOriginAtMargins)		
+
+		public Graphics CreateMeasurementGraphics (PageSettings pageSettings, bool honorOriginAtMargins)
 		{
-			throw new NotImplementedException();
-		} 
+			// .NET measures with the default page here too, and moves its origin by the given page's margins.
+			Graphics g = CreateMeasurementGraphics ();
+			if (honorOriginAtMargins) {
+				g.TranslateTransform (-pageSettings.HardMarginX, -pageSettings.HardMarginY);
+				g.TranslateTransform (pageSettings.Margins.Left, pageSettings.Margins.Top);
+			}
+			return g;
+		}
 
 		public IntPtr GetHdevmode()
 		{
@@ -343,16 +359,58 @@ namespace System.Drawing.Printing
 		}
 		
 
-		[MonoTODO("IsDirectPrintingSupported")]
+		// .NET: only JPEG and PNG can go to a printer as they are, and only to one whose driver answers the
+		// CHECKJPEGFORMAT / CHECKPNGFORMAT escape (QUERYESCSUPPORT) -- and, for an image, accepts its bytes (the
+		// escape answers 1). Elsewhere there is no printer driver to ask, so nothing is.
+		private const int QUERYESCSUPPORT = 8, CHECKJPEGFORMAT = 4119, CHECKPNGFORMAT = 4120;
+
+		[DllImport ("gdi32.dll", EntryPoint = "CreateICW", CharSet = CharSet.Unicode)]
+		private static extern IntPtr CreateIC (string driver, string device, string output, IntPtr devmode);
+
+		[DllImport ("gdi32.dll")]
+		private static extern bool DeleteDC (IntPtr hdc);
+
+		[DllImport ("gdi32.dll")]
+		private static extern int ExtEscape (IntPtr hdc, int escape, int inputSize, byte [] input, int outputSize, byte [] output);
+
+		private bool DirectEscape (ImageFormat imageFormat, byte [] imageBytes)
+		{
+			if (!imageFormat.Equals (ImageFormat.Jpeg) && !imageFormat.Equals (ImageFormat.Png))
+				return false;
+			if (!OperatingSystem.IsWindows ())
+				return false;
+			int escape = imageFormat.Equals (ImageFormat.Jpeg) ? CHECKJPEGFORMAT : CHECKPNGFORMAT;
+			IntPtr hdc = CreateIC (null, PrinterName, null, IntPtr.Zero);
+			if (hdc == IntPtr.Zero)
+				return false;
+			try {
+				if (ExtEscape (hdc, QUERYESCSUPPORT, 4, BitConverter.GetBytes (escape), 0, null) <= 0)
+					return false;
+				if (imageBytes == null)
+					return true;
+				byte [] result = new byte [4];
+				return ExtEscape (hdc, escape, imageBytes.Length, imageBytes, 4, result) > 0 && BitConverter.ToInt32 (result, 0) == 1;
+			} finally {
+				DeleteDC (hdc);
+			}
+		}
+
 		public bool IsDirectPrintingSupported (Image image)
 		{
-			throw new NotImplementedException();
+			if (image == null)
+				throw new ArgumentNullException (nameof (image));
+			ImageFormat format = image.RawFormat;
+			if (!format.Equals (ImageFormat.Jpeg) && !format.Equals (ImageFormat.Png))
+				return false;
+			using (var stream = new System.IO.MemoryStream ()) {
+				image.Save (stream, format);
+				return DirectEscape (format, stream.ToArray ());
+			}
 		}
-		
-		[MonoTODO("IsDirectPrintingSupported")]
+
 		public bool IsDirectPrintingSupported (ImageFormat imageFormat)
 		{
-			throw new NotImplementedException();
+			return DirectEscape (imageFormat, null);
 		}
 
 		public void SetHdevmode(IntPtr hdevmode)
@@ -400,7 +458,7 @@ namespace System.Drawing.Printing
 			object ICollection.SyncRoot { get { return this; } }			
 			[EditorBrowsable(EditorBrowsableState.Never)]
       			public int Add (PaperSource paperSource) {return _PaperSources.Add (paperSource); }
-			public void CopyTo (PaperSource[] paperSources, int index)  {throw new NotImplementedException (); }
+			public void CopyTo (PaperSource[] paperSources, int index) { _PaperSources.CopyTo (paperSources, index); }
 			
 			public virtual PaperSource this[int index] {
 				get { return _PaperSources[index] as PaperSource; }
@@ -443,7 +501,7 @@ namespace System.Drawing.Printing
 			object ICollection.SyncRoot { get { return this; } }			
 			[EditorBrowsable(EditorBrowsableState.Never)]
 			public int Add (PaperSize paperSize) {return _PaperSizes.Add (paperSize); }	
-			public void CopyTo (PaperSize[] paperSizes, int index) {throw new NotImplementedException (); }			
+			public void CopyTo (PaperSize[] paperSizes, int index) { _PaperSizes.CopyTo (paperSizes, index); }			
 			
 			public virtual PaperSize this[int index] {
 				get { return _PaperSizes[index] as PaperSize; }
@@ -485,7 +543,7 @@ namespace System.Drawing.Printing
 			object ICollection.SyncRoot { get { return this; } }			
 			[EditorBrowsable(EditorBrowsableState.Never)]
 			public int Add (PrinterResolution printerResolution) { return _PrinterResolutions.Add (printerResolution); }
-			public void CopyTo (PrinterResolution[] printerResolutions, int index) {throw new NotImplementedException (); }
+			public void CopyTo (PrinterResolution[] printerResolutions, int index) { _PrinterResolutions.CopyTo (printerResolutions, index); }
 						
 			public virtual PrinterResolution this[int index] {
 				get { return _PrinterResolutions[index] as PrinterResolution; }
@@ -531,7 +589,7 @@ namespace System.Drawing.Printing
 			}
 			[EditorBrowsable(EditorBrowsableState.Never)]
       			public int Add (string value) { return _Strings.Add (value); }
-      			public void CopyTo (string[] strings, int index) {throw new NotImplementedException (); }      			
+      			public void CopyTo (string[] strings, int index) { _Strings.CopyTo (strings, index); }      			
 
 			IEnumerator IEnumerable.GetEnumerator()
 			{
