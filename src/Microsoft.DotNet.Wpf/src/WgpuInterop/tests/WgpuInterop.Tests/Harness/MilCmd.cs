@@ -46,6 +46,14 @@ namespace WgpuInterop.Tests.Harness
             q.U32(0); q.U32(0); q.U32(0); q.U32(0); return q.ToArray();
         }
 
+        /// <summary>MILCMD_PEN: Handle@4, Thickness@8, MiterLimit@16, hBrush@24, hThicknessAnim@28,
+        /// StartLineCap@32, EndLineCap@36, DashCap@40, LineJoin@44, hDashStyle@48 (flat caps, miter join).</summary>
+        public static byte[] Pen(uint h, uint hBrush, double thickness)
+        {
+            var q = new Buf(); q.U32(0x86); q.U32(h); q.F64(thickness); q.F64(10); q.U32(hBrush); q.U32(0);
+            q.U32(0); q.U32(0); q.U32(0); q.U32(0); q.U32(0); q.U32(0); return q.ToArray();
+        }
+
         /// <summary>MILCMD_RECTANGLEGEOMETRY: Handle@4, RadiusX@8, RadiusY@16, Rect@24, hTransform@56.</summary>
         public static byte[] RectangleGeometry(uint h, double x, double y, double w, double hh,
             double radiusX = 0, double radiusY = 0)
@@ -567,7 +575,8 @@ namespace WgpuInterop.Tests.Harness
         /// walk desynchronises and the rest of the geometry is read as garbage.
         /// </summary>
         public static byte[] PathGeometryTriangle(uint handle,
-            (double X, double Y) a, (double X, double Y) b, (double X, double Y) c, bool poly)
+            (double X, double Y) a, (double X, double Y) b, (double X, double Y) c, bool poly,
+            bool closed = true, bool filled = true)
         {
             int segBytes = poly ? (16 + 2 * 16) : (32 + 32);
             int segCount = poly ? 1 : 2;
@@ -578,7 +587,7 @@ namespace WgpuInterop.Tests.Harness
             blob.U32((uint)blobSize); blob.U32(0);                 // MIL_PATHGEOMETRY: Size, Flags
             blob.F64(0); blob.F64(0); blob.F64(0); blob.F64(0);    // Bounds
             blob.U32(1); blob.U32(0);                              // FigureCount = 1, ForcePacking
-            blob.U32(0); blob.U32(0x4);                            // MIL_PATHFIGURE: BackSize, Flags = IsClosed
+            blob.U32(0); blob.U32((closed ? 0x4u : 0u) | (filled ? 0x8u : 0u));   // MIL_PATHFIGURE: BackSize, Flags = IsClosed | IsFillable, as WPF's BeginFigure writes them
             blob.U32((uint)segCount); blob.U32((uint)figureSize);
             blob.F64(a.X); blob.F64(a.Y);                          // StartPoint
             blob.U32(0); blob.U32(0);                              // OffsetToLastSegment, ForcePacking

@@ -3171,7 +3171,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var figures = new List<PathFigure>(geometry.Figures.Count);
             foreach (PathFigure f in geometry.Figures)
             {
-                var nf = new PathFigure(Vector2.Transform(f.Start, m)) { Closed = f.Closed };
+                var nf = new PathFigure(Vector2.Transform(f.Start, m)) { Closed = f.Closed, Filled = f.Filled };
                 foreach (PathSegment seg in f.Segments)
                 {
                     switch (seg)
