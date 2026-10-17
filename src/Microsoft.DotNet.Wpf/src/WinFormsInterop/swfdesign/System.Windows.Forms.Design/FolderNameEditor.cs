@@ -169,16 +169,30 @@ namespace System.Windows.Forms.Design
 
 			#region Public Instance Methods
 
-			[MonoTODO]
 			public DialogResult ShowDialog ()
 			{
 				return ShowDialog (null);
 			}
 
-			[MonoTODO]
+			// .NET Framework calls SHBrowseForFolder; here it is the FolderBrowserDialog, which is the system folder
+			// picker on every head that has one. The start location is a CSIDL, which Environment.SpecialFolder
+			// shares; one it does not name starts at the desktop.
 			public DialogResult ShowDialog (IWin32Window owner)
 			{
-				throw new NotImplementedException ();
+				using (FolderBrowserDialog dialog = CreateDialog ()) {
+					DialogResult result = owner != null ? dialog.ShowDialog (owner) : dialog.ShowDialog ();
+					directoryPath = result == DialogResult.OK ? dialog.SelectedPath ?? string.Empty : string.Empty;
+					return result;
+				}
+			}
+
+			internal FolderBrowserDialog CreateDialog ()
+			{
+				var root = (Environment.SpecialFolder) (int) startLocation;
+				return new FolderBrowserDialog {
+					Description = descriptionText,
+					RootFolder = Enum.IsDefined (typeof (Environment.SpecialFolder), root) ? root : Environment.SpecialFolder.Desktop,
+				};
 			}
 
 			#endregion Public Instance Methods

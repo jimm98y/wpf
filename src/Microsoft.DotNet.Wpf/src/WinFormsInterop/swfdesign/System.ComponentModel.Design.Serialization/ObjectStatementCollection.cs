@@ -56,7 +56,19 @@ namespace System.ComponentModel.Design.Serialization
 
 		public CodeStatementCollection this[object statementOwner]
 		{
-			get { return _statements[statementOwner] as CodeStatementCollection; }
+			// .NET: a populated owner gets its collection on first ask (Mono answered null, so a serializer's statements
+			// for it were dropped); an owner never populated has none.
+			get {
+				if (statementOwner == null)
+					throw new ArgumentNullException (nameof (statementOwner));
+				if (!_statements.ContainsKey (statementOwner))
+					return null;
+				if (!(_statements [statementOwner] is CodeStatementCollection statements)) {
+					statements = new CodeStatementCollection ();
+					_statements [statementOwner] = statements;
+				}
+				return statements;
+			}
 		}
 
 		IEnumerator IEnumerable.GetEnumerator()
