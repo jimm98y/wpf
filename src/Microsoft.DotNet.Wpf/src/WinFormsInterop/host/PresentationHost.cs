@@ -407,6 +407,16 @@ namespace System.Windows.Forms
             foreach (Control child in c.Controls) InvalidateTree(child);
         }
 
+        /// <summary>A window has begun an AnimateWindow: every host of this thread presents it by the
+        /// clock until it is done (see Win32Host.WatchAnimations).</summary>
+        internal static void AnimationStarted()
+        {
+            IWinFormsHost[] hosts;
+            lock (s_lock) hosts = s_hosts.ToArray();
+            foreach (IWinFormsHost host in hosts)
+                if (host is Win32Host w) w.WatchAnimations();
+        }
+
         /// <summary>Yield when nothing happened, so an idle app costs ~nothing. The hosts poll the OS
         /// queue rather than blocking on it, so the loop has to sleep somewhere -- but never past the
         /// next due timer, and never so long that input feels laggy.</summary>

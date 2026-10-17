@@ -55,6 +55,10 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     // Re-presents the frame for a while after the window was resized; see RepresentAfterResize.
     private const int RepresentTimerId = 2;
     private long _representUntil;
+    // Presents an AnimateWindow in progress; see WatchAnimations.
+    private const int AnimateTimerId = 3;
+    private bool _animateTimer;
+    private int _animationsEnded;
     // WF_TRACE_CURSOR=1 prints what shape the pointer is being asked for, which is the only way
     // to tell "the control never asked" from "the shape never arrived".
     private static readonly bool s_traceCursor = Environment.GetEnvironmentVariable("WF_TRACE_CURSOR") == "1";
@@ -705,6 +709,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         // tree) changes on its own clock, so fold its version in or a WPF-only animation never
         // reaches the screen.
         int ver = (int)_getVersion.Invoke(_driver, null) + EmbeddedScenes.CurrentVersion();
+        WatchAnimations();
         bool caretOn = CaretOn();
         string save = Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE");
         bool wantSave = !string.IsNullOrEmpty(save) && !_savedGpu;
@@ -748,6 +753,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             InputTrace.Presented = upTo;
         }
         _lastVer = ver; _lastCaretOn = caretOn;
+        _lastPresented = scenes;
         PresentCount++;
         if (wantSave)
         {
@@ -1147,6 +1153,12 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
             case 0x0113:                                                          // WM_TIMER
                 if ((int)wParam == FrameTimerId) { Frame(); return IntPtr.Zero; }
+                if ((int)wParam == AnimateTimerId)
+                {
+                    Present();
+                    if (!(_driver is System.Windows.Forms.XplatUIWebGpu ad && ad.Animating)) { KillTimer(hwnd, AnimateTimerId); _animateTimer = false; }
+                    return IntPtr.Zero;
+                }
                 if ((int)wParam == RepresentTimerId)
                 {
                     if (Environment.TickCount64 >= _representUntil) KillTimer(hwnd, RepresentTimerId);
@@ -1439,11 +1451,38 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     /// black until something in it changed. The same frame presented about a second later showed.
     /// An unchanged frame costs only the copy to the swap chain.
     /// </summary>
-    private void RepresentAfterResize()
+    private void RepresentAfterResize() => RepresentFor(2000, 250);
+
+    private void RepresentFor(int ms, uint every)
     {
         if (_hwnd == IntPtr.Zero) return;
-        _representUntil = Environment.TickCount64 + 2000;
-        SetTimer(_hwnd, RepresentTimerId, 250, IntPtr.Zero);
+        _representUntil = Math.Max(_representUntil, Environment.TickCount64 + ms);
+        SetTimer(_hwnd, RepresentTimerId, every, IntPtr.Zero);
+    }
+
+    /// <summary>
+    /// AnimateWindow runs by the clock in user32 -- a fade is over in its 100 ms whatever the
+    /// application does next. Here its frames went out only when something presented, from this
+    /// host's loop; a WM_TIMER on the window is dispatched by any loop at all (Windows' own modal
+    /// ones, WPF's dispatcher), so one presents the animation until it ends. Its last frame -- the
+    /// window fully shown -- is then presented again for a moment: as after a resize, a single
+    /// present does not always reach the screen, and an idle application presents nothing more.
+    /// DotNetBar's ribbon gallery faded in and stayed half transparent until the pointer moved.
+    /// </summary>
+    internal void WatchAnimations()
+    {
+        if (_hwnd == IntPtr.Zero || FormGone || !(_driver is System.Windows.Forms.XplatUIWebGpu d)) return;
+        if (d.Animating && !_animateTimer)
+        {
+            _animateTimer = true;
+            SetTimer(_hwnd, AnimateTimerId, 15, IntPtr.Zero);
+        }
+        int ended = d.AnimationsEnded;
+        if (ended != _animationsEnded)
+        {
+            _animationsEnded = ended;
+            RepresentFor(500, 50);
+        }
     }
 
     private void MouseAt(IntPtr lParam, MethodInfo inject)
@@ -1606,6 +1645,16 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     }
 
     public void InjectClickScreen(int x, int y) => _injectClick.Invoke(_driver, new object[] { x, y });
+    private System.Collections.Generic.List<(object, int, int)> _lastPresented;
+
+    /// <summary>The last presented frame, rendered again from the scenes it was made of (for tests:
+    /// what the window shows now, not what its windows would draw if presented now).</summary>
+    internal byte[] RenderLastPresented(out int width, out int height)
+    {
+        width = _wgpu?.DeviceWidth ?? 0; height = _wgpu?.DeviceHeight ?? 0;
+        return _wgpu == null || _lastPresented == null ? null : _wgpu.RenderScenesToRgba(_lastPresented, null);
+    }
+
     public void SaveFrame(string path)
     {
         if (_wgpu == null) return;
