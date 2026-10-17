@@ -464,97 +464,140 @@ namespace System.Windows.Forms {
 		#endregion	// IReflection Methods and Properties
 
 		#region IAccessible Methods and Properties
+		// The MSAA face of the object, as dotnet/winforms' AccessibleObject answers it for a client object: a child id
+		// of CHILDID_SELF (0, or none at all) means this object; another id n means GetChild(n - 1); an object it
+		// returns is answered as CHILDID_SELF when it is this one and as itself otherwise. There is no system
+		// IAccessible to fall back to here, so a child that does not exist answers null, as .NET answers through its
+		// system object for an unknown id. Every member of the Mono stub threw NotImplementedException.
+
+		private const int CHILDID_SELF = 0;
+
+		private static bool IsSelf (object childID)
+			=> childID == null || childID is int i && i == CHILDID_SELF || childID is System.Reflection.Missing;
+
+		/// <summary>The object a child id names: this, a child, or null when there is no such child.</summary>
+		private AccessibleObject Resolve (object childID)
+		{
+			if (IsSelf (childID))
+				return this;
+			if (childID is AccessibleObject direct)
+				return direct;
+			if (childID is int id && id > 0) {
+				try {
+					return GetChild (id - 1);
+				} catch (ArgumentException) {
+					return null;
+				}
+			}
+			return null;
+		}
+
+		/// <summary>How an object goes back to an IAccessible caller: CHILDID_SELF for this one, itself otherwise.</summary>
+		private object AsChildId (AccessibleObject obj) => obj == null ? null : obj == this ? (object) CHILDID_SELF : obj;
+
 		void IAccessible.accDoDefaultAction(object childID) {
-			throw new NotImplementedException();
+			Resolve (childID)?.DoDefaultAction ();
 		}
 
 		int IAccessible.accChildCount {
 			get {
-				throw new NotImplementedException();
+				int n = GetChildCount ();
+				return n < 0 ? 0 : n;
 			}
 		}
 
 		object IAccessible.accFocus {
-			get {
-				throw new NotImplementedException();
-			}
+			get { return AsChildId (GetFocused ()); }
 		}
 
 		object IAccessible.accHitTest(int xLeft, int yTop) {
-			throw new NotImplementedException();
+			return AsChildId (HitTest (xLeft, yTop));
 		}
 
 		void IAccessible.accLocation(out int pxLeft, out int pyTop, out int pcxWidth, out int pcyHeight, object childID) {
-			throw new NotImplementedException();
+			Rectangle bounds = Resolve (childID)?.Bounds ?? Rectangle.Empty;
+			pxLeft = bounds.X;
+			pyTop = bounds.Y;
+			pcxWidth = bounds.Width;
+			pcyHeight = bounds.Height;
 		}
 
 		object IAccessible.accNavigate(int navDir, object childID) {
-			throw new NotImplementedException();
+			return AsChildId (Resolve (childID)?.Navigate ((AccessibleNavigation) navDir));
 		}
 
 		object IAccessible.accParent {
-			get {
-				throw new NotImplementedException();
-			}
+			get { return Parent; }
 		}
 
-                void IAccessible.accSelect(int flagsSelect, object childID) {
-			throw new NotImplementedException();
-                }
+		void IAccessible.accSelect(int flagsSelect, object childID) {
+			Resolve (childID)?.Select ((AccessibleSelection) flagsSelect);
+		}
 
-                object IAccessible.accSelection {
-                        get {
-				throw new NotImplementedException();
-			}
+		object IAccessible.accSelection {
+			get { return AsChildId (GetSelected ()); }
 		}
 
 		object IAccessible.get_accChild(object childID) {
-			throw new NotImplementedException();
+			if (IsSelf (childID))
+				return this;
+			return Resolve (childID);
 		}
 
 		string IAccessible.get_accDefaultAction(object childID) {
-			throw new NotImplementedException();
+			return Resolve (childID)?.DefaultAction;
 		}
 
 		string IAccessible.get_accDescription(object childID) {
-			throw new NotImplementedException();
+			return Resolve (childID)?.Description;
 		}
 
 		string IAccessible.get_accHelp(object childID) {
-			throw new NotImplementedException();
+			return Resolve (childID)?.Help;
 		}
 
 		int IAccessible.get_accHelpTopic(out string pszHelpFile,object childID) {
-			throw new NotImplementedException();
+			AccessibleObject target = Resolve (childID);
+			if (target == null) {
+				pszHelpFile = null;
+				return -1;
+			}
+			return target.GetHelpTopic (out pszHelpFile);
 		}
 
 		string IAccessible.get_accKeyboardShortcut(object childID) {
-			throw new NotImplementedException();
+			return Resolve (childID)?.KeyboardShortcut;
 		}
 
 		string IAccessible.get_accName(object childID) {
-			throw new NotImplementedException();
+			return Resolve (childID)?.Name;
 		}
 
 		object IAccessible.get_accRole(object childID) {
-			throw new NotImplementedException();
+			AccessibleObject target = Resolve (childID);
+			return target == null ? null : (object) (int) target.Role;
 		}
 
 		object IAccessible.get_accState(object childID) {
-			throw new NotImplementedException();
+			AccessibleObject target = Resolve (childID);
+			return target == null ? null : (object) (int) target.State;
 		}
 
 		string IAccessible.get_accValue(object childID) {
-			throw new NotImplementedException();
+			return Resolve (childID)?.Value;
 		}
 
 		void IAccessible.set_accName(object childID, string newName) {
-			throw new NotImplementedException();
+			AccessibleObject target = Resolve (childID);
+			if (target != null)
+				target.Name = newName;
 		}
 
 		void IAccessible.set_accValue(object childID, string newValue) {
-			throw new NotImplementedException();
-                }
+			AccessibleObject target = Resolve (childID);
+			if (target != null)
+				target.Value = newValue;
+		}
 		#endregion	// IAccessible Methods and Properties
 	}
 }
