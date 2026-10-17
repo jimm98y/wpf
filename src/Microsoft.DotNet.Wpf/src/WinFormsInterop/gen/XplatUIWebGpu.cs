@@ -104,7 +104,33 @@ namespace System.Windows.Forms {
 		}
 		internal override void FillReversibleRectangle(Rectangle rectangle, Color backColor) {  }
 		internal override void DrawReversibleFrame(Rectangle rectangle, Color backColor, FrameStyle style) {  }
-		internal override SizeF GetAutoScaleSize(Font font) { return default(SizeF); }
+		// Form.GetAutoScaleSize, as .NET has it: the font's average character width, measured on the screen the way
+		// GDI+ measures a magic string, and its height. Generated as default(SizeF), so a form scaled the legacy
+		// way (AutoScaleBaseSize in its resources, e.g. app's Find dialog) was scaled to 0/base + 0.08:
+		// every control came out at a twelfth of its size.
+		// Every Form asks for its font's size when it is made (Mono keeps the base size up to date), so the
+		// measurement is remembered per font and resolution.
+		private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, float, FontStyle, GraphicsUnit, byte, float), float> s_autoScaleWidth = new();
+		internal override SizeF GetAutoScaleSize(Font font)
+		{
+			float height = font.Height;
+			var key = (font.Name, font.Size, font.Style, font.Unit, font.GdiCharSet, System.Drawing.WebGpuBackend.DisplayDpi.X);
+			if (s_autoScaleWidth.TryGetValue(key, out float known))
+				return new SizeF(known, height);
+			float width = 9.0f;
+			try {
+				using var bmp = new Bitmap(1, 1);
+				bmp.SetResolution(System.Drawing.WebGpuBackend.DisplayDpi.X, System.Drawing.WebGpuBackend.DisplayDpi.Y);
+				using Graphics g = Graphics.FromImage(bmp);
+				const string magicString = "The quick brown fox jumped over the lazy dog.";
+				const double magicNumber = 44.549996948242189;   // .NET's, for compatibility with older Windows Forms
+				width = (float)(g.MeasureString(magicString, font).Width / magicNumber);
+			} catch (Exception) {
+				// .NET answers 9 when it cannot measure
+			}
+			s_autoScaleWidth[key] = width;
+			return new SizeF(width, height);
+		}
 		internal override int SendInput(IntPtr hwnd, System.Collections.Queue keys) { return 0; }
 		internal override void ResetMouseHover(IntPtr hwnd) {  }
 	}

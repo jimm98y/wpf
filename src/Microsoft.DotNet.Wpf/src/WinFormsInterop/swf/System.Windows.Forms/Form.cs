@@ -1826,33 +1826,33 @@ namespace System.Windows.Forms {
 			float	dx;
 			float	dy;
 
-			if (current_size == autoscale_base_size)
+			// .NET: nothing without a base size, nothing when the font measures the same.
+			if (autoscale_base_size.IsEmpty || current_size == autoscale_base_size)
 				return;
 
 			if (Environment.GetEnvironmentVariable ("MONO_MWF_SCALING") == "disable"){
 				return;
 			}
-			
-			//
-			// I tried applying the Fudge height factor from:
-			// http://blogs.msdn.com/mharsh/archive/2004/01/25/62621.aspx
-			// but it makes things larger without looking better.
-			//
-			if (current_size.Width != AutoScaleBaseSize.Width) {
-				dx = (float)current_size.Width / AutoScaleBaseSize.Width + 0.08f;
-			} else {
-				dx = 1;
-			}
 
-			if (current_size.Height != AutoScaleBaseSize.Height) {
-				dy = (float)current_size.Height / AutoScaleBaseSize.Height + 0.08f;
-			} else {
-				dy = 1;
-			}
+			dx = AdjustScale ((float)current_size.Width / AutoScaleBaseSize.Width);
+			dy = AdjustScale ((float)current_size.Height / AutoScaleBaseSize.Height);
 
 			Scale (dx, dy);
 			
 			AutoScaleBaseSize = current_size;
+		}
+
+		// .NET's fudge on a legacy scale: a little more when it shrinks or grows by more than a hair, none
+		// just under 1. (Mono added 0.08 to any ratio but 1, so 0.95 grew to 1.03.)
+		private static float AdjustScale (float scale)
+		{
+			if (scale < .92f)
+				return scale + 0.08f;
+			if (scale < 1)
+				return 1;
+			if (scale > 1.01f)
+				return scale + 0.08f;
+			return scale;
 		}
 
 		protected void CenterToParent() {
@@ -2316,7 +2316,38 @@ namespace System.Windows.Forms {
 		[EditorBrowsable (EditorBrowsableState.Never)]
 		protected override void ScaleCore (float x, float y)
 		{
-			base.ScaleCore (x, y);
+			// .NET: a form scales its CLIENT size (and its minimum and maximum), never its frame or where it is,
+			// then its dock padding and its children. Through Control.ScaleCore it scaled its whole bounds, title
+			// bar included, so a legacy-scaled dialog came out taller than stock and kept its unscaled minimum.
+			SuspendLayout ();
+			try {
+				if (WindowState == FormWindowState.Normal) {
+					Size client = ClientSize;
+					Size min = MinimumSize;
+					Size max = MaximumSize;
+					if (!min.IsEmpty)
+						MinimumSize = ScaleSize (min, x, y);
+					if (!max.IsEmpty)
+						MaximumSize = ScaleSize (max, x, y);
+					ClientSize = ScaleSize (client, x, y);
+				}
+				ScaleDockPadding (x, y);
+				foreach (Control control in Controls.GetAllControls ())
+#pragma warning disable 618
+					control?.Scale (x, y);
+#pragma warning restore 618
+			} finally {
+				ResumeLayout ();
+			}
+		}
+
+		private Size ScaleSize (Size size, float x, float y)
+		{
+			if (!GetStyle (ControlStyles.FixedWidth))
+				size.Width = (int) Math.Round (size.Width * x);
+			if (!GetStyle (ControlStyles.FixedHeight))
+				size.Height = (int) Math.Round (size.Height * y);
+			return size;
 		}
 
 		protected override void Select(bool directed, bool forward) {
