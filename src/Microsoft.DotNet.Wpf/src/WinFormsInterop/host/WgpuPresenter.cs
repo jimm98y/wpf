@@ -29,6 +29,12 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 {
     private readonly WgpuContext _ctx;
     private readonly IntPtr _surface;
+    // Every frame is bracketed with BeginFrame/EndFrame, as the WPF sink brackets its own: that is
+    // the renderer's clock, and EndFrame is where its caches let go of what has not been drawn for a
+    // while -- image textures, coverage masks, gradient ramps, cached layers. The WinForms presenter
+    // never called them, so a window's renderer kept every texture it had ever made: every bitmap a
+    // control drew, at every size a resize passed through. GraphWorX's private bytes rose by about
+    // 27 MB per move+resize cycle for good, and the user's session reached 1.5 GB.
     private readonly WgpuSceneRenderer _renderer;
     private readonly WGPUTextureFormat _format;
     private readonly bool _srgb;          // sRGB surface -> renderer applies gamma-correct text coverage
@@ -156,7 +162,12 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
         IntPtr view = wgpuTextureCreateView(st.texture, IntPtr.Zero);
         // Opaque white clear matches the desktop behind the form; the form quad paints over it.
-        _renderer.RenderSceneToView(root, view, _format, _width, _height, RgbaColor.FromBytes(255, 255, 255, 255));
+        _renderer.BeginFrame();
+        try
+        {
+            _renderer.RenderSceneToView(root, view, _format, _width, _height, RgbaColor.FromBytes(255, 255, 255, 255));
+        }
+        finally { _renderer.EndFrame(); }   // lets the caches let go (see the note at _renderer)
         bool ok = wgpuSurfacePresent(_surface) == WGPUStatus.Success;
 
         wgpuTextureViewRelease(view);
@@ -216,7 +227,12 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             st.status != WGPUSurfaceGetCurrentTextureStatus.Occluded) return false;
 
         IntPtr view = wgpuTextureCreateView(st.texture, IntPtr.Zero);
-        _partial.Render(root, view, _format, DeviceWidth, DeviceHeight, ClearColor, false);
+        _renderer.BeginFrame();
+        try
+        {
+            _partial.Render(root, view, _format, DeviceWidth, DeviceHeight, ClearColor, false);
+        }
+        finally { _renderer.EndFrame(); }   // lets the caches let go (see the note at _renderer)
         long p3 = System.Diagnostics.Stopwatch.GetTimestamp();
         WGPUStatus presented = wgpuSurfacePresent(_surface);
         long p4 = System.Diagnostics.Stopwatch.GetTimestamp();
