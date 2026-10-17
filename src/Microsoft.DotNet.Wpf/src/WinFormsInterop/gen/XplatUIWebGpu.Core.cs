@@ -1326,7 +1326,14 @@ namespace System.Windows.Forms
 			}
 			else
 			{
-				window.Children.Add(drawn);
+				// A picture drawn over the picture the window already carries on top replaces the pixels
+				// it covers, as on a screen: the two become one (ImageLayers) rather than the scene
+				// growing by a picture per drawing -- DotNetBar redraws a dock panel's frame through
+				// GetWindowDC on every resize step, and those were kept until the panel next painted.
+				int last = window.Children.Count - 1;
+				object combined = last >= 0 ? System.Drawing.WebGpuBackend.GpuRaster.CombineImageLayers(window.Children[last], drawn) : null;
+				if (combined is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual merged) window.Children[last] = merged;
+				else window.Children.Add(drawn);
 			}
 			_paintVersion++;
 		}

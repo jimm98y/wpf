@@ -56,6 +56,18 @@ namespace System.Drawing.WebGpuBackend
                 ? Microsoft.Wpf.Interop.WebGpu.Composition.SceneReuse.Adopt(previous as Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual, n)
                 : fresh;
 
+        /// <summary>When <paramref name="drawn"/> is one unscaled picture and so is <paramref name="layer"/>,
+        /// the single picture holding both, the newer drawn over the older (ImageLayers); otherwise null.
+        /// Both are boxed SceneVisuals.</summary>
+        public static object CombineImageLayers(object layer, object drawn)
+        {
+            if (layer is not Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual o
+                || drawn is not Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual n) return null;
+            if (!Microsoft.Wpf.Interop.WebGpu.Composition.ImageLayers.TryFlat(o, out int ox, out int oy, out var oi)
+                || !Microsoft.Wpf.Interop.WebGpu.Composition.ImageLayers.TryFlat(n, out int nx, out int ny, out var ni)) return null;
+            return Microsoft.Wpf.Interop.WebGpu.Composition.ImageLayers.Combine(ox, oy, oi, nx, ny, ni);
+        }
+
         /// <summary>Detach the recorder without returning its scene (the scene was already captured
         /// elsewhere, e.g. a double-buffer blit).</summary>
         public static void Cancel(Graphics g)
