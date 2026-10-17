@@ -1452,16 +1452,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // MILCMD_VISUAL_SETCLIP: Handle@4, hClip@8 (a geometry resource).
                     uint vh = r.U32();
                     uint hClip = r.U32();
+                    if (hClip != 0) _visualClip[vh] = hClip; else _visualClip.Remove(vh);
                     if (_visuals.TryGetValue(vh, out SceneVisual? v))
-                    {
-                        v.Clip = null;
-                        v.ClipGeometry = null;
-                        if (hClip != 0 && _geometries.TryGetValue(hClip, out Geometry? clip))
-                        {
-                            if (clip is RectangleGeometry rg) v.Clip = rg.Rect;          // fast axis-aligned scissor
-                            else v.ClipGeometry = ToPathGeometry(clip);                  // arbitrary mask
-                        }
-                    }
+                        ApplyClip(v, hClip);
                     break;
                 }
             }
@@ -1592,6 +1585,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (hTransform != 0) _geometryTransforms[handle] = (raw, hTransform);
             else _geometryTransforms.Remove(handle);
             _geometries[handle] = ApplyGeometryTransform(raw, hTransform);
+            ReapplyClips(handle);
+        }
+
+        // visual handle -> the geometry handle it is clipped by (MILCMD_VISUAL_SETCLIP). WPF updates a clip
+        // geometry IN PLACE -- a RectangleGeometry whose Rect changes with layout, under the same handle --
+        // and the visual was resolved once, at SetClip: it kept the first rectangle for good, so a grid's
+        // header row stayed clipped to (or past) where its scroll viewer had first been.
+        private readonly Dictionary<uint, uint> _visualClip = new();
+
+        private void ApplyClip(SceneVisual v, uint hClip)
+        {
+            v.Clip = null;
+            v.ClipGeometry = null;
+            if (hClip != 0 && _geometries.TryGetValue(hClip, out Geometry? clip))
+            {
+                if (clip is RectangleGeometry rg) v.Clip = rg.Rect;          // fast axis-aligned scissor
+                else v.ClipGeometry = ToPathGeometry(clip);                  // arbitrary mask
+            }
+        }
+
+        private void ReapplyClips(uint geometryHandle)
+        {
+            if (_visualClip.Count == 0) return;
+            foreach (KeyValuePair<uint, uint> kv in _visualClip)
+                if (kv.Value == geometryHandle && _visuals.TryGetValue(kv.Key, out SceneVisual? v))
+                    ApplyClip(v, geometryHandle);
         }
 
         /// <summary>For the parse in progress: content that draws geometry <paramref name="handle"/>
@@ -1978,7 +1997,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             BumpResource(handle);   // for content that bakes it via PushTransform
             foreach (KeyValuePair<uint, (Geometry Raw, uint Transform)> gt in _geometryTransforms)
                 if (gt.Value.Transform == handle)
+                {
                     _geometries[gt.Key] = ApplyGeometryTransform(gt.Value.Raw, handle);
+                    ReapplyClips(gt.Key);
+                }
             foreach (KeyValuePair<uint, uint> kv in _visualTransform)
                 if (kv.Value == handle && _visuals.TryGetValue(kv.Key, out SceneVisual? v))
                     v.Transform = m;

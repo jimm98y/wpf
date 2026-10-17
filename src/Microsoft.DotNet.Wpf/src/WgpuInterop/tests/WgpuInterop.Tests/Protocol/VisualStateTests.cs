@@ -57,6 +57,51 @@ namespace WgpuInterop.Tests.Protocol
             new Image(px, W, H).AssertPixel(x, y, r, g, b, tol: 6, what);
         }
 
+        /// <summary>WPF updates a clip geometry IN PLACE: a layout clip whose RectangleGeometry.Rect changes
+        /// as its scroll viewer is arranged sends the same handle again. The visual used to keep the clip it
+        /// was first given -- a grid's header row (AlarmWorX, GridWorX) ran past its control.</summary>
+        [Theory]
+        [InlineData(false, 30, 14, 255, 0, 0, "the grown rect clip shows what it now covers")]
+        [InlineData(false, 38, 14, 255, 255, 255, "...and still masks past it")]
+        [InlineData(true, 30, 14, 255, 0, 0, "through the hosted-scene mirror too")]
+        [InlineData(true, 38, 14, 255, 255, 255, "...masked past it there as well")]
+        public void AClipGeometryUpdatedInPlace_ReclipsTheVisual(bool mirrored, int x, int y, int r, int g, int b, string what)
+        {
+            var engine = new MilcoreEngine();
+            engine.CreateOrAddRef(2, MilResourceTypeId.Visual);
+            engine.SubmitCommand(MilCmd.SolidColorBrush(3, 1, 0, 0, 1));
+            engine.SubmitCommand(MilCmd.RectangleGeometry(4, 8, 8, 12, 12));
+            SceneVisual root = Realize(engine, MilCmd.DrawRectangleRecord(3, 0, 0, 0, 40, 40), hVisual: 2, hContent: 5);
+            engine.SubmitCommand(MilCmd.VisualSetClip(2, 4));
+            engine.Realize();
+            var mirror = new SceneMirror();
+            SceneVisual first = mirror.Snapshot(engine.VisualByHandle(2)!);
+            // Layout: the same geometry resource, a wider rect.
+            engine.SubmitCommand(MilCmd.RectangleGeometry(4, 8, 8, 26, 12));
+            engine.Realize();
+            root = mirrored ? mirror.Snapshot(engine.VisualByHandle(2)!) : engine.VisualByHandle(2)!;
+            if (mirrored) Assert.NotSame(first, root);
+            byte[] px = NewRenderer().RenderToRgba(root, W, H, White);
+            new Image(px, W, H).AssertPixel(x, y, r, g, b, tol: 6, what);
+        }
+
+        [Fact]
+        public void AnEllipseClipUpdatedInPlace_ReclipsTheVisual()
+        {
+            var engine = new MilcoreEngine();
+            engine.CreateOrAddRef(2, MilResourceTypeId.Visual);
+            engine.SubmitCommand(MilCmd.SolidColorBrush(3, 1, 0, 0, 1));
+            engine.SubmitCommand(MilCmd.EllipseGeometry(6, 4, 4, 8, 8));
+            Realize(engine, MilCmd.DrawRectangleRecord(3, 0, 0, 0, 40, 40), hVisual: 2, hContent: 5);
+            engine.SubmitCommand(MilCmd.VisualSetClip(2, 6));
+            engine.Realize();
+            engine.SubmitCommand(MilCmd.EllipseGeometry(6, 8, 8, 24, 24));
+            engine.Realize();
+            byte[] px = NewRenderer().RenderToRgba(engine.VisualByHandle(2)!, W, H, White);
+            new Image(px, W, H).AssertPixel(24, 24, 255, 0, 0, tol: 6, "the moved ellipse clip's centre is painted");
+            new Image(px, W, H).AssertPixel(8, 8, 255, 255, 255, tol: 6, "where the ellipse was is masked now");
+        }
+
         [Theory]
         [InlineData(16, 16, 255, 0, 0, "ellipse clip centre is painted")]
         [InlineData(2, 2, 255, 255, 255, "the corner is outside the ellipse")]
