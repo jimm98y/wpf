@@ -516,10 +516,28 @@ namespace System.Windows.Forms
 		/// is behind.</summary>
 		private bool Hits(IntPtr handle, Hwnd h, int screenX, int screenY)
 		{
+			// A child window exists only inside its parents' client areas: Windows clips it there, for
+			// the mouse as for painting. Tested against its own rectangle alone, a control that runs past
+			// its parent took clicks meant for whatever is drawn there -- GraphWorX's Toolbox (a tall
+			// ToolStrip in a scrolling panel) took the clicks on its dock's tab strip below it, so the
+			// Explorer tab could only be clicked once the Toolbox was scrolled to its end.
+			if (!InsideParents(h, screenX, screenY)) return false;
 			Point p = ScreenLocation(h);
 			if (screenX >= p.X && screenY >= p.Y && screenX < p.X + h.width && screenY < p.Y + h.height)
 				return !PassesMouseThrough(h, screenX - p.X, screenY - p.Y) && !AnswersTransparent(handle, h, screenX, screenY);
 			return InChildFrame(handle, h, screenX - p.X, screenY - p.Y);
+		}
+
+		/// <summary>Whether a screen point is inside the client area of every parent of <paramref name="h"/>.</summary>
+		private bool InsideParents(Hwnd h, int screenX, int screenY)
+		{
+			for (Hwnd a = h.parent; a != null; a = a.parent)
+			{
+				Point ap = ScreenLocation(a);
+				if (screenX < ap.X || screenY < ap.Y || screenX >= ap.X + a.width || screenY >= ap.Y + a.height)
+					return false;
+			}
+			return true;
 		}
 
 		/// <summary>
