@@ -2311,7 +2311,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         NoteGeometryDeps(hClip);
                         if (_geometries.TryGetValue(hClip, out Geometry? clip))
                         {
-                            Geometry clipLocal = TransformGeometry(clip, state.Transform);
+                            // A clip is the region its geometry FILLS: unfilled figures add nothing, and a clip of
+                            // nothing but unfilled figures shows nothing.
+                            Geometry clipLocal = TransformGeometry(FillableOnly(clip) ?? new RectangleGeometry(new Rect(0, 0, 0, 0)), state.Transform);
                             state.Clip = state.Clip is null
                                 ? clipLocal
                                 : new CombinedGeometry(GeometryCombineMode.Intersect, state.Clip, clipLocal);
@@ -2632,8 +2634,75 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
             (Brush? strokeBrush, StrokeStyle strokeStyle) = ResolvePen(hPen, bounds);
             strokeBrush = ApplyOpacity(strokeBrush, state.Opacity);
+            // A figure that is not filled (BeginFigure(isFilled: false), PathFigure.IsFilled = false) is
+            // stroked but takes no part in the fill. Such a geometry is drawn twice: its fillable figures
+            // with the brush, then all of them with the pen. Drawn whole, an open trend line given a fill
+            // brush was filled, closing edge and all, where WPF shows only the line.
+            if (fill != null && HasUnfilledFigure(geometry))
+            {
+                Geometry? fillable = FillableOnly(geometry);
+                if (fillable != null)
+                {
+                    Geometry ftg = TransformGeometry(fillable, state.Transform);
+                    Geometry fg = state.Clip is null ? ftg : new CombinedGeometry(GeometryCombineMode.Intersect, ftg, state.Clip);
+                    output.Add(new GeometryDrawing(fg, fill, null, strokeStyle));
+                }
+                fill = null;
+            }
             if (fill != null || strokeBrush != null)
                 output.Add(new GeometryDrawing(g, fill, strokeBrush, strokeStyle));
+        }
+
+        /// <summary>Whether any path figure in <paramref name="g"/> is not filled.</summary>
+        private static bool HasUnfilledFigure(Geometry g)
+        {
+            switch (g)
+            {
+                case PathGeometry p:
+                    foreach (PathFigure f in p.Figures) if (!f.Filled) return true;
+                    return false;
+                case GeometryGroup gg:
+                    foreach (Geometry c in gg.Children) if (HasUnfilledFigure(c)) return true;
+                    return false;
+                case CombinedGeometry cg:
+                    return HasUnfilledFigure(cg.Geometry1) || HasUnfilledFigure(cg.Geometry2);
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary><paramref name="g"/> with its unfilled figures removed -- the region WPF fills (and clips
+        /// to); null when nothing of it is filled.</summary>
+        internal static Geometry? FillableOnly(Geometry g)
+        {
+            if (!HasUnfilledFigure(g)) return g;
+            switch (g)
+            {
+                case PathGeometry p:
+                {
+                    var kept = p.Figures.FindAll(f => f.Filled);
+                    return kept.Count == 0 ? null : new PathGeometry(p.FillRule, kept);
+                }
+                case GeometryGroup gg:
+                {
+                    var kids = new List<Geometry>();
+                    foreach (Geometry c in gg.Children) if (FillableOnly(c) is Geometry k) kids.Add(k);
+                    return kids.Count == 0 ? null : new GeometryGroup(gg.FillRule, kids);
+                }
+                case CombinedGeometry cg:
+                {
+                    Geometry? a = FillableOnly(cg.Geometry1), b = FillableOnly(cg.Geometry2);
+                    return cg.Mode switch
+                    {
+                        _ when a != null && b != null => new CombinedGeometry(cg.Mode, a, b),
+                        GeometryCombineMode.Intersect => null,
+                        GeometryCombineMode.Exclude => a,
+                        _ => a ?? b,                       // Union, Xor: what is left of either
+                    };
+                }
+                default:
+                    return g;
+            }
         }
 
         // Resolve an ImageBrush fill: source crop (Viewbox) -> destination tile (Viewport) ->
@@ -2938,7 +3007,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             var outF = new List<PathFigure>(figures.Count);
             foreach (PathFigure f in figures)
             {
-                var nf = new PathFigure(T(f.Start)) { Closed = f.Closed };
+                var nf = new PathFigure(T(f.Start)) { Closed = f.Closed, Filled = f.Filled };
                 foreach (PathSegment seg in f.Segments)
                     nf.Segments.Add(seg switch
                     {
@@ -3160,7 +3229,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 uint segCount = r.U32();           // Count (segments)
                 uint figSize = r.U32();            // Size (total figure bytes)
                 var start = new Vector2((float)r.F64(), (float)r.F64()); // StartPoint@16
-                var figure = new PathFigure(start) { Closed = (figFlags & 0x4) != 0 };
+                // MilPathFigureFlags: IsClosed = 0x4, IsFillable = 0x8 (BeginFigure's isFilled).
+                var figure = new PathFigure(start) { Closed = (figFlags & 0x4) != 0, Filled = (figFlags & 0x8) != 0 };
 
                 int segPos = figPos + 40;          // segments after the 40-byte figure header
                 for (uint s = 0; s < segCount && segPos + 12 <= blobOffset + figuresSize; s++)

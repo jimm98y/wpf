@@ -212,6 +212,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public Vector2 Start { get; set; }
         public List<PathSegment> Segments { get; } = new();
         public bool Closed { get; set; } = true;
+        /// <summary>Whether the figure takes part in a FILL (WPF's PathFigure.IsFilled, MilPathFigureFlags.IsFillable).
+        /// A figure that is not filled is still stroked: a chart's trend line is an open, unfilled figure drawn
+        /// with a fill brush and a pen, and only the pen shows.</summary>
+        public bool Filled { get; set; } = true;
 
         public PathFigure() { }
         public PathFigure(Vector2 start) => Start = start;

@@ -245,7 +245,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private static bool SameFigure(PathFigure a, PathFigure b)
         {
-            if (a.Start != b.Start || a.Closed != b.Closed || a.ImpliedStart != b.ImpliedStart || a.Segments.Count != b.Segments.Count) return false;
+            if (a.Start != b.Start || a.Closed != b.Closed || a.Filled != b.Filled || a.ImpliedStart != b.ImpliedStart || a.Segments.Count != b.Segments.Count) return false;
             for (int i = 0; i < a.Segments.Count; i++)
             {
                 PathSegment s = a.Segments[i], t = b.Segments[i];
