@@ -399,13 +399,23 @@ namespace System.Windows.Forms {
 		#endregion	// Public Instance Methods
 
 		#region Public Instance Methods
-		[MonoTODO ("Stub, not implemented")]
-		static bool ValidateWarned;
+		/// <summary>.NET's Validate: the control that has the focus in this container, and each
+		/// container between it and this one, raise Validating and Validated -- those whose
+		/// CausesValidation is set -- innermost first, stopping at the first that cancels. A dialog that
+		/// validates its fields on close (Form.ValidateChildren / Validate from OnFormClosing) relies on
+		/// it; Mono's stub only printed "not yet implemented" and answered true.</summary>
 		public bool Validate() {
-			//throw new NotImplementedException();
-			if (!ValidateWarned) {
-				Console.WriteLine("ContainerControl.Validate is not yet implemented");
-				ValidateWarned = true;
+			// Nothing to validate unless the focused control (or its container) takes part.
+			Control leaf = GetMostDeeplyNestedActiveControl (this);
+			if (leaf == null)
+				return true;
+			if (AutoValidate != AutoValidate.EnablePreventFocusChange && !leaf.CausesValidation)
+				return true;
+			for (Control c = leaf; c != null && c != this; c = c.Parent) {
+				if (!c.CausesValidation)
+					continue;
+				if (!ValidateControl (c))
+					return false;
 			}
 			return true;
 		}
