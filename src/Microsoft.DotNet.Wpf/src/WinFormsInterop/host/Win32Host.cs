@@ -872,6 +872,10 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 try { Application.DoEvents(); }
                 finally { t_draining = false; }
             }
+            // A press on such a window is a press "somewhere else" for an open WinForms menu too: the
+            // driver announces the presses it delivers itself (XplatUI.MousePress), and this one it
+            // never sees, so a ContextMenuStrip stayed open when the hosted content was clicked.
+            if (press && m >= 0x0200) XplatUI.RaiseMousePress(msg.hwnd);
             var message = Message.Create(msg.hwnd, (int)m, msg.wParam, msg.lParam);
             bool taken = Application.FilterMessage(ref message);
             if (s_traceFilter && m != 0x0200 && m != 0x00A0) Console.WriteLine($"win32host filter: msg=0x{m:x} hwnd=0x{msg.hwnd.ToInt64():x} taken={taken}");

@@ -96,6 +96,9 @@ namespace System.Windows.Forms.Integration
                         try { Application.DoEvents(); }
                         finally { t_draining = false; }
                     }
+                    // ...and a press there closes an open WinForms menu, as a press the driver delivers
+                    // does (XplatUI.MousePress, which this one never passes through).
+                    if (press && m >= 0x0200) System.Windows.Forms.XplatUI.RaiseMousePress(msg.hwnd);
                     var message = Message.Create(msg.hwnd, m, msg.wParam, msg.lParam);
                     if (Application.FilterMessage(ref message)) handled = true;
                     if (s_traceFilter && m != 0x0200) Console.Error.WriteLine($"elementhost filter: {DateTime.Now:HH:mm:ss.fff} msg=0x{m:x} hwnd=0x{msg.hwnd.ToInt64():x} taken={handled}");
