@@ -80,6 +80,8 @@ namespace System.Windows.Forms.Integration
                 int m = msg.message;
                 bool input = (m >= 0x0100 && m <= 0x0109) || (m >= 0x0200 && m <= 0x020E) || (m >= 0x00A0 && m <= 0x00AD);
                 if (!input) return;
+                if (KeyTrace.On && KeyTrace.IsKey(m))
+                    KeyTrace.Log($"wpf loop (ComponentDispatcher.ThreadFilterMessage) {KeyTrace.Describe(m, msg.wParam, msg.hwnd)} -> message filters");
                 try
                 {
                     // One queue, as on Windows: what WinForms posted before this click or key (a
@@ -341,6 +343,7 @@ namespace System.Windows.Forms.Integration
                 _source.RootVisual = RootElement;
                 _source.AddHook(SourceHook);
                 _dispatcher = _source.Dispatcher;
+                HookKeyboard();
                 _placedX = px; _placedY = py; _placedW = pw; _placedH = ph;
                 if (s_trace)
                     Console.WriteLine($"ElementHost: WPF window 0x{_source.Handle:x} in host 0x{hostWindow:x} " +
@@ -542,6 +545,7 @@ namespace System.Windows.Forms.Integration
             if (disposing)
             {
                 EmbeddedScenes.Unregister(this);
+                UnhookKeyboard();
                 if (_source != null)
                 {
                     HostedWpfContent.Release(_source.Handle);

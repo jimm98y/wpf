@@ -4116,6 +4116,15 @@ namespace System.Windows.Forms
 
 		internal PreProcessControlState PreProcessControlMessageInternal (ref Message msg)
 		{
+			if (!KeyTrace.On || !KeyTrace.IsKey (msg.Msg))
+				return PreProcessControlMessageCore (ref msg);
+			PreProcessControlState state = PreProcessControlMessageCore (ref msg);
+			KeyTrace.Log ($"  PreProcessControlMessage on {InputTrace.Describe (IsHandleCreated ? Handle : IntPtr.Zero)} ({GetType ().FullName}) -> {state}");
+			return state;
+		}
+
+		private PreProcessControlState PreProcessControlMessageCore (ref Message msg)
+		{
 			switch ((Msg)msg.Msg) {
 				case Msg.WM_KEYDOWN:
 				case Msg.WM_SYSKEYDOWN:
@@ -4158,6 +4167,20 @@ namespace System.Windows.Forms
 
 			if ((msg.Msg == (int)Msg.WM_KEYDOWN) || (msg.Msg == (int)Msg.WM_SYSKEYDOWN)) {
 				key_data = (Keys)msg.WParam.ToInt32() | XplatUI.State.ModifierKeys;
+
+				if (KeyTrace.On) {
+					bool cmd = ProcessCmdKey(ref msg, key_data);
+					KeyTrace.Log ($"    {GetType ().Name}.ProcessCmdKey({key_data}) -> {cmd}");
+					if (cmd)
+						return true;
+					bool input = IsInputKey(key_data);
+					KeyTrace.Log ($"    {GetType ().Name}.IsInputKey({key_data}) -> {input}");
+					if (input)
+						return false;
+					bool dialog = ProcessDialogKey(key_data);
+					KeyTrace.Log ($"    {GetType ().Name}.ProcessDialogKey({key_data}) -> {dialog}");
+					return dialog;
+				}
 
 				if (!ProcessCmdKey(ref msg, key_data)) {
 					if (IsInputKey(key_data)) {
