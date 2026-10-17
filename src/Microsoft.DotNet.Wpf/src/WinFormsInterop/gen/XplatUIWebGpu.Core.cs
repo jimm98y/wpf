@@ -518,8 +518,23 @@ namespace System.Windows.Forms
 		{
 			Point p = ScreenLocation(h);
 			if (screenX >= p.X && screenY >= p.Y && screenX < p.X + h.width && screenY < p.Y + h.height)
-				return !PassesMouseThrough(h, screenX - p.X, screenY - p.Y);
+				return !PassesMouseThrough(h, screenX - p.X, screenY - p.Y) && !AnswersTransparent(handle, h, screenX, screenY);
 			return InChildFrame(handle, h, screenX - p.X, screenY - p.Y);
+		}
+
+		/// <summary>
+		/// A transparent child window (WS_EX_TRANSPARENT, not layered) that answers WM_NCHITTEST with
+		/// HTTRANSPARENT at the point: Windows then hands the mouse to the window underneath, as it does
+		/// for any window of the thread. The designer's adorner window lies over the whole design surface
+		/// this way and takes the pointer only over a glyph that wants it. Asked of those windows alone,
+		/// so the hit test of every other window costs nothing more.
+		/// </summary>
+		private bool AnswersTransparent(IntPtr handle, Hwnd h, int screenX, int screenY)
+		{
+			if ((h.initial_ex_style & WindowExStyles.WS_EX_TRANSPARENT) == 0 || (h.initial_ex_style & WindowExStyles.WS_EX_LAYERED) != 0)
+				return false;
+			IntPtr lp = (IntPtr)((screenY << 16) | (screenX & 0xFFFF));
+			return (int)SendMessage(handle, Msg.WM_NCHITTEST, IntPtr.Zero, lp).ToInt64() == HTTRANSPARENT;
 		}
 
 		/// <summary>A client-relative point in the frame a child window keeps round its client.</summary>

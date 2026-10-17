@@ -1,154 +1,134 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 //
-// System.Windows.Forms.Design.Behavior.Behavior
-//
-// Author:
-//	Atsushi Enomoto (atsushi@ximian.com)
-//
-// Copyright (C) 2007 Novell, Inc.
-//
-
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-
+// Ported from dotnet/winforms (src/System.Windows.Forms.Design/src/System/Windows/Forms/Design/Behavior/Behavior.cs).
+// Every virtual defers to the next behavior on the BehaviorService's stack (callParentBehavior) or to the behavior
+// of the glyph it was given, and otherwise does nothing. The Mono stub threw from every one of them.
 
 using System.ComponentModel.Design;
 using System.Drawing;
-using System.Drawing.Design;
-using System.Drawing.Drawing2D;
 
 namespace System.Windows.Forms.Design.Behavior
 {
 	public abstract class Behavior
 	{
-		[MonoTODO]
+		private readonly bool _callParentBehavior;
+		private readonly BehaviorService _behaviorService;
+
 		protected Behavior ()
 		{
-			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
 		protected Behavior (bool callParentBehavior, BehaviorService behaviorService)
 		{
-			throw new NotImplementedException ();
+			if (callParentBehavior && behaviorService == null)
+				throw new ArgumentException (null, nameof (behaviorService));
+			_callParentBehavior = callParentBehavior;
+			_behaviorService = behaviorService;
 		}
 
-		[MonoTODO]
-		public virtual Cursor Cursor {
-			get { throw new NotImplementedException (); }
-		}
+		private Behavior Next => _callParentBehavior ? _behaviorService?.GetNextBehavior (this) : null;
 
-		[MonoTODO]
-		public virtual bool DisableAllCommands {
-			get { throw new NotImplementedException (); }
-		}
+		public virtual Cursor Cursor => Cursors.Default;
 
-		[MonoTODO]
+		public virtual bool DisableAllCommands => Next is Behavior next && next.DisableAllCommands;
+
 		public virtual MenuCommand FindCommand (CommandID commandId)
 		{
-			throw new NotImplementedException ();
+			try {
+				return Next?.FindCommand (commandId);
+			} catch {
+				// As .NET: any exception means "no command".
+				return null;
+			}
 		}
 
-		[MonoTODO]
-		public virtual void OnDragDrop (Glyph g, DragEventArgs e)
-		{
-			throw new NotImplementedException ();
-		}
+		private Behavior GetGlyphBehavior (Glyph g) => g?.Behavior != null && g.Behavior != this ? g.Behavior : null;
 
-		[MonoTODO]
-		public virtual void OnDragEnter (Glyph g, DragEventArgs e)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO]
-		public virtual void OnDragLeave (Glyph g, EventArgs e)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO]
-		public virtual void OnDragOver (Glyph g, DragEventArgs e)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO]
-		public virtual void OnGiveFeedback (Glyph g, GiveFeedbackEventArgs e)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO]
 		public virtual void OnLoseCapture (Glyph g, EventArgs e)
 		{
-			throw new NotImplementedException ();
+			if (Next is Behavior next) next.OnLoseCapture (g, e);
+			else GetGlyphBehavior (g)?.OnLoseCapture (g, e);
 		}
 
-		[MonoTODO]
 		public virtual bool OnMouseDoubleClick (Glyph g, MouseButtons button, Point mouseLoc)
 		{
-			throw new NotImplementedException ();
+			if (Next is Behavior next) return next.OnMouseDoubleClick (g, button, mouseLoc);
+			return GetGlyphBehavior (g)?.OnMouseDoubleClick (g, button, mouseLoc) ?? false;
 		}
 
-		[MonoTODO]
 		public virtual bool OnMouseDown (Glyph g, MouseButtons button, Point mouseLoc)
 		{
-			throw new NotImplementedException ();
+			if (Next is Behavior next) return next.OnMouseDown (g, button, mouseLoc);
+			return GetGlyphBehavior (g)?.OnMouseDown (g, button, mouseLoc) ?? false;
 		}
 
-		[MonoTODO]
 		public virtual bool OnMouseEnter (Glyph g)
 		{
-			throw new NotImplementedException ();
+			if (Next is Behavior next) return next.OnMouseEnter (g);
+			return GetGlyphBehavior (g)?.OnMouseEnter (g) ?? false;
 		}
 
-		[MonoTODO]
 		public virtual bool OnMouseHover (Glyph g, Point mouseLoc)
 		{
-			throw new NotImplementedException ();
+			if (Next is Behavior next) return next.OnMouseHover (g, mouseLoc);
+			return GetGlyphBehavior (g)?.OnMouseHover (g, mouseLoc) ?? false;
 		}
 
-		[MonoTODO]
 		public virtual bool OnMouseLeave (Glyph g)
 		{
-			throw new NotImplementedException ();
+			if (Next is Behavior next) return next.OnMouseLeave (g);
+			return GetGlyphBehavior (g)?.OnMouseLeave (g) ?? false;
 		}
 
-		[MonoTODO]
 		public virtual bool OnMouseMove (Glyph g, MouseButtons button, Point mouseLoc)
 		{
-			throw new NotImplementedException ();
+			if (Next is Behavior next) return next.OnMouseMove (g, button, mouseLoc);
+			return GetGlyphBehavior (g)?.OnMouseMove (g, button, mouseLoc) ?? false;
 		}
 
-		[MonoTODO]
 		public virtual bool OnMouseUp (Glyph g, MouseButtons button)
 		{
-			throw new NotImplementedException ();
+			if (Next is Behavior next) return next.OnMouseUp (g, button);
+			return GetGlyphBehavior (g)?.OnMouseUp (g, button) ?? false;
 		}
 
-		[MonoTODO]
+		public virtual void OnDragDrop (Glyph g, DragEventArgs e)
+		{
+			if (Next is Behavior next) next.OnDragDrop (g, e);
+			else GetGlyphBehavior (g)?.OnDragDrop (g, e);
+		}
+
+		public virtual void OnDragEnter (Glyph g, DragEventArgs e)
+		{
+			if (Next is Behavior next) next.OnDragEnter (g, e);
+			else GetGlyphBehavior (g)?.OnDragEnter (g, e);
+		}
+
+		public virtual void OnDragLeave (Glyph g, EventArgs e)
+		{
+			if (Next is Behavior next) next.OnDragLeave (g, e);
+			else GetGlyphBehavior (g)?.OnDragLeave (g, e);
+		}
+
+		public virtual void OnDragOver (Glyph g, DragEventArgs e)
+		{
+			if (Next is Behavior next) next.OnDragOver (g, e);
+			else if (GetGlyphBehavior (g) is Behavior behavior) behavior.OnDragOver (g, e);
+			else if (e.Effect != DragDropEffects.None)
+				e.Effect = Control.ModifierKeys == Keys.Control ? DragDropEffects.Copy : DragDropEffects.Move;
+		}
+
+		public virtual void OnGiveFeedback (Glyph g, GiveFeedbackEventArgs e)
+		{
+			if (Next is Behavior next) next.OnGiveFeedback (g, e);
+			else GetGlyphBehavior (g)?.OnGiveFeedback (g, e);
+		}
+
 		public virtual void OnQueryContinueDrag (Glyph g, QueryContinueDragEventArgs e)
 		{
-			throw new NotImplementedException ();
+			if (Next is Behavior next) next.OnQueryContinueDrag (g, e);
+			else GetGlyphBehavior (g)?.OnQueryContinueDrag (g, e);
 		}
 	}
 }
-

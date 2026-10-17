@@ -3034,6 +3034,9 @@ namespace System.Windows.Forms
 		[Browsable(false)]
 		public string Name {
 			get {
+				// .NET: a control with no name of its own is known by its site's (a designer's component).
+				if (string.IsNullOrEmpty (name))
+					return Site?.Name ?? (name ?? string.Empty);
 				return name;
 			}
 

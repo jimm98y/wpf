@@ -311,6 +311,24 @@ namespace System.ComponentModel.Design
 		// Since most of the specific designers are missing this temporary method 
 		// will fallback to the first available designer type in the type's base types
 		//
+		/// <summary>
+		/// Whether a DesignerAttribute is for designers of <paramref name="designerBaseType"/>. The attribute
+		/// names the base type as a string, and .NET's DesignerAttribute(Type) writes IDesigner's name with an
+		/// assembly and version of its own ("..., System.ComponentModel.Primitives, Version=4.0.0.0, ...") that
+		/// is neither the type's FullName nor this runtime's AssemblyQualifiedName: compared as strings, no
+		/// designer declared with [Designer(typeof(X))] was ever found, and the component was destroyed for
+		/// want of one. Compared by the type name alone, as TypeDescriptor compares them.
+		/// </summary>
+		private static bool IsDesignerBase (DesignerAttribute designerAttr, Type designerBaseType)
+		{
+			string name = designerAttr.DesignerBaseTypeName;
+			if (name == null)
+				return false;
+			int comma = name.IndexOf (',');
+			string typeName = (comma < 0 ? name : name.Substring (0, comma)).Trim ();
+			return typeName == designerBaseType.FullName;
+		}
+
 		private IDesigner CreateDesigner (IComponent component, Type designerBaseType)
 		{
 			IDesigner instance = null;
@@ -319,10 +337,13 @@ namespace System.ComponentModel.Design
 			foreach (Attribute attribute in attributes) {
 				DesignerAttribute designerAttr = attribute as DesignerAttribute;
 				if (designerAttr != null &&
-					(designerBaseType.FullName == designerAttr.DesignerBaseTypeName ||
-					designerBaseType.AssemblyQualifiedName == designerAttr.DesignerBaseTypeName)) {
+					IsDesignerBase (designerAttr, designerBaseType)) {
 					Type type = Type.GetType (designerAttr.DesignerTypeName);
-					if (type == null && designerBaseType == typeof (IRootDesigner))
+					// ComponentDocumentDesigner is not implemented, by design, in .NET either (every member throws):
+					// a control root is designed by the document designer, and a plain component has no root designer.
+					if (type == typeof (System.Windows.Forms.Design.ComponentDocumentDesigner))
+						type = component is System.Windows.Forms.Control ? typeof (System.Windows.Forms.Design.DocumentDesigner) : null;
+					else if (type == null && designerBaseType == typeof (IRootDesigner))
 						type = typeof (System.Windows.Forms.Design.DocumentDesigner);
 					if (type != null)
 						instance = (IDesigner) Activator.CreateInstance (type);
@@ -337,8 +358,7 @@ namespace System.ComponentModel.Design
 					foreach (Attribute attribute in attributes) {
 						DesignerAttribute designerAttr = attribute as DesignerAttribute;
 						if (designerAttr != null && 
-							(designerBaseType.FullName == designerAttr.DesignerBaseTypeName ||
-							designerBaseType.AssemblyQualifiedName == designerAttr.DesignerBaseTypeName)) {
+							IsDesignerBase (designerAttr, designerBaseType)) {
 							Type type = Type.GetType (designerAttr.DesignerTypeName);
 							if (type != null)
 								instance = (IDesigner) Activator.CreateInstance (type);

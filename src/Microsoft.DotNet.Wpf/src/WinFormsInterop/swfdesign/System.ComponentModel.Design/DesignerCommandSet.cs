@@ -1,62 +1,27 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 //
-// System.ComponentModel.Design.DesignerCommandSet.cs
-//
-// Author:
-//      Atsushi Enomoto  <atsushi@ximian.com>
-//
-// Copyright (C) 2007 Novell, Inc
-//
+// Ported from dotnet/winforms (System.ComponentModel.Design.DesignerCommandSet): Verbs and ActionLists are what
+// GetCommands answers for "Verbs" and "ActionLists", and the base answers null. (The Mono version kept two empty
+// collections of its own and threw from GetCommands.)
 
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-
-using System;
 using System.Collections;
-using System.ComponentModel;
 
 namespace System.ComponentModel.Design
 {
 	public class DesignerCommandSet
 	{
-		DesignerActionListCollection action_lists =
-			new DesignerActionListCollection ();
-		DesignerVerbCollection verbs =
-			new DesignerVerbCollection ();
+		private protected const string VerbsCommand = "Verbs";
+		private protected const string ActionListsCommand = "ActionLists";
 
 		public DesignerCommandSet ()
 		{
 		}
-		
-		public DesignerActionListCollection ActionLists {
-			get { return action_lists; }
-		}
 
-		[MonoTODO]
-		public virtual ICollection GetCommands (string name)
-		{
-			throw new NotImplementedException ();
-		}
+		public virtual ICollection GetCommands (string name) => null;
 
-		public DesignerVerbCollection Verbs {
-			get { return verbs; }
-		}
+		public DesignerVerbCollection Verbs => (DesignerVerbCollection) GetCommands (VerbsCommand);
+
+		public DesignerActionListCollection ActionLists => (DesignerActionListCollection) GetCommands (ActionListsCommand);
 	}
 }

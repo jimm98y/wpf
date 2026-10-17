@@ -224,6 +224,9 @@ namespace System.Windows.Forms.Design
 				}
 			}
 
+			/// <summary>The panel the designed control sits in: what the behavior service's adorner window covers.</summary>
+			internal Control SurfacePanel => DesignerPanel;
+
 			public Control DesignedControl {
 				get { return _designedControl; }
 				set { 
@@ -281,7 +284,24 @@ namespace System.Windows.Forms.Design
 			if (menuCommands != null && serviceContainer != null)
 				new DefaultMenuCommands (serviceContainer).AddTo (menuCommands);
 			InitializeSelectionService ();
+
+			// The root designer owns the surface's BehaviorService, as .NET's DocumentDesigner does: every
+			// ControlDesigner.BehaviorService, adorner and glyph goes through it.
+			if (serviceContainer != null && serviceContainer.GetService (typeof (BehaviorService)) == null) {
+				_behaviorService = new BehaviorService (serviceContainer, _designerViewFrame.SurfacePanel);
+				serviceContainer.AddService (typeof (BehaviorService), _behaviorService);
+			}
+			// ...and the designer action services, unless the host has its own (.NET's DocumentDesigner.Initialize).
+			if (GetService (typeof (DesignerActionService)) == null)
+				_designerActionService = new DesignerActionService (component.Site);
+			if (GetService (typeof (DesignerActionUIService)) == null)
+				_designerActionUIService = new DesignerActionUIService (component.Site);
 		}
+
+		private DesignerActionService _designerActionService;
+		private DesignerActionUIService _designerActionUIService;
+
+		private BehaviorService _behaviorService;
 
 		private void InitializeSelectionService ()
 		{
@@ -299,6 +319,15 @@ namespace System.Windows.Forms.Design
 		protected override void Dispose (bool disposing)
 		{
 			if (disposing) {
+				_designerActionUIService?.Dispose ();
+				_designerActionUIService = null;
+				_designerActionService?.Dispose ();
+				_designerActionService = null;
+				if (_behaviorService != null) {
+					(GetService (typeof (IServiceContainer)) as IServiceContainer)?.RemoveService (typeof (BehaviorService));
+					_behaviorService.Dispose ();
+					_behaviorService = null;
+				}
 				if (_designerViewFrame != null) {
 					_designerViewFrame.Dispose ();
 					_designerViewFrame = null;

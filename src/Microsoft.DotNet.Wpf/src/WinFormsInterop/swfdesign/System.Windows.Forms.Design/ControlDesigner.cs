@@ -111,10 +111,6 @@ namespace System.Windows.Forms.Design
 #region Properties and Fields - AccessabilityObject Left
 		protected static readonly Point InvalidPoint = new Point (int.MinValue, int.MinValue);
 
-		protected internal BehaviorService BehaviorService {
-			get { throw new NotImplementedException (); }
-		}
-
 		public virtual Control Control {
 			get { return (Control) base.Component; }
 		}
@@ -182,7 +178,7 @@ namespace System.Windows.Forms.Design
 		public virtual AccessibleObject AccessibilityObject {
 			get {
 				if (accessibilityObj == null)
-					accessibilityObj = new AccessibleObject ();
+					accessibilityObj = new ControlDesignerAccessibleObject (this, Control);   // as .NET
 
 				return accessibilityObj;
 			}
@@ -854,138 +850,308 @@ namespace System.Windows.Forms.Design
 			return success;
 		}
 
-#region NET_2_0 Stubs
+#region .NET members (ported from dotnet/winforms ControlDesigner)
+		// The Mono stubs threw NotImplementedException from every one of these -- InitializeNewComponent and
+		// InitializeExistingComponent among them, which DesignSurface calls for every control it creates or
+		// loads, and InheritanceAttribute, which ComponentDesigner asks of every designer.
+
+		private BehaviorService _behaviorService;
+
+		/// <summary>The BehaviorService of the design surface (the root designer puts it in the host).</summary>
+		protected internal BehaviorService BehaviorService => _behaviorService ??= GetService (typeof (BehaviorService)) as BehaviorService;
+
+		/// <summary>True when this designer's component is the host's root component.</summary>
+		internal bool IsRootComponent {
+			get {
+				IDesignerHost host = GetService (typeof (IDesignerHost)) as IDesignerHost;
+				return host != null && Component == host.RootComponent;
+			}
+		}
 
 		[ComVisible (true)]
 		public class ControlDesignerAccessibleObject : AccessibleObject
 		{
-			[MonoTODO]
+			private readonly ControlDesigner _designer;
+			private readonly Control _control;
+			private IDesignerHost _host;
+			private ISelectionService _selectionService;
+
 			public ControlDesignerAccessibleObject (ControlDesigner designer, Control control)
 			{
-				throw new NotImplementedException ();
+				_designer = designer;
+				_control = control;
 			}
 
-			[MonoTODO]
+			public override Rectangle Bounds => _control.AccessibilityObject.Bounds;
+
+			public override string Description => _control.AccessibilityObject.Description;
+
+			private IDesignerHost DesignerHost => _host ??= _designer.GetService (typeof (IDesignerHost)) as IDesignerHost;
+
+			public override string DefaultAction => string.Empty;
+
+			public override string Name => _control.Name;
+
+			public override AccessibleObject Parent => _control.AccessibilityObject.Parent;
+
+			public override AccessibleRole Role => _control.AccessibilityObject.Role;
+
+			private ISelectionService SelectionService => _selectionService ??= _designer.GetService (typeof (ISelectionService)) as ISelectionService;
+
+			public override AccessibleStates State {
+				get {
+					AccessibleStates state = _control.AccessibilityObject.State;
+					ISelectionService s = SelectionService;
+					if (s != null) {
+						if (s.GetComponentSelected (_control))
+							state |= AccessibleStates.Selected;
+						if (s.PrimarySelection == _control)
+							state |= AccessibleStates.Focused;
+					}
+					return state;
+				}
+			}
+
+			public override string Value => _control.AccessibilityObject.Value;
+
 			public override AccessibleObject GetChild (int index)
 			{
-				throw new NotImplementedException ();
+				AccessibleObject child = _control.AccessibilityObject.GetChild (index);
+				if (child is Control.ControlAccessibleObject childAccObj && GetDesignerAccessibleObject (childAccObj) is AccessibleObject cao)
+					return cao;
+				return child;
 			}
 
-			[MonoTODO]
-			public override int GetChildCount ()
+			public override int GetChildCount () => _control.AccessibilityObject.GetChildCount ();
+
+			private AccessibleObject GetDesignerAccessibleObject (Control.ControlAccessibleObject cao)
 			{
-				throw new NotImplementedException ();
+				if (cao.Owner == null || DesignerHost == null)
+					return null;
+				return DesignerHost.GetDesigner (cao.Owner) is ControlDesigner ctlDesigner ? ctlDesigner.AccessibilityObject : null;
 			}
 
-			[MonoTODO]
-			public override AccessibleObject GetFocused ()
-			{
-				throw new NotImplementedException ();
-			}
+			public override AccessibleObject GetFocused () => (State & AccessibleStates.Focused) != 0 ? this : null;
 
-			[MonoTODO]
-			public override AccessibleObject GetSelected ()
-			{
-				throw new NotImplementedException ();
-			}
+			public override AccessibleObject GetSelected () => (State & AccessibleStates.Selected) != 0 ? this : null;
 
-			[MonoTODO]
-			public override AccessibleObject HitTest (int x, int y)
-			{
-				throw new NotImplementedException ();
-			}
-
-			[MonoTODO]
-			public override Rectangle Bounds {
-				get { throw new NotImplementedException (); }
-			}
-
-			[MonoTODO]
-			public override string DefaultAction {
-				get { throw new NotImplementedException (); }
-			}
-
-			[MonoTODO]
-			public override string Description {
-				get { throw new NotImplementedException (); }
-			}
-
-			[MonoTODO]
-			public override string Name {
-				get { throw new NotImplementedException (); }
-			}
-
-			[MonoTODO]
-			public override AccessibleObject Parent {
-				get { throw new NotImplementedException (); }
-			}
-
-			[MonoTODO]
-			public override AccessibleRole Role {
-				get { throw new NotImplementedException (); }
-			}
-
-			[MonoTODO]
-			public override AccessibleStates State {
-				get { throw new NotImplementedException (); }
-			}
-
-			[MonoTODO]
-			public override string Value {
-				get { throw new NotImplementedException (); }
-			}
+			public override AccessibleObject HitTest (int x, int y) => _control.AccessibilityObject.HitTest (x, y);
 		}
 
-		[MonoTODO]
+		/// <summary>The behavior a control's body glyph routes drag-and-drop through to the designer (.NET's).</summary>
+		internal class TransparentBehavior : Behavior.Behavior
+		{
+			private readonly ControlDesigner _designer;
+			private Rectangle _controlRect = Rectangle.Empty;
+
+			internal TransparentBehavior (ControlDesigner designer)
+			{
+				_designer = designer ?? throw new ArgumentNullException (nameof (designer));
+			}
+
+			internal bool IsTransparent (Point p) => _designer.GetHitTest (p);
+
+			public override void OnDragDrop (Glyph g, DragEventArgs e)
+			{
+				_controlRect = Rectangle.Empty;
+				_designer.OnDragDrop (e);
+			}
+
+			public override void OnDragEnter (Glyph g, DragEventArgs e)
+			{
+				if (_designer.Control is Control control)
+					_controlRect = control.RectangleToScreen (control.ClientRectangle);
+				_designer.OnDragEnter (e);
+			}
+
+			public override void OnDragLeave (Glyph g, EventArgs e)
+			{
+				_controlRect = Rectangle.Empty;
+				_designer.OnDragLeave (e);
+			}
+
+			public override void OnDragOver (Glyph g, DragEventArgs e)
+			{
+				// Not over a valid drop area: no drop. The behavior service does its own validation.
+				if (e != null && _controlRect != Rectangle.Empty && !_controlRect.Contains (new Point (e.X, e.Y))) {
+					e.Effect = DragDropEffects.None;
+					return;
+				}
+				_designer.OnDragOver (e);
+			}
+
+			public override void OnGiveFeedback (Glyph g, GiveFeedbackEventArgs e) => _designer.OnGiveFeedback (e);
+		}
+
+		/// <summary>The behavior the selection glyphs move and size the control with. .NET's ResizeBehavior and
+		/// ContainerSelectorBehavior are not part of this port; moving and sizing is the designer's own (its
+		/// mouse handling), so the glyphs carry none and the pointer goes through them to the control.</summary>
+		internal virtual Behavior.Behavior StandardBehavior => null;
+
+		internal virtual Behavior.Behavior MoveBehavior => null;
+
+		/// <summary>A 'body' glyph for the bounds of this control: it hit tests the control and forwards
+		/// drag-and-drop to the designer.</summary>
 		protected virtual ControlBodyGlyph GetControlGlyph (GlyphSelectionType selectionType)
 		{
-			throw new NotImplementedException ();
+			// The right cursor for this component.
+			OnSetCursor ();
+			Cursor cursor = Cursor.Current;
+
+			Rectangle translatedBounds = BehaviorService?.ControlRectInAdornerWindow (Control) ?? Rectangle.Empty;
+
+			ControlBodyGlyph g = null;
+			Control parent = Control.Parent;
+			IDesignerHost host = GetService (typeof (IDesignerHost)) as IDesignerHost;
+			if (parent != null && host != null && host.RootComponent != Component) {
+				Rectangle parentRect = parent.RectangleToScreen (parent.ClientRectangle);
+				Rectangle controlRect = Control.RectangleToScreen (Control.ClientRectangle);
+				if (!parentRect.Contains (controlRect) && !parentRect.IntersectsWith (controlRect)) {
+					// The parent clips the control completely: it gets no mouse, so the glyph moves it.
+					if (GetService (typeof (ISelectionService)) is ISelectionService sel && sel.GetComponentSelected (Control))
+						g = new ControlBodyGlyph (translatedBounds, cursor, Control, MoveBehavior);
+					else if (cursor == Cursors.SizeAll)
+						cursor = Cursors.Default;
+				}
+			}
+
+			return g ?? new ControlBodyGlyph (translatedBounds, cursor, Control, this);
 		}
 
-		[MonoTODO]
+		internal ControlBodyGlyph GetControlGlyphInternal (GlyphSelectionType selectionType) => GetControlGlyph (selectionType);
+
+		/// <summary>The selection border and grab handles of a selected control: a sizeable border with handles,
+		/// a locked border, or a no-resize border with its single handle, as .NET makes them.</summary>
 		public virtual GlyphCollection GetGlyphs (GlyphSelectionType selectionType)
 		{
-			throw new NotImplementedException ();
+			GlyphCollection glyphs = new GlyphCollection ();
+			if (selectionType == GlyphSelectionType.NotSelected)
+				return glyphs;
+			if (BehaviorService == null)
+				throw new InvalidOperationException ();
+
+			Rectangle translatedBounds = BehaviorService.ControlRectInAdornerWindow (Control);
+			bool primarySelection = selectionType == GlyphSelectionType.SelectedPrimary;
+			SelectionRules rules = SelectionRules;
+
+			if (Locked || InheritanceAttribute == InheritanceAttribute.InheritedReadOnly) {
+				glyphs.Add (new LockedHandleGlyph (translatedBounds, primarySelection));
+				glyphs.Add (new LockedBorderGlyph (translatedBounds, SelectionBorderGlyphType.Top));
+				glyphs.Add (new LockedBorderGlyph (translatedBounds, SelectionBorderGlyphType.Bottom));
+				glyphs.Add (new LockedBorderGlyph (translatedBounds, SelectionBorderGlyphType.Left));
+				glyphs.Add (new LockedBorderGlyph (translatedBounds, SelectionBorderGlyphType.Right));
+			} else if ((rules & SelectionRules.AllSizeable) == SelectionRules.None) {
+				glyphs.Add (new NoResizeHandleGlyph (translatedBounds, rules, primarySelection, MoveBehavior));
+				glyphs.Add (new NoResizeSelectionBorderGlyph (translatedBounds, rules, SelectionBorderGlyphType.Top, MoveBehavior));
+				glyphs.Add (new NoResizeSelectionBorderGlyph (translatedBounds, rules, SelectionBorderGlyphType.Bottom, MoveBehavior));
+				glyphs.Add (new NoResizeSelectionBorderGlyph (translatedBounds, rules, SelectionBorderGlyphType.Left, MoveBehavior));
+				glyphs.Add (new NoResizeSelectionBorderGlyph (translatedBounds, rules, SelectionBorderGlyphType.Right, MoveBehavior));
+			} else {
+				if ((rules & SelectionRules.TopSizeable) != 0) {
+					glyphs.Add (new GrabHandleGlyph (translatedBounds, GrabHandleGlyphType.MiddleTop, StandardBehavior, primarySelection));
+					if ((rules & SelectionRules.LeftSizeable) != 0)
+						glyphs.Add (new GrabHandleGlyph (translatedBounds, GrabHandleGlyphType.UpperLeft, StandardBehavior, primarySelection));
+					if ((rules & SelectionRules.RightSizeable) != 0)
+						glyphs.Add (new GrabHandleGlyph (translatedBounds, GrabHandleGlyphType.UpperRight, StandardBehavior, primarySelection));
+				}
+				if ((rules & SelectionRules.BottomSizeable) != 0) {
+					glyphs.Add (new GrabHandleGlyph (translatedBounds, GrabHandleGlyphType.MiddleBottom, StandardBehavior, primarySelection));
+					if ((rules & SelectionRules.LeftSizeable) != 0)
+						glyphs.Add (new GrabHandleGlyph (translatedBounds, GrabHandleGlyphType.LowerLeft, StandardBehavior, primarySelection));
+					if ((rules & SelectionRules.RightSizeable) != 0)
+						glyphs.Add (new GrabHandleGlyph (translatedBounds, GrabHandleGlyphType.LowerRight, StandardBehavior, primarySelection));
+				}
+				if ((rules & SelectionRules.LeftSizeable) != 0)
+					glyphs.Add (new GrabHandleGlyph (translatedBounds, GrabHandleGlyphType.MiddleLeft, StandardBehavior, primarySelection));
+				if ((rules & SelectionRules.RightSizeable) != 0)
+					glyphs.Add (new GrabHandleGlyph (translatedBounds, GrabHandleGlyphType.MiddleRight, StandardBehavior, primarySelection));
+				glyphs.Add (new SelectionBorderGlyph (translatedBounds, rules, SelectionBorderGlyphType.Top, StandardBehavior));
+				glyphs.Add (new SelectionBorderGlyph (translatedBounds, rules, SelectionBorderGlyphType.Bottom, StandardBehavior));
+				glyphs.Add (new SelectionBorderGlyph (translatedBounds, rules, SelectionBorderGlyphType.Left, StandardBehavior));
+				glyphs.Add (new SelectionBorderGlyph (translatedBounds, rules, SelectionBorderGlyphType.Right, StandardBehavior));
+			}
+			return glyphs;
 		}
 
-		[MonoTODO]
+		/// <summary>After a drop or a load: the sited children keep no designer window target of ours.</summary>
 		public override void InitializeExistingComponent (IDictionary defaultValues)
 		{
-			throw new NotImplementedException ();
+			base.InitializeExistingComponent (defaultValues);
 		}
 
-		[MonoTODO]
+		/// <summary>
+		/// A new control: its Text becomes its site name (when Text is a browsable, writable string), it is added to
+		/// the parent's designer when defaultValues names a "Parent", and an AutoDock container that is its parent's
+		/// only undocked child fills the parent -- .NET's order, base last.
+		/// </summary>
 		public override void InitializeNewComponent (IDictionary defaultValues)
 		{
-			throw new NotImplementedException ();
+			ISite site = Component.Site;
+			if (site != null) {
+				PropertyDescriptor textProp = TypeDescriptor.GetProperties (Component) ["Text"];
+				if (textProp != null && textProp.PropertyType == typeof (string) && !textProp.IsReadOnly && textProp.IsBrowsable)
+					textProp.SetValue (Component, site.Name);
+			}
+
+			if (defaultValues != null && defaultValues ["Parent"] is IComponent parent
+			    && GetService (typeof (IDesignerHost)) is IDesignerHost host) {
+				if (host.GetDesigner (parent) is ParentControlDesigner parentDesigner)
+					parentDesigner.AddControlInternal (Control, defaultValues);
+
+				if (parent is Control parentControl) {
+					// Some containers dock themselves when the designer adds them.
+					DockingAttribute dockingAttribute = (DockingAttribute) TypeDescriptor.GetAttributes (Component) [typeof (DockingAttribute)];
+					if (dockingAttribute != null && dockingAttribute.DockingBehavior == DockingBehavior.AutoDock) {
+						bool onlyNonDockedChild = true;
+						foreach (Control c in parentControl.Controls) {
+							if (c != Control && c.Dock == DockStyle.None) {
+								onlyNonDockedChild = false;
+								break;
+							}
+						}
+						if (onlyNonDockedChild) {
+							PropertyDescriptor dockProp = TypeDescriptor.GetProperties (Component) ["Dock"];
+							if (dockProp != null && dockProp.IsBrowsable)
+								dockProp.SetValue (Component, DockStyle.Fill);
+						}
+					}
+				}
+			}
+
+			base.InitializeNewComponent (defaultValues);
 		}
 
-		[MonoTODO]
+		/// <summary>Cleans up after a drag-and-drop. The default does nothing.</summary>
 		protected virtual void OnDragComplete (DragEventArgs de)
 		{
-			throw new NotImplementedException ();
 		}
 
-		[MonoTODO]
-		protected override InheritanceAttribute InheritanceAttribute {
-			get { throw new NotImplementedException (); }
+		/// <summary>The root component is always Inherited; anything else is what ComponentDesigner says.</summary>
+		protected override InheritanceAttribute InheritanceAttribute => IsRootComponent ? InheritanceAttribute.Inherited : base.InheritanceAttribute;
+
+		/// <summary>The control's four edges (low priority) and the four margin lines (always), as .NET reports them.</summary>
+		public virtual IList SnapLines => EdgeAndMarginSnapLines (Control.Margin);
+
+		internal ArrayList EdgeAndMarginSnapLines (Padding margin)
+		{
+			ArrayList snapLines = new ArrayList (8);
+			int width = Control.Width;
+			int height = Control.Height;
+			snapLines.Add (new SnapLine (SnapLineType.Top, 0, SnapLinePriority.Low));
+			snapLines.Add (new SnapLine (SnapLineType.Bottom, height - 1, SnapLinePriority.Low));
+			snapLines.Add (new SnapLine (SnapLineType.Left, 0, SnapLinePriority.Low));
+			snapLines.Add (new SnapLine (SnapLineType.Right, width - 1, SnapLinePriority.Low));
+			// Margin snap lines even for a control without margins: only like filters match.
+			snapLines.Add (new SnapLine (SnapLineType.Horizontal, -margin.Top, SnapLine.MarginTop, SnapLinePriority.Always));
+			snapLines.Add (new SnapLine (SnapLineType.Horizontal, margin.Bottom + height, SnapLine.MarginBottom, SnapLinePriority.Always));
+			snapLines.Add (new SnapLine (SnapLineType.Vertical, -margin.Left, SnapLine.MarginLeft, SnapLinePriority.Always));
+			snapLines.Add (new SnapLine (SnapLineType.Vertical, margin.Right + width, SnapLine.MarginRight, SnapLinePriority.Always));
+			return snapLines;
 		}
 
-		[MonoTODO]
-		public virtual IList SnapLines {
-			get { throw new NotImplementedException (); }
-		}
+		public virtual bool ParticipatesWithSnapLines => true;
 
-		[MonoTODO]
-		public virtual bool ParticipatesWithSnapLines {
-			get { throw new NotImplementedException (); }
-		}
-
-		[MonoTODO]
-		public bool AutoResizeHandles {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
-		}
+		public bool AutoResizeHandles { get; set; }
 #endregion
 
 

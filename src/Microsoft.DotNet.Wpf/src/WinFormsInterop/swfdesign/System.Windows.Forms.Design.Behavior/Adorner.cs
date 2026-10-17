@@ -1,80 +1,41 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 //
-// System.Windows.Forms.Design.Behavior.Adorner
-//
-// Author:
-//	Atsushi Enomoto (atsushi@ximian.com)
-//
-// Copyright (C) 2007 Novell, Inc.
-//
-
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-
+// Ported from dotnet/winforms (Design/Behavior/Adorner.cs).
 
 using System.Drawing;
-using System.Drawing.Design;
-using System.Drawing.Drawing2D;
 
 namespace System.Windows.Forms.Design.Behavior
 {
 	public sealed class Adorner
 	{
+		private readonly GlyphCollection _glyphs = new GlyphCollection ();
+
 		public Adorner ()
 		{
+			EnabledInternal = true;
 		}
 
-		[MonoTODO]
-		public void Invalidate ()
-		{
-			throw new NotImplementedException ();
-		}
+		public BehaviorService BehaviorService { get; set; }
 
-		[MonoTODO]
-		public void Invalidate (Rectangle rectangle)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO]
-		public void Invalidate (Region region)
-		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO]
-		public BehaviorService BehaviorService {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
-		}
-
-		[MonoTODO]
 		public bool Enabled {
-			get { throw new NotImplementedException (); }
-			set { throw new NotImplementedException (); }
+			get => EnabledInternal;
+			set {
+				if (value != EnabledInternal) {
+					EnabledInternal = value;
+					Invalidate ();
+				}
+			}
 		}
 
-		[MonoTODO]
-		public GlyphCollection Glyphs {
-			get { throw new NotImplementedException (); }
-		}
+		internal bool EnabledInternal { get; set; }
+
+		public GlyphCollection Glyphs => _glyphs;
+
+		public void Invalidate () => BehaviorService?.Invalidate ();
+
+		public void Invalidate (Rectangle rectangle) => BehaviorService?.Invalidate (rectangle);
+
+		public void Invalidate (Region region) => BehaviorService?.Invalidate (region);
 	}
 }
-
