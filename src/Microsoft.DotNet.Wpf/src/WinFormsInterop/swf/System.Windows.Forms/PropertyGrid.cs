@@ -1402,37 +1402,58 @@ namespace System.Windows.Forms
 		#endregion
 
 		#region Com2Interop.IComPropertyBrowser Interface
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
-		bool ComponentModel.Com2Interop.IComPropertyBrowser.InPropertySet {
-			get {
-				throw new NotImplementedException();
-			}
-		}
+		// Ported from dotnet/winforms PropertyGrid (the Mono stubs threw or did nothing).
 
-		[MonoTODO ("Stub, does nothing")]
-		void ComponentModel.Com2Interop.IComPropertyBrowser.DropDownDone ()
-		{
-		}
+		bool ComponentModel.Com2Interop.IComPropertyBrowser.InPropertySet => _gridView.InPropertySet;
 
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
-		bool ComponentModel.Com2Interop.IComPropertyBrowser.EnsurePendingChangesCommitted ()
-		{
-			throw new NotImplementedException ();
-		}
+		void ComponentModel.Com2Interop.IComPropertyBrowser.DropDownDone () => _gridView.CloseDropDown ();
 
-		[MonoTODO ("Stub, does nothing")]
+		bool ComponentModel.Com2Interop.IComPropertyBrowser.EnsurePendingChangesCommitted () => _gridView.EnsurePendingChangesCommitted ();
+
 		void ComponentModel.Com2Interop.IComPropertyBrowser.HandleF4 ()
 		{
+			if (_gridView.ContainsFocus)
+				return;
+			if (ActiveControl != _gridView)
+				ActiveControl = _gridView;
+			_gridView.Focus ();
 		}
 
-		[MonoTODO ("Stub, does nothing")]
+		// The registry value names .NET keeps the grid's state under.
+		private const string StateAlphabeticalSort = "PbrsAlpha";
+		private const string StateHelpVisible = "PbrsShowDesc";
+		private const string StateCommandsVisible = "PbrsShowCommands";
+		private const string StateCommentSizeRatio = "PbrsDescHeightRatio";
+		private const string StateCommandSizeRatio = "PbrsHotCommandHeightRatio";
+
 		void ComponentModel.Com2Interop.IComPropertyBrowser.LoadState (Microsoft.Win32.RegistryKey optRoot)
 		{
+			if (optRoot == null) {
+				PropertySort = PropertySort.Categorized | PropertySort.Alphabetical;
+				HelpVisible = true;
+				CommandsVisibleIfAvailable = false;
+				return;
+			}
+			object value = optRoot.GetValue (StateAlphabeticalSort, "0");
+			PropertySort = value != null && value.ToString ().Equals ("1")
+				? PropertySort.Alphabetical
+				: PropertySort.Categorized | PropertySort.Alphabetical;
+			value = optRoot.GetValue (StateHelpVisible, "1");
+			HelpVisible = value != null && value.ToString ().Equals ("1");
+			value = optRoot.GetValue (StateCommandsVisible, "0");
+			CommandsVisibleIfAvailable = value != null && value.ToString ().Equals ("1");
 		}
 
-		[MonoTODO ("Stub, does nothing")]
 		void ComponentModel.Com2Interop.IComPropertyBrowser.SaveState (Microsoft.Win32.RegistryKey optRoot)
 		{
+			if (optRoot == null)
+				return;
+			optRoot.SetValue (StateAlphabeticalSort, PropertySort == PropertySort.Alphabetical ? "1" : "0");
+			optRoot.SetValue (StateHelpVisible, HelpVisible ? "1" : "0");
+			optRoot.SetValue (StateCommandsVisible, CommandsVisibleIfAvailable ? "1" : "0");
+			// The pane size ratios: none set, as .NET writes them before the user has dragged a splitter.
+			optRoot.SetValue (StateCommentSizeRatio, "-1");
+			optRoot.SetValue (StateCommandSizeRatio, "-1");
 		}
 
 		static object ComComponentNameChangedEvent = new object ();

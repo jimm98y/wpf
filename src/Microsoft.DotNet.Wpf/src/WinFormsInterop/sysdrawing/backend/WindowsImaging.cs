@@ -115,6 +115,82 @@ namespace System.Drawing.WebGpuBackend
             return CreateDib (argb, f.Width, f.Height);
         }
 
+        /// <summary>
+        /// A monochrome bitmap of <paramref name="bitmap"/>'s transparency, as ControlPaint.CreateHBitmapTransparencyMask
+        /// makes one: 1 (white) where a pixel's alpha is zero, 0 (black) elsewhere. On Windows a real 1bpp GDI
+        /// bitmap (CreateBitmap, word-aligned rows, the leftmost pixel in the high bit); elsewhere a handle to the
+        /// same black-and-white picture.
+        /// </summary>
+        internal static IntPtr CreateTransparencyMask (Bitmap bitmap)
+        {
+            int w = bitmap.Width, h = bitmap.Height;
+            uint[] argb = GdipPixels.ToArgb (bitmap.Data.Frame, new Rectangle (0, 0, w, h));
+            if (!OperatingSystem.IsWindows ()) {
+                var mask = new GdipFrame (w, h, PixelFormat.Format32bppArgb);
+                var row = new uint [w];
+                for (int y = 0; y < h; y++) {
+                    for (int x = 0; x < w; x++) row [x] = (argb [y * w + x] >> 24) == 0 ? 0xffffffffu : 0xff000000u;
+                    GdipPixels.WriteArgb (mask, 0, y, w, row, 0);
+                }
+                return Register (mask);
+            }
+            int stride = (w + 7) / 8;
+            if ((stride & 1) != 0) stride++;   // scan lines on word boundaries
+            byte[] bits = new byte [stride * h];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    if ((argb [y * w + x] >> 24) == 0)
+                        bits [stride * y + x / 8] |= (byte) (0x80 >> (x % 8));
+            return CreateBitmap (w, h, 1, 1, bits);
+        }
+
+        /// <summary>
+        /// ControlPaint.CreateHBitmapColorMask: <paramref name="bitmap"/>'s HBITMAP with its colour cleared to black
+        /// wherever <paramref name="monochromeMask"/> is set (GDI's DSna blit of the mask: each pixel ANDed with the
+        /// inverse of the mask's white), the alpha byte untouched.
+        /// </summary>
+        internal static IntPtr CreateColorMask (Bitmap bitmap, IntPtr monochromeMask)
+        {
+            int w = bitmap.Width, h = bitmap.Height;
+            uint[] mask;
+            if (OperatingSystem.IsWindows ()) {
+                mask = ReadDib (monochromeMask, w, h);
+            } else {
+                GdipFrame m = Lookup (monochromeMask);
+                mask = GdipPixels.ToArgb (m, new Rectangle (0, 0, Math.Min (w, m.Width), Math.Min (h, m.Height)));
+                if (m.Width != w || m.Height != h) {
+                    var full = new uint [w * h];
+                    for (int y = 0; y < Math.Min (h, m.Height); y++)
+                        Array.Copy (mask, y * Math.Min (w, m.Width), full, y * w, Math.Min (w, m.Width));
+                    mask = full;
+                }
+            }
+            uint[] argb = GdipPixels.ToArgb (bitmap.Data.Frame, new Rectangle (0, 0, w, h));
+            // GetHbitmap's own compositing over its default background first, then the mask.
+            Color background = Color.LightGray;
+            for (int i = 0; i < argb.Length; i++) {
+                uint c = argb [i];
+                int a = (int) (c >> 24);
+                if (a != 255) {
+                    int r = ((int) (c >> 16 & 0xff) * a + background.R * (255 - a) + 127) / 255;
+                    int g = ((int) (c >> 8 & 0xff) * a + background.G * (255 - a) + 127) / 255;
+                    int b = ((int) (c & 0xff) * a + background.B * (255 - a) + 127) / 255;
+                    c = (uint) a << 24 | (uint) r << 16 | (uint) g << 8 | (uint) b;
+                }
+                if ((mask [i] & 0x00ffffff) != 0) c &= 0xff000000u;
+                argb [i] = c;
+            }
+            if (!OperatingSystem.IsWindows ()) {
+                var frame = new GdipFrame (w, h, PixelFormat.Format32bppArgb);
+                for (int y = 0; y < h; y++) GdipPixels.WriteArgb (frame, 0, y, w, argb, y * w);
+                return Register (frame);
+            }
+            return CreateDib (argb, w, h);
+        }
+
+        [DllImport ("gdi32.dll")]
+        private static extern IntPtr CreateBitmap (int width, int height, uint planes, uint bitsPerPixel, byte[] bits);
+
         internal static GdipImageData FromResource (IntPtr hinstance, string name)
         {
             if (!OperatingSystem.IsWindows ())

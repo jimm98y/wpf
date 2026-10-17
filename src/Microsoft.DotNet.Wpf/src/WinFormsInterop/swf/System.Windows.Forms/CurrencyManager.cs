@@ -114,6 +114,10 @@ namespace System.Windows.Forms {
 			ListChangedHandler (null, new ListChangedEventArgs (ListChangedType.Reset, -1));
 		}
 
+		internal override Type BindTypeInternal => ListBindingHelper.GetListItemType (list);
+
+		internal override object DataSourceInternal => data_source;
+
 		public override PropertyDescriptorCollection GetItemProperties ()
 		{
 			return ListBindingHelper.GetListItemProperties (list);

@@ -749,8 +749,51 @@ namespace System.Windows.Forms {
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
+		// Ported from dotnet/winforms DataGridViewCell (the Mono stub threw): the editing panel takes the cell's area
+		// inside its borders and padding, clipped to the visible part; the editing control's rectangle -- relative to
+		// the panel -- is returned.
 		public virtual Rectangle PositionEditingPanel (Rectangle cellBounds, Rectangle cellClip, DataGridViewCellStyle cellStyle, bool singleVerticalBorderAdded, bool singleHorizontalBorderAdded, bool isFirstDisplayedColumn, bool isFirstDisplayedRow) {
-			throw new NotImplementedException();
+			if (DataGridView == null)
+				throw new InvalidOperationException ();
+			DataGridViewAdvancedBorderStyle placeholder = new DataGridViewAdvancedBorderStyle ();
+			DataGridViewAdvancedBorderStyle effective = AdjustCellBorderStyle (DataGridView.AdvancedCellBorderStyle, placeholder,
+				singleVerticalBorderAdded, singleHorizontalBorderAdded, isFirstDisplayedColumn, isFirstDisplayedRow);
+			Rectangle widths = BorderWidths (effective);
+			widths.X += cellStyle.Padding.Left;
+			widths.Y += cellStyle.Padding.Top;
+			widths.Width += cellStyle.Padding.Right;
+			widths.Height += cellStyle.Padding.Bottom;
+
+			int xPanel, wPanel = cellBounds.Width, yPanel, hPanel = cellBounds.Height;
+			if (cellClip.X - cellBounds.X >= widths.X) {
+				xPanel = cellClip.X;
+				wPanel -= cellClip.X - cellBounds.X;
+			} else {
+				xPanel = cellBounds.X + widths.X;
+				wPanel -= widths.X;
+			}
+			if (cellClip.Right <= cellBounds.Right - widths.Width)
+				wPanel -= cellBounds.Right - cellClip.Right;
+			else
+				wPanel -= widths.Width;
+			int xControl = cellBounds.X - cellClip.X;
+			int wControl = cellBounds.Width - widths.X - widths.Width;
+			if (cellClip.Y - cellBounds.Y >= widths.Y) {
+				yPanel = cellClip.Y;
+				hPanel -= cellClip.Y - cellBounds.Y;
+			} else {
+				yPanel = cellBounds.Y + widths.Y;
+				hPanel -= widths.Y;
+			}
+			if (cellClip.Bottom <= cellBounds.Bottom - widths.Height)
+				hPanel -= cellBounds.Bottom - cellClip.Bottom;
+			else
+				hPanel -= widths.Height;
+			int yControl = cellBounds.Y - cellClip.Y;
+			int hControl = cellBounds.Height - widths.Y - widths.Height;
+			DataGridView.EditingPanel.Location = new Point (xPanel, yPanel);
+			DataGridView.EditingPanel.Size = new Size (wPanel, hPanel);
+			return new Rectangle (xControl, yControl, wControl, hControl);
 		}
 
 		public override string ToString () {
@@ -1612,8 +1655,17 @@ cellBounds.Height -= 2;
 				this.dataGridViewCell = owner;
 			}
 
+			// .NET: the cell's displayed rectangle on the screen (empty when not displayed).
 			public override Rectangle Bounds {
-				get { throw new NotImplementedException(); }
+				get {
+					if (dataGridViewCell == null)
+						throw new InvalidOperationException ("Owner is not set.");
+					DataGridView grid = dataGridViewCell.DataGridView;
+					if (grid == null || dataGridViewCell.RowIndex < 0 || dataGridViewCell.ColumnIndex < 0 || !grid.IsHandleCreated)
+						return Rectangle.Empty;
+					Rectangle cell = grid.GetCellDisplayRectangle (dataGridViewCell.ColumnIndex, dataGridViewCell.RowIndex, false);
+					return cell.IsEmpty ? Rectangle.Empty : grid.RectangleToScreen (cell);
+				}
 			}
 
 			public override string DefaultAction {
@@ -1660,10 +1712,17 @@ cellBounds.Height -= 2;
 					return dataGridViewCell.FormattedValue.ToString();
 				}
 				set {
-					if (owner == null)
+					if (dataGridViewCell == null)
 						throw new InvalidOperationException ("owner is null");
-						
-					throw new NotImplementedException ();
+					// .NET: a header, read-only or unattached cell takes no value; an edit in progress ends (and is
+					// validated) first; the text is parsed with the cell's style and pushed into the cell.
+					if (dataGridViewCell is DataGridViewHeaderCell || dataGridViewCell.ReadOnly
+					    || dataGridViewCell.DataGridView == null || dataGridViewCell.OwningRow == null)
+						return;
+					if (dataGridViewCell.DataGridView.IsCurrentCellInEditMode)
+						dataGridViewCell.DataGridView.EndEdit ();
+					DataGridViewCellStyle style = dataGridViewCell.InheritedStyle;
+					dataGridViewCell.Value = dataGridViewCell.ParseFormattedValue (value, style, null, null);
 				}
 			}
 
@@ -1678,8 +1737,15 @@ cellBounds.Height -= 2;
 				}
 			}
 
+			// .NET: the one child is the editing control, while this cell is the one being edited.
 			public override AccessibleObject GetChild (int index) {
-				throw new NotImplementedException();
+				if (dataGridViewCell == null)
+					throw new InvalidOperationException ("Owner is not set.");
+				DataGridView grid = dataGridViewCell.DataGridView;
+				if (grid != null && grid.EditingControl != null && grid.IsCurrentCellInEditMode
+				    && grid.CurrentCell == dataGridViewCell && index == 0)
+					return grid.EditingControl.AccessibilityObject;
+				return null;
 			}
 
 			public override int GetChildCount () {

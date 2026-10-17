@@ -823,8 +823,11 @@ namespace System.Windows.Forms {
 
 		[Browsable (false)]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
+		// .NET hosts the editing control in this panel; here the editing control is the grid's child itself, and the
+		// panel is only made (on demand, as .NET makes it) for whoever asks -- PositionEditingPanel sizes it.
+		private Panel editingPanel;
 		public Panel EditingPanel {
-			get { throw new NotImplementedException(); }
+			get { return editingPanel ??= new Panel { AccessibleName = "Editing Panel", Visible = false }; }
 		}
 
 		[DefaultValue (DataGridViewEditMode.EditOnKeystrokeOrF2)]
@@ -3250,9 +3253,27 @@ namespace System.Windows.Forms {
 			get { return verticalScrollBar; }
 		}
 
+		// .NET: the address is checked, and accessibility clients are told the focus (when the grid has it) and the
+		// selection moved to the cell's object -- row object ids are 1-based after the top header row.
 		protected virtual void AccessibilityNotifyCurrentCellChanged (Point cellAddress)
 		{
-			throw new NotImplementedException ();
+			if (cellAddress.X < 0 || cellAddress.X >= Columns.Count)
+				throw new ArgumentOutOfRangeException (nameof (cellAddress));
+			if (cellAddress.Y < 0 || cellAddress.Y >= Rows.Count)
+				throw new ArgumentOutOfRangeException (nameof (cellAddress));
+			int visibleRowIndex = 0;
+			for (int i = 0; i < cellAddress.Y; i++)
+				if (Rows [i].Visible)
+					visibleRowIndex++;
+			int visibleColumnIndex = 0;
+			for (int i = 0; i < cellAddress.X; i++)
+				if (Columns [i].Visible)
+					visibleColumnIndex++;
+			int objectID = visibleRowIndex + (ColumnHeadersVisible ? 1 : 0) + 1;
+			int childID = visibleColumnIndex + (RowHeadersVisible ? 1 : 0);
+			if (ContainsFocus)
+				AccessibilityNotifyClients (AccessibleEvents.Focus, objectID, childID);
+			AccessibilityNotifyClients (AccessibleEvents.Selection, objectID, childID);
 		}
 
 		[MonoTODO ("Does not use fixedHeight parameter")]
@@ -3458,9 +3479,10 @@ namespace System.Windows.Forms {
 			base.Dispose(disposing);
 		}
 
+		// .NET: object ids of the grid's accessibility notifications are 1-based (0 is the grid itself).
 		protected override AccessibleObject GetAccessibilityObjectById (int objectId)
 		{
-			throw new NotImplementedException();
+			return AccessibilityObject.GetChild (objectId - 1);
 		}
 
 		protected override bool IsInputChar (char charCode)

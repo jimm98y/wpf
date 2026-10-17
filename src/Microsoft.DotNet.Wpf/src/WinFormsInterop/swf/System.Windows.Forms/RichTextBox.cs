@@ -1408,9 +1408,18 @@ namespace System.Windows.Forms {
 		#endregion	// Public Instance Methods
 
 		#region Protected Instance Methods
+		/// <summary>The object the control hands RichEdit as its IRichEditOleCallback (.NET: an OleCallback for this
+		/// control). This RichTextBox is not RichEdit and asks no callback of it, so the object only stands for one:
+		/// a derived class may wrap or replace it, as in .NET, and no caller gets an exception.</summary>
 		protected virtual object CreateRichEditOleCallback()
 		{
-			throw new NotImplementedException ();
+			return new RichEditOleCallback (this);
+		}
+
+		private sealed class RichEditOleCallback
+		{
+			internal RichEditOleCallback (RichTextBox owner) { Owner = owner; }
+			internal RichTextBox Owner { get; }
 		}
 
 		protected override void OnBackColorChanged (EventArgs e)

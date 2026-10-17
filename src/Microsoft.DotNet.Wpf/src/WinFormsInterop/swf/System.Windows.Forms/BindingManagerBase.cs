@@ -90,9 +90,16 @@ namespace System.Windows.Forms
 			return GetItemPropertiesInternal ();
 		}
 		
+		/// <summary>The type the manager binds to (.NET's BindType): a list's item type, a single object's own.</summary>
+		internal virtual Type BindTypeInternal => null;
+
+		/// <summary>The manager's data source, for the item properties of an untyped list (.NET's DataSource).</summary>
+		internal virtual object DataSourceInternal => null;
+
 		internal virtual PropertyDescriptorCollection GetItemPropertiesInternal ()
 		{
-			throw new NotImplementedException ();
+			Type bindType = BindTypeInternal;
+			return bindType == null ? new PropertyDescriptorCollection (null) : TypeDescriptor.GetProperties (bindType);
 		}
 
 		public abstract void RemoveAt(int index);
@@ -109,16 +116,64 @@ namespace System.Windows.Forms
 		}
 
 		#region Protected Instance Methods
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
+		// Ported from dotnet/winforms BindingManagerBase (the Mono stubs threw): the item properties at the end of a
+		// chain of list accessors -- an ITypedList answers them itself; otherwise each accessor is followed through
+		// the bound type's properties, an IList by its strongly typed indexer or else its first item.
 		protected internal virtual PropertyDescriptorCollection GetItemProperties (ArrayList dataSources, ArrayList listAccessors)
 		{
-			throw new NotImplementedException();
+			IList list = (this as CurrencyManager)?.List;
+			if (list is ITypedList typedList) {
+				PropertyDescriptor [] properties = new PropertyDescriptor [listAccessors.Count];
+				listAccessors.CopyTo (properties, 0);
+				return typedList.GetItemProperties (properties);
+			}
+			return GetItemProperties (BindTypeInternal, 0, dataSources, listAccessors);
 		}
 
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
 		protected virtual PropertyDescriptorCollection GetItemProperties (Type listType, int offset, ArrayList dataSources, ArrayList listAccessors)
 		{
-			throw new NotImplementedException();
+			if (listType == null || listAccessors.Count < offset)
+				return null;
+
+			if (listAccessors.Count == offset) {
+				if (!typeof (IList).IsAssignableFrom (listType))
+					return TypeDescriptor.GetProperties (listType);
+				foreach (System.Reflection.PropertyInfo property in listType.GetProperties ()) {
+					if (property.Name == "Item" && property.PropertyType != typeof (object))
+						return TypeDescriptor.GetProperties (property.PropertyType, new Attribute [] { new BrowsableAttribute (true) });
+				}
+				// The properties of the type of the list's first element.
+				if (offset > 0 && dataSources [offset - 1] is IList first && first.Count > 0)
+					return TypeDescriptor.GetProperties (first [0]);
+				return null;
+			}
+
+			if (typeof (IList).IsAssignableFrom (listType)) {
+				PropertyDescriptorCollection itemProps = null;
+				foreach (System.Reflection.PropertyInfo property in listType.GetProperties ()) {
+					if (property.Name == "Item" && property.PropertyType != typeof (object))
+						itemProps = TypeDescriptor.GetProperties (property.PropertyType, new Attribute [] { new BrowsableAttribute (true) });
+				}
+				if (itemProps == null) {
+					// No strongly typed indexer: the first element's properties. At offset 0 the list is the
+					// manager's own data source.
+					IList items = offset == 0 ? DataSourceInternal as IList : dataSources [offset - 1] as IList;
+					if (items != null && items.Count > 0)
+						itemProps = TypeDescriptor.GetProperties (items [0]);
+				}
+				if (itemProps != null) {
+					for (int j = 0; j < itemProps.Count; j++) {
+						if (itemProps [j].Equals (listAccessors [offset]))
+							return GetItemProperties (itemProps [j].PropertyType, offset + 1, dataSources, listAccessors);
+					}
+				}
+			} else {
+				foreach (System.Reflection.PropertyInfo property in listType.GetProperties ()) {
+					if (property.Name.Equals (((PropertyDescriptor) listAccessors [offset]).Name))
+						return GetItemProperties (property.PropertyType, offset + 1, dataSources, listAccessors);
+				}
+			}
+			return null;
 		}
 
 		protected internal abstract string GetListName (ArrayList listAccessors);

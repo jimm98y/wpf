@@ -682,10 +682,12 @@ namespace System.Windows.Forms
 			}
 		}
 
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
+		// .NET: the hook answers only WM_NOTIFY, with the GetOpenFileName notifications (CDN_*) of an old-style
+		// hooked dialog. This dialog is the platform's own file dialog and sends none, so no message is processed
+		// here -- zero, as .NET returns for everything that is not one of its notifications.
 		protected override IntPtr HookProc (IntPtr hWnd, int msg, IntPtr wparam, IntPtr lparam)
 		{
-			throw new NotImplementedException ();
+			return IntPtr.Zero;
 		}
 		
 		protected void OnFileOk (CancelEventArgs e)

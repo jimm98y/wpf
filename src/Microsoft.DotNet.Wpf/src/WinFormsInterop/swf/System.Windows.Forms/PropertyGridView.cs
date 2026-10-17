@@ -353,6 +353,16 @@ namespace System.Windows.Forms.PropertyGridInternal {
 		private int in_property_set;
 		public bool InPropertySet => in_property_set > 0;
 
+		/// <summary>.NET's EnsurePendingChangesCommitted: the drop-down closes and a value still being typed is
+		/// written to the object. False when the value was refused.</summary>
+		internal bool EnsurePendingChangesCommitted ()
+		{
+			CloseDropDown ();
+			if (grid_textbox != null && grid_textbox.Visible && this.SelectedGridItem != null)
+				return TrySetEntry (this.SelectedGridItem, grid_textbox.Text);
+			return true;
+		}
+
 		private bool TrySetEntry (GridEntry entry, object value)
 		{
 			if (entry == null || grid_textbox.Text.Equals (entry.ValueText))

@@ -51,13 +51,13 @@ namespace System.Windows.Forms
 			explicit_height = -1;
 			headerCell = new DataGridViewRowHeaderCell();
 			headerCell.SetOwningRow (this);
-			accessibilityObject = new AccessibleObject ();
+			// Made on first use from CreateAccessibilityInstance, as .NET makes it (a bare AccessibleObject had no children).
 			SetState (DataGridViewElementStates.Visible);
 		}
 
 		[Browsable (false)]
 		public AccessibleObject AccessibilityObject {
-			get { return accessibilityObject; }
+			get { return accessibilityObject ??= CreateAccessibilityInstance (); }
 		}
 
 		[Browsable (false)]
@@ -887,8 +887,17 @@ namespace System.Windows.Forms
 				this.dataGridViewRow = owner;
 			}
 
+			// .NET: the row's displayed rectangle on the screen (empty when it is not displayed).
 			public override Rectangle Bounds {
-				get { throw new NotImplementedException(); }
+				get {
+					if (dataGridViewRow == null)
+						throw new InvalidOperationException ("Owner is not set.");
+					DataGridView grid = dataGridViewRow.DataGridView;
+					if (grid == null || dataGridViewRow.Index < 0 || !grid.IsHandleCreated)
+						return Rectangle.Empty;
+					Rectangle row = grid.GetRowDisplayRectangle (dataGridViewRow.Index, false);
+					return row.IsEmpty ? Rectangle.Empty : grid.RectangleToScreen (row);
+				}
 			}
 
 			public override string Name {
@@ -932,12 +941,36 @@ namespace System.Windows.Forms
 				}
 			}
 
+			// .NET: the row header cell first (when row headers show), then the visible cells in display order.
 			public override AccessibleObject GetChild (int index) {
-				throw new NotImplementedException();
+				if (dataGridViewRow == null)
+					throw new InvalidOperationException ("Owner is not set.");
+				if (index < 0)
+					throw new ArgumentOutOfRangeException (nameof (index));
+				DataGridView grid = dataGridViewRow.DataGridView;
+				if (grid != null && grid.RowHeadersVisible) {
+					if (index == 0)
+						return dataGridViewRow.HeaderCell.AccessibilityObject;
+					index--;
+				}
+				if (grid == null)
+					return index < dataGridViewRow.Cells.Count ? dataGridViewRow.Cells [index].AccessibilityObject : null;
+				var visible = new System.Collections.Generic.List<DataGridViewColumn> ();
+				foreach (DataGridViewColumn column in grid.Columns)
+					if (column.Visible)
+						visible.Add (column);
+				visible.Sort ((a, b) => a.DisplayIndex.CompareTo (b.DisplayIndex));
+				return index < visible.Count ? dataGridViewRow.Cells [visible [index].Index].AccessibilityObject : null;
 			}
 
 			public override int GetChildCount () {
-				throw new NotImplementedException();
+				if (dataGridViewRow == null)
+					throw new InvalidOperationException ("Owner is not set.");
+				DataGridView grid = dataGridViewRow.DataGridView;
+				if (grid == null)
+					return dataGridViewRow.Cells.Count;
+				int count = grid.Columns.GetColumnCount (DataGridViewElementStates.Visible);
+				return grid.RowHeadersVisible ? count + 1 : count;
 			}
 
 			public override AccessibleObject GetFocused () {

@@ -436,49 +436,234 @@ namespace System.Windows.Forms {
 		#endregion	// Private Methods
 
 		#region IDataObject Members
+		// System.Runtime.InteropServices.ComTypes.IDataObject over this object's data, as dotnet/winforms' DataObject
+		// answers it (its Composition's managed-to-native adapter, seen through the runtime's ComTypes facade: a
+		// failing HRESULT of a void method arrives as a COMException). Every member of the Mono stub threw
+		// NotImplementedException. Data goes out in an HGLOBAL: text as ANSI or UTF-16 with its terminator, a file
+		// list as DROPFILES, a stream or byte array as its bytes, a string of any other format as UTF-16.
+
+		private const int E_NOTIMPL = unchecked ((int) 0x80004001);
+		private const int E_POINTER = unchecked ((int) 0x80004003);
+		private const int DV_E_FORMATETC = unchecked ((int) 0x80040064);
+		private const int DV_E_TYMED = unchecked ((int) 0x80040069);
+		private const int DV_E_DVASPECT = unchecked ((int) 0x8004006B);
+		private const int OLE_E_ADVISENOTSUPPORTED = unchecked ((int) 0x80040003);
+		private const int DATA_S_SAMEFORMATETC = 0x00040130;
+
+		private static readonly string [] s_standardFormats = {
+			null, DataFormats.Text, DataFormats.Bitmap, DataFormats.MetafilePict, DataFormats.SymbolicLink, DataFormats.Dif,
+			DataFormats.Tiff, DataFormats.OemText, DataFormats.Dib, DataFormats.Palette, DataFormats.PenData, DataFormats.Riff,
+			DataFormats.WaveAudio, DataFormats.UnicodeText, DataFormats.EnhancedMetafile, DataFormats.FileDrop, DataFormats.Locale,
+		};
+
+		[DllImport ("user32", EntryPoint = "RegisterClipboardFormatW", CharSet = CharSet.Unicode)]
+		private static extern int RegisterClipboardFormatW (string format);
+
+		[DllImport ("user32", EntryPoint = "GetClipboardFormatNameW", CharSet = CharSet.Unicode)]
+		private static extern int GetClipboardFormatNameW (int format, System.Text.StringBuilder name, int max);
+
+		/// <summary>The clipboard format id of a format name: the Win32 constants for the standard ones, the
+		/// registered id for the others (on Windows), and DataFormats' own id elsewhere.</summary>
+		internal static short FormatId (string format)
+		{
+			int i = Array.IndexOf (s_standardFormats, format);
+			if (i > 0)
+				return (short) i;
+			if (OperatingSystem.IsWindows ())
+				return (short) RegisterClipboardFormatW (format);
+			return (short) DataFormats.GetFormat (format).Id;
+		}
+
+		private static string FormatName (short id)
+		{
+			if (id > 0 && id < s_standardFormats.Length)
+				return s_standardFormats [id];
+			if (OperatingSystem.IsWindows ()) {
+				var sb = new System.Text.StringBuilder (256);
+				if (GetClipboardFormatNameW (id & 0xffff, sb, sb.Capacity) > 0)
+					return sb.ToString ();
+			}
+			return DataFormats.GetFormat (id & 0xffff).Name;
+		}
+
+		private static bool TymedUsable (System.Runtime.InteropServices.ComTypes.TYMED tymed)
+			=> (tymed & System.Runtime.InteropServices.ComTypes.TYMED.TYMED_HGLOBAL) != 0;
+
 		int System.Runtime.InteropServices.ComTypes.IDataObject.DAdvise (ref System.Runtime.InteropServices.ComTypes.FORMATETC pFormatetc, System.Runtime.InteropServices.ComTypes.ADVF advf, System.Runtime.InteropServices.ComTypes.IAdviseSink adviseSink, out int connection)
 		{
-			throw new NotImplementedException ();
+			connection = 0;
+			return E_NOTIMPL;
 		}
 
 		void System.Runtime.InteropServices.ComTypes.IDataObject.DUnadvise (int connection)
 		{
-			throw new NotImplementedException ();
+			Marshal.ThrowExceptionForHR (E_NOTIMPL);
 		}
 
 		int System.Runtime.InteropServices.ComTypes.IDataObject.EnumDAdvise (out System.Runtime.InteropServices.ComTypes.IEnumSTATDATA enumAdvise)
 		{
-			throw new NotImplementedException ();
+			enumAdvise = null;
+			return OLE_E_ADVISENOTSUPPORTED;
 		}
 
 		System.Runtime.InteropServices.ComTypes.IEnumFORMATETC System.Runtime.InteropServices.ComTypes.IDataObject.EnumFormatEtc (System.Runtime.InteropServices.ComTypes.DATADIR direction)
 		{
-			throw new NotImplementedException ();
+			if (direction != System.Runtime.InteropServices.ComTypes.DATADIR.DATADIR_GET)
+				Marshal.ThrowExceptionForHR (E_NOTIMPL);
+			string [] formats = GetFormats ();
+			var list = new System.Runtime.InteropServices.ComTypes.FORMATETC [formats.Length];
+			for (int i = 0; i < formats.Length; i++) {
+				list [i] = new System.Runtime.InteropServices.ComTypes.FORMATETC {
+					cfFormat = FormatId (formats [i]),
+					dwAspect = System.Runtime.InteropServices.ComTypes.DVASPECT.DVASPECT_CONTENT,
+					lindex = -1,
+					tymed = formats [i] == DataFormats.Bitmap ? System.Runtime.InteropServices.ComTypes.TYMED.TYMED_GDI : System.Runtime.InteropServices.ComTypes.TYMED.TYMED_HGLOBAL,
+				};
+			}
+			return new FormatEnumerator (list, 0);
 		}
 
 		int System.Runtime.InteropServices.ComTypes.IDataObject.GetCanonicalFormatEtc (ref System.Runtime.InteropServices.ComTypes.FORMATETC formatIn, out System.Runtime.InteropServices.ComTypes.FORMATETC formatOut)
 		{
-			throw new NotImplementedException ();
+			formatOut = default;
+			return DATA_S_SAMEFORMATETC;
 		}
 
 		void System.Runtime.InteropServices.ComTypes.IDataObject.GetData (ref System.Runtime.InteropServices.ComTypes.FORMATETC format, out System.Runtime.InteropServices.ComTypes.STGMEDIUM medium)
 		{
-			throw new NotImplementedException ();
+			medium = default;
+			if (!TymedUsable (format.tymed))
+				Marshal.ThrowExceptionForHR (DV_E_TYMED);
+			byte [] bytes = GetHGlobalBytes (format);
+			IntPtr hglobal = Marshal.AllocHGlobal (Math.Max (1, bytes.Length));
+			Marshal.Copy (bytes, 0, hglobal, bytes.Length);
+			if (bytes.Length == 0)
+				Marshal.WriteByte (hglobal, 0);
+			medium.tymed = System.Runtime.InteropServices.ComTypes.TYMED.TYMED_HGLOBAL;
+			medium.unionmember = hglobal;
 		}
 
 		void System.Runtime.InteropServices.ComTypes.IDataObject.GetDataHere (ref System.Runtime.InteropServices.ComTypes.FORMATETC format, ref System.Runtime.InteropServices.ComTypes.STGMEDIUM medium)
 		{
-			throw new NotImplementedException ();
+			if (!TymedUsable (format.tymed) || medium.tymed != System.Runtime.InteropServices.ComTypes.TYMED.TYMED_HGLOBAL)
+				Marshal.ThrowExceptionForHR (DV_E_TYMED);
+			if (medium.unionmember == IntPtr.Zero)
+				Marshal.ThrowExceptionForHR (E_POINTER);
+			byte [] bytes = GetHGlobalBytes (format);
+			// The caller's HGLOBAL, grown to the data (.NET's SaveDataToHGLOBAL reallocates the handle it is given).
+			medium.unionmember = Marshal.ReAllocHGlobal (medium.unionmember, (IntPtr) Math.Max (1, bytes.Length));
+			Marshal.Copy (bytes, 0, medium.unionmember, bytes.Length);
 		}
 
 		int System.Runtime.InteropServices.ComTypes.IDataObject.QueryGetData (ref System.Runtime.InteropServices.ComTypes.FORMATETC format)
 		{
-			throw new NotImplementedException ();
+			if (format.dwAspect != System.Runtime.InteropServices.ComTypes.DVASPECT.DVASPECT_CONTENT)
+				return DV_E_DVASPECT;
+			if (!TymedUsable (format.tymed))
+				return DV_E_TYMED;
+			if (format.cfFormat == 0)
+				return 1;   // S_FALSE: no format asked
+			string name = FormatName (format.cfFormat);
+			return name != null && GetDataPresent (name) ? 0 : DV_E_FORMATETC;
 		}
 
 		void System.Runtime.InteropServices.ComTypes.IDataObject.SetData (ref System.Runtime.InteropServices.ComTypes.FORMATETC formatIn, ref System.Runtime.InteropServices.ComTypes.STGMEDIUM medium, bool release)
 		{
-			throw new NotImplementedException ();
+			// .NET accepts only the drag-loop formats of the shell's drag images; anything else is E_NOTIMPL.
+			Marshal.ThrowExceptionForHR (E_NOTIMPL);
+		}
+
+		/// <summary>The bytes the HGLOBAL of a format holds; DV_E_FORMATETC when this object has no such data.</summary>
+		private byte [] GetHGlobalBytes (System.Runtime.InteropServices.ComTypes.FORMATETC format)
+		{
+			string name = FormatName (format.cfFormat);
+			object data = name == null ? null : GetData (name);
+			if (data == null)
+				Marshal.ThrowExceptionForHR (DV_E_FORMATETC);
+			if (name == DataFormats.FileDrop && data is string [] files)
+				return DropFiles (files);
+			if (data is Stream stream) {
+				using (var ms = new MemoryStream ()) {
+					long at = stream.CanSeek ? stream.Position : 0;
+					if (stream.CanSeek) stream.Position = 0;
+					stream.CopyTo (ms);
+					if (stream.CanSeek) stream.Position = at;
+					return ms.ToArray ();
+				}
+			}
+			if (data is byte [] raw)
+				return raw;
+			string text = data as string ?? data.ToString ();
+			if (name == DataFormats.Text || name == DataFormats.OemText || name == DataFormats.Rtf || name == DataFormats.Html || name == DataFormats.CommaSeparatedValue) {
+				// ANSI (UTF-8 for HTML, as .NET writes it), NUL-terminated.
+				System.Text.Encoding enc = name == DataFormats.Html ? System.Text.Encoding.UTF8 : System.Text.Encoding.Default;
+				byte [] b = enc.GetBytes (text);
+				Array.Resize (ref b, b.Length + 1);
+				return b;
+			}
+			byte [] u = System.Text.Encoding.Unicode.GetBytes (text);
+			Array.Resize (ref u, u.Length + 2);
+			return u;
+		}
+
+		/// <summary>CF_HDROP: a DROPFILES header (wide names), the names each NUL-terminated, then one more NUL.</summary>
+		private static byte [] DropFiles (string [] files)
+		{
+			const int header = 20;   // DWORD pFiles, POINT pt, BOOL fNC, BOOL fWide
+			var names = new System.Text.StringBuilder ();
+			foreach (string f in files)
+				names.Append (f).Append ('\0');
+			names.Append ('\0');
+			byte [] text = System.Text.Encoding.Unicode.GetBytes (names.ToString ());
+			byte [] result = new byte [header + text.Length];
+			BitConverter.GetBytes (header).CopyTo (result, 0);
+			BitConverter.GetBytes (1).CopyTo (result, 16);   // fWide
+			text.CopyTo (result, header);
+			return result;
+		}
+
+		/// <summary>IEnumFORMATETC over a fixed list (.NET's FormatEnumerator).</summary>
+		private sealed class FormatEnumerator : System.Runtime.InteropServices.ComTypes.IEnumFORMATETC
+		{
+			private readonly System.Runtime.InteropServices.ComTypes.FORMATETC [] _formats;
+			private int _current;
+
+			internal FormatEnumerator (System.Runtime.InteropServices.ComTypes.FORMATETC [] formats, int current)
+			{
+				_formats = formats;
+				_current = current;
+			}
+
+			public int Next (int celt, System.Runtime.InteropServices.ComTypes.FORMATETC [] rgelt, int [] pceltFetched)
+			{
+				int fetched = 0;
+				while (fetched < celt && _current < _formats.Length && rgelt != null && fetched < rgelt.Length)
+					rgelt [fetched++] = _formats [_current++];
+				if (pceltFetched != null && pceltFetched.Length > 0)
+					pceltFetched [0] = fetched;
+				return fetched == celt ? 0 : 1;   // S_OK : S_FALSE
+			}
+
+			public int Skip (int celt)
+			{
+				if (_current + celt >= _formats.Length) {
+					_current = _formats.Length;
+					return 1;
+				}
+				_current += celt;
+				return 0;
+			}
+
+			public int Reset ()
+			{
+				_current = 0;
+				return 0;
+			}
+
+			public void Clone (out System.Runtime.InteropServices.ComTypes.IEnumFORMATETC newEnum)
+			{
+				newEnum = new FormatEnumerator (_formats, _current);
+			}
 		}
 		#endregion
 	 }
