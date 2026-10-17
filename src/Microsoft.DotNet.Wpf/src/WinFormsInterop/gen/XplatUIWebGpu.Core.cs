@@ -2694,7 +2694,19 @@ namespace System.Windows.Forms
 			return -1;
 		}
 
-		internal void SetCursorOverride(IntPtr cursor) => _cursorOverride = CursorIdFromHandle(cursor);
+		/// <summary>Cursor.Current. A shape built from a .cur resource (Cursors.VSplit, HSplit) has no
+		/// handle here, so it is known by the cursor itself, as ShapeOf knows it.</summary>
+		internal void SetCursorOverride(IntPtr cursor)
+			=> _cursorOverride = cursor == IntPtr.Zero && Cursor.CurrentSet is Cursor c ? ShapeOf(c) : CursorIdFromHandle(cursor);
+
+		/// <summary>The pointer has moved over a window, which shows its own cursor again: what
+		/// Cursor.Current set is over (Windows' DefWindowProc / Control.WmSetCursor on WM_SETCURSOR,
+		/// which is never sent while the mouse is captured -- so a drag keeps the shape it set).</summary>
+		internal void EndCursorOverride()
+		{
+			_cursorOverride = -1;
+			Cursor.ForgetCurrent();
+		}
 		internal override void ShowCursor(bool show) { }
 		internal override void SetCursorPos(IntPtr hwnd, int x, int y) { }
 		internal override void GetCursorPos(IntPtr hwnd, out int x, out int y)
