@@ -37,8 +37,12 @@ namespace System.Windows.Forms {
 		internal override void GetDisplaySize(out Size size) { size = default(Size); }
 		internal override void SetWindowMinMax(IntPtr handle, Rectangle maximized, Size min, Size max) {  }
 		internal override double GetWindowTransparency(IntPtr handle) { return 0; }
-		internal override void SetWindowTransparency(IntPtr handle, double transparency, Color key) {  }
-		internal override TransparencySupport SupportsTransparency() { return default(TransparencySupport); }
+		// A form's Opacity (and TransparencyKey) is read straight off the form by the host, which presents
+		// the window layered with it. What the host needs to hear is that it CHANGED: nothing else asked
+		// for a frame, so a popup fading in on a timer stayed at whichever step happened to be presented
+		// last -- half transparent -- until the pointer moved over it.
+		internal override void SetWindowTransparency(IntPtr handle, double transparency, Color key) { _paintVersion++; }
+		internal override TransparencySupport SupportsTransparency() { return TransparencySupport.Set; }
 		internal override void SetMenu(IntPtr handle, Menu menu) {  }
 		internal override void Activate(IntPtr handle) {  }
 		internal override void HandleException(Exception e) {  }
