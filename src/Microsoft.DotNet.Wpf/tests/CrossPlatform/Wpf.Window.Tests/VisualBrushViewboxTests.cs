@@ -92,5 +92,120 @@ namespace Wpf.Window.Tests
             Assert.Equal(0xFF0000FFu, px[10 * 200 + 110]);
             Assert.Equal(0xFF0000FFu, px[90 * 200 + 190]);
         }
+        // ---- The Viewbox is in the space the source is drawn in WITH its offset and transform: its
+        // parent's. Recorded from stock WPF (RenderTargetBitmap of a Border at (100,50) on a Canvas):
+        // a Viewbox of its bounds in the parent shows it, one of its own bounds (0,0,w,h) shows
+        // nothing, and a RenderTransform moves it inside a fixed Viewbox. GraphWorX's drag ghost and
+        // resize outline (GwxElement.GetDrawing) take the element's parent-space bounds; taking them
+        // in its own space cropped the ghost by the grab offset and put the outline at the origin.
+
+        private static bool IsRed(uint p) => ((p >> 16) & 0xFF) > 200 && ((p >> 8) & 0xFF) < 60 && (p & 0xFF) < 60;
+
+        /// <summary>A 600x400 white canvas with a red 120x40 Border at (100,50), plus cells filled with
+        /// VisualBrushes of that Border through the given Viewboxes (each 120x40, at y = 200 + 50*i),
+        /// with the Border moved by a RenderTransform of <paramref name="move"/>.</summary>
+        private static uint[] RenderCells(Vector? move, params Rect[] viewboxes)
+        {
+            return UiThread.Invoke(() =>
+            {
+                var canvas = new System.Windows.Controls.Canvas { Width = 600, Height = 400, Background = Brushes.White };
+                var src = new System.Windows.Controls.Border { Width = 120, Height = 40, Background = Brushes.Red };
+                System.Windows.Controls.Canvas.SetLeft(src, 100); System.Windows.Controls.Canvas.SetTop(src, 50);
+                if (move is { } m) src.RenderTransform = new TranslateTransform(m.X, m.Y);
+                canvas.Children.Add(src);
+                for (int i = 0; i < viewboxes.Length; i++)
+                {
+                    var cell = new Rectangle
+                    {
+                        Width = 120, Height = 40,
+                        Fill = new VisualBrush(src)
+                        {
+                            Viewbox = viewboxes[i], ViewboxUnits = BrushMappingMode.Absolute,
+                            Viewport = new Rect(0, 0, 1, 1), ViewportUnits = BrushMappingMode.RelativeToBoundingBox,
+                            TileMode = TileMode.None, Stretch = Stretch.Fill,
+                        },
+                    };
+                    System.Windows.Controls.Canvas.SetLeft(cell, 300); System.Windows.Controls.Canvas.SetTop(cell, 200 + 50 * i);
+                    canvas.Children.Add(cell);
+                }
+                canvas.Measure(new Size(600, 400)); canvas.Arrange(new Rect(0, 0, 600, 400)); canvas.UpdateLayout();
+                var rtb = new RenderTargetBitmap(600, 400, 96, 96, PixelFormats.Pbgra32);
+                rtb.Render(canvas);
+                var buf = new uint[600 * 400];
+                rtb.CopyPixels(buf, 600 * 4, 0);
+                return buf;
+            });
+        }
+
+        [Fact]
+        public void AnAbsoluteViewbox_IsInTheSourcesParentSpace()
+        {
+            uint[] px = RenderCells(null, new Rect(100, 50, 120, 40), new Rect(0, 0, 120, 40));
+            Assert.True(IsRed(px[220 * 600 + 310]) && IsRed(px[235 * 600 + 410]), "the parent-space Viewbox did not show the source");
+            Assert.False(IsRed(px[270 * 600 + 310]) || IsRed(px[285 * 600 + 410]), "a Viewbox of the source's own bounds showed it (stock shows nothing there)");
+        }
+
+        [Fact]
+        public void TwoViewboxesOfOneSource_EachShowTheirOwnPart()
+        {
+            // The second Viewbox starts 60 px left of the Border: its left half is empty, its right half red.
+            uint[] px = RenderCells(null, new Rect(100, 50, 120, 40), new Rect(40, 50, 120, 40));
+            Assert.True(IsRed(px[220 * 600 + 305]), "first brush");
+            Assert.False(IsRed(px[270 * 600 + 310]), "the second brush shows the first brush's picture");
+            Assert.True(IsRed(px[270 * 600 + 410]), "the second brush lost the Border");
+        }
+
+        [Fact]
+        public void ARenderTransformOnTheSource_MovesItInsideAFixedViewbox()
+        {
+            uint[] px = RenderCells(new Vector(30, 10), new Rect(100, 50, 120, 40));
+            Assert.False(IsRed(px[220 * 600 + 310]), "the moved source still fills the Viewbox's left edge");
+            Assert.True(IsRed(px[235 * 600 + 340]), "the moved source is missing where it moved to");
+        }
+
+        /// <summary>GraphWorX's resize outline: a DrawingGroup scaled about the element's origin holding
+        /// GetDrawing's group (the parent-space VisualBrush under the inverse of the element's offset),
+        /// placed at the element. Stock draws it over the element, 1.5x its size.</summary>
+        [Fact]
+        public void AScaledDrawingOfTheElement_DrawsOverTheElement()
+        {
+            uint[] px = UiThread.Invoke(() =>
+            {
+                var canvas = new System.Windows.Controls.Canvas { Width = 600, Height = 400, Background = Brushes.White };
+                var src = new System.Windows.Controls.Border { Width = 120, Height = 40, Background = Brushes.Red };
+                System.Windows.Controls.Canvas.SetLeft(src, 100); System.Windows.Controls.Canvas.SetTop(src, 50);
+                canvas.Children.Add(src);
+                var host = new DrawingHost();
+                canvas.Children.Add(host);
+                var val = new Rect(100, 50, 120, 40);
+                var inner = new DrawingGroup { Transform = new TranslateTransform(-100, -50) };
+                inner.Children.Add(new GeometryDrawing(new VisualBrush(src)
+                {
+                    Viewbox = val, ViewboxUnits = BrushMappingMode.Absolute,
+                    Viewport = new Rect(0, 0, 1, 1), ViewportUnits = BrushMappingMode.RelativeToBoundingBox,
+                    TileMode = TileMode.None, Stretch = Stretch.Fill,
+                }, null, new RectangleGeometry(val)));
+                var scaled = new DrawingGroup { Transform = new ScaleTransform(1.5, 1.5) };
+                scaled.Children.Add(inner);
+                var placed = new DrawingGroup { Transform = new TranslateTransform(100, 50) };
+                placed.Children.Add(scaled);
+                host.Drawing = placed;
+                canvas.Measure(new Size(600, 400)); canvas.Arrange(new Rect(0, 0, 600, 400)); canvas.UpdateLayout();
+                var rtb = new RenderTargetBitmap(600, 400, 96, 96, PixelFormats.Pbgra32);
+                rtb.Render(canvas);
+                var buf = new uint[600 * 400];
+                rtb.CopyPixels(buf, 600 * 4, 0);
+                return buf;
+            });
+            // (100,50) + 1.5 * (120,40) = (280,110): the outline reaches past the element's own corner.
+            Assert.True(IsRed(px[100 * 600 + 270]), "the outline is not over the element at 1.5x");
+            Assert.False(IsRed(px[10 * 600 + 10]), "the outline is drawn at the origin");
+        }
+
+        private sealed class DrawingHost : FrameworkElement
+        {
+            public Drawing? Drawing;
+            protected override void OnRender(DrawingContext dc) { if (Drawing != null) dc.DrawDrawing(Drawing); }
+        }
     }
 }

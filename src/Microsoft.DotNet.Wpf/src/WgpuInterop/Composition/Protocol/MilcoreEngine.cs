@@ -2744,15 +2744,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // dragging out its rectangle, 4x4 at the start of the gesture and growing, with the
             // Viewbox already at its final size -- had its few pixels stretched across a texture that
             // the Viewbox then took a sliver of: GraphWorX showed a dot until the mouse was released.
-            // The Viewbox is in the source's OWN space (a VisualBrush draws its visual without the
-            // visual's offset and transform), so the source is drawn through the inverse of those.
+            // The Viewbox is in the space the visual is drawn in WITH its own offset and transform --
+            // its parent's -- as stock WPF renders a VisualBrush (measured: a Border at (100,50) shows
+            // through Viewbox (100,50,w,h) and not through (0,0,w,h); a RenderTransform on it moves
+            // the picture inside a fixed Viewbox). Taking the Viewbox in the visual's own space
+            // instead cropped GraphWorX's drag ghost (its Viewbox is the element's bounds in the
+            // parent) by the element's offset, and moved it with the drag's transform.
             Matrix3x2 own = Matrix3x2.Identity;
-            if (absolute && Matrix3x2.Invert(source.LocalToParent, out Matrix3x2 inverse))
-            {
+            if (absolute)
                 b = new Rect((float)ib.Viewbox.X, (float)ib.Viewbox.Y, (float)ib.Viewbox.Width, (float)ib.Viewbox.Height);
-                own = inverse;
-            }
-            else if (absolute) b = VisualSubtreeBounds(source, source.LocalToParent);   // a transform with no inverse
             if (b.Width <= 0.01f || b.Height <= 0.01f) return false;
 
             const int supersample = 2;
@@ -2766,7 +2766,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
             (float u0, float v0, float u1, float v1) = ViewboxUv(ib, b);
 
-            fill = new ImageBrush(wrapper, cb.Source, pw, ph, u0, v0, u1, v1, 0f, 0f, opacity);
+            // The texture is the source rendered through THIS wrapper: one id per source and framing.
+            // Keyed by the source alone, two brushes of one visual with different absolute Viewboxes
+            // shared whichever texture was rendered first in the frame (and the cache kept it).
+            // Brushes that frame it the same way -- the tiles of one source, each a relative Viewbox
+            // of the same full picture -- still share one.
+            uint textureId = (uint)HashCode.Combine(cb.Source, wrapper.Transform, pw, ph) | 0x80000000u;
+            fill = new ImageBrush(wrapper, textureId, pw, ph, u0, v0, u1, v1, 0f, 0f, opacity);
             return true;
         }
 

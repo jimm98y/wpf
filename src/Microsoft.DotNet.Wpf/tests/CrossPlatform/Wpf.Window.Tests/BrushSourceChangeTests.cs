@@ -53,7 +53,9 @@ namespace Wpf.Window.Tests
                         canvas.Children.Add(growing);
                         brush = new VisualBrush(canvas)
                         {
-                            Viewbox = new Rect(0, 0, 100, 50), ViewboxUnits = BrushMappingMode.Absolute,
+                            // In the space the source is drawn in with its offset -- its parent's -- as
+                            // stock WPF frames a VisualBrush: the source sits at x = -1000 there.
+                            Viewbox = new Rect(-1000, 0, 100, 50), ViewboxUnits = BrushMappingMode.Absolute,
                             Viewport = new Rect(0, 0, 1, 1), ViewportUnits = BrushMappingMode.RelativeToBoundingBox,
                             TileMode = TileMode.None, Stretch = Stretch.Fill,
                         };
