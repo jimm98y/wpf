@@ -80,6 +80,8 @@
     <!-- Named by the PresentationFramework closure a real Window loads (as in Wpf.Window.Tests). -->
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
     <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <!-- System.Design's CodeDom serializers need it at run time (the designer serialization tests). -->
+    <PackageReference Include="System.CodeDom" Version="10.0.0" />
   </ItemGroup>
 
   <!--

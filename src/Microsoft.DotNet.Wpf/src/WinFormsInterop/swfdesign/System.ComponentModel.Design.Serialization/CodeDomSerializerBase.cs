@@ -928,37 +928,110 @@ namespace System.ComponentModel.Design.Serialization
 			}
 		}
 
-#region Resource Serialization - TODO
-		protected CodeExpression SerializeToResourceExpression (IDesignerSerializationManager manager, object value) 
+#region Resource Serialization
+		// Ported from dotnet/winforms (CodeDomSerializerBase): the resource half of serialization, through
+		// ResourceCodeDomSerializer. Every one of these threw NotImplementedException.
+
+		protected CodeExpression SerializeToResourceExpression (IDesignerSerializationManager manager, object value)
 		{
-			throw new NotImplementedException ();
-		}
-		
-		protected CodeExpression SerializeToResourceExpression (IDesignerSerializationManager manager, object value, 
-									bool ensureInvariant) 
-		{
-			throw new NotImplementedException ();
-		}
-	 	
-		protected void SerializePropertiesToResources (IDesignerSerializationManager manager, CodeStatementCollection statements, 
-							       object value, Attribute[] filter) 
-		{
-			throw new NotImplementedException ();
+			return SerializeToResourceExpression (manager, value, true);
 		}
 
+		/// <summary>The value written to the resources and the expression that reads it back (null for a value that
+		/// cannot be serialized). With ensureInvariant, a new value also goes to the invariant culture.</summary>
+		protected CodeExpression SerializeToResourceExpression (IDesignerSerializationManager manager, object value,
+									bool ensureInvariant)
+		{
+#pragma warning disable SYSLIB0050
+			if (value != null && !value.GetType ().IsSerializable)
+				return null;
+#pragma warning restore SYSLIB0050
+			CodeStatementCollection saveStatements = null;
+			if (value != null && manager.Context [typeof (StatementContext)] is StatementContext statementCtx) {
+				saveStatements = statementCtx.StatementCollection [value];
+				if (saveStatements != null)
+					manager.Context.Push (saveStatements);
+			}
+			try {
+				return ResourceCodeDomSerializer.Default.Serialize (manager, value, false, ensureInvariant) as CodeExpression;
+			} finally {
+				if (saveStatements != null)
+					manager.Context.Pop ();
+			}
+		}
+
+		/// <summary>Every visible property of the value as resource metadata, named "object.Property".</summary>
+		protected void SerializePropertiesToResources (IDesignerSerializationManager manager, CodeStatementCollection statements,
+							       object value, Attribute[] filter)
+		{
+			PropertyDescriptorCollection props = TypeDescriptor.GetProperties (value, filter);
+			manager.Context.Push (statements);
+			try {
+				CodeExpression target = SerializeToExpression (manager, value);
+				if (target == null)
+					return;
+				var propertyRef = new CodePropertyReferenceExpression (target, string.Empty);
+				foreach (PropertyDescriptor property in props) {
+					var tree = new ExpressionContext (propertyRef, property.PropertyType, value);
+					manager.Context.Push (tree);
+					try {
+						if (property.Attributes.Contains (DesignerSerializationVisibilityAttribute.Visible)) {
+							propertyRef.PropertyName = property.Name;
+							string name = target is CodeThisReferenceExpression ? "$this" : manager.GetName (value);
+							name = name + "." + property.Name;
+							ResourceCodeDomSerializer.SerializeMetadata (manager, name, property.GetValue (value), property.ShouldSerializeValue (value));
+						}
+					} finally {
+						manager.Context.Pop ();
+					}
+				}
+			} finally {
+				manager.Context.Pop ();
+			}
+		}
+
+		/// <summary>A value written under a name, to the culture being designed.</summary>
 		protected void SerializeResource (IDesignerSerializationManager manager, string resourceName, object value)
 		{
-			throw new NotImplementedException ();
+			ResourceCodeDomSerializer.WriteResource (manager, resourceName, value);
 		}
 
-		protected void SerializeResourceInvariant (IDesignerSerializationManager manager, string resourceName, object value) 
+		/// <summary>A value written under a name, to the invariant culture.</summary>
+		protected void SerializeResourceInvariant (IDesignerSerializationManager manager, string resourceName, object value)
 		{
-			throw new NotImplementedException ();
+			ResourceCodeDomSerializer.WriteResourceInvariant (manager, resourceName, value);
 		}
 
+		/// <summary>The value's properties set from the resources named "object.Property" (or "$this.Property" for
+		/// the root), metadata first, of the properties that carry the filter's attributes.</summary>
 		protected void DeserializePropertiesFromResources (IDesignerSerializationManager manager, object value, Attribute[] filter)
 		{
-			throw new NotImplementedException ();
+			// Faster to walk the resources (read once per document) than to filter properties per object.
+			IDictionaryEnumerator de = ResourceCodeDomSerializer.GetMetadataEnumerator (manager)
+				?? ResourceCodeDomSerializer.GetEnumerator (manager, System.Globalization.CultureInfo.InvariantCulture);
+			if (de == null)
+				return;
+			string ourObjectName = manager.Context [typeof (RootContext)] is RootContext root && root.Value == value
+				? "$this"
+				: manager.GetName (value);
+			if (ourObjectName == null)
+				return;
+			PropertyDescriptorCollection ourProperties = TypeDescriptor.GetProperties (value);
+			while (de.MoveNext ()) {
+				if (!(de.Key is string resourceName))
+					continue;
+				int dotIndex = resourceName.IndexOf ('.');
+				if (dotIndex == -1 || !string.Equals (resourceName.Substring (0, dotIndex), ourObjectName, StringComparison.Ordinal))
+					continue;
+				PropertyDescriptor property = ourProperties [resourceName.Substring (dotIndex + 1)];
+				if (property == null || !property.Attributes.Contains (filter))
+					continue;
+				try {
+					property.SetValue (value, de.Value);
+				} catch (Exception e) {
+					manager.ReportError (e);
+				}
+			}
 		}
 #endregion
 	}

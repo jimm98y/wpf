@@ -37,6 +37,10 @@ namespace System.Windows.Forms
 	public abstract class DataGridColumnStyle : Component, IDataGridColumnStyleEditingNotificationService
 	{
 		[ComVisible(true)]
+		// The column header's accessible object, as the .NET Framework's DataGrid has it (the DataGrid family is
+		// gone from .NET, which throws PlatformNotSupportedException for it): its bounds are the header cell on the
+		// screen, its name the header text, its parent the grid's, and Left/Right move between header cells. Mono
+		// threw NotImplementedException from every one.
 		protected class DataGridColumnHeaderAccessibleObject : AccessibleObject
 		{
 			#region Local Variables
@@ -53,18 +57,26 @@ namespace System.Windows.Forms
 			}
 			#endregion //Constructors
 
+			private DataGrid Grid => owner?.DataGridTableStyle?.DataGrid;
+
 			#region Public Instance Properties
-			[MonoTODO ("Not implemented, will throw NotImplementedException")]
 			public override Rectangle Bounds {
 				get {
-					throw new NotImplementedException ();
+					DataGrid grid = Grid;
+					if (grid == null || owner.DataGridTableStyle != grid.CurrentTableStyle || !grid.ColumnHeadersVisible)
+						return Rectangle.Empty;
+					int index = grid.CurrentTableStyle.GridColumnStyles.IndexOf (owner);
+					if (index < 0)
+						return Rectangle.Empty;
+					Rectangle area = grid.ColumnHeadersArea;
+					var cell = new Rectangle (area.X + grid.GetColumnStartingPixel (index) - grid.HorizPixelOffset, area.Y, owner.Width, area.Height);
+					cell.Intersect (area);
+					return cell.IsEmpty ? Rectangle.Empty : grid.RectangleToScreen (cell);
 				}
 			}
 
 			public override string Name {
-				get {
-					throw new NotImplementedException ();
-				}
+				get { return owner?.HeaderText; }
 			}
 
 			protected DataGridColumnStyle Owner {
@@ -72,43 +84,56 @@ namespace System.Windows.Forms
 			}
 
 			public override AccessibleObject Parent {
-				get {
-					throw new NotImplementedException ();
-				}
+				get { return Grid?.AccessibilityObject; }
 			}
 
 			public override AccessibleRole Role {
-				get {
-					throw new NotImplementedException ();
-				}
+				get { return AccessibleRole.ColumnHeader; }
 			}
 			#endregion
 
 			#region Public Instance Methods
-			[MonoTODO ("Not implemented, will throw NotImplementedException")]
 			public override AccessibleObject Navigate (AccessibleNavigation navdir)
 			{
-				throw new NotImplementedException ();
+				DataGrid grid = Grid;
+				if (grid == null)
+					return null;
+				GridColumnStylesCollection columns = owner.DataGridTableStyle.GridColumnStyles;
+				int index = columns.IndexOf (owner);
+				switch (navdir) {
+				case AccessibleNavigation.Right:
+				case AccessibleNavigation.Next:
+				case AccessibleNavigation.Down:
+					return index + 1 < columns.Count ? columns [index + 1].HeaderAccessibleObject : null;
+				case AccessibleNavigation.Left:
+				case AccessibleNavigation.Previous:
+				case AccessibleNavigation.Up:
+					return index > 0 ? columns [index - 1].HeaderAccessibleObject : null;
+				default:
+					return null;
+				}
 			}
 			#endregion Public Instance Methods
 		}
 
 		protected class CompModSwitches
 		{
+			private static TraceSwitch s_dgEditColumnEditing;
+
 			public CompModSwitches ()
 			{
 			}
 
 			#region Public Instance Methods
-			[MonoTODO ("Not implemented, will throw NotImplementedException")]
+			/// <summary>The .NET Framework's trace switch for column editing.</summary>
 			public static TraceSwitch DGEditColumnEditing {
 				get {
-					throw new NotImplementedException ();
+					return s_dgEditColumnEditing ??= new TraceSwitch ("DGEditColumnEditing", "Editing related tracing");
 				}
 			}
 			#endregion Public Instance Methods
 		}
-		
+
 		internal enum ArrowDrawing
 		{
 			No = 0,
