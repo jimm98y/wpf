@@ -67,6 +67,40 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Throws<ArgumentNullException>(() => svc.GetHandler(null!));
         }
 
+        private sealed class TestMask : MaskDescriptor
+        {
+            private readonly string _mask, _sample; private readonly Type? _type;
+            public TestMask(string mask, string sample, Type? type = null) { _mask = mask; _sample = sample; _type = type; }
+            public override string Mask => _mask;
+            public override string Name => "test";
+            public override string Sample => _sample;
+            public override Type ValidatingType => _type!;
+        }
+
+        [Fact]
+        public void MaskDescriptor_ValidatesItsSampleAgainstItsMask()
+        {
+            Assert.True(MaskDescriptor.IsValidMaskDescriptor(new TestMask("000-0000", "555-1234")));
+            Assert.False(MaskDescriptor.IsValidMaskDescriptor(new TestMask("000-0000", "abc"), out string why));
+            Assert.StartsWith("Error at position 0: Digit expected", why);
+            Assert.False(MaskDescriptor.IsValidMaskDescriptor(null, out why));
+            Assert.Equal("The provided MaskDescriptor is null.", why);
+            Assert.Equal(new TestMask("00", "12"), new TestMask("00", "34"));
+            Assert.NotEqual(new TestMask("00", "12"), new TestMask("000", "123"));
+            Assert.Equal(System.Threading.Thread.CurrentThread.CurrentCulture, new TestMask("0", "1").Culture);
+        }
+
+        [Fact]
+        public void ExceptionCollection_HoldsCopiesOfItsExceptions()
+        {
+            var inner = new InvalidOperationException("boom");
+            var errors = new ExceptionCollection(new System.Collections.ArrayList { inner });
+            Assert.Single(errors.Exceptions!);
+            Assert.NotSame(errors.Exceptions, errors.Exceptions);   // a copy each time
+            Assert.Null(new ExceptionCollection(null!).Exceptions);
+            Assert.Throws<ArgumentException>(() => new ExceptionCollection(new System.Collections.ArrayList { "not an exception" }));
+        }
+
         private sealed class ShowingTray : ComponentTray
         {
             public ShowingTray(IDesigner d, IServiceProvider sp) : base(d, sp) { }

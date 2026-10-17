@@ -1,58 +1,39 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 //
-// System.ComponentModel.Design.ExceptionCollection.cs
-//
-// Author:
-//      Atsushi Enomoto  <atsushi@ximian.com>
-//
-// Copyright (C) 2007 Novell, Inc
-//
+// Ported from dotnet/winforms (ExceptionCollection). Mono's constructor threw NotImplementedException after storing
+// the list -- so a designer loader could never report its load errors with one.
 
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Runtime.Serialization;
 
 namespace System.ComponentModel.Design
 {
-	[Serializable]
 	public sealed class ExceptionCollection : Exception
 	{
-		ArrayList exceptions;
+		private readonly List<Exception> _exceptions;
 
-		[MonoTODO]
 		public ExceptionCollection (ArrayList exceptions)
 		{
-			this.exceptions = exceptions;
-			throw new NotImplementedException ();
+			if (exceptions == null)
+				return;
+			var list = new List<Exception> (exceptions.Count);
+			foreach (object e in exceptions) {
+				if (!(e is Exception ex))
+					throw new ArgumentException ("All objects in the collection must be of type Exception.", nameof (exceptions));
+				list.Add (ex);
+			}
+			_exceptions = list;
 		}
 
-		[MonoTODO]
+		/// <summary>A copy of the exceptions (null when constructed with none), as .NET hands it out.</summary>
+		public ArrayList Exceptions => _exceptions == null ? null : new ArrayList (_exceptions);
+
+		[Obsolete ("Formatter-based serialization is obsolete.", DiagnosticId = "SYSLIB0051")]
 		public override void GetObjectData (SerializationInfo info, StreamingContext context)
 		{
-			throw new NotImplementedException ();
-		}
-
-		public ArrayList Exceptions {
-			get { return exceptions; }
+			throw new PlatformNotSupportedException ();
 		}
 	}
 }

@@ -30,20 +30,20 @@
 
 
 using System;
+using System.ComponentModel;
 using System.Globalization;
 
 namespace System.Windows.Forms.Design
 {
+	// Ported from dotnet/winforms (System.Windows.Forms.Design.MaskDescriptor). Mono threw from Culture and from
+	// both IsValidMaskDescriptor overloads, and compared descriptors by reference.
 	public abstract class MaskDescriptor
 	{
 		protected MaskDescriptor ()
 		{
 		}
 
-		[MonoTODO]
-		public virtual CultureInfo Culture {
-			get { throw new NotImplementedException (); }
-		}
+		public virtual CultureInfo Culture => System.Threading.Thread.CurrentThread.CurrentCulture;
 
 		public abstract string Mask { get; }
 
@@ -53,35 +53,81 @@ namespace System.Windows.Forms.Design
 
 		public abstract Type ValidatingType { get; }
 
-		[MonoTODO]
-		public override bool Equals (object maskDescriptor)
-		{
-			return base.Equals (maskDescriptor);
-		}
-		
-		[MonoTODO]
-		public override int GetHashCode ()
-		{
-			return base.GetHashCode ();
-		}
-		
-		[MonoTODO]
 		public static bool IsValidMaskDescriptor (MaskDescriptor maskDescriptor)
 		{
-			throw new NotImplementedException ();
+			return IsValidMaskDescriptor (maskDescriptor, out string _);
 		}
-		
-		[MonoTODO]
+
+		/// <summary>.NET's check: the three required properties are set, the sample fits the mask, and it parses
+		/// as the validating type.</summary>
 		public static bool IsValidMaskDescriptor (MaskDescriptor maskDescriptor, out string validationErrorDescription)
 		{
-			throw new NotImplementedException ();
+			validationErrorDescription = string.Empty;
+			if (maskDescriptor == null) {
+				validationErrorDescription = "The provided MaskDescriptor is null.";
+				return false;
+			}
+			if (string.IsNullOrEmpty (maskDescriptor.Mask) || string.IsNullOrEmpty (maskDescriptor.Name) || string.IsNullOrEmpty (maskDescriptor.Sample)) {
+				validationErrorDescription = "One or more required properties are null or empty.";
+				return false;
+			}
+
+			var provider = new MaskedTextProvider (maskDescriptor.Mask, maskDescriptor.Culture);
+			using (var box = new MaskedTextBox (provider) {
+				SkipLiterals = true,
+				ResetOnPrompt = true,
+				ResetOnSpace = true,
+				ValidatingType = maskDescriptor.ValidatingType,
+				FormatProvider = maskDescriptor.Culture,
+				Culture = maskDescriptor.Culture,
+			}) {
+				box.TypeValidationCompleted += (s, e) => { if (!e.IsValidInput) ((MaskedTextBox) s).Tag = e.Message; };
+				box.MaskInputRejected += (s, e) => ((MaskedTextBox) s).Tag = RejectedMessage (e);
+				box.Text = maskDescriptor.Sample;
+				if (box.Tag == null && maskDescriptor.ValidatingType != null)
+					box.ValidateText ();
+				if (box.Tag != null)
+					validationErrorDescription = box.Tag.ToString ();
+			}
+			return validationErrorDescription.Length == 0;
 		}
-		
-		[MonoTODO]
+
+		/// <summary>MaskedTextBoxDesigner.GetMaskInputRejectedErrorMessage, with .NET's text.</summary>
+		internal static string RejectedMessage (MaskInputRejectedEventArgs e)
+		{
+			string hint;
+			switch (e.RejectionHint) {
+			case MaskedTextResultHint.AsciiCharacterExpected: hint = "ASCII character expected"; break;
+			case MaskedTextResultHint.AlphanumericCharacterExpected: hint = "Alphanumeric character expected"; break;
+			case MaskedTextResultHint.DigitExpected: hint = "Digit expected"; break;
+			case MaskedTextResultHint.LetterExpected: hint = "Letter expected"; break;
+			case MaskedTextResultHint.SignedDigitExpected: hint = "Signed digit expected"; break;
+			case MaskedTextResultHint.PromptCharNotAllowed: hint = "Prompt character disallowed as input"; break;
+			case MaskedTextResultHint.UnavailableEditPosition: hint = "Unavailable edit position"; break;
+			case MaskedTextResultHint.NonEditPosition: hint = "Non edit position"; break;
+			case MaskedTextResultHint.PositionOutOfRange: hint = "Position out of range"; break;
+			default: hint = "Invalid input character"; break;
+			}
+			return string.Format (CultureInfo.CurrentCulture, "Error at position {0}: {1}.", e.Position, hint);
+		}
+
+		/// <summary>Valid descriptors are equal when their masks and validating types are; others by reference.</summary>
+		public override bool Equals (object maskDescriptor)
+		{
+			MaskDescriptor descriptor = maskDescriptor as MaskDescriptor;
+			if (!IsValidMaskDescriptor (descriptor) || !IsValidMaskDescriptor (this))
+				return this == maskDescriptor;
+			return Mask == descriptor.Mask && ValidatingType == descriptor.ValidatingType;
+		}
+
+		public override int GetHashCode ()
+		{
+			return string.Concat (Mask, ValidatingType?.ToString ()).GetHashCode ();
+		}
+
 		public override string ToString ()
 		{
-			return base.ToString ();
+			return $"{GetType ()}<Name={Name ?? "null"}, Mask={Mask ?? "null"}, ValidatingType={(ValidatingType != null ? ValidatingType.ToString () : "null")}";
 		}
 	}
 }
-
