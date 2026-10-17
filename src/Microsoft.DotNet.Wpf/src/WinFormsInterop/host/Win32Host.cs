@@ -544,6 +544,11 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         finally { s_creating = null; Marshal.FreeHGlobal(title); }
         if (_hwnd == IntPtr.Zero)
             throw new InvalidOperationException($"CreateWindowExW failed (0x{Marshal.GetLastWin32Error():x})");
+        // A form that is disabled when its window is made -- a window of the thread opened while a modal
+        // dialog runs, which the modal loop has already disabled -- gets a disabled window, as Windows
+        // would have it: it was only ever told of changes, so it came up enabled and took the input the
+        // driver then dropped.
+        if (_form.IsHandleCreated && !System.Windows.Forms.XplatUI.IsEnabled(_form.Handle)) EnableWindowReal(_hwnd, false);
 
         // DPI: a per-monitor-aware application lays out in device pixels itself (ScaleHelper), so
         // its window renders 1:1 and the driver learns the display's DPI; any other has its 96-dpi
