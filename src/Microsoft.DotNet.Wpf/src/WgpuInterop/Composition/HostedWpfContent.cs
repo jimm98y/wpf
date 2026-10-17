@@ -26,6 +26,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public SceneVisual? Root;
             public int Width, Height;
             public int Version;          // bumped on every publish -> the host knows to re-present
+            // The publishing (render) thread's own: what it hands over is a copy the host can walk while the
+            // live tree is rebuilt for the next frame (see SceneMirror).
+            public readonly SceneMirror Mirror = new();
         }
 
         private static readonly Dictionary<ulong, Hosted> s_byHwnd = new();
@@ -81,10 +84,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// the sink's render pass in place of presenting the target.</summary>
         internal static void Publish(ulong hwnd, SceneVisual root, int width, int height)
         {
+            Hosted? h;
+            lock (s_lock) if (!s_byHwnd.TryGetValue(hwnd, out h)) return;
+            // The live tree is the render thread's and changes in place every frame; the host reads on its
+            // own UI thread. Hand it an immutable mirror, never the live tree.
+            SceneVisual mirror = h.Mirror.Snapshot(root);
             lock (s_lock)
             {
-                if (!s_byHwnd.TryGetValue(hwnd, out Hosted? h)) return;
-                h.Root = root;
+                h.Root = mirror;
                 h.Width = width;
                 h.Height = height;
                 h.Version++;

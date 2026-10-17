@@ -411,7 +411,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// <summary>Records <paramref name="root"/> as the current frame and returns whether the
             /// whole target must be redrawn. Otherwise <paramref name="rects"/> holds the disjoint
             /// device rectangles that changed (possibly none).</summary>
+            private static int s_failuresLogged;
+
+            /// <summary>The frame's damage (see ComputeCore). A partial frame is an optimisation: should
+            /// the diff ever fail -- a scene that changed under the walk, a record out of step with its
+            /// visual -- the frame is drawn whole and the next one diffs from scratch, rather than the
+            /// exception taking the application down from inside its message loop.</summary>
             internal bool Compute(SceneVisual root, int width, int height, List<Scissor> rects)
+            {
+                try
+                {
+                    return ComputeCore(root, width, height, rects);
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    if (Interlocked.Increment(ref s_failuresLogged) <= 3)
+                        Console.Error.WriteLine("WgpuSceneRenderer: damage tracking failed, drawing the whole frame: " + ex);
+                    _root = null;
+                    _sources.Clear();
+                    _sourcesSeen.Clear();
+                    _sourceChanged.Clear();
+                    _raw.Clear();
+                    _texts.Clear();
+                    _scrollRec = null;
+                    _scrollInner.Clear();
+                    Shift = null;
+                    rects.Clear();
+                    // No visual's measured bounds are this walk's any more: none may be used to cull.
+                    Stamp = Interlocked.Increment(ref s_damageStamp);
+                    if (Stamp == 0) Stamp = Interlocked.Increment(ref s_damageStamp);
+                    FullReason = "damage tracking failed";
+                    return true;
+                }
+            }
+
+            private bool ComputeCore(SceneVisual root, int width, int height, List<Scissor> rects)
             {
                 Stamp = Interlocked.Increment(ref s_damageStamp);
                 _now = Clock();
