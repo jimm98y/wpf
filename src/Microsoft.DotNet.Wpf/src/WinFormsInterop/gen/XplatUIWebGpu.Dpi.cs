@@ -146,7 +146,7 @@ namespace System.Windows.Forms {
 				Hwnd c = Hwnd.ObjectFromHandle(k);
 				if (c != null && c != h && c.parent == h && (c.initial_style & WindowStyles.WS_CHILD) != 0) kids.Add(k);
 			}
-			kids.Sort((a, b) => PaintKey(a).CompareTo(PaintKey(b)));
+			SortByPaintKey(kids);
 			foreach (IntPtr k in kids)
 			{
 				into.Add(k);

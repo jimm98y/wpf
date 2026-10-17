@@ -2472,13 +2472,43 @@ namespace System.Windows.Forms
 		/// </remarks>
 		private int PaintKey(IntPtr h)
 		{
+			Dictionary<Control, Dictionary<Control, int>> order = null;
+			return PaintKey(h, ref order);
+		}
+
+		/// <summary>Sorts windows by PaintKey, each key computed ONCE. Sorting with PaintKey as the
+		/// comparison computed it twice per comparison -- a FromHandle lookup and a fresh copy of the
+		/// parent's control array each time -- and this runs for every frame and every pointer move:
+		/// in a GraphWorX resize it was a tenth of the UI thread.</summary>
+		private void SortByPaintKey(List<IntPtr> list, Func<IntPtr, int> band = null)
+		{
+			int n = list.Count;
+			var keys = new (int Band, int Key, int Index)[n];
+			Dictionary<Control, Dictionary<Control, int>> order = null;
+			for (int i = 0; i < n; i++)
+				keys[i] = (band?.Invoke(list[i]) ?? 0, PaintKey(list[i], ref order), i);
+			Array.Sort(keys, (a, b) => a.Band != b.Band ? a.Band.CompareTo(b.Band) : a.Key != b.Key ? a.Key.CompareTo(b.Key) : a.Index.CompareTo(b.Index));
+			var sorted = new IntPtr[n];
+			for (int i = 0; i < n; i++) sorted[i] = list[keys[i].Index];
+			for (int i = 0; i < n; i++) list[i] = sorted[i];
+		}
+
+		/// <summary>PaintKey with the siblings' order looked up from a per-parent index built once.</summary>
+		private int PaintKey(IntPtr h, ref Dictionary<Control, Dictionary<Control, int>> order)
+		{
 			Control c = Control.FromHandle(h);
 			Control parent = c?.Parent;
 			if (parent != null)
 			{
-				Control[] siblings = parent.Controls.GetAllControls();
-				int i = Array.IndexOf(siblings, c);
-				if (i >= 0) return -i;
+				order ??= new Dictionary<Control, Dictionary<Control, int>>();
+				if (!order.TryGetValue(parent, out Dictionary<Control, int> index))
+				{
+					Control[] siblings = parent.Controls.GetAllControls();
+					index = new Dictionary<Control, int>(siblings.Length);
+					for (int i = 0; i < siblings.Length; i++) index.TryAdd(siblings[i], i);
+					order[parent] = index;
+				}
+				if (index.TryGetValue(c, out int at)) return -at;
 			}
 			int z = _zOrder.IndexOf(h);
 			return z < 0 ? int.MinValue : -z;
@@ -2502,7 +2532,7 @@ namespace System.Windows.Forms
 			if (h == null || !h.visible) return;                 // a hidden window hides its children
 			into.Add(root);
 			if (!children.TryGetValue(h, out List<IntPtr> kids)) return;
-			if (kids.Count > 1) kids.Sort((a, b) => PaintKey(a).CompareTo(PaintKey(b)));
+			if (kids.Count > 1) SortByPaintKey(kids);
 			foreach (IntPtr k in kids) CollectSubtree(k, into, children);
 		}
 
@@ -2542,22 +2572,16 @@ namespace System.Windows.Forms
 				if (h != null && h.parent == null && !IsParkedChild(h) && seenRoots.Add(k)
 					&& !IsOtherHostsForm(k, firstRoot)) roots.Add(k);
 			}
-			roots.Sort((a, b) =>
-			{
-				if (a == firstRoot != (b == firstRoot)) return a == firstRoot ? -1 : 1;
-				// A popup is over everything: that is what makes it a popup, and it is how the
-				// compositor draws one -- the host puts every window no form's subtree contains after
-				// its own. This list decides who is POINTED AT as well, and it did not agree: a menu was
-				// drawn on top and hit-tested underneath, so moving over an item asked the page behind
-				// it instead and no item ever took the highlight.
-				bool pa = IsPopupWindow(a), pb = IsPopupWindow(b);
-				if (pa != pb) return pa ? 1 : -1;
-				// HWND_TOPMOST windows over the rest, as Win32 keeps its two bands: a DotNetBar menu
-				// is made topmost and its drop shadow, shown after it, NOTOPMOST -- under the menu.
-				bool ta = _topmost.Contains(a), tb = _topmost.Contains(b);
-				if (ta != tb) return ta ? 1 : -1;
-				return PaintKey(a).CompareTo(PaintKey(b));
-			});
+			// A popup is over everything: that is what makes it a popup, and it is how the
+			// compositor draws one -- the host puts every window no form's subtree contains after
+			// its own. This list decides who is POINTED AT as well, and it did not agree: a menu was
+			// drawn on top and hit-tested underneath, so moving over an item asked the page behind
+			// it instead and no item ever took the highlight.
+			// HWND_TOPMOST windows over the rest, as Win32 keeps its two bands: a DotNetBar menu
+			// is made topmost and its drop shadow, shown after it, NOTOPMOST -- under the menu.
+			// The form being composited first, then plain windows, popups, topmost ones; then PaintKey --
+			// each computed once per window (SortByPaintKey).
+			SortByPaintKey(roots, h => (h == firstRoot ? 0 : 1) * 4 + (IsPopupWindow(h) ? 2 : 0) + (_topmost.Contains(h) ? 1 : 0));
 			var outl = new List<IntPtr>();
 			Dictionary<Hwnd, List<IntPtr>> children = ChildrenByParent();
 			foreach (IntPtr r in roots) CollectSubtree(r, outl, children);
