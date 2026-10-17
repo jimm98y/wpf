@@ -41,6 +41,9 @@ public static unsafe partial class Exports
         R((delegate* unmanaged<nint, int>)&IsZoomed, "IsZoomed");
         R((delegate* unmanaged<nint, int, int>)&ShowWindow, "ShowWindow", "ShowWindowAsync");
         R((delegate* unmanaged<nint, uint, uint, int>)&AnimateWindow, "AnimateWindow");
+        R((delegate* unmanaged<nint, uint, int>)&RegisterTouchWindow, "RegisterTouchWindow");
+        R((delegate* unmanaged<nint, int>)&UnregisterTouchWindow, "UnregisterTouchWindow");
+        R((delegate* unmanaged<nint, uint*, int>)&IsTouchWindow, "IsTouchWindow");
         R((delegate* unmanaged<nint, RECT*, int>)&GetWindowRectExport, "GetWindowRect");
         R((delegate* unmanaged<nint, RECT*, int>)&GetClientRect, "GetClientRect");
         R((delegate* unmanaged<nint, POINT*, int>)&ClientToScreen, "ClientToScreen");
@@ -443,6 +446,37 @@ public static unsafe partial class Exports
     });
 
     [UnmanagedCallersOnly] private static int IsWindowEnabled(nint hwnd) => IsEnabled(Resolve(hwnd)) ? TRUE : FALSE;
+
+    // Touch registration on the stack's windows. They are not Windows windows, so user32 refused
+    // them -- and DotNetBar's TouchHandler throws "Cannot register window" when RegisterTouchWindow
+    // fails, out of every ItemControl's OnHandleCreated (GraphWorX's "Configure your Control"). The
+    // registration is kept per window and answered as Windows answers it; touch itself reaches the
+    // application as pointer input through the host window (WM_POINTER), as for every other control.
+    private static readonly ConcurrentDictionary<nint, uint> s_touchWindows = new();
+
+    [UnmanagedCallersOnly]
+    private static int RegisterTouchWindow(nint hwnd, uint flags)
+    {
+        if (Resolve(hwnd) == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
+        s_touchWindows[hwnd] = flags;
+        return TRUE;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int UnregisterTouchWindow(nint hwnd)
+    {
+        if (Resolve(hwnd) == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
+        s_touchWindows.TryRemove(hwnd, out _);
+        return TRUE;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int IsTouchWindow(nint hwnd, uint* flags)
+    {
+        bool on = s_touchWindows.TryGetValue(hwnd, out uint f);
+        if (flags != null) *flags = on ? f : 0;
+        return on ? TRUE : FALSE;
+    }
 
     [UnmanagedCallersOnly]
     private static int EnableWindow(nint hwnd, int enable)
