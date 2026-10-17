@@ -802,31 +802,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 }
                 case Mil.RectangleGeometry:
                 {
-                    // Handle@4, RadiusX@8, RadiusY@16, Rect@24.
+                    // Handle@4, RadiusX@8, RadiusY@16, Rect@24, hTransform@56. The transform is the
+                    // geometry's own (RectangleGeometry.Transform): GraphWorX draws its rubber band as a
+                    // 1x1 rectangle scaled to the drag, which without it was a dot.
                     uint gh = r.U32();
                     double rx = r.F64(), ry = r.F64();
                     var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
-                    _geometries[gh] = (rx > 0 || ry > 0)
+                    uint hTransform = r.U32();
+                    StoreGeometry(gh, (rx > 0 || ry > 0)
                         ? new RoundedRectangleGeometry(rect, (float)rx, (float)ry)
-                        : new RectangleGeometry(rect);
+                        : new RectangleGeometry(rect), hTransform);
                     break;
                 }
                 case Mil.EllipseGeometry:
                 {
-                    // Handle@4, RadiusX@8, RadiusY@16, Center@24.
+                    // Handle@4, RadiusX@8, RadiusY@16, Center@24, hTransform@40.
                     uint gh = r.U32();
                     double rx = r.F64(), ry = r.F64();
                     var center = new Vector2((float)r.F64(), (float)r.F64());
-                    _geometries[gh] = new EllipseGeometry(center, (float)rx, (float)ry);
+                    uint hTransform = r.U32();
+                    StoreGeometry(gh, new EllipseGeometry(center, (float)rx, (float)ry), hTransform);
                     break;
                 }
                 case Mil.LineGeometry:
                 {
-                    // Handle@4, StartPoint@8, EndPoint@24.
+                    // Handle@4, StartPoint@8, EndPoint@24, hTransform@40.
                     uint gh = r.U32();
                     var start = new Vector2((float)r.F64(), (float)r.F64());
                     var end = new Vector2((float)r.F64(), (float)r.F64());
-                    _geometries[gh] = MakeLine(start, end);
+                    uint hTransform = r.U32();
+                    StoreGeometry(gh, MakeLine(start, end), hTransform);
                     break;
                 }
                 case Mil.DoubleResource:

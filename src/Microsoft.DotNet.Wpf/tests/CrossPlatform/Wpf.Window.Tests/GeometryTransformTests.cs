@@ -45,6 +45,21 @@ namespace Wpf.Window.Tests
             }, stretch: false, grow: () => { scale!.ScaleX = 0.1; scale.ScaleY = 0.05; });
         }
 
+        // The simple geometries have a Transform of their own too. GraphWorX draws the rubber band of a
+        // shape being drawn as a 1x1 RectangleGeometry under a MatrixTransform that scales it to the
+        // drag: the compositor dropped it and the band was a dot.
+        [Fact]
+        public void ARectangleGeometryWithItsOwnTransform_DrawsTransformed()
+        {
+            MatrixTransform? m = null;
+            Run(() => new RectangleGeometry(new Rect(50, 50, 1, 1)) { Transform = m = new MatrixTransform(12, 0, 0, 12, -600, -600) },
+                stretch: false, grow: () => m!.Matrix = new Matrix(200, 0, 0, 100, -10000, -5000));
+        }
+
+        [Fact]
+        public void AnEllipseGeometryWithItsOwnTransform_DrawsTransformed() =>
+            Run(() => new EllipseGeometry(new Point(0, 0), 1, 1) { Transform = new ScaleTransform(12, 12) }, stretch: false);
+
         /// <summary>A red 12x12 (or 12-unit) shape at the target's top-left corner of a white 200x100
         /// target: its own corner is red, the far corner stays white. With <paramref name="grow"/>, the
         /// transform then changes in place and the shape must follow it to the far corner.</summary>
