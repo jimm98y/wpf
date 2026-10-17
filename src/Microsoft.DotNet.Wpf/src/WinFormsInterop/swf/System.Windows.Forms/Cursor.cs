@@ -213,6 +213,20 @@ namespace System.Windows.Forms {
 			}
 		}
 
+		/// <summary>What Cursor.Current was last set to, null once the window under the pointer has
+		/// put its own cursor back (see <see cref="ForgetCurrent"/>).</summary>
+		internal static Cursor CurrentSet => current;
+
+		/// <summary>
+		/// Cursor.Current lasts until the pointer next moves over a window, as on Windows: it is a
+		/// SetCursor, and the next WM_SETCURSOR puts the window's own cursor back. The driver calls this
+		/// when it does that. Without it the shape stayed for the rest of the session: an app that
+		/// reset it after a wait (Cursor.Current = Cursors.Default, GraphWorX among them) pinned the
+		/// arrow over every splitter and every sizing edge -- and setting the same cursor again was
+		/// then ignored, being "already" current.
+		/// </summary>
+		internal static void ForgetCurrent () => current = null;
+
 		public static Cursor Current {
 			get {
 				if (current != null) 

@@ -36,7 +36,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     private readonly MethodInfo _isPopup;
     private readonly MethodInfo _isUnderPopup;
     private readonly MethodInfo _hasLayeredImage, _getLayeredBits;
-    private readonly MethodInfo _getCursor;
+    private readonly MethodInfo _getCursor, _endCursorOverride;
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
         && Environment.GetEnvironmentVariable("WF_WEBGPU") != "0";
@@ -84,7 +84,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         _hostActivate = M("HostActivate");
         _getRubberBands = M("GetReversibleRects");
         _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsInPopupWindow"); _isUnderPopup = M("IsUnderPopup"); _hasLayeredImage = M("HasLayeredImage"); _getLayeredBits = M("GetLayeredBits");
-        _getCursor = M("GetActiveCursor");
+        _getCursor = M("GetActiveCursor"); _endCursorOverride = M("EndCursorOverride");
         _leaveAll = M("InjectMouseLeaveAll");
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
         // window rather than creating a second one of its own.
@@ -1021,7 +1021,10 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // the pointer stayed an arrow no matter what a control asked for -- no I-beam over
             // text, no double arrow over a column divider. Only the client area is ours; the
             // frame and buttons belong to the default handling.
+            // Windows sends it when the pointer moves over the window without a capture, and that is
+            // what ends a Cursor.Current: it was a SetCursor, and the window's own cursor comes back.
             case 0x0020:
+                _endCursorOverride?.Invoke(_driver, null);
                 if ((((long)lParam) & 0xFFFF) == 1 && ApplyCursor())   // HTCLIENT
                     return (IntPtr)1;
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
