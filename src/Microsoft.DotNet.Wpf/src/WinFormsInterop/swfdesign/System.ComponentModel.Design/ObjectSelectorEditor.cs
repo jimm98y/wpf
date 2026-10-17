@@ -1,32 +1,9 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 //
-// System.ComponentModel.Design.ObjectSelectorEditor
-//
-// Authors:
-//      Gert Driesen (drieseng@users.sourceforge.net)
-//
-// (C) 2004 Novell
-//
-
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
+// Ported from dotnet/winforms (ObjectSelectorEditor, its Selector tree and SelectorNode): a drop-down tree of the
+// values a property can take, filled by FillTreeWithData; a click or Enter on a node commits it, Esc restores the
+// value the edit started with. Mono threw from EditValue, FillTreeWithData and every Selector member.
 
 using System.Drawing.Design;
 using System.Windows.Forms;
@@ -36,6 +13,11 @@ namespace System.ComponentModel.Design
 {
 	public abstract class ObjectSelectorEditor : UITypeEditor
 	{
+		public bool SubObjectSelector;
+		protected object prevValue;
+		protected object currValue;
+		private Selector _selector;
+
 		public ObjectSelectorEditor ()
 		{
 		}
@@ -45,21 +27,43 @@ namespace System.ComponentModel.Design
 			SubObjectSelector = subObjectSelector;
 		}
 
-		[MonoTODO]
 		public override object EditValue (ITypeDescriptorContext context, IServiceProvider provider, object value)
 		{
-			throw new NotImplementedException ();
+			if (!(provider?.GetService (typeof (IWindowsFormsEditorService)) is IWindowsFormsEditorService editorService))
+				return value;
+			if (_selector == null) {
+				_selector = new Selector (this);
+				ApplyTreeViewThemeStyles (_selector);
+			}
+			prevValue = value;
+			currValue = value;
+			FillTreeWithData (_selector, context, provider);
+			_selector.Start (editorService, value);
+			editorService.DropDownControl (_selector);
+			_selector.Stop ();
+			if (prevValue != currValue)
+				value = currValue;
+			return value;
+		}
+
+		/// <summary>The Explorer look .NET gives the tree: hot tracking and no lines. (.NET also turns on the
+		/// native tree view's double buffering and fading expandos; this tree draws itself.)</summary>
+		public static void ApplyTreeViewThemeStyles (TreeView treeView)
+		{
+			if (treeView == null)
+				throw new ArgumentNullException (nameof (treeView));
+			treeView.HotTracking = true;
+			treeView.ShowLines = false;
 		}
 
 		public bool EqualsToValue (object value)
 		{
-			return (currValue == value);
+			return value == currValue;
 		}
 
-		[MonoTODO]
 		protected virtual void FillTreeWithData (Selector selector, ITypeDescriptorContext context, IServiceProvider provider)
 		{
-			throw new NotImplementedException ();
+			selector.Clear ();
 		}
 
 		public override UITypeEditorEditStyle GetEditStyle (ITypeDescriptorContext context)
@@ -72,91 +76,159 @@ namespace System.ComponentModel.Design
 			currValue = value;
 		}
 
-		protected object currValue;
-		protected object prevValue;
-		public bool SubObjectSelector;
-
 		public class Selector : TreeView
 		{
-			[MonoTODO]
+			private readonly ObjectSelectorEditor _editor;
+			private IWindowsFormsEditorService _editorService;
+			public bool clickSeen;
+
 			public Selector (ObjectSelectorEditor editor)
 			{
-				throw new NotImplementedException ();
+				CreateHandle ();
+				_editor = editor;
+				BorderStyle = BorderStyle.None;
+				FullRowSelect = !editor.SubObjectSelector;
+				Scrollable = true;
+				CheckBoxes = false;
+				ShowPlusMinus = editor.SubObjectSelector;
+				ShowLines = editor.SubObjectSelector;
+				ShowRootLines = editor.SubObjectSelector;
+				AfterSelect += OnAfterSelect;
 			}
 
-			[MonoTODO]
 			public SelectorNode AddNode (string label, object value, SelectorNode parent)
 			{
-				throw new NotImplementedException ();
+				var newNode = new SelectorNode (label, value);
+				if (parent != null)
+					parent.Nodes.Add (newNode);
+				else
+					Nodes.Add (newNode);
+				return newNode;
 			}
 
-			[MonoTODO]
+			/// <summary>Commits the selected node's value, and closes the drop-down when the editor took it.</summary>
+			private bool ChooseSelectedNodeIfEqual ()
+			{
+				if (_editor != null && _editorService != null && SelectedNode is SelectorNode node) {
+					_editor.SetValue (node.value);
+					if (_editor.EqualsToValue (node.value)) {
+						_editorService.CloseDropDown ();
+						return true;
+					}
+				}
+				return false;
+			}
+
 			public void Clear ()
 			{
-				throw new NotImplementedException ();
+				clickSeen = false;
+				Nodes.Clear ();
 			}
 
-			[MonoTODO]
 			protected void OnAfterSelect (object sender, TreeViewEventArgs e)
 			{
-				throw new NotImplementedException ();
+				if (clickSeen) {
+					ChooseSelectedNodeIfEqual ();
+					clickSeen = false;
+				}
 			}
 
-			[MonoTODO]
 			protected override void OnKeyDown (KeyEventArgs e)
 			{
-				throw new NotImplementedException ();
+				switch (e.KeyCode) {
+				case Keys.Return:
+					if (ChooseSelectedNodeIfEqual ())
+						e.Handled = true;
+					break;
+				case Keys.Escape:
+					_editor.SetValue (_editor.prevValue);
+					e.Handled = true;
+					_editorService?.CloseDropDown ();
+					break;
+				}
+				base.OnKeyDown (e);
 			}
 
-			[MonoTODO]
 			protected override void OnKeyPress (KeyPressEventArgs e)
 			{
-				throw new NotImplementedException ();
+				if (e.KeyChar == '\r')
+					e.Handled = true;
+				base.OnKeyPress (e);
 			}
 
-			[MonoTODO]
+			// .NET sees the click as NM_CLICK, which arrives before the selection changes; a press is the same moment
+			// here, so a selection the press makes is committed.
+			protected override void OnMouseDown (MouseEventArgs e)
+			{
+				clickSeen = true;
+				base.OnMouseDown (e);
+			}
+
 			protected override void OnNodeMouseClick (TreeNodeMouseClickEventArgs e)
 			{
-				throw new NotImplementedException ();
+				// No AfterSelect for a node that is already selected.
+				if (e.Node == SelectedNode)
+					ChooseSelectedNodeIfEqual ();
+				base.OnNodeMouseClick (e);
 			}
 
-			[MonoTODO]
 			public bool SetSelection (object value, TreeNodeCollection nodes)
 			{
-				throw new NotImplementedException ();
+				nodes ??= Nodes;
+				int length = nodes.Count;
+				if (length == 0)
+					return false;
+				TreeNode [] treeNodes = new TreeNode [length];
+				nodes.CopyTo (treeNodes, 0);
+				for (int i = 0; i < length; i++) {
+					if (((SelectorNode) treeNodes [i]).value == value) {
+						SelectedNode = treeNodes [i];
+						return true;
+					}
+					if (treeNodes [i].Nodes != null && treeNodes [i].Nodes.Count != 0) {
+						treeNodes [i].Expand ();
+						if (SetSelection (value, treeNodes [i].Nodes))
+							return true;
+						treeNodes [i].Collapse ();
+					}
+				}
+				return false;
 			}
 
-			[MonoTODO]
 			public void Start (IWindowsFormsEditorService edSvc, object value)
 			{
-				throw new NotImplementedException ();
+				_editorService = edSvc;
+				clickSeen = false;
+				SetSelection (value, Nodes);
 			}
 
-			[MonoTODO]
 			public void Stop ()
 			{
-				throw new NotImplementedException ();
+				_editorService = null;
 			}
 
-			[MonoTODO]
 			protected override void WndProc (ref Message m)
 			{
-				throw new NotImplementedException ();
+				switch (m.Msg) {
+				case 0x0087:   // WM_GETDLGCODE: every key is ours (Enter, Esc)
+					m.Result = (IntPtr) ((long) m.Result | 0x0004);
+					return;
+				case 0x0200:   // WM_MOUSEMOVE
+					clickSeen = false;
+					break;
+				}
+				base.WndProc (ref m);
 			}
-
-			[MonoTODO]
-			public bool clickSeen;
 		}
 
 		public class SelectorNode : TreeNode
 		{
+			public object value;
+
 			public SelectorNode (string label, object value) : base (label)
 			{
 				this.value = value;
 			}
-
-			public object value;
 		}
-
 	}
 }

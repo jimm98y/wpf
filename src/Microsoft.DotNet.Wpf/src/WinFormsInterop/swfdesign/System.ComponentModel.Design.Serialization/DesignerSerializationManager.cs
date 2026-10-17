@@ -309,27 +309,31 @@ namespace System.ComponentModel.Design.Serialization
 			return _session;
 		}
 		
+		// .NET's order: SessionDisposed, then SerializationComplete -- while the session's state still exists (a
+		// serializer flushes its resource writers there) -- and only then the cleanup. Mono cleared the handler first,
+		// so SerializationComplete never reached anyone and no resource writer was ever closed.
 		protected virtual void OnSessionDisposed (EventArgs e)
 		{
-			_errors.Clear ();
-			_errors = null;
-			_serializersCache.Clear ();
-			_serializersCache = null;
-			_instancesByNameCache.Clear ();
-			_instancesByNameCache = null;
-			_instancesByValueCache.Clear ();
-			_instancesByValueCache = null;
-			_session = null;
-			_contextStack = null;
-			_resolveNameHandler = null;
-			_serializationCompleteHandler = null;
-			
-			if (SessionDisposed != null) {
-				SessionDisposed (this, e);
+			try {
+				try {
+					SessionDisposed?.Invoke (this, e);
+				} finally {
+					_serializationCompleteHandler?.Invoke (this, e);
+				}
+			} finally {
+				_errors?.Clear ();
+				_errors = null;
+				_serializersCache?.Clear ();
+				_serializersCache = null;
+				_instancesByNameCache?.Clear ();
+				_instancesByNameCache = null;
+				_instancesByValueCache?.Clear ();
+				_instancesByValueCache = null;
+				_session = null;
+				_contextStack = null;
+				_resolveNameHandler = null;
+				_serializationCompleteHandler = null;
 			}
-
-			if (_serializationCompleteHandler != null)
-				_serializationCompleteHandler (this, EventArgs.Empty);
 		}
 				
 		protected virtual Type GetType (string typeName)
