@@ -116,6 +116,10 @@ namespace System.Windows.Forms {
 		}
 
 		// Hide this method from the 2.0 public API
+		internal override Type BindTypeInternal => data_source?.GetType ();
+
+		internal override object DataSourceInternal => data_source;
+
 		internal override PropertyDescriptorCollection GetItemPropertiesInternal ()
 		{
 			return TypeDescriptor.GetProperties (data_source);

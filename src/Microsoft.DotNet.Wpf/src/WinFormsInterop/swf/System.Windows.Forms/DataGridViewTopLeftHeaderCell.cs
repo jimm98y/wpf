@@ -90,8 +90,14 @@ namespace System.Windows.Forms
 			{
 			}
 
+			// .NET: the corner where the row headers meet the column headers, on the screen.
 			public override Rectangle Bounds {
-				get { throw new NotImplementedException (); }
+				get {
+					DataGridView grid = Owner.DataGridView;
+					if (grid == null || !grid.IsHandleCreated || !grid.RowHeadersVisible || !grid.ColumnHeadersVisible)
+						return Rectangle.Empty;
+					return grid.RectangleToScreen (new Rectangle (0, 0, grid.RowHeadersWidth, grid.ColumnHeadersHeight));
+				}
 			}
 
 			public override string DefaultAction {
@@ -121,9 +127,20 @@ namespace System.Windows.Forms
 					Owner.DataGridView.SelectAll();
 			}
 
+			// .NET: the next item is the first visible column header; nothing lies before or around the corner.
 			public override AccessibleObject Navigate (AccessibleNavigation navigationDirection)
 			{
-				throw new NotImplementedException ();
+				DataGridView grid = Owner.DataGridView;
+				switch (navigationDirection) {
+				case AccessibleNavigation.Right:
+				case AccessibleNavigation.Next:
+					if (grid == null)
+						return null;
+					DataGridViewColumn first = grid.Columns.GetFirstColumn (DataGridViewElementStates.Visible);
+					return first?.HeaderCell.AccessibilityObject;
+				default:
+					return null;
+				}
 			}
 
 			public override void Select (AccessibleSelection flags)

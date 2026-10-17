@@ -156,28 +156,59 @@ namespace System.Windows.Forms {
 		#endregion	// Helpers
 
 		#region Public Static Properties
+		/// <summary>ControlDark, or WindowFrame in a high-contrast scheme where ControlDark does not show (.NET).</summary>
 		public static Color ContrastControlDark {
-			get { return(SystemColors.ControlDark); }
+			get { return SystemInformation.HighContrast ? SystemColors.WindowFrame : SystemColors.ControlDark; }
 		}
 		#endregion	// Public Static Properties
 
 		#region Public Static Methods
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
+		// Ported from dotnet/winforms ControlPaint (the Mono stubs threw).
+
+		/// <summary>A colour bitmap of <paramref name="bitmap"/> drawn over <paramref name="background"/>, in 16-bit
+		/// colour: every channel kept to the five bits a 16-bit (5-5-5) DIB holds, as GDI stores it.</summary>
 		public static IntPtr CreateHBitmap16Bit (Bitmap bitmap, Color background)
 		{
-			throw new NotImplementedException ();
+			if (bitmap == null)
+				throw new ArgumentNullException (nameof (bitmap));
+			Size size = bitmap.Size;
+			using (Bitmap composed = new Bitmap (size.Width, size.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb)) {
+				using (Graphics graphics = Graphics.FromImage (composed)) {
+					using (SolidBrush brush = new SolidBrush (background))
+						graphics.FillRectangle (brush, 0, 0, size.Width, size.Height);
+					graphics.DrawImage (bitmap, 0, 0, size.Width, size.Height);
+				}
+				for (int y = 0; y < size.Height; y++) {
+					for (int x = 0; x < size.Width; x++) {
+						Color c = composed.GetPixel (x, y);
+						composed.SetPixel (x, y, Color.FromArgb (255, Five (c.R), Five (c.G), Five (c.B)));
+					}
+				}
+				return composed.GetHbitmap ();
+			}
 		}
 
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
+		/// <summary>A channel through 5 bits and back, as GDI widens 5-5-5 to 8 bits (v &lt;&lt; 3 | v &gt;&gt; 2).</summary>
+		private static int Five (int channel)
+		{
+			int v = channel >> 3;
+			return v << 3 | v >> 2;
+		}
+
+		/// <summary>The bitmap's HBITMAP, black wherever the monochrome mask is set.</summary>
 		public static IntPtr CreateHBitmapColorMask (Bitmap bitmap, IntPtr monochromeMask)
 		{
-			throw new NotImplementedException ();
+			if (bitmap == null)
+				throw new ArgumentNullException (nameof (bitmap));
+			return System.Drawing.WebGpuBackend.WindowsImaging.CreateColorMask (bitmap, monochromeMask);
 		}
 
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
+		/// <summary>A 1bpp bitmap, set wherever the bitmap is fully transparent.</summary>
 		public static IntPtr CreateHBitmapTransparencyMask (Bitmap bitmap)
 		{
-			throw new NotImplementedException ();
+			if (bitmap == null)
+				throw new ArgumentNullException (nameof (bitmap));
+			return System.Drawing.WebGpuBackend.WindowsImaging.CreateTransparencyMask (bitmap);
 		}
 
 		public static Color Light(Color baseColor) {
@@ -513,16 +544,40 @@ namespace System.Windows.Forms {
 			ThemeEngine.Current.CPDrawScrollButton (graphics, rectangle, button, state);
 		}
 
-		[MonoTODO ("Stub, does nothing")]
-		private static bool DSFNotImpl = false;
+		/// <summary>
+		/// The hatched frame between <paramref name="outsideRect"/> and <paramref name="insideRect"/> (dotnet/winforms):
+		/// an active frame is diagonal stripes, a selected one a checkerboard, of ControlDark -- or ControlLight on a
+		/// dark background -- each an 8x8 pattern brush.
+		/// </summary>
 		public static void DrawSelectionFrame(Graphics graphics, bool active, Rectangle outsideRect, Rectangle insideRect, Color backColor) {
-			if (!DSFNotImpl) {
-				DSFNotImpl = true;
-				Console.WriteLine("NOT IMPLEMENTED: DrawSelectionFrame(Graphics graphics, bool active, Rectangle outsideRect, Rectangle insideRect, Color backColor)");
+			if (graphics == null)
+				throw new ArgumentNullException (nameof (graphics));
+			Color brushColor = backColor.GetBrightness () <= .5 ? SystemColors.ControlLight : SystemColors.ControlDark;
+			using (Bitmap pattern = new Bitmap (8, 8)) {
+				for (int x = 0; x < 8; x++)
+					for (int y = 0; y < 8; y++)
+						pattern.SetPixel (x, y, Color.Transparent);
+				if (active) {
+					for (int y = 0; y < 8; y++)
+						for (int x = -y; x < 8; x += 4)
+							if (x >= 0)
+								pattern.SetPixel (x, y, brushColor);
+				} else {
+					int start = 0;
+					for (int x = 0; x < 8; x += 2) {
+						for (int y = start; y < 8; y += 2)
+							pattern.SetPixel (x, y, brushColor);
+						start ^= 1;
+					}
+				}
+				using (TextureBrush frameBrush = new TextureBrush (pattern)) {
+					Region clip = graphics.Clip;
+					graphics.ExcludeClip (insideRect);
+					graphics.FillRectangle (frameBrush, outsideRect);
+					graphics.Clip = clip;
+				}
 			}
-			//throw new NotImplementedException();
 		}
-
 		public static void DrawSizeGrip (Graphics graphics, Color backColor, Rectangle bounds)
 		{
 			ThemeEngine.Current.CPDrawSizeGrip (graphics,  backColor,  bounds);
