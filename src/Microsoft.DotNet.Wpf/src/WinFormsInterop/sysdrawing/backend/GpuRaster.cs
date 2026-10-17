@@ -48,6 +48,14 @@ namespace System.Drawing.WebGpuBackend
             return null;
         }
 
+        /// <summary>The scene to keep for a window that recorded <paramref name="fresh"/> after
+        /// <paramref name="previous"/>: everything equal by value is the previous object again, so a
+        /// repaint that drew the same thing damages nothing (SceneReuse). Both are boxed SceneVisuals.</summary>
+        public static object Reuse(object previous, object fresh)
+            => fresh is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual n
+                ? Microsoft.Wpf.Interop.WebGpu.Composition.SceneReuse.Adopt(previous as Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual, n)
+                : fresh;
+
         /// <summary>Detach the recorder without returning its scene (the scene was already captured
         /// elsewhere, e.g. a double-buffer blit).</summary>
         public static void Cancel(Graphics g)
