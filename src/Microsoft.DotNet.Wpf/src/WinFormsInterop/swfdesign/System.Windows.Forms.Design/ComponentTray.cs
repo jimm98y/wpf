@@ -70,9 +70,13 @@ namespace System.Windows.Forms.Design
 			set { _autoArrange = value; }
 		}
 
-		[MonoTODO]
+		// The tray's components, in the order they were added, and where each sits in the tray (dotnet/winforms keeps a
+		// TrayControl per component; this tray draws none, so it keeps the bookkeeping the public API answers from).
+		private readonly ArrayList _trayComponents = new ArrayList ();
+		private readonly Hashtable _trayLocations = new Hashtable ();
+
 		public int ComponentCount {
-			get { return 0; }
+			get { return _trayComponents.Count; }
 		}
 
 		public bool ShowLargeIcons {
@@ -81,9 +85,12 @@ namespace System.Windows.Forms.Design
 		}
 
 
-		[MonoTODO]
+		/// <summary>Takes a component the tray can display (CanDisplayComponent), once.</summary>
 		public virtual void AddComponent (IComponent component)
 		{
+			if (component == null || !CanDisplayComponent (component) || _trayComponents.Contains (component))
+				return;
+			_trayComponents.Add (component);
 		}
 
 		protected virtual bool CanCreateComponentFromTool (ToolboxItem tool)
@@ -93,6 +100,8 @@ namespace System.Windows.Forms.Design
 
 		protected virtual bool CanDisplayComponent (IComponent component)
 		{
+			// This tray draws no component views (dotnet/winforms answers DesignTimeVisible here and shows each
+			// one): it displays nothing, so it takes nothing, and the designer shows no empty tray.
 			return false;
 		}
 
@@ -126,32 +135,43 @@ namespace System.Windows.Forms.Design
 		{
 		}
 
-		[MonoTODO]
+		/// <summary>The tray component after (or before) <paramref name="component"/>, null at either end; for a
+		/// component not in the tray, the first (or last) one -- .NET's order.</summary>
 		public IComponent GetNextComponent (IComponent component, bool forward)
 		{
-			throw new NotImplementedException ();
+			int i = _trayComponents.IndexOf (component);
+			if (i >= 0) {
+				int target = forward ? i + 1 : i - 1;
+				return target >= 0 && target < _trayComponents.Count ? (IComponent) _trayComponents [target] : null;
+			}
+			if (_trayComponents.Count > 0)
+				return (IComponent) _trayComponents [forward ? 0 : _trayComponents.Count - 1];
+			return null;
 		}
 
 		[Browsable (false)]
 		[Category ("Layout")]
 		[DesignOnly (true)]
 		[Localizable (false)]
-		[MonoTODO]
 		public Point GetTrayLocation (IComponent receiver)
 		{
-			throw new NotImplementedException ();
+			// Relative to the tray's scrolled origin, as .NET answers its tray control's location.
+			Point loc = _trayLocations [receiver] is Point p ? p : Point.Empty;
+			Point scroll = AutoScrollPosition;
+			return new Point (loc.X - scroll.X, loc.Y - scroll.Y);
 		}
 
-		[MonoTODO]
 		public bool IsTrayComponent (IComponent comp)
 		{
-			throw new NotImplementedException ();
+			return comp != null && _trayComponents.Contains (comp);
 		}
 
-		[MonoTODO]
 		public void SetTrayLocation (IComponent receiver, Point location)
 		{
-			throw new NotImplementedException ();
+			if (receiver == null || !_trayComponents.Contains (receiver))
+				return;
+			Point scroll = AutoScrollPosition;
+			_trayLocations [receiver] = new Point (location.X + scroll.X, location.Y + scroll.Y);
 		}
 
 		[MonoTODO]
@@ -219,9 +239,10 @@ namespace System.Windows.Forms.Design
 		{
 		}
 
-		[MonoTODO]
 		public virtual void RemoveComponent (IComponent component)
 		{
+			_trayComponents.Remove (component);
+			_trayLocations.Remove (component);
 		}
 
 		[MonoTODO]

@@ -1,70 +1,69 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 //
-// System.Windows.Forms.Design.DockEditor.cs
-//
-// Author:
-//   Gert Driesen (drieseng@users.sourceforge.net)
-//
-// (C) 2004 Novell
-//
+// Ported from dotnet/winforms (System.Windows.Forms.Design.EventHandlerService): a stack of handlers, the newest
+// first; GetHandler answers the newest one of the type asked for (the last answer cached). The Mono stub threw.
 
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-
-using System;
+using System.Collections.Generic;
 
 namespace System.Windows.Forms.Design
 {
 	public sealed class EventHandlerService
 	{
-		public event EventHandler EventHandlerChanged;
+		private object _lastHandler;
+		private Type _lastHandlerType;
+		private EventHandler _changedEvent;
+		private readonly LinkedList<object> _handlers = new LinkedList<object> ();
 
 		public EventHandlerService (Control focusWnd)
 		{
-			_focusWnd = focusWnd;
+			FocusWindow = focusWnd;
 		}
 
-		[MonoTODO]
+		public event EventHandler EventHandlerChanged {
+			add => _changedEvent += value;
+			remove => _changedEvent -= value;
+		}
+
+		public Control FocusWindow { get; }
+
 		public object GetHandler (Type handlerType)
 		{
-			throw new NotImplementedException ();
+			if (handlerType == null)
+				throw new ArgumentNullException (nameof (handlerType));
+			if (_lastHandlerType == null)
+				return null;
+			if (handlerType == _lastHandlerType)
+				return _lastHandler;
+			foreach (object handler in _handlers) {
+				if (handlerType.IsInstanceOfType (handler)) {
+					_lastHandler = handler;
+					_lastHandlerType = handlerType;
+					return handler;
+				}
+			}
+			return null;
 		}
 
-		[MonoTODO]
 		public void PopHandler (object handler)
 		{
-			throw new NotImplementedException ();
-		}
-
-		[MonoTODO]
-		public void PushHandler (object handler)
-		{
-			throw new NotImplementedException ();
-		}
-
-		public Control FocusWindow {
-			get {
-				return _focusWnd;
+			if (handler == null)
+				throw new ArgumentNullException (nameof (handler));
+			if (_handlers.Remove (handler)) {
+				_lastHandler = null;
+				_lastHandlerType = null;
+				_changedEvent?.Invoke (this, EventArgs.Empty);
 			}
 		}
 
-		private readonly Control _focusWnd;
+		public void PushHandler (object handler)
+		{
+			if (handler == null)
+				throw new ArgumentNullException (nameof (handler));
+			_handlers.AddFirst (handler);
+			_lastHandlerType = handler.GetType ();
+			_lastHandler = handler;
+			_changedEvent?.Invoke (this, EventArgs.Empty);
+		}
 	}
 }
