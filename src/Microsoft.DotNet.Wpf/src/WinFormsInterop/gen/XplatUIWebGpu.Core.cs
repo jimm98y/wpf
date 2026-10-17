@@ -2549,9 +2549,12 @@ namespace System.Windows.Forms
 			var children = new Dictionary<Hwnd, List<IntPtr>>();
 			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
 			{
+				// The parent read ONCE: another UI thread (a splash screen's) can reparent or destroy a
+				// window between two reads, and a null key took the whole application down.
 				Hwnd c = Hwnd.ObjectFromHandle(k);
-				if (c?.parent == null || c.parent == c) continue;
-				if (!children.TryGetValue(c.parent, out List<IntPtr> l)) children[c.parent] = l = new List<IntPtr>();
+				Hwnd p = c?.parent;
+				if (p == null || p == c) continue;
+				if (!children.TryGetValue(p, out List<IntPtr> l)) children[p] = l = new List<IntPtr>();
 				l.Add(k);
 			}
 			return children;
