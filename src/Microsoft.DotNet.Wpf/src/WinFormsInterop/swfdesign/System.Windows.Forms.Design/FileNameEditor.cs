@@ -44,10 +44,23 @@ namespace System.Windows.Forms.Design
 
 		#region Override implementation of UITypeEditor
 
-		[MonoTODO]
+		// Ported from dotnet/winforms (the Mono stubs threw): an Open File dialog starting at the current name,
+		// made once and initialized by InitializeDialog; only with an editor service, as .NET.
+		private OpenFileDialog _openFileDialog;
+
 		public override object EditValue (ITypeDescriptorContext context, IServiceProvider provider, object value)
 		{
-			throw new NotImplementedException ();
+			if (!(provider?.GetService (typeof (IWindowsFormsEditorService)) is IWindowsFormsEditorService))
+				return value;
+			if (_openFileDialog == null) {
+				_openFileDialog = new OpenFileDialog ();
+				InitializeDialog (_openFileDialog);
+			}
+			if (value is string stringValue)
+				_openFileDialog.FileName = stringValue;
+			if (_openFileDialog.ShowDialog () == DialogResult.OK)
+				return _openFileDialog.FileName;
+			return value;
 		}
 
 		public override UITypeEditorEditStyle GetEditStyle (ITypeDescriptorContext context)
@@ -59,10 +72,12 @@ namespace System.Windows.Forms.Design
 
 		#region Protected Instance Methods
 
-		[MonoTODO]
 		protected virtual void InitializeDialog (OpenFileDialog openFileDialog)
 		{
-			throw new NotImplementedException ();
+			if (openFileDialog == null)
+				throw new ArgumentNullException (nameof (openFileDialog));
+			openFileDialog.Filter = "All Files(*.*)|*.*";
+			openFileDialog.Title = "Open File";
 		}
 
 		#endregion Protected Instance Methods

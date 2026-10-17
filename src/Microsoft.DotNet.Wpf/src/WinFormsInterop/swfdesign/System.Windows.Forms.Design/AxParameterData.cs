@@ -28,46 +28,70 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using System;
 using System.CodeDom;
 using System.Reflection;
 
+// AxParameterData is plain reflection over a method's parameters, which the ActiveX wrapper generator uses to
+// write its wrapper's signatures; it needs no COM, so it is implemented here as the .NET Framework has it (the
+// Mono stub threw from every constructor). A name is stored with its first letter lowered, and the type name is
+// the C# one: a by-ref parameter's element type, nested types joined with '.'.
 namespace System.Windows.Forms.Design
 {
 	public class AxParameterData
 	{
-		[MonoTODO]
 		public AxParameterData (ParameterInfo info) : this (info, false)
 		{
 		}
 
-		[MonoTODO]
 		public AxParameterData (ParameterInfo info, bool ignoreByRefs)
 		{
-			throw new NotImplementedException ();
+			if (info == null)
+				throw new ArgumentNullException (nameof (info));
+			Name = info.Name;
+			type = info.ParameterType;
+			typeName = MapTypeName (type);
+			isByRef = type.IsByRef && !ignoreByRefs;
+			isIn = info.IsIn && !ignoreByRefs;
+			isOut = info.IsOut && !isIn && !ignoreByRefs;
+			isOptional = info.IsOptional;
 		}
 
-		[MonoTODO]
 		public AxParameterData (string inname, string typeName)
 		{
-			throw new NotImplementedException ();
+			Name = inname;
+			this.typeName = typeName;
 		}
 
-		[MonoTODO]
 		public AxParameterData (string inname, Type type)
 		{
-			throw new NotImplementedException ();
+			Name = inname;
+			this.type = type;
+			typeName = MapTypeName (type);
 		}
 
-		[MonoTODO]
 		public static AxParameterData[] Convert (ParameterInfo[] infos)
 		{
-			throw new NotImplementedException ();
+			return Convert (infos, false);
 		}
 
-		[MonoTODO]
 		public static AxParameterData[] Convert (ParameterInfo[] infos, bool ignoreByRefs)
 		{
-			throw new NotImplementedException ();
+			if (infos == null)
+				return new AxParameterData [0];
+			var parameters = new AxParameterData [infos.Length];
+			for (int i = 0; i < infos.Length; i++)
+				parameters [i] = new AxParameterData (infos [i], ignoreByRefs);
+			return parameters;
+		}
+
+		private static string MapTypeName (Type type)
+		{
+			if (type == null)
+				return null;
+			if (type.IsByRef)
+				type = type.GetElementType ();
+			return (type.FullName ?? type.Name).Replace ('+', '.');
 		}
 
 		public FieldDirection Direction {
@@ -109,9 +133,11 @@ namespace System.Windows.Forms.Design
 			get {
 				return name;
 			}
-			[MonoTODO]
 			set {
-				throw new NotImplementedException ();
+				if (!string.IsNullOrEmpty (value) && char.IsUpper (value [0]))
+					name = char.ToLower (value [0]) + value.Substring (1);
+				else
+					name = value;
 			}
 		}
 
@@ -121,10 +147,11 @@ namespace System.Windows.Forms.Design
 			}
 		}
 
-		[MonoTODO]
 		public string TypeName {
 			get {
-				throw new NotImplementedException ();
+				if (typeName == null)
+					typeName = MapTypeName (type);
+				return typeName;
 			}
 		}
 
@@ -134,6 +161,6 @@ namespace System.Windows.Forms.Design
 		private bool isOut;
 		private string name;
 		private Type type;
-//		private string typeName;
+		private string typeName;
 	}
 }

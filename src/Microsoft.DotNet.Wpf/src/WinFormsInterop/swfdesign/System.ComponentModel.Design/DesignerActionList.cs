@@ -62,8 +62,8 @@ namespace System.ComponentModel.Design
 
 		public object GetService (Type serviceType)
 		{
-			return null;
-			throw new NotImplementedException ();
+			// .NET: the services of the component the list is for, through its site.
+			return component?.Site?.GetService (serviceType);
 		}
 		
 		public virtual DesignerActionItemCollection GetSortedActionItems ()

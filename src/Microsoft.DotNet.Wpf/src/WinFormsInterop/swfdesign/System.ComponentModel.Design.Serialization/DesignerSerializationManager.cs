@@ -83,6 +83,7 @@ namespace System.ComponentModel.Design.Serialization
 		private Session _session = null;
 		private ArrayList _errors = null;
 		private List <IDesignerSerializationProvider> _serializationProviders;
+		private readonly HashSet <Type> _defaultProviderTypes = new HashSet <Type> ();
 		private Dictionary <Type, object> _serializersCache = null; // componentType - serializer instance
 		private Dictionary <string, object> _instancesByNameCache = null; // name - instance
 		private Dictionary <object, string> _instancesByValueCache = null; // instance - name
@@ -116,7 +117,7 @@ namespace System.ComponentModel.Design.Serialization
 		public IContainer Container { 
 			get {
 				if (_designerContainer == null) {
-					_designerContainer = (this.GetService (typeof (IDesignerHost)) as IDesignerHost).Container;
+					_designerContainer = (this.GetService (typeof (IDesignerHost)) as IDesignerHost)?.Container; // no host: no container, as .NET
 				}
 				return _designerContainer;
 			}
@@ -234,20 +235,8 @@ namespace System.ComponentModel.Design.Serialization
 				//
 				_serializersCache.TryGetValue (objectType, out serializer);
 
-				// check for provider attribute and add it to the list of providers
-				//
 				if (serializer != null && !serializerType.IsAssignableFrom (serializer.GetType ()))
 					serializer = null;
-				
-				AttributeCollection attributes = TypeDescriptor.GetAttributes (objectType);
-				DefaultSerializationProviderAttribute providerAttribute = attributes[typeof (DefaultSerializationProviderAttribute)] 
-																			   as DefaultSerializationProviderAttribute;
-				if (providerAttribute != null && this.GetType (providerAttribute.ProviderTypeName) == serializerType) {
-					object provider = Activator.CreateInstance (this.GetType (providerAttribute.ProviderTypeName), 
-																 BindingFlags.CreateInstance | BindingFlags.Public | BindingFlags.NonPublic, 
-																 null, null, null);
-					((IDesignerSerializationManager)this).AddSerializationProvider ((IDesignerSerializationProvider) provider);
-				}
 			}
 
 			// try 2: DesignerSerializerAttribute
@@ -269,7 +258,22 @@ namespace System.ComponentModel.Design.Serialization
 					_serializersCache[objectType] = serializer;
 			}
 
-			// try 3: from provider
+			// try 3: the serializer type's DefaultSerializationProvider (CodeDomSerializer names the CodeDom one), added
+			// once per serializer type, as .NET does. Mono looked for the attribute on the OBJECT type and compared the
+			// provider's type with the serializer type, which never matched, so a manager no loader had set up found
+			// no CodeDom serializer at all.
+			if (serializer == null && _defaultProviderTypes.Add (serializerType)) {
+				if (TypeDescriptor.GetAttributes (serializerType) [typeof (DefaultSerializationProviderAttribute)] is DefaultSerializationProviderAttribute providerAttribute) {
+					Type providerType = this.GetType (providerAttribute.ProviderTypeName) ?? Type.GetType (providerAttribute.ProviderTypeName);
+					if (providerType == typeof (CodeDomSerializationProvider))
+						((IDesignerSerializationManager)this).AddSerializationProvider (CodeDomSerializationProvider.Instance);
+					else if (providerType != null && typeof (IDesignerSerializationProvider).IsAssignableFrom (providerType))
+						((IDesignerSerializationManager)this).AddSerializationProvider ((IDesignerSerializationProvider) Activator.CreateInstance (providerType,
+							BindingFlags.CreateInstance | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, null, null));
+				}
+			}
+
+			// try 4: from provider
 			//
 			if (serializer == null && _serializationProviders != null) {
 				foreach (IDesignerSerializationProvider provider in _serializationProviders) {

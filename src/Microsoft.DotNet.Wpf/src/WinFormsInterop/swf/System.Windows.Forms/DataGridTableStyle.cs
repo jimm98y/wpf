@@ -525,10 +525,10 @@ namespace System.Windows.Forms
 
 		#region Public Instance Methods
 
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
+		// .NET Framework: the grid this style belongs to does the editing; without one, there is none.
 		public bool BeginEdit (DataGridColumnStyle gridColumn, int rowNumber)
 		{
-			throw new NotImplementedException ();
+			return DataGrid != null && DataGrid.BeginEdit (gridColumn, rowNumber);
 		}
 
 		protected internal virtual DataGridColumnStyle CreateGridColumn (PropertyDescriptor prop)
@@ -560,10 +560,9 @@ namespace System.Windows.Forms
 			base.Dispose (disposing);
 		}
 
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
 		public bool EndEdit (DataGridColumnStyle gridColumn, int rowNumber, bool shouldAbort)
 		{
-			throw new NotImplementedException ();
+			return DataGrid != null && DataGrid.EndEdit (gridColumn, rowNumber, shouldAbort);
 		}
 
 		protected virtual void OnAllowSortingChanged (EventArgs e)

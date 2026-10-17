@@ -37,6 +37,7 @@ using System.CodeDom;
 
 namespace System.ComponentModel.Design.Serialization
 {
+	[DefaultSerializationProvider (typeof (CodeDomSerializationProvider))]
 	public class CodeDomSerializer : CodeDomSerializerBase
 	{
 

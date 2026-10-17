@@ -45,11 +45,11 @@ namespace System.Windows.Forms.Design
 		{
 			PropertyDescriptorCollection properties = new PropertyDescriptorCollection (new PropertyDescriptor[0]);
 			ControlBindingsCollection collection = value as ControlBindingsCollection;
-			object bindableComponent = collection.BindableComponent;
+			object bindableComponent = collection?.BindableComponent;
 			if (collection != null && bindableComponent != null) {
-				foreach (PropertyDescriptor property in 
+				foreach (PropertyDescriptor property in
 					 TypeDescriptor.GetProperties (bindableComponent, attributes)) {
-					if (((BindableAttribute) property.Attributes[typeof (BindableAttribute)]).Bindable)
+					if (property.Attributes[typeof (BindableAttribute)] is BindableAttribute bindable && bindable.Bindable)
 						properties.Add (new DataBindingPropertyDescriptor (property, attributes, true));
 				}
 			}
@@ -77,42 +77,50 @@ namespace System.Windows.Forms.Design
 		}
 
 
-		[MonoTODO]
+		// One bindable property of the control in the property grid's (DataBindings) node: its value is the Binding
+		// the control has for it, setting one replaces it, resetting removes it -- as the .NET Framework's designer
+		// shows them (.NET itself no longer has this converter). Mono returned nothing, ignored a set, and threw
+		// from ResetValue.
 		private class DataBindingPropertyDescriptor : PropertyDescriptor
 		{
 			bool _readOnly;
 
-			[MonoTODO]
 			public DataBindingPropertyDescriptor (PropertyDescriptor property, Attribute [] attrs, bool readOnly)
 				: base (property.Name, attrs)
 			{
 				_readOnly = readOnly;
 			}
 
-			[MonoTODO]
+			private Binding BindingOf (object component)
+				=> (component as ControlBindingsCollection)?[Name];
+
 			public override object GetValue (object component)
 			{
-				// throw new NotImplementedException ();
-				return null;
+				return BindingOf (component);
 			}
 
-			[MonoTODO]
 			public override void SetValue (object component, object value)
 			{
-				// throw new NotImplementedException ();
+				if (!(component is ControlBindingsCollection collection))
+					return;
+				Binding existing = collection [Name];
+				if (existing == value)
+					return;
+				if (existing != null)
+					collection.Remove (existing);
+				if (value is Binding binding)
+					collection.Add (binding);
+				OnValueChanged (component, EventArgs.Empty);
 			}
 
-			[MonoTODO]
-			public override void ResetValue (object component) 
+			public override void ResetValue (object component)
 			{
-				throw new NotImplementedException ();
+				SetValue (component, null);
 			}
 
-			[MonoTODO]
-			public override bool CanResetValue (object component) 
+			public override bool CanResetValue (object component)
 			{
-				// throw new NotImplementedException ();
-				return false;
+				return BindingOf (component) != null;
 			}
 
 			public override bool ShouldSerializeValue (object component)
@@ -120,20 +128,12 @@ namespace System.Windows.Forms.Design
 				return false;
 			}
 
-			[MonoTODO]
 			public override Type PropertyType {
-				get {
-					// throw new NotImplementedException ();
-					return typeof (DataBindingPropertyDescriptor);
-				}
+				get { return typeof (Binding); }
 			}
 
-			[MonoTODO]
 			public override TypeConverter Converter {
-				get {
-					// throw new NotImplementedException ();
-					return null;
-				}
+				get { return TypeDescriptor.GetConverter (typeof (Binding)); }
 			}
 
 			public override Type ComponentType {

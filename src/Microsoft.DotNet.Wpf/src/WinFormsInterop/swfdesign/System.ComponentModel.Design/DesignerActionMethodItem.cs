@@ -100,12 +100,19 @@ namespace System.ComponentModel.Design
 			}
 		}
 
-		//
-		// I have no clue *where* this would look at to invoke the command
-		//
+		// .NET: the action list's own parameterless instance method named MemberName, public or not.
+		System.Reflection.MethodInfo method_info;
+
 		public virtual void Invoke ()
 		{
-			throw new NotImplementedException ();
+			if (action_list == null)
+				throw new InvalidOperationException ($"Could not find method '{MemberName}'.");
+			method_info ??= action_list.GetType ().GetMethod (MemberName,
+				System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+				null, Type.EmptyTypes, null);
+			if (method_info == null)
+				throw new InvalidOperationException ($"Could not find method '{MemberName}'.");
+			method_info.Invoke (action_list, null);
 		}
 	}
 }

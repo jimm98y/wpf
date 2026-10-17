@@ -34,13 +34,15 @@ namespace System.Windows.Forms.Design
 {
 	public class AxWrapperGen
 	{
-		[MonoTODO]
+		// AxWrapperGen writes the AxHost wrapper source for an ActiveX control's type library; ActiveX is not
+		// supported by this stack (see AxHost), so there is no wrapper to generate.
 		public AxWrapperGen (Type axType)
 		{
-			throw new NotImplementedException ();
+			throw new PlatformNotSupportedException (OperatingSystem.IsWindows ()
+				? "ActiveX controls cannot be hosted by the WebGPU WinForms stack: it does not activate COM objects or site them in native windows."
+				: "ActiveX controls are a Windows COM technology and are not available on this platform.");
 		}
 
-		[MonoTODO]
 		public static ArrayList GeneratedSources = new ArrayList ();
 	}
 }
