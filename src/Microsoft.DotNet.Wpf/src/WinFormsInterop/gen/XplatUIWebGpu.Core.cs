@@ -1331,6 +1331,17 @@ namespace System.Windows.Forms
 			_paintVersion++;
 		}
 
+		/// <summary>A window's new recording, with whatever it drew exactly as before swapped back for
+		/// the previous scene's objects (GpuRaster.Reuse): a repaint that changed nothing then damages
+		/// nothing. WF_SCENE_REUSE=0 keeps every recording as it is.</summary>
+		private object Reused(IntPtr handle, object fresh)
+		{
+			if (!s_sceneReuse || fresh == null || !_scenes.TryGetValue(handle, out object previous) || previous == null)
+				return fresh;
+			return System.Drawing.WebGpuBackend.GpuRaster.Reuse(previous, fresh);
+		}
+		private static readonly bool s_sceneReuse = Environment.GetEnvironmentVariable("WF_SCENE_REUSE") != "0";
+
 		/// <summary>The window's most recently recorded WebGPU scene (boxed SceneVisual), or null.</summary>
 		// How far a popup's shadow reaches past its own edges, and how dark it is at each step.
 		// Sampled off a stock combo box's list: down and to the right only, never up or left,
@@ -1506,7 +1517,7 @@ namespace System.Windows.Forms
 				else
 				{
 					DrawWindowBorder(handle, pevent.Graphics);
-					_scenes[handle] = ClipToWindow(System.Drawing.WebGpuBackend.GpuRaster.EndScene(pevent.Graphics), handle);
+					_scenes[handle] = Reused(handle, ClipToWindow(System.Drawing.WebGpuBackend.GpuRaster.EndScene(pevent.Graphics), handle));
 				}
 				_paintVersion++;   // content changed
 			}
@@ -1559,7 +1570,7 @@ namespace System.Windows.Forms
 				// double-buffered control is the offscreen one -- PaintEventEnd only cancels here.
 				DrawWindowBorder(dest_handle, offscreen_dc);
 				T($"BlitFromOffscreen h=0x{dest_handle.ToInt64():x} r={r}");
-				_scenes[dest_handle] = ClipToWindow(System.Drawing.WebGpuBackend.GpuRaster.EndScene(offscreen_dc), dest_handle);
+				_scenes[dest_handle] = Reused(dest_handle, ClipToWindow(System.Drawing.WebGpuBackend.GpuRaster.EndScene(offscreen_dc), dest_handle));
 				_paintedViaOffscreen.Add(dest_handle);
 				return;
 			}
