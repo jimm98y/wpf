@@ -141,8 +141,31 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     /// a dialog that wanted to be centred was not, and two windows opened together landed exactly on
     /// top of each other. Honour what the form asked for, and where it asked for nothing let Windows
     /// cascade them as it does for every other application.</summary>
+    /// <summary>WPF_WEBGPU_TEST_ORIGIN=x,y (diagnostics, Windows): every new top-level window -- a splash
+    /// screen and the main window included, but not a popup placed by the window that opened it -- is
+    /// created offset by x,y device pixels, before it is first shown. A test or benchmark run sets it to
+    /// somewhere off every monitor (8000,0), so a window the application centres on the primary display
+    /// never appears there even for the moment before the run moves it. Unset: no effect at all.</summary>
+    internal static (int X, int Y)? s_testOrigin = ParseTestOrigin(Environment.GetEnvironmentVariable("WPF_WEBGPU_TEST_ORIGIN"));
+
+    private static (int, int)? ParseTestOrigin(string v)
+    {
+        if (string.IsNullOrEmpty(v)) return null;
+        string[] p = v.Split(',');
+        return p.Length == 2 && int.TryParse(p[0].Trim(), out int x) && int.TryParse(p[1].Trim(), out int y) ? (x, y) : null;
+    }
+
     private (int, int) StartLocation()
     {
+        (int x, int y) = StartLocationCore(out bool placedByOpener);
+        if (s_testOrigin is not { } o || placedByOpener) return (x, y);
+        if (x == CW_USEDEFAULT) return (o.X, o.Y);
+        return (x + o.X, y + o.Y);
+    }
+
+    private (int, int) StartLocationCore(out bool placedByOpener)
+    {
+        placedByOpener = false;
         // A popup -- a drop-down, a menu, a tooltip -- is positioned by whatever opened it, and
         // in the driver's coordinates rather than the screen's. Win32 ignores CW_USEDEFAULT for
         // a WS_POPUP window for the same reason: nobody wants a menu cascaded into the corner of
@@ -150,7 +173,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         // Windows felt like putting it instead of under the row it belongs to.
         if (_form.FormBorderStyle == FormBorderStyle.None)
         {
-            if (TryMapPopup(_form.Left, _form.Top, out int px, out int py)) return (px, py);
+            if (TryMapPopup(_form.Left, _form.Top, out int px, out int py)) { placedByOpener = true; return (px, py); }
             return ToPhysical(_form.Left, _form.Top);
         }
 
