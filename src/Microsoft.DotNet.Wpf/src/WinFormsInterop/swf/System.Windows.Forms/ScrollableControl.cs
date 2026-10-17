@@ -622,6 +622,13 @@ namespace System.Windows.Forms {
 			base.OnVisibleChanged(e);
 		}
 
+		// .NET's ScaleDockPadding: what Form.ScaleCore scales before its children.
+		internal void ScaleDockPadding (float dx, float dy)
+		{
+			if (dock_padding != null)
+				dock_padding.Scale (dx, dy);
+		}
+
 		[EditorBrowsable (EditorBrowsableState.Never)]
 		protected override void ScaleCore(float dx, float dy) {
 			if (dock_padding != null)
