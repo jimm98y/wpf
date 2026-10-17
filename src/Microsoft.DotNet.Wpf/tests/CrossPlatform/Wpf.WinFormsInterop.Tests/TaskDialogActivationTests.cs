@@ -119,11 +119,14 @@ namespace Wpf.WinFormsInterop.Tests
             if (!OperatingSystem.IsWindows()) return;
             InLoop(() =>
             {
+                // The import binds (no EntryPointNotFoundException) and rejects a null config. It is called FIRST:
+                // nothing in the loop has to have loaded comctl32 already (a plain form creates no common control),
+                // so checking the module before the call depended on another test having loaded it.
+                Assert.Equal(E_INVALIDARG, TaskDialogIndirectNull(IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero));
+                // ...and what the loop's context resolves comctl32 to is v6: v5 has no task dialogs.
                 IntPtr comctl = GetModuleHandleW("comctl32.dll");
                 Assert.NotEqual(IntPtr.Zero, comctl);
                 Assert.NotEqual(IntPtr.Zero, GetProcAddress(comctl, "TaskDialogIndirect"));
-                // The import itself binds (no EntryPointNotFoundException) and rejects a null config.
-                Assert.Equal(E_INVALIDARG, TaskDialogIndirectNull(IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero));
             });
         }
 
