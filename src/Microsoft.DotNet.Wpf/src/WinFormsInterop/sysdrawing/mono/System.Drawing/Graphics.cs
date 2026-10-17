@@ -5723,12 +5723,17 @@ namespace System.Drawing
 			}
 		}
 
-		[MonoTODO]
+		// .NET: { the current clip (an infinite one for none), the current transform } -- this Graphics' own state;
+		// it is not a container of a printing Graphics, so there is no outer context to accumulate.
 		[EditorBrowsable (EditorBrowsableState.Never)]
 		public object GetContextInfo ()
 		{
-			// only known source of information @ http://blogs.wdevs.com/jdunlap/Default.aspx
-			throw new NotImplementedException ();
+			Region clip = Clip;
+			if (clip.IsInfinite (this)) {
+				clip.Dispose ();
+				clip = new Region ();
+			}
+			return new object [] { clip, Transform };
 		}
 	}
 }
