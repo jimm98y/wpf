@@ -1,69 +1,42 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 //
-// System.Windows.Forms.Design.Behavior.ControlBodyGlyph
-//
-// Author:
-//	Atsushi Enomoto (atsushi@ximian.com)
-//
-// Copyright (C) 2007 Novell, Inc.
-//
-
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-
+// Ported from dotnet/winforms (Design/Behavior/ControlBodyGlyph.cs).
 
 using System.ComponentModel;
 using System.Drawing;
-using System.Drawing.Design;
-using System.Drawing.Drawing2D;
 
 namespace System.Windows.Forms.Design.Behavior
 {
 	public class ControlBodyGlyph : ComponentGlyph
 	{
-		Rectangle bounds;
+		private readonly Rectangle _bounds;          // bounds of the related control
+		private readonly Cursor _hitTestCursor;      // cursor used to hit test
+		private readonly IComponent _component;
 
-		[MonoTODO]
+		public ControlBodyGlyph (Rectangle bounds, Cursor cursor, IComponent relatedComponent, ControlDesigner designer)
+			: base (relatedComponent, new ControlDesigner.TransparentBehavior (designer))
+		{
+			_bounds = bounds;
+			_hitTestCursor = cursor;
+			_component = relatedComponent;
+		}
+
 		public ControlBodyGlyph (Rectangle bounds, Cursor cursor, IComponent relatedComponent, Behavior behavior)
 			: base (relatedComponent, behavior)
 		{
-			this.bounds = bounds;
-			throw new NotImplementedException ();
+			_bounds = bounds;
+			_hitTestCursor = cursor;
+			_component = relatedComponent;
 		}
 
-		[MonoTODO]
-		public ControlBodyGlyph (Rectangle bounds, Cursor cursor, IComponent relatedComponent, ControlDesigner designer)
-			: this (bounds, cursor, relatedComponent, designer.BehaviorService.CurrentBehavior)
-		{
-		}
+		public override Rectangle Bounds => _bounds;
 
-		[MonoTODO]
-		public override Rectangle Bounds {
-			get { return bounds; }
-		}
-
-		[MonoTODO]
 		public override Cursor GetHitTest (Point p)
 		{
-			throw new NotImplementedException ();
+			// Non-controls are always visible here.
+			bool isVisible = !(_component is Control control) || control.Visible;
+			return isVisible && _bounds.Contains (p) ? _hitTestCursor : null;
 		}
 	}
 }
-

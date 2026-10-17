@@ -1,73 +1,71 @@
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
 //
-// System.ComponentModel.Design.DesignerActionUIService.cs
-//
-// Author:
-//      Atsushi Enomoto  <atsushi@ximian.com>
-//
-// Copyright (C) 2007 Novell, Inc
-//
-
-//
-// Permission is hereby granted, free of charge, to any person obtaining
-// a copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to
-// permit persons to whom the Software is furnished to do so, subject to
-// the following conditions:
-// 
-// The above copyright notice and this permission notice shall be
-// included in all copies or substantial portions of the Software.
-// 
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-//
-
-using System;
-using System.ComponentModel;
+// Ported from dotnet/winforms (System.ComponentModel.Design.DesignerActionUIService): ShowUI/HideUI/Refresh raise
+// DesignerActionUIStateChange, ShouldAutoShow follows the designer option and the component's lists. The Mono
+// stub threw from all four.
 
 namespace System.ComponentModel.Design
 {
 	public sealed class DesignerActionUIService : IDisposable
 	{
+		private DesignerActionUIStateChangeEventHandler _designerActionUIStateChangedEventHandler;
+		private readonly IServiceProvider _serviceProvider;
+		private readonly DesignerActionService _designerActionService;
+
 		internal DesignerActionUIService ()
 		{
 		}
 
-		public event DesignerActionUIStateChangeEventHandler DesignerActionUIStateChange;
+		internal DesignerActionUIService (IServiceProvider serviceProvider)
+		{
+			_serviceProvider = serviceProvider;
+			if (serviceProvider != null) {
+				(serviceProvider.GetService (typeof (IDesignerHost)) as IDesignerHost)?.AddService (typeof (DesignerActionUIService), this);
+				_designerActionService = serviceProvider.GetService (typeof (DesignerActionService)) as DesignerActionService;
+			}
+		}
 
-		[MonoTODO]
 		public void Dispose ()
 		{
+			(_serviceProvider?.GetService (typeof (IDesignerHost)) as IDesignerHost)?.RemoveService (typeof (DesignerActionUIService));
 		}
 
-		[MonoTODO]
-		public void ShowUI (IComponent component)
-		{
-			throw new NotImplementedException ();
+		public event DesignerActionUIStateChangeEventHandler DesignerActionUIStateChange {
+			add => _designerActionUIStateChangedEventHandler += value;
+			remove => _designerActionUIStateChangedEventHandler -= value;
 		}
 
-		[MonoTODO]
 		public void HideUI (IComponent component)
-		{
-			throw new NotImplementedException ();
-		}
+			=> OnDesignerActionUIStateChange (new DesignerActionUIStateChangeEventArgs (component, DesignerActionUIStateChangeType.Hide));
 
-		[MonoTODO]
+		public void ShowUI (IComponent component)
+			=> OnDesignerActionUIStateChange (new DesignerActionUIStateChangeEventArgs (component, DesignerActionUIStateChangeType.Show));
+
 		public void Refresh (IComponent component)
-		{
-			throw new NotImplementedException ();
-		}
+			=> OnDesignerActionUIStateChange (new DesignerActionUIStateChangeEventArgs (component, DesignerActionUIStateChangeType.Refresh));
 
-		[MonoTODO]
+		private void OnDesignerActionUIStateChange (DesignerActionUIStateChangeEventArgs e)
+			=> _designerActionUIStateChangedEventHandler?.Invoke (this, e);
+
 		public bool ShouldAutoShow (IComponent component)
 		{
-			throw new NotImplementedException ();
+			// The designer option first.
+			if (_serviceProvider?.GetService (typeof (DesignerOptionService)) is DesignerOptionService opts) {
+				PropertyDescriptor p = opts.Options.Properties ["ObjectBoundSmartTagAutoShow"];
+				if (p != null && p.PropertyType == typeof (bool) && !(bool) p.GetValue (null))
+					return false;
+			}
+			if (_designerActionService != null) {
+				DesignerActionListCollection coll = _designerActionService.GetComponentActions (component);
+				if (coll != null) {
+					for (int i = 0; i < coll.Count; i++) {
+						if (coll [i]?.AutoShow == true)
+							return true;
+					}
+				}
+			}
+			return false;
 		}
 	}
 }

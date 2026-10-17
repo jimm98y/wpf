@@ -691,17 +691,37 @@ namespace System.Windows.Forms.Design
 			base.InitializeNewComponent (defaultValues);
 		}
 
-		[MonoTODO]
+		// Ported from dotnet/winforms ParentControlDesigner (the Mono stubs threw).
+
+		/// <summary>The four padding snap lines (always), inside the non-client area, as .NET reports them.</summary>
 		protected void AddPaddingSnapLines (ref ArrayList snapLines)
 		{
-			throw new NotImplementedException ();
+			if (snapLines == null)
+				snapLines = new ArrayList (4);
+			// The display rectangle in the control's window coordinates: the padding sits inside the non-client
+			// area (a form's borders and title bar).
+			Point offset = GetOffsetToClientArea ();
+			Rectangle displayRectangle = Control.DisplayRectangle;
+			displayRectangle.X += offset.X;
+			displayRectangle.Y += offset.Y;
+			// Padding snap lines even without padding: only like filters match.
+			snapLines.Add (new SnapLine (SnapLineType.Vertical, displayRectangle.Left, SnapLine.PaddingLeft, SnapLinePriority.Always));
+			snapLines.Add (new SnapLine (SnapLineType.Vertical, displayRectangle.Right, SnapLine.PaddingRight, SnapLinePriority.Always));
+			snapLines.Add (new SnapLine (SnapLineType.Horizontal, displayRectangle.Top, SnapLine.PaddingTop, SnapLinePriority.Always));
+			snapLines.Add (new SnapLine (SnapLineType.Horizontal, displayRectangle.Bottom, SnapLine.PaddingBottom, SnapLinePriority.Always));
 		}
 
-		[MonoTODO]
-		protected virtual Control GetParentForComponent (IComponent component)
+		/// <summary>From the control's window origin to its client origin: its non-client area.</summary>
+		private Point GetOffsetToClientArea ()
 		{
-			throw new NotImplementedException ();
+			Point client = Control.PointToScreen (Point.Empty);
+			Point window = Control.Parent != null ? Control.Parent.PointToScreen (Control.Location) : Control.Location;
+			return new Point (client.X - window.X, client.Y - window.Y);
 		}
+
+		/// <summary>The control a new component is parented to: this designer's control. (A SplitContainer's
+		/// designer answers its selected panel.)</summary>
+		protected virtual Control GetParentForComponent (IComponent component) => Control;
 
 		[MonoTODO]
 		protected override ControlBodyGlyph GetControlGlyph (GlyphSelectionType selectionType)
@@ -715,10 +735,76 @@ namespace System.Windows.Forms.Design
 			return base.GetGlyphs (selectionType);
 		}
 
-		[MonoTODO]
+		/// <summary>The drag rectangle snapped to the grid when SnapToGrid is on (each edge to the nearest grid
+		/// line, the size to whole cells and at least one cell); unchanged otherwise.</summary>
 		protected Rectangle GetUpdatedRect (Rectangle originalRect, Rectangle dragRect, bool updateSize)
 		{
-			throw new NotImplementedException ();
+			if (!SnapToGrid)
+				return dragRect;
+			Size gridSize = GridSize;
+			if (gridSize.Width <= 0 || gridSize.Height <= 0)
+				return dragRect;
+			Point halfGrid = new Point (gridSize.Width / 2, gridSize.Height / 2);
+			Rectangle updatedRect = dragRect;
+			updatedRect.X = originalRect.X;
+			updatedRect.Y = originalRect.Y;
+			if (dragRect.X != originalRect.X) {
+				updatedRect.X = dragRect.X / gridSize.Width * gridSize.Width;
+				if (dragRect.X - updatedRect.X > halfGrid.X)
+					updatedRect.X += gridSize.Width;
+			}
+			if (dragRect.Y != originalRect.Y) {
+				updatedRect.Y = dragRect.Y / gridSize.Height * gridSize.Height;
+				if (dragRect.Y - updatedRect.Y > halfGrid.Y)
+					updatedRect.Y += gridSize.Height;
+			}
+			if (updateSize) {
+				updatedRect.Width = (dragRect.X + dragRect.Width) / gridSize.Width * gridSize.Width - updatedRect.X;
+				updatedRect.Height = (dragRect.Y + dragRect.Height) / gridSize.Height * gridSize.Height - updatedRect.Y;
+				if (updatedRect.Width < gridSize.Width)
+					updatedRect.Width = gridSize.Width;
+				if (updatedRect.Height < gridSize.Height)
+					updatedRect.Height = gridSize.Height;
+			}
+			return updatedRect;
+		}
+
+		/// <summary>
+		/// Parents a new child to this designer's control, as .NET's AddControl does for
+		/// ControlDesigner.InitializeNewComponent: at defaultValues' "Location" (screen) or the default location,
+		/// at its "Size" or its own, offset by "Offset", snapped to the grid, in front -- a top-level form, a
+		/// control without a designer and a control already inside this one are left alone.
+		/// </summary>
+		internal void AddControlInternal (Control newChild, IDictionary defaultValues)
+		{
+			IDesignerHost host = GetService (typeof (IDesignerHost)) as IDesignerHost;
+			if (host == null || newChild == null || Control.Contains (newChild) || !(host.GetDesigner (newChild) is ControlDesigner)
+			    || (newChild is Form form && form.TopLevel))
+				return;
+			bool hasLocation = defaultValues != null && defaultValues.Contains ("Location");
+			bool hasSize = defaultValues != null && defaultValues.Contains ("Size");
+			Size offset = defaultValues != null && defaultValues.Contains ("Offset") ? (Size) defaultValues ["Offset"] : Size.Empty;
+			Rectangle bounds = Rectangle.Empty;
+			if (hasLocation) {
+				Point location = GetParentForComponent (newChild).PointToClient ((Point) defaultValues ["Location"]);
+				bounds.X = location.X;
+				bounds.Y = location.Y;
+			} else {
+				bounds.Location = new Point (GridSize.Width, GridSize.Height);
+			}
+			bounds.Size = hasSize ? (Size) defaultValues ["Size"] : newChild.Size;
+			bounds = GetUpdatedRect (Rectangle.Empty, bounds, false);
+			bounds.X += offset.Width;
+			bounds.Y += offset.Height;
+
+			Control parent = GetParentForComponent (newChild);
+			IComponentChangeService changeService = GetService (typeof (IComponentChangeService)) as IComponentChangeService;
+			PropertyDescriptor controlsProp = TypeDescriptor.GetProperties (parent) ["Controls"];
+			changeService?.OnComponentChanging (parent, controlsProp);
+			parent.Controls.Add (newChild);
+			parent.Controls.SetChildIndex (newChild, 0);
+			changeService?.OnComponentChanged (parent, controlsProp, null, null);
+			newChild.Bounds = bounds;
 		}
 #endregion
 
