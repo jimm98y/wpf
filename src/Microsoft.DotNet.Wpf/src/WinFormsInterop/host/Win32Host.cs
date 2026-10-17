@@ -860,12 +860,17 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     /// True: a filter took the message.</summary>
     [ThreadStatic] private static bool t_draining;
     private static readonly bool s_traceFilter = Environment.GetEnvironmentVariable("WF_TRACE_FILTER") == "1";
+    [DllImport("user32", CharSet = CharSet.Unicode, EntryPoint = "GetClassNameW")] private static extern int GetClassNameKeys(IntPtr hwnd, System.Text.StringBuilder name, int max);
+    private static string ClassName(IntPtr hwnd) { var sb = new System.Text.StringBuilder(128); GetClassNameKeys(hwnd, sb, 128); return sb.ToString(); }
+
     private static bool OfferToMessageFilters(ref MSG msg)
     {
         uint m = msg.message;
         bool input = (m >= 0x0100 && m <= 0x0109) || (m >= 0x0200 && m <= 0x020E) || (m >= 0x00A0 && m <= 0x00AD);
         if (!input || msg.hwnd == IntPtr.Zero) return false;
         lock (s_byHwnd) if (s_byHwnd.ContainsKey(msg.hwnd)) return false;
+        if (KeyTrace.On && KeyTrace.IsKey((int)m))
+            KeyTrace.Log($"pump: foreign window (hosted WPF?) {KeyTrace.Describe((int)m, msg.wParam, msg.hwnd)} class '{ClassName(msg.hwnd)}' -> message filters, then dispatched to it");
         try
         {
             // One queue, as on Windows: what WinForms posted before a press runs before it (see
@@ -898,6 +903,8 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     // pressed/hover animation and caret updates show immediately (like the Cocoa pump).
     private IntPtr WindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
+        if (KeyTrace.On && KeyTrace.IsKey((int)msg))
+            KeyTrace.Log($"host window '{(FormGone ? "" : _form.Text)}' {KeyTrace.Describe((int)msg, wParam, hwnd)} driver focus={InputTrace.Describe(XplatUI.GetFocus())} modifiers={ModifierState()}");
         t_wndProcDepth++;
         try { return WindowProcCore(hwnd, msg, wParam, lParam); }
         finally { t_wndProcDepth--; }

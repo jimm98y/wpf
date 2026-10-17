@@ -461,10 +461,14 @@ namespace System.Windows.Forms
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public static bool FilterMessage (ref Message message)
 		{
+			bool trace = KeyTrace.On && KeyTrace.IsKey (message.Msg);
 			lock (message_filters) {
 				for (int i = 0; i < message_filters.Count; i++) {
 					IMessageFilter filter = (IMessageFilter) message_filters[i];
-					if (filter.PreFilterMessage (ref message))
+					bool taken = filter.PreFilterMessage (ref message);
+					if (trace)
+						KeyTrace.Log ($"  filter {filter.GetType ().FullName}: {(taken ? "TAKEN" : "passed")}");
+					if (taken)
 						return true;
 				}
 			}
@@ -833,6 +837,8 @@ namespace System.Windows.Forms
 
 			while (!quit && XplatUI.GetMessage(queue_id, ref msg, IntPtr.Zero, 0, 0)) {
 				Message m = Message.Create(msg.hwnd, (int)msg.message, msg.wParam, msg.lParam);
+				if (KeyTrace.On && KeyTrace.IsKey (m.Msg))
+					KeyTrace.Log ($"loop {KeyTrace.Describe (m.Msg, m.WParam, m.HWnd)} focus={InputTrace.Describe (XplatUI.GetFocus ())} capture={keyboard_capture?.GetType ().Name}");
 				
 				if (Application.FilterMessage (ref m))
 					continue;
