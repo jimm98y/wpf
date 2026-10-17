@@ -309,7 +309,7 @@ namespace System.Windows.Forms.Theming.Default
 						continue;
 					if (counter != tab.TabPages[i].Row)
 						continue;
-					Rectangle rect = tab.GetTabRect (i);
+					Rectangle rect = tab.DrawnTabRect (i);
 					if (!rect.IntersectsWith (area))
 						continue;
 					DrawTab (dc, tab.TabPages[i], tab, rect, false);
@@ -317,7 +317,7 @@ namespace System.Windows.Forms.Theming.Default
 			}
 
 			if (tab.SelectedIndex != -1 && tab.SelectedIndex >= tab.SliderPos) {
-				Rectangle rect = tab.GetTabRect (tab.SelectedIndex);
+				Rectangle rect = tab.DrawnTabRect (tab.SelectedIndex);
 				if (rect.IntersectsWith (area))
 					DrawTab (dc, tab.TabPages[tab.SelectedIndex], tab, rect, true);
 			}

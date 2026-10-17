@@ -323,7 +323,7 @@ namespace System.Windows.Forms {
 
 				if (value == selected_index) {
 					if (selected_index > -1)
-						Invalidate(GetTabRect (selected_index));
+						Invalidate(DrawnTabRect (selected_index));
 					return;
 				}
 
@@ -356,15 +356,18 @@ namespace System.Windows.Forms {
 				}
 
 				if (new_index != -1) {
-					int le = TabPages[new_index].TabBounds.Right;
+					// comctl32 scrolls a tab that ends past the up-down control into view by as few tabs
+					// as it takes: the first tab shown is the lowest one with which the selected tab ends
+					// at or before the up-down's left edge (measured on stock: six tabs in 300 px, the
+					// up-down at x = 262). In the tabs' own widths -- the selected one's inflation is
+					// drawing only -- and with the strip starting where the first tab is drawn.
 					int re = LeftScrollButtonArea.Left;
-					if (show_slider && le > re) {
+					Rectangle target = RawTabRect (new_index);
+					if (show_slider && target.Right > re) {
+						int start = CalcXPos ();
 						int i = 0;
 						for (i = 0; i < new_index; i++) {
-							if (TabPages [i].TabBounds.Left < 0) // tab scrolled off the visible area, ignore
-								continue;
-
-							if (TabPages [new_index].TabBounds.Right - TabPages[i].TabBounds.Right < re) {
+							if (start + (target.Right - RawTabRect (i).Right) <= re) {
 								i++;
 								break;
 							}
@@ -376,7 +379,7 @@ namespace System.Windows.Forms {
 
 				if (old_index != -1 && new_index != -1) {
 					if (!refresh)
-						invalid = GetTabRect (old_index);
+						invalid = DrawnTabRect (old_index);
 					((TabPage) Controls[old_index]).SetVisible (false);
 				}
 
@@ -384,7 +387,7 @@ namespace System.Windows.Forms {
 
 				if (new_index != -1) {
 					selected = (TabPage) Controls[new_index];
-					invalid = Rectangle.Union (invalid, GetTabRect (new_index));
+					invalid = Rectangle.Union (invalid, DrawnTabRect (new_index));
 					selected.SetVisible (true);
 				}
 
@@ -582,10 +585,34 @@ namespace System.Windows.Forms {
 			}
 			// A control not sized yet lays its tabs out with no height at all; the native control
 			// still reports the item's height (TCM_GETITEMRECT), and that is what a caller sizes by.
-			Rectangle tab = page.TabBounds;
+			Rectangle tab = RawTabRect (index);
 			if (tab.Height == 0 && !Multiline)
 				tab.Height = ItemSize.Height;
 			return tab;
+		}
+
+		/// <summary>The rectangle a tab is DRAWN in: the selected one with its inflation. What the
+		/// theme paints and the strip invalidates; GetTabRect is the tab's own rectangle.</summary>
+		internal Rectangle DrawnTabRect (int index)
+		{
+			Rectangle own = GetTabRect (index);   // lays the strip out first if it has to
+			Rectangle tab = GetTab (index).TabBounds;
+			if (tab.Height == 0 && !Multiline)
+				tab.Height = own.Height;
+			return tab;
+		}
+
+		/// <summary>A tab's own rectangle: the selected tab's TabBounds without the inflation it is
+		/// drawn with (ExpandSelected). comctl32's TCM_GETITEMRECT answers this for every tab, the
+		/// selected one included (stock: 62x20 at (2,2) whether tab 0 is selected or not).</summary>
+		private Rectangle RawTabRect (int index)
+		{
+			Rectangle r = GetTab (index).TabBounds;
+			if (index == expanded_index && r.Height > 0) {
+				Rectangle d = SelectedDelta;
+				r = new Rectangle (r.X + d.X, r.Y + d.Y, r.Width - d.Width, r.Height - d.Height);
+			}
+			return r;
 		}
 
 		public Control GetControl (int index)
@@ -940,12 +967,12 @@ namespace System.Windows.Forms {
 			switch ((Msg)m.Msg) {
 			case Msg.WM_SETFOCUS:
 				if (selected_index != -1)
-					Invalidate(GetTabRect(selected_index));
+					Invalidate(DrawnTabRect(selected_index));
 				base.WndProc (ref m);
 				break;
 			case Msg.WM_KILLFOCUS:
 				if (selected_index != -1)
-					Invalidate(GetTabRect(selected_index));
+					Invalidate(DrawnTabRect(selected_index));
 				base.WndProc (ref m);
 				break;
 			default:
@@ -1035,7 +1062,7 @@ namespace System.Windows.Forms {
 
 			int count = Controls.Count;
 			for (int i = SliderPos; i < count; i++) {
-				if (!GetTabRect (i).Contains (e.X, e.Y))
+				if (!DrawnTabRect (i).Contains (e.X, e.Y))
 					continue;
 				SelectedIndex = i;
 				mouse_down_on_a_tab_page = true;
@@ -1144,6 +1171,7 @@ namespace System.Windows.Forms {
 
 		private void CalcTabRows (int row_width)
 		{
+			expanded_index = -1;
 			int xpos = 0;
 			int ypos = 0;
 			Size spacing = TabSpacing;
@@ -1287,8 +1315,13 @@ namespace System.Windows.Forms {
 			}
 		}
 		
+		// The tab whose TabBounds carry the selected tab's inflation (ExpandSelected), until the
+		// next layout: the selection can change before the strip is laid out again.
+		private int expanded_index = -1;
+
 		private void SizeTabs (int row_width, bool vertical)
 		{
+			expanded_index = -1;
 			int ypos = 0;
 			int xpos = 0;
 			int prev_row = 1;
@@ -1326,9 +1359,35 @@ namespace System.Windows.Forms {
 						spacing, vertical);
 			}
 
+			// The tabs scrolled out of view are where they would be, to the left of the strip (stock:
+			// -135, -73 for the two before the first shown), not stacked at x = -1 -- where the
+			// selected one, inflated, drew over the first tab shown.
+			if (show_slider && slider_pos > 0 && slider_pos < TabPages.Count && !multiline) {
+				Rectangle first = TabPages [slider_pos].TabBounds;
+				int x = first.X;
+				for (int i = slider_pos - 1; i >= 0; i--) {
+					TabPage page = TabPages [i];
+					int w = OwnTabWidth (page);
+					x -= w;
+					page.TabBounds = new Rectangle (x, first.Y, w, first.Height);
+				}
+			}
+
 			if (SelectedIndex != -1) {
 				ExpandSelected (TabPages [SelectedIndex], 0, row_width - 1);
 			}
+		}
+
+		/// <summary>A tab's width from its caption and image, as SizeTab measures it (before the
+		/// selected tab's inflation).</summary>
+		private int OwnTabWidth (TabPage page)
+		{
+			if (SizeMode == TabSizeMode.Fixed)
+				return item_size.Width;
+			int width = TabCaptionSize (page.Text).Width + LayoutPadding.X * 2;
+			if (ImageList != null && page.ImageIndex >= 0)
+				width += ImageList.ImageSize.Width + ThemeEngine.Current.TabControlImagePadding.X;
+			return Math.Max (width, MinimumTabWidth);
 		}
 		
 		private static readonly bool s_tabTrace =
@@ -1391,8 +1450,12 @@ namespace System.Windows.Forms {
 				}
 				page.Row = row_count;
 				if (i == selected_index && show_slider) {
+					// The first tab shown makes the selected one end at or before the up-down's left
+					// edge, the strip starting at CalcXPos (comctl32's rule; see the SelectedIndex
+					// setter). The tabs here are laid out from x = 0.
+					int limit = xpos + width + CalcXPos () - LeftScrollButtonArea.Left;
 					for (int j = i-1; j >= 0; j--) {
-						if (TabPages [j].TabBounds.Left < xpos + width - row_width) {
+						if (TabPages [j].TabBounds.Left < limit) {
 							slider_pos = j+1;
 							break;
 						}
@@ -1505,6 +1568,7 @@ namespace System.Windows.Forms {
 			if (Appearance != TabAppearance.Normal)
 				return;
 
+			expanded_index = TabPages.IndexOf (page);
 			Rectangle r = page.TabBounds;
 			r.Y -= SelectedDelta.Y;
 			r.X -= SelectedDelta.X;

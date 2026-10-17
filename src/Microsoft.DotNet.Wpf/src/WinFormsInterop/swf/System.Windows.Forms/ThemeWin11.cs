@@ -2648,12 +2648,12 @@ namespace System.Windows.Forms
 			// control keeps for the selected tab is already nudged outwards, so measuring the row from
 			// that one put the body a pixel below the others' feet and left a seam of bare control
 			// between the two.
-			Rectangle row = tab.GetTabRect (0);
+			Rectangle row = tab.DrawnTabRect (0);
 			bool measured = false;
 			for (int i = 0; i < tab.TabCount && !measured; i++) {
 				if (i == tab.SelectedIndex)
 					continue;
-				row = tab.GetTabRect (i);
+				row = tab.DrawnTabRect (i);
 				measured = true;
 			}
 			if (!measured)
@@ -2697,7 +2697,7 @@ namespace System.Windows.Forms
 					bool selected = i == tab.SelectedIndex;
 					if (selected != (pass == 1))
 						continue;
-					Rectangle bounds = tab.GetTabRect (i);
+					Rectangle bounds = tab.DrawnTabRect (i);
 					if (bounds.Width <= 0 || bounds.Height <= 0)
 						continue;
 
@@ -2758,8 +2758,9 @@ namespace System.Windows.Forms
 				int SpinState (VisualStyles.PushButtonState s) => !tab.Enabled ? 4
 					: s == VisualStyles.PushButtonState.Pressed ? 3 : s == VisualStyles.PushButtonState.Hot ? 2 : 1;
 				dc.FillRectangle (ResPool.GetSolidBrush (tab.Parent?.BackColor ?? tab.BackColor), Rectangle.Union (left, right));
-				new VisualStyles.VisualStyleRenderer ("SPIN", 3, SpinState (tab.LeftSliderState)).DrawBackground (dc, left);
-				new VisualStyles.VisualStyleRenderer ("SPIN", 4, SpinState (tab.RightSliderState)).DrawBackground (dc, right);
+				// SPNP_DOWNHORZ (4) points left and is the left button; SPNP_UPHORZ (3) points right.
+				new VisualStyles.VisualStyleRenderer ("SPIN", 4, SpinState (tab.LeftSliderState)).DrawBackground (dc, left);
+				new VisualStyles.VisualStyleRenderer ("SPIN", 3, SpinState (tab.RightSliderState)).DrawBackground (dc, right);
 			}
 		}
 
