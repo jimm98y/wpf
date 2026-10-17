@@ -6,7 +6,10 @@
 //
 // AnimateWindow blocks for the length of the animation in Win32. Here it starts it and returns:
 // the frames are presented by the host as it presents anything else, and a window being hidden
-// is hidden when its animation ends.
+// is hidden when its animation ends. The animation runs by the clock, as user32's does: the host
+// is told when one starts and presents it from a timer of its own until it ends, whatever loop is
+// pumping and whether or not anything else happens -- and presents the finished picture again for
+// a moment after, as a frame presented once does not always reach the screen.
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
@@ -24,6 +27,14 @@ namespace System.Windows.Forms {
 		}
 
 		private readonly Dictionary<IntPtr, Reveal> _reveals = new Dictionary<IntPtr, Reveal>();
+		private int _animationsEnded;
+
+		/// <summary>Whether an AnimateWindow is in progress (the host keeps presenting while one is).</summary>
+		internal bool Animating => _reveals.Count > 0;
+
+		/// <summary>How many animations have run to their end; the host presents the finished picture
+		/// again for a while each time this moves.</summary>
+		internal int AnimationsEnded => _animationsEnded;
 		private static readonly Stopwatch s_revealClock = Stopwatch.StartNew();
 
 		/// <summary>user32's AnimateWindow: false, as there, when the window is already shown (or
@@ -43,6 +54,7 @@ namespace System.Windows.Forms {
 			if (!hide) SetVisible(handle, true, (flags & AW_ACTIVATE) != 0);
 			else if (!animates) SetVisible(handle, false, false);
 			_paintVersion++;
+			if (animates) PresentationHost.AnimationStarted();
 			return true;
 		}
 
@@ -56,6 +68,7 @@ namespace System.Windows.Forms {
 			{
 				if (now - r.Value.Start < r.Value.Duration && Hwnd.ObjectFromHandle(r.Key) != null) continue;
 				_reveals.Remove(r.Key);
+				_animationsEnded++;
 				if ((r.Value.Flags & AW_HIDE) != 0) SetVisible(r.Key, false, false);
 			}
 			_paintVersion++;
