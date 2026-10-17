@@ -19,6 +19,33 @@ namespace Microsoft.Wpf.Interop.WebGpu
 {
     internal static unsafe partial class Wgpu
     {
+        /// <summary>
+        /// Present the surface's acquired texture and let go of it -- the one safe order.
+        ///
+        /// wgpu-native's wgpuTextureRelease of a SURFACE texture that was never presented discards
+        /// the surface's acquired image, and treats "no acquired image" as fatal: a non-unwinding
+        /// panic that aborts the process ("Error in wgpuTextureRelease: Surface image is already
+        /// acquired"). A present that FAILS has already taken the acquired image away and still
+        /// leaves the texture marked as not presented -- so releasing it afterwards kills the app.
+        /// The GL backend fails a present whenever the window has gone (GetDC of a destroyed HWND,
+        /// a context that cannot be made current, SwapBuffers refusing): a window destroyed while a
+        /// frame for it was being made, which a render thread or a short-lived window (a splitter's
+        /// drag bar) hits by chance. The texture of a failed present is therefore abandoned rather
+        /// than released: a few bytes of bookkeeping instead of the process.
+        /// </summary>
+        internal static WGPUStatus PresentAndRelease(IntPtr surface, IntPtr texture)
+        {
+            WGPUStatus status = wgpuSurfacePresent(surface);
+            if (status == WGPUStatus.Success) wgpuTextureRelease(texture);
+            else System.Threading.Interlocked.Increment(ref s_abandonedSurfaceTextures);
+            return status;
+        }
+
+        private static int s_abandonedSurfaceTextures;
+
+        /// <summary>Surface textures given up after a failed present (see PresentAndRelease).</summary>
+        internal static int AbandonedSurfaceTextures => s_abandonedSurfaceTextures;
+
         internal enum WGPUStatus
         {
             Success = 0x00000001,

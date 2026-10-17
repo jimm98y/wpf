@@ -762,6 +762,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 return;
             }
+            // Nor to a window that has gone (destroyed by the UI thread while this frame was being
+            // made), or a surface never configured (its window went before it could be): acquiring
+            // from an unconfigured surface aborts the process. A present that fails anyway, the
+            // window going between here and there, is survived by PresentAndRelease.
+            if (!ts.Configured || !Platform.NativePlatform.IsWindowAlive(ts.NativeWindow))
+            {
+                return;
+            }
 
             WGPUSurfaceTexture surfaceTexture;
             wgpuSurfaceGetCurrentTexture(ts.Surface, &surfaceTexture);
@@ -856,7 +864,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
 
             long tp = System.Diagnostics.Stopwatch.GetTimestamp();
-            WGPUStatus pres = wgpuSurfacePresent(ts.Surface);
+            WGPUStatus pres = PresentAndRelease(ts.Surface, surfaceTexture.texture);   // releases the texture (see there)
             _perfPresentTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tp;
             if (s_tracePresent)
                 Console.WriteLine($"PRESENTTRACE: present hwnd=0x{t.Hwnd:x} status={pres}");
@@ -908,7 +916,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
 
             wgpuTextureViewRelease(view);
-            wgpuTextureRelease(surfaceTexture.texture);
         }
 
         /// <summary>
@@ -1391,6 +1398,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         private void Configure(TargetSurface ts)
         {
+            // A surface on a window that has gone cannot be configured: wgpu-native aborts the
+            // process ("Invalid surface"). The render thread composites behind the UI thread, so a
+            // frame for a window the UI thread has just destroyed is an ordinary event here.
+            if (!Platform.NativePlatform.IsWindowAlive(ts.NativeWindow)) return;
+            ts.Configured = true;
             WGPUPresentMode mode = SurfaceSupportsPresentMode(ts.Surface, s_presentMode) ? s_presentMode : WGPUPresentMode.Fifo;
             // Layered popups composite over the content behind them. Pick any non-opaque alpha mode the
             // surface advertises so wgpu sets the CAMetalLayer non-opaque (an Opaque mode would force it
@@ -1548,6 +1560,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             /// <summary>Whether the surface was configured with CopySrc, i.e. whether the WF_SURF_DUMP
             /// swapchain readback is possible at all on this backend (it is not on OpenGL).</summary>
             public bool CanCopySrc;
+            /// <summary>Whether the surface has been configured: acquiring from one that has not is
+            /// fatal in wgpu-native, and a configure is skipped when the window has already gone.</summary>
+            public bool Configured;
             public int Width;
             public int Height;
             /// <summary>Consecutive acquires that produced no drawable (occluded/bad status).</summary>

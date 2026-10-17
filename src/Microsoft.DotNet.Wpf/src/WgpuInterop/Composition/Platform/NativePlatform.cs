@@ -272,6 +272,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         }
 
         /// <summary>
+        /// Whether the native window a surface was made on still exists. On Windows a surface whose
+        /// HWND has been destroyed cannot be configured (wgpu-native ABORTS the process: "Invalid
+        /// surface") nor presented, so every configure checks first. True where the question has
+        /// no meaning or no answer.
+        /// </summary>
+        public static bool IsWindowAlive(IntPtr nativeWindow)
+        {
+            if (Current == PlatformKind.Windows && nativeWindow != IntPtr.Zero) return IsWindowWin32(nativeWindow);
+            return true;
+        }
+
+        [System.Runtime.InteropServices.DllImport("user32", EntryPoint = "IsWindow")]
+        private static extern bool IsWindowWin32(IntPtr hwnd);
+
+        /// <summary>
         /// Whether the native window backing a surface is opaque. A window made non-opaque for a
         /// translucent backdrop (the macOS Mica substitute installs an NSVisualEffectView and clears
         /// the window) must present through a transparent surface (alpha mode + transparent clear).

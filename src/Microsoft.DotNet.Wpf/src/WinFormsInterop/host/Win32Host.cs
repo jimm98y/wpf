@@ -588,7 +588,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _hwnd);
             if (surface == IntPtr.Zero) throw new InvalidOperationException("NativePlatform.CreateWindowSurface returned null");
-            _wgpu = new WgpuPresenter(ctx, surface, _form.ClientSize.Width, _form.ClientSize.Height, _scale, srgb: true);
+            _wgpu = new WgpuPresenter(ctx, surface, _form.ClientSize.Width, _form.ClientSize.Height, _scale, srgb: true, nativeWindow: _hwnd);
             Console.WriteLine($"WebGPU present path active (HWND 0x{_hwnd:x}, format {_wgpu.Format}, present {_wgpu.PresentMode}, scale {_scale}, client {ClientSize()})");
         }
         // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and its
