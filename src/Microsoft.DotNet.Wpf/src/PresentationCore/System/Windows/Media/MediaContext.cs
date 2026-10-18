@@ -552,9 +552,19 @@ namespace System.Windows.Media
             }
 
             long period = TimeSpan.TicksPerSecond / _reportedRefreshRate;
-            long remaining = period - (CurrentTicks - renderStartTicks);
+            // Frames keep to a beat: the next is due one period after this one was DUE, not after it
+            // happened to start. Measured from each start, every wake-up's lateness (a millisecond or
+            // so) was added to the period, and a 100-Hz panel got 87 frames a second where stock WPF,
+            // paced by vsync, gets 99. A render that began a period or more late starts a new beat.
+            long due = _frameDue != 0 && renderStartTicks - _frameDue > -period / 2 && renderStartTicks - _frameDue < period
+                ? _frameDue + period
+                : renderStartTicks + period;
+            _frameDue = due;
+            long remaining = due - CurrentTicks;
             return remaining < MinimumRenderDelay.Ticks ? MinimumRenderDelay : TimeSpan.FromTicks(remaining);
         }
+
+        private long _frameDue;   // when the frame being rendered was due (CurrentTicks); 0 = no beat yet
 
         private static readonly TimeSpan MinimumRenderDelay = TimeSpan.FromMilliseconds(1);
 

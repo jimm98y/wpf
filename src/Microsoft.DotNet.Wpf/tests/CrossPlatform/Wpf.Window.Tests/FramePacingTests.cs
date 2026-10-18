@@ -5,7 +5,8 @@
 // A window that animates every frame draws at the display's rate. Stock WPF paces its frames by the
 // render thread's presentation notifications (DWM vsync); this compositor has none, so the wait for
 // the rest of a refresh period was a DispatcherTimer -- whose deadlines are whole 15.6-ms system
-// ticks on Windows -- and WPF drew at 50-55 frames a second on a 100-Hz display.
+// ticks on Windows -- and WPF drew at 50-55 frames a second on a 100-Hz display; and a wait measured
+// from each frame's start added every wake-up's lateness to the period (87 a second, stock 99).
 //
 
 using System;
@@ -45,7 +46,7 @@ namespace Wpf.Window.Tests
             }
             finally { enabled.SetValue(null, was); }
 
-            Assert.True(paced < ticked - 1.0 && paced < period * 1.5,
+            Assert.True(paced < ticked - 1.0 && paced < period * 1.1,
                 $"median frame interval {paced:0.0} ms paced, {ticked:0.0} ms on the system tick, on a {hz}-Hz display ({period:0.0} ms)");
         }
 
