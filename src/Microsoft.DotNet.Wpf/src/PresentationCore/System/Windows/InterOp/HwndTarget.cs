@@ -1583,7 +1583,13 @@ namespace System.Windows.Interop
                 // as its client, so its paint is the one whose BeginPaint repaints the frame
                 // (WM_NCPAINT inside BeginPaint); an ordinary paint does not. Only that paint
                 // draws the composed frame -- a full readback, too slow for every paint.
-                if (DUCE.ManagedComposition.IsEnabled && _framePaintedInBeginPaint && hdc.h != IntPtr.Zero)
+                //
+                // Not for a child window: its frame repaints on every size change (WM_NCPAINT inside
+                // BeginPaint), so each step of a resize did a full GPU readback -- GraphWorX's canvas,
+                // hosted in an ElementHost, spent 80% of a resize there -- and a hosted window's picture
+                // is composited by its host, which answers PrintWindow for both.
+                if (DUCE.ManagedComposition.IsEnabled && _framePaintedInBeginPaint && hdc.h != IntPtr.Zero
+                    && (UnsafeNativeMethods.GetWindowLong(handleRef, NativeMethods.GWL_STYLE) & NativeMethods.WS_CHILD) == 0)
                 {
                     PrintClientManaged(hdc.h);
                 }
