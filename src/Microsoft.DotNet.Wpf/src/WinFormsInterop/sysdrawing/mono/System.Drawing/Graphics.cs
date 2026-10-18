@@ -5522,7 +5522,7 @@ namespace System.Drawing
 					// GpGraphics::GetClipBounds: the app clip's DEVICE region bounds, back in world units.
 					GpRegion app = gp.AppClip;
 					if (app == null) return new Region (gp.GetClip ()).Bounds ();
-					Rectangle d = app.Device (GpMatrix.CreateIdentity ()).Bounds;
+					Rectangle d = app.DeviceShared (GpMatrix.CreateIdentity ()).Bounds;
 					if (!gp.DeviceToWorld (out GpMatrix inv)) return RectangleF.Empty;
 					var pts = new [] { new PointF (d.Left, d.Top), new PointF (d.Right, d.Top), new PointF (d.Left, d.Bottom), new PointF (d.Right, d.Bottom) };
 					inv.Transform (pts);
@@ -5592,7 +5592,7 @@ namespace System.Drawing
 				if (gp == null) return false;
 				SyncEngine ();
 				GpRegion c = gp.AppClip;
-				return c != null && c.Device (GpMatrix.CreateIdentity ()).IsEmpty;
+				return c != null && c.DeviceShared (GpMatrix.CreateIdentity ()).IsEmpty;
 			}
 		}
 

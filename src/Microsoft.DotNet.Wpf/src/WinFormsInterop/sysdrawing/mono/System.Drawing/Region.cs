@@ -279,7 +279,7 @@ namespace System.Drawing
 			case GpRegion.NodeEmpty:
 				return RectangleF.Empty;
 			default: {
-				Rectangle b = gp.Device (toDevice).Bounds;
+				Rectangle b = gp.DeviceShared (toDevice).Bounds;
 				GpMatrix inv = toDevice;
 				if (!inv.Invert ()) return RectangleF.Empty;
 				return TransformBounds (inv, b.Left, b.Top, b.Right, b.Bottom);
@@ -392,7 +392,7 @@ namespace System.Drawing
 		{
 			Live ();
 			GpMatrix m = ToDevice (g);
-			DpRegion d = gp.Device (m);
+			DpRegion d = gp.DeviceShared (m);
 			m.Transform (ref x, ref y);
 			return d.Contains ((int) MathF.Floor (x + 0.5f), (int) MathF.Floor (y + 0.5f));
 		}
@@ -413,7 +413,7 @@ namespace System.Drawing
 			if (!(width > 0) || !(height > 0))
 				return false;
 			GpMatrix m = ToDevice (g);
-			DpRegion d = gp.Device (m);
+			DpRegion d = gp.DeviceShared (m);
 			if (m.IsTranslateScale) {
 				float x0 = x, y0 = y, x1 = x + width, y1 = y + height;
 				m.Transform (ref x0, ref y0);
@@ -443,7 +443,7 @@ namespace System.Drawing
 			LiveArgs (g);
 			Live ();
 			if (gp.Type == GpRegion.NodeEmpty) return true;
-			return gp.Device (ToDevice (g)).IsEmpty;
+			return gp.DeviceShared (ToDevice (g)).IsEmpty;
 		}
 
 		public bool IsInfinite (Graphics g)
@@ -453,7 +453,7 @@ namespace System.Drawing
 			LiveArgs (g);
 			Live ();
 			if (gp.Type == GpRegion.NodeInfinite) return true;
-			return gp.Device (ToDevice (g)).IsInfinite;
+			return gp.DeviceShared (ToDevice (g)).IsInfinite;
 		}
 
 		internal bool IsInfiniteInternal => gp.Type == GpRegion.NodeInfinite;
@@ -479,7 +479,7 @@ namespace System.Drawing
 			LiveArgs (region, g);
 			Live ();
 			GpMatrix m = ToDevice (g);
-			return SameBands (gp.Device (m), region.gp.Device (m));
+			return SameBands (gp.DeviceShared (m), region.gp.DeviceShared (m));
 		}
 
 		static bool SameBands (DpRegion a, DpRegion b)
@@ -539,10 +539,10 @@ namespace System.Drawing
 			if (!OperatingSystem.IsWindows ())
 				return IntPtr.Zero;
 			// (A disposed Graphics is no Graphics to GDI+ here: the world is the identity.)
-			if (gp.Type == GpRegion.NodeInfinite || gp.Device (ToDevice (g)).IsInfinite)
+			if (gp.Type == GpRegion.NodeInfinite || gp.DeviceShared (ToDevice (g)).IsInfinite)
 				return IntPtr.Zero;   // GDI+ hands back NULL for the infinite region
 			IntPtr rgn = CreateRectRgn (0, 0, 0, 0);
-			foreach (Rectangle r in gp.Device (ToDevice (g)).Rects ()) {
+			foreach (Rectangle r in gp.DeviceShared (ToDevice (g)).Rects ()) {
 				IntPtr part = CreateRectRgn (r.Left, r.Top, r.Right, r.Bottom);
 				CombineRgn (rgn, rgn, part, 2 /* RGN_OR */);
 				DeleteObject (part);
@@ -659,7 +659,7 @@ namespace System.Drawing
 			Live ();
 			GpMatrix m = matrix.Gp;
 			var scans = new List<RectangleF> ();
-			foreach (Rectangle r in gp.Device (m).Rects ()) scans.Add (r);
+			foreach (Rectangle r in gp.DeviceShared (m).Rects ()) scans.Add (r);
 			return scans.ToArray ();
 		}
 
