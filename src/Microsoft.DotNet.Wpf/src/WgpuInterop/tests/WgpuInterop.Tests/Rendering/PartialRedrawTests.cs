@@ -236,6 +236,40 @@ namespace WgpuInterop.Tests.Rendering
             h.Frame(root, expectPartial: true, "shadowed content changed");
         }
 
+        /// <summary>A live display: a few values changing among many labels that overlap. Each change
+        /// spreads to the runs it touches (their paper may have changed), which passed the limit on
+        /// damage pieces and drew the whole frame -- half a second a frame with a thousand labels.
+        /// Too many pieces are covered on a coarse grid instead: still exact, still partial.</summary>
+        [Fact]
+        public void ManyOverlappingLabels_AFewChanging_StayPartialAndExact()
+        {
+            var font = TestFonts.Load();
+            using var h = new Harness(this, () => NewRenderer(font), White);
+            var root = new SceneVisual();
+            root.Children.Add(Tiles());
+            var rnd = new Random(3);
+            var labels = new List<SceneVisual>();
+            for (int i = 0; i < 600; i++)
+            {
+                var l = new SceneVisual();
+                l.Content.Add(new GlyphRunDraw("v" + i, new Vector2(rnd.Next(100), 12 + rnd.Next(140)), 11f, RgbaColor.FromBytes(0, 0, 0, 255)));
+                labels.Add(l);
+                root.Children.Add(l);
+            }
+            h.Frame(root, expectPartial: false, "first frame");
+            for (int f = 1; f <= 3; f++)
+            {
+                for (int k = 0; k < 40; k++)
+                {
+                    SceneVisual l = labels[(f * 97 + k * 13) % labels.Count];
+                    var old = (GlyphRunDraw)l.Content[0];
+                    l.Content[0] = new GlyphRunDraw("v" + (f * 1000 + k), old.Origin, 11f, RgbaColor.FromBytes(0, 0, 0, 255));
+                }
+                h.Frame(root, expectPartial: true, $"update {f}");
+                Assert.True(h.Target.LastPixels < W * H * 7 / 10, $"update {f}: damage {h.Target.LastPixels} px");
+            }
+        }
+
         [Fact]
         public void ClearTypeTextOverABackgroundBeyondTheDamageIsExact()
         {

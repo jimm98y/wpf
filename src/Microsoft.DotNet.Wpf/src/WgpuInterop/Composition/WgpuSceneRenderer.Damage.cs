@@ -447,6 +447,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             private bool ComputeCore(SceneVisual root, int width, int height, List<Scissor> rects)
             {
+                FlushWhy();   // the previous frame's
                 Stamp = Interlocked.Increment(ref s_damageStamp);
                 _now = Clock();
                 SettleDue = 0;
@@ -533,7 +534,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// <paramref name="rects"/>; their area, or -1 when there are too many to sort out.</summary>
             private long Settle(List<Scissor> raw, List<Scissor> rects, int width, int height)
             {
-                if (raw.Count > MaxRawRects || !SpreadToText(raw, _texts)) return -1;
+                // Too many pieces to sort out one by one is no reason to draw everything: cover them
+                // with a coarse grid instead (more pixels, never fewer). A live display -- fifty values
+                // changing ten times a second among a thousand labels -- spread its few changes to the
+                // many runs they overlap, passed the limit, and drew whole 500-ms frames.
+                if (raw.Count > MaxRawRects || (long)raw.Count * _texts.Count > 4_000_000) Coarsen(raw, width, height);
+                if (!SpreadToText(raw, _texts)) return -1;
+                if (raw.Count > MaxRawRects) Coarsen(raw, width, height);
                 Normalize(raw, rects, width, height);
                 long area = 0;
                 foreach (Scissor r in rects) area += (long)r.W * r.H;
@@ -548,11 +555,54 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// overlaps is read from the draws under THAT box, earlier text skipped -- so it changed
             /// only if a change touches that box too. Chaining run to overlapping run made a column of
             /// text lines one piece of damage: a caret in one line of a list redrew the list.</para></summary>
+            /// <summary>Replaces <paramref name="list"/> with rectangles covering every pixel it covers
+            /// within the target, on a grid of CoarseCell pixels: each row's run of covered cells, runs
+            /// that repeat on the next row merged downward.</summary>
+            private static void Coarsen(List<Scissor> list, int width, int height)
+            {
+                int cw = Math.Max(1, (width + CoarseCell - 1) / CoarseCell), ch = Math.Max(1, (height + CoarseCell - 1) / CoarseCell);
+                var cells = new bool[cw * ch];
+                foreach (Scissor r in list)
+                {
+                    int x0 = Math.Max(0, r.X), y0 = Math.Max(0, r.Y), x1 = Math.Min(width, r.X + r.W), y1 = Math.Min(height, r.Y + r.H);
+                    if (x1 <= x0 || y1 <= y0) continue;
+                    for (int cy = y0 / CoarseCell; cy <= (y1 - 1) / CoarseCell; cy++)
+                        for (int cx = x0 / CoarseCell; cx <= (x1 - 1) / CoarseCell; cx++)
+                            cells[cy * cw + cx] = true;
+                }
+                list.Clear();
+                var open = new List<(int X0, int X1, int Y0)>();   // runs still growing downward
+                var next = new List<(int X0, int X1, int Y0)>();
+                for (int cy = 0; cy <= ch; cy++)
+                {
+                    next.Clear();
+                    if (cy < ch)
+                        for (int cx = 0; cx < cw;)
+                        {
+                            if (!cells[cy * cw + cx]) { cx++; continue; }
+                            int s0 = cx;
+                            while (cx < cw && cells[cy * cw + cx]) cx++;
+                            int y0 = cy;
+                            int k = open.FindIndex(o => o.X0 == s0 && o.X1 == cx);
+                            if (k >= 0) { y0 = open[k].Y0; open.RemoveAt(k); }
+                            next.Add((s0, cx, y0));
+                        }
+                    foreach (var o in open)   // runs that stop here
+                    {
+                        int x = o.X0 * CoarseCell, y = o.Y0 * CoarseCell;
+                        list.Add(new Scissor(x, y, Math.Min(width, o.X1 * CoarseCell) - x, Math.Min(height, cy * CoarseCell) - y));
+                    }
+                    open.Clear(); open.AddRange(next);
+                }
+            }
+
+            private const int CoarseCell = 32;
+
             private static bool SpreadToText(List<Scissor> raw, List<Scissor> texts)
             {
                 int n = raw.Count;
                 if (n == 0 || texts.Count == 0) return true;
-                if (n > MaxRawRects || (long)n * texts.Count > 4_000_000) return false;
+                if ((long)n * texts.Count > 16_000_000) return false;
                 foreach (Scissor tb in texts)
                 {
                     for (int i = 0; i < n; i++)
@@ -565,7 +615,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         }
                     }
                 }
-                return raw.Count <= MaxRawRects;
+                return true;
             }
             // ---- scrolling ------------------------------------------------------------------------
             //
@@ -993,6 +1043,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     && TryScroll(old, v, parentWorld, parentClip, inSnapshot) is { } moved)
                     return moved;
                 bool sameContent = sameState && SameContent(old!, v);
+                if (s_why && old != null && !fresh && (!sameState || !sameContent)) Why(old, v, sameState);
                 // A fresh recording of what was drawn here before, scrolled (a WinForms control's
                 // repaint): see TryContentScroll.
                 if (s_scrollTrace && sameState && !sameContent && v.Clip.HasValue)
@@ -1075,6 +1126,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         SpreadDamage(v, _raw, mark2, Union(before, old.Bounds));
                 }
                 return old;
+            }
+
+            // WGPU_DAMAGE_WHY=1 (diagnostics): what made each visual count as changed, tallied per frame.
+            private static readonly bool s_why = Environment.GetEnvironmentVariable("WGPU_DAMAGE_WHY") == "1";
+            private readonly System.Collections.Generic.Dictionary<string, int> _why = new();
+            private void Why(Rec r, SceneVisual v, bool sameState)
+            {
+                string k;
+                if (!sameState)
+                {
+                    Matrix3x2 l = v.LocalToParent;
+                    k = r.Local != l ? $"local {r.Local.M31:0.##},{r.Local.M32:0.##}->{l.M31:0.##},{l.M32:0.##}" : r.Opacity != v.Opacity ? "opacity" : r.HasClip != v.Clip.HasValue ? "clip on/off" : "state other";
+                    if (k.StartsWith("local")) k = "local" + ((r.Local.M31 == l.M31 && r.Local.M32 == l.M32) ? " (linear)" : " (translation)");
+                }
+                else
+                {
+                    int same = 0, n = Math.Min(r.ContentCount, v.Content.Count);
+                    for (int i = 0; i < n; i++) if (ReferenceEquals(r.Content[i], v.Content[i])) same++;
+                    k = $"content {r.ContentCount}->{v.Content.Count} same {same}" + (v.Content.Count > 0 ? " " + v.Content[0].GetType().Name : "");
+                }
+                _why[k] = _why.TryGetValue(k, out int c) ? c + 1 : 1;
+            }
+            private void FlushWhy()
+            {
+                if (!s_why || _why.Count == 0) return;
+                var sb = new System.Text.StringBuilder("[why]");
+                foreach (var kv in _why) sb.Append($" {kv.Value}x {kv.Key};");
+                Console.Error.WriteLine(sb.ToString());
+                _why.Clear();
             }
 
             private void AddTexts(Rec r, bool inSnapshot)
