@@ -570,6 +570,10 @@ namespace System.Drawing
 			float ox = dx + m [4], oy = dy + m [5];
 			if (ox != MathF.Floor (ox) || oy != MathF.Floor (oy))
 				return rgba;
+			// The same source array always comes out as the same edged array: a fresh copy per draw was a
+			// fresh texture per draw (every ribbon icon, every hover frame).
+			if (s_edged.TryGetValue (rgba, out Edged done) && done.W == w && done.H == h)
+				return done.Rgba;
 			byte [] o = (byte []) rgba.Clone ();
 			for (int y = 0; y < h; y++)
 				for (int x = 0; x < w; x++) {
@@ -578,8 +582,13 @@ namespace System.Drawing
 					int i = (y * w + x) * 4;
 					o [i + 3] = (byte) ((o [i + 3] * cov + 127) / 255);
 				}
+			s_edged.AddOrUpdate (rgba, new Edged { W = w, H = h, Rgba = o });
 			return o;
 		}
+
+		sealed class Edged { public int W, H; public byte [] Rgba; }
+		static readonly System.Runtime.CompilerServices.ConditionalWeakTable<byte [], Edged> s_edged = new ();
+		static readonly System.Runtime.CompilerServices.ConditionalWeakTable<byte [], byte []> s_intoBitmap = new ();
 
 		// An image drawn INTO a bitmap goes through GDI+'s premultiplied blend on the way: a
 		// translucent pixel comes out of the bitmap as the premultiply's round trip leaves it (a
@@ -589,6 +598,7 @@ namespace System.Drawing
 		// (WebGpuBackend.SceneRaster.Original).
 		static byte[] IntoBitmap (byte[] rgba)
 		{
+			if (s_intoBitmap.TryGetValue (rgba, out byte[] was)) return was;
 			byte[] stored = null;
 			for (int i = 0; i + 3 < rgba.Length; i += 4) {
 				int a = rgba [i + 3];
@@ -597,8 +607,9 @@ namespace System.Drawing
 				for (int k = 0; k < 3; k++)
 					stored [i + k] = (byte) GdipPixels.Unpremultiply (GdipPixels.Premultiply (rgba [i + k], a), a);
 			}
-			if (stored == null) return rgba;
-			WebGpuBackend.SceneRaster.Original.AddOrUpdate (stored, rgba);
+			if (stored != null) WebGpuBackend.SceneRaster.Original.AddOrUpdate (stored, rgba);
+			stored ??= rgba;
+			s_intoBitmap.AddOrUpdate (rgba, stored);
 			return stored;
 		}
 
@@ -688,7 +699,9 @@ namespace System.Drawing
 			float kx = dest.Width / src.Width, ky = dest.Height / src.Height;
 			var d = new RectangleF (dest.X + (x0 - src.X) * kx, dest.Y + (y0 - src.Y) * ky, w * kx, h * ky);
 			if (print_mode && PrintImageBands (bmp, new RectangleF (x0, y0, w, h), d, attrs)) return true;
-			byte[] rgba = GdipPixels.ToRgba (frame, new Rectangle (x0, y0, w, h));
+			// Without attributes the converted pixels are the cached ones (the same array for an unchanged
+			// bitmap, which is what the renderer keys its texture on); attributes recolour a fresh copy.
+			byte[] rgba = attrs == null ? CachedRgba (frame, new Rectangle (x0, y0, w, h)) : GdipPixels.ToRgba (frame, new Rectangle (x0, y0, w, h));
 			attrs?.Apply (rgba, Imaging.ColorAdjustType.Bitmap);
 			if (image_target != null) rgba = IntoBitmap (rgba);
 			rgba = AntialiasedImageEdges (rgba, w, h, d.X, d.Y, d.Width, d.Height);

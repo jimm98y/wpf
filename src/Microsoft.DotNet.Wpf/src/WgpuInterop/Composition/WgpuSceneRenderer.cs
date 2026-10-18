@@ -267,7 +267,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // mappedAtCreation buffer every frame per gradient/image fill).
         private readonly Dictionary<long, (IntPtr Buf, long LastFrame)> _uniCache = new();
         // Image-brush textures, keyed by the source pixel array's identity (were re-uploaded every frame).
-        private readonly Dictionary<long, (IntPtr Tex, IntPtr View, long LastFrame)> _imgCache = new();
+        // Keyed by the array ITSELF (reference equality), not its identity hash: the hash is not unique, and
+        // two arrays sharing one drew one's pixels for the other.
+        private readonly Dictionary<(byte[] Rgba, bool Srgb), (IntPtr Tex, IntPtr View, long LastFrame)> _imgCache = new(ImgKeyComparer.Instance);
+
+        // The bind group an image fill samples its cached texture through, kept as long as the texture:
+        // one per image draw per frame was a device call each (every ribbon icon on every hover frame).
+        private readonly Dictionary<(IntPtr View, WGPUTextureFormat Format, IntPtr Sampler, bool SourceCopy), IntPtr> _imgBindGroups = new();
+
+        private IntPtr ImageBindGroup(WGPUTextureFormat format, IntPtr view, IntPtr sampler, bool sourceCopy)
+        {
+            var key = (view, format, sampler, sourceCopy);
+            if (_imgBindGroups.TryGetValue(key, out IntPtr bg)) return bg;
+            bg = CreateSampledBindGroup(format, FillKind.Textured, view, sampler, sourceCopy);
+            _imgBindGroups[key] = bg;
+            return bg;
+        }
+
+        private void ReleaseImageBindGroups(IntPtr view)
+        {
+            if (_imgBindGroups.Count == 0) return;
+            List<(IntPtr, WGPUTextureFormat, IntPtr, bool)>? dead = null;
+            foreach (KeyValuePair<(IntPtr View, WGPUTextureFormat Format, IntPtr Sampler, bool SourceCopy), IntPtr> kv in _imgBindGroups)
+                if (kv.Key.View == view) (dead ??= new()).Add(kv.Key);
+            if (dead == null) return;
+            foreach (var k in dead) { DeferReleaseBindGroup(_imgBindGroups[k]); _imgBindGroups.Remove(k); }
+        }
+
+        private sealed class ImgKeyComparer : IEqualityComparer<(byte[] Rgba, bool Srgb)>
+        {
+            public static readonly ImgKeyComparer Instance = new();
+            public bool Equals((byte[] Rgba, bool Srgb) a, (byte[] Rgba, bool Srgb) b) => ReferenceEquals(a.Rgba, b.Rgba) && a.Srgb == b.Srgb;
+            public int GetHashCode((byte[] Rgba, bool Srgb) k) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(k.Rgba) * 2 + (k.Srgb ? 1 : 0);
+        }
         private int _frameId;
 
         // Static-layer cache: an effect/opacity card whose subtree is unchanged from a previous
@@ -428,15 +460,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             if (_imgCache.Count > 0)
             {
-                List<long>? deadI = null;
-                foreach (KeyValuePair<long, (IntPtr Tex, IntPtr View, long LastFrame)> kv in _imgCache)
+                List<(byte[], bool)>? deadI = null;
+                foreach (KeyValuePair<(byte[] Rgba, bool Srgb), (IntPtr Tex, IntPtr View, long LastFrame)> kv in _imgCache)
                 {
                     if (kv.Value.LastFrame >= _frameId - 60) continue;
-                    (deadI ??= new List<long>()).Add(kv.Key);
+                    (deadI ??= new List<(byte[], bool)>()).Add(kv.Key);
+                    ReleaseImageBindGroups(kv.Value.View);
                     wgpuTextureViewRelease(kv.Value.View);
                     wgpuTextureRelease(kv.Value.Tex);
                 }
-                if (deadI != null) foreach (long k in deadI) _imgCache.Remove(k);
+                if (deadI != null) foreach ((byte[], bool) k in deadI) _imgCache.Remove(k);
             }
 
             if (_uniCache.Count > 0)
@@ -3629,21 +3662,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // mapping the geometry across the Viewbox UV sub-rect [U0,U1]x[V0,V1]; a plain image
                     // brush uploads its pixels and maps the whole image [0,1].
                     float u0 = 0f, v0 = 0f, uSpan = 1f, vSpan = 1f;
-                    IntPtr view;
+                    IntPtr view = IntPtr.Zero;
                     if (img.SourceVisual is not null)
                     {
                         if (!_contentTexFrame.TryGetValue(img.SourceId, out view) || view == IntPtr.Zero)
                             return;   // source texture not rendered (unexpected) -> skip rather than sample garbage
                         u0 = img.U0; v0 = img.V0; uSpan = img.U1 - img.U0; vSpan = img.V1 - img.V0;
                     }
-                    else
+                    // RenderOptions.BitmapScalingMode=NearestNeighbor -> no filtering.
+                    IntPtr sampler = _nearestScaling ? NearestSampler() : LinearSampler();
+                    if (img.SourceVisual is null)
                     {
                         view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+                        bindGroup = ImageBindGroup(format, view, sampler, _srcCopy);   // owned by the image cache
                     }
-                    // RenderOptions.BitmapScalingMode=NearestNeighbor -> no filtering.
-                    bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view,
-                        _nearestScaling ? NearestSampler() : LinearSampler(), _srcCopy);
-                    DeferReleaseBindGroup(bindGroup);
+                    else
+                    {
+                        bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, sampler, _srcCopy);
+                        DeferReleaseBindGroup(bindGroup);
+                    }
                     kind = FillKind.Textured;
 
                     Bounds(mesh.Positions, out Vector2 min, out Vector2 size);
@@ -7587,7 +7624,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // _srgbOutput in the key since the format depends on it. Caller must NOT release the returned view.
         private IntPtr GetOrCreateImageView(byte[] rgba, int width, int height)
         {
-            long key = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(rgba) * 2 + (_srgbOutput ? 1 : 0);
+            var key = (rgba, _srgbOutput);
             if (_imgCache.TryGetValue(key, out (IntPtr Tex, IntPtr View, long LastFrame) e))
             {
                 _imgCache[key] = (e.Tex, e.View, _frameId);
