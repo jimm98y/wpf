@@ -395,7 +395,6 @@ namespace System.Windows.Forms
 					Dispose ();
 				else {
 					XplatUI.BlitFromOffscreen (parent.Handle, pe.Graphics, back_buffer, buffered_graphics, pe.ClipRectangle);
-					InvalidRegion.Exclude (pe.ClipRectangle);
 				}
 				buffered_graphics.Dispose ();
 			}
@@ -6373,15 +6372,11 @@ namespace System.Windows.Forms
 				// NotifyInvalidated..
 				if (e.InvalidRect == ClientRectangle) {
 					InvalidateBackBuffer ();
-				} else if (backbuffer != null){
-					// we need this Inflate call here so
-					// that the border of the rectangle is
-					// considered Visible (the
-					// invalid_region.IsVisible call) in
-					// the WM_PAINT handling below.
-					Rectangle r = Rectangle.Inflate(e.InvalidRect, 1,1);
-					backbuffer.InvalidRegion.Union (r);
 				}
+				// Mono also kept a running region of what was invalid -- a union per invalidate, an exclude
+				// per paint -- for a check in WM_PAINT that is commented out. Nothing reads it, and as a
+				// combine tree that only ever grew (its 1-pixel inflation never painted away) every hover
+				// made it a node deeper: cloning it took most of a frame after a few minutes of use.
 			}
 
 			InvalidateEventHandler eh = (InvalidateEventHandler)(Events [InvalidatedEvent]);
