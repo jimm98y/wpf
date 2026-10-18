@@ -562,6 +562,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (HostedWpfContent.Any && HostedWpfContent.IsClaimed(t.Hwnd))
                 {
                     HostedWpfContent.Publish(t.Hwnd, root, t.Width, t.Height);
+                    // Handed over is as presented as this frame gets: without a notice WPF has no refresh
+                    // rate and paces hosted content on its flat 10-ms DispatcherTimer, which fires on the
+                    // 15.6-ms tick -- GraphWorX's canvas animated at 58 frames a second on a 100-Hz panel.
+                    NotePresented(t.Hwnd);
                     continue;
                 }
 
