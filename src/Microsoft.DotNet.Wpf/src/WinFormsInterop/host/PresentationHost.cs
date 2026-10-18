@@ -158,10 +158,38 @@ namespace System.Windows.Forms
         internal static void Attach(IWinFormsHost host, Form form)
         {
             if (host == null) return;
+            ReapDeadThreads();
             lock (s_lock)
             {
                 if (!s_hosts.Contains(host)) s_hosts.Add(host);
                 if (form != null) s_forms[host] = form;
+                s_reaper ??= new System.Threading.Timer(static _ => ReapDeadThreads(), null, ReapPeriodMs, ReapPeriodMs);
+            }
+        }
+
+        // A thread that showed a form and ended without closing it (a worker-thread splash, a dialog
+        // thread that returns) leaves its host behind: Windows destroyed the window with the thread,
+        // silently, and nothing on that thread will ever run again to say so. Each one kept its GPU
+        // device, its context and its hidden window for the life of the process -- enough of them and
+        // a new window could not get a device at all (D3D12). WPF reaps its dead threads' composition
+        // backends the same way (ManagedComposition.ReapDeadThreads).
+        private const int ReapPeriodMs = 2000;
+        private static System.Threading.Timer s_reaper;
+
+        internal static void ReapDeadThreads()
+        {
+            System.Collections.Generic.List<Win32Host> dead = null;
+            lock (s_lock)
+            {
+                foreach (IWinFormsHost h in s_hosts)
+                    if (h is Win32Host w && w.OwnerThreadGone) (dead ??= new System.Collections.Generic.List<Win32Host>()).Add(w);
+                if (dead != null)
+                    foreach (Win32Host w in dead) { s_hosts.Remove(w); s_forms.Remove(w); }
+            }
+            if (dead == null) return;
+            foreach (Win32Host w in dead)
+            {
+                try { w.ReleaseAfterThreadEnded(); } catch { /* its thread is gone; there is no one to report to */ }
             }
         }
 

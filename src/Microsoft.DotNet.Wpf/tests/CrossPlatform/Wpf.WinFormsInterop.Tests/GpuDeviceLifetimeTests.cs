@@ -81,6 +81,41 @@ namespace Wpf.WinFormsInterop.Tests
             }
         }
 
+        /// <summary>Threads that show a form and simply end, never closing it (a worker-thread splash
+        /// screen, a dialog thread that returns): Windows takes the windows down with the threads and
+        /// nothing of ours runs there. Their GPU devices go back once the threads are found dead --
+        /// each kept a device, a context and a hidden window for good, and on D3D12 a few hundred of
+        /// them left no device for the next window at all.</summary>
+        [Fact]
+        public void ThreadsThatEndWithTheirFormOpen_GiveTheirDevicesBack()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "counts the GL backend's device windows");
+            OnSta(() => OpenAndClose(0));      // whatever is made once per process
+            int before = DeviceWindows();
+            const int Threads = 12;
+            for (int i = 0; i < Threads; i++)
+            {
+                int n = i;
+                var t = new Thread(() =>
+                {
+                    // Far from where any other test puts its windows: the driver keeps an abandoned
+                    // form's windows (nothing of that thread can take them down), and a test that asks
+                    // which window is under a point must not find these.
+                    var f = new SWF.Form { Text = "Abandoned " + n, StartPosition = SWF.FormStartPosition.Manual, Location = new Point(30000 + n * 130, 30), ClientSize = new Size(120, 80), ShowInTaskbar = false };
+                    f.Show();
+                    Pump(60);
+                    // ...and the thread ends, the form never closed.
+                });
+                t.SetApartmentState(ApartmentState.STA);
+                t.Start();
+                t.Join();
+            }
+            int after = DeviceWindows();
+            for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && after - before > 1; Thread.Sleep(100))
+                after = DeviceWindows();
+            Assert.True(after - before <= 1, $"{after - before} GPU device windows still held for {Threads} threads that ended ({before} -> {after})");
+        }
+
         private static object? Gpu(object host)
             => host.GetType().GetField("_wgpu", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(host);
 

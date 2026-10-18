@@ -513,7 +513,11 @@ namespace Wpf.WinFormsInterop.Tests
                     panel.MouseMove += (s, e) =>
                     {
                         moves++; lastX = e.X; panel.BackColor = Color.FromArgb(255, e.X % 256, 0, 0);
-                        Thread.Sleep(4);   // a move that takes a while to handle (a ribbon's hover)
+                        // a move that takes a while to handle (a ribbon's hover): 4 ms of work, spun --
+                        // a Sleep(4) is 15.6 ms whenever nothing on the machine has raised the timer
+                        // resolution, and a frame per move is then the right answer
+                        var spin = System.Diagnostics.Stopwatch.StartNew();
+                        while (spin.Elapsed.TotalMilliseconds < 4) { }
                     };
                     form.Controls.Add(panel);
                     form.Show();
