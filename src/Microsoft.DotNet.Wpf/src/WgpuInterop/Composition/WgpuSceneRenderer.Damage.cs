@@ -514,6 +514,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (plainArea < 0) { FullReason = $"{plain.Count} changes"; return true; }
                     return Decide(plainArea, target);
                 }
+                if (s_why)
+                {
+                    var big = new List<Scissor>(_raw); big.Sort((p, q) => ((long)q.W * q.H).CompareTo((long)p.W * p.H));
+                    var sb = new System.Text.StringBuilder("[why-raw]");
+                    for (int i = 0; i < Math.Min(4, big.Count); i++) sb.Append($" [{big[i].X},{big[i].Y} {big[i].W}x{big[i].H}]");
+                    Console.Error.WriteLine(sb.ToString());
+                }
                 long area = Settle(_raw, rects, width, height);
                 // So many separate changes that sorting them out would cost more than drawing them.
                 if (area < 0) { FullReason = $"{_raw.Count} changes"; return true; }
@@ -1037,6 +1044,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 bool kidsInSnapshot = inSnapshot || v.Snapshot != null;
 
                 bool sameState = old != null && !fresh && SameState(old, v);
+                // Only the clip rectangle moved or changed size (a form's or panel's own clip on a resize):
+                // what changed is where the two clips differ, plus whatever really changed inside.
+                if (!sameState && old != null && !fresh && s_clipDiff && OnlyClipRectChanged(old, v))
+                    return ClipResized(old, v, world, clip, parentClip, inSnapshot, kidsInSnapshot, shiftOk);
                 // A subtree that only MOVED, by whole device pixels, inside a clip that did not: its
                 // pixels can be shifted rather than redrawn (see TryScroll).
                 if (!sameState && old != null && !fresh && shiftOk && _scrollRec == null
@@ -1143,9 +1154,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 else
                 {
                     int same = 0, n = Math.Min(r.ContentCount, v.Content.Count);
-                    for (int i = 0; i < n; i++) if (ReferenceEquals(r.Content[i], v.Content[i])) same++;
-                    k = $"content {r.ContentCount}->{v.Content.Count} same {same}" + (v.Content.Count > 0 ? " " + v.Content[0].GetType().Name : "");
+                    int equal = 0;
+                    for (int i = 0; i < n; i++) { if (ReferenceEquals(r.Content[i], v.Content[i])) same++; else if (SceneReuse.SamePrimitive(r.Content[i], v.Content[i])) equal++; }
+                    k = $"content {r.ContentCount}->{v.Content.Count} same {same} equal {equal}" + (v.Content.Count > 0 ? " " + v.Content[0].GetType().Name : "");
                 }
+                if ((long)r.Bounds.W * r.Bounds.H > 200_000) k += $" BIG[{r.Bounds.X},{r.Bounds.Y} {r.Bounds.W}x{r.Bounds.H} kids={v.Children.Count} op={v.Opacity:0.##} mask={v.OpacityMask != null} snap={v.Snapshot != null} fx={v.Effect != null} clipgeo={v.ClipGeometry != null}]";
                 _why[k] = _why.TryGetValue(k, out int c) ? c + 1 : 1;
             }
             private void FlushWhy()
@@ -1156,6 +1169,94 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 Console.Error.WriteLine(sb.ToString());
                 _why.Clear();
             }
+
+            /// <summary>WGPU_DAMAGE_CLIPDIFF=0: a changed clip damages the visual's whole subtree, as before.</summary>
+            private static readonly bool s_clipDiff = Environment.GetEnvironmentVariable("WGPU_DAMAGE_CLIPDIFF") != "0";
+
+            private static bool OnlyClipRectChanged(Rec r, SceneVisual v)
+            {
+                if (!r.HasClip || v.Clip is not Rect c || SameRect(c, r.Clip)) return false;
+                // pixels under these are not where their content put them
+                if (v.Opacity < 0.999 || v.OpacityMask != null || v.Effect != null || v.Snapshot != null || v.ClipGeometry != null) return false;
+                if (r.Local != v.LocalToParent || r.Opacity != v.Opacity) return false;
+                if (!ReferenceEquals(r.ClipGeometry, v.ClipGeometry) || !ReferenceEquals(r.Effect, v.Effect)
+                    || !ReferenceEquals(r.Mask, v.OpacityMask) || !ReferenceEquals(r.Snapshot, v.Snapshot)) return false;
+                if (r.Aliased != v.AliasedEdges || r.Nearest != v.NearestBitmapScaling) return false;
+                return ReferenceEquals(r.GuidesX, v.GuidelinesX) && ReferenceEquals(r.GuidesY, v.GuidelinesY);
+            }
+
+            /// <summary>A visual whose clip rectangle alone changed: its children are diffed as ever (under
+            /// the new clip) for what really changed, the subtree is measured again under the new clip,
+            /// and the band between the old clip and the new one is damaged -- what came into view and
+            /// what went out of it. Damaging the whole subtree made every step of a resize a full frame.</summary>
+            private Rec ClipResized(Rec old, SceneVisual v, Matrix3x2 world, Scissor clip, Scissor parentClip,
+                bool inSnapshot, bool kidsInSnapshot, bool shiftOk)
+            {
+                Scissor oldClipBox = Intersect(RectBox(old.Clip, world), parentClip);
+                Scissor newClipBox = clip;
+                int textMark = _texts.Count;
+                // 1. What changed inside, by the usual diff, under the new clip.
+                int nk = v.Children.Count;
+                for (int i = 0; i < nk; i++)
+                    Visit(i < old.KidCount ? old.Kids[i] : null, v.Children[i], world, clip, fresh: false, kidsInSnapshot, shiftOk: false,
+                        parentClipped: true);
+                for (int i = nk; i < old.KidCount; i++)
+                    if (old.Kids[i] is { } gone) _raw.Add(gone.Bounds);
+                // Its own content: what differs, as PatchContent tells it (a background recorded again
+                // at the new size is its two rectangles' difference).
+                List<DrawingPrimitive> c = v.Content;
+                int on = old.ContentCount, nn = c.Count, pre = 0, suf = 0;
+                while (pre < on && pre < nn && Same(old.Content[pre], c[pre])) pre++;
+                while (suf < on - pre && suf < nn - pre && Same(old.Content[on - 1 - suf], c[nn - 1 - suf])) suf++;
+                bool resizedFill = s_fillDiff && on - pre - suf == 1 && nn - pre - suf == 1 && v.GuidelinesX == null && v.GuidelinesY == null
+                    && world.M12 == 0 && world.M21 == 0 && SameColourRect(old.Content[pre], c[pre]);
+                if (resizedFill)
+                    AddResizedRect(((RectangleGeometry)((GeometryFill)old.Content[pre]).Geometry).Rect,
+                        ((RectangleGeometry)((GeometryFill)c[pre]).Geometry).Rect, world, Union(oldClipBox, newClipBox));
+                else
+                    for (int i = pre; i < on - suf; i++) _raw.Add(old.Boxes[i]);
+                // 2. The subtree measured afresh under the new clip (boxes cut to it), adding no damage.
+                if (_texts.Count > textMark) _texts.RemoveRange(textMark, _texts.Count - textMark);
+                var rec = new Rec();
+                Capture(rec, v);
+                MeasureOwn(rec, v, world, clip, 0, v.Content.Count);
+                if (!resizedFill)
+                    for (int i = pre; i < nn - suf; i++) _raw.Add(rec.Boxes[i]);
+                AddTexts(rec, inSnapshot);
+                CheckLive(rec, addDamage: false);
+                rec.Kids = nk == 0 ? Array.Empty<Rec?>() : new Rec?[nk];
+                rec.KidCount = nk;
+                int mark = _raw.Count;
+                for (int i = 0; i < nk; i++)
+                    rec.Kids[i] = Visit(null, v.Children[i], world, clip, fresh: true, kidsInSnapshot, keepNudge: true);   // step 1 decided the nudges
+                _raw.RemoveRange(mark, _raw.Count - mark);
+                rec.Bounds = Finish(rec, v, world, clip);
+                // 3. Where the two clips differ, a pixel into both (a clip box is rounded to pixels).
+                AddRing(oldClipBox, newClipBox);
+                return rec;
+            }
+
+            /// <summary>Damage everything either box covers except what both cover, a pixel in from it.</summary>
+            private void AddRing(Scissor a, Scissor b)
+            {
+                if (a.IsEmpty && b.IsEmpty) return;
+                if (a.IsEmpty || b.IsEmpty) { _raw.Add(a.IsEmpty ? b : a); return; }
+                Scissor u = Union(a, b);
+                int ix0 = Math.Max(a.X, b.X) + 1, iy0 = Math.Max(a.Y, b.Y) + 1;
+                int ix1 = Math.Min(a.X + a.W, b.X + b.W) - 1, iy1 = Math.Min(a.Y + a.H, b.Y + b.H) - 1;
+                if (ix1 <= ix0 || iy1 <= iy0) { _raw.Add(u); return; }
+                int x0 = u.X, y0 = u.Y, x1 = u.X + u.W, y1 = u.Y + u.H;
+                if (iy0 > y0) _raw.Add(new Scissor(x0, y0, x1 - x0, iy0 - y0));
+                if (y1 > iy1) _raw.Add(new Scissor(x0, iy1, x1 - x0, y1 - iy1));
+                if (ix0 > x0) _raw.Add(new Scissor(x0, iy0, ix0 - x0, iy1 - iy0));
+                if (x1 > ix1) _raw.Add(new Scissor(ix1, iy0, x1 - ix1, iy1 - iy0));
+            }
+
+            private static bool Same(DrawingPrimitive a, DrawingPrimitive b)
+                => ReferenceEquals(a, b) || (s_valueSame && SceneReuse.SamePrimitive(a, b));
+
+            /// <summary>WGPU_DAMAGE_VALUE=0: content is the same only by reference, as before.</summary>
+            private static readonly bool s_valueSame = Environment.GetEnvironmentVariable("WGPU_DAMAGE_VALUE") != "0";
 
             private void AddTexts(Rec r, bool inSnapshot)
             {
@@ -1173,11 +1274,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 List<DrawingPrimitive> c = v.Content;
                 int on = r.ContentCount, nn = c.Count;
+                // Equal by value counts as the same: WPF re-renders a visual whole when its size changes,
+                // and GraphWorX's canvas grid -- 4000 strokes, every one the same as before -- made every
+                // step of a resize a full frame (damage everywhere it draws).
                 int pre = 0;
-                while (pre < on && pre < nn && ReferenceEquals(r.Content[pre], c[pre])) pre++;
+                while (pre < on && pre < nn && Same(r.Content[pre], c[pre])) pre++;
                 int suf = 0;
-                while (suf < on - pre && suf < nn - pre && ReferenceEquals(r.Content[on - 1 - suf], c[nn - 1 - suf])) suf++;
-                for (int i = pre; i < on - suf; i++) _raw.Add(r.Boxes[i]);
+                while (suf < on - pre && suf < nn - pre && Same(r.Content[on - 1 - suf], c[nn - 1 - suf])) suf++;
+                // One solid rectangle that only changed size (a window's or panel's background on a
+                // resize): what it changed is where the two rectangles differ, not both of them -- a
+                // form's background is the whole window, and every step of a resize was a full frame.
+                bool resizedFill = s_fillDiff && on - pre - suf == 1 && nn - pre - suf == 1 && v.GuidelinesX == null && v.GuidelinesY == null
+                    && world.M12 == 0 && world.M21 == 0 && SameColourRect(r.Content[pre], c[pre]);
+                Rect oldRect = resizedFill ? ((RectangleGeometry)((GeometryFill)r.Content[pre]).Geometry).Rect : default;
+                if (!resizedFill)
+                    for (int i = pre; i < on - suf; i++) _raw.Add(r.Boxes[i]);
 
                 // Keep the suffix's measurements, then take the new content.
                 var tailBoxes = new Scissor[suf];
@@ -1188,7 +1299,53 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 Array.Copy(tailBoxes, 0, r.Boxes, nn - suf, suf);
                 Array.Copy(tailKinds, 0, r.Kinds, nn - suf, suf);
                 MeasureOwn(r, v, world, clip, pre, nn - suf);
+                if (resizedFill)
+                {
+                    Rect newRect = ((RectangleGeometry)((GeometryFill)c[pre]).Geometry).Rect;
+                    AddResizedRect(oldRect, newRect, world, clip);
+                    return;
+                }
                 for (int i = pre; i < nn - suf; i++) _raw.Add(r.Boxes[i]);
+            }
+
+            private static bool SameColourRect(DrawingPrimitive a, DrawingPrimitive b)
+                => a is GeometryFill fa && b is GeometryFill fb && !fa.IsGlyph && !fb.IsGlyph
+                   && fa.PixelAligned == fb.PixelAligned
+                   && fa.Geometry is RectangleGeometry && fb.Geometry is RectangleGeometry
+                   && fa.Brush is SolidColorBrush ba && fb.Brush is SolidColorBrush bb
+                   && ba.Color.R == bb.Color.R && ba.Color.G == bb.Color.G && ba.Color.B == bb.Color.B && ba.Color.A == bb.Color.A;
+
+            /// <summary>WGPU_DAMAGE_FILLDIFF=0: a resized fill damages both rectangles whole, as before.</summary>
+            private static readonly bool s_fillDiff = Environment.GetEnvironmentVariable("WGPU_DAMAGE_FILLDIFF") != "0";
+
+            /// <summary>Damage where a solid rectangle that went from <paramref name="a"/> to
+            /// <paramref name="b"/> (local space, axis-aligned <paramref name="world"/>) can have changed a
+            /// pixel: everything either one reaches, a pixel more for the antialiased edge, except the
+            /// pixels both cover whole -- which see the same colour at full coverage before and after.</summary>
+            private void AddResizedRect(Rect a, Rect b, Matrix3x2 world, Scissor clip)
+            {
+                static (float X0, float Y0, float X1, float Y1) Dev(Rect r, Matrix3x2 m)
+                {
+                    float x0 = r.X * m.M11 + m.M31, x1 = (r.X + r.Width) * m.M11 + m.M31;
+                    float y0 = r.Y * m.M22 + m.M32, y1 = (r.Y + r.Height) * m.M22 + m.M32;
+                    return (Math.Min(x0, x1), Math.Min(y0, y1), Math.Max(x0, x1), Math.Max(y0, y1));
+                }
+                var da = Dev(a, world); var db = Dev(b, world);
+                // the pixels either reaches, one more each side
+                int ux0 = (int)MathF.Floor(Math.Min(da.X0, db.X0)) - 1, uy0 = (int)MathF.Floor(Math.Min(da.Y0, db.Y0)) - 1;
+                int ux1 = (int)MathF.Ceiling(Math.Max(da.X1, db.X1)) + 1, uy1 = (int)MathF.Ceiling(Math.Max(da.Y1, db.Y1)) + 1;
+                // the pixels both cover whole, one fewer each side
+                int ix0 = (int)MathF.Ceiling(Math.Max(da.X0, db.X0)) + 1, iy0 = (int)MathF.Ceiling(Math.Max(da.Y0, db.Y0)) + 1;
+                int ix1 = (int)MathF.Floor(Math.Min(da.X1, db.X1)) - 1, iy1 = (int)MathF.Floor(Math.Min(da.Y1, db.Y1)) - 1;
+                Scissor u = Intersect(new Scissor(ux0, uy0, ux1 - ux0, uy1 - uy0), clip);
+                if (u.IsEmpty) return;
+                if (ix1 <= ix0 || iy1 <= iy0) { _raw.Add(u); return; }
+                int x0 = u.X, y0 = u.Y, x1 = u.X + u.W, y1 = u.Y + u.H;
+                ix0 = Math.Clamp(ix0, x0, x1); ix1 = Math.Clamp(ix1, x0, x1); iy0 = Math.Clamp(iy0, y0, y1); iy1 = Math.Clamp(iy1, y0, y1);
+                if (iy0 > y0) _raw.Add(new Scissor(x0, y0, x1 - x0, iy0 - y0));
+                if (y1 > iy1) _raw.Add(new Scissor(x0, iy1, x1 - x0, y1 - iy1));
+                if (ix0 > x0 && iy1 > iy0) _raw.Add(new Scissor(x0, iy0, ix0 - x0, iy1 - iy0));
+                if (x1 > ix1 && iy1 > iy0) _raw.Add(new Scissor(ix1, iy0, x1 - ix1, iy1 - iy0));
             }
 
             /// <summary>The subtree's bounds from its own box and its children's, stamped on the visual
@@ -1945,12 +2102,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             private readonly DamageTracker _tracker = new();
             private readonly List<Scissor> _rects = new();
             private IntPtr _tex, _view, _blitBg, _vTex, _vView, _sTex, _sView;
+            private int _vW, _vH;   // the verify twin's size
             private WGPUTextureFormat _fmt, _blitFmt;
             private int _w, _h, _capW, _capH;
             private RgbaColor _bg;
 
             // WGPU_GROW_ONLY=0: a new persistent target for every size, as before.
-            private static readonly bool s_growOnly = Environment.GetEnvironmentVariable("WGPU_GROW_ONLY") != "0" && !Verify;
+            private static readonly bool s_growOnly = Environment.GetEnvironmentVariable("WGPU_GROW_ONLY") != "0";
             private static int RoundUp(int v) => (v + 255) & ~255;
             // WGPU_DAMAGE_RESIZE=0: a frame of another size is drawn in full.
             private static readonly bool s_damageAcrossSizes = s_growOnly && Environment.GetEnvironmentVariable("WGPU_DAMAGE_RESIZE") != "0";
@@ -2124,7 +2282,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // arrays every frame would be ~10 MB of garbage per frame. The partial frame is what
                 // gets shown; after a miss the next frame is drawn in full so the miss is not carried
                 // forward.
-                if (_vTex == IntPtr.Zero) (_vTex, _vView) = _r.CreatePersistentTarget(width, height, _fmt);
+                if (_vTex != IntPtr.Zero && (_vW != _capW || _vH != _capH)) { wgpuTextureViewRelease(_vView); wgpuTextureRelease(_vTex); _vTex = IntPtr.Zero; }
+                if (_vTex == IntPtr.Zero) { (_vTex, _vView) = _r.CreatePersistentTarget(_capW, _capH, _fmt); _vW = _capW; _vH = _capH; }
                 _r.RenderFrameDamaged(root, _vView, _fmt, width, height, background, transparentTarget, null, 0);
                 long frame = _frames;
                 List<Scissor>? damageCopy = damage == null ? null : new List<Scissor>(damage);
@@ -2157,7 +2316,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             private void VerifyAgainstFull(SceneVisual root, int width, int height, RgbaColor background, bool transparentTarget,
                 List<Scissor>? damage)
             {
-                if (_vTex == IntPtr.Zero) (_vTex, _vView) = _r.CreatePersistentTarget(width, height, _fmt);
+                // The reference target is the persistent one's twin -- the same high-water size -- so a
+                // resize is verified across sizes too, and the two can trade places after a mismatch.
+                if (_vTex != IntPtr.Zero && (_vW != _capW || _vH != _capH)) { wgpuTextureViewRelease(_vView); wgpuTextureRelease(_vTex); _vTex = IntPtr.Zero; }
+                if (_vTex == IntPtr.Zero) { (_vTex, _vView) = _r.CreatePersistentTarget(_capW, _capH, _fmt); _vW = _capW; _vH = _capH; }
                 _r.RenderFrameDamaged(root, _vView, _fmt, width, height, background, transparentTarget, null, 0);
                 byte[] got = _r.ReadTexture(_tex, width, height);
                 byte[] want = _r.ReadTexture(_vTex, width, height);
