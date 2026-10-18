@@ -119,22 +119,53 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         public enum Op { And, Or, Xor, Exclude, Complement }
 
+        // Both band lists are in y order without overlap, and each band's spans in x order without
+        // overlap or touching (Normalize, CombineSpans and FromRect all keep that), so a combine is two
+        // merges walked side by side. It was a SortedSet per row and a linear band search per y, and a
+        // DotNetBar repaint -- a clip set and restored per item -- spent most of its time in the GC.
+
+        [ThreadStatic] static int[] t_ys;
+        [ThreadStatic] static List<int> t_spans;
+
         public static DpRegion Combine (DpRegion a, DpRegion b, Op op)
         {
-            var ys = new SortedSet<int> ();
-            foreach (Band x in a.Bands) { ys.Add (x.Top); ys.Add (x.Bottom); }
-            foreach (Band x in b.Bands) { ys.Add (x.Top); ys.Add (x.Bottom); }
+            int na = a.Bands.Count, nb = b.Bands.Count;
+            int[] ys = t_ys;
+            if (ys == null || ys.Length < 2 * (na + nb)) t_ys = ys = new int [Math.Max (64, 2 * (na + nb))];
+            int n = 0;
+            foreach (Band x in a.Bands) { ys [n++] = x.Top; ys [n++] = x.Bottom; }
+            foreach (Band x in b.Bands) { ys [n++] = x.Top; ys [n++] = x.Bottom; }
+            System.Array.Sort (ys, 0, n);
             var r = new DpRegion ();
-            int? prev = null;
-            foreach (int y in ys) {
-                if (prev is int y0) {
-                    int[] sa = a.SpansAt (y0), sb = b.SpansAt (y0);
-                    int[] s = CombineSpans (sa, sb, op);
-                    r.AppendRow (y0, y, s);
+            int ia = 0, ib = 0;
+            bool ordered = a.Ordered () && b.Ordered ();
+            bool have = false; int y0 = 0;
+            for (int k = 0; k < n; k++) {
+                int y = ys [k];
+                if (have && y == y0) continue;          // unique
+                if (have) {
+                    int[] sa, sb;
+                    if (ordered) {
+                        while (ia < na && a.Bands [ia].Bottom <= y0) ia++;
+                        while (ib < nb && b.Bands [ib].Bottom <= y0) ib++;
+                        sa = ia < na && a.Bands [ia].Top <= y0 ? a.Bands [ia].X : System.Array.Empty<int> ();
+                        sb = ib < nb && b.Bands [ib].Top <= y0 ? b.Bands [ib].X : System.Array.Empty<int> ();
+                    } else { sa = a.SpansAt (y0); sb = b.SpansAt (y0); }
+                    r.AppendRow (y0, y, CombineSpans (sa, sb, op));
                 }
-                prev = y;
+                y0 = y; have = true;
             }
             return r;
+        }
+
+        /// <summary>Bands in y order and not overlapping, as every builder here makes them.</summary>
+        bool Ordered ()
+        {
+            for (int i = 0; i < Bands.Count; i++) {
+                if (Bands [i].Bottom <= Bands [i].Top) return false;
+                if (i > 0 && Bands [i].Top < Bands [i - 1].Bottom) return false;
+            }
+            return true;
         }
 
         int[] SpansAt (int y)
@@ -145,6 +176,46 @@ namespace System.Drawing.WebGpuBackend.Gdip
         }
 
         static int[] CombineSpans (int[] a, int[] b, Op op)
+        {
+            if (!Strict (a) || !Strict (b)) return CombineSpansGeneral (a, b, op);
+            List<int> o = t_spans ??= new List<int> ();
+            o.Clear ();
+            int i = 0, j = 0;              // next unread boundary in a and in b
+            bool have = false; int x0 = 0;
+            while (i < a.Length || j < b.Length) {
+                int x;
+                if (j >= b.Length || (i < a.Length && a [i] <= b [j])) {
+                    x = a [i++];
+                    if (j < b.Length && b [j] == x) j++;
+                } else x = b [j++];
+                if (have && x == x0) continue;          // a repeated boundary bounds nothing
+                if (have) {
+                    // inside a / b over [x0, x): an odd number of a's boundaries are at or before x0
+                    bool ia = InsideBefore (a, i, x), ib = InsideBefore (b, j, x);
+                    bool keep = op switch {
+                        Op.And => ia && ib, Op.Or => ia || ib, Op.Xor => ia != ib,
+                        Op.Exclude => ia && !ib, _ => ib && !ia,
+                    };
+                    if (keep) {
+                        if (o.Count > 0 && o [o.Count - 1] == x0) o [o.Count - 1] = x;
+                        else { o.Add (x0); o.Add (x); }
+                    }
+                }
+                x0 = x; have = true;
+            }
+            return o.Count == 0 ? System.Array.Empty<int> () : o.ToArray ();
+        }
+
+        static bool Strict (int[] s)
+        {
+            if ((s.Length & 1) != 0) return false;
+            for (int i = 1; i < s.Length; i++) if (s [i] <= s [i - 1]) return false;
+            return true;
+        }
+
+        /// <summary>Any spans, sorted or not, overlapping or not: every boundary of either, and each
+        /// interval between two kept or dropped by asking each side whether it covers its start.</summary>
+        static int[] CombineSpansGeneral (int[] a, int[] b, Op op)
         {
             var xs = new SortedSet<int> ();
             foreach (int v in a) xs.Add (v);
@@ -166,6 +237,16 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 prev = x;
             }
             return o.ToArray ();
+        }
+
+        /// <summary>Whether the interval just before boundary <paramref name="x"/> is inside spans
+        /// <paramref name="s"/>, given <paramref name="read"/> of its boundaries are at or before x:
+        /// the boundaries strictly before x number read, less one if s[read-1] == x.</summary>
+        static bool InsideBefore (int[] s, int read, int x)
+        {
+            int before = read;
+            if (before > 0 && s [before - 1] == x) before--;   // x itself is not before x
+            return (before & 1) == 1;
         }
 
         static bool Inside (int[] s, int x)

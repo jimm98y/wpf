@@ -278,7 +278,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             DpRegion v = DpRegion.FromRect (_surface.X, _surface.Y, _surface.Width, _surface.Height);
             if (_ctx.ContainerClip != null) v = DpRegion.Combine (_ctx.ContainerClip, v, DpRegion.Op.And);
-            if (_ctx.AppClip != null) v = DpRegion.Combine (_ctx.AppClip.Device (GpMatrix.CreateIdentity ()), v, DpRegion.Op.And);
+            if (_ctx.AppClip != null) v = DpRegion.Combine (_ctx.AppClip.DeviceShared (GpMatrix.CreateIdentity ()), v, DpRegion.Op.And);
             _visibleClip = v;
         }
 
@@ -471,7 +471,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             if (!CanFill (brush)) return false;
             if (_visibleClip.IsEmpty) return true;
-            DpRegion d = DpRegion.Combine (worldRegion.Device (WorldToDevice), _visibleClip, DpRegion.Op.And);
+            DpRegion d = DpRegion.Combine (worldRegion.DeviceShared (WorldToDevice), _visibleClip, DpRegion.Op.And);
             if (d.IsEmpty) return true;
             GpScan scan = NewScan ();
             GpSpan span = CreateSpan (brush, scan, d.Bounds);
