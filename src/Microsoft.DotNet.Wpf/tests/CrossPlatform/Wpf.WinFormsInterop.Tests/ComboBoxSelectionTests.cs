@@ -20,6 +20,7 @@ using SWF = System.Windows.Forms;
 
 namespace Wpf.WinFormsInterop.Tests
 {
+    [Collection(ProcessDpiStateCollection.Name)]
     public class ComboBoxSelectionTests
     {
         private static void OnSta(Action a)
@@ -105,6 +106,9 @@ namespace Wpf.WinFormsInterop.Tests
         [Fact]
         public void SingleLineHighlightRunsOnePixelPastTheSelection()
         {
+            // Measured against TextRenderer at 96 dpi, with the form on whatever monitor is at
+            // (-3300, 1500): a DPI-unaware application's layout, pinned whatever the process came up as.
+            using var dpiMode = SWF.ScaleHelper.OverrideForTests(SWF.HighDpiMode.DpiUnaware, 96);
             OnSta(() =>
             {
                 using var form = new SWF.Form { StartPosition = SWF.FormStartPosition.Manual, Location = new Point(-3300, 1500), ClientSize = new Size(300, 100), ShowInTaskbar = false };

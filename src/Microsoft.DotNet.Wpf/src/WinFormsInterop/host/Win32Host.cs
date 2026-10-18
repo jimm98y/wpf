@@ -533,8 +533,19 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // An owned form's window is OWNED by its owner's, as on Windows: it stays above it and
             // goes with it. Created unowned, a dialog could fall behind the window it belongs to.
             IntPtr ownerHwnd = (PresentationHost.HostOf(_form.Owner) as Win32Host)?._hwnd ?? IntPtr.Zero;
+            // A form kept out of the taskbar with no owner of its own is owned, as .NET does it, by a
+            // hidden window of its own (Form.TaskbarOwner): that is what keeps it out of the taskbar,
+            // and it also decides the window's DPI -- .NET's form created on a 240-dpi display this way
+            // comes up at the hidden owner's 96, laid out as at 96.
+            bool taskbarOwned = ownerHwnd == IntPtr.Zero && !_form.ShowInTaskbar && _form.FormBorderStyle != FormBorderStyle.None;
             _hwnd = CreateWindowExW(exStyle, s_classNamePtr, title, style,
                 wx, wy, _form.Width, _form.Height, ownerHwnd, IntPtr.Zero, _hinstance, IntPtr.Zero);
+            if (taskbarOwned && _hwnd != IntPtr.Zero)
+            {
+                // ...given to the window once it exists, as .NET does (Form.UpdateHandleWithOwner).
+                _taskbarOwner = CreateWindowExW(0, s_staticClass, IntPtr.Zero, 0x80000000 /* WS_POPUP */, 0, 0, 16, 16, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                if (_taskbarOwner != IntPtr.Zero) SetWindowLongPtrW(_hwnd, -8 /* GWLP_HWNDPARENT */, _taskbarOwner);
+            }
             _topmostApplied = _form.TopMost;
             if (_hwnd != IntPtr.Zero) s_byHwnd[_hwnd] = this;
             // Which WinForms window this real one shows: what an app asking Windows about its own
@@ -804,8 +815,13 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
     /// <summary>The window is going: its popups' and its own GPU devices go with it (WM_DESTROY,
     /// whichever way the window was closed). Idempotent.</summary>
+    private IntPtr _taskbarOwner;
+    // A system class, so the hidden owner's messages never reach this host's window procedure.
+    private static readonly IntPtr s_staticClass = Marshal.StringToHGlobalUni("STATIC");
+
     private void ReleaseGpu()
     {
+        if (_taskbarOwner != IntPtr.Zero) { DestroyWindow(_taskbarOwner); _taskbarOwner = IntPtr.Zero; }
         DestroyPopupWindows();
         WgpuPresenter gpu = _wgpu;
         _wgpu = null;
@@ -1418,8 +1434,13 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             bottom = Math.Min(WgpuPresenter.MaxDeviceDimension, (int)Math.Round(logicalH * _scale)) };
         if (OwnFrame(out System.Windows.Forms.Padding own))
         {
-            SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, r.right + (int)Math.Round(own.Horizontal * _scale), r.bottom + (int)Math.Round(own.Vertical * _scale),
-                         0x0002 | 0x0004 | 0x0010 | 0x0020);   // and FRAMECHANGED: the size may be the same
+            int ow = r.right + (int)Math.Round(own.Horizontal * _scale), oh = r.bottom + (int)Math.Round(own.Vertical * _scale);
+            // The size it already has is not set again: a window that is resized is placed on its
+            // monitor's DPI afresh, which took a form kept out of the taskbar (at its hidden owner's
+            // 96 dpi, as .NET's is) to the 240 of the display it sits on.
+            uint same = GetWindowRect(_hwnd, out RECT cur) && cur.right - cur.left == ow && cur.bottom - cur.top == oh ? 0x0001u : 0u;   // SWP_NOSIZE
+            SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, ow, oh,
+                         0x0002 | 0x0004 | 0x0010 | 0x0020 | same);   // and FRAMECHANGED: the size may be the same
             return;
         }
         int style = (int)GetWindowLongPtrW(_hwnd, -16);     // GWL_STYLE
@@ -1428,8 +1449,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         // exists on Windows 10 1607+, so fall back to the classic call.
         if (!AdjustWindowRectExForDpi(ref r, style, false, exStyle, GetDpiForWindow(_hwnd)))
             AdjustWindowRectEx(ref r, style, false, exStyle);
+        uint unchanged = GetWindowRect(_hwnd, out RECT now) && now.right - now.left == r.right - r.left && now.bottom - now.top == r.bottom - r.top ? 0x0001u : 0u;
         SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, r.right - r.left, r.bottom - r.top,
-                     0x0002 | 0x0004 | 0x0010);            // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+                     0x0002 | 0x0004 | 0x0010 | unchanged);            // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
     }
 
     // The user resized the window: adopt the new client area as the form's size so the WinForms

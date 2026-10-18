@@ -18,6 +18,7 @@ using WPF = System.Windows;
 
 namespace Wpf.WinFormsInterop.Tests
 {
+    [Collection(ProcessDpiStateCollection.Name)]
     public class ElementHostPopupPlacementTests
     {
         [Theory]
@@ -29,6 +30,9 @@ namespace Wpf.WinFormsInterop.Tests
         public void APopupInAnElementHost_OpensAtItsTarget(WPF.Controls.Primitives.PlacementMode mode, bool partlyCovered)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "real popup windows");
+            // What it expects is a DPI-unaware application's layout (the target at its 96-dpi place,
+            // scaled by the window's own scale): pinned, whatever the process came up as.
+            using var dpiMode = SWF.ScaleHelper.OverrideForTests(SWF.HighDpiMode.DpiUnaware, 96);
             Exception? failure = null;
             string result = "";
             var t = new Thread(() =>
