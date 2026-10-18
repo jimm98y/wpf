@@ -42,7 +42,8 @@ namespace System.Windows.Forms {
 		internal IntPtr window;
 		object control_tag;
 
-		internal static readonly int Minimum = 15;
+		// USER_TIMER_MINIMUM: Windows runs a shorter interval as 10 ms.
+		internal static readonly int Minimum = 10;
 
 		public Timer ()
 		{
@@ -76,9 +77,13 @@ namespace System.Windows.Forms {
 			}
 		}
 
+		// The clock timers keep time by: the system tick, as Windows' own timers do. WM_TIMER is
+		// generated at a tick, so a 10-ms timer runs every 15.6 ms on Windows (64 a second), and
+		// faster than that is not what the application would get on stock. A sub-millisecond clock
+		// with Mono's 15-ms floor ran it every 19-21 ms instead (about 50 a second).
 		internal static long StopWatchNowMilliseconds
 		{
-			get { return Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency; }
+			get { return Environment.TickCount64; }
 		}
 
 		[DefaultValue (100)]
