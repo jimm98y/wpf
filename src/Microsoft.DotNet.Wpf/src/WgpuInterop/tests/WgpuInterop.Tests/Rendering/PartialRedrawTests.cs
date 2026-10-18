@@ -236,6 +236,58 @@ namespace WgpuInterop.Tests.Rendering
             h.Frame(root, expectPartial: true, "shadowed content changed");
         }
 
+        /// <summary>A window being resized: its background -- one solid rectangle the size of the
+        /// window -- is recorded again at the new size. Only where the old and new rectangles differ
+        /// changed; damaging both of them made every step of a resize a full frame. Fractional edges
+        /// included, so the antialiased pixel along each edge has to be redrawn too.</summary>
+        [Fact]
+        public void AResizedBackground_RedrawsOnlyTheStripsThatChanged()
+        {
+            using var h = new Harness(this, NewRenderer, White);
+            var root = new SceneVisual();
+            var bg = new SceneVisual();
+            bg.Content.Add(Box(0, 0, 300, 220, 236, 233, 216));
+            root.Children.Add(bg);
+            var label = new SceneVisual();
+            label.Content.Add(Box(20, 20, 60, 30, 30, 90, 160));
+            root.Children.Add(label);
+            h.Frame(root, expectPartial: false, "first frame");
+            float[] widths = { 284.5f, 269.25f, 300f, 291.75f, 240f };
+            float[] heights = { 210.5f, 205f, 220f, 214.25f, 180f };
+            for (int i = 0; i < widths.Length; i++)
+            {
+                bg.Content[0] = Box(0, 0, widths[i], heights[i], 236, 233, 216);
+                h.Frame(root, expectPartial: true, $"size {i}");
+                Assert.True(h.Target.LastPixels < W * H / 2, $"size {i}: damage {h.Target.LastPixels} px");
+            }
+        }
+
+        /// <summary>A form being resized: the visual that holds everything gets a new clip rectangle
+        /// each step, and its children stay where they are. Only the band between the old clip and the
+        /// new one changed (what came into view or went out of it); damaging the whole subtree made every
+        /// step a full frame. A child that really changes at the same time is still redrawn.</summary>
+        [Fact]
+        public void AClipThatOnlyChangesSize_RedrawsTheBandBetween()
+        {
+            using var h = new Harness(this, NewRenderer, White);
+            var root = new SceneVisual();
+            var form = new SceneVisual { Clip = new Rect(0, 0, 300, 220) };
+            form.Children.Add(Tiles());
+            var mover = new SceneVisual { Offset = new Vector2(40, 40) };
+            mover.Content.Add(Box(0, 0, 30, 20, 200, 30, 30, 200));
+            form.Children.Add(mover);
+            root.Children.Add(form);
+            h.Frame(root, expectPartial: false, "first frame");
+            float[] w = { 280, 262.5f, 300, 290, 250 }, hh = { 214, 200.25f, 220, 205, 190 };
+            for (int i = 0; i < w.Length; i++)
+            {
+                form.Clip = new Rect(0, 0, w[i], hh[i]);
+                if (i == 3) mover.Offset = new Vector2(60, 50);
+                h.Frame(root, expectPartial: true, $"clip {i}");
+                Assert.True(h.Target.LastPixels < W * H / 2, $"clip {i}: damage {h.Target.LastPixels} px");
+            }
+        }
+
         /// <summary>A live display: a few values changing among many labels that overlap. Each change
         /// spreads to the runs it touches (their paper may have changed), which passed the limit on
         /// damage pieces and drew the whole frame -- half a second a frame with a thousand labels.
