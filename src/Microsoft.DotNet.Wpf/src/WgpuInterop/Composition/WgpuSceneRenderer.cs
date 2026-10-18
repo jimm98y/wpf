@@ -237,6 +237,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             /// FFI boundary rather than throwing. Intermittent because the sizes have to match exactly
             /// and the entry has to have been evicted first.</para></summary>
             public bool Pooled;
+            /// <summary>The mask is a rectangle of the shared ClearType atlas (WgpuSceneRenderer.MaskAtlas):
+            /// its texture and bind groups are the atlas's, not its own, and (U0,V0)-(U1,V1) is where.</summary>
+            public bool InAtlas;
+            public float U0, V0, U1 = 1f, V1 = 1f;
         }
 
         // The cached mask's bind group for the compositing mode in effect at this draw.
@@ -484,6 +488,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (deadU != null) foreach (long k in deadU) _uniCache.Remove(k);
             }
 
+            EmptyMaskAtlasIfFull();
             if (_maskCache.Count == 0) return;
             List<long>? dead = null;
             foreach (KeyValuePair<long, CachedMask> kv in _maskCache)
@@ -493,6 +498,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (kv.Value.LastFrame >= _frameId - 60) continue;
                 (dead ??= new List<long>()).Add(kv.Key);
                 CachedMask c = kv.Value;
+                if (c.InAtlas) continue;            // the atlas's texture and bind groups, not this mask's
                 wgpuBindGroupRelease(c.BindGroup);
                 if (c.BindGroupAdd != IntPtr.Zero) wgpuBindGroupRelease(c.BindGroupAdd);
                 if (c.BindGroupCopy != IntPtr.Zero) wgpuBindGroupRelease(c.BindGroupCopy);
@@ -4527,17 +4533,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         }
                         else
                             ApplySubpixelWeight(sm.Rgba, gamma, textBlend, solid.Color, _paperForMask, _windowBlendForRun);
-                        (tex, view) = CreateRgbaTexture(sm.Rgba, sm.Width, sm.Height);
                         mox = (int)sm.OriginX; moy = (int)sm.OriginY; mw = sm.Width; mh = sm.Height;
-                        cm = new CachedMask
-                        {
-                            Tex = tex, View = view,
-                            BindGroup = CreateSampledBindGroup(format, FillKind.TextSubpixelMultiply, view, NearestSampler()),
-                            BindGroupAdd = CreateSampledBindGroup(format, FillKind.TextSubpixelAdd, view, NearestSampler()),
-                            Subpixel = true,
-                            Sampler = NearestSampler(), Format = format,
-                            Ox = mox, Oy = moy, W = mw, H = mh,
-                        };
+                        cm = NewSubpixelMask(sm.Rgba, mw, mh, format, mox, moy);
                         _maskCache[key] = cm;
                         cm.LastFrame = _frameId;
                         EmitCachedSolidMask(cm, solid.Color, opacity, clip, width, height, data, ox, oy);
@@ -5659,10 +5656,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             float r = color.R, g = color.G, b = color.B, a = (float)Math.Clamp(color.A * opacity, 0.0, 1.0);
             float x0 = c.Ox + ox, y0 = c.Oy + oy, x1 = x0 + c.W, y1 = y0 + c.H;
             uint baseVertex = (uint)(data.Verts.Count / FloatsPerVertex);
-            AddVertex(data.Verts, ToNdc(new Vector2(x0, y0), width, height), r, g, b, a, 0f, 0f);
-            AddVertex(data.Verts, ToNdc(new Vector2(x1, y0), width, height), r, g, b, a, 1f, 0f);
-            AddVertex(data.Verts, ToNdc(new Vector2(x1, y1), width, height), r, g, b, a, 1f, 1f);
-            AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), r, g, b, a, 0f, 1f);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y0), width, height), r, g, b, a, c.U0, c.V0);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y0), width, height), r, g, b, a, c.U1, c.V0);
+            AddVertex(data.Verts, ToNdc(new Vector2(x1, y1), width, height), r, g, b, a, c.U1, c.V1);
+            AddVertex(data.Verts, ToNdc(new Vector2(x0, y1), width, height), r, g, b, a, c.U0, c.V1);
             uint firstIndex = (uint)data.Indices.Count;
             AddQuadIndices(data.Indices, baseVertex);
             if (c.Subpixel)
@@ -7043,6 +7040,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             foreach (IntPtr bg in _imgBindGroups.Values) wgpuBindGroupRelease(bg);
             _imgBindGroups.Clear();
             ReleaseDamagePipelines();
+            ReleaseMaskAtlas();
             FlushFrameReleases();
             foreach ((IntPtr Buf, ulong _) in _freeVtx) wgpuBufferRelease(Buf);
             foreach ((IntPtr Buf, ulong _) in _freeIdx) wgpuBufferRelease(Buf);
@@ -7508,7 +7506,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Texture uploads staged during scene collection (CreateTexture) and flushed as
         // CopyBufferToTexture into the frame's single command encoder (FlushPendingTexUploads),
         // so they add ZERO command buffers — see the note on CreateTexture.
-        private struct PendingTexUpload { public int StagingOffset; public IntPtr Texture; public int Width; public int Height; public int BytesPerRow; }
+        private struct PendingTexUpload { public int StagingOffset; public IntPtr Texture; public int Width; public int Height; public int BytesPerRow; public int OriginX, OriginY; }
         private readonly List<PendingTexUpload> _pendingTexUploads = new();
 
         // Frame-shared texture-upload staging: all this frame's texture pixels (gradient ramps, images,
@@ -7543,7 +7541,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     layout = new WGPUTexelCopyBufferLayout { offset = (ulong)u.StagingOffset, bytesPerRow = (uint)u.BytesPerRow, rowsPerImage = (uint)u.Height },
                     buffer = staging,
                 };
-                var dst = new WGPUTexelCopyTextureInfo { texture = u.Texture, aspect = WGPUTextureAspect.All };
+                var dst = new WGPUTexelCopyTextureInfo { texture = u.Texture, aspect = WGPUTextureAspect.All, origin = new WGPUOrigin3D { x = (uint)u.OriginX, y = (uint)u.OriginY } };
                 var size = new WGPUExtent3D { width = (uint)u.Width, height = (uint)u.Height, depthOrArrayLayers = 1 };
                 wgpuCommandEncoderCopyBufferToTexture(encoder, &src, &dst, &size);
             }
