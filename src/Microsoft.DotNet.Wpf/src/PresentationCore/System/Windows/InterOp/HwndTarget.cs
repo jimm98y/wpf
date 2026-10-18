@@ -1791,8 +1791,13 @@ namespace System.Windows.Interop
                 mctx.Resize(this);
 
                 Int32 style = UnsafeNativeMethods.GetWindowLong(_hWnd.MakeHandleRef(this), NativeMethods.GWL_STYLE);
-                if (_userInputResize || _usesPerPixelOpacity ||
-                    ((style & NativeMethods.WS_CHILD) != 0 && Utilities.IsCompositionEnabled))
+                // The child-window clause is a DWM work-around, and under managed composition a child's
+                // frame never goes to DWM on its own: its parent (or the WinForms host of an ElementHost)
+                // composites it. Waiting there made every step of a app resize wait for its hosted
+                // canvas to be realized and published, about 70 ms a step.
+                bool childSync = (style & NativeMethods.WS_CHILD) != 0 && Utilities.IsCompositionEnabled
+                    && !DUCE.ManagedComposition.IsEnabled;
+                if (_userInputResize || _usesPerPixelOpacity || childSync)
                 {
                     //
                     // To ensure that the client area and the non-client area resize
