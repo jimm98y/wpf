@@ -42,17 +42,15 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         public bool IsLeaf => (Type & 0x10000000) != 0;
 
-        public GpRegion Clone ()
-        {
-            var r = (GpRegion) MemberwiseClone ();
-            if (Points != null) { r.Points = (PointF[]) Points.Clone (); r.Types = (byte[]) Types.Clone (); }
-            r.Left = Left?.Clone ();
-            r.Right = Right?.Clone ();
-            return r;
-        }
+        /// <summary>A copy -- of this node only. Children and point arrays are shared and never changed
+        /// in place (Transform and Offset copy before they write), so a copy is O(1). It was a deep copy,
+        /// and every clip a paint saved and restored (Graphics.Clip, a region's Clone, each Combine) copied
+        /// the whole tree: a tenth of a DotNetBar ribbon's repaint.</summary>
+        public GpRegion Clone () => (GpRegion) MemberwiseClone ();
 
         public void Set (GpRegion other)
         {
+            Invalidate ();
             GpRegion c = other.Clone ();
             Type = c.Type; Rect = c.Rect; Points = c.Points; Types = c.Types; Fill = c.Fill; Left = c.Left; Right = c.Right;
         }
@@ -79,8 +77,9 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 if (m == 2 || m == 3 || m == 5) Set (other);
                 return;
             }
-            GpRegion left = Clone ();
+            GpRegion left = Clone ();     // keeps this node's device region: it is still left's
             GpRegion right = other.Clone ();
+            Invalidate ();
             Type = m; Left = left; Right = right; Points = null; Types = null;
         }
 
@@ -91,8 +90,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return r;
         }
 
-        void SetEmpty () { Type = NodeEmpty; Left = Right = null; Points = null; Types = null; }
-        void SetInfinite () { Type = NodeInfinite; Left = Right = null; Points = null; Types = null; }
+        void SetEmpty () { Invalidate (); Type = NodeEmpty; Left = Right = null; Points = null; Types = null; }
+        void SetInfinite () { Invalidate (); Type = NodeInfinite; Left = Right = null; Points = null; Types = null; }
 
         public void MakeEmpty () => SetEmpty ();
         public void MakeInfinite () => SetInfinite ();
@@ -101,6 +100,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public void Transform (in GpMatrix m)
         {
             if (m.IsIdentity) return;
+            Invalidate ();
             switch (Type) {
             case NodeRect:
                 if (m.IsTranslateScale) {
@@ -116,12 +116,14 @@ namespace System.Drawing.WebGpuBackend.Gdip
                 }
                 break;
             case NodePath:
+                Points = (PointF[]) Points.Clone ();   // the array may be shared with a copy
                 m.Transform (Points);
                 break;
             case NodeEmpty: case NodeInfinite:
                 break;
             default:
-                Left.Transform (m); Right.Transform (m);
+                Left = Left.Clone (); Left.Transform (m);
+                Right = Right.Clone (); Right.Transform (m);
                 break;
             }
         }
@@ -129,11 +131,20 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public void Offset (float dx, float dy)
         {
             if (dx == 0f && dy == 0f) return;
+            Invalidate ();
             switch (Type) {
             case NodeRect: Rect = new RectangleF (Rect.X + dx, Rect.Y + dy, Rect.Width, Rect.Height); break;
-            case NodePath: for (int i = 0; i < Points.Length; i++) Points [i] = new PointF (Points [i].X + dx, Points [i].Y + dy); break;
+            case NodePath: {
+                var moved = new PointF [Points.Length];   // the array may be shared with a copy
+                for (int i = 0; i < moved.Length; i++) moved [i] = new PointF (Points [i].X + dx, Points [i].Y + dy);
+                Points = moved;
+                break;
+            }
             case NodeEmpty: case NodeInfinite: break;
-            default: Left.Offset (dx, dy); Right.Offset (dx, dy); break;
+            default:
+                Left = Left.Clone (); Left.Offset (dx, dy);
+                Right = Right.Clone (); Right.Offset (dx, dy);
+                break;
             }
         }
 
@@ -181,8 +192,32 @@ namespace System.Drawing.WebGpuBackend.Gdip
             return r;
         }
 
-        /// <summary>The device region under <paramref name="m"/> (UpdateDeviceRegion).</summary>
-        public DpRegion Device (in GpMatrix m)
+        /// <summary>The device region under <paramref name="m"/> (UpdateDeviceRegion). The caller's own
+        /// copy.</summary>
+        public DpRegion Device (in GpMatrix m) => DeviceShared (m).Clone ();
+
+        // This node's device region, kept for the last matrix asked for. A graphics' clip is a tree that
+        // each SetClip/Intersect grows by a node over the last, and every change worked out the whole
+        // tree's region again from its leaves; children never change in place (see Clone), so theirs stay
+        // good. Any change to this node drops it (Invalidate).
+        DpRegion _device;
+        GpMatrix _deviceMatrix;
+
+        void Invalidate () => _device = null;
+
+        static bool SameMatrix (in GpMatrix a, in GpMatrix b)
+            => a.M11 == b.M11 && a.M12 == b.M12 && a.M21 == b.M21 && a.M22 == b.M22 && a.Dx == b.Dx && a.Dy == b.Dy && a.Complexity == b.Complexity;
+
+        /// <summary>The device region, shared: the caller must not change it.</summary>
+        internal DpRegion DeviceShared (in GpMatrix m)
+        {
+            if (_device != null && SameMatrix (_deviceMatrix, m)) return _device;
+            DpRegion d = Compute (m);
+            _device = d; _deviceMatrix = m;
+            return d;
+        }
+
+        DpRegion Compute (in GpMatrix m)
         {
             switch (Type) {
             case NodeEmpty: return new DpRegion ();
@@ -205,7 +240,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             case NodePath:
                 return PathDevice (Points, Types, Fill, m);
             default: {
-                DpRegion a = Left.Device (m), b = Right.Device (m);
+                DpRegion a = Left.DeviceShared (m), b = Right.DeviceShared (m);   // Combine only reads them
                 DpRegion.Op op = Type switch {
                     NodeAnd => DpRegion.Op.And, NodeOr => DpRegion.Op.Or, NodeXor => DpRegion.Op.Xor,
                     NodeExclude => DpRegion.Op.Exclude, _ => DpRegion.Op.Complement,
