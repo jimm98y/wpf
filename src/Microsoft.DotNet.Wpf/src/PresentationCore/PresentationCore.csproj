@@ -807,6 +807,7 @@
     <Compile Include="System\Windows\Media\MatrixTransform.cs" />
     <Compile Include="System\Windows\Media\mediaclock.cs" />
     <Compile Include="System\Windows\Media\MediaContext.cs" />
+    <Compile Include="System\Windows\Media\FramePacer.cs" />
     <Compile Include="System\Windows\Media\MediaContextNotificationWindow.cs" />
     <Compile Include="System\Windows\Media\mediaeventargs.cs" />
     <Compile Include="System\Windows\Media\mediaeventshelper.cs" />

@@ -632,8 +632,7 @@ namespace System.Windows.Media
                     {
                         _currentRenderOp = Dispatcher.BeginInvoke(DispatcherPriority.Inactive, _animRenderMessage, null);
 
-                        _promoteRenderOpToInput.Interval = nextTickNeeded;
-                        _promoteRenderOpToInput.Start();
+                        StartPromoteToInput(nextTickNeeded);
 
                         _promoteRenderOpToRender.Interval = TimeSpan.FromSeconds(1);
                         _promoteRenderOpToRender.Start();
@@ -673,7 +672,7 @@ namespace System.Windows.Media
                         _currentRenderOp.Priority = priority;
                     }
 
-                    _promoteRenderOpToInput.Stop();
+                    StopPromoteToInput();
                     _promoteRenderOpToRender.Stop();
                 }
 
@@ -1733,7 +1732,7 @@ namespace System.Windows.Media
                 }
 
                 // We don't need to keep our promotion timers around.
-                _promoteRenderOpToInput.Stop();
+                StopPromoteToInput();
                 _promoteRenderOpToRender.Stop();
             }
         }
@@ -1752,7 +1751,7 @@ namespace System.Windows.Media
             _currentRenderOp = null;
 
             // We don't need to keep our promotion timers around.
-            _promoteRenderOpToInput.Stop();
+            StopPromoteToInput();
             _promoteRenderOpToRender.Stop();
 
             // Now render manually directly from the resize handler.
@@ -1841,7 +1840,7 @@ namespace System.Windows.Media
             _isRendering = true;
 
             // We don't need our promotion timers anymore.
-            _promoteRenderOpToInput.Stop();
+            StopPromoteToInput();
             _promoteRenderOpToRender.Stop();
 
             bool gotException = true;
@@ -2580,6 +2579,36 @@ namespace System.Windows.Media
         {
             _cachedBoundsDrawingContextWalker = ctx;
         }
+
+        /// <summary>Promote the waiting render operation to Input priority after <paramref name="delay"/>.
+        /// <para>Stock WPF paces frames by the render thread's presentation notifications (DWM vsync,
+        /// interlocked mode); this compositor reports no such notification (interlock is off), so the
+        /// wait for the rest of the refresh period (NonInterlockedDelay) is a timer. A DispatcherTimer
+        /// keeps its deadline in Environment.TickCount -- whole 15.6-ms system ticks on Windows -- so
+        /// a 10-ms frame waited 15.6 or 31 ms and WPF drew at 50-55 frames a second on a 100-Hz
+        /// display. The frame's own wait is therefore a precise one (FramePacer); DispatcherTimer
+        /// itself keeps stock's timing for applications.</para></summary>
+        private void StartPromoteToInput(TimeSpan delay)
+        {
+            if (!InterlockIsEnabled && _reportedRefreshRate > 0 && FramePacer.Enabled)
+            {
+                _promoteRenderOpToInput.Stop();
+                // At the deadline the frame is due as it is when stock's vsync notification arrives:
+                // at Render priority (Input is the background range, which waits out pending input).
+                (_framePacer ??= new FramePacer(Dispatcher, () => { PaceTrace("paced"); _currentRenderOp?.Priority = DispatcherPriority.Render; })).Schedule(delay);
+                return;
+            }
+            _promoteRenderOpToInput.Interval = delay;
+            _promoteRenderOpToInput.Start();
+        }
+
+        private void StopPromoteToInput()
+        {
+            _promoteRenderOpToInput.Stop();
+            _framePacer?.Cancel();
+        }
+
+        private FramePacer _framePacer;
 
         private void PromoteRenderOpToInput(object sender, EventArgs e)
         {
