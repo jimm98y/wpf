@@ -129,8 +129,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // SelectBackends, which rejects a software adapter while a hardware one is still on the
         // table. WPF_WEBGPU_BACKEND=vulkan|gl|all pins it for triage.
         //
+        // WPF_WEBGPU_BACKEND=dx12 pins Windows to D3D12 (WARP where there is no hardware adapter):
+        // how a fix is checked on the other backend from the one this machine picks.
         private static ulong PreferredBackends =>
-            OperatingSystem.IsAndroid() ? WGPUInstanceBackend_Vulkan : WGPUInstanceBackend_All;
+            OperatingSystem.IsAndroid() ? WGPUInstanceBackend_Vulkan
+            : Environment.GetEnvironmentVariable("WPF_WEBGPU_BACKEND") == "dx12" ? WGPUInstanceBackend_DX12 : WGPUInstanceBackend_All;
 
         private static ulong FallbackBackends =>
             OperatingSystem.IsAndroid() ? WGPUInstanceBackend_GL : 0;

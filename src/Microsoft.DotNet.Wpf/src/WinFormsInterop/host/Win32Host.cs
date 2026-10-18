@@ -1750,6 +1750,19 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
     /// <summary>The thread the window belongs to: only it can take the window down.</summary>
     private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
+    private readonly System.Threading.Thread _ownerThread = System.Threading.Thread.CurrentThread;
+
+    /// <summary>The window's thread has ended (see PresentationHost.ReapDeadThreads).</summary>
+    internal bool OwnerThreadGone => !_ownerThread.IsAlive;
+
+    /// <summary>The window's thread ended with it open: Windows has destroyed the window, and only
+    /// the GPU side is left to give back.</summary>
+    internal void ReleaseAfterThreadEnded()
+    {
+        _hwnd = IntPtr.Zero;
+        _quit = true;
+        ReleaseGpu();
+    }
 
     public void SaveFrame(string path)
     {
