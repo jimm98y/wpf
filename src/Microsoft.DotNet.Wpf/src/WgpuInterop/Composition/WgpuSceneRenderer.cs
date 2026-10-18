@@ -7031,6 +7031,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         public void Dispose()
         {
+            // Every cache lets go of everything: what EndFrame evicts once it is old enough is all of
+            // it a long way into the future. A device stays alive while anything made on it does, and
+            // a window that closed used to keep its device -- and, on GL, a context and a hidden
+            // window -- for the life of the process.
+            _transientBakes.Clear();
+            _frameId += 1_000_000;
+            EndFrame();
+            foreach ((IntPtr Tex, IntPtr View, long _) in _bandCache.Values) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
+            _bandCache.Clear();
+            foreach (IntPtr bg in _imgBindGroups.Values) wgpuBindGroupRelease(bg);
+            _imgBindGroups.Clear();
+            ReleaseDamagePipelines();
             FlushFrameReleases();
             foreach ((IntPtr Buf, ulong _) in _freeVtx) wgpuBufferRelease(Buf);
             foreach ((IntPtr Buf, ulong _) in _freeIdx) wgpuBufferRelease(Buf);

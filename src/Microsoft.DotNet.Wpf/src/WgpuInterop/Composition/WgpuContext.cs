@@ -1,4 +1,4 @@
-// Licensed to the .NET Foundation under one or more agreements.
+﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
@@ -460,6 +460,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         public void Dispose()
         {
+#if !WGPU_BROWSER
+            // What was released waits for the GPU to be done with it before it is freed, and the
+            // device -- with its adapter, instance and, on GL, its context and hidden window -- stays
+            // alive until it is: wait once, so they go now rather than never (nothing polls a device
+            // that is being let go).
+            if (Device != IntPtr.Zero) wgpuDevicePoll(Device, WGPU_TRUE, null);
+#endif
             if (Queue != IntPtr.Zero) wgpuQueueRelease(Queue);
             if (Device != IntPtr.Zero) wgpuDeviceRelease(Device);
             if (Adapter != IntPtr.Zero) wgpuAdapterRelease(Adapter);
