@@ -491,16 +491,17 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     /// <summary>Frames presented to the window so far (for tests).</summary>
     internal int PresentCount { get; private set; }
 
-    /// <summary>The loop polls the OS queue and sleeps between frames (PresentationHost.Idle), and a
-    /// sleep lasts until the system tick: 15.6 ms unless the process asks for better. So every frame
-    /// of an animation paid its own cost AND a whole tick -- a month calendar's 10 ms zoom timer drew
-    /// every 35-50 ms where comctl32 draws every 15-20. Asked for once, as the managed WPF compositor
-    /// does (Common/Graphics/exports.cs); WF_TIMER_RESOLUTION=0 leaves the system tick alone.</summary>
+    /// <summary>A 1-ms system timer resolution for this process, only when WF_TIMER_RESOLUTION=1.
+    /// It used to be asked for always (a month calendar's 10-ms zoom timer drew every 35-50 ms, when
+    /// timers ran on a millisecond clock and every frame paid its own cost and then a whole tick).
+    /// Timers now keep the system tick as WM_TIMER does (Timer.StopWatchNowMilliseconds), and with
+    /// the finer resolution this process ran them FASTER than stock: an Interval=1 timer 64 times a
+    /// second on screen where stock WinForms, which never asks, gets 58.6. Without it: 58.6.</summary>
     private static void EnsureFineTimer()
     {
         if (s_fineTimer) return;
         s_fineTimer = true;
-        if (Environment.GetEnvironmentVariable("WF_TIMER_RESOLUTION") == "0") return;
+        if (Environment.GetEnvironmentVariable("WF_TIMER_RESOLUTION") != "1") return;
         try { timeBeginPeriod(1); } catch { /* winmm missing: keep the system tick */ }
     }
 
