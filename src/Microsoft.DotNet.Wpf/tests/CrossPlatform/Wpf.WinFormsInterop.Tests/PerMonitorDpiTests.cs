@@ -27,6 +27,7 @@ using Xunit;
 
 namespace Wpf.WinFormsInterop.Tests
 {
+    [Collection(ProcessDpiStateCollection.Name)]
     public class PerMonitorDpiTests
     {
         // What a process loads once, at the DPI it first runs at (the system icons, as stock caches

@@ -17,6 +17,7 @@ using SWF = System.Windows.Forms;
 
 namespace Wpf.WinFormsInterop.Tests
 {
+    [Collection(ProcessDpiStateCollection.Name)]
     public class WindowMoveTests
     {
         [Theory]

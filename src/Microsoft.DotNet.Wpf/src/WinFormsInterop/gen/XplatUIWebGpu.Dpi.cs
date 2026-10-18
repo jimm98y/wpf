@@ -123,6 +123,9 @@ namespace System.Windows.Forms {
 				if (_windowDpi.TryGetValue(handle, out int old) && old == dpi) return;
 				_windowDpi[handle] = dpi;
 			}
+			// The frame is the new DPI's (a caption at 240 dpi is two and a half times as tall): the
+			// client is what the window rectangle leaves inside it, before the window is told.
+			if (_styles.ContainsKey(handle)) ApplyFrame(handle, AskFrame(handle, StandardFrame(handle)));
 			var below = new List<IntPtr>();
 			CollectDescendants(handle, below);
 			foreach (IntPtr c in below)

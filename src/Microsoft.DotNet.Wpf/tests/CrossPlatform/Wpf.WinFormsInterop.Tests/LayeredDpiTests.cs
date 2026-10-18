@@ -20,6 +20,7 @@ using SWF = System.Windows.Forms;
 
 namespace Wpf.WinFormsInterop.Tests
 {
+    [Collection(ProcessDpiStateCollection.Name)]
     public class LayeredDpiTests
     {
         private sealed class LayeredForm : SWF.Form

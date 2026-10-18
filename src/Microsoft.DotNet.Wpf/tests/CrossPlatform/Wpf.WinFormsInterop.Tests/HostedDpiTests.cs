@@ -24,6 +24,7 @@ using WPF = System.Windows;
 
 namespace Wpf.WinFormsInterop.Tests
 {
+    [Collection(ProcessDpiStateCollection.Name)]
     public class HostedDpiTests
     {
         private const int WM_DPICHANGED = 0x02E0;
