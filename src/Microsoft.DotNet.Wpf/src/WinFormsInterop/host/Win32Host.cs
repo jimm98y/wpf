@@ -1762,6 +1762,8 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         _hwnd = IntPtr.Zero;
         _quit = true;
         ReleaseGpu();
+        // ...and its windows go from the driver as they went from Windows.
+        if (_driver is System.Windows.Forms.XplatUIWebGpu d && _formHandle != IntPtr.Zero) d.ForgetWindowTree(_formHandle);
     }
 
     public void SaveFrame(string path)

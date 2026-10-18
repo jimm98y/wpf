@@ -93,17 +93,17 @@ namespace Wpf.WinFormsInterop.Tests
             OnSta(() => OpenAndClose(0));      // whatever is made once per process
             int before = DeviceWindows();
             const int Threads = 12;
+            var abandoned = new (IntPtr Handle, Point Centre)[Threads];
             for (int i = 0; i < Threads; i++)
             {
                 int n = i;
                 var t = new Thread(() =>
                 {
-                    // Far from where any other test puts its windows: the driver keeps an abandoned
-                    // form's windows (nothing of that thread can take them down), and a test that asks
-                    // which window is under a point must not find these.
-                    var f = new SWF.Form { Text = "Abandoned " + n, StartPosition = SWF.FormStartPosition.Manual, Location = new Point(30000 + n * 130, 30), ClientSize = new Size(120, 80), ShowInTaskbar = false };
+                    var f = new SWF.Form { Text = "Abandoned " + n, StartPosition = SWF.FormStartPosition.Manual, Location = new Point(8000 + n * 130, 30), ClientSize = new Size(120, 80), ShowInTaskbar = false };
                     f.Show();
                     Pump(60);
+                    abandoned[n] = (f.Handle, f.PointToScreen(new Point(60, 40)));
+                    Assert.Equal(f.Handle, WindowAtPoint(abandoned[n].Centre));   // there while its thread lives
                     // ...and the thread ends, the form never closed.
                 });
                 t.SetApartmentState(ApartmentState.STA);
@@ -111,9 +111,23 @@ namespace Wpf.WinFormsInterop.Tests
                 t.Join();
             }
             int after = DeviceWindows();
-            for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && after - before > 1; Thread.Sleep(100))
+            bool ghosts = true;
+            for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && (after - before > 1 || ghosts); Thread.Sleep(100))
+            {
                 after = DeviceWindows();
+                ghosts = Array.Exists(abandoned, a => WindowAtPoint(a.Centre) == a.Handle);
+            }
             Assert.True(after - before <= 1, $"{after - before} GPU device windows still held for {Threads} threads that ended ({before} -> {after})");
+            // Windows destroyed those windows with their threads: nothing may still find them under a point.
+            Assert.False(ghosts, "a window whose thread has ended is still found under the point where it was");
+        }
+
+        private static IntPtr WindowAtPoint(Point screen)
+        {
+            object driver = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.XplatUI")!
+                .GetField("driver", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+            return (IntPtr)driver.GetType().GetMethod("WindowAtPoint", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(driver, new object[] { screen.X, screen.Y })!;
         }
 
         private static object? Gpu(object host)
