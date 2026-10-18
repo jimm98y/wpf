@@ -379,6 +379,62 @@ namespace WgpuInterop.Tests.Rendering
             h.Frame(root, expectPartial: true, "text recoloured");
         }
 
+        /// <summary>GraphWorX's ribbon gallery: GDI+ ClearType captions over white bands that cover
+        /// only part of each caption, the bands over a clip-geometry layer (the ribbon's rounded clip)
+        /// whose content is far away, and all of it over a grey ribbon. A partial frame skips the
+        /// layer -- nothing of it reaches the damage -- and finds the caption's paper pixel by pixel
+        /// from the bands and the grey; the full frame met the layer's composite and gave up, so a
+        /// hovered caption came back up to 31 levels off once the hover left it.</summary>
+        [Fact]
+        public void ACaptionOverAClipLayerThatLeavesItAlone_IsExactOnAPartialFrame()
+        {
+            var face = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Face("Segoe UI", 0);
+            Assert.SkipWhen(face is null, "Segoe UI is not installed");
+            using var h = new Harness(this, NewRenderer, White);
+            var root = new SceneVisual();
+            root.Content.Add(Box(0, 0, W, H, 240, 240, 240));
+            var ribbon = new SceneVisual { ClipGeometry = Rounded(4, 4, W - 8, H - 8, 6) };
+            ribbon.Content.Add(Box(W - 40, H - 40, 20, 20, 200, 30, 30));
+            root.Children.Add(ribbon);
+            var bands = new SceneVisual();
+            for (int i = 0; i < 6; i++)
+                bands.Content.Add(Box(10, 30 + i, W - 20, 12, 255, 255, 255));
+            root.Children.Add(bands);
+            var captions = new SceneVisual();
+            for (int c = 0; c < 3; c++)
+            {
+                var run = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Layout(face!, "Segoe UI", 9f, "PushPin", 20 + c * 90, 40, 80, 20,
+                                                                                            0, false, 0, 0, false, 5)!;
+                run.Contrast = 4;
+                var fallback = new GlyphRunDraw("PushPin", new Vector2(run.OriginX, run.OriginY), run.Em, RgbaColor.FromBytes(0, 0, 0, 255), 0, "Segoe UI");
+                captions.Content.Add(new GdiPlusTextDraw(run, "Segoe UI", 0, unchecked((int)0xFF000000), fallback));
+            }
+            root.Children.Add(captions);
+            h.Frame(root, expectPartial: false, "first frame");
+            for (int c = 0; c < 3; c++)
+            {
+                var hover = new SceneVisual();
+                hover.Content.Add(Box(14 + c * 90, 34, 84, 30, 188, 194, 184));
+                root.Children.Insert(root.Children.IndexOf(captions), hover);
+                h.Frame(root, expectPartial: true, $"hover on {c}");
+                root.Children.Remove(hover);
+                h.Frame(root, expectPartial: true, $"hover off {c}");
+            }
+        }
+
+        private static PathGeometry Rounded(float x, float y, float w, float h, float r)
+        {
+            var f = new PathFigure(new Vector2(x + r, y)) { Closed = true };
+            f.Segments.Add(new LineSegment(new Vector2(x + w - r, y)));
+            f.Segments.Add(new LineSegment(new Vector2(x + w, y + r)));
+            f.Segments.Add(new LineSegment(new Vector2(x + w, y + h - r)));
+            f.Segments.Add(new LineSegment(new Vector2(x + w - r, y + h)));
+            f.Segments.Add(new LineSegment(new Vector2(x + r, y + h)));
+            f.Segments.Add(new LineSegment(new Vector2(x, y + h - r)));
+            f.Segments.Add(new LineSegment(new Vector2(x, y + r)));
+            return new PathGeometry(FillRule.NonZero, new List<PathFigure> { f });
+        }
+
         /// <summary>The gallery's fps badge: a translucent rounded panel with a text run, pinned
         /// top-right as the LAST child (top of the z-order), over content that animates beneath it,
         /// its text changing on its own clock. Damage under it must redraw it on top, and its text
