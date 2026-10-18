@@ -1011,6 +1011,31 @@ namespace System.Windows.Forms
 			if (hwnd != null) { SendMessage(handle, Msg.WM_DESTROY, IntPtr.Zero, IntPtr.Zero); hwnd.Dispose(); }
 		}
 
+		/// <summary>
+		/// A window whose thread has ended with it open: Windows destroyed the real window with the
+		/// thread, so this one and everything in it go from the driver's tables too, or a hit test, a
+		/// window listing or a click could still land on a window that is not there. Nothing is sent
+		/// to the controls (their thread is gone and their code is not to run elsewhere).
+		/// </summary>
+		internal void ForgetWindowTree(IntPtr handle)
+		{
+			foreach (IntPtr child in ChildHandles(handle)) ForgetWindowTree(child);
+			if (backing.TryGetValue(handle, out Bitmap b)) { b?.Dispose(); backing.TryRemove(handle, out _); }
+			lock (window_queue) window_queue.Remove(handle);
+			if (_hotWindow == handle) _hotWindow = IntPtr.Zero;
+			captions.Remove(handle);
+			_scenes.Remove(handle);
+			_layered.Remove(handle);
+			_layeredPixels.Remove(handle);
+			_layeredBits.Remove(handle);
+			_reveals.Remove(handle);
+			_frames.Remove(handle);
+			_styles.Remove(handle);
+			SetNonClientChild(handle, false);
+			_paintVersion++;
+			Hwnd.ObjectFromHandle(handle)?.Dispose();
+		}
+
 		/// <summary>The handles whose immediate parent is <paramref name="handle"/>, as a snapshot --
 		/// the caller is about to destroy them, which mutates the registry.</summary>
 		private List<IntPtr> ChildHandles(IntPtr handle)
