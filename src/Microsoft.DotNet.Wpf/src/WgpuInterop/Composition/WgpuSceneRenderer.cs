@@ -5201,11 +5201,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // through, the paper is whatever the layer's own draws leave there. DotNetBar paints
                 // its ribbon under a clip path, and every caption on it lost its paper.
                 if (kind == FillKind.Clip && s_paperAt is not null) s_paperChain += $" clip#{i}(same={same is not null} layers={data.ClipLayers?.Count ?? -1} has={data.ClipLayers?.ContainsKey(i)})";
-                if (kind == FillKind.Clip && same is null && data.ClipLayers is { } layers && layers.TryGetValue(i, out CachedLayer? clipLayer))
+                // A layer with nothing over the box leaves it alone whatever was found above it, so
+                // the walk looks under it then too: a partial frame skips such a layer outright (it
+                // cannot reach the damage), and its answer has to be the full frame's.
+                if (kind == FillKind.Clip && data.ClipLayers is { } layers && layers.TryGetValue(i, out CachedLayer? clipLayer))
                 {
                     RgbaColor? layerPaper = ClipLayerPaper(clipLayer, x0, y0, x1, y1, out bool layerClear);
                     if (layerClear) continue;                       // nothing of the layer's there: look under it
-                    if (layerPaper is { } lp) return TracePaper("clip-layer", lp);
+                    if (same is null && layerPaper is { } lp) return TracePaper("clip-layer", lp);
                 }
                 if (s_paperAt is not null) s_paperChain += $" [{kind} ({b.X0},{b.Y0},{b.X1},{b.Y1}) {(b.Solid is { } sc ? $"{ToByte(sc.R)},{ToByte(sc.G)},{ToByte(sc.B)}" : "-")} covers={b.Covers(x0, y0, x1, y1)}]";
                 if (b.Solid is null && b.Gradient is { } banding && same is null && b.Covers(x0, y0, x1, y1)
