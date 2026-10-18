@@ -829,6 +829,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
     public bool Pump()
     {
+        long batchStart = System.Diagnostics.Stopwatch.GetTimestamp();
         while (PeekMessageW(out MSG msg, IntPtr.Zero, 0, 0, 0x0001)) // PM_REMOVE
         {
             if (msg.message == 0x0012) { _quit = true; t_quitSeen = true; return false; } // WM_QUIT
@@ -846,9 +847,26 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             try { DispatchMessageW(ref msg); }
             finally { t_pumpDepth = outer; }
             if (foreign) InputTrace.Log($"done #{n} msg 0x{msg.message:x4} in {InputTrace.Now - t0:0.00} ms");
+            // A batch that does not end -- a pointer that keeps moving while each move takes longer
+            // to handle than the next one takes to come -- still shows a frame every BatchFrameMs:
+            // waiting for the queue to empty put nothing on screen until the pointer stopped.
+            if (System.Diagnostics.Stopwatch.GetElapsedTime(batchStart).TotalMilliseconds >= BatchFrameMs)
+            {
+                PresentOwed();
+                batchStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            }
         }
-        // The batch is handled: the frames the input in it asked for (see InputFrame), this host's
-        // and any other window's of this thread that the batch reached.
+        PresentOwed();
+        return !_quit;
+    }
+
+    /// <summary>The longest a batch of input defers its frame (see Pump).</summary>
+    internal const double BatchFrameMs = 8;
+
+    /// <summary>The frames the input handled so far asked for (see InputFrame), this host's and any other
+    /// window's of this thread that it reached.</summary>
+    private static void PresentOwed()
+    {
         Win32Host[] owed = null;
         lock (s_byHwnd)
             foreach (Win32Host h in s_byHwnd.Values)
@@ -856,7 +874,6 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (owed != null)
             foreach (Win32Host h in owed)
                 if (h != null && h._presentOwed) { h._presentOwed = false; if (!h.FormGone && h._form.Visible) h.Present(); }
-        return !_quit;
     }
 
     /// <summary>Input for a real window of this thread that is not a host window -- a hosted WPF
@@ -1013,6 +1030,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 MouseMove(lParam); ApplyCursor(); InputFrame(); return IntPtr.Zero;
             case 0x02A3:        // WM_MOUSELEAVE
                 _trackingLeave = false;
+                // WF_SYNTHETIC_CURSOR=1 (diagnostics, input injected off screen): the pointer is where the
+                // injected messages put it, so the real one being elsewhere is no leave.
+                if (s_syntheticCursor) return IntPtr.Zero;
                 // Not always a leave: Windows cancels the tracking -- and posts this -- around a
                 // capture change as well, so a click on a list's scroll track "left" the window with
                 // the pointer still on the bar, and the bar shut under it. Only a pointer that is
@@ -1925,6 +1945,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     [DllImport("user32")] private static extern bool ShowWindow(IntPtr hWnd, int cmd);
     [StructLayout(LayoutKind.Sequential)] private struct TRACKMOUSEEVENT { public uint cbSize, dwFlags; public IntPtr hwndTrack; public uint dwHoverTime; }
     [DllImport("user32")] private static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT e);
+    private static readonly bool s_syntheticCursor = Environment.GetEnvironmentVariable("WF_SYNTHETIC_CURSOR") == "1";
     [DllImport("user32")] private static extern bool GetCursorPos(out POINT p);
     [DllImport("user32")] private static extern IntPtr WindowFromPoint(POINT p);
     private readonly MethodInfo _leaveAll;

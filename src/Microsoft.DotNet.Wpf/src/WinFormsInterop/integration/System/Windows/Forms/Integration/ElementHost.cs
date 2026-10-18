@@ -176,9 +176,13 @@ namespace System.Windows.Forms.Integration
             catch (Exception ex) { Console.Error.WriteLine("ElementHost: visibility sync failed: " + ex.Message); }
             try
             {
-                // Everything at a HIGHER priority than Background runs first -- which includes Render,
-                // where WPF's MediaContext commits the frame the sink then publishes. WPF's DoEvents.
-                _dispatcher?.Invoke(() => { }, DispatcherPriority.Background);
+                // Everything at a HIGHER priority than Loaded runs first -- Render above all, where WPF's
+                // MediaContext lays out and commits the frame the sink then publishes. Not Background
+                // (WPF's DoEvents): the dispatcher holds Input and Background work back while input is
+                // waiting, so under a moving pointer this frame sat in a nested loop until the pointer
+                // stopped, every move handled and presented one by one inside it. Lower-priority work
+                // runs as the dispatcher's own messages come round, as in any WPF application.
+                _dispatcher?.Invoke(() => { }, DispatcherPriority.Loaded);
             }
             catch (Exception ex)
             {

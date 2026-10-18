@@ -489,6 +489,66 @@ namespace Wpf.WinFormsInterop.Tests
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
+        /// <summary>A batch of input that takes longer than a frame to handle still shows frames while it
+        /// is handled. The frame used to wait for the queue to be empty, and a pointer that keeps moving
+        /// while each move takes longer to handle than the next one takes to come never empties it:
+        /// app's ribbon showed nothing new until the pointer stopped (a hover one item behind).</summary>
+        [Fact]
+        public void AnInputBatchLongerThanAFrame_StillShowsFrames()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "real WM_MOUSEMOVEs to a Win32 window");
+            Exception? failure = null;
+            var t = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new SWF.Form
+                    {
+                        Text = "LongBatchTest", StartPosition = SWF.FormStartPosition.Manual,
+                        Location = new Point(8000, 80), ClientSize = new Size(300, 200), ShowInTaskbar = false,
+                    };
+                    var lastX = -1; int moves = 0;
+                    var panel = new SWF.Panel { Dock = SWF.DockStyle.Fill };
+                    panel.MouseMove += (s, e) =>
+                    {
+                        moves++; lastX = e.X; panel.BackColor = Color.FromArgb(255, e.X % 256, 0, 0);
+                        Thread.Sleep(4);   // a move that takes a while to handle (a ribbon's hover)
+                    };
+                    form.Controls.Add(panel);
+                    form.Show();
+                    IntPtr host = IntPtr.Zero;
+                    for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && host == IntPtr.Zero;) { Pump(100); host = HostOf("LongBatchTest"); }
+                    Assert.NotEqual(IntPtr.Zero, host);
+                    Pump(2500);   // past the settling after the first show
+
+                    object hostObj = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.PresentationHost")!
+                        .GetMethod("HostOf", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, new object[] { form })!;
+                    var count = hostObj.GetType().GetProperty("PresentCount", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+                    int before = (int)count.GetValue(hostObj)!;
+                    double k = SWF.ScaleHelper.HostSourceDpi == 0 ? 1 : GetDpiForSystem() / (double)SWF.ScaleHelper.HostSourceDpi;
+                    for (int i = 0; i < 40; i++)
+                    {
+                        int px = (int)Math.Round((20 + i * 5) * k), py = (int)Math.Round(100 * k);
+                        PostMessage(host, 0x0200, IntPtr.Zero, Pack(px, py));
+                    }
+                    Pump(1500);
+                    int presents = (int)count.GetValue(hostObj)! - before;
+                    Assert.Equal(40, moves);                  // every move is still handled
+                    Assert.Equal(20 + 39 * 5, lastX);
+                    // 40 moves of 4 ms and more: a frame at least every 8 ms of them, not one at the end
+                    // -- and still not one per move.
+                    Assert.True(presents >= 6, $"{presents} frames for 160 ms and more of input");
+                    Assert.True(presents <= 30, $"{presents} frames for 40 moves");
+                    form.Close();
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            t.SetApartmentState(ApartmentState.STA);
+            t.Start();
+            t.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
         /// <summary>A resized window shows its last frame at the new size before the application lays
         /// itself out: by the time the form hears about its new size, a frame of that size is on screen.
         /// A resized GL swap chain shows black until something is presented to it, and app's layout
