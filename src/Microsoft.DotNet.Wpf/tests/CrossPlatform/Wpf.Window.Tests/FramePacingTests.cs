@@ -50,6 +50,31 @@ namespace Wpf.Window.Tests
                 $"median frame interval {paced:0.0} ms paced, {ticked:0.0} ms on the system tick, on a {hz}-Hz display ({period:0.0} ms)");
         }
 
+        /// <summary>The beat itself, without a clock: renders that each start a little after they were
+        /// due (a wake-up's lateness) still come one refresh period apart on average. Measured from each
+        /// start instead, every lateness is added to the period -- 87 frames a second for 99.</summary>
+        [Fact]
+        public void LateWakeUps_DoNotAddUpAcrossFrames()
+        {
+            MethodInfo next = typeof(CompositionTarget).Assembly.GetType("System.Windows.Media.MediaContext")!
+                .GetMethod("NextFrameDue", BindingFlags.NonPublic | BindingFlags.Static)!;
+            const long period = 100_000;       // 10 ms in 100-ns ticks
+            var rnd = new Random(5);
+            long due = 0, start = 1_000_000, first = start;
+            const int frames = 200;
+            for (int i = 0; i < frames; i++)
+            {
+                due = (long)next.Invoke(null, new object[] { due, start, period })!;
+                start = due + 5_000 + rnd.Next(10_000);   // the next render starts 0.5-1.5 ms late
+            }
+            double mean = (start - first) / (double)frames;
+            Assert.True(Math.Abs(mean - period) < period * 0.02, $"mean frame interval {mean / 10_000:0.00} ms for a {period / 10_000:0.0}-ms period");
+
+            // A render a period or more late (a long frame) starts a new beat rather than rushing to catch up.
+            long d = (long)next.Invoke(null, new object[] { 1_000_000L, 1_000_000L + 3 * period, period })!;
+            Assert.Equal(1_000_000L + 4 * period, d);
+        }
+
         private static double MedianFrameInterval()
         {
             var stamps = new List<double>();
