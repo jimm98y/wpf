@@ -253,15 +253,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 byte[] rgba = WpfNaturalMask(tex, tl, tw, th, frac, px0 - oxi, mw, ink, alpha, paper,
                     display ? s_wpfDisplayGammaIndex : s_wpfGammaIndex, ContrastTableFor(run.Font, display),
                     colCover, rowCover);
-                (IntPtr t, IntPtr view) = CreateRgbaTexture(rgba, mw, mh);
-                cm = new CachedMask
-                {
-                    Tex = t, View = view,
-                    BindGroup = CreateSampledBindGroup(format, FillKind.TextSubpixelMultiply, view, NearestSampler()),
-                    BindGroupAdd = CreateSampledBindGroup(format, FillKind.TextSubpixelAdd, view, NearestSampler()),
-                    Subpixel = true, Sampler = NearestSampler(), Format = format,
-                    Ox = 0, Oy = 0, W = mw, H = mh,
-                };
+                cm = NewSubpixelMask(rgba, mw, mh, format, 0, 0);
                 _maskCache[key] = cm;
             }
             cm.LastFrame = _frameId;
