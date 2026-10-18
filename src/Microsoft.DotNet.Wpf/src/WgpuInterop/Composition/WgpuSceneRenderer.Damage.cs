@@ -1804,6 +1804,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private IntPtr _blitModule, _blitIndices;
         private readonly Dictionary<WGPUTextureFormat, IntPtr> _blitPipelines = new();
 
+        private void ReleaseDamagePipelines()
+        {
+            foreach (IntPtr p in _blitPipelines.Values) wgpuRenderPipelineRelease(p);
+            _blitPipelines.Clear();
+            foreach (IntPtr p in _shiftPipelines.Values) wgpuRenderPipelineRelease(p);
+            _shiftPipelines.Clear();
+            if (_blitModule != IntPtr.Zero) { wgpuShaderModuleRelease(_blitModule); _blitModule = IntPtr.Zero; }
+            if (_shiftModule != IntPtr.Zero) { wgpuShaderModuleRelease(_shiftModule); _shiftModule = IntPtr.Zero; }
+            if (_blitIndices != IntPtr.Zero) { wgpuBufferRelease(_blitIndices); _blitIndices = IntPtr.Zero; }
+        }
+
         private IntPtr BlitPipeline(WGPUTextureFormat format)
         {
             if (_blitPipelines.TryGetValue(format, out IntPtr p)) return p;

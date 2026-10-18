@@ -28,7 +28,7 @@ internal readonly struct WgpuLayer
 internal sealed unsafe class WgpuPresenter : IDisposable
 {
     private readonly WgpuContext _ctx;
-    private readonly IntPtr _surface;
+    private IntPtr _surface;
     // Every frame is bracketed with BeginFrame/EndFrame, as the WPF sink brackets its own: that is
     // the renderer's clock, and EndFrame is where its caches let go of what has not been drawn for a
     // while -- image textures, coverage masks, gradient ramps, cached layers. The WinForms presenter
@@ -447,6 +447,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         lock (_frameLock)
         {
             if (_inFrame) { RefusedNestedFrames++; return false; }
+            if (_disposed) return false;
             // Nothing to present to once the window has gone (and a present to it would fail).
             if (!Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.IsWindowAlive(NativeWindow)) return false;
             _inFrame = true;
@@ -458,7 +459,8 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             finally
             {
                 _inFrame = false;
-                if (_configurePending) { _configurePending = false; ConfigureNow(); }
+                if (_disposePending) Dispose();
+                else if (_configurePending) { _configurePending = false; ConfigureNow(); }
             }
         }
     }
@@ -485,6 +487,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
     private void ConfigureNow()
     {
+        if (_disposed || _surface == IntPtr.Zero) return;
         // The window has gone: its surface cannot be configured (wgpu-native aborts, "Invalid surface").
         if (!Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.IsWindowAlive(NativeWindow)) return;
         var config = new WGPUSurfaceConfiguration
@@ -564,10 +567,26 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         return chosen;
     }
 
+    /// <summary>Everything the window had on the GPU: its frames, its surface and its device. A
+    /// window that closed used to keep all of it -- each dialog an application opened and closed
+    /// leaked a device, and on the GL backend a GL context behind a hidden window. Not while a frame
+    /// is out (the frame guard): a present asked for in the middle of this one is refused.</summary>
     public void Dispose()
     {
-        _partial?.Dispose();
-        _renderer?.Dispose();
-        _ctx?.Dispose();
+        lock (_frameLock)
+        {
+            if (_disposed) return;
+            // Asked from inside a frame (a message pumped during the present): taken apart once that
+            // frame is over, not from under it.
+            if (_inFrame) { _disposePending = true; return; }
+            _disposed = true;
+            _inFrame = true;          // no frame may start on what is being taken apart
+            _partial?.Dispose();
+            _renderer?.Dispose();
+            if (_surface != IntPtr.Zero) { wgpuSurfaceRelease(_surface); _surface = IntPtr.Zero; }
+            _ctx?.Dispose();
+        }
     }
+
+    private bool _disposed, _disposePending;
 }

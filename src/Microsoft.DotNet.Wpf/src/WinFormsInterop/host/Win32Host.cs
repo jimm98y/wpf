@@ -615,6 +615,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         // caption, the taskbar or anything asking Windows about the window.
         _form.TextChanged += (_, _) => { if (_hwnd != IntPtr.Zero && !FormGone) SetWindowTextW(_hwnd, _form.Text ?? ""); };
         _form.SizeChanged += OnFormResized;
+        _form.Disposed += OnFormDisposed;
         _form.VisibleChanged += OnFormVisibleChanged;
         if (s_traceFrames) Console.WriteLine($"[frames] {SinceStart:0} ms: window + surface ready");
         // The first frame is drawn BEFORE the window is shown. It takes the UI thread a second or
@@ -788,6 +789,29 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         return s_activeHighlights?.GetValue(null) is int n ? n : 0;
     }
 
+    /// <summary>The form is gone: take its window down NOW, on the form's own thread, while that
+    /// thread is still here to do it. Left to the next frame loop's tick, a form disposed just before
+    /// its thread ended (a dialog on a worker thread, a splash screen) lost its window to Windows,
+    /// which destroys a thread's windows silently when it ends -- with the GL surface still on it. The
+    /// driver never gets that surface back: about 256 of them in, every window the process opens
+    /// after is a white rectangle (its frames are drawn, and never reach the screen).</summary>
+    private void OnFormDisposed(object sender, EventArgs e)
+    {
+        if (Environment.CurrentManagedThreadId != _ownerThreadId || _hwnd == IntPtr.Zero) return;
+        Close();
+        PresentationHost.Detach(this);
+    }
+
+    /// <summary>The window is going: its popups' and its own GPU devices go with it (WM_DESTROY,
+    /// whichever way the window was closed). Idempotent.</summary>
+    private void ReleaseGpu()
+    {
+        DestroyPopupWindows();
+        WgpuPresenter gpu = _wgpu;
+        _wgpu = null;
+        try { gpu?.Dispose(); } catch (Exception e) { Console.Error.WriteLine("releasing the window's GPU device failed: " + e.Message); }
+    }
+
     /// <summary>Take the window down because the form closed itself (an OK button rather than the
     /// window close box). Idempotent.</summary>
     public void Close()
@@ -799,6 +823,11 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         _hwnd = IntPtr.Zero;
         _quit = true;
         DestroyWindow(hwnd);
+        // WM_DESTROY releases the GPU side, but only when it reaches this window procedure. Taken
+        // down from another thread's frame loop -- its form disposed on a thread that has since ended
+        // -- the window is already gone (Windows destroyed it with its thread, silently) and no message
+        // will come: release here, or the device and its GL context stay for the life of the process.
+        ReleaseGpu();
     }
 
     /// <summary>This thread's OS queue when it has no host to pump it -- a message loop with no form on
@@ -1244,6 +1273,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             case 0x0002:
                 _quit = true;
                 PresentationHost.Detach(this);
+                ReleaseGpu();
                 return IntPtr.Zero;
             default: return DefWindowProcW(hwnd, msg, wParam, lParam);
         }
@@ -1695,6 +1725,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         width = _wgpu?.DeviceWidth ?? 0; height = _wgpu?.DeviceHeight ?? 0;
         return _wgpu == null || _lastPresented == null ? null : _wgpu.RenderScenesToRgba(_lastPresented, null);
     }
+
+    /// <summary>The thread the window belongs to: only it can take the window down.</summary>
+    private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
 
     public void SaveFrame(string path)
     {
