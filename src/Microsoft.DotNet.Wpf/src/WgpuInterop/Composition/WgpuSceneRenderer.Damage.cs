@@ -1211,8 +1211,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 bool resizedFill = s_fillDiff && on - pre - suf == 1 && nn - pre - suf == 1 && v.GuidelinesX == null && v.GuidelinesY == null
                     && world.M12 == 0 && world.M21 == 0 && SameColourRect(old.Content[pre], c[pre]);
                 if (resizedFill)
-                    AddResizedRect(((RectangleGeometry)((GeometryFill)old.Content[pre]).Geometry).Rect,
-                        ((RectangleGeometry)((GeometryFill)c[pre]).Geometry).Rect, world, Union(oldClipBox, newClipBox));
+                    AddResizedRect(FillRect(old.Content[pre]), FillRect(c[pre]), world, Union(oldClipBox, newClipBox));
                 else
                     for (int i = pre; i < on - suf; i++) _raw.Add(old.Boxes[i]);
                 // 2. The subtree measured afresh under the new clip (boxes cut to it), adding no damage.
@@ -1286,7 +1285,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // form's background is the whole window, and every step of a resize was a full frame.
                 bool resizedFill = s_fillDiff && on - pre - suf == 1 && nn - pre - suf == 1 && v.GuidelinesX == null && v.GuidelinesY == null
                     && world.M12 == 0 && world.M21 == 0 && SameColourRect(r.Content[pre], c[pre]);
-                Rect oldRect = resizedFill ? ((RectangleGeometry)((GeometryFill)r.Content[pre]).Geometry).Rect : default;
+                Rect oldRect = resizedFill ? FillRect(r.Content[pre]) : default;
                 if (!resizedFill)
                     for (int i = pre; i < on - suf; i++) _raw.Add(r.Boxes[i]);
 
@@ -1301,7 +1300,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 MeasureOwn(r, v, world, clip, pre, nn - suf);
                 if (resizedFill)
                 {
-                    Rect newRect = ((RectangleGeometry)((GeometryFill)c[pre]).Geometry).Rect;
+                    Rect newRect = FillRect(c[pre]);
                     AddResizedRect(oldRect, newRect, world, clip);
                     return;
                 }
@@ -1309,11 +1308,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
 
             private static bool SameColourRect(DrawingPrimitive a, DrawingPrimitive b)
-                => a is GeometryFill fa && b is GeometryFill fb && !fa.IsGlyph && !fb.IsGlyph
-                   && fa.PixelAligned == fb.PixelAligned
-                   && fa.Geometry is RectangleGeometry && fb.Geometry is RectangleGeometry
-                   && fa.Brush is SolidColorBrush ba && fb.Brush is SolidColorBrush bb
-                   && ba.Color.R == bb.Color.R && ba.Color.G == bb.Color.G && ba.Color.B == bb.Color.B && ba.Color.A == bb.Color.A;
+                => SolidRect(a, out RgbaColor ca, out bool pa) && SolidRect(b, out RgbaColor cb, out bool pb) && pa == pb
+                   && ca.R == cb.R && ca.G == cb.G && ca.B == cb.B && ca.A == cb.A;
+
+            /// <summary>A plain solid rectangle: a fill, or a drawing that only fills (WPF records a
+            /// panel's Background as one -- an ElementHost's canvas re-rendered at its new size is
+            /// exactly this, and damaged its whole area on every step of a resize).</summary>
+            private static bool SolidRect(DrawingPrimitive p, out RgbaColor colour, out bool pixelAligned)
+            {
+                colour = default; pixelAligned = false;
+                switch (p)
+                {
+                    case GeometryFill f when !f.IsGlyph && f.Geometry is RectangleGeometry && f.Brush is SolidColorBrush b:
+                        colour = b.Color; pixelAligned = f.PixelAligned; return true;
+                    case GeometryDrawing d when d.Geometry is RectangleGeometry && d.Fill is SolidColorBrush b
+                                               && (d.Stroke is null || d.StrokeStyle.Thickness <= 0):
+                        colour = b.Color; return true;   // drawn as a plain GeometryFill (EmitGeometryDrawing)
+                    default:
+                        return false;
+                }
+            }
+
+            private static Rect FillRect(DrawingPrimitive p)
+                => ((RectangleGeometry)(p is GeometryFill f ? f.Geometry : ((GeometryDrawing)p).Geometry)).Rect;
 
             /// <summary>WGPU_DAMAGE_FILLDIFF=0: a resized fill damages both rectangles whole, as before.</summary>
             private static readonly bool s_fillDiff = Environment.GetEnvironmentVariable("WGPU_DAMAGE_FILLDIFF") != "0";

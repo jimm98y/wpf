@@ -262,6 +262,45 @@ namespace WgpuInterop.Tests.Rendering
             }
         }
 
+        /// <summary>WPF content hosted in a window being resized: the panel's Background is recorded
+        /// as a drawing that only fills (not a plain fill), again at each new size, under a clip that
+        /// changes with it. Only the strips between the old and new rectangle changed; damaging both
+        /// made every step after the hosted content caught up a full frame -- in a dense canvas,
+        /// 170 ms of GPU work that the next swap-chain reconfigure then waited out.</summary>
+        [Fact]
+        public void AResizedPanelBackgroundDrawing_RedrawsOnlyTheStripsThatChanged()
+        {
+            using var h = new Harness(this, NewRenderer, White);
+            var root = new SceneVisual();
+            var panel = new SceneVisual { Clip = new Rect(0, 0, 300, 220) };
+            panel.Content.Add(Panel(300, 220));
+            var shape = new SceneVisual { Offset = new Vector2(30, 30) };
+            shape.Content.Add(new GeometryDrawing(new RectangleGeometry(new Rect(0, 0, 50, 30)), new SolidColorBrush(RgbaColor.FromBytes(30, 90, 160, 255)),
+                new SolidColorBrush(RgbaColor.FromBytes(0, 0, 0, 255)), new StrokeStyle(1)));
+            panel.Children.Add(shape);
+            root.Children.Add(panel);
+            h.Frame(root, expectPartial: false, "first frame");
+            float[] widths = { 284.5f, 269.25f, 300f, 291.75f, 240f };
+            float[] heights = { 210.5f, 205f, 220f, 214.25f, 180f };
+            for (int i = 0; i < widths.Length; i++)
+            {
+                // the clip first (the host resized), then the content (WPF caught up), as they arrive
+                panel.Clip = new Rect(0, 0, widths[i], heights[i]);
+                h.Frame(root, expectPartial: true, $"clip {i}");
+                panel.Content[0] = Panel(widths[i], heights[i]);
+                h.Frame(root, expectPartial: true, $"background {i}");
+                Assert.True(h.Target.LastPixels < W * H / 2, $"background {i}: damage {h.Target.LastPixels} px");
+            }
+            // both at once
+            panel.Clip = new Rect(0, 0, 260, 200);
+            panel.Content[0] = Panel(260, 200);
+            h.Frame(root, expectPartial: true, "clip and background");
+            Assert.True(h.Target.LastPixels < W * H / 2, $"clip and background: damage {h.Target.LastPixels} px");
+
+            static GeometryDrawing Panel(float w, float hgt)
+                => new(new RectangleGeometry(new Rect(0, 0, w, hgt)), new SolidColorBrush(RgbaColor.FromBytes(250, 248, 240, 255)));
+        }
+
         /// <summary>A form being resized: the visual that holds everything gets a new clip rectangle
         /// each step, and its children stay where they are. Only the band between the old clip and the
         /// new one changed (what came into view or went out of it); damaging the whole subtree made every
