@@ -200,8 +200,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
         // each SetClip/Intersect grows by a node over the last, and every change worked out the whole
         // tree's region again from its leaves; children never change in place (see Clone), so theirs stay
         // good. Any change to this node drops it (Invalidate).
-        DpRegion _device;
-        GpMatrix _deviceMatrix;
+        // (A separate object, made only when asked for, so a node -- of which a paint makes thousands --
+        // stays small.)
+        sealed class DeviceCache { public DpRegion Region; public GpMatrix Matrix; }
+        DeviceCache _device;
 
         void Invalidate () => _device = null;
 
@@ -211,9 +213,10 @@ namespace System.Drawing.WebGpuBackend.Gdip
         /// <summary>The device region, shared: the caller must not change it.</summary>
         internal DpRegion DeviceShared (in GpMatrix m)
         {
-            if (_device != null && SameMatrix (_deviceMatrix, m)) return _device;
+            DeviceCache c = _device;
+            if (c != null && SameMatrix (c.Matrix, m)) return c.Region;
             DpRegion d = Compute (m);
-            _device = d; _deviceMatrix = m;
+            _device = new DeviceCache { Region = d, Matrix = m };   // replaced, never changed: copies share it
             return d;
         }
 

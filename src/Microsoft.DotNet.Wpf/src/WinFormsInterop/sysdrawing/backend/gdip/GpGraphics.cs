@@ -274,13 +274,25 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         public GpClip Clip => new GpClip (_visibleClip);
 
+        // The visible clip is only ever read (here, the clip wrappers and the print paths), so it may be
+        // a region shared with the surface or with the app clip's own device region.
+        DpRegion _surfaceRegion;
+
         void UpdateVisibleClip ()
         {
-            DpRegion v = DpRegion.FromRect (_surface.X, _surface.Y, _surface.Width, _surface.Height);
+            DpRegion v = _surfaceRegion ??= DpRegion.FromRect (_surface.X, _surface.Y, _surface.Width, _surface.Height);
             if (_ctx.ContainerClip != null) v = DpRegion.Combine (_ctx.ContainerClip, v, DpRegion.Op.And);
-            if (_ctx.AppClip != null) v = DpRegion.Combine (_ctx.AppClip.DeviceShared (GpMatrix.CreateIdentity ()), v, DpRegion.Op.And);
+            if (_ctx.AppClip != null) {
+                DpRegion app = _ctx.AppClip.DeviceShared (GpMatrix.CreateIdentity ());
+                // Inside the surface and no container: the intersection is the app clip itself. A paint
+                // sets and restores a clip around every item, and this was a new region each time.
+                v = _ctx.ContainerClip == null && Inside (app.Bounds, _surface) ? app : DpRegion.Combine (app, v, DpRegion.Op.And);
+            }
             _visibleClip = v;
         }
+
+        static bool Inside (Rectangle r, Rectangle outer)
+            => r.IsEmpty || (r.Left >= outer.Left && r.Top >= outer.Top && r.Right <= outer.Right && r.Bottom <= outer.Bottom);
 
         public void ResetClip () { _ctx.AppClip = null; UpdateVisibleClip (); }
 

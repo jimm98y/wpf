@@ -2023,14 +2023,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     return;
                 }
                 long r0 = System.Diagnostics.Stopwatch.GetTimestamp(), c0 = PerfCollectTicks, e0 = PerfEncodeTicks, su0 = PerfSubmitTicks;
-                int d0 = PerfDrawCalls;
+                int d0 = PerfDrawCalls, tx0 = PerfTextures, bg0 = PerfBindGroups, mk0 = PerfMaskTextures, ed0 = PerfEdgeTextures, cv0 = PerfCoverage, ly0 = PerfLayers;
+                long al0 = GC.GetAllocatedBytesForCurrentThread();
                 _r.RenderFrameDamaged(root, _view, fmt, width, height, background, transparentTarget, damage, _tracker.Stamp,
                     view, viewFormat, _blitBg, shift, _sView);
                 PerfRenderTicks += System.Diagnostics.Stopwatch.GetTimestamp() - r0;
                 PerfSplitCollect += PerfCollectTicks - c0; PerfSplitEncode += PerfEncodeTicks - e0; PerfSplitSubmit += PerfSubmitTicks - su0;
                 PerfSplitDraws += PerfDrawCalls - d0;
                 static double Ms(long t) => t * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-                LastSplit = $"track {Ms(r0 - tc0):0.0} collect {Ms(PerfCollectTicks - c0):0.0} encode {Ms(PerfEncodeTicks - e0):0.0} submit {Ms(PerfSubmitTicks - su0):0.0} draws {PerfDrawCalls - d0}";
+                LastSplit = $"track {Ms(r0 - tc0):0.0} collect {Ms(PerfCollectTicks - c0):0.0} encode {Ms(PerfEncodeTicks - e0):0.0} submit {Ms(PerfSubmitTicks - su0):0.0} draws {PerfDrawCalls - d0} tex {PerfTextures - tx0} bg {PerfBindGroups - bg0} mask {PerfMaskTextures - mk0} edge {PerfEdgeTextures - ed0} cov {PerfCoverage - cv0} layers {PerfLayers - ly0} alloc {(GC.GetAllocatedBytesForCurrentThread() - al0) / 1024}K";
             }
 
 #if WGPU_BROWSER
