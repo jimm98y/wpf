@@ -55,7 +55,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 add("d3dcompiler_47", "D3DCompile", (IntPtr)(delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int>)&D3DCompile);
                 add("d3dcompiler_47", "D3DCompile2", (IntPtr)(delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, uint, void*, nuint, IntPtr*, IntPtr*, int>)&D3DCompile2);
                 add("d3dcompiler_47", "D3DCompileFromFile", (IntPtr)(delegate* unmanaged<char*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int>)&D3DCompileFromFile);
-                n += 3;
+                // reflection needs no compiler: managed, over the blob's own chunks
+                add("d3dcompiler_47", "D3DReflect", (IntPtr)(delegate* unmanaged<void*, nuint, Guid*, IntPtr*, int>)&D3DReflect);
+                n += 4;
             }
             return n;
         }
@@ -80,6 +82,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static int D3DCompileFromFile(char* file, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, IntPtr* code, IntPtr* errors)
             => NoCompiler(entry, target, code, errors);
+
+        [UnmanagedCallersOnly]
+        private static int D3DReflect(void* src, nuint size, Guid* iid, IntPtr* reflector)
+        {
+            try { return D3DShaderReflection.Reflect(src, size, iid, reflector); }
+            catch (Exception e) { D3DLog.Error("D3DReflect", e); if (reflector != null) *reflector = IntPtr.Zero; return HResult.E_FAIL; }
+        }
+
+        internal static delegate* unmanaged<void*, nuint, Guid*, IntPtr*, int> ReflectPointer => &D3DReflect;
 
         /// <summary>The managed entry point, for callers in this process (tests): the same function
         /// the export reaches.</summary>
