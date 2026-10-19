@@ -323,7 +323,7 @@ fails the translation and names itself.
 **What WebGPU cannot express.** Each case has a defined fallback and one log line, and never wrong
 code:
 
-- doubles without `shader-f64` (emulated, with lower precision);
+- doubles without `shader-f64` (emulated exactly in integer arithmetic; see Status);
 - `SV_ViewportArrayIndex` beyond 1 (layered passes);
 - class linkage (each interface call site is specialized at bind time from the bound class
   instances);
@@ -468,5 +468,12 @@ green throughout.
     that buffer instead of its data. The context clears the binding after each submission that
     wrote storage (D3DContext.ResetGlUnpackBinding); D3DTextureUploadTests and the
     WriteTextureProbeTests repro hold it.
+  - Doubles, exactly: every double instruction (SM5.0 and the 11.1 extensions) on IEEE binary64
+    emulated in integer arithmetic after SoftFloat's algorithms -- round to nearest even,
+    subnormals kept, a fused dfma -- so no lower-precision fallback is needed. SoftDoubleTests
+    holds 16 operations to .NET's doubles bit for bit over 4096 operands each (subnormals, zeros,
+    infinities, near-ties); the corpus's double shaders match WARP. WARP is no oracle for dtoi and
+    dtou: it converts through a float (dtoi(16777217) is 16777216). movc and dmovc now select by
+    bits, so a NaN pattern in a register survives them on any driver.
   - Not yet: stream output from a domain shader or from GS streams above 0, layered rendering
-    after tessellation, doubles, class linkage, DXIL, managed D3DReflect.
+    after tessellation, class linkage, DXIL, managed D3DReflect.
