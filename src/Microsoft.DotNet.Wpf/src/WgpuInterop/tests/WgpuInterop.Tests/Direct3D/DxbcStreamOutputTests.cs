@@ -106,6 +106,7 @@ void main(point O v[1], uint prim : SV_PrimitiveID, inout LineStream<O> s)
             public uint Topology = 4;
             public uint Vertices = 6, Instances = 1;
             public bool Indexed;
+            public ushort[] Indices = { 3, 1, 4, 0, 2, 5, 7, 6, 8 };
             public int[] SoBytes = { 4096 };
             public bool Append;                  // a second draw appending to the first
             public (string? Semantic, int Start, int Count, int Slot)[] Decl = { ("SV_POSITION", 0, 4, 0), ("COLOR", 0, 4, 0) };
@@ -136,7 +137,7 @@ void main(point O v[1], uint prim : SV_PrimitiveID, inout LineStream<O> s)
                 var pos = new float[12 * 3];
                 for (int i = 0; i < 12; i++) { pos[i * 3] = -0.9f + 0.15f * i; pos[i * 3 + 1] = (i % 3) * 0.3f - 0.4f; pos[i * 3 + 2] = 0.1f * (i % 4); }
                 IntPtr vb = Data(dev, pos, D3D11_BIND.VERTEX_BUFFER, Keep);
-                IntPtr ib = Data(dev, new ushort[] { 3, 1, 4, 0, 2, 5, 7, 6, 8 }, D3D11_BIND.INDEX_BUFFER, Keep);
+                IntPtr ib = Data(dev, c.Indices, D3D11_BIND.INDEX_BUFFER, Keep);
                 var sos = c.SoBytes.Select(n => Fresh(dev, n, D3D11_BIND.STREAM_OUTPUT, Keep)).ToArray();
                 uint* offs = stackalloc uint[4] { 0, 0, 0, 0 };
                 fixed (IntPtr* sp = sos) ((delegate* unmanaged<IntPtr, uint, IntPtr*, uint*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.SOSetTargets))(ctx, (uint)sos.Length, sp, offs);
@@ -174,6 +175,7 @@ void main(point O v[1], uint prim : SV_PrimitiveID, inout LineStream<O> s)
             new Case { Name = "gs strips cut into lists", Gs = Gs },
             new Case { Name = "gs from a strip, indexed, instanced", Gs = Gs, Topology = 5, Vertices = 7, Indexed = true, Instances = 2 },
             new Case { Name = "gs line strips", Gs = GsLines, Topology = 1, Vertices = 5 },
+            new Case { Name = "gs from a strip with cuts", Gs = Gs, Topology = 5, Vertices = 9, Indexed = true, Instances = 2, Indices = new ushort[] { 3, 1, 4, 0xFFFF, 0, 2, 5, 7, 0xFFFF, 6, 8, 9, 10 } },
             new Case { Name = "gs two slots, a gap, partial components", Gs = Gs, SoBytes = new[] { 4096, 2048 },
                        Decl = new (string?, int, int, int)[] { ("SV_POSITION", 1, 2, 0), (null, 0, 1, 0), ("COLOR", 3, 1, 0), ("COLOR", 0, 2, 1) } },
             new Case { Name = "gs overflow: whole primitives only", Gs = Gs, SoBytes = new[] { 32 * 11 } },
