@@ -37,6 +37,8 @@
     <ProjectReference Include="../WpfMac.Win32/WpfMac.Win32.csproj" />
     <!-- Runtime detours for what CoreLib refuses off Windows; loaded by the bootstrap by name. -->
     <ProjectReference Include="../WpfMac.Detours/WpfMac.Detours.csproj" />
+    <!-- What app assemblies the launcher rewrote off built-in COM call (Documentation/comimport-rewriter.md). -->
+    <ProjectReference Include="../WpfMac.ComInterop/WpfMac.ComInterop.csproj" />
   </ItemGroup>
 
   <!-- Microsoft.WindowsDesktop.App, minus what the SDK already supplies: WPF, WinForms,

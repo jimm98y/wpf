@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The COM-import rewriter (Documentation/comimport-rewriter.md): rewrites an app assembly's
+       [ComImport] interfaces and the calls that use them onto WpfMac.ComInterop. Used by the launcher
+       when it prepares an app. Mono.Cecil: MIT (its notice ships in the overlay with MonoMod's). -->
+  <PropertyGroup>
+    <AssemblyName>WpfMac.ComRewrite</AssemblyName>
+    <RootNamespace>WpfMac.ComRewrite</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <ProjectReference Include="../WpfMac.ComInterop/WpfMac.ComInterop.csproj" />
+  </ItemGroup>
+
+</Project>
