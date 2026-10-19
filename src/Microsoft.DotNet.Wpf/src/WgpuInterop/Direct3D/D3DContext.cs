@@ -341,6 +341,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private IntPtr _passDepth;
         private readonly Dictionary<IntPtr, WGPUColor> _pendingColorClears = new();
         private readonly Dictionary<IntPtr, (float? Depth, uint? Stencil, bool HasStencil)> _pendingDepthClears = new();
+        // the views of the pending clears, held: an app may clear a view and release it at once (the clear
+        // still applies to its texture); let go of once the clears are encoded
+        private readonly List<D3DView> _clearOwners = new();
+
+        private void HoldForClear(D3DView view)
+        {
+            view.InternalAddRef();
+            _clearOwners.Add(view);
+        }
         private int _submissions;
 
         private IntPtr Encoder()
@@ -363,7 +372,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private void ResolvePendingClears()
         {
             EndPass();
-            if (_pendingColorClears.Count == 0 && _pendingDepthClears.Count == 0) return;
+            if (_pendingColorClears.Count == 0 && _pendingDepthClears.Count == 0) { ReleaseClearOwners(); return; }
             foreach (var (view, color) in _pendingColorClears)
             {
                 var att = new WGPURenderPassColorAttachment { view = view, depthSlice = 0xFFFFFFFF, loadOp = WGPULoadOp.Clear, storeOp = WGPUStoreOp.Store, clearValue = color };
@@ -382,6 +391,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }
             _pendingColorClears.Clear();
             _pendingDepthClears.Clear();
+            ReleaseClearOwners();
+        }
+
+        /// <summary>The clears are encoded (a pass holds what it names): their views may go.</summary>
+        private void ReleaseClearOwners()
+        {
+            if (_clearOwners.Count == 0) return;
+            foreach (D3DView v in _clearOwners) v.InternalRelease();
+            _clearOwners.Clear();
         }
 
         private static WGPURenderPassDepthStencilAttachment DepthAttachment(IntPtr view, (float? Depth, uint? Stencil, bool HasStencil) clear, bool readOnly)
@@ -444,6 +462,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             ResolvePendingClears();
             if (_encoder != IntPtr.Zero)
             {
+                if (Device.Gpu.IsOpenGL) Device.Gpu.GlUnpackSuspect = true;     // for the device's other uploaders: not every path that binds a storage buffer is known
                 ResetGlUnpackBinding();
                 IntPtr cmd = wgpuCommandEncoderFinish(_encoder, IntPtr.Zero);
                 wgpuCommandEncoderRelease(_encoder);
@@ -521,6 +540,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (c._pass != IntPtr.Zero && Array.IndexOf(c._passColor, v) >= 0) c.EndPass();
                 c._pendingColorClears[v] = color;
             }
+            c.HoldForClear(view);
         }, view);
 
         public void ClearDsv(D3DDepthStencilView view, uint flags, float depth, byte stencil) => Run(c =>
@@ -535,6 +555,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 uint? s = (flags & 2) != 0 && hasStencil ? stencil : old.Stencil;
                 c._pendingDepthClears[v] = (d, s, hasStencil);
             }
+            c.HoldForClear(view);
         }, view);
 
         public void CopyResource(D3DResource dst, D3DResource src) => Run(c => c.CopyImpl(dst, 0, 0, 0, 0, src, 0, null, whole: true), dst, src);
@@ -740,7 +761,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var (dm, dl) = dst.Split(dstSub);
             var fmt = Formats.Texture(format == DXGI_FORMAT.UNKNOWN ? src.Desc.Format : format);
             IntPtr sv = D3DView.CreateTextureView(src.Gpu, fmt, WGPUTextureViewDimension._2D, sm, 1, sl, 1);
-            IntPtr dv = D3DView.CreateTextureView(dst.Gpu, fmt, WGPUTextureViewDimension._2D, dm, 1, dl, 1);
+            // A resolve writes its target as a render attachment; D3D also resolves into a texture that is
+            // no render target (a shader resource only): through a texture of our own, then a copy.
+            bool direct = (dst.GpuUsage & WGPUTextureUsage.RenderAttachment) != 0;
+            uint w = Math.Max(1, dst.Desc.Width >> (int)dm), h = Math.Max(1, dst.Desc.Height >> (int)dm);
+            IntPtr temp = IntPtr.Zero;
+            if (!direct)
+            {
+                var td = new WGPUTextureDescriptor
+                {
+                    usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.CopySrc, dimension = WGPUTextureDimension._2D,
+                    size = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = 1 }, format = fmt, mipLevelCount = 1, sampleCount = 1,
+                };
+                temp = wgpuDeviceCreateTexture(Device.Gpu.Device, &td);
+            }
+            IntPtr dv = direct ? D3DView.CreateTextureView(dst.Gpu, fmt, WGPUTextureViewDimension._2D, dm, 1, dl, 1) : wgpuTextureCreateView(temp, IntPtr.Zero);
             var att = new WGPURenderPassColorAttachment { view = sv, depthSlice = 0xFFFFFFFF, resolveTarget = dv, loadOp = WGPULoadOp.Load, storeOp = WGPUStoreOp.Store };
             var desc = new WGPURenderPassDescriptor { colorAttachmentCount = 1, colorAttachments = &att };
             IntPtr p = wgpuCommandEncoderBeginRenderPass(c.Encoder(), &desc);
@@ -748,6 +783,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             wgpuRenderPassEncoderRelease(p);
             wgpuTextureViewRelease(sv);
             wgpuTextureViewRelease(dv);
+            if (!direct)
+            {
+                var from = new WGPUTexelCopyTextureInfo { texture = temp, aspect = WGPUTextureAspect.All };
+                var to = new WGPUTexelCopyTextureInfo { texture = dst.Gpu, mipLevel = dm, origin = new WGPUOrigin3D { z = dl }, aspect = WGPUTextureAspect.All };
+                var size = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = 1 };
+                wgpuCommandEncoderCopyTextureToTexture(c.Encoder(), &from, &to, &size);
+                wgpuTextureRelease(temp);      // the encoder keeps it until the copy is done
+            }
             dst.Version++;
         }, dst, src);
 

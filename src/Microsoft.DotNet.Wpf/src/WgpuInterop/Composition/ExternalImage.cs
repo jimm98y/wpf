@@ -14,6 +14,9 @@
 // linear), plain for a linear one. The CPU paths that read an image's bytes (rare: a hit test's
 // alpha, an image layer merge) read Placeholder, which is transparent.
 //
+// The texture is the device's that made it (Device): a renderer on another device (a WinForms window
+// compositing an ElementHost's WPF scene) cannot sample it, and draws the placeholder.
+//
 
 using System;
 using System.Threading;
@@ -28,12 +31,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public int Width { get; }
         public int Height { get; }
         public WGPUTextureFormat Format { get; }
+        /// <summary>The WebGPU device the texture belongs to.</summary>
+        public IntPtr Device { get; }
         private long _version;
         private byte[]? _placeholder;
 
-        public ExternalImage(IntPtr texture, IntPtr view, int width, int height, WGPUTextureFormat format)
+        public ExternalImage(IntPtr device, IntPtr texture, IntPtr view, int width, int height, WGPUTextureFormat format)
         {
-            Texture = texture; View = view; Width = width; Height = height; Format = format;
+            Device = device; Texture = texture; View = view; Width = width; Height = height; Format = format;
         }
 
         public long Version => Interlocked.Read(ref _version);

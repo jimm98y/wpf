@@ -28,6 +28,7 @@ internal readonly struct WgpuLayer
 internal sealed unsafe class WgpuPresenter : IDisposable
 {
     private readonly WgpuContext _ctx;
+    private readonly bool _threadDevice;
     private IntPtr _surface;
     // Every frame is bracketed with BeginFrame/EndFrame, as the WPF sink brackets its own: that is
     // the renderer's clock, and EndFrame is where its caches let go of what has not been drawn for a
@@ -69,9 +70,12 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     /// frame checks it is still there. Zero when the host does not say.</summary>
     internal IntPtr NativeWindow { get; }
 
-    internal WgpuPresenter(WgpuContext ctx, IntPtr surface, int width, int height, double scale = 1.0, bool srgb = false, IntPtr nativeWindow = default)
+    /// <param name="threadDevice">the device is the thread's (ThreadGpu.cs), shared with its other windows, its
+    /// WPF compositor and its Direct3D shim devices: released, not disposed, with the window.</param>
+    internal WgpuPresenter(WgpuContext ctx, IntPtr surface, int width, int height, double scale = 1.0, bool srgb = false, IntPtr nativeWindow = default, bool threadDevice = false)
     {
         _ctx = ctx;
+        _threadDevice = threadDevice;
         NativeWindow = nativeWindow;
         _surface = surface;
         _width = width;
@@ -594,7 +598,8 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             _partial?.Dispose();
             _renderer?.Dispose();
             if (_surface != IntPtr.Zero) { wgpuSurfaceRelease(_surface); _surface = IntPtr.Zero; }
-            _ctx?.Dispose();
+            if (_threadDevice) Microsoft.Wpf.Interop.WebGpu.Composition.ThreadGpu.Release(_ctx, hostWindow: true);
+            else _ctx?.Dispose();
         }
     }
 

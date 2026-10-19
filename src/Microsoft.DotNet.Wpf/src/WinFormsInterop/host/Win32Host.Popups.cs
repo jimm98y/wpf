@@ -153,9 +153,9 @@ internal sealed unsafe partial class Win32Host
         lock (s_popupOwner) s_popupOwner[hwnd] = this;
         try
         {
-            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
+            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ThreadGpu.AcquireForHostWindow();
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, hwnd);
-            var presenter = new WgpuPresenter(ctx, surface, 1, 1, _scale, srgb: true, nativeWindow: hwnd);
+            var presenter = new WgpuPresenter(ctx, surface, 1, 1, _scale, srgb: true, nativeWindow: hwnd, threadDevice: true);
             return new PopupWindow { Hwnd = hwnd, Presenter = presenter };
         }
         catch (Exception ex)

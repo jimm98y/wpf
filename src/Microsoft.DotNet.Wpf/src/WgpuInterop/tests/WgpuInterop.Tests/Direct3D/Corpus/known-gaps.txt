@@ -2,3 +2,9 @@
 # The coverage test fails when a shader not listed here fails, and when a listed shader translates
 # (then take it off). Each step of Documentation/d3d11-webgpu-shim.md section 9 shortens this list.
 stages.ps_interface.ps_5_0.dxbc: class linkage (interfaces): each call site is specialized at bind time from the bound class instances -- not implemented yet
+# Device gaps (not shaders, comments only: the coverage test reads the lines above):
+# - GL backend: a multisampled texture the app also samples (D3D11_BIND_SHADER_RESOURCE) keeps nothing drawn
+#   into it, so neither its resolve nor Texture2DMS loads see it (D3DMultisampleTests, skipped on GL). A possible
+#   emulation, not built: render into a render-target-only MS texture (a renderbuffer on GL, which resolves), resolve
+#   for SRV reads that sample, and for per-sample Load keep a single-sample shadow of N layers drawn in N passes
+#   (each pass with sample mask 1<<i); app does not hit it.

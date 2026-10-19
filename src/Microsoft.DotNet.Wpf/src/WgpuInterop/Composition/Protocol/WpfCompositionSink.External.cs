@@ -5,10 +5,10 @@
 // A D3DImage's frames (Documentation/d3d11-webgpu-shim.md, section 8): one texture per D3DImage resource
 // (ExternalImage.cs), kept across frames of the same size and written in place.
 //
-// - Zero-copy (SendSurface): the back buffer is a Direct3D shim surface on THIS compositor's device -- the
-//   first UI thread's compositor adopts the shim's device, D3DDevice.SharedGpu -- so the frame is a GPU
-//   copy, on the one queue, after the app's Direct3D work: a texture-to-texture copy of an opaque
-//   surface, or a pass that un-premultiplies (as the copy path does, to the integer) and then a copy.
+// - Zero-copy (SendSurface): the back buffer is a Direct3D shim surface on THIS compositor's device -- a
+//   UI thread's compositors and the shim devices made on it share the thread's device (ThreadGpu.cs) --
+//   so the frame is a GPU copy, on the one queue, after the app's Direct3D work: a pass that
+//   un-premultiplies (as the copy path does, to the integer) or makes the surface opaque, then a copy.
 //   No readback.
 // - The copy path (SendBitmapRegion): the dirty rectangle's pixels, read by D3DImage, written into the
 //   same texture with queue.writeTexture -- no new texture a frame, no BGRA->RGBA pass, no image cache.
@@ -50,22 +50,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// <summary>Frames that took the zero-copy path, and frames written from pixels (tests).</summary>
         public int ZeroCopyPresents, CopyPresents;
 
-        /// <summary>Whether this compositor uses the Direct3D shim's device (the first UI thread's does).</summary>
+        /// <summary>Whether this compositor's device is its thread's (ThreadGpu.cs), the one the shim devices
+        /// made on its thread use.</summary>
         public bool SharesShimDevice { get; private set; }
 
-        private static int s_shimDeviceClaimed;
-        private static readonly bool s_noShare = Environment.GetEnvironmentVariable("WPF_D3DIMAGE_SHARE") == "0";
-
-        /// <summary>The device for this compositor: the shim's for the first that asks, a device of its own
-        /// for every other (one GPU device per UI thread otherwise).</summary>
+        /// <summary>The device for this compositor: its UI thread's (Composition/ThreadGpu.cs), shared with the
+        /// thread's WinForms windows and the Direct3D shim devices made on it.</summary>
         private WgpuContext CreateOrShareContext()
         {
-            if (!s_noShare && System.Threading.Interlocked.CompareExchange(ref s_shimDeviceClaimed, 1, 0) == 0)
-            {
-                SharesShimDevice = true;
-                return D3DDevice.SharedGpu;
-            }
-            return WgpuContext.Create();
+            SharesShimDevice = !ThreadGpu.Unshared;
+            // the UI thread's, though this may run on the render thread
+            return ThreadGpu.Acquire(_ownerThreadId, wpfSink: true);
         }
 
         /// <summary>The back buffer <paramref name="key"/>'s front buffer at this size, made, kept or replaced
@@ -98,7 +93,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 };
                 IntPtr tex = wgpuDeviceCreateTexture(ctx.Device, &d);
                 IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
-                front.Image = new ExternalImage(tex, view, width, height, format);
+                front.Image = new ExternalImage(ctx.Device, tex, view, width, height, format);
+                if (s_trace) Log($"d3dimage: h{handle} key{key} {width}x{height} new texture view 0x{view:x} (was 0x{had?.View ?? 0:x}) thread {Environment.CurrentManagedThreadId}");
+                // shown at once, before the old one goes: a caller that gives up before its frame (the
+                // back buffer cannot be read) leaves no resource on a released texture
+                Publish(front);
                 if (had != null) Retire(had);
                 return front;
             }
@@ -111,8 +110,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 _externalOrphans.Add(key);
         }
 
+        private static readonly bool s_trace = Environment.GetEnvironmentVariable("WPF_D3DIMAGE_TRACE") == "1";
+        private int _tracedSend;
+
         private void Retire(ExternalImage image)
         {
+            if (s_trace) Log($"d3dimage: retire view 0x{image.View:x}");
             if (Recording) Record(() => _renderer?.RetireExternal(image));
             else _renderer?.RetireExternal(image);
         }
@@ -122,7 +125,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             lock (_externalLock)
             {
-                if (_externalKey.Remove(handle, out long key)) Leave(handle, key);
+                if (_externalKey.Remove(handle, out long key)) { Leave(handle, key); if (s_trace) Log($"d3dimage: h{handle} released (key{key})"); }
             }
         }
 
@@ -158,6 +161,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             image.Bump();
             uint[] handles;
             lock (_externalLock) { handles = new uint[front.Handles.Count]; front.Handles.CopyTo(handles); }
+            if (s_trace && image.Version % 100 == 0) Log($"d3dimage: publish v{image.Version} to {handles.Length} resource(s), {_external.Count} front buffer(s), {_externalKey.Count} resource(s) known, {_externalOrphans.Count} orphan(s)");
             foreach (uint handle in handles)
             {
                 uint h = handle;
@@ -174,7 +178,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public bool SendSurface(int channelId, uint handle, long key, IntPtr surface, int width, int height, bool premultiplied, int dx, int dy, int dw, int dh)
         {
             var ctx = _ctx;
-            if (ctx == null || !SharesShimDevice || !ReferenceEquals(ctx, D3DDevice.SharedGpu)) return false;
+            if (s_trace && (_tracedSend++ < 3 || _tracedSend % 100 == 0))
+                Log($"d3dimage: send h{handle} shares={SharesShimDevice} hosted={HostedWpfContent.Any} shim surface={(ComObject.From(surface) is Direct3DSurface9 s9 ? (ReferenceEquals(s9.Gpu?.Device.Gpu, ctx) ? "this device" : "another device") : "no")} foreign={ForeignRenderer} thread {Environment.CurrentManagedThreadId} {ThreadGpu.Describe()}");
+            if (ctx == null || ForeignRenderer) return false;
             if (ComObject.From(surface) is not Direct3DSurface9 { OnCpuSide: false } s || !ReferenceEquals(s.Gpu!.Device.Gpu, ctx)) return false;
             if (s.Width != width || s.Height != height) return false;
             var front = Target(handle, key, width, height, out bool fresh);
@@ -203,13 +209,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         public bool SendBitmapRegion(int channelId, uint handle, long key, int width, int height, byte[] pixels, int stride, int dx, int dy, int dw, int dh)
         {
             var ctx = _ctx;
-            if (ctx == null || pixels == null || dw <= 0 || dh <= 0 || dx < 0 || dy < 0 || dx + dw > width || dy + dh > height) return false;
+            if (ctx == null || ForeignRenderer || pixels == null || dw <= 0 || dh <= 0 || dx < 0 || dy < 0 || dx + dw > width || dy + dh > height) return false;
             if ((long)stride * (dh - 1) + dw * 4L > pixels.Length || stride < dw * 4) return false;
             var front = Target(handle, key, width, height, out bool fresh);
             if (front == null) return false;
             var image = front.Image;
             // a new texture needs the whole frame: the caller sends it (the texture is kept for it)
             if (fresh && (dx != 0 || dy != 0 || dw != width || dh != height)) return false;
+            ctx.ResetGlUnpack();      // the device may be shared with the Direct3D shim (WgpuContext.GlUnpackSuspect)
             fixed (byte* p = pixels)
             {
                 var dst = new WGPUTexelCopyTextureInfo { texture = image.Texture, origin = new WGPUOrigin3D { x = (uint)dx, y = (uint)dy }, aspect = WGPUTextureAspect.All };
@@ -218,9 +225,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 wgpuQueueWriteTexture(ctx.Queue, &dst, p, (nuint)((long)stride * (dh - 1) + dw * 4L), &layout, &size);
             }
             CopyPresents++;
+            if (s_trace) Log($"d3dimage: h{handle} key{key} region {dx},{dy} {dw}x{dh} view 0x{image.View:x}");
             Publish(front);
             return true;
         }
+
+        /// <summary>Whether a renderer on another device may draw this compositor's scenes: an ElementHost's
+        /// WPF scene is drawn by its WinForms window, with that window's thread's device. While a WinForms
+        /// window draws with another device than this compositor's (another UI thread's: a splash screen),
+        /// the frame goes as pixels, which any device can upload.</summary>
+        private bool ForeignRenderer => HostedWpfContent.Any && _ctx is { } c && ThreadGpu.HostWindowsOffDevice(c);
 
         private static void Clip(ref int x, ref int y, ref int w, ref int h, int width, int height)
         {

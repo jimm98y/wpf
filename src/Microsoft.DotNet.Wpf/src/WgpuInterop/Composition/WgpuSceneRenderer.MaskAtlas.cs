@@ -153,6 +153,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 #else
             if (_ctx.IsOpenGL)
             {
+                _ctx.ResetGlUnpack();      // a device shared with the Direct3D shim (WgpuContext.GlUnpackSuspect)
                 var glDest = new WGPUTexelCopyTextureInfo { texture = texture, aspect = WGPUTextureAspect.All, origin = new WGPUOrigin3D { x = (uint)ox, y = (uint)oy } };
                 var glLayout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)(width * bytesPerPixel), rowsPerImage = (uint)height };
                 var glSize = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 };

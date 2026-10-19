@@ -294,7 +294,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             Parent = parent;
             parent.AddRef();
-            Device11 = new D3DDevice(D3DDevice.SharedGpu, ownsGpu: false, D3D_FEATURE_LEVEL.L11_0, 0, null);
+            Device11 = new D3DDevice(Composition.ThreadGpu.AcquireForShim(), ownsGpu: true, D3D_FEATURE_LEVEL.L11_0, 0, null);
         }
 
         protected override void OnFinalRelease()
@@ -395,6 +395,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (shared != null && *shared != IntPtr.Zero)
             {
                 D3DTexture2D? t = SharedHandles.Find(*shared) ?? throw new ArgumentException($"shared handle 0x{(long)*shared:x} is not one of the shim's");
+                if (!ReferenceEquals(t.Device.Gpu, Device11.Gpu))
+                    throw new ArgumentException("the shared texture was made on another thread's WebGPU device (devices made on two UI threads share no resources)");
                 if (t.Desc.Width != w || t.Desc.Height != h || !D3D9Const.SameTexels(format, t.Desc.Format))
                     throw new ArgumentException($"shared texture is {t.Desc.Width}x{t.Desc.Height} {t.Desc.Format}, opened as {w}x{h} format {format}");
                 t.AddRef();

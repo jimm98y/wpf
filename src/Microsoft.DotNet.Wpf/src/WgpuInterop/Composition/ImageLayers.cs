@@ -36,7 +36,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 cur = cur.Children[0];
             }
             if (cur.Content[0] is not GeometryFill { Geometry: RectangleGeometry rg, Brush: ImageBrush ib } f
-                || f.SourceCopy || ib.SourceVisual != null || ib.TileMode != TileMode.None || ib.Opacity != 1f
+                || f.SourceCopy || ib.SourceVisual != null || ib.External != null || ib.TileMode != TileMode.None || ib.Opacity != 1f
                 || ib.PixelsRgba.Length < ib.PixelWidth * ib.PixelHeight * 4) return false;
             Rect r = rg.Rect;
             if (r.Width != ib.PixelWidth || r.Height != ib.PixelHeight) return false;
