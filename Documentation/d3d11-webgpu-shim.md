@@ -433,4 +433,17 @@ green throughout.
   - Shim surfaces take the copy path, by the user's decision (section 8).
 - **M3 (in progress):**
   - DXEngine's vertex and pixel shaders compile, and all of them draw as WARP draws (5b48ce73e).
-  - The general translator of section 9 is next.
+  - The general translator of section 9: the whole token format, every chunk, an opcode-coverage
+    ratchet (bf5f1a69a, 98a31b0ee); compute, UAVs, atomics and every texture form on the device,
+    executed against WARP word for word (1270e25ca).
+  - Geometry shaders through the compute expansion of section 6: the vertex shader runs as compute
+    and fetches its own vertices (every vertex format, unaligned elements, per-instance data), the
+    GS runs as compute into fixed per-invocation slots (D3D's order, no atomics), strips stay strips
+    through primitive restart, and a pass-through vertex shader feeds the pixel shader. All 47
+    corpus geometry shaders (DXEngine's 42 and the own corpus) draw as WARP draws. Measured on
+    WARP and followed: a triangle strip's odd triangles reach the GS as (n, n+2, n+1); every
+    stream is rasterized when the GS has no stream output; SV_VertexID is the index as stored and
+    SV_InstanceID counts from 0 (the native vertex stage now subtracts WebGPU's base vertex and
+    start instance too).
+  - Not yet: stream output, strip-cut indices into a GS, layered (array-index) rendering past
+    layer 0, then HS/DS, doubles, class linkage, DXIL and runtime compilation (section 9 order).

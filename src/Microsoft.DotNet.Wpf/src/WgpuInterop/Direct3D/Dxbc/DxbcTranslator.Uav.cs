@@ -40,6 +40,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         /// <summary>The device's optional features (WGPUFeatureName / WGPUNativeFeature values): a
         /// shader takes a feature's form where the device has it. Null: the shim's shared device's.</summary>
         public IReadOnlyCollection<uint>? Features;
+        /// <summary>Vertex-shader input registers whose element is B8G8R8A8: fetched as RGBA, swapped
+        /// back in the shader.</summary>
+        public IReadOnlyCollection<int>? BgraInputs;
     }
 
     internal sealed partial class DxbcTranslator

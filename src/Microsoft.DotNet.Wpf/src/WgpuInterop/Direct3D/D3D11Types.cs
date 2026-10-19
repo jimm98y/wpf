@@ -302,7 +302,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             DXGI_FORMAT.R8G8_UINT => VtxFmt.Uint8x2,
             DXGI_FORMAT.R8G8B8A8_SINT => VtxFmt.Sint8x4,
             DXGI_FORMAT.R8G8_SINT => VtxFmt.Sint8x2,
-            DXGI_FORMAT.B8G8R8A8_UNORM => VtxFmt.Unorm8x4BGRA,
+            // wgpu-native here has no unorm8x4-bgra (it aborts on it): read as RGBA, the vertex shader swaps
+            DXGI_FORMAT.B8G8R8A8_UNORM => VtxFmt.Unorm8x4,
+            DXGI_FORMAT.R10G10B10A2_UNORM => VtxFmt.Unorm10_10_10_2,
+            DXGI_FORMAT.R8_UINT => VtxFmt.Uint8, DXGI_FORMAT.R8_SINT => VtxFmt.Sint8, DXGI_FORMAT.R8_UNORM => VtxFmt.Unorm8, DXGI_FORMAT.R8_SNORM => VtxFmt.Snorm8,
+            DXGI_FORMAT.R16_UINT => VtxFmt.Uint16, DXGI_FORMAT.R16_SINT => VtxFmt.Sint16, DXGI_FORMAT.R16_UNORM => VtxFmt.Unorm16, DXGI_FORMAT.R16_SNORM => VtxFmt.Snorm16,
+            DXGI_FORMAT.R16_FLOAT => VtxFmt.Float16,
             _ => (WGPUVertexFormat)0,
         };
     }

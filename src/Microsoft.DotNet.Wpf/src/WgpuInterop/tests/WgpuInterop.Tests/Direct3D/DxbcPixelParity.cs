@@ -232,9 +232,9 @@ namespace WgpuInterop.Tests.Direct3D
                     ((delegate* unmanaged<IntPtr, IntPtr, float*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearRenderTargetView))(ctx, rtv, clear);
                 }
 
-                Bind(dev, ctx, refl, seed, Keep, Vtbl.ID3D11DeviceContext.PSSetConstantBuffers, Vtbl.ID3D11DeviceContext.PSSetSamplers, Vtbl.ID3D11DeviceContext.PSSetShaderResources);
+                BindStage(dev, ctx, refl, seed, Keep, Vtbl.ID3D11DeviceContext.PSSetConstantBuffers, Vtbl.ID3D11DeviceContext.PSSetSamplers, Vtbl.ID3D11DeviceContext.PSSetShaderResources);
                 if (vsRefl != null)
-                    Bind(dev, ctx, vsRefl, seed + 1, Keep, Vtbl.ID3D11DeviceContext.VSSetConstantBuffers, Vtbl.ID3D11DeviceContext.VSSetSamplers, Vtbl.ID3D11DeviceContext.VSSetShaderResources);
+                    BindStage(dev, ctx, vsRefl, seed + 1, Keep, Vtbl.ID3D11DeviceContext.VSSetConstantBuffers, Vtbl.ID3D11DeviceContext.VSSetSamplers, Vtbl.ID3D11DeviceContext.VSSetShaderResources);
 
                 IntPtr layout = IntPtr.Zero;
                 if (vsInputs != null) layout = Keep(VertexInput(dev, ctx, vsBlob, vsInputs, Keep));
@@ -249,7 +249,7 @@ namespace WgpuInterop.Tests.Direct3D
                 ((delegate* unmanaged<IntPtr, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Draw))(ctx, 3, 0);
 
                 var result = new List<float[]>();
-                foreach (IntPtr t in rtTex) result.Add(ReadBack(dev, ctx, t, Keep));
+                foreach (IntPtr t in rtTex) result.Add(ReadTarget(dev, ctx, t, Keep));
                 ((delegate* unmanaged<IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearState))(ctx);
                 return result;
             }
@@ -261,7 +261,7 @@ namespace WgpuInterop.Tests.Direct3D
         }
 
         /// <summary>One stage's constant buffers, samplers and textures, made from its reflection.</summary>
-        private static void Bind(IntPtr dev, IntPtr ctx, Reflection refl, int seed, Func<IntPtr, IntPtr> Keep, int setCb, int setSampler, int setSrv)
+        internal static void BindStage(IntPtr dev, IntPtr ctx, Reflection refl, int seed, Func<IntPtr, IntPtr> Keep, int setCb, int setSampler, int setSrv)
         {
                 // constant buffers
                 foreach (var cb in refl.CBuffers)
@@ -501,7 +501,7 @@ namespace WgpuInterop.Tests.Direct3D
             return keep(srv);
         }
 
-        private static float[] ReadBack(IntPtr dev, IntPtr ctx, IntPtr tex, Func<IntPtr, IntPtr> keep)
+        internal static float[] ReadTarget(IntPtr dev, IntPtr ctx, IntPtr tex, Func<IntPtr, IntPtr> keep)
         {
             D3D11_TEXTURE2D_DESC d;
             ((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, void>)Fn(tex, Vtbl.ID3D11Texture2D.GetDesc))(tex, &d);

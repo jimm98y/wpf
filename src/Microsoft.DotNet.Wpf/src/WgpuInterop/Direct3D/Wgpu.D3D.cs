@@ -43,7 +43,9 @@ namespace Microsoft.Wpf.Interop.WebGpu
             public const WGPUVertexFormat Float32 = (WGPUVertexFormat)0x1C, Float32x2 = (WGPUVertexFormat)0x1D, Float32x3 = (WGPUVertexFormat)0x1E, Float32x4 = (WGPUVertexFormat)0x1F;
             public const WGPUVertexFormat Uint32 = (WGPUVertexFormat)0x20, Uint32x2 = (WGPUVertexFormat)0x21, Uint32x3 = (WGPUVertexFormat)0x22, Uint32x4 = (WGPUVertexFormat)0x23;
             public const WGPUVertexFormat Sint32 = (WGPUVertexFormat)0x24, Sint32x2 = (WGPUVertexFormat)0x25, Sint32x3 = (WGPUVertexFormat)0x26, Sint32x4 = (WGPUVertexFormat)0x27;
-            public const WGPUVertexFormat Unorm8x4BGRA = (WGPUVertexFormat)0x29;
+            public const WGPUVertexFormat Unorm10_10_10_2 = (WGPUVertexFormat)0x28, Unorm8x4BGRA = (WGPUVertexFormat)0x29;
+            public const WGPUVertexFormat Uint8 = (WGPUVertexFormat)0x01, Sint8 = (WGPUVertexFormat)0x04, Unorm8 = (WGPUVertexFormat)0x07, Snorm8 = (WGPUVertexFormat)0x0A;
+            public const WGPUVertexFormat Uint16 = (WGPUVertexFormat)0x0D, Sint16 = (WGPUVertexFormat)0x10, Unorm16 = (WGPUVertexFormat)0x13, Snorm16 = (WGPUVertexFormat)0x16, Float16 = (WGPUVertexFormat)0x19;
         }
 
         internal const ulong WGPUShaderStage_Vertex = 1, WGPUShaderStage_Fragment = 2, WGPUShaderStage_Compute = 4;
