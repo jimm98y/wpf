@@ -36,10 +36,18 @@ if "%NUGETROOT%"=="" set "NUGETROOT=%USERPROFILE%\.nuget\packages"
 if exist "%NUGETROOT%\wpfwebgpu.sdk" rmdir /s /q "%NUGETROOT%\wpfwebgpu.sdk"
 if exist "%NUGETROOT%\wpfwebgpu.fonts" rmdir /s /q "%NUGETROOT%\wpfwebgpu.fonts"
 
-if exist "%OUT%" rmdir /s /q "%OUT%"
-echo ^>^> launcher -^> %OUT%\launcher
-dotnet publish "%HERE%WpfMac.Launcher" -c Release -o "%OUT%\launcher" -nologo -v q || (popd & exit /b 1)
-echo ^>^> overlay (%RID%) -^> %OUT%\overlay\wpfmac.payload
-dotnet publish "%HERE%WpfMac.Payload" -c Release -r %RID% --self-contained false -o "%OUT%\overlay\wpfmac.payload" -nologo -v q -clp:NoSummary -nowarn:MSB3277 || (popd & exit /b 1)
-echo ^>^> done: dotnet %OUT%\launcher\wpfmac.dll compare ^<App.dll^>
+rem Only this build's own two folders are cleaned: other folders beside them (an overlay-* or launcher-*
+rem kept for comparison) are left alone. WPFMAC_LAUNCHER_NAME / WPFMAC_OVERLAY_NAME build into other
+rem names under the RID folder (default launcher, overlay).
+set "LNAME=%WPFMAC_LAUNCHER_NAME%"
+if "%LNAME%"=="" set "LNAME=launcher"
+set "ONAME=%WPFMAC_OVERLAY_NAME%"
+if "%ONAME%"=="" set "ONAME=overlay"
+if exist "%OUT%\%LNAME%" rmdir /s /q "%OUT%\%LNAME%"
+if exist "%OUT%\%ONAME%" rmdir /s /q "%OUT%\%ONAME%"
+echo ^>^> launcher -^> %OUT%\%LNAME%
+dotnet publish "%HERE%WpfMac.Launcher" -c Release -o "%OUT%\%LNAME%" -nologo -v q || (popd & exit /b 1)
+echo ^>^> overlay (%RID%) -^> %OUT%\%ONAME%\wpfmac.payload
+dotnet publish "%HERE%WpfMac.Payload" -c Release -r %RID% --self-contained false -o "%OUT%\%ONAME%\wpfmac.payload" -nologo -v q -clp:NoSummary -nowarn:MSB3277 || (popd & exit /b 1)
+echo ^>^> done: dotnet %OUT%\%LNAME%\wpfmac.dll compare ^<App.dll^>
 popd

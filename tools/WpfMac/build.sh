@@ -56,18 +56,22 @@ fi
 # extracted the first time; take the one just packed.
 rm -rf "${NUGET_PACKAGES:-$HOME/.nuget/packages}/wpfwebgpu.sdk" "${NUGET_PACKAGES:-$HOME/.nuget/packages}/wpfwebgpu.fonts"
 
-rm -rf "$OUT"
-echo ">> launcher -> $OUT/launcher"
-dotnet publish "$HERE/WpfMac.Launcher" -c Release -o "$OUT/launcher" -nologo -v q
-echo ">> overlay ($RID) -> $OUT/overlay/wpfmac.payload"
+# Only this build's own two folders are cleaned: other folders beside them (an overlay-* or launcher-*
+# kept for comparison) are left alone. WPFMAC_LAUNCHER_NAME / WPFMAC_OVERLAY_NAME build into other names.
+LNAME="${WPFMAC_LAUNCHER_NAME:-launcher}"
+ONAME="${WPFMAC_OVERLAY_NAME:-overlay}"
+rm -rf "$OUT/$LNAME" "$OUT/$ONAME"
+echo ">> launcher -> $OUT/$LNAME"
+dotnet publish "$HERE/WpfMac.Launcher" -c Release -o "$OUT/$LNAME" -nologo -v q
+echo ">> overlay ($RID) -> $OUT/$ONAME/wpfmac.payload"
 dotnet publish "$HERE/WpfMac.Payload" -c Release -r "$RID" --self-contained false \
-  -o "$OUT/overlay/wpfmac.payload" -nologo -v q -clp:NoSummary -p:WarningLevel=0 -nowarn:MSB3277
+  -o "$OUT/$ONAME/wpfmac.payload" -nologo -v q -clp:NoSummary -p:WarningLevel=0 -nowarn:MSB3277
 case "$RID" in
   osx-*)
     # The Win32 trampoline an app's own P/Invokes into user32, kernel32, gdi32... land in. Windows
     # has the real DLLs, and Linux would need ELF stubs, which are not generated yet.
-    echo ">> libwin32shim ($RID) -> $OUT/overlay/wpfmac.payload"
-    "$HERE/WpfMac.Win32Native/build-shim.sh" "$OUT/overlay/wpfmac.payload" "$( [ "${RID#osx-}" = x64 ] && echo x86_64 || echo arm64 )" | tail -1
+    echo ">> libwin32shim ($RID) -> $OUT/$ONAME/wpfmac.payload"
+    "$HERE/WpfMac.Win32Native/build-shim.sh" "$OUT/$ONAME/wpfmac.payload" "$( [ "${RID#osx-}" = x64 ] && echo x86_64 || echo arm64 )" | tail -1
     ;;
 esac
-echo ">> done: dotnet $OUT/launcher/wpfmac.dll run <App.dll>"
+echo ">> done: dotnet $OUT/$LNAME/wpfmac.dll run <App.dll>"
