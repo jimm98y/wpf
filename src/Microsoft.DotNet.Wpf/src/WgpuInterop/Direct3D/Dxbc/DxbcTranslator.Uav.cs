@@ -71,6 +71,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         private int[] _threadGroup = { 1, 1, 1 };
         private TranslationOptions _options = new();
 
+        // ---- typed UAV textures used atomically (WGSL has no texture atomics) ----------------------------
+        //
+        // Such a UAV is bound as a buffer of words, its MIRROR: a header of MirrorHeaderWords words
+        // (width, height, depth or layers -- the view's, written by the device when it makes the
+        // mirror), then the texels in rows MirrorPitch apart and slices one after the other, then one
+        // word of scratch. The device copies the texture in before the dispatch and back after; only
+        // a 32-bit format can be mirrored, which is also D3D's rule for typed UAV atomics.
+
+        /// <summary>The words before a mirror's texels: 256 bytes, so every copy offset is aligned.</summary>
+        public const uint MirrorHeaderWords = 64;
+
+        /// <summary>The texels per row of a mirror: whole 256-byte rows, so the device copies between it
+        /// and the texture with no repacking.</summary>
+        public static uint MirrorPitch(uint width) => (width + 63) & ~63u;
+
+        private bool Mirrored(int u) => _atomicUavs.Contains(u) && _uavs.TryGetValue(u, out var d) && d.Kind == 't' && d.Dim != DimBuffer;
+
+        /// <summary>The word of a mirrored UAV texture's texel at <paramref name="c"/> (vec4&lt;u32&gt;),
+        /// or 0xFFFFFFFF outside the view (D3D drops such accesses).</summary>
+        private static string MirrorWord(int u, string c) => $"dx_mw{u}({c})";
+
+        /// <summary>The mirror helpers of UAV <paramref name="u"/>: its view's size and a texel's word.</summary>
+        private string MirrorHelpers(int u, int dim)
+        {
+            string y = dim is Dim1D or Dim1DArray ? "0u" : "c.y";
+            string z = dim switch { Dim1DArray => "c.y", Dim2DArray or Dim3D => "c.z", _ => "0u" };
+            return $"fn dx_msize{u}() -> vec3<u32> {{ return vec3<u32>(atomicLoad(&u{u}[0]), atomicLoad(&u{u}[1]), atomicLoad(&u{u}[2])); }}\n"
+                + $"fn dx_mw{u}(c: vec4<u32>) -> u32 {{\n"
+                + $"    let s = dx_msize{u}();\n"
+                + $"    let p = (s.x + 63u) & ~63u;\n"
+                + $"    let x = c.x; let y = {y}; let z = {z};\n"
+                + $"    return select(0xFFFFFFFFu, {MirrorHeaderWords}u + x + (y + z * s.y) * p, x < s.x && y < s.y && z < s.z);\n"
+                + "}\n";
+        }
+
+        /// <summary>The mirrored UAVs (their bindings are word buffers; the device copies the texture in and out).</summary>
+        public IReadOnlyCollection<int> MirroredUavs => _uavs.Keys.Where(Mirrored).ToList();
+
         /// <summary>The bindings a translation reads and writes, for the device to build its layout.</summary>
         public IReadOnlyDictionary<int, (char Kind, int Dim, char Ret, int Stride, bool Counter)> Uavs => _uavs;
         public IReadOnlyCollection<int> UsedUavs => _usedUavs;
@@ -137,7 +175,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 {
                     int u = o.Index0;
                     if (!_uavs.TryGetValue(u, out var d)) throw new NotSupportedException($"u{u} is not declared");
-                    if (d.Kind == 't' && d.Dim != DimBuffer) throw new NotSupportedException($"word access to typed UAV texture u{u}");
+                    if (d.Kind == 't' && d.Dim != DimBuffer && !Mirrored(u)) throw new NotSupportedException($"word access to typed UAV texture u{u}");
                     _usedUavs.Add(u);
                     return ($"u{u}", _atomicUavs.Contains(u));
                 }
@@ -302,7 +340,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             _uavRead.Add(u);
             string c = USource(o[1]);
             string v;
-            if (d.Dim == DimBuffer)
+            if (Mirrored(u))
+            {
+                string i = $"_w{_tmp++}";
+                Line($"let {i} = {MirrorWord(u, c)};");
+                v = $"bitcast<vec4<f32>>(vec4<u32>(select(0u, atomicLoad(&u{u}[min({i}, arrayLength(&u{u}) - 1u)]), {i} < arrayLength(&u{u})), 0u, 0u, 0u))";
+            }
+            else if (d.Dim == DimBuffer)
             {
                 int words = UavWords(u);
                 string i = $"(({c}).x * {words}u)";
@@ -327,6 +371,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             if (!_uavs.TryGetValue(u, out var d) || d.Kind != 't') throw new NotSupportedException($"store_uav_typed on u{u}, which is not a typed UAV");
             _usedUavs.Add(u);
             string c = USource(o[1]);
+            if (Mirrored(u))
+            {
+                string i = $"_w{_tmp++}";
+                Line($"let {i} = {MirrorWord(u, c)};");
+                Line($"if ({i} < arrayLength(&u{u})) {{ atomicStore(&u{u}[{i}], {USource(o[2])}.x); }}");
+                return;
+            }
             if (d.Dim == DimBuffer)
             {
                 int words = UavWords(u);
@@ -358,11 +409,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             bool imm = ins.Op.ToString().StartsWith("Imm", StringComparison.Ordinal);
             int k = imm ? 1 : 0;
             var target = o[k];
-            if (target.Type == OperandType.UnorderedAccessView && _uavs.TryGetValue(target.Index0, out var d) && d.Kind == 't' && d.Dim != DimBuffer)
-                throw new NotSupportedException($"{DxbcOpcodes.Info(ins.Op).Name} on typed UAV texture u{target.Index0}: WGSL has no texture atomics");
             var (array, _) = WordArray(target);
             if (target.Type == OperandType.UnorderedAccessView) _atomicUavs.Add(target.Index0);
             string address = AtomicWord(target, o[k + 1]);
+            if (target.Type == OperandType.UnorderedAccessView && Mirrored(target.Index0))
+            {
+                // outside the view the access is dropped (an immediate one returns 0): aim it at a
+                // word of scratch instead -- the mirror's last word is padding past every row
+                address = $"select(arrayLength(&{array}) - 1u, {address}, {address} < arrayLength(&{array}) - 1u)";
+            }
             string p = $"&{array}[{address}]";
             string a = USource(o[k + 2]) + ".x";
             string call = ins.Op switch
@@ -416,6 +471,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             if (target.Type == OperandType.UnorderedAccessView && _uavs.TryGetValue(target.Index0, out var d))
             {
                 if (d.Kind == 's') return $"(({c}).x * {Math.Max(4, d.Stride) / 4}u + ({c}).y / 4u)";
+                if (d.Kind == 't' && d.Dim != DimBuffer) return $"min({MirrorWord(target.Index0, c)}, arrayLength(&u{target.Index0}))";
                 if (d.Kind == 't') return $"(({c}).x * {UavWords(target.Index0)}u)";
                 return $"(({c}).x / 4u)";
             }
@@ -453,10 +509,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             {
                 if (!_usedUavs.Contains(u) && !_atomicUavs.Contains(u)) continue;
                 string binding = $"@group({_group}) @binding({UavBase + u})";
-                if (d.Kind == 't' && d.Dim != DimBuffer)
+                if (d.Kind == 't' && d.Dim != DimBuffer && !Mirrored(u))
                     w.Append($"{binding} var u{u}: {StorageTextureType(d.Dim, UavFormat(u, d.Ret), _uavRead.Contains(u))};\n");
                 else
                     w.Append($"{binding} var<storage, read_write> u{u}: array<{(_atomicUavs.Contains(u) ? "atomic<u32>" : "u32")}>;\n");
+                if (Mirrored(u)) w.Append(MirrorHelpers(u, d.Dim));
             }
             foreach (int u in _usedCounters.OrderBy(x => x))
                 w.Append($"@group({_group}) @binding({CounterBase + u}) var<storage, read_write> uc{u}: atomic<u32>;\n");

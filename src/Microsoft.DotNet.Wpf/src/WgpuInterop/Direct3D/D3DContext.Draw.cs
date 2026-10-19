@@ -177,7 +177,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             foreach (var (slot, u) in b.Uavs)
             {
                 var e = new WGPUBindGroupLayoutEntry { binding = (uint)(DxbcTranslator.UavBase + slot), visibility = stage };
-                if (u.Kind == 't' && u.Dim != 1)
+                if (u.Kind == 't' && u.Dim != 1 && !b.MirroredUavs.Contains(slot))
                 {
                     var view = uavs != null && slot < uavs.Length ? uavs[slot] : null;
                     e.storageTexture = new WGPUStorageTextureBindingLayout
@@ -514,6 +514,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 var view = uavs != null && slot < uavs.Length ? uavs[slot] : null;
                 uint binding = (uint)(DxbcTranslator.UavBase + slot);
+                if (b.MirroredUavs.Contains(slot))
+                {
+                    if (view?.Resource is not D3DTexture2D) throw new InvalidOperationException($"u{slot}: no texture UAV bound to mirror");
+                    entries.Add(new WGPUBindGroupEntry { binding = binding, buffer = view.MirrorBuffer(), offset = 0, size = view.MirrorBytes });
+                    continue;
+                }
                 if (u.Kind == 't' && u.Dim != 1)
                 {
                     if (view?.View is not IntPtr tv || tv == IntPtr.Zero) throw new InvalidOperationException($"u{slot}: no texture UAV bound (an unbound typed UAV texture has no WebGPU stand-in)");

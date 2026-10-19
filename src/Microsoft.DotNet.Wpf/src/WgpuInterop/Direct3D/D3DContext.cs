@@ -531,30 +531,53 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     var (dm, dl) = dt.Split(ds);
                     var (sm, sl) = st.Split(ss);
                     uint w = Math.Max(1, st.Desc.Width >> (int)sm), h = Math.Max(1, st.Desc.Height >> (int)sm);
-                    uint sx = 0, sy = 0;
-                    if (box is { } b) { sx = b.left; sy = b.top; w = b.right - b.left; h = b.bottom - b.top; }
+                    uint sx = 0, sy = 0, sz = 0, depth = st.DepthAt(sm);
+                    if (box is { } b) { sx = b.left; sy = b.top; w = b.right - b.left; h = b.bottom - b.top; if (st.Kind == 3) { sz = b.front; depth = b.back - b.front; } }
                     if (Formats.IsBlockCompressed(st.Desc.Format)) { w = (w + 3) & ~3u; h = (h + 3) & ~3u; }
-                    var size = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = 1 };
+                    // a 3D texture copies its slices (its subresource is a whole level): z is the slice, not the layer
+                    if (st.Kind == 3) sl = sz;
+                    if (dt.Kind == 3) dl = whole ? 0 : dz;
+                    var size = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = st.Kind == 3 ? Math.Max(1, depth) : 1 };
                     if (dt.IsStaging && !st.IsStaging)
                     {
                         if (st.SampleCount > 1) { D3DLog.Once("copy-ms", "copy from a multisampled texture"); return; }
                         var from = new WGPUTexelCopyTextureInfo { texture = st.Gpu, mipLevel = sm, origin = new WGPUOrigin3D { x = sx, y = sy, z = sl }, aspect = WGPUTextureAspect.All };
                         uint bpe = Formats.TexelBytes(dt.Desc.Format);
                         ulong rowOff = Formats.IsBlockCompressed(dt.Desc.Format) ? (ulong)(dy / 4) * dt.SubresourceRowPitch[ds] + dx / 4 * bpe : (ulong)dy * dt.SubresourceRowPitch[ds] + dx * bpe;
+                        if (dt.Kind == 3) { rowOff += (ulong)dl * dt.SubresourceRowPitch[ds] * dt.SubresourceRows[ds]; dl = 0; }
                         var to = new WGPUTexelCopyBufferInfo
                         {
                             buffer = dt.Staging,
                             layout = new WGPUTexelCopyBufferLayout { offset = dt.SubresourceOffset[ds] + rowOff, bytesPerRow = dt.SubresourceRowPitch[ds], rowsPerImage = dt.SubresourceRows[ds] },
                         };
-                        wgpuCommandEncoderCopyTextureToBuffer(enc, &from, &to, &size);
+                        if (GlVolume(st, from, size))
+                        {
+                            // slices from z > 0: through a buffer (right from z = 0), into a texture of
+                            // their own (buffer to texture is right), then from its z = 0
+                            var (scratch, layout) = GlSlicesToBuffer(enc, st, from, size);
+                            var td = new WGPUTextureDescriptor
+                            {
+                                usage = WGPUTextureUsage.CopySrc | WGPUTextureUsage.CopyDst, dimension = WGPUTextureDimension._3D,
+                                size = size, format = st.Format, mipLevelCount = 1, sampleCount = 1,
+                            };
+                            IntPtr temp = wgpuDeviceCreateTexture(Device.Gpu.Device, &td);
+                            var at = new WGPUTexelCopyTextureInfo { texture = temp, aspect = WGPUTextureAspect.All };
+                            var via = new WGPUTexelCopyBufferInfo { buffer = scratch, layout = layout };
+                            wgpuCommandEncoderCopyBufferToTexture(enc, &via, &at, &size);
+                            wgpuCommandEncoderCopyTextureToBuffer(enc, &at, &to, &size);
+                            wgpuTextureRelease(temp);      // the encoder keeps both until the copies ran
+                            wgpuBufferRelease(scratch);
+                        }
+                        else wgpuCommandEncoderCopyTextureToBuffer(enc, &from, &to, &size);
                     }
                     else if (!dt.IsStaging && st.IsStaging)
                     {
                         uint bpe = Formats.TexelBytes(st.Desc.Format);
+                        ulong sliceOff = st.Kind == 3 ? (ulong)sz * st.SubresourceRowPitch[ss] * st.SubresourceRows[ss] : 0;
                         var from = new WGPUTexelCopyBufferInfo
                         {
                             buffer = st.Staging,
-                            layout = new WGPUTexelCopyBufferLayout { offset = st.SubresourceOffset[ss] + (ulong)sy * st.SubresourceRowPitch[ss] + sx * bpe, bytesPerRow = st.SubresourceRowPitch[ss], rowsPerImage = st.SubresourceRows[ss] },
+                            layout = new WGPUTexelCopyBufferLayout { offset = st.SubresourceOffset[ss] + sliceOff + (ulong)sy * st.SubresourceRowPitch[ss] + sx * bpe, bytesPerRow = st.SubresourceRowPitch[ss], rowsPerImage = st.SubresourceRows[ss] },
                         };
                         var to = new WGPUTexelCopyTextureInfo { texture = dt.Gpu, mipLevel = dm, origin = new WGPUOrigin3D { x = dx, y = dy, z = dl }, aspect = WGPUTextureAspect.All };
                         wgpuCommandEncoderCopyBufferToTexture(enc, &from, &to, &size);
@@ -564,12 +587,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                         if (st.SampleCount > 1 || dt.SampleCount > 1) { D3DLog.Once("copy-ms", "copy of a multisampled texture"); return; }
                         var from = new WGPUTexelCopyTextureInfo { texture = st.Gpu, mipLevel = sm, origin = new WGPUOrigin3D { x = sx, y = sy, z = sl }, aspect = WGPUTextureAspect.All };
                         var to = new WGPUTexelCopyTextureInfo { texture = dt.Gpu, mipLevel = dm, origin = new WGPUOrigin3D { x = dx, y = dy, z = dl }, aspect = WGPUTextureAspect.All };
-                        wgpuCommandEncoderCopyTextureToTexture(enc, &from, &to, &size);
+                        if (st.Kind == 3 && Device.Gpu.IsOpenGL && (size.depthOrArrayLayers > 1 || from.origin.z > 0))
+                        {
+                            // wgpu's GL backend copies a 3D texture's slice 0 alone to another texture:
+                            // the slices go through a buffer instead (buffer to texture is right)
+                            var (scratch, layout) = GlSlicesToBuffer(enc, st, from, size);
+                            var via = new WGPUTexelCopyBufferInfo { buffer = scratch, layout = layout };
+                            wgpuCommandEncoderCopyBufferToTexture(enc, &via, &to, &size);
+                            wgpuBufferRelease(scratch);
+                        }
+                        else wgpuCommandEncoderCopyTextureToTexture(enc, &from, &to, &size);
                     }
                     else
                     {
                         // staging to staging: both are mapped buffers; copy the subresource rows
-                        ulong n = Math.Min((ulong)st.SubresourceRowPitch[ss] * st.SubresourceRows[ss], (ulong)dt.SubresourceRowPitch[ds] * dt.SubresourceRows[ds]);
+                        ulong n = Math.Min((ulong)st.SubresourceRowPitch[ss] * st.SubresourceRows[ss] * st.DepthAt(sm), (ulong)dt.SubresourceRowPitch[ds] * dt.SubresourceRows[ds] * dt.DepthAt(dm));
                         wgpuCommandEncoderCopyBufferToBuffer(enc, st.Staging, st.SubresourceOffset[ss], dt.Staging, dt.SubresourceOffset[ds], n & ~3UL);
                     }
                 }
@@ -577,6 +609,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 return;
             }
             D3DLog.Once("copy-kinds", $"copy from {src.GetType().Name} to {dst.GetType().Name}");
+        }
+
+        // ---- 3D textures on wgpu's GL backend -------------------------------------------------------------
+        //
+        // wgpu-hal's GL queue (wgpu-native v29) gets two 3D copies wrong: a texture-to-buffer copy reads
+        // slices origin.z..depth (not origin.z..origin.z+depth) to offsets counted from slice 0, so
+        // only a copy from z = 0 is right; and a texture-to-texture copy moves slice 0 alone. A buffer-
+        // to-texture copy is right. So a 3D copy from z > 0, or to another texture, goes through a
+        // buffer read from z = 0 (D3DTextureUploadTests.Texture3D_EverySliceReadsBackAsWritten).
+
+        /// <summary>Whether a texture-to-buffer copy of <paramref name="size"/> from <paramref name="from"/>
+        /// needs the way around (GL, a 3D texture, from z &gt; 0).</summary>
+        private bool GlVolume(D3DTexture2D t, in WGPUTexelCopyTextureInfo from, in WGPUExtent3D size) => t.Kind == 3 && from.origin.z > 0 && Device.Gpu.IsOpenGL;
+
+        /// <summary>Slices from.origin.z .. +size.depth of a 3D texture into a new buffer (the caller
+        /// releases it once the copies using it are recorded), read from z = 0; the layout locates the
+        /// first wanted slice.</summary>
+        private (IntPtr Buffer, WGPUTexelCopyBufferLayout Layout) GlSlicesToBuffer(IntPtr enc, D3DTexture2D t, WGPUTexelCopyTextureInfo from, WGPUExtent3D size)
+        {
+            bool bc = Formats.IsBlockCompressed(t.Desc.Format);
+            uint rowBytes = (bc ? (size.width + 3) / 4 : size.width) * Formats.TexelBytes(t.Desc.Format);
+            uint pitch = (rowBytes + 255) & ~255u, rows = bc ? (size.height + 3) / 4 : size.height;
+            uint z0 = from.origin.z, slices = z0 + size.depthOrArrayLayers;
+            ulong slice = (ulong)pitch * rows;
+            IntPtr scratch = Device.Gpu.CreateBuffer(Math.Max(256, slice * slices), WGPUBufferUsage.CopySrc | WGPUBufferUsage.CopyDst);
+            from.origin.z = 0;
+            var all = new WGPUExtent3D { width = size.width, height = size.height, depthOrArrayLayers = slices };
+            var to = new WGPUTexelCopyBufferInfo { buffer = scratch, layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = pitch, rowsPerImage = rows } };
+            wgpuCommandEncoderCopyTextureToBuffer(enc, &from, &to, &all);
+            return (scratch, new WGPUTexelCopyBufferLayout { offset = slice * z0, bytesPerRow = pitch, rowsPerImage = rows });
         }
 
         public void UpdateSubresource(D3DResource dst, uint sub, D3D11_BOX* box, void* data, uint rowPitch, uint depthPitch)

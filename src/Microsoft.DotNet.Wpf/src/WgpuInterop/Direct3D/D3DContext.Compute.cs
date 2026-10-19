@@ -131,6 +131,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             try { group = BindGroup(t.Layout, t.Bindings!, _cs, _csUav); }
             catch (InvalidOperationException e) { DispatchesSkipped++; D3DLog.Once("csbind:" + e.Message, "Dispatch skipped: " + e.Message); return; }
             _storageWritten = true;
+            // atomics on a texture: its R32 mirror holds the texels for the dispatch
+            foreach (int slot in t.Bindings!.MirroredUavs) _csUav[slot]!.CopyMirror(Encoder(), toMirror: true);
             IntPtr pass = wgpuCommandEncoderBeginComputePass(Encoder(), null);
             wgpuComputePassEncoderSetPipeline(pass, t.Pipeline);
             wgpuComputePassEncoderSetBindGroup(pass, 0, group, 0, null);
@@ -138,6 +140,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             else wgpuComputePassEncoderDispatchWorkgroups(pass, x, y, z);
             wgpuComputePassEncoderEnd(pass);
             wgpuComputePassEncoderRelease(pass);
+            foreach (int slot in t.Bindings!.MirroredUavs) _csUav[slot]!.CopyMirror(Encoder(), toMirror: false);
             wgpuBindGroupRelease(group);
             DispatchesIssued++;
             foreach (var (slot, _) in t.Bindings!.Uavs)

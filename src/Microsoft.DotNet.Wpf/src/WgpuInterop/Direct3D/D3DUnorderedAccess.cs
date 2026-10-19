@@ -102,6 +102,55 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             _ => throw new NotSupportedException($"a storage texture of format {Desc.Format}"),
         };
 
+        /// <summary>The view's size in texels (width, height, layers or depth) at its mip.</summary>
+        public (uint W, uint H, uint D) TexelSize
+        {
+            get
+            {
+                var t = (D3DTexture2D)Resource;
+                uint w = Math.Max(1, t.Desc.Width >> (int)Mip), h = t.Kind == 1 ? 1 : Math.Max(1, t.Desc.Height >> (int)Mip);
+                uint d = t.Kind == 3 ? t.DepthAt(Mip) : Desc.ViewDimension is 3 or 5 ? Math.Max(1, Desc.U2) : 1;
+                return (w, h, d);
+            }
+        }
+
+        private IntPtr _mirror;
+
+        /// <summary>Bytes of the R32 mirror of this texture view (atomics on it, DxbcTranslator.Uav.cs):
+        /// its texels with rows MirrorPitch apart, and one word of scratch after.</summary>
+        public ulong MirrorBytes { get { var (w, h, d) = TexelSize; return (Dxbc.DxbcTranslator.MirrorHeaderWords + (ulong)Dxbc.DxbcTranslator.MirrorPitch(w) * h * d + 1) * 4; } }
+
+        public IntPtr MirrorBuffer()
+        {
+            if (_mirror == IntPtr.Zero)
+            {
+                _mirror = Device.Gpu.CreateBuffer((MirrorBytes + 255) & ~255UL, WGPUBufferUsage.Storage | WGPUBufferUsage.CopySrc | WGPUBufferUsage.CopyDst);
+                var (w, h, d) = TexelSize;
+                Device.Gpu.WriteBuffer(_mirror, 0, System.Runtime.InteropServices.MemoryMarshal.AsBytes<uint>(stackalloc uint[] { w, h, d, 0 }));
+            }
+            return _mirror;
+        }
+
+        /// <summary>Copies between the texture and its mirror, in <paramref name="encoder"/>.</summary>
+        public void CopyMirror(IntPtr encoder, bool toMirror)
+        {
+            var t = (D3DTexture2D)Resource;
+            var (w, h, d) = TexelSize;
+            uint first = Desc.ViewDimension is 3 or 5 ? Desc.U1 : 0;
+            uint pitch = Dxbc.DxbcTranslator.MirrorPitch(w) * 4;
+            // a 3D view is one copy from z = 0 (the only form wgpu's GL backend copies right, see
+            // D3DContext.CopyImpl); an array's layers are copied one by one
+            bool volume = t.Kind == 3;
+            for (uint z = 0; z < (volume ? 1 : d); z++)
+            {
+                var tex = new WGPUTexelCopyTextureInfo { texture = t.Gpu, mipLevel = Mip, origin = new WGPUOrigin3D { z = first + z }, aspect = WGPUTextureAspect.All };
+                var buf = new WGPUTexelCopyBufferInfo { buffer = MirrorBuffer(), layout = new WGPUTexelCopyBufferLayout { offset = Dxbc.DxbcTranslator.MirrorHeaderWords * 4 + (ulong)pitch * h * z, bytesPerRow = pitch, rowsPerImage = h } };
+                var size = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = volume ? d : 1 };
+                if (toMirror) wgpuCommandEncoderCopyTextureToBuffer(encoder, &tex, &buf, &size);
+                else wgpuCommandEncoderCopyBufferToTexture(encoder, &buf, &tex, &size);
+            }
+        }
+
         /// <summary>A typed buffer view's element size in 32-bit words (the translator's specialization).</summary>
         public int BufferWords => Math.Max(1, (int)Formats.TexelBytes(Desc.Format) / 4);
 
@@ -116,6 +165,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             if (View != IntPtr.Zero) wgpuTextureViewRelease(View);
             if (Counter != IntPtr.Zero) wgpuBufferRelease(Counter);
+            if (_mirror != IntPtr.Zero) wgpuBufferRelease(_mirror);
+            _mirror = IntPtr.Zero;
             View = Counter = IntPtr.Zero;
             base.OnFinalRelease();
         }

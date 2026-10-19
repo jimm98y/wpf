@@ -303,7 +303,10 @@ fails the translation and names itself.
   - `sample`, `_b`, `_l`, `_d`, `_c`, `_c_lz`, `gather4` with offset and compare variants, `ld`, `ld_ms`.
   - `resinfo`, `sampleinfo`, `samplepos`, `lod`.
   - UAVs: typed `RWTexture*`, raw and structured buffers, loads and stores, and every atomic and
-    immediate atomic (on `atomic<u32>` storage).
+    immediate atomic (on `atomic<u32>` storage). WGSL has no texture atomics: an R32 typed UAV
+    texture used atomically is bound as its mirror, a buffer of the view's texels (a 256-byte header
+    with the view's size, rows 256 bytes apart, one scratch word for accesses outside the view),
+    which the device copies in before the dispatch and back after.
   - Append/consume counters, as atomics on a hidden counter buffer.
   - Groupshared memory (`var<workgroup>`), barriers (`sync_*`), and derivatives, including coarse and
     fine.
@@ -468,6 +471,13 @@ green throughout.
     that buffer instead of its data. The context clears the binding after each submission that
     wrote storage (D3DContext.ResetGlUnpackBinding); D3DTextureUploadTests and the
     WriteTextureProbeTests repro hold it.
+  - Texture atomics through an R32 mirror buffer (3D, 2D and 1D, returned values, compare-exchange,
+    accesses outside the view, GetDimensions: the corpus matches WARP). 3D copies on GL: wgpu-hal's
+    GL queue (v29) copies only slice 0 of a 3D texture to another texture, and a texture-to-buffer
+    copy from z > 0 reads the wrong slices to the wrong offsets. Such copies go through a buffer
+    read from z = 0 (D3DContext.GlSlicesToBuffer); before the fix a CopyResource of a 3D texture to
+    another texture, and any readback of slices from z > 0, lost every slice but the first
+    (D3DTextureUploadTests.Texture3D_EverySliceReadsBackAsWritten).
   - Doubles, exactly: every double instruction (SM5.0 and the 11.1 extensions) on IEEE binary64
     emulated in integer arithmetic after SoftFloat's algorithms -- round to nearest even,
     subnormals kept, a fused dfma -- so no lower-precision fallback is needed. SoftDoubleTests
