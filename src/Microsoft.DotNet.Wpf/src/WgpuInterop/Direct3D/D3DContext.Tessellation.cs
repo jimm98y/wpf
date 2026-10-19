@@ -59,7 +59,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 }).ToList();
                 var v = DxbcTranslator.TranslateVertexCompute(vs.Code, fetch);
                 var h = DxbcTranslator.TranslateHull(hs.Code, vs.Code, v.OutputRegisters);
-                var link = DxbcTranslator.LinkageOf(ps?.Code);
+                var link = DxbcTranslator.LinkageOf(ps?.Code, ds.Code);
                 var d = DxbcTranslator.TranslateDomain(ds.Code, hs.Code, h.ControlPointRegisters, h.PatchConstantRegisters, link);
                 foreach (string a in v.Approximations.Concat(h.Approximations).Concat(d.Approximations)) D3DLog.Once("approx:" + a, "shader approximation: " + a);
                 t.Info = HullInfo.Of(hs.Code);
@@ -351,7 +351,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     if (t.Info.InputPrimitive != want) throw new NotSupportedException($"a geometry shader of input primitive {t.Info.InputPrimitive} after tessellation that makes primitive {want} (D3D rejects it)");
                     var dsc = DxbcTranslator.TranslateDomain(ds.Code, _hs.Shader!.Code, tt.CpRegs, tt.PcRegs, Array.Empty<LinkedElement>(), compute: true);
                     var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, ds.Code, dsc.OutputRegisters, new TranslationOptions { IndexedInput = true });
-                    var link = DxbcTranslator.LinkageOf(ps?.Code);
+                    var link = DxbcTranslator.LinkageOf(ps?.Code, gs.Code);
                     var pass = DxbcTranslator.PassThrough(gs.Code, link);
                     if (pass.SelectsLayer || pass.SelectsViewport) D3DLog.Once("tsgslayer", "array slices and viewports picked by a geometry shader after tessellation: drawn to slice and viewport 0");
                     t.SelectsAny = pass.SelectsLayer || pass.SelectsViewport;

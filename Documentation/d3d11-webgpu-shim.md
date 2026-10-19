@@ -315,6 +315,13 @@ fails the translation and names itself.
 - **System values.** `SV_*` map to builtins where WebGPU has them. The rest are emulated:
   - `SV_PrimitiveID` from the vertex index, or from the GS/HS expansion.
   - `SV_RenderTargetArrayIndex` and `SV_ViewportArrayIndex` through the GS path, by layered passes.
+  - `SV_CullDistance` (WGSL has none): each vertex sends the pixel shader, per distance, 0 when its
+    distance is negative and 1 when not, interpolated linear and centroid. Over a primitive where
+    every vertex sent 0 that is exactly 0 (a sum of zeros), and inside any other it is above 0, so
+    the pixel shader discards where it is 0. That culls the whole primitives D3D culls and keeps
+    whole the ones it keeps. Not applied, with a log line, without a pixel shader or with no
+    inter-stage variable left. A clip or cull distance the pixel shader reads is linked like any
+    value.
 - **Stages.**
   - VS, PS and CS natively.
   - GS through the compute expansion (section 6).
