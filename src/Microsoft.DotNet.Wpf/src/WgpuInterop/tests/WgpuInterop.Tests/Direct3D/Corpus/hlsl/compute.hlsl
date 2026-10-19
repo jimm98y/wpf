@@ -108,9 +108,26 @@ void cs_double_ext(uint3 dt : SV_DispatchThreadID)
 }
 #endif
 
-// an atomic on a typed UAV texture (WGSL has none: needs the texture-atomic feature)
-[numthreads(8, 1, 1)]
-void cs_texture_atomic(uint3 dt : SV_DispatchThreadID)
+// atomics on typed UAV textures (WGSL has none: the device mirrors an R32 texture by a buffer):
+// 3D, 2D and 1D, returned values, a compare-exchange, accesses outside the view and GetDimensions
+RWTexture2D<int> ti : register(u0);       // u0 and u1 are other shaders'; at FL 11_0 a CS has eight UAVs
+RWTexture1D<uint> t1 : register(u1);
+[numthreads(8, 4, 1)]
+void cs_texture_atomic(uint3 dt : SV_DispatchThreadID, uint gi : SV_GroupIndex)
 {
-    InterlockedMax(u3[uint3(dt.x, 0, 0)], dt.x);
+    InterlockedMax(u3[uint3(dt.x, 0, dt.y)], dt.x);
+    int was;
+    InterlockedAdd(ti[dt.xy & 7], (int)dt.x - 5, was);
+    uint old;
+    InterlockedCompareExchange(t1[dt.x & 3], dt.y, dt.y + 100, old);   // every thread that can win writes the same
+    InterlockedOr(u3[uint3(dt.x + 40, 0, 0)], 1);        // outside the view: dropped
+    uint w, h, d, w1;
+    u3.GetDimensions(w, h, d);
+    t1.GetDimensions(w1);
+    uint2 dims;
+    ti.GetDimensions(dims.x, dims.y);
+    // the order of the adds is unknown: only what does not depend on it is stored
+    raw.Store(gi * 4, (w + h * 100 + d * 10000 + w1 * 1000000 + dims.x + dims.y) ^ (uint)(was & 0) ^ (old & 0));
+    InterlockedXor(ti[uint2(dt.x, 31)], 1);              // outside the view: dropped
+    if (dt.y == 0) t1[dt.x + 4] = t1[dt.x + 4] + 1;      // a plain load and store of a mirrored texture
 }

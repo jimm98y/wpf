@@ -55,6 +55,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         public readonly SortedSet<int> Counters = new();
         /// <summary>Typed UAV textures the shader reads (read_write); the others are write-only.</summary>
         public readonly SortedSet<int> UavReads = new();
+        /// <summary>Typed UAV textures used atomically: bound as their R32 mirror buffer (DxbcTranslator.Uav.cs).</summary>
+        public readonly SortedSet<int> MirroredUavs = new();
         /// <summary>The vertex shader reads SV_VertexID or SV_InstanceID: the draw's base vertex and
         /// start instance at binding <see cref="DxbcTranslator.DrawParamsBinding"/> (WebGPU's indices
         /// include them, D3D's do not).</summary>
@@ -162,6 +164,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             foreach (int u in _usedCounters) _bindings.Counters.Add(u);
             foreach (int t in _usedRawSrvs) _bindings.StorageResources.Add(t);
             foreach (int u in _uavRead) _bindings.UavReads.Add(u);
+            foreach (int u in MirroredUavs) _bindings.MirroredUavs.Add(u);
             Wgsl = Assemble();
         }
 

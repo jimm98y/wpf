@@ -233,6 +233,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         private void EmitResInfo(Instruction ins)
         {
             var o = ins.Operands;
+            if (o[2].Type == OperandType.UnorderedAccessView) { EmitUavResInfo(ins); return; }
             int t = o[2].Index0;
             UseResource(t, false);
             int dim = ResourceDim(t);
@@ -259,6 +260,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 _ => $"vec4<f32>({dims})",
             };
             if (ret == 1) v = $"vec4<f32>(({v}).xyz, f32(({dims}).w))";   // rcpfloat leaves the level count as it is
+            Store(o[0], $"({v}){Swz(o[2])}", ins.Saturate);
+        }
+
+        /// <summary>resinfo of a typed UAV texture: its view's size (one level).</summary>
+        private void EmitUavResInfo(Instruction ins)
+        {
+            var o = ins.Operands;
+            int u = o[2].Index0;
+            if (!_uavs.TryGetValue(u, out var d) || d.Kind != 't' || d.Dim == DimBuffer) throw new NotSupportedException($"resinfo on u{u}, which is not a typed UAV texture");
+            _usedUavs.Add(u);
+            int ret = (int)((ins.Token >> 11) & 3);
+            string dims;
+            if (Mirrored(u))
+            {
+                string s = $"dx_msize{u}()";
+                dims = d.Dim switch
+                {
+                    Dim1D => $"vec4<u32>({s}.x, 0u, 0u, 1u)",
+                    Dim1DArray => $"vec4<u32>({s}.xz, 0u, 1u)",
+                    Dim2D => $"vec4<u32>({s}.xy, 0u, 1u)",
+                    _ => $"vec4<u32>({s}, 1u)",
+                };
+            }
+            else
+            {
+                string tex = $"u{u}";
+                dims = d.Dim switch
+                {
+                    Dim1D => $"vec4<u32>(textureDimensions({tex}).x, 0u, 0u, 1u)",
+                    Dim1DArray => $"vec4<u32>(textureDimensions({tex}).x, textureNumLayers({tex}), 0u, 1u)",
+                    Dim2D => $"vec4<u32>(textureDimensions({tex}), 0u, 1u)",
+                    Dim2DArray => $"vec4<u32>(textureDimensions({tex}), textureNumLayers({tex}), 1u)",
+                    _ => $"vec4<u32>(textureDimensions({tex}), 1u)",
+                };
+            }
+            string v = ret switch
+            {
+                2 => $"bitcast<vec4<f32>>({dims})",
+                1 => $"vec4<f32>((vec4<f32>(1.0f) / vec4<f32>({dims})).xyz, f32(({dims}).w))",
+                _ => $"vec4<f32>({dims})",
+            };
             Store(o[0], $"({v}){Swz(o[2])}", ins.Saturate);
         }
 

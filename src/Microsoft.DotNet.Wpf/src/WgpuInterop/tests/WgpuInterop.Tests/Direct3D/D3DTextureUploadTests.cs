@@ -48,6 +48,80 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures.GetRange(0, Math.Min(20, failures.Count))));
         }
 
+        /// <summary>A 3D texture's every slice: initial data, a box in slice 2, CopyResource into staging
+        /// and a CopySubresourceRegion of slices 1..2 into another (a copy once moved slice 0 alone).</summary>
+        [Fact]
+        public void Texture3D_EverySliceReadsBackAsWritten()
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            IntPtr dev, ctx;
+            uint level;
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &dev, &level, &ctx) >= 0, "shim");
+            var made = new List<IntPtr>();
+            try
+            {
+                const uint W = 16, H = 8, D = 4;
+                var data = new uint[W * H * D];
+                for (uint i = 0; i < data.Length; i++) data[i] = i * 2654435761u;
+                var td = new D3D11_TEXTURE3D_DESC { Width = W, Height = H, Depth = D, MipLevels = 1, Format = DXGI_FORMAT.R32_UINT, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.SHADER_RESOURCE };
+                IntPtr tex;
+                fixed (uint* p = data)
+                {
+                    var init = new D3D11_SUBRESOURCE_DATA { pSysMem = p, SysMemPitch = W * 4, SysMemSlicePitch = W * H * 4 };
+                    Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE3D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture3D))(dev, &td, &init, &tex), "CreateTexture3D");
+                }
+                made.Add(tex);
+                var patch = new uint[] { 0xAAAA0001, 0xAAAA0002, 0xAAAA0003, 0xAAAA0004 };
+                var box = new D3D11_BOX { left = 5, top = 3, front = 2, right = 7, bottom = 5, back = 3 };
+                fixed (uint* p = patch)
+                    ((delegate* unmanaged<IntPtr, IntPtr, uint, D3D11_BOX*, void*, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.UpdateSubresource))(ctx, tex, 0, &box, p, 8, 16);
+                for (uint r = 0; r < 2; r++) { data[2 * W * H + (3 + r) * W + 5] = patch[r * 2]; data[2 * W * H + (3 + r) * W + 6] = patch[r * 2 + 1]; }
+
+                td.Usage = D3D11_USAGE.STAGING; td.BindFlags = 0; td.CPUAccessFlags = D3D11_CPU_ACCESS.READ;
+                IntPtr whole, part;
+                Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE3D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture3D))(dev, &td, null, &whole), "staging");
+                made.Add(whole);
+                Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE3D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture3D))(dev, &td, null, &part), "staging");
+                made.Add(part);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopyResource))(ctx, whole, tex);
+                var slices = new D3D11_BOX { left = 0, top = 0, front = 1, right = W, bottom = H, back = 3 };
+                ((delegate* unmanaged<IntPtr, IntPtr, uint, uint, uint, uint, IntPtr, uint, D3D11_BOX*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopySubresourceRegion))(ctx, part, 0, 0, 0, 1, tex, 0, &slices);
+                // and texture to texture: slices 1..2 into a default texture at the same place, read back whole
+                td.Usage = D3D11_USAGE.DEFAULT; td.BindFlags = D3D11_BIND.SHADER_RESOURCE; td.CPUAccessFlags = 0;
+                IntPtr gpuCopy, gpuBack;
+                Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE3D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture3D))(dev, &td, null, &gpuCopy), "copy");
+                made.Add(gpuCopy);
+                ((delegate* unmanaged<IntPtr, IntPtr, uint, uint, uint, uint, IntPtr, uint, D3D11_BOX*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopySubresourceRegion))(ctx, gpuCopy, 0, 0, 0, 1, tex, 0, &slices);
+                td.Usage = D3D11_USAGE.STAGING; td.BindFlags = 0; td.CPUAccessFlags = D3D11_CPU_ACCESS.READ;
+                Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE3D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture3D))(dev, &td, null, &gpuBack), "staging");
+                made.Add(gpuBack);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopyResource))(ctx, gpuBack, gpuCopy);
+
+                IntPtr context = ctx;
+                string? Check3D(IntPtr st, uint from, uint to)
+                {
+                    IntPtr ctx = context;
+                    D3D11_MAPPED_SUBRESOURCE map;
+                    Check(((delegate* unmanaged<IntPtr, IntPtr, uint, D3D11_MAP, uint, D3D11_MAPPED_SUBRESOURCE*, int>)Fn(ctx, Vtbl.ID3D11DeviceContext.Map))(ctx, st, 0, D3D11_MAP.READ, 0, &map), "Map");
+                    try
+                    {
+                        for (uint z = from; z < to; z++)
+                            for (uint y = 0; y < H; y++)
+                                for (uint x = 0; x < W; x++)
+                                {
+                                    uint got = *(uint*)((byte*)map.pData + z * map.DepthPitch + y * map.RowPitch + x * 4), want = data[(z * H + y) * W + x];
+                                    if (got != want) return $"texel ({x}, {y}, {z}) is 0x{got:x8}, written 0x{want:x8}";
+                                }
+                    }
+                    finally { ((delegate* unmanaged<IntPtr, IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Unmap))(ctx, st, 0); }
+                    return null;
+                }
+                string? w3 = Check3D(whole, 0, D), p3 = Check3D(part, 1, 3), g3 = Check3D(gpuBack, 1, 3);
+                Assert.True(w3 == null && p3 == null, $"CopyResource: {w3 ?? "ok"}; CopySubresourceRegion: {p3 ?? "ok"}; texture to texture: {g3 ?? "ok"}");
+            }
+            finally { foreach (var p in made) Release(p); Release(ctx); Release(dev); }
+        }
+
         /// <summary>The same uploads after a compute shader wrote a buffer that was then copied: on GL
         /// that leaves the buffer bound for unpacking (D3DContext.ResetGlUnpackBinding), and without
         /// the reset every texture uploaded after it read back as zero.</summary>
