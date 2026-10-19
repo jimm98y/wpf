@@ -47,6 +47,10 @@ internal sealed class Runner
         var merger = new DepsMerger(rid, fetcher);
         JsonObject? appDeps = File.Exists(App.Deps) ? DepsMerger.ReadJson(App.Deps) : null;
         JsonObject deps = merger.Merge(App, appDeps, OverlayDir, payloadDeps);
+        // app assemblies with [ComImport] types: rewritten copies in the cache (Documentation/comimport-rewriter.md)
+        var comNotes = new List<string>();
+        ComImportStep.Apply(deps, App.Directory, OverlayDir, Locations.CacheRoot, HostInfo.IsWindows,
+            Environment.GetEnvironmentVariable("WPF_COMIMPORT_REWRITE"), comNotes);
 
         var props = new Dictionary<string, string>
         {
@@ -81,7 +85,7 @@ internal sealed class Runner
         File.WriteAllText(depsPath, deps.ToJsonString(json));
         File.WriteAllLines(Path.Combine(cacheDir, "merge-report.txt"),
             new[] { $"app      {App.Dll}", $"overlay  {OverlayDir}", $"rid      {rid}", $"replaced {string.Join(", ", merger.Replaced)}" }
-                .Concat(merger.Notes));
+                .Concat(merger.Notes).Concat(comNotes));
 
         var psi = new ProcessStartInfo(HostInfo.DotnetMuxer())
         {
@@ -93,6 +97,7 @@ internal sealed class Runner
             Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(OverlayDir))!,
             Path.GetDirectoryName(App.Directory)!,
             fetcher.Root,
+            Locations.CacheRoot,            // comimport/: the rewritten COM-import assemblies
         };
         psi.ArgumentList.Add("exec");
         psi.ArgumentList.Add("--runtimeconfig");
@@ -118,7 +123,7 @@ internal sealed class Runner
         // The app's own children must not inherit a startup hook a parent shell may have set.
         psi.Environment.Remove("DOTNET_STARTUP_HOOKS");
 
-        return new Prepared(rcPath, depsPath, logPath, merger.Notes, merger.Replaced)
+        return new Prepared(rcPath, depsPath, logPath, merger.Notes.Concat(comNotes).ToList(), merger.Replaced)
         {
             StartInfo = psi,
             MergedDeps = deps,

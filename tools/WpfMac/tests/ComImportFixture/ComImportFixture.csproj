@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- An app-like assembly with [ComImport] interfaces, for ComRewriterTests: the tests rewrite it and
+       run the rewritten copy against COM objects of their own. -->
+  <PropertyGroup>
+    <AssemblyName>ComImportFixture</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CA1416;SYSLIB1096</NoWarn>
+  </PropertyGroup>
+</Project>
