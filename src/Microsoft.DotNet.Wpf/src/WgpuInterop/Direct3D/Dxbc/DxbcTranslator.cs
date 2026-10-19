@@ -55,6 +55,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         public readonly SortedSet<int> Counters = new();
         /// <summary>Typed UAV textures the shader reads (read_write); the others are write-only.</summary>
         public readonly SortedSet<int> UavReads = new();
+        /// <summary>The vertex shader reads SV_VertexID or SV_InstanceID: the draw's base vertex and
+        /// start instance at binding <see cref="DxbcTranslator.DrawParamsBinding"/> (WebGPU's indices
+        /// include them, D3D's do not).</summary>
+        public bool DrawParams;
     }
 
     internal sealed class LinkedElement
@@ -73,6 +77,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
     internal sealed partial class DxbcTranslator
     {
         public const int SamplerBase = 16, ResourceBase = 32;
+        /// <summary>A uniform vec4&lt;u32&gt; of the draw (base vertex, start instance): the binding no
+        /// constant buffer takes (D3D has b0..b13).</summary>
+        public const int DrawParamsBinding = 15;
 
         private readonly DxbcShader _s;
         private readonly int _group;
@@ -187,6 +194,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 }
                 case Opcode.DclInput:
                 case Opcode.DclInputPs:
+                    if (_s.Stage == ShaderStage.Geometry && ins.Operands[0].Type == OperandType.Input && ins.Operands[0].Indices.Length == 2) { _gsInputRegs.Add(ins.Operands[0].Index1); break; }
                     if (IsRegisterFile(ins.Operands[0])) _inputRegs.Add(ins.Operands[0].Index0);
                     if (ins.Op == Opcode.DclInputPs) _inputInterpolation[ins.Operands[0].Index0] = ins.Interpolation;
                     break;
@@ -194,6 +202,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 case Opcode.DclInputSiv:
                 case Opcode.DclInputPsSgv:
                 case Opcode.DclInputPsSiv:
+                    if (_s.Stage == ShaderStage.Geometry && ins.Operands[0].Indices.Length == 2) { _gsInputRegs.Add(ins.Operands[0].Index1); break; }
                     _inputRegs.Add(ins.Operands[0].Index0);
                     _inputSv[ins.Operands[0].Index0] = ins.SystemValue;
                     break;
@@ -270,6 +279,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             {
                 case OperandType.Temp: return $"r{o.Index0}";
                 case OperandType.Input:
+                    if (_form == StageForm.GeometryCompute) return GeometryInput(o);
                     if (o.Indices.Length == 1 && o.Indices[0].Relative == null) return $"v{o.Index0}";
                     if (o.Indices.Length == 1) { _indexedInputs = true; return $"dx_v[{IndexExpr(o.Indices[0])}]"; }
                     throw new NotSupportedException("two-dimensional input registers outside a geometry, hull or domain shader");
@@ -409,7 +419,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 case Opcode.Sync: EmitSync(ins); return;
                 case Opcode.Emit: case Opcode.Cut: case Opcode.EmitThenCut:
                 case Opcode.EmitStream: case Opcode.CutStream: case Opcode.EmitThenCutStream:
-                    throw new NotSupportedException("geometry shader instruction outside a geometry shader");
+                    EmitGeometry(ins); return;
             }
             if (info.Class == OpClass.Atomic) { EmitAtomic(ins); return; }
             throw new NotSupportedException($"instruction {info.Name}");
@@ -469,6 +479,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 
             switch (_s.Stage)
             {
+                case ShaderStage.Vertex when _form == StageForm.VertexCompute: AssembleVertexCompute(w); break;
+                case ShaderStage.Geometry when _form == StageForm.GeometryCompute: AssembleGeometryCompute(w); break;
                 case ShaderStage.Vertex: AssembleVertex(w); break;
                 case ShaderStage.Pixel: AssemblePixel(w); break;
                 case ShaderStage.Compute: AssembleCompute(w); break;

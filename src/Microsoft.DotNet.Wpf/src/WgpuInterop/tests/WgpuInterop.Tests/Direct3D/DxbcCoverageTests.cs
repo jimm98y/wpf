@@ -125,6 +125,65 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.True(failures.Count == 0, $"{compared} compared, {runOnly} run only; " + string.Join(Environment.NewLine, failures));
         }
 
+        /// <summary>Every geometry shader of the corpus draws on the shim what it draws on WARP, between
+        /// a generated vertex shader and pixel shader (DxbcGeometryParity): the compute expansion, its
+        /// primitive order and strips, and the pass-through linkage.</summary>
+        [Fact]
+        public unsafe void EveryCorpusGeometryShader_DrawsAsWarpDraws()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "real Direct3D 11 (WARP) and the HLSL compiler exist on Windows only");
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            var gaps = KnownGaps();
+            IntPtr wDev, wCtx, sDev, sCtx;
+            uint level, want = 0xb000;
+            Assert.True(RealCreateDevice(IntPtr.Zero, 5, IntPtr.Zero, 0, &want, 1, 7, &wDev, &level, &wCtx) >= 0, "WARP");
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &sDev, &level, &sCtx) >= 0, "shim");
+            var failures = new List<string>();
+            var notes = new List<string>();
+            int same = 0;
+            try
+            {
+                foreach (string f in Shaders().Where(f => Path.GetFileName(f).Contains(".gs_") || f.EndsWith(".gs")))
+                {
+                    string name = Path.GetFileName(f);
+                    if (gaps.ContainsKey(name)) continue;
+                    byte[] blob = File.ReadAllBytes(f);
+                    var gs = DxbcShader.Parse(blob);
+                    var info = GeometryInfo.Of(gs);
+                    if (DxbcGeometryParity.TopologyFor(info) is not { } topo) { notes.Add($"{name}: input primitive {info.InputPrimitive} not drawn here"); continue; }
+                    string profile = gs.Major >= 5 ? "_5_0" : "_4_0";
+                    byte[] vs = DxbcPixelParity.Compile(DxbcGeometryParity.VertexShaderFor(gs), "vs" + profile, out string? verr);
+                    if (vs.Length == 0) { failures.Add($"{name}: generated vertex shader: {verr?.Trim()}"); continue; }
+                    string psHlsl = DxbcGeometryParity.PixelShaderFor(gs);
+                    byte[] ps = DxbcPixelParity.Compile(psHlsl, "ps" + profile, out string? perr);
+                    if (ps.Length == 0) { failures.Add($"{name}: generated pixel shader: {perr?.Trim()}"); continue; }
+                    var psShader = DxbcShader.Parse(ps);
+                    var refl = DxbcPixelParity.Reflect(blob);
+                    float[] positions = DxbcGeometryParity.Positions(topo.Vertices);
+                    List<float[]> warp, shim;
+                    try { warp = DxbcGeometryParity.Draw(wDev, wCtx, vs, blob, ps, psShader, refl, topo.Topology, positions, 5); }
+                    catch (Exception e) { failures.Add($"{name}: WARP: {e.Message}"); continue; }
+                    try { shim = DxbcGeometryParity.Draw(sDev, sCtx, vs, blob, ps, psShader, refl, topo.Topology, positions, 5); }
+                    catch (Exception e) { failures.Add($"{name}: shim: {e.Message}"); continue; }
+                    int covered = DxbcPixelParity.Covered(warp);
+                    var (count, first) = DxbcPixelParity.Compare(warp, shim);
+                    if (count == 0) { same++; if (covered == 0) notes.Add($"{name}: draws nothing on WARP either (the shim covers {DxbcPixelParity.Covered(shim)}, {warp.Count} target(s))"); continue; }
+                    if (DxbcPixelParity.OnlyCoverageDiffers(warp, shim, 3) is int edge && edge > 0) { same++; notes.Add($"{name}: {edge} pixel(s) on an edge covered by one rasterizer only"); continue; }
+                    failures.Add($"{name}: {count} components differ (WARP covers {covered}, the shim {DxbcPixelParity.Covered(shim)}); {first}");
+                }
+            }
+            finally
+            {
+                var shimContext = Microsoft.Wpf.Interop.WebGpu.Direct3D.ComObject.From<D3DContext>(sCtx);
+                if (shimContext != null && shimContext.DrawsSkipped > 0) failures.Add($"the shim skipped {shimContext.DrawsSkipped} draw(s)");
+                foreach (IntPtr p in new[] { sCtx, sDev, wCtx, wDev })
+                    ((delegate* unmanaged<IntPtr, uint>)(*(IntPtr**)p)[2])(p);
+            }
+            Console.WriteLine($"  {same} geometry shaders draw as WARP draws");
+            foreach (string n in notes) Console.WriteLine("  " + n);
+            Assert.True(failures.Count == 0, $"{same} draw as WARP draws; " + string.Join(Environment.NewLine, failures.Take(25)));
+        }
+
         [Fact]
         public void EveryCorpusShader_TranslatesOrIsAKnownGap()
         {
@@ -145,10 +204,16 @@ namespace WgpuInterop.Tests.Direct3D
                     try
                     {
                         var link = s.Stage == ShaderStage.Vertex ? DxbcTranslator.LinkageOf(null) : DxbcTranslator.LinkageOf(s.Stage == ShaderStage.Pixel ? s : null);
-                        var t = DxbcTranslator.Translate(s, s.Stage == ShaderStage.Pixel ? 1 : 0, link);
-                        IntPtr module = device.Immediate.CreateModule(t.Wgsl, name, out string? werr);
-                        if (module == IntPtr.Zero) error = "wgsl: " + (werr?.Split('\n').FirstOrDefault(l => l.Contains("error"))?.Trim() ?? werr);
-                        else Microsoft.Wpf.Interop.WebGpu.Wgpu.wgpuShaderModuleRelease(module);
+                        // a geometry shader: its compute form and the pass-through vertex shader after it
+                        var modules = s.Stage == ShaderStage.Geometry
+                            ? new[] { DxbcTranslator.TranslateGeometryCompute(s, null, 0).Wgsl, DxbcTranslator.PassThrough(s, link).Wgsl }
+                            : new[] { DxbcTranslator.Translate(s, s.Stage == ShaderStage.Pixel ? 1 : 0, link).Wgsl };
+                        foreach (string wgsl in modules)
+                        {
+                            IntPtr module = device.Immediate.CreateModule(wgsl, name, out string? werr);
+                            if (module == IntPtr.Zero) { error = "wgsl: " + (werr?.Split('\n').FirstOrDefault(l => l.Contains("error"))?.Trim() ?? werr); break; }
+                            Microsoft.Wpf.Interop.WebGpu.Wgpu.wgpuShaderModuleRelease(module);
+                        }
                     }
                     catch (NotSupportedException e) { error = e.Message; }
                     catch (Exception e) { error = $"{e.GetType().Name}: {e.Message}"; }

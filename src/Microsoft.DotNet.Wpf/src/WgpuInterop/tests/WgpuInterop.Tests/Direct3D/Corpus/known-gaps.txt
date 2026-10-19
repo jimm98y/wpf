@@ -7,11 +7,6 @@ compute.cs_texture_atomic.cs_5_0.dxbc: atomic_umax on typed UAV texture u2: WGSL
 stages.ds_line.ds_5_0.dxbc: Domain shaders are translated by the geometry/compute path
 stages.ds_quad.ds_5_0.dxbc: Domain shaders are translated by the geometry/compute path
 stages.ds_tri.ds_5_0.dxbc: Domain shaders are translated by the geometry/compute path
-stages.gs_instanced.gs_5_0.dxbc: Geometry shaders are translated by the geometry/compute path
-stages.gs_lineadj.gs_4_0.dxbc: Geometry shaders are translated by the geometry/compute path
-stages.gs_lineadj.gs_5_0.dxbc: Geometry shaders are translated by the geometry/compute path
-stages.gs_quad.gs_4_0.dxbc: Geometry shaders are translated by the geometry/compute path
-stages.gs_quad.gs_5_0.dxbc: Geometry shaders are translated by the geometry/compute path
 stages.hs_line.hs_5_0.dxbc: Hull shaders are translated by the geometry/compute path
 stages.hs_quad.hs_5_0.dxbc: Hull shaders are translated by the geometry/compute path
 stages.hs_tri.hs_5_0.dxbc: Hull shaders are translated by the geometry/compute path

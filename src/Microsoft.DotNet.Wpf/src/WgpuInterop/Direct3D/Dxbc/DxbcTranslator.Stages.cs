@@ -69,11 +69,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 w.Append($"    @location({reg}) a{reg}: {WgslType(sigType)},\n");
             }
             w.Append("    @builtin(vertex_index) vid: u32,\n    @builtin(instance_index) iid: u32,\n}\n\n");
+            if (vertexId >= 0 || instanceId >= 0)
+            {
+                _bindings.DrawParams = true;
+                w.Append($"@group({_group}) @binding({DrawParamsBinding}) var<uniform> dx_draw: vec4<u32>;\n\n");
+            }
 
-            // outputs: position, clip distances and the pixel shader's linkage
+            AppendVertexOutput(w);
+
+            w.Append("@vertex\nfn main(input: VsIn) -> VsOut {\n");
+            foreach (int reg in _inputRegs.OrderBy(r => r))
+            {
+                // D3D's SV_VertexID is the index as stored (no base vertex), its SV_InstanceID counts from 0
+                if (reg == vertexId) w.Append($"    {InReg(reg)} = bitcast<vec4<f32>>(vec4<u32>(bitcast<u32>(bitcast<i32>(input.vid) - bitcast<i32>(dx_draw.x)), 0u, 0u, 0u));\n");
+                else if (reg == instanceId) w.Append($"    {InReg(reg)} = bitcast<vec4<f32>>(vec4<u32>(input.iid - dx_draw.y, 0u, 0u, 0u));\n");
+                else
+                {
+                    var e = _s.Inputs.FirstOrDefault(i => i.Register == reg);
+                    int ct = e?.ComponentType ?? 3;
+                    string swap = _options.BgraInputs?.Contains(reg) == true ? ".zyxw" : "";
+                    w.Append(ct == 3 ? $"    {InReg(reg)} = input.a{reg}{swap};\n" : $"    {InReg(reg)} = bitcast<vec4<f32>>(input.a{reg});\n");
+                }
+            }
+            w.Append(_body);
+            w.Append("    return shader_out();\n}\n");
+        }
+
+        /// <summary>The vertex stage's outputs -- position, clip distances and the pixel shader's
+        /// linkage -- as struct VsOut and shader_out() over the o# registers. Shared by the vertex
+        /// shader and the pass-through after a geometry shader (its stream-0 outputs).</summary>
+        private void AppendVertexOutput(StringBuilder w)
+        {
+            var outputs = _s.Outputs.Where(e => e.Stream == 0).ToList();
             int posReg = -1;
             var clip = new List<string>();             // each clip-distance component, in register order
-            foreach (var e in _s.Outputs.OrderBy(e => e.Register).ThenBy(e => e.Mask))
+            foreach (var e in outputs.OrderBy(e => e.Register).ThenBy(e => e.Mask))
             {
                 if (e.SystemValue == SvPosition || e.SemanticName.Equals("SV_Position", StringComparison.OrdinalIgnoreCase)) posReg = e.Register;
                 if (e.SystemValue == SvClipDistance && _outputRegs.Contains(e.Register))
@@ -97,26 +127,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             for (int i = 0; i < clip.Count; i++) w.Append($"    out.clip[{i}] = {clip[i]};\n");
             foreach (var l in _link)
             {
-                var e = _s.Outputs.FirstOrDefault(x => x.SemanticName.Equals(l.Semantic, StringComparison.OrdinalIgnoreCase) && x.SemanticIndex == l.Index);
+                var e = outputs.FirstOrDefault(x => x.SemanticName.Equals(l.Semantic, StringComparison.OrdinalIgnoreCase) && x.SemanticIndex == l.Index);
                 string v = e == null || !_outputRegs.Contains(e.Register) ? "vec4<f32>(0.0f)" : $"{OutReg(e.Register)}{ShiftDown(e.Mask)}";
                 w.Append($"    out.l{l.Location} = {Cast(v, l.ComponentType)};\n");
             }
             w.Append("    return out;\n}\n\n");
-
-            w.Append("@vertex\nfn main(input: VsIn) -> VsOut {\n");
-            foreach (int reg in _inputRegs.OrderBy(r => r))
-            {
-                if (reg == vertexId) w.Append($"    {InReg(reg)} = bitcast<vec4<f32>>(vec4<u32>(input.vid, 0u, 0u, 0u));\n");
-                else if (reg == instanceId) w.Append($"    {InReg(reg)} = bitcast<vec4<f32>>(vec4<u32>(input.iid, 0u, 0u, 0u));\n");
-                else
-                {
-                    var e = _s.Inputs.FirstOrDefault(i => i.Register == reg);
-                    int ct = e?.ComponentType ?? 3;
-                    w.Append(ct == 3 ? $"    {InReg(reg)} = input.a{reg};\n" : $"    {InReg(reg)} = bitcast<vec4<f32>>(input.a{reg});\n");
-                }
-            }
-            w.Append(_body);
-            w.Append("    return shader_out();\n}\n");
         }
 
         private void AssemblePixel(StringBuilder w)

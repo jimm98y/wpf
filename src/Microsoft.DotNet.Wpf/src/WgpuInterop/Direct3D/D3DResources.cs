@@ -112,8 +112,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (IsStaging)
                 return (Desc.CPUAccessFlags & D3D11_CPU_ACCESS.READ) != 0 ? WGPUBufferUsage.MapRead | WGPUBufferUsage.CopyDst : WGPUBufferUsage.MapWrite | WGPUBufferUsage.CopySrc;
             var u = WGPUBufferUsage.CopyDst | WGPUBufferUsage.CopySrc;
-            if ((Desc.BindFlags & D3D11_BIND.VERTEX_BUFFER) != 0) u |= WGPUBufferUsage.Vertex;
-            if ((Desc.BindFlags & D3D11_BIND.INDEX_BUFFER) != 0) u |= WGPUBufferUsage.Index;
+            // vertex and index buffers are storage too: a draw with a geometry shader fetches them in compute
+            if ((Desc.BindFlags & D3D11_BIND.VERTEX_BUFFER) != 0) u |= WGPUBufferUsage.Vertex | WGPUBufferUsage.Storage;
+            if ((Desc.BindFlags & D3D11_BIND.INDEX_BUFFER) != 0) u |= WGPUBufferUsage.Index | WGPUBufferUsage.Storage;
             if ((Desc.BindFlags & (D3D11_BIND.SHADER_RESOURCE | D3D11_BIND.UNORDERED_ACCESS | D3D11_BIND.STREAM_OUTPUT)) != 0) u |= WGPUBufferUsage.Storage;
             if ((Desc.MiscFlags & D3D11_RESOURCE_MISC.DRAWINDIRECT_ARGS) != 0) u |= WGPUBufferUsage.Indirect;
             return u;

@@ -41,18 +41,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             public string? Error;
         }
 
-        private readonly Dictionary<(ulong, ulong), Translation> _translations = new();
+        private readonly Dictionary<(ulong, ulong, string), Translation> _translations = new();
 
         private Translation Translate(D3DShader vs, D3DShader? ps)
         {
-            var key = (vs.Code.Hash, ps?.Code.Hash ?? 0);
+            // the input registers the layout feeds from B8G8R8A8 elements (swapped in the shader)
+            var bgra = new SortedSet<int>();
+            if (_layout != null)
+                foreach (var e in _layout.Elements.Where(e => e.Format == DXGI_FORMAT.B8G8R8A8_UNORM))
+                    if (vs.Code.Inputs.FirstOrDefault(i => i.SystemValue == 0 && i.SemanticName.Equals(e.Semantic, StringComparison.OrdinalIgnoreCase) && i.SemanticIndex == e.Index) is { } sig) bgra.Add(sig.Register);
+            var key = (vs.Code.Hash, ps?.Code.Hash ?? 0, string.Join(",", bgra));
             if (_translations.TryGetValue(key, out var t)) return t;
             t = new Translation();
             _translations[key] = t;
             try
             {
                 var link = DxbcTranslator.LinkageOf(ps?.Code);
-                var v = DxbcTranslator.Translate(vs.Code, 0, link);
+                var v = DxbcTranslator.Translate(vs.Code, 0, link, bgra.Count > 0 ? new TranslationOptions { BgraInputs = bgra } : null);
                 t.VsBindings = v.Bindings;
                 t.Vs = CreateModule(v.Wgsl, "vs", out string? verr);
                 if (t.Vs == IntPtr.Zero) { t.Error = "vertex shader: " + verr; Dump(vs.Code, v.Wgsl, t.Error); return t; }
@@ -184,6 +189,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     binding = (uint)(DxbcTranslator.CounterBase + slot), visibility = stage,
                     buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage, minBindingSize = 4 },
                 });
+            if (b.DrawParams)
+                entries.Add(new WGPUBindGroupLayoutEntry
+                {
+                    binding = DxbcTranslator.DrawParamsBinding, visibility = stage,
+                    buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Uniform, minBindingSize = 16 },
+                });
             foreach (var (slot, size) in b.ConstantBuffers)
                 entries.Add(new WGPUBindGroupLayoutEntry
                 {
@@ -238,7 +249,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private static WGPUStencilOperation StencilOp(uint op) => (WGPUStencilOperation)(op switch { 1 => 1, 2 => 2, 3 => 3, 4 => 5, 5 => 6, 6 => 4, 7 => 7, 8 => 8, _ => 1 });
 
-        private IntPtr Pipeline(Translation t, D3DShader vs, D3DShader? ps, out string? why)
+        /// <summary>The draw after a geometry shader: no vertex buffers, the GS's output topology.</summary>
+        private sealed class GeometryDraw { public string Key = ""; public WGPUPrimitiveTopology Topology; }
+
+        private IntPtr Pipeline(Translation t, D3DShader vs, D3DShader? ps, out string? why, GeometryDraw? gd = null)
         {
             why = null;
             var raster = _raster?.Desc ?? D3D11_RASTERIZER_DESC.Default();
@@ -246,10 +260,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var depth = _depth?.Desc ?? D3D11_DEPTH_STENCIL_DESC.Default();
             var topo = _topology;
             var key = new StringBuilder(256);
-            key.Append(vs.Code.Hash).Append('|').Append(ps?.Code.Hash ?? 0).Append('|').Append(_layout?.Id ?? 0).Append('|').Append((int)topo).Append('|');
-            if (_layout != null)
+            if (gd != null) key.Append("gs:").Append(gd.Key).Append('|').Append((int)gd.Topology).Append('|');
+            else key.Append(vs.Code.Hash).Append('|').Append(ps?.Code.Hash ?? 0).Append('|').Append(_layout?.Id ?? 0).Append('|').Append((int)topo).Append('|');
+            if (_layout != null && gd == null)
                 foreach (int slot in _layout.Elements.Select(e => e.Slot).Distinct()) key.Append(slot).Append(':').Append(_vbStride[slot]).Append(',');
-            if (topo is D3D_PRIMITIVE_TOPOLOGY.LINESTRIP or D3D_PRIMITIVE_TOPOLOGY.TRIANGLESTRIP) key.Append("ib").Append((int)_ibFormat);
+            if (gd == null && topo is D3D_PRIMITIVE_TOPOLOGY.LINESTRIP or D3D_PRIMITIVE_TOPOLOGY.TRIANGLESTRIP) key.Append("ib").Append((int)_ibFormat);
             key.Append('|').Append(raster.CullMode).Append(raster.FrontCounterClockwise).Append(raster.DepthBias).Append(raster.SlopeScaledDepthBias).Append(raster.DepthBiasClamp).Append(raster.DepthClipEnable);
             uint samples = 1;
             for (int i = 0; i < MaxTargets; i++)
@@ -283,7 +298,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var handles = new List<GCHandle>();
             try
             {
-                if (_layout != null)
+                if (_layout != null && gd == null)
                 {
                     foreach (var group in _layout.Elements.GroupBy(e => e.Slot))
                     {
@@ -369,7 +384,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                         vertex = new WGPUVertexState { module = t.Vs, entryPoint = new WGPUStringView { data = m, length = 4 }, bufferCount = (nuint)bufArr.Length, buffers = vb },
                         primitive = new WGPUPrimitiveState
                         {
-                            topology = topo switch
+                            topology = gd != null ? gd.Topology : topo switch
                             {
                                 D3D_PRIMITIVE_TOPOLOGY.POINTLIST => WGPUPrimitiveTopology.PointList,
                                 D3D_PRIMITIVE_TOPOLOGY.LINELIST => WGPUPrimitiveTopology.LineList,
@@ -377,7 +392,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                                 D3D_PRIMITIVE_TOPOLOGY.TRIANGLESTRIP => WGPUPrimitiveTopology.TriangleStrip,
                                 _ => WGPUPrimitiveTopology.TriangleList,
                             },
-                            stripIndexFormat = topo is D3D_PRIMITIVE_TOPOLOGY.LINESTRIP or D3D_PRIMITIVE_TOPOLOGY.TRIANGLESTRIP && _ib != null
+                            stripIndexFormat = gd != null
+                                ? (gd.Topology is WGPUPrimitiveTopology.LineStrip or WGPUPrimitiveTopology.TriangleStrip ? WGPUIndexFormat.Uint32 : WGPUIndexFormat.Undefined)
+                                : topo is D3D_PRIMITIVE_TOPOLOGY.LINESTRIP or D3D_PRIMITIVE_TOPOLOGY.TRIANGLESTRIP && _ib != null
                                 ? (_ibFormat == DXGI_FORMAT.R16_UINT ? WGPUIndexFormat.Uint16 : WGPUIndexFormat.Uint32) : WGPUIndexFormat.Undefined,
                             frontFace = raster.FrontCounterClockwise != 0 ? WGPUFrontFace.CCW : WGPUFrontFace.CW,
                             cullMode = raster.CullMode switch { 2 => WGPUCullMode.Front, 3 => WGPUCullMode.Back, _ => WGPUCullMode.None },
@@ -401,6 +418,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         private int[] _slotOfBuffer = Array.Empty<int>();
+        /// <summary>The draw a vertex shader's bind group is made for (ShaderBindings.DrawParams).</summary>
+        private int _drawBaseVertex;
+        private uint _drawFirstInstance;
 
         // ---- constants and bind groups ----------------------------------------------------------------
 
@@ -413,7 +433,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private ulong ArenaWrite(D3DBuffer? cb, int vec4s)
         {
-            ulong size = (ulong)vec4s * 16;
+            var tmp = new byte[(ulong)vec4s * 16];
+            if (cb != null && cb.Shadow != null) new ReadOnlySpan<byte>(cb.Shadow, (int)Math.Min((ulong)tmp.Length, cb.Size)).CopyTo(tmp);
+            return ArenaWrite(tmp);
+        }
+
+        /// <summary>Bytes (a multiple of 16) into the uniform arena: their offset in _arenas[_arenaIndex].</summary>
+        private ulong ArenaWrite(byte[] tmp)
+        {
+            ulong size = (ulong)tmp.Length;
             if (_arenaOffset + size > ArenaSize)
             {
                 FlushToGpu(wait: false);           // a new submission: the arena is free to reuse from the start
@@ -421,8 +449,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (_arenas[_arenaIndex] == IntPtr.Zero)
                 _arenas[_arenaIndex] = Device.Gpu.CreateBuffer(ArenaSize, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
             ulong at = _arenaOffset;
-            var tmp = new byte[size];
-            if (cb != null && cb.Shadow != null) new ReadOnlySpan<byte>(cb.Shadow, (int)Math.Min(size, cb.Size)).CopyTo(tmp);
             Device.Gpu.WriteBuffer(_arenas[_arenaIndex], at, tmp);
             _arenaOffset = (at + size + 255) & ~255UL;
             return at;
@@ -492,6 +518,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 var view = uavs != null && slot < uavs.Length ? uavs[slot] : null;
                 entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.CounterBase + slot), buffer = view?.Counter is IntPtr c && c != IntPtr.Zero ? c : DummyStorage(), offset = 0, size = 4 });
+            }
+            if (b.DrawParams)
+            {
+                var dp = new byte[16];
+                BitConverter.TryWriteBytes(dp.AsSpan(0), _drawBaseVertex);
+                BitConverter.TryWriteBytes(dp.AsSpan(4), _drawFirstInstance);
+                ulong at = ArenaWrite(dp);
+                entries.Add(new WGPUBindGroupEntry { binding = DxbcTranslator.DrawParamsBinding, buffer = _arenas[_arenaIndex], offset = at, size = 16 });
             }
             foreach (var (slot, size) in b.ConstantBuffers)
             {
@@ -591,13 +625,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (a.Count == 0 || a.Instances == 0) return;
             var vs = _vs.Shader;
             if (vs == null) { DrawsSkipped++; return; }
-            if (_gs.Shader != null) { D3DLog.Once("gs", "geometry shaders are not drawn yet"); DrawsSkipped++; return; }
+            if (_gs.Shader != null) { DrawGeometry(a, vs, _gs.Shader); return; }
             var t = Translate(vs, _ps.Shader);
             if (t.Error != null) { DrawsSkipped++; return; }
             IntPtr pipeline = Pipeline(t, vs, _ps.Shader, out string? why);
             if (pipeline == IntPtr.Zero) { DrawsSkipped++; return; }
 
             // bind groups before the pass: the arena writes are queue writes
+            _drawBaseVertex = a.Indexed ? a.BaseVertex : 0;
+            _drawFirstInstance = a.FirstInstance;
             IntPtr g0 = BindGroup(t.VsLayout, t.VsBindings!, _vs);
             IntPtr g1 = BindGroup(t.PsLayout, t.PsBindings ?? new ShaderBindings(), _ps);
             if (!EnsurePass()) { wgpuBindGroupRelease(g0); wgpuBindGroupRelease(g1); DrawsSkipped++; return; }
@@ -623,11 +659,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 }
             }
 
+            if (!ApplyRasterState()) { DrawsSkipped++; return; }
+
+            if (a.Indexed)
+            {
+                if (_ib == null || _ib.Gpu == IntPtr.Zero) { DrawsSkipped++; return; }
+                var fmt = _ibFormat == DXGI_FORMAT.R16_UINT ? WGPUIndexFormat.Uint16 : WGPUIndexFormat.Uint32;
+                wgpuRenderPassEncoderSetIndexBuffer(_pass, _ib.Gpu, fmt, _ibOffset, _ib.Size > _ibOffset ? _ib.Size - _ibOffset : 0);
+                wgpuRenderPassEncoderDrawIndexed(_pass, a.Count, a.Instances, a.First, a.BaseVertex, a.FirstInstance);
+            }
+            else wgpuRenderPassEncoderDraw(_pass, a.Count, a.Instances, a.First, a.FirstInstance);
+            DrawsIssued++;
+            for (int i = 0; i < MaxTargets; i++) if (_rtv[i] != null) _rtv[i]!.Texture.Version++;
+        }
+
+        /// <summary>The open pass's viewport, scissor, blend constant and stencil reference; false when
+        /// the viewport has no area on the targets.</summary>
+        private bool ApplyRasterState()
+        {
             var (tw, th) = TargetSize();
             var vp = _viewportCount > 0 ? _viewports[0] : new D3D11_VIEWPORT { Width = tw, Height = th, MaxDepth = 1 };
             float x = Math.Max(0, vp.TopLeftX), y = Math.Max(0, vp.TopLeftY);
             float w = Math.Min(vp.Width, tw - x), h = Math.Min(vp.Height, th - y);
-            if (w <= 0 || h <= 0) { DrawsSkipped++; return; }
+            if (w <= 0 || h <= 0) return false;
             if (x != vp.TopLeftX || y != vp.TopLeftY || w != vp.Width || h != vp.Height) D3DLog.Once("vpclip", "a viewport past its target was cut to it");
             wgpuRenderPassEncoderSetViewport(_pass, x, y, w, h, Math.Clamp(vp.MinDepth, 0, 1), Math.Clamp(vp.MaxDepth, 0, 1));
             var raster = _raster?.Desc ?? D3D11_RASTERIZER_DESC.Default();
@@ -641,17 +695,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var bf = _blendFactor;
             wgpuRenderPassEncoderSetBlendConstant(_pass, &bf);
             wgpuRenderPassEncoderSetStencilReference(_pass, _stencilRef);
-
-            if (a.Indexed)
-            {
-                if (_ib == null || _ib.Gpu == IntPtr.Zero) { DrawsSkipped++; return; }
-                var fmt = _ibFormat == DXGI_FORMAT.R16_UINT ? WGPUIndexFormat.Uint16 : WGPUIndexFormat.Uint32;
-                wgpuRenderPassEncoderSetIndexBuffer(_pass, _ib.Gpu, fmt, _ibOffset, _ib.Size > _ibOffset ? _ib.Size - _ibOffset : 0);
-                wgpuRenderPassEncoderDrawIndexed(_pass, a.Count, a.Instances, a.First, a.BaseVertex, a.FirstInstance);
-            }
-            else wgpuRenderPassEncoderDraw(_pass, a.Count, a.Instances, a.First, a.FirstInstance);
-            DrawsIssued++;
-            for (int i = 0; i < MaxTargets; i++) if (_rtv[i] != null) _rtv[i]!.Texture.Version++;
+            return true;
         }
     }
 }
