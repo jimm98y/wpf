@@ -515,6 +515,11 @@ namespace System.Windows.Interop
         {
             
             BitmapSource copy = null;
+
+            if (ManagedInteropBitmap.From(_pInteropDeviceBitmap) is { } managed)
+            {
+                return managed.ToBitmapSource(_dpiX, _dpiY);
+            }
             
             if (_pInteropDeviceBitmap != null)
             {
@@ -673,6 +678,16 @@ namespace System.Windows.Interop
             }
 
             UnsubscribeFromCommittingBatch();
+
+            if (UnsafeNativeMethods.InteropDeviceBitmap.UseManaged)
+            {
+                // No composition thread to copy the back buffer: it is read now, and its pixels are
+                // this resource's bitmap; the next Lock does not wait.
+                SendManagedPixels((DUCE.Channel)sender);
+                _isDirty = false;
+                _canWriteEvent.Set();
+                return;
+            }
             
             unsafe
             {
@@ -731,6 +746,17 @@ namespace System.Windows.Interop
         ///     If the back buffer version matches the current version, update the front
         ///     buffer status.
         /// </summary>
+        /// <summary>The back buffer's pixels as this resource's bitmap (managed composition).</summary>
+        private void SendManagedPixels(DUCE.Channel channel)
+        {
+            if (!_duceResource.IsOnChannel(channel)) return;
+            var managed = ManagedInteropBitmap.From(_pInteropDeviceBitmap);
+            byte[] px = managed?.ReadPixels();
+            if (managed == null || px == null) return;
+            channel.SendCommandBitmapData(_duceResource.GetHandle(channel), (int)managed.Width, (int)managed.Height, (int)managed.Width * 4, px);
+            managed.Dirty = Int32Rect.Empty;
+        }
+
         private object SetIsFrontBufferAvailable(object isAvailableVersionPair)
         {
             (bool isFrontBufferAvailable, uint version) = (Tuple<bool, uint>)isAvailableVersionPair;
@@ -768,6 +794,15 @@ namespace System.Windows.Interop
                 base.UpdateResource(channel, skipOnChannelCheck);
 
                 bool isSynchronous = channel.IsSynchronous;
+
+                if (UnsafeNativeMethods.InteropDeviceBitmap.UseManaged)
+                {
+                    // The compositor gets pixels, not the interop bitmap: on the synchronous channel
+                    // (RenderTargetBitmap, printing) now; on the asynchronous one at the next present.
+                    if (isSynchronous) SendManagedPixels(channel);
+                    else _waitingForUpdateResourceBecauseBitmapChanged = false;
+                    return;
+                }
 
                 DUCE.MILCMD_D3DIMAGE data;
                 unsafe
