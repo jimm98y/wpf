@@ -244,11 +244,26 @@ implementation. The DUCE commands `MILCMD_D3DIMAGE` and `MILCMD_D3DIMAGE_PRESENT
 primitive, `ExternalImage`, that names a WebGPU texture, a version and a dirty rectangle.
 
 - **The surface is the shim's** (`IDirect3DSurface9` from section 7): **zero-copy.**
-  - **Decided (2026-10-19, the user, replacing "the copy path stays"): device sharing.** The first UI
-    thread's compositor adopts the shim's device, `D3DDevice.SharedGpu`
-    (`WpfCompositionSink.CreateOrShareContext`; `WPF_D3DIMAGE_SHARE=0` turns it off). Every other UI
-    thread's compositor keeps a device of its own and takes the copy path below; on the GL backend
-    textures cannot cross wgpu devices.
+  - **Decided (2026-10-19, the user, replacing "the copy path stays"): device sharing, per UI thread**
+    (`Composition/ThreadGpu.cs`). Each UI thread has one WebGPU device, and these all use it:
+    - the thread's WPF sink. The sink asks for the device from its render thread, but it is
+      the owner UI thread's device, and it is made on the UI thread when the sink is constructed;
+    - the thread's WinForms windows and popups, which also composite an ElementHost's WPF scene;
+    - the Direct3D shim devices made on the thread (`D3D11CreateDevice`, `CreateDeviceEx` of
+      Direct3D9Ex).
+  - A thread that composites nothing (a decoder's worker) uses the primary device for its shim
+    devices: that is the first WPF sink thread's device. Its shared handles then still meet the
+    D3DImage on the UI thread.
+  - Shared resources never cross devices. `OpenSharedResource` and the D3D9 shared-handle open
+    refuse a texture of another device, with a log line. A shim surface shown on another thread's
+    compositor takes the copy path.
+  - Every device is made as the shim wants it (`D3DDevice.CreateGpu`): the adapter's limits, the
+    features D3D11 takes for granted, and validation errors logged rather than fatal. The last user
+    of a device lets go of it.
+  - `WPF_D3DIMAGE_SHARE=0` gives the shim devices a device of their own.
+  - This replaced a first version in which the first compositor to ask took the shim's single
+    device. In GraphWorX that was the splash screen's thread, so DXEngine's frames, made on the main
+    thread, never shared a device with the window that showed them.
   - A present (`IMilCompositionSink.SendSurface`, made under D3DImage's lock) flushes the shim's
     immediate context, then on the one queue runs a pass that un-premultiplies (to the integer, as the
     copy path does) or, for X8R8G8B8, makes the surface opaque. The pass writes into a scratch texture,
@@ -261,6 +276,15 @@ primitive, `ExternalImage`, that names a WebGPU texture, a version and a dirty r
     - it is let go of when no resource shows it at the end of a batch, or on a resize.
   - A synchronous channel (RenderTargetBitmap, printing) always takes the whole back buffer, as
     `CopyBackBuffer` does, and leaves the dirty rectangle to the window's channel.
+  - **Inside an ElementHost** the WinForms window draws the hosted WPF scene itself, on its thread's
+    device, which is the WPF sink's device too. Two rules keep this safe:
+    - While some WinForms window draws with another thread's device (a splash screen still up),
+      `SendSurface` and `SendBitmapRegion` decline, and D3DImage sends the whole bitmap, which any
+      device can upload.
+    - The renderer draws an `ExternalImage` only on the device that made it (`ExternalImage.Device`),
+      and draws its transparent placeholder anywhere else.
+    - Before these rules, GraphWorX with `WPF_D3D11_SHIM=0` aborted in wgpu ("TextureView no longer
+      alive"), and with the shim its 3D view stayed white.
   - The scene carries the texture itself (`ImageBrush.External`, with a version), so there is no
     content hash and no image-cache lookup.
   - `D3DImageZeroCopyTests` covers:
@@ -495,7 +519,41 @@ green throughout.
   - D3D9Ex shim (095d5e223) and managed D3DImage on the copy path (f087d629c), with sharing both ways.
   - The launcher routes d3d11/dxgi/d3d9/d3dcompiler_47 (`WPF_D3D11_SHIM`, default every app assembly
     on every OS since 2026-10-19; it was `SharpDX*;Ab3d.DXEngine*`) and fills `libwin32shim` elsewhere.
-  - Shim surfaces take the copy path, by the user's decision (section 8).
+  - Shim surfaces are copied on the GPU (zero-copy) since 2026-10-19, by the user's decision
+    (section 8).
+- **M5 (2026-10-19):** GraphWorX 3D works with the shim. The display has three `Box3D`s and a
+  `Line3D` in a `Gwx3DControl`, with Diffuse+Specular and Emissive materials. Everything ran off
+  screen, and frames were taken from the compositor.
+  - **The shim against real D3D11 + D3D9** (Parallels hardware, `WPF_D3D11_SHIM=0`) differs in 120
+    pixels, by at most one code. Before the fixes below it differed in about 30,000, every one of
+    them antialiasing:
+    - DXEngine's `DeviceCapabilities` probes 2 samples first and stops at the first refusal, so
+      the shim's "1 and 4 only" gave it no MSAA at all. The shim now answers 2 and backs it with
+      4 samples; `Desc` keeps 2. This is a deliberate approximation: an app that asks for 2 samples
+      gets 4-sample antialiasing (GraphWorX: within one code over 120 pixels of real D3D11). A
+      Texture2DMS read's sample count is then 4.
+    - `ResolveSubresource` into a texture that is not a render target goes through a texture of
+      the shim's own, then a copy. Before, it was a wgpu validation abort.
+    - On wgpu's GL backend, a multisampled texture made sampleable is a GL texture and keeps
+      nothing drawn into it. It is now sampleable only when the app made it a shader resource.
+      One that is still resolves empty on GL; the `D3DMultisampleTests` case is skipped there, and the
+      gap and a possible emulation are in `Direct3D/Corpus/known-gaps.txt`.
+    - A clear of a view the app releases at once (the clear still applies) left a freed view in
+      the pending clears. The context now holds the view until the clear is encoded.
+  - **`PreferredRendering=Compatible`** (WPF's own 3D) against real D3D11 differs in 2,650 pixels,
+    and only 3 of them by more than 64 codes. All are edge pixels: the tube's highlight, and a grid
+    line DXEngine draws through a box.
+  - **No E_NOTIMPL and no refused shader** appear in the shim's log.
+  - **Interaction:** the camera orbits every WPF frame for 8 s, and the main window's presents are
+    counted, along with the frames that changed the 3D view.
+    - With one device per window, the frame went as pixels inside an ElementHost: shim 62 fps,
+      real D3D11 89, Compatible 91. The shim paid for reading each frame back.
+    - With one device per UI thread (section 8), zero-copy inside the ElementHost: shim 77 and 73
+      fps, real D3D11 77 (two runs, with the demo licence's countdown on screen).
+    - Open: one run before the device fix froze the 3D view after 2.6 s. The demo licence then
+      expired, so this is not rechecked.
+  - **PBR:** GraphWorX's XAML takes WPF materials only. DXEngine's PBR material is not reachable
+    from a display.
 - **M3 (in progress):**
   - DXEngine's vertex and pixel shaders compile, and all of them draw as WARP draws (5b48ce73e).
   - The general translator of section 9: the whole token format, every chunk, an opcode-coverage

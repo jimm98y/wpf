@@ -221,6 +221,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public readonly WGPUTextureFormat Format;
         public readonly uint MipLevels;
         public IntPtr Gpu;                   // WGPUTexture (not for staging)
+        public WGPUTextureUsage GpuUsage;    // what it was made with
         public IntPtr Staging;               // WGPUBuffer (staging only)
         public ulong StagingSize;
         public readonly ulong[] SubresourceOffset;
@@ -269,7 +270,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         public override D3D11_RESOURCE_DIMENSION Dimension => Kind switch { 1 => D3D11_RESOURCE_DIMENSION.TEXTURE1D, 3 => D3D11_RESOURCE_DIMENSION.TEXTURE3D, _ => D3D11_RESOURCE_DIMENSION.TEXTURE2D };
         public bool IsStaging => Desc.Usage == D3D11_USAGE.STAGING;
-        public uint SampleCount => Math.Max(1, Desc.SampleDesc.Count);
+        /// <summary>The GPU's sample count: WebGPU has 1 and 4, so a texture asked for 2 samples has 4 (the
+        /// device answers 2 as supported, CheckMultisampleQualityLevels: an app that tries 2 first and
+        /// stops at the first count refused, as Ab3d.DXEngine does, would otherwise get no MSAA at all).
+        /// Desc keeps the count the app asked for.</summary>
+        public uint SampleCount => Desc.SampleDesc.Count > 1 ? 4u : 1u;
         public uint DepthAt(uint mip) => Kind == 3 ? Math.Max(1, Depth >> (int)mip) : 1;
 
         /// <summary>A planar 4:2:0 texture (NV12, P010, P016): stored as its bytes lie in memory.</summary>
@@ -351,7 +356,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding;
                 if (Format is TexFmt.Depth32Float or TexFmt.Depth16Unorm) usage |= WGPUTextureUsage.CopySrc;
             }
-            if (SampleCount > 1) usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding;   // no copies of multisampled textures
+            // No copies of multisampled textures; and sampled only when the app said so: on the GL backend a
+            // multisampled texture that can be sampled is a GL texture, and resolving one leaves its target
+            // empty -- one that cannot is a renderbuffer, which resolves (D3DMultisampleTests).
+            if (SampleCount > 1)
+                usage = WGPUTextureUsage.RenderAttachment | ((desc.BindFlags & D3D11_BIND.SHADER_RESOURCE) != 0 ? WGPUTextureUsage.TextureBinding : 0);
+            GpuUsage = usage;
             var tdesc = new WGPUTextureDescriptor
             {
                 usage = usage,
@@ -439,6 +449,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                                     uint rowPitch, uint rows, uint tight, uint slicePitch, WGPUExtent3D size)
         {
             uint d = Math.Max(1, size.depthOrArrayLayers);
+            if (gpu.IsOpenGL) gpu.ResetGlUnpack();      // after work that may have left a storage buffer bound (WgpuContext.GlUnpackSuspect)
             var dst = new WGPUTexelCopyTextureInfo { texture = texture, mipLevel = mip, origin = origin, aspect = WGPUTextureAspect.All };
             var layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = rowPitch, rowsPerImage = d > 1 ? slicePitch / rowPitch : rows };
             wgpuQueueWriteTexture(gpu.Queue, &dst, data, (nuint)((ulong)(d - 1) * slicePitch + (ulong)rowPitch * (rows - 1) + tight), &layout, &size);

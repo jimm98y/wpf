@@ -293,6 +293,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         /// <summary>An external image's texture is let go of (resized, its D3DImage gone): its bind groups
         /// with it, and the texture after the frames in flight (render thread).</summary>
+        /// <summary>A D3DImage texture's view when this renderer's device can sample it; null otherwise (the
+        /// caller draws the image's bytes, its transparent placeholder).</summary>
+        private IntPtr? ExternalView(ExternalImage? image) => image != null && image.Device == _ctx.Device ? image.View : null;
+
         public void RetireExternal(ExternalImage image)
         {
             ReleaseImageBindGroups(image.View);
@@ -3703,7 +3707,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (kind == FillKind.TexturedWpf) MilcoreFilterDraws++;
                     if (img.SourceVisual is null)
                     {
-                        view = img.External?.View ?? GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+                        view = ExternalView(img.External) ?? GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
                         bindGroup = ImageBindGroup(format, view, sampler, _srcCopy, kind);   // owned by the image cache
                     }
                     else
@@ -7255,7 +7259,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 IntPtr view = inputView;
                 if (def.SamplerBrushes[i] is ImageBrush ib)
-                    view = ib.External?.View ?? GetOrCreateImageView(ib.PixelsRgba, ib.PixelWidth, ib.PixelHeight);
+                    view = ExternalView(ib.External) ?? GetOrCreateImageView(ib.PixelsRgba, ib.PixelWidth, ib.PixelHeight);
                 entries[n] = new WGPUBindGroupEntry { binding = n, textureView = view }; n++;
                 entries[n] = new WGPUBindGroupEntry { binding = n, sampler = LinearSampler() }; n++;
             }
@@ -7631,6 +7635,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // code path, correct on Metal. Sidestep the padding entirely where it buys us nothing.
             if (_ctx.IsOpenGL)
             {
+                _ctx.ResetGlUnpack();      // a device shared with the Direct3D shim (WgpuContext.GlUnpackSuspect)
                 var glDest = new WGPUTexelCopyTextureInfo { texture = texture, aspect = WGPUTextureAspect.All };
                 var glLayout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)(width * bytesPerPixel), rowsPerImage = (uint)height };
                 var glSize = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 };
@@ -8175,7 +8180,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (!GetOrRasterizeLocalCoverage(localGeom, world, out IntPtr covView, out float ox, out float oy, out float w, out float h))
                 return false;
 
-            IntPtr imgView = img.External?.View ?? GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+            IntPtr imgView = ExternalView(img.External) ?? GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
 
             byte[] uni = BuildImageBrushParams(img, ox, oy, w, h, (float)Math.Clamp(opacity * img.Opacity, 0.0, 1.0));
             IntPtr ubuf = GetOrCreateUniform(uni);

@@ -175,7 +175,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             Immediate.FinalShutdown();
             Data.ReleaseAll();
             Adapter.Release();
-            if (OwnsGpu) Gpu.Dispose();
+            if (OwnsGpu)
+            {
+                if (Composition.ThreadGpu.Manages(Gpu)) Composition.ThreadGpu.Release(Gpu);
+                else Gpu.Dispose();
+            }
         }
 
         // ---- creating the WebGPU device ------------------------------------------------------------
@@ -225,12 +229,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>A WebGPU device of its own for a D3D11 device: the features D3D11 at feature level
         /// 11 takes for granted where the adapter has them, and validation errors logged rather than
         /// fatal (wgpu-native aborts on an uncaptured error).</summary>
-        /// <summary>The WebGPU device every shim device uses, as every Direct3D device on a machine
-        /// uses its GPU: a texture shared between devices (a D3D9 surface of a D3D11 texture, a
-        /// shared handle) is then one WebGPU texture. Never disposed.</summary>
-        public static WgpuContext SharedGpu => s_sharedGpu.Value;
-
-        private static readonly Lazy<WgpuContext> s_sharedGpu = new(CreateGpu, System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+        /// <summary>The calling thread's WebGPU device (Composition/ThreadGpu.cs): its compositors' and the
+        /// shim devices made on it, so a texture shared between devices (a D3D9 surface of a D3D11
+        /// texture, a shared handle) is one WebGPU texture, and a D3DImage of it is a GPU copy. No
+        /// reference is taken: for descriptions and tests.</summary>
+        public static WgpuContext SharedGpu => Composition.ThreadGpu.Peek();
 
         public static WgpuContext CreateGpu()
         {
@@ -242,9 +245,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     s_features = (uint*)NativeMemory.AllocZeroed((nuint)(s_wantedFeatures.Length * 4));
                 }
                 int n = 0;
-                s_granted.Clear();
+                // one adapter: the features are the same for every device (and read without a lock)
+                bool first = s_granted.Count == 0;
                 foreach (uint f in s_wantedFeatures)
-                    if (wgpuAdapterHasFeature(adapter, f) != 0) { s_features[n++] = f; s_granted.Add(f); }
+                    if (wgpuAdapterHasFeature(adapter, f) != 0) { s_features[n++] = f; if (first) s_granted.Add(f); }
                 *s_desc = default;
                 // the adapter's own limits, not WebGPU's defaults: D3D11 takes eight 128-bit render
                 // targets, 128 shader resources and 16 samplers per stage for granted, and the
@@ -379,7 +383,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         /// <summary>OpenSharedResource(1): a shim handle names a texture (made shared by D3D11 or
-        /// D3D9); every shim device shares one WebGPU device, so it is that same texture.</summary>
+        /// D3D9); a device on the same WebGPU device (Composition/ThreadGpu.cs: made on the same thread,
+        /// or on threads that composite nothing) opens that same texture. A texture of another WebGPU
+        /// device cannot be opened.</summary>
         [UnmanagedCallersOnly]
         private static int OpenSharedResource(IntPtr self, IntPtr handle, Guid* iid, IntPtr* resource)
         {
@@ -387,6 +393,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             *resource = IntPtr.Zero;
             D3DTexture2D? t = SharedHandles.Find(handle);
             if (t == null) { D3DLog.Once("openshared:" + handle, $"OpenSharedResource: 0x{(long)handle:x} is not a shim handle"); return HResult.E_INVALIDARG; }
+            if (Self(self) is { } d && !ReferenceEquals(d.Gpu, t.Device.Gpu))
+            {
+                D3DLog.Once("openshared-gpu", "OpenSharedResource: the texture was made on another thread's WebGPU device (devices made on two UI threads share no resources)");
+                return HResult.E_INVALIDARG;
+            }
             return QueryInterfaceOf(t, *iid, resource);
         }
 
@@ -623,8 +634,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static int CheckMultisampleQualityLevels(IntPtr self, DXGI_FORMAT format, uint samples, uint* levels)
         {
             if (levels == null) return HResult.E_INVALIDARG;
-            // WebGPU offers 1 and 4 samples.
-            *levels = (samples == 1 || samples == 4) && Formats.Texture(format) != WGPUTextureFormat.Undefined && !Formats.IsBlockCompressed(format) ? 1u : 0u;
+            // WebGPU offers 1 and 4 samples; 2 is given 4 (D3DTexture2D.SampleCount).
+            *levels = (samples == 1 || samples == 2 || samples == 4) && Formats.Texture(format) != WGPUTextureFormat.Undefined && !Formats.IsBlockCompressed(format) ? 1u : 0u;
             return HResult.S_OK;
         }
 

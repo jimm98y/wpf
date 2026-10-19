@@ -467,6 +467,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return bytes;
         }
 
+        /// <summary>GL backend: work that wrote storage buffers was submitted on this device (the Direct3D
+        /// shim's, Composition/ThreadGpu.cs), so wgpu-hal may have left a storage buffer bound to
+        /// GL_PIXEL_UNPACK_BUFFER, and a queue.writeTexture would then read it instead of its data
+        /// (D3DContext.ResetGlUnpackBinding). An uploader clears it first with <see cref="ResetGlUnpack"/>.</summary>
+        internal volatile bool GlUnpackSuspect;
+        private IntPtr _glResetBuffer, _glResetTexture;
+        private readonly object _glResetLock = new();
+
+        /// <summary>Puts GL's pixel-unpack binding back (a 1x1 buffer-to-texture copy binds and clears it),
+        /// when work that wrote storage was submitted since the last time.</summary>
+        internal void ResetGlUnpack()
+        {
+#if !WGPU_BROWSER
+            if (!GlUnpackSuspect) return;
+            lock (_glResetLock)
+            {
+                if (!GlUnpackSuspect) return;
+                GlUnpackSuspect = false;
+                if (_glResetBuffer == IntPtr.Zero)
+                {
+                    _glResetBuffer = CreateBuffer(256, WGPUBufferUsage.CopySrc | WGPUBufferUsage.CopyDst);
+                    var td = new WGPUTextureDescriptor
+                    {
+                        usage = WGPUTextureUsage.CopyDst, dimension = WGPUTextureDimension._2D,
+                        size = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = 1 }, format = WGPUTextureFormat.RGBA8Unorm, mipLevelCount = 1, sampleCount = 1,
+                    };
+                    _glResetTexture = wgpuDeviceCreateTexture(Device, &td);
+                }
+                IntPtr enc = wgpuDeviceCreateCommandEncoder(Device, IntPtr.Zero);
+                var src = new WGPUTexelCopyBufferInfo { buffer = _glResetBuffer, layout = new WGPUTexelCopyBufferLayout { bytesPerRow = 256, rowsPerImage = 1 } };
+                var dst = new WGPUTexelCopyTextureInfo { texture = _glResetTexture, aspect = WGPUTextureAspect.All };
+                var size = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = 1 };
+                wgpuCommandEncoderCopyBufferToTexture(enc, &src, &dst, &size);
+                IntPtr cmd = wgpuCommandEncoderFinish(enc, IntPtr.Zero);
+                wgpuCommandEncoderRelease(enc);
+                wgpuQueueSubmit(Queue, 1, &cmd);
+                wgpuCommandBufferRelease(cmd);
+            }
+#endif
+        }
+
         public void Dispose()
         {
 #if !WGPU_BROWSER

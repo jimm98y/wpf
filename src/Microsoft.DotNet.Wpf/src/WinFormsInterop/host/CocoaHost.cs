@@ -257,11 +257,11 @@ internal sealed class CocoaHost : IWinFormsHost
             _popupView = SendInitRect(Send(Cls("NSView"), Sel("alloc")), Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = content.w, h = content.h });
             SendVoidBool(_popupView, Sel("setWantsLayer:"), true);
             SendVoidPtr(_popupWindow, Sel("setContentView:"), _popupView);
-            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
+            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ThreadGpu.AcquireForHostWindow();
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _popupView);
             SendVoidBool(Send(_popupView, Sel("layer")), Sel("setOpaque:"), false);
             double scale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_popupView);
-            _popupWgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster);
+            _popupWgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster, threadDevice: true);
             _popupWgpu.SetTransparent(true);
             _popupWgpu.Tag = " popups";
             _popupFrame = content;
@@ -403,7 +403,8 @@ internal sealed class CocoaHost : IWinFormsHost
                 {
                     try
                     {
-                        var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
+                        // the creating thread's device (ThreadGpu.cs), though the window presents off it
+                        var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ThreadGpu.AcquireForHostWindow();
                         IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, nv);
                         _pendingScale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(nv);
                         if (_transparent) SendVoidBool(Send(nv, Sel("layer")), Sel("setOpaque:"), false);
@@ -454,7 +455,8 @@ internal sealed class CocoaHost : IWinFormsHost
         // HWND source, the browser a canvas), then present each composite as a textured quad.
         if (UseWebGpu)
         {
-            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext.Create();
+            // the UI thread's device (ThreadGpu.cs), shared with its WPF compositor and Direct3D shim devices
+            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ThreadGpu.AcquireForHostWindow();
             // Cross-platform surface creation: NativePlatform dispatches to the CAMetalLayer (mac),
             // HWND (Windows), Xlib (Linux) or canvas (browser) source by detected OS. Here we pass the
             // NSView*; a Win32 host passes its HWND. The present path below is identical everywhere.
@@ -466,7 +468,7 @@ internal sealed class CocoaHost : IWinFormsHost
             double scale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_imageView);
             // Scene path uses an sRGB surface so the renderer's gamma-correct glyph coverage kicks in
             // (crisp, WPF-weight text); the bitmap path stays non-sRGB (pixels are already display-space).
-            _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster);
+            _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster, threadDevice: true);
             if (_transparent)
             {
                 SendVoidBool(Send(_imageView, Sel("layer")), Sel("setOpaque:"), false);
@@ -548,7 +550,7 @@ internal sealed class CocoaHost : IWinFormsHost
         {
             if (_wgpu == null && _pendingSurface != IntPtr.Zero && !_closed)
             {
-                _wgpu = new WgpuPresenter(_pendingContext, _pendingSurface, _form.Width, _form.Height, _pendingScale, srgb: _gpuRaster);
+                _wgpu = new WgpuPresenter(_pendingContext, _pendingSurface, _form.Width, _form.Height, _pendingScale, srgb: _gpuRaster, threadDevice: true);
                 _wgpu.SetTransparent(_transparent);
                 _lastVer = -1;
                 if (Environment.GetEnvironmentVariable("WF_TRACE_SURFACE") == "1") Console.WriteLine($"[CocoaHost] off-main presenter for '{_form.Text}' {_form.Width}x{_form.Height}");
