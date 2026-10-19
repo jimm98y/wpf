@@ -1140,9 +1140,50 @@ namespace MS.Win32.PresentationCore
         internal static class InteropDeviceBitmap
         {
             internal delegate void FrontBufferAvailableCallback(bool lost, uint version);
-            
+
+            // On the managed (WebGPU) composition backend there is no milcore: D3DImage's interop
+            // bitmap is System.Windows.Interop.ManagedInteropBitmap (D3DImage.Managed.cs).
+
+            internal static int Create(
+                IntPtr d3dResource,
+                double dpiX,
+                double dpiY,
+                uint version,
+                FrontBufferAvailableCallback pfnCallback,
+                bool isSoftwareFallbackEnabled,
+                out SafeMILHandle ppInteropDeviceBitmap,
+                out uint pixelWidth,
+                out uint pixelHeight
+                )
+            {
+                if (UseManaged)
+                    return System.Windows.Interop.ManagedInteropBitmap.Create(d3dResource, out ppInteropDeviceBitmap, out pixelWidth, out pixelHeight);
+                return CreateNative(d3dResource, dpiX, dpiY, version, pfnCallback, isSoftwareFallbackEnabled, out ppInteropDeviceBitmap, out pixelWidth, out pixelHeight);
+            }
+
+            /// <summary>The managed interop bitmap whenever managed composition runs -- or could: a D3DImage
+            /// may get its back buffer before the first frame has started composition, and this stack
+            /// ships no milcore to fall back on.</summary>
+            internal static bool UseManaged => System.Windows.Media.Composition.DUCE.ManagedComposition.IsEnabled || !s_nativeMilcore.Value;
+
+            private static readonly Lazy<bool> s_nativeMilcore = new(() => NativeLibrary.TryLoad(DllImport.MilCore, typeof(InteropDeviceBitmap).Assembly, null, out IntPtr h) && h != IntPtr.Zero);
+
+            internal static void Detach(SafeMILHandle pInteropDeviceBitmap)
+            {
+                var m = System.Windows.Interop.ManagedInteropBitmap.From(pInteropDeviceBitmap);
+                if (m != null) { m.Detach(); return; }
+                DetachNative(pInteropDeviceBitmap);
+            }
+
+            internal static int AddDirtyRect(int x, int y, int w, int h, SafeMILHandle pInteropDeviceBitmap)
+            {
+                var m = System.Windows.Interop.ManagedInteropBitmap.From(pInteropDeviceBitmap);
+                if (m != null) { m.AddDirtyRect(x, y, w, h); return 0; }
+                return AddDirtyRectNative(x, y, w, h, pInteropDeviceBitmap);
+            }
+
             [DllImport(DllImport.MilCore, EntryPoint = "InteropDeviceBitmap_Create")]
-            internal static extern int Create(
+            private static extern int CreateNative(
                 IntPtr d3dResource,
                 double dpiX,
                 double dpiY,
@@ -1155,16 +1196,15 @@ namespace MS.Win32.PresentationCore
                 );
 
             [DllImport(DllImport.MilCore, EntryPoint = "InteropDeviceBitmap_Detach")]
-            internal static extern void Detach(
+            private static extern void DetachNative(
                 SafeMILHandle pInteropDeviceBitmap
                 );
 
             [DllImport(DllImport.MilCore, EntryPoint = "InteropDeviceBitmap_AddDirtyRect")]
-            internal static extern int AddDirtyRect(
-
-                int x, 
-                int y, 
-                int w, 
+            private static extern int AddDirtyRectNative(
+                int x,
+                int y,
+                int w,
                 int h,
                 SafeMILHandle pInteropDeviceBitmap
                 );

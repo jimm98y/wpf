@@ -387,7 +387,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 _arenas[_arenaIndex] = Device.Gpu.CreateBuffer(ArenaSize, WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst);
             ulong at = _arenaOffset;
             var tmp = new byte[size];
-            if (cb?.Shadow != null) new ReadOnlySpan<byte>(cb.Shadow, (int)Math.Min(size, cb.Size)).CopyTo(tmp);
+            if (cb != null && cb.Shadow != null) new ReadOnlySpan<byte>(cb.Shadow, (int)Math.Min(size, cb.Size)).CopyTo(tmp);
             Device.Gpu.WriteBuffer(_arenas[_arenaIndex], at, tmp);
             _arenaOffset = (at + size + 255) & ~255UL;
             return at;
