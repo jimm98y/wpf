@@ -21,6 +21,61 @@ fn fs_textured(in : VSOut) -> @location(0) vec4<f32> {
     return vec4<f32>(round(s.rgb * a * 255.0) / 255.0, a);
 }
 
+// A texel of a WPF bitmap as WPF's PBGRA holds it: eight bits, premultiplied with rounding.
+fn wpf_texel(p : vec2<i32>) -> vec4<u32> {
+    let c = vec4<u32>(round(textureLoad(tex, p, 0) * 255.0));
+    return vec4<u32>((c.rgb * c.a + vec3<u32>(127u)) / 255u, c.a);
+}
+
+// A WPF bitmap carries WPF's own device-to-texture mapping instead of a uv: per axis the 16.16
+// step and the 16.16 offset (split in halves so each is exact as a float), as milcore's software
+// rasterizer holds them (CBilinearSpan::InitializeFixedPointState). Flat: never interpolated.
+struct VSOutWpf {
+    @builtin(position) pos : vec4<f32>,
+    @location(0) color : vec4<f32>,
+    @location(1) @interpolate(flat) step : vec2<f32>,
+    @location(2) @interpolate(flat) offset : vec4<f32>,
+};
+
+@vertex
+fn vs_wpf_image(@location(0) pos : vec2<f32>, @location(1) color : vec4<f32>, @location(2) step : vec2<f32>, @location(3) offset : vec4<f32>) -> VSOutWpf {
+    var o : VSOutWpf;
+    o.pos = vec4<f32>(pos, 0.0, 1.0);
+    o.color = color;
+    o.step = step;
+    o.offset = offset;
+    return o;
+}
+
+// A WPF bitmap, bilinear exactly as WPF's rasterizer does it (CBilinearSpan, the C path every
+// 64-bit build runs): the 16.16 texel position u = step * x + offset at the pixel's integer
+// coordinate, its texel u >> 16 and weight (u >> 8) & 0xff, the four premultiplied 8-bit texels
+// blended in one sum, (sum + 32768) >> 16, clamped at the edges. Fitted with no error against
+// stock RenderTargetBitmap. The GPU's sampler weighs at its own precision and on its own (float)
+// mapping, and missed by one at band edges. The sampler stays bound, so this entry's bind group
+// layout is fs_textured's.
+@fragment
+fn fs_textured_wpf(in : VSOutWpf) -> @location(0) vec4<f32> {
+    let keep = textureSampleLevel(tex, samp, vec2<f32>(0.0), 0.0) * 0.0;
+    let dims = vec2<i32>(textureDimensions(tex));
+    let px = vec2<i32>(floor(in.pos.xy));
+    let off = (vec2<i32>(in.offset.xz) << vec2<u32>(16u)) + vec2<i32>(in.offset.yw);
+    let u = vec2<i32>(in.step) * px + off;
+    let i0 = u >> vec2<u32>(16u);
+    let f = vec2<u32>((u >> vec2<u32>(8u)) & vec2<i32>(255));
+    let lo = clamp(i0, vec2<i32>(0), dims - vec2<i32>(1));
+    let hi = clamp(i0 + vec2<i32>(1), vec2<i32>(0), dims - vec2<i32>(1));
+    let wx1 = f.x;
+    let wx0 = 256u - f.x;
+    let wy1 = f.y;
+    let wy0 = 256u - f.y;
+    let sum = wpf_texel(vec2<i32>(lo.x, lo.y)) * (wx0 * wy0) + wpf_texel(vec2<i32>(hi.x, lo.y)) * (wx1 * wy0)
+            + wpf_texel(vec2<i32>(lo.x, hi.y)) * (wx0 * wy1) + wpf_texel(vec2<i32>(hi.x, hi.y)) * (wx1 * wy1);
+    let s = (sum + vec4<u32>(32768u)) >> vec4<u32>(16u);
+    let o = in.color.a;
+    return vec4<f32>(round(vec3<f32>(s.rgb) * o) / 255.0, f32(s.a) / 255.0 * o) + keep;
+}
+
 @fragment
 fn fs_text(in : VSOut) -> @location(0) vec4<f32> {
     let coverage = textureSample(tex, samp, in.uv).r;   // R8 glyph coverage
