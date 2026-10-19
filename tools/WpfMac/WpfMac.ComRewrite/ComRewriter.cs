@@ -888,11 +888,7 @@ public static class ComRewriter
                         ins.OpCode = OpCodes.Call; ins.Operand = _adopt;
                         il.InsertAfter(ins, cast);
                         _r.CallSites++;
-                        // Off Windows that is all. On Windows the assembly then gets objects that built-in COM
-                        // made for other assemblies, and in GraphWorX the two that flipped this way did not run
-                        // as before (Ab3d.DXEngine stopped using Direct3D; GwxRuntimeCore's Location, asked by
-                        // IcoTrace from outside, changed): such an assembly stays on built-in COM there.
-                        _r.Unsupported.Add($"{md.DeclaringType.FullName}.{md.Name}: casts an object of unknown origin to COM interface {t.Name} (adopted off Windows; on Windows it may be another assembly's built-in RCW)");
+
                     }
                 }
             }
