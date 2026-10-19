@@ -97,6 +97,9 @@ namespace ComImportFixture
                 (a == System.Reflection.Assembly.Load("ComImportFixture") && a == System.Reflection.Assembly.GetExecutingAssembly()).ToString(),
             };
         }
+        /// <summary>Where another assembly (not rewritten for COM: rewritten for its location calls) says this one is.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        public static string WhereByCaller() => LocationAskerFixture.Asker.CallersCodeBase();
 #pragma warning restore SYSLIB0012, SYSLIB0044
 
         [DllImport("ole32.dll")]

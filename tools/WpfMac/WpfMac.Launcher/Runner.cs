@@ -50,7 +50,7 @@ internal sealed class Runner
         // app assemblies with [ComImport] types: rewritten copies in the cache (Documentation/comimport-rewriter.md)
         var comNotes = new List<string>();
         var comList = new List<string>();
-        ComImportStep.Apply(deps, App.Directory, OverlayDir, Locations.CacheRoot, HostInfo.IsWindows,
+        ComImportStep.Apply(deps, App.Directory, OverlayDir, Locations.CacheRoot, cacheDir, HostInfo.IsWindows,
             Environment.GetEnvironmentVariable("WPF_COMIMPORT_REWRITE"), comNotes, comList);
 
         var props = new Dictionary<string, string>

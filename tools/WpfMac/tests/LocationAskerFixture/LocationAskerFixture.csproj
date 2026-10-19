@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- An app-like helper that asks OTHER assemblies where they are, as IcoTrace does: ComImportFixture calls
+       it, so the launcher rewrites it too (caller rewriting, ComRewriterTests). -->
+  <PropertyGroup>
+    <AssemblyName>LocationAskerFixture</AssemblyName>
+    <NoWarn>$(NoWarn);SYSLIB0012</NoWarn>
+  </PropertyGroup>
+</Project>

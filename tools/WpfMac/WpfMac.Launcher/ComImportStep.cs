@@ -1,11 +1,18 @@
-// The COM-import rewrite as a step of preparing an app (Documentation/comimport-rewriter.md): every app
-// assembly that declares [ComImport] types is judged, rewritten into the cache when it may be, and the
-// merged deps.json then names the rewritten copy instead of the app's file.
+// The COM-import rewrite as a step of preparing an app (Documentation/comimport-rewriter.md).
 //
-// Windows: all or nothing per assembly -- rewritten only when the rewriter supports every ComImport use
-// in it, and only together with the assemblies whose COM types it uses (their objects must be
-// ComObjects too); else left on built-in COM. Elsewhere there is no built-in COM: what is supported is
-// rewritten, and the rest throws by name when called.
+// 1. Judge every app assembly that declares [ComImport] types (ComRewriter.Analyze: a metadata and IL scan,
+//    no code generated). Windows: all or nothing per assembly -- rewritten only when every ComImport use is
+//    supported, and only together with the assemblies whose COM types it uses; else left on built-in COM.
+//    Elsewhere there is no built-in COM: what is supported is rewritten, the rest throws by name.
+// 2. Caller rewriting (Limit 1): a rewritten assembly has no file, and reports its original location only
+//    to code whose location calls are redirected. App assemblies that ask OTHER assemblies where they are
+//    (LocationCallers) and can reach a rewritten one -- it calls them, or they enumerate every assembly --
+//    are rewritten too, for their location calls alone; and so on, to a fixpoint.
+// 3. The chosen leave the deps, and their names and original paths go to the runtimeconfig
+//    (WpfMac.ComImport): the startup hook rewrites each in memory when it is first loaded.
+//
+// Nothing rewritten is written to disk. The verdicts are cached, by file hash and rewriter version, in a
+// small JSON file in the app's cache folder (comimport-verdicts.json) -- verdicts, not assemblies.
 
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
@@ -21,6 +28,9 @@ internal static class ComImportStep
 {
     /// <summary>Where an earlier wpfmac kept rewritten copies on disk (now removed when found).</summary>
     public const string Folder = "comimport";
+    public const string VerdictFile = "comimport-verdicts.json";
+    /// <summary>Bumped when the judge's verdicts change, so cached ones are judged again.</summary>
+    private const string Version = "5";
 
     /// <summary>WPF_COMIMPORT_REWRITE: on (default), off, or a ';'-separated list of assembly names.</summary>
     internal static Func<string, bool> Scope(string? setting)
@@ -33,39 +43,59 @@ internal static class ComImportStep
         return name => names.Any(r => r.IsMatch(name));
     }
 
-    private sealed class Candidate
+    private sealed class AppFile
     {
-        public required string File, Name, Asset;
-        public required JsonObject Runtime;
-        public required JsonNode? Props;
-        public Verdict Verdict = new();
+        public required string File, Name;
+        /// <summary>Its entries in the deps (an assembly can be listed by more than one library).</summary>
+        public List<(JsonObject Runtime, string Asset)> Entries = new();
+        public string Hash = "";
+        public bool DeclaresCom, MayReadLocations;
+        public List<string> References = new();
+        public Verdict? Verdict;
+        public LocationAsks? Asks;
     }
 
-    private sealed class Verdict
+    public sealed class Verdict
     {
         public int Unsupported { get; set; }
         public List<string> UsesComTypesOf { get; set; } = new();
         public string Summary { get; set; } = "";
     }
 
-    /// <summary>
-    /// Rewrites what may be rewritten among the app's runtime assemblies in <paramref name="deps"/> and
-    /// points the deps at the copies under <paramref name="cacheRoot"/>/comimport. One line per ComImport
-    /// assembly goes to <paramref name="notes"/>.
-    /// </summary>
-    public static void Apply(JsonObject deps, string appDir, string overlayDir, string cacheRoot, bool windows, string? setting, List<string> notes, List<string> list)
+    public sealed class AsksEntry
     {
+        public bool AsksOthers { get; set; }
+        public bool EnumeratesAll { get; set; }
+        public string? Example { get; set; }
+    }
+
+    private sealed class Cache
+    {
+        public string Version { get; set; } = "";
+        public Dictionary<string, Verdict> Verdicts { get; set; } = new();
+        public Dictionary<string, AsksEntry> Asks { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Chooses what is rewritten among the app's runtime assemblies in <paramref name="deps"/>, takes those out
+    /// of it, and lists them ("name|original path") in <paramref name="list"/>. One line per assembly judged
+    /// goes to <paramref name="notes"/>. <paramref name="appCache"/>: the app's cache folder (the verdicts).
+    /// </summary>
+    public static void Apply(JsonObject deps, string appDir, string overlayDir, string cacheRoot, string? appCache, bool windows, string? setting, List<string> notes, List<string> list)
+    {
+        var total = System.Diagnostics.Stopwatch.StartNew();
         // what an earlier wpfmac wrote: rewritten copies on disk (now made in memory, at load)
         string old = Path.Combine(cacheRoot, Folder);
         if (Directory.Exists(old)) { try { Directory.Delete(old, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
         var inScope = Scope(setting);
+        var force = Scope(Environment.GetEnvironmentVariable("WPF_COMIMPORT_FORCE") ?? "off");
         string targetName = deps["runtimeTarget"]?["name"]?.GetValue<string>() ?? "";
-        if (deps["targets"]?[targetName] is not JsonObject target || deps["libraries"] is not JsonObject libraries) return;
+        if (deps["targets"]?[targetName] is not JsonObject target) return;
         string[] searchDirs = { appDir, overlayDir, System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory() };
+        bool partial = !windows;
 
-        // the app's assemblies, and which declare COM types
-        var appFiles = new List<string>();
-        var candidates = new List<Candidate>();
+        // the app's assemblies, from their metadata
+        var files = new List<AppFile>();
         foreach (var (libKey, libNode) in target.ToList())
         {
             if (libKey == DepsMerger.OverlayLibrary || libKey.StartsWith("WpfMac.", StringComparison.Ordinal)) continue;      // the stack's own: never
@@ -74,111 +104,152 @@ internal static class ComImportStep
             {
                 string file = Path.Combine(appDir, asset);
                 if (!File.Exists(file)) continue;
-                appFiles.Add(file);
-                if (!ComRewriter.DeclaresComImport(file)) continue;
-                string name = Path.GetFileNameWithoutExtension(file);
-                if (!inScope(name)) { notes.Add($"comimport {name}: left (WPF_COMIMPORT_REWRITE)"); continue; }
-                candidates.Add(new Candidate { File = file, Name = name, Asset = asset, Runtime = runtime, Props = props });
+                var known = files.FirstOrDefault(x => string.Equals(x.File, file, StringComparison.OrdinalIgnoreCase));
+                if (known != null) { known.Entries.Add((runtime, asset)); continue; }
+                var f = new AppFile { File = file, Name = Path.GetFileNameWithoutExtension(file) };
+                f.Entries.Add((runtime, asset));
+                if (!ReadMetadata(f)) continue;
+                if (files.Any(x => string.Equals(x.Name, f.Name, StringComparison.OrdinalIgnoreCase))) continue;     // the same assembly twice: the first
+                files.Add(f);
             }
         }
+        var candidates = files.Where(f => f.DeclaresCom).ToList();
         if (candidates.Count == 0) return;
+        foreach (var c in candidates.Where(c => !inScope(c.Name))) notes.Add($"comimport {c.Name}: left (WPF_COMIMPORT_REWRITE)");
+        candidates = candidates.Where(c => inScope(c.Name)).ToList();
+
+        // the cached verdicts
+        string? cachePath = appCache == null ? null : Path.Combine(appCache, VerdictFile);
+        var cache = Load(cachePath);
+        bool dirty = false;
 
         // what of each candidate the other app assemblies reference by name
-        var external = ExternalReferences(appFiles, candidates.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase));
+        var external = ExternalReferences(files.Select(f => f.File), candidates.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase));
 
-        // which app assemblies ask other assemblies where they are (Limit 1)
-        var askers = LocationAskers(appFiles);
-
-        // judge each (nothing is written: the verdicts go to merge-report.txt)
-        bool partial = !windows;
+        // 1. judge
+        int judged = 0;
         foreach (var c in candidates)
         {
             var refs = external.TryGetValue(c.Name, out var r) ? r : new HashSet<string>();
+            string key = $"{c.Hash}|{HashText(string.Join("\n", refs.Order(StringComparer.Ordinal)))}|{(partial ? "p" : "w")}";
+            if (cache.Verdicts.TryGetValue(key, out var v)) { c.Verdict = v; continue; }
             var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var res = ComRewriter.Rewrite(c.File, null, searchDirs, partial, refs);
+                var res = ComRewriter.Analyze(c.File, searchDirs, refs);
                 c.Verdict = new Verdict { Unsupported = res.Unsupported.Count, UsesComTypesOf = res.UsesComTypesOf.ToList(), Summary = res.ToString() };
             }
             catch (Exception e) { c.Verdict = new Verdict { Unsupported = 1, Summary = $"the rewriter failed: {e.GetType().Name}: {e.Message}" }; }
-            // Limit 1: a rewritten assembly reports its original location only to its own code. One that calls
-            // an app assembly which asks its callers (or every loaded assembly) where they are would be found
-            // nowhere by it (GwxRuntimeCore -> IcoTrace's GetCallingAssembly().CodeBase: Gwx.config.xml)
-            var asked = References(c.File).Where(askers.Contains).ToList();
-            if (asked.Count > 0)
-            {
-                if (!partial) c.Verdict.Unsupported++;
-                c.Verdict.Summary += $"; its location is asked by {string.Join(", ", asked)} (it reports it only to its own code{(partial ? "; rewritten anyway: there is no built-in COM here" : "")})";
-            }
             c.Verdict.Summary += $" [judged in {sw.ElapsedMilliseconds} ms]";
+            cache.Verdicts[key] = c.Verdict;
+            dirty = true;
+            judged++;
         }
 
         // Windows: rewritten together or not at all -- an assembly whose COM types another uses goes with it
-        // WPF_COMIMPORT_FORCE (diagnostics): rewritten whatever the verdict, as off Windows
-        var force = Scope(Environment.GetEnvironmentVariable("WPF_COMIMPORT_FORCE") ?? "off");
-        var chosen = candidates.Where(c => partial || c.Verdict.Unsupported == 0 || force(c.Name)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+        var chosen = candidates.Where(c => partial || c.Verdict!.Unsupported == 0 || force(c.Name)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
         if (!partial)
         {
             for (bool changed = true; changed;)
             {
                 changed = false;
                 foreach (var c in chosen.Values.ToList())
-                    if (!force(c.Name) && c.Verdict.UsesComTypesOf.Any(u => !chosen.ContainsKey(u))) { chosen.Remove(c.Name); changed = true; }
+                    if (!force(c.Name) && c.Verdict!.UsesComTypesOf.Any(u => !chosen.ContainsKey(u))) { chosen.Remove(c.Name); changed = true; }
             }
         }
 
-        // The chosen leave the deps: the startup hook's resolver gets the first request for each, and
-        // loads it rewritten in memory from the original (WpfMac.ComRewrite.ComImportLoader).
+        // 2. caller rewriting: who asks the chosen (and, in turn, the callers) where they are
+        var callers = new Dictionary<string, AppFile>(StringComparer.OrdinalIgnoreCase);
+        if (chosen.Count > 0)
+        {
+            foreach (var f in files.Where(f => f.MayReadLocations))
+            {
+                if (cache.Asks.TryGetValue(f.Hash, out var a)) { f.Asks = new LocationAsks(a.AsksOthers, a.EnumeratesAll, a.Example); continue; }
+                try { f.Asks = LocationCallers.Analyze(f.File); }
+                catch (Exception) { f.Asks = new LocationAsks(true, false, "its IL could not be read"); }
+                cache.Asks[f.Hash] = new AsksEntry { AsksOthers = f.Asks.AsksOthers, EnumeratesAll = f.Asks.EnumeratesAll, Example = f.Asks.Example };
+                dirty = true;
+            }
+            var askers = files.Where(f => f.Asks is { AsksOthers: true }).ToList();
+            var rewritten = new HashSet<string>(chosen.Keys, StringComparer.OrdinalIgnoreCase);
+            for (bool grew = true; grew;)
+            {
+                grew = false;
+                foreach (var x in askers)
+                {
+                    if (rewritten.Contains(x.Name)) continue;
+                    // x can be asked to tell where a rewritten R is when R calls it, or when x enumerates all
+                    var reachedBy = files.Where(rf => rewritten.Contains(rf.Name) && rf.References.Contains(x.Name, StringComparer.OrdinalIgnoreCase)).Select(rf => rf.Name).ToList();
+                    if (reachedBy.Count == 0 && !x.Asks!.EnumeratesAll) continue;
+                    rewritten.Add(x.Name);
+                    callers[x.Name] = x;
+                    grew = true;
+                    notes.Add($"comimport {x.Name}: its location calls rewritten in memory at load -- it asks other assemblies where they are ({x.Asks!.Example}){(reachedBy.Count > 0 ? $", and {string.Join(", ", reachedBy)} call it" : ", and it goes through every loaded assembly")}");
+                }
+            }
+        }
+
+        // 3. the chosen and their callers leave the deps; the startup hook loads them rewritten
         foreach (var c in candidates)
         {
             bool rewrite = chosen.ContainsKey(c.Name);
-            string why = c.Verdict.Summary + (!rewrite && c.Verdict.Unsupported == 0 && c.Verdict.UsesComTypesOf.Count > 0 ? " (left with them)" : "");
-            if (rewrite)
-            {
-                c.Runtime.Remove(c.Asset);
-                list.Add($"{c.Name}|{c.File}");
-            }
+            string why = c.Verdict!.Summary + (!rewrite && c.Verdict.Unsupported == 0 && c.Verdict.UsesComTypesOf.Count > 0 ? " (left with them)" : "");
+            if (rewrite) Take(c, list);
             notes.Add($"comimport {c.Name}: {(rewrite ? "rewritten in memory at load" : "left on built-in COM")} -- {why}");
         }
+        foreach (var x in callers.Values) Take(x, list, locationOnly: !chosen.ContainsKey(x.Name));
         foreach (var (_, libNode) in target)
             if (libNode is JsonObject lib && lib["runtime"] is JsonObject rt && rt.Count == 0) lib.Remove("runtime");
+
+        if (dirty && cachePath != null)
+        {
+            try { Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!); File.WriteAllText(cachePath, JsonSerializer.Serialize(cache)); }
+            catch (IOException) { }
+        }
+        notes.Add($"comimport: {files.Count} app assemblies read, {candidates.Count} declare COM types, {judged} judged now (the rest cached), " +
+                  $"{chosen.Count} rewritten for COM, {callers.Count} for their location calls; {total.ElapsedMilliseconds} ms");
     }
 
-    /// <summary>The app assemblies that ask other assemblies where they are: they read Location, CodeBase or
-    /// EscapedCodeBase, and get assemblies they did not name themselves (GetCallingAssembly, GetAssemblies,
-    /// GetAssembly). From the member references alone: conservative.</summary>
-    private static HashSet<string> LocationAskers(IEnumerable<string> files)
+    private static void Take(AppFile f, List<string> list, bool locationOnly = false)
     {
-        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string f in files)
+        foreach (var (runtime, asset) in f.Entries) runtime.Remove(asset);
+        // a caller alone keeps its COM types as they are, for built-in COM
+        list.Add($"{f.Name}|{f.File}{(locationOnly ? "|location" : "")}");
+    }
+
+    /// <summary>The file's hash, what it references, whether it declares COM types and may read locations.</summary>
+    private static bool ReadMetadata(AppFile f)
+    {
+        try
+        {
+            byte[] bytes = File.ReadAllBytes(f.File);
+            f.Hash = Convert.ToHexString(SHA256.HashData(bytes))[..24].ToLowerInvariant();
+            using var pe = new PEReader(new MemoryStream(bytes));
+            if (!pe.HasMetadata) return false;
+            var md = pe.GetMetadataReader();
+            if (!md.IsAssembly) return false;
+            f.Name = md.GetString(md.GetAssemblyDefinition().Name);
+            foreach (var h in md.TypeDefinitions)
+                if ((md.GetTypeDefinition(h).Attributes & System.Reflection.TypeAttributes.Import) != 0) { f.DeclaresCom = true; break; }
+            f.MayReadLocations = LocationCallers.MayRead(md);
+            f.References = md.AssemblyReferences.Select(h => md.GetString(md.GetAssemblyReference(h).Name)).ToList();
+            return true;
+        }
+        catch (Exception e) when (e is BadImageFormatException or IOException or InvalidOperationException) { return false; }
+    }
+
+    private static Cache Load(string? path)
+    {
+        if (path != null && File.Exists(path))
         {
             try
             {
-                using var fs = File.OpenRead(f);
-                using var pe = new PEReader(fs);
-                if (!pe.HasMetadata) continue;
-                var md = pe.GetMetadataReader();
-                bool reads = false, gets = false;
-                foreach (var h in md.MemberReferences)
-                {
-                    string n = md.GetString(md.GetMemberReference(h).Name);
-                    if (n is "get_Location" or "get_CodeBase" or "get_EscapedCodeBase") reads = true;
-                    else if (n is "GetCallingAssembly" or "GetAssemblies" or "GetAssembly") gets = true;
-                }
-                if (reads && gets && md.IsAssembly) result.Add(md.GetString(md.GetAssemblyDefinition().Name));
+                var c = JsonSerializer.Deserialize<Cache>(File.ReadAllText(path));
+                if (c != null && c.Version == Version) return c;
             }
-            catch (BadImageFormatException) { }
+            catch (JsonException) { }
         }
-        return result;
-    }
-
-    /// <summary>The names of the assemblies <paramref name="file"/> references.</summary>
-    private static IEnumerable<string> References(string file)
-    {
-        using var fs = File.OpenRead(file);
-        using var pe = new PEReader(fs);
-        var md = pe.GetMetadataReader();
-        return md.AssemblyReferences.Select(h => md.GetString(md.GetAssemblyReference(h).Name)).ToList();
+        return new Cache { Version = Version };
     }
 
     /// <summary>For each of <paramref name="targets"/>: the names of its types (Namespace.Name, or Name for a
@@ -199,7 +270,6 @@ internal static class ComImportStep
                     var tr = md.GetTypeReference(h);
                     string name = md.GetString(tr.Name);
                     string ns = md.GetString(tr.Namespace);
-                    // the outermost scope names the assembly
                     var scope = tr.ResolutionScope;
                     bool nested = false;
                     while (scope.Kind == HandleKind.TypeReference) { nested = true; scope = md.GetTypeReference((TypeReferenceHandle)scope).ResolutionScope; }
@@ -214,4 +284,6 @@ internal static class ComImportStep
         }
         return result;
     }
+
+    private static string HashText(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s)))[..8].ToLowerInvariant();
 }
