@@ -484,7 +484,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             {
                 case ShaderStage.Vertex when _form == StageForm.VertexCompute: AssembleVertexCompute(w); break;
                 case ShaderStage.Hull when _form == StageForm.HullCompute: AssembleHull(w); break;
-                case ShaderStage.Domain when _form == StageForm.DomainVertex: AssembleDomain(w); break;
+                case ShaderStage.Domain when _form is StageForm.DomainVertex or StageForm.DomainCompute: AssembleDomain(w); break;
                 case ShaderStage.Geometry when _form == StageForm.GeometryCompute: AssembleGeometryCompute(w); break;
                 case ShaderStage.Vertex: AssembleVertex(w); break;
                 case ShaderStage.Pixel: AssemblePixel(w); break;

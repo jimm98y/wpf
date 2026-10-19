@@ -230,6 +230,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
             // 1 and 2: the vertex shader and both hull kernels, in one compute pass
             EndPass();
+            _storageWritten = true;
             IntPtr pass = wgpuCommandEncoderBeginComputePass(Encoder(), null);
             wgpuComputePassEncoderSetPipeline(pass, t.VsPipeline);
             wgpuComputePassEncoderSetBindGroup(pass, 0, groups[0], 0, null);

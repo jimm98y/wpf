@@ -29,7 +29,7 @@ using System.Text;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 {
-    internal enum StageForm { Native, VertexCompute, GeometryCompute, GeometryPassThrough, HullCompute, DomainVertex }
+    internal enum StageForm { Native, VertexCompute, GeometryCompute, GeometryPassThrough, HullCompute, DomainVertex, DomainCompute }
 
     /// <summary>One input-layout element, as the compute form of a vertex shader fetches it.</summary>
     internal sealed class FetchElement

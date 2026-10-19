@@ -222,6 +222,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 return;
             }
             EndPass();
+            _storageWritten = true;
             IntPtr pass = wgpuCommandEncoderBeginComputePass(Encoder(), null);
             wgpuComputePassEncoderSetPipeline(pass, t.VsPipeline);
             wgpuComputePassEncoderSetBindGroup(pass, 0, groups[0], 0, null);
