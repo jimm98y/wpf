@@ -130,20 +130,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 case Opcode.DclIndexableTemp: _indexable[(int)ins.Extra[0]] = ((int)ins.Extra[1], (int)ins.Extra[2]); break;
                 case Opcode.DclConstantBuffer:
                 {
-                    var o = ins.Operands[0];
-                    int slot = o.Index0, size = o.Indices.Length > 1 ? o.Index1 : 4096;
-                    _bindings.ConstantBuffers[slot] = Math.Max(1, size);
+                    // a size of 0 is "any size" (the slot takes whatever buffer is bound)
+                    int slot = ins.Register, size = ins.Count > 0 ? (int)ins.Count : 4096;
+                    _bindings.ConstantBuffers[slot] = size;
                     break;
                 }
                 case Opcode.DclSampler:
                 {
                     int mode = (int)((ins.Token >> 11) & 0xF);
-                    _samplerComparison[ins.Operands[0].Index0] = mode == 1;
+                    _samplerComparison[ins.Register] = mode == 1;
                     break;
                 }
                 case Opcode.DclResource:
                 {
-                    int slot = ins.Operands[0].Index0;
+                    int slot = ins.Register;
                     _resourceDim[slot] = ins.ResourceDimension;
                     int rt = (int)(ins.ReturnType & 0xF);
                     _resourceKind[slot] = rt switch { 3 => 'i', 4 => 'u', _ => 'f' };

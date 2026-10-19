@@ -58,6 +58,12 @@
     <ProjectReference Include="..\..\WgpuInterop.csproj" />
   </ItemGroup>
 
+  <!-- The DXBC translator's own corpus (Direct3D/Corpus: HLSL, manifest, build.ps1), compiled and checked in. -->
+  <ItemGroup>
+    <None Include="Direct3D/Corpus/bin/*.dxbc" Link="DxbcCorpus/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="Direct3D/Corpus/known-gaps.txt" Link="DxbcCorpus/known-gaps.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
   <!-- The native backend, next to the test binary so the loader finds it. -->
   <ItemGroup>
     <None Include="$(WgpuNativeDir)wgpu_native.dll"      Condition="Exists('$(WgpuNativeDir)wgpu_native.dll')"      CopyToOutputDirectory="PreserveNewest" Visible="false" />
