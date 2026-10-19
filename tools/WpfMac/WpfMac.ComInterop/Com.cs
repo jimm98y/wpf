@@ -150,6 +150,19 @@ public static unsafe partial class Com
     private static IntPtr PointerFor(object o, Guid iid)
     {
         if (o is ComObject c) return c.QueryInterface(iid);
+        // a built-in RCW (Windows: from an assembly left on built-in COM, or the BCL): its native object
+        if (OperatingSystem.IsWindows() && Marshal.IsComObject(o))
+        {
+            IntPtr u = Marshal.GetIUnknownForObject(o);
+            if (iid == IID_IUnknown) return u;
+            try
+            {
+                int hr = Marshal.QueryInterface(u, in iid, out IntPtr q);
+                if (hr < 0) Marshal.ThrowExceptionForHR(hr);
+                return q;
+            }
+            finally { Marshal.Release(u); }
+        }
         // a managed object: its CCW
         IntPtr unk = CcwUnknown(o);
         if (iid == IID_IUnknown) return unk;
@@ -333,7 +346,7 @@ public sealed unsafe class ComObject : IDynamicInterfaceCastable
         try { Separate(); } catch { /* finalizer */ }
     }
 
-    private static Type? ImplOf(Type iface) => s_impl.GetValue(iface, t => t.GetNestedType("ComImpl", BindingFlags.Public | BindingFlags.NonPublic));
+    private static Type? ImplOf(Type iface) => s_impl.GetValue(iface, t => t.GetNestedType("ComImpl", BindingFlags.Public | BindingFlags.NonPublic) ?? BclComTypes.ImplOf(t));
 
     bool IDynamicInterfaceCastable.IsInterfaceImplemented(RuntimeTypeHandle interfaceType, bool throwIfNotImplemented)
     {
@@ -343,6 +356,12 @@ public sealed unsafe class ComObject : IDynamicInterfaceCastable
             if (throwIfNotImplemented) throw new InvalidCastException($"{t} is not a COM interface wpfmac rewrote");
             return false;
         }
+        // an event interface ([ComEventInterface]): the object's connection points, through its provider
+        if (t.GetNestedType("ComEvents", BindingFlags.Public | BindingFlags.NonPublic) != null)
+            return For(Com.IID_IConnectionPointContainer, throwIfNotImplemented) != IntPtr.Zero;
+        // a dispinterface: an object may answer only IDispatch for it, as built-in COM interop accepts
+        if (t.GetNestedType("ComDispatch", BindingFlags.Public | BindingFlags.NonPublic) != null && For(t.GUID, false) == IntPtr.Zero)
+            return For(Com.IID_IDispatch, throwIfNotImplemented) != IntPtr.Zero;
         return For(t.GUID, throwIfNotImplemented) != IntPtr.Zero;
     }
 

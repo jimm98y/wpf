@@ -1,6 +1,6 @@
 // VARIANT marshalling for rewritten COM calls (Documentation/comimport-rewriter.md): what built-in COM
 // interop does for an object parameter, an object by reference and an object retval, for the common
-// VT_ types. Arrays (SAFEARRAY) and VT_BYREF are refused by name.
+// VT_ types, and arrays (VT_ARRAY, SafeArray.cs). VT_BYREF is refused by name.
 
 using System.Runtime.InteropServices;
 
@@ -61,7 +61,13 @@ public static unsafe partial class Com
             }
             case Enum e: ToVariant(Convert.ChangeType(e, Enum.GetUnderlyingType(e.GetType())), dst); return;
             case ComObject c: v->Vt = VT_UNKNOWN; *(IntPtr*)d = c.QueryInterface(IID_IUnknown); return;
-            case Array: throw Unsupported("VARIANT", $"an array ({o.GetType()}) as a VARIANT (a SAFEARRAY)");
+            case Array a:
+            {
+                IntPtr psa = ToSafeArray(a, 0);
+                v->Vt = (ushort)(VT_ARRAY | SafeArrayVartype(psa));
+                *(IntPtr*)d = psa;
+                return;
+            }
         }
         // a managed object handed to native code: its CCW (IUnknown)
         v->Vt = VT_UNKNOWN;
@@ -74,7 +80,9 @@ public static unsafe partial class Com
         var v = (ComVariant*)src;
         void* d = &v->Data1;
         ushort vt = v->Vt;
-        if ((vt & (VT_ARRAY | VT_BYREF)) != 0) throw Unsupported("VARIANT", $"a VARIANT of type 0x{vt:x4} (an array or by reference)");
+        if ((vt & VT_BYREF) != 0) throw Unsupported("VARIANT", $"a VARIANT of type 0x{vt:x4} (by reference)");
+        // an array: its own element type (object[] for VARIANTs), as built-in COM interop gives it
+        if ((vt & VT_ARRAY) != 0) return FromSafeArray(*(IntPtr*)d, typeof(Array).TypeHandle);
         switch (vt)
         {
             case VT_EMPTY: return null;
@@ -111,6 +119,7 @@ public static unsafe partial class Com
     {
         var v = (ComVariant*)p;
         void* d = &v->Data1;
+        if ((v->Vt & VT_ARRAY) != 0 && (v->Vt & VT_BYREF) == 0) { DestroySafeArray(*(IntPtr*)d); *v = default; return; }
         switch (v->Vt)
         {
             case VT_BSTR: if (*(IntPtr*)d != IntPtr.Zero) Marshal.FreeBSTR(*(IntPtr*)d); break;

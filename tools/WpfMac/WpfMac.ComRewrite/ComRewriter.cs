@@ -33,10 +33,10 @@ public sealed class RewriteResult
     public SortedSet<string> UsesComTypesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Written to the output path.</summary>
     public bool Written;
-    public int Interfaces, Methods, PInvokes, Delegates, CallSites;
+    public int Interfaces, Methods, PInvokes, Delegates, CallSites, EventInterfaces;
 
     public override string ToString() => !UsesComImport ? "no ComImport"
-        : $"{Interfaces} interfaces ({Methods} methods), {PInvokes} P/Invokes, {Delegates} delegates, {CallSites} call sites" +
+        : $"{Interfaces} interfaces ({Methods} methods), {PInvokes} P/Invokes, {Delegates} delegates, {CallSites} call sites" + (EventInterfaces > 0 ? $", {EventInterfaces} event interfaces" : "") +
           (UsesComTypesOf.Count == 0 ? "" : $"; uses the COM types of {string.Join(", ", UsesComTypesOf)}") +
           (Unsupported.Count == 0 ? "" : $"; unsupported: {string.Join("; ", Unsupported.Take(8))}{(Unsupported.Count > 8 ? $" (+{Unsupported.Count - 8} more)" : "")}");
 }
@@ -195,6 +195,8 @@ public static partial class ComRewriter
 
         // imported references
         private readonly MethodReference _toVariant, _fromVariant, _clearVariant;
+        private readonly MethodReference _toSafeArray, _fromSafeArray, _takeSafeArray, _destroySafeArray;
+        private readonly MethodReference _dispInvoke, _dispatchResult, _borrowDispatch, _eventProvider;
         private readonly TypeReference _variant;
         private readonly MethodReference _adopt, _toBstr, _freeBstr, _takeBstr, _takeCoTaskUni;
         private readonly MethodReference _this, _borrow, _borrowUnknown, _release, _take, _check, _unsupported, _createInstance, _keepAlive;
@@ -224,6 +226,14 @@ public static partial class ComRewriter
             _toVariant = Imp(nameof(Com.ToVariant), typeof(object), typeof(IntPtr));
             _fromVariant = Imp(nameof(Com.FromVariant), typeof(IntPtr));
             _clearVariant = Imp(nameof(Com.ClearVariant), typeof(IntPtr));
+            _toSafeArray = Imp(nameof(Com.ToSafeArray), typeof(object), typeof(int));
+            _fromSafeArray = Imp(nameof(Com.FromSafeArray), typeof(IntPtr), typeof(RuntimeTypeHandle));
+            _takeSafeArray = Imp(nameof(Com.TakeSafeArray), typeof(IntPtr), typeof(RuntimeTypeHandle));
+            _destroySafeArray = Imp(nameof(Com.DestroySafeArray), typeof(IntPtr));
+            _dispInvoke = Imp(nameof(Com.DispInvoke), typeof(object), typeof(RuntimeTypeHandle), typeof(int), typeof(string), typeof(int), typeof(object[]), typeof(long));
+            _dispatchResult = Imp(nameof(Com.DispatchResult), typeof(object), typeof(RuntimeTypeHandle));
+            _borrowDispatch = Imp(nameof(Com.BorrowDispatch), typeof(object));
+            _eventProvider = Imp(nameof(Com.EventProvider), typeof(object), typeof(RuntimeTypeHandle));
             _variant = m.ImportReference(typeof(ComVariant));
             _freeBstr = Imp(nameof(Com.FreeBstr), typeof(IntPtr));
             _takeBstr = Imp(nameof(Com.TakeBstr), typeof(IntPtr));
@@ -271,8 +281,7 @@ public static partial class ComRewriter
                 if (t.IsImport || t.IsInterface) continue;
                 foreach (var i in t.Interfaces)
                     if (IsCom(i.InterfaceType)) _ccwUsers.Add((t, i.InterfaceType));
-                if (t.CustomAttributes.Any(a => a.AttributeType.Name == "ComSourceInterfacesAttribute"))
-                    _r.Unsupported.Add($"COM events: {t.FullName} has [ComSourceInterfaces]");
+                // [ComSourceInterfaces]: its CCW answers IConnectionPointContainer (WpfMac.ComInterop's EventSource)
             }
             // COM types of other assemblies (and the BCL's ComTypes): their objects come from built-in COM, which a
             // rewritten assembly's own wrappers cannot stand in for, nor take
@@ -281,17 +290,18 @@ public static partial class ComRewriter
                 var d = Safe(tr);
                 if (d != null && d.IsImport && d.Module != _m)
                 {
-                    // the BCL's ComTypes are built-in COM's own, and never rewritten
-                    if (d.Module.Assembly.Name.Name is "System.Private.CoreLib" or "System.Runtime" or "mscorlib" or "netstandard")
+                    // the BCL's ComTypes are built-in COM's own, and never rewritten; WpfMac.ComInterop supports
+                    // some of them by hand (SupportedBclComTypes)
+                    if (IsBclCom(d)) continue;
+                    if (IsBcl(d))
                         _r.Unsupported.Add($"uses COM type {d.FullName} of {d.Module.Assembly.Name.Name}");
                     else _r.UsesComTypesOf.Add(d.Module.Assembly.Name.Name);
                 }
             }
-            foreach (var t in _comTypes.ToList())
-            {
-                if (t.CustomAttributes.Any(a => a.AttributeType.Name == "ComEventInterfaceAttribute"))
-                    _r.Unsupported.Add($"COM events: {t.FullName} has [ComEventInterface]");
-            }
+            // tlbimp-style event interfaces: their add_/remove_ go to the provider made for the COM object
+            foreach (var t in _m.Types.SelectMany(AllTypes).Where(t => t.IsInterface).ToList())
+                if (t.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "System.Runtime.InteropServices.ComEventInterfaceAttribute") is { } ev)
+                    RewriteEventInterface(t, ev);
 
             // A COM interface other assemblies can see may receive their built-in RCWs.
             foreach (var t in _comTypes.Where(t => t.IsInterface && Visible(t)))
@@ -302,6 +312,7 @@ public static partial class ComRewriter
             foreach (var (cls, it) in _ccwUsers)
             {
                 var d = Safe(it);
+                if (d != null && IsBclCom(d)) continue;            // its CCW is WpfMac.ComInterop's
                 if (d == null || !_ccwRefused.TryGetValue(d, out var refused)) { _r.Unsupported.Add($"managed class {cls.FullName} implements COM interface {it.Name} (no CCW)"); continue; }
                 foreach (var why in refused) _r.Unsupported.Add($"managed class {cls.FullName} implements {it.Name}, whose CCW cannot convert {why}");
             }
@@ -329,8 +340,16 @@ public static partial class ComRewriter
             if (t == null) return false;
             if (t is ByReferenceType br) return IsCom(br.ElementType);
             TypeDefinition? d = t.Module == _m || t.Scope == _m ? Safe(t) : null;
-            return d != null && _comTypes.Contains(d);
+            if (d != null && _comTypes.Contains(d)) return true;
+            return t is not GenericParameter && t.Namespace == "System.Runtime.InteropServices.ComTypes" && (d ?? Safe(t)) is { } b && IsBclCom(b);
         }
+
+        private static bool IsBcl(TypeDefinition d) => d.Module.Assembly.Name.Name is "System.Private.CoreLib" or "System.Runtime" or "System.Runtime.InteropServices" or "mscorlib" or "netstandard";
+
+        /// <summary>A BCL COM interface WpfMac.ComInterop implements by hand (both ways).</summary>
+        private static bool IsBclCom(TypeDefinition d) => d.IsImport && d.IsInterface && IsBcl(d) && s_bclCom.Contains(d.FullName);
+
+        private static readonly HashSet<string> s_bclCom = new(WpfMac.ComInterop.Com.SupportedBclComTypes, StringComparer.Ordinal);
 
         private bool IsComInterface(TypeReference t) => IsCom(t) && Safe(t is ByReferenceType b ? b.ElementType : t)!.IsInterface;
 
@@ -342,9 +361,10 @@ public static partial class ComRewriter
 
         // ---- marshalling ------------------------------------------------------------------------
 
-        private enum Kind { Blit, Bool4, Bool2, Bool1, Iface, Unknown, OutIface, ByRefBlit, StrW, StrA, StrB, BlitArray, RefBool4, RefBool2, RefBool1, RefStrB, RefStrW, Variant, RefVariant }
+        private enum Kind { Blit, Bool4, Bool2, Bool1, Iface, Unknown, OutIface, ByRefBlit, StrW, StrA, StrB, BlitArray, RefBool4, RefBool2, RefBool1, RefStrB, RefStrW, Variant, RefVariant, SafeArray, RefSafeArray }
 
-        private sealed record Arg(Kind Kind, TypeReference Native, TypeReference? Iface = null);
+        /// <param name="Vt">a SAFEARRAY's element VARTYPE (0: the managed element type's default, at run time)</param>
+        private sealed record Arg(Kind Kind, TypeReference Native, TypeReference? Iface = null, int Vt = 0);
 
         private static readonly HashSet<string> s_prim = new()
         {
@@ -382,6 +402,7 @@ public static partial class ComRewriter
                 var e = br.ElementType;
                 if (IsComInterface(e)) return new Arg(Kind.OutIface, _intPtr, e);
                 if (e.FullName == "System.Object" && nt is NativeType.IUnknown or NativeType.IntF) return new Arg(Kind.OutIface, _intPtr, null);
+                if (e.FullName == "System.Object" && nt is NativeType.IDispatch) return new Arg(Kind.OutIface, _intPtr, null, 9);
                 if (IsBlittable(e) && e.FullName != "System.Boolean") return new Arg(Kind.ByRefBlit, _intPtr);
                 if (e.FullName == "System.Object" && (nt is NativeType.Struct || (nt == NativeType.None && comDefaults)))
                     return new Arg(Kind.RefVariant, _intPtr);
@@ -396,6 +417,8 @@ public static partial class ComRewriter
                     if (nt is NativeType.U1 or NativeType.I1) return new Arg(Kind.RefBool1, _intPtr);
                     if (nt is NativeType.VariantBool || nt == NativeType.None) return new Arg(Kind.RefBool2, _intPtr);
                 }
+                if (IsSafeArray(e, nt, comDefaults))
+                    return SafeArrayVt(e, mi, out why) is int rvt ? new Arg(Kind.RefSafeArray, _intPtr, null, rvt) : null;
                 why = $"by-reference {e.Name}"; return null;
             }
             if (IsComInterface(type)) return new Arg(Kind.Iface, _intPtr, type);
@@ -415,14 +438,48 @@ public static partial class ComRewriter
                 case "System.Object":
                     if (nt is NativeType.IUnknown or NativeType.IntF) return new Arg(Kind.Unknown, _intPtr);
                     if (nt is NativeType.Struct || (nt == NativeType.None && comDefaults)) return new Arg(Kind.Variant, _variant);
-                    why = nt == NativeType.IDispatch ? "IDispatch" : $"object as {nt}"; return null;
+                    if (nt is NativeType.IDispatch) return new Arg(Kind.Unknown, _intPtr, null, 9);
+                    why = $"object as {nt}"; return null;
             }
             if (IsBlittable(type)) return new Arg(Kind.Blit, type);
             // an array marshalled as a C array (not COM's default SAFEARRAY) of blittable elements: pinned
             if (type is ArrayType at && at.IsVector && IsBlittable(at.ElementType) && at.ElementType.FullName != "System.Char"
                 && (nt is NativeType.Array || (nt == NativeType.None && !comDefaults)))
                 return new Arg(Kind.BlitArray, _intPtr);
+            if (IsSafeArray(type, nt, comDefaults))
+                return SafeArrayVt(type, mi, out why) is int vt ? new Arg(Kind.SafeArray, _intPtr, null, vt) : null;
             why = type.IsArray ? $"array {type.Name}{(nt == NativeType.None ? " (a SAFEARRAY)" : $" as {nt}")}" : $"{type.FullName}"; return null;
+        }
+
+        /// <summary>An array marshalled as a SAFEARRAY: COM's default for an array (or System.Array) in a COM
+        /// interface method, or [MarshalAs(UnmanagedType.SafeArray)].</summary>
+        private static bool IsSafeArray(TypeReference t, NativeType nt, bool comDefaults) =>
+            (t is ArrayType || t.FullName == "System.Array") && (nt == NativeType.SafeArray || (nt == NativeType.None && comDefaults));
+
+        /// <summary>The element VARTYPE to pass (0: the run time's default for the element type), or null and why.</summary>
+        private int? SafeArrayVt(TypeReference t, MarshalInfo? mi, out string? why)
+        {
+            why = null;
+            if (mi is SafeArrayMarshalInfo sm && sm.ElementType != VariantType.None)
+            {
+                if ((int)sm.ElementType is 36 or 29) { why = "a SAFEARRAY of records"; return null; }          // VT_RECORD, VT_USERDEFINED
+                return (int)sm.ElementType;
+            }
+            if (t is not ArrayType at) return 0;                       // System.Array: its element type at run time
+            var e = at.ElementType;
+            if (e is ArrayType) { why = "a SAFEARRAY of arrays"; return null; }
+            if (IsComInterface(e))
+            {
+                var d = Safe(e);
+                var ita = d?.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "System.Runtime.InteropServices.InterfaceTypeAttribute");
+                int type = ita != null && ita.ConstructorArguments.Count == 1 ? Convert.ToInt32(ita.ConstructorArguments[0].Value) : 0;
+                return type == 1 ? 13 : 9;                               // VT_UNKNOWN / VT_DISPATCH (dual)
+            }
+            if (s_prim.Contains(e.FullName) || e.FullName is "System.Boolean" or "System.String" or "System.Object" or "System.Decimal" or "System.DateTime")
+                return 0;
+            if (Safe(e) is { IsEnum: true }) return 0;
+            if (Safe(e) is { IsInterface: true } or { IsClass: true, IsValueType: false }) return 13;
+            why = $"a SAFEARRAY of {e.Name} (VT_RECORD)"; return null;
         }
 
         // ---- interfaces -------------------------------------------------------------------------
@@ -432,9 +489,9 @@ public static partial class ComRewriter
             int ifaceType = 0;      // InterfaceIsDual
             var ita = t.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "System.Runtime.InteropServices.InterfaceTypeAttribute");
             if (ita != null && ita.ConstructorArguments.Count == 1) ifaceType = Convert.ToInt32(ita.ConstructorArguments[0].Value);
-            if (ifaceType == 2 /* IDispatch */ || ifaceType == 3 /* IInspectable */)
+            if (ifaceType == 3 /* IInspectable */)
             {
-                _r.Unsupported.Add($"{t.FullName}: {(ifaceType == 2 ? "an IDispatch (late-bound) interface" : "a WinRT interface")}");
+                _r.Unsupported.Add($"{t.FullName}: a WinRT interface");
                 return;
             }
             if (!t.CustomAttributes.Any(a => a.AttributeType.FullName == "System.Runtime.InteropServices.GuidAttribute"))
@@ -443,6 +500,7 @@ public static partial class ComRewriter
                 return;
             }
             int first = ifaceType == 1 ? 3 : 7;
+            if (ifaceType == 2) { RewriteDispInterface(t, ita); return; }
             if (AnalyzeOnly)
             {
                 _r.Interfaces++;
@@ -478,6 +536,161 @@ public static partial class ComRewriter
                 EmitVtableCall(t, md, body, slot++);
                 _r.Methods++;
             }
+        }
+
+        // ---- event interfaces ([ComEventInterface(typeof(Source), typeof(Provider))]) -------------------
+
+        /// <summary>I.ComImpl forwards each member to Com.EventProvider(this, Provider), the provider tlbimp
+        /// wrote (it finds the connection point and Advises its sink helper); the nested ComEvents marks it, so a
+        /// cast asks the object for IConnectionPointContainer.</summary>
+        private void RewriteEventInterface(TypeDefinition t, CustomAttribute ev)
+        {
+            if (ev.ConstructorArguments.Count != 2 || ev.ConstructorArguments[1].Value is not TypeReference provider)
+            {
+                _r.Unsupported.Add($"COM events: {t.FullName}'s [ComEventInterface] names no provider");
+                return;
+            }
+            _r.EventInterfaces++;
+            if (AnalyzeOnly || t.NestedTypes.Any(n => n.Name == "ComImpl")) return;
+            var impl = new TypeDefinition("", "ComImpl", TypeAttributes.NestedPublic | TypeAttributes.Interface | TypeAttributes.Abstract);
+            impl.Interfaces.Add(new InterfaceImplementation(t));
+            impl.CustomAttributes.Add(new CustomAttribute(_m.ImportReference(typeof(System.Runtime.InteropServices.DynamicInterfaceCastableImplementationAttribute).GetConstructor(Type.EmptyTypes)!)));
+            t.NestedTypes.Add(impl);
+            t.NestedTypes.Add(new TypeDefinition("", "ComEvents", TypeAttributes.NestedPublic | TypeAttributes.Abstract | TypeAttributes.Sealed, _object));
+            foreach (var md in t.Methods.Where(x => !x.IsStatic).ToList())
+            {
+                var body = new MethodDefinition($"{t.FullName}.{md.Name}", MethodAttributes.Private | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual | MethodAttributes.Final, md.ReturnType);
+                foreach (var p in md.Parameters) body.Parameters.Add(new ParameterDefinition(p.Name, p.Attributes, p.ParameterType));
+                body.Overrides.Add(md);
+                impl.Methods.Add(body);
+                var il = body.Body.GetILProcessor();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldtoken, provider);
+                il.Emit(OpCodes.Call, _eventProvider);
+                il.Emit(OpCodes.Castclass, t);
+                for (int i = 0; i < md.Parameters.Count; i++) il.Emit(OpCodes.Ldarg, i + 1);
+                il.Emit(OpCodes.Callvirt, md);
+                il.Emit(OpCodes.Ret);
+            }
+        }
+
+        // ---- dispinterfaces: called through IDispatch::Invoke ---------------------------------------
+
+        /// <summary>A dispinterface ([InterfaceType(InterfaceIsIDispatch)]): I.ComImpl's bodies box the arguments
+        /// and call Com.DispInvoke with the member's DISPID; I.ComCcw answers IDispatch by reflection; the
+        /// nested ComDispatch marks it (a cast accepts an object answering IDispatch only).</summary>
+        private void RewriteDispInterface(TypeDefinition t, CustomAttribute? ita)
+        {
+            var methods = t.Methods.Where(x => !x.IsStatic).ToList();
+            _r.Interfaces++;
+            foreach (var md in methods)
+            {
+                _r.Methods++;
+                if (DispWhy(md) is { } why) _r.Unsupported.Add($"{t.FullName}.{md.Name}: {why}");
+            }
+            if (AnalyzeOnly) { _ccwRefused[t] = new List<string>(); return; }
+            t.IsImport = false;
+            if (ita != null) t.CustomAttributes.Remove(ita);
+            var impl = new TypeDefinition("", "ComImpl", TypeAttributes.NestedPublic | TypeAttributes.Interface | TypeAttributes.Abstract);
+            impl.Interfaces.Add(new InterfaceImplementation(t));
+            impl.CustomAttributes.Add(new CustomAttribute(_m.ImportReference(typeof(System.Runtime.InteropServices.DynamicInterfaceCastableImplementationAttribute).GetConstructor(Type.EmptyTypes)!)));
+            t.NestedTypes.Add(impl);
+            t.NestedTypes.Add(new TypeDefinition("", "ComDispatch", TypeAttributes.NestedPublic | TypeAttributes.Abstract | TypeAttributes.Sealed, _object));
+            EmitCcw(t, 7, new List<MethodDefinition>());
+            foreach (var md in methods)
+            {
+                var body = new MethodDefinition($"{t.FullName}.{md.Name}", MethodAttributes.Private | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual | MethodAttributes.Final, md.ReturnType);
+                foreach (var p in md.Parameters) body.Parameters.Add(new ParameterDefinition(p.Name, p.Attributes & ~ParameterAttributes.HasFieldMarshal, p.ParameterType));
+                body.Overrides.Add(md);
+                impl.Methods.Add(body);
+                if (DispWhy(md) is { } why) { Refuse(body.Body.GetILProcessor(), $"{t.FullName}.{md.Name}", why); continue; }
+                EmitDispatchCall(t, md, body);
+            }
+        }
+
+        /// <summary>What a VARIANT cannot carry in <paramref name="md"/>'s signature; null when every part converts.</summary>
+        private string? DispWhy(MethodDefinition md)
+        {
+            string? Of(TypeReference t, string what)
+            {
+                if (t is ByReferenceType br) t = br.ElementType;
+                if (t.IsPointer || t.IsFunctionPointer || t is GenericParameter) return $"{what}: {t.Name}";
+                if (t is ArrayType at) return at.ElementType is ArrayType ? $"{what}: an array of arrays" : Of(at.ElementType, what);
+                if (s_prim.Contains(t.FullName) || t.FullName is "System.Boolean" or "System.String" or "System.Object" or "System.Decimal" or "System.DateTime" or "System.Void" or "System.Array") return null;
+                var d = Safe(t);
+                if (d == null) return $"{what}: {t.Name} (unresolved)";
+                if (d.IsEnum || d.IsInterface || !d.IsValueType) return null;
+                return $"{what}: {t.Name} (a struct in a VARIANT)";
+            }
+            foreach (var p in md.Parameters) if (Of(p.ParameterType, $"parameter {p.Name}") is { } w) return w;
+            return Of(md.ReturnType, "return");
+        }
+
+        private static int? DispIdOf(ICustomAttributeProvider p)
+        {
+            var a = p.CustomAttributes.FirstOrDefault(x => x.AttributeType.FullName == "System.Runtime.InteropServices.DispIdAttribute");
+            return a != null && a.ConstructorArguments.Count == 1 ? Convert.ToInt32(a.ConstructorArguments[0].Value) : null;
+        }
+
+        private void EmitDispatchCall(TypeDefinition iface, MethodDefinition decl, MethodDefinition body)
+        {
+            body.Body.InitLocals = true;
+            var il = body.Body.GetILProcessor();
+            // the member: a property's accessor goes by the property's DISPID and name
+            var prop = decl.IsSpecialName ? iface.Properties.FirstOrDefault(p => p.GetMethod == decl || p.SetMethod == decl) : null;
+            int dispid = DispIdOf(decl) ?? (prop != null ? DispIdOf(prop) : null) ?? Com.DispIdUnknown;
+            string name = prop?.Name ?? decl.Name;
+            bool isVoid = decl.ReturnType.FullName == "System.Void";
+            int flags = prop == null ? (isVoid ? Com.DISPATCH_METHOD : Com.DISPATCH_METHOD | Com.DISPATCH_PROPERTYGET)
+                : prop.GetMethod == decl ? Com.DISPATCH_PROPERTYGET : Com.DISPATCH_PROPERTYPUT;
+            var arr = Local(body, new ArrayType(_object));
+            il.Emit(OpCodes.Ldc_I4, decl.Parameters.Count);
+            il.Emit(OpCodes.Newarr, _object);
+            il.Emit(OpCodes.Stloc, arr);
+            long mask = 0;
+            for (int i = 0; i < decl.Parameters.Count; i++)
+            {
+                var pt = decl.Parameters[i].ParameterType;
+                bool byRef = pt is ByReferenceType;
+                var et = byRef ? ((ByReferenceType)pt).ElementType : pt;
+                if (byRef && i < 64) mask |= 1L << i;
+                il.Emit(OpCodes.Ldloc, arr);
+                il.Emit(OpCodes.Ldc_I4, i);
+                il.Emit(OpCodes.Ldarg, i + 1);
+                if (byRef) il.Emit(OpCodes.Ldobj, et);
+                il.Emit(OpCodes.Box, et);                 // a no-op for a reference type
+                il.Emit(OpCodes.Stelem_Ref);
+            }
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldtoken, iface);
+            il.Emit(OpCodes.Ldc_I4, dispid);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Ldc_I4, flags);
+            il.Emit(OpCodes.Ldloc, arr);
+            il.Emit(OpCodes.Ldc_I8, mask);
+            il.Emit(OpCodes.Call, _dispInvoke);
+            var res = Local(body, _object);
+            il.Emit(OpCodes.Stloc, res);
+            for (int i = 0; i < decl.Parameters.Count; i++)
+            {
+                if (decl.Parameters[i].ParameterType is not ByReferenceType br) continue;
+                il.Emit(OpCodes.Ldarg, i + 1);
+                il.Emit(OpCodes.Ldloc, arr);
+                il.Emit(OpCodes.Ldc_I4, i);
+                il.Emit(OpCodes.Ldelem_Ref);
+                il.Emit(OpCodes.Ldtoken, br.ElementType);
+                il.Emit(OpCodes.Call, _dispatchResult);
+                il.Emit(OpCodes.Unbox_Any, br.ElementType);
+                il.Emit(OpCodes.Stobj, br.ElementType);
+            }
+            if (!isVoid)
+            {
+                il.Emit(OpCodes.Ldloc, res);
+                il.Emit(OpCodes.Ldtoken, decl.ReturnType);
+                il.Emit(OpCodes.Call, _dispatchResult);
+                il.Emit(OpCodes.Unbox_Any, decl.ReturnType);
+            }
+            il.Emit(OpCodes.Ret);
         }
 
         /// <summary>What a vtable call to <paramref name="decl"/> could not convert; null when it can (the same
@@ -635,7 +848,7 @@ public static partial class ComRewriter
                     // borrowed before the try: a failed cast throws before anything is held
                     il.Emit(OpCodes.Ldarg, argIndex);
                     if (a.Kind == Kind.Iface) { il.Emit(OpCodes.Ldtoken, a.Iface!); il.Emit(OpCodes.Call, _borrow); }
-                    else il.Emit(OpCodes.Call, _borrowUnknown);
+                    else il.Emit(OpCodes.Call, a.Vt == 9 ? _borrowDispatch : _borrowUnknown);
                     il.Emit(OpCodes.Stloc, tmp);
                     pushes.Add(() => il.Emit(OpCodes.Ldloc, tmp));
                     cleanup.Add(() => { il.Emit(OpCodes.Ldloc, tmp); il.Emit(OpCodes.Call, _release); });
@@ -743,6 +956,41 @@ public static partial class ComRewriter
                     cleanup.Add(() => { il.Emit(OpCodes.Ldloca, v); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Call, _clearVariant); });
                     break;
                 }
+                case Kind.SafeArray:
+                {
+                    var tmp = Local(body, _intPtr);
+                    il.Emit(OpCodes.Ldarg, argIndex);
+                    il.Emit(OpCodes.Ldc_I4, a.Vt);
+                    il.Emit(OpCodes.Call, _toSafeArray);
+                    il.Emit(OpCodes.Stloc, tmp);
+                    pushes.Add(() => il.Emit(OpCodes.Ldloc, tmp));
+                    cleanup.Add(() => { il.Emit(OpCodes.Ldloc, tmp); il.Emit(OpCodes.Call, _destroySafeArray); });
+                    break;
+                }
+                case Kind.RefSafeArray:
+                {
+                    // in: the current array (an out's is null); out: the callee's (it may have replaced ours),
+                    // destroyed in the finally either way
+                    var elem = ((ByReferenceType)managed).ElementType;
+                    var tmp = Local(body, _intPtr);
+                    il.Emit(OpCodes.Ldarg, argIndex);
+                    il.Emit(OpCodes.Ldind_Ref);
+                    il.Emit(OpCodes.Ldc_I4, a.Vt);
+                    il.Emit(OpCodes.Call, _toSafeArray);
+                    il.Emit(OpCodes.Stloc, tmp);
+                    pushes.Add(() => { il.Emit(OpCodes.Ldloca, tmp); il.Emit(OpCodes.Conv_U); });
+                    after.Add(() =>
+                    {
+                        il.Emit(OpCodes.Ldarg, argIndex);
+                        il.Emit(OpCodes.Ldloc, tmp);
+                        il.Emit(OpCodes.Ldtoken, elem);
+                        il.Emit(OpCodes.Call, _fromSafeArray);
+                        il.Emit(OpCodes.Castclass, elem);
+                        il.Emit(OpCodes.Stind_Ref);
+                    });
+                    cleanup.Add(() => { il.Emit(OpCodes.Ldloc, tmp); il.Emit(OpCodes.Call, _destroySafeArray); });
+                    break;
+                }
                 case Kind.StrB:
                 {
                     var tmp = Local(body, _intPtr);
@@ -807,6 +1055,11 @@ public static partial class ComRewriter
                     break;
                 case Kind.StrB:
                     il.Emit(OpCodes.Call, _takeBstr);
+                    break;
+                case Kind.SafeArray:
+                    il.Emit(OpCodes.Ldtoken, managed);
+                    il.Emit(OpCodes.Call, _takeSafeArray);
+                    il.Emit(OpCodes.Castclass, managed);
                     break;
                 case Kind.StrW:
                     il.Emit(OpCodes.Call, _takeCoTaskUni);

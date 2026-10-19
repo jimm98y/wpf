@@ -128,7 +128,8 @@ For each `[ComImport]` interface `I` (with `Guid` G):
     passed as its native pointer. It is borrowed, as the built-in marshaller borrows it: no
     AddRef. `out`/`ref` interfaces receive the native pointer and wrap it. The wrapper takes over
     the reference the callee returned.
-  - **Refused** (VARIANT, BSTR, SAFEARRAY, `IDispatch` late binding, custom marshallers): the
+  - **BSTR, VARIANT and SAFEARRAY**, as §6 lists them.
+  - **Refused** (`IDispatch` late binding, custom marshallers, and the rest that §6 names): the
     method's `I.Impl` body throws `NotSupportedException` naming the method and the parameter, and
     the compatibility log says so once. A call is never marshalled wrong.
 
@@ -200,23 +201,30 @@ adapter.
   - the `Marshal` COM members;
   - `new` of a coclass.
 - **Not supported yet** (each named in the verdict):
-  - VARIANT, BSTR, SAFEARRAY;
-  - IDispatch-only interfaces;
-  - COM events;
+  - SAFEARRAYs of records (VT_RECORD) or of arrays;
+  - a struct in a dispinterface member (it would travel in a VARIANT as VT_RECORD); type information
+    (IDispatch::GetTypeInfo answers E_NOTIMPL, as a built-in CCW without a type library);
   - `ref` interfaces;
-  - formatted classes passed by reference;
-  - COM types of another assembly or the BCL's `ComTypes`.
+  - formatted classes passed by reference, `StringBuilder`;
+  - the BCL's other `ComTypes`: in GraphWorX, ITypeInfo (WebView2.Core) and IDataObject (RibbonView,
+    WindowsAPICodePack.Shell).
   - Two more cases are left alone on Windows, because a built-in RCW could reach them and would not
     convert:
     - a cast to a rewritten interface of an object of unknown origin;
     - a COM interface that other assemblies can see.
-- **GraphWorX's folder on Windows:**
-  - Ab3d.DXEngine.Wpf is rewritten (4 interfaces, its Direct3DCreate9Ex P/Invoke, 5 delegates, 11
-    call sites).
-  - The 14 others stay on built-in COM, each for a named reason: Ab3d.DXEngine (a cast of unknown
-    origin), GwxRuntimeCore (IViewObject from a WinForms control's ActiveX), MediaFoundation,
-    WebView2.Core/Wpf, WindowsAPICodePack(.Shell), SharpDX, IcoWindowsFormsSpecialized (TOM), and
-    Telerik ×5 (CCWs, BSTR, VARIANT, the BCL's ComTypes).
+- **GraphWorX's folder on Windows (2026-10-20):**
+  - 13 assemblies declare COM types. Rewritten for COM: Ab3d.DXEngine, Ab3d.DXEngine.Wpf,
+    GwxRuntimeCore, Telerik.Windows.Controls.SyntaxEditor and SharpDX (through the BCL's IEnumString).
+  - SharpDX's flip was gated: 3D frame 0 px against 15c92fc6e, bench smoke 495 move / 75 resize steps
+    with no settings change, Workbench smoke clean (6 assemblies rewritten there).
+  - Left on built-in COM, each for a named reason:
+    - MediaFoundation: interfaces other assemblies use, PROPVARIANT classes, StringBuilder;
+    - Telerik.Windows.MediaFoundation: uses MediaFoundation's types;
+    - WebView2.Core: visible interfaces, IDispatch, ITypeInfo; WebView2.Wpf: a struct by reference;
+    - WindowsAPICodePack(.Shell): IEnumerable returns, coclass calls, PropVariant;
+    - IcoWindowsFormsSpecialized: uses Mono.System.Drawing's COM types;
+    - Telerik.Windows.Controls (WMI: `string[]` by reference, char arrays, delegates called back),
+      FileDialogs and RibbonView (by-reference structs, IDispatch, VARIANT, the BCL types above).
 - **Added since the first version:**
   - BSTR in, by reference and as retval.
   - **CCWs:** a managed object implementing a rewritten interface can be handed to native code.
@@ -226,7 +234,7 @@ adapter.
       built-in COM does.
     - `WpfMac.ComInterop`'s ComWrappers answers with one entry per rewritten interface the object
       implements.
-    - A dual interface's IDispatch slots answer E_NOTIMPL.
+    - A dual interface's IDispatch slots answer by reflection (see IDispatch below).
     - A method whose signature a stub cannot convert answers E_NOTIMPL. Its class's verdict names it.
     - Judging GraphWorX's folder now takes 4.5 s per launch, since the stubs are generated while
       judging.
@@ -248,6 +256,100 @@ adapter.
       blamed on Ab3d.DXEngine, which is in fact fine rewritten: 0 px against the build before the
       rewriter.
   - `WPF_COMIMPORT_FORCE=<names>` (diagnostics): those are rewritten whatever the verdict.
+  - **COM events** (`ConnectionPoints.cs`).
+    - The BCL's IConnectionPointContainer, IConnectionPoint, IEnumConnectionPoints and
+      IEnumConnections are written by hand both ways, as IStream is.
+    - **Client side:** a tlbimp-style event interface (`[ComEventInterface(typeof(Source),
+      typeof(Provider))]`) gets an I.ComImpl. Each `add_`/`remove_` goes to `Com.EventProvider(this,
+      Provider)`: one provider per COM object, made with the object, as built-in interop makes it.
+      - The provider is tlbimp's own code. It casts the object to IConnectionPointContainer, finds
+        the connection point, and Advises a sink helper.
+      - The sink helper is a managed class implementing the source dispinterface, so its CCW answers
+        IDispatch.
+      - A cast to the event interface asks the object for IConnectionPointContainer (the nested
+        `ComEvents` marks it).
+    - **Server side:** a managed class with `[ComSourceInterfaces]` gets an IConnectionPointContainer
+      CCW entry.
+      - Its connection points are made on demand, one per source interface.
+      - Advise hooks each .NET event named after a source method. The handler is a compiled
+        expression that calls the sink through the source interface: a vtable call, or Invoke for a
+        dispinterface.
+      - Unadvise unhooks it, and EnumConnections lists the sinks.
+    - Test: a managed `[ComSourceInterfaces]` source, seen as a COM object through its own CCW,
+      subscribed through the event interface. Every hop goes through native vtables:
+      provider -> FindConnectionPoint -> Advise(sink helper) -> the .NET event -> the sink's Invoke
+      -> the handler. Unadvise stops the calls.
+  - **IDispatch** (`Dispatch.cs`), both ways.
+    - **Dispinterfaces** (`InterfaceIsIDispatch`) are called through IDispatch::Invoke.
+      - I.ComImpl's bodies box the arguments into an `object[]` and call `Com.DispInvoke` with the
+        member's DISPID. The DISPID comes from `[DispId]` on the method or on its property, or else
+        from GetIDsOfNames by name, cached per object.
+      - Flags: METHOD (plus PROPERTYGET when the method returns a value), PROPERTYGET for a getter,
+        and PROPERTYPUT with the named DISPID_PROPERTYPUT for a setter.
+      - By-reference arguments go as VT_BYREF|VT_VARIANT and are written back.
+      - DISP_E_EXCEPTION becomes a COMException with the server's description and scode (a deferred
+        fill-in is called first).
+      - The result is converted to the declared type.
+      - A cast to a dispinterface accepts an object that answers only IDispatch, as built-in interop
+        does. The nested `ComDispatch` type marks the interface.
+    - **CCWs:** a managed object's dispinterfaces, and its dual interfaces' slots 3-6, answer
+      IDispatch.
+      - GetIDsOfNames finds members (case-insensitive) and parameter positions.
+      - Invoke goes by reflection over the interface. Members are numbered by `[DispId]`, or else
+        0x60020000 + declaration order, as a type library numbers them.
+      - Invoke handles positional and named (put) arguments, VT_BYREF written back, omitted optional
+        arguments (DISP_E_PARAMNOTFOUND), DISP_E_MEMBERNOTFOUND / BADPARAMCOUNT / TYPEMISMATCH, and
+        an exception as DISP_E_EXCEPTION with its message, source and HRESULT in EXCEPINFO.
+      - The ComWrappers adds an IDispatch entry: the first such interface's vtable.
+    - `object` marshalled as `IDispatch` (in, out, retval) passes the object's IDispatch.
+    - Tests:
+      - a native IDispatch-only counter: DISPIDs, a property put, VT_BYREF, GetIDsOfNames, and
+        DISP_E_EXCEPTION;
+      - a managed dispinterface called by native code (event-sink shaped);
+      - a managed dual object passed as IDispatch.
+  - **SAFEARRAY** (`SafeArray.cs`): an array or `System.Array` parameter of a COM method (COM's
+    default, or `[MarshalAs(UnmanagedType.SafeArray)]`), in, `ref`/`out`, as retval, inside a VARIANT
+    (VT_ARRAY), and the same in CCW stubs.
+    - The descriptor is the SDK's. Its bounds are stored rightmost dimension first and its data is
+      column-major.
+    - On Windows the arrays are oleaut32's (SafeArrayCreate/SafeArrayDestroy are plain exports, not
+      COM), because native callees free and replace them.
+    - Elsewhere the same layout is made in managed code, with the VARTYPE 4 bytes before the
+      descriptor (FADF_HAVEVARTYPE), as oleaut32 keeps it.
+    - Element types: the integers, R4/R8, BOOL, CY, DATE, DECIMAL, BSTR, VARIANT, UNKNOWN and
+      DISPATCH. The element VARTYPE comes from `SafeArraySubType`, then from the element type (a COM
+      interface: VT_UNKNOWN, or VT_DISPATCH when dual), as built-in interop picks it.
+    - `T[]` must be one-dimensional (SafeArrayRankMismatchException otherwise) and is made
+      zero-based. `System.Array` keeps the rank and the bounds.
+    - In and ref arrays are destroyed after the call, a retval once it is converted.
+      A CCW stub frees the caller's old by-reference array when it replaces it, as oleaut32 code
+      does.
+    - Tests: native code reads the descriptor raw (VT_I4 and FADF_HAVEVARTYPE, a 2-D array's
+      column-major order), BSTR retvals, a VARIANT array replaced by reference, a 2x3 VT_R8 matrix in
+      a VARIANT, and a managed object's CCW. They run once through oleaut32 and once through the
+      managed layout (the AppContext switch `WpfMac.ComInterop.ManagedSafeArrays`).
+    - GraphWorX: nothing flips (Telerik.Windows.Controls' `string[]` by reference is now
+      supported, and it still has other reasons).
+  - **The BCL's IStream, IBindCtx and IEnumString** (System.Runtime.InteropServices.ComTypes).
+    - The rewriter cannot nest a ComImpl or ComCcw in a BCL type, so `WpfMac.ComInterop/ComTypes.cs`
+      writes both by hand: a `[DynamicInterfaceCastableImplementation]` interface per type, and a
+      vtable of `[UnmanagedCallersOnly]` stubs. `ComObject.ImplOf` and the ComWrappers fall back to
+      them.
+    - The marshalling matches built-in COM's for these declarations:
+      - byte arrays are pinned on a call, and copied (in, and whole back) in a CCW;
+      - STATSTG's name is a CoTaskMem string that the receiver frees;
+      - IEnumString.Next's strings are CoTaskMem strings that the caller frees;
+      - `object` parameters go as IUnknown.
+    - `Com.SupportedBclComTypes` is the list the rewriter reads.
+    - A rewritten assembly may use these types in its own signatures, P/Invokes (SignatureHasCom)
+      and classes (their CCW is WpfMac.ComInterop's).
+    - A built-in RCW passed where an interface is expected (Windows) now gives its own native pointer.
+    - IBindCtx.GetRunningObjectTable's result casts only when IRunningObjectTable is supported, which
+      it is not yet. Otherwise a NotSupportedException names it.
+    - Tests: a native IStream (Read in pieces, Stat, Seek, Clone), a managed one read by native code,
+      a native IEnumString (Next, Skip, Reset, Clone), a managed one enumerated by native code, and
+      ole32's IBindCtx on Windows. Its EnumObjectParam is E_NOTIMPL, so NotImplementedException, as
+      built-in COM gives.
   - Visibility judged from what the app's other assemblies actually reference.
   - Assemblies rewritten together with those whose COM types they use (a fixpoint over the app).
   - The in-memory loader, with location redirection.

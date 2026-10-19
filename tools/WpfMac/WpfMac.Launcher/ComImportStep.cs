@@ -30,7 +30,7 @@ internal static class ComImportStep
     public const string Folder = "comimport";
     public const string VerdictFile = "comimport-verdicts.json";
     /// <summary>Bumped when the judge's verdicts change, so cached ones are judged again.</summary>
-    private const string Version = "5";
+    private const string Version = "6";
 
     /// <summary>WPF_COMIMPORT_REWRITE: on (default), off, or a ';'-separated list of assembly names.</summary>
     internal static Func<string, bool> Scope(string? setting)
