@@ -1,16 +1,14 @@
-// The Direct3D shim's exports (d3d11, dxgi, d3d9), routed to their managed implementation in the
-// stack's WebGPU interop (Microsoft.Wpf.Interop.WebGpu, Direct3D/Exports.cs; design in
+// The Direct3D shim's exports (d3d11, dxgi, d3d9, and d3dcompiler_47's), routed to their managed
+// implementation in the stack's WebGPU interop (Microsoft.Wpf.Interop.WebGpu, Direct3D/Exports.cs; design in
 // Documentation/d3d11-webgpu-shim.md). The bootstrap does not reference it, so it is reached by name.
 //
-// Off Windows there is no Direct3D at all: every app assembly that P/Invokes these DLLs gets the
-// shim (through libwin32shim, ShimLibrary). On Windows the real Direct3D is there and works, so only
-// the assemblies WPF_D3D11_SHIM names are redirected (WindowsShim), by name prefix:
+// One implementation on every OS (the user's decision, 2026-10-19): every app assembly that P/Invokes these
+// DLLs gets the shim -- off Windows through libwin32shim (ShimLibrary), on Windows through the generated
+// mirror images (WindowsShim), even though the real Direct3D is there. WPF_D3D11_SHIM narrows it, for
+// diagnosis and as the test oracle (the real Direct3D to compare against), not as a product mode:
 //
-//   unset           SharpDX*;Ab3d.DXEngine*   (SharpDX's Direct3D 11, and DXEngine's own D3D9Ex,
-//                                              which opens SharpDX's shared textures: one side shimmed
-//                                              and the other real would not share)
-//   0 / off         nothing on Windows; off Windows the DLLs then stay unimplemented
-//   all             every app assembly
+//   unset / all / 1 every app assembly
+//   0 / off         nothing on Windows (the real Direct3D); off Windows the DLLs then stay unimplemented
 //   A*;B;C*         those assemblies
 //
 // The stack's own assemblies never go through this: they reach the shim's objects through their
@@ -22,7 +20,7 @@ namespace WpfMac.Bootstrap.Win32
 {
     internal static class Direct3DShim
     {
-        private const string DefaultSpec = "SharpDX*;Ab3d.DXEngine*";
+        private const string DefaultSpec = "all";
         private static string[] s_patterns = Array.Empty<string>();
         private static bool s_all;
 

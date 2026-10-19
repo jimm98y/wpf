@@ -4,8 +4,8 @@ using Xunit;
 namespace WpfMac.Tests;
 
 /// <summary>
-/// Which of an app's assemblies get the Direct3D shim's d3d11/dxgi/d3d9 on Windows (WPF_D3D11_SHIM;
-/// WpfMac.Bootstrap's Direct3DShim). Off Windows every assembly does: there is no other Direct3D.
+/// Which of an app's assemblies get the Direct3D shim's d3d11/dxgi/d3d9/d3dcompiler_47 on Windows (WPF_D3D11_SHIM;
+/// WpfMac.Bootstrap's Direct3DShim): every one unless the setting narrows it. Off Windows every assembly does.
 /// </summary>
 public class Direct3DShimTests
 {
@@ -21,16 +21,17 @@ public class Direct3DShimTests
         finally { Environment.SetEnvironmentVariable("WPF_D3D11_SHIM", was); }
     }
 
+    /// <summary>One implementation on every OS (2026-10-19): by default every app assembly gets the shim on
+    /// Windows too, the real Direct3D only by WPF_D3D11_SHIM (a diagnostic and test-oracle switch).</summary>
     [Fact]
-    public void By_default_SharpDX_and_DXEngine_are_redirected_and_nothing_else()
+    public void By_default_every_app_assembly_is_redirected()
         => With(null, () =>
         {
             Assert.False(Direct3DShim.Disabled);
             Assert.True(Direct3DShim.Covers("SharpDX.Direct3D11"));
-            Assert.True(Direct3DShim.Covers("sharpdx"));
             Assert.True(Direct3DShim.Covers("Ab3d.DXEngine.Wpf"));
-            Assert.False(Direct3DShim.Covers("SharpMediaFoundationInterop.WPF"));
-            Assert.False(Direct3DShim.Covers("MyApp"));
+            Assert.True(Direct3DShim.Covers("SharpMediaFoundationInterop.WPF"));
+            Assert.True(Direct3DShim.Covers("MyApp"));
         });
 
     [Fact]
