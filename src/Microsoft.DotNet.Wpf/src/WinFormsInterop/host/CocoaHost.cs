@@ -702,6 +702,15 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private IntPtr _resizeBlock, _resizeObserver;
     private GCHandle _self;
+    // WF_TRACE_RESIZE=1 (diagnostics): each resize callback; one entered inside another (AppKit's
+    // tracking loop re-entered) with the stack that got there
+    private static readonly bool s_traceResize = Environment.GetEnvironmentVariable("WF_TRACE_RESIZE") == "1";
+    private static int s_inResize;
+
+    private static void TraceResize(string what, bool stack = false)
+    {
+        if (s_traceResize) Console.Error.WriteLine($"[resize] {what}{(stack ? Environment.NewLine + Environment.StackTrace : "")}");
+    }
 
     private unsafe void ObserveLiveResize()
     {
@@ -726,12 +735,20 @@ internal sealed class CocoaHost : IWinFormsHost
             IntPtr context = MS.Internal.Interop.ObjCBlock.ContextOf(block);
             if (context == IntPtr.Zero || GCHandle.FromIntPtr(context).Target is not CocoaHost host) return;
             if (host._window == IntPtr.Zero || host._form.IsDisposed) return;
-            host.SyncFrame();
-            EmbeddedScenes.Pump();
-            host.Present();
+            if (s_traceResize) TraceResize($"enter native={host.NativeBounds()} form={host._form.Bounds} depth={s_inResize}", stack: s_inResize == 1);
+            s_inResize++;
+            try
+            {
+                host.SyncFrame();
+                EmbeddedScenes.Pump();
+                host.Present();
+            }
+            finally { s_inResize--; }
+            if (s_traceResize) TraceResize($"leave native={host.NativeBounds()} form={host._form.Bounds}");
         }
-        catch
+        catch (Exception e)
         {
+            TraceResize("callback threw: " + e);
         }
     }
 
@@ -985,7 +1002,9 @@ internal sealed class CocoaHost : IWinFormsHost
         HookWpfIfLoaded();
         SyncFrame();
 
-        while (true)
+        // Inside a resize callback (an app's Resize handler calling DoEvents) the queue is AppKit's
+        // tracking loop's: see CocoaWindow.PumpEventsCore.
+        while (s_inResize == 0)
         {
             IntPtr evt = SendNextEvent(App(), Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
                 unchecked((nuint)ulong.MaxValue), IntPtr.Zero, NSStr("kCFRunLoopDefaultMode"), true);
