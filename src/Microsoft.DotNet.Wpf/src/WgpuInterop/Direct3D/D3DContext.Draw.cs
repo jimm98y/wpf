@@ -88,7 +88,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             catch { }
         }
 
-        private IntPtr CreateModule(string wgsl, string label, out string? error)
+        internal IntPtr CreateModule(string wgsl, string label, out string? error)
         {
             byte[] code = Encoding.UTF8.GetBytes(wgsl);
             fixed (byte* p = code)
@@ -120,9 +120,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>Pops the validation scope pushed before creating <paramref name="result"/>: the
         /// object, or zero (and the error) when WebGPU rejected it.</summary>
-        private IntPtr PopScope(IntPtr result, out string? error)
+        private IntPtr PopScope(IntPtr result, out string? error) => PopScope(Device.Gpu, result, out error);
+
+        /// <summary>As the instance PopScope, for any shim object made on <paramref name="gpu"/>.</summary>
+        internal static IntPtr PopScope(Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext gpu, IntPtr result, out string? error)
         {
-            IntPtr dev = Device.Gpu.Device;
+            IntPtr dev = gpu.Device;
             var r = new ScopeResult();
             var h = GCHandle.Alloc(r);
             try
@@ -136,7 +139,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 wgpuDevicePopErrorScope(dev, info);
                 for (int i = 0; i < 10000 && !r.Done; i++)
                 {
-                    wgpuInstanceProcessEvents(Device.Gpu.Instance);
+                    wgpuInstanceProcessEvents(gpu.Instance);
                     if (!r.Done) wgpuDevicePoll(dev, 0, null);
                 }
             }
@@ -166,7 +169,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     sampler = new WGPUSamplerBindingLayout { type = cmp ? WGPUSamplerBindingType.Comparison : WGPUSamplerBindingType.Filtering },
                 });
             foreach (var (slot, r) in b.Resources)
-                entries.Add(new WGPUBindGroupLayoutEntry
+                entries.Add(r.Dim == 1 ? new WGPUBindGroupLayoutEntry
+                {
+                    binding = (uint)(DxbcTranslator.ResourceBase + slot), visibility = stage,
+                    buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage, minBindingSize = 0 },
+                } : new WGPUBindGroupLayoutEntry
                 {
                     binding = (uint)(DxbcTranslator.ResourceBase + slot), visibility = stage,
                     texture = new WGPUTextureBindingLayout
@@ -393,6 +400,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return at;
         }
 
+        private IntPtr _dummyStorage;
+
+        /// <summary>What an unbound typed buffer reads: 16 zero bytes.</summary>
+        private IntPtr DummyStorage()
+        {
+            if (_dummyStorage == IntPtr.Zero) _dummyStorage = Device.Gpu.CreateBufferMapped(new byte[16], WGPUBufferUsage.Storage);
+            return _dummyStorage;
+        }
+
         private IntPtr DummyView(int dim, char kind)
         {
             int key = dim * 4 + kind;
@@ -435,6 +451,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             foreach (var (slot, r) in b.Resources)
             {
                 var srv = s.Resources[slot];
+                if (r.Dim == 1)
+                {
+                    // a typed buffer's view: its elements as words (see DxbcTranslator.BufferLoad)
+                    if (srv?.Resource is D3DBuffer buf && buf.Gpu != IntPtr.Zero)
+                    {
+                        if (Formats.TexelBytes(srv.Desc.Format) != 16) D3DLog.Once("bufsrv:" + srv.Desc.Format, $"buffer shader resource view of {srv.Desc.Format}: read as 128-bit elements");
+                        ulong first = (ulong)srv.Desc.U0 * 16, size = Math.Min((ulong)srv.Desc.U1 * 16, ((ulong)buf.Size & ~3UL) - Math.Min(first, (ulong)buf.Size & ~3UL));
+                        if (size == 0) size = ((ulong)buf.Size & ~3UL) - first;
+                        entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.ResourceBase + slot), buffer = buf.Gpu, offset = first, size = size });
+                    }
+                    else entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.ResourceBase + slot), buffer = DummyStorage(), offset = 0, size = 16 });
+                    continue;
+                }
                 IntPtr view = srv != null && srv.Resource is D3DTexture2D ? srv.ViewFor(r.Dim) : DummyView(r.Dim, r.Kind);
                 entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.ResourceBase + slot), textureView = view });
             }

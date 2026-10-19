@@ -185,6 +185,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         private static extern uint wgpuAdapterHasFeature(IntPtr adapter, uint feature);
 
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int wgpuAdapterGetLimits(IntPtr adapter, byte* limits);
+
         [StructLayout(LayoutKind.Sequential)]
         private struct DeviceDescriptor
         {
@@ -200,6 +203,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private static DeviceDescriptor* s_desc;
         private static uint* s_features;
+        private static byte* s_limits;      // a WGPULimits, filled by the adapter (its layout is never read here)
 
         /// <summary>A WebGPU device of its own for a D3D11 device: the features D3D11 at feature level
         /// 11 takes for granted where the adapter has them, and validation errors logged rather than
@@ -224,6 +228,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 foreach (uint f in s_wantedFeatures)
                     if (wgpuAdapterHasFeature(adapter, f) != 0) s_features[n++] = f;
                 *s_desc = default;
+                // the adapter's own limits, not WebGPU's defaults: D3D11 takes eight 128-bit render
+                // targets, 128 shader resources and 16 samplers per stage for granted, and the
+                // defaults (32 bytes of color attachments per sample, ...) refuse what an adapter
+                // usually can do
+                if (s_limits == null) s_limits = (byte*)NativeMemory.AllocZeroed(1024);
+                new Span<byte>(s_limits, 1024).Clear();
+                if (wgpuAdapterGetLimits(adapter, s_limits) == 1 /* WGPUStatus_Success */) s_desc->requiredLimits = (IntPtr)s_limits;
                 s_desc->requiredFeatureCount = (nuint)n;
                 s_desc->requiredFeatures = s_features;
                 s_desc->lostMode = WGPUCallbackMode.AllowSpontaneous;

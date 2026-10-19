@@ -231,7 +231,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 case OperandType.Output: return $"o{o.Index0}";
                 case OperandType.IndexableTemp: return $"x{o.Index0}[{IndexExpr(o.Indices[1])}]";
                 case OperandType.ConstantBuffer: return $"cb{o.Index0}[{IndexExpr(o.Indices[1])}]";
-                case OperandType.ImmediateConstantBuffer: return $"icb[{IndexExpr(o.Indices[0])}]";
+                case OperandType.ImmediateConstantBuffer: return $"bitcast<vec4<f32>>(icb[{IndexExpr(o.Indices[0])}])";
                 case OperandType.OutputDepth: return "oDepth";
                 case OperandType.InputPrimitiveId: return "vPrim";
                 default: throw new NotSupportedException($"operand {o.Type}");
@@ -300,7 +300,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             int mask = dest.ComponentCount == 4 ? (dest.IsMask ? dest.Mask : 0xF) : 1;
             if (dest.Type == OperandType.OutputDepth) { Line($"oDepth = ({value}).x;"); return; }
             if (mask == 0xF) { Line($"{reg} = {value};"); return; }
-            string t = $"t{_tmp++}";
+            string t = $"_k{_tmp++}";
             Line($"let {t} = {value};");
             for (int c = 0; c < 4; c++)
                 if ((mask & (1 << c)) != 0) Line($"{reg}.{"xyzw"[c]} = {t}.{"xyzw"[c]};");
@@ -308,7 +308,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 
         private void StoreI(Operand dest, string ivec, bool saturate = false) => Store(dest, $"bitcast<vec4<f32>>({ivec})", false);
 
-        private static string Mask(string boolVec) => $"select(vec4<u32>(0u), vec4<u32>(0xFFFFFFFFu), {boolVec})";
+        // 0 or all ones per component. Not select(u32, u32, bool): naga's GLSL backend emitted that as a float mix and
+        // then uintBitsToFloat(vec4), which no GLSL compiler takes (every compare failed on the GL backend).
+        private static string Mask(string boolVec) => $"(vec4<u32>({boolVec}) * vec4<u32>(0xFFFFFFFFu))";
 
         private string Cond(Operand o, bool nonZero)
         {
@@ -589,7 +591,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             string c = ISource(o[1]);
             string call = dim switch
             {
-                1 => throw new NotSupportedException("ld from a buffer"),
+                1 => BufferLoad(t, c),
                 2 => $"textureLoad(t{t}, ({c}).x, ({c}).y)",
                 3 => $"textureLoad(t{t}, ({c}).xy, ({c}).w)",
                 5 => $"textureLoad(t{t}, ({c}).xyz, ({c}).w)",
@@ -597,7 +599,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 8 => $"textureLoad(t{t}, ({c}).xy, ({c}).z, ({c}).w)",
                 _ => throw new NotSupportedException($"ld from dimension {dim}"),
             };
-            if (_bindings.Resources[t].Kind != 'f') call = $"bitcast<vec4<f32>>({call})";
+            if (_bindings.Resources[t].Kind != 'f' && dim != 1) call = $"bitcast<vec4<f32>>({call})";
             Store(o[0], $"({call}){Swz(o[2])}", ins.Saturate);
         }
 
@@ -628,8 +630,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 
         // ---- the module ----------------------------------------------------------------------------
 
+        /// <summary>ld from a typed buffer (Buffer&lt;T&gt;): WebGPU has no texel buffers, so the view is a
+        /// read-only storage buffer of 32-bit words and an element is four of them (the 128-bit
+        /// formats; D3DContext logs any other view format). Out of range reads 0, as D3D11's do.</summary>
+        private string BufferLoad(int t, string c)
+        {
+            string i = $"bitcast<u32>(({c}).x)";
+            string w(int k) => $"select(0u, t{t}[{i} * 4u + {k}u], {i} * 4u + {k}u < arrayLength(&t{t}))";
+            return $"bitcast<vec4<f32>>(vec4<u32>({w(0)}, {w(1)}, {w(2)}, {w(3)}))";   // registers hold bits
+        }
+
         private static string TextureType(int dim, char kind, bool depth)
         {
+            if (dim == 1) return "array<u32>";
             string k = kind switch { 'i' => "i32", 'u' => "u32", _ => "f32" };
             if (depth) return dim switch { 6 => "texture_depth_cube", 8 => "texture_depth_2d_array", 10 => "texture_depth_cube_array", _ => "texture_depth_2d" };
             return dim switch
@@ -655,16 +668,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             foreach (var (slot, cmp) in _bindings.Samplers)
                 w.Append($"@group({_group}) @binding({SamplerBase + slot}) var s{slot}: {(cmp ? "sampler_comparison" : "sampler")};\n");
             foreach (var (slot, r) in _bindings.Resources)
-                w.Append($"@group({_group}) @binding({ResourceBase + slot}) var t{slot}: {TextureType(r.Dim, r.Kind, r.Depth)};\n");
+                w.Append($"@group({_group}) @binding({ResourceBase + slot}) var{(r.Dim == 1 ? "<storage, read>" : "")} t{slot}: {TextureType(r.Dim, r.Kind, r.Depth)};\n");
             if (_s.ImmediateConstantBuffer.Length > 0)
             {
                 int n = _s.ImmediateConstantBuffer.Length / 4;
-                w.Append($"const icb = array<vec4<f32>, {n}>(");
+                // as bits: naga does not evaluate bitcast in a constant expression; reads bitcast them
+                w.Append($"const icb = array<vec4<u32>, {n}>(");
                 for (int i = 0; i < n; i++)
                 {
                     if (i > 0) w.Append(", ");
                     var u = _s.ImmediateConstantBuffer;
-                    w.Append($"vec4<f32>({Bits(u[i * 4])}, {Bits(u[i * 4 + 1])}, {Bits(u[i * 4 + 2])}, {Bits(u[i * 4 + 3])})");
+                    w.Append($"vec4<u32>({u[i * 4]}u, {u[i * 4 + 1]}u, {u[i * 4 + 2]}u, {u[i * 4 + 3]}u)");
                 }
                 w.Append(");\n");
             }
