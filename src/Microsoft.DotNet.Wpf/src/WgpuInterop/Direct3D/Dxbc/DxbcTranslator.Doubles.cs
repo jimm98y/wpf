@@ -6,7 +6,8 @@
 // extension that naga's WGSL front end does not take, so every double instruction runs on IEEE 754
 // binary64 emulated in integer arithmetic: a double is its two 32-bit halves (lo, hi) as D3D keeps
 // them in a register (.xy or .zw), and the operations follow Berkeley SoftFloat's algorithms
-// (roundPackToF64, addMags/subMags, mul, the fused mulAdd) with round to nearest even and
+// (roundPackToF64, addMags/subMags, mul, the fused mulAdd; Berkeley SoftFloat 3e, BSD licence, see
+// THIRD-PARTY-NOTICES.TXT) with round to nearest even and
 // subnormals kept, as D3D requires of doubles; division is a restoring long division. Results are
 // exact, bit for bit what an IEEE double unit makes (DoubleTests holds them to WARP's).
 //
