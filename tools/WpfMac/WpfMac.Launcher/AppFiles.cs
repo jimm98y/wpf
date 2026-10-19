@@ -78,17 +78,52 @@ internal static class FileIdentity
         catch { return null; }
     }
 
+    /// <summary>
+    /// The file version: the version resource's, or -- for an assembly with no version resource --
+    /// its [AssemblyFileVersion] attribute. On Windows FileVersionInfo reads only the native
+    /// resource and reports 0.0.0.0 without one (off Windows it reads the attribute), so a version
+    /// that depended on the OS made the newer of two packages lose on Windows.
+    /// </summary>
     public static Version? FileVersion(string path)
     {
         try
         {
             var info = FileVersionInfo.GetVersionInfo(path);
-            return new Version(info.FileMajorPart, info.FileMinorPart, info.FileBuildPart, info.FilePrivatePart);
+            if (!string.IsNullOrEmpty(info.FileVersion))
+                return new Version(info.FileMajorPart, info.FileMinorPart, info.FileBuildPart, info.FilePrivatePart);
         }
         catch
         {
-            return null;
         }
+        return AttributeFileVersion(path);
+    }
+
+    private static Version? AttributeFileVersion(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            using var pe = new PEReader(stream);
+            if (!pe.HasMetadata) return null;
+            var md = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+            foreach (var h in md.GetAssemblyDefinition().GetCustomAttributes())
+            {
+                var a = md.GetCustomAttribute(h);
+                if (a.Constructor.Kind != System.Reflection.Metadata.HandleKind.MemberReference) continue;
+                var ctor = md.GetMemberReference((System.Reflection.Metadata.MemberReferenceHandle)a.Constructor);
+                if (ctor.Parent.Kind != System.Reflection.Metadata.HandleKind.TypeReference) continue;
+                var type = md.GetTypeReference((System.Reflection.Metadata.TypeReferenceHandle)ctor.Parent);
+                if (!md.StringComparer.Equals(type.Name, "AssemblyFileVersionAttribute")) continue;
+                var blob = md.GetBlobReader(a.Value);
+                if (blob.ReadUInt16() != 1) return null;           // the custom-attribute prolog
+                string? text = blob.ReadSerializedString();
+                return Version.TryParse(text, out var v) ? v : null;
+            }
+        }
+        catch
+        {
+        }
+        return null;
     }
 
     public static bool IsNativeLibraryName(string fileName) =>
