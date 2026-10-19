@@ -369,7 +369,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 }
                 w.Append("    }\n");
             }
-            if (_builtins.Contains("vPrim")) w.Append("    vPrim = bitcast<vec4<f32>>(vec4<u32>(prim, 0u, 0u, 0u));\n");
+            // after tessellation the primitive ID is the patch's (the D3D11.3 spec; WARP adds the
+            // primitive's place in its patch): the patches follow the primitives' indices in dx_vin
+            if (_builtins.Contains("vPrim"))
+                w.Append(_options.IndexedInput
+                    ? $"    vPrim = bitcast<vec4<f32>>(vec4<u32>(dx_vin[prims * {g.InputVertices}u + prim], 0u, 0u, 0u));\n"
+                    : "    vPrim = bitcast<vec4<f32>>(vec4<u32>(prim, 0u, 0u, 0u));\n");
             if (_builtins.Contains("vGSInstanceID")) w.Append("    vGSInstanceID = bitcast<vec4<f32>>(vec4<u32>(gsi, 0u, 0u, 0u));\n");
             w.Append("    dx_body();\n");
             w.Append($"    for (var j = dx_k; j < {per}u; j = j + 1u) {{ dx_gsidx[dx_ibase + j] = 0xFFFFFFFFu; }}\n}}\n");
