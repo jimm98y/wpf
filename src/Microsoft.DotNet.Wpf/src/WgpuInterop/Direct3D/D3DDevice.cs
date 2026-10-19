@@ -204,6 +204,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>A WebGPU device of its own for a D3D11 device: the features D3D11 at feature level
         /// 11 takes for granted where the adapter has them, and validation errors logged rather than
         /// fatal (wgpu-native aborts on an uncaptured error).</summary>
+        /// <summary>The WebGPU device every shim device uses, as every Direct3D device on a machine
+        /// uses its GPU: a texture shared between devices (a D3D9 surface of a D3D11 texture, a
+        /// shared handle) is then one WebGPU texture. Never disposed.</summary>
+        public static WgpuContext SharedGpu => s_sharedGpu.Value;
+
+        private static readonly Lazy<WgpuContext> s_sharedGpu = new(CreateGpu, System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+
         public static WgpuContext CreateGpu()
         {
             return WgpuContext.Create(adapter =>
@@ -255,6 +262,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 Vtbl.ID3D11Device.IID, Vtbl.ID3D11Device1.IID, Vtbl.ID3D11Device2.IID, Vtbl.ID3D11Device3.IID, Vtbl.ID3D11Device4.IID, Vtbl.ID3D11Device5.IID);
             vt.Set(Vtbl.ID3D11Device.CreateBuffer, (delegate* unmanaged<IntPtr, D3D11_BUFFER_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)&CreateBuffer);
             vt.Set(Vtbl.ID3D11Device.CreateTexture2D, (delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)&CreateTexture2D);
+            vt.Set(Vtbl.ID3D11Device.OpenSharedResource, (delegate* unmanaged<IntPtr, IntPtr, Guid*, IntPtr*, int>)&OpenSharedResource);
+            vt.Set(Vtbl.ID3D11Device1.OpenSharedResource1, (delegate* unmanaged<IntPtr, IntPtr, Guid*, IntPtr*, int>)&OpenSharedResource);
             vt.Set(Vtbl.ID3D11Device.CreateShaderResourceView, (delegate* unmanaged<IntPtr, IntPtr, D3D11_VIEW_DESC*, IntPtr*, int>)&CreateShaderResourceView);
             vt.Set(Vtbl.ID3D11Device.CreateRenderTargetView, (delegate* unmanaged<IntPtr, IntPtr, D3D11_VIEW_DESC*, IntPtr*, int>)&CreateRenderTargetView);
             vt.Set(Vtbl.ID3D11Device.CreateDepthStencilView, (delegate* unmanaged<IntPtr, IntPtr, D3D11_DEPTH_STENCIL_VIEW_DESC*, IntPtr*, int>)&CreateDepthStencilView);
@@ -310,6 +319,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (texture != null) *texture = IntPtr.Zero;
             var copy = *desc;
             return Guard("CreateTexture2D", () => ComObject.Out(texture, new D3DTexture2D(d, copy, init)));
+        }
+
+        /// <summary>OpenSharedResource(1): a shim handle names a texture (made shared by D3D11 or
+        /// D3D9); every shim device shares one WebGPU device, so it is that same texture.</summary>
+        [UnmanagedCallersOnly]
+        private static int OpenSharedResource(IntPtr self, IntPtr handle, Guid* iid, IntPtr* resource)
+        {
+            if (resource == null || iid == null) return HResult.E_INVALIDARG;
+            *resource = IntPtr.Zero;
+            D3DTexture2D? t = SharedHandles.Find(handle);
+            if (t == null) { D3DLog.Once("openshared:" + handle, $"OpenSharedResource: 0x{(long)handle:x} is not a shim handle"); return HResult.E_INVALIDARG; }
+            return QueryInterfaceOf(t, *iid, resource);
         }
 
         [UnmanagedCallersOnly]
