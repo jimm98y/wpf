@@ -1,0 +1,31 @@
+# Shaders of the corpus that do not translate yet, each with the start of the reason (DxbcCoverageTests).
+# The coverage test fails when a shader not listed here fails, and when a listed shader translates
+# (then take it off). Each step of Documentation/d3d11-webgpu-shim.md section 9 shortens this list.
+alu.ps_bits.ps_5_0.dxbc: instruction UBfe
+alu.ps_msad.ps_5_0.dxbc: instruction Bfi
+compute.cs_atomics.cs_5_0.dxbc: Compute shaders are translated by the geometry/compute path
+compute.cs_counter_down.cs_5_0.dxbc: Compute shaders are translated by the geometry/compute path
+compute.cs_double_ext.cs_5_0.dxbc: Compute shaders are translated by the geometry/compute path
+compute.cs_double.cs_5_0.dxbc: Compute shaders are translated by the geometry/compute path
+compute.cs_uav.cs_5_0.dxbc: Compute shaders are translated by the geometry/compute path
+stages.ds_line.ds_5_0.dxbc: Domain shaders are translated by the geometry/compute path
+stages.ds_quad.ds_5_0.dxbc: Domain shaders are translated by the geometry/compute path
+stages.ds_tri.ds_5_0.dxbc: Domain shaders are translated by the geometry/compute path
+stages.gs_instanced.gs_5_0.dxbc: Geometry shaders are translated by the geometry/compute path
+stages.gs_lineadj.gs_4_0.dxbc: Geometry shaders are translated by the geometry/compute path
+stages.gs_lineadj.gs_5_0.dxbc: Geometry shaders are translated by the geometry/compute path
+stages.gs_quad.gs_4_0.dxbc: Geometry shaders are translated by the geometry/compute path
+stages.gs_quad.gs_5_0.dxbc: Geometry shaders are translated by the geometry/compute path
+stages.hs_line.hs_5_0.dxbc: Hull shaders are translated by the geometry/compute path
+stages.hs_quad.hs_5_0.dxbc: Hull shaders are translated by the geometry/compute path
+stages.hs_tri.hs_5_0.dxbc: Hull shaders are translated by the geometry/compute path
+stages.ps_interface.ps_5_0.dxbc: instruction DclFunctionBody
+stages.ps_sample.ps_5_0.dxbc: instruction EvalSampleIndex
+texture.ps_gather.ps_4_1.dxbc: instruction Gather4
+texture.ps_gather.ps_5_0.dxbc: instruction Gather4
+texture.ps_load.ps_4_0.dxbc: instruction LdMs
+texture.ps_load.ps_4_1.dxbc: instruction LdMs
+texture.ps_load.ps_5_0.dxbc: instruction LdMs
+texture.ps_sample.ps_4_0.dxbc: wgsl
+texture.ps_sample.ps_4_1.dxbc: wgsl
+texture.ps_sample.ps_5_0.dxbc: wgsl

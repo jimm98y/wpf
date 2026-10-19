@@ -1,0 +1,35 @@
+# file        entry            profiles (each compiled; SM41 / SM5 / DOUBLE_EXT defined by profile or listed)
+alu.hlsl      ps_float         ps_4_0 ps_4_1 ps_5_0
+alu.hlsl      ps_deriv         ps_4_0 ps_5_0
+alu.hlsl      ps_compare       ps_4_0 ps_5_0
+alu.hlsl      ps_int           ps_4_0 ps_5_0
+alu.hlsl      ps_convert       ps_4_0 ps_5_0
+alu.hlsl      ps_bits          ps_5_0
+alu.hlsl      ps_msad          ps_5_0
+alu.hlsl      ps_mul           ps_4_0 ps_5_0
+alu.hlsl      ps_index         ps_4_0 ps_5_0
+flow.hlsl     ps_loops         ps_4_0 ps_5_0
+flow.hlsl     ps_switch        ps_4_0 ps_5_0
+flow.hlsl     ps_discard       ps_4_0 ps_5_0
+texture.hlsl  ps_sample        ps_4_0 ps_4_1 ps_5_0
+texture.hlsl  ps_compare       ps_4_0 ps_5_0
+texture.hlsl  ps_load          ps_4_0 ps_4_1 ps_5_0
+texture.hlsl  ps_gather        ps_4_1 ps_5_0
+compute.hlsl  cs_uav           cs_5_0
+compute.hlsl  cs_atomics       cs_5_0
+compute.hlsl  cs_counter_down  cs_5_0
+compute.hlsl  cs_double        cs_5_0
+compute.hlsl  cs_double_ext    cs_5_0:DOUBLE_EXT
+stages.hlsl   vs_main          vs_4_0 vs_4_1 vs_5_0
+stages.hlsl   ps_sv            ps_4_0 ps_5_0
+stages.hlsl   ps_sample        ps_5_0
+stages.hlsl   gs_quad          gs_4_0 gs_5_0
+stages.hlsl   gs_lineadj       gs_4_0 gs_5_0
+stages.hlsl   gs_instanced     gs_5_0
+stages.hlsl   hs_tri           hs_5_0
+stages.hlsl   ds_tri           ds_5_0
+stages.hlsl   hs_quad          hs_5_0
+stages.hlsl   ds_quad          ds_5_0
+stages.hlsl   hs_line          hs_5_0
+stages.hlsl   ds_line          ds_5_0
+stages.hlsl   ps_interface     ps_5_0
