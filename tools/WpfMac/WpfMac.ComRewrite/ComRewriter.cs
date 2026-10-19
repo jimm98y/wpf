@@ -617,8 +617,9 @@ public static class ComRewriter
             p.DeclaringType.Methods.Add(native);
 
             // the P/Invoke becomes a managed method that converts and calls it
-            p.IsPInvokeImpl = false;
+            // (in this order: Cecil's PInvokeInfo setter sets the PInvokeImpl flag, even to null)
             p.PInvokeInfo = null;
+            p.IsPInvokeImpl = false;
             p.ImplAttributes = MethodImplAttributes.IL | MethodImplAttributes.Managed;
             p.Body = new MethodBody(p);
             EmitForward(p, p.IsStatic ? null : default(int?), native, p.Parameters, p.ReturnType, isStatic: true);
