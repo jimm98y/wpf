@@ -232,6 +232,10 @@ namespace System.Windows.Media
         {
             get
             {
+                // The managed backend has no milcore to ask: the preference is kept here. (Reading it
+                // threw DllNotFoundException for wpfgfx_cor3.dll.)
+                if (UnsafeNativeMethods.InteropDeviceBitmap.UseManaged)
+                    return s_softwareOnlyForProcess ? RenderMode.SoftwareOnly : RenderMode.Default;
                 return UnsafeNativeMethods.MilCoreApi.RenderOptions_IsSoftwareRenderingForcedForProcess() ?
                     RenderMode.SoftwareOnly : RenderMode.Default;
             }
@@ -242,11 +246,18 @@ namespace System.Windows.Media
                 {
                     throw new System.ComponentModel.InvalidEnumArgumentException("value", (int)value, typeof(RenderMode));
                 }
-                
+
+                if (UnsafeNativeMethods.InteropDeviceBitmap.UseManaged)
+                {
+                    s_softwareOnlyForProcess = value == RenderMode.SoftwareOnly;
+                    return;
+                }
                 UnsafeNativeMethods.MilCoreApi.RenderOptions_ForceSoftwareRenderingModeForProcess(
                     value == RenderMode.SoftwareOnly
                     );
             }
         }
+
+        private static bool s_softwareOnlyForProcess;
     }
 }
