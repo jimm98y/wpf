@@ -23,7 +23,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         internal readonly D3DBuffer?[] _so = new D3DBuffer?[4];
         private IntPtr _soState;
 
-        public void SetSoTargets(D3DBuffer?[] buffers, uint[] offsets) => Run(c =>
+        public void SetSoTargets(D3DBuffer?[] buffers, uint[] offsets) => State(c =>
         {
             for (int i = 0; i < 4; i++)
             {

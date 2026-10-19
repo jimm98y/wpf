@@ -155,12 +155,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private void RunMany(Action<D3DContext> a, ComObject?[] refs) => Run(a, refs);
 
-        public D3DCommandList Finish()
+        /// <summary>A state setter. A deferred context records it, and also applies it to its own
+        /// fields (its GPU side, a counter or filled size written, suppressed): the state is then
+        /// there to be read back, and to carry into the next command list when FinishCommandList
+        /// is asked to restore it.</summary>
+        private void State(Action<D3DContext> a, params ComObject?[] refs)
+        {
+            Run(a, refs);
+            if (!Deferred) return;
+            _shadow = true;
+            try { a(this); }
+            finally { _shadow = false; }
+        }
+
+        /// <summary>A deferred context applying a setter to itself (see <see cref="State"/>).</summary>
+        private bool _shadow;
+
+        public D3DCommandList Finish(bool restore = false)
         {
             var list = new D3DCommandList(Device, _recorded.ToArray(), _recordedRefs.ToArray());
             _recorded.Clear();
             _recordedRefs.Clear();          // ownership moves to the list
-            ClearStateImpl();
+            if (restore)
+            {
+                // the next list starts from this context's state as it is now (each list is
+                // executed from the default state, so it carries the state as its first command)
+                var saved = SaveState();
+                _recorded.Add(saved.Restore);
+                _recordedRefs.AddRange(saved.Refs);
+            }
+            else ClearStateImpl();
             return list;
         }
 
@@ -186,9 +210,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             // every bound object, re-bound through the same setters on restore
             var refs = new List<ComObject>();
             void Hold(ComObject? o) { if (o != null) { o.InternalAddRef(); refs.Add(o); } }
-            var stages = new[] { _vs, _ps, _gs };
-            var copies = new (D3DShader? sh, D3DBuffer?[] cb, D3DShaderResourceView?[] srv, D3DSamplerState?[] smp)[3];
-            for (int i = 0; i < 3; i++)
+            var stages = new[] { _vs, _ps, _gs, _hs, _ds, _cs };
+            var copies = new (D3DShader? sh, D3DBuffer?[] cb, D3DShaderResourceView?[] srv, D3DSamplerState?[] smp)[stages.Length];
+            for (int i = 0; i < stages.Length; i++)
             {
                 var s = stages[i];
                 copies[i] = (s.Shader, (D3DBuffer?[])s.ConstantBuffers.Clone(), (D3DShaderResourceView?[])s.Resources.Clone(), (D3DSamplerState?[])s.Samplers.Clone());
@@ -206,13 +230,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var dsv = _dsv; Hold(dsv);
             var blend = _blend; Hold(blend); var bf = _blendFactor; var sm = _sampleMask;
             var depth = _depth; Hold(depth); var sr = _stencilRef;
+            // UAVs keep their hidden counters (they live in the views), stream-output targets their
+            // filled sizes (in the buffers): re-binding them is the whole state
+            var csUav = (D3DUnorderedAccessView?[])_csUav.Clone(); foreach (var o in csUav) Hold(o);
+            var omUav = (D3DUnorderedAccessView?[])_omUav.Clone(); foreach (var o in omUav) Hold(o);
+            var so = (D3DBuffer?[])_so.Clone(); foreach (var o in so) Hold(o);
             return new SavedState
             {
                 Refs = refs.ToArray(),
                 Restore = c =>
                 {
-                    var st = new[] { c._vs, c._ps, c._gs };
-                    for (int i = 0; i < 3; i++)
+                    var st = new[] { c._vs, c._ps, c._gs, c._hs, c._ds, c._cs };
+                    for (int i = 0; i < st.Length; i++)
                     {
                         Bind(ref st[i].Shader, copies[i].sh);
                         for (int k = 0; k < MaxConstantBuffers; k++) Bind(ref st[i].ConstantBuffers[k], copies[i].cb[k]);
@@ -229,6 +258,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     Bind(ref c._dsv, dsv);
                     Bind(ref c._blend, blend); c._blendFactor = bf; c._sampleMask = sm;
                     Bind(ref c._depth, depth); c._stencilRef = sr;
+                    for (int k = 0; k < MaxUavs; k++) { Bind(ref c._csUav[k], csUav[k]); Bind(ref c._omUav[k], omUav[k]); }
+                    for (int k = 0; k < so.Length; k++) Bind(ref c._so[k], so[k]);
                 },
             };
         }
@@ -241,23 +272,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         // ---- state setters -------------------------------------------------------------------------
 
-        public void SetShader(ShaderStage stage, D3DShader? shader) => Run(c => Bind(ref c.Stage(stage).Shader, shader), shader);
+        public void SetShader(ShaderStage stage, D3DShader? shader) => State(c => Bind(ref c.Stage(stage).Shader, shader), shader);
 
         public void SetConstantBuffers(ShaderStage stage, int start, D3DBuffer?[] buffers)
-            => Run(c => { var s = c.Stage(stage); for (int i = 0; i < buffers.Length && start + i < MaxConstantBuffers; i++) Bind(ref s.ConstantBuffers[start + i], buffers[i]); }, buffers);
+            => State(c => { var s = c.Stage(stage); for (int i = 0; i < buffers.Length && start + i < MaxConstantBuffers; i++) Bind(ref s.ConstantBuffers[start + i], buffers[i]); }, buffers);
 
         public void SetResources(ShaderStage stage, int start, D3DShaderResourceView?[] views)
-            => Run(c => { var s = c.Stage(stage); for (int i = 0; i < views.Length && start + i < MaxResources; i++) Bind(ref s.Resources[start + i], views[i]); }, views);
+            => State(c => { var s = c.Stage(stage); for (int i = 0; i < views.Length && start + i < MaxResources; i++) Bind(ref s.Resources[start + i], views[i]); }, views);
 
         public void SetSamplers(ShaderStage stage, int start, D3DSamplerState?[] samplers)
-            => Run(c => { var s = c.Stage(stage); for (int i = 0; i < samplers.Length && start + i < MaxSamplers; i++) Bind(ref s.Samplers[start + i], samplers[i]); }, samplers);
+            => State(c => { var s = c.Stage(stage); for (int i = 0; i < samplers.Length && start + i < MaxSamplers; i++) Bind(ref s.Samplers[start + i], samplers[i]); }, samplers);
 
-        public void SetInputLayout(D3DInputLayout? layout) => Run(c => Bind(ref c._layout, layout), layout);
+        public void SetInputLayout(D3DInputLayout? layout) => State(c => Bind(ref c._layout, layout), layout);
 
-        public void SetTopology(D3D_PRIMITIVE_TOPOLOGY t) => Run(c => c._topology = t);
+        public void SetTopology(D3D_PRIMITIVE_TOPOLOGY t) => State(c => c._topology = t);
 
         public void SetVertexBuffers(int start, D3DBuffer?[] buffers, uint[] strides, uint[] offsets)
-            => Run(c =>
+            => State(c =>
             {
                 for (int i = 0; i < buffers.Length && start + i < MaxVertexBuffers; i++)
                 {
@@ -268,31 +299,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }, buffers);
 
         public void SetIndexBuffer(D3DBuffer? buffer, DXGI_FORMAT format, uint offset)
-            => Run(c => { Bind(ref c._ib, buffer); c._ibFormat = format; c._ibOffset = offset; }, buffer);
+            => State(c => { Bind(ref c._ib, buffer); c._ibFormat = format; c._ibOffset = offset; }, buffer);
 
-        public void SetRasterizer(D3DRasterizerState? s) => Run(c => Bind(ref c._raster, s), s);
+        public void SetRasterizer(D3DRasterizerState? s) => State(c => Bind(ref c._raster, s), s);
 
-        public void SetViewports(D3D11_VIEWPORT[] v) => Run(c => { Array.Copy(v, c._viewports, Math.Min(v.Length, MaxViewports)); c._viewportCount = Math.Min(v.Length, MaxViewports); });
+        public void SetViewports(D3D11_VIEWPORT[] v) => State(c => { Array.Copy(v, c._viewports, Math.Min(v.Length, MaxViewports)); c._viewportCount = Math.Min(v.Length, MaxViewports); });
 
-        public void SetScissors(D3D11_RECT[] r) => Run(c => { Array.Copy(r, c._scissors, Math.Min(r.Length, MaxViewports)); c._scissorCount = Math.Min(r.Length, MaxViewports); });
+        public void SetScissors(D3D11_RECT[] r) => State(c => { Array.Copy(r, c._scissors, Math.Min(r.Length, MaxViewports)); c._scissorCount = Math.Min(r.Length, MaxViewports); });
 
         public void SetTargets(D3DRenderTargetView?[] rtvs, D3DDepthStencilView? dsv)
         {
             var refs = new ComObject?[rtvs.Length + 1];
             Array.Copy(rtvs, refs, rtvs.Length);
             refs[^1] = dsv;
-            Run(c =>
+            State(c =>
             {
                 for (int i = 0; i < MaxTargets; i++) Bind(ref c._rtv[i], i < rtvs.Length ? rtvs[i] : null);
                 Bind(ref c._dsv, dsv);
             }, refs);
         }
 
-        public void SetBlend(D3DBlendState? s, WGPUColor factor, uint mask) => Run(c => { Bind(ref c._blend, s); c._blendFactor = factor; c._sampleMask = mask; }, s);
+        public void SetBlend(D3DBlendState? s, WGPUColor factor, uint mask) => State(c => { Bind(ref c._blend, s); c._blendFactor = factor; c._sampleMask = mask; }, s);
 
-        public void SetDepthStencil(D3DDepthStencilState? s, uint stencilRef) => Run(c => { Bind(ref c._depth, s); c._stencilRef = stencilRef; }, s);
+        public void SetDepthStencil(D3DDepthStencilState? s, uint stencilRef) => State(c => { Bind(ref c._depth, s); c._stencilRef = stencilRef; }, s);
 
-        public void ClearState() => Run(c => c.ClearStateImpl());
+        public void ClearState() => State(c => c.ClearStateImpl());
 
         // ---- GPU work ------------------------------------------------------------------------------
 
@@ -421,6 +452,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>A write to a GPU buffer that must land after what was recorded before it.</summary>
         public void WriteBufferOrdered(IntPtr buffer, uint offset, ReadOnlySpan<byte> data)
         {
+            if (_shadow) return;
             if (_encoder != IntPtr.Zero || _pendingColorClears.Count > 0 || _pendingDepthClears.Count > 0) FlushToGpu(wait: false);
             int len = (data.Length + 3) & ~3;
             if (len == data.Length) { Device.Gpu.WriteBuffer(buffer, offset, data); return; }
