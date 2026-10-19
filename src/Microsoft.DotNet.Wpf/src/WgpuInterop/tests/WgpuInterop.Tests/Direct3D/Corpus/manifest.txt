@@ -35,3 +35,8 @@ stages.hlsl   ds_quad          ds_5_0
 stages.hlsl   hs_line          hs_5_0
 stages.hlsl   ds_line          ds_5_0
 stages.hlsl   ps_interface     ps_5_0
+compute_exec.hlsl cs_int         cs_5_0
+compute_exec.hlsl cs_float       cs_5_0
+compute_exec.hlsl cs_textures    cs_5_0
+compute_exec.hlsl cs_groupshared cs_5_0
+compute_exec.hlsl cs_atomic_totals cs_5_0

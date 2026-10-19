@@ -57,6 +57,74 @@ namespace WgpuInterop.Tests.Direct3D
 
         private static string FindSource([System.Runtime.CompilerServices.CallerFilePath] string here = "") => Path.Combine(Path.GetDirectoryName(here)!, "Corpus");
 
+        [System.Runtime.InteropServices.DllImport("d3d11.dll", EntryPoint = "D3D11CreateDevice")]
+        private static extern unsafe int RealCreateDevice(IntPtr adapter, uint driverType, IntPtr software, uint flags, uint* levels, uint count, uint sdk, IntPtr* device, uint* level, IntPtr* context);
+
+        /// <summary>Corpus compute shaders whose UAVs depend on the order threads run in (an atomic's
+        /// returned value stored per thread, a race on one element, a counter's handed-out indices):
+        /// they are dispatched on both, but not compared.</summary>
+        private static readonly HashSet<string> s_orderDependent = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "compute.cs_atomics.cs_5_0.dxbc", "compute.cs_counter_down.cs_5_0.dxbc", "compute.cs_uav.cs_5_0.dxbc",
+        };
+
+        /// <summary>Differences that are the driver's, not the translator's: shader, the adapter it
+        /// shows on, and the one word that differs there. Parallels' GL (over Metal) folds an atomic
+        /// add of a value an earlier atomic returned into one add per wave of the first lane's value
+        /// (the sum of 64 returned values comes out 64*base+1024, not 64*base+2016); the same add of
+        /// (old &amp; 63) is exact, and the returned values themselves are all distinct.</summary>
+        private static readonly (string Shader, string Adapter, string Word)[] s_driverDifferences =
+        {
+            ("compute_exec.cs_atomic_totals.cs_5_0.dxbc", "Parallels", "rawOut[9]:"),
+        };
+
+        /// <summary>Every compute shader of the corpus that translates computes on the shim what it
+        /// computes on WARP, from the same inputs (DxbcComputeParity).</summary>
+        [Fact]
+        public unsafe void EveryCorpusComputeShader_ComputesAsWarpComputes()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "real Direct3D 11 (WARP) exists on Windows only");
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            var gaps = KnownGaps();
+            IntPtr wDev, wCtx, sDev, sCtx;
+            uint level, want = 0xb000;
+            Assert.True(RealCreateDevice(IntPtr.Zero, 5, IntPtr.Zero, 0, &want, 1, 7, &wDev, &level, &wCtx) >= 0, "WARP");
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &sDev, &level, &sCtx) >= 0, "shim");
+            var failures = new List<string>();
+            int compared = 0, runOnly = 0;
+            try
+            {
+                foreach (string f in Shaders().Where(f => Path.GetFileName(f).Contains(".cs_")))
+                {
+                    string name = Path.GetFileName(f);
+                    if (gaps.ContainsKey(name)) continue;
+                    byte[] blob = File.ReadAllBytes(f);
+                    var refl = DxbcPixelParity.Reflect(blob);
+                    List<DxbcComputeParity.Output> warp, shim;
+                    try { warp = DxbcComputeParity.Run(wDev, wCtx, blob, refl, 3); }
+                    catch (Exception e) { failures.Add($"{name}: WARP: {e.Message}"); continue; }
+                    try { shim = DxbcComputeParity.Run(sDev, sCtx, blob, refl, 3); }
+                    catch (Exception e) { failures.Add($"{name}: shim: {e.Message}"); continue; }
+                    if (s_orderDependent.Contains(name)) { runOnly++; continue; }
+                    var (count, first) = DxbcComputeParity.Compare(warp, shim);
+                    compared++;
+                    string adapter = D3DDevice.SharedGpu.AdapterDescription ?? "";
+                    if (count == 1 && s_driverDifferences.Any(d => d.Shader == name && adapter.Contains(d.Adapter, StringComparison.Ordinal) && first.StartsWith(d.Word, StringComparison.Ordinal)))
+                        Console.WriteLine($"  {name}: the known driver difference on this adapter: {first}");
+                    else if (count > 0) failures.Add($"{name}: {count} words differ; {first}");
+                }
+            }
+            finally
+            {
+                // a dispatch the shim skipped (no pipeline, an unbindable UAV) is a failure even unseen
+                var shimContext = Microsoft.Wpf.Interop.WebGpu.Direct3D.ComObject.From<D3DContext>(sCtx);
+                if (shimContext != null && shimContext.DispatchesSkipped > 0) failures.Add($"the shim skipped {shimContext.DispatchesSkipped} dispatch(es)");
+                foreach (IntPtr p in new[] { sCtx, sDev, wCtx, wDev })
+                    ((delegate* unmanaged<IntPtr, uint>)(*(IntPtr**)p)[2])(p);
+            }
+            Assert.True(failures.Count == 0, $"{compared} compared, {runOnly} run only; " + string.Join(Environment.NewLine, failures));
+        }
+
         [Fact]
         public void EveryCorpusShader_TranslatesOrIsAKnownGap()
         {

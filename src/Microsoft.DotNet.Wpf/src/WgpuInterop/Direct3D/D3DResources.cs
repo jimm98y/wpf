@@ -231,17 +231,59 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return vt;
         }
 
-        public override D3D11_RESOURCE_DIMENSION Dimension => D3D11_RESOURCE_DIMENSION.TEXTURE2D;
+        private static readonly Vtable s_vt1d = Build1D();
+        private static readonly Vtable s_vt3d = Build3D();
+
+        private static Vtable Build1D()
+        {
+            var vt = new Vtable("ID3D11Texture1D", Vtbl.ID3D11Texture1D.SlotCount, Vtbl.ID3D11Texture1D.IID, Vtbl.ID3D11Resource.IID, Vtbl.ID3D11DeviceChild.IID);
+            FillResource(vt);
+            vt.Set(Vtbl.ID3D11Texture1D.GetDesc, (delegate* unmanaged<IntPtr, D3D11_TEXTURE1D_DESC*, void>)&GetDesc1D);
+            return vt;
+        }
+
+        private static Vtable Build3D()
+        {
+            var vt = new Vtable("ID3D11Texture3D", Vtbl.ID3D11Texture3D1.SlotCount, Vtbl.ID3D11Texture3D.IID, Vtbl.ID3D11Texture3D1.IID, Vtbl.ID3D11Resource.IID, Vtbl.ID3D11DeviceChild.IID);
+            FillResource(vt);
+            vt.Set(Vtbl.ID3D11Texture3D.GetDesc, (delegate* unmanaged<IntPtr, D3D11_TEXTURE3D_DESC*, void>)&GetDesc3D);
+            return vt;
+        }
+
+        /// <summary>1D, 2D or 3D. A Texture1D is a 2D texture one texel high (the translator reads it so,
+        /// see DxbcTranslator.Resources.cs); a Texture3D is a 3D texture whose Desc.ArraySize is 1.</summary>
+        public readonly int Kind;
+        /// <summary>The depth of a 3D texture's top level (1 otherwise).</summary>
+        public readonly uint Depth;
+
+        public override D3D11_RESOURCE_DIMENSION Dimension => Kind switch { 1 => D3D11_RESOURCE_DIMENSION.TEXTURE1D, 3 => D3D11_RESOURCE_DIMENSION.TEXTURE3D, _ => D3D11_RESOURCE_DIMENSION.TEXTURE2D };
         public bool IsStaging => Desc.Usage == D3D11_USAGE.STAGING;
         public uint SampleCount => Math.Max(1, Desc.SampleDesc.Count);
+        public uint DepthAt(uint mip) => Kind == 3 ? Math.Max(1, Depth >> (int)mip) : 1;
 
-        public D3DTexture2D(D3DDevice device, D3D11_TEXTURE2D_DESC desc, D3D11_SUBRESOURCE_DATA* init)
-            : base(device, s_vt, s_dxgiResource, s_dxgiSurface)
+        public static D3DTexture2D Create1D(D3DDevice device, D3D11_TEXTURE1D_DESC d, D3D11_SUBRESOURCE_DATA* init) => new(device, new D3D11_TEXTURE2D_DESC
         {
+            Width = d.Width, Height = 1, MipLevels = d.MipLevels, ArraySize = d.ArraySize, Format = d.Format, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 },
+            Usage = d.Usage, BindFlags = d.BindFlags, CPUAccessFlags = d.CPUAccessFlags, MiscFlags = d.MiscFlags,
+        }, init, 1, 1);
+
+        public static D3DTexture2D Create3D(D3DDevice device, D3D11_TEXTURE3D_DESC d, D3D11_SUBRESOURCE_DATA* init) => new(device, new D3D11_TEXTURE2D_DESC
+        {
+            Width = d.Width, Height = d.Height, MipLevels = d.MipLevels, ArraySize = 1, Format = d.Format, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 },
+            Usage = d.Usage, BindFlags = d.BindFlags, CPUAccessFlags = d.CPUAccessFlags, MiscFlags = d.MiscFlags,
+        }, init, 3, Math.Max(1, d.Depth));
+
+        public D3DTexture2D(D3DDevice device, D3D11_TEXTURE2D_DESC desc, D3D11_SUBRESOURCE_DATA* init) : this(device, desc, init, 2, 1) { }
+
+        private D3DTexture2D(D3DDevice device, D3D11_TEXTURE2D_DESC desc, D3D11_SUBRESOURCE_DATA* init, int kind, uint depth)
+            : base(device, kind switch { 1 => s_vt1d, 3 => s_vt3d, _ => s_vt }, s_dxgiResource, s_dxgiSurface)
+        {
+            Kind = kind;
+            Depth = depth;
             Format = Formats.Texture(desc.Format);
             if (Format == WGPUTextureFormat.Undefined) throw new NotSupportedException($"texture format {desc.Format}");
             if (desc.Width == 0 || desc.Height == 0) throw new ArgumentException("zero-sized texture");
-            uint maxMips = 1 + (uint)Math.Floor(Math.Log2(Math.Max(desc.Width, desc.Height)));
+            uint maxMips = 1 + (uint)Math.Floor(Math.Log2(Math.Max(Math.Max(desc.Width, desc.Height), depth)));
             MipLevels = desc.MipLevels == 0 ? maxMips : Math.Min(desc.MipLevels, maxMips);
             desc.MipLevels = MipLevels;
             desc.ArraySize = Math.Max(1, desc.ArraySize);
@@ -264,7 +306,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     SubresourceOffset[i] = offset;
                     SubresourceRowPitch[i] = pitch;
                     SubresourceRows[i] = h;
-                    offset += (ulong)pitch * h;
+                    offset += (ulong)pitch * h * DepthAt(m);   // a 3D level is its slices, one after the other
                 }
             StagingSize = offset;
 
@@ -283,6 +325,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var usage = WGPUTextureUsage.CopySrc | WGPUTextureUsage.CopyDst | WGPUTextureUsage.TextureBinding;
             if (!bc && ((desc.BindFlags & (D3D11_BIND.RENDER_TARGET | D3D11_BIND.DEPTH_STENCIL)) != 0 || (desc.MiscFlags & D3D11_RESOURCE_MISC.GENERATE_MIPS) != 0))
                 usage |= WGPUTextureUsage.RenderAttachment;
+            if (!bc && (desc.BindFlags & D3D11_BIND.UNORDERED_ACCESS) != 0) usage |= WGPUTextureUsage.StorageBinding;
             if (Formats.IsDepth(Format))
             {
                 // depth formats: never written by copies, copied from only when 16- or 32-bit float
@@ -293,8 +336,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var tdesc = new WGPUTextureDescriptor
             {
                 usage = usage,
-                dimension = WGPUTextureDimension._2D,
-                size = new WGPUExtent3D { width = desc.Width, height = desc.Height, depthOrArrayLayers = desc.ArraySize },
+                dimension = kind == 3 ? WGPUTextureDimension._3D : WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = desc.Width, height = desc.Height, depthOrArrayLayers = kind == 3 ? depth : desc.ArraySize },
                 format = Format,
                 mipLevelCount = MipLevels,
                 sampleCount = SampleCount,
@@ -311,7 +354,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 for (int i = 0; i < subs; i++)
                 {
                     if (init[i].pSysMem == null) continue;
-                    WriteSubresource(i, init[i].pSysMem, init[i].SysMemPitch, null);
+                    WriteSubresource(i, init[i].pSysMem, init[i].SysMemPitch, null, init[i].SysMemSlicePitch);
                 }
             }
         }
@@ -320,22 +363,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>queue.writeTexture of one subresource (or a box of it) from app memory with the
         /// app's own row pitch.</summary>
-        public void WriteSubresource(int sub, void* data, uint rowPitch, D3D11_BOX* box)
+        public void WriteSubresource(int sub, void* data, uint rowPitch, D3D11_BOX* box, uint slicePitch = 0)
         {
             var (mip, layer) = Split((uint)sub);
-            uint w = Math.Max(1, Desc.Width >> (int)mip), h = Math.Max(1, Desc.Height >> (int)mip);
-            uint x = 0, y = 0;
-            if (box != null) { x = box->left; y = box->top; w = box->right - box->left; h = box->bottom - box->top; }
-            if (w == 0 || h == 0) return;
+            uint w = Math.Max(1, Desc.Width >> (int)mip), h = Math.Max(1, Desc.Height >> (int)mip), d = DepthAt(mip);
+            uint x = 0, y = 0, z = Kind == 3 ? 0 : layer;
+            if (box != null)
+            {
+                x = box->left; y = box->top; w = box->right - box->left; h = box->bottom - box->top;
+                if (Kind == 3) { z = box->front; d = box->back - box->front; }
+            }
+            if (w == 0 || h == 0 || d == 0) return;
             bool bc = Formats.IsBlockCompressed(Desc.Format);
             uint rows = bc ? (h + 3) / 4 : h;
             uint bpe = Formats.TexelBytes(Desc.Format);
             uint tight = (bc ? (w + 3) / 4 : w) * bpe;
             if (rowPitch == 0) rowPitch = tight;
-            var dst = new WGPUTexelCopyTextureInfo { texture = Gpu, mipLevel = mip, origin = new WGPUOrigin3D { x = x, y = y, z = layer }, aspect = WGPUTextureAspect.All };
-            var layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = rowPitch, rowsPerImage = rows };
-            var size = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = 1 };
-            wgpuQueueWriteTexture(Device.Gpu.Queue, &dst, data, (nuint)((ulong)rowPitch * (rows - 1) + tight), &layout, &size);
+            if (d > 1 && slicePitch == 0) slicePitch = rowPitch * rows;
+            // WebGPU takes slices as rowsPerImage rows apart: a slice pitch that is not a whole number
+            // of rows is written slice by slice
+            if (d > 1 && slicePitch % rowPitch != 0)
+            {
+                for (uint k = 0; k < d; k++)
+                {
+                    var one = new D3D11_BOX { left = x, top = y, front = z + k, right = x + w, bottom = y + h, back = z + k + 1 };
+                    WriteSubresource(sub, (byte*)data + (ulong)k * slicePitch, rowPitch, &one, 0);
+                }
+                return;
+            }
+            var dst = new WGPUTexelCopyTextureInfo { texture = Gpu, mipLevel = mip, origin = new WGPUOrigin3D { x = x, y = y, z = z }, aspect = WGPUTextureAspect.All };
+            var layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = rowPitch, rowsPerImage = d > 1 ? slicePitch / rowPitch : rows };
+            var size = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = d };
+            wgpuQueueWriteTexture(Device.Gpu.Queue, &dst, data, (nuint)((ulong)(d - 1) * (d > 1 ? slicePitch : 0) + (ulong)rowPitch * (rows - 1) + tight), &layout, &size);
             Interlocked.Increment(ref Version);
         }
 
@@ -349,7 +408,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (p == null) return hr;
             mapped->pData = p + SubresourceOffset[subresource];
             mapped->RowPitch = SubresourceRowPitch[subresource];
-            mapped->DepthPitch = SubresourceRowPitch[subresource] * SubresourceRows[subresource];
+            mapped->DepthPitch = SubresourceRowPitch[subresource] * SubresourceRows[subresource];   // a 3D slice
             _mapped = true;
             return HResult.S_OK;
         }
@@ -366,6 +425,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             var t = From<D3DTexture2D>(self);
             if (t != null && desc != null) *desc = t.Desc;
+        }
+
+        [UnmanagedCallersOnly]
+        private static void GetDesc1D(IntPtr self, D3D11_TEXTURE1D_DESC* desc)
+        {
+            var t = From<D3DTexture2D>(self);
+            if (t == null || desc == null) return;
+            var d = t.Desc;
+            *desc = new D3D11_TEXTURE1D_DESC { Width = d.Width, MipLevels = d.MipLevels, ArraySize = d.ArraySize, Format = d.Format, Usage = d.Usage, BindFlags = d.BindFlags, CPUAccessFlags = d.CPUAccessFlags, MiscFlags = d.MiscFlags };
+        }
+
+        [UnmanagedCallersOnly]
+        private static void GetDesc3D(IntPtr self, D3D11_TEXTURE3D_DESC* desc)
+        {
+            var t = From<D3DTexture2D>(self);
+            if (t == null || desc == null) return;
+            var d = t.Desc;
+            *desc = new D3D11_TEXTURE3D_DESC { Width = d.Width, Height = d.Height, Depth = t.Depth, MipLevels = d.MipLevels, Format = d.Format, Usage = d.Usage, BindFlags = d.BindFlags, CPUAccessFlags = d.CPUAccessFlags, MiscFlags = d.MiscFlags };
         }
 
         protected override void OnFinalRelease()

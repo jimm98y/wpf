@@ -130,9 +130,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             _sampleMask = 0xFFFFFFFF;
             Bind(ref _depth, null);
             _stencilRef = 0;
+            ClearComputeState();
         }
 
-        private StageState Stage(ShaderStage s) => s switch { ShaderStage.Vertex => _vs, ShaderStage.Pixel => _ps, ShaderStage.Geometry => _gs, _ => throw new NotSupportedException($"{s} stage") };
+        private StageState Stage(ShaderStage s) => s switch
+        {
+            ShaderStage.Vertex => _vs, ShaderStage.Pixel => _ps, ShaderStage.Geometry => _gs,
+            ShaderStage.Compute => _cs, ShaderStage.Hull => _hs, ShaderStage.Domain => _ds,
+            _ => throw new NotSupportedException($"{s} stage"),
+        };
 
         // ---- deferred recording ----------------------------------------------------------------------
 

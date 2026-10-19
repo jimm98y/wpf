@@ -153,9 +153,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return result;
         }
 
-        private IntPtr BindGroupLayout(ShaderBindings b, ulong stage)
+        private IntPtr BindGroupLayout(ShaderBindings b, ulong stage, D3DUnorderedAccessView?[]? uavs = null)
         {
             var entries = new List<WGPUBindGroupLayoutEntry>();
+            foreach (int slot in b.StorageResources)
+                entries.Add(new WGPUBindGroupLayoutEntry
+                {
+                    binding = (uint)(DxbcTranslator.ResourceBase + slot), visibility = stage,
+                    buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage },
+                });
+            foreach (var (slot, u) in b.Uavs)
+            {
+                var e = new WGPUBindGroupLayoutEntry { binding = (uint)(DxbcTranslator.UavBase + slot), visibility = stage };
+                if (u.Kind == 't' && u.Dim != 1)
+                {
+                    var view = uavs != null && slot < uavs.Length ? uavs[slot] : null;
+                    e.storageTexture = new WGPUStorageTextureBindingLayout
+                    {
+                        access = b.UavReads.Contains(slot) ? 4 /* ReadWrite */ : 2 /* WriteOnly */,
+                        format = view?.Format ?? (u.Ret switch { 'i' => TexFmt.R32Sint, 'u' => TexFmt.R32Uint, _ => TexFmt.R32Float }),
+                        viewDimension = u.Dim switch { 7 or 8 => WGPUTextureViewDimension._2DArray, 5 => WGPUTextureViewDimension._3D, _ => WGPUTextureViewDimension._2D },
+                    };
+                }
+                else e.buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage };
+                entries.Add(e);
+            }
+            foreach (int slot in b.Counters)
+                entries.Add(new WGPUBindGroupLayoutEntry
+                {
+                    binding = (uint)(DxbcTranslator.CounterBase + slot), visibility = stage,
+                    buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage, minBindingSize = 4 },
+                });
             foreach (var (slot, size) in b.ConstantBuffers)
                 entries.Add(new WGPUBindGroupLayoutEntry
                 {
@@ -405,7 +433,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>What an unbound typed buffer reads: 16 zero bytes.</summary>
         private IntPtr DummyStorage()
         {
-            if (_dummyStorage == IntPtr.Zero) _dummyStorage = Device.Gpu.CreateBufferMapped(new byte[16], WGPUBufferUsage.Storage);
+            // writable too: an unbound UAV reads 0 and its writes are dropped (D3D's rule; here they land in this scratch)
+            if (_dummyStorage == IntPtr.Zero) _dummyStorage = Device.Gpu.CreateBufferMapped(new byte[16], WGPUBufferUsage.Storage | WGPUBufferUsage.CopyDst);
             return _dummyStorage;
         }
 
@@ -427,9 +456,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return v;
         }
 
-        private IntPtr BindGroup(IntPtr layout, ShaderBindings b, StageState s)
+        private IntPtr BindGroup(IntPtr layout, ShaderBindings b, StageState s, D3DUnorderedAccessView?[]? uavs = null)
         {
             var entries = new List<WGPUBindGroupEntry>();
+            foreach (int slot in b.StorageResources)
+            {
+                // a raw or structured buffer view: its byte range (BUFFEREX: first element, count, flags)
+                var srv = s.Resources[slot];
+                if (srv?.Resource is D3DBuffer buf && buf.Gpu != IntPtr.Zero)
+                {
+                    bool raw = (srv.Desc.U2 & 1) != 0 || (buf.Desc.MiscFlags & D3D11_RESOURCE_MISC.BUFFER_STRUCTURED) == 0;
+                    ulong element = raw ? 4UL : Math.Max(4UL, buf.Desc.StructureByteStride);
+                    ulong first = srv.Desc.U0 * element, size = srv.Desc.U1 * element;
+                    ulong whole = (ulong)buf.Size & ~3UL;
+                    if (first >= whole) { first = 0; size = 0; }
+                    if (size == 0 || first + size > whole) size = whole - first;
+                    entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.ResourceBase + slot), buffer = buf.Gpu, offset = first, size = Math.Max(4UL, size & ~3UL) });
+                }
+                else entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.ResourceBase + slot), buffer = DummyStorage(), offset = 0, size = 16 });
+            }
+            foreach (var (slot, u) in b.Uavs)
+            {
+                var view = uavs != null && slot < uavs.Length ? uavs[slot] : null;
+                uint binding = (uint)(DxbcTranslator.UavBase + slot);
+                if (u.Kind == 't' && u.Dim != 1)
+                {
+                    if (view?.View is not IntPtr tv || tv == IntPtr.Zero) throw new InvalidOperationException($"u{slot}: no texture UAV bound (an unbound typed UAV texture has no WebGPU stand-in)");
+                    entries.Add(new WGPUBindGroupEntry { binding = binding, textureView = tv });
+                }
+                else if (view?.Resource is D3DBuffer vb && vb.Gpu != IntPtr.Zero)
+                    entries.Add(new WGPUBindGroupEntry { binding = binding, buffer = vb.Gpu, offset = view.Offset, size = Math.Max(4UL, view.Size & ~3UL) });
+                else entries.Add(new WGPUBindGroupEntry { binding = binding, buffer = DummyStorage(), offset = 0, size = 16 });
+            }
+            foreach (int slot in b.Counters)
+            {
+                var view = uavs != null && slot < uavs.Length ? uavs[slot] : null;
+                entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.CounterBase + slot), buffer = view?.Counter is IntPtr c && c != IntPtr.Zero ? c : DummyStorage(), offset = 0, size = 4 });
+            }
             foreach (var (slot, size) in b.ConstantBuffers)
             {
                 ulong at = ArenaWrite(s.ConstantBuffers[slot], size);

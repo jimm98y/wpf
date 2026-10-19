@@ -31,6 +31,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 
         private void Helper(string code) => _helpers.Add(code);
 
+        /// <summary>select(f, t, c) on u32 vectors, written with bit operations: naga's GLSL backend
+        /// emits a u32-vector select as a float mix and then uintBitsToFloat(vec4), which no GLSL
+        /// compiler takes.</summary>
+        private static string SelU(string f, string t, string cond) => $"({f} ^ (({f} ^ {t}) & {Mask(cond)}))";
+
         private const string MulHiWgsl = @"
 // the high 32 bits of a 32 x 32 product (WGSL has no mulhi): four 16-bit partial products
 fn dx_umulhi(a: u32, b: u32) -> u32 {
@@ -44,6 +49,38 @@ fn dx_imulhi(a: i32, b: i32) -> i32 {
     if (a < 0) { h = h - bitcast<u32>(b); }
     if (b < 0) { h = h - bitcast<u32>(a); }
     return bitcast<i32>(h);
+}
+";
+
+        private const string HalfWgsl = @"
+// f32 bits to f16 bits as WARP converts: toward zero, denormals kept, overflow to infinity, NaN kept quiet
+fn dx_f32tof16(f: u32) -> u32 {
+    let s = (f >> 16u) & 0x8000u;
+    let e = i32((f >> 23u) & 0xFFu);
+    let m = f & 0x7FFFFFu;
+    if (e == 255) { return s | 0x7C00u | select(0u, 0x200u | (m >> 13u), m != 0u); }
+    let he = e - 127 + 15;
+    if (he >= 31) { return s | 0x7C00u; }
+    if (he <= 0) {
+        if (he < -10) { return s; }
+        let mm = m | 0x800000u;
+        return s | (mm >> u32(14 - he));
+    }
+    return s | (u32(he) << 10u) | (m >> 13u);
+}
+// f16 bits (the low 16) to f32 bits, exactly; a NaN comes out quiet
+fn dx_f16tof32(v: u32) -> u32 {
+    let s = (v & 0x8000u) << 16u;
+    let e = (v >> 10u) & 0x1Fu;
+    var m = v & 0x3FFu;
+    if (e == 0u) {
+        if (m == 0u) { return s; }
+        var x = 113u;
+        loop { if ((m & 0x400u) != 0u) { break; } m = m << 1u; x = x - 1u; }
+        return s | (x << 23u) | ((m & 0x3FFu) << 13u);
+    }
+    if (e == 31u) { return s | 0x7F800000u | select(0u, 0x400000u | (m << 13u), m != 0u); }
+    return s | ((e + 112u) << 23u) | (m << 13u);
 }
 ";
 
@@ -92,9 +129,14 @@ fn dx_msad(r: u32, s: u32, acc: u32) -> u32 {
                 case Opcode.DerivRtxFine: Store(o[0], $"dpdxFine({Source(o[1])})", sat); return true;
                 case Opcode.DerivRtyFine: Store(o[0], $"dpdyFine({Source(o[1])})", sat); return true;
                 case Opcode.SinCos:
-                    if (o[0].Type != OperandType.Null) Store(o[0], $"sin({Source(o[2])})", sat);
-                    if (o[1].Type != OperandType.Null) Store(o[1], $"cos({Source(o[2])})", sat);
+                {
+                    // the source is read once: the first result may overwrite it (sincos r0, r1, r0)
+                    string x = $"_c{_tmp++}";
+                    Line($"let {x} = {Source(o[2])};");
+                    if (o[0].Type != OperandType.Null) Store(o[0], $"sin({x})", sat);
+                    if (o[1].Type != OperandType.Null) Store(o[1], $"cos({x})", sat);
                     return true;
+                }
 
                 case Opcode.Eq: Store(o[0], $"bitcast<vec4<f32>>({Mask($"{Source(o[1])} == {Source(o[2])}")})", false); return true;
                 case Opcode.Ne: Store(o[0], $"bitcast<vec4<f32>>({Mask($"{Source(o[1])} != {Source(o[2])}")})", false); return true;
@@ -141,7 +183,10 @@ fn dx_msad(r: u32, s: u32, acc: u32) -> u32 {
                 {
                     // imul/umul dHi, dLo, a, b
                     bool signed = ins.Op == Opcode.IMul;
-                    string a = signed ? ISource(o[2]) : USource(o[2]), b = signed ? ISource(o[3]) : USource(o[3]);
+                    // sources are read once, before either result is written (umul r0, r1, r0, r1)
+                    string a = $"_c{_tmp++}", b = $"_c{_tmp++}";
+                    Line($"let {a} = {(signed ? ISource(o[2]) : USource(o[2]))};");
+                    Line($"let {b} = {(signed ? ISource(o[3]) : USource(o[3]))};");
                     if (o[0].Type != OperandType.Null)
                     {
                         Helper(MulHiWgsl);
@@ -153,9 +198,12 @@ fn dx_msad(r: u32, s: u32, acc: u32) -> u32 {
                 case Opcode.UDiv:
                 {
                     // division by zero gives all ones in both results
-                    string a = USource(o[2]), b = USource(o[3]);
-                    if (o[0].Type != OperandType.Null) StoreI(o[0], $"select(vec4<u32>(0xFFFFFFFFu), {a} / max({b}, vec4<u32>(1u)), {b} != vec4<u32>(0u))");
-                    if (o[1].Type != OperandType.Null) StoreI(o[1], $"select(vec4<u32>(0xFFFFFFFFu), {a} % max({b}, vec4<u32>(1u)), {b} != vec4<u32>(0u))");
+                    // sources are read once, before either result is written (udiv r0, r1, r0, r1)
+                    string a = $"_c{_tmp++}", b = $"_c{_tmp++}";
+                    Line($"let {a} = {USource(o[2])};");
+                    Line($"let {b} = {USource(o[3])};");
+                    if (o[0].Type != OperandType.Null) StoreI(o[0], SelU("vec4<u32>(0xFFFFFFFFu)", $"({a} / max({b}, vec4<u32>(1u)))", $"{b} != vec4<u32>(0u)"));
+                    if (o[1].Type != OperandType.Null) StoreI(o[1], SelU("vec4<u32>(0xFFFFFFFFu)", $"({a} % max({b}, vec4<u32>(1u)))", $"{b} != vec4<u32>(0u)"));
                     return true;
                 }
                 case Opcode.UAddc:
@@ -186,13 +234,13 @@ fn dx_msad(r: u32, s: u32, acc: u32) -> u32 {
                 case Opcode.FirstBitHi:
                 {
                     string b = $"firstLeadingBit({USource(o[1])})";
-                    StoreI(o[0], $"select(vec4<u32>(31u) - {b}, vec4<u32>(0xFFFFFFFFu), {b} == vec4<u32>(0xFFFFFFFFu))");
+                    StoreI(o[0], SelU($"(vec4<u32>(31u) - {b})", "vec4<u32>(0xFFFFFFFFu)", $"{b} == vec4<u32>(0xFFFFFFFFu)"));
                     return true;
                 }
                 case Opcode.FirstBitShi:
                 {
                     string b = $"bitcast<vec4<u32>>(firstLeadingBit({ISource(o[1])}))";
-                    StoreI(o[0], $"select(vec4<u32>(31u) - {b}, vec4<u32>(0xFFFFFFFFu), {b} == vec4<u32>(0xFFFFFFFFu))");
+                    StoreI(o[0], SelU($"(vec4<u32>(31u) - {b})", "vec4<u32>(0xFFFFFFFFu)", $"{b} == vec4<u32>(0xFFFFFFFFu)"));
                     return true;
                 }
                 case Opcode.FirstBitLo: StoreI(o[0], $"firstTrailingBit({USource(o[1])})"); return true;
@@ -207,18 +255,16 @@ fn dx_msad(r: u32, s: u32, acc: u32) -> u32 {
                     Helper(MsadWgsl);
                     StoreI(o[0], PerComponent("dx_msad", USource(o[1]), USource(o[2]), USource(o[3])));
                     return true;
+                // half conversions in integer arithmetic: WGSL leaves pack2x16float's rounding and
+                // unpack's denormals to the implementation; WARP (the oracle) rounds toward zero and keeps them
                 case Opcode.F32toF16:
-                {
-                    string s = Source(o[1]);
-                    StoreI(o[0], $"vec4<u32>(pack2x16float(vec2<f32>(({s}).x, 0.0f)), pack2x16float(vec2<f32>(({s}).y, 0.0f)), pack2x16float(vec2<f32>(({s}).z, 0.0f)), pack2x16float(vec2<f32>(({s}).w, 0.0f)))");
+                    Helper(HalfWgsl);
+                    StoreI(o[0], PerComponent("dx_f32tof16", $"bitcast<vec4<u32>>({Source(o[1])})"));
                     return true;
-                }
                 case Opcode.F16toF32:
-                {
-                    string u = USource(o[1]);
-                    Store(o[0], $"vec4<f32>(unpack2x16float(({u}).x & 0xFFFFu).x, unpack2x16float(({u}).y & 0xFFFFu).x, unpack2x16float(({u}).z & 0xFFFFu).x, unpack2x16float(({u}).w & 0xFFFFu).x)", sat);
+                    Helper(HalfWgsl);
+                    StoreI(o[0], PerComponent("dx_f16tof32", USource(o[1])));
                     return true;
-                }
 
                 // pixel-shader attribute evaluation. WGSL interpolates an input only where its own
                 // qualifier says (center, centroid or sample); evaluating it anywhere else is not
