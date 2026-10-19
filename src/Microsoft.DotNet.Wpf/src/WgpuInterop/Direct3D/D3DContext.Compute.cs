@@ -33,7 +33,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public int DispatchesIssued, DispatchesSkipped;
 
         public void SetUavs(bool compute, int start, D3DUnorderedAccessView?[] views, uint[]? initialCounts)
-            => Run(c =>
+            => State(c =>
             {
                 var slots = compute ? c._csUav : c._omUav;
                 for (int i = 0; i < views.Length && start + i < MaxUavs; i++)

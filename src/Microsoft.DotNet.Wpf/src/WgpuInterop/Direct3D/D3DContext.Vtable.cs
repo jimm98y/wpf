@@ -405,7 +405,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (c == null || !c.Deferred) return HResult.DXGI_ERROR_INVALID_CALL;
             try
             {
-                var l = c.Finish();
+                var l = c.Finish(restore != 0);
                 if (list == null) { l.Release(); return HResult.S_OK; }
                 *list = l.Pointer;
                 return HResult.S_OK;
