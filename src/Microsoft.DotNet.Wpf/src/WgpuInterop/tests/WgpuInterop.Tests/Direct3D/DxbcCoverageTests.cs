@@ -30,7 +30,7 @@ namespace WgpuInterop.Tests.Direct3D
     {
         private static string CorpusDir => Path.Combine(AppContext.BaseDirectory, "DxbcCorpus");
 
-        private static IEnumerable<string> Shaders()
+        internal static IEnumerable<string> Shaders()
         {
             foreach (string f in Directory.GetFiles(CorpusDir, "*.dxbc").OrderBy(f => f)) yield return f;
             if (Environment.GetEnvironmentVariable("DXBC_CORPUS") is { Length: > 0 } more)

@@ -168,6 +168,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         public int Mask;
         public int ReadWriteMask;
         public int Stream;
+        /// <summary>D3D_MIN_PRECISION (the *SG1 chunks of 5.1 carry it).</summary>
+        public int MinPrecision;
         public override string ToString() => $"{SemanticName}{SemanticIndex} r{Register} m{Mask} sv{SystemValue} t{ComponentType}";
     }
 
@@ -213,7 +215,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 switch (tag)
                 {
                     case "ISGN": ReadSignature(data, s.Inputs, false, false); break;
-                    case "ISG1": ReadSignature(data, s.Inputs, false, true); break;
+                    case "ISG1": ReadSignature(data, s.Inputs, true, true); break;
                     case "OSGN": ReadSignature(data, s.Outputs, false, false); break;
                     case "OSG5": ReadSignature(data, s.Outputs, true, false); break;
                     case "OSG1": ReadSignature(data, s.Outputs, true, true); break;
@@ -267,6 +269,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 e.Register = BitConverter.ToInt32(data[(p + 16)..]);
                 e.Mask = data[p + 20];
                 e.ReadWriteMask = data[p + 21];
+                if (minPrecision) e.MinPrecision = BitConverter.ToInt32(data[(p + 24)..]);
                 int end = nameOff;
                 while (end < data.Length && data[end] != 0) end++;
                 e.SemanticName = Encoding.ASCII.GetString(data[nameOff..end]);

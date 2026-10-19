@@ -360,8 +360,12 @@ to write, but it means a native dependency for every head, which the rules here 
 - **Windows:** the real `d3dcompiler_47.dll` ships with the OS, so the shim leaves it alone, and the
   DXBC it produces goes through the translator like any other.
 - **Elsewhere (the user's decision, 2026-10-19: not for now):** `D3DCompile` answers `E_FAIL` with
-  one clear log line. There is no DXC package and no managed HLSL front end. A managed `D3DReflect`
-  over the RDEF/signature reader stays in the plan, because it is cheap.
+  one clear log line. There is no DXC package and no managed HLSL front end. `D3DReflect` is
+  managed (D3DShaderReflection): ID3D11ShaderReflection read from the blob's chunks (RDEF,
+  signatures, STAT, SFI0, the declarations). It matches d3dcompiler_47 field for field over the
+  corpus and DXEngine's shaders (D3DReflectTests): descriptions and instruction counts, constant
+  buffers, variables with defaults, type trees with class-linkage subtypes, bindings, parameters,
+  and lookups of names that are not there.
 - Weighed and set aside: `D3DCompile` through DXC as an optional native package (its DXIL taken by
   the DXIL path), and a managed HLSL front end (about 30k lines to reach fxc's dialect).
 
@@ -493,4 +497,4 @@ green throughout.
     dtou: it converts through a float (dtoi(16777217) is 16777216). movc and dmovc now select by
     bits, so a NaN pattern in a register survives them on any driver.
   - Not yet: stream output from a domain shader or from GS streams above 0, layered rendering
-    after tessellation, class linkage, DXIL, managed D3DReflect.
+    after tessellation, class linkage, DXIL. Managed D3DReflect is done (see Runtime compilation).

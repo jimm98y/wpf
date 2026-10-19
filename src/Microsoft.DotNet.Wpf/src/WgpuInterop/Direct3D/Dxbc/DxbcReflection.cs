@@ -25,12 +25,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             public int Class, Kind, Rows, Columns, Elements;   // D3D_SHADER_VARIABLE_CLASS, D3D_SHADER_VARIABLE_TYPE
             public string Name = "";
             public List<(string Name, int Offset, Type Type)> Members = new();
+            /// <summary>From 5.0 (class linkage): the type an interface pointer points to, the base
+            /// class, and the interfaces a class implements.</summary>
+            public Type? SubType, BaseClass;
+            public List<Type> Interfaces = new();
         }
 
         internal sealed class Variable
         {
             public string Name = "";
             public int Offset, Size, Flags;
+            /// <summary>From 5.0: the textures and samplers of the variable (-1 start when none).</summary>
+            public int StartTexture = -1, TextureSize, StartSampler = -1, SamplerSize;
             public Type Type = new();
             public byte[]? Default;
         }
@@ -102,6 +108,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                     va.Type = ReadType(d, I32(d, vo + 16), r.Major >= 5, types, 0);
                     int def = I32(d, vo + 20);
                     if (def > 0 && def + va.Size <= d.Length) va.Default = d.Slice(def, va.Size).ToArray();
+                    if (r.Major >= 5) { va.StartTexture = I32(d, vo + 24); va.TextureSize = I32(d, vo + 28); va.StartSampler = I32(d, vo + 32); va.SamplerSize = I32(d, vo + 36); }
                     cb.Variables.Add(va);
                 }
                 r.ConstantBuffers.Add(cb);
@@ -118,7 +125,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             t.Class = U16(d, o); t.Kind = U16(d, o + 2); t.Rows = U16(d, o + 4); t.Columns = U16(d, o + 6);
             t.Elements = U16(d, o + 8);
             int members = U16(d, o + 10), mOff = I32(d, o + 12);
-            if (v5 && o + 36 <= d.Length) t.Name = Str(d, I32(d, o + 32));
+            if (v5 && o + 36 <= d.Length)
+            {
+                t.Name = Str(d, I32(d, o + 32));
+                int sub = I32(d, o + 16), baseClass = I32(d, o + 20), interfaces = I32(d, o + 24), iOff = I32(d, o + 28);
+                if (sub > 0) t.SubType = ReadType(d, sub, v5, seen, depth + 1);
+                if (baseClass > 0) t.BaseClass = ReadType(d, baseClass, v5, seen, depth + 1);
+                for (int k = 0; k < interfaces && iOff > 0 && iOff + 4 * k + 4 <= d.Length; k++)
+                    t.Interfaces.Add(ReadType(d, I32(d, iOff + 4 * k), v5, seen, depth + 1));
+            }
             for (int m = 0; m < members; m++)
             {
                 int mo = mOff + m * 12;
