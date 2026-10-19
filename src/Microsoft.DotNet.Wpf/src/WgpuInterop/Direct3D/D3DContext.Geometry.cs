@@ -34,19 +34,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             /// <summary>Stream output (a GS made with CreateGeometryShaderWithStreamOutput): its three kernels.</summary>
             public StreamOutputDesc? So;
             public IntPtr SoCount, SoScan, SoWrite;
+            /// <summary>An indexed strip: ia_scan, which lists the strips' primitives past their cuts.</summary>
+            public bool StripCut;
+            public IntPtr IaScan;
             /// <summary>The draw: the pass-through vertex shader (group 0, the GS's registers) and the pixel shader.</summary>
             public readonly Translation Draw = new();
             public GeometryDraw Pipeline = new();
         }
 
         private readonly Dictionary<string, GeometryTranslation> _geometries = new();
-        private IntPtr _gsVsOut, _gsOut, _gsIdx, _soCounts;
-        private ulong _gsVsOutSize, _gsOutSize, _gsIdxSize, _soCountsSize;
+        private IntPtr _gsVsOut, _gsOut, _gsIdx, _soCounts, _gsTable;
+        private ulong _gsVsOutSize, _gsOutSize, _gsIdxSize, _soCountsSize, _gsTableSize;
         private const ulong MaxScratch = 128UL << 20;     // WebGPU's default largest storage binding
 
-        private GeometryTranslation TranslateGeometry(D3DShader vs, D3DShader gs, D3DShader? ps)
+        private GeometryTranslation TranslateGeometry(D3DShader vs, D3DShader gs, D3DShader? ps, bool stripCut)
         {
-            string key = $"{vs.Code.Hash:x16}|{gs.Code.Hash:x16}|{ps?.Code.Hash ?? 0:x16}|{_layout?.Id ?? 0}|{gs.StreamOutput?.Key}";
+            string key = $"{vs.Code.Hash:x16}|{gs.Code.Hash:x16}|{ps?.Code.Hash ?? 0:x16}|{_layout?.Id ?? 0}|{gs.StreamOutput?.Key}|{stripCut}";
             if (_geometries.TryGetValue(key, out var t)) return t;
             t = new GeometryTranslation();
             _geometries[key] = t;
@@ -59,7 +62,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 }).ToList();
                 var v = DxbcTranslator.TranslateVertexCompute(vs.Code, fetch);
                 t.So = gs.StreamOutput;
-                var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, vs.Code, v.OutputRegisters, t.So != null ? new TranslationOptions { StreamOutput = t.So } : null);
+                t.StripCut = stripCut;
+                var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, vs.Code, v.OutputRegisters, new TranslationOptions { StreamOutput = t.So, StripCut = stripCut });
                 var link = DxbcTranslator.LinkageOf(ps?.Code);
                 var pass = DxbcTranslator.PassThrough(gs.Code, link);
                 foreach (string a in v.Approximations.Concat(g.Approximations).Concat(pass.Approximations)) D3DLog.Once("approx:" + a, "shader approximation: " + a);
@@ -80,8 +84,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
                 // 2. the geometry shader as compute
                 t.GsLayout = BindGroupLayout(g.Bindings, WGPUShaderStage_Compute);
-                t.GsPlumbing = PlumbingLayout(vertex: false, null, t.So);
+                t.GsPlumbing = PlumbingLayout(vertex: false, null, t.So, stripCut);
                 t.GsPipeline = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err);
+                if (stripCut && t.GsPipeline != IntPtr.Zero)
+                {
+                    t.IaScan = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err, "ia_scan");
+                    if (t.IaScan == IntPtr.Zero) { t.Error = "strip cuts: " + err; return t; }
+                }
                 if (t.So != null && t.GsPipeline != IntPtr.Zero)
                 {
                     t.SoCount = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err, "so_count");
@@ -123,7 +132,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>Group 1 of the two kernels: the parameters, the index buffer, the registers, the
         /// strip indices and the vertex buffers (DxbcTranslator.Plumbing*).</summary>
-        private IntPtr PlumbingLayout(bool vertex, SortedSet<int>? slots, StreamOutputDesc? so = null)
+        private IntPtr PlumbingLayout(bool vertex, SortedSet<int>? slots, StreamOutputDesc? so = null, bool stripCut = false)
         {
             var entries = new List<WGPUBindGroupLayoutEntry>
             {
@@ -141,6 +150,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 entries.Add(new() { binding = DxbcTranslator.PlumbingGsOut, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage } });
                 entries.Add(new() { binding = DxbcTranslator.PlumbingGsIndices, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage } });
                 if (so != null) AddStreamOutLayout(entries, so, counts: true);
+                if (stripCut)
+                {
+                    entries.Add(new() { binding = DxbcTranslator.PlumbingIndices, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage } });
+                    entries.Add(new() { binding = DxbcTranslator.PlumbingPrimitiveTable, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage } });
+                }
             }
             var arr = entries.ToArray();
             fixed (WGPUBindGroupLayoutEntry* p = arr)
@@ -202,15 +216,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private void DrawGeometry(DrawArgs a, D3DShader vs, D3DShader gs)
         {
-            var t = TranslateGeometry(vs, gs, _ps.Shader);
-            if (t.Error != null) { DrawsSkipped++; return; }
             var prims = Primitives(_topology, a.Count);
             if (prims == null) { D3DLog.Once("gstopo:" + _topology, $"a geometry shader draw in topology {_topology} is not assembled"); DrawsSkipped++; return; }
             var (primitive, step, mode, count) = prims.Value;
+            // an indexed strip honours its cuts (all-ones indices) through a primitive table
+            var t = TranslateGeometry(vs, gs, _ps.Shader, stripCut: a.Indexed && mode != 0);
+            if (t.Error != null) { DrawsSkipped++; return; }
             if (primitive != t.Info.InputPrimitive) { D3DLog.Once("gsmismatch", $"topology {_topology} does not match the geometry shader's input primitive {t.Info.InputPrimitive} (D3D rejects the draw)"); DrawsSkipped++; return; }
             if (count == 0) return;
             if (a.Indexed && (_ib == null || _ib.Gpu == IntPtr.Zero)) { DrawsSkipped++; return; }
-            if (a.Indexed && mode != 0) D3DLog.Once("gsrestart", "an indexed strip into a geometry shader: strip-cut indices are not honoured");
 
             ulong vsTotal = (ulong)a.Count * a.Instances;
             ulong gsTotal = (ulong)count * a.Instances * (ulong)t.Info.Instances;
@@ -270,6 +284,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     new() { binding = DxbcTranslator.PlumbingGsOut, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) },
                     new() { binding = DxbcTranslator.PlumbingGsIndices, buffer = gsIdx, offset = 0, size = Math.Max(16, idxBytes) },
                 });
+                if (t.StripCut)
+                {
+                    IntPtr table = Scratch(ref _gsTable, ref _gsTableSize, (2UL * a.Count + 1) * 4, 0);
+                    soEntries.Add(new() { binding = DxbcTranslator.PlumbingIndices, buffer = _ib!.Gpu, offset = 0, size = (ulong)_ib.Size & ~3UL });
+                    soEntries.Add(new() { binding = DxbcTranslator.PlumbingPrimitiveTable, buffer = table, offset = 0, size = (2UL * a.Count + 1) * 4 });
+                }
                 groups.Add(MakeGroup(t.GsPlumbing, soEntries));
                 groups.Add(MakeGroup(t.Draw.VsLayout, new List<WGPUBindGroupEntry> { new() { binding = 0, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) } }));
                 groups.Add(BindGroup(t.Draw.PsLayout, t.Draw.PsBindings ?? new ShaderBindings(), _ps));
@@ -294,9 +314,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             wgpuComputePassEncoderSetBindGroup(pass, 0, groups[0], 0, null);
             wgpuComputePassEncoderSetBindGroup(pass, 1, groups[1], 0, null);
             Dispatch1D(pass, vsTotal);
-            wgpuComputePassEncoderSetPipeline(pass, t.GsPipeline);
             wgpuComputePassEncoderSetBindGroup(pass, 0, groups[2], 0, null);
             wgpuComputePassEncoderSetBindGroup(pass, 1, groups[3], 0, null);
+            if (t.StripCut)
+            {
+                wgpuComputePassEncoderSetPipeline(pass, t.IaScan);
+                wgpuComputePassEncoderDispatchWorkgroups(pass, 1, 1, 1);
+            }
+            wgpuComputePassEncoderSetPipeline(pass, t.GsPipeline);
             Dispatch1D(pass, gsTotal);
             if (t.So != null)
             {

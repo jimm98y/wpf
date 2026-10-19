@@ -84,6 +84,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
     internal sealed partial class DxbcTranslator
     {
         public const int PlumbingGroup = 1, PlumbingParams = 0, PlumbingIndices = 1, PlumbingVsOut = 2, PlumbingGsOut = 3, PlumbingGsIndices = 4, PlumbingVertexBuffer = 8;
+        /// <summary>The strip-cut primitive table of an indexed strip into a GS (ia_scan writes it).</summary>
+        public const int PlumbingPrimitiveTable = 18;
         /// <summary>vec4&lt;u32&gt;s of the draw's parameters: four of the draw, then one per vertex-buffer slot.</summary>
         public const int ParamVec4s = 4 + 32;
         /// <summary>Invocations per row of a dispatch: 65535 workgroups of 64.</summary>
@@ -308,6 +310,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             w.Append($"@group({PlumbingGroup}) @binding({PlumbingVsOut}) var<storage, read> dx_vsout: array<vec4<f32>>;\n");
             w.Append($"@group({PlumbingGroup}) @binding({PlumbingGsOut}) var<storage, read_write> dx_gsout: array<vec4<f32>>;\n");
             w.Append($"@group({PlumbingGroup}) @binding({PlumbingGsIndices}) var<storage, read_write> dx_gsidx: array<u32>;\n");
+            if (_options.StripCut) AppendStripCutScan(w, g.InputVertices);
             w.Append($"var<private> dx_gv: array<array<vec4<f32>, {inRegs}>, {g.InputVertices}>;\n");
             w.Append("var<private> dx_n: u32;\nvar<private> dx_k: u32;\nvar<private> dx_vbase: u32;\nvar<private> dx_ibase: u32;\nvar<private> dx_open: bool;\n\n");
 
@@ -324,13 +327,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             w.Append($"    let i = gid.x + gid.y * {InvocationsPerRow}u;\n    if (i >= dx_p[3].x) {{ return; }}\n");
             w.Append($"    let gsi = i % {g.Instances}u;\n    let rest = i / {g.Instances}u;\n    let prims = max(dx_p[2].y, 1u);\n    let prim = rest % prims;\n    let inst = rest / prims;\n");
             w.Append($"    dx_vbase = i * {max}u;\n    dx_ibase = i * {per}u;\n    let first = inst * dx_p[0].x;\n");
+            if (_options.StripCut)
+            {
+                // an indexed strip with cuts: the primitive's first vertex and parity from the table;
+                // the invocations past the strips' primitives own empty segments
+                w.Append($"    if (prim >= dx_tab[0]) {{ for (var j = 0u; j < {per}u; j = j + 1u) {{ dx_gsidx[dx_ibase + j] = 0xFFFFFFFFu; }} return; }}\n");
+                w.Append("    let start = dx_tab[1u + 2u * prim];\n    let odd = dx_tab[2u + 2u * prim];\n");
+            }
             // the primitive's vertices: lists step by the primitive's size, strips by one, a triangle
             // strip's odd triangles come as (n, n+2, n+1) (D3D's order, measured on WARP)
             for (int k = 0; k < g.InputVertices; k++)
             {
-                w.Append($"    {{\n        var o = prim * dx_p[2].w + {k}u;\n");
-                w.Append($"        if (dx_p[2].z != 0u) {{ o = prim + {k}u; }}\n");
-                if (k > 0) w.Append($"        if (dx_p[2].z == 2u && (prim & 1u) == 1u) {{ o = prim + {3 - k}u; }}\n");
+                if (_options.StripCut)
+                {
+                    w.Append($"    {{\n        var o = start + {k}u;\n");
+                    if (k > 0) w.Append($"        if (dx_p[2].z == 2u && odd == 1u) {{ o = start + {3 - k}u; }}\n");
+                }
+                else
+                {
+                    w.Append($"    {{\n        var o = prim * dx_p[2].w + {k}u;\n");
+                    w.Append($"        if (dx_p[2].z != 0u) {{ o = prim + {k}u; }}\n");
+                    if (k > 0) w.Append($"        if (dx_p[2].z == 2u && (prim & 1u) == 1u) {{ o = prim + {3 - k}u; }}\n");
+                }
                 w.Append($"        let b = (first + o) * {vsRegs}u;\n");
                 foreach (var e in _s.Inputs.Where(e => _gsInputRegs.Contains(e.Register)))
                 {
@@ -351,6 +369,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             w.Append("    dx_body();\n");
             w.Append($"    for (var j = dx_k; j < {per}u; j = j + 1u) {{ dx_gsidx[dx_ibase + j] = 0xFFFFFFFFu; }}\n}}\n");
             if (StreamOut != null) AppendGeometryStreamOut(w);
+        }
+
+        /// <summary>ia_scan: one invocation walks the draw's indices and lists each strip primitive's
+        /// first vertex and parity (a cut, all ones, starts a new strip), the count first.</summary>
+        private static void AppendStripCutScan(StringBuilder w, int vertices)
+        {
+            w.Append($"@group({PlumbingGroup}) @binding({PlumbingIndices}) var<storage, read> dx_ib: array<u32>;\n");
+            w.Append($"@group({PlumbingGroup}) @binding({PlumbingPrimitiveTable}) var<storage, read_write> dx_tab: array<u32>;\n");
+            w.Append("@compute @workgroup_size(1)\nfn ia_scan() {\n    var n = 0u;\n    var run = 0u;\n    let wide = dx_p[1].z == 0u;\n    let cut = select(0xFFFFu, 0xFFFFFFFFu, wide);\n    let len = arrayLength(&dx_ib);\n");
+            w.Append("    for (var j = 0u; j < dx_p[0].x; j = j + 1u) {\n");
+            w.Append("        var at = dx_p[1].y + (dx_p[0].y + j) * 4u;\n        if (!wide) { at = dx_p[1].y + (dx_p[0].y + j) * 2u; }\n");
+            w.Append("        var index = select(0u, dx_ib[min(at >> 2u, len - 1u)], (at >> 2u) < len);\n        if (!wide) { index = (index >> ((at & 2u) * 8u)) & 0xFFFFu; }\n");
+            w.Append($"        if (index == cut) {{ run = 0u; continue; }}\n        run = run + 1u;\n");
+            w.Append($"        if (run >= {vertices}u && 2u + 2u * n < arrayLength(&dx_tab)) {{ dx_tab[1u + 2u * n] = j + 1u - {vertices}u; dx_tab[2u + 2u * n] = (run - {vertices}u) & 1u; n = n + 1u; }}\n");
+            w.Append("    }\n    dx_tab[0] = n;\n}\n");
         }
 
         // ---- the pass-through vertex shader of the draw ---------------------------------------------------

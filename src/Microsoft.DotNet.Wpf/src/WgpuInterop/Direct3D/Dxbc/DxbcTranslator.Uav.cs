@@ -45,6 +45,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         public IReadOnlyCollection<int>? BgraInputs;
         /// <summary>A geometry shader's stream-output declaration (CreateGeometryShaderWithStreamOutput).</summary>
         public StreamOutputDesc? StreamOutput;
+        /// <summary>A geometry shader fed by an indexed strip: its primitives come from a table the
+        /// ia_scan kernel builds, honouring strip-cut indices (all ones).</summary>
+        public bool StripCut;
     }
 
     internal sealed partial class DxbcTranslator
