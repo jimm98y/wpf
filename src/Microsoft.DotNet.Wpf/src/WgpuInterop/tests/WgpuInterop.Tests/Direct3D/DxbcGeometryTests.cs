@@ -66,11 +66,42 @@ O main(V v, bool face : SV_IsFrontFace)
         [Fact]
         public void TheVertexShader_SeesD3DsVertexAndInstanceIds() => DrawsAsWarp(geometry: false, stride: 44);
 
-        private void DrawsAsWarp(bool geometry, int stride)
+        // SV_CullDistance (two of them): x culls the triangles wholly left of x = 0.45 -- one that
+        // straddles it is drawn whole, as a clip distance would not -- and y the second instance
+        private const string CullVs = @"
+struct O { float4 pos : SV_Position; float4 a : TEXCOORD0; float4 b : TEXCOORD1; float4 c : TEXCOORD2; float4 d : TEXCOORD3; nointerpolation uint4 e : TEXCOORD4; float2 cull : SV_CullDistance0; };
+O main(float3 p : POSITION, float4 c0 : COLOR0, float4 c1 : COLOR1, float2 h : TEXCOORD0, float2 s : TEXCOORD1, float4 t : TEXCOORD2,
+       uint4 u : TEXCOORD3, int2 i : TEXCOORD4, float2 n : TEXCOORD5, float4 inst : TEXCOORD6, uint vid : SV_VertexID, uint iid : SV_InstanceID)
+{
+    O o;
+    o.pos = float4(p.xy * 0.45 + inst.xy, p.z, 1);
+    o.a = c0; o.b = c1; o.c = float4(h, s); o.d = t + float4(n, 0, 0);
+    o.e = u + uint4(i.x + 8, i.y + 8, vid, iid);
+    o.cull = float2(o.pos.x - 0.45, iid == 1 ? -1 : 1);
+    return o;
+}";
+
+        private const string CullGs = @"
+struct V { float4 pos : SV_Position; float4 a : TEXCOORD0; float4 b : TEXCOORD1; float4 c : TEXCOORD2; float4 d : TEXCOORD3; nointerpolation uint4 e : TEXCOORD4; float2 cull : SV_CullDistance0; };
+[maxvertexcount(3)]
+void main(triangle V v[3], inout TriangleStream<V> s)
+{
+    [unroll] for (int k = 0; k < 3; k++) s.Append(v[k]);
+}";
+
+        /// <summary>SV_CullDistance from the vertex shader: whole primitives culled as WARP culls them.</summary>
+        [Fact]
+        public void CullDistances_CullWholePrimitivesAsWarp() => DrawsAsWarp(geometry: false, stride: 44, CullVs, null, culls: true);
+
+        /// <summary>SV_CullDistance from a geometry shader (the pass-through vertex stage carries it).</summary>
+        [Fact]
+        public void CullDistances_FromAGeometryShader_CullAsWarp() => DrawsAsWarp(geometry: true, stride: 44, CullVs, CullGs, culls: true);
+
+        private void DrawsAsWarp(bool geometry, int stride, string? vsSource = null, string? gsSource = null, bool culls = false)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "real Direct3D 11 (WARP) and the HLSL compiler exist on Windows only");
             Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
-            byte[] vs = Compile(Vs, "vs_5_0", out string? e1), gs = Compile(Gs, "gs_5_0", out string? e2), ps = Compile(Ps, "ps_5_0", out string? e3);
+            byte[] vs = Compile(vsSource ?? Vs, "vs_5_0", out string? e1), gs = Compile(gsSource ?? Gs, "gs_5_0", out string? e2), ps = Compile(Ps, "ps_5_0", out string? e3);
             Assert.True(vs.Length > 0 && gs.Length > 0 && ps.Length > 0, e1 + e2 + e3);
 
             IntPtr wDev, wCtx, sDev, sCtx;
@@ -82,7 +113,14 @@ O main(V v, bool face : SV_IsFrontFace)
                 var warp = Draw(wDev, wCtx, vs, geometry ? gs : null, ps, stride);
                 var shim = Draw(sDev, sCtx, vs, geometry ? gs : null, ps, stride);
                 int covered = Covered(warp);
-                Assert.True(covered > 30, $"WARP covers {covered} pixels");
+                Assert.True(covered > (culls ? 15 : 30), $"WARP covers {covered} pixels");
+                if (culls)
+                {
+                    // the cull distances cull something, and not everything
+                    byte[] plain = Compile(Vs, "vs_5_0", out _);
+                    int all = Covered(Draw(wDev, wCtx, plain, null, ps, stride));
+                    Assert.True(covered < all * 3 / 4, $"WARP covers {covered} of {all} pixels with the cull distances");
+                }
                 var (count, first) = Compare(warp, shim);
                 int edge = count == 0 ? 0 : OnlyCoverageDiffers(warp, shim, 3);
                 Assert.True(count == 0 || edge > 0, $"{count} components differ (WARP covers {covered}, the shim {Covered(shim)}); {first}; by target: "

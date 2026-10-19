@@ -63,7 +63,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             _translations[key] = t;
             try
             {
-                var link = DxbcTranslator.LinkageOf(ps?.Code);
+                var link = DxbcTranslator.LinkageOf(ps?.Code, vs.Code);
                 var v = DxbcTranslator.Translate(vs.Code, 0, link, bgra.Count > 0 ? new TranslationOptions { BgraInputs = bgra } : null);
                 t.VsBindings = v.Bindings;
                 t.Vs = CreateModule(v.Wgsl, "vs", out string? verr);

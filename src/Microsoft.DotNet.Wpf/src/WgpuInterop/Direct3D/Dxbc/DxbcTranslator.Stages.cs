@@ -108,9 +108,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 if (e.SystemValue == SvPosition || e.SemanticName.Equals("SV_Position", StringComparison.OrdinalIgnoreCase)) posReg = e.Register;
                 if (e.SystemValue == SvClipDistance && _outputRegs.Contains(e.Register))
                     for (int c = 0; c < 4; c++) if ((e.Mask & (1 << c)) != 0) clip.Add($"{OutReg(e.Register)}.{"xyzw"[c]}");
-                if (e.SystemValue == SvCullDistance && _outputRegs.Contains(e.Register))
-                    Approximate("SV_CullDistance: not applied (WGSL has no cull distances); primitives it would cull are drawn");
             }
+            var cull = CullComponents(_s);
+            if (cull.Count > 0 && !_link.Any(l => l.Semantic == CullSemantic))
+                Approximate(_link.Count + (cull.Count + 3) / 4 > MaxInterStageVariables
+                    ? "SV_CullDistance: not applied (no inter-stage variable left to carry it); primitives it would cull are drawn"
+                    : "SV_CullDistance: not applied without a pixel shader; primitives it would cull are drawn");
             if (clip.Count > 0)
             {
                 if (!HasFeature(D3DDevice.FeatureClipDistances)) throw new NotSupportedException("SV_ClipDistance: this adapter has no clip-distances feature");
@@ -127,6 +130,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             for (int i = 0; i < clip.Count; i++) w.Append($"    out.clip[{i}] = {clip[i]};\n");
             foreach (var l in _link)
             {
+                if (l.Semantic == CullSemantic)
+                {
+                    // per distance: 0 when this vertex's is negative, else 1 (see LinkageOf)
+                    var parts = new string[4];
+                    for (int c = 0; c < 4; c++)
+                    {
+                        int i = l.Index * 4 + c;
+                        parts[c] = i < cull.Count && _outputRegs.Contains(cull[i].Register)
+                            ? $"select(1.0f, 0.0f, {OutReg(cull[i].Register)}.{"xyzw"[cull[i].Component]} < 0.0f)" : "1.0f";
+                    }
+                    w.Append($"    out.l{l.Location} = vec4<f32>({string.Join(", ", parts)});\n");
+                    continue;
+                }
                 var e = outputs.FirstOrDefault(x => x.SemanticName.Equals(l.Semantic, StringComparison.OrdinalIgnoreCase) && x.SemanticIndex == l.Index);
                 string v = e == null || !_outputRegs.Contains(e.Register) ? "vec4<f32>(0.0f)" : $"{OutReg(e.Register)}{ShiftDown(e.Mask)}";
                 w.Append($"    out.l{l.Location} = {Cast(v, l.ComponentType)};\n");
@@ -204,6 +220,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                     assigned = true;
                 }
             }
+            // a primitive every vertex of which has a negative cull distance is culled (see LinkageOf)
+            foreach (var l in _link.Where(l => l.Semantic == CullSemantic))
+                w.Append($"    if (any(input.l{l.Location} <= vec4<f32>(0.0f))) {{ discard; }}\n");
             w.Append(_body);
             w.Append("    return shader_out();\n}\n");
         }

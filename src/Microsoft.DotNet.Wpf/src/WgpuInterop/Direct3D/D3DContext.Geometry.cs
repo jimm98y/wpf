@@ -65,7 +65,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 t.So = gs.StreamOutput;
                 t.StripCut = stripCut;
                 var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, vs.Code, v.OutputRegisters, new TranslationOptions { StreamOutput = t.So, StripCut = stripCut });
-                var link = DxbcTranslator.LinkageOf(ps?.Code);
+                var link = DxbcTranslator.LinkageOf(ps?.Code, gs.Code);
                 var pass = DxbcTranslator.PassThrough(gs.Code, link);
                 foreach (string a in v.Approximations.Concat(g.Approximations).Concat(pass.Approximations)) D3DLog.Once("approx:" + a, "shader approximation: " + a);
                 t.Info = GeometryInfo.Of(gs.Code);

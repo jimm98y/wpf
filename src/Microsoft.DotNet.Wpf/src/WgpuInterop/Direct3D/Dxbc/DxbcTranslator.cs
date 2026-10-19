@@ -118,8 +118,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             if (options != null) _options = options;
         }
 
-        /// <summary>The pixel shader's linkage: one location per non-system-value input element.</summary>
-        public static List<LinkedElement> LinkageOf(DxbcShader? pixelShader)
+        /// <summary>The linked element that carries cull distances to the pixel shader (no semantic of
+        /// D3D's can be spelled so).</summary>
+        public const string CullSemantic = "\u0001CULL";
+
+        /// <summary>WebGPU's default maxInterStageShaderVariables.</summary>
+        public const int MaxInterStageVariables = 16;
+
+        /// <summary>The pixel shader's linkage: one location per non-system-value input element (and
+        /// per clip or cull distance it reads), then -- when <paramref name="rasterized"/>, the stage
+        /// before the rasterizer, writes SV_CullDistance -- the elements that cull with them.</summary>
+        public static List<LinkedElement> LinkageOf(DxbcShader? pixelShader, DxbcShader? rasterized = null)
         {
             var list = new List<LinkedElement>();
             if (pixelShader == null) return list;
@@ -130,7 +139,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                     modes[ins.Operands[0].Index0] = ins.Interpolation;
             foreach (var e in pixelShader.Inputs.OrderBy(e => e.Register).ThenBy(e => e.Mask))
             {
-                if (e.SystemValue != 0) continue;
+                // a clip or cull distance the pixel shader reads is linked like any value
+                if (e.SystemValue is not (0 or SvClipDistance or SvCullDistance)) continue;
                 if (list.Any(l => l.Semantic == e.SemanticName.ToUpperInvariant() && l.Index == e.SemanticIndex)) continue;
                 list.Add(new LinkedElement
                 {
@@ -139,6 +149,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                     Interpolation = modes.TryGetValue(e.Register, out int m) ? m : (e.ComponentType == 3 ? 2 : 1),
                 });
             }
+            // SV_CullDistance: WGSL has no cull distances. D3D culls a primitive when, for some
+            // distance, every vertex's is negative. Each vertex sends, per distance, 0 when its own is
+            // negative and 1 when not; interpolated over the primitive that is exactly 0 everywhere
+            // when every vertex sent 0 (a sum of zeros), and above 0 inside it otherwise (centroid
+            // interpolation keeps it inside), so the pixel shader discards where it is 0.
+            int cull = rasterized == null ? 0 : CullComponents(rasterized).Count;
+            int cullElements = (cull + 3) / 4;
+            if (cullElements > 0 && list.Count + cullElements <= MaxInterStageVariables)
+                for (int k = 0; k < cullElements; k++)
+                    list.Add(new LinkedElement { Semantic = CullSemantic, Index = k, Location = list.Count, ComponentType = 3, ComponentCount = 4, Interpolation = 5 });
+            return list;
+        }
+
+        /// <summary>The stage's stream-0 cull-distance components, in register order (register, component).</summary>
+        internal static List<(int Register, int Component)> CullComponents(DxbcShader s)
+        {
+            var list = new List<(int, int)>();
+            foreach (var e in s.Outputs.Where(e => e.Stream == 0 && e.SystemValue == SvCullDistance).OrderBy(e => e.Register).ThenBy(e => e.Mask))
+                for (int c = 0; c < 4; c++) if ((e.Mask & (1 << c)) != 0) list.Add((e.Register, c));
             return list;
         }
 
