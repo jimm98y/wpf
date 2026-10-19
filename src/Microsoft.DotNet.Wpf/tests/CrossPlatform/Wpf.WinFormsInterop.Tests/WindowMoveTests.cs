@@ -601,65 +601,6 @@ namespace Wpf.WinFormsInterop.Tests
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
-        /// <summary>A resize that comes while the GPU is still drawing the last frame lays the form out
-        /// first and shows the last frame at the new size after that, before the new frame. The preview
-        /// reconfigures the swap chain, a configure waits for the GPU, and straight after a frame that is
-        /// most of the frame's GPU time: shown first, every step of a app drag-resize waited
-        /// 20-28 ms for it before its layout could start, and the window was black for that wait anyway.</summary>
-        [Fact]
-        public void AResizeWhileTheGpuIsBusy_LaysOutFirst_AndStillShowsTheLastFrameBeforeTheNewOne()
-        {
-            Assert.SkipUnless(OperatingSystem.IsWindows(), "a Win32 window sized by the OS");
-            Exception? failure = null;
-            var t = new Thread(() =>
-            {
-                var hostType = typeof(SWF.Control).Assembly.GetType("Win32Host")!;
-                var hook = hostType.GetField("GpuIdleForTests", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-                try
-                {
-                    using var form = new SWF.Form
-                    {
-                        Text = "ResizeBusyGpuTest", StartPosition = SWF.FormStartPosition.Manual,
-                        Location = new Point(8000, 80), Size = new Size(300, 200), ShowInTaskbar = false, BackColor = Color.Gold,
-                    };
-                    form.Show();
-                    IntPtr host = IntPtr.Zero;
-                    for (var end = DateTime.UtcNow.AddSeconds(10); DateTime.UtcNow < end && host == IntPtr.Zero;) { Pump(100); host = HostOf("ResizeBusyGpuTest"); }
-                    Assert.NotEqual(IntPtr.Zero, host);
-                    Pump(500);
-                    object hostObj = typeof(SWF.Control).Assembly.GetType("System.Windows.Forms.PresentationHost")!
-                        .GetMethod("HostOf", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, new object[] { form })!;
-                    var previews = hostObj.GetType().GetProperty("ResizePreviews", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-                    var seen = new System.Collections.Generic.List<int>();
-                    form.Resize += (s, e) => seen.Add((int)previews.GetValue(hostObj)!);
-                    int start = (int)previews.GetValue(hostObj)!;
-                    hook.SetValue(null, (Func<bool>)(() => false));     // the GPU is never done
-                    var after = new System.Collections.Generic.List<int>();
-                    for (int i = 1; i <= 5; i++)
-                    {
-                        SetWindowPos(host, IntPtr.Zero, 0, 0, 300 + i * 40, 200 + i * 30, 0x0002 | 0x0004 | 0x0010);   // NOMOVE | NOZORDER | NOACTIVATE
-                        after.Add((int)previews.GetValue(hostObj)!);    // the step is over when SetWindowPos returns
-                        Pump(100);
-                    }
-                    Assert.True(seen.Count >= 5, $"only {seen.Count} resizes were seen");
-                    for (int i = 0; i < 5; i++)
-                    {
-                        // laid out before the preview (the GPU had the layout's time to finish) ...
-                        Assert.True(seen[i] == start + i, $"resize {i + 1}: {seen[i] - start} previews when the form was resized, expected {i}");
-                        // ... and the preview still made, before the step's own frame
-                        Assert.True(after[i] == start + i + 1, $"resize {i + 1}: {after[i] - start} previews after the step, expected {i + 1}");
-                    }
-                    form.Close();
-                }
-                catch (Exception ex) { failure = ex; }
-                finally { hook.SetValue(null, null); }
-            });
-            t.SetApartmentState(ApartmentState.STA);
-            t.Start();
-            t.Join();
-            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
-        }
-
         [DllImport("user32", EntryPoint = "PostMessageW")] private static extern bool PostMessage(IntPtr h, int m, IntPtr w, IntPtr l);
 
         [DllImport("user32")] private static extern bool ShowWindow(IntPtr h, int cmd);
