@@ -496,5 +496,18 @@ green throughout.
     infinities, near-ties); the corpus's double shaders match WARP. WARP is no oracle for dtoi and
     dtou: it converts through a float (dtoi(16777217) is 16777216). movc and dmovc now select by
     bits, so a NaN pattern in a register survives them on any driver.
-  - Not yet: stream output from a domain shader or from GS streams above 0, layered rendering
-    after tessellation, class linkage, DXIL. Managed D3DReflect is done (see Runtime compilation).
+  - After tessellation, everything a GS path has:
+    - a domain shader's own stream output (its bytecode handed to
+      CreateGeometryShaderWithStreamOutput): the DS as compute, written by the tessellator's
+      primitives;
+    - a geometry shader's stream output;
+    - layered and viewport-array passes.
+    StreamOutputAfterTessellation_IsWarps matches WARP vertex for vertex for every domain and
+    output primitive. A GS after tessellation sees the patch's SV_PrimitiveID, as the D3D11.3 spec
+    says. WARP instead adds the primitive's place in its patch, so no test compares against WARP
+    there.
+  - Command lists keep and carry the whole state: every stage, both UAV sets and the
+    stream-output targets, with ExecuteCommandList(restore) and FinishCommandList(restore)
+    (D3DCommandListTests).
+  - Not yet: GS streams above 0, class linkage, DXIL. Managed D3DReflect is done (see Runtime
+    compilation).

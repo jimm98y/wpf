@@ -163,8 +163,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var hs = _hs.Shader;
             var ds = _ds.Shader;
             if (hs == null || ds == null) { D3DLog.Once("tsmissing", "a draw with only one of the hull and domain shaders bound (D3D rejects it)"); DrawsSkipped++; return; }
-            if (_gs.Shader is { } gsAfter && (gsAfter.StreamOutput != null || gsAfter.Code.Stage != ShaderStage.Geometry))
-            { D3DLog.Once("tsso", "stream output after tessellation is not written"); DrawsSkipped++; return; }
+            if (_gs.Shader is { } gsAfter && gsAfter.Code.Stage is not (ShaderStage.Geometry or ShaderStage.Domain))
+            { D3DLog.Once("tsso", "stream output of a vertex shader with tessellation bound (D3D rejects it)"); DrawsSkipped++; return; }
             var t = TranslateTessellation(vs, hs, ds, _ps.Shader);
             if (t.Error != null) { DrawsSkipped++; return; }
             var h = t.Info;
@@ -261,6 +261,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var pc = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(pcData).ToArray();
             var points = new List<uint>();
             var indices = new List<uint>();
+            var primPatch = new List<uint>();      // a geometry shader's SV_PrimitiveID: each primitive's patch
+            int perPrim = h.Output switch { TessOutput.Point => 1, TessOutput.Line => 2, _ => 3 };
             for (int patch = 0; patch < (int)patches; patch++)
             {
                 var (u, v, idx) = Tessellate(h, pc, t.PcRegs, patch);
@@ -271,8 +273,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     points.Add((uint)patch); points.Add((uint)(patch % perInstance));
                 }
                 foreach (int i in idx) indices.Add(first + (uint)i);
+                for (int q = 0; q < idx.Length / perPrim; q++) primPatch.Add((uint)(patch % perInstance));
             }
             if (indices.Count == 0) { DrawsIssued++; return; }       // every patch culled
+            int indexCount = indices.Count;
+            if (_gs.Shader is { Code.Stage: ShaderStage.Geometry }) indices.AddRange(primPatch);   // read past the indices
             ulong pointBytes = (ulong)points.Count * 4, idxBytes = (ulong)indices.Count * 4;
             if (pointBytes > MaxScratch || idxBytes > MaxScratch) { D3DLog.Once("tsbig", "a tessellated draw too large for its scratch buffers was skipped"); DrawsSkipped++; return; }
             IntPtr pts = Scratch(ref _tsPoints, ref _tsPointsSize, pointBytes, 0);
@@ -280,10 +285,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             Device.Gpu.WriteBuffer(pts, 0, System.Runtime.InteropServices.MemoryMarshal.AsBytes(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(points)));
             Device.Gpu.WriteBuffer(ib, 0, System.Runtime.InteropServices.MemoryMarshal.AsBytes(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(indices)));
 
-            if (_gs.Shader != null)
+            if (_gs.Shader is { Code.Stage: ShaderStage.Geometry } gsNext)
             {
-                DrawTessellatedGeometry(t, ds, _gs.Shader, pts, (ulong)points.Count / 4, ib, (ulong)indices.Count, cpOut, cpBytes, pcOut, pcBytes);
+                DrawTessellatedGeometry(t, ds, gsNext, pts, (ulong)points.Count / 4, ib, (ulong)indexCount, cpOut, cpBytes, pcOut, pcBytes);
                 return;
+            }
+            if (_gs.Shader is { StreamOutput: { } dsSo })
+            {
+                // the domain shader's own stream output (CreateGeometryShaderWithStreamOutput of its
+                // bytecode): as compute over the points, written by the tessellator's primitives
+                DomainStreamOut(t, ds, dsSo, pts, (ulong)points.Count / 4, ib, (ulong)indexCount, cpOut, cpBytes, pcOut, pcBytes);
+                if (dsSo.RasterizedStream != 0 || (_dsv == null && _rtv.All(r => r == null))) { DrawsIssued++; return; }
             }
 
             // 4: the domain shader's draw
@@ -310,7 +322,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             wgpuRenderPassEncoderSetPipeline(_pass, pipeline);
             for (int i = 0; i < 3; i++) wgpuRenderPassEncoderSetBindGroup(_pass, (uint)i, groups[i], 0, null);
             wgpuRenderPassEncoderSetIndexBuffer(_pass, ib, WGPUIndexFormat.Uint32, 0, idxBytes);
-            wgpuRenderPassEncoderDrawIndexed(_pass, (uint)indices.Count, 1, 0, 0, 0);
+            wgpuRenderPassEncoderDrawIndexed(_pass, (uint)indexCount, 1, 0, 0, 0);
             foreach (IntPtr g in groups) wgpuBindGroupRelease(g);
             DrawsIssued++;
             for (int i = 0; i < MaxTargets; i++) if (_rtv[i] != null) _rtv[i]!.Texture.Version++;
@@ -327,7 +339,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             public IntPtr DsLayout, DsPlumbing, DsPipeline, GsLayout, GsPlumbing, GsPipeline;
             public readonly Translation Draw = new();
             public GeometryDraw Pipeline = new();
-            public bool SelectsAny;
+            public bool SelectsLayer, SelectsViewport;
+            public StreamOutputDesc? So;
+            public IntPtr SoCount, SoScan, SoWrite;
         }
 
         private readonly Dictionary<string, TessellatedGeometry> _tessellatedGeometries = new();
@@ -338,7 +352,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                                              IntPtr cpOut, ulong cpBytes, IntPtr pcOut, ulong pcBytes)
         {
             var ps = _ps.Shader;
-            string key = $"{tt.Pipeline.Key}|{gs.Code.Hash:x16}";
+            string key = $"{tt.Pipeline.Key}|{gs.Code.Hash:x16}|{gs.StreamOutput?.Key}";
             if (!_tessellatedGeometries.TryGetValue(key, out var t))
             {
                 t = new TessellatedGeometry();
@@ -350,11 +364,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     int want = tt.Info.Output switch { TessOutput.Point => 1, TessOutput.Line => 2, _ => tt.Info.Domain == 1 ? 2 : 3 };
                     if (t.Info.InputPrimitive != want) throw new NotSupportedException($"a geometry shader of input primitive {t.Info.InputPrimitive} after tessellation that makes primitive {want} (D3D rejects it)");
                     var dsc = DxbcTranslator.TranslateDomain(ds.Code, _hs.Shader!.Code, tt.CpRegs, tt.PcRegs, Array.Empty<LinkedElement>(), compute: true);
-                    var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, ds.Code, dsc.OutputRegisters, new TranslationOptions { IndexedInput = true });
+                    t.So = gs.StreamOutput;
+                    var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, ds.Code, dsc.OutputRegisters, new TranslationOptions { IndexedInput = true, StreamOutput = t.So });
                     var link = DxbcTranslator.LinkageOf(ps?.Code, gs.Code);
                     var pass = DxbcTranslator.PassThrough(gs.Code, link);
-                    if (pass.SelectsLayer || pass.SelectsViewport) D3DLog.Once("tsgslayer", "array slices and viewports picked by a geometry shader after tessellation: drawn to slice and viewport 0");
-                    t.SelectsAny = pass.SelectsLayer || pass.SelectsViewport;
+                    t.SelectsLayer = pass.SelectsLayer;
+                    t.SelectsViewport = pass.SelectsViewport;
                     t.DsRegs = dsc.OutputRegisters;
                     t.GsRegs = g.OutputRegisters;
                     t.DsBindings = dsc.Bindings;
@@ -378,6 +393,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                             new() { binding = DxbcTranslator.PlumbingGsIndices, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage } },
                             new() { binding = DxbcTranslator.PlumbingInputIndices, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage } },
                         };
+                        if (t.So != null) AddStreamOutLayout(entries, t.So, counts: true);
                         var arr = entries.ToArray();
                         fixed (WGPUBindGroupLayoutEntry* pe = arr)
                         {
@@ -386,6 +402,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                         }
                         t.GsPipeline = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err);
                         if (t.GsPipeline == IntPtr.Zero) t.Error = "geometry shader as compute: " + err;
+                        else if (t.So != null)
+                        {
+                            t.SoCount = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err, "so_count");
+                            t.SoScan = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err, "so_scan");
+                            t.SoWrite = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err, "so_write");
+                            if (t.SoCount == IntPtr.Zero || t.SoScan == IntPtr.Zero || t.SoWrite == IntPtr.Zero) t.Error = "stream output: " + err;
+                        }
                     }
                     if (t.Error == null)
                     {
@@ -401,7 +424,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                         var entry = stackalloc WGPUBindGroupLayoutEntry[2];
                         entry[0] = new WGPUBindGroupLayoutEntry { binding = 0, visibility = WGPUShaderStage_Vertex, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage } };
                         entry[1] = new WGPUBindGroupLayoutEntry { binding = 1, visibility = WGPUShaderStage_Vertex, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Uniform, minBindingSize = 16 } };
-                        var vld = new WGPUBindGroupLayoutDescriptor { entryCount = pass.SelectsLayer || pass.SelectsViewport ? 2u : 1u, entries = entry };
+                        var vld = new WGPUBindGroupLayoutDescriptor { entryCount = t.SelectsLayer || t.SelectsViewport ? 2u : 1u, entries = entry };
                         d.VsLayout = wgpuDeviceCreateBindGroupLayout(Device.Gpu.Device, &vld);
                         d.PsLayout = BindGroupLayout(d.PsBindings ?? new ShaderBindings(), WGPUShaderStage_Fragment);
                         IntPtr* layouts = stackalloc IntPtr[2] { d.VsLayout, d.PsLayout };
@@ -426,6 +449,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             IntPtr gsIdx = Scratch(ref _gsIdx, ref _gsIdxSize, idxBytes, WGPUBufferUsage.Index);
             var p32 = new uint[DxbcTranslator.ParamVec4s * 4];
             p32[9] = (uint)prims; p32[12] = (uint)gsTotal;          // count 0: no draw instances to step over
+            var soEntries = new List<WGPUBindGroupEntry>();
+            if (t.So != null) p32[13] = AddStreamOutGroup(soEntries, t.So, Scratch(ref _soCounts, ref _soCountsSize, gsTotal * 4, 0), gsTotal * 4);
             var bytes = new byte[p32.Length * 4];
             Buffer.BlockCopy(p32, 0, bytes, 0, bytes.Length);
             ulong at = ArenaWrite(bytes);
@@ -442,17 +467,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     new() { binding = DxbcTranslator.DomainOut, buffer = dsOut, offset = 0, size = Math.Max(16, dsBytes) },
                 }));
                 groups.Add(BindGroup(t.GsLayout, t.GsBindings!, _gs));
-                groups.Add(MakeGroup(t.GsPlumbing, new List<WGPUBindGroupEntry>
+                soEntries.AddRange(new WGPUBindGroupEntry[]
                 {
                     new() { binding = DxbcTranslator.PlumbingParams, buffer = arena, offset = at, size = DxbcTranslator.ParamVec4s * 16 },
                     new() { binding = DxbcTranslator.PlumbingVsOut, buffer = dsOut, offset = 0, size = Math.Max(16, dsBytes) },
                     new() { binding = DxbcTranslator.PlumbingGsOut, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) },
                     new() { binding = DxbcTranslator.PlumbingGsIndices, buffer = gsIdx, offset = 0, size = Math.Max(16, idxBytes) },
-                    new() { binding = DxbcTranslator.PlumbingInputIndices, buffer = indices, offset = 0, size = Math.Max(4, indexCount * 4) },
-                }));
-                var g4 = new List<WGPUBindGroupEntry> { new() { binding = 0, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) } };
-                if (t.Draw.VsLayout != IntPtr.Zero && DrawSelects(t)) g4.Add(new() { binding = 1, buffer = arena, offset = at, size = 16 });
-                groups.Add(MakeGroup(t.Draw.VsLayout, g4));
+                    new() { binding = DxbcTranslator.PlumbingInputIndices, buffer = indices, offset = 0, size = Math.Max(4, (indexCount + prims) * 4) },
+                });
+                groups.Add(MakeGroup(t.GsPlumbing, soEntries));
                 groups.Add(BindGroup(t.Draw.PsLayout, t.Draw.PsBindings ?? new ShaderBindings(), _ps));
             }
             catch (InvalidOperationException e)
@@ -462,8 +485,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 DrawsSkipped++;
                 return;
             }
-            IntPtr pipeline = Pipeline(t.Draw, ds, _ps.Shader, out _, t.Pipeline);
-            if (pipeline == IntPtr.Zero) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
+            // stream output alone (no rasterized stream, or nothing to rasterize to) draws nothing
+            bool targets = _dsv != null || _rtv.Any(r => r != null);
+            bool render = (t.So == null || t.So.RasterizedStream == 0) && (targets || t.So == null);
+            IntPtr pipeline = render ? Pipeline(t.Draw, ds, _ps.Shader, out _, t.Pipeline) : IntPtr.Zero;
+            if (render && pipeline == IntPtr.Zero) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
             EndPass();
             _storageWritten = true;
             IntPtr cpass = wgpuCommandEncoderBeginComputePass(Encoder(), null);
@@ -475,19 +501,140 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             wgpuComputePassEncoderSetBindGroup(cpass, 0, groups[2], 0, null);
             wgpuComputePassEncoderSetBindGroup(cpass, 1, groups[3], 0, null);
             Dispatch1D(cpass, gsTotal);
+            if (t.So != null)
+            {
+                wgpuComputePassEncoderSetPipeline(cpass, t.SoCount);
+                Dispatch1D(cpass, gsTotal);
+                wgpuComputePassEncoderSetPipeline(cpass, t.SoScan);
+                wgpuComputePassEncoderDispatchWorkgroups(cpass, 1, 1, 1);
+                wgpuComputePassEncoderSetPipeline(cpass, t.SoWrite);
+                Dispatch1D(cpass, gsTotal);
+                BumpSoVersions(t.So);
+            }
             wgpuComputePassEncoderEnd(cpass);
             wgpuComputePassEncoderRelease(cpass);
-            if (!EnsurePass() || !ApplyRasterState()) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
-            wgpuRenderPassEncoderSetPipeline(_pass, pipeline);
-            wgpuRenderPassEncoderSetBindGroup(_pass, 0, groups[4], 0, null);
-            wgpuRenderPassEncoderSetBindGroup(_pass, 1, groups[5], 0, null);
-            wgpuRenderPassEncoderSetIndexBuffer(_pass, gsIdx, WGPUIndexFormat.Uint32, 0, Math.Max(16, idxBytes));
-            wgpuRenderPassEncoderDrawIndexed(_pass, (uint)(gsTotal * per), 1, 0, 0, 0);
+            bool drew = !render || DrawExpanded(pipeline, t.Draw.VsLayout, groups[4], gsOut, gsBytes, gsIdx, idxBytes, (uint)(gsTotal * per), t.SelectsLayer, t.SelectsViewport);
             foreach (IntPtr g in groups) wgpuBindGroupRelease(g);
+            if (!drew) { DrawsSkipped++; return; }
             DrawsIssued++;
-            for (int i = 0; i < MaxTargets; i++) if (_rtv[i] != null) _rtv[i]!.Texture.Version++;
         }
 
-        private static bool DrawSelects(TessellatedGeometry t) => t.Draw.VsLayout != IntPtr.Zero && t.SelectsAny;
+        // ---- a domain shader's stream output ---------------------------------------------------------------
+
+        private sealed class DomainStreamOutTranslation
+        {
+            public string? Error;
+            public int DsRegs;
+            public ShaderBindings? DsBindings;
+            public IntPtr DsLayout, DsPlumbing, DsPipeline, SoLayout, SoScan, SoWrite;
+        }
+
+        private readonly Dictionary<string, DomainStreamOutTranslation> _domainStreamOuts = new();
+
+        /// <summary>The domain shader as compute over the tessellator's points, and its stream output
+        /// by the tessellator's primitives (points, lines or triangles, in the tessellator's order).</summary>
+        private void DomainStreamOut(TessellationTranslation tt, D3DShader ds, StreamOutputDesc so, IntPtr points, ulong pointCount, IntPtr indices, ulong indexCount,
+                                     IntPtr cpOut, ulong cpBytes, IntPtr pcOut, ulong pcBytes)
+        {
+            int vertices = tt.Info.Output switch { TessOutput.Point => 1, TessOutput.Line => 2, _ => 3 };
+            string key = $"{tt.Pipeline.Key}|{so.Key}|{vertices}";
+            if (!_domainStreamOuts.TryGetValue(key, out var t))
+            {
+                t = new DomainStreamOutTranslation();
+                _domainStreamOuts[key] = t;
+                try
+                {
+                    var dsc = DxbcTranslator.TranslateDomain(ds.Code, _hs.Shader!.Code, tt.CpRegs, tt.PcRegs, Array.Empty<LinkedElement>(), compute: true);
+                    t.DsRegs = dsc.OutputRegisters;
+                    t.DsBindings = dsc.Bindings;
+                    t.DsLayout = BindGroupLayout(dsc.Bindings, WGPUShaderStage_Compute);
+                    var de = stackalloc WGPUBindGroupLayoutEntry[4];
+                    for (int i = 0; i < 4; i++)
+                        de[i] = new WGPUBindGroupLayoutEntry { binding = (uint)i, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = i == DxbcTranslator.DomainOut ? WGPUBufferBindingType.Storage : WGPUBufferBindingType.ReadOnlyStorage } };
+                    var dld = new WGPUBindGroupLayoutDescriptor { entryCount = 4, entries = de };
+                    t.DsPlumbing = wgpuDeviceCreateBindGroupLayout(Device.Gpu.Device, &dld);
+                    t.DsPipeline = ComputePipeline(dsc.Wgsl, "ds-cs", t.DsLayout, t.DsPlumbing, ds.Code, out string? err);
+                    if (t.DsPipeline == IntPtr.Zero) { t.Error = "domain shader as compute: " + err; return; }
+                    string wgsl = DxbcTranslator.StreamOutFromVertex(ds.Code, t.DsRegs, so, vertices, indexed: true);
+                    var entries = new List<WGPUBindGroupLayoutEntry>
+                    {
+                        new() { binding = DxbcTranslator.PlumbingParams, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Uniform, minBindingSize = DxbcTranslator.ParamVec4s * 16 } },
+                        new() { binding = DxbcTranslator.PlumbingVsOut, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage } },
+                        new() { binding = DxbcTranslator.PlumbingInputIndices, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage } },
+                    };
+                    AddStreamOutLayout(entries, so, counts: false);
+                    var arr = entries.ToArray();
+                    fixed (WGPUBindGroupLayoutEntry* p = arr)
+                    {
+                        var ld = new WGPUBindGroupLayoutDescriptor { entryCount = (nuint)arr.Length, entries = p };
+                        t.SoLayout = wgpuDeviceCreateBindGroupLayout(Device.Gpu.Device, &ld);
+                    }
+                    IntPtr empty = BindGroupLayout(new ShaderBindings(), WGPUShaderStage_Compute);
+                    t.SoScan = ComputePipeline(wgsl, "so", empty, t.SoLayout, ds.Code, out err, "so_scan");
+                    t.SoWrite = ComputePipeline(wgsl, "so", empty, t.SoLayout, ds.Code, out err, "so_write");
+                    if (t.SoScan == IntPtr.Zero || t.SoWrite == IntPtr.Zero) t.Error = "stream output: " + err;
+                }
+                catch (NotSupportedException e) { t.Error = e.Message; D3DLog.Once("tr:" + e.Message, $"stream output of a domain shader not translated: {e.Message}"); }
+                catch (Exception e) { t.Error = e.Message; D3DLog.Error("translate domain stream output", e); }
+            }
+            if (t.Error != null) return;
+
+            ulong prims = indexCount / (ulong)vertices;
+            ulong dsBytes = pointCount * (ulong)t.DsRegs * 16;
+            if (prims == 0) return;
+            if (dsBytes > MaxScratch) { D3DLog.Once("dssobig", "stream output of a domain shader too large for its scratch buffers was skipped"); return; }
+            var p32 = new uint[DxbcTranslator.ParamVec4s * 4];
+            p32[9] = (uint)prims; p32[11] = (uint)vertices; p32[12] = (uint)prims;      // p[0].x 0: one "instance", indices absolute
+            var soEntries = new List<WGPUBindGroupEntry>();
+            p32[13] = AddStreamOutGroup(soEntries, so, IntPtr.Zero, 0);
+            var bytes = new byte[p32.Length * 4];
+            Buffer.BlockCopy(p32, 0, bytes, 0, bytes.Length);
+            IntPtr dsOut = Scratch(ref _gsVsOut, ref _gsVsOutSize, dsBytes, 0);
+            ulong at = ArenaWrite(bytes);
+            IntPtr arena = _arenas[_arenaIndex];
+            var groups = new List<IntPtr>();
+            try
+            {
+                groups.Add(BindGroup(t.DsLayout, t.DsBindings!, _ds));
+                groups.Add(MakeGroup(t.DsPlumbing, new List<WGPUBindGroupEntry>
+                {
+                    new() { binding = DxbcTranslator.DomainPoints, buffer = points, offset = 0, size = pointCount * 16 },
+                    new() { binding = DxbcTranslator.DomainCps, buffer = cpOut, offset = 0, size = Math.Max(16, cpBytes) },
+                    new() { binding = DxbcTranslator.DomainPcs, buffer = pcOut, offset = 0, size = Math.Max(16, pcBytes) },
+                    new() { binding = DxbcTranslator.DomainOut, buffer = dsOut, offset = 0, size = Math.Max(16, dsBytes) },
+                }));
+                soEntries.InsertRange(0, new WGPUBindGroupEntry[]
+                {
+                    new() { binding = DxbcTranslator.PlumbingParams, buffer = arena, offset = at, size = DxbcTranslator.ParamVec4s * 16 },
+                    new() { binding = DxbcTranslator.PlumbingVsOut, buffer = dsOut, offset = 0, size = Math.Max(16, dsBytes) },
+                    new() { binding = DxbcTranslator.PlumbingInputIndices, buffer = indices, offset = 0, size = Math.Max(4, indexCount * 4) },
+                });
+                groups.Add(MakeGroup(t.SoLayout, soEntries));
+                groups.Add(MakeGroup(BindGroupLayout(new ShaderBindings(), WGPUShaderStage_Compute), new List<WGPUBindGroupEntry>()));
+            }
+            catch (InvalidOperationException e)
+            {
+                foreach (IntPtr g in groups) wgpuBindGroupRelease(g);
+                D3DLog.Once("dssobind:" + e.Message, "stream output of a domain shader skipped: " + e.Message);
+                return;
+            }
+            EndPass();
+            _storageWritten = true;
+            IntPtr pass = wgpuCommandEncoderBeginComputePass(Encoder(), null);
+            wgpuComputePassEncoderSetPipeline(pass, t.DsPipeline);
+            wgpuComputePassEncoderSetBindGroup(pass, 0, groups[0], 0, null);
+            wgpuComputePassEncoderSetBindGroup(pass, 1, groups[1], 0, null);
+            Dispatch1D(pass, pointCount);
+            wgpuComputePassEncoderSetPipeline(pass, t.SoScan);
+            wgpuComputePassEncoderSetBindGroup(pass, 0, groups[3], 0, null);
+            wgpuComputePassEncoderSetBindGroup(pass, 1, groups[2], 0, null);
+            wgpuComputePassEncoderDispatchWorkgroups(pass, 1, 1, 1);
+            wgpuComputePassEncoderSetPipeline(pass, t.SoWrite);
+            Dispatch1D(pass, prims);
+            wgpuComputePassEncoderEnd(pass);
+            wgpuComputePassEncoderRelease(pass);
+            foreach (IntPtr g in groups) wgpuBindGroupRelease(g);
+            BumpSoVersions(so);
+        }
     }
 }

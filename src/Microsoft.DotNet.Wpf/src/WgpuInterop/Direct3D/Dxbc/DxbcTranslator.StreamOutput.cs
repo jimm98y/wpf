@@ -161,14 +161,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             w.Append("}\n");
         }
 
-        /// <summary>Stream output of a vertex shader handed to CreateGeometryShaderWithStreamOutput:
-        /// its outputs (from the vertex shader run as compute) by the input assembler's primitives.
-        /// Entry points so_scan and so_write over the geometry plumbing's parameters.</summary>
-        public static string StreamOutFromVertex(DxbcShader vs, int vsRegs, StreamOutputDesc so, int vertices)
+        /// <summary>Stream output of a vertex or domain shader handed to CreateGeometryShaderWithStreamOutput:
+        /// its outputs (from the shader run as compute) by the input assembler's primitives, or -- with
+        /// <paramref name="indexed"/>, after tessellation -- by a list of <paramref name="vertices"/>-vertex
+        /// primitives whose vertices dx_vin names. Entry points so_scan and so_write over the geometry
+        /// plumbing's parameters.</summary>
+        public static string StreamOutFromVertex(DxbcShader vs, int vsRegs, StreamOutputDesc so, int vertices, bool indexed = false)
         {
             var w = new StringBuilder();
             w.Append($"@group({PlumbingGroup}) @binding({PlumbingParams}) var<uniform> dx_p: array<vec4<u32>, {ParamVec4s}>;\n");
             w.Append($"@group({PlumbingGroup}) @binding({PlumbingVsOut}) var<storage, read> dx_vsout: array<vec4<f32>>;\n");
+            if (indexed) w.Append($"@group({PlumbingGroup}) @binding({PlumbingInputIndices}) var<storage, read> dx_vin: array<u32>;\n");
             AppendStreamOutBindings(w, so, counts: false);
             w.Append("\n@compute @workgroup_size(1)\nfn so_scan() {\n");
             AppendStreamOutFit(w, so, vertices, "dx_p[3].x");
@@ -179,8 +182,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             for (int k = 0; k < vertices; k++)
             {
                 // the topology's vertices of the primitive (as the GS path assembles them)
-                w.Append($"    {{\n        var o = prim * dx_p[2].w + {k}u;\n        if (dx_p[2].z != 0u) {{ o = prim + {k}u; }}\n");
-                if (k > 0) w.Append($"        if (dx_p[2].z == 2u && (prim & 1u) == 1u) {{ o = prim + {3 - k}u; }}\n");
+                if (indexed) w.Append($"    {{\n        let o = dx_vin[prim * {vertices}u + {k}u];\n");
+                else
+                {
+                    w.Append($"    {{\n        var o = prim * dx_p[2].w + {k}u;\n        if (dx_p[2].z != 0u) {{ o = prim + {k}u; }}\n");
+                    if (k > 0) w.Append($"        if (dx_p[2].z == 2u && (prim & 1u) == 1u) {{ o = prim + {3 - k}u; }}\n");
+                }
                 AppendStreamOutVertex(w, so, vs.Outputs, vertices, "i", k, r => $"dx_vsout[(first + o) * {vsRegs}u + {r}u]", "        ");
                 w.Append("    }\n");
             }
