@@ -180,7 +180,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         // ---- creating the WebGPU device ------------------------------------------------------------
 
-        private static readonly uint[] s_wantedFeatures = { 0x3 /*Depth32FloatStencil8*/, 0x4 /*TextureCompressionBC*/, 0xA /*IndirectFirstInstance*/, 0xE /*Float32Filterable*/, 0x9 /*TimestampQuery*/, 0x2 /*DepthClipControl*/, 0xC /*RG11B10UfloatRenderable*/ };
+        private static readonly uint[] s_wantedFeatures =
+        {
+            0x3 /*Depth32FloatStencil8*/, 0x4 /*TextureCompressionBC*/, 0xA /*IndirectFirstInstance*/, 0xE /*Float32Filterable*/,
+            0x9 /*TimestampQuery*/, 0x2 /*DepthClipControl*/, 0xC /*RG11B10UfloatRenderable*/, 0xF /*Float32Blendable*/,
+            0x10 /*ClipDistances*/, 0x11 /*DualSourceBlending*/, 0x15 /*PrimitiveIndex*/, 0xD /*BGRA8UnormStorage*/,
+            0x13 /*TextureFormatsTier1*/, 0x14 /*TextureFormatsTier2*/,
+            0x3001D /*ShaderF64*/, 0x30026 /*ShaderInt64*/, 0x30027 /*ShaderFloat32Atomic*/, 0x30028 /*TextureAtomic*/, 0x30020 /*ShaderEarlyDepthTest*/,
+        };
+
+        /// <summary>The optional features the shared device was created with (the translator emits
+        /// a feature's form where the device has it, and its fallback where not).</summary>
+        public static IReadOnlyCollection<uint> Features => s_granted;
+
+        private static readonly HashSet<uint> s_granted = new();
+
+        public static bool HasFeature(uint feature) { _ = SharedGpu; return s_granted.Contains(feature); }
+
+        public const uint FeatureClipDistances = 0x10, FeaturePrimitiveIndex = 0x15, FeatureShaderF64 = 0x3001D, FeatureTextureAtomic = 0x30028, FeatureDualSource = 0x11;
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         private static extern uint wgpuAdapterHasFeature(IntPtr adapter, uint feature);
@@ -225,8 +242,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     s_features = (uint*)NativeMemory.AllocZeroed((nuint)(s_wantedFeatures.Length * 4));
                 }
                 int n = 0;
+                s_granted.Clear();
                 foreach (uint f in s_wantedFeatures)
-                    if (wgpuAdapterHasFeature(adapter, f) != 0) s_features[n++] = f;
+                    if (wgpuAdapterHasFeature(adapter, f) != 0) { s_features[n++] = f; s_granted.Add(f); }
                 *s_desc = default;
                 // the adapter's own limits, not WebGPU's defaults: D3D11 takes eight 128-bit render
                 // targets, 128 shader resources and 16 samplers per stage for granted, and the
