@@ -29,6 +29,11 @@ namespace Wpf.Window.Tests
             Assert.SkipUnless(OperatingSystem.IsWindows(), "the display rate read from Windows");
             int hz = DisplayHz();
             Assert.SkipUnless(hz >= 75, $"a display of 75 Hz or more tells a 15.6-ms tick from a frame (this one is {hz} Hz)");
+            // Only a display that is refreshing has frames to pace by. With the monitor off, or the
+            // session's console not shown (a locked or minimised virtual machine), the adapter raises
+            // no vertical blank and DWM composes a few times a second: presents then block on
+            // whatever the driver does instead, and the median says nothing about the pacing.
+            Assert.SkipUnless(DisplayIsRefreshing(), "the display is not refreshing (no vertical blank: monitor off, or the console not shown)");
             double period = 1000.0 / hz;
 
             // The same animation paced both ways, back to back, so the machine's own timing noise
@@ -113,6 +118,41 @@ namespace Wpf.Window.Tests
             Console.WriteLine($"FramePacingTests: median {median:0.00} ms");
             return median;
         }
+
+        /// <summary>Whether the primary display's adapter raises vertical blanks: ten waits succeed and
+        /// take at least a few milliseconds (a failing wait returns at once).</summary>
+        private static bool DisplayIsRefreshing()
+        {
+            IntPtr dc = GetDC(IntPtr.Zero);
+            var open = new D3DKMT_OPENADAPTERFROMHDC { hDc = dc };
+            try
+            {
+                if (D3DKMTOpenAdapterFromHdc(ref open) != 0) return false;
+            }
+            finally { ReleaseDC(IntPtr.Zero, dc); }
+            try
+            {
+                var wait = new D3DKMT_WAITFORVERTICALBLANKEVENT { hAdapter = open.hAdapter, VidPnSourceId = open.VidPnSourceId };
+                var clock = Stopwatch.StartNew();
+                for (int i = 0; i < 10; i++)
+                    if (D3DKMTWaitForVerticalBlankEvent(ref wait) != 0) return false;
+                return clock.Elapsed.TotalMilliseconds >= 10 * 2.0;   // faster than 500 Hz is no vblank
+            }
+            finally
+            {
+                var close = new D3DKMT_CLOSEADAPTER { hAdapter = open.hAdapter };
+                D3DKMTCloseAdapter(ref close);
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)] private struct D3DKMT_OPENADAPTERFROMHDC { public IntPtr hDc; public uint hAdapter; public long AdapterLuid; public uint VidPnSourceId; }
+        [StructLayout(LayoutKind.Sequential)] private struct D3DKMT_WAITFORVERTICALBLANKEVENT { public uint hAdapter; public uint hDevice; public uint VidPnSourceId; }
+        [StructLayout(LayoutKind.Sequential)] private struct D3DKMT_CLOSEADAPTER { public uint hAdapter; }
+        [DllImport("gdi32")] private static extern int D3DKMTOpenAdapterFromHdc(ref D3DKMT_OPENADAPTERFROMHDC open);
+        [DllImport("gdi32")] private static extern int D3DKMTWaitForVerticalBlankEvent(ref D3DKMT_WAITFORVERTICALBLANKEVENT wait);
+        [DllImport("gdi32")] private static extern int D3DKMTCloseAdapter(ref D3DKMT_CLOSEADAPTER close);
+        [DllImport("user32")] private static extern IntPtr GetDC(IntPtr hwnd);
+        [DllImport("user32")] private static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
 
         private static int DisplayHz()
         {
