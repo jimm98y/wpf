@@ -265,14 +265,15 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.True(ps.Length > 0, perr);
             var failures = new List<string>();
             int same = 0;
+            bool isolineLinesGap = DxbcCoverageTests.KnownGaps().ContainsKey("draw:isoline-lines");
             try
             {
                 foreach (var (domain, points, nf, kStruct) in Domains)
                     foreach (string part in s_partitionings)
                     {
-                        // isolines as points: WARP rasterizes the lines of an isoline patch only in part (the points,
-                        // and the stream-out test above, show the same positions and line list as ours)
-                        string topology = domain == "isoline" ? "point" : part == "integer" ? "triangle_ccw" : "triangle_cw";
+                        // isolines as points while known-gaps.txt lists draw:isoline-lines (WARP rasterizes the
+                        // lines of an isoline patch only in part; the points and the stream-out list match ours)
+                        string topology = domain == "isoline" ? (isolineLinesGap ? "point" : "line") : part == "integer" ? "triangle_ccw" : "triangle_cw";
                         byte[] hs = Compile(Hull(domain, points, nf, kStruct, part, topology), "hs_5_0", out string? herr);
                         byte[] ds = Compile(Domain(domain, points, kStruct, position: true), "ds_5_0", out string? derr);
                         if (hs.Length == 0 || ds.Length == 0) { failures.Add($"{domain}/{part}: compile: {herr}{derr}"); continue; }

@@ -40,7 +40,7 @@ namespace WgpuInterop.Tests.Direct3D
         }
 
         /// <summary>The known gaps: shader file name, then the start of the reason it fails today.</summary>
-        private static Dictionary<string, string> KnownGaps()
+        internal static Dictionary<string, string> KnownGaps()
         {
             var gaps = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             string path = Path.Combine(AppContext.BaseDirectory, "DxbcCorpus", "known-gaps.txt");
