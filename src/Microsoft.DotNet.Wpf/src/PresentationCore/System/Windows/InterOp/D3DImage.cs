@@ -1,4 +1,4 @@
-﻿// Licensed to the .NET Foundation under one or more agreements.
+// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
 // Description: D3DImage class
@@ -751,10 +751,36 @@ namespace System.Windows.Interop
         {
             if (!_duceResource.IsOnChannel(channel)) return;
             var managed = ManagedInteropBitmap.From(_pInteropDeviceBitmap);
-            byte[] px = managed?.ReadPixels();
-            if (managed == null || px == null) return;
-            channel.SendCommandBitmapData(_duceResource.GetHandle(channel), (int)managed.Width, (int)managed.Height, (int)managed.Width * 4, px);
-            managed.Dirty = Int32Rect.Empty;
+            if (managed == null) return;
+            var handle = _duceResource.GetHandle(channel);
+            Int32Rect dirty = managed.Dirty;
+            int w = (int)managed.Width, h = (int)managed.Height;
+            // The whole surface when no rectangle was added, or it reaches outside -- and on a synchronous
+            // channel (RenderTargetBitmap, printing), whose resource is new each time and which reads the
+            // whole back buffer (CopyBackBuffer); the rectangle stays the asynchronous channel's.
+            bool sync = channel.IsSynchronous;
+            if (sync || dirty.Width <= 0 || dirty.Height <= 0 || dirty.X < 0 || dirty.Y < 0 || dirty.X + dirty.Width > w || dirty.Y + dirty.Height > h)
+                dirty = new Int32Rect(0, 0, w, h);
+            // 1. the surface on the compositor's own GPU device: a GPU copy, no pixels
+            if (managed.SendSurface(channel, handle, dirty))
+            {
+                if (!sync) managed.Dirty = Int32Rect.Empty;
+                return;
+            }
+            // 2. the changed rectangle's pixels into the compositor's texture of it
+            bool whole = dirty.X == 0 && dirty.Y == 0 && dirty.Width == w && dirty.Height == h;
+            byte[] region = managed.ReadPixels(dirty);
+            if (region == null) return;
+            if (!channel.SendCommandBitmapRegion(handle, managed.Key, w, h, region, dirty.Width * 4, dirty.X, dirty.Y, dirty.Width, dirty.Height))
+            {
+                // the compositor's texture of it is new (a part is not enough), or there is none
+                byte[] px = whole ? region : managed.ReadPixels();
+                if (px == null) return;
+                // 3. a backend that takes whole bitmaps only
+                if (whole || !channel.SendCommandBitmapRegion(handle, managed.Key, w, h, px, w * 4, 0, 0, w, h))
+                    channel.SendCommandBitmapData(handle, w, h, w * 4, px);
+            }
+            if (!sync) managed.Dirty = Int32Rect.Empty;
         }
 
         private object SetIsFrontBufferAvailable(object isAvailableVersionPair)

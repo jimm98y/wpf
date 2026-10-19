@@ -181,7 +181,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 {
                     var j = (ImageBrush)b;
                     // The pixels by reference: an unchanged bitmap hands the recorder the same array.
-                    return ReferenceEquals(i.PixelsRgba, j.PixelsRgba) && i.PixelWidth == j.PixelWidth && i.PixelHeight == j.PixelHeight
+                    return i.SamePixels(j) && i.PixelWidth == j.PixelWidth && i.PixelHeight == j.PixelHeight
                         && i.TileMode == j.TileMode && i.TileWidth == j.TileWidth && i.TileHeight == j.TileHeight && i.Opacity == j.Opacity
                         && ReferenceEquals(i.SourceVisual, j.SourceVisual) && i.SourceId == j.SourceId
                         && i.SourceTexW == j.SourceTexW && i.SourceTexH == j.SourceTexH

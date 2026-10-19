@@ -360,6 +360,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// weights, premultiplied texels, one rounding), not by the GPU's sampler -- see fs_textured_wpf.</summary>
         public bool WpfFilter { get; init; }
 
+        /// <summary>The pixels are this texture's (a D3DImage's back buffer, ExternalImage.cs); PixelsRgba is
+        /// its transparent placeholder. <see cref="ExternalVersion"/> is the frame this brush shows.</summary>
+        public ExternalImage? External { get; init; }
+        public long ExternalVersion { get; init; }
+
+        /// <summary>The same image, another frame: an external image's version, else the pixel array.</summary>
+        public bool SamePixels(ImageBrush o) => External != null || o.External != null
+            ? ReferenceEquals(External, o.External) && ExternalVersion == o.ExternalVersion
+            : ReferenceEquals(PixelsRgba, o.PixelsRgba);
+
         // GPU-live source variant (VisualBrush/DrawingBrush painted onto an axis-aligned rect, TileMode.None):
         // instead of a CPU readback + per-tile pixel upload, the brush samples a texture rendered from
         // SourceVisual on the GPU each frame. SourceId dedups that render across all tiles of one source

@@ -288,6 +288,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return bg;
         }
 
+        /// <summary>The bitmap textures' sRGB-ness (a D3DImage's texture is made to match, ExternalImage.cs).</summary>
+        public bool SrgbOutput => _srgbOutput;
+
+        /// <summary>An external image's texture is let go of (resized, its D3DImage gone): its bind groups
+        /// with it, and the texture after the frames in flight (render thread).</summary>
+        public void RetireExternal(ExternalImage image)
+        {
+            ReleaseImageBindGroups(image.View);
+            DeferReleaseTexView(image.Texture, image.View);
+        }
+
         private void ReleaseImageBindGroups(IntPtr view)
         {
             if (_imgBindGroups.Count == 0) return;
@@ -2645,6 +2656,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         finally { _liveBrushDepth--; }
                     }
                     break;
+                case ImageBrush img when img.External != null:
+                    // a D3DImage's frame: its version, not its (GPU) pixels
+                    HV(15); HV(img.PixelWidth); HV(img.PixelHeight); HF((float)img.TileWidth); HF((float)img.TileHeight);
+                    HV(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(img.External)); HV(img.ExternalVersion);
+                    break;
                 case ImageBrush img:
                     HV(14); HV(img.PixelWidth); HV(img.PixelHeight); HF((float)img.TileWidth); HF((float)img.TileHeight);
                     byte[] px = img.PixelsRgba;
@@ -3687,7 +3703,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (kind == FillKind.TexturedWpf) MilcoreFilterDraws++;
                     if (img.SourceVisual is null)
                     {
-                        view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+                        view = img.External?.View ?? GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
                         bindGroup = ImageBindGroup(format, view, sampler, _srcCopy, kind);   // owned by the image cache
                     }
                     else
@@ -7239,7 +7255,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 IntPtr view = inputView;
                 if (def.SamplerBrushes[i] is ImageBrush ib)
-                    view = GetOrCreateImageView(ib.PixelsRgba, ib.PixelWidth, ib.PixelHeight);
+                    view = ib.External?.View ?? GetOrCreateImageView(ib.PixelsRgba, ib.PixelWidth, ib.PixelHeight);
                 entries[n] = new WGPUBindGroupEntry { binding = n, textureView = view }; n++;
                 entries[n] = new WGPUBindGroupEntry { binding = n, sampler = LinearSampler() }; n++;
             }
@@ -8159,7 +8175,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (!GetOrRasterizeLocalCoverage(localGeom, world, out IntPtr covView, out float ox, out float oy, out float w, out float h))
                 return false;
 
-            IntPtr imgView = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+            IntPtr imgView = img.External?.View ?? GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
 
             byte[] uni = BuildImageBrushParams(img, ox, oy, w, h, (float)Math.Clamp(opacity * img.Opacity, 0.0, 1.0));
             IntPtr ubuf = GetOrCreateUniform(uni);
