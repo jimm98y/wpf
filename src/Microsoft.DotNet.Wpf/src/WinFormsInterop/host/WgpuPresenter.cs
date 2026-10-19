@@ -475,20 +475,6 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     internal bool PresentLastAtSize(int width, int height)
         => Frame(() => PresentLastAtSizeCore(width, height));
 
-    /// <summary>
-    /// Whether the GPU has finished everything submitted to this window's device, asked without
-    /// waiting. A surface configure waits for exactly that, so a reconfigure made while the last frame
-    /// is still being drawn costs the rest of that frame's GPU time.
-    /// </summary>
-    internal bool GpuIdle()
-    {
-        lock (_frameLock)
-        {
-            if (_disposed || _ctx.Device == IntPtr.Zero) return true;
-            return wgpuDevicePoll(_ctx.Device, 0, null) != 0;
-        }
-    }
-
     /// <summary>Reconfigure now, or -- in the middle of a frame -- as soon as it is over.</summary>
     private void Configure()
     {

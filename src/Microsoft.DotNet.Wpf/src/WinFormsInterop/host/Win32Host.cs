@@ -1515,11 +1515,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         ResizeClientTo(want.Width, want.Height);
     }
 
-    /// <summary>WF_RESIZE_PREVIEW=0: no preview frame on a resize; =first: always before the layout.</summary>
-    private static readonly string s_resizePreviewMode = Environment.GetEnvironmentVariable("WF_RESIZE_PREVIEW");
-    private static readonly bool s_resizePreview = s_resizePreviewMode != "0";
-    /// <summary>Tests: stands in for <see cref="WgpuPresenter.GpuIdle"/>.</summary>
-    internal static Func<bool> GpuIdleForTests;
+    private static readonly bool s_resizePreview = Environment.GetEnvironmentVariable("WF_RESIZE_PREVIEW") != "0";
 
     private void OnClientResized()
     {
@@ -1531,21 +1527,16 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         // The last frame first, at the new size, so the window is never black while the application
         // lays itself out and repaints (see WgpuPresenter.PresentLastAtSize). WF_RESIZE_PREVIEW=0: not.
         //
-        // The preview reconfigures the swap chain, and a configure waits for the GPU to finish what was
-        // submitted before it. Straight after the last step's frame that is most of that frame's GPU
-        // time -- 20-28 ms a step of a GraphWorX drag-resize, on top of the layout that has to follow
-        // anyway. So when the GPU is still busy, the layout goes first and the preview after it: the
-        // GPU finishes in the layout's time, and the window shows the last frame no later than a
-        // preview that would have waited for it.
+        // FIRST, even though its configure waits for the GPU to finish the last step's frame (20-28 ms
+        // a step of a GraphWorX drag-resize, measured with WF_TRACE_RESIZE): laying out first and
+        // previewing after was faster, but black showed in the window's new edges about three times
+        // as often, measured on screen (19 samples in 19 runs against 4 in 11).
         long rs0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        bool preview = s_resizePreview && !WantsLayeredHost();
-        bool previewFirst = preview && (s_resizePreviewMode == "first" || (GpuIdleForTests?.Invoke() ?? _wgpu.GpuIdle()));
-        if (previewFirst && _wgpu.PresentLastAtSize(lw, lh)) ResizePreviews++;
+        if (s_resizePreview && !WantsLayeredHost() && _wgpu.PresentLastAtSize(lw, lh)) ResizePreviews++;
         long rs1 = System.Diagnostics.Stopwatch.GetTimestamp();
         // As Win32 tells a window it was sized (see XplatUIWebGpu.HostResized), not through ClientSize.
         if (_driver is System.Windows.Forms.XplatUIWebGpu d && !FormGone) d.HostResized(_formHandle, lw, lh);
         else _form.ClientSize = new Size(lw, lh);
-        if (preview && !previewFirst && _wgpu != null && _wgpu.PresentLastAtSize(lw, lh)) ResizePreviews++;
         long rs2 = System.Diagnostics.Stopwatch.GetTimestamp();
         Application.DoEvents();                             // let the WinForms layout settle first
         long rs3 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -1556,7 +1547,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (s_traceResize)
         {
             static double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-            Console.Error.WriteLine($"[resize] {lw}x{lh} {(previewFirst ? "first" : preview ? "after" : "none")} preview {Ms(rs0, rs1):0.0} (configure {_wgpu?.LastConfigureMs:0.0}) layout {Ms(rs1, rs2):0.0} doevents {Ms(rs2, rs3):0.0} present {Ms(rs3, rs4):0.0} [{_wgpu?.LastTiming}] gc0 {GC.CollectionCount(0)} gc2 {GC.CollectionCount(2)} sinceLast {(_lastResizeEnd == 0 ? 0 : Ms(_lastResizeEnd, rs0)):0.0}");
+            Console.Error.WriteLine($"[resize] {lw}x{lh} preview {Ms(rs0, rs1):0.0} (configure {_wgpu?.LastConfigureMs:0.0}) layout {Ms(rs1, rs2):0.0} doevents {Ms(rs2, rs3):0.0} present {Ms(rs3, rs4):0.0} [{_wgpu?.LastTiming}] gc0 {GC.CollectionCount(0)} gc2 {GC.CollectionCount(2)} sinceLast {(_lastResizeEnd == 0 ? 0 : Ms(_lastResizeEnd, rs0)):0.0}");
             _lastResizeEnd = rs4;
         }
     }
