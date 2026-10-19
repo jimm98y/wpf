@@ -39,6 +39,8 @@
     <ProjectReference Include="../WpfMac.Detours/WpfMac.Detours.csproj" />
     <!-- What app assemblies the launcher rewrote off built-in COM call (Documentation/comimport-rewriter.md). -->
     <ProjectReference Include="../WpfMac.ComInterop/WpfMac.ComInterop.csproj" />
+    <!-- ...and the rewriter itself: the startup hook rewrites them in memory as they load. -->
+    <ProjectReference Include="../WpfMac.ComRewrite/WpfMac.ComRewrite.csproj" />
   </ItemGroup>
 
   <!-- Microsoft.WindowsDesktop.App, minus what the SDK already supplies: WPF, WinForms,

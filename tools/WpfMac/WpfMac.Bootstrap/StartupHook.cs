@@ -1,4 +1,4 @@
-// The startup hook wpfmac installs into every app it launches.
+﻿// The startup hook wpfmac installs into every app it launches.
 //
 // wpfmac runs an unmodified app through `dotnet exec` with a GENERATED runtimeconfig and deps.json
 // that live in wpfmac's cache, never beside the app. The host derives the app's base directory from
@@ -29,6 +29,19 @@ internal static class StartupHook
         AppContext.SetData(Keys.LogCallback, (Action<string>)CompatLog.Info);
         AppContext.SetData(Keys.LogOnceCallback, (Action<string, string>)CompatLog.Once);
         VersionUnification.Install(AssemblyLoadContext.Default);
+        // App assemblies with [ComImport] types that the launcher chose: rewritten in memory on first load
+        // (WpfMac.ComRewrite; Documentation/comimport-rewriter.md)
+        if (AppContext.GetData(Keys.ComImport) is string comImport && comImport.Length > 0)
+        {
+            try
+            {
+                Type.GetType("WpfMac.ComRewrite.ComImportLoader, WpfMac.ComRewrite", throwOnError: true)!
+                    .GetMethod("InstallDefault")!
+                    .Invoke(null, new object[] { comImport, AppContext.GetData(Keys.AppDirectory) as string ?? AppContext.BaseDirectory,
+                        AppContext.GetData(Keys.OverlayDirectory) as string ?? "", (Action<string>)CompatLog.Info });
+            }
+            catch (Exception e) { CompatLog.Info($"comimport: the in-memory rewriter is not available ({e.GetBaseException().Message})"); }
+        }
         if (AppContext.GetData(Keys.OverlayDirectory) is string overlay && overlay.Length > 0)
         {
             WpfMac.Bootstrap.Win32.ShimLibrary.Initialize(overlay);
@@ -129,6 +142,8 @@ namespace WpfMac.Bootstrap
         public const string Isolate = "WpfMac.Isolate";
         public const string ScreenshotInterval = "WpfMac.ScreenshotInterval";
         public const string CrashReports = "WpfMac.CrashReports";
+        /// <summary>The app assemblies to rewrite in memory: "name|original path" lines (ComImportStep).</summary>
+        public const string ComImport = "WpfMac.ComImport";
 
         // Published by the hook, not passed to it: Action<string> and Action<string, string> (key, message).
         public const string LogCallback = "WpfMac.Log";

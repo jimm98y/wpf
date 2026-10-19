@@ -96,12 +96,14 @@ dotnet exec --runtimeconfig <cache>/App.runtimeconfig.json --depsfile <cache>/Ap
   - starts the compatibility log;
   - on macOS, loads `libwin32shim` and installs the runtime detours.
 
-- **COM imports:** an app assembly that declares `[ComImport]` interfaces is rewritten in wpfmac's
-  cache, and the app runs the rewritten copy ([comimport-rewriter.md](comimport-rewriter.md)). Its
-  COM calls go through `ComWrappers` and vtable calls, which work on every OS, Windows included.
-  - This modifies a third-party binary in memory and in wpfmac's cache, never in the app's folder.
-    It is done because the user decided it; whoever runs an app this way should be sure its
-    licence allows it.
+- **COM imports:** an app assembly that declares `[ComImport]` interfaces may be rewritten when it
+  loads ([comimport-rewriter.md](comimport-rewriter.md)).
+  - The startup hook rewrites the original's bytes in memory and loads them from there. Its COM calls
+    then go through `ComWrappers` and vtable calls, which work on every OS, Windows included.
+  - It still reports its original file as its location.
+  - Which assemblies are rewritten, and why the others are not, is in `merge-report.txt`.
+  - This modifies a third-party binary in memory only, never on disk. It is done because the user
+    decided it; whoever runs an app this way should be sure its licence allows it.
   - `WPF_COMIMPORT_REWRITE=off` turns it off, and a list of assembly names limits it to those.
 
 Because the app's own `.dll` runs from its own folder, `GetEntryAssembly`, `App.dll.config` and
