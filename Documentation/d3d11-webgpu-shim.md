@@ -77,16 +77,18 @@ D3DImage.SetBackBuffer ------> managed InteropDeviceBitmap ---> scene "external 
   The implementations register the same way WpfMac.Win32's do. The bootstrap finds them by name, in
   `Microsoft.Wpf.Interop.WebGpu`, type `Microsoft.Wpf.Interop.WebGpu.Direct3D.Exports`, method
   `Register`.
-- **Which assemblies get it.** Not every app assembly that imports d3d11. The default set is
-  `SharpDX*` and `Ab3d.*`. The environment variable `WPF_D3D11_SHIM` changes it:
-  - `0` turns it off;
-  - `*` means every app assembly;
-  - a `;`-separated list of name patterns replaces the default;
-  - a leading `+` adds to the default.
+- **Which assemblies get it: every app assembly, on every OS** (the user's decision, 2026-10-19: one
+  implementation, ours, on macOS, Linux and Windows alike). Every d3d11, dxgi, d3d9 and
+  d3dcompiler_47 import of an app assembly lands in the shim, on Windows too, where the real Direct3D
+  is present. `WPF_D3D11_SHIM` remains as a diagnostic and as the tests' oracle switch, not a product
+  mode:
+  - `0` (or `off`) gives Windows' real Direct3D back, the comparison runs of the milestones;
+  - a `;`-separated list of name patterns (`SharpDX*;Ab3d.*`) narrows it to those assemblies;
+  - unset, `all` or `1`: every app assembly.
 
-  Code that needs the real Direct3D 11 for its own sake keeps it. SharpMediaFoundationInterop's
-  CsWin32 D3D11 is the example: Media Foundation's hardware decoders need a real device. It is not
-  in the default set.
+  An app that hands the shim's device to native code -- Media Foundation through
+  `IMFDXGIDeviceManager`, as SharpMediaFoundationInterop does -- has that native code call the
+  shim's vtables (section 8, video).
 - **macOS and Linux.** `libwin32shim` gains the d3d11, dxgi and d3d9 exports, and their slots point at
   the same managed functions (`Implementations.RegisterAll`). Built-in COM interop does not exist
   off Windows, so DXEngine's `[ComImport]` D3D9 path cannot run there. DXEngine has a
@@ -260,6 +262,32 @@ primitive, `ExternalImage`, that names a WebGPU texture, a version and a dirty r
 - **First-class GPU images.** A port-only `WebGpuImage : ImageSource` exposes the composition device and
   a texture, with D3DImage's lock semantics, for new code that renders with WebGPU directly. It is
   the same `ExternalImage` primitive.
+- **The cost of the copy path, measured (2026-10-19).** SharpMediaPlayer plays Big Buck Bunny (480p
+  H.264, 24 fps) at 24 fps under the shim, 0.35 cores. SpatialVideoConverter's player shows IMG_7881's
+  two 1080p HEVC eyes (one 3840x1080 picture, 30 fps) at 7-18 fps, 3.3-3.6 cores: the compositor's
+  render thread is saturated by the copy -- SendBitmap 22%, the image cache's GetOrCreateImageView 16%
+  (it looks at every byte of the 16 MB frame), the upload and the frame. The decoders are not the
+  limit. The device-sharing option above is the path that removes it.
+
+**Video (2026-10-19).** WebGPU has no video decode. The shim's device answers
+`ID3D11VideoDevice` and its context `ID3D11VideoContext` as a **video processor only**:
+- No decoder profiles. Media Foundation's H.264 decoder, handed such a device through
+  `IMFDXGIDeviceManager`, refuses it (`MFT_MESSAGE_SET_D3D_MANAGER`: E_NOINTERFACE without the video
+  interfaces, E_FAIL with no profiles or no H.264 one; `MediaFoundationProbeTests`), and decodes on the
+  CPU to system memory; the app then uploads the frames. Reporting a profile would mean decoding
+  DXVA's bitstream buffers ourselves.
+- NV12, P010 and P016 textures are stored as their bytes lie in memory (`D3DTexture2D.PlaneRows`: the
+  luma rows, then the interleaved chroma rows), so `Map`, `UpdateSubresource` and
+  `CopySubresourceRegion` (a box in luma texels covers both planes) are D3D's layout.
+- `VideoProcessorBlt` is a render pass of the shim's own (D3DVideoProcessor.cs): background over the
+  target rectangle, the stream's source rectangle over its destination rectangle, rotated, sampled
+  bilinearly with chroma centred between the luma texels, converted by the stream's matrix (BT.601,
+  BT.709; BT.2020 through the DXGI colour spaces) and range. `D3DVideoProcessorTests` compares it with
+  the hardware's video processor (Parallels' D3D11; WARP has none): scaled, rotated, rectangles and
+  P010 within a code (mean 0.02-0.06); 1:1 within two codes (mean 0.56, the hardware's 1:1 chroma
+  filter is not its scaling one); the matrices exact (flat chroma: a code, mean 0.05). The hardware
+  reads a 16-bit texel as a fraction of 65535 with the 8-bit ranges, and the shim does the same. It
+  ignores the output's RGB_Range bit (limited RGB); the shim follows the documented meaning.
 
 ### 9. Translating any application's shaders
 
@@ -357,10 +385,12 @@ to write, but it means a native dependency for every head, which the rules here 
 
 **Runtime compilation.** Applications call `D3DCompile`/`D3DCompileFromFile` and `D3DReflect`.
 
-- **Windows:** the real `d3dcompiler_47.dll` ships with the OS, so the shim leaves it alone, and the
-  DXBC it produces goes through the translator like any other.
-- **Elsewhere (the user's decision, 2026-10-19: not for now):** `D3DCompile` answers `E_FAIL` with
-  one clear log line. There is no DXC package and no managed HLSL front end. `D3DReflect` is
+- **Every OS, Windows included (the user's decisions, 2026-10-19):** the d3dcompiler_47 exports are
+  the shim's. `D3DCompile`, `D3DCompile2` and `D3DCompileFromFile` answer `E_FAIL` with one clear log
+  line until there is a compiler of our own; there is no DXC package and no managed HLSL front end.
+  An app that compiles HLSL at run time ships the DXBC instead: SharpMediaFoundationInterop now embeds
+  its renderer's shaders, compiled ahead of time by fxc (branch `features/precompiled-shaders` of that
+  repo; the bytecode is byte for byte what D3DCompile made of the same source). `D3DReflect` is
   managed (D3DShaderReflection): ID3D11ShaderReflection read from the blob's chunks (RDEF,
   signatures, STAT, SFI0, the declarations). It matches d3dcompiler_47 field for field over the
   corpus and DXEngine's shaders (D3DReflectTests): descriptions and instruction counts, constant
@@ -439,8 +469,8 @@ green throughout.
   against real D3D11 WARP on Windows through the same vtable slots.
 - **M2:** done.
   - D3D9Ex shim (095d5e223) and managed D3DImage on the copy path (f087d629c), with sharing both ways.
-  - The launcher routes d3d11/dxgi/d3d9 (`WPF_D3D11_SHIM`, default `SharpDX*;Ab3d.DXEngine*`) and fills
-    `libwin32shim` elsewhere.
+  - The launcher routes d3d11/dxgi/d3d9/d3dcompiler_47 (`WPF_D3D11_SHIM`, default every app assembly
+    on every OS since 2026-10-19; it was `SharpDX*;Ab3d.DXEngine*`) and fills `libwin32shim` elsewhere.
   - Shim surfaces take the copy path, by the user's decision (section 8).
 - **M3 (in progress):**
   - DXEngine's vertex and pixel shaders compile, and all of them draw as WARP draws (5b48ce73e).

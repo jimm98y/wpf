@@ -62,7 +62,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private static readonly Vtable s_vt = Build();
 
-        public D3DContext(D3DDevice device, bool deferred) : base(device, s_vt)
+        public D3DContext(D3DDevice device, bool deferred) : base(device, s_vt, s_videoContext)
         {
             Deferred = deferred;
             if (!deferred)
@@ -148,7 +148,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private void Run(Action<D3DContext> a, params ComObject?[] refs)
         {
-            if (!Deferred) { a(this); return; }
+            // the immediate context is called from more than one thread when the app says it may be
+            // (ID3D10Multithread; Media Foundation's decoder threads, the app's render thread, the UI
+            // thread): one call at a time, under the device's lock, as Direct3D's own protection does
+            if (!Deferred) { lock (Device.Sync) a(this); return; }
             foreach (var r in refs) if (r != null) { r.InternalAddRef(); _recordedRefs.Add(r); }
             _recorded.Add(a);
         }
@@ -189,6 +192,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         public void Execute(D3DCommandList list, bool restore)
+        {
+            lock (Device.Sync) ExecuteLocked(list, restore);
+        }
+
+        private void ExecuteLocked(D3DCommandList list, bool restore)
         {
             // D3D11 starts a command list from the default state and leaves the default state (or
             // the saved one) behind.
@@ -534,8 +542,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public void CopySubresourceRegion(D3DResource dst, uint dstSub, uint x, uint y, uint z, D3DResource src, uint srcSub, D3D11_BOX? box)
             => Run(c => c.CopyImpl(dst, dstSub, x, y, z, src, srcSub, box, whole: false), dst, src);
 
-        private void CopyImpl(D3DResource dst, uint dstSub, uint dx, uint dy, uint dz, D3DResource src, uint srcSub, D3D11_BOX? box, bool whole)
+        private void CopyImpl(D3DResource dst, uint dstSub, uint dx, uint dy, uint dz, D3DResource src, uint srcSub, D3D11_BOX? box, bool whole, bool raw = false)
         {
+            if (!raw && box is { } pb && src is D3DTexture2D { Planar: true } ps && dst is D3DTexture2D { Planar: true } pd)
+            {
+                // a box of a planar texture is in luma texels and covers both planes: the luma rows, and the
+                // chroma rows half as many, after the luma (the textures hold both, D3DTexture2D.PlaneRows)
+                uint sh = Math.Max(1, ps.Desc.Height >> (int)ps.Split(srcSub).Mip), dh = Math.Max(1, pd.Desc.Height >> (int)pd.Split(dstSub).Mip);
+                CopyImpl(dst, dstSub, dx, dy, dz, src, srcSub, pb, whole, raw: true);
+                var chroma = new D3D11_BOX { left = pb.left & ~1u, right = pb.right, top = sh + pb.top / 2, bottom = sh + (pb.bottom + 1) / 2, front = pb.front, back = pb.back };
+                CopyImpl(dst, dstSub, dx & ~1u, dh + dy / 2, dz, src, srcSub, chroma, whole, raw: true);
+                return;
+            }
             ResolvePendingClears();
             IntPtr enc = Encoder();
             if (dst is D3DBuffer db && src is D3DBuffer sb)
@@ -562,7 +580,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     uint ds = whole ? (uint)i : dstSub, ss = whole ? (uint)i : srcSub;
                     var (dm, dl) = dt.Split(ds);
                     var (sm, sl) = st.Split(ss);
-                    uint w = Math.Max(1, st.Desc.Width >> (int)sm), h = Math.Max(1, st.Desc.Height >> (int)sm);
+                    uint w = Math.Max(1, st.Desc.Width >> (int)sm), h = st.PlaneRows(Math.Max(1, st.Desc.Height >> (int)sm));
                     uint sx = 0, sy = 0, sz = 0, depth = st.DepthAt(sm);
                     if (box is { } b) { sx = b.left; sy = b.top; w = b.right - b.left; h = b.bottom - b.top; if (st.Kind == 3) { sz = b.front; depth = b.back - b.front; } }
                     if (Formats.IsBlockCompressed(st.Desc.Format)) { w = (w + 3) & ~3u; h = (h + 3) & ~3u; }
@@ -695,7 +713,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (dst is D3DTexture2D t)
             {
                 var (mip, _) = t.Split(sub);
-                uint h = box != null ? box->bottom - box->top : Math.Max(1, t.Desc.Height >> (int)mip);
+                // a planar texture's data is its luma rows and then its chroma rows (D3DTexture2D.PlaneRows)
+                uint h = t.PlaneRows(box != null ? box->bottom - box->top : Math.Max(1, t.Desc.Height >> (int)mip));
                 if (Formats.IsBlockCompressed(t.Desc.Format)) h = (h + 3) / 4;
                 uint w = box != null ? box->right - box->left : Math.Max(1, t.Desc.Width >> (int)mip);
                 uint tight = (Formats.IsBlockCompressed(t.Desc.Format) ? (w + 3) / 4 : w) * Formats.TexelBytes(t.Desc.Format);
@@ -735,10 +754,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public void Map(D3DResource r, uint sub, D3D11_MAP type, uint flags, D3D11_MAPPED_SUBRESOURCE* mapped, out int hr)
         {
             if (Deferred && type != D3D11_MAP.WRITE_DISCARD) { hr = HResult.E_INVALIDARG; return; }
-            hr = r.Map(this, sub, type, flags, mapped);
+            lock (Device.Sync) hr = r.Map(this, sub, type, flags, mapped);
         }
 
-        public void Unmap(D3DResource r, uint sub) => r.Unmap(this, sub);
+        public void Unmap(D3DResource r, uint sub) { lock (Device.Sync) r.Unmap(this, sub); }
 
         private void ReleaseGpuCaches()
         {

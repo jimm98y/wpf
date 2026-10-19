@@ -272,6 +272,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public uint SampleCount => Math.Max(1, Desc.SampleDesc.Count);
         public uint DepthAt(uint mip) => Kind == 3 ? Math.Max(1, Depth >> (int)mip) : 1;
 
+        /// <summary>A planar 4:2:0 texture (NV12, P010, P016): stored as its bytes lie in memory.</summary>
+        public readonly bool Planar;
+
+        /// <summary>The rows the texture holds for <paramref name="height"/> luma rows: the chroma's too
+        /// when it is planar (D3D's own layout of such a texture, in Map and UpdateSubresource).</summary>
+        public uint PlaneRows(uint height) => Planar ? height + (height + 1) / 2 : height;
+
         public static D3DTexture2D Create1D(D3DDevice device, D3D11_TEXTURE1D_DESC d, D3D11_SUBRESOURCE_DATA* init) => new(device, new D3D11_TEXTURE2D_DESC
         {
             Width = d.Width, Height = 1, MipLevels = d.MipLevels, ArraySize = d.ArraySize, Format = d.Format, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 },
@@ -291,6 +298,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             Kind = kind;
             Depth = depth;
+            Planar = Formats.IsPlanar(desc.Format);
             Format = Formats.Texture(desc.Format);
             if (Format == WGPUTextureFormat.Undefined) throw new NotSupportedException($"texture format {desc.Format}");
             if (desc.Width == 0 || desc.Height == 0) throw new ArgumentException("zero-sized texture");
@@ -311,7 +319,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 for (uint m = 0; m < MipLevels; m++)
                 {
                     int i = (int)(a * MipLevels + m);
-                    uint w = Math.Max(1, desc.Width >> (int)m), h = Math.Max(1, desc.Height >> (int)m);
+                    uint w = Math.Max(1, desc.Width >> (int)m), h = PlaneRows(Math.Max(1, desc.Height >> (int)m));
                     if (bc) { w = (w + 3) / 4; h = (h + 3) / 4; }
                     uint pitch = (w * bpe + 255) & ~255u;
                     SubresourceOffset[i] = offset;
@@ -348,7 +356,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 usage = usage,
                 dimension = kind == 3 ? WGPUTextureDimension._3D : WGPUTextureDimension._2D,
-                size = new WGPUExtent3D { width = desc.Width, height = desc.Height, depthOrArrayLayers = kind == 3 ? depth : desc.ArraySize },
+                size = new WGPUExtent3D { width = desc.Width, height = PlaneRows(desc.Height), depthOrArrayLayers = kind == 3 ? depth : desc.ArraySize },
                 format = Format,
                 mipLevelCount = MipLevels,
                 sampleCount = SampleCount,
@@ -374,11 +382,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>queue.writeTexture of one subresource (or a box of it) from app memory with the
         /// app's own row pitch.</summary>
-        public void WriteSubresource(int sub, void* data, uint rowPitch, D3D11_BOX* box, uint slicePitch = 0)
+        private void WriteRows(int sub, void* data, uint rowPitch, D3D11_BOX* box) => WriteSubresource(sub, data, rowPitch, box, 0, raw: true);
+
+        public void WriteSubresource(int sub, void* data, uint rowPitch, D3D11_BOX* box, uint slicePitch = 0, bool raw = false)
         {
             var (mip, layer) = Split((uint)sub);
-            uint w = Math.Max(1, Desc.Width >> (int)mip), h = Math.Max(1, Desc.Height >> (int)mip), d = DepthAt(mip);
+            uint w = Math.Max(1, Desc.Width >> (int)mip), h = PlaneRows(Math.Max(1, Desc.Height >> (int)mip)), d = DepthAt(mip);
             uint x = 0, y = 0, z = Kind == 3 ? 0 : layer;
+            if (box != null && Planar && !raw)
+            {
+                // a box of a planar texture is in luma texels and covers both planes: its luma rows from
+                // the data, then its chroma rows after them
+                uint lumaRows = box->bottom - box->top, full = Math.Max(1, Desc.Height >> (int)mip);
+                var luma = new D3D11_BOX { left = box->left, top = box->top, right = box->right, bottom = box->bottom, front = 0, back = 1 };
+                var chroma = new D3D11_BOX { left = box->left & ~1u, top = full + box->top / 2, right = box->right, bottom = full + (box->bottom + 1) / 2, front = 0, back = 1 };
+                WriteRows(sub, data, rowPitch, &luma);
+                WriteRows(sub, (byte*)data + (ulong)rowPitch * lumaRows, rowPitch, &chroma);
+                return;
+            }
             if (box != null)
             {
                 x = box->left; y = box->top; w = box->right - box->left; h = box->bottom - box->top;
