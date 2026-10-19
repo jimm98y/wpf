@@ -44,13 +44,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             add("dxgi", "CreateDXGIFactory1", (IntPtr)(delegate* unmanaged<Guid*, IntPtr*, int>)&CreateDXGIFactory1);
             add("dxgi", "CreateDXGIFactory2", (IntPtr)(delegate* unmanaged<uint, Guid*, IntPtr*, int>)&CreateDXGIFactory2);
             add("dxgi", "DXGIGetDebugInterface1", (IntPtr)(delegate* unmanaged<uint, Guid*, IntPtr*, int>)&DXGIGetDebugInterface1);
-            return 5;
+            add("d3d9", "Direct3DCreate9Ex", (IntPtr)(delegate* unmanaged<uint, IntPtr*, int>)&Direct3DCreate9Ex);
+            add("d3d9", "Direct3DCreate9", (IntPtr)(delegate* unmanaged<uint, IntPtr>)&Direct3DCreate9);
+            return 7;
         }
 
         /// <summary>The managed entry point, for callers in this process (tests): the same function
         /// the export reaches.</summary>
         internal static delegate* unmanaged<IntPtr, uint, IntPtr, uint, uint*, uint, uint, IntPtr*, uint*, IntPtr*, int> CreateDevicePointer => &D3D11CreateDevice;
         internal static delegate* unmanaged<Guid*, IntPtr*, int> CreateFactory1Pointer => &CreateDXGIFactory1;
+        internal static delegate* unmanaged<uint, IntPtr*, int> Create9ExPointer => &Direct3DCreate9Ex;
+
+        [UnmanagedCallersOnly]
+        private static int Direct3DCreate9Ex(uint sdk, IntPtr* d3d)
+        {
+            if (d3d == null) return D3D9Const.D3DERR_INVALIDCALL;
+            try { *d3d = Direct3D9.Create(ex: true).Pointer; return HResult.S_OK; }
+            catch (Exception e) { D3DLog.Error("Direct3DCreate9Ex", e); *d3d = IntPtr.Zero; return D3D9Const.D3DERR_NOTAVAILABLE; }
+        }
+
+        [UnmanagedCallersOnly]
+        private static IntPtr Direct3DCreate9(uint sdk)
+        {
+            try { return Direct3D9.Create(ex: false).Pointer; }
+            catch (Exception e) { D3DLog.Error("Direct3DCreate9", e); return IntPtr.Zero; }
+        }
 
         private static readonly D3D_FEATURE_LEVEL[] s_defaultLevels = { D3D_FEATURE_LEVEL.L11_0, D3D_FEATURE_LEVEL.L10_1, D3D_FEATURE_LEVEL.L10_0, D3D_FEATURE_LEVEL.L9_3, D3D_FEATURE_LEVEL.L9_2, D3D_FEATURE_LEVEL.L9_1 };
 
@@ -75,8 +93,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (device == null && context == null) return HResult.S_FALSE;   // a query of the level
 
                 DxgiAdapter? a = ComObject.From<DxgiAdapter>(adapter);
-                var gpu = D3DDevice.CreateGpu();
-                var d = new D3DDevice(gpu, ownsGpu: true, chosen, flags & ~D3D11_CREATE_DEVICE_DEBUG, a);
+                var gpu = D3DDevice.SharedGpu;
+                var d = new D3DDevice(gpu, ownsGpu: false, chosen, flags & ~D3D11_CREATE_DEVICE_DEBUG, a);
                 if ((flags & D3D11_CREATE_DEVICE_DEBUG) != 0) D3DLog.Once("debugdev", "a debug device was asked for; it is an ordinary one");
                 D3DLog.Once("created", $"D3D11 device at feature level {chosen} over {gpu.AdapterDescription}");
                 if (context != null) *context = d.Immediate.AddRefPointer();

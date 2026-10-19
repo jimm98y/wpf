@@ -109,6 +109,10 @@ namespace WpfMac.Bootstrap.Win32
 
             setHandler(&OnUnimplemented);
             int implemented = Implementations.RegisterAll(s_handle, m => s_modules.Contains(m));
+            // Direct3D (d3d11, dxgi, d3d9) over WebGPU: there is no other Direct3D here.
+            int d3d = 0;
+            Direct3DShim.Register((module, name, fn) => { if (Register(name, (void*)fn)) d3d++; });
+            implemented += d3d;
 
             Hook(AssemblyLoadContext.Default);
             AppDomain.CurrentDomain.AssemblyLoad += (_, e) =>

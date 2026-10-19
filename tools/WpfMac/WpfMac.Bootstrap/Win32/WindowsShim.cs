@@ -50,6 +50,21 @@ namespace WpfMac.Bootstrap.Win32
             public required IntPtr Real;
             public IntPtr Shim;
             public readonly Dictionary<string, (IntPtr Fn, int Mask)> Implemented = new(StringComparer.Ordinal);
+            /// <summary>Exports that always run the managed implementation, no classifier (the
+            /// Direct3D shim's: d3d11, dxgi, d3d9).</summary>
+            public readonly Dictionary<string, IntPtr> Managed = new(StringComparer.Ordinal);
+            /// <summary>A Direct3D shim module: only the assemblies Direct3DShim covers get it.</summary>
+            public bool Direct3D;
+        }
+
+        private static Module ModuleFor(string module)
+        {
+            if (!s_modules.TryGetValue(module, out var m))
+            {
+                IntPtr real = NativeLibrary.Load(module + ".dll", typeof(WindowsShim).Assembly, DllImportSearchPath.System32);
+                s_modules[module] = m = new Module { Name = module, Real = real };
+            }
+            return m;
         }
 
         private static readonly Dictionary<string, Module> s_modules = new(StringComparer.OrdinalIgnoreCase);
@@ -68,15 +83,7 @@ namespace WpfMac.Bootstrap.Win32
                 Type? exports = asm.GetType("WpfMac.Win32.Exports");
                 var register = exports?.GetMethod("RegisterWindows");
                 if (register == null) return;
-                Action<string, string, IntPtr, int> add = (module, name, fn, mask) =>
-                {
-                    if (!s_modules.TryGetValue(module, out var m))
-                    {
-                        IntPtr real = NativeLibrary.Load(module + ".dll", typeof(WindowsShim).Assembly, DllImportSearchPath.System32);
-                        s_modules[module] = m = new Module { Name = module, Real = real };
-                    }
-                    m.Implemented[name] = (fn, mask);
-                };
+                Action<string, string, IntPtr, int> add = (module, name, fn, mask) => ModuleFor(module).Implemented[name] = (fn, mask);
                 Action<string, string> logOnce = CompatLog.Once;
                 classifier = (IntPtr)register.Invoke(null, new object[] { add, logOnce, RuntimeInformation.ProcessArchitecture })!;
             }
@@ -85,6 +92,18 @@ namespace WpfMac.Bootstrap.Win32
                 CompatLog.Info($"win32 dispatch: the managed implementations did not load: {e.GetBaseException().Message}");
                 return;
             }
+
+            // The Direct3D shim: its exports always run managed, for the assemblies it covers.
+            Direct3DShim.Register((module, name, fn) =>
+            {
+                try
+                {
+                    Module m = ModuleFor(module);
+                    m.Direct3D = true;
+                    m.Managed[name] = fn;
+                }
+                catch (DllNotFoundException) { CompatLog.Once("d3dmod:" + module, $"d3d11 shim: no {module}.dll on this Windows to mirror"); }
+            });
 
             string dir = Path.Combine(cacheDir ?? Path.Combine(Path.GetTempPath(), "WpfMac"), "win32");
             foreach (Module m in s_modules.Values)
@@ -111,7 +130,7 @@ namespace WpfMac.Bootstrap.Win32
             int dispatched = 0;
             foreach (var (ordinal, name, rva) in exports)
             {
-                bool d = name != null && m.Implemented.ContainsKey(name);
+                bool d = name != null && m.Implemented.ContainsKey(name) && !m.Managed.ContainsKey(name);
                 if (d) dispatched++;
                 list.Add(new ShimImage.Export(ordinal, name, rva != 0, d));
             }
@@ -133,7 +152,8 @@ namespace WpfMac.Bootstrap.Win32
             {
                 if (!list[i].Present) continue;
                 byte* entry = data + ShimImage.TableOffset + i * ShimImage.EntrySize;
-                IntPtr target = GetProcAddressByOrdinal(m.Real, list[i].Ordinal);
+                IntPtr target = list[i].Name is string n && m.Managed.TryGetValue(n, out IntPtr managed)
+                    ? managed : GetProcAddressByOrdinal(m.Real, list[i].Ordinal);
                 *(IntPtr*)entry = target;
                 if (list[i].Dispatched && m.Implemented.TryGetValue(list[i].Name!, out var impl))
                 {
@@ -142,7 +162,9 @@ namespace WpfMac.Bootstrap.Win32
                 }
             }
             m.Shim = shim;
-            CompatLog.Info($"win32 dispatch: {m.Name}: {list.Count(e => e.Present)} exports, {dispatched} reach the stack's windows ({Path.GetFileName(path)})");
+            CompatLog.Info(m.Direct3D
+                ? $"win32 dispatch: {m.Name}: {list.Count(e => e.Present)} exports, {m.Managed.Count} on the Direct3D shim ({Path.GetFileName(path)})"
+                : $"win32 dispatch: {m.Name}: {list.Count(e => e.Present)} exports, {dispatched} reach the stack's windows ({Path.GetFileName(path)})");
         }
 
         /// <summary>The export table of a loaded module: (ordinal, name or null, function RVA or 0) for
@@ -215,6 +237,12 @@ namespace WpfMac.Bootstrap.Win32
             string module = ShimLibrary.Normalize(name);
             if (s_modules.TryGetValue(module, out var m) && m.Shim != IntPtr.Zero)
             {
+                if (m.Direct3D)
+                {
+                    if (!Direct3DShim.Covers(requester.GetName().Name)) return IntPtr.Zero;   // the real Direct3D
+                    CompatLog.Once("d3d:" + module + ":" + requester.GetName().Name, $"d3d11 shim: {requester.GetName().Name} binds {name} to the shim");
+                    return m.Shim;
+                }
                 CompatLog.Once("dispatch:" + module + ":" + requester.GetName().Name, $"win32 dispatch: {requester.GetName().Name} binds {name} through the stack");
                 return m.Shim;
             }

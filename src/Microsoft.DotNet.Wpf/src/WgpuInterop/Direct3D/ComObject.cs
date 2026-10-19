@@ -132,18 +132,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>Hands out a reference: the caller now owns one more.</summary>
         public IntPtr AddRefPointer(Vtable? vt = null)
         {
-            Interlocked.Increment(ref _refs);
+            IncRef();
             return vt == null ? Pointer : PointerFor(vt);
         }
 
-        public uint AddRef() => (uint)Interlocked.Increment(ref _refs);
+        public uint AddRef() => (uint)IncRef();
 
         public uint Release()
         {
             int n = Interlocked.Decrement(ref _refs);
-            if (n == 0) Final();
+            if (n == 0 && !OnNoReferences()) Final();
             return (uint)Math.Max(n, 0);
         }
+
+        private int IncRef()
+        {
+            int n = Interlocked.Increment(ref _refs);
+            if (n == 1) OnReferenced();
+            return n;
+        }
+
+        /// <summary>The application's references went from none to one (an object that can be held
+        /// at zero, see <see cref="OnNoReferences"/>).</summary>
+        protected virtual void OnReferenced() { }
+
+        /// <summary>The application let go of its last reference. True keeps the object (one whose
+        /// lifetime is another's: a D3D9 texture's level shares its texture's count); false, the
+        /// default, finalises it once the shim's own references are gone too.</summary>
+        protected virtual bool OnNoReferences() => false;
 
         /// <summary>A reference the shim itself holds (a bound view, a view's resource): keeps the
         /// object's GPU resources alive past the app's last Release.</summary>
@@ -184,7 +200,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 {
                     if (g == iid)
                     {
-                        Interlocked.Increment(ref _refs);
+                        IncRef();
                         *ppv = _blocks[i];
                         return HResult.S_OK;
                     }
