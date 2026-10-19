@@ -150,7 +150,11 @@ fn dx_msad(r: u32, s: u32, acc: u32) -> u32 {
                 case Opcode.UGe: Store(o[0], $"bitcast<vec4<f32>>({Mask($"{USource(o[1])} >= {USource(o[2])}")})", false); return true;
 
                 case Opcode.Movc:
-                    Store(o[0], $"select({Source(o[3])}, {Source(o[2])}, bitcast<vec4<u32>>({Source(Strip(o[1]))}) != vec4<u32>(0u))", sat); return true;
+                    // by bits, not a float select: the drivers here may pass a float select's NaN-pattern
+                    // operands (integers, a double's halves) through float arithmetic
+                    if (sat) { Store(o[0], $"select({Source(o[3])}, {Source(o[2])}, bitcast<vec4<u32>>({Source(Strip(o[1]))}) != vec4<u32>(0u))", sat); return true; }
+                    StoreI(o[0], SelU($"bitcast<vec4<u32>>({Source(o[3])})", $"bitcast<vec4<u32>>({Source(o[2])})", $"bitcast<vec4<u32>>({Source(Strip(o[1]))}) != vec4<u32>(0u)"));
+                    return true;
                 case Opcode.Swapc:
                 {
                     // swapc d0, d1, cond, a, b: d0 = cond ? b : a; d1 = cond ? a : b
@@ -280,9 +284,9 @@ fn dx_msad(r: u32, s: u32, acc: u32) -> u32 {
             return false;
         }
 
-        /// <summary>Doubles. WGSL has f64 only behind the shader-f64 extension, which naga's WGSL front
-        /// end does not take yet: each double instruction is refused by name (the dmov family, which
-        /// only moves bits, is translated).</summary>
+        /// <summary>Doubles: the dmov family moves bits; every other instruction runs on the integer
+        /// binary64 emulation of DxbcTranslator.Doubles.cs (WGSL's f64 needs an extension naga's WGSL
+        /// front end does not take).</summary>
         private void EmitDouble(Instruction ins)
         {
             var o = ins.Operands;
@@ -291,10 +295,11 @@ fn dx_msad(r: u32, s: u32, acc: u32) -> u32 {
                 case Opcode.DMov: Store(o[0], Source(o[1]), false); return;
                 case Opcode.DMovc:
                     // a double occupies two components; the condition's components select pairs
-                    Store(o[0], $"select({Source(o[3])}, {Source(o[2])}, bitcast<vec4<u32>>({Source(Strip(o[1]))}).xxyy != vec4<u32>(0u))", false);
+                    StoreI(o[0], SelU($"bitcast<vec4<u32>>({Source(o[3])})", $"bitcast<vec4<u32>>({Source(o[2])})", $"bitcast<vec4<u32>>({Source(Strip(o[1]))}).xxyy != vec4<u32>(0u)"));
                     return;
             }
-            throw new NotSupportedException($"double-precision {DxbcOpcodes.Info(ins.Op).Name}: shader-f64 is not available to WGSL here");
+            if (EmitSoftDouble(ins)) return;
+            throw new NotSupportedException($"double-precision {DxbcOpcodes.Info(ins.Op).Name}");
         }
 
         // ---- control flow ------------------------------------------------------------------------

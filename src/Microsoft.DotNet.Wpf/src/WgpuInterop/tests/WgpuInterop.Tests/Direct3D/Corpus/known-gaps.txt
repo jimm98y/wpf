@@ -1,7 +1,5 @@
 # Shaders of the corpus that do not translate yet, each with the start of the reason (DxbcCoverageTests).
 # The coverage test fails when a shader not listed here fails, and when a listed shader translates
 # (then take it off). Each step of Documentation/d3d11-webgpu-shim.md section 9 shortens this list.
-compute.cs_double_ext.cs_5_0.dxbc: double-precision itod: shader-f64 is not available to WGSL here
-compute.cs_double.cs_5_0.dxbc: double-precision utod: shader-f64 is not available to WGSL here
 compute.cs_texture_atomic.cs_5_0.dxbc: atomic_umax on typed UAV texture u2: WGSL has no texture atomics
 stages.ps_interface.ps_5_0.dxbc: class linkage (interfaces): each call site is specialized at bind time from the bound class instances -- not implemented yet

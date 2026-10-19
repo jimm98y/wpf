@@ -94,7 +94,7 @@ void cs_double(uint3 dt : SV_DispatchThreadID)
     double c = min(a, b) + max(a, b);
     if (a == b || a < b || a >= b || a != c) c += a;
     c = a > b ? c : a;
-    raw.Store(0, asuint((float)c));
+    raw.Store(dt.x * 4, asuint((float)c));      // each thread its own word (order-independent)
 }
 
 #if defined(DOUBLE_EXT)
@@ -104,7 +104,7 @@ void cs_double_ext(uint3 dt : SV_DispatchThreadID)
 {
     double a = dparams.x + (double)(int)dt.x, b = dparams.y + (double)dt.y;
     double c = fma(a, b, a / b) + rcp(b);
-    raw.Store(0, (uint)c + (uint)(int)c);
+    raw.Store(dt.x * 4, (uint)c + (uint)(int)c);
 }
 #endif
 

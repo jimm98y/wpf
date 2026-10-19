@@ -76,6 +76,11 @@ namespace WgpuInterop.Tests.Direct3D
         private static readonly (string Shader, string Adapter, string Word)[] s_driverDifferences =
         {
             ("compute_exec.cs_atomic_totals.cs_5_0.dxbc", "Parallels", "rawOut[9]:"),
+            // WARP's own: its dtoi of the shader's double (131676.4...) comes back 0x80000000 (it
+            // converts doubles to integers through a float, see SoftDoubleTests); every double before
+            // it matches bit for bit
+            ("compute.cs_double_ext.cs_5_0.dxbc", "", "raw[0]:"),
+            ("compute.cs_double_ext.cs_5_0.dxbc", "", "raw[1]:"),
         };
 
         /// <summary>Every compute shader of the corpus that translates computes on the shim what it
@@ -110,7 +115,7 @@ namespace WgpuInterop.Tests.Direct3D
                     compared++;
                     string adapter = D3DDevice.SharedGpu.AdapterDescription ?? "";
                     if (count == 1 && s_driverDifferences.Any(d => d.Shader == name && adapter.Contains(d.Adapter, StringComparison.Ordinal) && first.StartsWith(d.Word, StringComparison.Ordinal)))
-                        Console.WriteLine($"  {name}: the known driver difference on this adapter: {first}");
+                        Console.WriteLine($"  {name}: a known difference (the driver's or the oracle's, see s_driverDifferences): {first}");
                     else if (count > 0) failures.Add($"{name}: {count} words differ; {first}");
                 }
             }
