@@ -43,6 +43,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         /// <summary>Vertex-shader input registers whose element is B8G8R8A8: fetched as RGBA, swapped
         /// back in the shader.</summary>
         public IReadOnlyCollection<int>? BgraInputs;
+        /// <summary>A geometry shader's stream-output declaration (CreateGeometryShaderWithStreamOutput).</summary>
+        public StreamOutputDesc? StreamOutput;
     }
 
     internal sealed partial class DxbcTranslator

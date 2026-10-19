@@ -449,5 +449,16 @@ green throughout.
     every domain, partitioning and output primitive, fractional, clamped and culled factors), and
     tessellated draws match WARP's pixels. Cost: the factor read-back makes such a draw wait for
     the GPU (patterns are cached); a GPU tessellator is the later step.
-  - Not yet: stream output, strip-cut indices into a GS, layered (array-index) rendering past
-    layer 0, a GS after tessellation, doubles, class linkage, DXIL, managed D3DReflect.
+  - Stream output, DrawAuto and the indirect draws. A GS made with
+    CreateGeometryShaderWithStreamOutput writes its stream 0 through three kernels (count each
+    invocation's primitives, scan for their places and for what fits, write): strips cut into lists,
+    whole primitives only, appended at each buffer's filled size (a GPU counter that SOSetTargets
+    sets). A vertex shader handed in a GS's place streams out the input assembler's primitives. Both
+    match WARP word for word (gaps, partial components, two slots, appending, overflow) to an ulp
+    or two of float (this GL driver over Metal reassociates adds). DrawAuto and the indirect draws
+    through the compute paths read their counts back; a native indirect draw stays on the GPU, except
+    on an adapter without indirect-first-instance (this one), which reads back too. Measured on
+    WARP and followed: a non-indexed draw's SV_VertexID counts from 0, not from the start vertex.
+  - Not yet: stream output from a domain shader or from GS streams above 0, strip-cut indices into
+    a GS, layered (array-index) rendering past layer 0, a GS after tessellation, doubles, class
+    linkage, DXIL, managed D3DReflect.

@@ -146,7 +146,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         {
             if (_form != StageForm.GeometryCompute) throw new NotSupportedException("geometry shader instruction outside a geometry shader");
             int stream = ins.Op is Opcode.EmitStream or Opcode.CutStream or Opcode.EmitThenCutStream && ins.Operands.Length > 0 ? ins.Operands[0].Index0 : 0;
-            if (stream != 0) Approximate("geometry shader streams above 0: rasterized with stream 0 (as WARP draws a GS made without stream output); stream output is not written");
+            if (stream != 0 && StreamOut != null) { Approximate("stream output from geometry shader streams above 0: not written (stream 0 is)"); return; }
+            if (stream != 0) Approximate("geometry shader streams above 0: rasterized with stream 0 (as WARP draws a GS made without stream output)");
             switch (ins.Op)
             {
                 case Opcode.Emit: case Opcode.EmitStream: Line("dx_emit();"); break;
@@ -184,7 +185,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 
             w.Append("@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n");
             w.Append($"    let idx = gid.x + gid.y * {InvocationsPerRow}u;\n    if (idx >= dx_p[2].x) {{ return; }}\n");
-            w.Append("    let count = max(dx_p[0].x, 1u);\n    let inst = idx / count;\n    let ord = idx % count;\n    var vid = dx_p[0].y + ord;\n    var fetch = vid;\n");
+            w.Append("    let count = max(dx_p[0].x, 1u);\n    let inst = idx / count;\n    let ord = idx % count;\n    var vid = ord;\n    var fetch = dx_p[0].y + ord;\n");
+            // D3D's SV_VertexID counts from 0 in a draw (not from the start vertex, measured on WARP)
             w.Append("    if (dx_p[1].x != 0u) {\n");
             w.Append("        var at = dx_p[1].y + (dx_p[0].y + ord) * 4u;\n        if (dx_p[1].z != 0u) { at = dx_p[1].y + (dx_p[0].y + ord) * 2u; }\n");
             w.Append("        let n = arrayLength(&dx_ib);\n        var index = select(0u, dx_ib[min(at >> 2u, n - 1u)], (at >> 2u) < n);\n");
@@ -348,6 +350,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             if (_builtins.Contains("vGSInstanceID")) w.Append("    vGSInstanceID = bitcast<vec4<f32>>(vec4<u32>(gsi, 0u, 0u, 0u));\n");
             w.Append("    dx_body();\n");
             w.Append($"    for (var j = dx_k; j < {per}u; j = j + 1u) {{ dx_gsidx[dx_ibase + j] = 0xFFFFFFFFu; }}\n}}\n");
+            if (StreamOut != null) AppendGeometryStreamOut(w);
         }
 
         // ---- the pass-through vertex shader of the draw ---------------------------------------------------

@@ -80,7 +80,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             w.Append("@vertex\nfn main(input: VsIn) -> VsOut {\n");
             foreach (int reg in _inputRegs.OrderBy(r => r))
             {
-                // D3D's SV_VertexID is the index as stored (no base vertex), its SV_InstanceID counts from 0
+                // D3D's SV_VertexID is the index as stored (no base vertex), or counts from 0 (no start vertex); its SV_InstanceID counts from 0
                 if (reg == vertexId) w.Append($"    {InReg(reg)} = bitcast<vec4<f32>>(vec4<u32>(bitcast<u32>(bitcast<i32>(input.vid) - bitcast<i32>(dx_draw.x)), 0u, 0u, 0u));\n");
                 else if (reg == instanceId) w.Append($"    {InReg(reg)} = bitcast<vec4<f32>>(vec4<u32>(input.iid - dx_draw.y, 0u, 0u, 0u));\n");
                 else

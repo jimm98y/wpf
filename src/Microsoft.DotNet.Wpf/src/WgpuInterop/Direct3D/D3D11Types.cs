@@ -113,6 +113,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct D3D11_SO_DECLARATION_ENTRY
+    {
+        public uint Stream;
+        public byte* SemanticName;
+        public uint SemanticIndex;
+        public byte StartComponent, ComponentCount, OutputSlot;
+    }
+
     internal unsafe struct D3D11_INPUT_ELEMENT_DESC
     {
         public byte* SemanticName;

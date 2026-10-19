@@ -31,19 +31,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             public IntPtr VsLayout, VsPlumbing, VsPipeline;
             public IntPtr GsLayout, GsPlumbing, GsPipeline;
             public SortedSet<int> Slots = new();
+            /// <summary>Stream output (a GS made with CreateGeometryShaderWithStreamOutput): its three kernels.</summary>
+            public StreamOutputDesc? So;
+            public IntPtr SoCount, SoScan, SoWrite;
             /// <summary>The draw: the pass-through vertex shader (group 0, the GS's registers) and the pixel shader.</summary>
             public readonly Translation Draw = new();
             public GeometryDraw Pipeline = new();
         }
 
         private readonly Dictionary<string, GeometryTranslation> _geometries = new();
-        private IntPtr _gsVsOut, _gsOut, _gsIdx;
-        private ulong _gsVsOutSize, _gsOutSize, _gsIdxSize;
+        private IntPtr _gsVsOut, _gsOut, _gsIdx, _soCounts;
+        private ulong _gsVsOutSize, _gsOutSize, _gsIdxSize, _soCountsSize;
         private const ulong MaxScratch = 128UL << 20;     // WebGPU's default largest storage binding
 
         private GeometryTranslation TranslateGeometry(D3DShader vs, D3DShader gs, D3DShader? ps)
         {
-            string key = $"{vs.Code.Hash:x16}|{gs.Code.Hash:x16}|{ps?.Code.Hash ?? 0:x16}|{_layout?.Id ?? 0}";
+            string key = $"{vs.Code.Hash:x16}|{gs.Code.Hash:x16}|{ps?.Code.Hash ?? 0:x16}|{_layout?.Id ?? 0}|{gs.StreamOutput?.Key}";
             if (_geometries.TryGetValue(key, out var t)) return t;
             t = new GeometryTranslation();
             _geometries[key] = t;
@@ -55,7 +58,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     Semantic = e.Semantic, Index = e.Index, Format = e.Format, Slot = e.Slot, Offset = e.Offset, PerInstance = e.PerInstance, StepRate = e.StepRate,
                 }).ToList();
                 var v = DxbcTranslator.TranslateVertexCompute(vs.Code, fetch);
-                var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, vs.Code, v.OutputRegisters);
+                t.So = gs.StreamOutput;
+                var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, vs.Code, v.OutputRegisters, t.So != null ? new TranslationOptions { StreamOutput = t.So } : null);
                 var link = DxbcTranslator.LinkageOf(ps?.Code);
                 var pass = DxbcTranslator.PassThrough(gs.Code, link);
                 foreach (string a in v.Approximations.Concat(g.Approximations).Concat(pass.Approximations)) D3DLog.Once("approx:" + a, "shader approximation: " + a);
@@ -76,8 +80,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
                 // 2. the geometry shader as compute
                 t.GsLayout = BindGroupLayout(g.Bindings, WGPUShaderStage_Compute);
-                t.GsPlumbing = PlumbingLayout(vertex: false, null);
+                t.GsPlumbing = PlumbingLayout(vertex: false, null, t.So);
                 t.GsPipeline = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err);
+                if (t.So != null && t.GsPipeline != IntPtr.Zero)
+                {
+                    t.SoCount = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err, "so_count");
+                    t.SoScan = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err, "so_scan");
+                    t.SoWrite = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err, "so_write");
+                    if (t.SoCount == IntPtr.Zero || t.SoScan == IntPtr.Zero || t.SoWrite == IntPtr.Zero) { t.Error = "stream output: " + err; return t; }
+                }
                 if (t.GsPipeline == IntPtr.Zero) { t.Error = "geometry shader as compute: " + err; return t; }
 
                 // 3. the draw: pass-through and pixel shader
@@ -112,7 +123,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>Group 1 of the two kernels: the parameters, the index buffer, the registers, the
         /// strip indices and the vertex buffers (DxbcTranslator.Plumbing*).</summary>
-        private IntPtr PlumbingLayout(bool vertex, SortedSet<int>? slots)
+        private IntPtr PlumbingLayout(bool vertex, SortedSet<int>? slots, StreamOutputDesc? so = null)
         {
             var entries = new List<WGPUBindGroupLayoutEntry>
             {
@@ -129,6 +140,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 entries.Add(new() { binding = DxbcTranslator.PlumbingGsOut, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage } });
                 entries.Add(new() { binding = DxbcTranslator.PlumbingGsIndices, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage } });
+                if (so != null) AddStreamOutLayout(entries, so, counts: true);
             }
             var arr = entries.ToArray();
             fixed (WGPUBindGroupLayoutEntry* p = arr)
@@ -217,6 +229,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             p[4] = a.Indexed ? 1u : 0u; p[5] = _ibOffset; p[6] = _ibFormat == DXGI_FORMAT.R16_UINT ? 1u : 0u; p[7] = a.Instances;
             p[8] = (uint)vsTotal; p[9] = count; p[10] = mode; p[11] = step;
             p[12] = (uint)gsTotal;
+            var soEntries = new List<WGPUBindGroupEntry>();
+            if (t.So != null) p[13] = AddStreamOutGroup(soEntries, t.So, Scratch(ref _soCounts, ref _soCountsSize, gsTotal * 4, 0), gsTotal * 4);
             foreach (int s in t.Slots) { p[(4 + s) * 4] = _vbOffset[s]; p[(4 + s) * 4 + 1] = _vbStride[s]; }
             var bytes = new byte[p.Length * 4];
             Buffer.BlockCopy(p, 0, bytes, 0, bytes.Length);
@@ -249,13 +263,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 }
                 groups.Add(MakeGroup(t.VsPlumbing, ve));
                 groups.Add(BindGroup(t.GsLayout, t.GsBindings!, _gs));
-                groups.Add(MakeGroup(t.GsPlumbing, new List<WGPUBindGroupEntry>
+                soEntries.AddRange(new WGPUBindGroupEntry[]
                 {
                     new() { binding = DxbcTranslator.PlumbingParams, buffer = arena, offset = at, size = DxbcTranslator.ParamVec4s * 16 },
                     new() { binding = DxbcTranslator.PlumbingVsOut, buffer = vsOut, offset = 0, size = Math.Max(16, vsBytes) },
                     new() { binding = DxbcTranslator.PlumbingGsOut, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) },
                     new() { binding = DxbcTranslator.PlumbingGsIndices, buffer = gsIdx, offset = 0, size = Math.Max(16, idxBytes) },
-                }));
+                });
+                groups.Add(MakeGroup(t.GsPlumbing, soEntries));
                 groups.Add(MakeGroup(t.Draw.VsLayout, new List<WGPUBindGroupEntry> { new() { binding = 0, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) } }));
                 groups.Add(BindGroup(t.Draw.PsLayout, t.Draw.PsBindings ?? new ShaderBindings(), _ps));
             }
@@ -266,8 +281,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 DrawsSkipped++;
                 return;
             }
-            IntPtr pipeline = Pipeline(t.Draw, vs, _ps.Shader, out _, t.Pipeline);
-            if (pipeline == IntPtr.Zero) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
+            // stream output alone (no rasterized stream, or nothing to rasterize to) draws nothing
+            bool targets = _dsv != null || _rtv.Any(r => r != null);
+            bool render = (t.So == null || t.So.RasterizedStream == 0) && (targets || t.So == null);
+            IntPtr pipeline = render ? Pipeline(t.Draw, vs, _ps.Shader, out _, t.Pipeline) : IntPtr.Zero;
+            if (render && pipeline == IntPtr.Zero) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
 
             // 1 and 2: the two kernels, in one compute pass (WebGPU orders its dispatches' storage writes)
             EndPass();
@@ -280,8 +298,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             wgpuComputePassEncoderSetBindGroup(pass, 0, groups[2], 0, null);
             wgpuComputePassEncoderSetBindGroup(pass, 1, groups[3], 0, null);
             Dispatch1D(pass, gsTotal);
+            if (t.So != null)
+            {
+                // stream output: count each invocation's primitives, place them, write them
+                wgpuComputePassEncoderSetPipeline(pass, t.SoCount);
+                Dispatch1D(pass, gsTotal);
+                wgpuComputePassEncoderSetPipeline(pass, t.SoScan);
+                wgpuComputePassEncoderDispatchWorkgroups(pass, 1, 1, 1);
+                wgpuComputePassEncoderSetPipeline(pass, t.SoWrite);
+                Dispatch1D(pass, gsTotal);
+                BumpSoVersions(t.So);
+            }
             wgpuComputePassEncoderEnd(pass);
             wgpuComputePassEncoderRelease(pass);
+            if (!render) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsIssued++; return; }
 
             // 3: the indexed draw
             if (!EnsurePass() || !ApplyRasterState()) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
