@@ -156,17 +156,14 @@ public sealed unsafe class ComRewriterTests
     }
 
     [Fact]
-    public void TheFixture_IsRewritten_WithTheVariantAndTheForeignCastNamed()
+    public void TheFixture_IsRewritten_AndOnlyTheVariantIsUnsupported()
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.UsesComImport);
         Assert.Equal(4, r.Interfaces);
         Assert.Equal(1, r.PInvokes);
-        // the VARIANT method, and the cast of an object from elsewhere (adopted; on Windows it keeps the
-        // assembly on built-in COM)
-        Assert.Equal(2, r.Unsupported.Count);
-        Assert.Contains(r.Unsupported, u => u.Contains("Variant"));
-        Assert.Contains(r.Unsupported, u => u.Contains("AddThroughObject") && u.Contains("unknown origin"));
+        string u = Assert.Single(r.Unsupported);
+        Assert.Contains("Variant", u);
         Assert.Equal(1, r.Delegates);
     }
 

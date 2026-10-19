@@ -74,9 +74,14 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
    own. Before that fix, DXEngine.Wpf's d3d9 import reached the real d3d9 and its shared surface
    failed.
 5. **What it cannot cover:**
-   - **Another assembly asking a rewritten one's location.** For example IcoTrace's
-     `GetCallingAssembly().CodeBase`, which GwxRuntimeCore relies on to find `Mobile_devices.csv`.
-     That caller is not rewritten, so it sees an assembly without a file.
+   - **Another assembly asking a rewritten one's location** (Limit 1). For example IcoTrace's
+     `GetCallingAssembly().CodeBase`, which GwxRuntimeCore relies on for `Gwx.config.xml` and
+     `Mobile_devices.csv`. That caller is not rewritten, so it sees an assembly without a file.
+     - Measured for app's folder: 15 of its 355 assemblies ask about an assembly that is not
+       provably their own.
+     - Rewriting the callers too, as a closure from DXEngine(.Wpf) and GwxRuntimeCore, adds five:
+       IcoTrace, IcoCommonCore.Net, Ab2d.ReaderWmf, Ab3d.Reader3ds and Telerik.Windows.Controls
+       (GetAssemblies). That costs 1.45 s more per launch, 1.0 s of it Telerik.Windows.Controls.
    - **Assemblies loaded by path** (`Assembly.LoadFrom`). They stay as they are.
 
 ## 2. Interfaces
@@ -197,14 +202,25 @@ adapter.
     Telerik ×5 (CCWs, BSTR, VARIANT, the BCL's ComTypes).
 - **Added since the first version:**
   - BSTR in, by reference and as retval.
-  - Built-in RCWs adopted at a cast. Off Windows only: on Windows such an assembly stays on built-in
-    COM, because the two that flipped this way in app did not run as before. Ab3d.DXEngine
-    stopped using Direct3D (cause not found yet), and GwxRuntimeCore's location, asked from IcoTrace,
-    changed.
+  - Built-in RCWs adopted at a cast, on every OS.
+  - **Limit 1, stated:** a rewritten assembly reports its original location only to its own code.
+    - On Windows, an assembly that references an app assembly which asks other assemblies where they
+      are stays on built-in COM, with the reason "its location is asked by ...". An asking assembly
+      reads Location/CodeBase/EscapedCodeBase and gets assemblies it did not name itself
+      (GetCallingAssembly, GetAssemblies, GetAssembly).
+    - This judge is provisional (the user's decision on rewriting callers is open).
+    - Off Windows the assembly is rewritten anyway, and the verdict says so.
+    - The case behind it: GwxDocument (GwxRuntimeCore) loads Gwx.config.xml from IcoTrace's
+      `GetCallingAssembly().CodeBase`. Rewritten, it lost its settings, among them
+      `UseStandard3DRenderer`, so app drew its 3D with WPF instead of DXEngine. That was first
+      blamed on Ab3d.DXEngine, which is in fact fine rewritten: 0 px against the build before the
+      rewriter.
+  - `WPF_COMIMPORT_FORCE=<names>` (diagnostics): those are rewritten whatever the verdict.
   - Visibility judged from what the app's other assemblies actually reference.
   - Assemblies rewritten together with those whose COM types they use (a fixpoint over the app).
   - The in-memory loader, with location redirection.
-- **app, Windows (2026-10-19):** only Ab3d.DXEngine.Wpf is rewritten. Loaded from memory, its 3D
+- **app, Windows (2026-10-19):** Ab3d.DXEngine and Ab3d.DXEngine.Wpf are rewritten (0 px with both
+  forced, before the licence lapsed); GwxRuntimeCore stays (Limit 1). Earlier, with only Ab3d.DXEngine.Wpf rewritten: Loaded from memory, its 3D
   frame is identical to the build before the rewriter (0 px; 120 px within 1 code against real
   D3D11), and the bench smoke run and Workbench run are clean.
 - **Tests:**

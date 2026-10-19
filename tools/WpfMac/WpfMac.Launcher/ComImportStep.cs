@@ -86,6 +86,9 @@ internal static class ComImportStep
         // what of each candidate the other app assemblies reference by name
         var external = ExternalReferences(appFiles, candidates.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase));
 
+        // which app assemblies ask other assemblies where they are (Limit 1)
+        var askers = LocationAskers(appFiles);
+
         // judge each (nothing is written: the verdicts go to merge-report.txt)
         bool partial = !windows;
         foreach (var c in candidates)
@@ -98,18 +101,29 @@ internal static class ComImportStep
                 c.Verdict = new Verdict { Unsupported = res.Unsupported.Count, UsesComTypesOf = res.UsesComTypesOf.ToList(), Summary = res.ToString() };
             }
             catch (Exception e) { c.Verdict = new Verdict { Unsupported = 1, Summary = $"the rewriter failed: {e.GetType().Name}: {e.Message}" }; }
+            // Limit 1: a rewritten assembly reports its original location only to its own code. One that calls
+            // an app assembly which asks its callers (or every loaded assembly) where they are would be found
+            // nowhere by it (GwxRuntimeCore -> IcoTrace's GetCallingAssembly().CodeBase: Gwx.config.xml)
+            var asked = References(c.File).Where(askers.Contains).ToList();
+            if (asked.Count > 0)
+            {
+                if (!partial) c.Verdict.Unsupported++;
+                c.Verdict.Summary += $"; its location is asked by {string.Join(", ", asked)} (it reports it only to its own code{(partial ? "; rewritten anyway: there is no built-in COM here" : "")})";
+            }
             c.Verdict.Summary += $" [judged in {sw.ElapsedMilliseconds} ms]";
         }
 
         // Windows: rewritten together or not at all -- an assembly whose COM types another uses goes with it
-        var chosen = candidates.Where(c => partial || c.Verdict.Unsupported == 0).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+        // WPF_COMIMPORT_FORCE (diagnostics): rewritten whatever the verdict, as off Windows
+        var force = Scope(Environment.GetEnvironmentVariable("WPF_COMIMPORT_FORCE") ?? "off");
+        var chosen = candidates.Where(c => partial || c.Verdict.Unsupported == 0 || force(c.Name)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
         if (!partial)
         {
             for (bool changed = true; changed;)
             {
                 changed = false;
                 foreach (var c in chosen.Values.ToList())
-                    if (c.Verdict.UsesComTypesOf.Any(u => !chosen.ContainsKey(u))) { chosen.Remove(c.Name); changed = true; }
+                    if (!force(c.Name) && c.Verdict.UsesComTypesOf.Any(u => !chosen.ContainsKey(u))) { chosen.Remove(c.Name); changed = true; }
             }
         }
 
@@ -128,6 +142,43 @@ internal static class ComImportStep
         }
         foreach (var (_, libNode) in target)
             if (libNode is JsonObject lib && lib["runtime"] is JsonObject rt && rt.Count == 0) lib.Remove("runtime");
+    }
+
+    /// <summary>The app assemblies that ask other assemblies where they are: they read Location, CodeBase or
+    /// EscapedCodeBase, and get assemblies they did not name themselves (GetCallingAssembly, GetAssemblies,
+    /// GetAssembly). From the member references alone: conservative.</summary>
+    private static HashSet<string> LocationAskers(IEnumerable<string> files)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string f in files)
+        {
+            try
+            {
+                using var fs = File.OpenRead(f);
+                using var pe = new PEReader(fs);
+                if (!pe.HasMetadata) continue;
+                var md = pe.GetMetadataReader();
+                bool reads = false, gets = false;
+                foreach (var h in md.MemberReferences)
+                {
+                    string n = md.GetString(md.GetMemberReference(h).Name);
+                    if (n is "get_Location" or "get_CodeBase" or "get_EscapedCodeBase") reads = true;
+                    else if (n is "GetCallingAssembly" or "GetAssemblies" or "GetAssembly") gets = true;
+                }
+                if (reads && gets && md.IsAssembly) result.Add(md.GetString(md.GetAssemblyDefinition().Name));
+            }
+            catch (BadImageFormatException) { }
+        }
+        return result;
+    }
+
+    /// <summary>The names of the assemblies <paramref name="file"/> references.</summary>
+    private static IEnumerable<string> References(string file)
+    {
+        using var fs = File.OpenRead(file);
+        using var pe = new PEReader(fs);
+        var md = pe.GetMetadataReader();
+        return md.AssemblyReferences.Select(h => md.GetString(md.GetAssemblyReference(h).Name)).ToList();
     }
 
     /// <summary>For each of <paramref name="targets"/>: the names of its types (Namespace.Name, or Name for a
