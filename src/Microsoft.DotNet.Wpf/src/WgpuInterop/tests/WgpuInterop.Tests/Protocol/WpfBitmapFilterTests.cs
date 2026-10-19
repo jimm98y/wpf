@@ -2,18 +2,21 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// A WPF bitmap is filtered as WPF's own rasterizer filters it (milcore CBilinearSpan, which stock
-// RenderTargetBitmap and software-rendered windows use), not by the GPU's sampler: the 16.16 fixed
+// A WPF bitmap in a RenderTargetBitmap is filtered as stock filters it there -- milcore's software
+// rasterizer, CBilinearSpan -- not by the GPU's sampler: the 16.16 fixed
 // point device-to-texture mapping, the weight truncated to 1/256, four premultiplied 8-bit texels
 // in one sum (fs_textured_wpf). The GPU sampler weighed at its own precision (7 bits here) and on
 // a float mapping, and a D3DImage stretched into a window came out one level off along a band
-// edge: 344 pixels against stock.
+// edge: 344 pixels against stock's RenderTargetBitmap. A WINDOW keeps the GPU sampler: stock draws
+// windows at render tier 2, where the texture unit does the bilinear (per GPU; not yet compared on
+// screen, the console was not shown).
 //
 // The expected values are stock's: rendered by stock WPF's RenderTargetBitmap from the same
 // bitmap and rectangle (scratchpad harness d3dh, modes "bands" and "ramp2").
 //
 
 using System;
+using Microsoft.Wpf.Interop.WebGpu.Composition;
 using Microsoft.Wpf.Interop.WebGpu.Composition.Protocol;
 using WgpuInterop.Tests.Harness;
 using Xunit;
@@ -24,14 +27,50 @@ namespace WgpuInterop.Tests.Protocol
     {
         public WpfBitmapFilterTests(GpuFixture gpu) : base(gpu) { }
 
-        private const uint HRoot = 2, HContent = 5, HImg = 10;
+        private const uint HRoot = 2, HContent = 5, HImg = 10, HTarget = 20;
 
-        private byte[] Render(byte[] rgba, int iw, int ih, double x, double y, double w, double h, int tw, int th)
+        /// <summary>The real RenderTargetBitmap path: the bitmap through the sink as PresentationCore
+        /// sends it (straight BGRA), a bitmap target (MILCMD_GENERICTARGET_CREATE) rooted at the
+        /// visual, and WpfCompositionSink.ReadbackTarget. Returns RGBA, and how many draws took the
+        /// milcore filter on the target and then on a window-style render of the same scene.</summary>
+        private (byte[] Rgba, int TargetDraws, int WindowDraws) Render(byte[] rgba, int iw, int ih, double x, double y, double w, double h, int tw, int th)
         {
-            var engine = new MilcoreEngine();
-            engine.SetBitmap(HImg, rgba, iw, ih);
+            _ = Gpu;   // skips without a GPU
+            var bgra = (byte[])rgba.Clone();
+            for (int i = 0; i < bgra.Length; i += 4) (bgra[i], bgra[i + 2]) = (bgra[i + 2], bgra[i]);
+            using var sink = new WpfCompositionSink { UseRenderThread = false };
+            sink.SendBitmap(0, HImg, iw, ih, iw * 4, bgra);
+            MilcoreEngine engine = sink.Engine;
             engine.CreateOrAddRef(HRoot, MilResourceTypeId.Visual);
-            return RenderContent(engine, MilCmd.DrawImageRecord(x, y, w, h, HImg), tw, th, hVisual: HRoot, hContent: HContent);
+            SceneVisual root = Realize(engine, MilCmd.DrawImageRecord(x, y, w, h, HImg), hVisual: HRoot, hContent: HContent);
+            var target = new byte[32];
+            BitConverter.TryWriteBytes(target.AsSpan(0), (uint)Mil.GenericTargetCreate);
+            BitConverter.TryWriteBytes(target.AsSpan(4), HTarget);
+            BitConverter.TryWriteBytes(target.AsSpan(24), (uint)tw);
+            BitConverter.TryWriteBytes(target.AsSpan(28), (uint)th);
+            engine.SubmitCommand(target);
+            engine.SubmitCommand(MilCmd.TargetSetRoot(HTarget, HRoot));
+
+            byte[]? px = sink.ReadbackTarget(0, HTarget);
+            Assert.NotNull(px);
+            int targetDraws = sink.Renderer.MilcoreFilterDraws;
+            Assert.False(sink.Renderer.MilcoreBitmapFilter, "the filter outlived the readback");
+            // what a window frame renders with: the GPU sampler (stock draws windows at tier 2)
+            sink.Renderer.RenderToRgba(root, tw, th, White);
+            int windowDraws = sink.Renderer.MilcoreFilterDraws - targetDraws;
+            for (int i = 0; i < px!.Length; i += 4) (px[i], px[i + 2]) = (px[i + 2], px[i]);
+            return (px, targetDraws, windowDraws);
+        }
+
+        /// <summary>A RenderTargetBitmap takes milcore's software filter, a window the GPU's: stock
+        /// renders the one in software and the other at render tier 2.</summary>
+        [Fact]
+        public void ARenderTargetBitmap_TakesMilcoresFilter_AWindowTheGpus()
+        {
+            byte[] px = { 0, 0, 0, 255, 255, 255, 255, 255 };
+            var (_, targetDraws, windowDraws) = Render(px, 2, 1, 0, 0, 64, 4, 64, 4);
+            Assert.Equal(1, targetDraws);
+            Assert.Equal(0, windowDraws);
         }
 
         /// <summary>Three 64-row bands, 256x192, stretched to 344x241 at (20, 20): every row of stock's
@@ -46,15 +85,15 @@ namespace WgpuInterop.Tests.Protocol
                 var c = bands[i / 256 / 64];
                 px[i * 4] = c.R; px[i * 4 + 1] = c.G; px[i * 4 + 2] = c.B; px[i * 4 + 3] = 255;
             }
-            byte[] got = Render(px, 256, 192, 20, 20, 344, 241, 384, 281);
+            byte[] got = Render(px, 256, 192, 20, 20, 344, 241, 384, 281).Rgba;
 
             // stock RenderTargetBitmap, each row (the picture is uniform along a row)
             (int Y, byte R, byte G, byte B)[] stock = { (20, 32, 192, 128), (100, 32, 152, 168), (101, 32, 128, 192), (180, 90, 128, 134), (181, 192, 128, 32), (261, 255, 255, 255) };
             int wrong = 0;
             string first = "";
-            for (int y = 0; y < 281; y++)
+            for (int y = 20; y < 261; y++)   // the target clears transparent; the image rows
             {
-                (byte R, byte G, byte B) want = (255, 255, 255);
+                (byte R, byte G, byte B) want = (0, 0, 0);
                 foreach (var s in stock) if (y >= s.Y) want = (s.R, s.G, s.B);
                 for (int x = 20; x < 364; x++)
                 {
@@ -75,7 +114,7 @@ namespace WgpuInterop.Tests.Protocol
         {
             // texels (R, G, B): (0,0,0) (255,255,100) / (0,255,37) (0,0,255)
             byte[] px = { 0, 0, 0, 255, 255, 255, 100, 255, 0, 255, 37, 255, 0, 0, 255, 255 };
-            byte[] got = Render(px, 2, 2, 0, 0, 512, 512, 512, 512);
+            byte[] got = Render(px, 2, 2, 0, 0, 512, 512, 512, 512).Rgba;
             int wrong = 0;
             string first = "";
             for (int y = 0; y < 512; y++)

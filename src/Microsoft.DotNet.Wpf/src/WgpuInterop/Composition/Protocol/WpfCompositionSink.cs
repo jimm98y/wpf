@@ -420,7 +420,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     return null;
                 }
 
-                byte[] px = _renderer!.RenderToRgba(root, t.Width, t.Height, t.ClearColor, srgbOutput: true);
+                // Stock renders a RenderTargetBitmap in software: its bitmaps are filtered by milcore's
+                // CBilinearSpan, not by a GPU (WgpuSceneRenderer.MilcoreBitmapFilter).
+                byte[] px;
+                _renderer!.MilcoreBitmapFilter = true;
+                try { px = _renderer.RenderToRgba(root, t.Width, t.Height, t.ClearColor, srgbOutput: true); }
+                finally { _renderer.MilcoreBitmapFilter = false; }
                 for (int i = 0; i < px.Length; i += 4)
                     (px[i], px[i + 2]) = (px[i + 2], px[i]);   // RGBA -> BGRA
                 Log($"readback target 0x{targetHandle:x}: {t.Width}x{t.Height} root={t.RootHandle}");

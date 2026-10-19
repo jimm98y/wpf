@@ -356,7 +356,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public float TileWidth { get; }
         public float TileHeight { get; }
         public float Opacity { get; }   // TileBrush.Opacity (incl. animated); modulates the sampled alpha
-        /// <summary>A WPF bitmap: filtered as WPF's own rasterizer filters it (8-bit truncated bilinear
+        /// <summary>A WPF bitmap: in a RenderTargetBitmap filtered as milcore's software rasterizer filters it (8-bit bilinear
         /// weights, premultiplied texels, one rounding), not by the GPU's sampler -- see fs_textured_wpf.</summary>
         public bool WpfFilter { get; init; }
 

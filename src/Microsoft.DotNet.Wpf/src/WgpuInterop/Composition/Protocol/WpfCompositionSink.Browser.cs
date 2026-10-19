@@ -80,7 +80,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 EnsureGpu();
                 if (_headless) return null;
                 width = t.Width; height = t.Height;
-                pending = _renderer!.RenderToRgbaAsync(root, width, height, t.ClearColor, srgbOutput: true);
+                _renderer!.MilcoreBitmapFilter = true;   // a RenderTargetBitmap: milcore's software filter
+                try { pending = _renderer.RenderToRgbaAsync(root, width, height, t.ClearColor, srgbOutput: true); }
+                finally { _renderer.MilcoreBitmapFilter = false; }
             }
             catch (Exception ex)
             {
