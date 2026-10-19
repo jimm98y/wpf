@@ -31,6 +31,8 @@ namespace WgpuInterop.Tests.Direct3D
     internal static unsafe class DxbcPixelParity
     {
         public const int W = 32, H = 32;
+        /// <summary>Textures whose upload did not read back as written (DXBC_CHECK_UPLOADS).</summary>
+        public static int LostUploads;
 
         // ---- reflection (RDEF) -------------------------------------------------------------------
 
@@ -449,6 +451,22 @@ namespace WgpuInterop.Tests.Direct3D
                     Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &td, depth ? null : ip, &tex), "CreateTexture2D srv");
             }
             keep(tex);
+            // DXBC_CHECK_UPLOADS: read the texture straight back and count the texels that did not arrive
+            if (!depth && !cube && layers == 1 && Environment.GetEnvironmentVariable("DXBC_CHECK_UPLOADS") != null)
+            {
+                D3D11_TEXTURE2D_DESC sd = td;
+                sd.Usage = D3D11_USAGE.STAGING; sd.BindFlags = 0; sd.CPUAccessFlags = D3D11_CPU_ACCESS.READ;
+                IntPtr st;
+                Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &sd, null, &st), "staging check");
+                keep(st);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopyResource))(ctx, st, tex);
+                D3D11_MAPPED_SUBRESOURCE m;
+                Check(((delegate* unmanaged<IntPtr, IntPtr, uint, D3D11_MAP, uint, D3D11_MAPPED_SUBRESOURCE*, int>)Fn(ctx, Vtbl.ID3D11DeviceContext.Map))(ctx, st, 0, D3D11_MAP.READ, 0, &m), "map check");
+                for (int y = 0; y < S; y++)
+                    for (int x = 0; x < S; x++)
+                        if (((uint*)((byte*)m.pData + y * m.RowPitch))[x] != px[y * S + x]) { LostUploads++; y = S; break; }
+                ((delegate* unmanaged<IntPtr, IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Unmap))(ctx, st, 0);
+            }
             if (depth)
             {
                 var dd = new D3D11_DEPTH_STENCIL_VIEW_DESC { Format = DXGI_FORMAT.D32_FLOAT, ViewDimension = 3 };
