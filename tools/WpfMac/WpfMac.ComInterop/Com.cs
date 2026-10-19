@@ -119,6 +119,13 @@ public static unsafe partial class Com
         finally { Marshal.FreeBSTR(p); }
     }
 
+    /// <summary>A string argument a native caller passed (it keeps the memory): null for null.</summary>
+    public static string? StringOfBstr(IntPtr p) => p == IntPtr.Zero ? null : Marshal.PtrToStringBSTR(p);
+
+    public static string? StringOfUni(IntPtr p) => p == IntPtr.Zero ? null : Marshal.PtrToStringUni(p);
+
+    public static string? StringOfAnsi(IntPtr p) => p == IntPtr.Zero ? null : Marshal.PtrToStringAnsi(p);
+
     /// <summary>An LPWSTR the callee returned in CoTaskMem memory: its string, and freed.</summary>
     public static string? TakeCoTaskString(IntPtr p)
     {
@@ -144,14 +151,14 @@ public static unsafe partial class Com
     {
         if (o is ComObject c) return c.QueryInterface(iid);
         // a managed object: its CCW
-        IntPtr unk = Ccw.Instance.GetOrCreateComInterfaceForObject(o, CreateComInterfaceFlags.None);
+        IntPtr unk = CcwUnknown(o);
         if (iid == IID_IUnknown) return unk;
         try
         {
             int hr = Marshal.QueryInterface(unk, in iid, out IntPtr p);
             if (hr < 0)
             {
-                LogOnce("ccw:" + o.GetType().FullName + iid, $"a managed {o.GetType().FullName} was passed to native code as interface {iid}: only IUnknown is implemented for managed objects");
+                LogOnce("ccw:" + o.GetType().FullName + iid, $"a managed {o.GetType().FullName} was passed to native code as interface {iid}, which it does not implement as a rewritten COM interface");
                 throw new InvalidCastException($"{o.GetType().FullName} has no COM interface {iid} for native code");
             }
             return p;
@@ -225,22 +232,6 @@ public static unsafe partial class Com
     [DllImport("ole32.dll")]
     private static extern int CoCreateInstance(in Guid clsid, IntPtr outer, uint context, in Guid iid, out IntPtr p);
 
-    /// <summary>Managed objects handed to native code: IUnknown only, for now (the rewriter logs a managed
-    /// implementation of a ComImport interface that would need more).</summary>
-    private sealed class Ccw : ComWrappers
-    {
-        public static readonly Ccw Instance = new();
-
-        protected override ComInterfaceEntry* ComputeVtables(object obj, CreateComInterfaceFlags flags, out int count)
-        {
-            count = 0;
-            return null;
-        }
-
-        protected override object? CreateObject(IntPtr externalComObject, CreateObjectFlags flags) => null;
-
-        protected override void ReleaseObjects(System.Collections.IEnumerable objects) { }
-    }
 }
 
 /// <summary>A native COM object, one per identity (its IUnknown): what a rewritten assembly holds where

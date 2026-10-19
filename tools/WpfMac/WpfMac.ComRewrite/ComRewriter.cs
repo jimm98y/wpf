@@ -41,7 +41,7 @@ public sealed class RewriteResult
           (Unsupported.Count == 0 ? "" : $"; unsupported: {string.Join("; ", Unsupported.Take(8))}{(Unsupported.Count > 8 ? $" (+{Unsupported.Count - 8} more)" : "")}");
 }
 
-public static class ComRewriter
+public static partial class ComRewriter
 {
     /// <summary>Whether the file declares a ComImport type (metadata only, cheap).</summary>
     public static bool DeclaresComImport(string path)
@@ -162,7 +162,7 @@ public static class ComRewriter
 
     // ------------------------------------------------------------------------------------------------
 
-    private sealed class Work
+    private sealed partial class Work
     {
         private readonly ModuleDefinition _m;
         private readonly RewriteResult _r;
@@ -180,6 +180,7 @@ public static class ComRewriter
         private readonly MethodReference _guidCtor, _strToUni, _strToAnsi, _freeCoTask;
 
         private readonly ISet<string>? _external;
+        private readonly List<(TypeDefinition Class, TypeReference Interface)> _ccwUsers = new();
 
         public Work(ModuleDefinition m, RewriteResult r, ISet<string>? externallyReferenced)
         {
@@ -234,7 +235,7 @@ public static class ComRewriter
             {
                 if (t.IsImport || t.IsInterface) continue;
                 foreach (var i in t.Interfaces)
-                    if (IsCom(i.InterfaceType)) _r.Unsupported.Add($"managed class {t.FullName} implements COM interface {i.InterfaceType.Name} (a CCW)");
+                    if (IsCom(i.InterfaceType)) _ccwUsers.Add((t, i.InterfaceType));
                 if (t.CustomAttributes.Any(a => a.AttributeType.Name == "ComSourceInterfacesAttribute"))
                     _r.Unsupported.Add($"COM events: {t.FullName} has [ComSourceInterfaces]");
             }
@@ -262,6 +263,13 @@ public static class ComRewriter
                 if (_external == null || _external.Contains(t.IsNested ? t.Name : t.FullName))
                     _r.Unsupported.Add($"{t.FullName} is {(_external == null ? "visible to" : "used by")} other assemblies (they may hand it built-in RCWs)");
             foreach (var t in _comTypes.Where(t => t.IsInterface).ToList()) RewriteInterface(t);
+            // a managed class implementing a COM interface: its CCW must cover every method
+            foreach (var (cls, it) in _ccwUsers)
+            {
+                var d = Safe(it);
+                if (d == null || !_ccwRefused.TryGetValue(d, out var refused)) { _r.Unsupported.Add($"managed class {cls.FullName} implements COM interface {it.Name} (no CCW)"); continue; }
+                foreach (var why in refused) _r.Unsupported.Add($"managed class {cls.FullName} implements {it.Name}, whose CCW cannot convert {why}");
+            }
             foreach (var t in _m.Types.SelectMany(AllTypes).ToList()) if (IsDelegate(t) && !t.IsImport) MaybeRewriteDelegate(t);
             foreach (var t in _m.Types.SelectMany(AllTypes).ToList())
                 foreach (var md in t.Methods.ToList())
@@ -411,7 +419,9 @@ public static class ComRewriter
             _r.Interfaces++;
 
             int slot = first;
-            foreach (var md in t.Methods.Where(x => !x.IsStatic).ToList())
+            var methods = t.Methods.Where(x => !x.IsStatic).ToList();
+            EmitCcw(t, first, methods);
+            foreach (var md in methods)
             {
                 var body = new MethodDefinition($"{t.FullName}.{md.Name}", MethodAttributes.Private | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual | MethodAttributes.Final, md.ReturnType);
                 foreach (var p in md.Parameters) body.Parameters.Add(new ParameterDefinition(p.Name, p.Attributes & ~ParameterAttributes.HasFieldMarshal, p.ParameterType));
