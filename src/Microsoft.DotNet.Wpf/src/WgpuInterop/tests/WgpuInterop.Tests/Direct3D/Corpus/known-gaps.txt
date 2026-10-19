@@ -5,5 +5,3 @@ compute.cs_double_ext.cs_5_0.dxbc: double-precision itod: shader-f64 is not avai
 compute.cs_double.cs_5_0.dxbc: double-precision utod: shader-f64 is not available to WGSL here
 compute.cs_texture_atomic.cs_5_0.dxbc: atomic_umax on typed UAV texture u2: WGSL has no texture atomics
 stages.ps_interface.ps_5_0.dxbc: class linkage (interfaces): each call site is specialized at bind time from the bound class instances -- not implemented yet
-# Draw-level gaps (not a shader of the corpus): the test that would cover each reads its line.
-draw:isoline-lines: WARP rasterizes an isoline patch's lines only in part (points and the stream-out line list match); TessellatedDraws draws isolines as points until it is understood

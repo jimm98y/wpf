@@ -265,21 +265,22 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.True(ps.Length > 0, perr);
             var failures = new List<string>();
             int same = 0;
-            bool isolineLinesGap = DxbcCoverageTests.KnownGaps().ContainsKey("draw:isoline-lines");
+            byte[] vsLines = Compile("struct O { float4 pos : SV_Position; float4 c : COLOR0; };\nO main(float4 p : POSITION, float4 c : COLOR) { O o; o.pos = p; o.c = c; return o; }", "vs_5_0", out _);
             try
             {
                 foreach (var (domain, points, nf, kStruct) in Domains)
                     foreach (string part in s_partitionings)
                     {
-                        // isolines as points while known-gaps.txt lists draw:isoline-lines (WARP rasterizes the
-                        // lines of an isoline patch only in part; the points and the stream-out list match ours)
-                        string topology = domain == "isoline" ? (isolineLinesGap ? "point" : "line") : part == "integer" ? "triangle_ccw" : "triangle_cw";
+                        string topology = domain == "isoline" ? "line" : part == "integer" ? "triangle_ccw" : "triangle_cw";
                         byte[] hs = Compile(Hull(domain, points, nf, kStruct, part, topology), "hs_5_0", out string? herr);
                         byte[] ds = Compile(Domain(domain, points, kStruct, position: true), "ds_5_0", out string? derr);
                         if (hs.Length == 0 || ds.Length == 0) { failures.Add($"{domain}/{part}: compile: {herr}{derr}"); continue; }
                         foreach (float[] f in new[] { s_factors[1], s_factors[2], s_factors[3] })
                         {
-                            var warp = DrawPatches(wDev, wCtx, vs, hs, ds, ps, points, f);
+                            // WARP's isoline patches rasterize their lines only in part, and not the same way twice,
+                            // while WARP draws the very lines its domain shader streams out in full as a line list:
+                            // that line list, drawn by WARP, is the oracle for isolines
+                            var warp = domain == "isoline" ? LinesThroughSo(wDev, wCtx, vs, hs, ds, ps, vsLines, points, f, out _) : DrawPatches(wDev, wCtx, vs, hs, ds, ps, points, f);
                             var shim = DrawPatches(sDev, sCtx, vs, hs, ds, ps, points, f);
                             var (count, first) = Compare(warp, shim);
                             string what = $"{domain}/{part} [{string.Join(", ", f.Take(nf))}]";
@@ -296,6 +297,91 @@ namespace WgpuInterop.Tests.Direct3D
                 foreach (IntPtr p in new[] { sCtx, sDev, wCtx, wDev }) Release(p);
             }
             Assert.True(failures.Count == 0, $"{same} draw as WARP draws; " + string.Join(Environment.NewLine, failures.Take(25)));
+        }
+
+        /// <summary>The patches' domain-shader outputs streamed out (no rasterizer), then drawn by
+        /// DrawAuto as a line list.</summary>
+        private static List<float[]> LinesThroughSo(IntPtr dev, IntPtr ctx, byte[] vs, byte[] hs, byte[] ds, byte[] ps, byte[] vsLines, int points, float[] factors, out List<float> stream)
+        {
+            var made = new List<IntPtr>();
+            IntPtr Keep(IntPtr p) { made.Add(p); return p; }
+            var hnd = new List<GCHandle>();
+            byte* Name(string s) { var h = GCHandle.Alloc(Encoding.ASCII.GetBytes(s + "\0"), GCHandleType.Pinned); hnd.Add(h); return (byte*)h.AddrOfPinnedObject(); }
+            try
+            {
+                IntPtr v, h, d, gs, psh, layout, layout2, v2, vb, cb, so, tex, rtv, rs;
+                fixed (byte* p = vs) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateVertexShader))(dev, p, (nuint)vs.Length, IntPtr.Zero, &v), "vs"); Keep(v);
+                fixed (byte* p = vsLines) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateVertexShader))(dev, p, (nuint)vsLines.Length, IntPtr.Zero, &v2), "vs2"); Keep(v2);
+                fixed (byte* p = hs) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateHullShader))(dev, p, (nuint)hs.Length, IntPtr.Zero, &h), "hs"); Keep(h);
+                fixed (byte* p = ds) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateDomainShader))(dev, p, (nuint)ds.Length, IntPtr.Zero, &d), "ds"); Keep(d);
+                fixed (byte* p = ps) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreatePixelShader))(dev, p, (nuint)ps.Length, IntPtr.Zero, &psh), "ps"); Keep(psh);
+                var decl = new[] { new SoEntry { SemanticName = Name("SV_POSITION"), ComponentCount = 4 }, new SoEntry { SemanticName = Name("COLOR"), ComponentCount = 4 } };
+                uint stride = 32;
+                fixed (byte* p = ds) fixed (SoEntry* e = decl)
+                    Check(((delegate* unmanaged<IntPtr, byte*, nuint, SoEntry*, uint, uint*, uint, uint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateGeometryShaderWithStreamOutput))(dev, p, (nuint)ds.Length, e, 2, &stride, 1, 0xFFFFFFFF, IntPtr.Zero, &gs), "gs so");
+                Keep(gs);
+                var el = new D3D11_INPUT_ELEMENT_DESC { SemanticName = Name("POSITION"), Format = DXGI_FORMAT.R32G32B32_FLOAT };
+                fixed (byte* code = vs) Check(((delegate* unmanaged<IntPtr, D3D11_INPUT_ELEMENT_DESC*, uint, byte*, nuint, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateInputLayout))(dev, &el, 1, code, (nuint)vs.Length, &layout), "il"); Keep(layout);
+                var els = new[] { new D3D11_INPUT_ELEMENT_DESC { SemanticName = Name("POSITION"), Format = DXGI_FORMAT.R32G32B32A32_FLOAT }, new D3D11_INPUT_ELEMENT_DESC { SemanticName = Name("COLOR"), Format = DXGI_FORMAT.R32G32B32A32_FLOAT, AlignedByteOffset = 16 } };
+                fixed (D3D11_INPUT_ELEMENT_DESC* ep = els) fixed (byte* code = vsLines) Check(((delegate* unmanaged<IntPtr, D3D11_INPUT_ELEMENT_DESC*, uint, byte*, nuint, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateInputLayout))(dev, ep, 2, code, (nuint)vsLines.Length, &layout2), "il2"); Keep(layout2);
+                var verts = new List<float>();
+                for (int patch = 0; patch < 2; patch++) { float x0 = patch == 0 ? -0.95f : 0.05f, x1 = x0 + 0.9f; verts.AddRange(new[] { x0, 0.1f, 0.5f, x1, -0.1f, 0.5f }); }
+                var va = verts.ToArray();
+                fixed (float* p = va) vb = Buffer(dev, p, va.Length * 4, D3D11_BIND.VERTEX_BUFFER, Keep);
+                var fb = new float[8]; Array.Copy(factors, fb, 6);
+                fixed (float* p = fb) cb = Buffer(dev, p, 32, D3D11_BIND.CONSTANT_BUFFER, Keep);
+                var zeros = new byte[8192];
+                fixed (byte* p = zeros) so = Buffer(dev, p, zeros.Length, D3D11_BIND.STREAM_OUTPUT | D3D11_BIND.VERTEX_BUFFER, Keep);
+                uint zero = 0, vstride = 12;
+                ((delegate* unmanaged<IntPtr, uint, IntPtr*, uint*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.SOSetTargets))(ctx, 1, &so, &zero);
+                ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, uint*, uint*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetVertexBuffers))(ctx, 0, 1, &vb, &vstride, &zero);
+                ((delegate* unmanaged<IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetInputLayout))(ctx, layout);
+                ((delegate* unmanaged<IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetPrimitiveTopology))(ctx, (uint)(32 + points));
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.VSSetShader))(ctx, v, null, 0);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.HSSetShader))(ctx, h, null, 0);
+                ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.HSSetConstantBuffers))(ctx, 0, 1, &cb);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.DSSetShader))(ctx, d, null, 0);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.GSSetShader))(ctx, gs, null, 0);
+                ((delegate* unmanaged<IntPtr, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Draw))(ctx, (uint)(2 * points), 0);
+                ((delegate* unmanaged<IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearState))(ctx);
+                // read the stream back
+                IntPtr st;
+                var bd = new D3D11_BUFFER_DESC { ByteWidth = (uint)zeros.Length, Usage = D3D11_USAGE.STAGING, CPUAccessFlags = D3D11_CPU_ACCESS.READ };
+                Check(((delegate* unmanaged<IntPtr, D3D11_BUFFER_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateBuffer))(dev, &bd, null, &st), "st"); Keep(st);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopyResource))(ctx, st, so);
+                D3D11_MAPPED_SUBRESOURCE m;
+                Check(((delegate* unmanaged<IntPtr, IntPtr, uint, D3D11_MAP, uint, D3D11_MAPPED_SUBRESOURCE*, int>)Fn(ctx, Vtbl.ID3D11DeviceContext.Map))(ctx, st, 0, D3D11_MAP.READ, 0, &m), "map");
+                stream = new List<float>();
+                float* fp = (float*)m.pData;
+                for (int v8 = 0; v8 * 8 + 8 <= zeros.Length / 4 && fp[v8 * 8 + 3] != 0; v8++) for (int k = 0; k < 8; k++) stream.Add(fp[v8 * 8 + k]);
+                ((delegate* unmanaged<IntPtr, IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Unmap))(ctx, st, 0);
+                // and draw it as a line list
+                var td = new D3D11_TEXTURE2D_DESC { Width = W, Height = H, MipLevels = 1, ArraySize = 1, Format = DXGI_FORMAT.R16G16B16A16_FLOAT, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.RENDER_TARGET };
+                Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &td, null, &tex), "tex"); Keep(tex);
+                Check(((delegate* unmanaged<IntPtr, IntPtr, void*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateRenderTargetView))(dev, tex, null, &rtv), "rtv"); Keep(rtv);
+                float* clear = stackalloc float[] { 0.25f, 0.5f, 0.75f, 1f };
+                ((delegate* unmanaged<IntPtr, IntPtr, float*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearRenderTargetView))(ctx, rtv, clear);
+                var rd = D3D11_RASTERIZER_DESC.Default(); rd.CullMode = 1;
+                Check(((delegate* unmanaged<IntPtr, D3D11_RASTERIZER_DESC*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateRasterizerState))(dev, &rd, &rs), "rs"); Keep(rs);
+                ((delegate* unmanaged<IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetState))(ctx, rs);
+                uint s32 = 32;
+                ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, uint*, uint*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetVertexBuffers))(ctx, 0, 1, &so, &s32, &zero);
+                ((delegate* unmanaged<IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetInputLayout))(ctx, layout2);
+                ((delegate* unmanaged<IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetPrimitiveTopology))(ctx, 2);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.VSSetShader))(ctx, v2, null, 0);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.PSSetShader))(ctx, psh, null, 0);
+                ((delegate* unmanaged<IntPtr, uint, IntPtr*, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetRenderTargets))(ctx, 1, &rtv, IntPtr.Zero);
+                var vp = new D3D11_VIEWPORT { Width = W, Height = H, MaxDepth = 1 };
+                ((delegate* unmanaged<IntPtr, uint, D3D11_VIEWPORT*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetViewports))(ctx, 1, &vp);
+                ((delegate* unmanaged<IntPtr, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Draw))(ctx, (uint)(stream.Count / 8), 0);
+                return new List<float[]> { ReadTarget(dev, ctx, tex, Keep) };
+            }
+            finally
+            {
+                ((delegate* unmanaged<IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearState))(ctx);
+                foreach (IntPtr p in made) Release(p);
+                foreach (var x in hnd) x.Free();
+            }
         }
 
         /// <summary>Every domain, partitioning and output primitive, over a spread of factors: the
