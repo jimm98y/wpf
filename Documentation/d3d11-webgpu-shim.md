@@ -241,9 +241,15 @@ app that renders into it. The native `InteropDeviceBitmap` P/Invokes are replace
 implementation. The DUCE commands `MILCMD_D3DIMAGE` and `MILCMD_D3DIMAGE_PRESENT` become a scene
 primitive, `ExternalImage`, that names a WebGPU texture, a version and a dirty rectangle.
 
-- **The surface is the shim's** (`IDirect3DSurface9` from section 7): the primitive references the
-  shim texture directly, so there is no copy. The present event (`_canWriteEvent`) is set once the
-  renderer has sampled that version.
+- **The surface is the shim's** (`IDirect3DSurface9` from section 7): it takes the same path as a
+  real one below: a GPU readback through the shim's `GetRenderTargetData`, then an upload.
+  - **Decided (2026-10-19, the user): the copy path stays; no device sharing for now.** A copy-free
+    path needs the shim's textures and the compositor on one WebGPU device. The compositor has one
+    device per UI thread (the multi-UI-thread fix), and the shim's device logs validation errors
+    instead of aborting. On the GL backend textures cannot cross wgpu devices.
+  - The option kept for later: the compositor adopts the shim's device rules and the shim uses the
+    UI thread's device. A present is then a GPU-to-GPU copy into the compositor's texture, which is
+    what stock does with a shared D3D9Ex surface.
 - **The surface is a real Direct3D 9 surface** (Windows): it is read through its vtable (`GetDesc`,
   `GetDevice`, then `CreateOffscreenPlainSurface(SYSTEMMEM)`, `GetRenderTargetData`, `LockRect`) and
   uploaded with `queue.writeTexture` into the primitive's texture. This is WPF's own software-
@@ -255,6 +261,150 @@ primitive, `ExternalImage`, that names a WebGPU texture, a version and a dirty r
   a texture, with D3DImage's lock semantics, for new code that renders with WebGPU directly. It is
   the same `ExternalImage` primitive.
 
+### 9. Translating any application's shaders
+
+Translation has to work for any application's shaders, not only for the shaders we have tested. Coverage comes
+from the bytecode specification (the DXBC token format and the SM4/SM5 instruction set), and the
+corpora check that coverage.
+
+**The container.** Every chunk is read:
+
+- `SHDR`/`SHEX`, the token stream;
+- `ISGN`/`OSGN`/`PCSG` and their 5.0/5.1 forms `ISG1`/`OSG5`/`OSG1`/`PSG1`;
+- `RDEF`, the resource bindings and constant-buffer layouts, also used by `D3DReflect`;
+- `STAT` and `SFI0`, the required features (doubles, 64 UAVs, typed UAV loads, ...);
+- `IFCE`, class linkage.
+
+An unknown chunk is logged once and skipped.
+
+**The decoder.** It decodes every opcode with its operands:
+
+- operand types, 0–3 index dimensions with immediate, relative or combined addressing;
+- swizzle, select and mask modes, negate/abs modifiers, `_sat`;
+- extended opcode tokens: sample offsets, resource dimension and return type, `precise`;
+- every declaration;
+- the immediate constant buffer;
+- interface and function tables.
+
+The decoder is table-driven, one row per opcode: its operand count and kinds, which of them are
+destinations, and the opcode's class. So nothing can be skipped silently. An opcode with no emitter
+fails the translation and names itself.
+
+**The emitter, by area.**
+
+- **ALU.** Float, integer and bit operations, conversions, f16 pack/unpack, the `msad`/`bfi`/`ubfe`
+  family, and `swapc`. Registers stay `vec4<f32>` bits, with `bitcast` at integer operations.
+- **Doubles.** `shader-f64` when the adapter has it, which wgpu has natively on Vulkan/Metal/DX12.
+  Otherwise an emulation with two f32 values, logged once as lower precision.
+- **Control flow.** `if`, `loop`, `switch`, `break`/`continue`/`ret` with their conditional forms,
+  `call`/`callc` (functions), and `discard`.
+- **Resources.**
+  - Textures of every dimension, including multisampled and arrays.
+  - `sample`, `_b`, `_l`, `_d`, `_c`, `_c_lz`, `gather4` with offset and compare variants, `ld`, `ld_ms`.
+  - `resinfo`, `sampleinfo`, `samplepos`, `lod`.
+  - UAVs: typed `RWTexture*`, raw and structured buffers, loads and stores, and every atomic and
+    immediate atomic (on `atomic<u32>` storage).
+  - Append/consume counters, as atomics on a hidden counter buffer.
+  - Groupshared memory (`var<workgroup>`), barriers (`sync_*`), and derivatives, including coarse and
+    fine.
+- **Interpolation modifiers.** linear/centroid/sample/noperspective/constant become
+  `@interpolate(...)`.
+- **System values.** `SV_*` map to builtins where WebGPU has them. The rest are emulated:
+  - `SV_PrimitiveID` from the vertex index, or from the GS/HS expansion.
+  - `SV_RenderTargetArrayIndex` and `SV_ViewportArrayIndex` through the GS path, by layered passes.
+- **Stages.**
+  - VS, PS and CS natively.
+  - GS through the compute expansion (section 6).
+  - HS/DS through compute: the hull shader's control-point and patch-constant phases run as compute
+    kernels. A managed port of the D3D11 fixed-function tessellator (integer, pow2 and fractional
+    partitioning; triangle, quad and isoline domains) runs on the GPU as a compute pass. The domain
+    shader runs as the vertex shader of the draw that follows.
+
+**What WebGPU cannot express.** Each case has a defined fallback and one log line, and never wrong
+code:
+
+- doubles without `shader-f64` (emulated, with lower precision);
+- `SV_ViewportArrayIndex` beyond 1 (layered passes);
+- class linkage (each interface call site is specialized at bind time from the bound class
+  instances);
+- 64-bit atomics (refused, with the reason);
+- stencil reference output from PS (refused);
+- conservative rasterization (ignored).
+
+A refused shader makes its draw a no-op and logs why. It does not abort.
+
+**DXIL (SM6, DXC's output).** The input is LLVM 3.7 bitcode in a `DXIL` container chunk:
+
+1. A managed bitcode reader: blocks, abbreviations, the value/type/metadata tables.
+2. The `dx.op` intrinsics, about 250.
+3. A structurizer for the unstructured SSA control-flow graph (a stackifier, as Binaryen and naga's
+   SPIR-V reader do).
+4. Emission through the same WGSL back end as DXBC.
+
+SM6 wave intrinsics map to WGSL subgroups where the adapter has them; otherwise the shader is
+refused. The alternative is a native dxil-spirv (Valve) with naga's SPIR-V front end. It is smaller
+to write, but it means a native dependency for every head, which the rules here keep out.
+
+**Runtime compilation.** Applications call `D3DCompile`/`D3DCompileFromFile` and `D3DReflect`.
+
+- **Windows:** the real `d3dcompiler_47.dll` ships with the OS, so the shim leaves it alone, and the
+  DXBC it produces goes through the translator like any other.
+- **Elsewhere:**
+  - a managed `D3DReflect` over the RDEF/signature reader;
+  - `D3DCompile` through DXC (open source, MIT/LLVM licence, builds for macOS/Linux), loaded only
+    when an application compiles, with its DXIL taken by the DXIL path;
+  - shipped as an optional native package, and its absence answers `D3DCompile` with `E_FAIL` and
+    a log line.
+- A managed HLSL front end was weighed against this: about 30k lines to reach fxc's dialect, for one
+  feature.
+
+**Tests for generality.**
+
+- **Corpora, checked in as bytecode with their sources.**
+  - Per-opcode HLSL tests written here, one small shader per instruction family and stage, compiled
+    with fxc (`/T *_4_0`, `*_4_1`, `*_5_0`) by a script and checked in as data.
+  - Microsoft's samples, MIT-licensed (DirectX-Graphics-Samples, the D3D11 samples), compiled the
+    same way.
+  - DXEngine's 170, from the application, through `DXBC_CORPUS` (not checked in).
+- **Every shader** is translated, its WGSL validated by naga at module creation, and its pipeline
+  created.
+- **Representative shaders run** against WARP, pixel- or buffer-exact within half-float tolerance:
+  - VS/PS through `DxbcPixelParity`: inputs from reflection, a generated partner stage, point
+    sampling;
+  - CS through UAV buffers;
+  - GS and HS/DS through the generated partner.
+- **An opcode-coverage report.** Every opcode in every corpus is counted against the emitter table.
+  The test fails on any that is unhandled, and lists the ones the corpora never exercise.
+
+**Size.**
+
+| Part | Lines (approx.) |
+|---|---|
+| DXBC decoder, all chunks and opcodes | 1,500 |
+| Emitter: ALU, integer, doubles, control flow | 2,000 |
+| Resources, UAVs, atomics, groupshared, sampling | 2,000 |
+| CS on the device side (dispatch, UAV binding, counters) | 800 |
+| GS compute expansion, translator and runtime | 1,500 |
+| HS/DS: the tessellator port and runtime | 3,000 |
+| Fallbacks: class linkage, viewport arrays, f64 emulation | 1,000 |
+| DXIL: bitcode reader, dx.op, structurizer | 7,000 |
+| D3DReflect and DXC loading | 1,000 |
+| Tests, the per-opcode corpus, the coverage report | 3,500 |
+| **Total** | **about 23,000** |
+
+**Order.**
+
+1. The table-driven decoder and the coverage report (they say what is missing).
+2. ALU and resources.
+3. CS and UAVs.
+4. GS.
+5. HS/DS.
+6. Doubles and the fallbacks.
+7. DXIL.
+8. Runtime compilation.
+
+Each step is its own commit with its corpus tests.
+
 ## Milestones
 
 Each milestone is one or more commits with tests. The WgpuInterop, WinForms and pixel gates stay
@@ -264,7 +414,8 @@ green throughout.
 |---|---|---|
 | M1 | Device, immediate context, buffers, 2D textures, RTV, input layout, the VS/PS subset of the translator, clear plus triangle, staging `Map` | WgpuInterop.Tests `Direct3D/*`: readback against expected pixels, and the same calls on real D3D11 WARP on Windows (same slots, same results) |
 | M2 | D3DImage: shim surface (no copy) and real D3D9 surface (copy); D3D9Ex shim | minimal D3DImage sample against stock; SpatialVideoConverter's GpuMediaControl plays under the launcher |
-| M3 | Full SM4 translator plus GS emulation | all 170 DXEngine shaders translate and pass WebGPU validation; pixel tests of representative ones against WARP |
+| M3 | A general DXBC translator: SM4.0/4.1/5.0 by the specification, all stages (section 9) | the corpus suites of section 9; DXEngine's 170 shaders are one corpus among several |
+| M3b | DXIL (SM6) input; runtime HLSL compilation (D3DCompile and D3DReflect) | section 9 |
 | M4 | DXEngine in a plain WPF test app (box, lines, PBR material) under the launcher | frame against stock WPF with real D3D11 |
 | M5 | app 3D display with the shim | frame of `ThreeD.gdfx` plus models |
 | M6 | Off Windows (Mac head, or the dx12/WARP/GL backends), plus the WriteableBitmap fallback probe | the M1/M3 tests on each backend; probe log |
@@ -275,5 +426,11 @@ green throughout.
   vertex/pixel subset of the shader translator, clear plus a triangle, and staging `Map`.
   `Direct3D/D3D11ShimTests` (WgpuInterop.Tests) checks the readback against expected pixels and
   against real D3D11 WARP on Windows through the same vtable slots.
-- **Not wired yet:** the d3d11/dxgi entries in the launcher's export images (Windows) and in
-  `libwin32shim` (other heads). Until then the shim is reached only through its managed entry points.
+- **M2:** done.
+  - D3D9Ex shim (095d5e223) and managed D3DImage on the copy path (f087d629c), with sharing both ways.
+  - The launcher routes d3d11/dxgi/d3d9 (`WPF_D3D11_SHIM`, default `SharpDX*;Ab3d.DXEngine*`) and fills
+    `libwin32shim` elsewhere.
+  - Shim surfaces take the copy path, by the user's decision (section 8).
+- **M3 (in progress):**
+  - DXEngine's vertex and pixel shaders compile, and all of them draw as WARP draws (5b48ce73e).
+  - The general translator of section 9 is next.
