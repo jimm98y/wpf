@@ -6,4 +6,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NoWarn>$(NoWarn);CA1416;SYSLIB1096</NoWarn>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../LocationAskerFixture/LocationAskerFixture.csproj" />
+  </ItemGroup>
 </Project>

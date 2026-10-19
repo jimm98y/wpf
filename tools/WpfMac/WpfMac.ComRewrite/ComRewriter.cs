@@ -67,6 +67,25 @@ public static partial class ComRewriter
     public static RewriteResult Rewrite(string input, string? output, IEnumerable<string> searchDirs, bool partial)
         => Rewrite(input, output, searchDirs, partial, externallyReferenced: null);
 
+    /// <summary>
+    /// The verdict alone, the launcher's judge: what the rewrite would support, found by reading the metadata
+    /// and IL -- no code is generated (that happens when the assembly loads, ComImportLoader).
+    /// </summary>
+    public static RewriteResult Analyze(string input, IEnumerable<string> searchDirs, ISet<string>? externallyReferenced)
+    {
+        var result = new RewriteResult();
+        var resolver = new DefaultAssemblyResolver();
+        foreach (string d in searchDirs) if (Directory.Exists(d)) resolver.AddSearchDirectory(d);
+        resolver.AddSearchDirectory(Path.GetDirectoryName(Path.GetFullPath(input))!);
+        using var module = ModuleDefinition.ReadModule(input, new ReaderParameters { AssemblyResolver = resolver, ReadingMode = ReadingMode.Deferred, InMemory = true });
+        if (!module.Types.SelectMany(AllTypes).Any(t => t.IsImport)) return result;
+        result.UsesComImport = true;
+        if (!module.IsILOnly()) { result.Unsupported.Add("mixed-mode (not IL-only) assembly"); return result; }
+        try { new Work(module, result, externallyReferenced) { AnalyzeOnly = true }.Run(); }
+        catch (AssemblyResolutionException e) { result.Unsupported.Add($"cannot resolve {e.AssemblyReference.Name}"); }
+        return result;
+    }
+
     /// <param name="externallyReferenced">The names (Namespace.Name, or Name for a nested type) of this
     /// assembly's types that other assemblies of the app reference; null: assume any visible type is.</param>
     public static RewriteResult Rewrite(string input, string? output, IEnumerable<string> searchDirs, bool partial, ISet<string>? externallyReferenced)
@@ -75,7 +94,7 @@ public static partial class ComRewriter
         var resolver = new DefaultAssemblyResolver();
         foreach (string d in searchDirs) if (Directory.Exists(d)) resolver.AddSearchDirectory(d);
         resolver.AddSearchDirectory(Path.GetDirectoryName(Path.GetFullPath(input))!);
-        using var module = ModuleDefinition.ReadModule(input, new ReaderParameters { AssemblyResolver = resolver, ReadingMode = ReadingMode.Immediate, InMemory = true });
+        using var module = ModuleDefinition.ReadModule(input, new ReaderParameters { AssemblyResolver = resolver, ReadingMode = ReadingMode.Deferred, InMemory = true });
         if (!module.Types.SelectMany(AllTypes).Any(t => t.IsImport)) return result;
         result.UsesComImport = true;
         if (!module.IsILOnly()) { result.Unsupported.Add("mixed-mode (not IL-only) assembly"); return result; }
@@ -110,7 +129,9 @@ public static partial class ComRewriter
     /// memory: what the loader hands to LoadFromStream. Rewrites what is supported whatever else the
     /// assembly does (the decision to rewrite it was made already).
     /// </summary>
-    public static (MemoryStream Image, MemoryStream? Symbols, RewriteResult Result) RewriteToMemory(string input, IEnumerable<string> searchDirs)
+    /// <param name="locationOnly">only the location calls (caller rewriting): the COM types stay as they are,
+    /// for built-in COM.</param>
+    public static (MemoryStream Image, MemoryStream? Symbols, RewriteResult Result) RewriteToMemory(string input, IEnumerable<string> searchDirs, bool locationOnly = false)
     {
         var result = new RewriteResult();
         var resolver = new DefaultAssemblyResolver();
@@ -118,7 +139,7 @@ public static partial class ComRewriter
         resolver.AddSearchDirectory(Path.GetDirectoryName(Path.GetFullPath(input))!);
         string pdb = Path.ChangeExtension(input, ".pdb");
         bool symbols = File.Exists(pdb);
-        var rp = new ReaderParameters { AssemblyResolver = resolver, ReadingMode = ReadingMode.Immediate, InMemory = true };
+        var rp = new ReaderParameters { AssemblyResolver = resolver, ReadingMode = ReadingMode.Deferred, InMemory = true };
         ModuleDefinition module;
         try
         {
@@ -135,7 +156,8 @@ public static partial class ComRewriter
         using (module)
         {
             result.UsesComImport = module.Types.SelectMany(AllTypes).Any(t => t.IsImport);
-            new Work(module, result, externallyReferenced: null).Run();
+            if (locationOnly) new Work(module, result, externallyReferenced: null).RunLocationOnly();
+            else new Work(module, result, externallyReferenced: null).Run();
             module.Attributes &= ~ModuleAttributes.StrongNameSigned;
             var image = new MemoryStream();
             MemoryStream? sym = null;
@@ -180,6 +202,8 @@ public static partial class ComRewriter
         private readonly MethodReference _guidCtor, _strToUni, _strToAnsi, _freeCoTask;
 
         private readonly ISet<string>? _external;
+        /// <summary>Judge only: the checks, without generating code (Analyze).</summary>
+        public bool AnalyzeOnly;
         private readonly List<(TypeDefinition Class, TypeReference Interface)> _ccwUsers = new();
 
         public Work(ModuleDefinition m, RewriteResult r, ISet<string>? externallyReferenced)
@@ -224,6 +248,17 @@ public static partial class ComRewriter
                 _m.Types.Add(_shims);
                 return _shims;
             }
+        }
+
+        /// <summary>Caller rewriting: the location calls alone.</summary>
+        public void RunLocationOnly()
+        {
+            foreach (var t in _m.Types.SelectMany(AllTypes).ToList())
+                foreach (var md in t.Methods)
+                    if (md.HasBody)
+                        foreach (var ins in md.Body.Instructions)
+                            if ((ins.OpCode == OpCodes.Call || ins.OpCode == OpCodes.Callvirt) && ins.Operand is MethodReference mr && LocationReplacement(mr) is { } loc)
+                            { ins.OpCode = OpCodes.Call; ins.Operand = loc; _r.CallSites++; }
         }
 
         public void Run()
@@ -408,6 +443,19 @@ public static partial class ComRewriter
                 return;
             }
             int first = ifaceType == 1 ? 3 : 7;
+            if (AnalyzeOnly)
+            {
+                _r.Interfaces++;
+                var refused = new List<string>();
+                foreach (var md in t.Methods.Where(x => !x.IsStatic))
+                {
+                    _r.Methods++;
+                    if (ForwardWhy(md) is { } f) _r.Unsupported.Add($"{t.FullName}.{md.Name}: {f}");
+                    if (ReverseWhy(md) is { } rv) refused.Add($"{md.Name}: {rv}");
+                }
+                _ccwRefused[t] = refused;
+                return;
+            }
 
             // the plain interface, and its implementation
             t.IsImport = false;
@@ -430,6 +478,37 @@ public static partial class ComRewriter
                 EmitVtableCall(t, md, body, slot++);
                 _r.Methods++;
             }
+        }
+
+        /// <summary>What a vtable call to <paramref name="decl"/> could not convert; null when it can (the same
+        /// checks as EmitVtableCall's).</summary>
+        private string? ForwardWhy(MethodDefinition decl)
+        {
+            foreach (var p in decl.Parameters)
+                if (Classify(p.ParameterType, p.MarshalInfo, comDefaults: true, out string? why) == null) return $"parameter {p.Name}: {why}";
+            if (decl.ReturnType.FullName == "System.Void") return null;
+            var ret = Classify(decl.ReturnType, decl.MethodReturnType.MarshalInfo, comDefaults: true, out string? w);
+            if (ret != null && ret.Kind == Kind.Variant && decl.IsPreserveSig) return "a VARIANT returned by value";
+            if (ret == null || ret.Kind is Kind.ByRefBlit or Kind.OutIface or Kind.StrA or Kind.BlitArray or Kind.RefBool1 or Kind.RefBool2 or Kind.RefBool4 or Kind.RefStrB or Kind.RefStrW)
+                return $"return {w ?? decl.ReturnType.Name}";
+            return null;
+        }
+
+        /// <summary>What a CCW stub for <paramref name="md"/> could not convert; null when it can (the same checks
+        /// as Stub's).</summary>
+        private string? ReverseWhy(MethodDefinition md)
+        {
+            foreach (var p in md.Parameters)
+            {
+                var a = Classify(p.ParameterType, p.MarshalInfo, comDefaults: true, out string? w);
+                if (a == null || a.Kind is Kind.BlitArray) return $"parameter {p.Name}: {w ?? "an array of unknown length"}";
+            }
+            if (md.ReturnType.FullName == "System.Void") return null;
+            var ret = Classify(md.ReturnType, md.MethodReturnType.MarshalInfo, comDefaults: true, out string? w2);
+            if (ret == null || ret.Kind is Kind.ByRefBlit or Kind.OutIface or Kind.BlitArray or Kind.RefBool1 or Kind.RefBool2 or Kind.RefBool4 or Kind.RefStrB or Kind.RefStrW or Kind.RefVariant or Kind.StrA
+                || (md.IsPreserveSig && ret.Kind == Kind.Variant))
+                return $"return {w2 ?? md.ReturnType.Name}";
+            return null;
         }
 
         private void EmitVtableCall(TypeDefinition iface, MethodDefinition decl, MethodDefinition body, int slot)
@@ -770,6 +849,7 @@ public static partial class ComRewriter
             foreach (var prm in p.Parameters)
                 if (prm.ParameterType is ByReferenceType b && IsComInterface(b.ElementType) && !prm.IsOut)
                 { _r.Unsupported.Add($"P/Invoke {p.DeclaringType.FullName}.{p.Name}: ref interface {prm.Name}"); return; }
+            if (AnalyzeOnly) { _r.PInvokes++; return; }
             var info = p.PInvokeInfo;
             var native = new MethodDefinition(p.Name + "<native>", p.Attributes, NativeOf(p.ReturnType, out _))
             {
@@ -804,6 +884,7 @@ public static partial class ComRewriter
             foreach (var prm in invoke.Parameters)
                 if (prm.ParameterType is ByReferenceType b && IsComInterface(b.ElementType) && !prm.IsOut)
                 { _r.Unsupported.Add($"delegate {d.FullName}: ref interface {prm.Name}"); return; }
+            if (AnalyzeOnly) { _rewrittenDelegates.Add(d); _r.Delegates++; return; }
             // the shim callers use: the delegate with its old signature
             var shim = new MethodDefinition($"{d.Name}<Invoke>", MethodAttributes.Assembly | MethodAttributes.Static | MethodAttributes.HideBySig, invoke.ReturnType);
             shim.Parameters.Add(new ParameterDefinition("d", ParameterAttributes.None, d));

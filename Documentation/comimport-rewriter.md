@@ -49,8 +49,13 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
    check is a `System.Reflection.Metadata` scan, cheap for the others.
    - The verdict for each (rewritten, or left and why) goes to `merge-report.txt`. Nothing else is
      written.
-   - Judging is not cached: GraphWorX's 14 ComImport assemblies take 2.6 s per launch (Telerik.Windows.Controls
-     0.8 s, the others 0.03-0.4 s).
+   - The judge is a pure metadata/IL scan (`ComRewriter.Analyze`): it runs the rewrite's checks
+     without generating any code. Code is generated only at load.
+   - Verdicts are cached in `comimport-verdicts.json` beside `merge-report.txt`. Each is keyed by
+     the assembly's SHA-256 plus the rewriter version. Only verdicts are cached, never DLLs.
+   - Cost for GraphWorX (355 assemblies, 14 with ComImport):
+     - before this step, judging alone: 3.9 s per prepare;
+     - now: 9.2 s on a cold cache (hashing and scanning everything once), 0.93-1.0 s warm.
    - A chosen assembly leaves the deps (so it is not on the TPA list). Its name and original path go
      to the app's runtimeconfig as `WpfMac.ComImport`.
    - What an earlier wpfmac wrote (`<cache>/comimport/`) is deleted.
@@ -74,15 +79,27 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
    own. Before that fix, DXEngine.Wpf's d3d9 import reached the real d3d9 and its shared surface
    failed.
 5. **What it cannot cover:**
-   - **Another assembly asking a rewritten one's location** (Limit 1). For example IcoTrace's
-     `GetCallingAssembly().CodeBase`, which GwxRuntimeCore relies on for `Gwx.config.xml` and
-     `Mobile_devices.csv`. That caller is not rewritten, so it sees an assembly without a file.
-     - Measured for GraphWorX's folder: 15 of its 355 assemblies ask about an assembly that is not
-       provably their own.
-     - Rewriting the callers too, as a closure from DXEngine(.Wpf) and GwxRuntimeCore, adds five:
-       IcoTrace, IcoCommonCore.Net, Ab2d.ReaderWmf, Ab3d.Reader3ds and Telerik.Windows.Controls
-       (GetAssemblies). That costs 1.45 s more per launch, 1.0 s of it Telerik.Windows.Controls.
    - **Assemblies loaded by path** (`Assembly.LoadFrom`). They stay as they are.
+6. **Callers that ask where a rewritten assembly is (Limit 1, closed by caller rewriting, on every
+   OS; the user's decision, 2026-10-20).** For example IcoTrace's `GetCallingAssembly().CodeBase`,
+   which GwxRuntimeCore relies on for `Gwx.config.xml` and `Mobile_devices.csv`. An unrewritten
+   caller would see an assembly without a file.
+   - `LocationCallers` finds such callers from the IL. A caller reads Location, CodeBase,
+     EscapedCodeBase, `GetName().CodeBase` or `Module.FullyQualifiedName` of an assembly that is not
+     provably its own, or it enumerates `AppDomain.GetAssemblies`. Provably its own means
+     `GetExecutingAssembly()`, `typeof(OwnType).Assembly`, `this.GetType().Assembly`, or a local
+     assigned once from one of those. `GetEntryAssembly()` is ignored, because the entry assembly
+     is never rewritten.
+   - A caller joins the rewrite set when it is referenced by a rewritten assembly or calls
+     GetAssemblies. This is a closure, so callers of callers are included.
+   - A caller is rewritten **for its location calls alone** (`name|path|location` in the list).
+     Its own COM types stay on built-in COM.
+   - GraphWorX, measured: 15 of its 355 assemblies ask about assemblies that are not their own.
+     - The closure adds five: IcoTrace, IcoCommonCore.Net, Telerik.Windows.Controls, Ab3d.Reader3ds
+       and Ab2d.ReaderWmf.
+     - Load-time cost: IcoTrace 81 ms, IcoCommonCore.Net 20 ms, Telerik.Windows.Controls 603 ms.
+       The COM rewrites cost GwxRuntimeCore 371 ms, DXEngine 189 ms and DXEngine.Wpf 129 ms.
+       In total about 1.4 s, spread over first loads.
 
 ## 2. Interfaces
 
@@ -164,13 +181,13 @@ With the rewriter, DXEngine's D3DImage path no longer needs built-in COM. What r
 Linux is what the shim needs there anyway: d3d11/dxgi/d3d9 routed to it (`libwin32shim`) and a WebGPU
 adapter.
 
-## 6. Status (2026-10-19)
+## 6. Status (2026-10-20)
 
 - **Built:**
   - `WpfMac.ComRewrite` (the rewriter, with Mono.Cecil);
   - `WpfMac.ComInterop` (the runtime, shipped in the overlay);
-  - the launcher step (`ComImportStep`). Its verdicts go to `merge-report.txt` and the rewritten
-    copies to `<cache>/comimport/`.
+  - the launcher step (`ComImportStep`). Its verdicts go to `merge-report.txt` and are cached in
+    `comimport-verdicts.json`.
 - **Supported:**
   - IUnknown and dual interfaces;
   - blittables and blittable structs, by value and by reference;
@@ -223,13 +240,8 @@ adapter.
       supported, but on Windows Limit 1 keeps them: their locations are asked by Telerik.Windows.Controls
       and by IcoTrace.
   - Built-in RCWs adopted at a cast, on every OS.
-  - **Limit 1, stated:** a rewritten assembly reports its original location only to its own code.
-    - On Windows, an assembly that references an app assembly which asks other assemblies where they
-      are stays on built-in COM, with the reason "its location is asked by ...". An asking assembly
-      reads Location/CodeBase/EscapedCodeBase and gets assemblies it did not name itself
-      (GetCallingAssembly, GetAssemblies, GetAssembly).
-    - This judge is provisional (the user's decision on rewriting callers is open).
-    - Off Windows the assembly is rewritten anyway, and the verdict says so.
+  - **Limit 1, closed** by caller rewriting (§1.6) on every OS. It replaces the provisional judge
+    that had kept such assemblies on built-in COM on Windows.
     - The case behind it: GwxDocument (GwxRuntimeCore) loads Gwx.config.xml from IcoTrace's
       `GetCallingAssembly().CodeBase`. Rewritten, it lost its settings, among them
       `UseStandard3DRenderer`, so GraphWorX drew its 3D with WPF instead of DXEngine. That was first
@@ -239,10 +251,13 @@ adapter.
   - Visibility judged from what the app's other assemblies actually reference.
   - Assemblies rewritten together with those whose COM types they use (a fixpoint over the app).
   - The in-memory loader, with location redirection.
-- **GraphWorX, Windows (2026-10-19):** Ab3d.DXEngine and Ab3d.DXEngine.Wpf are rewritten (0 px with both
-  forced, before the licence lapsed); GwxRuntimeCore stays (Limit 1). Earlier, with only Ab3d.DXEngine.Wpf rewritten: Loaded from memory, its 3D
-  frame is identical to the build before the rewriter (0 px; 120 px within 1 code against real
-  D3D11), and the bench smoke run and Workbench run are clean.
+- **GraphWorX, Windows (2026-10-20):**
+  - Rewritten for COM: Ab3d.DXEngine, Ab3d.DXEngine.Wpf, GwxRuntimeCore and
+    Telerik.Windows.Controls.SyntaxEditor.
+  - Rewritten as callers: the five of §1.6.
+  - Gwx.config.xml and Mobile_devices.csv load, so `UseStandard3DRenderer` is read and the 3D is
+    drawn by DXEngine. Its frame is 0 px against the build before the rewriter (15c92fc6e).
+  - The bench smoke run and the Workbench smoke run are clean. Workbench rewrites 4 assemblies.
 - **Tests:**
   - `ComRewriterTests`: calls, retvals, out interfaces, VARIANT_BOOL, structs by reference, LPWStr,
     HRESULT exceptions, an unsupported member, casts and identity, Release, and DXEngine's
@@ -252,7 +267,7 @@ adapter.
   - The in-memory load: the fixture reports its original `Location`, `CodeBase`, `EscapedCodeBase`,
     `GetName().CodeBase` and module names. `typeof(X).Assembly == Assembly.Load(name) ==
     GetExecutingAssembly()` holds, and a P/Invoke finds a library beside the original.
-- **Still to run:**
-  - the GraphWorX 3D frame through the rewritten DXEngine.Wpf, and the GraphWorX/Workbench smoke
-    runs (waiting for the demo licence);
-  - the Mac head (M6).
+  - Caller rewriting: a second fixture (LocationAskerFixture) answers `GetCallingAssembly().CodeBase`
+    with the rewritten fixture's original file. The step tests cover the closure, location-only
+    entries and the verdict cache (reused when the hash matches, redone when it does not).
+- **Still to run:** the Mac head (M6).

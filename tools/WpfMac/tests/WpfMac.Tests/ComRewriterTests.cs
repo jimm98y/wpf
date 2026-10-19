@@ -173,6 +173,7 @@ public sealed unsafe class ComRewriterTests
         string dir = TestEnvironment.NewDirectory("comimport-app");
         string file = Path.Combine(dir, "ComImportFixture.dll");
         File.Copy(FixtureFile, file);
+        File.Copy(Path.Combine(Path.GetDirectoryName(FixtureFile)!, "LocationAskerFixture.dll"), Path.Combine(dir, "LocationAskerFixture.dll"));
         if (File.Exists(Path.ChangeExtension(FixtureFile, ".pdb"))) File.Copy(Path.ChangeExtension(FixtureFile, ".pdb"), Path.ChangeExtension(file, ".pdb"));
         if (OperatingSystem.IsWindows()) File.Copy(Path.Combine(Environment.SystemDirectory, "version.dll"), Path.Combine(dir, "fixturenative.dll"));
         return file;
@@ -183,7 +184,12 @@ public sealed unsafe class ComRewriterTests
         // the verdict, as the launcher judges it
         var result = ComRewriter.Rewrite(FixtureFile, null, new[] { AppContext.BaseDirectory }, partial: true);
         // the load, as the startup hook does it: rewritten in memory on the first request
-        var loader = new ComImportLoader(new Dictionary<string, string> { ["ComImportFixture"] = s_original.Value }, new[] { AppContext.BaseDirectory }, null);
+        // the fixture, and the helper that asks its callers where they are (caller rewriting)
+        var loader = new ComImportLoader(new Dictionary<string, string>
+        {
+            ["ComImportFixture"] = s_original.Value,
+            ["LocationAskerFixture"] = Path.Combine(Path.GetDirectoryName(s_original.Value)!, "LocationAskerFixture.dll"),
+        }, new[] { AppContext.BaseDirectory }, null);
         var alc = new AssemblyLoadContext("comimport-fixture");
         loader.Install(alc);
         var asm = alc.LoadFromAssemblyName(new AssemblyName("ComImportFixture"));
@@ -338,6 +344,10 @@ public sealed unsafe class ComRewriterTests
     }
 
     [Fact]
+    public void AnotherAssemblyAskingWhereItIs_IsToldTheOriginal_WhenItIsRewrittenToo()
+        => Assert.Equal(new Uri(s_original.Value).AbsoluteUri, (string)Run("WhereByCaller")!);
+
+    [Fact]
     public void ItsPInvokes_FindLibrariesBesideTheOriginal()
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "the library beside it is a copy of version.dll");
@@ -363,7 +373,7 @@ public sealed class ComImportStepTests
     private static System.Text.Json.Nodes.JsonObject Deps() => System.Text.Json.Nodes.JsonNode.Parse("""
         {
           "runtimeTarget": { "name": "T" },
-          "targets": { "T": { "App/1.0.0": { "runtime": { "ComImportFixture.dll": {}, "Other.dll": {} } } } },
+          "targets": { "T": { "App/1.0.0": { "runtime": { "ComImportFixture.dll": {}, "LocationAskerFixture.dll": {}, "Other.dll": {} } } } },
           "libraries": { "App/1.0.0": { "type": "package", "path": "app" } }
         }
         """)!.AsObject();
@@ -372,12 +382,16 @@ public sealed class ComImportStepTests
     {
         string app = TestEnvironment.NewDirectory("comstep-app");
         File.Copy(Fixture, Path.Combine(app, "ComImportFixture.dll"));
+        File.Copy(Path.Combine(Path.GetDirectoryName(Fixture)!, "LocationAskerFixture.dll"), Path.Combine(app, "LocationAskerFixture.dll"));
         string cache = TestEnvironment.NewDirectory("comstep-cache");
         var deps = Deps();
         var notes = new List<string>();
         var list = new List<string>();
-        WpfMac.ComImportStep.Apply(deps, app, AppContext.BaseDirectory, cache, windows, setting, notes, list);
+        string appCache = TestEnvironment.NewDirectory("comstep-appcache");
+        WpfMac.ComImportStep.Apply(deps, app, AppContext.BaseDirectory, cache, appCache, windows, setting, notes, list);
         Assert.Empty(Directory.EnumerateFileSystemEntries(cache));       // nothing is written: the rewrite happens in memory, at load
+        // ...but the verdicts, which the next launch reads instead of judging again
+        Assert.All(Directory.EnumerateFileSystemEntries(appCache), f => Assert.Equal(WpfMac.ComImportStep.VerdictFile, Path.GetFileName(f)));
         s_lastList = list;
         return (deps, notes);
     }
@@ -400,9 +414,12 @@ public sealed class ComImportStepTests
         Assert.Contains(notes, n => n.Contains("ComImportFixture: rewritten in memory"));
         Assert.Null(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["ComImportFixture.dll"]);
         Assert.NotNull(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["Other.dll"]);
-        string entry = Assert.Single(s_lastList!);
-        Assert.StartsWith("ComImportFixture|", entry);
-        Assert.EndsWith("ComImportFixture.dll", entry);
+        Assert.Equal(2, s_lastList!.Count);
+        Assert.Contains(s_lastList, e => e.StartsWith("ComImportFixture|") && e.EndsWith("ComImportFixture.dll"));
+        // the helper it calls asks its callers where they are: rewritten for that (caller rewriting)
+        Assert.Contains(s_lastList, e => e.StartsWith("LocationAskerFixture|"));
+        Assert.Contains(notes, n => n.Contains("LocationAskerFixture: its location calls rewritten") && n.Contains("GetCallingAssembly"));
+        Assert.Null(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["LocationAskerFixture.dll"]);
     }
 
     [Fact]
@@ -411,7 +428,7 @@ public sealed class ComImportStepTests
         string cache = TestEnvironment.NewDirectory("comstep-old");
         Directory.CreateDirectory(Path.Combine(cache, WpfMac.ComImportStep.Folder, "abc"));
         File.WriteAllText(Path.Combine(cache, WpfMac.ComImportStep.Folder, "abc", "X.dll"), "");
-        WpfMac.ComImportStep.Apply(Deps(), TestEnvironment.NewDirectory("comstep-empty"), AppContext.BaseDirectory, cache, true, null, new(), new());
+        WpfMac.ComImportStep.Apply(Deps(), TestEnvironment.NewDirectory("comstep-empty"), AppContext.BaseDirectory, cache, null, true, null, new(), new());
         Assert.False(Directory.Exists(Path.Combine(cache, WpfMac.ComImportStep.Folder)));
     }
 

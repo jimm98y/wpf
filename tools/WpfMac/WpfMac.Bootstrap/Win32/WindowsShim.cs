@@ -246,7 +246,7 @@ namespace WpfMac.Bootstrap.Win32
                 var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 if (AppContext.GetData("WpfMac.ComImport") is string list)
                     foreach (string line in list.Split((char)10, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                        if (line.IndexOf('|') is int bar and > 0) d[line[..bar]] = line[(bar + 1)..];
+                        if (line.Split('|') is { Length: >= 2 } parts && parts[0].Length > 0) d[parts[0]] = parts[1];
                 s_rewritten = d;
             }
             return s_rewritten.TryGetValue(name, out var p) ? p : null;
