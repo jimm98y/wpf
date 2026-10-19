@@ -130,6 +130,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             IntPtr group;
             try { group = BindGroup(t.Layout, t.Bindings!, _cs, _csUav); }
             catch (InvalidOperationException e) { DispatchesSkipped++; D3DLog.Once("csbind:" + e.Message, "Dispatch skipped: " + e.Message); return; }
+            _storageWritten = true;
             IntPtr pass = wgpuCommandEncoderBeginComputePass(Encoder(), null);
             wgpuComputePassEncoderSetPipeline(pass, t.Pipeline);
             wgpuComputePassEncoderSetBindGroup(pass, 0, group, 0, null);

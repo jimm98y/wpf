@@ -316,6 +316,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
             // 1 and 2: the two kernels, in one compute pass (WebGPU orders its dispatches' storage writes)
             EndPass();
+            _storageWritten = true;
             IntPtr pass = wgpuCommandEncoderBeginComputePass(Encoder(), null);
             wgpuComputePassEncoderSetPipeline(pass, t.VsPipeline);
             wgpuComputePassEncoderSetBindGroup(pass, 0, groups[0], 0, null);

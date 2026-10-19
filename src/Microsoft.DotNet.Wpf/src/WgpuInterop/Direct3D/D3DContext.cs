@@ -360,6 +360,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return ds;
         }
 
+        /// <summary>The encoder holds a pass that writes storage (a dispatch, a UAV draw).</summary>
+        private bool _storageWritten;
+        private IntPtr _glResetBuffer, _glResetTexture;
+        /// <summary>WPF_D3D11_NO_GL_RESET=1 turns the reset off (to show what it fixes).</summary>
+        private static readonly bool s_noGlReset = Environment.GetEnvironmentVariable("WPF_D3D11_NO_GL_RESET") == "1";
+
+        /// <summary>
+        /// wgpu's GL backend (wgpu-hal gles, queue.rs) synchronises a storage buffer that is next used
+        /// as a copy source with a BufferBarrier command that binds it to GL_PIXEL_UNPACK_BUFFER -- and
+        /// never unbinds it. queue.writeTexture reaches GL from client memory (glTexSubImage with a
+        /// pointer), so while that binding stands every later upload reads from the storage buffer
+        /// instead and the texture comes out zero (measured: 200 of 200 lost after one compute pass
+        /// and a copy of its buffer; WriteTextureProbeTests). A copy from a real buffer to a texture
+        /// binds the unpack buffer itself and clears it after, so one 1x1 such copy at the end of every
+        /// submission that wrote storage puts the binding back. The composition renderer writes no
+        /// storage buffers, so it never leaves the binding behind.
+        /// </summary>
+        private void ResetGlUnpackBinding()
+        {
+            if (!_storageWritten || !Device.Gpu.IsOpenGL || _encoder == IntPtr.Zero || s_noGlReset) return;
+            _storageWritten = false;
+            EndPass();
+            if (_glResetBuffer == IntPtr.Zero)
+            {
+                _glResetBuffer = Device.Gpu.CreateBuffer(256, WGPUBufferUsage.CopySrc | WGPUBufferUsage.CopyDst);
+                var td = new WGPUTextureDescriptor
+                {
+                    usage = WGPUTextureUsage.CopyDst, dimension = WGPUTextureDimension._2D,
+                    size = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = 1 }, format = TexFmt.RGBA8Unorm, mipLevelCount = 1, sampleCount = 1,
+                };
+                _glResetTexture = wgpuDeviceCreateTexture(Device.Gpu.Device, &td);
+            }
+            var src = new WGPUTexelCopyBufferInfo { buffer = _glResetBuffer, layout = new WGPUTexelCopyBufferLayout { bytesPerRow = 256, rowsPerImage = 1 } };
+            var dst = new WGPUTexelCopyTextureInfo { texture = _glResetTexture, aspect = WGPUTextureAspect.All };
+            var size = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = 1 };
+            wgpuCommandEncoderCopyBufferToTexture(_encoder, &src, &dst, &size);
+        }
+
         /// <summary>Submits everything recorded. <paramref name="wait"/>: until the GPU is done.</summary>
         public void FlushToGpu(bool wait)
         {
@@ -367,6 +405,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             ResolvePendingClears();
             if (_encoder != IntPtr.Zero)
             {
+                ResetGlUnpackBinding();
                 IntPtr cmd = wgpuCommandEncoderFinish(_encoder, IntPtr.Zero);
                 wgpuCommandEncoderRelease(_encoder);
                 _encoder = IntPtr.Zero;
@@ -611,6 +650,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             EndPass();
             if (_encoder != IntPtr.Zero) { wgpuCommandEncoderRelease(_encoder); _encoder = IntPtr.Zero; }
+            if (_glResetBuffer != IntPtr.Zero) { wgpuBufferRelease(_glResetBuffer); _glResetBuffer = IntPtr.Zero; }
+            if (_glResetTexture != IntPtr.Zero) { wgpuTextureRelease(_glResetTexture); _glResetTexture = IntPtr.Zero; }
             foreach (var p in _pipelines.Values) if (p.Pipeline != IntPtr.Zero) wgpuRenderPipelineRelease(p.Pipeline);
             _pipelines.Clear();
             foreach (var t in _translations.Values) { if (t.Vs != IntPtr.Zero) wgpuShaderModuleRelease(t.Vs); if (t.Ps != IntPtr.Zero) wgpuShaderModuleRelease(t.Ps); }

@@ -8,3 +8,5 @@ using Xunit;
 // collection xunit already serialises; this makes it true for the whole assembly, including the
 // CPU-only tests that would otherwise interleave with GPU work.
 [assembly: CollectionBehavior(DisableTestParallelization = true)]
+
+[assembly: WgpuInterop.Tests.Direct3D.WriteTextureWatch]

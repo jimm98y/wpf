@@ -271,6 +271,7 @@ namespace WgpuInterop.Tests.Direct3D
                 foreach (var (domain, points, nf, kStruct) in Domains)
                     foreach (string part in s_partitionings)
                     {
+                        if (Environment.GetEnvironmentVariable("TS_ONLY") is { Length: > 0 } only && !$"{domain}/{part}".Contains(only)) continue;
                         string topology = domain == "isoline" ? "line" : part == "integer" ? "triangle_ccw" : "triangle_cw";
                         byte[] hs = Compile(Hull(domain, points, nf, kStruct, part, topology), "hs_5_0", out string? herr);
                         byte[] ds = Compile(Domain(domain, points, kStruct, position: true), "ds_5_0", out string? derr);

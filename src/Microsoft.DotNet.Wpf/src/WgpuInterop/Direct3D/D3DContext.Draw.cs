@@ -509,6 +509,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 }
                 else entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.ResourceBase + slot), buffer = DummyStorage(), offset = 0, size = 16 });
             }
+            if (b.Uavs.Count > 0) _storageWritten = true;
             foreach (var (slot, u) in b.Uavs)
             {
                 var view = uavs != null && slot < uavs.Length ? uavs[slot] : null;
