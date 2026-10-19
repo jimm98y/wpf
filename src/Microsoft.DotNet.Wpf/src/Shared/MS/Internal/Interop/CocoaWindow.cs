@@ -1981,6 +1981,19 @@ namespace MS.Internal.Interop
             IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
             IntPtr mode = s_defaultRunLoopMode ??= MakeNSString("kCFRunLoopDefaultMode");
 
+            // A live resize: AppKit's tracking loop owns the queue until the mouse comes up, as
+            // Windows' modal sizing loop owns the mouse. A pump run from inside it (the WinForms host
+            // presents an ElementHost's frame from its resize notification, and that frame's
+            // Dispatcher.Invoke pumps) took the drags the loop was waiting for and sent them on, so
+            // the window started a second resize loop inside the first, and the first resumed on what
+            // the second had torn down: a crash in -[NSWindow _runResizeTrackingLoop] (app). The
+            // dispatcher's own work still runs; only the queue is left alone.
+            if (AnyWindowInLiveResize(app))
+            {
+                DetectResizes();
+                return;
+            }
+
             // Block up to maxMilliseconds for the first event (runs the run loop meanwhile)...
             IntPtr until = SendPtrDouble(objc_getClass("NSDate"), Sel("dateWithTimeIntervalSinceNow:"),
                                          maxMilliseconds / 1000.0);
@@ -2001,6 +2014,15 @@ namespace MS.Internal.Interop
             // size after draining and raise Resized so the hosting HwndTarget re-lays-out and the
             // WebGPU surface is reconfigured (rather than the CAMetalLayer stretching the old frame).
             DetectResizes();
+        }
+
+        private static bool AnyWindowInLiveResize(IntPtr app)
+        {
+            IntPtr windows = Send(app, Sel("windows"));
+            nuint count = windows == IntPtr.Zero ? 0 : (nuint)(nint)Send(windows, Sel("count"));
+            for (nuint i = 0; i < count; i++)
+                if (SendBool(SendPtrNUInt(windows, Sel("objectAtIndex:"), i), Sel("inLiveResize"))) return true;
+            return false;
         }
 
         // ---- sharing the event queue with another windowing host --------------------------------
