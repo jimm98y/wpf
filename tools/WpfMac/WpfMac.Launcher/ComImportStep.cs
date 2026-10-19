@@ -18,7 +18,7 @@ internal static class ComImportStep
     public const string Library = "WpfMac.ComImport/1.0.0";
     public const string Folder = "comimport";
     /// <summary>Bumped when the rewriter's output changes, so cached copies are made again.</summary>
-    private const string Version = "1";
+    private const string Version = "2";
 
     /// <summary>WPF_COMIMPORT_REWRITE: on (default), off, or a ';'-separated list of assembly names.</summary>
     internal static Func<string, bool> Scope(string? setting)

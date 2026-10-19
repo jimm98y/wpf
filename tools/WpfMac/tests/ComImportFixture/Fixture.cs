@@ -36,8 +36,26 @@ namespace ComImportFixture
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     internal delegate int GetOtherFn(ICalc self, out IOther other);
 
+    /// <summary>IBindCtx, declared by the app (Windows' ole32 makes one).</summary>
+    [ComImport, Guid("0000000e-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IAppBindCtx
+    {
+        void RegisterObjectBound([MarshalAs(UnmanagedType.IUnknown)] object o);
+    }
+
     public static class Scenario
     {
+        [DllImport("ole32.dll")]
+        private static extern int CreateBindCtx(uint reserved, out IAppBindCtx ctx);
+
+        /// <summary>A P/Invoke that returns a COM interface (Windows).</summary>
+        public static string BindCtx()
+        {
+            int hr = CreateBindCtx(0, out IAppBindCtx ctx);
+            if (hr < 0 || ctx == null) return "failed " + hr.ToString("x8");
+            return Marshal.ReleaseComObject(ctx) == 0 ? "ok" : "still referenced";
+        }
+
         internal static ICalc Wrap(IntPtr p) => (ICalc)Marshal.GetObjectForIUnknown(p);
 
         public static int Add(IntPtr p, int a, int b) => Wrap(p).Add(a, b);

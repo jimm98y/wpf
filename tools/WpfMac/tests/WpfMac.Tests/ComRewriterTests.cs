@@ -130,7 +130,8 @@ public sealed unsafe class ComRewriterTests
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.Written);
-        Assert.Equal(3, r.Interfaces);
+        Assert.Equal(4, r.Interfaces);
+        Assert.Equal(1, r.PInvokes);
         string u = Assert.Single(r.Unsupported);
         Assert.Contains("Variant", u);
         Assert.Equal(1, r.Delegates);
@@ -179,6 +180,13 @@ public sealed unsafe class ComRewriterTests
     [Fact]
     public void ADelegateCall_ThroughAVtableSlot_AsDXEngineMakesIt()
         => Assert.Equal(55, WithCalc(55, p => (int)Run("ThroughDelegate", p)!));
+
+    [Fact]
+    public void APInvoke_ReturningACOMInterface_IsWrapped()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "ole32's CreateBindCtx");
+        Assert.Equal("ok", (string)Run("BindCtx")!);
+    }
 
     [Fact]
     public void ReleaseComObject_LetsGoOfTheNativeObject()
