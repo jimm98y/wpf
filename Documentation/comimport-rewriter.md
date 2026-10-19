@@ -202,6 +202,15 @@ adapter.
     Telerik ×5 (CCWs, BSTR, VARIANT, the BCL's ComTypes).
 - **Added since the first version:**
   - BSTR in, by reference and as retval.
+  - VARIANT in (passed by value, as COM does), by reference and as retval (`ComVariant`,
+    `Com.ToVariant`/`FromVariant`/`ClearVariant`).
+    - Covered: EMPTY, NULL, BOOL, I1–I8, UI1–UI8, INT/UINT, R4, R8, CY, DATE, DECIMAL, BSTR, ERROR
+      and UNKNOWN/DISPATCH. Enums go as their underlying type, and `Missing` as
+      DISP_E_PARAMNOTFOUND.
+    - VT_ARRAY and VT_BYREF are refused by name.
+    - With it, Telerik.Windows.Controls.SyntaxEditor and IcoWindowsFormsSpecialized are fully
+      supported, but on Windows Limit 1 keeps them: their locations are asked by Telerik.Windows.Controls
+      and by IcoTrace.
   - Built-in RCWs adopted at a cast, on every OS.
   - **Limit 1, stated:** a rewritten assembly reports its original location only to its own code.
     - On Windows, an assembly that references an app assembly which asks other assemblies where they

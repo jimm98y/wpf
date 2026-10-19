@@ -28,7 +28,7 @@ public sealed unsafe class ComRewriterTests
 
     private static IntPtr* BuildCalc()
     {
-        var vt = (IntPtr*)NativeMemory.AllocZeroed(16, (nuint)sizeof(IntPtr));
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(19, (nuint)sizeof(IntPtr));
         vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&QueryInterface;
         vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
         vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
@@ -41,10 +41,13 @@ public sealed unsafe class ComRewriterTests
         vt[9] = (IntPtr)(delegate* unmanaged<Obj*, int*, int>)&Swap;
         vt[10] = (IntPtr)(delegate* unmanaged<Obj*, char*, int>)&Length;
         vt[11] = (IntPtr)(delegate* unmanaged<Obj*, int, IntPtr*, int>)&MakeOther;
-        vt[12] = (IntPtr)(delegate* unmanaged<Obj*, void*, int>)&Variant;
+        vt[12] = (IntPtr)(delegate* unmanaged<Obj*, WpfMac.ComInterop.ComVariant*, int>)&Variant;
         vt[13] = (IntPtr)(delegate* unmanaged<Obj*, char*, int>)&BLen;
         vt[14] = (IntPtr)(delegate* unmanaged<Obj*, char*, IntPtr*, int>)&Greet;
         vt[15] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&Upper;
+        vt[16] = (IntPtr)(delegate* unmanaged<Obj*, WpfMac.ComInterop.ComVariant, WpfMac.ComInterop.ComVariant*, int>)&Echo;
+        vt[17] = (IntPtr)(delegate* unmanaged<Obj*, WpfMac.ComInterop.ComVariant*, int>)&Bump;
+        vt[18] = (IntPtr)(delegate* unmanaged<Obj*, void*, int>)&Arrays;
         return vt;
     }
 
@@ -99,7 +102,25 @@ public sealed unsafe class ComRewriterTests
     [UnmanagedCallersOnly] private static int Swap(Obj* self, int* p) { (p[0], p[1]) = (p[1], p[0]); return 0; }
     [UnmanagedCallersOnly] private static int Length(Obj* self, char* s) { int n = 0; while (s[n] != 0) n++; return n; }
     [UnmanagedCallersOnly] private static int MakeOther(Obj* self, int v, IntPtr* other) { *other = (IntPtr)New(s_otherVt, v); return 0; }
-    [UnmanagedCallersOnly] private static int Variant(Obj* self, void* v) => 0;
+    // VARIANTs, through the same conversions the rewritten caller uses (a native callee would do the same by hand)
+    [UnmanagedCallersOnly] private static int Variant(Obj* self, WpfMac.ComInterop.ComVariant* r) { WpfMac.ComInterop.Com.ToVariant("from native", (IntPtr)r); return 0; }
+    [UnmanagedCallersOnly]
+    private static int Echo(Obj* self, WpfMac.ComInterop.ComVariant v, WpfMac.ComInterop.ComVariant* r)
+    {
+        // the callee owns nothing of v; its copy goes back as a new VARIANT
+        object? o = WpfMac.ComInterop.Com.FromVariant((IntPtr)(&v));
+        WpfMac.ComInterop.Com.ToVariant(o, (IntPtr)r);
+        return 0;
+    }
+    [UnmanagedCallersOnly]
+    private static int Bump(Obj* self, WpfMac.ComInterop.ComVariant* v)
+    {
+        object? o = WpfMac.ComInterop.Com.FromVariant((IntPtr)v);
+        WpfMac.ComInterop.Com.ClearVariant((IntPtr)v);
+        WpfMac.ComInterop.Com.ToVariant(o is int i ? i + 1 : (object)"not an int", (IntPtr)v);
+        return 0;
+    }
+    [UnmanagedCallersOnly] private static int Arrays(Obj* self, void* a) => 0;
     [UnmanagedCallersOnly] private static int Value(Obj* self) => self->Value;
     // BSTRs: the length is the prefix before the characters (in bytes)
     [UnmanagedCallersOnly] private static int BLen(Obj* self, char* s) => s == null ? -1 : (int)(((uint*)s)[-1] / 2);
@@ -163,7 +184,7 @@ public sealed unsafe class ComRewriterTests
         Assert.Equal(4, r.Interfaces);
         Assert.Equal(1, r.PInvokes);
         string u = Assert.Single(r.Unsupported);
-        Assert.Contains("Variant", u);
+        Assert.Contains("Arrays", u);
         Assert.Equal(1, r.Delegates);
     }
 
@@ -206,7 +227,32 @@ public sealed unsafe class ComRewriterTests
 
     [Fact]
     public void AnUnsupportedSignature_ThrowsNotSupported()
-        => Assert.Equal("NotSupported", WithCalc(0, p => (string)Run("Variant", p)!));
+        => Assert.Equal("NotSupported", WithCalc(0, p => (string)Run("Arrays", p)!));
+
+    [Theory]
+    [InlineData(42)]
+    [InlineData(-7L)]
+    [InlineData(2.5)]
+    [InlineData(true)]
+    [InlineData("text")]
+    [InlineData(null)]
+    public void Variants_RoundTrip(object? value)
+        => Assert.Equal(value, WithCalc(0, p => Run("Echo", p, value!)));
+
+    [Fact]
+    public void Variants_DecimalDateAndDBNull_RoundTrip()
+    {
+        Assert.Equal(123.4567m, WithCalc(0, p => Run("Echo", p, 123.4567m)));
+        Assert.Equal(new DateTime(2026, 10, 19, 12, 30, 0), WithCalc(0, p => Run("Echo", p, new DateTime(2026, 10, 19, 12, 30, 0))));
+        Assert.Equal(DBNull.Value, WithCalc(0, p => Run("Echo", p, DBNull.Value)));
+    }
+
+    [Fact]
+    public void Variants_RetvalAndByReference()
+    {
+        Assert.Equal("from native", WithCalc(0, p => Run("Variant", p)));
+        Assert.Equal(6, WithCalc(0, p => Run("Bump", p, 5)));
+    }
 
     [Fact]
     public void ACast_QueryInterfaces_AndTheObjectIsOnePerIdentity()
@@ -303,7 +349,7 @@ public sealed class ComImportStepTests
     public void OnWindows_AnAssemblyWithAnUnsupportedUse_IsLeftOnBuiltInCom()
     {
         var (deps, notes) = Apply(windows: true);
-        Assert.Contains(notes, n => n.Contains("ComImportFixture: left on built-in COM") && n.Contains("Variant"));
+        Assert.Contains(notes, n => n.Contains("ComImportFixture: left on built-in COM") && n.Contains("Arrays"));
         Assert.NotNull(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["ComImportFixture.dll"]);
         Assert.Empty(s_lastList!);
     }
