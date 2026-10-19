@@ -184,12 +184,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                             Array.Copy(texel, 0, data, (l * h + yy) * pitch + xx * (uint)texel.Length, texel.Length);
                 FlushToGpu(wait: false);
                 fixed (byte* p = data)
-                {
-                    var dst = new WGPUTexelCopyTextureInfo { texture = t.Gpu, mipLevel = view.Mip, origin = new WGPUOrigin3D { z = first }, aspect = WGPUTextureAspect.All };
-                    var layout = new WGPUTexelCopyBufferLayout { bytesPerRow = pitch, rowsPerImage = h };
-                    var size = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = Math.Max(1, layers) };
-                    wgpuQueueWriteTexture(Device.Gpu.Queue, &dst, p, (nuint)data.Length, &layout, &size);
-                }
+                    D3DTexture2D.Upload(Device.Gpu, t.Gpu, view.Mip, new WGPUOrigin3D { z = first }, p, pitch, h, row, pitch * h,
+                                        new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = Math.Max(1, layers) });
                 System.Threading.Interlocked.Increment(ref t.Version);
             }
         }

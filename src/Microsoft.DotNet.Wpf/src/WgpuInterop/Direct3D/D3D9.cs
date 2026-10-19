@@ -973,11 +973,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             WgpuContext gpu = Gpu!.Device.Gpu;
             uint w = (uint)(src.right - src.left), h = (uint)(src.bottom - src.top);
-            var dst = new WGPUTexelCopyTextureInfo { texture = Gpu.Gpu, mipLevel = Level, origin = new WGPUOrigin3D { x = (uint)dx, y = (uint)dy }, aspect = WGPUTextureAspect.All };
-            var layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)pitch, rowsPerImage = h };
-            var extent = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = 1 };
             byte* first = mem + (long)src.top * pitch + src.left * Bpp;
-            wgpuQueueWriteTexture(gpu.Queue, &dst, first, (nuint)((ulong)pitch * (h - 1) + w * Bpp), &layout, &extent);
+            D3DTexture2D.Upload(gpu, Gpu.Gpu, Level, new WGPUOrigin3D { x = (uint)dx, y = (uint)dy }, first, (uint)pitch, h, w * (uint)Bpp, 0,
+                                new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = 1 });
             System.Threading.Interlocked.Increment(ref Gpu.Version);
         }
 

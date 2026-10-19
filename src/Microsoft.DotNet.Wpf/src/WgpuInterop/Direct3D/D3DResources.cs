@@ -402,11 +402,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 }
                 return;
             }
-            var dst = new WGPUTexelCopyTextureInfo { texture = Gpu, mipLevel = mip, origin = new WGPUOrigin3D { x = x, y = y, z = z }, aspect = WGPUTextureAspect.All };
-            var layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = rowPitch, rowsPerImage = d > 1 ? slicePitch / rowPitch : rows };
-            var size = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = d };
-            wgpuQueueWriteTexture(Device.Gpu.Queue, &dst, data, (nuint)((ulong)(d - 1) * (d > 1 ? slicePitch : 0) + (ulong)rowPitch * (rows - 1) + tight), &layout, &size);
+            Upload(Device.Gpu, Gpu, mip, new WGPUOrigin3D { x = x, y = y, z = z }, (byte*)data, rowPitch, rows, tight, d > 1 ? slicePitch : 0,
+                   new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = d });
             Interlocked.Increment(ref Version);
+        }
+
+        /// <summary>Texels into a texture through a staging buffer and a copy in a submission of its
+        /// own, never queue.writeTexture: on this GL backend writeTexture's data is lost now and then
+        /// (the texture then reads as zero -- one run in four of the corpus tests), the copy's is not;
+        /// the composition renderer uploads the same way. A submission keeps queue order: it lands
+        /// after what was submitted and before what is submitted next. <paramref name="rows"/> rows of
+        /// <paramref name="tight"/> bytes, <paramref name="rowPitch"/> apart, per slice
+        /// (<paramref name="slicePitch"/> apart).</summary>
+        internal static void Upload(Microsoft.Wpf.Interop.WebGpu.Composition.WgpuContext gpu, IntPtr texture, uint mip, WGPUOrigin3D origin, byte* data,
+                                    uint rowPitch, uint rows, uint tight, uint slicePitch, WGPUExtent3D size)
+        {
+            uint d = Math.Max(1, size.depthOrArrayLayers);
+            uint aligned = (tight + 255) & ~255u;
+            var staging = new byte[(ulong)aligned * rows * d];
+            for (uint k = 0; k < d; k++)
+                for (uint r = 0; r < rows; r++)
+                    new ReadOnlySpan<byte>(data + (ulong)k * slicePitch + (ulong)r * rowPitch, (int)tight)
+                        .CopyTo(staging.AsSpan((int)(((ulong)k * rows + r) * aligned)));
+            IntPtr buffer = gpu.CreateBufferMapped(staging, WGPUBufferUsage.CopySrc);
+            IntPtr enc = wgpuDeviceCreateCommandEncoder(gpu.Device, IntPtr.Zero);
+            var src = new WGPUTexelCopyBufferInfo { layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = aligned, rowsPerImage = rows }, buffer = buffer };
+            var dst = new WGPUTexelCopyTextureInfo { texture = texture, mipLevel = mip, origin = origin, aspect = WGPUTextureAspect.All };
+            wgpuCommandEncoderCopyBufferToTexture(enc, &src, &dst, &size);
+            IntPtr cmd = wgpuCommandEncoderFinish(enc, IntPtr.Zero);
+            wgpuCommandEncoderRelease(enc);
+            wgpuQueueSubmit(gpu.Queue, 1, &cmd);
+            wgpuCommandBufferRelease(cmd);
+            wgpuBufferRelease(buffer);
         }
 
         public override int Map(D3DContext ctx, uint subresource, D3D11_MAP type, uint flags, D3D11_MAPPED_SUBRESOURCE* mapped)
