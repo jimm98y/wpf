@@ -27,12 +27,35 @@ namespace ComImportFixture
         object Echo(object v);                                  // slot 16: a VARIANT in, one back
         void Bump(ref object v);                                // slot 17: a VARIANT by reference
         [PreserveSig] int Arrays([MarshalAs(UnmanagedType.SafeArray)] int[] a);   // slot 18: unsupported (SAFEARRAY)
+        string UseSink(ISink sink);                              // slot 19: native code calls a managed object
     }
 
     [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A02"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IOther
     {
         [PreserveSig] int Value();                              // slot 3
+    }
+
+    /// <summary>Implemented by managed code, called by native code (a CCW).</summary>
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A04"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface ISink
+    {
+        [PreserveSig] int Add(int a, int b);                     // slot 3
+        string Name(string prefix, bool loud);                   // slot 4: BSTR in, VARIANT_BOOL in, BSTR retval
+        void Count(ref int n, out IOther made);                  // slot 5: by reference, an interface out
+        object Echo(object v);                                   // slot 6: VARIANT in, VARIANT retval
+        void Fail();                                             // slot 7: an exception -> its HRESULT
+    }
+
+    internal sealed class ManagedOther : IOther { public int Value() => 77; }
+
+    internal sealed class ManagedSink : ISink
+    {
+        public int Add(int a, int b) => a + b;
+        public string Name(string prefix, bool loud) => loud ? (prefix + " sink").ToUpperInvariant() : prefix + " sink";
+        public void Count(ref int n, out IOther made) { n++; made = new ManagedOther(); }
+        public object Echo(object v) => v is int i ? i * 2 : v;
+        public void Fail() => throw new InvalidOperationException("no");
     }
 
     [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A03"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -101,6 +124,8 @@ namespace ComImportFixture
         }
         public static int OtherValue(IntPtr p) { Wrap(p).GetOther(out IOther o); return o.Value(); }
         public static int ValueOfOther(IntPtr p) { var c = Wrap(p); c.GetOther(out IOther o); return c.ValueOf(o); }
+        public static int ValueOfManaged(IntPtr p) => Wrap(p).ValueOf(new ManagedOther());
+        public static string UseSink(IntPtr p) => Wrap(p).UseSink(new ManagedSink());
         public static bool IsOdd(IntPtr p, int x) => Wrap(p).IsOdd(x);
         public static Pair Swap(IntPtr p, Pair x) { Wrap(p).Swap(ref x); return x; }
         public static int Length(IntPtr p, string s) => Wrap(p).Length(s);

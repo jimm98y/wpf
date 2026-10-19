@@ -28,7 +28,7 @@ public sealed unsafe class ComRewriterTests
 
     private static IntPtr* BuildCalc()
     {
-        var vt = (IntPtr*)NativeMemory.AllocZeroed(19, (nuint)sizeof(IntPtr));
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(20, (nuint)sizeof(IntPtr));
         vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&QueryInterface;
         vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
         vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
@@ -36,7 +36,7 @@ public sealed unsafe class ComRewriterTests
         vt[4] = (IntPtr)(delegate* unmanaged<Obj*, int, int*, int>)&Twice;
         vt[5] = (IntPtr)(delegate* unmanaged<Obj*, int>)&Fail;
         vt[6] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&GetOther;
-        vt[7] = (IntPtr)(delegate* unmanaged<Obj*, Obj*, int*, int>)&ValueOf;
+        vt[7] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, int*, int>)&ValueOf;
         vt[8] = (IntPtr)(delegate* unmanaged<Obj*, int, short*, int>)&IsOdd;
         vt[9] = (IntPtr)(delegate* unmanaged<Obj*, int*, int>)&Swap;
         vt[10] = (IntPtr)(delegate* unmanaged<Obj*, char*, int>)&Length;
@@ -48,6 +48,7 @@ public sealed unsafe class ComRewriterTests
         vt[16] = (IntPtr)(delegate* unmanaged<Obj*, WpfMac.ComInterop.ComVariant, WpfMac.ComInterop.ComVariant*, int>)&Echo;
         vt[17] = (IntPtr)(delegate* unmanaged<Obj*, WpfMac.ComInterop.ComVariant*, int>)&Bump;
         vt[18] = (IntPtr)(delegate* unmanaged<Obj*, void*, int>)&Arrays;
+        vt[19] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, IntPtr*, int>)&UseSink;
         return vt;
     }
 
@@ -97,7 +98,34 @@ public sealed unsafe class ComRewriterTests
     [UnmanagedCallersOnly] private static int Twice(Obj* self, int x, int* r) { *r = 2 * x; return 0; }
     [UnmanagedCallersOnly] private static int Fail(Obj* self) => unchecked((int)0x80070057);
     [UnmanagedCallersOnly] private static int GetOther(Obj* self, IntPtr* other) { *other = (IntPtr)New(s_otherVt, self->Value); return 0; }
-    [UnmanagedCallersOnly] private static int ValueOf(Obj* self, Obj* other, int* r) { *r = other == null ? -1 : 1000 + other->Value; return 0; }
+    // through the other's vtable (slot 3, Value): a native one of ours, or a managed object's CCW
+    [UnmanagedCallersOnly] private static int ValueOf(Obj* self, IntPtr other, int* r) { *r = other == 0 ? -1 : 1000 + ((delegate* unmanaged<IntPtr, int>)(*(IntPtr**)other)[3])(other); return 0; }
+
+    /// <summary>Native code calling a managed ISink through its CCW, every kind of argument.</summary>
+    [UnmanagedCallersOnly]
+    private static int UseSink(Obj* self, IntPtr sink, IntPtr* r)
+    {
+        IntPtr* vt = *(IntPtr**)sink;
+        var parts = new List<string>();
+        parts.Add(((delegate* unmanaged<IntPtr, int, int, int>)vt[3])(sink, 20, 22).ToString());
+        IntPtr prefix = Marshal.StringToBSTR("my"), name;
+        int hr = ((delegate* unmanaged<IntPtr, IntPtr, short, IntPtr*, int>)vt[4])(sink, prefix, -1, &name);
+        Marshal.FreeBSTR(prefix);
+        parts.Add(hr == 0 ? Marshal.PtrToStringBSTR(name) : $"hr {hr:x8}");
+        if (hr == 0) Marshal.FreeBSTR(name);
+        int n = 41; IntPtr made;
+        hr = ((delegate* unmanaged<IntPtr, int*, IntPtr*, int>)vt[5])(sink, &n, &made);
+        parts.Add($"{n}/{((delegate* unmanaged<IntPtr, int>)(*(IntPtr**)made)[3])(made)}");
+        ((delegate* unmanaged<IntPtr, uint>)(*(IntPtr**)made)[2])(made);
+        WpfMac.ComInterop.ComVariant v, e;
+        WpfMac.ComInterop.Com.ToVariant(21, (IntPtr)(&v));
+        hr = ((delegate* unmanaged<IntPtr, WpfMac.ComInterop.ComVariant, WpfMac.ComInterop.ComVariant*, int>)vt[6])(sink, v, &e);
+        parts.Add(WpfMac.ComInterop.Com.FromVariant((IntPtr)(&e))!.ToString()!);
+        WpfMac.ComInterop.Com.ClearVariant((IntPtr)(&e));
+        parts.Add(((delegate* unmanaged<IntPtr, int>)vt[7])(sink).ToString("x8"));
+        *r = Marshal.StringToBSTR(string.Join(",", parts));
+        return 0;
+    }
     [UnmanagedCallersOnly] private static int IsOdd(Obj* self, int x, short* r) { *r = (short)((x & 1) != 0 ? -1 : 0); return 0; }
     [UnmanagedCallersOnly] private static int Swap(Obj* self, int* p) { (p[0], p[1]) = (p[1], p[0]); return 0; }
     [UnmanagedCallersOnly] private static int Length(Obj* self, char* s) { int n = 0; while (s[n] != 0) n++; return n; }
@@ -181,7 +209,7 @@ public sealed unsafe class ComRewriterTests
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.UsesComImport);
-        Assert.Equal(4, r.Interfaces);
+        Assert.Equal(5, r.Interfaces);
         Assert.Equal(1, r.PInvokes);
         string u = Assert.Single(r.Unsupported);
         Assert.Contains("Arrays", u);
@@ -207,6 +235,15 @@ public sealed unsafe class ComRewriterTests
         Assert.Equal(7, WithCalc(0, p => (int)Run("BLen", p, "a bcdef")!));       // a BSTR keeps an embedded NUL
         Assert.Equal("Hi there", WithCalc(0, p => (string)Run("Greet", p, "there")!));
         Assert.Equal("LOUD", WithCalc(0, p => (string)Run("Upper", p, "loud")!));
+    }
+
+    [Fact]
+    public void AManagedObject_HandedToNativeCode_IsCalledThroughItsCcw()
+    {
+        Assert.Equal(1077, WithCalc(0, p => (int)Run("ValueOfManaged", p)!));
+        // Add, Name (BSTR, VARIANT_BOOL, BSTR retval), Count (ref int, out interface), Echo (VARIANTs),
+        // Fail (InvalidOperationException's HRESULT, COR_E_INVALIDOPERATION)
+        Assert.Equal("42,MY SINK,42/77,42,80131509", WithCalc(0, p => (string)Run("UseSink", p)!));
     }
 
     [Fact]

@@ -185,7 +185,7 @@ adapter.
 - **Not supported yet** (each named in the verdict):
   - VARIANT, BSTR, SAFEARRAY;
   - IDispatch-only interfaces;
-  - CCWs (managed classes implementing a COM interface) and COM events;
+  - COM events;
   - `ref` interfaces;
   - formatted classes passed by reference;
   - COM types of another assembly or the BCL's `ComTypes`.
@@ -202,6 +202,17 @@ adapter.
     Telerik ×5 (CCWs, BSTR, VARIANT, the BCL's ComTypes).
 - **Added since the first version:**
   - BSTR in, by reference and as retval.
+  - **CCWs:** a managed object implementing a rewritten interface can be handed to native code.
+    - Each rewritten interface gets a nested `ComCcw` whose `Vtable()` holds `[UnmanagedCallersOnly]`
+      stubs. A stub finds the object behind the pointer, converts every supported kind the other way
+      round, calls the method, and returns the HRESULT. An exception's own HRESULT is returned, as
+      built-in COM does.
+    - `WpfMac.ComInterop`'s ComWrappers answers with one entry per rewritten interface the object
+      implements.
+    - A dual interface's IDispatch slots answer E_NOTIMPL.
+    - A method whose signature a stub cannot convert answers E_NOTIMPL. Its class's verdict names it.
+    - Judging GraphWorX's folder now takes 4.5 s per launch, since the stubs are generated while
+      judging.
   - VARIANT in (passed by value, as COM does), by reference and as retval (`ComVariant`,
     `Com.ToVariant`/`FromVariant`/`ClearVariant`).
     - Covered: EMPTY, NULL, BOOL, I1–I8, UI1–UI8, INT/UINT, R4, R8, CY, DATE, DECIMAL, BSTR, ERROR
