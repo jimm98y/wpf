@@ -79,7 +79,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
     internal sealed partial class DxbcTranslator
     {
         public const int PlumbingCpOut = 5, PlumbingPcOut = 6;
-        public const int DomainGroup = 2, DomainPoints = 0, DomainCps = 1, DomainPcs = 2;
+        public const int DomainGroup = 2, DomainPoints = 0, DomainCps = 1, DomainPcs = 2, DomainOut = 3;
 
         private HullInfo? _hull;
         private DxbcShader? _hullOf;                     // the domain form: the hull shader before it
@@ -112,12 +112,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         /// <summary>The domain shader as the vertex shader of the tessellated draw. <paramref name="cpRegs"/>
         /// and <paramref name="pcRegs"/> are the hull shader's strides (its translation's).</summary>
         public static DxbcTranslator TranslateDomain(DxbcShader ds, DxbcShader? hs, int cpRegs, int pcRegs, IReadOnlyList<LinkedElement> link, TranslationOptions? options = null)
+            => TranslateDomain(ds, hs, cpRegs, pcRegs, link, compute: false, options);
+
+        /// <summary>The domain shader as a vertex shader (<paramref name="compute"/> false) or, for a
+        /// geometry shader after it, as a compute kernel over the domain points writing its output
+        /// registers (group 1: the points, control points and patch constants at 0..2, the outputs at 3).</summary>
+        public static DxbcTranslator TranslateDomain(DxbcShader ds, DxbcShader? hs, int cpRegs, int pcRegs, IReadOnlyList<LinkedElement> link, bool compute, TranslationOptions? options = null)
         {
             if (ds.Stage != ShaderStage.Domain) throw new ArgumentException("not a domain shader");
             var t = new DxbcTranslator(ds, 0, link, options)
             {
                 // no hull shader (a coverage run): the domain shader's own declarations, register for register
-                _form = StageForm.DomainVertex, _hullOf = hs, _hull = HullInfo.Of(hs ?? ds), _cpRegs = Math.Max(1, cpRegs), _pcRegs = Math.Max(1, pcRegs),
+                _form = compute ? StageForm.DomainCompute : StageForm.DomainVertex, _hullOf = hs, _hull = HullInfo.Of(hs ?? ds), _cpRegs = Math.Max(1, cpRegs), _pcRegs = Math.Max(1, pcRegs),
             };
             t.Run();
             return t;
@@ -180,7 +186,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                         return $"dx_pc[{IndexExpr(o.Indices[0])}]";
                 }
             }
-            else if (_form == StageForm.DomainVertex)
+            else if (_form is StageForm.DomainVertex or StageForm.DomainCompute)
             {
                 switch (o.Type)
                 {
@@ -297,9 +303,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             var h = _hull!;
             var hs = _hullOf;
             int outCps = h.OutputControlPoints;
-            w.Append($"@group({DomainGroup}) @binding({DomainPoints}) var<storage, read> dx_dp: array<vec4<u32>>;\n");
-            w.Append($"@group({DomainGroup}) @binding({DomainCps}) var<storage, read> dx_cpout: array<vec4<f32>>;\n");
-            w.Append($"@group({DomainGroup}) @binding({DomainPcs}) var<storage, read> dx_pcout: array<vec4<f32>>;\n");
+            bool compute = _form == StageForm.DomainCompute;
+            int group = compute ? PlumbingGroup : DomainGroup;
+            w.Append($"@group({group}) @binding({DomainPoints}) var<storage, read> dx_dp: array<vec4<u32>>;\n");
+            w.Append($"@group({group}) @binding({DomainCps}) var<storage, read> dx_cpout: array<vec4<f32>>;\n");
+            w.Append($"@group({group}) @binding({DomainPcs}) var<storage, read> dx_pcout: array<vec4<f32>>;\n");
+            if (compute) w.Append($"@group({group}) @binding({DomainOut}) var<storage, read_write> dx_dsout: array<vec4<f32>>;\n");
             w.Append("var<private> dx_patch: u32;\n\n");
 
             // a control point: the hull shader's output of the same semantic
@@ -322,14 +331,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             }
             w.Append("        default: { return vec4<f32>(0.0f); }\n    }\n}\n\n");
 
-            AppendVertexOutput(w);
-            w.Append("@vertex\nfn main(@builtin(vertex_index) vid: u32) -> VsOut {\n    let d = dx_dp[vid];\n    dx_patch = d.z;\n");
+            if (compute)
+            {
+                w.Append("fn dx_body() {\n").Append(_body).Append("}\n\n");
+                w.Append($"@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\n    let vid = gid.x + gid.y * {InvocationsPerRow}u;\n    if (vid >= arrayLength(&dx_dp)) {{ return; }}\n    let d = dx_dp[vid];\n    dx_patch = d.z;\n");
+            }
+            else
+            {
+                AppendVertexOutput(w);
+                w.Append("@vertex\nfn main(@builtin(vertex_index) vid: u32) -> VsOut {\n    let d = dx_dp[vid];\n    dx_patch = d.z;\n");
+            }
             if (_builtins.Contains("vDomain"))
             {
                 string third = h.Domain == 2 ? "1.0f - bitcast<f32>(d.x) - bitcast<f32>(d.y)" : "0.0f";
                 w.Append($"    vDomain = vec4<f32>(bitcast<f32>(d.x), bitcast<f32>(d.y), {third}, 0.0f);\n");
             }
             if (_builtins.Contains("vPrim")) w.Append("    vPrim = bitcast<vec4<f32>>(vec4<u32>(d.w, 0u, 0u, 0u));\n");
+            if (compute)
+            {
+                w.Append("    dx_body();\n");
+                int regs = OutputRegisters;
+                foreach (int r in _outputRegs.OrderBy(r => r)) w.Append($"    dx_dsout[vid * {regs}u + {r}u] = {OutReg(r)};\n");
+                w.Append("}\n");
+                return;
+            }
             w.Append(_body);
             w.Append("    return shader_out();\n}\n");
         }

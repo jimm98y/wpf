@@ -177,7 +177,7 @@ namespace WgpuInterop.Tests.Direct3D
         private const string Ps = "struct O { float4 pos : SV_Position; float4 c : COLOR0; };\nfloat4 main(O o, bool face : SV_IsFrontFace) : SV_Target { return float4(o.c.xyz, face ? 1 : 0.5); }\n";
 
         /// <summary>Two patches through the shaders on the device, both windings drawn: the target's texels.</summary>
-        private static List<float[]> DrawPatches(IntPtr dev, IntPtr ctx, byte[] vs, byte[] hs, byte[] ds, byte[] ps, int points, float[] factors)
+        private static List<float[]> DrawPatches(IntPtr dev, IntPtr ctx, byte[] vs, byte[] hs, byte[] ds, byte[] ps, int points, float[] factors, byte[]? gsBlob = null)
         {
             var made = new List<IntPtr>();
             IntPtr Keep(IntPtr p) { made.Add(p); return p; }
@@ -235,6 +235,13 @@ namespace WgpuInterop.Tests.Direct3D
                 ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.HSSetConstantBuffers))(ctx, 0, 1, &cb);
                 ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.DSSetShader))(ctx, d, null, 0);
                 ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.PSSetShader))(ctx, psh, null, 0);
+                if (gsBlob != null)
+                {
+                    IntPtr g;
+                    fixed (byte* q = gsBlob) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateGeometryShader))(dev, q, (nuint)gsBlob.Length, IntPtr.Zero, &g), "CreateGeometryShader");
+                    Keep(g);
+                    ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.GSSetShader))(ctx, g, null, 0);
+                }
                 ((delegate* unmanaged<IntPtr, uint, IntPtr*, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetRenderTargets))(ctx, 1, &rtv, IntPtr.Zero);
                 var vp = new D3D11_VIEWPORT { Width = W, Height = H, MaxDepth = 1 };
                 ((delegate* unmanaged<IntPtr, uint, D3D11_VIEWPORT*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetViewports))(ctx, 1, &vp);
@@ -383,6 +390,54 @@ namespace WgpuInterop.Tests.Direct3D
                 foreach (IntPtr p in made) Release(p);
                 foreach (var x in hnd) x.Free();
             }
+        }
+
+        private const string GsAfter = @"
+struct O { float4 pos : SV_Position; float4 c : COLOR0; };
+[maxvertexcount(4)]
+void main(triangle O v[3], inout TriangleStream<O> s)
+{
+    // each tessellated triangle shrunk towards its centre, its third colour the triangle's area
+    float2 m = (v[0].pos.xy + v[1].pos.xy + v[2].pos.xy) / 3;
+    float area = abs(cross(float3(v[1].pos.xy - v[0].pos.xy, 0), float3(v[2].pos.xy - v[0].pos.xy, 0)).z);
+    [unroll] for (int k = 0; k < 3; k++) { O o = v[k]; o.pos.xy = lerp(o.pos.xy, m, 0.25); o.c.z = area * 20; s.Append(o); }
+}";
+
+        /// <summary>A geometry shader after tessellation: the domain shader as compute, the GS over
+        /// the tessellator's triangles, against WARP.</summary>
+        [Fact]
+        public void AGeometryShaderAfterTessellation_DrawsAsWarpDraws()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "real Direct3D 11 (WARP) and the HLSL compiler exist on Windows only");
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            IntPtr wDev, wCtx, sDev, sCtx;
+            uint level, want = 0xb000;
+            Assert.True(RealCreateDevice(IntPtr.Zero, 5, IntPtr.Zero, 0, &want, 1, 7, &wDev, &level, &wCtx) >= 0, "WARP");
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &sDev, &level, &sCtx) >= 0, "shim");
+            byte[] vs = Compile(Vs, "vs_5_0", out _), ps = Compile(Ps, "ps_5_0", out _), gs = Compile(GsAfter, "gs_5_0", out string? gerr);
+            Assert.True(gs.Length > 0, gerr);
+            var failures = new List<string>();
+            try
+            {
+                foreach (var (domain, points, nf, kStruct) in Domains.Take(2))
+                    foreach (string part in new[] { "integer", "fractional_odd" })
+                    {
+                        byte[] hs = Compile(Hull(domain, points, nf, kStruct, part, "triangle_cw"), "hs_5_0", out _);
+                        byte[] ds = Compile(Domain(domain, points, kStruct, position: true), "ds_5_0", out _);
+                        foreach (float[] f in new[] { s_factors[1], s_factors[3] })
+                        {
+                            var warp = DrawPatches(wDev, wCtx, vs, hs, ds, ps, points, f, gs);
+                            var shim = DrawPatches(sDev, sCtx, vs, hs, ds, ps, points, f, gs);
+                            var (count, first) = Compare(warp, shim);
+                            string what = $"{domain}/{part} [{string.Join(", ", f.Take(nf))}]";
+                            if (Covered(warp) == 0) failures.Add($"{what}: WARP draws nothing");
+                            else if (count > 0 && OnlyCoverageDiffers(warp, shim, 4) == 0) failures.Add($"{what}: {count} components differ (WARP covers {Covered(warp)}, the shim {Covered(shim)}); {first}");
+                        }
+                    }
+                if (Microsoft.Wpf.Interop.WebGpu.Direct3D.ComObject.From<D3DContext>(sCtx)!.DrawsSkipped > 0) failures.Add("the shim skipped draws");
+            }
+            finally { foreach (IntPtr p in new[] { sCtx, sDev, wCtx, wDev }) Release(p); }
+            Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures));
         }
 
         /// <summary>Every domain, partitioning and output primitive, over a spread of factors: the
