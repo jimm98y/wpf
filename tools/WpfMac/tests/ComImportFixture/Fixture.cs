@@ -2,6 +2,7 @@
 // and calls Scenario's members against a native test object.
 using System;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
 
 namespace ComImportFixture
 {
@@ -26,7 +27,7 @@ namespace ComImportFixture
         void Upper(ref string s);                               // slot 15: a BSTR by reference
         object Echo(object v);                                  // slot 16: a VARIANT in, one back
         void Bump(ref object v);                                // slot 17: a VARIANT by reference
-        [PreserveSig] int Arrays([MarshalAs(UnmanagedType.SafeArray)] int[] a);   // slot 18: unsupported (SAFEARRAY)
+        [PreserveSig] int Arrays([MarshalAs(UnmanagedType.SafeArray)] Pair[] a);  // slot 18: unsupported (a SAFEARRAY of records)
         string UseSink(ISink sink);                              // slot 19: native code calls a managed object
     }
 
@@ -72,6 +73,214 @@ namespace ComImportFixture
         void RegisterObjectBound([MarshalAs(UnmanagedType.IUnknown)] object o);
     }
 
+    /// <summary>The BCL's own COM interfaces (System.Runtime.InteropServices.ComTypes) in an app's interface.</summary>
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A05"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IStreams
+    {
+        IStream Open(int length);                                // slot 3: a native IStream
+        [PreserveSig] int Sum(IStream s);                        // slot 4: native code reads a stream
+        IEnumString Names();                                     // slot 5: a native IEnumString
+        [PreserveSig] int Count(IEnumString e);                  // slot 6: native code enumerates
+    }
+
+    /// <summary>SAFEARRAYs: COM's default for an array in a COM interface method.</summary>
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A06"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface ISafeArrays
+    {
+        [PreserveSig] int Sum(int[] a);                          // slot 3: native code reads the descriptor itself
+        string[] Names(int n);                                   // slot 4: a SAFEARRAY of BSTRs as retval
+        void Reverse(ref object[] a);                            // slot 5: VARIANTs, replaced by the callee
+        object Matrix();                                         // slot 6: a VARIANT holding a 2x3 VT_R8 array
+        [PreserveSig] int Weighted(Array m);                     // slot 7: a 2-D array: column-major, as COM lays it out
+        string UseSink(IArraySink sink);                         // slot 8: native code calls a managed object with arrays
+    }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A07"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IArraySink
+    {
+        [PreserveSig] int Sum(short[] a);                        // slot 3
+        string[] Make(int n);                                    // slot 4: retval
+        void Double(ref int[] a);                                // slot 5: by reference, replaced
+    }
+
+    internal sealed class ManagedArraySink : IArraySink
+    {
+        public int Sum(short[] a) { int s = 0; foreach (short x in a) s += x; return s; }
+        public string[] Make(int n) { var r = new string[n]; for (int i = 0; i < n; i++) r[i] = new string('m', i + 1); return r; }
+        public void Double(ref int[] a) { var r = new int[a.Length * 2]; for (int i = 0; i < r.Length; i++) r[i] = a[i % a.Length]; a = r; }
+    }
+
+    /// <summary>A dispinterface: called through IDispatch::Invoke (the object answers IDispatch only).</summary>
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A08"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+    internal interface ICounterDisp
+    {
+        [DispId(1)] int Add(int a, int b);
+        [DispId(2)] string Name { get; set; }
+        [DispId(3)] void Bump(ref int n);
+        int ByName(string s);                                    // no [DispId]: GetIDsOfNames
+        [DispId(5)] void Fail();                                 // DISP_E_EXCEPTION
+    }
+
+    /// <summary>A dispinterface implemented by managed code (an event sink's shape), called by native code.</summary>
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A09"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+    internal interface IDispSink
+    {
+        [DispId(7)] string Echo(string s, int times);
+        [DispId(8)] int Total { get; }
+        [DispId(9)] void Twice(ref int n);
+        [DispId(10)] void Throw();
+    }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A0A"), InterfaceType(ComInterfaceType.InterfaceIsDual)]
+    internal interface IDualThing
+    {
+        [DispId(11)] int Square(int x);
+    }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A0B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IDispUser
+    {
+        [return: MarshalAs(UnmanagedType.IDispatch)] object Counter();          // slot 3: a native IDispatch-only object
+        string UseSink(IDispSink sink);                                          // slot 4
+        [PreserveSig] int UseDual([MarshalAs(UnmanagedType.IDispatch)] object o);   // slot 5: a managed dual object's IDispatch
+    }
+
+    internal sealed class ManagedDispSink : IDispSink
+    {
+        public string Echo(string s, int times) { var r = ""; for (int i = 0; i < times; i++) r += s; return r; }
+        public int Total => 99;
+        public void Twice(ref int n) => n *= 2;
+        public void Throw() => throw new InvalidOperationException("sink failed");
+    }
+
+    internal sealed class ManagedDual : IDualThing { public int Square(int x) => x * x; }
+
+    // ---- COM events, as tlbimp writes them: a source dispinterface, its event interface, provider and sink helper ----
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A0C"), InterfaceType(ComInterfaceType.InterfaceIsIDispatch)]
+    internal interface ITickEvents
+    {
+        [DispId(1)] void Tick(int n);
+        [DispId(2)] void Done(string why);
+    }
+
+    public delegate void ITickEvents_TickEventHandler(int n);
+    public delegate void ITickEvents_DoneEventHandler(string why);
+
+    [ComEventInterface(typeof(ITickEvents), typeof(ITickEvents_EventProvider)), ComVisible(false)]
+    internal interface ITickEvents_Event
+    {
+        event ITickEvents_TickEventHandler Tick;
+        event ITickEvents_DoneEventHandler Done;
+    }
+
+    /// <summary>tlbimp's provider: finds the source's connection point and Advises a sink helper per handler.</summary>
+    internal sealed class ITickEvents_EventProvider : ITickEvents_Event
+    {
+        private readonly IConnectionPointContainer _container;
+        private IConnectionPoint? _point;
+        private readonly System.Collections.Generic.List<ITickEvents_SinkHelper> _sinks = new();
+
+        public ITickEvents_EventProvider(object source) { _container = (IConnectionPointContainer)source; }
+
+        private void Init()
+        {
+            if (_point != null) return;
+            Guid g = typeof(ITickEvents).GUID;
+            _container.FindConnectionPoint(ref g, out _point);
+        }
+
+        private void Add(ITickEvents_SinkHelper h)
+        {
+            lock (_sinks) { Init(); _point!.Advise(h, out h.Cookie); _sinks.Add(h); }
+        }
+
+        private void Remove(Func<ITickEvents_SinkHelper, bool> match)
+        {
+            lock (_sinks)
+            {
+                var h = _sinks.Find(x => match(x));
+                if (h == null) return;
+                _point!.Unadvise(h.Cookie);
+                _sinks.Remove(h);
+            }
+        }
+
+        public event ITickEvents_TickEventHandler Tick
+        {
+            add => Add(new ITickEvents_SinkHelper { TickDelegate = value });
+            remove => Remove(h => h.TickDelegate == value);
+        }
+
+        public event ITickEvents_DoneEventHandler Done
+        {
+            add => Add(new ITickEvents_SinkHelper { DoneDelegate = value });
+            remove => Remove(h => h.DoneDelegate == value);
+        }
+    }
+
+    [ClassInterface(ClassInterfaceType.None)]
+    internal sealed class ITickEvents_SinkHelper : ITickEvents
+    {
+        public ITickEvents_TickEventHandler? TickDelegate;
+        public ITickEvents_DoneEventHandler? DoneDelegate;
+        public int Cookie;
+        public void Tick(int n) => TickDelegate?.Invoke(n);
+        public void Done(string why) => DoneDelegate?.Invoke(why);
+    }
+
+    /// <summary>An event source: raises the .NET events named as ITickEvents's methods.</summary>
+    [ComSourceInterfaces(typeof(ITickEvents)), ClassInterface(ClassInterfaceType.None)]
+    public sealed class Ticker
+    {
+        public event ITickEvents_TickEventHandler? Tick;
+        public event ITickEvents_DoneEventHandler? Done;
+        public void Run(int n) { for (int i = 1; i <= n; i++) Tick?.Invoke(i); Done?.Invoke("ran " + n); }
+    }
+
+    /// <summary>A managed IStream over bytes, handed to native code.</summary>
+    internal sealed class ManagedStream : IStream
+    {
+        private readonly byte[] _bytes; private int _pos;
+        public ManagedStream(params byte[] bytes) { _bytes = bytes; }
+        public void Read(byte[] pv, int cb, IntPtr pcbRead)
+        {
+            int n = Math.Min(cb, _bytes.Length - _pos);
+            Array.Copy(_bytes, _pos, pv, 0, n); _pos += n;
+            if (pcbRead != IntPtr.Zero) Marshal.WriteInt32(pcbRead, n);
+        }
+        public void Write(byte[] pv, int cb, IntPtr pcbWritten) => throw new NotSupportedException();
+        public void Seek(long dlibMove, int dwOrigin, IntPtr plibNewPosition)
+        {
+            _pos = (int)(dwOrigin == 0 ? dlibMove : dwOrigin == 1 ? _pos + dlibMove : _bytes.Length + dlibMove);
+            if (plibNewPosition != IntPtr.Zero) Marshal.WriteInt64(plibNewPosition, _pos);
+        }
+        public void SetSize(long libNewSize) => throw new NotSupportedException();
+        public void CopyTo(IStream pstm, long cb, IntPtr pcbRead, IntPtr pcbWritten) => throw new NotSupportedException();
+        public void Commit(int grfCommitFlags) { }
+        public void Revert() { }
+        public void LockRegion(long libOffset, long cb, int dwLockType) => throw new NotSupportedException();
+        public void UnlockRegion(long libOffset, long cb, int dwLockType) => throw new NotSupportedException();
+        public void Stat(out STATSTG pstatstg, int grfStatFlag) => pstatstg = new STATSTG { pwcsName = "managed.bin", cbSize = _bytes.Length, type = 2 };
+        public void Clone(out IStream ppstm) => ppstm = new ManagedStream(_bytes) { _pos = _pos };
+    }
+
+    internal sealed class ManagedNames : IEnumString
+    {
+        private readonly string[] _names; private int _at;
+        public ManagedNames(params string[] names) { _names = names; }
+        public int Next(int celt, string[] rgelt, IntPtr pceltFetched)
+        {
+            int n = 0;
+            for (; n < celt && _at < _names.Length; n++) rgelt[n] = _names[_at++];
+            if (pceltFetched != IntPtr.Zero) Marshal.WriteInt32(pceltFetched, n);
+            return n == celt ? 0 : 1;
+        }
+        public int Skip(int celt) { _at += celt; return 0; }
+        public void Reset() => _at = 0;
+        public void Clone(out IEnumString ppenum) => ppenum = new ManagedNames(_names) { _at = _at };
+    }
+
     public static class Scenario
     {
         [DllImport("fixturenative", EntryPoint = "GetFileVersionInfoSizeW", CharSet = CharSet.Unicode)]
@@ -115,6 +324,131 @@ namespace ComImportFixture
 
         internal static ICalc Wrap(IntPtr p) => (ICalc)Marshal.GetObjectForIUnknown(p);
 
+        // ---- the BCL's ComTypes ----
+        private static IStreams Streams(IntPtr p) => (IStreams)Marshal.GetObjectForIUnknown(p);
+
+        // ---- SAFEARRAYs ----
+        private static ISafeArrays Arrays2(IntPtr p) => (ISafeArrays)Marshal.GetObjectForIUnknown(p);
+        public static int SafeSum(IntPtr p) => Arrays2(p).Sum(new[] { 1, 2, 3, 40 });
+        public static int SafeSumEmpty(IntPtr p) => Arrays2(p).Sum(new int[0]);
+        public static string SafeNames(IntPtr p) => string.Join(",", Arrays2(p).Names(3));
+        public static string SafeReverse(IntPtr p)
+        {
+            object[] a = { 1, "two", 3.5 };
+            Arrays2(p).Reverse(ref a);
+            return string.Join(",", a) + "|" + a[0].GetType().Name;
+        }
+        public static string SafeMatrix(IntPtr p)
+        {
+            object m = Arrays2(p).Matrix();
+            var d = (double[,])m;
+            return $"{d.GetLength(0)}x{d.GetLength(1)}:{d[0, 0]},{d[0, 2]},{d[1, 0]},{d[1, 2]}";
+        }
+        public static int SafeWeighted(IntPtr p) => Arrays2(p).Weighted(new int[,] { { 1, 2, 3 }, { 4, 5, 6 } });
+        public static string SafeSink(IntPtr p) => Arrays2(p).UseSink(new ManagedArraySink());
+
+        // ---- events ----
+        /// <summary>A managed event source seen as a COM object (its CCW, wrapped back): subscribed through the
+        /// event interface, which goes provider -> FindConnectionPoint -> Advise(sink helper) over vtables, and
+        /// called back source -> sink (IDispatch::Invoke) -> sink helper -> the handler.</summary>
+        public static string Events()
+        {
+            var ticker = new Ticker();
+            IntPtr unk = Marshal.GetIUnknownForObject(ticker);
+            object com = Marshal.GetObjectForIUnknown(unk);
+            Marshal.Release(unk);
+            var ev = (ITickEvents_Event)com;
+            var log = new System.Collections.Generic.List<string>();
+            ITickEvents_TickEventHandler tick = n => log.Add("t" + n);
+            ev.Tick += tick;
+            ev.Done += why => log.Add(why);
+            ticker.Run(3);
+            ev.Tick -= tick;
+            ticker.Run(1);
+            return string.Join(",", log);
+        }
+
+        // ---- IDispatch ----
+        private static IDispUser Disp(IntPtr p) => (IDispUser)Marshal.GetObjectForIUnknown(p);
+        public static string DispCounter(IntPtr p)
+        {
+            var c = (ICounterDisp)Disp(p).Counter();
+            int sum = c.Add(2, 3);
+            c.Name = "abc";
+            int n = 41;
+            c.Bump(ref n);
+            string fail;
+            try { c.Fail(); fail = "no exception"; }
+            catch (COMException e) { fail = $"{e.Message}:{e.HResult:x8}"; }
+            return $"{sum}|{c.Name}|{n}|{c.ByName("four")}|{fail}";
+        }
+        public static string DispSink(IntPtr p) => Disp(p).UseSink(new ManagedDispSink());
+        public static int DispDual(IntPtr p) => Disp(p).UseDual(new ManagedDual());
+
+        /// <summary>A native IStream: read in pieces, Stat, Seek and Clone.</summary>
+        public static unsafe string ReadNative(IntPtr p)
+        {
+            IStream s = Streams(p).Open(5);
+            var all = new System.Collections.Generic.List<byte>();
+            var buf = new byte[3];
+            int got;
+            do { s.Read(buf, buf.Length, (IntPtr)(&got)); for (int i = 0; i < got; i++) all.Add(buf[i]); } while (got > 0);
+            s.Stat(out STATSTG st, 0);
+            long pos;
+            s.Seek(1, 0, (IntPtr)(&pos));
+            s.Clone(out IStream c);
+            c.Read(buf, 1, (IntPtr)(&got));
+            return $"{string.Join(",", all)}|{st.pwcsName}|{st.cbSize}|{pos}|{buf[0]}";
+        }
+
+        /// <summary>A managed IStream read by native code.</summary>
+        public static int SumManaged(IntPtr p) => Streams(p).Sum(new ManagedStream(1, 2, 3, 4));
+
+        /// <summary>A native IStream handed back to native code.</summary>
+        public static int SumNative(IntPtr p) { var x = Streams(p); return x.Sum(x.Open(4)); }
+
+        /// <summary>A native IEnumString: Next in pieces, Skip, Reset, Clone.</summary>
+        public static unsafe string NamesNative(IntPtr p)
+        {
+            IEnumString e = Streams(p).Names();
+            var a = new string[2];
+            int n;
+            int hr = e.Next(2, a, (IntPtr)(&n));
+            string first = $"{hr}:{n}:{a[0]},{a[1]}";
+            hr = e.Next(2, a, (IntPtr)(&n));
+            string second = $"{hr}:{n}:{a[0]}";
+            e.Reset();
+            e.Skip(1);
+            e.Clone(out IEnumString c);
+            c.Next(1, a, IntPtr.Zero);
+            return $"{first}|{second}|{a[0]}";
+        }
+
+        /// <summary>A managed IEnumString enumerated by native code.</summary>
+        public static int CountManaged(IntPtr p) => Streams(p).Count(new ManagedNames("a", "bb", "ccc"));
+
+        [DllImport("ole32.dll")]
+        private static extern int CreateBindCtx(uint reserved, out IBindCtx ctx);
+
+        /// <summary>The BCL's IBindCtx, from ole32 (Windows): options, an object parameter, its enumeration.</summary>
+        public static string BclBindCtx()
+        {
+            Marshal.ThrowExceptionForHR(CreateBindCtx(0, out IBindCtx ctx));
+            var o = new BIND_OPTS { cbStruct = Marshal.SizeOf<BIND_OPTS>(), grfMode = 2 };
+            ctx.SetBindOptions(ref o);
+            var back = new BIND_OPTS { cbStruct = o.cbStruct };
+            ctx.GetBindOptions(ref back);
+            ctx.RegisterObjectParam("key", new ManagedNames("x"));
+            ctx.GetObjectParam("key", out object got);
+            // ole32 answers E_NOTIMPL here: built-in COM throws NotImplementedException
+            string keys;
+            try { ctx.EnumObjectParam(out IEnumString e); keys = "enumerated"; }
+            catch (NotImplementedException) { keys = "notimpl"; }
+            int revoked = ctx.RevokeObjectParam("key");
+            int again = ctx.RevokeObjectParam("key");
+            return $"{back.grfMode}|{got != null}|{keys}|{revoked}|{again != 0}";
+        }
+
         public static int Add(IntPtr p, int a, int b) => Wrap(p).Add(a, b);
         /// <summary>An object from somewhere else (a built-in RCW, on Windows) cast to a rewritten interface.</summary>
         public static int AddThroughObject(object o, int a, int b) => ((ICalc)o).Add(a, b);
@@ -141,7 +475,7 @@ namespace ComImportFixture
         public static object Bump(IntPtr p, object v) { Wrap(p).Bump(ref v); return v; }
         public static string Arrays(IntPtr p)
         {
-            try { Wrap(p).Arrays(new[] { 1 }); return "no exception"; }
+            try { Wrap(p).Arrays(new[] { new Pair() }); return "no exception"; }
             catch (NotSupportedException) { return "NotSupported"; }
         }
         public static bool CastsToMissing(IntPtr p) => Wrap(p) is INotThere;

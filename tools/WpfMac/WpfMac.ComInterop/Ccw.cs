@@ -13,6 +13,10 @@ namespace WpfMac.ComInterop;
 
 public static unsafe partial class Com
 {
+    /// <summary>The BCL COM interfaces (System.Runtime.InteropServices.ComTypes) supported off built-in COM, by
+    /// full name: written by hand here (ComTypes.cs), which a rewritten assembly may use.</summary>
+    public static IReadOnlyList<string> SupportedBclComTypes => BclComTypes.Supported;
+
     /// <summary>A stub's first argument: the managed object the CCW stands for.</summary>
     public static object CcwTarget(IntPtr dispatch) => ComWrappers.ComInterfaceDispatch.GetInstance<object>((ComWrappers.ComInterfaceDispatch*)dispatch);
 
@@ -58,9 +62,15 @@ public static unsafe partial class Com
             foreach (Type i in type.GetInterfaces())
             {
                 Type? ccw = i.GetNestedType("ComCcw", BindingFlags.Public | BindingFlags.NonPublic);
-                if (ccw?.GetMethod("Vtable", BindingFlags.Public | BindingFlags.Static) is not { } vt) continue;
-                list.Add((i.GUID, (IntPtr)vt.Invoke(null, null)!));
+                if (ccw?.GetMethod("Vtable", BindingFlags.Public | BindingFlags.Static) is { } vt) list.Add((i.GUID, (IntPtr)vt.Invoke(null, null)!));
+                else if (BclComTypes.VtableOf(i) is var bcl && bcl != IntPtr.Zero) list.Add((i.GUID, bcl));
             }
+            // an event source ([ComSourceInterfaces]): IConnectionPointContainer, its connection points made on demand
+            if (EventSource.SourceInterfaces(type) != null && !list.Exists(e => e.Iid == IID_IConnectionPointContainer))
+                list.Add((IID_IConnectionPointContainer, BclComTypes.VtableOf(typeof(System.Runtime.InteropServices.ComTypes.IConnectionPointContainer))));
+            // IDispatch: the first dispinterface's or dual interface's (their slots 3-6 answer it)
+            foreach (var (_, v) in list.ToArray())
+                if (IsDispatchVtable(v)) { list.Add((IID_IDispatch, v)); break; }
             if (list.Count == 0)
                 LogOnce("ccw:" + type.FullName, $"a managed {type.FullName} was handed to native code: it implements no rewritten COM interface, so only IUnknown is offered");
             var table = (ComInterfaceEntry*)NativeMemory.AllocZeroed((nuint)Math.Max(1, list.Count), (nuint)sizeof(ComInterfaceEntry));

@@ -15,6 +15,7 @@ public static partial class ComRewriter
     private sealed partial class Work
     {
         private readonly Dictionary<TypeDefinition, List<string>> _ccwRefused = new();
+        private MethodReference? _fillDispatch;
         private MethodReference? _ccwTarget, _newVtable, _notImplSlot, _hresultOf, _wrap, _strFromBstr, _strFromUni, _strFromAnsi, _uco, _freeBstrM, _strToCoTaskUni;
 
         private void ImportCcw()
@@ -24,6 +25,7 @@ public static partial class ComRewriter
             MethodReference Imp(string name, params Type[] args) => _m.ImportReference(com.GetMethod(name, args) ?? throw new MissingMethodException(name));
             _ccwTarget = Imp(nameof(Com.CcwTarget), typeof(IntPtr));
             _newVtable = Imp(nameof(Com.NewVtable), typeof(int));
+            _fillDispatch = Imp(nameof(Com.FillDispatchSlots), typeof(IntPtr), typeof(RuntimeTypeHandle));
             _notImplSlot = _m.ImportReference(com.GetProperty(nameof(Com.NotImplementedSlot))!.GetGetMethod()!);
             _hresultOf = Imp(nameof(Com.HResultOf), typeof(Exception));
             _wrap = Imp(nameof(Com.Wrap), typeof(IntPtr));
@@ -74,7 +76,9 @@ public static partial class ComRewriter
                 load();
                 il.Emit(OpCodes.Stind_I);
             }
-            for (int k = 3; k < first; k++) Slot(k, () => il.Emit(OpCodes.Call, _notImplSlot!));
+            // a dual interface's or dispinterface's IDispatch (slots 3-6), answered by reflection
+            if (first == 7) { il.Emit(OpCodes.Ldloc, p); il.Emit(OpCodes.Ldtoken, iface); il.Emit(OpCodes.Call, _fillDispatch!); }
+            else for (int k = 3; k < first; k++) Slot(k, () => il.Emit(OpCodes.Call, _notImplSlot!));
             for (int k = 0; k < stubs.Count; k++) { var s = stubs[k]; Slot(first + k, () => il.Emit(OpCodes.Ldftn, s)); }
             il.Emit(OpCodes.Ldloc, p);
             il.Emit(OpCodes.Stsfld, field);
@@ -154,6 +158,30 @@ public static partial class ComRewriter
                     case Kind.StrA: loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Call, _strFromAnsi!); }); break;
                     case Kind.StrB: loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Call, _strFromBstr!); }); break;
                     case Kind.Variant: loads.Add(() => { il.Emit(OpCodes.Ldarga, stub.Parameters[n]); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Call, _fromVariant); }); break;
+                    case Kind.SafeArray:
+                    {
+                        var t = prm.ParameterType;
+                        loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _fromSafeArray); il.Emit(OpCodes.Castclass, t); });
+                        break;
+                    }
+                    case Kind.RefSafeArray:
+                    {
+                        var elem = ((ByReferenceType)prm.ParameterType).ElementType;
+                        var l = Local(stub, elem);
+                        if (!outOnly) { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldind_I); il.Emit(OpCodes.Ldtoken, elem); il.Emit(OpCodes.Call, _fromSafeArray); il.Emit(OpCodes.Castclass, elem); il.Emit(OpCodes.Stloc, l); }
+                        loads.Add(() => il.Emit(OpCodes.Ldloca, l));
+                        after.Add(() =>
+                        {
+                            // the caller's old array is the callee's to free when it is replaced, as with oleaut32
+                            if (!outOnly) { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldind_I); il.Emit(OpCodes.Call, _destroySafeArray); }
+                            il.Emit(OpCodes.Ldarg, n);
+                            il.Emit(OpCodes.Ldloc, l);
+                            il.Emit(OpCodes.Ldc_I4, a.Vt);
+                            il.Emit(OpCodes.Call, _toSafeArray);
+                            il.Emit(OpCodes.Stind_I);
+                        });
+                        break;
+                    }
                     case Kind.OutIface:
                     {
                         var elem = ((ByReferenceType)prm.ParameterType).ElementType;
@@ -166,7 +194,7 @@ public static partial class ComRewriter
                             il.Emit(OpCodes.Ldarg, n);
                             il.Emit(OpCodes.Ldloc, l);
                             if (a.Iface != null) { il.Emit(OpCodes.Ldtoken, a.Iface); il.Emit(OpCodes.Call, _borrow); }
-                            else il.Emit(OpCodes.Call, _borrowUnknown);
+                            else il.Emit(OpCodes.Call, a.Vt == 9 ? _borrowDispatch : _borrowUnknown);
                             il.Emit(OpCodes.Stind_I);
                         });
                         break;
@@ -287,9 +315,10 @@ public static partial class ComRewriter
                 case Kind.Bool2: il.Emit(OpCodes.Neg); il.Emit(OpCodes.Conv_I2); break;            // true -> -1
                 case Kind.Bool4: case Kind.Bool1: break;
                 case Kind.Iface: il.Emit(OpCodes.Ldtoken, a.Iface!); il.Emit(OpCodes.Call, _borrow); break;
-                case Kind.Unknown: il.Emit(OpCodes.Call, _borrowUnknown); break;
+                case Kind.Unknown: il.Emit(OpCodes.Call, a.Vt == 9 ? _borrowDispatch : _borrowUnknown); break;
                 case Kind.StrB: il.Emit(OpCodes.Call, _toBstr); break;
                 case Kind.StrW: il.Emit(OpCodes.Call, _strToCoTaskUni!); break;
+                case Kind.SafeArray: il.Emit(OpCodes.Ldc_I4, a.Vt); il.Emit(OpCodes.Call, _toSafeArray); break;
             }
         }
     }

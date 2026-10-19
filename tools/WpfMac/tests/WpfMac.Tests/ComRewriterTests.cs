@@ -162,6 +162,454 @@ public sealed unsafe class ComRewriterTests
         return 0;
     }
 
+    // ---- the BCL's ComTypes: IStreams, a native IStream, a native IEnumString -------------------
+
+    private static readonly Guid IID_IStreams = new("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A05");
+    private static readonly Guid IID_IStream = new("0000000c-0000-0000-C000-000000000046");
+    private static readonly Guid IID_IEnumString = new("00000101-0000-0000-C000-000000000046");
+
+    /// <summary>A native stream or enumerator: { vtable, refs, length, position } (Obj's first fields).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Cursor { public IntPtr* Vtbl; public int Refs; public int Len; public int Pos; }
+
+    /// <summary>STATSTG as native code lays it out.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NStatstg
+    {
+        public IntPtr Name; public int Type; public long Size;
+        public long M, C, A; public int Mode, Locks; public Guid Clsid; public int State, Reserved;
+    }
+
+    private static readonly string[] s_names = { "one", "two", "three" };
+    private static readonly IntPtr* s_streamsVt = BuildStreams();
+    private static readonly IntPtr* s_streamVt = BuildStream();
+    private static readonly IntPtr* s_enumVt = BuildEnum();
+
+    private static IntPtr* BuildStreams()
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(7, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&CursorQueryInterface;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, int, IntPtr*, int>)&Open;
+        vt[4] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, int>)&Sum;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&Names;
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, int>)&Count;
+        return vt;
+    }
+
+    private static IntPtr* BuildStream()
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(14, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&CursorQueryInterface;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        for (int k = 3; k < 14; k++) vt[k] = (IntPtr)(delegate* unmanaged<IntPtr, int>)&NotImpl;
+        vt[3] = (IntPtr)(delegate* unmanaged<Cursor*, byte*, int, int*, int>)&StreamRead;
+        vt[5] = (IntPtr)(delegate* unmanaged<Cursor*, long, int, long*, int>)&StreamSeek;
+        vt[12] = (IntPtr)(delegate* unmanaged<Cursor*, NStatstg*, int, int>)&StreamStat;
+        vt[13] = (IntPtr)(delegate* unmanaged<Cursor*, IntPtr*, int>)&CursorClone;
+        return vt;
+    }
+
+    private static IntPtr* BuildEnum()
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(7, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&CursorQueryInterface;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        vt[3] = (IntPtr)(delegate* unmanaged<Cursor*, int, IntPtr*, int*, int>)&EnumNext;
+        vt[4] = (IntPtr)(delegate* unmanaged<Cursor*, int, int>)&EnumSkip;
+        vt[5] = (IntPtr)(delegate* unmanaged<Cursor*, int>)&EnumReset;
+        vt[6] = (IntPtr)(delegate* unmanaged<Cursor*, IntPtr*, int>)&CursorClone;
+        return vt;
+    }
+
+    private static Cursor* NewCursor(IntPtr* vt, int len, int pos)
+    {
+        var c = (Cursor*)NativeMemory.AllocZeroed((nuint)sizeof(Cursor));
+        c->Vtbl = vt; c->Refs = 1; c->Len = len; c->Pos = pos;
+        Interlocked.Increment(ref Live);
+        return c;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int CursorQueryInterface(Obj* self, Guid* iid, IntPtr* ppv)
+    {
+        Guid own = self->Vtbl == s_streamsVt ? IID_IStreams : self->Vtbl == s_streamVt ? IID_IStream : IID_IEnumString;
+        if (*iid == IID_IUnknown || *iid == own) { self->Refs++; *ppv = (IntPtr)self; return 0; }
+        *ppv = IntPtr.Zero;
+        return unchecked((int)0x80004002);
+    }
+
+    [UnmanagedCallersOnly] private static int NotImpl(IntPtr self) => unchecked((int)0x80004001);
+    [UnmanagedCallersOnly] private static int Open(Obj* self, int len, IntPtr* r) { *r = (IntPtr)NewCursor(s_streamVt, len, 0); return 0; }
+    [UnmanagedCallersOnly] private static int Names(Obj* self, IntPtr* r) { *r = (IntPtr)NewCursor(s_enumVt, s_names.Length, 0); return 0; }
+
+    /// <summary>Native code reading a stream (bytes, then Stat): sum + 100 x name length + 10000 x size.</summary>
+    [UnmanagedCallersOnly]
+    private static int Sum(Obj* self, IntPtr s)
+    {
+        IntPtr* vt = *(IntPtr**)s;
+        byte* buf = stackalloc byte[2];
+        int sum = 0, got;
+        do
+        {
+            int hr = ((delegate* unmanaged<IntPtr, byte*, int, int*, int>)vt[3])(s, buf, 2, &got);
+            if (hr < 0) return hr;
+            for (int i = 0; i < got; i++) sum += buf[i];
+        } while (got > 0);
+        NStatstg st;
+        int h = ((delegate* unmanaged<IntPtr, NStatstg*, int, int>)vt[12])(s, &st, 0);
+        if (h < 0) return h;
+        string name = Marshal.PtrToStringUni(st.Name) ?? "";
+        Marshal.FreeCoTaskMem(st.Name);
+        return sum + 100 * name.Length + 10000 * (int)st.Size;
+    }
+
+    /// <summary>Native code enumerating strings: fetched x 100 + their total length.</summary>
+    [UnmanagedCallersOnly]
+    private static int Count(Obj* self, IntPtr e)
+    {
+        IntPtr* buf = stackalloc IntPtr[10];
+        int fetched = 0;
+        int hr = ((delegate* unmanaged<IntPtr, int, IntPtr*, int*, int>)(*(IntPtr**)e)[3])(e, 10, buf, &fetched);
+        if (hr < 0) return hr;
+        int len = 0;
+        for (int i = 0; i < fetched; i++) { len += Marshal.PtrToStringUni(buf[i])!.Length; Marshal.FreeCoTaskMem(buf[i]); }
+        return fetched * 100 + len;
+    }
+
+    // a stream of Len bytes, byte k being k + 1
+    [UnmanagedCallersOnly]
+    private static int StreamRead(Cursor* c, byte* pv, int cb, int* read)
+    {
+        int n = Math.Min(cb, c->Len - c->Pos);
+        for (int i = 0; i < n; i++) pv[i] = (byte)(c->Pos + i + 1);
+        c->Pos += n;
+        if (read != null) *read = n;
+        return n == cb ? 0 : 1;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int StreamSeek(Cursor* c, long move, int origin, long* pos)
+    {
+        c->Pos = (int)(origin == 0 ? move : origin == 1 ? c->Pos + move : c->Len + move);
+        if (pos != null) *pos = c->Pos;
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int StreamStat(Cursor* c, NStatstg* st, int flag)
+    {
+        *st = default;
+        st->Name = Marshal.StringToCoTaskMemUni("native.bin");
+        st->Type = 2;
+        st->Size = c->Len;
+        return 0;
+    }
+
+    [UnmanagedCallersOnly] private static int CursorClone(Cursor* c, IntPtr* r) { *r = (IntPtr)NewCursor(c->Vtbl, c->Len, c->Pos); return 0; }
+
+    [UnmanagedCallersOnly]
+    private static int EnumNext(Cursor* c, int celt, IntPtr* rgelt, int* fetched)
+    {
+        int n = 0;
+        for (; n < celt && c->Pos < c->Len; n++) rgelt[n] = Marshal.StringToCoTaskMemUni(s_names[c->Pos++]);
+        if (fetched != null) *fetched = n;
+        return n == celt ? 0 : 1;
+    }
+
+    [UnmanagedCallersOnly] private static int EnumSkip(Cursor* c, int n) { c->Pos = Math.Min(c->Len, c->Pos + n); return 0; }
+    [UnmanagedCallersOnly] private static int EnumReset(Cursor* c) { c->Pos = 0; return 0; }
+
+    // ---- SAFEARRAYs: ISafeArrays, native, reading the descriptor as native code does ---------------
+
+    private static readonly Guid IID_ISafeArrays = new("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A06");
+    private static readonly IntPtr* s_safeVt = BuildSafe();
+
+    private static IntPtr* BuildSafe()
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(9, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&SafeQueryInterface;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, int>)&SafeSum;
+        vt[4] = (IntPtr)(delegate* unmanaged<Obj*, int, IntPtr*, int>)&SafeNames;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&SafeReverse;
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, WpfMac.ComInterop.ComVariant*, int>)&SafeMatrix;
+        vt[7] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, int>)&SafeWeighted;
+        vt[8] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, IntPtr*, int>)&SafeUseSink;
+        return vt;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int SafeQueryInterface(Obj* self, Guid* iid, IntPtr* ppv)
+    {
+        if (*iid == IID_IUnknown || *iid == IID_ISafeArrays) { self->Refs++; *ppv = (IntPtr)self; return 0; }
+        *ppv = IntPtr.Zero;
+        return unchecked((int)0x80004002);
+    }
+
+    // the SDK's SAFEARRAY: cDims, fFeatures, cbElements, cLocks, pvData, bounds (rightmost dimension first)
+    private static int PvData => IntPtr.Size == 8 ? 16 : 12;
+    private static int Bounds => PvData + IntPtr.Size;
+
+    /// <summary>A one-dimensional VT_I4 SAFEARRAY read raw: its sum, or a negative code for what is wrong.</summary>
+    [UnmanagedCallersOnly]
+    private static int SafeSum(Obj* self, IntPtr psa)
+    {
+        byte* p = (byte*)psa;
+        if (*(ushort*)p != 1) return -1;
+        if (*(uint*)(p + 4) != 4) return -2;
+        ushort features = *(ushort*)(p + 2);
+        if ((features & 0x80) == 0 || *(int*)(p - 4) != 3) return -3;           // FADF_HAVEVARTYPE, VT_I4
+        uint n = *(uint*)(p + Bounds);
+        if (*(int*)(p + Bounds + 4) != 0) return -4;
+        int* data = *(int**)(p + PvData);
+        int s = 0;
+        for (int i = 0; i < n; i++) s += data[i];
+        return s + 10000 * (int)n;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int SafeNames(Obj* self, int n, IntPtr* r)
+    {
+        var a = new string[n];
+        for (int i = 0; i < n; i++) a[i] = "n" + i;
+        *r = WpfMac.ComInterop.Com.ToSafeArray(a, 0);
+        return 0;
+    }
+
+    /// <summary>[in, out] SAFEARRAY**: the callee frees the caller's and hands back its own.</summary>
+    [UnmanagedCallersOnly]
+    private static int SafeReverse(Obj* self, IntPtr* psa)
+    {
+        var a = (object[])WpfMac.ComInterop.Com.FromSafeArray(*psa, typeof(object[]).TypeHandle)!;
+        WpfMac.ComInterop.Com.DestroySafeArray(*psa);
+        Array.Reverse(a);
+        *psa = WpfMac.ComInterop.Com.ToSafeArray(a, 0);
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int SafeMatrix(Obj* self, WpfMac.ComInterop.ComVariant* r)
+    {
+        WpfMac.ComInterop.Com.ToVariant(new double[,] { { 1, 2, 3 }, { 4, 5, 6 } }, (IntPtr)r);
+        return 0;
+    }
+
+    /// <summary>A 2-D VT_I4 array read raw: each element times its position in memory (column-major).</summary>
+    [UnmanagedCallersOnly]
+    private static int SafeWeighted(Obj* self, IntPtr psa)
+    {
+        byte* p = (byte*)psa;
+        if (*(ushort*)p != 2) return -1;
+        uint right = *(uint*)(p + Bounds), left = *(uint*)(p + Bounds + 8);
+        int* data = *(int**)(p + PvData);
+        int s = 0;
+        for (int k = 0; k < right * left; k++) s += data[k] * (k + 1);
+        return s * 100 + (int)left * 10 + (int)right;
+    }
+
+    /// <summary>Native code calling a managed IArraySink: Sum (in), Make (retval), Double (by reference).</summary>
+    [UnmanagedCallersOnly]
+    private static int SafeUseSink(Obj* self, IntPtr sink, IntPtr* r)
+    {
+        IntPtr* vt = *(IntPtr**)sink;
+        var parts = new List<string>();
+        IntPtr shorts = WpfMac.ComInterop.Com.ToSafeArray(new short[] { 5, 6, 7 }, 0);
+        parts.Add(((delegate* unmanaged<IntPtr, IntPtr, int>)vt[3])(sink, shorts).ToString());
+        WpfMac.ComInterop.Com.DestroySafeArray(shorts);
+        IntPtr made;
+        int hr = ((delegate* unmanaged<IntPtr, int, IntPtr*, int>)vt[4])(sink, 3, &made);
+        parts.Add(hr != 0 ? $"hr {hr:x8}" : string.Join("/", (string[])WpfMac.ComInterop.Com.TakeSafeArray(made, typeof(string[]).TypeHandle)!));
+        IntPtr ints = WpfMac.ComInterop.Com.ToSafeArray(new[] { 1, 2 }, 0);
+        hr = ((delegate* unmanaged<IntPtr, IntPtr*, int>)vt[5])(sink, &ints);
+        parts.Add(hr != 0 ? $"hr {hr:x8}" : string.Join("/", (int[])WpfMac.ComInterop.Com.TakeSafeArray(ints, typeof(int[]).TypeHandle)!));
+        *r = Marshal.StringToBSTR(string.Join(",", parts));
+        return 0;
+    }
+
+    private static T WithSafe<T>(Func<IntPtr, T> body)
+    {
+        var o = New(s_safeVt, 0);
+        try { return body((IntPtr)o); }
+        finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_safeVt[2])(o); }
+    }
+
+    // ---- IDispatch: IDispUser, and a native IDispatch-only counter -------------------------------
+
+    private static readonly Guid IID_IDispUser = new("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A0B");
+    private static readonly Guid IID_IDispatch = new("00020400-0000-0000-C000-000000000046");
+    private static readonly IntPtr* s_dispUserVt = BuildDispUser();
+    private static readonly IntPtr* s_counterVt = BuildCounter();
+    private static string? s_counterName;
+
+    private static IntPtr* BuildDispUser()
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(6, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&DispQueryInterface;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&DispCounter;
+        vt[4] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, IntPtr*, int>)&DispUseSink;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, int>)&DispUseDual;
+        return vt;
+    }
+
+    private static IntPtr* BuildCounter()
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(7, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&DispQueryInterface;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, uint*, int>)&CounterTypeInfoCount;
+        vt[4] = (IntPtr)(delegate* unmanaged<IntPtr, int>)&NotImpl;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, char**, uint, int, int*, int>)&CounterIdsOfNames;
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, int, Guid*, int, ushort, WpfMac.ComInterop.ComDispParams*, WpfMac.ComInterop.ComVariant*, WpfMac.ComInterop.ComExcepInfo*, uint*, int>)&CounterInvoke;
+        return vt;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int DispQueryInterface(Obj* self, Guid* iid, IntPtr* ppv)
+    {
+        // the counter answers IDispatch only, not its dispinterface's IID
+        Guid own = self->Vtbl == s_dispUserVt ? IID_IDispUser : IID_IDispatch;
+        if (*iid == IID_IUnknown || *iid == own) { self->Refs++; *ppv = (IntPtr)self; return 0; }
+        *ppv = IntPtr.Zero;
+        return unchecked((int)0x80004002);
+    }
+
+    [UnmanagedCallersOnly] private static int DispCounter(Obj* self, IntPtr* r) { *r = (IntPtr)New(s_counterVt, 0); return 0; }
+    [UnmanagedCallersOnly] private static int CounterTypeInfoCount(Obj* self, uint* n) { *n = 0; return 0; }
+
+    [UnmanagedCallersOnly]
+    private static int CounterIdsOfNames(Obj* self, Guid* riid, char** names, uint count, int lcid, int* ids)
+    {
+        if (new string(names[0]) == "ByName") { ids[0] = 4; return 0; }
+        ids[0] = -1;
+        return unchecked((int)0x80020006);
+    }
+
+    [UnmanagedCallersOnly]
+    private static int CounterInvoke(Obj* self, int id, Guid* riid, int lcid, ushort flags, WpfMac.ComInterop.ComDispParams* dp, WpfMac.ComInterop.ComVariant* res, WpfMac.ComInterop.ComExcepInfo* ex, uint* argErr)
+    {
+        var a = dp->Args;
+        switch (id)
+        {
+            case 1:          // Add(a, b): rgvarg is last first
+                WpfMac.ComInterop.Com.ToVariant((int)WpfMac.ComInterop.Com.FromVariant((IntPtr)(&a[1]))! + (int)WpfMac.ComInterop.Com.FromVariant((IntPtr)(&a[0]))!, (IntPtr)res);
+                return 0;
+            case 2:
+                if ((flags & 4) != 0)
+                {
+                    if (dp->NamedCount != 1 || dp->NamedArgs[0] != -3) return unchecked((int)0x80020007);       // DISP_E_NONAMEDARGS
+                    s_counterName = (string?)WpfMac.ComInterop.Com.FromVariant((IntPtr)(&a[0]));
+                }
+                else WpfMac.ComInterop.Com.ToVariant(s_counterName, (IntPtr)res);
+                return 0;
+            case 3:          // Bump(ref n): VT_BYREF | VT_VARIANT
+            {
+                if (a[0].Vt != (0x4000 | 12)) return unchecked((int)0x80020005);
+                var inner = (WpfMac.ComInterop.ComVariant*)a[0].Data1;
+                int v = (int)WpfMac.ComInterop.Com.FromVariant((IntPtr)inner)!;
+                WpfMac.ComInterop.Com.ClearVariant((IntPtr)inner);
+                WpfMac.ComInterop.Com.ToVariant(v + 1, (IntPtr)inner);
+                return 0;
+            }
+            case 4:
+                WpfMac.ComInterop.Com.ToVariant(((string)WpfMac.ComInterop.Com.FromVariant((IntPtr)(&a[0]))!).Length * 10, (IntPtr)res);
+                return 0;
+            case 5:
+                ex->Description = Marshal.StringToBSTR("bad thing");
+                ex->Scode = unchecked((int)0x80004005);
+                return unchecked((int)0x80020009);
+        }
+        return unchecked((int)0x80020003);
+    }
+
+    /// <summary>IDispatch::Invoke from native code; the arguments given last first, as rgvarg holds them.</summary>
+    private static int CallInvoke(IntPtr d, int id, ushort flags, WpfMac.ComInterop.ComVariant* args, uint n, WpfMac.ComInterop.ComVariant* res, out string? error)
+    {
+        var dp = new WpfMac.ComInterop.ComDispParams { Args = args, ArgCount = n };
+        WpfMac.ComInterop.ComExcepInfo ex = default;
+        uint argErr;
+        Guid none = Guid.Empty;
+        int hr = ((delegate* unmanaged<IntPtr, int, Guid*, int, ushort, WpfMac.ComInterop.ComDispParams*, WpfMac.ComInterop.ComVariant*, WpfMac.ComInterop.ComExcepInfo*, uint*, int>)(*(IntPtr**)d)[6])(d, id, &none, 0, flags, &dp, res, &ex, &argErr);
+        error = hr == unchecked((int)0x80020009) ? $"{Marshal.PtrToStringBSTR(ex.Description)}:{ex.Scode:x8}" : null;
+        if (ex.Description != 0) Marshal.FreeBSTR(ex.Description);
+        if (ex.Source != 0) Marshal.FreeBSTR(ex.Source);
+        return hr;
+    }
+
+    private static int IdOf(IntPtr d, string name)
+    {
+        int id;
+        Guid none = Guid.Empty;
+        fixed (char* s = name)
+        {
+            char* names = s;
+            int hr = ((delegate* unmanaged<IntPtr, Guid*, char**, uint, int, int*, int>)(*(IntPtr**)d)[5])(d, &none, &names, 1, 0, &id);
+            return hr == 0 ? id : hr;
+        }
+    }
+
+    /// <summary>Native code calling a managed dispinterface through its CCW's IDispatch.</summary>
+    [UnmanagedCallersOnly]
+    private static int DispUseSink(Obj* self, IntPtr sink, IntPtr* r)
+    {
+        var parts = new List<string> { IdOf(sink, "echo").ToString() };
+        var args = stackalloc WpfMac.ComInterop.ComVariant[2];
+        WpfMac.ComInterop.ComVariant res = default;
+        WpfMac.ComInterop.Com.ToVariant(3, (IntPtr)(&args[0]));
+        WpfMac.ComInterop.Com.ToVariant("ab", (IntPtr)(&args[1]));
+        int hr = CallInvoke(sink, 7, 1, args, 2, &res, out _);
+        parts.Add(hr == 0 ? (string)WpfMac.ComInterop.Com.FromVariant((IntPtr)(&res))! : $"hr {hr:x8}");
+        WpfMac.ComInterop.Com.ClearVariant((IntPtr)(&res));
+        WpfMac.ComInterop.Com.ClearVariant((IntPtr)(&args[1]));
+        hr = CallInvoke(sink, 8, 2, null, 0, &res, out _);
+        parts.Add(hr == 0 ? WpfMac.ComInterop.Com.FromVariant((IntPtr)(&res))!.ToString()! : $"hr {hr:x8}");
+        // Twice(ref n), n a VT_BYREF | VT_I4
+        int n = 20;
+        args[0] = default;
+        args[0].Vt = 0x4000 | 3;
+        args[0].Data1 = (IntPtr)(&n);
+        hr = CallInvoke(sink, 9, 1, args, 1, null, out _);
+        parts.Add(hr == 0 ? n.ToString() : $"hr {hr:x8}");
+        hr = CallInvoke(sink, 10, 1, null, 0, null, out string? error);
+        parts.Add(error ?? $"hr {hr:x8}");
+        *r = Marshal.StringToBSTR(string.Join("|", parts));
+        return 0;
+    }
+
+    /// <summary>A managed dual object's IDispatch (it was passed as IDispatch): GetIDsOfNames, Invoke.</summary>
+    [UnmanagedCallersOnly]
+    private static int DispUseDual(Obj* self, IntPtr d)
+    {
+        int id = IdOf(d, "Square");
+        var arg = stackalloc WpfMac.ComInterop.ComVariant[1];
+        WpfMac.ComInterop.Com.ToVariant(7, (IntPtr)arg);
+        WpfMac.ComInterop.ComVariant res = default;
+        int hr = CallInvoke(d, id, 1, arg, 1, &res, out _);
+        if (hr != 0) return hr;
+        return (id == 11 ? 1000 : 0) + (int)WpfMac.ComInterop.Com.FromVariant((IntPtr)(&res))!;
+    }
+
+    private static T WithDisp<T>(Func<IntPtr, T> body)
+    {
+        var o = New(s_dispUserVt, 0);
+        try { return body((IntPtr)o); }
+        finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_dispUserVt[2])(o); }
+    }
+
+    private static T WithStreams<T>(Func<IntPtr, T> body)
+    {
+        var o = New(s_streamsVt, 0);
+        try { return body((IntPtr)o); }
+        finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_streamsVt[2])(o); }
+    }
+
     // ---- the rewritten fixture ------------------------------------------------------------------
 
     internal static string FixtureFile => typeof(ComRewriterTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().First(a => a.Key == "ComImportFixture").Value!;
@@ -215,8 +663,9 @@ public sealed unsafe class ComRewriterTests
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.UsesComImport);
-        Assert.Equal(5, r.Interfaces);
-        Assert.Equal(1, r.PInvokes);
+        Assert.Equal(13, r.Interfaces);
+        Assert.Equal(1, r.EventInterfaces);
+        Assert.Equal(2, r.PInvokes);
         string u = Assert.Single(r.Unsupported);
         Assert.Contains("Arrays", u);
         Assert.Equal(1, r.Delegates);
@@ -302,6 +751,93 @@ public sealed unsafe class ComRewriterTests
     {
         Assert.False(WithCalc(0, p => (bool)Run("CastsToMissing", p)!));
         Assert.True(WithCalc(0, p => (bool)Run("SameObject", p)!));
+    }
+
+    [Fact]
+    public void SafeArrays_InRetvalByReferenceAndInAVariant()
+    {
+        // laid out as the SDK's (FADF_HAVEVARTYPE, VT_I4, zero-based), read raw by native code
+        Assert.Equal(46 + 40000, WithSafe(p => (int)Run("SafeSum", p)!));
+        Assert.Equal(0, WithSafe(p => (int)Run("SafeSumEmpty", p)!));
+        Assert.Equal("n0,n1,n2", WithSafe(p => (string)Run("SafeNames", p)!));
+        Assert.Equal("3.5,two,1|Double", WithSafe(p => (string)Run("SafeReverse", p)!));
+        Assert.Equal("2x3:1,3,4,6", WithSafe(p => (string)Run("SafeMatrix", p)!));
+    }
+
+    [Fact]
+    public void SafeArrays_TheManagedLayout_AsOffWindows()
+    {
+        // what every other OS uses (no oleaut32): the same descriptor, made and destroyed here
+        AppContext.SetSwitch("WpfMac.ComInterop.ManagedSafeArrays", true);
+        try
+        {
+            Assert.Equal(46 + 40000, WithSafe(p => (int)Run("SafeSum", p)!));
+            Assert.Equal("n0,n1,n2", WithSafe(p => (string)Run("SafeNames", p)!));
+            Assert.Equal("3.5,two,1|Double", WithSafe(p => (string)Run("SafeReverse", p)!));
+            Assert.Equal("2x3:1,3,4,6", WithSafe(p => (string)Run("SafeMatrix", p)!));
+            Assert.Equal(86 * 100 + 2 * 10 + 3, WithSafe(p => (int)Run("SafeWeighted", p)!));
+            Assert.Equal("18,m/mm/mmm,1/2/1/2", WithSafe(p => (string)Run("SafeSink", p)!));
+        }
+        finally { AppContext.SetSwitch("WpfMac.ComInterop.ManagedSafeArrays", false); }
+    }
+
+    [Fact]
+    public void SafeArrays_TwoDimensional_AreColumnMajor()
+    {
+        // memory order 1,4,2,5,3,6: 1*1 + 4*2 + 2*3 + 5*4 + 3*5 + 6*6 = 86; dims 2 (left) x 3 (right)
+        Assert.Equal(86 * 100 + 2 * 10 + 3, WithSafe(p => (int)Run("SafeWeighted", p)!));
+    }
+
+    [Fact]
+    public void SafeArrays_ToAManagedObject_ThroughItsCcw()
+        => Assert.Equal("18,m/mm/mmm,1/2/1/2", WithSafe(p => (string)Run("SafeSink", p)!));
+
+    [Fact]
+    public void ComEvents_ProviderConnectionPointAndSource()
+        // the client side (event interface -> tlbimp's provider -> IConnectionPointContainer/IConnectionPoint ->
+        // a sink helper's IDispatch) and the server side ([ComSourceInterfaces]: its .NET events call the
+        // Advise'd sink), every step through native vtables; Unadvise stops the calls
+        => Assert.Equal("t1,t2,t3,ran 3,ran 1", (string)Run("Events")!);
+
+    [Fact]
+    public void ADispinterface_IsCalledThroughInvoke()
+        // DISPIDs, a property put (DISPID_PROPERTYPUT named), VT_BYREF, GetIDsOfNames, DISP_E_EXCEPTION's
+        // description; the object answers IDispatch only, not the dispinterface's IID
+        => Assert.Equal("5|abc|42|40|bad thing:80004005", WithDisp(p => (string)Run("DispCounter", p)!));
+
+    [Fact]
+    public void AManagedDispinterface_AnswersIDispatch()
+        // GetIDsOfNames (case-insensitive), a method, a property get, VT_BYREF written back, an exception as
+        // DISP_E_EXCEPTION with its message and HRESULT
+        => Assert.Equal("7|ababab|99|40|sink failed:80131509", WithDisp(p => (string)Run("DispSink", p)!));
+
+    [Fact]
+    public void AManagedDualObject_PassedAsIDispatch_AnswersIt()
+        => Assert.Equal(1049, WithDisp(p => (int)Run("DispDual", p)!));
+
+    [Fact]
+    public void TheBclsIStream_BothWays()
+    {
+        // a native stream: Read in pieces, Stat (its CoTaskMem name taken over), Seek, Clone
+        Assert.Equal("1,2,3,4,5|native.bin|5|1|2", WithStreams(p => (string)Run("ReadNative", p)!));
+        // a managed stream read by native code through its CCW (bytes copied, STATSTG's name allocated)
+        Assert.Equal(10 + 1100 + 40000, WithStreams(p => (int)Run("SumManaged", p)!));
+        // a native stream passed back: its own pointer
+        Assert.Equal(10 + 1000 + 40000, WithStreams(p => (int)Run("SumNative", p)!));
+    }
+
+    [Fact]
+    public void TheBclsIEnumString_BothWays()
+    {
+        Assert.Equal("0:2:one,two|1:1:three|two", WithStreams(p => (string)Run("NamesNative", p)!));
+        Assert.Equal(306, WithStreams(p => (int)Run("CountManaged", p)!));
+    }
+
+    [Fact]
+    public void TheBclsIBindCtx_FromOle32()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "ole32's CreateBindCtx");
+        Assert.Equal("2|True|notimpl|0|True", (string)Run("BclBindCtx")!);
     }
 
     [Fact]
