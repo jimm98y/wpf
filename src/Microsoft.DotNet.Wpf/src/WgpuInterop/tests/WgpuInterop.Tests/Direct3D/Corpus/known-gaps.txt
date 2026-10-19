@@ -4,10 +4,4 @@
 compute.cs_double_ext.cs_5_0.dxbc: double-precision itod: shader-f64 is not available to WGSL here
 compute.cs_double.cs_5_0.dxbc: double-precision utod: shader-f64 is not available to WGSL here
 compute.cs_texture_atomic.cs_5_0.dxbc: atomic_umax on typed UAV texture u2: WGSL has no texture atomics
-stages.ds_line.ds_5_0.dxbc: Domain shaders are translated by the geometry/compute path
-stages.ds_quad.ds_5_0.dxbc: Domain shaders are translated by the geometry/compute path
-stages.ds_tri.ds_5_0.dxbc: Domain shaders are translated by the geometry/compute path
-stages.hs_line.hs_5_0.dxbc: Hull shaders are translated by the geometry/compute path
-stages.hs_quad.hs_5_0.dxbc: Hull shaders are translated by the geometry/compute path
-stages.hs_tri.hs_5_0.dxbc: Hull shaders are translated by the geometry/compute path
 stages.ps_interface.ps_5_0.dxbc: class linkage (interfaces): each call site is specialized at bind time from the bound class instances -- not implemented yet

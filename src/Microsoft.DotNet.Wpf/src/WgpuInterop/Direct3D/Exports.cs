@@ -46,8 +46,40 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             add("dxgi", "DXGIGetDebugInterface1", (IntPtr)(delegate* unmanaged<uint, Guid*, IntPtr*, int>)&DXGIGetDebugInterface1);
             add("d3d9", "Direct3DCreate9Ex", (IntPtr)(delegate* unmanaged<uint, IntPtr*, int>)&Direct3DCreate9Ex);
             add("d3d9", "Direct3DCreate9", (IntPtr)(delegate* unmanaged<uint, IntPtr>)&Direct3DCreate9);
-            return 7;
+            int n = 7;
+            // Runtime HLSL compilation (section 9, the user's decision: not for now). Windows keeps its
+            // own d3dcompiler_47, whose DXBC the translator takes; elsewhere there is no compiler, and
+            // the answer is E_FAIL with one line saying so.
+            if (!OperatingSystem.IsWindows())
+            {
+                add("d3dcompiler_47", "D3DCompile", (IntPtr)(delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int>)&D3DCompile);
+                add("d3dcompiler_47", "D3DCompile2", (IntPtr)(delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, uint, void*, nuint, IntPtr*, IntPtr*, int>)&D3DCompile2);
+                add("d3dcompiler_47", "D3DCompileFromFile", (IntPtr)(delegate* unmanaged<char*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int>)&D3DCompileFromFile);
+                n += 3;
+            }
+            return n;
         }
+
+        private static int NoCompiler(byte* entry, byte* target, IntPtr* code, IntPtr* errors)
+        {
+            if (code != null) *code = IntPtr.Zero;
+            if (errors != null) *errors = IntPtr.Zero;
+            string what = $"{(entry != null ? Marshal.PtrToStringUTF8((IntPtr)entry) : "?")} ({(target != null ? Marshal.PtrToStringUTF8((IntPtr)target) : "?")})";
+            D3DLog.Once("d3dcompile", $"D3DCompile of {what}: there is no HLSL compiler off Windows; precompiled shaders (DXBC) work, run-time HLSL does not (E_FAIL)");
+            return unchecked((int)0x80004005);
+        }
+
+        [UnmanagedCallersOnly]
+        private static int D3DCompile(void* src, nuint size, byte* name, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, IntPtr* code, IntPtr* errors)
+            => NoCompiler(entry, target, code, errors);
+
+        [UnmanagedCallersOnly]
+        private static int D3DCompile2(void* src, nuint size, byte* name, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, uint secondaryFlags, void* secondary, nuint secondarySize, IntPtr* code, IntPtr* errors)
+            => NoCompiler(entry, target, code, errors);
+
+        [UnmanagedCallersOnly]
+        private static int D3DCompileFromFile(char* file, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, IntPtr* code, IntPtr* errors)
+            => NoCompiler(entry, target, code, errors);
 
         /// <summary>The managed entry point, for callers in this process (tests): the same function
         /// the export reaches.</summary>

@@ -349,14 +349,11 @@ to write, but it means a native dependency for every head, which the rules here 
 
 - **Windows:** the real `d3dcompiler_47.dll` ships with the OS, so the shim leaves it alone, and the
   DXBC it produces goes through the translator like any other.
-- **Elsewhere:**
-  - a managed `D3DReflect` over the RDEF/signature reader;
-  - `D3DCompile` through DXC (open source, MIT/LLVM licence, builds for macOS/Linux), loaded only
-    when an application compiles, with its DXIL taken by the DXIL path;
-  - shipped as an optional native package, and its absence answers `D3DCompile` with `E_FAIL` and
-    a log line.
-- A managed HLSL front end was weighed against this: about 30k lines to reach fxc's dialect, for one
-  feature.
+- **Elsewhere (the user's decision, 2026-10-19: not for now):** `D3DCompile` answers `E_FAIL` with
+  one clear log line. There is no DXC package and no managed HLSL front end. A managed `D3DReflect`
+  over the RDEF/signature reader stays in the plan, because it is cheap.
+- Weighed and set aside: `D3DCompile` through DXC as an optional native package (its DXIL taken by
+  the DXIL path), and a managed HLSL front end (about 30k lines to reach fxc's dialect).
 
 **Tests for generality.**
 
@@ -388,7 +385,7 @@ to write, but it means a native dependency for every head, which the rules here 
 | HS/DS: the tessellator port and runtime | 3,000 |
 | Fallbacks: class linkage, viewport arrays, f64 emulation | 1,000 |
 | DXIL: bitcode reader, dx.op, structurizer | 7,000 |
-| D3DReflect and DXC loading | 1,000 |
+| Managed D3DReflect (DXC dropped) | 400 |
 | Tests, the per-opcode corpus, the coverage report | 3,500 |
 | **Total** | **about 23,000** |
 
@@ -401,7 +398,7 @@ to write, but it means a native dependency for every head, which the rules here 
 5. HS/DS.
 6. Doubles and the fallbacks.
 7. DXIL.
-8. Runtime compilation.
+8. Managed D3DReflect, and `D3DCompile` answering `E_FAIL` off Windows.
 
 Each step is its own commit with its corpus tests.
 
@@ -445,5 +442,12 @@ green throughout.
     stream is rasterized when the GS has no stream output; SV_VertexID is the index as stored and
     SV_InstanceID counts from 0 (the native vertex stage now subtracts WebGPU's base vertex and
     start instance too).
+  - Hull and domain shaders: the VS and both hull kernels (control points; fork and join phases)
+    run as compute, the tess factors come back to the CPU, a port of Microsoft's reference
+    tessellator (MIT, D3DTessellator) makes the points and primitives, and the DS draws them as
+    the vertex shader. The tessellator matches WARP bit for bit over stream output (288 cases:
+    every domain, partitioning and output primitive, fractional, clamped and culled factors), and
+    tessellated draws match WARP's pixels. Cost: the factor read-back makes such a draw wait for
+    the GPU (patterns are cached); a GPU tessellator is the later step.
   - Not yet: stream output, strip-cut indices into a GS, layered (array-index) rendering past
-    layer 0, then HS/DS, doubles, class linkage, DXIL and runtime compilation (section 9 order).
+    layer 0, a GS after tessellation, doubles, class linkage, DXIL, managed D3DReflect.

@@ -138,14 +138,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }
         }
 
-        private IntPtr ComputePipeline(string wgsl, string label, IntPtr group0, IntPtr group1, DxbcShader code, out string? error)
+        private IntPtr ComputePipeline(string wgsl, string label, IntPtr group0, IntPtr group1, DxbcShader code, out string? error, string entryPoint = "main")
         {
             IntPtr module = CreateModule(wgsl, label, out error);
             if (module == IntPtr.Zero) { Dump(code, wgsl, error ?? ""); return IntPtr.Zero; }
             IntPtr* layouts = stackalloc IntPtr[2] { group0, group1 };
             var pl = new WGPUPipelineLayoutDescriptor { bindGroupLayoutCount = 2, bindGroupLayouts = layouts };
             IntPtr layout = wgpuDeviceCreatePipelineLayout(Device.Gpu.Device, &pl);
-            byte[] entry = Encoding.UTF8.GetBytes("main");
+            byte[] entry = Encoding.UTF8.GetBytes(entryPoint);
             fixed (byte* e = entry)
             {
                 var d = new WGPUComputePipelineDescriptor
