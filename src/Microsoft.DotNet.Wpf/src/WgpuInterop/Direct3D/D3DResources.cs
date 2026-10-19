@@ -72,6 +72,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public byte* Shadow;
         public readonly uint Size;
         private bool _mapped;
+        /// <summary>The bytes stream output has written to this buffer (BufferFilledSize), on the GPU.</summary>
+        public IntPtr SoFilled;
+
+        public IntPtr SoFilledBuffer()
+        {
+            if (SoFilled == IntPtr.Zero) SoFilled = Device.Gpu.CreateBufferMapped(new byte[16], WGPUBufferUsage.Storage | WGPUBufferUsage.CopyDst | WGPUBufferUsage.CopySrc);
+            return SoFilled;
+        }
 
         private static readonly Vtable s_vt = Build();
 
@@ -199,6 +207,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             if (Gpu != IntPtr.Zero) wgpuBufferRelease(Gpu);
             Gpu = IntPtr.Zero;
+            if (SoFilled != IntPtr.Zero) wgpuBufferRelease(SoFilled);
+            SoFilled = IntPtr.Zero;
             if (Shadow != null) NativeMemory.Free(Shadow);
             Shadow = null;
             base.OnFinalRelease();

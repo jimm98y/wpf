@@ -197,7 +197,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         public static bool HasFeature(uint feature) { _ = SharedGpu; return s_granted.Contains(feature); }
 
-        public const uint FeatureClipDistances = 0x10, FeaturePrimitiveIndex = 0x15, FeatureShaderF64 = 0x3001D, FeatureTextureAtomic = 0x30028, FeatureDualSource = 0x11;
+        public const uint FeatureIndirectFirstInstance = 0xA, FeatureClipDistances = 0x10, FeaturePrimitiveIndex = 0x15, FeatureShaderF64 = 0x3001D, FeatureTextureAtomic = 0x30028, FeatureDualSource = 0x11;
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         private static extern uint wgpuAdapterHasFeature(IntPtr adapter, uint feature);
@@ -306,6 +306,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.ID3D11Device.CreateVertexShader, (delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)&CreateVertexShader);
             vt.Set(Vtbl.ID3D11Device.CreatePixelShader, (delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)&CreatePixelShader);
             vt.Set(Vtbl.ID3D11Device.CreateGeometryShader, (delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)&CreateGeometryShader);
+            vt.Set(Vtbl.ID3D11Device.CreateGeometryShaderWithStreamOutput, (delegate* unmanaged<IntPtr, byte*, nuint, D3D11_SO_DECLARATION_ENTRY*, uint, uint*, uint, uint, IntPtr, IntPtr*, int>)&CreateGeometryShaderWithStreamOutput);
             vt.Set(Vtbl.ID3D11Device.CreateBlendState, (delegate* unmanaged<IntPtr, D3D11_BLEND_DESC*, IntPtr*, int>)&CreateBlendState);
             vt.Set(Vtbl.ID3D11Device.CreateDepthStencilState, (delegate* unmanaged<IntPtr, D3D11_DEPTH_STENCIL_DESC*, IntPtr*, int>)&CreateDepthStencilState);
             vt.Set(Vtbl.ID3D11Device.CreateRasterizerState, (delegate* unmanaged<IntPtr, D3D11_RASTERIZER_DESC*, IntPtr*, int>)&CreateRasterizerState);
@@ -446,6 +447,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static int CreateGeometryShader(IntPtr self, byte* bytecode, nuint length, IntPtr linkage, IntPtr* shader)
             => CreateShader(self, bytecode, length, shader, Dxbc.ShaderStage.Geometry, "CreateGeometryShader");
+
+        /// <summary>A geometry shader with stream output; its bytecode a GS's, or a VS's or DS's for a
+        /// pass-through GS.</summary>
+        [UnmanagedCallersOnly]
+        private static int CreateGeometryShaderWithStreamOutput(IntPtr self, byte* bytecode, nuint length, D3D11_SO_DECLARATION_ENTRY* decl, uint entries,
+                                                                 uint* strides, uint numStrides, uint rasterized, IntPtr linkage, IntPtr* shader)
+        {
+            var d = Self(self);
+            if (d == null || bytecode == null || length < 32 || (entries > 0 && decl == null) || entries > 64) return HResult.E_INVALIDARG;
+            if (shader != null) *shader = IntPtr.Zero;
+            var blob = new ReadOnlySpan<byte>(bytecode, (int)length).ToArray();
+            var so = new Dxbc.StreamOutputDesc { RasterizedStream = rasterized == 0xFFFFFFFF ? -1 : (int)rasterized };
+            for (uint i = 0; i < entries; i++)
+            {
+                var e = decl[i];
+                string? name = e.SemanticName == null ? null : Marshal.PtrToStringUTF8((IntPtr)e.SemanticName);
+                if (name == "$SKIP" || name == "$skip") name = null;
+                so.Entries.Add(new Dxbc.SoEntry { Stream = (int)e.Stream, Semantic = name, Index = (int)e.SemanticIndex, Start = e.StartComponent, Count = e.ComponentCount, Slot = e.OutputSlot & 3 });
+            }
+            for (int s = 0; s < 4; s++)
+                so.Strides[s] = s < numStrides && strides != null ? strides[s] : (uint)System.Linq.Enumerable.Sum(System.Linq.Enumerable.Where(so.Entries, e => e.Slot == s), e => e.Count * 4);
+            return Guard("CreateGeometryShaderWithStreamOutput", () =>
+            {
+                var parsed = Dxbc.DxbcShader.Parse(blob);
+                if (parsed.Stage is not (Dxbc.ShaderStage.Geometry or Dxbc.ShaderStage.Vertex or Dxbc.ShaderStage.Domain)) return HResult.E_INVALIDARG;
+                return ComObject.Out(shader, new D3DShader(d, parsed, so));
+            });
+        }
 
         [UnmanagedCallersOnly]
         private static int CreateComputeShader(IntPtr self, byte* bytecode, nuint length, IntPtr linkage, IntPtr* shader)

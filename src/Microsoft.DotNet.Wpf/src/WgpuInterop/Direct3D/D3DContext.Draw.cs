@@ -13,6 +13,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc;
 using static Microsoft.Wpf.Interop.WebGpu.Wgpu;
+using static Microsoft.Wpf.Interop.WebGpu.Direct3D.WgpuCompute;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 {
@@ -23,9 +24,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             public bool Indexed;
             public uint Count, Instances, First, FirstInstance;
             public int BaseVertex;
+            /// <summary>DrawInstancedIndirect / DrawIndexedInstancedIndirect: the arguments' buffer and offset.</summary>
+            public D3DBuffer? Indirect;
+            public uint IndirectOffset;
         }
 
-        public void Draw(DrawArgs a) => Run(c => c.DrawImpl(a));
+        public void Draw(DrawArgs a) => Run(c => c.DrawImpl(a), a.Indirect);
 
         /// <summary>Draws issued and draws skipped (no shader, a translation or pipeline failure), for
         /// tests and traces.</summary>
@@ -420,6 +424,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private int[] _slotOfBuffer = Array.Empty<int>();
         /// <summary>The draw a vertex shader's bind group is made for (ShaderBindings.DrawParams).</summary>
         private int _drawBaseVertex;
+        private ulong _drawParamsAt = ulong.MaxValue;
         private uint _drawFirstInstance;
 
         // ---- constants and bind groups ----------------------------------------------------------------
@@ -525,6 +530,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 BitConverter.TryWriteBytes(dp.AsSpan(0), _drawBaseVertex);
                 BitConverter.TryWriteBytes(dp.AsSpan(4), _drawFirstInstance);
                 ulong at = ArenaWrite(dp);
+                _drawParamsAt = at;
                 entries.Add(new WGPUBindGroupEntry { binding = DxbcTranslator.DrawParamsBinding, buffer = _arenas[_arenaIndex], offset = at, size = 16 });
             }
             foreach (var (slot, size) in b.ConstantBuffers)
@@ -622,21 +628,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private void DrawImpl(DrawArgs a)
         {
-            if (a.Count == 0 || a.Instances == 0) return;
+            // an indirect draw through the compute paths needs its counts here: read back (it waits)
+            // and so does one with a start instance when the adapter lacks indirect-first-instance (WebGPU
+            // would drop the draw)
+            if (a.Indirect != null && (_gs.Shader != null || _hs.Shader != null || _ds.Shader != null || !D3DDevice.HasFeature(D3DDevice.FeatureIndirectFirstInstance)))
+            {
+                a = ReadIndirect(a);
+                if (a.Indirect != null) { DrawsSkipped++; return; }
+            }
+            if (a.Indirect == null && (a.Count == 0 || a.Instances == 0)) return;
             var vs = _vs.Shader;
             if (vs == null) { DrawsSkipped++; return; }
             if (_hs.Shader != null || _ds.Shader != null) { DrawTessellated(a, vs); return; }
-            if (_gs.Shader != null) { DrawGeometry(a, vs, _gs.Shader); return; }
+            if (_gs.Shader is { } gs)
+            {
+                if (gs.StreamOutput == null || gs.Code.Stage == ShaderStage.Geometry) { DrawGeometry(a, vs, gs); return; }
+                // a vertex shader's stream output (a pass-through GS); rasterized as without a GS
+                if (gs.Code.Stage == ShaderStage.Vertex) VertexStreamOut(a, vs, gs.StreamOutput);
+                else D3DLog.Once("sods", "stream output of a domain shader is not written");
+                if (gs.StreamOutput.RasterizedStream != 0 || (_dsv == null && _rtv.All(r => r == null))) { DrawsIssued++; return; }
+            }
             var t = Translate(vs, _ps.Shader);
             if (t.Error != null) { DrawsSkipped++; return; }
             IntPtr pipeline = Pipeline(t, vs, _ps.Shader, out string? why);
             if (pipeline == IntPtr.Zero) { DrawsSkipped++; return; }
 
             // bind groups before the pass: the arena writes are queue writes
-            _drawBaseVertex = a.Indexed ? a.BaseVertex : 0;
+            // what WebGPU adds to its indices and D3D does not: indexed, the base vertex; not, the start vertex (WARP)
+            _drawBaseVertex = a.Indexed ? a.BaseVertex : (int)a.First;
             _drawFirstInstance = a.FirstInstance;
+            _drawParamsAt = ulong.MaxValue;
             IntPtr g0 = BindGroup(t.VsLayout, t.VsBindings!, _vs);
             IntPtr g1 = BindGroup(t.PsLayout, t.PsBindings ?? new ShaderBindings(), _ps);
+            if (a.Indirect != null && _drawParamsAt != ulong.MaxValue)
+            {
+                // the vertex shader's base vertex and start instance are in the arguments: copied there
+                EndPass();
+                IntPtr arena = _arenas[_arenaIndex];
+                if (a.Indexed) wgpuCommandEncoderCopyBufferToBuffer(Encoder(), a.Indirect.Gpu, a.IndirectOffset + 12, arena, _drawParamsAt, 8);
+                else wgpuCommandEncoderCopyBufferToBuffer(Encoder(), a.Indirect.Gpu, a.IndirectOffset + 8, arena, _drawParamsAt, 8);
+            }
             if (!EnsurePass()) { wgpuBindGroupRelease(g0); wgpuBindGroupRelease(g1); DrawsSkipped++; return; }
 
             wgpuRenderPassEncoderSetPipeline(_pass, pipeline);
@@ -667,8 +698,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (_ib == null || _ib.Gpu == IntPtr.Zero) { DrawsSkipped++; return; }
                 var fmt = _ibFormat == DXGI_FORMAT.R16_UINT ? WGPUIndexFormat.Uint16 : WGPUIndexFormat.Uint32;
                 wgpuRenderPassEncoderSetIndexBuffer(_pass, _ib.Gpu, fmt, _ibOffset, _ib.Size > _ibOffset ? _ib.Size - _ibOffset : 0);
-                wgpuRenderPassEncoderDrawIndexed(_pass, a.Count, a.Instances, a.First, a.BaseVertex, a.FirstInstance);
+                if (a.Indirect != null) wgpuRenderPassEncoderDrawIndexedIndirect(_pass, a.Indirect.Gpu, a.IndirectOffset);
+                else wgpuRenderPassEncoderDrawIndexed(_pass, a.Count, a.Instances, a.First, a.BaseVertex, a.FirstInstance);
             }
+            else if (a.Indirect != null) wgpuRenderPassEncoderDrawIndirect(_pass, a.Indirect.Gpu, a.IndirectOffset);
             else wgpuRenderPassEncoderDraw(_pass, a.Count, a.Instances, a.First, a.FirstInstance);
             DrawsIssued++;
             for (int i = 0; i < MaxTargets; i++) if (_rtv[i] != null) _rtv[i]!.Texture.Version++;

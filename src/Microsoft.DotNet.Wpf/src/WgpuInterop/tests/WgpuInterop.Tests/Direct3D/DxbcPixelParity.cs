@@ -555,6 +555,24 @@ namespace WgpuInterop.Tests.Direct3D
             return n;
         }
 
+        /// <summary>How many pixels differ beyond tolerance in any target component.</summary>
+        public static int DifferingPixels(List<float[]> a, List<float[]> b)
+        {
+            int n = 0;
+            for (int px = 0; px < W * H; px++)
+            {
+                bool differs = false;
+                for (int t = 0; t < Math.Min(a.Count, b.Count) && !differs; t++)
+                    for (int c = 0; c < 4 && !differs; c++)
+                    {
+                        float x = a[t][px * 4 + c], y = b[t][px * 4 + c];
+                        differs = !(x == y || (float.IsNaN(x) && float.IsNaN(y)) || Math.Abs(x - y) <= Math.Max(4e-3f, 4e-3f * Math.Max(Math.Abs(x), Math.Abs(y))));
+                    }
+                if (differs) n++;
+            }
+            return n;
+        }
+
         /// <summary>How many of the targets' float components differ beyond tolerance (relative 1e-3,
         /// absolute 2e-3; NaN equals NaN), and the first one.</summary>
         public static (int Count, string First) Compare(List<float[]> a, List<float[]> b)

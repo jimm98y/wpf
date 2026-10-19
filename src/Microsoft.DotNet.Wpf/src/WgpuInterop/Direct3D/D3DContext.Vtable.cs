@@ -55,6 +55,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.ID3D11DeviceContext.Draw, (delegate* unmanaged<IntPtr, uint, uint, void>)&DrawSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.DrawIndexedInstanced, (delegate* unmanaged<IntPtr, uint, uint, uint, int, uint, void>)&DrawIndexedInstanced);
             vt.Set(Vtbl.ID3D11DeviceContext.DrawInstanced, (delegate* unmanaged<IntPtr, uint, uint, uint, uint, void>)&DrawInstanced);
+            vt.Set(Vtbl.ID3D11DeviceContext.DrawIndexedInstancedIndirect, (delegate* unmanaged<IntPtr, IntPtr, uint, void>)&DrawIndexedInstancedIndirect);
+            vt.Set(Vtbl.ID3D11DeviceContext.DrawInstancedIndirect, (delegate* unmanaged<IntPtr, IntPtr, uint, void>)&DrawInstancedIndirect);
+            vt.Set(Vtbl.ID3D11DeviceContext.DrawAuto, (delegate* unmanaged<IntPtr, void>)&DrawAutoSlot);
+            vt.Set(Vtbl.ID3D11DeviceContext.SOSetTargets, (delegate* unmanaged<IntPtr, uint, IntPtr*, uint*, void>)&SOSetTargets);
+            vt.Set(Vtbl.ID3D11DeviceContext.SOGetTargets, (delegate* unmanaged<IntPtr, uint, IntPtr*, void>)&SOGetTargets);
             vt.Set(Vtbl.ID3D11DeviceContext.Map, (delegate* unmanaged<IntPtr, IntPtr, uint, D3D11_MAP, uint, D3D11_MAPPED_SUBRESOURCE*, int>)&MapSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.Unmap, (delegate* unmanaged<IntPtr, IntPtr, uint, void>)&UnmapSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.IASetInputLayout, (delegate* unmanaged<IntPtr, IntPtr, void>)&IASetInputLayout);
@@ -213,6 +218,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly] private static void DrawSlot(IntPtr self, uint count, uint start) => DoDraw(self, new DrawArgs { Count = count, Instances = 1, First = start });
         [UnmanagedCallersOnly] private static void DrawIndexed(IntPtr self, uint count, uint start, int baseVertex) => DoDraw(self, new DrawArgs { Indexed = true, Count = count, Instances = 1, First = start, BaseVertex = baseVertex });
         [UnmanagedCallersOnly] private static void DrawInstanced(IntPtr self, uint count, uint instances, uint start, uint startInstance) => DoDraw(self, new DrawArgs { Count = count, Instances = instances, First = start, FirstInstance = startInstance });
+        [UnmanagedCallersOnly] private static void DrawIndexedInstancedIndirect(IntPtr self, IntPtr args, uint offset)
+        {
+            var b = From<D3DBuffer>(args);
+            if (b != null) DoDraw(self, new DrawArgs { Indexed = true, Indirect = b, IndirectOffset = offset, Instances = 1 });
+        }
+
+        [UnmanagedCallersOnly] private static void DrawInstancedIndirect(IntPtr self, IntPtr args, uint offset)
+        {
+            var b = From<D3DBuffer>(args);
+            if (b != null) DoDraw(self, new DrawArgs { Indirect = b, IndirectOffset = offset, Instances = 1 });
+        }
+
+        [UnmanagedCallersOnly] private static void DrawAutoSlot(IntPtr self) { var c = C(self); if (c != null) Guard("DrawAuto", () => c.DrawAuto()); }
+
+        [UnmanagedCallersOnly]
+        private static void SOSetTargets(IntPtr self, uint n, IntPtr* buffers, uint* offsets)
+        {
+            var c = C(self);
+            if (c == null) return;
+            var b = Objects<D3DBuffer>(buffers, Math.Min(n, 4u));
+            var o = new uint[b.Length];
+            for (int i = 0; i < o.Length; i++) o[i] = offsets != null ? offsets[i] : 0;
+            Guard("SOSetTargets", () => c.SetSoTargets(b, o));
+        }
+
+        [UnmanagedCallersOnly]
+        private static void SOGetTargets(IntPtr self, uint n, IntPtr* buffers)
+        {
+            var c = C(self);
+            if (c == null || buffers == null) return;
+            for (int i = 0; i < n; i++) buffers[i] = i < 4 && c._so[i] != null ? c._so[i]!.AddRefPointer() : IntPtr.Zero;
+        }
+
         [UnmanagedCallersOnly] private static void DrawIndexedInstanced(IntPtr self, uint count, uint instances, uint start, int baseVertex, uint startInstance) => DoDraw(self, new DrawArgs { Indexed = true, Count = count, Instances = instances, First = start, BaseVertex = baseVertex, FirstInstance = startInstance });
 
         [UnmanagedCallersOnly]

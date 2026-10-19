@@ -153,6 +153,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return vt;
         }
 
+        /// <summary>A geometry shader made with CreateGeometryShaderWithStreamOutput (its code may be a
+        /// vertex or domain shader's, standing in for a pass-through GS).</summary>
+        public readonly StreamOutputDesc? StreamOutput;
+
+        public D3DShader(D3DDevice d, DxbcShader code, StreamOutputDesc so) : base(d, s_gs)
+        {
+            Code = code;
+            StreamOutput = so;
+        }
+
         public D3DShader(D3DDevice d, DxbcShader code) : base(d, code.Stage switch
         {
             ShaderStage.Vertex => s_vs,
@@ -167,7 +177,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             Code = code;
         }
 
-        public ShaderStage Stage => Code.Stage;
+        public ShaderStage Stage => StreamOutput != null ? ShaderStage.Geometry : Code.Stage;
     }
 
     internal sealed unsafe class D3DInputLayout : D3DChild

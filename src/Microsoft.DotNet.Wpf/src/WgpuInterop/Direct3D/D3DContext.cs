@@ -121,6 +121,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             Bind(ref _ib, null);
             _ibFormat = DXGI_FORMAT.UNKNOWN; _ibOffset = 0;
             _topology = D3D_PRIMITIVE_TOPOLOGY.UNDEFINED;
+            for (int i = 0; i < _so.Length; i++) Bind(ref _so[i], null);
             Bind(ref _raster, null);
             _viewportCount = 0; _scissorCount = 0;
             for (int i = 0; i < MaxTargets; i++) Bind(ref _rtv[i], null);

@@ -147,5 +147,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern void wgpuComputePassEncoderEnd(IntPtr pass);
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern void wgpuComputePassEncoderRelease(IntPtr pass);
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern void wgpuCommandEncoderClearBuffer(IntPtr encoder, IntPtr buffer, ulong offset, ulong size);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern void wgpuRenderPassEncoderDrawIndirect(IntPtr pass, IntPtr buffer, ulong offset);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern void wgpuRenderPassEncoderDrawIndexedIndirect(IntPtr pass, IntPtr buffer, ulong offset);
     }
 }
