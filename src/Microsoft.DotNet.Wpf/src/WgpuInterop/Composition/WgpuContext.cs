@@ -239,7 +239,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return adapter;
         }
 
-        public static WgpuContext Create()
+        public static WgpuContext Create() => Create(null);
+
+        /// <summary>As <see cref="Create()"/>, with the device requested through the descriptor
+        /// <paramref name="deviceDescriptor"/> returns for the chosen adapter (a WGPUDeviceDescriptor*
+        /// that stays valid until the request completes; zero for the default device). The Direct3D
+        /// shim asks for its features and an uncaptured-error callback this way.</summary>
+        public static WgpuContext Create(Func<IntPtr, IntPtr>? deviceDescriptor)
         {
 #if WGPU_BROWSER
             // Browser: the adapter/device were pre-acquired by WgpuBrowser.InitializeAsync
@@ -370,7 +376,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 mode = WGPUCallbackMode.AllowSpontaneous,
                 callback = (IntPtr)(delegate* unmanaged[Cdecl]<WGPURequestDeviceStatus, IntPtr, WGPUStringView, IntPtr, IntPtr, void>)&OnDeviceReady,
             };
-            wgpuAdapterRequestDevice(adapterResult, IntPtr.Zero, deviceInfo);
+            wgpuAdapterRequestDevice(adapterResult, deviceDescriptor?.Invoke(adapterResult) ?? IntPtr.Zero, deviceInfo);
             for (int i = 0; i < 1000 && !s_deviceDone; i++) Thread.Sleep(1);
             deviceResult = s_deviceResult;
             } // s_requestLock
