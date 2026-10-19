@@ -433,21 +433,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         // ---- clears and copies ------------------------------------------------------------------------
 
+        // an array view's clear is every slice's
         public void ClearRtv(D3DRenderTargetView view, WGPUColor color) => Run(c =>
         {
-            int i = Array.IndexOf(c._passColor, view.View);
-            if (c._pass != IntPtr.Zero && i >= 0) c.EndPass();
-            c._pendingColorClears[view.View] = color;
+            for (uint l = 0; l < view.Layers; l++)
+            {
+                IntPtr v = view.ViewForLayer(l);
+                if (c._pass != IntPtr.Zero && Array.IndexOf(c._passColor, v) >= 0) c.EndPass();
+                c._pendingColorClears[v] = color;
+            }
         }, view);
 
         public void ClearDsv(D3DDepthStencilView view, uint flags, float depth, byte stencil) => Run(c =>
         {
-            if (c._pass != IntPtr.Zero && c._passDepth == view.View) c.EndPass();
             bool hasStencil = Formats.HasStencil(view.Texture.Format);
-            c._pendingDepthClears.TryGetValue(view.View, out var old);
-            float? d = (flags & 1) != 0 ? depth : old.Depth;
-            uint? s = (flags & 2) != 0 && hasStencil ? stencil : old.Stencil;
-            c._pendingDepthClears[view.View] = (d, s, hasStencil);
+            for (uint l = 0; l < view.Layers; l++)
+            {
+                IntPtr v = view.ViewForLayer(l);
+                if (c._pass != IntPtr.Zero && c._passDepth == v) c.EndPass();
+                c._pendingDepthClears.TryGetValue(v, out var old);
+                float? d = (flags & 1) != 0 ? depth : old.Depth;
+                uint? s = (flags & 2) != 0 && hasStencil ? stencil : old.Stencil;
+                c._pendingDepthClears[v] = (d, s, hasStencil);
+            }
         }, view);
 
         public void CopyResource(D3DResource dst, D3DResource src) => Run(c => c.CopyImpl(dst, 0, 0, 0, 0, src, 0, null, whole: true), dst, src);
