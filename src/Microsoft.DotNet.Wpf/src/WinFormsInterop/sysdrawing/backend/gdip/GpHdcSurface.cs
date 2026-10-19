@@ -89,10 +89,11 @@ namespace System.Drawing.WebGpuBackend.Gdip
             GdiFlush ();
             int row = Width * 4;
             var line = new byte [row];
+            var argb = new uint [frame.Width];
             for (int y = 0; y < Height; y++) {
                 Marshal.Copy (_bits + y * row, line, 0, row);
                 for (int i = 3; i < row; i += 4) line [i] = 0xff;
-                WriteRow (frame, y, line);
+                WriteRow (frame, y, line, argb);
             }
         }
 
@@ -128,9 +129,7 @@ namespace System.Drawing.WebGpuBackend.Gdip
             var after = new uint [Width];
             for (int y = 0; y < Height; y++) {
                 GdipPixels.ReadArgb (frame, 0, y, Width, before, 0);
-                var bytes = new byte [row];
-                Marshal.Copy (_bits + y * row, bytes, 0, row);
-                Buffer.BlockCopy (bytes, 0, after, 0, row);
+                unsafe { new ReadOnlySpan<uint> ((void*) (_bits + y * row), Width).CopyTo (after); }
                 bool changed = false;
                 for (int x = 0; x < Width; x++)
                     if ((after [x] & 0xffffff) != (before [x] & 0xffffff)) { before [x] = after [x] | 0xff000000; changed = true; }
@@ -138,9 +137,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             }
         }
 
-        static void WriteRow (GdipFrame frame, int y, byte[] bgra)
+        static void WriteRow (GdipFrame frame, int y, byte[] bgra, uint[] argb)
         {
-            var argb = new uint [frame.Width];
             Buffer.BlockCopy (bgra, 0, argb, 0, Math.Min (bgra.Length, argb.Length * 4));
             GdipPixels.WriteArgb (frame, 0, y, frame.Width, argb, 0);
         }

@@ -148,13 +148,14 @@ namespace Wpf.WinFormsInterop.Tests
         public void FillPath_Aliased_FillsWholePixelsAndKeepsTheHole()
         {
             // At GDI+'s default smoothing a path covers whole pixels (runs), not an antialiased geometry,
-            // and the hole stays one: 30 rows of the outer square, 10 of which are split by the inner one.
+            // and the hole stays one. Rows alike are one rectangle: the 10 rows above the hole, the
+            // 10 beside it on either side, the 10 below.
             using var path = new GraphicsPath(FillMode.Alternate);
             path.AddRectangle(new Rectangle(0, 0, 30, 30));
             path.AddRectangle(new Rectangle(10, 10, 10, 10));
             var (n, kinds) = Record(g => g.FillPath(Brushes.Black, path));
             Assert.DoesNotContain("PathGeometry", kinds);
-            Assert.Equal(40, n);
+            Assert.Equal(4, n);
         }
 
         [Fact]
@@ -193,7 +194,7 @@ namespace Wpf.WinFormsInterop.Tests
                 g.DrawLine(pen, new Point(163, 18), new Point(226, 18));
             var rows = new List<string>();
             CollectRects(GpuRaster.EndScene(g), rows);
-            Assert.Equal(new[] { "163,17,63,1", "163,18,63,1" }, rows);
+            Assert.Equal(new[] { "163,17,63,2" }, rows);      // the two rows alike: one rectangle
         }
 
         [Fact]

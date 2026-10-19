@@ -84,8 +84,11 @@ namespace System.Drawing
 		static int ArgbOf (Pen p)
 		{
 			if (p == null) return 0;
-			if (p.Brush is SolidBrush sb) return sb.Color.ToArgb ();
-			if (p.Brush is Drawing2D.HatchBrush hb) return Blend (hb.ForegroundColor, hb.BackgroundColor);
+			// The pen's own brush: Pen.Brush hands out a copy, two of them for every line drawn.
+			// (A disposed pen still throws, as reading its brush always did.)
+			Brush b = p.IsDisposed ? p.Brush : p.BrushRef;
+			if (b is SolidBrush sb) return sb.Color.ToArgb ();
+			if (b is Drawing2D.HatchBrush hb) return Blend (hb.ForegroundColor, hb.BackgroundColor);
 			return p.Color.ToArgb ();
 		}
 		// A pen's dash pattern, in GDI+ units (multiples of the pen width), or null when solid.
@@ -249,7 +252,12 @@ namespace System.Drawing
 				default: return ((x + y) & 1) == 0;   // Percent50 and everything else
 			}
 		}
-		bool RecordPen (Pen p) => GpuRecorder != null && (p?.Brush is SolidBrush || p != null);
+		bool RecordPen (Pen p)
+		{
+			if (GpuRecorder == null || p == null) return false;
+			if (p.IsDisposed) _ = p.Brush;   // throws, as reading its brush (a copy) here always did
+			return true;
+		}
 		// Resolve a gradient brush (linear multi-stop or path/radial) to a GradientDesc; false = not a
 		// gradient in GPU mode (fall through to libgdiplus).
 		/// <summary>A LinearGradientBrush fill of a whole-pixel rectangle as GDI+ computes it, pixel for
@@ -743,7 +751,14 @@ namespace System.Drawing
 				for (int i = 0; i < c.Length / 2; i++) { ymin = Math.Min (ymin, c [i * 2 + 1]); ymax = Math.Max (ymax, c [i * 2 + 1]); }
 			if (ymin > ymax) return;
 			var xs = new List<(float X, int Dir)> ();
-			for (int y = (int) Math.Ceiling (ymin); y < ymax; y++) {
+			// A span that repeats on the rows below it is one rectangle, not one a row: a form's
+			// outline (DotNetBar's RibbonForm fills its border so) was two thousand one-row fills on
+			// every repaint -- and two thousand damage rectangles on every step of a resize.
+			var open = new List<(int A, int B, int Y0)> ();
+			var next = new List<(int A, int B, int Y0)> ();
+			int y = (int) Math.Ceiling (ymin);
+			for (; y < ymax; y++) {
+				next.Clear ();
 				xs.Clear ();
 				foreach (float [] xy in contours) {
 				int n = xy.Length / 2;
@@ -765,9 +780,16 @@ namespace System.Drawing
 					bool inside = winding ? wind != 0 : (wind & 1) != 0;
 					if (!inside) continue;
 					int a = (int) Math.Ceiling (xs [k].X), b = (int) Math.Ceiling (xs [k + 1].X);
-					if (b > a) GpuRecorder.FillRect (a, y, b - a, 1, argb);
+					if (b <= a) continue;
+					int y0 = y;
+					for (int o = 0; o < open.Count; o++)
+						if (open [o].A == a && open [o].B == b) { y0 = open [o].Y0; open.RemoveAt (o); break; }
+					next.Add ((a, b, y0));
 				}
+				foreach ((int A, int B, int Y0) r in open) GpuRecorder.FillRect (r.A, r.Y0, r.B - r.A, y - r.Y0, argb);
+				(open, next) = (next, open);
 			}
+			foreach ((int A, int B, int Y0) r in open) GpuRecorder.FillRect (r.A, r.Y0, r.B - r.A, y - r.Y0, argb);
 		}
 
 		/// <summary>A solid pen's line. GDI+ strokes a pen wider than a pixel as the polygon the pen
@@ -2494,15 +2516,25 @@ namespace System.Drawing
 			
 		}
 
+		// The two lines' trace and print paths are lambdas over the arguments, kept out of DrawLine
+		// itself: a lambda over a method's parameters costs a closure on EVERY call, traced or not,
+		// and designers draw their adornments a line at a time.
+		void TraceLine (string op, Pen pen, int x1, int y1, int x2, int y2)
+			=> GfxTrace (op, () => $"{x1},{y1}-{x2},{y2} pen={pen?.Color} w={pen?.Width}", RectangleF.FromLTRB (Math.Min (x1, x2), Math.Min (y1, y2), Math.Max (x1, x2) + 1, Math.Max (y1, y2) + 1));
+		void TraceLine (string op, Pen pen, float x1, float y1, float x2, float y2)
+			=> GfxTrace (op, () => $"{x1},{y1}-{x2},{y2} pen={pen?.Color} w={pen?.Width}", RectangleF.FromLTRB (Math.Min (x1, x2), Math.Min (y1, y2), Math.Max (x1, x2) + 1, Math.Max (y1, y2) + 1));
+		bool PrintLine (Pen pen, int x1, int y1, int x2, int y2) => PrintStroke (pen, gp => gp.AddLine (x1, y1, x2, y2));
+		bool PrintLine (Pen pen, float x1, float y1, float x2, float y2) => PrintStroke (pen, gp => gp.AddLine (x1, y1, x2, y2));
+
 		public void DrawLine (Pen pen, int x1, int y1, int x2, int y2)
 		{
-			GfxTrace ("DrawLine", () => $"{x1},{y1}-{x2},{y2} pen={pen?.Color} w={pen?.Width}", RectangleF.FromLTRB (Math.Min (x1, x2), Math.Min (y1, y2), Math.Max (x1, x2) + 1, Math.Max (y1, y2) + 1));
+			if (s_gfxTrace != null) TraceLine ("DrawLine", pen, x1, y1, x2, y2);
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			CheckUse (pen);
 			CheckTarget ();
 			if (EngineDrawLine (pen, x1, y1, x2, y2)) return;
-			if (PrintStroke (pen, gp => gp.AddLine (x1, y1, x2, y2))) return;
+			if (print_mode && PrintLine (pen, x1, y1, x2, y2)) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (RecordPen (pen)) {
@@ -2518,13 +2550,13 @@ namespace System.Drawing
 
 		public void DrawLine (Pen pen, float x1, float y1, float x2, float y2)
 		{
-			GfxTrace ("DrawLineF", () => $"{x1},{y1}-{x2},{y2} pen={pen?.Color} w={pen?.Width}", RectangleF.FromLTRB (Math.Min (x1, x2), Math.Min (y1, y2), Math.Max (x1, x2) + 1, Math.Max (y1, y2) + 1));
+			if (s_gfxTrace != null) TraceLine ("DrawLineF", pen, x1, y1, x2, y2);
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			CheckUse (pen);
 			CheckTarget ();
 			if (EngineDrawLine (pen, x1, y1, x2, y2)) return;
-			if (PrintStroke (pen, gp => gp.AddLine (x1, y1, x2, y2))) return;
+			if (print_mode && PrintLine (pen, x1, y1, x2, y2)) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (!float.IsNaN(x1) && !float.IsNaN(y1) &&

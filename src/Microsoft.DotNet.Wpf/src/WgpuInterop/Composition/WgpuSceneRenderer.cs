@@ -977,8 +977,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             foreach ((IntPtr Buf, ulong Cap, bool Idx) b in _inUseBufs) (b.Idx ? _freeIdx : _freeVtx).Add((b.Buf, b.Cap));
             _inUseBufs.Clear();
             // Return this frame's DrawData (and their grown Vert/Index/Draw lists) to the pool so next
-            // frame reuses the backing arrays instead of allocating fresh lists per pass.
-            foreach (DrawData d in _inUseDrawData) _drawDataPool.Push(d);
+            // frame reuses the backing arrays instead of allocating fresh lists per pass. In reverse,
+            // so the next frame rents them in this frame's order: the pool is a stack, and pushed in
+            // order the main pass got the last-rented (a small layer's) lists every other frame and
+            // grew them again from nothing -- most of a frame's garbage.
+            for (int i = _inUseDrawData.Count - 1; i >= 0; i--) _drawDataPool.Push(_inUseDrawData[i]);
             _inUseDrawData.Clear();
         }
 
@@ -5211,7 +5214,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (b.Solid is null && b.Gradient is { } banding && same is null && b.Covers(x0, y0, x1, y1)
                     && banding(x0, y0, x1, y1) is null)
                 {
-                    field = (px, py) => banding(px, py, px + 1, py + 1);
+                    field = BandingField(banding);
                     return TracePaper("gradient-field", null);
                 }
                 if (b.Solid is null && b.Gradient is { } gradientAt && b.Covers(x0, y0, x1, y1)
@@ -5241,15 +5244,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (b.Covers(x0, y0, x1, y1))
                     {
                         if (stack is null) return TracePaper("solid", solid);
-                        List<PaperInfo> pieces = stack;
-                        RgbaColor bottom = solid;
-                        field = (px, py) =>
-                        {
-                            float cx = px + 0.5f, cy = py + 0.5f;
-                            foreach (PaperInfo q in pieces)
-                                if (q.HoldsCentre(cx, cy)) return q.Solid;
-                            return bottom;
-                        };
+                        field = PiecesField(stack, solid);
                         return TracePaper("solid-field", null);
                     }
                     same = solid;
@@ -5280,6 +5275,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             return TracePaper(data.ClearPaper is null ? "clear-unknown" : "clear", data.ClearPaper);
         }
+
+        // The per-pixel answers, made here rather than in PaperUnder's loop: a lambda there over the
+        // loop's own variables cost a closure on every draw the walk looked at.
+        private static Func<int, int, RgbaColor?> BandingField(Func<float, float, float, float, RgbaColor?> banding)
+            => (px, py) => banding(px, py, px + 1, py + 1);
+
+        private static Func<int, int, RgbaColor?> PiecesField(List<PaperInfo> pieces, RgbaColor bottom)
+            => (px, py) =>
+            {
+                float cx = px + 0.5f, cy = py + 0.5f;
+                foreach (PaperInfo q in pieces)
+                    if (q.HoldsCentre(cx, cy)) return q.Solid;
+                return bottom;
+            };
 
         /// <summary>The paper a clip layer's content leaves over a device box, when the clip lets the
         /// whole box through and the topmost draw there is one opaque colour covering it; else null.</summary>
