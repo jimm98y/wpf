@@ -3680,9 +3680,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     // RenderOptions.BitmapScalingMode=NearestNeighbor -> no filtering.
                     IntPtr sampler = _nearestScaling ? NearestSampler() : LinearSampler();
-                    // A WPF bitmap is filtered as WPF filters it (fs_textured_wpf); not in linear-light
-                    // mode, whose sRGB textures load decoded.
-                    kind = img.WpfFilter && img.SourceVisual is null && !_nearestScaling && !_srgbOutput ? FillKind.TexturedWpf : FillKind.Textured;
+                    // A WPF bitmap drawn into a RenderTargetBitmap is filtered as milcore's software
+                    // rasterizer filters it (fs_textured_wpf); not in linear-light mode, whose sRGB
+                    // textures load decoded. A window is not: stock draws it on the GPU (tier 2).
+                    kind = img.WpfFilter && MilcoreBitmapFilter && img.SourceVisual is null && !_nearestScaling && !_srgbOutput ? FillKind.TexturedWpf : FillKind.Textured;
+                    if (kind == FillKind.TexturedWpf) MilcoreFilterDraws++;
                     if (img.SourceVisual is null)
                     {
                         view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
@@ -8257,6 +8259,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// offset is rebased from device coordinates onto the current target's (origin
         /// <paramref name="targetOrigin"/>), exactly, in integers.
         /// </summary>
+        /// <summary>
+        /// Set while rendering what stock renders with milcore's SOFTWARE rasterizer -- a
+        /// RenderTargetBitmap (WpfCompositionSink.ReadbackTarget) -- so WPF bitmaps are filtered as
+        /// CBilinearSpan filters them. Off for windows: stock draws those at render tier 2 on the
+        /// GPU, whose texture unit does the bilinear, so a window keeps the GPU sampler.
+        /// </summary>
+        internal bool MilcoreBitmapFilter;
+
+        /// <summary>Draws that took the milcore filter (tests: which path a render took).</summary>
+        internal int MilcoreFilterDraws;
+
         private static (int Step, int Offset) WpfImageMapping(float scale, float offset, float targetOrigin)
         {
             if (scale == 0f || !float.IsFinite(scale) || !float.IsFinite(offset)) return (0, 0);
