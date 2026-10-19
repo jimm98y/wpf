@@ -172,6 +172,8 @@ public static class ComRewriter
         private TypeDefinition? _shims;
 
         // imported references
+        private readonly MethodReference _toVariant, _fromVariant, _clearVariant;
+        private readonly TypeReference _variant;
         private readonly MethodReference _adopt, _toBstr, _freeBstr, _takeBstr, _takeCoTaskUni;
         private readonly MethodReference _this, _borrow, _borrowUnknown, _release, _take, _check, _unsupported, _createInstance, _keepAlive;
         private readonly TypeReference _intPtr, _int32, _int16, _byte, _object, _void, _guid;
@@ -194,6 +196,10 @@ public static class ComRewriter
             _createInstance = Imp(nameof(Com.CreateInstance), typeof(Guid));
             _adopt = Imp(nameof(Com.Adopt), typeof(object));
             _toBstr = Imp(nameof(Com.ToBstr), typeof(string));
+            _toVariant = Imp(nameof(Com.ToVariant), typeof(object), typeof(IntPtr));
+            _fromVariant = Imp(nameof(Com.FromVariant), typeof(IntPtr));
+            _clearVariant = Imp(nameof(Com.ClearVariant), typeof(IntPtr));
+            _variant = m.ImportReference(typeof(ComVariant));
             _freeBstr = Imp(nameof(Com.FreeBstr), typeof(IntPtr));
             _takeBstr = Imp(nameof(Com.TakeBstr), typeof(IntPtr));
             _takeCoTaskUni = Imp(nameof(Com.TakeCoTaskString), typeof(IntPtr));
@@ -293,7 +299,7 @@ public static class ComRewriter
 
         // ---- marshalling ------------------------------------------------------------------------
 
-        private enum Kind { Blit, Bool4, Bool2, Bool1, Iface, Unknown, OutIface, ByRefBlit, StrW, StrA, StrB, BlitArray, RefBool4, RefBool2, RefBool1, RefStrB, RefStrW }
+        private enum Kind { Blit, Bool4, Bool2, Bool1, Iface, Unknown, OutIface, ByRefBlit, StrW, StrA, StrB, BlitArray, RefBool4, RefBool2, RefBool1, RefStrB, RefStrW, Variant, RefVariant }
 
         private sealed record Arg(Kind Kind, TypeReference Native, TypeReference? Iface = null);
 
@@ -334,6 +340,8 @@ public static class ComRewriter
                 if (IsComInterface(e)) return new Arg(Kind.OutIface, _intPtr, e);
                 if (e.FullName == "System.Object" && nt is NativeType.IUnknown or NativeType.IntF) return new Arg(Kind.OutIface, _intPtr, null);
                 if (IsBlittable(e) && e.FullName != "System.Boolean") return new Arg(Kind.ByRefBlit, _intPtr);
+                if (e.FullName == "System.Object" && (nt is NativeType.Struct || (nt == NativeType.None && comDefaults)))
+                    return new Arg(Kind.RefVariant, _intPtr);
                 if (e.FullName == "System.String")
                 {
                     if (nt is NativeType.BStr || (nt == NativeType.None && comDefaults)) return new Arg(Kind.RefStrB, _intPtr);
@@ -363,7 +371,8 @@ public static class ComRewriter
                     why = $"string as {nt}"; return null;
                 case "System.Object":
                     if (nt is NativeType.IUnknown or NativeType.IntF) return new Arg(Kind.Unknown, _intPtr);
-                    why = nt == NativeType.IDispatch ? "IDispatch" : "object (a VARIANT)"; return null;
+                    if (nt is NativeType.Struct || (nt == NativeType.None && comDefaults)) return new Arg(Kind.Variant, _variant);
+                    why = nt == NativeType.IDispatch ? "IDispatch" : $"object as {nt}"; return null;
             }
             if (IsBlittable(type)) return new Arg(Kind.Blit, type);
             // an array marshalled as a C array (not COM's default SAFEARRAY) of blittable elements: pinned
@@ -432,6 +441,7 @@ public static class ComRewriter
             if (!isVoid)
             {
                 ret = Classify(decl.ReturnType, decl.MethodReturnType.MarshalInfo, comDefaults: true, out string? why);
+                if (ret != null && ret.Kind == Kind.Variant && preserve) { Refuse(il, member, "a VARIANT returned by value"); return; }
                 if (ret == null || ret.Kind is Kind.ByRefBlit or Kind.OutIface or Kind.StrA or Kind.BlitArray or Kind.RefBool1 or Kind.RefBool2 or Kind.RefBool4 or Kind.RefStrB or Kind.RefStrW)
                 { Refuse(il, member, $"return {why ?? decl.ReturnType.Name}"); return; }
             }
@@ -499,7 +509,12 @@ public static class ComRewriter
                 });
             }
 
-            if (ret != null)
+            if (ret != null && ret.Kind == Kind.Variant && !preserve)
+            {
+                il.Emit(OpCodes.Ldloca, retLocal!); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Call, _fromVariant);
+                il.Emit(OpCodes.Ldloca, retLocal!); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Call, _clearVariant);
+            }
+            else if (ret != null)
             {
                 var v = preserve ? preservedRet! : retLocal!;
                 il.Emit(OpCodes.Ldloc, v);
@@ -609,6 +624,34 @@ public static class ComRewriter
                         il.Emit(OpCodes.Cgt_Un);
                         il.Emit(OpCodes.Stind_I1);
                     });
+                    break;
+                }
+                case Kind.Variant:
+                {
+                    var v = Local(body, _variant);
+                    il.Emit(OpCodes.Ldarg, argIndex);
+                    il.Emit(OpCodes.Ldloca, v); il.Emit(OpCodes.Conv_U);
+                    il.Emit(OpCodes.Call, _toVariant);
+                    pushes.Add(() => il.Emit(OpCodes.Ldloc, v));            // by value, as COM passes it
+                    cleanup.Add(() => { il.Emit(OpCodes.Ldloca, v); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Call, _clearVariant); });
+                    break;
+                }
+                case Kind.RefVariant:
+                {
+                    var v = Local(body, _variant);
+                    il.Emit(OpCodes.Ldarg, argIndex);
+                    il.Emit(OpCodes.Ldind_Ref);
+                    il.Emit(OpCodes.Ldloca, v); il.Emit(OpCodes.Conv_U);
+                    il.Emit(OpCodes.Call, _toVariant);
+                    pushes.Add(() => { il.Emit(OpCodes.Ldloca, v); il.Emit(OpCodes.Conv_U); });
+                    after.Add(() =>
+                    {
+                        il.Emit(OpCodes.Ldarg, argIndex);
+                        il.Emit(OpCodes.Ldloca, v); il.Emit(OpCodes.Conv_U);
+                        il.Emit(OpCodes.Call, _fromVariant);
+                        il.Emit(OpCodes.Stind_Ref);
+                    });
+                    cleanup.Add(() => { il.Emit(OpCodes.Ldloca, v); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Call, _clearVariant); });
                     break;
                 }
                 case Kind.StrB:

@@ -18,7 +18,7 @@ using System.Runtime.InteropServices;
 namespace WpfMac.ComInterop;
 
 /// <summary>The rewritten assemblies' entry points.</summary>
-public static unsafe class Com
+public static unsafe partial class Com
 {
     private static readonly Guid IID_IUnknown = new("00000000-0000-0000-C000-000000000046");
 

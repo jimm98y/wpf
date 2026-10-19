@@ -20,10 +20,13 @@ namespace ComImportFixture
         void Swap(ref Pair p);                                  // slot 9
         [PreserveSig] int Length([MarshalAs(UnmanagedType.LPWStr)] string s);   // slot 10
         IOther MakeOther(int value);                            // slot 11: an interface retval
-        object Variant();                                       // slot 12: unsupported (VARIANT)
+        object Variant();                                       // slot 12: a VARIANT retval
         [PreserveSig] int BLen(string s);                       // slot 13: a BSTR in
         string Greet(string name);                              // slot 14: a BSTR retval
         void Upper(ref string s);                               // slot 15: a BSTR by reference
+        object Echo(object v);                                  // slot 16: a VARIANT in, one back
+        void Bump(ref object v);                                // slot 17: a VARIANT by reference
+        [PreserveSig] int Arrays([MarshalAs(UnmanagedType.SafeArray)] int[] a);   // slot 18: unsupported (SAFEARRAY)
     }
 
     [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A02"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -105,9 +108,12 @@ namespace ComImportFixture
         public static string Greet(IntPtr p, string s) => Wrap(p).Greet(s);
         public static string Upper(IntPtr p, string s) { Wrap(p).Upper(ref s); return s; }
         public static int MadeOther(IntPtr p, int v) => Wrap(p).MakeOther(v).Value();
-        public static string Variant(IntPtr p)
+        public static object Variant(IntPtr p) => Wrap(p).Variant();
+        public static object Echo(IntPtr p, object v) => Wrap(p).Echo(v);
+        public static object Bump(IntPtr p, object v) { Wrap(p).Bump(ref v); return v; }
+        public static string Arrays(IntPtr p)
         {
-            try { Wrap(p).Variant(); return "no exception"; }
+            try { Wrap(p).Arrays(new[] { 1 }); return "no exception"; }
             catch (NotSupportedException) { return "NotSupported"; }
         }
         public static bool CastsToMissing(IntPtr p) => Wrap(p) is INotThere;
