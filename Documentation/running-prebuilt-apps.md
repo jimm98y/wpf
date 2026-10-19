@@ -131,8 +131,12 @@ wpfmac's state.
 
 ## What does not work (yet)
 
-- **Direct3D / DXGI** and libraries built on them (SharpDX views, D3DImage content) degrade:
-  their factories return failure HRESULTs.
+- **Direct3D / DXGI.** One implementation on every OS, Windows included: an app's d3d11, dxgi, d3d9
+  and d3dcompiler_47 imports reach the stack's Direct3D over WebGPU
+  ([d3d11-webgpu-shim.md](d3d11-webgpu-shim.md)). What it does not do: run-time HLSL compilation
+  (`D3DCompile` answers `E_FAIL`; ship DXBC), video decode (the video processor is there, decoding is
+  Media Foundation's on the CPU), and DXIL. `WPF_D3D11_SHIM=0` gives a Windows app the real Direct3D,
+  for comparison only.
 - **C++/CLI assemblies** cannot load outside Windows.
 - **COM activation** is unavailable (`PlatformNotSupportedException: COM Interop`).
 - **Unimplemented Win32 functions** fail quietly. The compatibility log names each one; that list

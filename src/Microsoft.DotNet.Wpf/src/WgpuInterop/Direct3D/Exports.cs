@@ -46,20 +46,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             add("dxgi", "DXGIGetDebugInterface1", (IntPtr)(delegate* unmanaged<uint, Guid*, IntPtr*, int>)&DXGIGetDebugInterface1);
             add("d3d9", "Direct3DCreate9Ex", (IntPtr)(delegate* unmanaged<uint, IntPtr*, int>)&Direct3DCreate9Ex);
             add("d3d9", "Direct3DCreate9", (IntPtr)(delegate* unmanaged<uint, IntPtr>)&Direct3DCreate9);
-            int n = 7;
-            // Runtime HLSL compilation (section 9, the user's decision: not for now). Windows keeps its
-            // own d3dcompiler_47, whose DXBC the translator takes; elsewhere there is no compiler, and
-            // the answer is E_FAIL with one line saying so.
-            if (!OperatingSystem.IsWindows())
-            {
-                add("d3dcompiler_47", "D3DCompile", (IntPtr)(delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int>)&D3DCompile);
-                add("d3dcompiler_47", "D3DCompile2", (IntPtr)(delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, uint, void*, nuint, IntPtr*, IntPtr*, int>)&D3DCompile2);
-                add("d3dcompiler_47", "D3DCompileFromFile", (IntPtr)(delegate* unmanaged<char*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int>)&D3DCompileFromFile);
-                // reflection needs no compiler: managed, over the blob's own chunks
-                add("d3dcompiler_47", "D3DReflect", (IntPtr)(delegate* unmanaged<void*, nuint, Guid*, IntPtr*, int>)&D3DReflect);
-                n += 4;
-            }
-            return n;
+            // d3dcompiler_47: ours on every OS, Windows too (the user's decision, 2026-10-19: one
+            // implementation everywhere). Reflection is managed, over the blob's own chunks; run-time
+            // HLSL compilation is not there yet (section 9), and answers E_FAIL with one line saying so.
+            add("d3dcompiler_47", "D3DCompile", (IntPtr)(delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int>)&D3DCompile);
+            add("d3dcompiler_47", "D3DCompile2", (IntPtr)(delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, uint, void*, nuint, IntPtr*, IntPtr*, int>)&D3DCompile2);
+            add("d3dcompiler_47", "D3DCompileFromFile", (IntPtr)(delegate* unmanaged<char*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int>)&D3DCompileFromFile);
+            add("d3dcompiler_47", "D3DReflect", (IntPtr)(delegate* unmanaged<void*, nuint, Guid*, IntPtr*, int>)&D3DReflect);
+            return 11;
         }
 
         private static int NoCompiler(byte* entry, byte* target, IntPtr* code, IntPtr* errors)
@@ -67,7 +61,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (code != null) *code = IntPtr.Zero;
             if (errors != null) *errors = IntPtr.Zero;
             string what = $"{(entry != null ? Marshal.PtrToStringUTF8((IntPtr)entry) : "?")} ({(target != null ? Marshal.PtrToStringUTF8((IntPtr)target) : "?")})";
-            D3DLog.Once("d3dcompile", $"D3DCompile of {what}: there is no HLSL compiler off Windows; precompiled shaders (DXBC) work, run-time HLSL does not (E_FAIL)");
+            D3DLog.Once("d3dcompile", $"D3DCompile of {what}: the shim has no HLSL compiler yet; precompiled shaders (DXBC) work, run-time HLSL does not (E_FAIL)");
             return unchecked((int)0x80004005);
         }
 
@@ -91,6 +85,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         internal static delegate* unmanaged<void*, nuint, Guid*, IntPtr*, int> ReflectPointer => &D3DReflect;
+        internal static delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int> CompilePointer => &D3DCompile;
 
         /// <summary>The managed entry point, for callers in this process (tests): the same function
         /// the export reaches.</summary>
