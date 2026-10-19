@@ -34,6 +34,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>Draws issued and draws skipped (no shader, a translation or pipeline failure), for
         /// tests and traces.</summary>
         public int DrawsIssued, DrawsSkipped;
+        /// <summary>Texture bindings of draws with no view bound (reading the zero stand-in), and with a
+        /// bound view that has no WebGPU view (diagnostics).</summary>
+        public int UnboundTextureReads, NullTextureViews;
 
         // ---- translation -----------------------------------------------------------------------------
 
@@ -568,6 +571,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     continue;
                 }
                 IntPtr view = srv != null && srv.Resource is D3DTexture2D ? srv.ViewFor(r.Dim) : DummyView(r.Dim, r.Kind);
+                if (srv == null || srv.Resource is not D3DTexture2D) UnboundTextureReads++;
+                else if (view == IntPtr.Zero) NullTextureViews++;
                 entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.ResourceBase + slot), textureView = view });
             }
             var arr = entries.ToArray();
