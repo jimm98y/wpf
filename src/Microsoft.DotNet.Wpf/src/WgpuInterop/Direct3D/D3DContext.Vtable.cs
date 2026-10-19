@@ -53,6 +53,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.ID3D11DeviceContext.CopyStructureCount, (delegate* unmanaged<IntPtr, IntPtr, uint, IntPtr, void>)&CopyStructureCountSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.DrawIndexed, (delegate* unmanaged<IntPtr, uint, uint, int, void>)&DrawIndexed);
             vt.Set(Vtbl.ID3D11DeviceContext.Draw, (delegate* unmanaged<IntPtr, uint, uint, void>)&DrawSlot);
+            vt.Set(Vtbl.ID3D11DeviceContext.Begin, (delegate* unmanaged<IntPtr, IntPtr, void>)&BeginSlot);
+            vt.Set(Vtbl.ID3D11DeviceContext.End, (delegate* unmanaged<IntPtr, IntPtr, void>)&EndSlot);
+            vt.Set(Vtbl.ID3D11DeviceContext.GetData, (delegate* unmanaged<IntPtr, IntPtr, void*, uint, uint, int>)&GetDataSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.DrawIndexedInstanced, (delegate* unmanaged<IntPtr, uint, uint, uint, int, uint, void>)&DrawIndexedInstanced);
             vt.Set(Vtbl.ID3D11DeviceContext.DrawInstanced, (delegate* unmanaged<IntPtr, uint, uint, uint, uint, void>)&DrawInstanced);
             vt.Set(Vtbl.ID3D11DeviceContext.DrawIndexedInstancedIndirect, (delegate* unmanaged<IntPtr, IntPtr, uint, void>)&DrawIndexedInstancedIndirect);
@@ -92,6 +95,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         private static D3DContext? C(IntPtr p) => From<D3DContext>(p);
+
+        [UnmanagedCallersOnly]
+        private static void BeginSlot(IntPtr self, IntPtr query) { var c = C(self); var q = From<D3DQuery>(query); if (c != null && q != null) Guard("Begin", () => c.Begin(q)); }
+
+        [UnmanagedCallersOnly]
+        private static void EndSlot(IntPtr self, IntPtr query) { var c = C(self); var q = From<D3DQuery>(query); if (c != null && q != null) Guard("End", () => c.End(q)); }
+
+        [UnmanagedCallersOnly]
+        private static int GetDataSlot(IntPtr self, IntPtr query, void* data, uint size, uint flags)
+        {
+            var c = C(self);
+            var q = From<D3DQuery>(query);
+            if (c == null || q == null) return HResult.E_INVALIDARG;
+            try { return c.GetData(q, data, size, flags); }
+            catch (Exception e) { D3DLog.Error("GetData", e); return HResult.E_FAIL; }
+        }
 
         private static void Guard(string where, Action a)
         {

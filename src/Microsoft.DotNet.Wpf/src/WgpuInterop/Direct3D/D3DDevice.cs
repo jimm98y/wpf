@@ -154,7 +154,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static readonly Vtable s_multithread = BuildMultithread();
 
         public D3DDevice(WgpuContext gpu, bool ownsGpu, D3D_FEATURE_LEVEL level, uint flags, DxgiAdapter? adapter)
-            : base(s_device, s_dxgiDevice, s_multithread)
+            : base(s_device, s_dxgiDevice, s_multithread, s_videoDevice)
         {
             Gpu = gpu;
             OwnsGpu = ownsGpu;
@@ -290,6 +290,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var vt = new Vtable("ID3D11Device", Vtbl.ID3D11Device5.SlotCount,
                 Vtbl.ID3D11Device.IID, Vtbl.ID3D11Device1.IID, Vtbl.ID3D11Device2.IID, Vtbl.ID3D11Device3.IID, Vtbl.ID3D11Device4.IID, Vtbl.ID3D11Device5.IID);
             vt.Set(Vtbl.ID3D11Device.CreateBuffer, (delegate* unmanaged<IntPtr, D3D11_BUFFER_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)&CreateBuffer);
+            vt.Set(Vtbl.ID3D11Device.CreateQuery, (delegate* unmanaged<IntPtr, D3D11_QUERY_DESC*, IntPtr*, int>)&CreateQuery);
+            vt.Set(Vtbl.ID3D11Device.CreatePredicate, (delegate* unmanaged<IntPtr, D3D11_QUERY_DESC*, IntPtr*, int>)&CreatePredicate);
             vt.Set(Vtbl.ID3D11Device.CreateTexture2D, (delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)&CreateTexture2D);
             vt.Set(Vtbl.ID3D11Device.CreateTexture1D, (delegate* unmanaged<IntPtr, D3D11_TEXTURE1D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)&CreateTexture1D);
             vt.Set(Vtbl.ID3D11Device.CreateTexture3D, (delegate* unmanaged<IntPtr, D3D11_TEXTURE3D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)&CreateTexture3D);
@@ -329,6 +331,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         private static D3DDevice? Self(IntPtr p) => From<D3DDevice>(p);
+
+        [UnmanagedCallersOnly]
+        private static int CreateQuery(IntPtr self, D3D11_QUERY_DESC* desc, IntPtr* query)
+        {
+            if (query != null) *query = IntPtr.Zero;
+            var d = Self(self);
+            if (d == null || desc == null || !D3DQuery.Valid(desc->Query)) return HResult.E_INVALIDARG;
+            return ComObject.Out(query, new D3DQuery(d, *desc, predicate: false));
+        }
+
+        [UnmanagedCallersOnly]
+        private static int CreatePredicate(IntPtr self, D3D11_QUERY_DESC* desc, IntPtr* predicate)
+        {
+            if (predicate != null) *predicate = IntPtr.Zero;
+            var d = Self(self);
+            // only the predicates: occlusion, stream-output overflow (any stream)
+            if (d == null || desc == null || desc->Query is not (D3DQuery.OcclusionPredicate or D3DQuery.SoOverflowPredicate or 11 or 13 or 15)) return HResult.E_INVALIDARG;
+            return ComObject.Out(predicate, new D3DQuery(d, *desc, predicate: true));
+        }
 
         private static int Guard(string where, Func<int> body)
         {
@@ -741,12 +762,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         // ---- ID3D10Multithread / ID3D11Multithread: always protected -------------------------------
 
-        private static readonly Guid IID_ID3D10Multithread = new("9b7e4e00-342c-4106-a19f-4f2704f689f0");
-        private static readonly Guid IID_ID3D11Multithread = new("9b7e4e00-342c-4106-a19f-4f2704f689f0");
-
+        // ID3D10Multithread and ID3D11Multithread share their IID. A literal, not a static field: s_multithread
+        // is initialised above any field declared here (static initialisers run in textual order), and an
+        // IID read from a field not yet initialised was Guid.Empty -- no caller could get the interface.
         private static Vtable BuildMultithread()
         {
-            var vt = new Vtable("ID3D10Multithread", 7, IID_ID3D10Multithread);
+            var vt = new Vtable("ID3D10Multithread", 7, new Guid("9b7e4e00-342c-4106-a19f-4f2704f689f0"));
             vt.Set(3, (delegate* unmanaged<IntPtr, void>)&MtEnter);
             vt.Set(4, (delegate* unmanaged<IntPtr, void>)&MtLeave);
             vt.Set(5, (delegate* unmanaged<IntPtr, int, int>)&MtSet);

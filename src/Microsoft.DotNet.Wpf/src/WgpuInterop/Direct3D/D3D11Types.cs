@@ -252,8 +252,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             DXGI_FORMAT.BC7_UNORM_SRGB => TexFmt.BC7Srgb,
             DXGI_FORMAT.B8G8R8A8_UNORM or DXGI_FORMAT.B8G8R8A8_TYPELESS or DXGI_FORMAT.B8G8R8X8_UNORM or DXGI_FORMAT.B8G8R8X8_TYPELESS => TexFmt.BGRA8Unorm,
             DXGI_FORMAT.B8G8R8A8_UNORM_SRGB or DXGI_FORMAT.B8G8R8X8_UNORM_SRGB => TexFmt.BGRA8UnormSrgb,
+            // 4:2:0 video: one texture of the formats' bytes as they lie in memory -- the luma rows, then
+            // the interleaved chroma rows, as many again as half -- read by the video processor and the
+            // plane views (D3DVideoProcessor.cs)
+            NV12 => TexFmt.R8Unorm,
+            P010 or P016 => TexFmt.R16Uint,
             _ => WGPUTextureFormat.Undefined,
         };
+
+        public const DXGI_FORMAT NV12 = (DXGI_FORMAT)103, P010 = (DXGI_FORMAT)104, P016 = (DXGI_FORMAT)105;
+
+        /// <summary>A planar 4:2:0 format: a luma plane and a half-height plane of interleaved chroma.</summary>
+        public static bool IsPlanar(DXGI_FORMAT f) => f is NV12 or P010 or P016;
 
         /// <summary>Bytes per texel (per 4x4 block for a block-compressed format).</summary>
         public static uint TexelBytes(DXGI_FORMAT f) => f switch
@@ -268,6 +278,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             >= DXGI_FORMAT.BC2_TYPELESS and <= DXGI_FORMAT.BC5_SNORM => 16,
             >= DXGI_FORMAT.BC6H_TYPELESS and <= DXGI_FORMAT.BC7_UNORM_SRGB => 16,
             >= DXGI_FORMAT.B8G8R8A8_UNORM and <= DXGI_FORMAT.B8G8R8X8_UNORM_SRGB => 4,
+            NV12 => 1,
+            P010 or P016 => 2,
             _ => 4,
         };
 
