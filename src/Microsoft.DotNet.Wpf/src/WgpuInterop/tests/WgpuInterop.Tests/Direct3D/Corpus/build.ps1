@@ -1,11 +1,11 @@
-# Compiles the DXBC translator's own corpus (manifest.txt) with fxc into bin\, one blob per entry
+# Compiles the DXBC translator's own corpus (manifest.txt) with fxc into dxbc\, one blob per entry
 # point and profile: <file>.<entry>.<profile>.dxbc. The blobs are checked in: the tests read them
 # and need no compiler. Run on Windows with the Windows SDK installed:  pwsh build.ps1
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" | Sort-Object FullName | Select-Object -Last 1
 if (-not $fxc) { throw 'fxc.exe not found (install the Windows SDK)' }
-$out = Join-Path $here 'bin'
+$out = Join-Path $here 'dxbc'
 New-Item -ItemType Directory -Force $out | Out-Null
 $failed = 0
 foreach ($line in Get-Content (Join-Path $here 'manifest.txt')) {
